@@ -311,9 +311,9 @@ export function Composer({
   onGuideQueuedMessage: (id: string) => void;
   onEditQueuedMessage: (id: string) => void;
   onEditGuideMessage: (id: string) => void;
-  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => void;
-  onSteer?: (promptOverride?: string, contentParts?: MessageContentPart[]) => void;
-  onQueue?: (promptOverride?: string, contentParts?: MessageContentPart[]) => void;
+  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
+  onSteer?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
+  onQueue?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
   onInterrupt: () => void;
   telemetryTurnID?: string;
   tokensPerSecond?: number;
@@ -709,7 +709,7 @@ export function Composer({
   }
 
   function submitComposerWith(
-    onSubmit: (promptOverride?: string, contentParts?: MessageContentPart[]) => void,
+    onSubmit: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void,
     promptOverride = prompt,
   ): void {
     // A disconnected (or otherwise send-disabled) composer must not clear the
@@ -740,15 +740,14 @@ export function Composer({
     if (submittedDraftSignatureRef.current === draftSignature) {
       return;
     }
+    const contentParts = collapsedContentPartsForPrompt(promptOverride);
+    const accepted = contentParts
+      ? onSubmit(promptOverride, contentParts)
+      : onSubmit(promptOverride);
+    if (accepted === false) return;
     submittedDraftSignatureRef.current = draftSignature;
     optimisticPromptQueueRef.current.length = 0;
     setLocalPrompt("");
-    const contentParts = collapsedContentPartsForPrompt(promptOverride);
-    if (contentParts) {
-      onSubmit(promptOverride, contentParts);
-    } else {
-      onSubmit(promptOverride);
-    }
     setSubmissionClearRevision((current) => current + 1);
     // Restore focus within the user action so software keyboards can open.
     // An already-focused editor must not blur/refocus or scroll on send.

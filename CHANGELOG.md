@@ -106,6 +106,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Composer submissions no longer wait for cached conversation refreshes. Main
+  and split views accept normal follow-ups after a final answer, preserve the
+  original workspace across asynchronous preparation, and retain failed input
+  without overwriting newer drafts.
+
 - Conversation model changes no longer replace the selected model with workspace
   defaults. Model, reasoning-effort, and permission update failures use the shared
   top notification instead of duplicating errors in the composer status line.

@@ -51,6 +51,14 @@ describe("threadHasAcceptedComposerMessage", () => {
         `${OPTIMISTIC_TURN_ID_PREFIX}local`,
       ),
     ).toBe(true);
+    expect(
+      threadHasAcceptedComposerMessage(
+        { turns: [turnWithUserText("earlier-turn", "keep this sent")] },
+        { text: "keep this sent" },
+        `${OPTIMISTIC_TURN_ID_PREFIX}local`,
+        new Set(["earlier-turn"]),
+      ),
+    ).toBe(false);
   });
 });
 

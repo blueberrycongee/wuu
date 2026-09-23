@@ -511,6 +511,10 @@ describe("workspace routing", () => {
     }, 30_000, expect.any(String));
     await bridge.api.listWorkspaceDirectory();
     expect(remote.call).toHaveBeenLastCalledWith("workspace/directory/list", { path: undefined, root: "/computer/beta" }, 30_000, expect.any(String));
+    await bridge.api.startThread({ model: "captured-model" }, { kind: "project", project_id: "alpha", cwd: "/computer/alpha" });
+    expect(remote.call).toHaveBeenLastCalledWith("thread/start", {
+      model: "captured-model", cwd: "/computer/alpha", workspace_id: "alpha",
+    }, 30_000, "/computer/alpha");
   });
 
   it("routes background and worktree events to their owning project after switching", async () => {

@@ -2067,8 +2067,8 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle(
     "wuu:thread-start",
-    (event, params?: ThreadStartParams) =>
-      appServerRequest<{ thread: Thread }>(event, "thread/start", params ?? {}),
+    (event, params?: ThreadStartParams, targetContext?: RuntimeContext) =>
+      appServerRequest<{ thread: Thread }>(event, "thread/start", params ?? {}, targetContext),
   );
   ipcMain.handle("wuu:thread-resume", (event, sessionId?: string) =>
     rendererServerEventBatcher.resolveSnapshot(

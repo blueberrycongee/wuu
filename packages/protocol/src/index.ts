@@ -3083,7 +3083,7 @@ export type WuuDesktopApi = {
   updateChannelTask: (params: ChannelTaskUpdateParams) => Promise<ChannelTaskUpdateResult>;
   getChannelHumanMentionStatus: () => Promise<ChannelHumanMentionStatusResult>;
   ackChannelHumanMentions: () => Promise<ChannelHumanMentionAckResult>;
-  startThread: (params?: ThreadStartParams) => Promise<{ thread: Thread }>;
+  startThread: (params?: ThreadStartParams, targetContext?: RuntimeContext) => Promise<{ thread: Thread }>;
   loadEarlierThreadHistory?: (threadID: string, cursor: string) => Promise<void>;
   readRemoteAttachment?: (ref: string) => Promise<string>;
   /** A bounded thumbnail data URL, independently fetched from the original. */

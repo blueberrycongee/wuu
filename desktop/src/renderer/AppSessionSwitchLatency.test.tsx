@@ -12,6 +12,7 @@ import type {
   RuntimeContext,
   ServerEvent,
   Thread,
+  Turn,
   WuuDesktopApi,
 } from "../shared/protocol";
 
@@ -56,6 +57,8 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 }));
 
 import { App } from "./App";
+import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
+import * as ComposerMessages from "./ComposerMessages";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -68,14 +71,17 @@ const threadBID = "thread-switch-b";
 type Deferred<T> = {
   promise: Promise<T>;
   resolve: (value: T) => void;
+  reject: (error: Error) => void;
 };
 
 function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((promiseResolve) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
     resolve = promiseResolve;
+    reject = promiseReject;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function initialized(): InitializeResult {
@@ -363,6 +369,7 @@ describe("session tab switch latency", () => {
       root?.unmount();
     });
     root = null;
+    vi.restoreAllMocks();
     container.remove();
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
@@ -473,7 +480,7 @@ describe("session tab switch latency", () => {
     expect(activeThreadProbe()?.dataset.turnCount).toBe("2");
   });
 
-  it("blocks a send during a cached switch and routes the next send to the target thread", async () => {
+  it.each(["Enter", "click"])("accepts %s during a cached switch before background resume finishes", async (action) => {
     const { resumeThread, startTurn } = installWuuApi();
 
     await act(async () => {
@@ -506,26 +513,154 @@ describe("session tab switch latency", () => {
       setMainComposerPrompt("send after switching");
     });
     await act(async () => {
-      mainComposerSendButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      if (action === "Enter") {
+        mainComposerTextarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      } else {
+        mainComposerSendButton().click();
+      }
     });
-    expect(startTurn).not.toHaveBeenCalled();
-
-    delayedResumeB.resolve({ thread: threadB() });
-    await flushAsync();
-    expect(mainComposerTextarea().value).toBe("send after switching");
-    expect(mainComposerSendButton().disabled).toBe(false);
-    await act(async () => {
-      mainComposerSendButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-
+    expect(mainComposerTextarea().value).toBe("");
     expect(startTurn).toHaveBeenCalledWith(
       threadBID,
       "send after switching",
       expect.any(Array),
       expect.any(Array),
-      expect.anything(),
       undefined,
+      undefined,
+      undefined,
+      { kind: "no_project", cwd: workspace },
     );
+    await act(async () => { setMainComposerPrompt("a newer draft"); });
+    delayedResumeB.resolve({ thread: threadB() });
+    await flushAsync();
+    expect(mainComposerTextarea().value).toBe("a newer draft");
+    expect(startTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["main", "Enter"], ["main", "click"], ["split", "Enter"], ["split", "click"],
+  ])("starts a normal follow-up from %s via %s after the final answer while cleanup is running", async (pane, action) => {
+    const { threadsByID, startTurn } = installWuuApi();
+    const answerReady = runningThreadA();
+    answerReady.turns[0].items[1] = {
+      ...answerReady.turns[0].items[1], status: "completed", terminal: true,
+    };
+    threadsByID.set(threadAID, answerReady);
+    window.wuu.queueTurn = vi.fn();
+    window.wuu.steerTurn = vi.fn();
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    if (pane === "split") {
+      await act(async () => { requestOpenThreadInSplit(threadBID); });
+    }
+    const composer = pane === "split"
+      ? container.querySelector(".conversation-split-pane")!
+      : container.querySelector('[data-main-conversation-composer="dock"]')!;
+    const textarea = composer.querySelector<HTMLTextAreaElement>("textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "next question");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      if (action === "Enter") {
+        textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      } else {
+        composer.querySelector<HTMLButtonElement>(".composer-send-button")!.click();
+      }
+    });
+    expect(startTurn).toHaveBeenCalledTimes(1);
+    expect(startTurn.mock.calls[0].slice(0, 2)).toEqual([threadAID, "next question"]);
+    expect(window.wuu.queueTurn).not.toHaveBeenCalled();
+    expect(window.wuu.steerTurn).not.toHaveBeenCalled();
+    expect(textarea.value).toBe("");
+  });
+
+  it.each(["", "newer draft"])("preserves failed input without overwriting the current draft (%s)", async (newerDraft) => {
+    const { startTurn } = installWuuApi();
+    const pending = deferred<{ turn: Turn }>();
+    startTurn.mockReturnValueOnce(pending.promise);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    // Repeating an earlier prompt is not evidence that this send was admitted.
+    const text = threadA().turns[0].items[0].text!;
+    await act(async () => { setMainComposerPrompt(text); });
+    await act(async () => { mainComposerSendButton().click(); });
+    expect(mainComposerTextarea().value).toBe("");
+    await act(async () => { setMainComposerPrompt(newerDraft); });
+    await act(async () => { pending.reject(new Error("send rejected")); });
+    expect(mainComposerTextarea().value).toBe(newerDraft || text);
+    if (newerDraft) {
+      expect(activeThreadProbe()?.dataset.latestUserText).toBe(text);
+      expect(activeThreadProbe()?.dataset.latestTurnStatus).toBe("failed");
+    }
+    expect(startTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["accepted", "rejected"])("does not reactivate a submitted conversation when its delayed response is %s", async (outcome) => {
+    const { startTurn } = installWuuApi();
+    const pending = deferred<{ turn: Turn }>();
+    startTurn.mockReturnValueOnce(pending.promise);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await act(async () => { setMainComposerPrompt("send to A"); });
+    await act(async () => { mainComposerSendButton().click(); });
+    await act(async () => { threadRowButton("session switch B")!.click(); });
+    await act(async () => { setMainComposerPrompt("draft for B"); });
+    await act(async () => {
+      if (outcome === "accepted") {
+        pending.resolve({ turn: { id: "accepted", items_view: "full", status: "in_progress", items: [] } });
+      } else {
+        pending.reject(new Error("A failed"));
+      }
+    });
+    expect(activeSessionTabLabel()).toContain("session switch B");
+    expect(mainComposerTextarea().value).toBe("draft for B");
+    expect(startTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the captured workspace while an attachment finishes preparing after a switch", async () => {
+    const { threadsByID, startTurn } = installWuuApi();
+    const projects = [
+      { id: "alpha", name: "Alpha", path: workspace },
+      { id: "beta", name: "Beta", path: `${workspace}-other` },
+    ].map((project) => ({ ...project, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }));
+    let context: RuntimeContext = { kind: "project", project_id: "alpha", cwd: workspace };
+    threadsByID.set(threadAID, { ...threadA(), workspace_id: "alpha" });
+    const otherThread = { ...threadB(), workspace_id: "beta", cwd: projects[1].path };
+    threadsByID.set(threadBID, otherThread);
+    window.wuu.listProjects = vi.fn(async () => ({ projects, active_context: context }));
+    window.wuu.selectProject = vi.fn(async (id) => {
+      context = { kind: "project", project_id: id, cwd: projects.find((project) => project.id === id)!.path };
+      return { projects, active_context: context };
+    });
+    window.wuu.initialize = vi.fn(async () => ({ ...initialized(), workspace_root: context.cwd }));
+    const encoded = { id: "prepared-image", media_type: "image/png", data: "aW1hZ2U=" };
+    const encoding = deferred<ComposerMessages.ComposerImage>();
+    vi.spyOn(ComposerMessages, "composerImagePlaceholder").mockReturnValue({ ...encoded, data: "", encodePromise: encoding.promise });
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await act(async () => {
+      const input = container.querySelector<HTMLInputElement>('[data-main-conversation-composer="dock"] input[type="file"]')!;
+      Object.defineProperty(input, "files", { value: [new File(["image"], "image.png", { type: "image/png" })] });
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      setMainComposerPrompt("inspect this in alpha");
+    });
+    await act(async () => { mainComposerSendButton().click(); });
+    expect(startTurn).not.toHaveBeenCalled();
+    await act(async () => {
+      const section = Array.from(container.querySelectorAll(".project-row-name")).find((label) => label.textContent === "Beta");
+      (section!.closest("button") as HTMLButtonElement).click();
+    });
+    await act(async () => { emitNotification("thread/updated", { thread: otherThread }, otherThread.cwd); });
+    await act(async () => { threadRowButton("session switch B")!.click(); });
+    await act(async () => { setMainComposerPrompt("beta draft"); });
+    await act(async () => { encoding.resolve(encoded); });
+    expect(startTurn).toHaveBeenCalledExactlyOnceWith(
+      threadAID, "inspect this in alpha", [{ media_type: encoded.media_type, data: encoded.data }], [],
+      undefined, undefined, undefined, { kind: "project", project_id: "alpha", cwd: workspace },
+    );
+    expect(activeSessionTabLabel()).toContain("session switch B");
+    expect(mainComposerTextarea().value).toBe("beta draft");
   });
 
   it("shows the admitted model during a turn and the session pin after it settles", async () => {

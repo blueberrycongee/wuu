@@ -16,6 +16,7 @@ export type TopNoticeProps = {
   isError?: boolean;
   action?: TopNoticeAction;
   dismissAriaLabel?: string;
+  persistent?: boolean;
 };
 
 /**
@@ -29,10 +30,12 @@ export function TopNotice({
   isError = false,
   action,
   dismissAriaLabel = "Close",
+  persistent = false,
 }: TopNoticeProps): JSX.Element {
   const [leaving, setLeaving] = useState(false);
 
   useEffect(() => {
+    if (persistent) return;
     const timer = window.setTimeout(() => {
       setLeaving(true);
     }, TOP_NOTICE_AUTO_DISMISS_MS - 400);
@@ -41,7 +44,7 @@ export function TopNotice({
       window.clearTimeout(timer);
       window.clearTimeout(finalize);
     };
-  }, [onDismiss]);
+  }, [onDismiss, persistent]);
 
   return (
     <div
@@ -68,6 +71,7 @@ export function TopNotice({
         type="button"
         className="archive-tip-dismiss"
         aria-label={dismissAriaLabel}
+        title={dismissAriaLabel}
         onClick={() => {
           setLeaving(true);
           window.setTimeout(onDismiss, 200);

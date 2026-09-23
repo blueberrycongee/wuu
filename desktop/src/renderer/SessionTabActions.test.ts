@@ -418,6 +418,36 @@ describe("createSessionTabActions", () => {
     await closing;
   });
 
+  it("preserves input typed during a cached cross-workspace tab refresh", async () => {
+    const sourceContext = projectContext("source");
+    const targetContext = projectContext("target");
+    const source = createDraftSessionTab("draft:source", sourceContext);
+    const thread = {
+      id: "target-thread", preview: "Target", cwd: targetContext.cwd, status: "idle" as const,
+      model_provider: "fake", model: "fake", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+      turns: [{ id: "turn", items_view: "full" as const, status: "completed" as const, items: [] }],
+    };
+    const target = createThreadSessionTab(thread, targetContext, { ...emptyComposerDraft(), prompt: "old target draft" });
+    const harness = buildActions({
+      initial: { ...initialState, activeContext: sourceContext, activeSessionTabID: source.id, sessionTabs: [source, target], threads: [thread] },
+    });
+    let resolveResume!: (value: { thread: typeof thread }) => void;
+    Object.defineProperty(window, "wuu", {
+      configurable: true,
+      value: { resumeThread: () => new Promise((resolve) => { resolveResume = resolve; }) },
+    });
+    harness.selectRuntimeContext.mockResolvedValue({ projects: [], active_context: targetContext });
+    const switching = harness.actions.selectSessionTab(target.id);
+    expect(harness.getCurrentDraft().prompt).toBe("old target draft");
+    harness.restorePrimaryComposerDraft({ ...emptyComposerDraft(), prompt: "new target draft" });
+    await Promise.resolve();
+    resolveResume({ thread });
+    await switching;
+    expect(harness.getCurrentDraft().prompt).toBe("new target draft");
+    expect(sessionTabPrompt(harness.getAppState().sessionTabs, target.id)).toBe("new target draft");
+    expect(harness.resetSplitComposerDrafts).toHaveBeenCalledTimes(1);
+  });
+
   it("pops out a draft tab and closes it after the detached window opens", async () => {
     const context = projectContext();
     const activeDraft = createDraftSessionTab("draft:active", context);

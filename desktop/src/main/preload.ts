@@ -27,6 +27,7 @@ import {
   type BrowserTabAdopted,
   type RemoteControlEvent,
   type RunningThreadSnapshot,
+  type RuntimeContext,
   type ServerEvent,
   type SideThreadEventEnvelope,
   type SideThreadSendParams,
@@ -361,8 +362,8 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:codex-pet-runtime", runtime),
   updateCodexPetHints: (hints) =>
     ipcRenderer.invoke("wuu:codex-pet-hints", hints),
-  startThread: (params?: ThreadStartParams) =>
-    ipcRenderer.invoke("wuu:thread-start", params),
+  startThread: (params?: ThreadStartParams, targetContext?: RuntimeContext) =>
+    ipcRenderer.invoke("wuu:thread-start", params, targetContext),
   resumeThread: (sessionId?: string) =>
     ipcRenderer.invoke("wuu:thread-resume", sessionId),
   forkThread: (
