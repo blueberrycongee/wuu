@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Agents can inspect local PNG, JPEG, static GIF, and WebP images with
+  `read_file`, including generated session artifacts, without a composer
+  attachment. Image results retain the existing file scope and model capability
+  checks. Code Mode forwards emitted images as visual observations.
+
 - Image previews support smooth trackpad pinch zoom, two-finger panning, drag,
   fit-to-window and actual-size views, rotation, keyboard controls, and a desktop
   Save As dialog that preserves the original image.

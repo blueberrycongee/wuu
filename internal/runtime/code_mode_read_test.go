@@ -1,9 +1,13 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +18,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/codemode"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/tools"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCodeModeReadFileProjectedContinuation(t *testing.T) {
@@ -102,4 +107,67 @@ func TestCodeModeReadFileProjectedContinuation(t *testing.T) {
 	if output.String() != "READ_CONTINUATION_OK" {
 		t.Fatalf("unexpected output: %s", output.String())
 	}
+}
+
+func TestCodeModeReadFileImage(t *testing.T) {
+	executable := os.Getenv("WUU_CODE_MODE_HOST")
+	if executable == "" {
+		t.Skip("WUU_CODE_MODE_HOST is required for the real JavaScript host")
+	}
+	root := t.TempDir()
+	var pngBytes bytes.Buffer
+	require.NoError(t, png.Encode(&pngBytes, image.NewNRGBA(image.Rect(0, 0, 8, 4))))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "screen.png"), pngBytes.Bytes(), 0600))
+	kit, err := tools.New(root)
+	require.NoError(t, err)
+	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5", true)
+	service, err := codemode.NewService(codemode.ServiceConfig{Executable: executable, SessionID: "read-image"})
+	require.NoError(t, err)
+	defer service.Close()
+	kit.SetCodeModeService(service)
+	kit.SetCodeModeOnly(true)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	runtime := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: kit, RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
+	defer runtime.Cancel()
+	args, err := json.Marshal(map[string]any{
+		"source": `const result = await tools.read_file({path: "screen.png"});
+  for (const part of result.content) {
+   if (part.type === "image") image(part);
+   else if (part.type === "text") text(part.text);
+  }`, "yield_time_ms": 1,
+	})
+	require.NoError(t, err)
+	call := providers.ToolCall{ID: "image-exec", Name: "exec", Arguments: string(args)}
+	images := 0
+	for step := 0; ; step++ {
+		messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{call}, nil)
+		require.NoError(t, err)
+		require.Len(t, messages, 1)
+		require.NotNil(t, messages[0].ToolResult)
+		result := *messages[0].ToolResult
+		require.False(t, result.IsError, result.TextProjection())
+		projected := providers.ProjectToolResult(result)
+		for _, img := range projected.ObservationImages {
+			require.Equal(t, "image/png", img.MediaType)
+			require.Equal(t, base64.StdEncoding.EncodeToString(pngBytes.Bytes()), img.Data)
+			images++
+		}
+		require.NotContains(t, projected.ToolText, "base64")
+		var response struct {
+			State     string
+			CellID    string  `json:"cell_id"`
+			ErrorText *string `json:"error_text"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(result.Content[0].Text), &response))
+		require.Nil(t, response.ErrorText)
+		if response.State != "Yielded" {
+			require.Equal(t, "Result", response.State)
+			break
+		}
+		args, err = json.Marshal(map[string]any{"cell_id": response.CellID, "yield_time_ms": 1000})
+		require.NoError(t, err)
+		call = providers.ToolCall{ID: fmt.Sprintf("image-wait-%d", step), Name: "wait", Arguments: string(args)}
+	}
+	require.Equal(t, 1, images)
 }

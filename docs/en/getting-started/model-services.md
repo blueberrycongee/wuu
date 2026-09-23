@@ -80,6 +80,41 @@ Anthropic Messages can explicitly request continuation with `pause_turn`. Respon
 
 Each continuation is another model request and may incur charges. Wuu allows up to eight consecutive automatic tool-free continuations, then reports an error if the service still requests another. Client tool execution resets this count; configured step limits and cancellation still apply. An unfinished response cannot replace conversation history as a compact summary.
 
+## Let the agent inspect local images
+
+Ask the agent to inspect a local image by its path, for example: “Read
+`screenshots/settings.png` and check the alignment.” With Wuu's built-in tools,
+`read_file` returns PNG, JPEG, static GIF, and WebP files as visual input to an
+image-capable model. You do not need to attach the image in the composer first.
+Relative paths use the session workspace; absolute paths must satisfy the same
+file scope and sensitive-path rules as other reads. Generated images in the
+session artifact directory can also be read.
+
+The file's bytes determine its format. Large images are resized to a longest
+side of 2048 pixels using the shared attachment processor; the result reports
+source and delivered dimensions. A read accepts up to 20 MiB of source data and
+40 million source pixels, and the normalized image must fit the 2 MiB inline
+tool-result limit. Crop or resize a file if the tool reports a limit. Corrupt,
+animated, and unsupported image formats fail; SVG remains source text. Line
+ranges and continuations apply to text, not images.
+
+A model explicitly marked as text-only receives an unsupported-image marker,
+not the pixels. Choose an image-capable model to inspect the image. Original
+image results remain in history when the model changes. With optional Code Mode,
+forward image parts with `image(part)`; `text(result)` only prints text. For
+example:
+
+```javascript
+const result = await tools.read_file({path: "screenshots/settings.png"});
+for (const part of result.content) {
+  if (part.type === "image") image(part);
+  else if (part.type === "text") text(part.text);
+}
+```
+
+`present_artifact` displays a deliverable to the user; it does not inspect the
+image for the model. External agent engines use their own file and image tools.
+
 ## Large tool results
 
 Wuu keeps the original tool result and gives the model a stable, bounded view. Large ordinary text results show a continuous first page with a `read_file` continuation; following it reads the saved result without running the original tool again. Pages prefer complete lines and can split a long line without breaking Unicode characters. Continuations reject changed content rather than silently mixing versions. Images and other supported media retain their separate provider representation.
