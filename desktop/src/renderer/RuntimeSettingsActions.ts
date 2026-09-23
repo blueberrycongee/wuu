@@ -270,14 +270,14 @@ export function createRuntimeSettingsActions(
                 current.initialized.advanced_settings,
             }
           : current.initialized;
-        // Optimistic thread patch limited to the fields this call explicitly
-        // changed; the server's thread/updated snapshot stays the authority
-        // for resolved values.
+        // The response describes workspace defaults, not the target thread.
+        // Only the requested values may be used for a local thread patch;
+        // thread/updated carries the server's resolved selection.
         const threadPatch: Partial<Thread> = {
           ...(nextProvider === undefined
             ? {}
-            : { model_provider: updated.provider }),
-          ...(nextModel === undefined ? {} : { model: updated.model }),
+            : { model_provider: nextProvider }),
+          ...(nextModel === undefined ? {} : { model: nextModel }),
           ...(nextVariant === undefined && nextEffort === undefined
             ? {}
             : {
@@ -291,24 +291,16 @@ export function createRuntimeSettingsActions(
             ? {}
             : { approve_for_me: update.approveForMe }),
         };
-        const next = updateThreadByID(
+        return updateThreadByID(
           { ...current, initialized },
           targetThread?.id,
           (thread) => ({ ...thread, ...threadPatch }),
         );
-        return {
-          ...next,
-          status: scope === "workspace" ? current.status : "ready",
-        };
       });
     } catch (error) {
-      if (scope === "session") deps.setAppState((current) => ({
-        ...current,
-        status:
-          error instanceof Error
-            ? error.message
-            : translateCurrent("runtime.settingsUpdateFailed"),
-      }));
+      if (scope === "session") {
+        showErrorToast(error, translateCurrent("runtime.settingsUpdateFailed"));
+      }
       throw error;
     }
   }
@@ -530,8 +522,7 @@ export function createRuntimeSettingsActions(
       await sendRuntimeSelection({ provider, model, variant: nextVariant });
       rememberDraftRuntime(provider, model, nextVariant);
       return true;
-    } catch (error) {
-      showErrorToast(error, translateCurrent("runtime.settingsUpdateFailed"));
+    } catch {
       return false;
     }
   }
@@ -550,8 +541,7 @@ export function createRuntimeSettingsActions(
         nextVariant,
       );
       return true;
-    } catch (error) {
-      showErrorToast(error, translateCurrent("runtime.settingsUpdateFailed"));
+    } catch {
       return false;
     }
     // Keep the panel open — see selectRuntimeModel.
@@ -573,7 +563,7 @@ export function createRuntimeSettingsActions(
         writeDraftApproveForMeMemory(approveForMe);
       }
     } catch {
-      // Failure already surfaced through the status line.
+      // sendRuntimeSelection reports the failure through the shared toast.
     }
     deps.setAccessMenuOpen(false);
   }
@@ -586,7 +576,7 @@ export function createRuntimeSettingsActions(
       await sendRuntimeSelection({ approveForMe: enabled });
       writeDraftApproveForMeMemory(enabled);
     } catch {
-      // Failure already surfaced through the status line.
+      // sendRuntimeSelection reports the failure through the shared toast.
     }
   }
 
