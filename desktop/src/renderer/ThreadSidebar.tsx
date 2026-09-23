@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 import { SidebarNameDialog } from "./SidebarNameDialog";
-import type { DesktopProject } from "../shared/protocol";
+import type { DesktopProject, RuntimeContext } from "../shared/protocol";
 import {
   copyToClipboard,
   ThreadContextMenu,
@@ -170,6 +170,12 @@ export function ProjectList({
   );
 }
 
+export type PendingConversation = {
+  id: string;
+  context: RuntimeContext;
+  title: string;
+};
+
 /**
  * Single project (or scratch pseudo) collapsible group. AppSidebar renders
  * one of these per reorderable section key. Visual/behavioral parity with
@@ -179,6 +185,9 @@ export function ProjectList({
 export function ProjectGroup({
   project,
   activeID,
+  pendingConversations = [],
+  activeSessionTabID,
+  onSelectPendingConversation,
   pendingProjectID,
   expandedSidebarSectionIDs,
   loadingProjectThreadIDs,
@@ -204,6 +213,9 @@ export function ProjectGroup({
 }: {
   project: DesktopProject;
   activeID?: string;
+  pendingConversations?: readonly PendingConversation[];
+  activeSessionTabID?: string;
+  onSelectPendingConversation?: (id: string) => void;
   pendingProjectID?: string;
   expandedSidebarSectionIDs: ReadonlySet<string>;
   loadingProjectThreadIDs?: ReadonlySet<string>;
@@ -315,7 +327,7 @@ export function ProjectGroup({
       lastViewedTurnByThreadID,
     ),
   );
-  const projectHasRunning = projectThreads.some((thread) =>
+  const projectHasRunning = pendingConversations.length > 0 || projectThreads.some((thread) =>
     isThreadExecuting(thread),
   );
   const CollapsedIcon = isScratchPseudo ? MessageSquare : Folder;
@@ -396,23 +408,44 @@ export function ProjectGroup({
             : undefined
         }
       >
-        {projectThreads.length === 0 ? null : (
-          <ThreadList
-            threads={projectThreads}
-            activeID={activeThreadID}
-            pendingThreadID={pendingThreadID}
-            lastViewedTurnByThreadID={lastViewedTurnByThreadID}
-            visibleCount={visibleThreadCount}
-            onSelect={(threadID) => onSelectThread(project.id, threadID)}
-            onTogglePinned={onToggleThreadPinned}
-            onArchive={onArchiveThread}
-            onDelete={onDeleteThread}
-            onRename={onRenameThread}
-            onReorder={reorderProjectThreads}
-            onShowMore={showMoreProjectThreads}
-            onCollapse={collapseProjectThreads}
-          />
-        )}
+        {pendingConversations.length > 0 || projectThreads.length > 0 ? (
+          <>
+            {pendingConversations.length > 0 ? (
+              <div className="thread-list">
+                {pendingConversations.map((pending) => (
+                  <div key={pending.id} className={`thread-row sidebar-session-row running${pending.id === activeSessionTabID ? " active" : ""}`}>
+                    <span className="thread-row-spinner" aria-hidden="true" />
+                    <button
+                      className="thread-row-main"
+                      type="button"
+                      aria-busy="true"
+                      onClick={() => onSelectPendingConversation?.(pending.id)}
+                    >
+                      <ThreadRowTitle title={pending.title} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {projectThreads.length === 0 ? null : (
+              <ThreadList
+                threads={projectThreads}
+                activeID={activeThreadID}
+                pendingThreadID={pendingThreadID}
+                lastViewedTurnByThreadID={lastViewedTurnByThreadID}
+                visibleCount={visibleThreadCount}
+                onSelect={(threadID) => onSelectThread(project.id, threadID)}
+                onTogglePinned={onToggleThreadPinned}
+                onArchive={onArchiveThread}
+                onDelete={onDeleteThread}
+                onRename={onRenameThread}
+                onReorder={reorderProjectThreads}
+                onShowMore={showMoreProjectThreads}
+                onCollapse={collapseProjectThreads}
+              />
+            )}
+          </>
+        ) : null}
       </SidebarSection>
       {contextMenu ? (
         <ThreadContextMenu

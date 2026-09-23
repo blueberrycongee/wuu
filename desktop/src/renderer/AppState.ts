@@ -700,16 +700,11 @@ function reduceNotification(
           : state.secondaryThread?.id === thread.id
             ? state.secondaryThread
             : state.threads.find((item) => item.id === thread.id);
-      // thread/start emits its notification before the matching RPC response.
-      // If the renderer has already inserted an optimistic first turn, the
-      // notification's empty snapshot must not erase it and briefly restore
-      // the empty-conversation hero.
+      // Creation and resume snapshots can arrive after a newer local send.
+      // Preserve that input and its sidebar label through the same merge used
+      // by background lists.
       const mergedThread = currentThread
-        ? {
-            ...thread,
-            turns: thread.turns.length > 0 ? thread.turns : currentThread.turns,
-            child_agents: thread.child_agents ?? currentThread.child_agents,
-          }
+        ? mergeListedThread(currentThread, thread)
         : thread;
       const knownThread = state.threads.some((item) => item.id === thread.id);
       const updatesVisibleThread =

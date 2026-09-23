@@ -53,6 +53,7 @@ export type SessionTabActionsDeps = {
   nextDraftSessionTab: (
     context: NonNullable<AppState["activeContext"]>,
   ) => SessionTab;
+  isDraftPending?: (tabID: string) => boolean;
   selectThread: (threadID: string) => Promise<void>;
   beginViewSwitch: (kind: ViewSwitchKind, targetID: string) => number;
   beginInstantThreadSwitch: (targetID?: string) => number;
@@ -614,7 +615,7 @@ export function createSessionTabActions(
       return;
     }
     const existingDraft = draftSessionTabForContext(
-      currentState.sessionTabs,
+      currentState.sessionTabs.filter((tab) => !deps.isDraftPending?.(tab.id)),
       currentState.activeContext,
     );
     if (existingDraft) {
@@ -627,6 +628,7 @@ export function createSessionTabActions(
     deps.clearPrimaryComposerDraft();
     const nextTab =
       activeSessionTab(currentState)?.kind === "draft" &&
+      !deps.isDraftPending?.(currentState.activeSessionTabID) &&
       !outgoingDraft.prompt.trim() &&
       outgoingDraft.images.length === 0 &&
       outgoingDraft.files.length === 0

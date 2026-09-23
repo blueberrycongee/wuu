@@ -2267,20 +2267,32 @@ export function App(): JSX.Element {
         }
       : { kind: "wuu" };
   const emptyThreadTitle = greetingFor(currentHour, greetingContext);
-  const [pendingNewThreadTurn, setPendingNewThreadTurn] = useState<{
+  type PendingThreadCreation = {
     sessionTabID: string;
+    context: RuntimeContext;
     turn: Turn;
-  }>();
+    cancel: () => void;
+  };
+  const pendingThreadCreationsRef = useRef(new Map<string, PendingThreadCreation>());
+  const [pendingThreadCreations, setPendingThreadCreations] = useState<PendingThreadCreation[]>([]);
+  function clearPendingThreadCreation(turnID: string): void {
+    for (const [tabID, pending] of pendingThreadCreationsRef.current) {
+      if (pending.turn.id !== turnID) continue;
+      pendingThreadCreationsRef.current.delete(tabID);
+      setPendingThreadCreations([...pendingThreadCreationsRef.current.values()]);
+      return;
+    }
+  }
   const [failedDraftTabIDs, setFailedDraftTabIDs] = useState<string[]>([]);
   useEffect(() => {
     setFailedDraftTabIDs((ids) => ids.includes(state.activeSessionTabID)
       ? ids.filter((id) => id !== state.activeSessionTabID)
       : ids);
   }, [state.activeSessionTabID]);
-  const activePendingNewThreadTurn =
-    pendingNewThreadTurn?.sessionTabID === state.activeSessionTabID
-      ? pendingNewThreadTurn.turn
-      : undefined;
+  const activePendingThreadCreation = pendingThreadCreations.find(
+    (pending) => pending.sessionTabID === state.activeSessionTabID,
+  );
+  const activePendingNewThreadTurn = activePendingThreadCreation?.turn;
   const turns = activeThread?.turns ?? [];
   const activeContextCompositionEntries = activeThreadID
     ? contextCompositionEntries.filter((entry) => entry.threadID === activeThreadID)
@@ -3127,12 +3139,15 @@ export function App(): JSX.Element {
         images={composerImages}
         queuedMessages={queuedMessages}
         guideMessages={guideMessages}
-        sendDisabled={submissionTargetPending}
+        sendDisabled={submissionTargetPending || Boolean(activePendingThreadCreation)}
+        forceStopWhileRunning={Boolean(activePendingThreadCreation)}
         running={
+          Boolean(activePendingThreadCreation) ||
           (!activeThreadReadOnly && composerTurnRunning) ||
           viewContextSwitchPending
         }
         runtimeControlsDisabled={
+          Boolean(activePendingThreadCreation) ||
           (!activeThreadReadOnly && activeThreadIsRunning) ||
           viewContextSwitchPending
         }
@@ -3299,7 +3314,10 @@ export function App(): JSX.Element {
             ? (promptOverride, contentParts) => sendPrompt("queue", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)
             : undefined
         }
-        onInterrupt={() => void interrupt()}
+        onInterrupt={() => {
+          if (activePendingThreadCreation) activePendingThreadCreation.cancel();
+          else void interrupt();
+        }}
         queryHistorySessionID={activeThread?.id ?? currentSessionTab?.id}
         queryHistory={queryTextsForThread(activeThread)}
         requestedHandoffIntent={requestedHandoffIntentForThread(activeThread)}
@@ -3484,6 +3502,7 @@ export function App(): JSX.Element {
       restorePrimaryComposerDraft(emptyComposerDraft()),
     restoreLoadedRuntimeComposerDraft,
     nextDraftSessionTab,
+    isDraftPending: (tabID) => pendingThreadCreationsRef.current.has(tabID),
     closeProjectMenus,
     
     beginViewSwitch,
@@ -3580,6 +3599,7 @@ export function App(): JSX.Element {
     getCrossWorkspaceThreads: () => sidebarThreads,
     getRunningThreadIDs: () => crossWorkdirRunningThreadIDs,
     nextDraftSessionTab,
+    isDraftPending: (tabID) => pendingThreadCreationsRef.current.has(tabID),
     selectThread,
     beginViewSwitch,
     beginInstantThreadSwitch,
@@ -4097,7 +4117,7 @@ export function App(): JSX.Element {
     }
     if (
       !message || !currentState.activeContext || !currentState.initialized ||
-      (pane && !targetThread) || (!targetThread && currentState.running)
+      (pane && !targetThread) || (!targetThread && pendingThreadCreationsRef.current.has(currentState.activeSessionTabID))
     ) {
       return false;
     }
@@ -4533,19 +4553,25 @@ export function App(): JSX.Element {
     }
     let optimisticTurnID: string | undefined;
     let optimisticThreadID: string | undefined;
-    // Render a tab-scoped optimistic turn before a new thread exists. Once
-    // thread/start returns, the same turn moves into normal thread state.
-    if (!targetThread && currentState.activeSessionTabID) {
-      setPendingNewThreadTurn({
+    // Creation belongs to the draft, independently of background list refreshes.
+    let creationCancelled = false;
+    const cancelledCreation = !targetThread ? new Promise<never>((_, reject) => {
+      pendingThreadCreationsRef.current.set(currentState.activeSessionTabID, {
         sessionTabID: currentState.activeSessionTabID,
+        context: activeContext,
         turn: optimisticTurn,
+        cancel: () => {
+          creationCancelled = true;
+          reject(new Error("Thread creation cancelled"));
+        },
       });
-    }
+      setPendingThreadCreations([...pendingThreadCreationsRef.current.values()]);
+    }) : undefined;
     try {
       const thread =
         targetThread ??
         requireThread(
-          await window.wuu.startThread({
+          await Promise.race([window.wuu.startThread({
             ...(draftEngine ? { engine: draftEngine } : {}),
             ...(newThreadEngine !== "wuu"
               ? {
@@ -4559,7 +4585,24 @@ export function App(): JSX.Element {
                   permission_mode: currentState.initialized?.permissions?.mode,
                   approve_for_me: currentState.initialized?.permissions?.approve_for_me,
                 } satisfies ThreadStartParams),
-          }, activeContext),
+          }, activeContext).then(async (result) => {
+            if (creationCancelled && result.thread) {
+              // No turn was submitted to this newly created session. A late
+              // response must not leave an empty conversation after Stop.
+              try {
+                const threadID = result.thread.id;
+                await window.wuu.deleteThread(threadID);
+                removeCachedSidebarThread(threadID);
+                setState((current) => ({
+                  ...current,
+                  threads: current.threads.filter((thread) => thread.id !== threadID),
+                }));
+              } catch (error) {
+                showErrorToast(error);
+              }
+            }
+            return result;
+          }), cancelledCreation!]),
           "thread/start did not return a thread",
         );
       if (!targetThread) {
@@ -4591,9 +4634,7 @@ export function App(): JSX.Element {
           (currentThread) => upsertTurn(currentThread, optimisticTurn),
         ),
       );
-      setPendingNewThreadTurn((current) =>
-        current?.turn.id === optimisticTurn.id ? undefined : current,
-      );
+      clearPendingThreadCreation(optimisticTurn.id);
       const encodedImages = await awaitComposerImages(message.images);
       const images = inputImagesFromComposer(encodedImages);
       const result = await window.wuu.startTurn(
@@ -4679,13 +4720,11 @@ export function App(): JSX.Element {
       };
       appStateRef.current = settle(appStateRef.current);
       setState(settle);
-      setPendingNewThreadTurn((current) =>
-        current?.turn.id === optimisticTurn.id ? undefined : current,
-      );
+      clearPendingThreadCreation(optimisticTurn.id);
       if (noModelConfigured) {
         showNoModelConfiguredToast();
       }
-      return interrupted || keepAcceptedTurn;
+      return !creationCancelled && (interrupted || keepAcceptedTurn);
     }
     return true;
   }
@@ -5061,6 +5100,16 @@ export function App(): JSX.Element {
             onNavigateAway={closeCompactSessionSwitcher}
             state={state}
             sidebarProjects={sidebarProjects}
+            pendingConversations={pendingThreadCreations.map((pending) => ({
+              id: pending.sessionTabID,
+              context: pending.context,
+              title: pending.turn.items[0].text || t("tabs.newConversation"),
+            }))}
+            onSelectPendingConversation={(tabID) => {
+              openHarnessView();
+              closeCompactSessionSwitcher();
+              void selectSessionTab(tabID);
+            }}
             activeProjectID={
               workspaceProjectSelectionEnabled && workspaceContext?.kind === "project"
                 ? workspaceContext.project_id
