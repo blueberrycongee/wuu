@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Ready Agent Core entries show an external agent's detected executable path in
+  its override field without repeating it in the status or help text.
+
 - Model choices in desktop settings keep a stable order and selected styling.
   The catalog no longer shows ineffective per-model remove controls or selection
   animations, and provider remove controls keep their icon centered and color
