@@ -161,8 +161,9 @@ scripts/reset-first-run.sh
 # Local e2e/probe scratch output.
 .tmp/
 
-# Generated marketing assets copied by docs-site prepare-content.
+# Generated assets copied by docs-site prepare-content.
 docs-site/public/site-assets/
+docs-site/public/docs-assets/
 
 # Private, unpublished articles and their illustrations.
 /landing/.private-drafts/

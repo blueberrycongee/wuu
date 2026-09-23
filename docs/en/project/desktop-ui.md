@@ -2,6 +2,8 @@
 
 Use the renderer's shared components and design variables when changing the desktop interface. Check the result in a real browser or Electron window: type checks and jsdom tests cannot establish readable spacing, working scroll effects, or a visible keyboard focus ring.
 
+The [Wuu design system](design-system.md) defines color, typography, spacing, radius, elevation, and interaction guidance, with regenerable light/dark boards. Use it for design roles and this page for real component previews and acceptance entry points.
+
 ## Preview real components
 
 After [development setup](development.md), start a renderer preview server:
