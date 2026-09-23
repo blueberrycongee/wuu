@@ -125,12 +125,7 @@ func (s *Server) handleChannelAgentDelete(ctx context.Context, req Request) erro
 	s.invalidateChannelAgentInsights()
 	var interruptErr error
 	for _, ref := range refs {
-		if s.thread(ref) != nil {
-			_, err = s.interruptThreadExecution(ref, "", "")
-		} else if s.rt != nil {
-			_, err = session.RequestThreadExecutionReset(s.rt.SessionDir, ref)
-		}
-		interruptErr = errors.Join(interruptErr, err)
+		interruptErr = errors.Join(interruptErr, s.interruptOwnedThreadExecution(ref))
 	}
 	for _, link := range links {
 		if link.Active {

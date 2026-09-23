@@ -486,6 +486,10 @@ func TestChannelAgentDeleteStopsOwnedExecutionsAndPreservesRoomHistory(t *testin
 		t.Fatal(err)
 	}
 	refs := []string{namedAgentSessionID(credential.Agent), "delete-secondary-session"}
+	// A cached thread can be idle here while another app-server owns execution.
+	if _, err := server.ensureNamedAgentThreadLocked(credential.Agent); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := client.BindCollaborationSession(ctx, channels.CollaborationSessionBindParams{
 		SessionRef: refs[1], RoomID: room.ID, WorkID: task.ID, Purpose: channels.CollaborationSessionWork,
 	}); err != nil {

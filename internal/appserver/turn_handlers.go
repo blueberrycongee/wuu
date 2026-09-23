@@ -1732,6 +1732,20 @@ func (s *Server) handleTurnInterrupt(req Request) error {
 	return s.writeResponse(req.ID, OKResult{OK: err == nil}, err)
 }
 
+func (s *Server) interruptOwnedThreadExecution(threadID string) error {
+	var resetErr error
+	// Cached threads do not imply local execution ownership. Signal the lease
+	// holder before local interruption can release the current execution lease.
+	if s.rt != nil {
+		_, resetErr = session.RequestThreadExecutionReset(s.rt.SessionDir, threadID)
+	}
+	if s.thread(threadID) != nil {
+		_, err := s.interruptThreadExecution(threadID, "", "")
+		return errors.Join(resetErr, err)
+	}
+	return resetErr
+}
+
 // interruptThreadExecution is the shared interruption core for turn/interrupt
 // and run/interrupt. The bool reports whether an active Turn will perform the
 // terminal settlement; false means the caller interrupted only between-turn
