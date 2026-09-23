@@ -244,6 +244,17 @@ func TestBashDeduplicationSurvivesStorageAndRequestPreparation(t *testing.T) {
 	if result.ModelText == nil || result.TextProjection() == raw || result.Content[0].Text != raw {
 		t.Fatal("execution did not settle the lossless projection separately")
 	}
+	record := recordFor(kit.ToolTelemetry(), call.ID)
+	if record == nil || record.Projection == nil || !record.Projection.Applied || record.Projection.Reason != reasonDeduplicated {
+		t.Fatalf("execution did not record lossless diagnostics: %+v", record)
+	}
+	if record.ResultBudgeted || record.ResultRef != "" {
+		t.Fatalf("lossless settlement reported omitted evidence: %+v", record)
+	}
+	envelope := record.ResultEnvelope()
+	if envelope.Truncated || len(envelope.Warnings) != 0 || envelope.DataRef != "" {
+		t.Fatalf("lossless settlement advertised truncation or recovery: %+v", envelope)
+	}
 	dir := t.TempDir()
 	if _, err := session.CreateWithMetadata(dir, "bash-replay", t.TempDir()); err != nil {
 		t.Fatal(err)

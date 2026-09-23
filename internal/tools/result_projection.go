@@ -207,7 +207,9 @@ func (t *Toolkit) finalizeToolResult(call providers.ToolCall, result toolresult.
 		stable, diag := finalizeBuiltInToolResult(t.env.SessionDir, call.Name, call.ID, result, defaultProjectionTokenBudget)
 		diagnostic = &diag
 		if mode == projectionModeActive && diag.Applied {
-			return stable, diag.ArtifactRef, true, diagnostic
+			// ResultBudgeted drives truncation warnings and recovery context;
+			// lossless deduplication does not omit evidence to recover.
+			return stable, diag.ArtifactRef, diag.Reason != reasonDeduplicated, diagnostic
 		}
 	}
 	settled, ref, paged := finalizeGenericToolResult(t.env.SessionDir, call.ID, result, defaultProjectionTokenBudget)
