@@ -98,6 +98,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Conversation model changes no longer replace the selected model with workspace
+  defaults. Model, reasoning-effort, and permission update failures use the shared
+  top notification instead of duplicating errors in the composer status line.
+
 - Responses image-generation results now appear as assistant image attachments
   and remain available when reopening the conversation, including replies with
   no text.
