@@ -791,8 +791,6 @@ export const zhCN = {
   "provider.modelCount": "{count} 个模型",
   "provider.selectedModel": "已选：{model}",
   "provider.availableModels": "可选模型",
-  "provider.removeModel": "删除 {model}",
-  "provider.keepOneModel": "至少保留一个模型",
   "provider.removeNamed": "删除 {name}",
   "provider.removeTitle": "删除这个模型服务",
   "provider.inUse": "这个模型服务正在被运行中的会话使用，等当前回复结束后再删除。",

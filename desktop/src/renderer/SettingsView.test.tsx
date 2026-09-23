@@ -674,6 +674,51 @@ describe("SettingsView provider configuration", () => {
     expect(container.querySelector(".settings-provider-remove")).toBeNull();
   });
 
+  it("keeps model buttons in the same order when the selected model changes", async () => {
+    installBuildInfoStub({
+      core: undefined,
+      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
+    });
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const provider = {
+      name: "grok-build",
+      type: "grok-build",
+      model: "grok-4.7",
+      models: [
+        { id: "grok-4.7" },
+        { id: "grok-4.5" },
+        { id: "grok-4.6" },
+      ],
+    };
+    const modelButtons = () => Array.from(container.querySelectorAll<HTMLButtonElement>(
+      ".settings-provider-model-list > .settings-button",
+    ));
+    renderSettings({
+      initialPage: "providers",
+      initialized: baseInitialized({ provider: provider.name, model: provider.model, providers: [provider] }),
+      onSave,
+    });
+    expect(modelButtons().map((button) => button.textContent)).toEqual(["grok-4.5", "grok-4.6", "grok-4.7"]);
+    expect(modelButtons().map((button) => button.getAttribute("aria-pressed"))).toEqual(["false", "false", "true"]);
+
+    await act(async () => {
+      modelButtons()[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(onSave).toHaveBeenCalledWith("grok-build", "grok-4.5", undefined, undefined, expect.any(String));
+    renderSettings({
+      initialPage: "providers",
+      initialized: baseInitialized({
+        provider: provider.name,
+        model: "grok-4.5",
+        providers: [{ ...provider, model: "grok-4.5", models: [provider.models[1], provider.models[0], provider.models[2]] }],
+      }),
+      onSave,
+    });
+    expect(modelButtons().map((button) => button.textContent)).toEqual(["grok-4.5", "grok-4.6", "grok-4.7"]);
+    expect(modelButtons().map((button) => button.getAttribute("aria-pressed"))).toEqual(["true", "false", "false"]);
+  });
+
   it("shows an alert instead of removing a provider used by a running turn", async () => {
     installBuildInfoStub({
       core: undefined,
@@ -815,26 +860,6 @@ describe("SettingsView provider model catalog", () => {
     expect(container.textContent).toContain("connection unavailable");
   });
 
-  it("removes tags without selecting them, switches away from a removed default, and protects the last model", async () => {
-    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "1970-01-01T00:00:00Z" } });
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    const initialized = baseInitialized({ provider: "kimi", model: "k3", providers: [
-      { name: "kimi", type: "openai", model: "k3", models: [{ id: "k3" }, { id: "k2" }] },
-    ] });
-    renderSettings({ initialPage: "providers", initialized, onSave });
-    const remove = (model: string) => container.querySelector<HTMLButtonElement>(`button[aria-label="删除 ${model}"]`)!;
-    await act(async () => { remove("k2").click(); });
-    expect(onSave).toHaveBeenCalledTimes(1);
-    expect(onSave).toHaveBeenLastCalledWith("kimi", "k3", undefined, { remove_model: "k2" }, expect.any(String));
-    await act(async () => { remove("k3").click(); });
-    expect(onSave).toHaveBeenLastCalledWith("kimi", "k2", undefined, { remove_model: "k3" }, expect.any(String));
-    renderSettings({ initialPage: "providers", onSave, initialized: { ...initialized, model: "k2", providers: [
-      { name: "kimi", type: "openai", model: "k2", models: [{ id: "k2" }] },
-    ] } });
-    expect(remove("k3")).toBeNull();
-    expect(remove("k2").disabled).toBe(true);
-  });
-
   it("shows all known models, preserves an unlisted selection, and saves a catalog choice", async () => {
     installBuildInfoStub({
       core: undefined,
@@ -854,6 +879,7 @@ describe("SettingsView provider model catalog", () => {
     });
     const modelButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('form button[aria-pressed]'));
     expect(modelButtons.map((button) => button.textContent)).toEqual(["custom-k3", "k2", "p7"]);
+    expect(container.querySelectorAll(".settings-provider-model-list button")).toHaveLength(3);
     expect(modelButtons[0].getAttribute("aria-pressed")).toBe("true");
     await act(async () => {
       modelButtons[1].click();

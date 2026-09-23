@@ -60,6 +60,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Model choices in desktop settings keep a stable order and selected styling.
+  The catalog no longer shows ineffective per-model remove controls or selection
+  animations, and provider remove controls keep their icon centered and color
+  stable on hover.
+
 - Settings switches now include the track border in their sizing, keeping the
   thumb centered with equal vertical clearance.
 

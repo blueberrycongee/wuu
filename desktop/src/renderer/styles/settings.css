@@ -994,21 +994,22 @@
 
 .settings-provider-remove {
   position: absolute;
-  top: var(--card-padding);
+  top: 50%;
   right: var(--card-padding);
   display: grid;
   place-items: center;
   width: 24px;
   height: 24px;
+  padding: 0;
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink-tertiary);
+  transform: translateY(-50%);
 }
 
 .settings-provider-remove:hover:not(:disabled) {
   background: var(--ink-overlay-8);
-  color: var(--danger);
 }
 
 .settings-provider-button:disabled,
@@ -1093,64 +1094,15 @@
   max-width: 100%;
   overflow-wrap: anywhere;
   white-space: normal;
+  transition: none;
 }
 
-.settings-provider-model-tag {
-  position: relative;
-  max-width: 100%;
+.settings-provider-model-list .settings-button:active:not(:disabled) {
+  transform: none;
 }
 
-.settings-provider-model-tag .settings-button {
-  padding-right: 26px;
-}
-
-.settings-provider-model-remove {
-  opacity: 0;
-  pointer-events: none;
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--ink-soft);
-  cursor: pointer;
-}
-
-.settings-provider-model-tag:has([aria-pressed="true"]) .settings-provider-model-remove {
-  color: var(--paper);
-}
-
-.settings-provider-model-remove:hover:not(:disabled) {
-  background: color-mix(in srgb, currentColor 15%, transparent);
-}
-
-.settings-provider-model-tag:hover .settings-provider-model-remove,
-.settings-provider-model-tag:focus-within .settings-provider-model-remove {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.settings-provider-model-remove:disabled {
-  cursor: default;
-}
-
-.settings-provider-model-tag:hover .settings-provider-model-remove:disabled,
-.settings-provider-model-tag:focus-within .settings-provider-model-remove:disabled {
-  opacity: 0.35;
-}
-
-.settings-provider-model-remove .icon {
-  width: 12px;
-  height: 12px;
-}
-
-.settings-provider-model-list [aria-pressed="true"] {
+.settings-provider-model-list [aria-pressed="true"],
+.settings-provider-model-list [aria-pressed="true"]:hover:not(:disabled) {
   background: var(--ink-strong);
   color: var(--paper);
 }
