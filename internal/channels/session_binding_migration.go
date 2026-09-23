@@ -61,6 +61,7 @@ func (s *Service) migrateCollaborationSessions() error {
 			run.created_at, run.updated_at
 		FROM work_runs run
 		JOIN works work ON work.id = run.work_id
+		JOIN named_agents agent ON agent.id = run.named_agent_id AND agent.deleted_at IS NULL
 		WHERE run.session_ref IS NOT NULL AND run.named_agent_id IS NOT NULL`); err != nil {
 		return fmt.Errorf("backfill collaboration session bindings: %w", err)
 	}

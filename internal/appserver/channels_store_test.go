@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -451,6 +452,77 @@ func TestChannelAgentResetRequestsTheCurrentThreadOwner(t *testing.T) {
 	requested, err := owner.ResetRequested()
 	if err != nil || !requested {
 		t.Fatalf("owner reset requested = %v, err %v", requested, err)
+	}
+}
+
+func TestChannelAgentDeleteStopsOwnedExecutionsAndPreservesRoomHistory(t *testing.T) {
+	ctx := context.Background()
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WuuHome = filepath.Join(t.TempDir(), ".wuu")
+	attachNamedAgentTestToolkit(t, rt)
+	out := &lockedBuffer{}
+	server := NewWithCredentialStore(rt, out, nil, nil)
+	t.Cleanup(server.Close)
+	server.channelService.SetWakeSink(nil)
+	credential, err := server.channelService.CreateNamedAgent(ctx, channels.CreateNamedAgentParams{Name: "Alpha"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	room, err := server.channelService.CreateRoom(ctx, channels.CreateRoomParams{
+		Kind: channels.RoomChannel, Name: "Shared history", CreatedBy: "human-1",
+		Members: []channels.RoomMember{{MemberType: channels.MemberAgent, MemberID: credential.Agent.ID}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := server.channelService.CreateTaskHuman(ctx, channels.TaskCreateParams{
+		RoomID: room.ID, Title: "Delete active owner", OwnerID: credential.Agent.ID, HumanID: "human-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := server.channelService.BindAgent(ctx, credential.Agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs := []string{namedAgentSessionID(credential.Agent), "delete-secondary-session"}
+	if _, err := client.BindCollaborationSession(ctx, channels.CollaborationSessionBindParams{
+		SessionRef: refs[1], RoomID: room.ID, WorkID: task.ID, Purpose: channels.CollaborationSessionWork,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var owners []*session.ThreadExecutionLease
+	for _, ref := range refs {
+		owner, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, ref)
+		if err != nil || !acquired {
+			t.Fatalf("acquire %s: %v, %v", ref, acquired, err)
+		}
+		defer owner.Release()
+		owners = append(owners, owner)
+	}
+	// Missing local identity state must not make an unwanted agent undeletable.
+	if err := os.RemoveAll(filepath.Dir(credential.Agent.MemoryDir)); err != nil {
+		t.Fatal(err)
+	}
+	var deleted ChannelAgentDeleteResult
+	callChannelRPC(t, server, out, MethodChannelAgentDelete, ChannelAgentDeleteParams{AgentID: credential.Agent.ID}, &deleted)
+	if !deleted.Deleted {
+		t.Fatal("delete RPC returned false")
+	}
+	for i, owner := range owners {
+		if requested, err := owner.ResetRequested(); err != nil || !requested {
+			t.Fatalf("reset %s: %v, %v", refs[i], requested, err)
+		}
+	}
+	if _, err := server.channelService.GetNamedAgent(ctx, credential.Agent.ID); !errors.Is(err, channels.ErrNotFound) {
+		t.Fatalf("deleted identity lookup: %v", err)
+	}
+	work, err := server.channelService.GetWork(ctx, task.ID)
+	if err != nil || work.State != channels.WorkCancelled {
+		t.Fatalf("retained work: %#v, %v", work, err)
+	}
+	if err := server.deliverNamedAgentWake(ctx, credential.Agent.ID); !errors.Is(err, channels.ErrNotFound) {
+		t.Fatalf("late wake: %v", err)
 	}
 }
 

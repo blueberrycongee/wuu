@@ -171,6 +171,17 @@ func TestTaskVerificationPersistsAndWakesVisibleOwner(t *testing.T) {
 	if err != nil || completed.TaskState != string(TaskStateDone) {
 		t.Fatalf("verified completion = %#v, err = %v", completed, err)
 	}
+	if err := service.DeleteNamedAgent(ctx, owner.Agent.ID); err != nil {
+		t.Fatalf("delete verified task owner: %v", err)
+	}
+	history, err := service.GetWork(ctx, task.ID)
+	if err != nil || history.State != WorkCompleted || history.OwnerNamedAgentID != owner.Agent.ID || len(history.Runs) == 0 {
+		t.Fatalf("verified work history after owner deletion = %#v, err = %v", history, err)
+	}
+	preserved, err := service.GetTaskVerification(ctx, task.ID)
+	if err != nil || preserved.OwnerID != persisted.OwnerID || preserved.Report != persisted.Report || preserved.RunRef != persisted.RunRef || preserved.Decision != persisted.Decision {
+		t.Fatalf("verification after owner deletion = %#v, err = %v", preserved, err)
+	}
 }
 
 func TestNamedVerifierReturnsAuditableResultToVisibleLead(t *testing.T) {

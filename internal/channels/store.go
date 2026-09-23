@@ -147,7 +147,7 @@ func positiveEnvInt64(name string, fallback int64) int64 {
 }
 
 func (s *Service) ensureNamedAgentMemoryIndexes() error {
-	rows, err := s.db.Query(`SELECT memory_dir FROM named_agents`)
+	rows, err := s.db.Query(`SELECT memory_dir FROM named_agents WHERE deleted_at IS NULL`)
 	if err != nil {
 		return fmt.Errorf("list named agent memory directories: %w", err)
 	}
@@ -285,6 +285,7 @@ func (s *Service) migrate() error {
 			effort_override TEXT,
 			token_hash TEXT NOT NULL,
 			autostart INTEGER NOT NULL DEFAULT 0 CHECK (autostart IN (0, 1)),
+			deleted_at INTEGER,
 			created_at INTEGER NOT NULL
 		)`,
 		// Keep request tombstones after identity deletion so a delayed retry cannot recreate it.
@@ -725,7 +726,7 @@ func (s *Service) recoverPendingVerificationDeliveries() error {
 	if _, err := tx.Exec(`
 		UPDATE collaboration_messages AS delivery
 		SET pulled_at = NULL
-		WHERE delivery.pulled_at IS NOT NULL AND (
+		WHERE delivery.pulled_at IS NOT NULL AND delivery.invalidated_at IS NULL AND (
 			(delivery.kind = 'candidate_ready' AND EXISTS (
 				SELECT 1 FROM room_messages AS task
 				WHERE task.id = delivery.source_message_id
@@ -782,6 +783,7 @@ func (s *Service) recoverPendingVerificationDeliveries() error {
 		SELECT DISTINCT delivery.to_agent_id, 1, 0, ?
 		FROM collaboration_messages AS delivery
 		WHERE delivery.pulled_at IS NULL
+				AND delivery.invalidated_at IS NULL
 				AND delivery.kind IN ('candidate_ready', 'peer_result', 'verification_feedback')
 		ON CONFLICT(agent_id) DO UPDATE SET
 			outstanding = 1,
@@ -867,6 +869,7 @@ func (s *Service) ensureLegacyColumns() error {
 		{table: "named_agents", name: "avatar_image", definition: "TEXT NOT NULL DEFAULT ''"},
 		{table: "named_agents", name: "engine_override", definition: "TEXT"},
 		{table: "named_agents", name: "effort_override", definition: "TEXT"},
+		{table: "named_agents", name: "deleted_at", definition: "INTEGER"},
 		{table: "rooms", name: "avatar_image", definition: "TEXT NOT NULL DEFAULT ''"},
 		{table: "rooms", name: "membership_revision", definition: "INTEGER NOT NULL DEFAULT 1"},
 		{table: "collaboration_messages", name: "kind", definition: "TEXT NOT NULL DEFAULT 'control'"},
@@ -934,7 +937,7 @@ func (s *Service) ensureLegacyColumns() error {
 }
 
 func (s *Service) ensureNamedAgentAvatars() error {
-	rows, err := s.db.Query(`SELECT id FROM named_agents WHERE avatar_key = ''`)
+	rows, err := s.db.Query(`SELECT id FROM named_agents WHERE avatar_key = '' AND deleted_at IS NULL`)
 	if err != nil {
 		return fmt.Errorf("list named agents without avatars: %w", err)
 	}
@@ -1302,7 +1305,17 @@ func (s *Service) GetNamedAgent(ctx context.Context, id string) (NamedAgent, err
 	}
 	return scanNamedAgent(s.db.QueryRowContext(ctx, `
 		SELECT id, name, role, memory_dir, avatar_key, avatar_image, COALESCE(engine_override, ''), COALESCE(provider_override, ''), COALESCE(model_override, ''), COALESCE(effort_override, ''), autostart, created_at
-		FROM named_agents WHERE id = ? AND kind = 'named'`, id))
+		FROM named_agents WHERE id = ? AND kind = 'named' AND deleted_at IS NULL`, id))
+}
+
+// Check inside the write transaction: authentication may predate deletion.
+func requireActiveNamedAgentTx(ctx context.Context, tx *sql.Tx, id string) error {
+	var exists int
+	err := tx.QueryRowContext(ctx, `SELECT 1 FROM named_agents WHERE id = ? AND kind = 'named' AND deleted_at IS NULL`, id).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	return err
 }
 
 func (s *Service) ListNamedAgents(ctx context.Context) ([]NamedAgent, error) {
@@ -1312,7 +1325,7 @@ func (s *Service) ListNamedAgents(ctx context.Context) ([]NamedAgent, error) {
 func (s *Service) listNamedAgents(ctx context.Context) ([]NamedAgent, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, role, memory_dir, avatar_key, avatar_image, COALESCE(engine_override, ''), COALESCE(provider_override, ''), COALESCE(model_override, ''), COALESCE(effort_override, ''), autostart, created_at
-		FROM named_agents WHERE kind = 'named' ORDER BY created_at, id`)
+		FROM named_agents WHERE kind = 'named' AND deleted_at IS NULL ORDER BY created_at, id`)
 	if err != nil {
 		return nil, fmt.Errorf("list named agents: %w", err)
 	}
@@ -1376,7 +1389,7 @@ func (s *Service) UpdateNamedAgent(ctx context.Context, params UpdateNamedAgentP
 		}
 	}
 	result, err := s.db.ExecContext(ctx, `
-		UPDATE named_agents SET name = ?, role = ?, avatar_key = ?, avatar_image = ?, engine_override = ?, provider_override = ?, model_override = ?, effort_override = ? WHERE id = ?`,
+		UPDATE named_agents SET name = ?, role = ?, avatar_key = ?, avatar_image = ?, engine_override = ?, provider_override = ?, model_override = ?, effort_override = ? WHERE id = ? AND deleted_at IS NULL`,
 		name, role, avatarKey, avatarImage, nullableString(engine), nullableString(provider), nullableString(model), nullableString(effort), id)
 	if err != nil {
 		return NamedAgent{}, fmt.Errorf("update named agent: %w", err)
@@ -1408,12 +1421,39 @@ func (s *Service) deleteAgent(ctx context.Context, agent NamedAgent) error {
 		return fmt.Errorf("begin named agent delete: %w", err)
 	}
 	defer tx.Rollback()
-	var taskCount int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM room_messages WHERE task_owner = ?`, id).Scan(&taskCount); err != nil {
-		return fmt.Errorf("count named agent task history: %w", err)
+	// Settle work before removing memberships, while terminal notifications can
+	// still use their original participants. Completed history stays untouched.
+	workRows, err := tx.QueryContext(ctx, workSelect+` WHERE work.state NOT IN ('completed', 'cancelled', 'failed') AND (
+		work.owner_named_agent_id = ? OR work.lead_named_agent_id = ? OR EXISTS (
+			SELECT 1 FROM work_runs run WHERE run.work_id = work.id
+			AND run.state IN ('queued', 'running') AND run.named_agent_id = ?))`, id, id, id)
+	if err != nil {
+		return fmt.Errorf("list deleted agent work: %w", err)
 	}
-	if taskCount > 0 {
-		return fmt.Errorf("%w: named agent %q has task history and cannot be deleted", ErrConflict, id)
+	var works []Work
+	for workRows.Next() {
+		work, err := scanWork(workRows)
+		if err != nil {
+			workRows.Close()
+			return err
+		}
+		works = append(works, work)
+	}
+	if err := workRows.Close(); err != nil {
+		return err
+	}
+	if err := workRows.Err(); err != nil {
+		return err
+	}
+	var interruptTargets []workSessionInterruptTarget
+	var next []string
+	for _, work := range works {
+		targets, wakeIDs, err := s.cancelWorkTx(ctx, tx, work, "Agent deleted: "+agent.Name)
+		if err != nil {
+			return err
+		}
+		interruptTargets = append(interruptTargets, targets...)
+		next = appendUniqueStrings(next, wakeIDs...)
 	}
 	type roomRemoval struct {
 		roomID, createdBy string
@@ -1450,7 +1490,6 @@ func (s *Service) deleteAgent(ctx context.Context, agent NamedAgent) error {
 		return fmt.Errorf("delete named agent direct messages: %w", err)
 	}
 	now := toMillis(s.now())
-	var next []string
 	for _, removal := range removals {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM room_members WHERE room_id = ? AND member_type = 'agent' AND member_id = ?`, removal.roomID, id); err != nil {
 			return fmt.Errorf("remove named agent membership: %w", err)
@@ -1470,18 +1509,45 @@ func (s *Service) deleteAgent(ctx context.Context, agent NamedAgent) error {
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM named_agents WHERE id = ?`, id); err != nil {
+	// Retain only historical attribution and FK targets, never a usable identity.
+	if _, err := tx.ExecContext(ctx, `UPDATE named_agents SET deleted_at = ?, token_hash = '', autostart = 0,
+		role = '', memory_dir = '', avatar_key = '', avatar_image = '', engine_override = NULL,
+		provider_override = NULL, model_override = NULL, effort_override = NULL WHERE id = ?`, now, id); err != nil {
 		return fmt.Errorf("delete named agent: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM collaboration_principals WHERE id = ?`, id); err != nil {
-		return fmt.Errorf("delete named agent principal: %w", err)
+	// Private replies may still reference deliveries to this principal. Keep
+	// that history, but remove every source of future execution and local state.
+	for _, statement := range []string{
+		`DELETE FROM drafts WHERE agent_id = ?`,
+		`DELETE FROM reminders WHERE agent_id = ?`,
+		`DELETE FROM inbox_items WHERE member_type = 'agent' AND member_id = ?`,
+		`DELETE FROM collaboration_followups WHERE owner_id = ?`,
+		`DELETE FROM named_agent_conversations WHERE agent_id = ?`,
+		`DELETE FROM collaboration_session_bindings WHERE principal_id = ?`,
+		`DELETE FROM agent_wake_state WHERE agent_id = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, statement, id); err != nil {
+			return fmt.Errorf("remove deleted agent state: %w", err)
+		}
 	}
+	if _, err := tx.ExecContext(ctx, `UPDATE collaboration_messages SET invalidated_at = ?
+		WHERE (to_agent_id = ? OR from_id = ?) AND consumed_at IS NULL AND invalidated_at IS NULL`, now, id, id); err != nil {
+		return err
+	}
+	admittedWakeIDs, err := s.admitQueuedWorkRunsTx(ctx, tx, fromMillis(now))
+	if err != nil {
+		return err
+	}
+	next = appendUniqueStrings(next, admittedWakeIDs...)
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit named agent delete: %w", err)
 	}
+	s.interruptWorkSessions(interruptTargets)
 	if s.wake != nil {
-		for _, id := range next {
-			s.wake.Deliver(id)
+		for _, recipientID := range next {
+			if recipientID != id {
+				s.wake.Deliver(recipientID)
+			}
 		}
 	}
 	return os.RemoveAll(filepath.Dir(agent.MemoryDir))
@@ -1499,7 +1565,7 @@ func (s *Service) AuthenticateAgent(ctx context.Context, agentID, token string) 
 	var createdAt int64
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, name, role, memory_dir, avatar_key, avatar_image, COALESCE(engine_override, ''), COALESCE(provider_override, ''), COALESCE(model_override, ''), COALESCE(effort_override, ''), autostart, created_at, token_hash
-		FROM named_agents WHERE id = ? AND kind = 'named'`, agentID,
+		FROM named_agents WHERE id = ? AND kind = 'named' AND deleted_at IS NULL`, agentID,
 	).Scan(&agent.ID, &agent.Name, &agent.Role, &agent.MemoryDir, &agent.AvatarKey, &agent.AvatarImage, &agent.EngineOverride, &agent.ProviderOverride, &agent.ModelOverride, &agent.EffortOverride, &autostart, &createdAt, &storedHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return NamedAgent{}, ErrUnauthorized
@@ -1586,7 +1652,7 @@ func (s *Service) CreateRoom(ctx context.Context, params CreateRoomParams) (Room
 	for _, member := range room.Members {
 		if member.MemberType == MemberAgent {
 			var exists int
-			if err := tx.QueryRowContext(ctx, `SELECT 1 FROM named_agents WHERE id = ? AND kind = 'named'`, member.MemberID).Scan(&exists); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT 1 FROM named_agents WHERE id = ? AND kind = 'named' AND deleted_at IS NULL`, member.MemberID).Scan(&exists); err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					return Room{}, fmt.Errorf("%w: named agent %q", ErrNotFound, member.MemberID)
 				}
@@ -1634,7 +1700,7 @@ func (s *Service) OpenDirectMessage(ctx context.Context, humanID, agentID string
 	defer s.mu.Unlock()
 
 	var agentName string
-	if err := s.db.QueryRowContext(ctx, `SELECT name FROM named_agents WHERE id = ? AND kind = 'named'`, agentID).Scan(&agentName); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT name FROM named_agents WHERE id = ? AND kind = 'named' AND deleted_at IS NULL`, agentID).Scan(&agentName); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Room{}, fmt.Errorf("%w: named agent %q", ErrNotFound, agentID)
 		}
@@ -1918,7 +1984,7 @@ func (s *Service) UpdateRoom(ctx context.Context, params UpdateRoomParams) (Room
 				continue
 			}
 			var exists int
-			if err := tx.QueryRowContext(ctx, `SELECT 1 FROM named_agents WHERE id = ? AND kind = 'named'`, member.MemberID).Scan(&exists); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT 1 FROM named_agents WHERE id = ? AND kind = 'named' AND deleted_at IS NULL`, member.MemberID).Scan(&exists); err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					return Room{}, fmt.Errorf("%w: named agent %q", ErrNotFound, member.MemberID)
 				}

@@ -92,7 +92,7 @@ func (s *Service) inviteRoomAgent(ctx context.Context, roomID, agentID string) (
 		}
 		return Room{}, fmt.Errorf("read invited room: %w", err)
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT name FROM named_agents WHERE id = ? AND kind = 'named'`, agentID).Scan(&agentName); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT name FROM named_agents WHERE id = ? AND kind = 'named' AND deleted_at IS NULL`, agentID).Scan(&agentName); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Room{}, fmt.Errorf("%w: named agent %q", ErrNotFound, agentID)
 		}

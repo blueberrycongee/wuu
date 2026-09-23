@@ -1114,80 +1114,15 @@ func (s *Service) CancelWork(ctx context.Context, workID, reason, agentID, token
 	if work.State == WorkCompleted {
 		return Work{}, fmt.Errorf("%w: completed work cannot be cancelled", ErrConflict)
 	}
-	interruptTargets, err := activeWorkSessionInterruptTargetsTx(ctx, tx, work.ID)
+	interruptTargets, terminalWakeIDs, err := s.cancelWorkTx(ctx, tx, work, reason)
 	if err != nil {
 		return Work{}, err
 	}
-	wakeRecipients, err := pendingWorkWakeRecipientsTx(ctx, tx, work.ID)
-	if err != nil {
-		return Work{}, err
-	}
-	now := fromMillis(toMillis(s.now()))
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM work_runs WHERE work_id = ? AND state IN ('queued', 'running') ORDER BY created_at, id`, work.ID)
-	if err != nil {
-		return Work{}, err
-	}
-	var activeRunIDs []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return Work{}, err
-		}
-		activeRunIDs = append(activeRunIDs, id)
-	}
-	if err := rows.Close(); err != nil {
-		return Work{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE works SET state = 'cancelled', current_run_ref = NULL, failure_reason = ?, cancelled_at = ?, updated_at = ? WHERE id = ?`, strings.TrimSpace(reason), toMillis(now), toMillis(now), work.ID); err != nil {
-		return Work{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE room_messages SET task_state = 'open' WHERE id = ?`, work.ID); err != nil {
-		return Work{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE collaboration_messages SET invalidated_at = ? WHERE work_id = ? AND pulled_at IS NULL`, toMillis(now), work.ID); err != nil {
-		return Work{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE inbox_items SET pulled_at = ?
-		WHERE member_type = 'agent' AND message_id = ? AND kind = 'task' AND pulled_at IS NULL`, toMillis(now), work.ID); err != nil {
-		return Work{}, fmt.Errorf("retire cancelled work inbox: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE collaboration_session_bindings
-		SET state = 'interrupted', run_id = NULL, updated_at = ?
-		WHERE work_id = ? AND state != 'missing'`, toMillis(now), work.ID); err != nil {
-		return Work{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE work_runs SET state = 'cancelled', ended_at = ?, updated_at = ? WHERE work_id = ? AND state IN ('queued', 'running')`, toMillis(now), toMillis(now), work.ID); err != nil {
-		return Work{}, err
-	}
-	var terminalWakeIDs []string
-	for _, runID := range activeRunIDs {
-		run, err := scanWorkRun(tx.QueryRowContext(ctx, workRunSelect+` WHERE run.id = ?`, runID))
-		if err != nil {
-			return Work{}, err
-		}
-		run.State, run.Outcome, run.EndedAt = WorkRunCancelled, strings.TrimSpace(reason), now
-		ids, err := s.enqueueWorkRunTerminalTx(ctx, tx, work, run, now)
-		if err != nil {
-			return Work{}, err
-		}
-		terminalWakeIDs = appendUniqueStrings(terminalWakeIDs, ids...)
-	}
-	admittedWakeIDs, err := s.admitQueuedWorkRunsTx(ctx, tx, now)
+	admittedWakeIDs, err := s.admitQueuedWorkRunsTx(ctx, tx, fromMillis(toMillis(s.now())))
 	if err != nil {
 		return Work{}, err
 	}
 	terminalWakeIDs = appendUniqueStrings(terminalWakeIDs, admittedWakeIDs...)
-	if err := insertWorkEventTx(ctx, tx, WorkEvent{WorkID: work.ID, Kind: "cancellation", State: string(WorkCancelled), Summary: strings.TrimSpace(reason), GoalRevision: work.GoalRevision, CandidateRevision: work.CandidateRevision, CreatedAt: now}); err != nil {
-		return Work{}, err
-	}
-	for _, recipientID := range wakeRecipients {
-		if err := recomputeAgentWakeTx(ctx, tx, recipientID, toMillis(now)); err != nil {
-			return Work{}, err
-		}
-	}
 	if err := tx.Commit(); err != nil {
 		return Work{}, err
 	}
@@ -1198,6 +1133,83 @@ func (s *Service) CancelWork(ctx context.Context, workID, reason, agentID, token
 		}
 	}
 	return s.GetWork(ctx, work.ID)
+}
+
+// The caller admits queued work only after all cancellations in its transaction.
+func (s *Service) cancelWorkTx(ctx context.Context, tx *sql.Tx, work Work, reason string) ([]workSessionInterruptTarget, []string, error) {
+	interruptTargets, err := activeWorkSessionInterruptTargetsTx(ctx, tx, work.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	wakeRecipients, err := pendingWorkWakeRecipientsTx(ctx, tx, work.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	now := fromMillis(toMillis(s.now()))
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM work_runs WHERE work_id = ? AND state IN ('queued', 'running') ORDER BY created_at, id`, work.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	var activeRunIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, nil, err
+		}
+		activeRunIDs = append(activeRunIDs, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE works SET state = 'cancelled', current_run_ref = NULL, failure_reason = ?, cancelled_at = ?, updated_at = ? WHERE id = ?`, strings.TrimSpace(reason), toMillis(now), toMillis(now), work.ID); err != nil {
+		return nil, nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE room_messages SET task_state = 'open' WHERE id = ?`, work.ID); err != nil {
+		return nil, nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE collaboration_messages SET invalidated_at = ? WHERE work_id = ? AND pulled_at IS NULL`, toMillis(now), work.ID); err != nil {
+		return nil, nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inbox_items SET pulled_at = ?
+		WHERE member_type = 'agent' AND message_id = ? AND kind = 'task' AND pulled_at IS NULL`, toMillis(now), work.ID); err != nil {
+		return nil, nil, fmt.Errorf("retire cancelled work inbox: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE collaboration_session_bindings
+		SET state = 'interrupted', run_id = NULL, updated_at = ?
+		WHERE work_id = ? AND state != 'missing'`, toMillis(now), work.ID); err != nil {
+		return nil, nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE work_runs SET state = 'cancelled', ended_at = ?, updated_at = ? WHERE work_id = ? AND state IN ('queued', 'running')`, toMillis(now), toMillis(now), work.ID); err != nil {
+		return nil, nil, err
+	}
+	var terminalWakeIDs []string
+	for _, runID := range activeRunIDs {
+		run, err := scanWorkRun(tx.QueryRowContext(ctx, workRunSelect+` WHERE run.id = ?`, runID))
+		if err != nil {
+			return nil, nil, err
+		}
+		run.State, run.Outcome, run.EndedAt = WorkRunCancelled, strings.TrimSpace(reason), now
+		ids, err := s.enqueueWorkRunTerminalTx(ctx, tx, work, run, now)
+		if err != nil {
+			return nil, nil, err
+		}
+		terminalWakeIDs = appendUniqueStrings(terminalWakeIDs, ids...)
+	}
+	if err := insertWorkEventTx(ctx, tx, WorkEvent{WorkID: work.ID, Kind: "cancellation", State: string(WorkCancelled), Summary: strings.TrimSpace(reason), GoalRevision: work.GoalRevision, CandidateRevision: work.CandidateRevision, CreatedAt: now}); err != nil {
+		return nil, nil, err
+	}
+	for _, recipientID := range wakeRecipients {
+		if err := recomputeAgentWakeTx(ctx, tx, recipientID, toMillis(now)); err != nil {
+			return nil, nil, err
+		}
+	}
+	return interruptTargets, terminalWakeIDs, nil
 }
 
 type workSessionInterruptTarget struct {

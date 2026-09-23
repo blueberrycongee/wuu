@@ -18,7 +18,7 @@ func (s *Service) migrateCollaborationPrincipals() error {
 	if _, err := tx.Exec(`
 		INSERT OR IGNORE INTO collaboration_principals(id, kind)
 		SELECT id, CASE kind WHEN 'room' THEN 'room_runtime' ELSE 'named_agent' END
-		FROM named_agents`); err != nil {
+		FROM named_agents WHERE deleted_at IS NULL`); err != nil {
 		return fmt.Errorf("backfill collaboration principals: %w", err)
 	}
 	if _, err := tx.Exec(`

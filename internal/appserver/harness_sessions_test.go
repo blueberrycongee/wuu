@@ -331,6 +331,35 @@ func TestHarnessManageExistingReleaseAndStop(t *testing.T) {
 	f.waitForCompletion(t)
 }
 
+func TestDeletingManagingAgentStopsTasklessHarnessExecution(t *testing.T) {
+	f, provider := newCollaborationFlowFixture(t)
+	ctx := context.Background()
+	var parent ChannelSessionResult
+	f.rpc(t, MethodChannelSessionCreate, ChannelSessionCreateParams{AgentID: f.identity.ID, RoomID: f.room.ID, Prompt: "Inspect docs", RequestID: "request"}, &parent)
+	_ = provider.next(t)
+	actor := harnessTestActor(t, f, parent.Session.SessionRef)
+	id, _, _ := harnessTestCreate(t, f, actor)
+	_ = provider.next(t)
+	var deleted ChannelAgentDeleteResult
+	f.rpc(t, MethodChannelAgentDelete, ChannelAgentDeleteParams{AgentID: actor.AgentID}, &deleted)
+	if !deleted.Deleted {
+		t.Fatal("delete RPC returned false")
+	}
+	for _, ref := range []string{actor.SessionRef, id} {
+		waitForThreadLeaseRelease(t, f.server.rt.SessionDir, ref)
+	}
+	control, _, err := session.ReadControl(f.server.rt.SessionDir, id)
+	if err != nil || control.State != session.ControlPaused {
+		t.Fatalf("deleted identity still controls execution: %+v, %v", control, err)
+	}
+	if _, err := f.server.HarnessSession(ctx, actor, channels.HarnessSessionParams{Action: "send", SessionID: id, Prompt: "Late continuation", OperationID: "late-send"}); err == nil {
+		t.Fatal("deleted identity accepted new execution")
+	}
+	if _, found, err := session.Find(f.server.rt.SessionDir, id); err != nil || !found {
+		t.Fatalf("project execution history was removed: %v, %v", found, err)
+	}
+}
+
 func TestHarnessTaskCancellationStopsOnlyItsExecution(t *testing.T) {
 	f, provider := newCollaborationFlowFixture(t)
 	ctx := context.Background()
