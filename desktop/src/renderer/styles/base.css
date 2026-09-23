@@ -352,10 +352,10 @@
   --scrollbar-thumb-active: rgba(38, 70, 98, 0.45);
   --scrollbar-thin-thumb: rgba(32, 36, 39, 0.14);
 
-  /* Native chrome stays in DIP when Chromium zooms the page. Compensate the
-   * shared row just like the native control insets, including at the default
-   * desktop zoom, so its center stays at 24 DIP. Web hosts use zoom 1. */
-  --window-titlebar-height: calc(48px / var(--desktop-page-zoom, 1));
+  /* Native chrome stays in DIP when Chromium zooms the page. Keep its 24-DIP
+   * center while the controls fit; at larger zoom/font sizes, grow the row
+   * instead of clipping controls that still scale with the page. */
+  --window-titlebar-height: max(calc(48px / var(--desktop-page-zoom, 1)), calc(var(--control-size-toolbar) + var(--space-2)));
   --window-titlebar-padding-inline: 24px;
   --window-titlebar-leading-inset: max(var(--window-titlebar-padding-inline), calc(var(--window-controls-inset-left) + 10px));
 

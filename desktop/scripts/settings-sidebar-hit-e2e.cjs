@@ -136,12 +136,12 @@ async function run() {
 
 // Exercise the real app, not copies of header markup or stylesheet literals.
 // Page switching must preserve the control's hit box and rendered glyph;
-// zoom must not move its center away from the native 24-DIP chrome center.
+// Default zoom preserves the native center; zooming in must not clip chrome.
 async function verifyTitlebarContinuity(win) {
   const results = [];
   for (const theme of ["light", "dark"]) {
     for (const font of [14, 20]) {
-      for (const zoom of [1, 1.2 ** -0.5]) {
+      for (const zoom of [1, 1.2 ** -0.5, 1.5, 2]) {
         win.webContents.setZoomFactor(zoom);
         await win.webContents.executeJavaScript(`
           document.documentElement.dataset.platform = ${JSON.stringify(process.platform)};
@@ -151,7 +151,8 @@ async function verifyTitlebarContinuity(win) {
           document.documentElement.style.setProperty('--desktop-page-zoom', '${zoom}');
         `);
         for (const layout of ["docked", "collapsed", "compact"]) {
-          win.setContentSize(layout === "compact" ? 600 : 1180, 820);
+          // Keep the CSS viewport in the requested layout as page zoom changes.
+          win.setContentSize(Math.round((layout === "compact" ? 600 : 1180) * zoom), 820);
           await waitFor(win, layout === "compact"
             ? () => document.querySelector(".app-shell").classList.contains("compact-navigation")
             : () => !document.querySelector(".app-shell").classList.contains("compact-navigation"), 3000);
@@ -162,6 +163,7 @@ async function verifyTitlebarContinuity(win) {
           }
           await settleChrome(win);
           const main = await chromeToggleGeometry(win);
+          assert.deepEqual(main.clippedChrome, [], `Main chrome must fit: ${JSON.stringify({ theme, font, zoom, layout, main })}`);
           if (layout !== "docked") {
             await evaluate(win, () => {
               const button = document.querySelector('[data-wuu-component="sidebar-toggle"]');
@@ -174,6 +176,7 @@ async function verifyTitlebarContinuity(win) {
             await waitFor(win, () => Boolean(document.querySelector(".sidebar-drawer-open")), 3000);
             await settleChrome(win);
             const drawer = await chromeToggleGeometry(win);
+            assert.deepEqual(drawer.clippedChrome, [], `Drawer chrome must fit: ${JSON.stringify({ theme, font, zoom, layout, drawer })}`);
             for (const key of ["x", "y", "width", "height"]) {
               assert.ok(Math.abs(drawer[key] - main[key]) < 0.1, `Opening the drawer moved ${key}: ${JSON.stringify({layout,zoom,main,drawer})}`);
             }
@@ -186,11 +189,14 @@ async function verifyTitlebarContinuity(win) {
           await settleChrome(win);
           const settings = await chromeToggleGeometry(win);
           const context = JSON.stringify({ theme, font, zoom, layout, main, settings });
+          assert.deepEqual(settings.clippedChrome, [], `Settings chrome must fit: ${context}`);
           for (const key of ["x", "y", "width", "height", "iconWidth", "iconHeight"]) {
             assert.ok(Math.abs(main[key] - settings[key]) < 0.1, `Switching pages moved/resized ${key}: ${context}`);
           }
           assert.equal(settings.icon, main.icon, `Switching pages changed the sidebar glyph: ${context}`);
-          assert.ok(Math.abs((main.y + main.height / 2) * zoom - 24) < 0.1, `Native chrome center drifted: ${context}`);
+          if (zoom <= 1) {
+            assert.ok(Math.abs((main.y + main.height / 2) * zoom - 24) < 0.1, `Native chrome center drifted: ${context}`);
+          }
           assert.ok(main.hit && settings.hit, `The visible toggle must own its center hit: ${context}`);
           results.push({ theme, font, zoom, layout, x: main.x, centerY: (main.y + main.height / 2) * zoom });
           await evaluate(win, () => document.querySelector(".settings-back-button").click());
@@ -228,10 +234,26 @@ async function chromeToggleGeometry(win) {
     const icon = button.querySelector("svg");
     const glyph = icon.getBoundingClientRect();
     const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    const headers = new Set([
+      button.closest(".traffic-spacer, .titlebar, .settings-titlebar"),
+      document.querySelector(".titlebar"),
+    ].filter(Boolean));
+    const clippedChrome = [];
+    for (const header of headers) {
+      const bounds = header.getBoundingClientRect();
+      for (const element of header.querySelectorAll(".icon-button, .conversation-title-heading")) {
+        const box = element.getBoundingClientRect();
+        if (!box.width || !box.height || getComputedStyle(element).visibility === "hidden") continue;
+        if (box.top < Math.max(0, bounds.top) - 0.1 || box.bottom > bounds.bottom + 0.1) {
+          clippedChrome.push({ target: element.className, top: box.top, bottom: box.bottom, headerTop: bounds.top, headerBottom: bounds.bottom });
+        }
+      }
+    }
     return {
       x: rect.x, y: rect.y, width: rect.width, height: rect.height,
       iconWidth: glyph.width, iconHeight: glyph.height, icon: icon.innerHTML,
       hit: button === hit || button.contains(hit),
+      clippedChrome,
       titleX: document.querySelector(".conversation-title-heading")?.getBoundingClientRect().x,
     };
   });

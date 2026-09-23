@@ -185,8 +185,8 @@
 
 .globalized-sidebar-toggle-region {
   position: fixed;
-  /* Match the shared toolbar control's center inside the titlebar.
-   * This control and the native traffic lights both center at 24px. */
+  /* Match the shared toolbar center, including when zoomed controls require
+   * a taller row than the native traffic lights. */
   top: calc(env(safe-area-inset-top, 0px) + (var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
   /* The OS inset is a hard exclusion zone. Wuu owns an additional fixed
    * gutter so decorated theme controls never visually merge with it. */
@@ -792,9 +792,8 @@
 }
 
 .traffic-spacer {
-  /* Keep window controls and sidebar navigation in the first chrome row.
-   * 48px matches the conversation/settings titlebar so the collapse
-   * toggle shares the traffic-light center at 24px. */
+  /* Match the conversation/settings row, including its zoom-aware minimum
+   * height, so sidebar controls never outgrow their reserved chrome. */
   position: relative;
   display: flex;
   height: var(--window-titlebar-height);
