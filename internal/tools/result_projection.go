@@ -3,6 +3,7 @@ package tools
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"strings"
 
@@ -37,7 +38,7 @@ const (
 	// projectorVersion is recorded in diagnostics so telemetry can attribute a
 	// projected result to the exact projector revision that produced it. Bump
 	// on any change that alters projected bytes for the same input.
-	projectorVersion = "6"
+	projectorVersion = "7"
 )
 
 // projectionMode selects how the stable projection participates in a run.
@@ -110,11 +111,12 @@ var builtInAlwaysProject = map[string]bool{
 type projectionReason string
 
 const (
-	reasonNotEligible projectionReason = "not_eligible" // not on the allowlist, or not text-only
-	reasonUnderBudget projectionReason = "under_budget" // eligible but already within budget (identity)
-	reasonNoProjector projectionReason = "no_projector" // eligible + over budget but no projector registered
-	reasonProjected   projectionReason = "projected"    // tool-specific projection applied
-	reasonFailOpen    projectionReason = "fail_open"    // projector/artifact failed; full result preserved
+	reasonNotEligible  projectionReason = "not_eligible" // not on the allowlist, or not text-only
+	reasonUnderBudget  projectionReason = "under_budget" // eligible but already within budget (identity)
+	reasonNoProjector  projectionReason = "no_projector" // eligible + over budget but no projector registered
+	reasonProjected    projectionReason = "projected"    // tool-specific projection applied
+	reasonFailOpen     projectionReason = "fail_open"    // projector/artifact failed; full result preserved
+	reasonDeduplicated projectionReason = "deduplicated" // reversible removal of duplicate evidence
 )
 
 // ProjectionDiagnostics captures non-content facts about one projection
@@ -245,10 +247,9 @@ func ensureProjectionArtifact(sessionDir, callID, rawText, existingRef string) (
 // is used verbatim for both the history Content and the rich ToolResult, so the
 // projection is the single source of truth downstream.
 //
-// It is fail-safe by construction: a non-eligible tool, an under-budget result,
-// a missing projector, a declining projector, or an unrecoverable artifact all
-// return the input result unchanged. Only a successful projection with a
-// recoverable artifact replaces the result.
+// Lossless bash deduplication needs no artifact. Evidence-dropping projections
+// require a recoverable artifact; ineligible or already settled results and
+// failed projections keep their input unchanged.
 func finalizeBuiltInToolResult(sessionDir, toolName, callID string, raw toolresult.Result, budgetTokens int) (toolresult.Result, ProjectionDiagnostics) {
 	if budgetTokens <= 0 {
 		budgetTokens = defaultProjectionTokenBudget
@@ -267,11 +268,38 @@ func finalizeBuiltInToolResult(sessionDir, toolName, callID string, raw toolresu
 	diag.ProjectedTokens = diag.OriginalTokens
 	diag.ProjectionHash = diag.OriginalHash
 
-	if !builtInProjectionAllowlist[toolName] || !raw.IsTextOnly() {
+	if raw.ModelText != nil || !builtInProjectionAllowlist[toolName] || !raw.IsTextOnly() {
 		diag.Reason = reasonNotEligible
 		return raw, diag
 	}
 	diag.Eligible = true
+
+	// Removing output is reversible only when both complete streams reproduce
+	// it byte for byte. Validate the entire JSON text so trailing evidence cannot
+	// be silently discarded by the envelope decoder.
+	if toolName == "bash" && json.Valid([]byte(rawText)) {
+		m, ok := parseToolEnvelope(rawText)
+		output, hasOutput := m["output"].(string)
+		stdout, hasStdout := m["stdout_tail"].(string)
+		stderr, hasStderr := m["stderr_tail"].(string)
+		stdoutTruncated, hasStdoutTruncated := m["stdout_tail_truncated"].(bool)
+		stderrTruncated, hasStderrTruncated := m["stderr_tail_truncated"].(bool)
+		if ok && hasOutput && hasStdout && hasStderr &&
+			hasStdoutTruncated && !stdoutTruncated && hasStderrTruncated && !stderrTruncated &&
+			output == stdout+stderr {
+			delete(m, "output")
+			if candidate, ok := marshalEnvelope(m); ok && estimateResultTokens(candidate) <= budgetTokens {
+				diag.Applied = true
+				diag.Reason = reasonDeduplicated
+				diag.ProjectedBytes = len(candidate)
+				diag.ProjectedTokens = estimateResultTokens(candidate)
+				diag.ProjectionHash = projectionHash(candidate)
+				return settleModelText(raw, candidate), diag
+			}
+			// Do not settle an oversized candidate: the existing projection and
+			// generic fallback must still be able to archive the original result.
+		}
+	}
 
 	if diag.OriginalTokens <= budgetTokens && !builtInAlwaysProject[toolName] {
 		diag.Reason = reasonUnderBudget

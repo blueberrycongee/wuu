@@ -199,7 +199,7 @@ func TestBashRunTimeoutPromotesToBackground(t *testing.T) {
 	if result.PromotedProcessID == "" {
 		t.Fatalf("run should promote the timed-out command instead of killing it: %+v", result)
 	}
-	if !strings.Contains(result.Output, "partial") {
+	if !strings.Contains(result.StdoutTail, "partial") {
 		t.Fatalf("promotion should attach the output captured so far: %+v", result)
 	}
 	record, err := manager.Get(result.PromotedProcessID)
