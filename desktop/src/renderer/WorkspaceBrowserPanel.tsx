@@ -32,11 +32,6 @@ const SEARCH_FALLBACK_URL = "https://www.google.com/search?igu=1&q=";
 
 type BrowserStatus = "idle" | "loading" | "error";
 
-function extractHostname(value: string): string | undefined {
-  const match = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/([^/?#]+)/.exec(value);
-  return match?.[1];
-}
-
 function looksLikeUrl(input: string): boolean {
   const value = input.trim();
   if (value.length === 0) {
@@ -125,13 +120,11 @@ export function WorkspaceBrowserPanel({
   const showingAgentTab = Boolean(agentTabID && selectedTabID === agentTabID);
 
   const [currentURL, setCurrentURL] = useState("");
-  const [pageTitle, setPageTitle] = useState("");
   const [draftURL, setDraftURL] = useState("");
   const [status, setStatus] = useState<BrowserStatus>("idle");
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
-  const [hostHint, setHostHint] = useState<string | undefined>(undefined);
   const [pendingURL, setPendingURL] = useState<string | undefined>(undefined);
   const consumeNavigation = useWorkspaceBrowserNavigationConsumer();
   const consumedRequestIDRef = useRef<number | undefined>(undefined);
@@ -139,8 +132,6 @@ export function WorkspaceBrowserPanel({
   const applySurface = useCallback((snapshot: BrowserSurfaceSnapshot) => {
     setCurrentURL(snapshot.url);
     setPendingURL(undefined);
-    setHostHint(extractHostname(snapshot.url));
-    setPageTitle(snapshot.title);
     setCanGoBack(snapshot.canGoBack);
     setCanGoForward(snapshot.canGoForward);
     if (snapshot.error) {
@@ -156,16 +147,14 @@ export function WorkspaceBrowserPanel({
   }, []);
 
   useLayoutEffect(() => {
-    // A failed or absent snapshot must not leave another tab's address, title,
+    // A failed or absent snapshot must not leave another tab's address,
     // navigation controls, or native page visible in this session.
     setCurrentURL("");
-    setPageTitle("");
     setDraftURL("");
     setStatus("idle");
     setErrorMessage(undefined);
     setCanGoBack(false);
     setCanGoForward(false);
-    setHostHint(undefined);
     setPendingURL(undefined);
   }, [workdir, selectedTabID]);
 
@@ -385,50 +374,9 @@ export function WorkspaceBrowserPanel({
           data-active={isLoading ? "true" : "false"}
           aria-hidden="true"
         />
-      </div>
-      <div className="workspace-browser-frame" data-wuu-component="workspace-browser-content">
-        <div className="workspace-browser-host" />
-        {!showChromePage ? (
-          <WorkspacePanelEmpty
-            className="workspace-browser-home"
-            title={t("workspace.browser.startBrowsing")}
-            hint={t("workspace.browser.startBrowsingHint")}
-            icon={<Globe size={28} strokeWidth={1.6} />}
-          />
-        ) : null}
-        {status === "error" && errorMessage ? (
-          <div className="workspace-browser-error" role="alert">
-            <strong>{t("workspace.browser.cannotOpen")}</strong>
-            <span>{errorMessage}</span>
-            <button
-              className="workspace-browser-retry"
-              type="button"
-              onClick={() => navigate(currentURL)}
-            >
-              {t("workspace.browser.retry")}
-            </button>
-          </div>
-        ) : null}
-        {isLoading && !showChromePage ? (
-          <div className="workspace-browser-status" role="status">
-            {t("workspace.browser.preparing")}
-          </div>
-        ) : null}
-      </div>
-      <div
-        className="workspace-browser-statusbar"
-        data-wuu-component="workspace-browser-statusbar"
-        aria-live="polite"
-      >
-        {showChromePage && hostHint ? (
-          <span className="workspace-browser-host-hint">{hostHint}</span>
-        ) : null}
-        {showChromePage && pageTitle ? (
-          <span className="workspace-browser-title-hint">{pageTitle}</span>
-        ) : null}
         {showingAgentTab && activity && activity.state !== "stopped" ? (
           <span className="workspace-browser-activity">
-            <span className={`workspace-browser-activity-state ${activity.controller}`}>
+            <span className={`workspace-browser-activity-state ${activity.controller}`} aria-live="polite">
               {browserActivityLabel(activity)}
             </span>
             {activity.controller === "user" ? (
@@ -463,7 +411,35 @@ export function WorkspaceBrowserPanel({
             </button>
           </span>
         ) : null}
-        {isLoading ? <span className="workspace-browser-loading-dot" aria-hidden="true" /> : null}
+      </div>
+      <div className="workspace-browser-frame" data-wuu-component="workspace-browser-content">
+        <div className="workspace-browser-host" />
+        {!showChromePage ? (
+          <WorkspacePanelEmpty
+            className="workspace-browser-home"
+            title={t("workspace.browser.startBrowsing")}
+            hint={t("workspace.browser.startBrowsingHint")}
+            icon={<Globe size={28} strokeWidth={1.6} />}
+          />
+        ) : null}
+        {status === "error" && errorMessage ? (
+          <div className="workspace-browser-error" role="alert">
+            <strong>{t("workspace.browser.cannotOpen")}</strong>
+            <span>{errorMessage}</span>
+            <button
+              className="workspace-browser-retry"
+              type="button"
+              onClick={() => navigate(currentURL)}
+            >
+              {t("workspace.browser.retry")}
+            </button>
+          </div>
+        ) : null}
+        {isLoading && !showChromePage ? (
+          <div className="workspace-browser-status" role="status">
+            {t("workspace.browser.preparing")}
+          </div>
+        ) : null}
       </div>
     </div>
   );

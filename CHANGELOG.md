@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- The embedded browser no longer shows a bottom domain and page-title bar,
+  leaving more room for the page. Active browser controls sit in the toolbar.
+
 - While a conversation loads, the loading indicator covers only the
   conversation area. The sidebar, title bar, and environment panel stay
   visible and usable, and the sidebar marks the conversation being opened.
