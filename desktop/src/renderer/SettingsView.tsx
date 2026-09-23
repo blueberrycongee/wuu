@@ -1059,9 +1059,11 @@ export function SettingsView({
             data-wuu-page={activePage}
             key={activePage}
           >
-            <header className="settings-page-header">
-              <h1 className="settings-page-title">{pageTitle}</h1>
-            </header>
+            {activePage !== "subscriptions" ? (
+              <header className="settings-page-header">
+                <h1 className="settings-page-title">{pageTitle}</h1>
+              </header>
+            ) : null}
   
             {activePluginSettingsRecord ? (
               <PluginSettingsEditor plugin={activePluginSettingsRecord} variant="page" />

@@ -37,20 +37,17 @@ SuperGrok subscription login, Grok CLI login, and an `XAI_API_KEY` are separate 
 ## Check subscriptions in the desktop app
 
 **Settings → Subscriptions** groups installed external agents and built-in
-subscription services. Each source keeps its own model and authentication path;
-expand **Details** for request information and ACP sign-in.
-
-Request status, errors, and reported usage belong to the recorded request, even
-after a conversation changes providers. Usage from an earlier request is never
-shown as the usage of a later failure. Older records without a provable source
-remain unknown. A static CLI model list alone does not establish login status.
+subscription services. Choose models directly from each row. ACP agents that
+need account setup offer a sign-in button; choose a method to start authentication,
+which may open your browser. A model-loading failure is not proof that credentials
+are missing, and a static CLI model list does not establish login status.
 
 Codex account allowances come from the installed CLI and show remaining
 percentages and reset times. Refresh after a reset or when a snapshot is over
-five minutes old. Other sources show **Not provided** until an account-quota
-integration is available; ACP context-window occupancy is not subscription quota.
-**Used in Wuu** totals reported tokens in retained local history, including cached
-input. It excludes unreported usage and activity outside Wuu, and is not a bill.
+five minutes old. Sources without account-quota support have no allowance meter;
+ACP context-window occupancy and local token counts are not subscription quota.
+This page shows concise loading and sign-in failures rather than request history
+or raw agent logs. Use the refresh button to retry loading the catalog and quotas.
 
 ## Configure the CLI
 
