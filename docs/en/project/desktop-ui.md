@@ -25,6 +25,12 @@ The [mascot lab](../../../desktop/dev/mascot/README.md) uses `npm --prefix deskt
 
 ## Shared typography and geometry
 
+Composer feedback belongs in the shared reading area above the input, not beside
+the send button. Main and split composers preserve errors, action restrictions,
+and operation progress there, wrapping long text and allowing it to scroll.
+Restored drafts and updated Git results already show success; do not add a second
+confirmation through the global status field.
+
 [`base.css`](../../../desktop/src/renderer/styles/base.css) defines the renderer's base roles, including typography, colors, corners, focus, and elevation. [`spacing.css`](../../../desktop/src/renderer/styles/spacing.css) defines spacing roles, density boundaries, and minimum control sizes. Prefer these existing roles to new per-component constants.
 
 Pointer clicks do not paint an extra outline. Text fields keep the caret; other controls keep their rest and hover surfaces. A 2px `--focus-ring` outline appears after Tab, or after arrow-key movement on a non-text control. Arrow keys inside an input or textarea do not count as keyboard focus movement. Chromium still reports `:focus-visible` for a click into a text field, so rings key off `html[data-focus-modality]` from [`FocusModality.ts`](../../../desktop/src/renderer/FocusModality.ts) rather than that pseudo-class alone. Do not add a per-control click ring or a second frame around an existing field border.

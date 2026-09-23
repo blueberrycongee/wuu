@@ -5114,32 +5114,6 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   max-height: min(120px, 18vh);
 }
 
-.split-composer-bar {
-  container: split-composer-toolbar / inline-size;
-}
-
-.split-composer-status {
-  display: flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  align-items: center;
-  overflow: hidden;
-  padding: 0;
-  background: transparent;
-  color: var(--ink-tertiary);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-medium);
-  line-height: var(--line-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-@container split-composer-toolbar (max-width: 300px) {
-  .split-composer-status {
-    display: none;
-  }
-}
-
 /* Global scrollbar styling lives in styles/scrollbars.css. The conversation
  * panes opt into a stable gutter so the layout never shifts when the
  * thumb fades in or out, and reserve it on both edges so the flow stays on

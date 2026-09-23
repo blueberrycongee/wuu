@@ -33,6 +33,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Composer feedback no longer crowds the send toolbar. Redundant queue-edit,
+  commit, and pull-request confirmations are removed; errors and restrictions
+  remain readable above the input in both main and split conversations.
+
 - Desktop conversation refresh and session resume discard obsolete cached
   messages when a full completed turn arrives, preventing duplicate replies
   after a missed completion notification.

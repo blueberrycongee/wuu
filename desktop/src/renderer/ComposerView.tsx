@@ -61,7 +61,7 @@ import {
 } from "./HandoffDraft";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
-import { TruncatedText } from "./TruncatedText";
+import { ComposerFeedback } from "./ComposerFeedback";
 import {
   CollapsedComposerPromptCard,
   useCollapsedComposerPrompt
@@ -1131,6 +1131,7 @@ export function Composer({
           onEditQueuedMessage={onEditQueuedMessage}
         />
         <div className="composer-frame-shell">
+          <ComposerFeedback text={statusText} liveProgress={statusIsLiveProgress} />
           {canSelectProject ? (
             <div className="composer-workspace-bar" ref={menuRef}>
               <div className="hero-project-pill-anchor composer-project-control">
@@ -1403,14 +1404,6 @@ export function Composer({
                     )}
                   </>
                 )}
-                {statusText ? (
-                  <span className="status-label">
-                    <TruncatedText
-                      className={`status-label-text${statusIsLiveProgress ? " live-progress-chip" : ""}`}
-                      text={statusText}
-                    />
-                  </span>
-                ) : null}
                 <button
                   className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
                   data-wuu-component="composer-send"
