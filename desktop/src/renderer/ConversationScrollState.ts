@@ -295,6 +295,10 @@ export function useConversationScrollState({
   const scrollModeRef = useRef<ConversationScrollMode>("following");
   const runningRef = useRef(running);
   runningRef.current = running;
+  // Read through a ref: mounting the status row must not re-run the thread
+  // restore, which would re-place a paused reader.
+  const statusClusterNodeRef = useRef(statusClusterNode);
+  statusClusterNodeRef.current = statusClusterNode;
   function syncStreamFollowing(): void {
     // Scroll-linked fades and the live text wave repaint on every chunk
     // while the viewport is pinned to a running turn. The attribute lets
@@ -353,6 +357,20 @@ export function useConversationScrollState({
     pane?.style.setProperty("--dock-composer-height", heightValue);
     pane?.style.setProperty("--conversation-input-inset", insetValue);
   }, [dockComposerNode]);
+  /** Returns whether the reserved status-row space changed. */
+  const syncConversationStatusSpace = useCallback((): boolean => {
+    const pane = conversationPaneRef.current;
+    const cluster = statusClusterNodeRef.current;
+    if (!pane) return false;
+    const height = cluster?.getBoundingClientRect().height ?? 0;
+    const gap = cluster
+      ? cssPixelValue(window.getComputedStyle(cluster).getPropertyValue("--conversation-status-gap"))
+      : 0;
+    const value = `${height > 0 ? Math.ceil(height + gap) : 0}px`;
+    if (pane.style.getPropertyValue("--conversation-status-space") === value) return false;
+    pane.style.setProperty("--conversation-status-space", value);
+    return true;
+  }, []);
   const setAutoFollow = useCallback((next: boolean): void => {
     // A later ownership change supersedes a pending click's restoration.
     if (pointerScrollGestureRef.current) pointerScrollGestureRef.current.resumeScrollTop = undefined;
@@ -1389,6 +1407,10 @@ export function useConversationScrollState({
         return;
       }
       markSessionSwitch(activeThreadID, "scroll-restore-start");
+      // The status row already shows the incoming session's items. Its observer
+      // reports a frame late, so placing against the outgoing reservation would
+      // move the whole session once the stale gap is released.
+      syncConversationStatusSpace();
       measureActiveConversationForRestore(node);
       let snapshot = savedSnapshot;
       const restorationOffset = restoredOffset.current;
@@ -1428,7 +1450,7 @@ export function useConversationScrollState({
     } finally {
       restoreScrollLockRef.current = false;
     }
-  }, [activePane, activeThreadID, setAutoFollow, splitConversation, syncDockComposerGeometry, restoredOffset, submittedMessage, discardTailSpace]);
+  }, [activePane, activeThreadID, setAutoFollow, splitConversation, syncConversationStatusSpace, syncDockComposerGeometry, restoredOffset, submittedMessage, discardTailSpace]);
 
   // Only a direct submission owns placement. Queue/steer materialization is
   // incoming content and must preserve the current following/reading policy.
@@ -1692,17 +1714,10 @@ export function useConversationScrollState({
   ]);
 
   useLayoutEffect(() => {
-    const pane = conversationPaneRef.current;
-    if (!pane) return;
+    if (!conversationPaneRef.current) return;
     let frame = 0;
     const update = (): void => {
-      const height = statusClusterNode?.getBoundingClientRect().height ?? 0;
-      const gap = statusClusterNode
-        ? cssPixelValue(window.getComputedStyle(statusClusterNode).getPropertyValue("--conversation-status-gap"))
-        : 0;
-      const value = `${height > 0 ? Math.ceil(height + gap) : 0}px`;
-      if (pane.style.getPropertyValue("--conversation-status-space") === value) return;
-      pane.style.setProperty("--conversation-status-space", value);
+      if (!syncConversationStatusSpace()) return;
       if (isWindowResizing()) {
         pinConversationDuringWindowResize();
         return;
@@ -1720,7 +1735,7 @@ export function useConversationScrollState({
       observer.disconnect();
       window.cancelAnimationFrame(frame);
     };
-  }, [pinConversationDuringWindowResize, statusClusterNode, scrollConversationToBottom]);
+  }, [pinConversationDuringWindowResize, statusClusterNode, syncConversationStatusSpace, scrollConversationToBottom]);
 
   useLayoutEffect(() => {
     const node = dockComposerNode;

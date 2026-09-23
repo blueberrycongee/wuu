@@ -5651,6 +5651,7 @@ export function App(): JSX.Element {
             <JumpToLatestPill
               containerRef={conversationScrollRef}
               bottomAnchor={dockComposerNode}
+              scopeKey={activeThreadID}
               inline
             />
           ) : null}

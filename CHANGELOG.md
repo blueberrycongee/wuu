@@ -8,6 +8,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Fixed
+
+- Switching conversations no longer shifts messages after they appear. A
+  conversation left mid-history reopens at the same reading position with
+  Jump to latest already shown.
+
 ## [2026.9.23] - 2026-09-23
 
 ### Added
