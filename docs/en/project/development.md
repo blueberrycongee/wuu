@@ -72,3 +72,7 @@ macOS pull requests test the native helper; pushes to `main` also package a desk
 `cmd/wuu` and `internal` contain the CLI and Go core. `desktop` owns Electron main/preload, renderer UI, IPC, and packaging. `packages/protocol` holds shared client protocol types; `clients/core` implements UI-free remote behavior. The plugin SDKs and bundled implementations live in `packages/plugin-sdk`, `packages/plugin-go`, and `plugins`.
 
 Keep Electron APIs in the desktop shell. A new shell should communicate with `wuu app-server` through its [protocol](../integrations/app-server-protocol.md), rather than importing desktop internals or creating a separate core. Update both language versions of affected public docs with behavior changes; [documentation maintenance](../../../docs/README.md) describes placement and checks.
+
+## Experimental floating sidebar
+
+Run `VITE_EXPERIMENT_FLOATING_SIDEBAR=true make dev` to try the floating sidebar. In a wide window, the sidebar toggle switches between docked navigation and a floating card. Click the card header to fold or expand its navigation; Escape inside the card folds it and returns focus to the header. Narrow windows retain the drawer interaction. Omit the variable to use the regular sidebar.

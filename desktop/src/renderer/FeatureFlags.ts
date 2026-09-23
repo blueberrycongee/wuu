@@ -34,3 +34,7 @@ export const ENABLE_ACCOUNT =
  */
 export const ENABLE_EMBEDDED_BROWSER =
   import.meta.env.VITE_ENABLE_BROWSER !== "false";
+
+/** Opt-in sidebar card experiment; remove the flag once the interaction is settled. */
+export const ENABLE_FLOATING_SIDEBAR =
+  import.meta.env.VITE_EXPERIMENT_FLOATING_SIDEBAR === "true";

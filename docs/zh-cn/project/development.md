@@ -70,3 +70,7 @@ macOS 拉取请求测试原生辅助程序，推送到 `main` 时还生成桌面
 `cmd/wuu` 和 `internal` 包含 CLI 与 Go 核心；`desktop` 负责 Electron main/preload、renderer UI、IPC 和打包。`packages/protocol` 保存共享客户端协议类型，`clients/core` 实现无 UI 的远程行为。插件 SDK 和内置实现位于 `packages/plugin-sdk`、`packages/plugin-go` 和 `plugins`。
 
 Electron API 应留在桌面外壳。新外壳应通过[协议（英文）](../../en/integrations/app-server-protocol.md)与 `wuu app-server` 通信，不应依赖桌面内部实现或另建一套核心。行为变化时同步更新公开文档的中英文版本，放置和检查规则见[文档维护（英文）](../../../docs/README.md)。
+
+## 实验性悬浮侧栏
+
+运行 `VITE_EXPERIMENT_FLOATING_SIDEBAR=true make dev` 可体验悬浮侧栏。在宽窗口中，侧栏按钮在停靠导航和悬浮卡片之间切换；点击卡片标题可收起或展开导航，在卡片内按 Escape 可收起并将焦点返回标题。窄窗口仍使用抽屉交互。不设置该变量时使用常规侧栏。

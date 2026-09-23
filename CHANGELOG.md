@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- An opt-in desktop sidebar experiment provides expandable floating navigation
+  cards with `VITE_EXPERIMENT_FLOATING_SIDEBAR=true`.
+
 - Image previews support smooth trackpad pinch zoom, two-finger panning, drag,
   fit-to-window and actual-size views, rotation, keyboard controls, and a desktop
   Save As dialog that preserves the original image.

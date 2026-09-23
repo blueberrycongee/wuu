@@ -5,6 +5,7 @@ import {
   Archive,
   Bell,
   ChevronRight,
+  ChevronDown,
   Folder,
   FolderMinus,
   FolderOpen,
@@ -465,6 +466,7 @@ export function AppSidebar({
   drawerVisible = false,
   sidebarVisible = true,
   sidebarCollapsed = false,
+  floating = false,
   onNavigateAway,
   onToggleSidebar,
 }: {
@@ -564,10 +566,13 @@ export function AppSidebar({
   drawerVisible?: boolean;
   sidebarVisible?: boolean;
   sidebarCollapsed?: boolean;
+  floating?: boolean;
   onNavigateAway?: () => void;
   onToggleSidebar?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const [floatingExpanded, setFloatingExpanded] = useState(true);
+  const floatingToggleRef = useRef<HTMLButtonElement>(null);
   const [attentionStickyIDsState, setAttentionStickyIDsState] = useState<Set<string>>(() => new Set());
   const attentionStickyIDs = attentionStickyIDsProp ?? attentionStickyIDsState;
   const attentionStickyIDsRef = useRef(attentionStickyIDs);
@@ -1763,14 +1768,54 @@ export function AppSidebar({
     state.activeProjectId, state.initialized, state.lastViewedTurnByThreadID, t,
   ]);
 
+  const floatingProject = sidebarProjects.find(project => project.id === (activeProjectID ?? state.activeProjectId));
+  const floatingThread = state.threads.find(thread => thread.id === activeThreadID);
+  const floatingTitle = selectedCollaborationRoomID || selectedCollaborationAgentID
+    ? pinnedCollaborationConversations.find(item => item.room?.id === selectedCollaborationRoomID)?.name
+      ?? collaborationNavigationNodes?.find(node => node.active)?.label
+      ?? collaborationAgents.find(agent => agent.id === selectedCollaborationAgentID)?.name
+      ?? t("sidebar.collaboration")
+    : floatingThread ? floatingThread.title?.trim() || floatingThread.preview?.trim() || floatingThread.id : t("sidebar.newConversation");
+
   const nativeSidebar = (
     <aside
       className="sidebar"
       data-wuu-component="sidebar"
+      data-floating-expanded={floating ? floatingExpanded : undefined}
+      onKeyDown={event => {
+        if (floating && floatingExpanded && event.key === "Escape" && !event.defaultPrevented) {
+          event.preventDefault();
+          setFloatingExpanded(false);
+          floatingToggleRef.current?.focus();
+        }
+      }}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
     >
-      <div className="sidebar-content">
+      {floating ? (
+        <button
+          ref={floatingToggleRef}
+          className="sidebar-floating-summary"
+          type="button"
+          aria-expanded={floatingExpanded}
+          aria-controls="floating-sidebar-content"
+          aria-label={t(floatingExpanded ? "app.collapseLeftSidebar" : "app.expandLeftSidebar")}
+          onClick={() => setFloatingExpanded(expanded => !expanded)}
+        >
+          <Folder aria-hidden="true" />
+          <span className="sidebar-floating-context">
+            <span className="sidebar-floating-project">{floatingProject?.name ?? t("sidebar.workspace")}</span>
+            <span className="sidebar-floating-title" title={floatingTitle}>{floatingTitle}</span>
+          </span>
+          <ChevronDown className="sidebar-floating-chevron" aria-hidden="true" />
+        </button>
+      ) : null}
+      <div
+        className="sidebar-content"
+        id={floating ? "floating-sidebar-content" : undefined}
+        inert={floating && !floatingExpanded}
+        aria-hidden={floating && !floatingExpanded ? true : undefined}
+      >
         <div className="traffic-spacer">
           {onToggleSidebar ? (
             <button

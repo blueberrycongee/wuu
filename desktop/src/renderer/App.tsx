@@ -225,6 +225,7 @@ import {
 import type { SettingsPage } from "./SettingsView";
 import {
   ENABLE_CONVERSATION_TURN_RAIL,
+  ENABLE_FLOATING_SIDEBAR,
   ENABLE_EMBEDDED_BROWSER,
   ENABLE_GROUP_CHAT,
   ENABLE_ACCOUNT,
@@ -569,6 +570,7 @@ export function App(): JSX.Element {
   // has to live above it for the user to come back to the view they left.
   const [unreadViewOpen, setUnreadViewOpen] = useState(false);
   const [attentionStickyIDs, setAttentionStickyIDs] = useState<Set<string>>(() => new Set());
+  const floatingSidebar = ENABLE_FLOATING_SIDEBAR && !compactNavigation && sidebarCollapsed;
   const sidebarDrawerMode = compactNavigation || sidebarCollapsed;
   const {
     sidebarDrawerPhase,
@@ -581,7 +583,7 @@ export function App(): JSX.Element {
     scheduleSidebarDrawerCloseFromPointerLeave,
   } = useSidebarDrawerState({
     appShellRef,
-    sidebarCollapsed: sidebarDrawerMode,
+    sidebarCollapsed: sidebarDrawerMode && !floatingSidebar,
     resizingSidebar,
     motionMs: SIDEBAR_DRAWER_EXIT_MS,
     dockingMotionMs: SIDEBAR_MOTION_MS,
@@ -2882,7 +2884,7 @@ export function App(): JSX.Element {
     }
   }, [environmentPanelOpen, sideThread.close, sideThread.entry?.open]);
 
-  const shellClassName = `app-shell${poppedOutMode ? " popped-out-shell" : ""}${compactNavigation ? " compact-navigation" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
+  const shellClassName = `app-shell${floatingSidebar ? " sidebar-floating" : ""}${poppedOutMode ? " popped-out-shell" : ""}${compactNavigation ? " compact-navigation" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
     sidebarDrawerMode && sidebarDrawerVisible ? " sidebar-drawer-open" : ""
   }${
     sidebarDrawerMode &&
@@ -5255,7 +5257,7 @@ export function App(): JSX.Element {
                     : "app.expandLeftSidebar",
                 )}
                 aria-pressed={sidebarDrawerVisible}
-                onClick={sidebarDrawerVisible ? closeSidebarDrawer : openSidebarDrawerNow}
+                onClick={floatingSidebar ? toggleSessionSwitcher : sidebarDrawerVisible ? closeSidebarDrawer : openSidebarDrawerNow}
                 onPointerEnter={scheduleSidebarDrawerOpen}
                 onPointerLeave={(event) =>
                   scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
@@ -5266,6 +5268,7 @@ export function App(): JSX.Element {
             </div>
           ) : null}
           <AppSidebar
+            floating={floatingSidebar}
             onToggleSidebar={sidebarDrawerMode ? undefined : toggleSessionSwitcher}
             sidebarCollapsed={sidebarCollapsed}
             collaborationNavigationNodes={ENABLE_GROUP_CHAT ? [
@@ -5380,7 +5383,7 @@ export function App(): JSX.Element {
               }}
             />
           ) : undefined}
-            sidebarVisible={!sidebarDrawerMode || sidebarDrawerVisible}
+            sidebarVisible={floatingSidebar || !sidebarDrawerMode || sidebarDrawerVisible}
             mobileNavigation={compactNavigation && isTouchWebShell()}
             drawerVisible={sidebarDrawerVisible}
             onNavigateAway={closeCompactSessionSwitcher}
