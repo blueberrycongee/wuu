@@ -100,7 +100,7 @@ import type {
   ComposerVariant,
   PermissionMode
 } from "./ComposerTypes";
-import { composerStatusIsLiveProgress, composerStatusText } from "./ComposerTypes";
+import { COMPOSER_PROJECT_MENU_WIDTH, composerStatusIsLiveProgress, composerStatusText } from "./ComposerTypes";
 import type { WorkspacePanelView } from "./WorkspacePanels";
 import { ComposerRuntimeMeters } from "./ComposerRuntimeMeters";
 import { ComposerPresentation } from "./plugins/ComposerPresentation";
@@ -1151,7 +1151,6 @@ export function Composer({
                       <ProjectPillIcon />
                     </span>
                     <span className="hero-project-pill-text">{projectPillLabel}</span>
-                    <ChevronDown className="hero-project-pill-chevron" aria-hidden="true" />
                   </button>
                 </Tooltip>
                 {menuOpen ? (
@@ -1160,7 +1159,7 @@ export function Composer({
                     owner="composer-runtime"
                     placement="above"
                     align="left"
-                    width={280}
+                    width={COMPOSER_PROJECT_MENU_WIDTH}
                     mobileSheet={{ label: t("composer.switchProject", { project: projectPillLabel }), onClose: onToggleMenu }}
                   >
                     <ProjectPickerMenu
