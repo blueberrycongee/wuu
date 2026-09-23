@@ -139,7 +139,7 @@
   width: auto;
   contain: strict;
   container-type: inline-size;
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
   overflow: hidden;
   border-left: 1px solid transparent;
   background: var(--paper);
@@ -152,10 +152,6 @@
     opacity var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease),
     transform var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
   pointer-events: none;
-}
-
-.workspace-right-panel.detail {
-  grid-template-rows: 48px minmax(0, 1fr);
 }
 
 .bottom-panel-open .workspace-right-panel {
@@ -177,7 +173,7 @@
 .workspace-panel-tabbar {
   display: flex;
   min-width: 0;
-  height: 48px;
+  height: var(--window-titlebar-height);
   align-items: center;
   gap: 4px;
   box-shadow: inset 0 -1px 0 var(--surface-3);
@@ -199,7 +195,7 @@
 
 .workspace-right-panel.compact-navigation {
   grid-template-rows:
-    calc(52px + env(safe-area-inset-top, 0px))
+    calc(var(--window-titlebar-height) + env(safe-area-inset-top, 0px))
     minmax(0, 1fr);
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
@@ -207,16 +203,16 @@
 .workspace-right-panel.compact-navigation .workspace-panel-tabbar {
   display: grid;
   height: auto;
-  grid-template-columns: 36px minmax(0, 1fr) 36px;
+  grid-template-columns: var(--control-size-toolbar) minmax(0, 1fr) var(--control-size-toolbar);
   gap: 8px;
   padding:
     env(safe-area-inset-top, 0px)
-    10px
+    max(10px, var(--window-controls-inset-right))
     0;
 }
 
 .app-shell.right-panel-globalized .workspace-right-panel.compact-navigation .workspace-panel-tabbar {
-  grid-template-columns: 36px 36px minmax(0, 1fr) 36px;
+  grid-template-columns: var(--control-size-toolbar) var(--control-size-toolbar) minmax(0, 1fr) var(--control-size-toolbar);
 }
 
 .workspace-panel-compact-heading {
@@ -249,14 +245,12 @@
   .workspace-panel-back,
   .workspace-panel-close-tab
 ) {
-  width: 36px;
-  height: 36px;
   margin: 0;
 }
 
 .workspace-panel-compact-action-slot {
-  width: 36px;
-  height: 36px;
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
 }
 
 .turn-file-diff-panel {

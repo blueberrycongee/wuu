@@ -136,6 +136,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Desktop surfaces share titlebar geometry and sidebar-control alignment, while
   compact channel headers retain their native safe-area clearance.
+  Sidebar toggles now retain their position and size when switching to Settings
+  or opening a narrow-window drawer. Workspace headers use the same geometry
+  across window widths, and desktop zoom preserves native window-control alignment.
 
 - The desktop app detects external engines installed in the usual user
   locations, including `~/.local/bin`, Homebrew, and version-manager shims,

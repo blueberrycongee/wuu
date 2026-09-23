@@ -328,7 +328,7 @@
   z-index: 10000;
   align-items: stretch;
   width: var(--linux-caption-width);
-  height: 48px;
+  height: var(--window-titlebar-height);
   margin: 0;
   padding: 0;
   border: 0;
@@ -736,15 +736,15 @@
 }
 
 .app-shell.compact-navigation .titlebar {
+  height: calc(var(--window-titlebar-height) + env(safe-area-inset-top, 0px));
   column-gap: 6px;
-  /* Compact navigation also collapses the sidebar, moving this control into
-   * the window's top-left corner. Keep the macOS traffic-light exclusion
-   * zone while preserving the compact 10px gutter on other platforms. */
+  /* Compact navigation moves this control to the window corner. Share the
+   * collapsed leading slot with settings and the globalized workspace. */
   padding:
     env(safe-area-inset-top, 0px)
-    10px
+    max(10px, var(--window-controls-inset-right))
     0;
-  padding-left: max(10px, calc(var(--window-controls-inset-left) + 10px));
+  padding-left: var(--window-titlebar-leading-inset);
 }
 
 .app-shell.compact-navigation .title-block {
@@ -766,15 +766,6 @@
   display: none;
 }
 
-.app-shell.compact-navigation .titlebar .sidebar-toggle-button,
-.app-shell.compact-navigation .compact-conversation-actions > .icon-button {
-  flex: 0 0 44px;
-  width: 44px;
-  height: 44px;
-  padding: 6px;
-  background-clip: content-box;
-}
-
 /* The compact titlebar is still a native Electron drag region. Keep the
  * sidebar control explicitly above that region: at narrow desktop widths the
  * titlebar's grid can otherwise leave the button looking clickable while the
@@ -791,8 +782,8 @@
   .titlebar .sidebar-toggle-button,
 .app-shell.compact-navigation.sidebar-drawer-docking .titlebar .sidebar-toggle-button {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + (48px - 44px) / 2);
-  left: max(10px, calc(var(--window-controls-inset-left) + 10px));
+  top: calc(env(safe-area-inset-top, 0px) + (var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
+  left: var(--window-titlebar-leading-inset);
 }
 
 .compact-conversation-actions > .icon-button:disabled {
@@ -834,21 +825,6 @@
 
 .conversation-actions-menu svg {
   flex-shrink: 0;
-}
-
-.app-shell.compact-navigation .titlebar .environment-toggle-button,
-.app-shell.compact-navigation .titlebar .side-panel-toggle-button {
-  width: 36px;
-  height: 36px;
-}
-
-/* Main and tool-panel headers share the toolbar control geometry. */
-:where(.titlebar, .settings-titlebar, .workspace-panel-tabbar) .icon-button,
-.globalized-sidebar-toggle-region .globalized-sidebar-toggle {
-  width: var(--control-size-toolbar);
-  height: var(--control-size-toolbar);
-  padding: 0;
-  background-clip: border-box;
 }
 
 .titlebar .task-board-button:disabled {

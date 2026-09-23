@@ -118,7 +118,7 @@
 }
 
 .app-shell.popped-out-shell .titlebar {
-  padding-left: max(var(--window-titlebar-padding-inline), calc(var(--window-controls-inset-left) + 10px));
+  padding-left: var(--window-titlebar-leading-inset);
 }
 
 /* Right-panel "globalized" focus mode: the panel takes over the main stage
@@ -187,21 +187,17 @@
   position: fixed;
   /* Match the shared toolbar control's center inside the titlebar.
    * This control and the native traffic lights both center at 24px. */
-  top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
+  top: calc(env(safe-area-inset-top, 0px) + (var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
   /* The OS inset is a hard exclusion zone. Wuu owns an additional fixed
    * gutter so decorated theme controls never visually merge with it. */
-  left: max(var(--window-titlebar-padding-inline), calc(var(--window-controls-inset-left) + 10px));
+  left: var(--window-titlebar-leading-inset);
   z-index: 150;
-  width: 34px;
-  height: 34px;
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
   -webkit-app-region: drag;
 }
 
 .globalized-sidebar-toggle-region .globalized-sidebar-toggle {
-  width: 30px;
-  height: 30px;
-  padding: 2px;
-  background-clip: content-box;
   -webkit-app-region: no-drag;
 }
 
@@ -220,14 +216,14 @@
  * the tabbar's buttons opt out via the `.workspace-panel-tabbar button`
  * rule in workspace.css. */
 .app-shell.right-panel-globalized.sidebar-collapsed .workspace-panel-tabbar {
-  padding-left: max(8px, calc(var(--window-controls-inset-left) + 10px));
+  padding-left: var(--window-titlebar-leading-inset);
   -webkit-app-region: drag;
 }
 
 .workspace-panel-sidebar-hit-hole {
-  width: 38px;
+  width: var(--control-size-toolbar);
   height: 100%;
-  flex: 0 0 38px;
+  flex: 0 0 var(--control-size-toolbar);
   pointer-events: none;
   -webkit-app-region: no-drag;
 }
@@ -435,29 +431,18 @@
 .sidebar-drawer-docking :is(.titlebar, .settings-titlebar) .sidebar-toggle-button {
   position: fixed;
   top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
-  left: max(var(--window-titlebar-padding-inline), calc(var(--window-controls-inset-left) + 10px));
+  left: var(--window-titlebar-leading-inset);
   z-index: 150;
 }
 
-.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
-  .title-block::before,
-.sidebar-drawer-docking .title-block::before,
-.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
-  .settings-titlebar::before,
-.sidebar-drawer-docking .settings-titlebar::before {
+/* Channel headers host the toggle directly; conversation headers wrap it.
+ * Reserve its space only while that slot still contains the lifted control. */
+:is(.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing), .sidebar-drawer-docking)
+  :is(.title-block, .settings-titlebar, .channel-room-header):has(> .sidebar-toggle-button)::before {
   content: "";
   flex: 0 0 var(--control-size-toolbar);
   width: var(--control-size-toolbar);
   height: var(--control-size-toolbar);
-}
-
-.app-shell.compact-navigation.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
-  .title-block::before,
-.app-shell.compact-navigation.sidebar-drawer-docking .title-block::before {
-  flex-basis: 44px;
-  width: 44px;
-  height: 44px;
-  margin-right: 6px;
 }
 
 .sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
@@ -803,7 +788,7 @@
   /* Keep a product-owned visual gutter after the macOS traffic-light
    * exclusion zone. Themes may decorate the first control, but they cannot
    * shrink this window-chrome boundary. */
-  padding-left: max(var(--window-titlebar-padding-inline), calc(var(--window-controls-inset-left) + 10px));
+  padding-left: var(--window-titlebar-leading-inset);
 }
 
 .traffic-spacer {
@@ -816,26 +801,20 @@
   flex-shrink: 0;
   align-items: center;
   justify-content: flex-end;
-  padding-right: var(--sidebar-row-pad-x);
+  /* Preserve the sidebar accessory center while using the top-row hit size. */
+  padding-right: calc(var(--sidebar-row-pad-x) + (var(--sidebar-row-action-size) - var(--control-size-toolbar)) / 2);
   -webkit-app-region: drag;
 }
 
 .traffic-spacer .sidebar-collapse-toggle {
   position: relative;
   z-index: 1;
-  /* Hold the header toggle to the sidebar's trailing accessory column (bell,
-   * section actions, row actions, account chevron) instead of a local 30px
-   * box: the shared control size keeps the glyph, hit target, and hover pill
-   * centered on that one column at every appearance scale. */
-  width: var(--sidebar-row-action-size);
-  height: var(--sidebar-row-action-size);
-  padding: 0;
   -webkit-app-region: no-drag;
 }
 
-:root[data-platform="linux"] .traffic-spacer,
-:root[data-platform="win32"] .traffic-spacer,
-:root[data-host-kind="web"] .traffic-spacer {
+:root[data-platform="linux"] .traffic-spacer:empty,
+:root[data-platform="win32"] .traffic-spacer:empty,
+:root[data-host-kind="web"] .traffic-spacer:empty {
   height: 12px;
 }
 

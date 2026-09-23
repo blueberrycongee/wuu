@@ -352,11 +352,12 @@
   --scrollbar-thumb-active: rgba(38, 70, 98, 0.45);
   --scrollbar-thin-thumb: rgba(32, 36, 39, 0.14);
 
-  /* Every desktop surface uses the same 48px titlebar center. Keeping the
-   * row geometry in one token prevents page-specific chrome from drifting
-   * away from the native macOS traffic lights and Windows overlay. */
-  --window-titlebar-height: 48px;
+  /* Native chrome stays in DIP when Chromium zooms the page. Compensate the
+   * shared row just like the native control insets, including at the default
+   * desktop zoom, so its center stays at 24 DIP. Web hosts use zoom 1. */
+  --window-titlebar-height: calc(48px / var(--desktop-page-zoom, 1));
   --window-titlebar-padding-inline: 24px;
+  --window-titlebar-leading-inset: max(var(--window-titlebar-padding-inline), calc(var(--window-controls-inset-left) + 10px));
 
   --turn-warning-border: var(--warning-border);
   --turn-warning-bg: var(--warning-soft);
