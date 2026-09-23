@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- While a conversation loads, the loading indicator covers only the
+  conversation area. The sidebar, title bar, and environment panel stay
+  visible and usable, and the sidebar marks the conversation being opened.
+
 - Composer project and branch selectors use lightweight, arrow-free pills
   instead of a full-width background. Their menus have roomier spacing,
   aligned icon and selection columns, and separate branch status text.
@@ -17,6 +21,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Sending a message moves only the message bubble into place. The new turn's
   in-progress status no longer travels with it; it fades in as the bubble lands,
   for both the first message and follow-ups.
+
+### Fixed
+
+- Switching conversations no longer shifts messages after they appear. A
+  conversation left mid-history reopens at the same reading position with
+  Jump to latest already shown.
+
+- Scrolling down to the latest message no longer bounces back when Jump to
+  latest disappears.
 
 ## [2026.9.23] - 2026-09-23
 

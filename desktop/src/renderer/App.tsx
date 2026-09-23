@@ -2377,7 +2377,6 @@ export function App(): JSX.Element {
     state.secondaryThread,
   ]);
 
-  const [statusClusterNode, statusClusterRef] = useState<HTMLDivElement | null>(null);
   const {
     conversationScrollRef,
     scrollContentRef,
@@ -2385,6 +2384,7 @@ export function App(): JSX.Element {
     conversationPaneRef,
     dockComposerRef,
     dockComposerNode,
+    statusClusterRef,
     scheduleStreamScroll,
     handleConversationScroll,
     enableConversationAutoFollow,
@@ -2403,7 +2403,6 @@ export function App(): JSX.Element {
     emptyConversation,
     initialized: Boolean(state.initialized),
     running: isStateActiveThreadRunning(state),
-    statusClusterNode,
   });
   const activeManagementTabID = showingManagementCatalog
     ? currentSessionTab?.id
@@ -5651,6 +5650,7 @@ export function App(): JSX.Element {
             <JumpToLatestPill
               containerRef={conversationScrollRef}
               bottomAnchor={dockComposerNode}
+              scopeKey={activeThreadID}
               inline
             />
           ) : null}

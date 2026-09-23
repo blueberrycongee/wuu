@@ -4,6 +4,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import {
@@ -55,10 +56,16 @@ type JumpToLatestPillProps = {
    * the effect re-runs only when the boolean actually changes.
    */
   onScrolledAwayChange?: (scrolledAway: boolean) => void;
-  /** In-flow status groups reserve space instead of covering conversation content. */
+  /** Renders inside the caller's status group instead of floating above the composer. */
   inline?: boolean;
   /** Remains available at the bottom; shares one centered group with the jump action. */
   companion?: ReactNode;
+  /**
+   * Identifies the conversation shown in a reused container. A conversation
+   * reopens where it was left, so its last visibility applies before the first
+   * scroll event instead of the outgoing conversation's pill for a frame.
+   */
+  scopeKey?: string;
 };
 
 const DEFAULT_THRESHOLD_PX = 80;
@@ -85,11 +92,24 @@ export function JumpToLatestPill({
   onScrolledAwayChange,
   inline = false,
   companion,
+  scopeKey,
 }: JumpToLatestPillProps): React.ReactElement | null {
   const { t } = useI18n();
   const accessibleLabel = label ?? t("conversation.jumpToLatest");
+  const scrolledAwayByScopeRef = useRef(new Map<string, boolean>());
   const [scrolledAway, setScrolledAway] = useState(false);
+  const [renderedScopeKey, setRenderedScopeKey] = useState(scopeKey);
   const [position, setPosition] = useState<PillPosition | null>(null);
+  if (renderedScopeKey !== scopeKey) {
+    // Adjust during render: the commit that swaps conversations must already
+    // carry the incoming visibility, before scroll restoration measures it.
+    setRenderedScopeKey(scopeKey);
+    setScrolledAway(scopeKey !== undefined && scrolledAwayByScopeRef.current.get(scopeKey) === true);
+  }
+
+  useEffect(() => {
+    if (scopeKey !== undefined) scrolledAwayByScopeRef.current.set(scopeKey, scrolledAway);
+  }, [scopeKey, scrolledAway]);
 
   // Mirror the scrolled-away boolean to the parent whenever it flips. The
   // parent uses this to swap a sibling progress pill out of the same

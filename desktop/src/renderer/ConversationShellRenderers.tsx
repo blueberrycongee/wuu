@@ -512,7 +512,7 @@ export function ConversationSidePanels({
         onCloseFilePreview={onCloseFilePreview}
       />
 
-      {switchLoadingVisible ? <ViewSwitchLoading /> : null}
+      {switchLoadingVisible ? <ViewSwitchLoading placement="conversation" /> : null}
     </>
   );
 }

@@ -36,7 +36,7 @@ describe("ViewSwitchLoading", () => {
   });
 
   it("can embed connection progress beside recovery controls", () => {
-    const view = render(<section><ViewSwitchLoading inline /><button>Reconnect</button></section>);
+    const view = render(<section><ViewSwitchLoading placement="inline" /><button>Reconnect</button></section>);
     expect(view.querySelector('[role="status"]')?.parentElement).toBe(view.querySelector("section"));
     expect(view.querySelector("button")).not.toBeNull();
   });
