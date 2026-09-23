@@ -553,23 +553,6 @@ export function SettingsView({
     }
   }
 
-  async function removeModel(model: string): Promise<void> {
-    if (addingProvider || !selectedProvider || running) return;
-    const remaining = [...new Set([selectedProvider.model, ...(selectedProvider.models ?? []).map((item) => item.id)])]
-      .filter((id) => id && id !== model);
-    if (!remaining.length) return;
-    const nextModel = selectedProvider.model === model ? remaining[0] : selectedProvider.model;
-    const variant = normalizedVariantForProviderModel(variantDraft, selectedProvider, nextModel);
-    setError("");
-    try {
-      await onSave(providerDraft, nextModel, undefined, { remove_model: model }, variant);
-      setModelDraft(nextModel);
-      setVariantDraft(variant);
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : t("provider.saveFailed"));
-    }
-  }
-
   async function commitBaseURL(): Promise<void> {
     if (addingProvider || connectionLocked) {
       return;
@@ -1126,7 +1109,6 @@ export function SettingsView({
                   onBaseURLDraftChange={setBaseURLDraft}
                   onAPIKeyDraftChange={setAPIKeyDraft}
                   onCommitModel={commitModelName}
-                  onRemoveModel={removeModel}
                   onCommitBaseURL={commitBaseURL}
                   onCommitAPIKey={commitAPIKey}
                   onSubmit={submit}
@@ -1325,7 +1307,6 @@ function SettingsProvidersPage({
   onBaseURLDraftChange,
   onAPIKeyDraftChange,
   onCommitModel,
-  onRemoveModel,
   onCommitBaseURL,
   onCommitAPIKey,
   onSubmit,
@@ -1362,7 +1343,6 @@ function SettingsProvidersPage({
   onBaseURLDraftChange: (value: string) => void;
   onAPIKeyDraftChange: (value: string) => void;
   onCommitModel: (selection?: string) => void;
-  onRemoveModel: (model: string) => Promise<void>;
   onCommitBaseURL: () => void;
   onCommitAPIKey: () => void;
   onSubmit: (event: ReactFormEvent<HTMLFormElement>) => Promise<void>;
@@ -1376,9 +1356,10 @@ function SettingsProvidersPage({
 }): JSX.Element {
   const { t } = useI18n();
   const [catalogRefreshing, setCatalogRefreshing] = useState(false);
-  const [removingModel, setRemovingModel] = useState(false);
   function modelIDs(provider: ProviderSummary | undefined): string[] {
-    return [...new Set([provider?.model ?? "", ...(provider?.models ?? []).map((model) => model.id)].filter(Boolean))];
+    // Provider summaries put the selected model first; keep button positions stable when selection changes.
+    return [...new Set([provider?.model ?? "", ...(provider?.models ?? []).map((model) => model.id)].filter(Boolean))]
+      .sort((left, right) => left.toLowerCase().localeCompare(right.toLowerCase()) || left.localeCompare(right));
   }
   const reasoningMode = providerModelReasoningMode(selectedProvider, modelDraft);
   const authFieldLabel = t("provider.apiKey");
@@ -1524,23 +1505,14 @@ function SettingsProvidersPage({
         <section className="settings-provider-form-section">
           {!addingProvider && modelIDs(selectedProvider).length > 0 && <SettingsRow title={t("provider.availableModels")} block>
             <div className="settings-provider-model-list" role="group" aria-label={t("provider.availableModels")}>
-              {modelIDs(selectedProvider).map((model) => <span key={model} className="settings-provider-model-tag"><button
+              {modelIDs(selectedProvider).map((model) => <button
+                key={model}
                 type="button"
                 className="settings-button"
                 aria-pressed={modelDraft === model}
-                disabled={running || removingModel}
+                disabled={running}
                 onClick={() => onCommitModel(model)}
-              >{model}</button><button
-                type="button"
-                className="settings-provider-model-remove"
-                aria-label={t("provider.removeModel", { model })}
-                title={modelIDs(selectedProvider).length < 2 ? t("provider.keepOneModel") : t("provider.removeModel", { model })}
-                disabled={running || removingModel || modelIDs(selectedProvider).length < 2}
-                onClick={() => {
-                  setRemovingModel(true);
-                  void onRemoveModel(model).finally(() => setRemovingModel(false));
-                }}
-              ><X className="icon" /></button></span>)}
+              >{model}</button>)}
             </div>
           </SettingsRow>}
           <div className="settings-provider-model-fields">
