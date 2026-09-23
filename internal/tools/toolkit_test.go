@@ -445,7 +445,7 @@ func TestToolkit_ReadFileStreamsLargeFileRange(t *testing.T) {
 	if len(parsed.Suggestions) == 0 || !strings.Contains(strings.Join(parsed.Suggestions, " "), "omitted range") {
 		t.Fatalf("read_file response missing omitted-range suggestion: %+v", parsed.Suggestions)
 	}
-	for _, want := range []string{"  3001|line-3001", "  3002|line-3002", "  3003|line-3003"} {
+	for _, want := range []string{"3001|line-3001", "\n|line-3002", "\n|line-3003"} {
 		if !strings.Contains(parsed.Content, want) {
 			t.Fatalf("expected content to include %q, got: %q", want, parsed.Content)
 		}
@@ -477,7 +477,7 @@ func TestToolkit_ReadFileStreamsLargeFileRange(t *testing.T) {
 	if rangeParsed.NumLines != 3 || rangeParsed.Range.StartLine != 42 || rangeParsed.Range.EndLine != 44 {
 		t.Fatalf("unexpected range response metadata: %+v", rangeParsed)
 	}
-	for _, want := range []string{"    42|line-0042", "    43|line-0043", "    44|line-0044"} {
+	for _, want := range []string{"42|line-0042", "\n|line-0043", "\n|line-0044"} {
 		if !strings.Contains(rangeParsed.Content, want) {
 			t.Fatalf("range response missing %q:\n%s", want, rangeParsed.Content)
 		}

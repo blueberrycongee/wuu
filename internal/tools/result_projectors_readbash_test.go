@@ -11,7 +11,10 @@ import (
 func readFileEnvelope(numLines int) (rawText string, firstLine, lastLine string) {
 	var content strings.Builder
 	for i := 1; i <= numLines; i++ {
-		line := fmt.Sprintf("%6d|func handler%04d(ctx context.Context) error { return process(ctx, %d) }", i, i, i)
+		line := fmt.Sprintf("|func handler%04d(ctx context.Context) error { return process(ctx, %d) }", i, i)
+		if i == 1 || i%10 == 0 {
+			line = fmt.Sprint(i) + line
+		}
 		content.WriteString(line)
 		content.WriteByte('\n')
 		if i == 1 {
