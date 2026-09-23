@@ -101,14 +101,16 @@ body { margin: 0; width: 1600px; background: var(--surface-2); color: var(--ink-
 * { box-sizing: border-box; }
 .board { margin: 48px; padding: 56px; border-radius: var(--radius-md); background: var(--paper); }
 .masthead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; color: var(--ink-soft); font-size: 18px; }
-.brand { display: flex; align-items: center; gap: 12px; color: var(--ink-strong); font-size: 24px; font-weight: 600; }
-.brand::before { content: ''; width: 12px; height: 12px; border-radius: var(--radius-circle); background: var(--wuu-accent); }
+.brand { color: var(--ink-strong); font-size: 24px; font-weight: 600; }
 h1 { margin: 0; font-size: 52px; line-height: 1.15; font-weight: 500; }
 .intro { font-size: 22px; line-height: 1.6; color: var(--ink-soft); margin: 16px 0 40px; }
 h2 { margin: 0 0 20px; font-size: 20px; font-weight: 500; color: var(--ink-soft); }
 section + section { margin-top: 36px; }
 .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; }
 .swatch { height: 94px; border-radius: var(--radius-sm); margin-bottom: 12px; border: 1px solid var(--hairline); }
+.implementation { border-top: 1px solid var(--hairline); margin-top: 36px; padding-top: 24px; }
+.implementation .swatch { width: 24px; height: 24px; border-radius: var(--radius-xs); }
+.implementation .note { margin: 0 0 20px; }
 .name { font-size: 20px; line-height: 1.4; }
 .token, .value { font: 17px/1.6 var(--font-mono); color: var(--ink-soft); overflow-wrap: anywhere; }
 .footer { border-top: 1px solid var(--hairline); margin-top: 40px; padding-top: 24px; display: flex; justify-content: space-between; gap: 32px; font-size: 17px; line-height: 1.6; color: var(--ink-soft); }
@@ -157,7 +159,7 @@ async function renderBoard(kind, theme, marker) {
   }
   const heading = { colour: "Colour / 色彩", geometry: "Space, radius & elevation / 空间与层级", type: "Typography / 排版" }[kind];
   const descriptions = {
-    colour: "Semantic roles, not a decorative palette. / 按用途选择颜色，而不是按色值。",
+    colour: "Paper and ink establish identity. Colour communicates purpose.<br>纸色与墨色构成基础，形状与排版建立识别，颜色传达状态与交互。",
     geometry: "Compact controls. Comfortable reading. / 紧凑的操作区，舒展的阅读区。",
     type: "One UI baseline. Independent code size. / 统一界面基线，代码字号独立。",
   };
@@ -167,12 +169,16 @@ async function renderBoard(kind, theme, marker) {
       ["Surfaces / 表面", [["Canvas / 画布", "--paper"], ["Surface / 基础表面", "--surface-1"], ["Muted / 次级表面", "--surface-2"], ["Raised / 强调表面", "--surface-3"]]],
       ["Text / 文字", [["Strong / 强调", "--ink-strong"], ["Body / 正文", "--ink"], ["Secondary / 次要", "--ink-soft"], ["Muted / 弱化", "--ink-muted"]]],
       ["Lines / 边界", [["Divider / 内部分隔", "--hairline-soft"], ["Frame / 容器边界", "--hairline"], ["Strong / 强边界", "--hairline-strong"], ["Control / 功能边界", "--control-boundary"]]],
-      ["Accent & interaction / 品牌与交互", [["Brand / 品牌朱红", "--wuu-accent"], ["Pressed / 品牌按下", "--wuu-accent-press"], ["Slider / 滑块强调", "--interaction-accent"], ["Focus / 键盘焦点", "--focus-ring"]]],
       ["Status / 状态", [["Success / 成功", "--success"], ["Warning / 注意", "--warning"], ["Danger / 危险", "--danger"], ["Info / 信息", "--info"]]],
       ["Status surfaces / 状态底色", [["Success tint / 成功底色", "--success-soft"], ["Warning tint / 注意底色", "--warning-soft"], ["Danger tint / 危险底色", "--danger-soft"], ["Selection / 选中底色", "--selection-surface"]]],
     ];
-    content = groups.map(([label, tokens]) => `<section><h2>${label}</h2><div class="grid">${tokens.map(([name, token]) => `<div><div class="swatch" style="background:var(${token})"></div><div class="name">${name}</div><div class="token">${token}</div><div class="value">${color(token)}</div></div>`).join("")}</div></section>`).join("");
+    function swatches(tokens) {
+      return `<div class="grid">${tokens.map(([name, token]) => `<div><div class="swatch" style="background:var(${token})"></div><div class="name">${name}</div><div class="token">${token}</div><div class="value">${color(token)}</div></div>`).join("")}</div>`;
+    }
+    content = groups.map(([label, tokens]) => `<section><h2>${label}</h2>${swatches(tokens)}</section>`).join("");
     content += '<p class="note">Muted text and status fills are not universal text colours. Check each foreground/background pair.<br>弱化文字与状态填充色不能任意用作正文；对比度必须按实际前景和背景检查。</p>';
+    const interactions = [["Slider / 滑块强调", "--interaction-accent"], ["Focus / 键盘焦点", "--focus-ring"], ["Current accent / 现有强调", "--wuu-accent"], ["Pressed accent / 按下强调", "--wuu-accent-press"]];
+    content += `<section class="implementation"><h2>Current accents & interaction / 当前强调与交互实现</h2><p class="note">Existing accent values are implementation references, not a required brand hue.<br>现有强调色记录实现，不规定品牌色相；调整前须按控件与状态用途逐一判断。</p>${swatches(interactions)}</section>`;
   } else if (kind === "geometry") {
     const spaces = [1, 2, 3, 4, 5, 6, 8].map(n => `--space-${n}`);
     content = `<section><h2>Space / 间距 · diagrams at 2× / 图示放大两倍</h2><div class="scale">${spaces.map(token => {

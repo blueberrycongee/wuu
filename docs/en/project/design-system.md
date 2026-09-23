@@ -1,6 +1,6 @@
 # Wuu design system
 
-Wuu prioritizes sustained reading and frequent actions. Neutral surfaces carry content, vermillion provides selective brand emphasis, and semantic colors communicate status. Establish hierarchy with position, space, type size, and weight before adding borders or shadows.
+Wuu prioritizes sustained reading and frequent actions. Paper and ink tones form the foundation; shape and typography establish identity; color communicates status and necessary interaction cues. Establish hierarchy with position, space, type size, and weight before adding borders or shadows.
 
 This specification and its visual boards maintain the desktop foundations for designers, developers, and coding agents. They are not a reskin proposal or a claim that every existing screen already conforms. Native phone interfaces share the information and interaction principles, not literal desktop pixel dimensions.
 
@@ -14,7 +14,7 @@ The boards cover color, space/radius/elevation, and typography using Wuu's own v
 | Space, radius, elevation | [Full image](../assets/design-system/geometry-light.png) | [Full image](../assets/design-system/geometry-dark.png) |
 | Typography | [Full image](../assets/design-system/type-light.png) | [Full image](../assets/design-system/type-dark.png) |
 
-![Wuu light colors: surfaces, text, boundaries, brand, interaction, and status](../assets/design-system/colour-light.png)
+![Wuu light colors: neutral surfaces, text, boundaries, status, and current interaction tokens](../assets/design-system/colour-light.png)
 
 ![Wuu spacing scale, radius roles, elevation, and control size floors](../assets/design-system/geometry-light.png)
 
@@ -39,6 +39,14 @@ These are internal renderer roles, not all public API promises. Extensions use t
 
 ## Color
 
+### Identity and emphasis
+
+Wuu's identity is monochrome-first, with paper, ink, and neutral surfaces rather than a mandatory signature hue. The black-and-white app icon, consistent shapes, typography, and space provide recognition. Neutral does not mean a flat gray interface: use readable tonal contrast and clear hierarchy, with light and dark themes expressing the same roles.
+
+Brand identity, action emphasis, and status are separate concerns. Primary actions can use strong foreground/background contrast without a saturated brand fill. Links, keyboard focus, and selection need recognizable interaction cues; success, warning, and danger need distinct meanings. Color supports these purposes rather than decorating every heading or selected item. Never rely on color alone for an essential distinction.
+
+### Color roles
+
 | Role | Variables | Use |
 | --- | --- | --- |
 | Canvas and surfaces | `--paper`, `--surface-1` through `--surface-4` | Base, secondary, and emphasized surfaces; surface numbers are not shadow levels |
@@ -46,11 +54,16 @@ These are internal renderer roles, not all public API promises. Extensions use t
 | Quieter text | `--ink-tertiary`, `--ink-muted`, `--ink-faint` | Select by purpose; low contrast must not conceal crowding or carry essential information |
 | Three line tiers | `--hairline-soft`, `--hairline`, `--hairline-strong` | Within-surface separators, independent frames, stronger control boundaries; no local gray per line |
 | Functional boundary and focus | `--control-boundary`, `--focus-ring` | Identify controls and keyboard focus, distinct from decorative separators |
-| Brand and interaction | `--wuu-accent`, `--wuu-accent-press`, `--interaction-accent` | Vermillion for brand emphasis; a separate slider accent, with neutral navigation and reading surfaces |
 | Selection | `--selection-surface` | A clear selection surface, not a borrowed warning or success color |
 | Status | `--success`, `--warning`, `--danger`, `--info` | Success, caution, danger, information; combine with text or icons, never color alone |
 
 Success, warning, and danger tints are `--success-soft`, `--warning-soft`, and `--danger-soft`. Status colors are not general-purpose body colors or automatically readable on arbitrary fills. Use appropriate content roles such as `--ink-on-accent` on colored surfaces, then check the actual pair. Dark mode adjusts surfaces, text, and status independently rather than inverting light colors.
+
+### Current implementation accents
+
+The renderer currently defines `--wuu-accent` and `--wuu-accent-press` with vermillion defaults, plus `--interaction-accent` for sliders. These describe existing implementation, not a requirement that Wuu's brand be red. The boards retain their computed values in a compact implementation reference, separate from the neutral foundation and status palette.
+
+Existing accent uses include status indicators as well as controls. Review each use by purpose before changing it; do not globally replace red with gray or repurpose status tokens as brand colors. This specification does not change product styles or theme overrides.
 
 ## Typography
 
