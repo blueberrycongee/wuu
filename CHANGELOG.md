@@ -8,6 +8,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+## [2026.9.23] - 2026-09-23
+
 ### Added
 
 - Agents can inspect local PNG, JPEG, static GIF, and WebP images with
