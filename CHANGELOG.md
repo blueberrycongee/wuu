@@ -29,6 +29,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Desktop conversation refresh and session resume discard obsolete cached
+  messages when a full completed turn arrives, preventing duplicate replies
+  after a missed completion notification.
+
 - Invalid external configuration edits report an error without erasing the last
   valid model inventory. Unchanged invalid files no longer trigger repeated
   parsing and logging, and corrected files recover automatically.

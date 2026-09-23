@@ -91,7 +91,7 @@ describe("mergeSidebarThreadSnapshots", () => {
     expect(repeated).toBe(reconciled);
   });
 
-  it("stabilizes when a listed turn omits cached trailing items", () => {
+  it.each(["in_progress", "completed", "interrupted", "failed"] as const)("stabilizes when a listed %s turn omits cached trailing items", (status) => {
     const listedItem = {
       id: "item-listed",
       type: "user_message" as const,
@@ -108,7 +108,7 @@ describe("mergeSidebarThreadSnapshots", () => {
         id: "turn-alpha",
         items: [listedItem],
         items_view: "full" as const,
-        status: "completed" as const,
+        status,
       }],
     };
     const cached = {
@@ -122,7 +122,9 @@ describe("mergeSidebarThreadSnapshots", () => {
     const reconciled = mergeSidebarThreadSnapshots([cached], [listed]);
     const repeated = mergeSidebarThreadSnapshots(reconciled, [listed]);
 
-    expect(reconciled[0]?.turns[0]?.items).toEqual([listedItem, cachedItem]);
+    expect(reconciled[0]?.turns[0]?.items).toEqual(
+      status === "in_progress" ? [listedItem, cachedItem] : [listedItem],
+    );
     expect(repeated).toBe(reconciled);
   });
 });
