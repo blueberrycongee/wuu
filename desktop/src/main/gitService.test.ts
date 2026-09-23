@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeContext } from "../shared/protocol";
 import { GitService, gitWorkingTreeBusy, type CommitMessageGenerator } from "./gitService";
 
@@ -45,12 +45,53 @@ function serviceFor(
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 describe("GitService file previews", () => {
+  it.each([
+    "plain.txt",
+    "中文.txt",
+    " leading space.txt",
+    ...(process.platform === "win32" ? [] : [
+      "trailing space.txt ",
+      "tab\tname.txt",
+      "line\nname.txt",
+      'quote"name.txt',
+      "back\\slash.txt",
+    ]),
+  ])("preserves untracked filename %j in changes, previews and totals", (path) => {
+    // Force Git's default quoting regardless of the developer's configuration.
+    vi.stubEnv("GIT_CONFIG_COUNT", "1");
+    vi.stubEnv("GIT_CONFIG_KEY_0", "core.quotePath");
+    vi.stubEnv("GIT_CONFIG_VALUE_0", "true");
+    const root = makeRepository();
+    const text = "第一行\n第二行\n";
+    writeFileSync(join(root, path), text);
+    const service = serviceFor(root);
+
+    const changes = service.changes();
+    expect.soft(changes.files).toEqual([
+      { path, status: "untracked", additions: 2, deletions: 0, binary: false },
+    ]);
+    const result = service.fileDiff(changes.files[0].path);
+    expect.soft(result).toMatchObject({
+      path,
+      status: "untracked",
+      additions: 2,
+      deletions: 0,
+      binary: false,
+      original_text: "",
+      modified_text: text,
+      truncated: false,
+    });
+    expect.soft(result.patch).toContain("+第一行\n+第二行");
+    expect.soft(service.status().diff).toEqual({ files: 1, additions: 2, deletions: 0 });
+  });
+
   it("returns ignored text files as complete new-file previews", () => {
     const root = makeRepository();
     writeFileSync(join(root, ".gitignore"), "/docs/plans/*\n");

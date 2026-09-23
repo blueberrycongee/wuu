@@ -664,15 +664,8 @@ function gitDiffStats(cwd: string, includeUntracked: boolean): GitDiffStats {
   if (!includeUntracked) {
     return stats;
   }
-  const untracked = gitOutput(cwd, [
-    "ls-files",
-    "--others",
-    "--exclude-standard",
-  ])
-    ?.split("\n")
-    .map((item) => item.trim())
-    .filter(Boolean);
-  if (!untracked?.length) {
+  const untracked = listUntrackedGitFiles(cwd);
+  if (!untracked.length) {
     return stats;
   }
   let additions = 0;
@@ -814,12 +807,13 @@ function gitChangeStatus(statusCode: string): GitChangeFile["status"] {
 }
 
 function listUntrackedGitFiles(cwd: string): string[] {
-  return (
-    gitOutput(cwd, ["ls-files", "--others", "--exclude-standard"])
-      ?.split("\n")
-      .map((item) => item.trim())
-      .filter(Boolean) ?? []
+  // NUL-delimited output preserves literal paths; gitOutput trims whitespace.
+  const result = spawnSync(
+    "git",
+    ["-C", cwd, "ls-files", "--others", "--exclude-standard", "-z"],
+    { cwd, encoding: "utf8", env: process.env },
   );
+  return result.status === 0 ? result.stdout.split("\0").filter(Boolean) : [];
 }
 
 function untrackedGitFileStats(
@@ -967,7 +961,9 @@ function splitPatchTextLines(text: string): string[] {
 }
 
 function normalizeGitRelativePath(path: string): string {
-  const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
+  // Backslashes are literal filename characters on POSIX, not separators.
+  const portablePath = process.platform === "win32" ? path.replace(/\\/g, "/") : path;
+  const normalized = portablePath.replace(/^\/+/, "");
   if (!normalized || normalized.split("/").some((part) => part === ".." || part === "")) {
     throw new Error("invalid workspace file path");
   }
