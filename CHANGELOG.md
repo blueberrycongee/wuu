@@ -29,6 +29,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Desktop development now uses a separate data directory per checkout and forwards
+  explicit `WUU_HOME` overrides on macOS, preventing experimental settings from
+  breaking an installed app.
+
 - Untracked files with Chinese names or filename whitespace now show their
   original paths, added-line counts, and contents in desktop Git previews.
 

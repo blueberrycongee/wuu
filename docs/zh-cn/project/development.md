@@ -11,6 +11,11 @@ make setup
 make dev
 ```
 
+开发模式使用当前检出目录中的 `.wuu-dev/` 作为 Wuu 数据目录，将配置和运行数据与安装版及其他检出目录隔离。
+需要使用已有数据进行 dogfood 时，显式指定绝对路径 `WUU_HOME`，例如
+`WUU_HOME="$HOME/.wuu" make dev`。共享数据意味着开发版可以修改安装版的数据，旧版可能无法识别新增配置。
+macOS LaunchServices 启动器也会转发该设置。
+
 `make setup` 安装桌面、共享客户端核心、保留的 Web/Expo 客户端、插件 SDK、协议包和文档站的锁定依赖，不会安装原生手机工具链或配置远程服务。
 
 `make dev` 运行桌面启动器，在启动 Electron 前构建共享 Web 资源、适用平台的原生辅助程序，以及当前 Go 核心和插件辅助程序。应用使用该检出目录的私有 `wuu-core`，不是 `PATH` 中另行安装的 `wuu`。renderer 修改通过 Vite 更新；修改 Go、原生辅助程序或进程启动代码后，应重启启动器，让运行中的进程使用新构建。
