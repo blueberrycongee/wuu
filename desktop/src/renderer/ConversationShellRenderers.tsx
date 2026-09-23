@@ -426,7 +426,7 @@ export function ConversationTitleActions({
             aria-pressed={environmentPanelVisible}
             onClick={onToggleEnvironmentPanel}
           >
-            <Info className="icon-lg" size={18} />
+            <Info />
       </button>
       <button
             className="icon-button side-panel-toggle-button"
