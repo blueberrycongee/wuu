@@ -8,6 +8,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Changed
+
+- While a conversation loads, the loading indicator covers only the
+  conversation area. The sidebar, title bar, and environment panel stay
+  visible and usable, and the sidebar marks the conversation being opened.
+
 ### Fixed
 
 - Switching conversations no longer shifts messages after they appear. A

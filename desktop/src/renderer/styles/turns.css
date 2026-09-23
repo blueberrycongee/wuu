@@ -4410,6 +4410,7 @@ pre {
 }
 
 .view-switch-loading,
+.view-switch-loading-conversation,
 .view-switch-loading-inline {
   display: grid;
   align-content: center;
@@ -4423,6 +4424,28 @@ pre {
   z-index: 10000;
   background: var(--paper);
   pointer-events: auto;
+}
+
+/* Sidebar, titlebar and environment panel stay usable while a conversation
+ * loads: cover only the conversation cell, above its composer and status row
+ * and below the environment panel. The fade cross-dissolves the outgoing
+ * session instead of cutting to a blank pane. */
+.view-switch-loading-conversation {
+  grid-row: 2;
+  z-index: 30;
+  background: var(--paper);
+  pointer-events: auto;
+  animation: view-switch-enter var(--motion-base) var(--ease-out) both;
+}
+
+.conversation-pane.environment-panel-reserved .view-switch-loading-conversation {
+  padding-right: var(--environment-panel-content-inset);
+}
+
+@keyframes view-switch-enter {
+  from {
+    opacity: 0;
+  }
 }
 
 .view-switch-mark {
@@ -4512,6 +4535,7 @@ pre {
   .wuu-launch-mark span,
   .wuu-launch-rail::after,
   .view-switch-loading,
+  .view-switch-loading-conversation,
   .project-row .project-row-loading,
   .project-row.pending-switch::before,
   .thread-row.pending-switch::before,
