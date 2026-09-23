@@ -3744,6 +3744,8 @@ describe("reconcileResumedThreadTurns", () => {
   it("salvages client tail items when a resumed turn snapshot lags behind live items", () => {
     const resumed = threadWithTurnIDs(["turn-1", "turn-2"]);
     const local = threadWithTurnIDs(["turn-1", "turn-2"]);
+    resumed.turns[1].status = "in_progress";
+    local.turns[1].status = "in_progress";
     const liveItem: ThreadItem = {
       id: "turn-2-tool",
       seq: 8,
