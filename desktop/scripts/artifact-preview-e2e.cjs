@@ -97,6 +97,9 @@ app.whenReady().then(async () => {
     if (event.level === "error" && !event.message.startsWith("Blocked script execution")) console.error(event.message);
   });
   await win.loadFile(path.join(desktopRoot, "out/renderer/index.html"));
+  // Hidden windows need focused-page emulation to paint keyboard focus rings.
+  win.webContents.debugger.attach('1.3');
+  await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
   await waitFor(win, () => Boolean(document.querySelector(".composer textarea")));
   await evaluate(win, () => {
     const input = document.querySelector(".composer textarea");
@@ -182,11 +185,53 @@ app.whenReady().then(async () => {
       });
       await waitFor(win, () => Boolean(document.querySelector('.image-preview-image.loaded')));
       assert.equal(await evaluate(win, () => document.querySelector('.image-preview-image').src), source, "Enlarging must still open the complete original image");
-      await evaluate(win, () => document.querySelector('.image-preview-toolbar-button:last-child').click());
+      if (index === 2) assert.equal(await evaluate(win, () => document.querySelector('.image-preview-navigation')), null);
+      await evaluate(win, () => document.querySelector('.image-preview-toolbar .wuu-icon-x').closest('button').click());
       await waitFor(win, () => !document.querySelector('.image-preview-overlay'));
     }
   }
-  console.log("Artifact preview e2e passed: completion, managed HTML/text/images, sandbox, dismissal, manual reopen, light/dark, 14/20px, wide/narrow geometry, portrait/panorama fit and enlarge.");
+  await evaluate(win, () => {
+    const opener = document.querySelectorAll('.turn-artifact-inline-image button')[1];
+    opener.focus();
+    opener.click();
+  });
+  await waitFor(win, () => Boolean(document.querySelector('.image-preview-image.loaded')));
+  assert.equal(await evaluate(win, () => document.querySelector('.image-preview-position').textContent), '2 / 2');
+  await evaluate(win, () => {
+    window.previewDialog = document.querySelector('.image-preview-overlay');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+  });
+  await waitFor(win, () => document.querySelector('.image-preview-position')?.textContent === '1 / 2' && Boolean(document.querySelector('.image-preview-image.loaded')));
+  assert.equal(await evaluate(win, () => document.querySelector('.image-preview-overlay') === window.previewDialog), true);
+  assert.equal(await evaluate(win, () => document.querySelector('.image-preview-image').src === document.querySelector('.turn-artifact-inline-image img').src), true);
+  assert.equal(await evaluate(win, () => document.querySelector('.image-preview-navigation button').disabled), true);
+  for (const theme of ['light', 'dark']) {
+    for (const size of [14, 20]) {
+      await win.webContents.executeJavaScript(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.setProperty('--font-ui','${size}px')`);
+      for (const width of [1440, 760, 360]) {
+        win.setContentSize(width, 900);
+        await settle(win);
+        const contained = await evaluate(win, () => [...document.querySelectorAll('.image-preview-toolbar button, .image-preview-position')].every(node => {
+          const rect = node.getBoundingClientRect();
+          return rect.left >= 0 && rect.right <= innerWidth && rect.bottom <= document.querySelector('.image-preview-stage').getBoundingClientRect().top;
+        }));
+        assert.equal(contained, true, 'Preview navigation and actions must fit without overlapping the image stage');
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' });
+        win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' });
+        await settle(win);
+        assert.equal(await evaluate(win, () => document.querySelector('.image-preview-overlay').contains(document.activeElement)), true);
+        assert.equal(await evaluate(win, () => getComputedStyle(document.activeElement).outlineStyle !== 'none'), true, 'Keyboard focus must be visible');
+        fs.writeFileSync(path.join(output, `gallery-${theme}-${size}-${width}.png`), (await win.webContents.capturePage()).toPNG());
+      }
+    }
+  }
+  await evaluate(win, () => document.querySelector('.image-preview-navigation button:last-child').click());
+  await waitFor(win, () => document.querySelector('.image-preview-position')?.textContent === '2 / 2' && Boolean(document.querySelector('.image-preview-image.loaded')));
+  assert.equal(await evaluate(win, () => document.querySelector('.image-preview-navigation button:last-child').disabled), true);
+  await evaluate(win, () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  await waitFor(win, () => !document.querySelector('.image-preview-overlay'));
+  assert.equal(await evaluate(win, () => document.activeElement === document.querySelectorAll('.turn-artifact-inline-image button')[1]), true);
+  console.log("Artifact preview e2e passed: completion, managed HTML/text/images, sandbox, dismissal, manual reopen, light/dark, 14/20px, wide/narrow geometry, portrait/panorama fit, gallery navigation, boundaries and focus restoration.");
   win.destroy();
   app.exit(0);
 }).catch((error) => { console.error(error); app.exit(1); });

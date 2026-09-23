@@ -8,6 +8,7 @@ import remarkGfm from "remark-gfm";
 import remarkCjkAutolinkBoundary from "./remarkCjkAutolinkBoundary";
 import remarkCjkStrongBoundary from "./remarkCjkStrongBoundary";
 import { useImagePreview } from "./ImagePreview";
+import { useImagePreviewRegistration } from "./ImagePreviewGallery";
 import {
   formatWorkspaceFileTarget,
   parseLinkTarget,
@@ -840,23 +841,25 @@ function RichImage({
   const resolvedSource = resolveImageSource(source, cwd);
   const [failedSource, setFailedSource] = useState<string | null>(null);
   const { openPreview } = useImagePreview();
+  const titleText = imageTarget(source);
+  const register = useImagePreviewRegistration(failedSource === resolvedSource ? null : { src: resolvedSource, alt, title: titleText });
   if (failedSource === resolvedSource) {
     return <></>;
   }
-  const titleText = imageTarget(source);
-  const handleActivate = (): void => {
-    openPreview({ src: resolvedSource, alt, title: titleText });
+  const handleActivate = (origin: HTMLElement): void => {
+    openPreview({ src: resolvedSource, alt, title: titleText }, origin);
   };
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLImageElement>): void => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      handleActivate();
+      handleActivate(event.currentTarget);
     }
   };
   const image = (
     <Tooltip content={titleText}>
       <img
         className="rich-image"
+        ref={register}
         src={resolvedSource}
         alt={alt}
         loading="lazy"
@@ -865,7 +868,7 @@ function RichImage({
         aria-label={
           alt ? t("rich.enlargeNamed", { alt }) : t("rich.enlargeImage")
         }
-        onClick={handleActivate}
+        onClick={event => handleActivate(event.currentTarget)}
         onKeyDown={handleKeyDown}
         onError={() => setFailedSource(resolvedSource)}
       />
