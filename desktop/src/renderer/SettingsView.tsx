@@ -911,6 +911,23 @@ export function SettingsView({
     })),
   ]), [customPluginSettingsPages, pluginSettingsRecords, t]);
 
+  const sidebarToggle = (
+    <button
+      type="button"
+      className="icon-button side-panel-toggle-button sidebar-toggle-button sidebar-collapse-toggle settings-sidebar-toggle"
+      data-wuu-component="sidebar-toggle"
+      aria-label={sidebarCollapsed ? t("settings.expandSidebar") : t("settings.collapseSidebar")}
+      aria-pressed={!sidebarCollapsed}
+      onClick={onToggleSidebar}
+      onPointerEnter={scheduleSidebarDrawerOpen}
+      onPointerLeave={(event) =>
+        scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
+      }
+    >
+      <SidePanelToggleIcon side="left" open={!sidebarCollapsed} />
+    </button>
+  );
+
   const nativeSettings = (
     <div ref={effectiveShellRef} className={shellClassName} style={shellStyle} data-wuu-component="settings-shell">
       <div
@@ -934,7 +951,7 @@ export function SettingsView({
           * 淡出/位移也复用 sidebar.css 里同一组规则。
           */}
         <div className="sidebar-content">
-          <div className="traffic-spacer" />
+          <div className="traffic-spacer">{!sidebarCollapsed ? sidebarToggle : null}</div>
           <button className="settings-back-button" type="button" onClick={onBack}>
             <ArrowLeft className="icon" />
             <span>{t("settings.backToApp")}</span>
@@ -1031,26 +1048,9 @@ export function SettingsView({
       <main className="settings-main" data-wuu-component="settings-content">
         <div className="settings-titlebar">
           {isTouchWebShell() && <button type="button" className="settings-phone-back" aria-label={t("common.back")} onClick={onBack}><ArrowLeft size={22} /></button>}
-          {/* The toggle must stay a descendant of the titlebar drag strip:
-           * a no-drag element only gets carved out of a drag region when it
-           * belongs to it — as a shell-level sibling positioned over the
-           * strip it kept its DOM hit target but real clicks were swallowed
-           * as window drags. The hover-drawer lift is shared with the
-           * conversation titlebar via sidebar.css. */}
-          <button
-            type="button"
-            className="icon-button side-panel-toggle-button sidebar-toggle-button settings-sidebar-toggle"
-            data-wuu-component="sidebar-toggle"
-            aria-label={sidebarCollapsed ? t("settings.expandSidebar") : t("settings.collapseSidebar")}
-            aria-pressed={!sidebarCollapsed}
-            onClick={onToggleSidebar}
-            onPointerEnter={scheduleSidebarDrawerOpen}
-            onPointerLeave={(event) =>
-              scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
-            }
-          >
-            <SidePanelToggleIcon side="left" open={!sidebarCollapsed} />
-          </button>
+          {/* Match the main shell's docked/collapsed slots. Keep the collapsed
+           * toggle inside the drag strip so native hit testing honors no-drag. */}
+          {sidebarCollapsed ? sidebarToggle : null}
         </div>
         <div ref={settingsScrollRef} className="settings-scroll">
           <div

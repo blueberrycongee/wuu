@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -167,4 +168,33 @@ func rejectSensitiveToolPath(env *Env, toolName, action, absPath string) error {
 		return fmt.Errorf("%s refuses to %s sensitive path %q (%s). This guard applies in every permission mode, including unconfined, and chat approval does not lift it. Edit the file outside the session", toolName, action, displayPath, reason)
 	}
 	return nil
+}
+
+// resolveReadTarget checks the actual file after worktree rebasing and symlink resolution.
+func resolveReadTarget(ctx context.Context, env *Env, toolName, path string, managed bool) (string, error) {
+	// Resolve aliases before the final sensitive-path check. An innocently
+	// named symlink must not expose a credential file within a workspace root.
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	if !managed {
+		// Hosted worktrees can live under WUU_HOME. Recheck the actual target
+		// against that execution root, not the infrastructure path above it.
+		execRoot, err := env.ExecRootDir(ctx)
+		if err != nil {
+			return "", err
+		}
+		boundary := &Env{
+			RootDir: execRoot, FileScopeRoots: append([]string{execRoot}, env.FileScopeRoots...),
+			Unconfined: env.Unconfined, PermissionMode: env.PermissionMode, AllowMutations: env.AllowMutations,
+		}
+		if _, err := boundary.ResolvePath(resolved); err != nil {
+			return "", err
+		}
+		if err := rejectSensitiveReadPath(boundary, toolName, resolved); err != nil {
+			return "", err
+		}
+	}
+	return resolved, nil
 }

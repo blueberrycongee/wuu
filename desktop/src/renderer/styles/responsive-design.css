@@ -527,11 +527,8 @@
 }
 
 @media (pointer: coarse) and (max-width: 760px) {
-  .app-shell.compact-navigation .titlebar :is(
-    .sidebar-toggle-button, .environment-toggle-button, .side-panel-toggle-button
-  ) {
-    width: 44px;
-    height: 44px;
+  :root[data-host-kind="web"] {
+    --window-titlebar-leading-inset: 10px;
   }
 
   .app-shell.compact-navigation .composer-bar {
@@ -551,29 +548,5 @@
 
   .app-shell.compact-navigation :is(.nav-item, .thread-row, .project-row) {
     min-height: 44px;
-  }
-
-  .workspace-right-panel.compact-navigation .workspace-panel-tabbar {
-    grid-template-columns: 44px minmax(0, 1fr) 44px;
-  }
-
-  .app-shell.right-panel-globalized .workspace-right-panel.compact-navigation .workspace-panel-tabbar {
-    grid-template-columns: 44px 44px minmax(0, 1fr) 44px;
-  }
-
-  .app-shell.compact-navigation .globalized-sidebar-toggle-region {
-    top: calc(env(safe-area-inset-top, 0px) + 4px);
-    width: 44px;
-    height: 44px;
-  }
-
-  .app-shell.compact-navigation .globalized-sidebar-toggle {
-    width: 44px;
-    height: 44px;
-  }
-
-  .workspace-right-panel.compact-navigation :is(.workspace-panel-back, .workspace-panel-close-tab) {
-    width: 44px;
-    height: 44px;
   }
 }

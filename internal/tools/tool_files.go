@@ -2,18 +2,21 @@ package tools
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 // ---------------------------------------------------------------------------
@@ -31,7 +34,7 @@ func (t *ReadFileTool) IsConcurrencySafe() bool { return true }
 func (t *ReadFileTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        "read_file",
-		Description: "Read a continuous range of a workspace file with line numbers. Each line is NUMBER|CONTENT: the number and first | are display metadata; everything after that delimiter is file content, including its original indentation. Copy only CONTENT when editing. Use offset and limit for focused reads. If projected, pass continuation.next as the next call arguments to read the rest of the requested range. Results include displayed range, omitted ranges, and workspace_revision. Use list_files for directories.",
+		Description: "Read a local text file or inspect a PNG, JPEG, static GIF, or WebP image. Images are returned as visual content for image-capable models, with large dimensions resized. SVG is read as text. Text files return a continuous range with line numbers. Each line is NUMBER|CONTENT: the number and first | are display metadata; everything after that delimiter is file content, including its original indentation. Copy only CONTENT when editing. Use offset and limit for focused reads. If projected, pass continuation.next as the next call arguments to read the rest of the requested range. Results include displayed range, omitted ranges, and workspace_revision. Use list_files for directories.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -41,15 +44,15 @@ func (t *ReadFileTool) Definition() providers.ToolDefinition {
 				},
 				"path": map[string]any{
 					"type":        "string",
-					"description": "File path relative to workspace root, or a supported artifact path. Required unless continuation is supplied.",
+					"description": "File path relative to workspace root, an absolute path in the allowed file scope, or a session artifact path. Required unless continuation is supplied.",
 				},
 				"offset": map[string]any{
 					"type":        "integer",
-					"description": "1-based line number to start reading from. Default 1.",
+					"description": "Text only: 1-based line number to start reading from. Default 1.",
 				},
 				"limit": map[string]any{
 					"type":        "integer",
-					"description": "Max lines to return. Omit to read the whole file when it fits size limits.",
+					"description": "Text only: max lines to return. Omit to read the whole file when it fits size limits.",
 				},
 			},
 			// Enforce path-or-continuation in ValidateInput: root unions are
@@ -73,6 +76,14 @@ func (t *ReadFileTool) ValidateInput(argsJSON string) error {
 }
 
 func (t *ReadFileTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	result, err := t.ExecuteResult(ctx, argsJSON)
+	return result.TextProjection(), err
+}
+
+func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (toolresult.Result, error) {
+	if err := ctx.Err(); err != nil {
+		return toolresult.Result{}, err
+	}
 	type byteRangeArgs struct {
 		Offset    int `json:"offset"`
 		Limit     int `json:"limit"`
@@ -87,15 +98,15 @@ func (t *ReadFileTool) Execute(ctx context.Context, argsJSON string) (string, er
 		ByteRange      *byteRangeArgs `json:"byte_range"`
 	}
 	if err := decodeArgs(argsJSON, &args); err != nil {
-		return "", err
+		return toolresult.Result{}, err
 	}
 	if strings.TrimSpace(args.Continuation) != "" {
 		continuation, err := decodeReadFileContinuation(args.Continuation)
 		if err != nil {
-			return "", err
+			return toolresult.Result{}, err
 		}
 		if strings.TrimSpace(args.Path) != "" && args.Path != continuation.Path {
-			return "", errors.New("read_file continuation does not match path")
+			return toolresult.Result{}, errors.New("read_file continuation does not match path")
 		}
 		args.Path = continuation.Path
 		if continuation.ByteOffset != nil {
@@ -110,7 +121,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, argsJSON string) (string, er
 		args.ExpectedSHA256 = continuation.ExpectedSHA256
 	}
 	if strings.TrimSpace(args.Path) == "" {
-		return "", errors.New("read_file requires path")
+		return toolresult.Result{}, errors.New("read_file requires path")
 	}
 	// Some provider-compatible decoders materialize every optional schema
 	// property with zero values. Treat those empty selector sentinels as absent
@@ -124,11 +135,11 @@ func (t *ReadFileTool) Execute(ctx context.Context, argsJSON string) (string, er
 
 	resolved, displayPath, managedArtifact, err := t.env.ResolveReadPath(args.Path)
 	if err != nil {
-		return "", err
+		return toolresult.Result{}, err
 	}
 	if !managedArtifact {
 		if err := rejectSensitiveReadPath(t.env, "read_file", resolved); err != nil {
-			return "", err
+			return toolresult.Result{}, err
 		}
 	}
 	// Worktree-bound execution: rebase onto the checkout only after the
@@ -136,7 +147,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, argsJSON string) (string, er
 	if !managedArtifact {
 		resolved, err = t.env.ExecPath(ctx, resolved)
 		if err != nil {
-			return "", err
+			return toolresult.Result{}, err
 		}
 	}
 
@@ -148,21 +159,49 @@ func (t *ReadFileTool) Execute(ctx context.Context, argsJSON string) (string, er
 			if hint != "" {
 				msg += fmt.Sprintf(". Did you mean: %s?", hint)
 			}
-			return "", errors.New(msg)
+			return toolresult.Result{}, errors.New(msg)
 		}
-		return "", fmt.Errorf("stat file: %w", err)
+		return toolresult.Result{}, fmt.Errorf("stat file: %w", err)
 	}
 	if info.IsDir() {
-		return "", fmt.Errorf("path is a directory: %s. Use list_files to inspect directories or read_file on a file inside it", args.Path)
+		return toolresult.Result{}, fmt.Errorf("path is a directory: %s. Use list_files to inspect directories or read_file on a file inside it", args.Path)
 	}
+	if !info.Mode().IsRegular() {
+		return toolresult.Result{}, fmt.Errorf("read_file requires a regular file: %s", args.Path)
+	}
+	file, err := os.Open(resolved)
+	if err != nil {
+		return toolresult.Result{}, fmt.Errorf("open file: %w", err)
+	}
+	defer file.Close()
+	sample, err := io.ReadAll(io.LimitReader(file, 512))
+	if err != nil {
+		return toolresult.Result{}, fmt.Errorf("read file header: %w", err)
+	}
+	mediaType := http.DetectContentType(sample)
+	if strings.HasPrefix(mediaType, "image/") {
+		if _, err := resolveReadTarget(ctx, t.env, t.Name(), resolved, managedArtifact); err != nil {
+			return toolresult.Result{}, err
+		}
+		if args.Offset > 1 || args.Limit != nil || args.ByteRange != nil || args.Continuation != "" || args.ExpectedSHA256 != "" {
+			return toolresult.Result{}, errors.New("image reads do not support text ranges or continuations; call read_file with only path")
+		}
+		return readFileImage(ctx, file, displayPath, info.Size())
+	}
+
 	if args.ByteRange != nil {
 		if args.Offset > 0 || args.Limit != nil {
-			return "", errors.New("read_file accepts byte_range instead of offset/limit")
+			return toolresult.Result{}, errors.New("read_file accepts byte_range instead of offset/limit")
 		}
-		return readFileByteWindowRedacted(ctx, t.env, resolved, displayPath, args.ByteRange.Offset, args.ByteRange.Limit, args.ByteRange.EndOffset, strings.TrimSpace(args.ExpectedSHA256), info.Size())
+		text, err := readFileByteWindowRedacted(ctx, t.env, resolved, displayPath, args.ByteRange.Offset, args.ByteRange.Limit, args.ByteRange.EndOffset, strings.TrimSpace(args.ExpectedSHA256), info.Size())
+		return toolresult.FromText(text), err
 	}
+	if bytes.IndexByte(sample, 0) >= 0 {
+		return toolresult.Result{}, errors.New("unsupported binary file; read_file accepts text, PNG, JPEG, static GIF, and WebP")
+	}
+
 	if args.Limit == nil && info.Size() > int64(defaultMaxFileBytes) {
-		return "", fmt.Errorf("file too large (%d bytes, max %d). Use offset and limit to read portions", info.Size(), defaultMaxFileBytes)
+		return toolresult.Result{}, fmt.Errorf("file too large (%d bytes, max %d). Use offset and limit to read portions", info.Size(), defaultMaxFileBytes)
 	}
 
 	if args.Offset <= 0 {
@@ -171,7 +210,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, argsJSON string) (string, er
 	limit := 0
 	if args.Limit != nil {
 		if *args.Limit <= 0 {
-			return "", errors.New("read_file limit must be positive")
+			return toolresult.Result{}, errors.New("read_file limit must be positive")
 		}
 		limit = *args.Limit
 	}
@@ -182,11 +221,11 @@ func (t *ReadFileTool) Execute(ctx context.Context, argsJSON string) (string, er
 	}
 	readResult, err := readFileLineRange(resolved, args.Offset, limit, maxSelectedBytes)
 	if err != nil {
-		return "", err
+		return toolresult.Result{}, err
 	}
 	contentHash := readResult.ContentSHA256
 	if expected := strings.TrimSpace(args.ExpectedSHA256); expected != "" && expected != contentHash {
-		return "", fmt.Errorf("read_file continuation is stale: file content changed from %q to %q; restart without expected_sha256", expected, contentHash)
+		return toolresult.Result{}, fmt.Errorf("read_file continuation is stale: file content changed from %q to %q; restart without expected_sha256", expected, contentHash)
 	}
 
 	// Dedup check: same file, same range, same content → return stub.
@@ -207,7 +246,8 @@ func (t *ReadFileTool) Execute(ctx context.Context, argsJSON string) (string, er
 					"message":            "File unchanged since last read. Refer to the earlier read result.",
 					"next_suggestions":   []string{"use the earlier read result as evidence, or request a different offset/limit if more context is needed"},
 				}
-				return mustJSON(result)
+				text, err := mustJSON(result)
+				return toolresult.FromText(text), err
 			}
 		}
 	}
@@ -243,7 +283,8 @@ func (t *ReadFileTool) Execute(ctx context.Context, argsJSON string) (string, er
 		"truncated":          args.Offset <= readResult.TotalLines && args.Offset-1+len(readResult.Lines) < readResult.TotalLines,
 		"next_suggestions":   readFileNextSuggestions(readResult.TotalLines, args.Offset, len(readResult.Lines)),
 	}
-	return mustJSON(result)
+	text, err := mustJSON(result)
+	return toolresult.FromText(text), err
 }
 
 const (

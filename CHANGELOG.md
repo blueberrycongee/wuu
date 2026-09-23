@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Agents can inspect local PNG, JPEG, static GIF, and WebP images with
+  `read_file`, including generated session artifacts, without a composer
+  attachment. Image results retain the existing file scope and model capability
+  checks. Code Mode forwards emitted images as visual observations.
+
 - Image previews support smooth trackpad pinch zoom, two-finger panning, drag,
   fit-to-window and actual-size views, rotation, keyboard controls, and a desktop
   Save As dialog that preserves the original image.
@@ -110,6 +115,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Inline artifact image previews fit the image's original proportions instead of
+  adding white margins inside a fixed 4:3 frame, without cropping or stretching.
+  Click-to-enlarge still opens the complete original image.
+
 - Conversation model changes no longer replace the selected model with workspace
   defaults. Model, reasoning-effort, and permission update failures use the shared
   top notification instead of duplicating errors in the composer status line.
@@ -153,6 +162,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Desktop surfaces share titlebar geometry and sidebar-control alignment, while
   compact channel headers retain their native safe-area clearance.
+  Sidebar toggles now retain their position and size when switching to Settings
+  or opening a narrow-window drawer. Workspace headers use the same geometry
+  across window widths. Desktop zoom preserves native window-control alignment
+  while controls fit; larger zoom or font sizes expand the row to avoid clipping.
 
 - The desktop app detects external engines installed in the usual user
   locations, including `~/.local/bin`, Homebrew, and version-manager shims,
