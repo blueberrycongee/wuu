@@ -2,11 +2,17 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import type { Thread, ThreadItem, Turn } from "../shared/protocol";
-import { initialState, reduceServerEvent, type AppState } from "./AppState";
+import {
+  initialState,
+  reconcileListedThreadState,
+  reconcileResumedThreadTurns,
+  reduceServerEvent,
+  type AppState,
+} from "./AppState";
 import { ASSISTANT_TURN_PRESENTATION_STABILIZE_MS } from "./AssistantTurnPresentation";
 import { TurnView } from "./TurnView";
 
-it("shows one answer after completion replaces a cached item with a different id", async () => {
+it.each(["notification", "refresh", "resume"] as const)("shows one answer after %s replaces a stale cached identity", async (via) => {
   vi.useFakeTimers();
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -54,18 +60,36 @@ it("shows one answer after completion replaces a cached item with a different id
       status: "completed",
       items: [{ ...cachedAnswer, id: "turn-1-item-8" }],
     };
+    // A final item can arrive under its canonical identity before the turn
+    // snapshot removes the cached alias. That makes the full snapshot a prefix
+    // of local items, which must not be mistaken for a lagging live snapshot.
+    state = reduceServerEvent(state, {
+      kind: "notification",
+      workdir: "/repo",
+      message: {
+        method: "item/completed",
+        params: { thread_id: thread.id, turn_id: turn.id, item: completedTurn.items[0] },
+      },
+    });
+    const completedThread: Thread = { ...thread, status: "idle", turns: [completedTurn] };
     // The full completion result is authoritative, unlike an in-flight cache.
     // Replaying it must not retain both identities of the same answer.
     for (let delivery = 0; delivery < 2; delivery++) {
       act(() => {
-        state = reduceServerEvent(state, {
-          kind: "notification",
-          workdir: "/repo",
-          message: {
-            method: "turn/completed",
-            params: { thread_id: thread.id, turn: completedTurn },
-          },
-        });
+        if (via === "refresh") {
+          state = reconcileListedThreadState(state, [completedThread]);
+        } else if (via === "resume") {
+          state = { ...state, thread: reconcileResumedThreadTurns(completedThread, state.thread) };
+        } else {
+          state = reduceServerEvent(state, {
+            kind: "notification",
+            workdir: "/repo",
+            message: {
+              method: "turn/completed",
+              params: { thread_id: thread.id, turn: completedTurn },
+            },
+          });
+        }
         render();
       });
       await act(async () => {

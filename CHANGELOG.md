@@ -29,6 +29,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Desktop conversation refresh and session resume discard obsolete cached
+  messages when a full completed turn arrives, preventing duplicate replies
+  after a missed completion notification.
+
 - Files with Chinese names or filename whitespace now preserve their paths,
   line counts, and contents in desktop Git previews before and after staging,
   including modifications, deletions, and renames. Commit message generation

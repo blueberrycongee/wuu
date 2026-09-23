@@ -25,6 +25,7 @@ import { isInternalUserNotificationItem } from "./InternalUserNotification";
 import { threadDisplayTitle } from "./ThreadTitles";
 import { sortChildAgents } from "./ThreadAgents";
 import {
+  hasAuthoritativeTurnItems,
   mergeTurnItemsInOrder,
   orderedTurnItems,
   upsertTurnItemInOrder,
@@ -1342,7 +1343,8 @@ function updateThread(
  * that is genuinely ahead of the client) breaks the prefix match, and we defer
  * to the resumed snapshot as authoritative. The overlapping prefix always uses
  * the server's (fresher) turn/item objects; only the client's extra tail
- * carries over.
+ * carries over. Full terminal turns are authoritative even when their items
+ * are a prefix: missing items there are obsolete, not newer local work.
  */
 export function reconcileResumedThreadTurns(
   resumed: Thread,
@@ -1363,7 +1365,7 @@ export function reconcileResumedThreadTurns(
   let changed = false;
   const mergedTurns = resumed.turns.map((turn, index) => {
     const localTurn = localTurns[index];
-    if (localTurn.items.length <= turn.items.length) {
+    if (hasAuthoritativeTurnItems(turn) || localTurn.items.length <= turn.items.length) {
       return turn;
     }
     changed = true;
@@ -1744,7 +1746,7 @@ function mergeListedThreadTurns(existing: Turn[], listed: Turn[]): Turn[] {
     let needsMerge = existing.length > listed.length;
     const listedTurns = listed.map((turn, index) => {
       const local = existing[index];
-      if (local.items.length <= turn.items.length) {
+      if (hasAuthoritativeTurnItems(turn) || local.items.length <= turn.items.length) {
         return turn;
       }
       needsMerge = true;
