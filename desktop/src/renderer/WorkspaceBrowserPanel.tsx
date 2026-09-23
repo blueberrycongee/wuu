@@ -2,11 +2,8 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUpRight,
-  Bot,
   Globe,
-  Hand,
   RotateCw,
-  Square,
   X
 } from "./WuuIcons";
 import {
@@ -18,7 +15,7 @@ import {
   type FormEvent
 } from "react";
 import type { ActivitySession, BrowserDockTarget, BrowserSurfaceSnapshot, RuntimeContext } from "../shared/protocol";
-import { translateCurrent, useI18n } from "./i18n";
+import { useI18n } from "./i18n";
 import { browserTabIDForActivity, displayedBrowserTabID, observeBrowserPanelBounds } from "./BrowserVisibility";
 import { openExternalURL, workspaceBrowserOpenTarget } from "./WorkspaceBrowserOpen";
 import {
@@ -31,11 +28,6 @@ const HOME_PAGE_URL = "wuu://new-tab";
 const SEARCH_FALLBACK_URL = "https://www.google.com/search?igu=1&q=";
 
 type BrowserStatus = "idle" | "loading" | "error";
-
-function extractHostname(value: string): string | undefined {
-  const match = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/([^/?#]+)/.exec(value);
-  return match?.[1];
-}
 
 function looksLikeUrl(input: string): boolean {
   const value = input.trim();
@@ -92,9 +84,7 @@ export function WorkspaceBrowserPanel({
   dockTarget,
   requestedURL,
   overlaySuppressed = false,
-  onActivityTakeover,
-  onActivityRelease,
-  onActivityStop,
+  onUserInteraction,
 }: {
   visible?: boolean;
   threadID?: string;
@@ -103,9 +93,7 @@ export function WorkspaceBrowserPanel({
   dockTarget?: BrowserDockTarget;
   requestedURL?: WorkspaceBrowserNavigationRequest;
   overlaySuppressed?: boolean;
-  onActivityTakeover?: () => void;
-  onActivityRelease?: () => void;
-  onActivityStop?: () => void;
+  onUserInteraction?: () => void | Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -125,13 +113,11 @@ export function WorkspaceBrowserPanel({
   const showingAgentTab = Boolean(agentTabID && selectedTabID === agentTabID);
 
   const [currentURL, setCurrentURL] = useState("");
-  const [pageTitle, setPageTitle] = useState("");
   const [draftURL, setDraftURL] = useState("");
   const [status, setStatus] = useState<BrowserStatus>("idle");
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
-  const [hostHint, setHostHint] = useState<string | undefined>(undefined);
   const [pendingURL, setPendingURL] = useState<string | undefined>(undefined);
   const consumeNavigation = useWorkspaceBrowserNavigationConsumer();
   const consumedRequestIDRef = useRef<number | undefined>(undefined);
@@ -139,8 +125,6 @@ export function WorkspaceBrowserPanel({
   const applySurface = useCallback((snapshot: BrowserSurfaceSnapshot) => {
     setCurrentURL(snapshot.url);
     setPendingURL(undefined);
-    setHostHint(extractHostname(snapshot.url));
-    setPageTitle(snapshot.title);
     setCanGoBack(snapshot.canGoBack);
     setCanGoForward(snapshot.canGoForward);
     if (snapshot.error) {
@@ -156,16 +140,14 @@ export function WorkspaceBrowserPanel({
   }, []);
 
   useLayoutEffect(() => {
-    // A failed or absent snapshot must not leave another tab's address, title,
+    // A failed or absent snapshot must not leave another tab's address,
     // navigation controls, or native page visible in this session.
     setCurrentURL("");
-    setPageTitle("");
     setDraftURL("");
     setStatus("idle");
     setErrorMessage(undefined);
     setCanGoBack(false);
     setCanGoForward(false);
-    setHostHint(undefined);
     setPendingURL(undefined);
   }, [workdir, selectedTabID]);
 
@@ -217,21 +199,22 @@ export function WorkspaceBrowserPanel({
     return subscribe((payload) => {
       if (!workdir || payload.workdir !== workdir) return;
       if (payload.tabID !== selectedTabIDRef.current) return;
-      if (!activity || activity.controller !== "agent" || activity.state === "stopped") return;
-      onActivityTakeover?.();
+      if (!showingAgentTab || !activity || activity.state === "stopped") return;
+      void onUserInteraction?.();
     });
-  }, [activity, onActivityTakeover, workdir]);
+  }, [activity, onUserInteraction, showingAgentTab, workdir]);
 
   const runCommand = useCallback(async (command: "navigate" | "back" | "forward" | "reload" | "stop", url?: string) => {
     const tabID = selectedTabIDRef.current;
     const send = window.wuu?.browserCommand;
     if (!workdir || !tabID || typeof send !== "function") return;
-    if (activity && activity.controller === "agent" && activity.state !== "stopped") {
-      onActivityTakeover?.();
+    if (showingAgentTab && activity && activity.state !== "stopped") {
+      await onUserInteraction?.();
     }
+    if (tabID !== selectedTabIDRef.current) return;
     const snapshot = await send({ workdir, tabID, command, url });
     if (snapshot && snapshot.tabID === selectedTabIDRef.current) applySurface(snapshot);
-  }, [activity, applySurface, onActivityTakeover, workdir]);
+  }, [activity, applySurface, onUserInteraction, showingAgentTab, workdir]);
 
   const navigate = useCallback((rawInput: string) => {
     const target = resolveNavigationInput(rawInput);
@@ -415,72 +398,6 @@ export function WorkspaceBrowserPanel({
           </div>
         ) : null}
       </div>
-      <div
-        className="workspace-browser-statusbar"
-        data-wuu-component="workspace-browser-statusbar"
-        aria-live="polite"
-      >
-        {showChromePage && hostHint ? (
-          <span className="workspace-browser-host-hint">{hostHint}</span>
-        ) : null}
-        {showChromePage && pageTitle ? (
-          <span className="workspace-browser-title-hint">{pageTitle}</span>
-        ) : null}
-        {showingAgentTab && activity && activity.state !== "stopped" ? (
-          <span className="workspace-browser-activity">
-            <span className={`workspace-browser-activity-state ${activity.controller}`}>
-              {browserActivityLabel(activity)}
-            </span>
-            {activity.controller === "user" ? (
-              <button
-                className="icon-button workspace-browser-activity-button"
-                type="button"
-                aria-label={t("workspace.browser.releaseToAgent")}
-                title={t("workspace.browser.releaseToAgentShort")}
-                onClick={onActivityRelease}
-              >
-                <Bot className="icon-sm" />
-              </button>
-            ) : (
-              <button
-                className="icon-button workspace-browser-activity-button"
-                type="button"
-                aria-label={t("workspace.browser.takeOver")}
-                title={t("workspace.browser.takeOver")}
-                onClick={onActivityTakeover}
-              >
-                <Hand className="icon-sm" />
-              </button>
-            )}
-            <button
-              className="icon-button workspace-browser-activity-button"
-              type="button"
-              aria-label={t("workspace.browser.stopActivity")}
-              title={t("workspace.browser.stopActivityShort")}
-              onClick={onActivityStop}
-            >
-              <Square className="icon-sm" />
-            </button>
-          </span>
-        ) : null}
-        {isLoading ? <span className="workspace-browser-loading-dot" aria-hidden="true" /> : null}
-      </div>
     </div>
   );
-}
-
-function browserActivityLabel(activity: ActivitySession): string {
-  if (activity.state === "waiting_confirmation") {
-    return translateCurrent("workspace.browser.activityWaitingConfirmation");
-  }
-  if (activity.state === "error") {
-    return translateCurrent("workspace.browser.activityError");
-  }
-  if (activity.controller === "user") {
-    return translateCurrent("workspace.browser.activityUserControl");
-  }
-  if (activity.controller === "agent") {
-    return translateCurrent("workspace.browser.activityAgentControl");
-  }
-  return translateCurrent("workspace.browser.activityUnassigned");
 }

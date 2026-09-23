@@ -1472,7 +1472,7 @@ export function App(): JSX.Element {
     );
   }
 
-  async function takeoverBrowserActivity(): Promise<void> {
+  async function pauseBrowserTask(): Promise<void> {
     if (!activeBrowserActivity) {
       return;
     }
@@ -1483,39 +1483,10 @@ export function App(): JSX.Element {
       );
       mergeActivityResponse(result.activity);
     } catch (error) {
-      showErrorToast(error, t("app.browserTakeoverFailed"));
+      showErrorToast(error, t("app.browserPauseFailed"));
     }
   }
 
-  async function releaseBrowserActivity(): Promise<void> {
-    if (!activeBrowserActivity) {
-      return;
-    }
-    try {
-      const result = await window.wuu.releaseActivity(
-        activeBrowserActivity.thread_id,
-        activeBrowserActivity.id,
-      );
-      mergeActivityResponse(result.activity);
-    } catch (error) {
-      showErrorToast(error, t("app.browserReleaseFailed"));
-    }
-  }
-
-  async function stopBrowserActivity(): Promise<void> {
-    if (!activeBrowserActivity) {
-      return;
-    }
-    try {
-      const result = await window.wuu.stopActivity(
-        activeBrowserActivity.thread_id,
-        activeBrowserActivity.id,
-      );
-      mergeActivityResponse(result.activity);
-    } catch (error) {
-      showErrorToast(error, t("app.browserStopFailed"));
-    }
-  }
   const sessionRuntime = useMemo(
     () => runtimeViewForSession(state.initialized, activeThread),
     [state.initialized, activeThread],
@@ -5712,9 +5683,7 @@ export function App(): JSX.Element {
           browserActivity={activeBrowserActivity}
           browserDockTarget={browserDockTarget}
           browserOverlaySuppressed={browserOverlaySuppressed}
-          onBrowserActivityTakeover={() => void takeoverBrowserActivity()}
-          onBrowserActivityRelease={() => void releaseBrowserActivity()}
-          onBrowserActivityStop={() => void stopBrowserActivity()}
+          onBrowserUserInteraction={pauseBrowserTask}
           focusedComposer={
             rightPanelGlobalized && activeWorkspaceFileTabID
               ? (

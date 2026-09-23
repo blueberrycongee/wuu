@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- The embedded browser no longer shows a bottom domain and page-title bar,
+  leaving more room for the page. Direct page input or navigation pauses the
+  current task; sending the next instruction in the conversation resumes browser
+  work without separate control-transfer buttons or status labels.
+
 - While a conversation loads, the loading indicator covers only the
   conversation area. The sidebar, title bar, and environment panel stay
   visible and usable, and the sidebar marks the conversation being opened.

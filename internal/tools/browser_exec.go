@@ -131,11 +131,8 @@ func (t *Toolkit) executeBrowserToolResult(ctx context.Context, call providers.T
 	return result, err
 }
 
-// executeBrowserFinalize runs the finalize action's close/persist work through
-// the ordinary pipeline (so the boundary check and telemetry apply) and then,
-// only when the model kept no tabs, stops the thread's browser activity so the
-// preview UI clears. Stopping requires the registry, which the tool has no
-// handle to, so it lives here.
+// executeBrowserFinalize closes or preserves tabs through the ordinary pipeline
+// without ending the thread's browser activity.
 func (t *Toolkit) executeBrowserFinalize(ctx context.Context, call providers.ToolCall, tool Tool) (toolresult.Result, error) {
 	// finalize closes the tabs the model did not keep (handled by the tool's own
 	// Execute) but deliberately does NOT stop the browser activity, even with an
@@ -143,7 +140,7 @@ func (t *Toolkit) executeBrowserFinalize(ctx context.Context, call providers.Too
 	// session for the process lifetime — Acquire then returns ErrStopped forever
 	// with no in-thread recovery, so a later turn's navigate would break browsing
 	// for good. The activity's lifetime is the thread's: Server.Close stops it on
-	// teardown, and the user Stop button remains the only mid-thread hard stop.
+	// teardown, and activity/stop remains an explicit mid-thread hard stop.
 	return t.executeKnownToolResult(ctx, call, tool)
 }
 

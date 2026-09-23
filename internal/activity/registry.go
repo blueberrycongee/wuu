@@ -22,10 +22,11 @@ var (
 )
 
 type registryEntry struct {
-	session    Session
-	leaseToken string
-	control    context.Context
-	revoke     context.CancelCauseFunc
+	session         Session
+	leaseToken      string
+	control         context.Context
+	revoke          context.CancelCauseFunc
+	takeoverVersion uint64
 }
 
 type Registry struct {
@@ -364,6 +365,7 @@ func (r *Registry) Takeover(threadID, activityID string) (Session, error) {
 	entry.leaseToken = ""
 	entry.session.Controller = ControllerUser
 	entry.session.State = StateUserControlled
+	entry.takeoverVersion++
 	entry.session.UpdatedAt = r.now().UTC()
 	session := entry.session
 	r.mu.Unlock()
@@ -387,16 +389,63 @@ func (r *Registry) Release(threadID, activityID string) (Session, Lease, error) 
 		r.mu.Unlock()
 		return Session{}, Lease{}, err
 	}
+	session := r.releaseLocked(entry, token)
+	r.mu.Unlock()
+	r.emit(Event{Type: EventControlChanged, Activity: session})
+	return session, Lease{ActivityID: session.ID, ThreadID: session.ThreadID, Token: token}, nil
+}
+
+// PrepareResume snapshots user-controlled activities before a user turn is
+// admitted. Call the returned function only once admission succeeds. A newer
+// takeover or stop wins over this pending resume; old leases stay revoked.
+func (r *Registry) PrepareResume(threadID string, kind Kind) (func(), error) {
+	if r == nil {
+		return func() {}, nil
+	}
+	type pendingResume struct {
+		entry   *registryEntry
+		version uint64
+		token   string
+	}
+	r.mu.Lock()
+	var pending []pendingResume
+	for _, entry := range r.entries {
+		if entry.session.ThreadID != threadID || entry.session.Kind != kind || entry.session.Controller != ControllerUser || entry.session.State == StateStopped {
+			continue
+		}
+		token, err := randomID("lease", 24)
+		if err != nil {
+			r.mu.Unlock()
+			return nil, err
+		}
+		pending = append(pending, pendingResume{entry: entry, version: entry.takeoverVersion, token: token})
+	}
+	r.mu.Unlock()
+	return func() {
+		r.mu.Lock()
+		var events []Event
+		for _, resume := range pending {
+			entry := resume.entry
+			if entry.takeoverVersion != resume.version || entry.session.Controller != ControllerUser || entry.session.State == StateStopped {
+				continue
+			}
+			events = append(events, Event{Type: EventControlChanged, Activity: r.releaseLocked(entry, resume.token)})
+		}
+		r.mu.Unlock()
+		for _, event := range events {
+			r.emit(event)
+		}
+	}, nil
+}
+
+func (r *Registry) releaseLocked(entry *registryEntry, token string) Session {
 	entry.revoke(ErrControlRevoked)
 	entry.control, entry.revoke = context.WithCancelCause(context.Background())
 	entry.leaseToken = token
 	entry.session.Controller = ControllerAgent
 	entry.session.State = StateBackgroundControlled
 	entry.session.UpdatedAt = r.now().UTC()
-	session := entry.session
-	r.mu.Unlock()
-	r.emit(Event{Type: EventControlChanged, Activity: session})
-	return session, Lease{ActivityID: session.ID, ThreadID: session.ThreadID, Token: token}, nil
+	return entry.session
 }
 
 func (r *Registry) Stop(threadID, activityID string) (Session, error) {
