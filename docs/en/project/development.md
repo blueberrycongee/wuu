@@ -11,6 +11,13 @@ make setup
 make dev
 ```
 
+Development uses `.wuu-dev/` in the checkout as its Wuu data directory, separating
+configuration and runtime state from the installed app and other checkouts.
+To intentionally use existing data, set an absolute `WUU_HOME`, for example
+`WUU_HOME="$HOME/.wuu" make dev`. Shared-data dogfooding allows the development
+build to change installed-app data; older builds may reject newer settings.
+The override is also forwarded through the macOS LaunchServices launcher.
+
 `make setup` installs locked dependencies for the desktop, shared client core, retained Web/Expo clients, plugin SDK, protocol package, and docs site. It does not install the native phone toolchains or provision remote services.
 
 `make dev` runs the desktop launcher. It builds the shared Web assets, native helper where applicable, and current Go core and plugin helpers before starting Electron. The app uses that checkout's private `wuu-core`, not a separately installed `wuu` on `PATH`. Renderer changes use Vite updates; restart the launcher after changing Go, native helpers, or process-startup code so the running processes use the new build.

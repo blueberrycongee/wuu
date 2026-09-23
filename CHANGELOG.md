@@ -37,6 +37,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   messages when a full completed turn arrives, preventing duplicate replies
   after a missed completion notification.
 
+- Invalid external configuration edits report an error without erasing the last
+  valid model inventory. Unchanged invalid files no longer trigger repeated
+  parsing and logging, and corrected files recover automatically.
+
+- Desktop development now uses a separate data directory per checkout and forwards
+  explicit `WUU_HOME` overrides on macOS, preventing experimental settings from
+  breaking an installed app.
+
 - Files with Chinese names or filename whitespace now preserve their paths,
   line counts, and contents in desktop Git previews before and after staging,
   including modifications, deletions, and renames. Commit message generation

@@ -2,6 +2,8 @@
 
 Wuu keeps model connections and execution choices in user configuration, while projects can supply additional behavior. Start with `wuu init` for CLI use or desktop onboarding, then edit only the settings you need. Wuu rejects unknown configuration fields rather than silently ignoring typos.
 
+If an external edit makes configuration invalid while the desktop is running, Wuu reports the error and retains the last valid model inventory for display. That inventory does not bypass configuration validation for changes or execution. Correct the file to resume automatic refresh; restoring its previous contents also clears the error. Unchanged invalid files do not produce repeated refresh errors.
+
 ## User configuration and project layers
 
 Normal startup selects the user file at `~/.wuu/config.json`, or `$WUU_HOME/config.json` when set. The legacy `~/.config/wuu/config.json` path is a migration and fallback source, not another overlay applied after the current user file.

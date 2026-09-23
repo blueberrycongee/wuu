@@ -48,6 +48,7 @@ desktop/.node_modules.synced
 # DO want tracked.
 
 .wuu.json
+/.wuu-dev/
 .wuu/*
 !.wuu/settings.json
 .wuu/settings.local.json

@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
 const { join, resolve } = require("node:path");
+const { devHome } = require("./dev-home.cjs");
 const packageJSON = require("../package.json");
 const {
   launchEnvironment,
@@ -47,6 +48,14 @@ assert.ok(environment.includes("WUU_DEV_LAUNCH_TOKEN=token-1"));
 assert.ok(environment.includes("WUU_DESKTOP_CORE=/repo/desktop/build/bin/wuu-core"));
 assert.ok(!environment.includes("WUU_DESKTOP_USE_GO_RUN=1"));
 assert.ok(environment.includes("WUU_SOURCE_ROOT=/repo"));
+assert.ok(environment.includes(`WUU_HOME=${resolve("/repo/.wuu-dev")}`));
+assert.notEqual(devHome({}, "/repo"), devHome({}, "/other-checkout"));
+const sharedHome = resolve("/user/wuu-data");
+assert.equal(devHome({ WUU_HOME: sharedHome }, "/repo"), sharedHome);
+assert.ok(launchEnvironment({ WUU_HOME: sharedHome }, "shared", "/repo")
+  .includes(`WUU_HOME=${sharedHome}`));
+assert.equal(devHome({ WUU_HOME: " " }, "/repo"), devHome({}, "/repo"));
+
 assert.ok(environment.includes("WUU_ENABLE_CUA_MAC=1"));
 assert.ok(environment.includes("WUU_CUA_MAC_HELPER=/repo/desktop/build/bin/wuu-cua-mac"));
 assert.ok(environment.includes("WUU_CUA_MAC_PIP_HELPER=/repo/desktop/build/bin/wuu-cua-mac-pip"));

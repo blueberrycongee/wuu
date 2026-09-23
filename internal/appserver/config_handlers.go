@@ -2290,9 +2290,12 @@ func selectionConfigPointers(selection modelvariant.Selection, touched bool, pre
 }
 
 func (s *Server) providerSummaries() []ProviderSummary {
+	s.providerSummariesMu.Lock()
+	defer s.providerSummariesMu.Unlock()
 	cfg, _, err := s.rt.LoadEffectiveConfig()
 	if err != nil {
-		return nil
+		// Presentation only: execution and mutations still load and validate config.
+		return s.lastProviderSummaries
 	}
 	home := os.Getenv("HOME")
 	autoDiscovered := false
@@ -2322,6 +2325,7 @@ func (s *Server) providerSummaries() []ProviderSummary {
 		}
 	}
 	s.attachLatestProviderRequests(summaries)
+	s.lastProviderSummaries = summaries
 	return summaries
 }
 
