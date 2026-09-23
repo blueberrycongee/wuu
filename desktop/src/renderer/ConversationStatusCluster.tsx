@@ -18,7 +18,12 @@ type ResolvedStatusItem = ComposerStatusItem & Readonly<{ key: string }>;
 interface ConversationStatusClusterProps {
   host: PluginHost;
   visible: boolean;
-  /** Measures only the compact row; expanded popovers do not resize the stream. */
+  /**
+   * Measures the compact row while it holds status; expanded popovers do not
+   * resize the stream. Navigation alone is not measured: it shows only away
+   * from the latest content, where reserved trailing space is off-screen, and
+   * releasing that space as the reader arrives would pull the scroll end back.
+   */
   clusterRef?: (node: HTMLDivElement | null) => void;
   navigation?: ReactNode;
   threadId?: string;
@@ -75,7 +80,8 @@ export function ConversationStatusCluster({
     return () => document.removeEventListener("pointerdown", dismissOverflow);
   }, []);
 
-  if (!visible || (!navigation && !todoVisible && items.length === 0)) return null;
+  const statusVisible = todoVisible || items.length > 0;
+  if (!visible || (!navigation && !statusVisible)) return null;
 
   const visibleItemLimit = MAX_VISIBLE_ITEMS - (todoVisible ? 1 : 0);
   const visibleItems = items.slice(0, visibleItemLimit);
@@ -83,7 +89,7 @@ export function ConversationStatusCluster({
   return (
     <div
       className="jump-to-latest-cluster conversation-status-cluster"
-      ref={clusterRef}
+      ref={statusVisible ? clusterRef : undefined}
       aria-label={t("channels.status")}
     >
       {navigation}

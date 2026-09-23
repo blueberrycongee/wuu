@@ -56,7 +56,7 @@ type JumpToLatestPillProps = {
    * the effect re-runs only when the boolean actually changes.
    */
   onScrolledAwayChange?: (scrolledAway: boolean) => void;
-  /** In-flow status groups reserve space instead of covering conversation content. */
+  /** Renders inside the caller's status group instead of floating above the composer. */
   inline?: boolean;
   /** Remains available at the bottom; shares one centered group with the jump action. */
   companion?: ReactNode;

@@ -40,12 +40,13 @@ type Props = {
   todoComplete?: boolean;
   composer?: boolean;
   processRow?: boolean;
+  navigation?: boolean;
 };
 function LayoutSignal() {
   React.useLayoutEffect(() => { api.scheduleStreamScroll(); });
   return null;
 }
-function Probe({ id = "a", running = false, split = false, messageID, pluginHost, onOpenSession = () => undefined, signalLayout = false, item, mountKey, processItems, todoComplete, composer, processRow }: Props) {
+function Probe({ id = "a", running = false, split = false, messageID, pluginHost, onOpenSession = () => undefined, signalLayout = false, item, mountKey, processItems, todoComplete, composer, processRow, navigation }: Props) {
   const [statusClusterNode, setStatusClusterNode] = React.useState<HTMLDivElement | null>(null);
   const primaryTurns: Turn[] = messageID ? [{ id: "turn", items_view: "full", status: running ? "in_progress" : "completed", items: [{ ...item, id: messageID, type: "user_message" }] }] : [];
   api = useConversationScrollState({ activeThreadID: id ?? undefined, activePane: "primary", splitConversation: split, primaryTurns, emptyConversation: !messageID, initialized: true, running, nativeScrollBounce: false, statusClusterNode });
@@ -73,6 +74,7 @@ function Probe({ id = "a", running = false, split = false, messageID, pluginHost
     {composer ? <div data-dock ref={api.dockComposerRef} /> : null}
     {pluginHost ? <ConversationStatusCluster host={pluginHost} visible threadId={id ?? undefined}
       clusterRef={setStatusClusterNode}
+      navigation={navigation ? <button>Jump</button> : undefined}
       onOpenSession={onOpenSession}
       todoUpdate={{ todos: [{ content: "Keep history controls accessible", status: todoComplete ? "completed" : "in_progress" }] }}
     /> : null}
@@ -388,7 +390,7 @@ it("yields a held submission when a tap on the summary becomes a swipe", () => {
   expect(api.captureConversationScrollPosition()?.autoFollow).toBe(false);
 });
 
-it.each(["following", "holding", "paused"])("reserves trailing status space without shortening the reading viewport while %s", mode => {
+it.each(["following", "holding", "paused"])("reserves trailing status space, not a lone jump action, without shortening the reading viewport while %s", mode => {
   const pluginHost = new PluginHost({ react: React });
   render({ messageID: "old" });
   if (mode === "holding") submit();
@@ -396,7 +398,7 @@ it.each(["following", "holding", "paused"])("reserves trailing status space with
   const messageID = mode === "holding" ? "submitted" : "old";
   const readingTop = scrollTop();
   const viewport = api.conversationScrollRef.current!;
-  render({ messageID, pluginHost });
+  render({ messageID, pluginHost, navigation: true });
   expect(viewport.clientHeight).toBe(viewportHeight);
   expect(scrollTop()).toBe(mode === "following" ? naturalHeight + statusHeight - viewport.clientHeight : readingTop);
   statusHeight = 48;
@@ -404,7 +406,9 @@ it.each(["following", "holding", "paused"])("reserves trailing status space with
   tick(800);
   expect(viewport.clientHeight).toBe(viewportHeight);
   expect(scrollTop()).toBe(mode === "following" ? naturalHeight + statusHeight - viewport.clientHeight : readingTop);
-  render({ messageID, pluginHost, todoComplete: true });
+  // The jump action stays mounted; it shows only away from latest content.
+  render({ messageID, pluginHost, navigation: true, todoComplete: true });
+  expect(statusSpace()).toBe(0);
   expect(viewport.clientHeight).toBe(viewportHeight);
   expect(scrollTop()).toBe(mode === "following" ? naturalHeight - viewport.clientHeight : readingTop);
   grow(1000);

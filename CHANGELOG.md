@@ -20,6 +20,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   conversation left mid-history reopens at the same reading position with
   Jump to latest already shown.
 
+- Scrolling down to the latest message no longer bounces back when Jump to
+  latest disappears.
+
 ## [2026.9.23] - 2026-09-23
 
 ### Added
