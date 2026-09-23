@@ -53,9 +53,16 @@
   gap: var(--control-toolbar-gap);
 }
 
-.titlebar .icon-button {
+/* All top-row controls share geometry, including narrow windows and the
+ * fixed toggle above a hover drawer. Size the placeholder from this token too. */
+:is(.titlebar, .settings-titlebar, .traffic-spacer, .workspace-panel-tabbar,
+    .session-inspector-header, .side-thread-panel__header,
+    .globalized-sidebar-toggle-region) .icon-button {
+  flex: 0 0 auto;
   width: var(--control-size-toolbar);
   height: var(--control-size-toolbar);
+  padding: 0;
+  background-clip: border-box;
 }
 
 .icon-button {
@@ -88,9 +95,7 @@ html[data-focus-modality="keyboard"] :is(
 }
 
 @media (pointer: coarse) {
-  :is(.titlebar, .settings-titlebar, .workspace-panel-tabbar) .icon-button,
-  .globalized-sidebar-toggle-region .globalized-sidebar-toggle {
-    min-width: var(--control-size-touch);
-    min-height: var(--control-size-touch);
+  :root {
+    --control-size-toolbar: max(var(--control-size-touch), var(--control-field-height));
   }
 }
