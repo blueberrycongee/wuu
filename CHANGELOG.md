@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Text file reads show a line number on the first line of each page and at
+  every tenth file line. Each line retains a separator so source indentation
+  and literal pipes can be copied without display metadata.
+
 - The embedded browser no longer shows a bottom domain and page-title bar,
   leaving more room for the page. Direct page input or navigation pauses the
   current task; sending the next instruction in the conversation resumes browser

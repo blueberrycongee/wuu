@@ -273,9 +273,12 @@ func TestReadFileProjectedPagesPreserveRequestedRange(t *testing.T) {
 	for i := 1; i <= 600; i++ {
 		indent := []string{"", "\t\t", "    ", " \t "}[i%4]
 		line := fmt.Sprintf("%srecord-%04d | %s", indent, i, strings.Repeat("x", 100))
+		if i%17 == 0 || i == 450 {
+			line = ""
+		}
 		fmt.Fprintln(&file, line)
 		if i >= 51 && i <= 450 {
-			fmt.Fprintf(&expected, "%6d|%s\n", i, line)
+			fmt.Fprintln(&expected, line)
 		}
 	}
 	path := filepath.Join(root, "records.txt")
@@ -294,6 +297,7 @@ func TestReadFileProjectedPagesPreserveRequestedRange(t *testing.T) {
 	}
 	var actual strings.Builder
 	var savedNext string
+	nextLine := 51
 	pages := 0
 	for ; pages < 100; pages++ {
 		if err := tool.ValidateInput(args); err != nil {
@@ -305,7 +309,27 @@ func TestReadFileProjectedPagesPreserveRequestedRange(t *testing.T) {
 		}
 		result, _ := finalizeBuiltInToolResult(kit.env.SessionDir, "read_file", fmt.Sprintf("read-%d", pages), toolresult.FromText(raw), defaultProjectionTokenBudget)
 		page := parseOut(t, result.TextProjection())
-		actual.WriteString(page["content"].(string))
+		lines := contentLines(page["content"].(string))
+		rangeMeta := page["range"].(map[string]any)
+		if len(lines) == 0 || page["start_line"] != float64(nextLine) ||
+			page["num_lines"] != float64(len(lines)) ||
+			rangeMeta["start_line"] != float64(nextLine) ||
+			rangeMeta["end_line"] != float64(nextLine+len(lines)-1) {
+			t.Fatalf("page does not continue requested range at line %d: %+v", nextLine, page)
+		}
+		for i, displayed := range lines {
+			marker, body, ok := strings.Cut(displayed, "|")
+			wantMarker := ""
+			if i == 0 || nextLine%10 == 0 {
+				wantMarker = fmt.Sprint(nextLine)
+			}
+			if !ok || marker != wantMarker {
+				t.Fatalf("invalid line anchor at %d: %q", nextLine, displayed)
+			}
+			actual.WriteString(body)
+			actual.WriteByte('\n')
+			nextLine++
+		}
 		if continuation, ok := page["continuation"].(map[string]any); ok && continuation["has_more"] == true {
 			next, _ := json.Marshal(continuation["next"])
 			args = string(next)
@@ -314,21 +338,12 @@ func TestReadFileProjectedPagesPreserveRequestedRange(t *testing.T) {
 			break
 		}
 	}
-	if pages == 0 || pages == 100 || actual.String() != expected.String() {
+	if pages == 0 || pages == 100 || nextLine != 451 || actual.String() != expected.String() {
 		t.Fatalf("projected pages changed requested content: pages=%d, got bytes=%d want=%d", pages+1, actual.Len(), expected.Len())
 	}
 	// Copying only the content after each display delimiter must produce a
 	// usable exact-edit anchor, including mixed tabs/spaces and literal pipes.
-	var copied strings.Builder
-	for _, numbered := range contentLines(actual.String()) {
-		_, body, ok := strings.Cut(numbered, "|")
-		if !ok {
-			t.Fatalf("missing content boundary: %q", numbered)
-		}
-		copied.WriteString(body)
-		copied.WriteByte('\n')
-	}
-	old := copied.String()
+	old := actual.String()
 	replacement := strings.ReplaceAll(old, "record-", "updated-")
 	if _, err := NewEditFileTool(kit.env).Execute(context.Background(), mustMarshalMap(map[string]any{
 		"path": "records.txt", "old_text": old, "new_text": replacement,

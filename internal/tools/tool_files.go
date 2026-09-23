@@ -34,7 +34,7 @@ func (t *ReadFileTool) IsConcurrencySafe() bool { return true }
 func (t *ReadFileTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        "read_file",
-		Description: "Read a local text file or inspect a PNG, JPEG, static GIF, or WebP image. Images are returned as visual content for image-capable models, with large dimensions resized. SVG is read as text. Text files return a continuous range with line numbers. Each line is NUMBER|CONTENT: the number and first | are display metadata; everything after that delimiter is file content, including its original indentation. Copy only CONTENT when editing. Use offset and limit for focused reads. If projected, pass continuation.next as the next call arguments to read the rest of the requested range. Results include displayed range, omitted ranges, and workspace_revision. Use list_files for directories.",
+		Description: "Read a local text file or inspect a PNG, JPEG, static GIF, or WebP image. Images are returned as visual content for image-capable models, with large dimensions resized. SVG is read as text. Text files return a continuous range: the first displayed line and every absolute line divisible by 10 use NUMBER|CONTENT; other lines use |CONTENT. The optional number and first | are display metadata; copy only CONTENT when editing, preserving its indentation. Use offset and limit for focused reads. If projected, pass continuation.next as the next call arguments to read the rest of the requested range. Results include displayed range, omitted ranges, and workspace_revision. Use list_files for directories.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -252,11 +252,15 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 		}
 	}
 
-	// A visible separator keeps display metadata distinct from source tabs.
+	// Anchor every page independently; keep a separator on unnumbered lines
+	// so source indentation and literal pipes remain unambiguous when copied.
 	var buf strings.Builder
 	for i, line := range readResult.Lines {
 		lineNum := args.Offset + i
-		fmt.Fprintf(&buf, "%6d|%s\n", lineNum, line)
+		if i == 0 || lineNum%10 == 0 {
+			fmt.Fprint(&buf, lineNum)
+		}
+		fmt.Fprintf(&buf, "|%s\n", line)
 	}
 
 	// Record read state for deduplication and active-file context freshness.

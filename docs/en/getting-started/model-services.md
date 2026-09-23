@@ -114,6 +114,8 @@ image for the model. External agent engines use their own file and image tools.
 
 ## Large tool results
 
+Text file reads use `NUMBER|CONTENT` on the first displayed line and on file lines divisible by ten; other lines use `|CONTENT`. Everything after the first `|` is source text, including indentation and literal pipes. Each continuation page starts with its own line-number anchor, and range metadata still identifies every displayed line.
+
 Wuu keeps the original tool result and gives the model a stable, bounded view. Large ordinary text results show a continuous first page with a `read_file` continuation; following it reads the saved result without running the original tool again. Pages prefer complete lines and can split a long line without breaking Unicode characters. Continuations reject changed content rather than silently mixing versions. Images and other supported media retain their separate provider representation.
 
 Built-in views preserve useful structure: search pages keep whole records and snapshot cursors, and shell output prioritizes recent error evidence. Results are settled before the tool ledger records them, including extension results and execution errors, so later requests and replay keep the same view. Wuu does not cut these pages again to fit a batch-wide text limit; conversation capacity remains the responsibility of context management. Paging can require extra model requests, and Wuu retains the full result if it cannot safely save or page it. Smaller pages are not a guarantee of lower total cost.
