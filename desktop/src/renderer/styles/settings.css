@@ -2625,20 +2625,20 @@
   min-width: 0;
 }
 
-/* Bound the form by its content instead of stretching the controls across
- * the settings page. Right-aligned labels keep the reading gap consistent. */
+/* Center the complete row with equal outer space. Keep labels on its left
+ * edge so unused label space does not shift the visual weight to the right. */
 .auto-model-selections {
-  width: min(100%, calc(40em + 2 * var(--space-6)));
+  width: calc(100% - 2 * var(--space-6));
   margin-inline: auto;
   scroll-margin-block: var(--space-4);
 }
 
 .auto-model-selections .settings-row {
-  grid-template-columns: minmax(0, 8em) minmax(0, 20em) minmax(0, 12em);
+  grid-template-columns: minmax(0, 6em) minmax(0, 5fr) minmax(0, 3fr);
 }
 
 .auto-model-selection > .settings-row-label-title {
-  text-align: right;
+  text-align: left;
 }
 
 .auto-model-selections .settings-select-trigger {
@@ -2647,7 +2647,7 @@
 
 @container settings-page (max-width: 44em) {
   .auto-model-selections {
-    width: min(100%, calc(32em + var(--space-3)));
+    width: 100%;
   }
 
   .auto-model-selections .settings-row {
