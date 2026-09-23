@@ -32,6 +32,8 @@ Claude Opus 5.5 和 Fable 5.1 始终使用自适应思考。Wuu 将已保存的 
 | xAI SuperGrok | 添加 **xAI SuperGrok** 服务，按提示在浏览器登录。CLI 使用 `wuu login xai`，运行时选择 `--provider xai-subscription`。 |
 | Grok Build | 先运行 `grok login`，再在 Wuu 中选择检测到的服务，或传入 `--provider grok-build`。登录过期后重新在 Grok CLI 登录；Wuu 不刷新或修改这类凭据。 |
 
+新建 Codex 订阅配置默认使用 `gpt-6-sol`。Wuu 从已登录账号加载可用模型（包括 `gpt-6-luna`）和推理档位；实际可用性取决于套餐和工作区设置。已有保存的选择保持不变。
+
 SuperGrok 订阅登录、Grok CLI 登录和 `XAI_API_KEY` 是不同的凭据来源，请选择与你的账号对应的连接。文件编辑和命令执行还要求服务及模型支持工具调用。
 
 ## 在桌面端查看订阅

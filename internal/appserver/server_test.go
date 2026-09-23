@@ -3508,21 +3508,39 @@ func TestCachedCodexModelsKeepGPT5SubscriptionWindow(t *testing.T) {
 	}
 }
 
-func TestCachedCodexModelsKeepAstraCatalogWindow(t *testing.T) {
-	srv := &Server{}
-	srv.cacheCodexModels("openai-codex", []codex.ModelInfo{{
-		Slug:               "gpt-6-astra",
-		DisplayName:        "GPT-6 Astra",
-		SupportedReasoning: []string{"low", "medium", "high", "xhigh", "max"},
-	}})
-	merged := srv.withCachedCodexModels("openai-codex", config.ProviderConfig{Type: "openai-codex"})
-	model := merged.Models["gpt-6-astra"]
-	if model.ContextWindow != 1_050_000 || model.Limit == nil || model.Limit.Context != 1_050_000 || model.Limit.Input != 272_000 || model.Limit.Output != 128_000 {
-		t.Fatalf("live Astra model did not keep the GPT-6 subscription window: %+v", model)
-	}
-	fast := merged.Models["gpt-6-astra-fast"]
-	if fast.ID != "gpt-6-astra" || fast.Name != "GPT-6 Astra Fast" || fast.ContextWindow != 1_050_000 {
-		t.Fatalf("live Astra Fast alias missing GPT-6 subscription metadata: %+v", fast)
+func TestCachedCodexModelsKeepGPT6CatalogWindow(t *testing.T) {
+	for _, spec := range []struct{ id, name, effort string }{
+		{"gpt-6-astra", "GPT-6 Astra", "low"},
+		{"gpt-6-sol", "GPT-6 Sol", "medium"},
+		{"gpt-6-luna", "GPT-6 Luna", "high"},
+	} {
+		t.Run(spec.id, func(t *testing.T) {
+			srv := &Server{}
+			srv.cacheCodexModels("openai-codex", []codex.ModelInfo{{
+				Slug:                  spec.id,
+				DisplayName:           spec.name,
+				DefaultReasoningLevel: spec.effort,
+				SupportedReasoning:    []string{"low", "medium", "high", "xhigh", "max"},
+			}})
+			merged := srv.withCachedCodexModels("openai-codex", config.ProviderConfig{Type: "openai-codex"})
+			model := merged.Models[spec.id]
+			if model.ContextWindow != 1_050_000 || model.Limit == nil || model.Limit.Context != 1_050_000 || model.Limit.Input != 272_000 || model.Limit.Output != 128_000 {
+				t.Fatalf("live model did not keep the GPT-6 subscription window: %+v", model)
+			}
+			fast := merged.Models[spec.id+"-fast"]
+			if fast.ID != spec.id || fast.Name != spec.name+" Fast" || fast.ContextWindow != 1_050_000 {
+				t.Fatalf("Fast alias missing GPT-6 subscription metadata: %+v", fast)
+			}
+			for _, id := range []string{spec.id, spec.id + "-fast"} {
+				cfg := merged.Models[id]
+				if cfg.DefaultEffort != spec.effort || strings.Join(cfg.SupportedEfforts, ",") != "low,medium,high,xhigh,max" {
+					t.Fatalf("%s did not preserve live subscription reasoning: %+v", id, cfg)
+				}
+				if _, ok := cfg.Variants["none"]; ok {
+					t.Fatalf("%s exposed API-only reasoning variant", id)
+				}
+			}
+		})
 	}
 }
 

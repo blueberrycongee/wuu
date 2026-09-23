@@ -30,6 +30,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   changes. Tool-closing requests use their supported automatic tool choice.
   New CLI configurations start with GPT-6 Sol and Claude Opus 5.5.
 
+- New Codex subscription configurations that reuse a Codex CLI login default to
+  GPT-6 Sol. Sol and Luna discovery retains account-provided reasoning options
+  and subscription limits, including their Fast aliases.
+
 - SuperGrok and xAI API catalogs now include Grok 4.7 (`grok-4.7`), with the
   documented 500k context window and low/medium/high/xhigh reasoning efforts.
   New SuperGrok providers default to it; Grok Build lists it alongside 4.5 and

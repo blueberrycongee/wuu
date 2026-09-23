@@ -32,6 +32,8 @@ Claude Opus 5.5 and Fable 5.1 always use adaptive thinking. Wuu maps a saved `no
 | xAI SuperGrok | Add an **xAI SuperGrok** provider and follow the browser login. For the CLI, run `wuu login xai` and select `--provider xai-subscription`. |
 | Grok Build | Run `grok login`, then select the detected provider in Wuu or pass `--provider grok-build`. If the login expires, sign in again with Grok CLI; Wuu does not refresh or modify those credentials. |
 
+New Codex subscription configurations default to `gpt-6-sol`. Wuu loads available models, including `gpt-6-luna`, and reasoning options from the signed-in account; availability depends on your plan and workspace settings. Existing saved selections are preserved.
+
 SuperGrok subscription login, Grok CLI login, and an `XAI_API_KEY` are separate credential sources. Use the connection that matches your account. File editing and command execution also require the selected service and model to support tool calling.
 
 ## Check subscriptions in the desktop app

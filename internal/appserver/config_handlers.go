@@ -2721,6 +2721,12 @@ func codexLiveModelConfigs(models []codex.ModelInfo) map[string]config.ProviderM
 				continue
 			}
 			cfg := modelcatalog.MergeModelConfig(modelcatalog.ModelConfig(alias), out[id])
+			// Fast aliases use the same subscription model, so API catalog
+			// defaults must not replace its account-provided reasoning settings.
+			cfg.SupportedEfforts = out[id].SupportedEfforts
+			cfg.Variants = out[id].Variants
+			cfg.DefaultEffort = out[id].DefaultEffort
+			cfg.DefaultVariant = out[id].DefaultVariant
 			applyCodexSubscriptionLimit(aliasID, &cfg)
 			out[aliasID] = cfg
 		}
