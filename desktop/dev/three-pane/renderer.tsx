@@ -5,7 +5,8 @@ import { ProjectGroup } from "../../src/renderer/ThreadSidebar";
 import { TurnView } from "../../src/renderer/TurnView";
 import { WorkspaceRightPanel, type WorkspacePanelView } from "../../src/renderer/WorkspacePanels";
 import type { WorkspaceViewTab } from "../../src/renderer/WorkspaceViewTabs";
-import type { ThreadSummary } from "../../src/renderer/AppState";
+import { initialState, type ThreadSummary } from "../../src/renderer/AppState";
+import { ConversationTitleActions } from "../../src/renderer/ConversationShellRenderers";
 import type { WuuDesktopApi, Turn } from "../../src/shared/protocol";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { ImagePreviewProvider } from "../../src/renderer/ImagePreview";
@@ -53,6 +54,9 @@ function Fixture() {
   const [tabs, setTabs] = useState<WorkspaceViewTab[]>([]);
   const [activeTab, setActiveTab] = useState<string>();
   const [rightOpen, setRightOpen] = useState(true);
+  const [globalized, setGlobalized] = useState(params.has("globalized"));
+  const [environmentOpen, setEnvironmentOpen] = useState(false);
+  const environmentToggleRef = useRef<HTMLButtonElement>(null);
   const dock = useRef<HTMLElement>(null);
   const [dockHeight, setDockHeight] = useState(0);
   useLayoutEffect(() => { applyMessageFlowFontSize(size); document.documentElement.dataset.theme = theme; }, [size, theme]);
@@ -67,7 +71,7 @@ function Fixture() {
   return <WuuUIRoot><ImagePreviewProvider>
     <AppBackground />
     <div className="sample-controls"><span>当前源码 · 示例数据</span><label>主题 <select value={theme} onChange={e => setTheme(e.target.value)}><option value="light">亮色</option><option value="dark">暗色</option></select></label><label>字号 <select value={size} onChange={e => setSize(Number(e.target.value))}>{[13,14,20].map(n => <option key={n}>{n}</option>)}</select></label><button onClick={() => setRightOpen(value => !value)}>切换右栏</button></div>
-    <div className={`app-shell sample-shell${rightOpen ? " right-panel-open" : ""}`}>
+    <div className={`app-shell sample-shell${rightOpen ? " right-panel-open" : ""}${globalized ? " right-panel-globalized" : ""}`}>
       <aside className="sidebar"><div className="sidebar-content">
         <div className="sample-brand">Wuu</div>
         <nav className="primary-nav"><button className="nav-item"><MessageSquarePlus/><span>新对话</span></button><button className="nav-item"><Search/><span>搜索会话</span></button></nav>
@@ -76,14 +80,19 @@ function Fixture() {
         </section></div><button className="nav-item"><Settings/><span>设置</span></button>
       </div></aside>
       <main className="conversation-pane" style={{ "--dock-composer-height": `${dockHeight}px` } as CSSProperties}>
-        <header className="titlebar"><div className="title-block"><PanelLeft className="icon"/><span>优化软件排版问题</span></div></header>
+        <header className="titlebar"><div className="title-block"><PanelLeft className="icon"/><span>优化软件排版问题</span></div>
+          <ConversationTitleActions state={initialState} compactNavigation={params.has("compact")} onStartNewThread={noop}
+            environmentToggleRef={environmentToggleRef} environmentPanelVisible={environmentOpen}
+            onToggleEnvironmentPanel={() => setEnvironmentOpen(value => !value)}
+            rightPanelOpen={rightOpen} onToggleRightPanel={() => setRightOpen(value => !value)} />
+        </header>
         <div className={`scroll-region${params.has("empty") ? " empty-scroll-region" : ""}`}>
           {params.has("empty") ? <EmptyConversationHome title="晚上好，今天还想在 wuu 里处理什么？" />
             : <div className="conversation-width session-flow">{params.has("background") ? <div className="sample-background-settings"><BackgroundSettings /></div> : <TurnView turn={turn} onStreamFrame={noop} isLatestTurn latestAgentMessageID="sample-answer"/>}</div>}
         </div>
         <footer ref={dock} className="composer-wrap dock-composer-wrap"><div className="composer-stack"><div className="composer-shell"><div className="composer-frame-shell"><div className="composer-frame"><div className="composer"><textarea aria-label="示例输入" placeholder="即刻开始"/><div className="composer-bar"><div className="composer-bar-left"><button className="composer-tool-button" aria-label="附件"><Plus className="icon"/></button></div><div className="composer-bar-right"><button className="codex-runtime-trigger">Wuu · 示例模型</button><button className="composer-action-button composer-send-button" disabled aria-label="发送"><ArrowUp className="icon"/></button></div></div></div></div></div></div></div></footer>
       </main>
-      <WorkspaceRightPanel open={rightOpen} present={rightOpen} tabs={tabs} activeTabID={activeTab} activeContext={{ kind: "no_project", cwd: "/preview" }} workspaceContext={{ kind: "no_project", cwd: "/preview" }} onSelectTab={setActiveTab} onOpenTool={openTool} onShowTools={() => setActiveTab(undefined)} onCloseTab={id => { setTabs(current => current.filter(tab => tab.id !== id)); setActiveTab(undefined); }} onReorderTabs={noop} onOpenFile={noop} onClose={() => setRightOpen(false)} globalized={false} onToggleGlobalize={noop}/>
+      <WorkspaceRightPanel open={rightOpen} present={rightOpen} tabs={tabs} activeTabID={activeTab} activeContext={{ kind: "no_project", cwd: "/preview" }} workspaceContext={{ kind: "no_project", cwd: "/preview" }} onSelectTab={setActiveTab} onOpenTool={openTool} onShowTools={() => setActiveTab(undefined)} onCloseTab={id => { setTabs(current => current.filter(tab => tab.id !== id)); setActiveTab(undefined); }} onReorderTabs={noop} onOpenFile={noop} onClose={() => setRightOpen(false)} globalized={globalized} onToggleGlobalize={() => setGlobalized(value => !value)}/>
     </div>
   </ImagePreviewProvider></WuuUIRoot>;
 }

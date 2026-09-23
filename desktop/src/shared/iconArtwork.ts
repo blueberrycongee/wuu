@@ -27,13 +27,14 @@ const frame = rect(3.5, 3.5, 17, 17, 4.5);
 const ring = circle(12, 12, 9);
 const check = path("m4.5 12 5.5 5.5L20 6.5");
 const containedCheck = path("m7.5 12 3.3 3.5 5.7-7");
-const plus = path("M12 3.5v17M3.5 12h17");
+const plus = path("M12 4.5v15M4.5 12h15");
 const cross = path("m5 5 14 14M19 5 5 19");
 const arrow = [path("M12 20V4m-6 6 6-6 6 6")];
 const chevron = [path("m8.5 5.5 6.5 6.5-6.5 6.5")];
-const folder = path("M3 9V7c0-2 1-3 3-3h2.2c1 0 1.5.3 2.2 1l1.1 1.1c.6.6 1.2.9 2.3.9H17c2.8 0 4 1.4 4 4v5c0 2.6-1.4 4-4 4H7c-2.6 0-4-1.4-4-4V9Zm.5 0h7");
+const folder = path("M6.5 4.5h2.8c.8 0 1.3.3 1.8.9l.9 1.2c.5.6 1 .9 1.8.9h3.7a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3h-11a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3Z");
 const file = path("M13 3H8C5.6 3 4.5 4.3 4.5 6.5v11c0 2.2 1.1 3.5 3.5 3.5h8c2.4 0 3.5-1.3 3.5-3.5V9L13 3Zm0 0v3.5C13 8.2 13.8 9 15.5 9h4");
-const chat = path("M9 4h6c3.8 0 6 2.2 6 6v3c0 3.8-2.2 6-6 6H9l-4.5 2 .7-4.2C3.7 15.6 3 14.3 3 12v-2c0-3.8 2.2-6 6-6Z");
+const chat = path("M8 3.5h8A4.5 4.5 0 0 1 20.5 8v6a4.5 4.5 0 0 1-4.5 4.5H9.5l-5.2 2.3c-.4.2-.8-.1-.8-.5V8A4.5 4.5 0 0 1 8 3.5Z");
+const conversation = [chat, path("M8 9.5h8M8 13.5h5")];
 const search = [path("M10.5 3.5c4.1 0 7 2.9 7 7s-2.9 7-7 7-7-2.9-7-7 2.9-7 7-7ZM16 16l4.5 4.5")];
 const monitor = [rect(3, 3.5, 18, 13, 3.5), path("M12 16.5v4M8 20.5h8")];
 const shield = path("M12 3c2.7 2 5.3 2.5 8 3v5c0 5-3 8.3-8 10-5-1.7-8-5-8-10V6c2.7-.5 5.3-1 8-3Z");
@@ -47,7 +48,7 @@ const triangleAlert = [path("M9.6 4.8c1.1-2 3.7-2 4.8 0l6.2 11.7c1.1 2.1 0 4-2.4
 const ellipsis = [circle(5, 12, 1.5, true), circle(12, 12, 1.5, true), circle(19, 12, 1.5, true)];
 const loader = [path("M20.5 12a8.5 8.5 0 1 1-8.5-8.5")];
 const pencil = [path("m4 20 1-5L16.5 3.5a2.8 2.8 0 0 1 4 4L9 19ZM14.5 5.5l4 4")];
-const squarePen = [path("M12.5 4H9C5.7 4 4 5.7 4 9v6c0 3.3 1.7 5 5 5h6c3.3 0 5-1.7 5-5v-3.5"), path("m10 14 .8-3.6 7.3-7.3a1.8 1.8 0 0 1 2.5 2.5l-7.3 7.3Z", true)];
+const squarePen = [path("M12 3.5H8A4.5 4.5 0 0 0 3.5 8v8A4.5 4.5 0 0 0 8 20.5h8a4.5 4.5 0 0 0 4.5-4.5v-4"), path("m10 14 .8-3.6 7.3-7.3a1.8 1.8 0 0 1 2.5 2.5l-7.3 7.3Z", true)];
 const branch = [path("M6 7v10m12-10v2c0 3-2 4-5 4H6"), circle(6, 4.5, 2.5), circle(6, 19.5, 2.5), circle(18, 4.5, 2.5)];
 const commit = [path("M3 12h5m8 0h5"), circle(12, 12, 4)];
 const globe = [ring, path("M3 12h18M12 3c-3.8 4.4-3.8 13.6 0 18 3.8-4.4 3.8-13.6 0-18Z")];
@@ -117,10 +118,10 @@ export const iconArtwork = {
   FlaskConical: [path("M8.5 3h7M10 3v6L4.5 18c-1 1.5 0 3 2 3h11c2 0 3-1.5 2-3L14 9V3M7 14h10")],
   FoldVertical: [path("M12 3v5m-4-4 4 4 4-4M12 21v-5m-4 4 4-4 4 4M4 12h16")],
   Folder: [folder],
-  FolderMinus: [folder, path("M9 14.5h6")],
-  FolderOpen: [path("M3 15V7c0-2 1-3 3-3h3l3 3h5c2 0 3 1 3 3M4 20l2-8h15l-2 8Z")],
-  FolderPlus: [folder, path("M9 14.5h6m-3-3v6")],
-  FolderX: [folder, path("m9.5 12 5 5m0-5-5 5")],
+  FolderMinus: [folder, path("M9 13.5h6")],
+  FolderOpen: [path("M3.5 16.5v-9a3 3 0 0 1 3-3h2.8c.8 0 1.3.3 1.8.9l.9 1.2c.5.6 1 .9 1.8.9h3.7a3 3 0 0 1 3 3M3.5 16.5l1.7-4.6c.3-.9 1.1-1.4 2.1-1.4H20c1 0 1.6.9 1.3 1.8l-1.7 5.2c-.4 1.2-1.5 2-2.8 2H6.5a3 3 0 0 1-3-3Z")],
+  FolderPlus: [folder, path("M9 13.5h6m-3-3v6")],
+  FolderX: [folder, path("m9.5 11 5 5m0-5-5 5")],
   Gauge: [path("M5 19a9 9 0 1 1 14 0ZM12 5v2M5 12h2m10 0h2m-7 3 4-6"), circle(12, 15, 1.5, true)],
   GitBranch: inset(branch, 0.9),
   GitCommit: commit,
@@ -136,7 +137,7 @@ export const iconArtwork = {
   ImagePlus: [path("M12 4H8C5 4 3.5 5.5 3.5 8.5V16c0 3 1.5 4.5 4.5 4.5h8c3 0 4.5-1.5 4.5-4.5v-4M4 17l5-5 8 8M16 6h6m-3-3v6"), circle(8.5, 8, 1.25, true)],
   Images: [rect(7, 7, 14, 14, 3.5), path("M16 3H7C4.3 3 3 4.3 3 7v9M8 17l4-4 8 7"), circle(16.5, 11, 1.25, true)],
   Inbox: [path("M3 12 6 4h12l3 8v5c0 3-1.5 4-4 4H7c-2.5 0-4-1-4-4Zm0 0h5l1.5 3h5l1.5-3h5")],
-  Info: [ring, path("M12 11v6"), circle(12, 7.5, 1, true)],
+  Info: [circle(12, 12, 8.5), path("M12 11.5v5"), circle(12, 7.5, 1, true)],
   KeyRound: [circle(8, 8, 5), path("m11.5 11.5 9 9M16 16l3-3m0 6 3-3")],
   Laptop: [rect(5, 3.5, 14, 13, 3), path("M5 16.5 2.5 21h19L19 16.5")],
   Layers: [path("m12 3 9 5-9 5-9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5")],
@@ -150,12 +151,12 @@ export const iconArtwork = {
   Lock: [rect(5, 10, 14, 11, 3.5), path("M8 10V6a4 4 0 0 1 8 0v4"), rect(11, 14, 2, 3.5, 1, true)],
   LogOut: [path("M10 3H7C4.3 3 3 4.3 3 7v10c0 2.7 1.3 4 4 4h3M11 12h10m-5-5 5 5-5 5")],
   Mail: [rect(3, 4.5, 18, 15, 3.5), path("m4 6 8 7 8-7")],
-  Maximize2: [path("M14 3.5h6.5V10M20 4l-6 6M10 20.5H3.5V14M4 20l6-6")],
-  MessageCircle: [chat, path("M8 10h8M8 14h5")],
-  MessageSquare: [chat, path("M8 10h8M8 14h5")],
-  MessageSquarePlus: [chat, path("M8.5 11.5h7m-3.5-3.5v7")],
-  MessagesSquare: [path("M17 4H8C5 4 3.5 5.5 3.5 8.5V14L7 12.5h8c3 0 4.5-1.5 4.5-4.5S19 4 17 4ZM8 16.5h8L20.5 20v-8")],
-  Minimize2: [path("M20.5 10H14V3.5M20 4l-6 6M3.5 14H10v6.5M4 20l6-6")],
+  Maximize2: [path("M14 4.5h5.5V10m0-5.5L14 10M10 19.5H4.5V14m0 5.5L10 14")],
+  MessageCircle: conversation,
+  MessageSquare: conversation,
+  MessageSquarePlus: [chat, path("M8.5 11h7M12 7.5v7")],
+  MessagesSquare: [path("M7 3.5h6A3.5 3.5 0 0 1 16.5 7v4a3.5 3.5 0 0 1-3.5 3.5H8l-3.7 2.3c-.4.2-.8-.1-.8-.5V7A3.5 3.5 0 0 1 7 3.5ZM20.5 10v9.8c0 .4-.4.7-.8.5L16 18h-6")],
+  Minimize2: [path("M19.5 10H14V4.5m0 5.5 5.5-5.5M4.5 14H10v5.5m0-5.5-5.5 5.5")],
   Minus: [path("M4 12h16")],
   Monitor: monitor,
   Moon: [path("M10 3a9 9 0 1 0 11 11C12 17 7 11 10 3Z")],

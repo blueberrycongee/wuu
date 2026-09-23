@@ -53,6 +53,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Folder, conversation, and new-conversation icons use simpler contours and
+  consistent rounded frames, matching the sidebar toggle controls. Single and
+  stacked conversation bubbles share the same visual style.
+
+- Information, add, and expand/restore icons use balanced optical insets beside
+  sidebar toggles and close icons. Sidebar glyphs follow their control's size,
+  including compact titlebar menus.
+
 - Conversation images use compact tool thumbnails and bounded, proportional
   previews in replies, with consistent space before and after images.
 

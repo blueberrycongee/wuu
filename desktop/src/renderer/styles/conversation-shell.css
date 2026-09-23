@@ -869,6 +869,8 @@
 
 .side-panel-toggle-icon {
   display: block;
+  width: var(--icon-size);
+  height: var(--icon-size);
 }
 
 /* The rail stays visible when closed; its fill marks the open state. */

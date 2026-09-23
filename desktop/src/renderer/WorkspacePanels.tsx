@@ -758,7 +758,7 @@ export function WorkspaceRightPanel({
           disabled={!open}
           onClick={onShowTools}
         >
-          <Plus className="icon-lg" />
+          <Plus />
         </button>
         <button
           className={`icon-button workspace-panel-globalize${globalized ? " active" : ""}`}
