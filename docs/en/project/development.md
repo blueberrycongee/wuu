@@ -76,3 +76,5 @@ Keep Electron APIs in the desktop shell. A new shell should communicate with `wu
 ## Experimental floating sidebar
 
 Run `VITE_EXPERIMENT_FLOATING_SIDEBAR=true make dev` to try the floating sidebar. In a wide window, the sidebar toggle switches between docked navigation and a floating card. Click the card header to fold or expand its navigation; Escape inside the card folds it and returns focus to the header. Narrow windows retain the drawer interaction. Omit the variable to use the regular sidebar.
+
+The card keeps Back and Forward controls visible when folded. History follows conversations, rooms, plugin pages, and settings during the current app session. Visiting a new destination after going back replaces the forward history. Settings also exposes these controls in its titlebar and remembers each settings page's scroll position.

@@ -467,6 +467,8 @@ export function AppSidebar({
   sidebarVisible = true,
   sidebarCollapsed = false,
   floating = false,
+  navigationControls,
+  navigationTitle,
   onNavigateAway,
   onToggleSidebar,
 }: {
@@ -567,6 +569,8 @@ export function AppSidebar({
   sidebarVisible?: boolean;
   sidebarCollapsed?: boolean;
   floating?: boolean;
+  navigationControls?: ReactNode;
+  navigationTitle?: string;
   onNavigateAway?: () => void;
   onToggleSidebar?: () => void;
 }): JSX.Element {
@@ -1793,22 +1797,24 @@ export function AppSidebar({
       onPointerLeave={onPointerLeave}
     >
       {floating ? (
+        <div className="sidebar-floating-summary">
+          {navigationControls}
         <button
           ref={floatingToggleRef}
-          className="sidebar-floating-summary"
+          className="sidebar-floating-disclosure"
           type="button"
           aria-expanded={floatingExpanded}
           aria-controls="floating-sidebar-content"
           aria-label={t(floatingExpanded ? "app.collapseLeftSidebar" : "app.expandLeftSidebar")}
           onClick={() => setFloatingExpanded(expanded => !expanded)}
         >
-          <Folder aria-hidden="true" />
           <span className="sidebar-floating-context">
             <span className="sidebar-floating-project">{floatingProject?.name ?? t("sidebar.workspace")}</span>
-            <span className="sidebar-floating-title" title={floatingTitle}>{floatingTitle}</span>
+            <span className="sidebar-floating-title" title={navigationTitle ?? floatingTitle}>{navigationTitle ?? floatingTitle}</span>
           </span>
           <ChevronDown className="sidebar-floating-chevron" aria-hidden="true" />
         </button>
+        </div>
       ) : null}
       <div
         className="sidebar-content"

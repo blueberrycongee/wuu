@@ -125,6 +125,7 @@ function renderSettings(props: {
   onRefreshEngineInventory?: () => Promise<EngineListResult | undefined>;
   onUpdateEngineInventory?: (params: EngineUpdateParams) => Promise<EngineListResult>;
   initialPage?: SettingsPage;
+  scrollPositions?: Map<SettingsPage, number>;
   runningProviderNames?: string[];
   codexPets?: CodexPetsSnapshot;
   codexPetsLoading?: boolean;
@@ -154,6 +155,7 @@ function renderSettings(props: {
     <SettingsView
         initialized={props.initialized}
         initialPage={props.initialPage ?? "general"}
+        scrollPositions={props.scrollPositions}
         running={props.running ?? false}
         usage={props.usage}
         usageLoading={props.usageLoading}
@@ -330,6 +332,27 @@ describe("SettingsView shell", () => {
 
     expect(shell?.classList.contains("sidebar-drawer-open")).toBe(false);
     expect(shell?.classList.contains("sidebar-drawer-closing")).toBe(true);
+  });
+
+  it("restores each settings page's reading position when navigation history supplies snapshots", () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" } });
+    renderSettings({ initialized: baseInitialized(), initialPage: "providers", scrollPositions: new Map() });
+    const scroll = container.querySelector<HTMLElement>(".settings-scroll")!;
+    const items = () => Array.from(container.querySelectorAll<HTMLButtonElement>(".settings-nav-item"));
+    act(() => {
+      scroll.scrollTop = 420;
+      scroll.dispatchEvent(new Event("scroll"));
+      items().find(button => button.textContent?.includes("高级"))!.click();
+    });
+    expect(scroll.scrollTop).toBe(0);
+    act(() => {
+      scroll.scrollTop = 160;
+      scroll.dispatchEvent(new Event("scroll"));
+      items().find(button => button.textContent?.includes("模型服务"))!.click();
+    });
+    expect(scroll.scrollTop).toBe(420);
+    act(() => { items().find(button => button.textContent?.includes("高级"))!.click(); });
+    expect(scroll.scrollTop).toBe(160);
   });
 
   it("starts each settings page at the top and replaces the content surface", () => {

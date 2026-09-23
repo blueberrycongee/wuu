@@ -3191,7 +3191,7 @@ html[data-focus-modality="keyboard"] :is(
   gap: 10px;
   width: 100%;
   min-height: 56px;
-  padding: 10px 12px;
+  padding: 6px;
   text-align: left;
   color: var(--ink);
   font: inherit;
@@ -3208,16 +3208,16 @@ html[data-focus-modality="keyboard"] :is(
   pointer-events: auto;
 }
 
-.sidebar-floating-summary:hover {
+.sidebar-floating-disclosure:hover {
   background: var(--surface-2);
 }
 
-.sidebar-floating-summary:focus-visible {
+.sidebar-floating-disclosure:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-.sidebar-floating-summary > svg {
+.sidebar-floating-disclosure > svg {
   flex: 0 0 18px;
   width: 18px;
   height: 18px;
@@ -3288,4 +3288,33 @@ html[data-focus-modality="keyboard"] :is(
   .sidebar-floating-chevron {
     transition: none;
   }
+}
+
+.sidebar-floating-disclosure {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.navigation-history-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+.navigation-history-controls .icon-button {
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
 }

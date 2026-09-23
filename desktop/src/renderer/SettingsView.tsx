@@ -126,6 +126,10 @@ function availableSettingsPage(page: SettingsPage | undefined): SettingsPage {
 export function SettingsView({
   initialized,
   initialPage,
+  navigationControls,
+  page,
+  onPageChange,
+  scrollPositions,
   running,
   usage,
   usageLoading = false,
@@ -169,6 +173,10 @@ export function SettingsView({
 }: {
   initialized?: InitializeResult;
   initialPage?: SettingsPage;
+  navigationControls?: ReactNode;
+  page?: SettingsPage;
+  onPageChange?: (page: SettingsPage) => void;
+  scrollPositions?: Map<SettingsPage, number>;
   running: boolean;
   usage?: SettingsUsageResponse;
   usageLoading?: boolean;
@@ -233,9 +241,15 @@ export function SettingsView({
   } | null>(null);
   const [xaiLoginBusy, setXAILoginBusy] = useState(false);
   const [desktopBuild, setDesktopBuild] = useState<DesktopBuildInfo | undefined>();
-  const [activePage, setActivePage] = useState<SettingsPage>(() =>
+  const [activePageState, setActivePageState] = useState<SettingsPage>(() =>
     availableSettingsPage(initialPage),
   );
+
+  const activePage = page ?? activePageState;
+  const setActivePage = (next: SettingsPage): void => {
+    setActivePageState(next);
+    onPageChange?.(next);
+  };
   const customPluginSettingsPages = useSyncExternalStore(
     (listener) => pluginHost.subscribe(listener),
     () => pluginHost.getSettingsPages(),
@@ -287,7 +301,7 @@ export function SettingsView({
   const advancedCommittedRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
-    setActivePage(availableSettingsPage(initialPage));
+    setActivePageState(availableSettingsPage(initialPage));
   }, [initialPage]);
 
   useLayoutEffect(() => {
@@ -300,9 +314,9 @@ export function SettingsView({
 
   useLayoutEffect(() => {
     if (settingsScrollRef.current) {
-      settingsScrollRef.current.scrollTop = 0;
+      settingsScrollRef.current.scrollTop = scrollPositions?.get(activePage) ?? 0;
     }
-  }, [activePage]);
+  }, [activePage, scrollPositions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1047,12 +1061,15 @@ export function SettingsView({
       )}
       <main className="settings-main" data-wuu-component="settings-content">
         <div className="settings-titlebar">
+          {navigationControls}
           {isTouchWebShell() && <button type="button" className="settings-phone-back" aria-label={t("common.back")} onClick={onBack}><ArrowLeft size={22} /></button>}
           {/* Match the main shell's docked/collapsed slots. Keep the collapsed
            * toggle inside the drag strip so native hit testing honors no-drag. */}
           {sidebarCollapsed ? sidebarToggle : null}
         </div>
-        <div ref={settingsScrollRef} className="settings-scroll">
+        <div ref={settingsScrollRef} className="settings-scroll" onScroll={event => {
+          scrollPositions?.set(activePage, event.currentTarget.scrollTop);
+        }}>
           <div
             className={`settings-page${activePage === "archive" ? " settings-page-archive" : ""}${activePage === "providers" ? " settings-page-providers" : ""}`}
             data-wuu-component="settings-page"

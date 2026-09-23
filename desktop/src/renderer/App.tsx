@@ -18,6 +18,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type {
   ActivitySession,
@@ -277,7 +278,8 @@ import {
   useDesktopPluginRuntime,
 } from "./plugins/DesktopPluginRuntime";
 import { DesktopWorkbench } from "./plugins";
-import { usePrimaryPluginViewCover } from "./PrimaryPluginViewCover";
+import { NavigationHistoryButtons, useNavigationHistory } from "./NavigationHistory";
+import { visibleWorkbenchView } from "./plugins/Workbench";
 import { releaseWindowResizeClass, WINDOW_RESIZING_CLASS } from "./WindowResizeState";
 import { useComposerDraftState } from "./ComposerDraftState";
 import { useComposerPendingState } from "./ComposerPendingState";
@@ -420,6 +422,16 @@ function formatUserQuestionSteerPrompt(
     return `${question.question}\n${parts.join(", ") || "(no answer)"}`;
   }).join("\n\n");
 }
+
+type NavigationDestination = { key: string } & (
+  | { kind: "thread"; threadID: string }
+  | { kind: "draft"; tabID: string }
+  | { kind: "room"; roomID: string }
+  | { kind: "agents" }
+  | { kind: "catalog" }
+  | { kind: "settings"; page: SettingsPage }
+  | { kind: "plugin"; instanceID: string }
+);
 
 export function App(): JSX.Element {
   const phoneNavigation = useContext(PhoneNavigationContext);
@@ -2312,7 +2324,12 @@ export function App(): JSX.Element {
     }
     return entries;
   }, [turns]);
-  const showingPrimaryPluginView = usePrimaryPluginViewCover();
+  const navigationWorkbench = useSyncExternalStore(
+    desktopWorkbenchController.subscribe, desktopWorkbenchController.getSnapshot,
+  );
+  const primaryNavigationView = visibleWorkbenchView(navigationWorkbench, "primary");
+  const settingsScrollPositions = useRef(new Map<SettingsPage, number>());
+  const showingPrimaryPluginView = primaryNavigationView !== undefined;
   const mainConversationDockVisible =
     Boolean(state.initialized) &&
     !splitConversation &&
@@ -3558,6 +3575,7 @@ export function App(): JSX.Element {
 
   const {
     startNewThread,
+    selectSessionTab,
   } = createSessionTabActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
@@ -5103,6 +5121,59 @@ export function App(): JSX.Element {
     return () => window.removeEventListener("wuu:workbench-back", back);
   }, [accountOpen, settingsOpen, sidebarDrawerVisible, closeSidebarDrawer, rightPanelOpen, setRightPanelOpenWithMotion]);
 
+  let navigationDestination: NavigationDestination | undefined;
+  if (ENABLE_FLOATING_SIDEBAR && state.initialized && !viewContextSwitchPending && !accountOpen) {
+    if (settingsOpen) {
+      navigationDestination = { kind: "settings", page: settingsInitialPage, key: `settings:${settingsInitialPage}` };
+    } else if (primaryNavigationView) {
+      navigationDestination = { kind: "plugin", instanceID: primaryNavigationView.view.id, key: `plugin:${primaryNavigationView.view.id}` };
+    } else if (appMode === "collaboration") {
+      if (collaborationSection === "agents") navigationDestination = { kind: "agents", key: "agents" };
+      else if (!agentOnboardingActive && !selectedCollaborationAgentID && selectedChannelRoomID) {
+        navigationDestination = { kind: "room", roomID: selectedChannelRoomID, key: `room:${selectedChannelRoomID}` };
+      }
+    } else if (showingSkillsCatalog) {
+      navigationDestination = { kind: "catalog", key: "catalog" };
+    } else if (activeThreadID) {
+      navigationDestination = { kind: "thread", threadID: activeThreadID, key: `thread:${activeThreadID}` };
+    } else if (state.activeSessionTabID) {
+      navigationDestination = { kind: "draft", tabID: state.activeSessionTabID, key: `draft:${state.activeSessionTabID}` };
+    }
+  }
+  const navigationHistory = useNavigationHistory(navigationDestination, async destination => {
+    try {
+      if (destination.kind === "settings") {
+        setSettingsInitialPage(destination.page);
+        setSettingsOpen(true);
+        return;
+      }
+      if (destination.kind === "plugin") {
+        if (!desktopWorkbenchController.getSnapshot().views.some(view => view.id === destination.instanceID)) {
+          throw new Error(t("app.navigationUnavailable"));
+        }
+        desktopWorkbenchController.activateView(destination.instanceID);
+      } else if (destination.kind === "room") {
+        if (!activeChannelRooms.some(room => room.id === destination.roomID)) throw new Error(t("app.navigationUnavailable"));
+        selectChannelRoom(destination.roomID);
+      } else if (destination.kind === "catalog") {
+        openHarnessView();
+        openSkillsTab();
+      } else if (destination.kind === "agents") {
+        openAgentManagement();
+      } else {
+        if (destination.kind === "thread") await activateThread(destination.threadID);
+        else await selectSessionTab(destination.tabID);
+        openHarnessView();
+        revealConversationFromFocusedWorkspace();
+      }
+      setSettingsOpen(false);
+    } catch (error) {
+      showErrorToast(error);
+    }
+  });
+  const navigationControls = ENABLE_FLOATING_SIDEBAR
+    ? <NavigationHistoryButtons {...navigationHistory} /> : undefined;
+
   if (ENABLE_ACCOUNT && accountOpen && window.wuu?.remoteAccount) {
     return <AccountScreen driver={window.wuu.remoteAccount} onBack={() => setAccountOpen(false)} />;
   }
@@ -5115,6 +5186,10 @@ export function App(): JSX.Element {
         <SettingsShellRenderer
           initialized={state.initialized}
           initialPage={settingsInitialPage}
+          page={ENABLE_FLOATING_SIDEBAR ? settingsInitialPage : undefined}
+          onPageChange={ENABLE_FLOATING_SIDEBAR ? setSettingsInitialPage : undefined}
+          scrollPositions={ENABLE_FLOATING_SIDEBAR ? settingsScrollPositions.current : undefined}
+          navigationControls={navigationControls}
           running={viewContextSwitchPending}
           runningProviderNames={runningProviderNames}
           usage={settingsUsage}
@@ -5269,6 +5344,8 @@ export function App(): JSX.Element {
           ) : null}
           <AppSidebar
             floating={floatingSidebar}
+            navigationControls={navigationControls}
+            navigationTitle={primaryNavigationView?.definition.title ?? (showingSkillsCatalog ? t("skills.title") : undefined)}
             onToggleSidebar={sidebarDrawerMode ? undefined : toggleSessionSwitcher}
             sidebarCollapsed={sidebarCollapsed}
             collaborationNavigationNodes={ENABLE_GROUP_CHAT ? [
