@@ -61,6 +61,7 @@ import type {
   FloatingMenuPlacement,
   PermissionMode
 } from "./ComposerTypes";
+import { COMPOSER_PROJECT_MENU_WIDTH } from "./ComposerTypes";
 import { lastEffortForEngineModel } from "./DraftEngineMemory";
 import { engineLabel } from "./EngineDisplay";
 import { EngineIcon } from "./EngineIcons";
@@ -1633,7 +1634,8 @@ export function ProjectPickerMenu({
     : projects;
 
   return (
-    <div className="composer-project-menu" role="menu">
+    <div className="composer-project-menu" role="menu"
+      style={{ "--composer-project-menu-width": `${COMPOSER_PROJECT_MENU_WIDTH}px` } as CSSProperties}>
       <label className="menu-search project-search">
         <Search className="icon-lg" />
         <input value={query} placeholder={t("runtime.searchProjects")} onChange={(event) => setQuery(event.target.value)} />
@@ -1643,7 +1645,7 @@ export function ProjectPickerMenu({
         {filteredProjects.map((project) => {
           const selected = activeContext?.kind === "project" && activeContext.project_id === project.id;
           return (
-            <button key={project.id} type="button" role="menuitem" onClick={() => onSelectProject(project.id)}>
+            <button key={project.id} type="button" role="menuitem" title={project.name} onClick={() => onSelectProject(project.id)}>
               <Folder className="icon-lg" />
               <span>{project.name}</span>
               {selected ? <Check className="icon-lg" /> : null}

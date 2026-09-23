@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Composer project and branch selectors use lightweight, arrow-free pills
+  instead of a full-width background. Their menus have roomier spacing,
+  aligned icon and selection columns, and separate branch status text.
+
 - Sending a message moves only the message bubble into place. The new turn's
   in-progress status no longer travels with it; it fades in as the bubble lands,
   for both the first message and follow-ups.

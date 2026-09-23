@@ -1,7 +1,8 @@
-import { Check, ChevronDown, GitBranch, Plus, Search } from "./WuuIcons";
-import { useRef, useState } from "react";
+import { Check, GitBranch, Plus, Search } from "./WuuIcons";
+import { type CSSProperties, useRef, useState } from "react";
 import type { GitStatusResult } from "../shared/protocol";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
+import { COMPOSER_PROJECT_MENU_WIDTH } from "./ComposerTypes";
 import { hostSupports } from "./HostCapabilities";
 import { useI18n } from "./i18n";
 import { showErrorToast } from "./Toast";
@@ -33,10 +34,9 @@ export function ComposerBranchPicker({
         disabled={disabled} onClick={onToggle}>
         <GitBranch className="hero-project-pill-icon" />
         <span className="hero-project-pill-text">{branch}</span>
-        <ChevronDown className="hero-project-pill-chevron" />
       </button>
       {open && !disabled ? (
-        <FloatingMenuPortal anchorRef={anchorRef} owner="composer-runtime" placement="above" align="left" width={280}
+        <FloatingMenuPortal anchorRef={anchorRef} owner="composer-runtime" placement="above" align="left" width={COMPOSER_PROJECT_MENU_WIDTH}
           mobileSheet={{ label: t("git.branch"), onClose: onToggle }}>
           <ComposerBranchMenu gitStatus={gitStatus} onSelect={onSelect} onCreate={onCreate} />
         </FloatingMenuPortal>
@@ -74,12 +74,14 @@ function ComposerBranchMenu({ gitStatus, onSelect, onCreate }: {
   }
 
   return (
-    <div className="composer-project-menu composer-branch-menu" role="menu" aria-label={t("git.branch")} aria-busy={pending}>
+    <div className="composer-project-menu composer-branch-menu" role="menu" aria-label={t("git.branch")} aria-busy={pending}
+      style={{ "--composer-project-menu-width": `${COMPOSER_PROJECT_MENU_WIDTH}px` } as CSSProperties}>
       <label className="menu-search">
         <Search className="icon-sm" aria-hidden="true" />
         <input autoFocus value={query} aria-label={t("environment.searchBranches")} placeholder={t("environment.searchBranches")}
           onChange={(event) => setQuery(event.target.value)} />
       </label>
+      <div className="project-picker-heading">{t("git.branch")}</div>
       <div className="project-picker-list">
         {branches.length === 0 ? <div className="project-picker-empty">{t("environment.noMatchingBranches")}</div> : null}
         {branches.map((branch) => {
@@ -89,7 +91,7 @@ function ComposerBranchMenu({ gitStatus, onSelect, onCreate }: {
               disabled={selected || pending || !hostSupports("checkoutGitBranch")} title={branch}
               onClick={() => void run(() => onSelect(branch))}>
               <GitBranch />
-              <span>{branch}{selected && gitStatus.dirty_count > 0 ? (
+              <span className="project-picker-item-copy"><span className="project-picker-item-title">{branch}</span>{selected && gitStatus.dirty_count > 0 ? (
                 <small>{t("composer.branchDirtyFiles", { count: gitStatus.dirty_count })}</small>
               ) : null}</span>
               {selected ? <Check /> : null}
