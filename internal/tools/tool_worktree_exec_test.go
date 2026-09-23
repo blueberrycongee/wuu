@@ -145,7 +145,7 @@ func TestWorktreeBoundBashRunExecutesInWorktree(t *testing.T) {
 	out := executeToolForWorktreeTest(t, kit, ctx, "bash", `{"command":"pwd"}`)
 	var result struct {
 		ExitCode int    `json:"exit_code"`
-		Output   string `json:"output"`
+		Stdout   string `json:"stdout_tail"`
 	}
 	if err := json.Unmarshal([]byte(out), &result); err != nil {
 		t.Fatalf("unmarshal bash result: %v", err)
@@ -157,15 +157,15 @@ func TestWorktreeBoundBashRunExecutesInWorktree(t *testing.T) {
 	if err != nil {
 		resolvedWorktree = worktree
 	}
-	if !strings.Contains(result.Output, resolvedWorktree) {
-		t.Fatalf("bash run should execute inside the worktree %q, got %s", resolvedWorktree, result.Output)
+	if !strings.Contains(result.Stdout, resolvedWorktree) {
+		t.Fatalf("bash run should execute inside the worktree %q, got %s", resolvedWorktree, result.Stdout)
 	}
 	resolvedParent, err := filepath.EvalSymlinks(parent)
 	if err != nil {
 		resolvedParent = parent
 	}
-	if strings.Contains(result.Output, resolvedParent) {
-		t.Fatalf("bash run should not execute in the parent root %q, got %s", resolvedParent, result.Output)
+	if strings.Contains(result.Stdout, resolvedParent) {
+		t.Fatalf("bash run should not execute in the parent root %q, got %s", resolvedParent, result.Stdout)
 	}
 }
 

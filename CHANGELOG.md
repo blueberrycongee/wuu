@@ -16,6 +16,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Short bash results omit the duplicate combined output from model context when
+  the complete stdout and stderr reproduce it exactly. Original results and all
+  diagnostic evidence remain intact.
+
 - Text file reads show a line number on the first line of each page and at
   every tenth file line. Each line retains a separator so source indentation
   and literal pipes can be copied without display metadata.
