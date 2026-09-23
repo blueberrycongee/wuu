@@ -320,10 +320,13 @@ export function createSessionTabActions(
       if (!deps.finishViewSwitch(requestID)) {
         return;
       }
-      deps.restorePrimaryComposerDraft(targetDraft);
-      deps.resetSplitComposerDrafts();
+      if (!canSwitchInstantly) {
+        deps.restorePrimaryComposerDraft(targetDraft);
+        deps.resetSplitComposerDrafts();
+      }
+      const currentDraft = canSwitchInstantly ? deps.getPrimaryComposerDraft() : targetDraft;
       deps.setAppState((current) => {
-        const withDraft = persistActiveSessionTabDraft(current, outgoingDraft);
+        const withDraft = canSwitchInstantly ? current : persistActiveSessionTabDraft(current, outgoingDraft);
         const cachedThread =
           conversationPaneThreadsByID(
             withDraft.threads,
@@ -340,7 +343,7 @@ export function createSessionTabActions(
           allowThreadAutoActivation: true,
           sessionTabs: ensureSessionTab(
             next.sessionTabs,
-            createThreadSessionTab(thread, tab.context, targetDraft),
+            createThreadSessionTab(thread, tab.context, currentDraft),
           ),
           activeSessionTabID: threadSessionTabID(thread.id),
           threads: upsertThread(next.threads, thread),

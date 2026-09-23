@@ -479,8 +479,11 @@ function appServerRequest<T>(
   event: IpcMainInvokeEvent,
   method: string,
   params?: unknown,
+  targetContext?: RuntimeContext,
 ): Promise<T> {
-  const context = windowRegistry.runtimeContextForWindow(event.sender.id);
+  const context = targetContext
+    ? projectManager.resolveSubmissionContext(targetContext)
+    : windowRegistry.runtimeContextForWindow(event.sender.id);
   return context
     ? appServerClientPool.requestInContext<T>(context, method, params)
     : appServerClientPool.request<T>(method, params);
@@ -2064,8 +2067,8 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle(
     "wuu:thread-start",
-    (event, params?: ThreadStartParams) =>
-      appServerRequest<{ thread: Thread }>(event, "thread/start", params ?? {}),
+    (event, params?: ThreadStartParams, targetContext?: RuntimeContext) =>
+      appServerRequest<{ thread: Thread }>(event, "thread/start", params ?? {}, targetContext),
   );
   ipcMain.handle("wuu:thread-resume", (event, sessionId?: string) =>
     rendererServerEventBatcher.resolveSnapshot(
@@ -2421,6 +2424,7 @@ app.whenReady().then(async () => {
       permissionMode?: string,
       activeDocument?: ActiveDocumentContext,
       contentParts?: import("../shared/protocol").MessageContentPart[],
+      targetContext?: RuntimeContext,
     ) =>
       appServerRequest<{ turn: Turn }>(event, "turn/start", {
         thread_id: threadId,
@@ -2430,7 +2434,7 @@ app.whenReady().then(async () => {
         ...(permissionMode === undefined ? {} : { permission_mode: permissionMode }),
         ...(activeDocument === undefined ? {} : { active_document: activeDocument }),
         ...(contentParts === undefined ? {} : { content_parts: contentParts }),
-      }),
+      }, targetContext),
   );
   ipcMain.handle(
     "wuu:turn-queue",
@@ -2444,6 +2448,7 @@ app.whenReady().then(async () => {
       permissionMode?: string,
       activeDocument?: ActiveDocumentContext,
       contentParts?: import("../shared/protocol").MessageContentPart[],
+      targetContext?: RuntimeContext,
     ) =>
       appServerRequest(event, "turn/queue", {
         thread_id: threadId,
@@ -2454,7 +2459,7 @@ app.whenReady().then(async () => {
         ...(permissionMode === undefined ? {} : { permission_mode: permissionMode }),
         ...(activeDocument === undefined ? {} : { active_document: activeDocument }),
         ...(contentParts === undefined ? {} : { content_parts: contentParts }),
-      }),
+      }, targetContext),
   );
   ipcMain.handle(
     "wuu:turn-update-queued",
@@ -2496,6 +2501,7 @@ app.whenReady().then(async () => {
       files?: InputFile[],
       activeDocument?: ActiveDocumentContext,
       contentParts?: import("../shared/protocol").MessageContentPart[],
+      targetContext?: RuntimeContext,
     ) =>
       appServerRequest(event, "turn/steer", {
         thread_id: threadId,
@@ -2506,7 +2512,7 @@ app.whenReady().then(async () => {
         client_id: clientId,
         ...(activeDocument === undefined ? {} : { active_document: activeDocument }),
         ...(contentParts === undefined ? {} : { content_parts: contentParts }),
-      }),
+      }, targetContext),
   );
   ipcMain.handle("wuu:turn-unsteer", (event, threadId: string, steerId: string) =>
     appServerRequest<{ ok: boolean }>(event, "turn/unsteer", {

@@ -554,8 +554,10 @@ describe("queued turn reconciliation", () => {
       "start the next turn",
       [],
       [],
-      "standard",
       undefined,
+      undefined,
+      undefined,
+      { kind: "no_project", cwd: workspace },
     );
     expect(queueTurn).not.toHaveBeenCalled();
     expect(composerProbe().dataset.queuedIds).toBe("");

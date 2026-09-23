@@ -111,7 +111,7 @@ describe("useViewSwitchState", () => {
     expect(hook.get().pendingViewSwitch).toBeUndefined();
   });
 
-  it("keeps cached thread switches send-blocked without marking the tab busy or covering content during a slow resume", async () => {
+  it("allows cached-thread submissions while a slow background resume is pending", async () => {
     vi.useFakeTimers();
     const hook = await renderViewSwitchState();
 
@@ -128,7 +128,9 @@ describe("useViewSwitchState", () => {
       kind: "thread",
       targetID: "thread-cached",
       visible: false,
+      background: true,
     });
+    expect(hook.get().submissionTargetPending).toBe(false);
     expect(hook.get().viewSwitchPending).toBe(true);
     expect(hook.get().viewContextSwitchPending).toBe(false);
     expect(hook.get().visiblePendingThreadID).toBeUndefined();
@@ -150,6 +152,7 @@ describe("useViewSwitchState", () => {
       act(() => {
         requestID = hook.get().beginViewSwitch(kind, "target");
       });
+      expect(hook.get().submissionTargetPending).toBe(true);
       expect(document.querySelector('[role="status"]')).toBeNull();
       act(() => { vi.advanceTimersByTime(50); });
       expect(document.querySelector('[role="status"]')).not.toBeNull();
@@ -181,6 +184,7 @@ describe("useViewSwitchState", () => {
       kind: "thread",
       targetID: "cached",
       visible: false,
+      background: true,
     });
     expect(hook.get().viewSwitchPending).toBe(true);
     act(() => { hook.get().finishViewSwitch(cachedRequest); });

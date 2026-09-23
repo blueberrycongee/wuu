@@ -346,8 +346,10 @@ describe("workspace file tabs", () => {
       "Rewrite the weak section.",
       [],
       [],
-      "standard",
+      undefined,
       { path: "README.md" },
+      undefined,
+      { kind: "no_project", cwd: "/tmp/wuu-artifact-tab-test" },
     );
     expect(container.querySelector('[data-testid="workspace-document-turn-drawer"]')).not.toBeNull();
 

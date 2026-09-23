@@ -10,6 +10,7 @@ import type {
 } from "../shared/protocol";
 import { SplitPaneComposer } from "./ComposerView";
 import {
+  activeTurnIsAnswerReady,
   isThreadRunning,
   type ComposerDraftState,
   type ConversationPaneID,
@@ -75,7 +76,7 @@ export function ConversationSplitPane({
   onPasteAttachmentFiles: (files: File[]) => void;
   onRemoveFile: (id: string) => void;
   onRemoveImage: (id: string) => void;
-  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => void;
+  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
   onInterrupt: () => void;
   onForkMessage: (turnID: string, itemID: string) => void;
   onOpenFile?: (path: string) => void;
@@ -224,7 +225,7 @@ export function ConversationSplitPane({
           setPrompt={onSetPrompt}
           files={draft.files}
           images={draft.images}
-          running={paneRunning || viewSwitchPending}
+          running={(paneRunning && !activeTurnIsAnswerReady(thread)) || viewSwitchPending}
           sendDisabled={viewSwitchPending}
           readOnly={false}
           status={paneStatus}

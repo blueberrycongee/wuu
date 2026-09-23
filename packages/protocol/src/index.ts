@@ -3083,7 +3083,7 @@ export type WuuDesktopApi = {
   updateChannelTask: (params: ChannelTaskUpdateParams) => Promise<ChannelTaskUpdateResult>;
   getChannelHumanMentionStatus: () => Promise<ChannelHumanMentionStatusResult>;
   ackChannelHumanMentions: () => Promise<ChannelHumanMentionAckResult>;
-  startThread: (params?: ThreadStartParams) => Promise<{ thread: Thread }>;
+  startThread: (params?: ThreadStartParams, targetContext?: RuntimeContext) => Promise<{ thread: Thread }>;
   loadEarlierThreadHistory?: (threadID: string, cursor: string) => Promise<void>;
   readRemoteAttachment?: (ref: string) => Promise<string>;
   /** A bounded thumbnail data URL, independently fetched from the original. */
@@ -3226,6 +3226,8 @@ export type WuuDesktopApi = {
     permissionMode?: string,
     activeDocument?: ActiveDocumentContext,
     contentParts?: MessageContentPart[],
+    // Capture the destination before attachment preparation or a workspace switch.
+    targetContext?: RuntimeContext,
   ) => Promise<{ turn: Turn }>;
   queueTurn: (
     threadId: string,
@@ -3236,6 +3238,7 @@ export type WuuDesktopApi = {
     permissionMode?: string,
     activeDocument?: ActiveDocumentContext,
     contentParts?: MessageContentPart[],
+    targetContext?: RuntimeContext,
   ) => Promise<{ queued: QueuedTurn }>;
   updateQueuedTurn: (
     threadId: string,
@@ -3255,6 +3258,7 @@ export type WuuDesktopApi = {
     files?: InputFile[],
     activeDocument?: ActiveDocumentContext,
     contentParts?: MessageContentPart[],
+    targetContext?: RuntimeContext,
   ) => Promise<{ turn_id: string }>;
   unsteerTurn: (threadId: string, steerId: string) => Promise<{ ok: boolean }>;
   requeueTurn: (

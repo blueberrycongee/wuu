@@ -450,11 +450,11 @@ export class RemoteDesktopBridge {
     }
   }
 
-  private async call<T>(method: string, params?: unknown): Promise<T> {
+  private async call<T>(method: string, params?: unknown, targetWorkdir?: string): Promise<T> {
     const snapshotRead = SNAPSHOT_READ_METHODS.has(method);
     this.assertAvailable(snapshotRead);
     const revision = this.connection.revision;
-    const workdir = this.requestWorkdir(params);
+    const workdir = targetWorkdir ?? this.requestWorkdir(params);
     const key = snapshotRead ? JSON.stringify([revision, workdir, method, params]) : undefined;
     if (key) {
       const pending = this.snapshotReads.get(key);
@@ -709,13 +709,13 @@ export class RemoteDesktopBridge {
         this.emitServerEvent({ workdir: this.requestWorkdir(params), kind: "notification", message: { method: "thread/resumed", params: result } });
         return result;
       },
-      startThread: (params = {}) => this.call("thread/start", {
+      startThread: (params = {}, targetContext = this.activeContext) => this.call("thread/start", {
         ...params,
-        cwd: params.cwd || this.workdir(),
+        cwd: params.cwd || targetContext?.cwd || this.workdir(),
         workspace_id: params.workspace_id && this.remoteWorkspaceIDs.has(params.workspace_id)
-          ? params.workspace_id : this.activeContext?.kind === "project" && this.remoteWorkspaceIDs.has(this.activeContext.project_id)
-            ? this.activeContext.project_id : undefined,
-      }),
+          ? params.workspace_id : targetContext?.kind === "project" && this.remoteWorkspaceIDs.has(targetContext.project_id)
+            ? targetContext.project_id : undefined,
+      }, targetContext?.cwd),
       searchThreads: (query: string, limit?: number) =>
         this.call("thread/search", { query, limit }),
       getThreadPreview: (threadId: string, limit?: number) =>

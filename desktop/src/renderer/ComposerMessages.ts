@@ -613,13 +613,14 @@ export function threadHasAcceptedComposerMessage(
   thread: { turns: Turn[] } | undefined,
   message: Pick<QueuedComposerMessage, "text">,
   optimisticTurnID?: string,
+  previousTurnIDs: ReadonlySet<string> = new Set(),
 ): boolean {
   const expected = message.text.trim();
   if (!thread || !expected) {
     return false;
   }
   return thread.turns.some((turn) => {
-    if (turn.id === optimisticTurnID || turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX)) {
+    if (previousTurnIDs.has(turn.id) || turn.id === optimisticTurnID || turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX)) {
       return false;
     }
     return userMessageText(turn) === expected;
