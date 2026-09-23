@@ -254,7 +254,7 @@ function StatusCard({
   return (
     <main className="web-gate">
       <section className="web-gate-card web-gate-status">
-        {title.startsWith('正在') && <ViewSwitchLoading inline />}
+        {title.startsWith('正在') && <ViewSwitchLoading placement="inline" />}
         <h1 role="status">{title}</h1>
         {detail ? <p className="web-gate-detail">{detail}</p> : null}
         {children}
