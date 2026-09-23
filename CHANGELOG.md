@@ -8,6 +8,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+## [2026.9.23] - 2026-09-23
+
 ### Added
 
 - Agents can inspect local PNG, JPEG, static GIF, and WebP images with
@@ -22,11 +24,6 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Browser previews show an animated completion badge when the visible task
   finishes successfully, and clear it when work resumes. Hover reveals preview
   controls even while another application is active.
-
-- A subscription dashboard in desktop Settings shows source models
-  and Codex account allowance windows with remaining percentages
-  and reset times. Unsupported account quotas stay unknown rather than being
-  inferred from local usage.
 
 - Model selection now includes GPT-6 Sol/Luna (including Fast mode) and
   Claude Opus 5.5, with current limits, pricing, and reasoning controls.
@@ -58,9 +55,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
-- Subscription settings use compact provider rows and directly visible allowance
-  meters. Model selection and sign-in stay accessible without expanding details;
-  concise failure states replace raw engine logs and repeated login instructions.
+- The subscription dashboard stays development-only and is not exposed in
+  production Settings or extension-provided settings navigation.
 
 - Folder, conversation, and new-conversation icons use simpler contours and
   consistent rounded frames, matching the sidebar toggle controls. Single and
