@@ -1,10 +1,8 @@
 import type {
   EngineInfo,
-  EngineLatestRequest,
   EngineListResult,
   ProviderSummary,
   SubscriptionQuota,
-  SubscriptionUsage,
 } from "../shared/protocol";
 import { readDraftEngineMemory, writeDraftEngineMemory } from "./DraftEngineMemory";
 
@@ -20,12 +18,10 @@ export type SubscriptionSource = {
   id: string;
   label: string;
   login: SubscriptionLogin;
-  detail: string;
+  catalogFailed: boolean;
   models: { id: string; label: string }[];
   selectedModel: string;
-  latest?: EngineLatestRequest;
   quota?: SubscriptionQuota;
-  localUsage?: SubscriptionUsage;
   engine?: EngineInfo;
   provider?: ProviderSummary;
 };
@@ -70,12 +66,10 @@ function engineSource(engine: EngineInfo): SubscriptionSource {
     id: engine.id,
     label: engine.display_name?.trim() || engine.id,
     login: engineLogin(engine),
-    detail: engine.models_error || engine.error || "",
+    catalogFailed: !!(engine.models_error || engine.error),
     models,
     selectedModel: selected,
-    latest: engine.latest_request,
     quota: engine.quota,
-    localUsage: engine.local_usage,
     engine,
   };
 }
@@ -85,7 +79,8 @@ function engineLogin(engine: EngineInfo): SubscriptionLogin {
   // Only an ACP catalog was read from an accepted session. Static CLI model
   // lists and Codex model/list do not establish an authenticated account.
   if (engine.protocol === "acp" && (engine.models ?? []).length > 0) return "ready";
-  if (engine.models_error) return engine.protocol === "acp" ? "sign_in" : "unknown";
+  // Catalog failures can be cancellations or transport errors, not proof that
+  // credentials are missing. Authentication remains an explicit user action.
   return "unknown";
 }
 
@@ -97,11 +92,9 @@ function providerSource(provider: ProviderSummary): SubscriptionSource {
     id: provider.name,
     label: provider.name,
     login: provider.api_key_configured ? "ready" : "sign_in",
-    detail: "",
+    catalogFailed: false,
     models,
     selectedModel: provider.model,
-    latest: provider.latest_request,
-    localUsage: provider.local_usage,
     provider,
   };
 }

@@ -23,8 +23,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   finishes successfully, and clear it when work resumes. Hover reveals preview
   controls even while another application is active.
 
-- A subscription dashboard in desktop Settings shows source models, reported
-  Wuu token usage, and Codex account allowance windows with remaining percentages
+- A subscription dashboard in desktop Settings shows source models
+  and Codex account allowance windows with remaining percentages
   and reset times. Unsupported account quotas stay unknown rather than being
   inferred from local usage.
 
@@ -57,6 +57,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   hide the tool.
 
 ### Changed
+
+- Subscription settings use compact provider rows and directly visible allowance
+  meters. Model selection and sign-in stay accessible without expanding details;
+  concise failure states replace raw engine logs and repeated login instructions.
 
 - Folder, conversation, and new-conversation icons use simpler contours and
   consistent rounded frames, matching the sidebar toggle controls. Single and
