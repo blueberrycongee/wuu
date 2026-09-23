@@ -29,6 +29,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Untracked files with Chinese names or filename whitespace now show their
+  original paths, added-line counts, and contents in desktop Git previews.
+
 - Named agents can be deleted even when they have task history. Deletion stops
   their execution and removes their local identity state while retaining shared
   channel history and completed task attribution.
