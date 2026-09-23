@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe.each([undefined, "true"])("production phone access (build override: %s)", (override) => {
-  it("keeps settings usable without exposing or contacting phone/account services", async () => {
+  it.each(["remote", "subscriptions"] as const)("keeps settings usable without exposing development-only pages from %s", async (initialPage) => {
     vi.stubEnv("DEV", false);
     vi.stubEnv("VITE_ENABLE_ACCOUNT", override);
     vi.stubEnv("VITE_ENABLE_REMOTE_CONTROL", override);
@@ -29,10 +29,12 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
     const remoteAccount = vi.fn().mockResolvedValue({ username: "test-user" });
     const getRemoteControlSnapshot = vi.fn().mockResolvedValue({ status: null, host_running: false, pair_uri: null });
     const onRemoteControlEvent = vi.fn(() => () => {});
+    const listEngines = vi.fn().mockResolvedValue({ engines: [] });
     window.wuu = {
       remoteAccount,
       getRemoteControlSnapshot,
       onRemoteControlEvent,
+      listEngines,
       getBuildInfo: vi.fn().mockResolvedValue({}),
       listMCPServers: vi.fn().mockResolvedValue({ servers: [] }),
     } as unknown as WuuDesktopApi;
@@ -60,7 +62,7 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
     const engines = { engines: [] };
     await act(async () => root!.render(
       <SettingsView
-        initialPage="remote"
+        initialPage={initialPage}
         running={false}
         codexPetsLoading={false}
         codexPetsError=""
@@ -89,6 +91,9 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
     ));
     const navigation = container.querySelector('[data-wuu-component="settings-navigation"]')!;
     expect(navigation.textContent).not.toContain(t("settings.remote"));
+    expect(navigation.textContent).not.toContain(t("settings.subscriptions"));
+    expect(container.querySelector('[data-testid="settings-subscriptions"]')).toBeNull();
+    expect(listEngines).not.toHaveBeenCalledWith({ include_quota: true });
     expect(container.querySelector('[data-testid="settings-remote-page"]')).toBeNull();
     expect(container.querySelector(".settings-nav-item.active")?.textContent).toBe(t("settings.providers"));
     expect(getRemoteControlSnapshot).not.toHaveBeenCalled();

@@ -23,11 +23,6 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   finishes successfully, and clear it when work resumes. Hover reveals preview
   controls even while another application is active.
 
-- A subscription dashboard in desktop Settings shows source models
-  and Codex account allowance windows with remaining percentages
-  and reset times. Unsupported account quotas stay unknown rather than being
-  inferred from local usage.
-
 - Model selection now includes GPT-6 Sol/Luna (including Fast mode) and
   Claude Opus 5.5, with current limits, pricing, and reasoning controls.
   Claude Fable 5.1 and Opus 5.5 use always-on adaptive thinking, preserve
@@ -58,9 +53,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
-- Subscription settings use compact provider rows and directly visible allowance
-  meters. Model selection and sign-in stay accessible without expanding details;
-  concise failure states replace raw engine logs and repeated login instructions.
+- The subscription dashboard stays development-only and is not exposed in
+  production Settings or extension-provided settings navigation.
 
 - Folder, conversation, and new-conversation icons use simpler contours and
   consistent rounded frames, matching the sidebar toggle controls. Single and
