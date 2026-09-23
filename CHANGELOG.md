@@ -14,6 +14,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   conversation area. The sidebar, title bar, and environment panel stay
   visible and usable, and the sidebar marks the conversation being opened.
 
+- Sending a message moves only the message bubble into place. The new turn's
+  in-progress status no longer travels with it; it fades in as the bubble lands,
+  for both the first message and follow-ups.
+
 ### Fixed
 
 - Switching conversations no longer shifts messages after they appear. A

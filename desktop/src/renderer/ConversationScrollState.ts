@@ -62,6 +62,13 @@ const SUBMITTED_CONTEXT_MIN_FRACTION = 0.16;
 const SUBMITTED_CONTEXT_MAX_FRACTION = 0.24;
 const SUBMITTED_MESSAGE_MIN_FRACTION = 0.25;
 const SUBMITTED_MESSAGE_MAX_FRACTION = 0.35;
+/** Hides the submitted turn's status on the content wrapper while its bubble
+ * is being placed. The status is not part of what the user sent, so it enters
+ * once the bubble arrives instead of travelling with it. */
+const SUBMIT_PLACING_ATTR = "data-submit-placing";
+/** Remaining placement distance at which the status enters. Below this the
+ * glide only creeps, so the entrance overlaps the bubble settling. */
+const SUBMIT_STATUS_REVEAL_PX = 8;
 
 function clampFraction(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
@@ -312,6 +319,9 @@ export function useConversationScrollState({
   function writeScrollMode(mode: ConversationScrollMode): void {
     scrollModeRef.current = mode;
     syncStreamFollowing();
+    // Any exit from placing (landing, cancellation, a missing pane) must
+    // leave the status visible.
+    scrollContentRef.current?.toggleAttribute(SUBMIT_PLACING_ATTR, mode === "placing");
     // Readers of the conversation scrollport skip geometry work for the
     // duration and catch up when this clears.
     setSubmitGlideActive(mode === "placing");
@@ -776,6 +786,24 @@ export function useConversationScrollState({
       reflowSubmittedMotionRef.current = undefined;
       submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(viewport, false, placed);
     };
+    const revealStatusNear = (remaining: number): void => {
+      const content = scrollContentRef.current;
+      if (remaining > SUBMIT_STATUS_REVEAL_PX || !content?.hasAttribute(SUBMIT_PLACING_ATTR)) return;
+      // Start the entrance in the same task that unhides the status, so it
+      // never paints a frame at full opacity. Plain ease-out, not the
+      // front-loaded --ease-out: this should surface, not pop.
+      const landed = submittedMessage();
+      const turn = landed?.closest(".turn") ?? landed?.parentElement;
+      turn?.querySelector<HTMLElement>(":scope > .assistant-turn-shell")?.animate?.([
+        { opacity: 0, transform: "translateY(4px)" },
+        { opacity: 1, transform: "none" },
+      ], {
+        duration: motionDurationMs("--motion-slow", 280),
+        easing: "ease-out",
+        fill: "backwards",
+      });
+      content.removeAttribute(SUBMIT_PLACING_ATTR);
+    };
     const armFrames = (
       paint: (now: number | undefined) => void,
       syncStart: boolean,
@@ -827,6 +855,7 @@ export function useConversationScrollState({
           : glide.step(now, 0, liftViewportHeight);
         // Padding is the motion. Do not read it back: the commanded spacer
         // is the position, and a geometry read would lay the thread out twice.
+        revealStatusNear(position);
         applyLeadSpace(position);
         viewport.scrollTop = targetTop;
         programmaticScrollTopRef.current = targetTop;
@@ -908,6 +937,7 @@ export function useConversationScrollState({
       // is the achieved one. Reading scrollTop back would force a second layout.
       programmaticScrollTopRef.current = top;
       lastConversationScrollTopRef.current = top;
+      revealStatusNear(Math.abs(anchor.targetScreen - position));
       if (done) {
         finishHold(viewport, top);
         return;

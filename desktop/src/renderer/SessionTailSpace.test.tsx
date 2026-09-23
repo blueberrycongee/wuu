@@ -829,6 +829,7 @@ it("clears an in-flight first-bubble lift when the user scrolls", () => {
   expect(leadSpace()).toBeGreaterThan(0);
   scrollUp(100);
   expect(leadSpace()).toBe(0);
+  expect(api.scrollContentRef.current!.hasAttribute("data-submit-placing")).toBe(false);
 });
 
 it("clears an in-flight first-bubble lift when switching sessions", () => {
@@ -857,8 +858,14 @@ it("lifts the in-progress timer with a short first bubble instead of a second tr
   expect(leadSpace()).toBeGreaterThan(0);
   expect(motionY()).toBe(0);
   expect(motionY(process)).toBe(0);
+  // The timer rides in flow but stays hidden; it enters only after landing.
+  const content = api.scrollContentRef.current!;
+  expect(content.hasAttribute("data-submit-placing")).toBe(true);
+  expect(animations.filter(animation => animation.element === process)).toHaveLength(0);
   settle(360);
   expect(leadSpace()).toBe(0);
+  expect(content.hasAttribute("data-submit-placing")).toBe(false);
+  expect(animations.filter(animation => animation.element === process)).toHaveLength(1);
 });
 
 it("does not lift a follow-up bubble that can scroll into place", () => {
@@ -1060,7 +1067,9 @@ it("lifts a short first query without remeasuring on later frames", () => {
 it("moves immediately and decelerates into the reading position", () => {
   render({ messageID: "old" });
   act(() => api.requestSubmittedQueryScroll("submitted"));
-  render({ messageID: "submitted" });
+  render({ messageID: "submitted", processRow: true });
+  const process = host.querySelector<HTMLElement>("[data-process-row]");
+  const content = api.scrollContentRef.current!;
   tick(0);
   const start = scrollTop();
   tick(60);
@@ -1068,7 +1077,12 @@ it("moves immediately and decelerates into the reading position", () => {
   tick(120);
   expect(first).toBeGreaterThan(0);
   expect(scrollTop() - start - first).toBeLessThan(first);
+  // The status does not scroll in with the bubble; it enters as the bubble lands.
+  expect(content.hasAttribute("data-submit-placing")).toBe(true);
+  expect(animations.filter(animation => animation.element === process)).toHaveLength(0);
   settle(360);
+  expect(content.hasAttribute("data-submit-placing")).toBe(false);
+  expect(animations.filter(animation => animation.element === process)).toHaveLength(1);
   expect(scrollTop()).toBeCloseTo(submittedMessageScrollTop(api.conversationScrollRef.current!, host.querySelector('[data-user-message-id="submitted"]')!));
 });
 
