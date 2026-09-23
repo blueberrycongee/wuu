@@ -53,6 +53,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Composer project and branch selectors use more breathing room and omit
+  dropdown chevrons while keeping their menus accessible.
+
 - Folder, conversation, and new-conversation icons use simpler contours and
   consistent rounded frames, matching the sidebar toggle controls. Single and
   stacked conversation bubbles share the same visual style.

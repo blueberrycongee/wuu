@@ -1,4 +1,4 @@
-import { Check, ChevronDown, GitBranch, Plus, Search } from "./WuuIcons";
+import { Check, GitBranch, Plus, Search } from "./WuuIcons";
 import { useRef, useState } from "react";
 import type { GitStatusResult } from "../shared/protocol";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
@@ -33,7 +33,6 @@ export function ComposerBranchPicker({
         disabled={disabled} onClick={onToggle}>
         <GitBranch className="hero-project-pill-icon" />
         <span className="hero-project-pill-text">{branch}</span>
-        <ChevronDown className="hero-project-pill-chevron" />
       </button>
       {open && !disabled ? (
         <FloatingMenuPortal anchorRef={anchorRef} owner="composer-runtime" placement="above" align="left" width={280}

@@ -1152,7 +1152,6 @@ export function Composer({
                       <ProjectPillIcon />
                     </span>
                     <span className="hero-project-pill-text">{projectPillLabel}</span>
-                    <ChevronDown className="hero-project-pill-chevron" aria-hidden="true" />
                   </button>
                 </Tooltip>
                 {menuOpen ? (
