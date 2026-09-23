@@ -499,6 +499,9 @@ export type PluginInventoryChangedNotification = {
   skills: SkillSummary[];
 };
 
+/** A rejected configuration refresh; the last valid inventory remains displayable. */
+export type ConfigErrorNotification = { message: string };
+
 /** Published after the core hot-applies an external change to the effective config. */
 export type ConfigChangedNotification = {
   provider: string;

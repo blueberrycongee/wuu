@@ -29,6 +29,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Invalid external configuration edits report an error without erasing the last
+  valid model inventory. Unchanged invalid files no longer trigger repeated
+  parsing and logging, and corrected files recover automatically.
+
 - Desktop development now uses a separate data directory per checkout and forwards
   explicit `WUU_HOME` overrides on macOS, preventing experimental settings from
   breaking an installed app.

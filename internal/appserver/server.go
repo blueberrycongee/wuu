@@ -286,6 +286,9 @@ type Server struct {
 	pluginGenerationRefreshMu    sync.Mutex
 	configRefreshMu              sync.Mutex
 	configFingerprint            string
+	configRejectedSources        string
+	providerSummariesMu          sync.Mutex
+	lastProviderSummaries        []ProviderSummary
 	pluginLifecycleReplayPending atomic.Bool
 	refreshExtensionsForTest     func(config.Config) error
 	refreshConfigForTest         func() error

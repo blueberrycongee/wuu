@@ -201,6 +201,7 @@ const (
 	NotificationMCPStatusUpdated       = "mcp/status/updated"
 	NotificationPluginInventoryChanged = "plugin/inventory/changed"
 	NotificationConfigChanged          = "config/changed"
+	NotificationConfigError            = "config/error"
 	NotificationUserQuestionRequested  = "user-question/requested"
 	NotificationUserQuestionResolved   = "user-question/resolved"
 )
@@ -209,6 +210,10 @@ type PluginInventoryChangedNotification struct {
 	Epoch              uint64                     `json:"epoch"`
 	ExtensionInventory []ExtensionInventoryRecord `json:"extension_inventory"`
 	Skills             []SkillSummary             `json:"skills"`
+}
+
+type ConfigErrorNotification struct {
+	Message string `json:"message"`
 }
 
 type ConfigChangedNotification struct {

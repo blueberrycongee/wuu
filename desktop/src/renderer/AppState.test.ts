@@ -3916,3 +3916,31 @@ it("joins pages within a long turn while retaining newer live item content", () 
   expect(next.thread?.turns[0].items).toEqual([tool,...live.items]);
   expect(next.thread?.turns[0].status).toBe("in_progress");
 });
+
+describe("configuration refresh recovery", () => {
+  it("keeps model inventory on failure and clears only its own status after repair", () => {
+    const providers = [{ name: "example", model: "model-a", type: "openai-compatible" }];
+    const state = {
+      ...initialState,
+      initialized: { provider: "example", model: "model-a", providers } as NonNullable<AppState["initialized"]>,
+      status: "ready",
+    };
+    const failed = reduceServerEvent(state, {
+      kind: "notification",
+      workdir: "/repo",
+      message: { method: "config/error", params: { message: "invalid configuration" } },
+    });
+    expect(failed.initialized?.providers).toBe(providers);
+    expect(failed.status).toBe("invalid configuration");
+    const recovery = {
+      kind: "notification" as const,
+      workdir: "/repo",
+      message: { method: "config/changed", params: { provider: "example", model: "model-a", model_roles: [], providers } },
+    };
+    const repaired = reduceServerEvent(failed, recovery);
+    expect(repaired.configError).toBeUndefined();
+    expect(repaired.status).toBe("ready");
+    expect(repaired.initialized?.providers).toEqual(providers);
+    expect(reduceServerEvent({ ...failed, status: "another error" }, recovery).status).toBe("another error");
+  });
+});

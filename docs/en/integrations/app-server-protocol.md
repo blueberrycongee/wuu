@@ -34,6 +34,15 @@ outstanding. Do not assume every line is the response to the most recent request
 The stdio scanner has a 64 MiB line buffer limit; attachment/provider limits are
 separate and may be lower. Keep stdout free of banners and debug logging.
 
+When an external configuration edit cannot be loaded, `config/error` carries a
+`message` describing the failure. The previous provider inventory remains
+available for display; it is not a fallback for configuration mutations or
+execution validation. An unchanged rejected document does not emit repeated
+errors. After repair, `config/changed` publishes the valid selection and inventory,
+including when the file was restored to its previous contents. Clients should
+clear the configuration error on that notification. Unknown configuration fields
+remain invalid; this is recovery behavior, not downgrade compatibility.
+
 ## Session methods
 
 | Method | Input | Result |

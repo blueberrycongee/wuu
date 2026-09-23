@@ -136,6 +136,7 @@ type SessionTab =
     };
 
 type AppState = {
+  configError?: string;
   initialized?: InitializeResult;
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
@@ -655,12 +656,18 @@ function reduceNotification(
 ): AppState {
   const params = notification.params as Record<string, unknown> | undefined;
   switch (notification.method) {
+    case "config/error": {
+      if (typeof params?.message !== "string") return state;
+      return { ...state, configError: params.message, status: params.message };
+    }
     case "config/changed": {
       if (!state.initialized || !isConfigChangedNotification(params)) {
         return state;
       }
       return {
         ...state,
+        configError: undefined,
+        status: state.configError && state.status === state.configError ? "ready" : state.status,
         initialized: {
           ...state.initialized,
           provider: params.provider,
