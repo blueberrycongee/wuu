@@ -2,11 +2,8 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUpRight,
-  Bot,
   Globe,
-  Hand,
   RotateCw,
-  Square,
   X
 } from "./WuuIcons";
 import {
@@ -18,7 +15,7 @@ import {
   type FormEvent
 } from "react";
 import type { ActivitySession, BrowserDockTarget, BrowserSurfaceSnapshot, RuntimeContext } from "../shared/protocol";
-import { translateCurrent, useI18n } from "./i18n";
+import { useI18n } from "./i18n";
 import { browserTabIDForActivity, displayedBrowserTabID, observeBrowserPanelBounds } from "./BrowserVisibility";
 import { openExternalURL, workspaceBrowserOpenTarget } from "./WorkspaceBrowserOpen";
 import {
@@ -87,9 +84,7 @@ export function WorkspaceBrowserPanel({
   dockTarget,
   requestedURL,
   overlaySuppressed = false,
-  onActivityTakeover,
-  onActivityRelease,
-  onActivityStop,
+  onUserInteraction,
 }: {
   visible?: boolean;
   threadID?: string;
@@ -98,9 +93,7 @@ export function WorkspaceBrowserPanel({
   dockTarget?: BrowserDockTarget;
   requestedURL?: WorkspaceBrowserNavigationRequest;
   overlaySuppressed?: boolean;
-  onActivityTakeover?: () => void;
-  onActivityRelease?: () => void;
-  onActivityStop?: () => void;
+  onUserInteraction?: () => void | Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -206,21 +199,22 @@ export function WorkspaceBrowserPanel({
     return subscribe((payload) => {
       if (!workdir || payload.workdir !== workdir) return;
       if (payload.tabID !== selectedTabIDRef.current) return;
-      if (!activity || activity.controller !== "agent" || activity.state === "stopped") return;
-      onActivityTakeover?.();
+      if (!showingAgentTab || !activity || activity.state === "stopped") return;
+      void onUserInteraction?.();
     });
-  }, [activity, onActivityTakeover, workdir]);
+  }, [activity, onUserInteraction, showingAgentTab, workdir]);
 
   const runCommand = useCallback(async (command: "navigate" | "back" | "forward" | "reload" | "stop", url?: string) => {
     const tabID = selectedTabIDRef.current;
     const send = window.wuu?.browserCommand;
     if (!workdir || !tabID || typeof send !== "function") return;
-    if (activity && activity.controller === "agent" && activity.state !== "stopped") {
-      onActivityTakeover?.();
+    if (showingAgentTab && activity && activity.state !== "stopped") {
+      await onUserInteraction?.();
     }
+    if (tabID !== selectedTabIDRef.current) return;
     const snapshot = await send({ workdir, tabID, command, url });
     if (snapshot && snapshot.tabID === selectedTabIDRef.current) applySurface(snapshot);
-  }, [activity, applySurface, onActivityTakeover, workdir]);
+  }, [activity, applySurface, onUserInteraction, showingAgentTab, workdir]);
 
   const navigate = useCallback((rawInput: string) => {
     const target = resolveNavigationInput(rawInput);
@@ -374,43 +368,6 @@ export function WorkspaceBrowserPanel({
           data-active={isLoading ? "true" : "false"}
           aria-hidden="true"
         />
-        {showingAgentTab && activity && activity.state !== "stopped" ? (
-          <span className="workspace-browser-activity">
-            <span className={`workspace-browser-activity-state ${activity.controller}`} aria-live="polite">
-              {browserActivityLabel(activity)}
-            </span>
-            {activity.controller === "user" ? (
-              <button
-                className="icon-button workspace-browser-activity-button"
-                type="button"
-                aria-label={t("workspace.browser.releaseToAgent")}
-                title={t("workspace.browser.releaseToAgentShort")}
-                onClick={onActivityRelease}
-              >
-                <Bot className="icon-sm" />
-              </button>
-            ) : (
-              <button
-                className="icon-button workspace-browser-activity-button"
-                type="button"
-                aria-label={t("workspace.browser.takeOver")}
-                title={t("workspace.browser.takeOver")}
-                onClick={onActivityTakeover}
-              >
-                <Hand className="icon-sm" />
-              </button>
-            )}
-            <button
-              className="icon-button workspace-browser-activity-button"
-              type="button"
-              aria-label={t("workspace.browser.stopActivity")}
-              title={t("workspace.browser.stopActivityShort")}
-              onClick={onActivityStop}
-            >
-              <Square className="icon-sm" />
-            </button>
-          </span>
-        ) : null}
       </div>
       <div className="workspace-browser-frame" data-wuu-component="workspace-browser-content">
         <div className="workspace-browser-host" />
@@ -443,20 +400,4 @@ export function WorkspaceBrowserPanel({
       </div>
     </div>
   );
-}
-
-function browserActivityLabel(activity: ActivitySession): string {
-  if (activity.state === "waiting_confirmation") {
-    return translateCurrent("workspace.browser.activityWaitingConfirmation");
-  }
-  if (activity.state === "error") {
-    return translateCurrent("workspace.browser.activityError");
-  }
-  if (activity.controller === "user") {
-    return translateCurrent("workspace.browser.activityUserControl");
-  }
-  if (activity.controller === "agent") {
-    return translateCurrent("workspace.browser.activityAgentControl");
-  }
-  return translateCurrent("workspace.browser.activityUnassigned");
 }

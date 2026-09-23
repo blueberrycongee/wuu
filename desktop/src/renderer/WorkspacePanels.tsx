@@ -207,9 +207,7 @@ export function WorkspaceRightPanel({
   browserActivity,
   browserDockTarget,
   browserOverlaySuppressed = false,
-  onBrowserActivityTakeover,
-  onBrowserActivityRelease,
-  onBrowserActivityStop,
+  onBrowserUserInteraction,
   focusedComposer,
   fileRefreshKey,
   pluginHost,
@@ -250,9 +248,7 @@ export function WorkspaceRightPanel({
   browserActivity?: ActivitySession;
   browserDockTarget?: BrowserDockTarget;
   browserOverlaySuppressed?: boolean;
-  onBrowserActivityTakeover?: () => void;
-  onBrowserActivityRelease?: () => void;
-  onBrowserActivityStop?: () => void;
+  onBrowserUserInteraction?: () => void | Promise<void>;
   focusedComposer?: ReactNode;
   fileRefreshKey?: string;
   pluginHost?: PluginHost;
@@ -946,9 +942,7 @@ export function WorkspaceRightPanel({
                   dockTarget={browserDockTarget}
                   requestedURL={browserNavigation}
                   overlaySuppressed={browserOverlaySuppressed}
-                  onActivityTakeover={onBrowserActivityTakeover}
-                  onActivityRelease={onBrowserActivityRelease}
-                  onActivityStop={onBrowserActivityStop}
+                  onUserInteraction={onBrowserUserInteraction}
                 />
               </div>
             ) : null}

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
@@ -43,6 +44,8 @@ type queuedTurn struct {
 	followups []providers.ChatMessage
 	snapshot  turnRuntimeSnapshot
 	origin    string
+	// Captured only at explicit user submission, never by a background drain.
+	resumeBrowser func()
 }
 
 type queuedTurnClaim struct {
@@ -202,6 +205,10 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	snapshot.PermissionExplicit = params.PermissionMode != nil
 	snapshot.ForceCompact = isManualCompactPrompt(params.Prompt)
 	snapshot.RequestContext = activeDocumentRequestContext(params.ActiveDocument)
+	resumeBrowser, err := s.rt.ActivityRegistry.PrepareResume(params.ThreadID, activity.KindBrowser)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	var threadRuntime *runtime.ThreadRuntime
 	started, ok, err := s.startThreadUserTurnWithAdmission(
 		ctx,
@@ -244,6 +251,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	}); err != nil {
 		return errors.Join(err, s.abortStartedThreadTurnDurably(th, started, err))
 	}
+	resumeBrowser()
 	launch.Commit()
 	return nil
 }
@@ -506,6 +514,10 @@ func (s *Server) handleTurnQueue(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	entry := queuedTurn{id: queueID, msg: msg, snapshot: turnRuntimeSnapshot{}.withPermissions(permissions), origin: session.HeldUserWorkOriginQueue}
+	entry.resumeBrowser, err = s.rt.ActivityRegistry.PrepareResume(params.ThreadID, activity.KindBrowser)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	entry.snapshot.PermissionExplicit = params.PermissionMode != nil
 	entry.snapshot.ForceCompact = isManualCompactPrompt(params.Prompt)
 	entry.snapshot.ActiveDocument = cloneActiveDocument(params.ActiveDocument)
@@ -723,6 +735,10 @@ func (s *Server) handleTurnSteer(req Request) error {
 			return s.writeResponse(req.ID, nil, errors.New("no active turn to steer"))
 		}
 		heldTurn.msg.Steered = false
+		heldTurn.resumeBrowser, err = s.rt.ActivityRegistry.PrepareResume(params.ThreadID, activity.KindBrowser)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
 		started, startErr := s.startQueuedTurn(context.Background(), params.ThreadID, heldTurn)
 		if startErr != nil {
 			return s.writeResponse(req.ID, nil, startErr)
@@ -3829,6 +3845,9 @@ func (s *Server) startQueuedTurn(ctx context.Context, threadID string, entry que
 			th.signalSteerWakeLocked()
 		}
 		th.mu.Unlock()
+	}
+	if entry.resumeBrowser != nil {
+		entry.resumeBrowser()
 	}
 	launch.Commit()
 	if reference := started.runtime.PluginTurn; reference != nil {

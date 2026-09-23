@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/hooks"
@@ -38,6 +39,15 @@ func TestRunStartSettlesManifest(t *testing.T) {
 	thread := newThreadState("ephemeral-run-thread", []providers.ChatMessage{{Role: "system", Content: "system"}}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
 	thread.Ephemeral = true
 	srv.threads[thread.ID] = thread
+	rt.ActivityRegistry = activity.NewRegistry()
+	options := activity.StartOptions{ThreadID: thread.ID, Workdir: rt.RootDir, Kind: activity.KindBrowser, PluginID: "browser"}
+	browser, _, err := rt.ActivityRegistry.Acquire(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.ActivityRegistry.Takeover(thread.ID, browser.ID); err != nil {
+		t.Fatal(err)
+	}
 
 	request := Request{ID: json.RawMessage(`"start"`), Method: MethodRunStart, Params: mustJSON(RunStartParams{
 		ThreadID: thread.ID,
@@ -53,6 +63,9 @@ func TestRunStartSettlesManifest(t *testing.T) {
 	}
 	startResult := remarshal[RunStartResult](t, responseByID(t, parseOutput(t, out.String()), "start")["result"])
 	run := startResult.Run
+	if _, _, err := rt.ActivityRegistry.Acquire(options); err != nil {
+		t.Fatalf("run/start did not resume browser: %v", err)
+	}
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {

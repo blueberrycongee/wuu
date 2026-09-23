@@ -210,6 +210,66 @@ func TestRegistryAcquireReusesPluginActivityAndHonorsUserControl(t *testing.T) {
 	}
 }
 
+func TestRegistryPreparedResumePreservesNewerUserControl(t *testing.T) {
+	for _, scenario := range []string{"resume", "newer input", "stopped", "other thread", "other kind", "new pause"} {
+		t.Run(scenario, func(t *testing.T) {
+			registry := NewRegistry()
+			options := StartOptions{ThreadID: "thread-1", Workdir: "/repo", PluginID: "browser", Kind: KindBrowser}
+			if scenario == "other thread" {
+				options.ThreadID = "thread-2"
+			}
+			if scenario == "other kind" {
+				options.Kind = KindCUA
+			}
+			current, oldLease, err := registry.Acquire(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario != "new pause" {
+				if _, err := registry.Takeover(options.ThreadID, current.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			resume, err := registry.PrepareResume("thread-1", KindBrowser)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "newer input" || scenario == "new pause" {
+				if _, err := registry.Takeover(options.ThreadID, current.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if scenario == "stopped" {
+				if _, err := registry.Stop(options.ThreadID, current.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, _, err := registry.Acquire(options); err == nil {
+				t.Fatal("preparing a resume must not restore control")
+			}
+			resume()
+			_, nextLease, err := registry.Acquire(options)
+			switch scenario {
+			case "resume":
+				if err != nil || nextLease.Token == oldLease.Token {
+					t.Fatalf("resume lease = %+v, error = %v", nextLease, err)
+				}
+			case "stopped":
+				if !errors.Is(err, ErrStopped) {
+					t.Fatalf("Acquire = %v, want ErrStopped", err)
+				}
+			default:
+				if !errors.Is(err, ErrControlRevoked) {
+					t.Fatalf("Acquire = %v, want ErrControlRevoked", err)
+				}
+			}
+			if err := registry.CheckControl(options.ThreadID, current.ID, oldLease.Token); !errors.Is(err, ErrControlRevoked) {
+				t.Fatalf("old lease = %v, want ErrControlRevoked", err)
+			}
+		})
+	}
+}
+
 func TestRegistryAllowsOnlyOneCUAControllerPerTarget(t *testing.T) {
 	registry := NewRegistry()
 	first, _, err := registry.Acquire(StartOptions{

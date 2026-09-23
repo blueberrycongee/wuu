@@ -53,44 +53,23 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function render(props: {
+type PanelProps = {
   visible?: boolean;
   threadID?: string;
   dockTarget?: BrowserDockTarget;
   activity?: ActivitySession;
-  onActivityTakeover?: () => void;
-  onActivityRelease?: () => void;
-  onActivityStop?: () => void;
-}) {
-  act(() => {
-    root = createRoot(container);
-    root!.render(
-      <WorkspaceBrowserPanel
-        visible={props.visible ?? true}
-        threadID={props.threadID ?? "thread-1"}
-        dockTarget={props.dockTarget}
-        activeContext={{ kind: "no_project", cwd: "/repo" }}
-        activity={props.activity}
-        onActivityTakeover={props.onActivityTakeover}
-        onActivityRelease={props.onActivityRelease}
-        onActivityStop={props.onActivityStop}
-      />
-    );
-  });
+  onUserInteraction?: () => void | Promise<void>;
+};
+
+function render(props: PanelProps) {
+  root = createRoot(container);
+  rerender(props);
   return {
     input: container.querySelector(".workspace-browser-url-input") as HTMLInputElement | null
   };
 }
 
-function rerender(props: {
-  visible?: boolean;
-  threadID?: string;
-  dockTarget?: BrowserDockTarget;
-  activity?: ActivitySession;
-  onActivityTakeover?: () => void;
-  onActivityRelease?: () => void;
-  onActivityStop?: () => void;
-}) {
+function rerender(props: PanelProps) {
   act(() => {
     root!.render(
       <WorkspaceBrowserPanel
@@ -99,9 +78,7 @@ function rerender(props: {
         dockTarget={props.dockTarget}
         activeContext={{ kind: "no_project", cwd: "/repo" }}
         activity={props.activity}
-        onActivityTakeover={props.onActivityTakeover}
-        onActivityRelease={props.onActivityRelease}
-        onActivityStop={props.onActivityStop}
+        onUserInteraction={props.onUserInteraction}
       />
     );
   });
@@ -252,7 +229,6 @@ describe("WorkspaceBrowserPanel", () => {
   });
 
   it("shows the agent tab in the address bar and parks it when the panel closes", () => {
-    const takeover = vi.fn();
     const activity: ActivitySession = {
       id: "activity-1",
       kind: "browser",
@@ -264,7 +240,7 @@ describe("WorkspaceBrowserPanel", () => {
       created_at: "2026-07-10T10:00:00Z",
       updated_at: "2026-07-10T10:00:01Z",
     };
-    const { input } = render({ visible: true, activity, onActivityTakeover: takeover });
+    const { input } = render({ visible: true, activity });
     act(() => {
       surfaceHandlers[0]?.({
         workdir: "/repo",
@@ -278,17 +254,16 @@ describe("WorkspaceBrowserPanel", () => {
     });
     expect(input?.value).toBe("https://example.com/pelican");
     expect(container.querySelector(".workspace-browser-home")).toBeNull();
-    expect(container.textContent).toContain("Agent 控制");
     reportBrowserBounds.mockClear();
-    rerender({ visible: false, activity, onActivityTakeover: takeover });
+    rerender({ visible: false, activity });
     expect(browserCommand).not.toHaveBeenCalled();
     expect(reportBrowserBounds).toHaveBeenCalledWith("/repo", "tab-live", null);
   });
 
-  it("renders Activity control and takeover, release, and stop commands", () => {
-    const takeover = vi.fn();
-    const release = vi.fn();
-    const stop = vi.fn();
+  it("pauses for direct input only on the displayed agent tab and waits before navigating", async () => {
+    let finishPause!: () => void;
+    const paused = new Promise<void>((resolve) => { finishPause = resolve; });
+    const onUserInteraction = vi.fn(() => paused);
     const activity: ActivitySession = {
       id: "activity-1",
       kind: "browser",
@@ -296,24 +271,46 @@ describe("WorkspaceBrowserPanel", () => {
       workdir: "/repo",
       state: "active",
       controller: "agent",
+      target: "tab-live",
       created_at: "2026-07-10T10:00:00Z",
       updated_at: "2026-07-10T10:00:01Z",
     };
-    render({ activity, onActivityTakeover: takeover, onActivityRelease: release, onActivityStop: stop });
-    expect(container.textContent).toContain("Agent 控制");
-    (container.querySelector('button[aria-label="接管浏览器"]') as HTMLButtonElement | null)?.click();
-    (container.querySelector('button[aria-label="停止浏览器 Activity"]') as HTMLButtonElement | null)?.click();
-    expect(takeover).toHaveBeenCalledTimes(1);
-    expect(stop).toHaveBeenCalledTimes(1);
-
-    rerender({
-      activity: { ...activity, state: "user_controlled", controller: "user", updated_at: "2026-07-10T10:00:02Z" },
-      onActivityTakeover: takeover,
-      onActivityRelease: release,
-      onActivityStop: stop,
+    render({ activity, onUserInteraction });
+    const userInput = () => vi.mocked(window.wuu.onBrowserUserInput!).mock.calls.at(-1)![0];
+    act(() => {
+      userInput()({ workdir: "/other", tabID: "tab-live" });
+      userInput()({ workdir: "/repo", tabID: "another-tab" });
     });
-    expect(container.textContent).toContain("你正在控制");
-    (container.querySelector('button[aria-label="交还浏览器给 Agent"]') as HTMLButtonElement | null)?.click();
-    expect(release).toHaveBeenCalledTimes(1);
+    expect(onUserInteraction).not.toHaveBeenCalled();
+    act(() => { userInput()({ workdir: "/repo", tabID: "tab-live" }); });
+    expect(onUserInteraction).toHaveBeenCalledTimes(1);
+    onUserInteraction.mockClear();
+    act(() => {
+      surfaceHandlers.at(-1)!({
+        workdir: "/repo", tabID: "tab-live", url: "https://example.com",
+        title: "Example", loading: false, canGoBack: true, canGoForward: false,
+      });
+    });
+    act(() => { container.querySelector<HTMLButtonElement>(".workspace-browser-nav")!.click(); });
+    expect(onUserInteraction).toHaveBeenCalledTimes(1);
+    expect(browserCommand).not.toHaveBeenCalled();
+    await act(async () => { finishPause(); await paused; });
+    expect(browserCommand).toHaveBeenCalledWith({ workdir: "/repo", tabID: "tab-live", command: "back", url: undefined });
+    onUserInteraction.mockClear();
+    await act(async () => {
+      rerender({ activity: { ...activity, controller: "user", state: "user_controlled" }, onUserInteraction });
+    });
+    act(() => { userInput()({ workdir: "/repo", tabID: "tab-live" }); });
+    expect(onUserInteraction).toHaveBeenCalledTimes(1);
+    onUserInteraction.mockClear();
+    await act(async () => {
+      rerender({
+        activity,
+        dockTarget: { thread_id: "thread-1", workdir: "/repo", tabID: "retained-preview" },
+        onUserInteraction,
+      });
+    });
+    act(() => { userInput()({ workdir: "/repo", tabID: "retained-preview" }); });
+    expect(onUserInteraction).not.toHaveBeenCalled();
   });
 });

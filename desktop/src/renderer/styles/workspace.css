@@ -1822,7 +1822,6 @@ html.resizing-workspace-file-split * {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   column-gap: 8px;
-  row-gap: 4px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--hairline-soft);
   background: transparent;
@@ -2044,34 +2043,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 
 .workspace-browser-retry:hover {
   background: var(--browser-retry-hover-bg);
-}
-
-.workspace-browser-activity {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  grid-column: 1 / -1;
-  justify-self: end;
-}
-
-.workspace-browser-activity-state {
-  color: var(--ink-muted);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-semibold);
-  white-space: nowrap;
-}
-
-.workspace-browser-activity-state.user {
-  color: var(--warning);
-}
-
-.workspace-browser-activity-state.agent {
-  color: var(--success);
-}
-
-.workspace-browser-activity-button {
-  width: 24px;
-  height: 24px;
 }
 
 @keyframes workspace-browser-pulse {

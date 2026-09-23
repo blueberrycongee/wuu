@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/activity"
+	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 func (s *Server) handleActivityList(req Request) error {
@@ -41,11 +42,19 @@ func (s *Server) handleActivityTakeover(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	session, err := registry.Takeover(params.ThreadID, params.ActivityID)
+	current, err := registry.Takeover(params.ThreadID, params.ActivityID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	return s.writeResponse(req.ID, ActivityActionResult{Activity: activitySessionFromRuntime(session)}, nil)
+	if current.Kind == activity.KindBrowser {
+		if err := s.takeHarnessControl(params.ThreadID, session.ControlPaused); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if _, err := s.interruptThreadExecution(params.ThreadID, "", ""); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+	}
+	return s.writeResponse(req.ID, ActivityActionResult{Activity: activitySessionFromRuntime(current)}, nil)
 }
 
 func (s *Server) handleActivityRelease(req Request) error {
