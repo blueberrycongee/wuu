@@ -648,8 +648,8 @@ describe("AppState protocol normalization", () => {
     ]);
   });
 
-  it("keeps an optimistic first turn when thread/started carries an empty snapshot", () => {
-    const current = threadWithUserTexts(["first query"]);
+  it("keeps an optimistic first turn and sidebar label when thread/started carries an empty snapshot", () => {
+    const current = { ...threadWithUserTexts(["first query"]), preview: "first query" };
     const next = reduceServerEvent(
       {
         ...initialState,
@@ -666,12 +666,14 @@ describe("AppState protocol normalization", () => {
             thread: {
               ...current,
               turns: [],
+              preview: "",
             },
           },
         },
       },
     );
 
+    expect(next.thread?.preview).toBe("first query");
     expect(next.thread?.turns).toEqual(current.turns);
     expect(next.threads.find((thread) => thread.id === current.id)?.turns).toEqual(
       current.turns,

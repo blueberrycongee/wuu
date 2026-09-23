@@ -115,6 +115,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- New Harness conversations appear in the sidebar while creation is pending.
+  Stop remains available through background refreshes, restores the submitted
+  input, and cleans up an unused session if creation finishes after cancellation.
+  Concurrent drafts no longer share a single pending placeholder.
+
 - Inline artifact image previews fit the image's original proportions instead of
   adding white margins inside a fixed 4:3 frame, without cropping or stretching.
   Click-to-enlarge still opens the complete original image.

@@ -8,6 +8,8 @@ Select a workspace, then start a conversation. Its menu provides rename, pin, an
 
 Delete is permanent: it removes saved history and cleans up associated artifacts and any fork worktree still bound to the conversation. Preserve outputs and changes you need before deleting. Wuu rejects deletion while the conversation, its side chat, or its child agents are active.
 
+After the first send, the workspace sidebar immediately shows the pending conversation. You can switch away and return while it is being created. Stop cancels this wait and retains your input; a late creation response does not send the cancelled message or keep an unused empty conversation. Starting another conversation uses a separate draft.
+
 ## While a task is running
 
 The composer supports these keyboard actions:

@@ -375,6 +375,82 @@ describe("session tab switch latency", () => {
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
   });
 
+  it("keeps pending creation visible and stoppable after a background list refresh", async () => {
+    const { threadsByID, startTurn } = installWuuApi();
+    threadsByID.clear();
+    const creation = deferred<{ thread: Thread }>();
+    window.wuu.startThread = vi.fn(() => creation.promise);
+    window.wuu.deleteThread = vi.fn().mockResolvedValue(undefined);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await act(async () => { setMainComposerPrompt("first pending query"); });
+    await act(async () => { mainComposerSendButton().click(); });
+    expect(threadRowButton("first pending query")).toBeDefined();
+
+    // Re-listing sees no server thread yet and clears the global running flag.
+    const listCount = vi.mocked(window.wuu.listThreads).mock.calls.length;
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    await flushAsync();
+    expect(vi.mocked(window.wuu.listThreads).mock.calls.length).toBeGreaterThan(listCount);
+    await act(async () => { setMainComposerPrompt("newer draft"); });
+    await act(async () => {
+      mainComposerTextarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(window.wuu.startThread).toHaveBeenCalledTimes(1);
+    expect(mainComposerTextarea().value).toBe("newer draft");
+    const stop = container.querySelector<HTMLButtonElement>('[data-main-conversation-composer] .composer-stop-button');
+    expect(stop).not.toBeNull();
+    await act(async () => { stop!.click(); });
+    expect(threadRowButton("first pending query")).toBeUndefined();
+    expect(mainComposerTextarea().value).toBe("newer draft");
+    const recovery = document.querySelector<HTMLButtonElement>('[role="alert"] .archive-tip-action');
+    expect(recovery).not.toBeNull();
+    await act(async () => { recovery!.click(); });
+    expect(mainComposerTextarea().value).toBe("first pending query");
+
+    const late = { ...threadA(), id: "late-created", preview: "", turns: [] };
+    await act(async () => {
+      emitNotification("thread/started", { thread: late });
+      creation.resolve({ thread: late });
+    });
+    await flushAsync();
+    expect(startTurn).not.toHaveBeenCalled();
+    expect(window.wuu.deleteThread).toHaveBeenCalledWith(late.id);
+    expect(mainComposerTextarea().value).toBe("first pending query");
+    expect(threadRowButton("未命名对话")).toBeUndefined();
+  });
+
+  it.each(["top", "workspace"])("keeps pending drafts separate when starting another conversation from %s", async (entry) => {
+    const { threadsByID, startTurn } = installWuuApi();
+    threadsByID.clear();
+    const first = deferred<{ thread: Thread }>();
+    const second = deferred<{ thread: Thread }>();
+    window.wuu.startThread = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await act(async () => { setMainComposerPrompt("pending A"); });
+    await act(async () => { mainComposerSendButton().click(); });
+    const newConversation = container.querySelector<HTMLButtonElement>(entry === "top" ? '.primary-nav .nav-item' : '.project-row-new-thread');
+    expect(newConversation).not.toBeNull();
+    await act(async () => { newConversation!.click(); });
+    await act(async () => { setMainComposerPrompt("pending B"); });
+    await act(async () => { mainComposerSendButton().click(); });
+    expect(window.wuu.startThread).toHaveBeenCalledTimes(2);
+    expect(threadRowButton("pending A")).toBeDefined();
+    expect(threadRowButton("pending B")).toBeDefined();
+    await act(async () => { threadRowButton("pending A")!.click(); });
+    expect(container.querySelector('.composer-stop-button')).not.toBeNull();
+    await act(async () => { second.resolve({ thread: { ...threadB(), preview: "", turns: [] } }); });
+    expect(startTurn).toHaveBeenCalledTimes(1);
+    expect(startTurn.mock.calls[0].slice(0, 2)).toEqual([threadBID, "pending B"]);
+    expect(container.querySelector('.composer-stop-button')).not.toBeNull();
+    await act(async () => { first.resolve({ thread: { ...threadA(), preview: "", turns: [] } }); });
+    expect(startTurn).toHaveBeenCalledTimes(2);
+    expect(startTurn.mock.calls[1].slice(0, 2)).toEqual([threadAID, "pending A"]);
+    expect(container.querySelectorAll('.thread-row-main')).toHaveLength(2);
+    expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
+  });
+
   it("keeps sidebar row titles and click targets after A-B-A switching and a delayed project list", async () => {
     installWuuApi();
     const projects = ["alpha", "beta"].map((id) => ({
