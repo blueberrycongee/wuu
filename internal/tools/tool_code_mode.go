@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -49,8 +50,11 @@ func (*CodeModeExecTool) Definition() providers.ToolDefinition {
 			"Filter by name or description and print matching entries with text(), for example: " +
 			"text(ALL_TOOLS.filter(t => /file|search/.test(t.name))); " +
 			"Use await for tool calls and text(value) to return output, for example: " +
-			"const result = await tools.read_file({path: 'README.md'}); text(result). Prefer this tool " +
-			"for multi-step reasoning, data transformation, and batched tool orchestration; each program " +
+			"const result = await tools.read_file({path: 'README.md'}); text(result). " +
+			"For images, forward each image content part with image(part), not text(): " +
+			"const result = await tools.read_file({path: 'screenshot.png'}); " +
+			"for (const part of result.content ?? []) { if (part.type === 'image') image(part); else if (part.type === 'text') text(part.text); } " +
+			"Prefer this tool for multi-step reasoning, data transformation, and batched tool orchestration; each program " +
 			"starts with a clean sandbox (no process, network, or file access unless provided by tools). " +
 			"After starting, use wait to collect output or terminate the cell.",
 		InputSchema: map[string]any{
@@ -187,6 +191,27 @@ func (w *CodeModeWaitTool) ExecuteResult(ctx context.Context, args string) (tool
 }
 
 func codeModeResponseResult(response codemode.Response) toolresult.Result {
+	// Keep cell state and textual output in the existing envelope, but route
+	// media through the canonical result so provider projection can attach it.
+	content := slices.Clone(response.Content)
+	var media []toolresult.ContentPart
+	for i, item := range content {
+		var kind, dataURL string
+		switch item.Type {
+		case "input_image":
+			kind, dataURL = toolresult.ContentTypeImage, item.ImageURL
+		case "input_audio":
+			kind, dataURL = toolresult.ContentTypeAudio, item.AudioURL
+		default:
+			continue
+		}
+		header, data, ok := strings.Cut(dataURL, ";base64,")
+		if !ok || !strings.HasPrefix(header, "data:"+kind+"/") {
+			return toolresult.FromErrorText("invalid code-mode " + kind + " output: expected a base64 data URL")
+		}
+		media = append(media, toolresult.ContentPart{Type: kind, MIMEType: strings.TrimPrefix(header, "data:"), Data: data})
+		content[i] = codemode.ContentItem{Type: "input_text", Text: "[" + kind + " output attached]"}
+	}
 	data, err := json.Marshal(struct {
 		State          string                 `json:"state"`
 		CellID         string                 `json:"cell_id"`
@@ -197,7 +222,7 @@ func codeModeResponseResult(response codemode.Response) toolresult.Result {
 	}{
 		State:          response.State,
 		CellID:         response.CellID,
-		Content:        response.Content,
+		Content:        content,
 		ErrorText:      response.ErrorText,
 		HostDurationNS: response.HostDurationNS,
 		Missing:        response.Missing,
@@ -205,7 +230,9 @@ func codeModeResponseResult(response codemode.Response) toolresult.Result {
 	if err != nil {
 		return toolresult.FromErrorText(fmt.Sprintf("encode code-mode response: %v", err))
 	}
-	return toolresult.FromText(string(data))
+	result := toolresult.FromText(string(data))
+	result.Content = append(result.Content, media...)
+	return result
 }
 
 // Code-mode entry tools belong to the runtime, independently of the model's

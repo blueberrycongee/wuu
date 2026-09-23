@@ -672,7 +672,7 @@ describe("main composer focus continuity", () => {
       model: "fake-model",
       effort: "high",
       permission_mode: "standard",
-    });
+    }, { kind: "no_project", cwd: scratchCwd });
     expect(window.wuu.startTurn).toHaveBeenCalled();
   });
 
@@ -696,14 +696,29 @@ describe("main composer focus continuity", () => {
     await flushAsync();
   });
 
-  it("removes the pending query and restores the dock draft when thread creation fails", async () => {
-    await renderApp(false, { rejectThreadStart: true });
+  it.each(["", "newer draft"])("recovers failed thread creation without replacing newer input (%s)", async (newerDraft) => {
+    await renderApp(false, { deferThreadStart: true, rejectThreadStart: true });
     const dock = mainComposer("dock");
 
     await enterCommand(dock, "query that fails before thread start");
-
-    expect(mainComposer("dock").value).toBe("query that fails before thread start");
+    if (newerDraft) {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(dock, newerDraft);
+        dock.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+    await act(async () => { releaseThreadStart!(); });
+    await flushAsync();
+    expect(mainComposer("dock").value).toBe(newerDraft || "query that fails before thread start");
     expect(container.querySelector(".turn-process-title")).toBeNull();
+    if (newerDraft) {
+      const recovery = document.querySelector<HTMLButtonElement>('[role="alert"] .archive-tip-action');
+      expect(recovery).not.toBeNull();
+      await act(async () => { recovery!.click(); });
+      expect(mainComposer("dock").value).toBe("query that fails before thread start");
+      await enterCommand(mainComposer("dock"), "/new");
+      expect(mainComposer("dock").value).toBe(newerDraft);
+    }
   });
 
   it("restores focus to the dock when the first query fails", async () => {

@@ -849,21 +849,26 @@
   flex: 0 0 auto;
 }
 
+.settings-subscriptions {
+  width: 100%;
+  max-width: 680px;
+  align-self: center;
+  gap: var(--space-5);
+}
+
 .settings-subscription-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22em), 1fr));
-  gap: 16px;
-  align-items: start;
 }
 
 .settings-subscription {
-  --ink-muted: var(--ink-soft);
   display: grid;
   min-width: 0;
-  gap: 12px;
-  padding: 16px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-lg);
+  gap: var(--space-3);
+  padding-block: var(--space-4);
+}
+
+.settings-subscription + .settings-subscription {
+  border-top: 1px solid var(--hairline);
 }
 
 .settings-subscription-header {
@@ -871,65 +876,117 @@
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-4);
 }
 
-.settings-subscription-main,
-.settings-subscription-model {
+.settings-subscription-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 15em);
+  align-items: center;
+  min-height: var(--control-field-height);
+  gap: var(--space-3) var(--space-5);
+}
+
+.settings-subscription-main {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
+}
+
+.settings-subscription-main .settings-engine-row-icon,
+.settings-subscription-main .engine-icon {
+  width: var(--icon-size-lg);
+  height: var(--icon-size-lg);
+}
+
+.settings-subscription-identity {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
 }
 
 .settings-subscription-name {
   min-width: 0;
+  margin: 0;
   overflow-wrap: anywhere;
   color: var(--ink);
+  font-size: inherit;
   font-weight: var(--weight-medium);
 }
 
-.settings-subscription-login {
-  color: var(--ink-muted);
-  font-size: var(--font-ui);
+.settings-subscription-status {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-soft);
 }
 
-.settings-subscription-login {
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
-.settings-subscription-model {
-  color: var(--ink-muted);
-}
-
-.settings-subscription-model .select-menu {
-  flex: 1;
+.settings-subscription-actions {
+  display: grid;
+  justify-items: end;
   min-width: 0;
+  gap: var(--space-2);
+}
+
+.settings-subscription-actions .select-menu {
+  width: 100%;
   max-width: 100%;
+}
+
+.select-menu-trigger.settings-subscription-model-trigger {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-soft);
+}
+
+.settings-subscription-model-trigger .select-menu-value {
+  text-align: right;
+}
+
+.select-menu-trigger.settings-subscription-model-trigger:hover:not(:disabled),
+.select-menu-trigger.settings-subscription-model-trigger[aria-expanded="true"] {
+  border-color: transparent;
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.settings-engine-auth-compact .settings-engine-auth-actions {
+  justify-content: flex-end;
 }
 
 .settings-subscription-usage {
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 4px 12px;
-  color: var(--ink-muted);
+  gap: var(--space-1) var(--space-3);
+  color: var(--ink-soft);
   font-variant-numeric: tabular-nums;
 }
 
-.settings-subscription-usage > :last-child {
+.settings-subscription-remaining {
   color: var(--ink);
+  font-weight: var(--weight-medium);
 }
 
-.settings-subscription-quota,
-.settings-subscription-window {
+/* Provider-grouped metrics follow OpenUsage's dashboard hierarchy:
+ * https://github.com/robinebers/openusage (ProviderCard / WidgetRowView). */
+.settings-subscription-quota {
   display: grid;
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16em), 1fr));
+  gap: var(--space-5);
+  padding: var(--space-4);
+  background: var(--surface-1);
+  border-radius: var(--radius-sm);
 }
 
-.settings-subscription-window + .settings-subscription-window {
-  margin-top: 4px;
+.settings-subscription-window {
+  --subscription-meter-fill: var(--info);
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: var(--space-2);
+  overflow-wrap: anywhere;
 }
 
 .settings-subscription-window meter {
@@ -937,7 +994,7 @@
   width: 100%;
   height: 6px;
   border: 0;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   overflow: hidden;
   background: var(--surface-3);
 }
@@ -949,34 +1006,42 @@
 }
 
 .settings-subscription-window meter::-webkit-meter-optimum-value {
-  background: var(--ink);
+  background: var(--subscription-meter-fill);
 }
 
 .settings-subscription-window meter::-moz-meter-bar {
-  background: var(--ink);
+  background: var(--subscription-meter-fill);
 }
 
 .settings-subscription-reset {
   color: var(--ink-muted);
 }
 
-.settings-subscription-details {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  color: var(--ink-soft);
+.settings-subscription-window[data-exhausted="true"] {
+  --subscription-meter-fill: var(--danger);
 }
 
-.settings-subscription-details summary {
-  cursor: pointer;
-}
-
-.settings-subscription-details p,
-.settings-subscription-details .settings-engine-auth {
-  margin-block: 8px 0;
-}
-
-.settings-subscription-window[data-exhausted="true"] .settings-subscription-usage > :last-child {
+.settings-subscription-window[data-exhausted="true"] .settings-subscription-remaining {
   color: var(--danger);
+}
+
+@container settings-page (max-width: 32em) {
+  .settings-subscription-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+
+  .settings-subscription-actions {
+    justify-items: start;
+  }
+
+  .settings-subscription-model-trigger .select-menu-value {
+    text-align: left;
+  }
+
+  .settings-engine-auth-compact .settings-engine-auth-actions {
+    justify-content: flex-start;
+  }
 }
 
 .settings-engine-refresh {

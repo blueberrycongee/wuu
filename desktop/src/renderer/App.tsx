@@ -125,6 +125,7 @@ import {
   activeTurnIDForThread,
   bindActiveSessionTabToThread,
   cloneSessionTabDraft,
+  composerDraftHasContent,
   conversationPaneThreadsByID,
   createDraftSessionTab,
   emptyComposerDraft,
@@ -151,6 +152,7 @@ import {
   reduceServerEvent,
   reconcileListedThreadState,
   resolveComposerRunningAction,
+  resolveThreadRuntimeContext,
   requireThread,
   runtimeContextKey,
   sameRuntimeContext,
@@ -469,6 +471,8 @@ export function App(): JSX.Element {
   });
   const [historyMessageEdit, setHistoryMessageEdit] =
     useState<HistoryMessageEditState | undefined>(undefined);
+  const composerDraftsRef = useRef({ primary: currentPrimaryComposerDraft, split: splitComposerDrafts });
+  composerDraftsRef.current = { primary: currentPrimaryComposerDraft, split: splitComposerDrafts };
   const [activitySessions, setActivitySessions] = useState(emptyActivitySessions);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const closeProjectMenu = useCallback(() => setProjectMenuOpen(false), []);
@@ -1055,6 +1059,7 @@ export function App(): JSX.Element {
     visiblePendingThreadID,
     visiblePendingProjectID,
     viewSwitchPending,
+    submissionTargetPending,
     viewContextSwitchPending,
     beginViewSwitch,
     beginInstantThreadSwitch,
@@ -2262,14 +2267,32 @@ export function App(): JSX.Element {
         }
       : { kind: "wuu" };
   const emptyThreadTitle = greetingFor(currentHour, greetingContext);
-  const [pendingNewThreadTurn, setPendingNewThreadTurn] = useState<{
+  type PendingThreadCreation = {
     sessionTabID: string;
+    context: RuntimeContext;
     turn: Turn;
-  }>();
-  const activePendingNewThreadTurn =
-    pendingNewThreadTurn?.sessionTabID === state.activeSessionTabID
-      ? pendingNewThreadTurn.turn
-      : undefined;
+    cancel: () => void;
+  };
+  const pendingThreadCreationsRef = useRef(new Map<string, PendingThreadCreation>());
+  const [pendingThreadCreations, setPendingThreadCreations] = useState<PendingThreadCreation[]>([]);
+  function clearPendingThreadCreation(turnID: string): void {
+    for (const [tabID, pending] of pendingThreadCreationsRef.current) {
+      if (pending.turn.id !== turnID) continue;
+      pendingThreadCreationsRef.current.delete(tabID);
+      setPendingThreadCreations([...pendingThreadCreationsRef.current.values()]);
+      return;
+    }
+  }
+  const [failedDraftTabIDs, setFailedDraftTabIDs] = useState<string[]>([]);
+  useEffect(() => {
+    setFailedDraftTabIDs((ids) => ids.includes(state.activeSessionTabID)
+      ? ids.filter((id) => id !== state.activeSessionTabID)
+      : ids);
+  }, [state.activeSessionTabID]);
+  const activePendingThreadCreation = pendingThreadCreations.find(
+    (pending) => pending.sessionTabID === state.activeSessionTabID,
+  );
+  const activePendingNewThreadTurn = activePendingThreadCreation?.turn;
   const turns = activeThread?.turns ?? [];
   const activeContextCompositionEntries = activeThreadID
     ? contextCompositionEntries.filter((entry) => entry.threadID === activeThreadID)
@@ -3116,12 +3139,15 @@ export function App(): JSX.Element {
         images={composerImages}
         queuedMessages={queuedMessages}
         guideMessages={guideMessages}
-        sendDisabled={viewSwitchPending}
+        sendDisabled={submissionTargetPending || Boolean(activePendingThreadCreation)}
+        forceStopWhileRunning={Boolean(activePendingThreadCreation)}
         running={
+          Boolean(activePendingThreadCreation) ||
           (!activeThreadReadOnly && composerTurnRunning) ||
           viewContextSwitchPending
         }
         runtimeControlsDisabled={
+          Boolean(activePendingThreadCreation) ||
           (!activeThreadReadOnly && activeThreadIsRunning) ||
           viewContextSwitchPending
         }
@@ -3277,18 +3303,21 @@ export function App(): JSX.Element {
         onGuideQueuedMessage={(id) => void guideQueuedMessage(id)}
         onEditQueuedMessage={(id) => void editQueuedMessage(id)}
         onEditGuideMessage={(id) => void editGuideMessage(id)}
-        onSend={(promptOverride, contentParts) => void sendPrompt("queue", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)}
+        onSend={(promptOverride, contentParts) => sendPrompt("queue", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)}
         onSteer={
           activeThreadIsRunning && activeThread && activeThreadCanSteer
-            ? (promptOverride, contentParts) => void sendPrompt("steer", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)
+            ? (promptOverride, contentParts) => sendPrompt("steer", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)
             : undefined
         }
         onQueue={
           activeThreadIsRunning && activeThread
-            ? (promptOverride, contentParts) => void sendPrompt("queue", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)
+            ? (promptOverride, contentParts) => sendPrompt("queue", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)
             : undefined
         }
-        onInterrupt={() => void interrupt()}
+        onInterrupt={() => {
+          if (activePendingThreadCreation) activePendingThreadCreation.cancel();
+          else void interrupt();
+        }}
         queryHistorySessionID={activeThread?.id ?? currentSessionTab?.id}
         queryHistory={queryTextsForThread(activeThread)}
         requestedHandoffIntent={requestedHandoffIntentForThread(activeThread)}
@@ -3473,6 +3502,7 @@ export function App(): JSX.Element {
       restorePrimaryComposerDraft(emptyComposerDraft()),
     restoreLoadedRuntimeComposerDraft,
     nextDraftSessionTab,
+    isDraftPending: (tabID) => pendingThreadCreationsRef.current.has(tabID),
     closeProjectMenus,
     
     beginViewSwitch,
@@ -3556,6 +3586,7 @@ export function App(): JSX.Element {
 
   const {
     startNewThread,
+    selectSessionTab,
   } = createSessionTabActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
@@ -3568,6 +3599,7 @@ export function App(): JSX.Element {
     getCrossWorkspaceThreads: () => sidebarThreads,
     getRunningThreadIDs: () => crossWorkdirRunningThreadIDs,
     nextDraftSessionTab,
+    isDraftPending: (tabID) => pendingThreadCreationsRef.current.has(tabID),
     selectThread,
     beginViewSwitch,
     beginInstantThreadSwitch,
@@ -4051,43 +4083,54 @@ export function App(): JSX.Element {
     worktreeForkNonGitReason: t("app.worktreeRequiresGit"),
   });
 
-  async function sendPrompt(
+  function sendPrompt(
     runningAction: "queue" | "steer" = "queue",
     promptOverride?: string,
     contentParts?: MessageContentPart[],
     consumedOfferID?: string,
-  ): Promise<void> {
-    if (viewSwitchPending) {
-      return;
+    pane?: ConversationPaneID,
+  ): boolean {
+    if (submissionTargetPending) {
+      return false;
     }
-    if (consumedOfferID && pendingUserQuestionOffer?.request_id === consumedOfferID) {
-      void cancelUserQuestion(consumedOfferID).catch(() => undefined);
-    }
+    const draft = pane ? splitComposerDrafts[pane] : currentPrimaryComposerDraft();
     const draftMessage = createComposerMessage(
-      promptOverride ?? currentPrimaryComposerDraft().prompt,
-      composerImages,
-      composerFiles,
+      promptOverride ?? draft.prompt,
+      draft.images,
+      draft.files,
       contentParts,
     );
-    const activeDocumentPath = activeWorkspaceFile;
+    const activeDocumentPath = pane ? undefined : activeWorkspaceFile;
     const message =
       draftMessage && activeDocumentPath
         ? { ...draftMessage, activeDocument: { path: activeDocumentPath } }
         : draftMessage;
     const currentState = appStateRef.current;
-    const targetThread = activeThreadForState(currentState);
+    const targetPane = pane ?? currentState.activePane;
+    const targetThread = threadForPane(currentState, targetPane);
     if (targetThread?.read_only) {
       setState((current) => ({
         ...current,
         status: localizedText("app.childTaskReadOnly"),
       }));
-      return;
+      return false;
     }
-    if (!message || !currentState.activeContext || !currentState.initialized) {
-      return;
+    if (
+      !message || !currentState.activeContext || !currentState.initialized ||
+      (pane && !targetThread) || (!targetThread && pendingThreadCreationsRef.current.has(currentState.activeSessionTabID))
+    ) {
+      return false;
+    }
+    if (!targetThread && (draftEngine || engineInventory?.settings?.default_engine || "wuu") === "wuu"
+      && !hasReadyProvider(currentState.initialized.providers)) {
+      showNoModelConfiguredToast();
+      return false;
+    }
+    if (consumedOfferID && pendingUserQuestionOffer?.request_id === consumedOfferID) {
+      void cancelUserQuestion(consumedOfferID).catch(() => undefined);
     }
     let focusRequest: MainComposerFocusRequest | undefined;
-    if (emptyConversation) {
+    if (!pane && emptyConversation) {
       const activeElement = document.activeElement;
       if (
         activeElement === document.body ||
@@ -4096,33 +4139,64 @@ export function App(): JSX.Element {
         focusRequest = requestMainComposerFocus("dock", activeElement);
       }
     }
-    setPrompt("");
-    setComposerImages([]);
-    setComposerFiles([]);
-    if (
-      isStateActiveThreadRunning(currentState) &&
-      !activeTurnIsAnswerReady(targetThread)
-    ) {
-      const resolvedAction = resolveComposerRunningAction(runningAction, targetThread);
-      const sent = resolvedAction === "steer"
-        ? await steerComposerMessage(message, targetThread)
-        : await queueComposerMessage(message, targetThread);
-      if (!sent) {
-        setPrompt(message.text);
-        setComposerImages(message.images);
-        setComposerFiles(message.files);
+    // Capture the destination and install pending state before preparation yields.
+    let submittedThread = targetThread;
+    const busy = targetThread && isThreadRunning(targetThread) && !activeTurnIsAnswerReady(targetThread);
+    const operation = busy
+      ? resolveComposerRunningAction(runningAction, targetThread) === "steer"
+        ? steerComposerMessage(message, targetThread)
+        : queueComposerMessage(message, targetThread)
+      : sendComposerMessage(message, targetThread, targetPane, (thread) => { submittedThread = thread; });
+    if (pane) {
+      setSplitComposerDrafts((current) => ({ ...current, [pane]: emptyComposerDraft() }));
+    } else {
+      restorePrimaryComposerDraft(emptyComposerDraft());
+    }
+    const sessionTabID = currentState.activeSessionTabID;
+    void operation.then((sent) => {
+      if (sent) return;
+      const latest = appStateRef.current;
+      const recoveryDraft = { prompt: message.text, images: message.images, files: message.files };
+      const stillTarget = submittedThread
+        ? threadForPane(latest, targetPane)?.id === submittedThread.id
+        : latest.activeSessionTabID === sessionTabID;
+      const latestDraft = pane ? composerDraftsRef.current.split[pane] : composerDraftsRef.current.primary();
+      if (stillTarget && !composerDraftHasContent(latestDraft)) {
+        if (pane) {
+          setSplitComposerDrafts((current) => ({ ...current, [pane]: recoveryDraft }));
+        } else {
+          restorePrimaryComposerDraft(recoveryDraft);
+        }
+      } else if (submittedThread) {
+        // Keep failed input in its conversation without replacing a newer draft.
+        const failedTurn: Turn = {
+          ...createOptimisticTurn(message, Date.now()),
+          status: "failed",
+          error: { message: t("composer.sendFailed") },
+        };
+        const threadID = submittedThread.id;
+        const preserve = (state: AppState) => updateThreadByID(state, threadID, (thread) => upsertTurn(thread, failedTurn));
+        appStateRef.current = preserve(appStateRef.current);
+        setState(preserve);
+      } else {
+        // Thread creation failed before there was a conversation to retain the
+        // input. A separate draft must not replace newer work in the source tab.
+        const recoveryTab = createDraftSessionTab(`draft:recovery:${message.id}`, currentState.activeContext!, recoveryDraft);
+        const preserve = (state: AppState): AppState => ({
+          ...state,
+          // Keep the newer tab as the workspace's default draft.
+          sessionTabs: [recoveryTab, ...state.sessionTabs],
+        });
+        appStateRef.current = preserve(appStateRef.current);
+        setState(preserve);
+        setFailedDraftTabIDs((ids) => [...ids, recoveryTab.id]);
       }
-      return;
-    }
-    const sent = await sendComposerMessage(message, true);
-    if (!sent && focusRequest) {
-      cancelMainComposerFocusRequest(focusRequest);
-      requestMainComposerFocus(
-        "hero",
-        focusRequest.origin,
-        focusRequest.interactionVersion,
-      );
-    }
+      if (stillTarget && focusRequest) {
+        cancelMainComposerFocusRequest(focusRequest);
+        requestMainComposerFocus("hero", focusRequest.origin, focusRequest.interactionVersion);
+      }
+    });
+    return true;
   }
 
   async function compactActiveThread(): Promise<void> {
@@ -4258,6 +4332,7 @@ export function App(): JSX.Element {
     targetThread = activeThreadForState(appStateRef.current),
   ): Promise<boolean> {
     const currentState = appStateRef.current;
+    const targetContext = targetThread ? resolveThreadRuntimeContext(targetThread, currentState.projects) : undefined;
     const text = message.text.trim();
     const imageCount = message.images.length;
     const files = inputFilesFromComposer(message.files);
@@ -4267,7 +4342,7 @@ export function App(): JSX.Element {
       targetThread.read_only ||
       !currentState.activeContext ||
       !currentState.initialized ||
-      viewSwitchPending
+      submissionTargetPending
     ) {
       return false;
     }
@@ -4299,9 +4374,10 @@ export function App(): JSX.Element {
         images,
         message.id,
         files,
-        targetThread.permission_mode || currentState.initialized.permissions?.mode,
+        targetThread.permission_mode,
         message.activeDocument,
-        ...(message.contentParts === undefined ? [] : [message.contentParts] as const),
+        message.contentParts,
+        targetContext,
       );
       updateThreadPendingComposerMessages(targetThread.id, (previous) => ({
         ...previous,
@@ -4329,7 +4405,9 @@ export function App(): JSX.Element {
         setState((current) => ({
           ...current,
           status:
-            error instanceof Error ? error.message : t("app.queueFailed"),
+            activeThreadIDForState(current) === targetThread.id
+              ? error instanceof Error ? error.message : t("app.queueFailed")
+              : current.status,
         }));
       }
       return !stillPending;
@@ -4341,6 +4419,7 @@ export function App(): JSX.Element {
     targetThread = activeThreadForState(appStateRef.current),
   ): Promise<boolean> {
     const currentState = appStateRef.current;
+    const targetContext = targetThread ? resolveThreadRuntimeContext(targetThread, currentState.projects) : undefined;
     const text = message.text.trim();
     const files = inputFilesFromComposer(message.files);
     const turnID = targetThread ? activeTurnIDForThread(targetThread) : undefined;
@@ -4351,7 +4430,7 @@ export function App(): JSX.Element {
       !turnID ||
       !currentState.activeContext ||
       !currentState.initialized ||
-      viewSwitchPending
+      submissionTargetPending
     ) {
       return false;
     }
@@ -4387,7 +4466,8 @@ export function App(): JSX.Element {
         message.id,
         files,
         message.activeDocument,
-        ...(message.contentParts === undefined ? [] : [message.contentParts] as const),
+        message.contentParts,
+        targetContext,
       );
       updateThreadPendingComposerMessages(targetThread.id, (previous) => ({
         ...previous,
@@ -4410,7 +4490,9 @@ export function App(): JSX.Element {
         setState((current) => ({
           ...current,
           status:
-            error instanceof Error ? error.message : t("composer.guideFailed"),
+            activeThreadIDForState(current) === targetThread.id
+              ? error instanceof Error ? error.message : t("composer.guideFailed")
+              : current.status,
         }));
       }
       return !stillPending;
@@ -4419,7 +4501,9 @@ export function App(): JSX.Element {
 
   async function sendComposerMessage(
     message: QueuedComposerMessage,
-    restoreDraftOnError = false,
+    targetThread = activeThreadForState(appStateRef.current),
+    targetPane = appStateRef.current.activePane,
+    onThreadCreated?: (thread: Thread) => void,
   ): Promise<boolean> {
     // Captured before any await: on a brand-new conversation the thread
     // itself is created over IPC first, and the optimistic turn's live
@@ -4427,11 +4511,6 @@ export function App(): JSX.Element {
     // round-trip finishes.
     const sendClickedAtMs = Date.now();
     const currentState = appStateRef.current;
-    const targetThread = activeThreadForState(currentState);
-    const targetPane: ConversationPaneID =
-      currentState.activePane === "secondary" && currentState.secondaryThread
-        ? "secondary"
-        : "primary";
     const text = message.text.trim();
     const imageCount = message.images.length;
     const files = inputFilesFromComposer(message.files);
@@ -4440,19 +4519,21 @@ export function App(): JSX.Element {
       !currentState.activeContext ||
       !currentState.initialized ||
       targetThread?.read_only ||
-      viewSwitchPending ||
-      (isStateActiveThreadRunning(currentState) &&
+      submissionTargetPending ||
+      (targetThread && isThreadRunning(targetThread) &&
         !activeTurnIsAnswerReady(targetThread))
     ) {
       return false;
     }
-    const activeContext = currentState.activeContext;
+    const activeContext = targetThread
+      ? resolveThreadRuntimeContext(targetThread, currentState.projects)
+      : currentState.activeContext;
     const newThreadEngine =
       (targetThread?.engine_id ?? "")
       || draftEngine
       || engineInventory?.settings?.default_engine
       || "wuu";
-    if (newThreadEngine === "wuu" && !hasReadyProvider(currentState.initialized?.providers)) {
+    if (!targetThread && newThreadEngine === "wuu" && !hasReadyProvider(currentState.initialized?.providers)) {
       showNoModelConfiguredToast();
       return false;
     }
@@ -4464,32 +4545,33 @@ export function App(): JSX.Element {
       effort: draftEngineRuntime.effort || defaultExternalRuntime.effort,
     };
     const optimisticTurn = createOptimisticTurn(message, sendClickedAtMs);
-    requestSubmittedQueryScroll(optimisticTurn.items[0].id);
-    appStateRef.current = {
-      ...currentState,
-      running: true,
-      status: localizedText("app.sendingRequest"),
-    };
-    setState((current) => ({
-      ...current,
-      running: true,
-      status: localizedText("app.sendingRequest"),
-    }));
+    const previousTurnIDs = new Set(targetThread?.turns.map((turn) => turn.id));
+    if (!targetThread || activeThreadIDForState(currentState) === targetThread.id) {
+      requestSubmittedQueryScroll(optimisticTurn.items[0].id);
+      appStateRef.current = { ...currentState, running: true, status: localizedText("app.sendingRequest") };
+      setState((current) => ({ ...current, running: true, status: localizedText("app.sendingRequest") }));
+    }
     let optimisticTurnID: string | undefined;
     let optimisticThreadID: string | undefined;
-    // Render a tab-scoped optimistic turn before a new thread exists. Once
-    // thread/start returns, the same turn moves into normal thread state.
-    if (!targetThread && currentState.activeSessionTabID) {
-      setPendingNewThreadTurn({
+    // Creation belongs to the draft, independently of background list refreshes.
+    let creationCancelled = false;
+    const cancelledCreation = !targetThread ? new Promise<never>((_, reject) => {
+      pendingThreadCreationsRef.current.set(currentState.activeSessionTabID, {
         sessionTabID: currentState.activeSessionTabID,
+        context: activeContext,
         turn: optimisticTurn,
+        cancel: () => {
+          creationCancelled = true;
+          reject(new Error("Thread creation cancelled"));
+        },
       });
-    }
+      setPendingThreadCreations([...pendingThreadCreationsRef.current.values()]);
+    }) : undefined;
     try {
       const thread =
         targetThread ??
         requireThread(
-          await window.wuu.startThread({
+          await Promise.race([window.wuu.startThread({
             ...(draftEngine ? { engine: draftEngine } : {}),
             ...(newThreadEngine !== "wuu"
               ? {
@@ -4503,47 +4585,41 @@ export function App(): JSX.Element {
                   permission_mode: currentState.initialized?.permissions?.mode,
                   approve_for_me: currentState.initialized?.permissions?.approve_for_me,
                 } satisfies ThreadStartParams),
-          }),
+          }, activeContext).then(async (result) => {
+            if (creationCancelled && result.thread) {
+              // No turn was submitted to this newly created session. A late
+              // response must not leave an empty conversation after Stop.
+              try {
+                const threadID = result.thread.id;
+                await window.wuu.deleteThread(threadID);
+                removeCachedSidebarThread(threadID);
+                setState((current) => ({
+                  ...current,
+                  threads: current.threads.filter((thread) => thread.id !== threadID),
+                }));
+              } catch (error) {
+                showErrorToast(error);
+              }
+            }
+            return result;
+          }), cancelledCreation!]),
           "thread/start did not return a thread",
         );
-      appStateRef.current = {
-        ...setThreadForPane(appStateRef.current, targetPane, thread),
-        activePane: targetPane,
-        allowThreadAutoActivation: true,
-        sessionTabs:
-          targetPane === "primary"
-            ? bindActiveSessionTabToThread(
-                appStateRef.current.sessionTabs,
-                appStateRef.current.activeSessionTabID,
-                thread,
-                activeContext,
-              )
-            : appStateRef.current.sessionTabs,
-        activeSessionTabID:
-          targetPane === "primary"
-            ? threadSessionTabID(thread.id)
-            : appStateRef.current.activeSessionTabID,
-        threads: upsertThread(appStateRef.current.threads, thread),
-      };
-      setState((current) => ({
-        ...setThreadForPane(current, targetPane, thread),
-        activePane: targetPane,
-        allowThreadAutoActivation: true,
-        sessionTabs:
-          targetPane === "primary"
-            ? bindActiveSessionTabToThread(
-                current.sessionTabs,
-                current.activeSessionTabID,
-                thread,
-                activeContext,
-              )
-            : current.sessionTabs,
-        activeSessionTabID:
-          targetPane === "primary"
-            ? threadSessionTabID(thread.id)
-            : current.activeSessionTabID,
-        threads: upsertThread(current.threads, thread),
-      }));
+      if (!targetThread) {
+        onThreadCreated?.(thread);
+        const adoptThread = (current: AppState): AppState => {
+          const stillTarget = current.activeSessionTabID === currentState.activeSessionTabID
+            && sameRuntimeContext(current.activeContext, activeContext);
+          return {
+            ...(stillTarget ? setThreadForPane(current, targetPane, thread) : current),
+            sessionTabs: bindActiveSessionTabToThread(current.sessionTabs, currentState.activeSessionTabID, thread, activeContext),
+            activeSessionTabID: stillTarget ? threadSessionTabID(thread.id) : current.activeSessionTabID,
+            threads: upsertThread(current.threads, thread),
+          };
+        };
+        appStateRef.current = adoptThread(appStateRef.current);
+        setState(adoptThread);
+      }
       optimisticTurnID = optimisticTurn.id;
       optimisticThreadID = thread.id;
       appStateRef.current = updateThreadByID(
@@ -4558,9 +4634,7 @@ export function App(): JSX.Element {
           (currentThread) => upsertTurn(currentThread, optimisticTurn),
         ),
       );
-      setPendingNewThreadTurn((current) =>
-        current?.turn.id === optimisticTurn.id ? undefined : current,
-      );
+      clearPendingThreadCreation(optimisticTurn.id);
       const encodedImages = await awaitComposerImages(message.images);
       const images = inputImagesFromComposer(encodedImages);
       const result = await window.wuu.startTurn(
@@ -4568,9 +4642,11 @@ export function App(): JSX.Element {
         text,
         images,
         files,
-        thread.permission_mode || currentState.initialized.permissions?.mode,
+        thread.permission_mode || (!targetThread
+          ? currentState.initialized.permissions?.mode : undefined),
         message.activeDocument,
-        ...(message.contentParts === undefined ? [] : [message.contentParts] as const),
+        message.contentParts,
+        activeContext,
       );
       const interruptedBeforeAcceptance = isOptimisticTurnInterrupted(
         appStateRef.current.threads.find((candidate) => candidate.id === thread.id),
@@ -4591,7 +4667,7 @@ export function App(): JSX.Element {
       if (acceptedMessage) acknowledgeSubmittedMessage(optimisticTurn.items[0].id, acceptedMessage.id);
       setState((current) =>
         updateThreadByID(
-          setThreadForPane(current, targetPane, thread),
+          current,
           thread.id,
           (currentThread) =>
             replaceOptimisticTurn(
@@ -4616,31 +4692,12 @@ export function App(): JSX.Element {
         currentThread,
         message,
         optimisticTurnID,
+        previousTurnIDs,
       );
       const keepAcceptedTurn = alreadyAccepted && !interrupted;
-      const droppedState =
-        optimisticTurnID && optimisticThreadID
-          ? updateThreadByID(
-              appStateRef.current,
-              optimisticThreadID,
-              (currentThread) =>
-                interrupted
-                  ? interruptOptimisticTurn(currentThread, optimisticTurnID, Date.now())
-                  : keepAcceptedTurn
-                    ? currentThread
-                    : dropOptimisticTurn(currentThread, optimisticTurnID),
-            )
-          : appStateRef.current;
       if (!interrupted && !keepAcceptedTurn) discardSubmittedMessage(optimisticTurn.items[0].id);
-      appStateRef.current = {
-        ...droppedState,
-        running: keepAcceptedTurn,
-        // A missing model configuration is announced via the onboarding
-        // toast; do not also flag the composer status row with the error.
-        status: noModelConfigured || interrupted || keepAcceptedTurn ? "" : errorMessage,
-      };
-      setState((current) => ({
-        ...(optimisticTurnID && optimisticThreadID
+      const settle = (current: AppState): AppState => {
+        const next = optimisticTurnID && optimisticThreadID
           ? updateThreadByID(
               current,
               optimisticThreadID,
@@ -4651,244 +4708,23 @@ export function App(): JSX.Element {
                     ? currentThread
                     : dropOptimisticTurn(currentThread, optimisticTurnID),
             )
-          : current),
-        running: keepAcceptedTurn,
-        status: noModelConfigured || interrupted || keepAcceptedTurn ? "" : errorMessage,
-      }));
-      setPendingNewThreadTurn((current) =>
-        current?.turn.id === optimisticTurn.id ? undefined : current,
-      );
-      if (noModelConfigured) {
-        showNoModelConfiguredToast();
-      }
-      if (restoreDraftOnError && !interrupted && !keepAcceptedTurn) {
-        setPrompt(message.text);
-        setComposerImages(message.images);
-        setComposerFiles(message.files);
-      }
-      return interrupted || keepAcceptedTurn;
-    }
-    return true;
-  }
-
-  async function sendPromptForPane(
-    pane: ConversationPaneID,
-    promptOverride?: string,
-    contentParts?: MessageContentPart[],
-  ): Promise<void> {
-    if (viewSwitchPending) {
-      return;
-    }
-    const draft = splitComposerDrafts[pane] ?? emptyComposerDraft();
-    const message = createComposerMessage(
-      promptOverride ?? draft.prompt,
-      draft.images,
-      draft.files,
-      contentParts,
-    );
-    const currentState = appStateRef.current;
-    const targetThread = threadForPane(currentState, pane);
-    if (targetThread?.read_only) {
-      setState((current) => ({
-        ...current,
-        status: localizedText("app.childTaskReadOnly"),
-      }));
-      return;
-    }
-    if (
-      !message ||
-      !targetThread ||
-      !currentState.activeContext ||
-      !currentState.initialized
-    ) {
-      return;
-    }
-    if (isThreadRunning(targetThread)) {
-      const queued = await queueComposerMessage(message, targetThread);
-      if (queued) {
-        setSplitComposerDrafts((current) => ({
-          ...current,
-          [pane]: emptyComposerDraft(),
-        }));
-        setState((current) => ({
-          ...current,
-          activePane: pane,
-        }));
-      }
-      return;
-    }
-    setSplitComposerDrafts((current) => ({
-      ...current,
-      [pane]: emptyComposerDraft(),
-    }));
-    const sent = await sendComposerMessageToPane(message, pane);
-    if (!sent) {
-      setSplitComposerDrafts((current) => ({
-        ...current,
-        [pane]: {
-          prompt: message.text,
-          images: message.images.map((image) => ({ ...image })),
-          files: message.files.map((file) => ({ ...file })),
-        },
-      }));
-    }
-  }
-
-  async function sendComposerMessageToPane(
-    message: QueuedComposerMessage,
-    pane: ConversationPaneID,
-  ): Promise<boolean> {
-    const currentState = appStateRef.current;
-    const targetThread = threadForPane(currentState, pane);
-    const text = message.text.trim();
-    const imageCount = message.images.length;
-    const files = inputFilesFromComposer(message.files);
-    if (
-      (!text && imageCount === 0 && files.length === 0) ||
-      !targetThread ||
-      targetThread.read_only ||
-      !currentState.activeContext ||
-      !currentState.initialized ||
-      viewSwitchPending ||
-      isThreadRunning(targetThread)
-    ) {
-      return false;
-    }
-    if (!hasReadyProvider(currentState.initialized?.providers)) {
-      showNoModelConfiguredToast();
-      return false;
-    }
-    enableConversationAutoFollow();
-    appStateRef.current = {
-      ...currentState,
-      activePane: pane,
-      running: true,
-      status: localizedText("app.sendingRequest"),
-    };
-    setState((current) => ({
-      ...current,
-      activePane: pane,
-      running: true,
-      status: localizedText("app.sendingRequest"),
-    }));
-    let optimisticTurnID: string | undefined;
-    try {
-      // Insert an optimistic in_progress turn before the IPC round-trip
-      // so the live "正在回复/处理" timer starts at the user's click
-      // moment instead of waiting for the server's first turn
-      // notification. The placeholder is replaced (or dropped on error)
-      // once the real turn arrives or the request fails.
-      const optimisticTurn = createOptimisticTurn(message, Date.now());
-      optimisticTurnID = optimisticTurn.id;
-      appStateRef.current = updateThreadByID(
-        appStateRef.current,
-        targetThread.id,
-        (thread) => upsertTurn(thread, optimisticTurn),
-      );
-      setState((current) =>
-        updateThreadByID(
-          current,
-          targetThread.id,
-          (thread) => upsertTurn(thread, optimisticTurn),
-        ),
-      );
-      const encodedImages = await awaitComposerImages(message.images);
-      const images = inputImagesFromComposer(encodedImages);
-      const result = await window.wuu.startTurn(
-        targetThread.id,
-        text,
-        images,
-        files,
-        targetThread.permission_mode || currentState.initialized.permissions?.mode,
-        message.activeDocument,
-        ...(message.contentParts === undefined ? [] : [message.contentParts] as const),
-      );
-      const interruptedBeforeAcceptance = isOptimisticTurnInterrupted(
-        appStateRef.current.threads.find(
-          (candidate) => candidate.id === targetThread.id,
-        ),
-        optimisticTurnID,
-      );
-      if (interruptedBeforeAcceptance && result.turn.status === "in_progress") {
-        try {
-          await window.wuu.interruptTurn(targetThread.id);
-        } catch {
-          // Keep the explicit local stop visible until server state catches up.
-        }
-      }
-      const acceptedTurn: Turn = interruptedBeforeAcceptance
-        ? { ...result.turn, status: "interrupted" }
-        : result.turn;
-      setState((current) =>
-        updateThreadByID(
-          { ...current, activePane: pane },
-          targetThread.id,
-          (thread) =>
-            replaceOptimisticTurn(
-              thread,
-              optimisticTurnID ?? result.turn.id,
-              acceptedTurn,
-              upsertTurn,
-            ),
-        ),
-      );
-    } catch (error) {
-      const rawMessage = rawErrorMessage(error, t("composer.sendFailed"));
-      const errorMessage = statusMessageForError(rawMessage, t("composer.sendFailed"));
-      const noModelConfigured = isNoModelConfiguredError(rawMessage);
-      const currentThread = appStateRef.current.threads.find(
-        (candidate) => candidate.id === targetThread.id,
-      );
-      const interrupted =
-        isCancellationMessage(rawMessage.toLowerCase()) ||
-        isOptimisticTurnInterrupted(currentThread, optimisticTurnID);
-      const alreadyAccepted = threadHasAcceptedComposerMessage(
-        currentThread,
-        message,
-        optimisticTurnID,
-      );
-      const keepAcceptedTurn = alreadyAccepted && !interrupted;
-      const droppedState = optimisticTurnID
-        ? updateThreadByID(
-            appStateRef.current,
-            targetThread.id,
-            (thread) =>
-              interrupted
-                ? interruptOptimisticTurn(thread, optimisticTurnID, Date.now())
-                : keepAcceptedTurn
-                  ? thread
-                  : dropOptimisticTurn(thread, optimisticTurnID),
-          )
-        : appStateRef.current;
-      appStateRef.current = {
-        ...droppedState,
-        activePane: pane,
-        running: keepAcceptedTurn,
-        // A missing model configuration is announced via the onboarding
-        // toast; do not also flag the composer status row with the error.
-        status: noModelConfigured || interrupted || keepAcceptedTurn ? "" : errorMessage,
+          : current;
+        const stillTarget = optimisticThreadID
+          ? activeThreadIDForState(current) === optimisticThreadID
+          : current.activeSessionTabID === currentState.activeSessionTabID;
+        return stillTarget ? {
+          ...next,
+          running: keepAcceptedTurn,
+          status: noModelConfigured || interrupted || keepAcceptedTurn ? "" : errorMessage,
+        } : next;
       };
-      setState((current) => ({
-        ...(optimisticTurnID
-          ? updateThreadByID(
-              current,
-              targetThread.id,
-              (thread) =>
-                interrupted
-                  ? interruptOptimisticTurn(thread, optimisticTurnID, Date.now())
-                  : keepAcceptedTurn
-                    ? thread
-                    : dropOptimisticTurn(thread, optimisticTurnID),
-            )
-          : current),
-        activePane: pane,
-        running: keepAcceptedTurn,
-        status: noModelConfigured || interrupted || keepAcceptedTurn ? "" : errorMessage,
-      }));
+      appStateRef.current = settle(appStateRef.current);
+      setState(settle);
+      clearPendingThreadCreation(optimisticTurn.id);
       if (noModelConfigured) {
         showNoModelConfiguredToast();
       }
-      return interrupted || keepAcceptedTurn;
+      return !creationCancelled && (interrupted || keepAcceptedTurn);
     }
     return true;
   }
@@ -4897,151 +4733,27 @@ export function App(): JSX.Element {
     message: QueuedComposerMessage,
     targetThread: Thread,
   ): Promise<boolean> {
-    const currentState = appStateRef.current;
-    const text = message.text.trim();
-    const imageCount = message.images.length;
-    const files = inputFilesFromComposer(message.files);
-    if (
-      (!text && imageCount === 0 && files.length === 0) ||
-      targetThread.read_only ||
-      !currentState.activeContext ||
-      !currentState.initialized ||
-      viewSwitchPending ||
-      isThreadRunning(targetThread)
-    ) {
-      return false;
-    }
-    const targetIsActive = activeThreadIDForState(currentState) === targetThread.id;
-    const optimisticTurn = createOptimisticTurn(message, Date.now());
-    if (targetIsActive) {
-      requestSubmittedQueryScroll(optimisticTurn.items[0].id);
-      appStateRef.current = {
-        ...currentState,
-        running: true,
-        status: localizedText("app.sendingRequest"),
-      };
-      setState((current) => ({
-        ...current,
-        running: true,
-        status: localizedText("app.sendingRequest"),
-      }));
-    }
-    let optimisticTurnID: string | undefined;
-    try {
-      // Insert an optimistic in_progress turn before the IPC round-trip
-      // so the live "正在回复/处理" timer starts at the user's click
-      // moment instead of waiting for the server's first turn
-      // notification. The placeholder is replaced (or dropped on error)
-      // once the real turn arrives or the request fails.
-      optimisticTurnID = optimisticTurn.id;
-      appStateRef.current = updateThreadByID(
-        appStateRef.current,
-        targetThread.id,
-        (thread) => upsertTurn(thread, optimisticTurn),
-      );
-      setState((current) =>
-        updateThreadByID(
-          current,
-          targetThread.id,
-          (thread) => upsertTurn(thread, optimisticTurn),
-        ),
-      );
-      const encodedImages = await awaitComposerImages(message.images);
-      const images = inputImagesFromComposer(encodedImages);
-      const result = await window.wuu.startTurn(
-        targetThread.id,
-        text,
-        images,
-        files,
-        targetThread.permission_mode || currentState.initialized.permissions?.mode,
-        message.activeDocument,
-        ...(message.contentParts === undefined ? [] : [message.contentParts] as const),
-      );
-      const interruptedBeforeAcceptance = isOptimisticTurnInterrupted(
-        appStateRef.current.threads.find(
-          (candidate) => candidate.id === targetThread.id,
-        ),
-        optimisticTurnID,
-      );
-      if (interruptedBeforeAcceptance && result.turn.status === "in_progress") {
-        try {
-          await window.wuu.interruptTurn(targetThread.id);
-        } catch {
-          // Keep the explicit local stop visible until server state catches up.
-        }
-      }
-      const acceptedTurn: Turn = interruptedBeforeAcceptance
-        ? { ...result.turn, status: "interrupted" }
-        : result.turn;
-      const acceptedMessage = acceptedTurn.items.find((item) => item.type === "user_message");
-      if (acceptedMessage) acknowledgeSubmittedMessage(optimisticTurn.items[0].id, acceptedMessage.id);
-      setState((current) =>
-        updateThreadByID(
-          current,
-          targetThread.id,
-          (thread) =>
-            replaceOptimisticTurn(
-              thread,
-              optimisticTurnID ?? result.turn.id,
-              acceptedTurn,
-              upsertTurn,
-            ),
-          targetIsActive ? { running: true } : {},
-        ),
-      );
-    } catch (error) {
-      const rawMessage = rawErrorMessage(error, t("composer.sendFailed"));
-      const errorMessage = statusMessageForError(rawMessage, t("composer.sendFailed"));
-      const currentThread = appStateRef.current.threads.find(
-        (candidate) => candidate.id === targetThread.id,
-      );
-      const interrupted =
-        isCancellationMessage(rawMessage.toLowerCase()) ||
-        isOptimisticTurnInterrupted(currentThread, optimisticTurnID);
-      const alreadyAccepted = threadHasAcceptedComposerMessage(
-        currentThread,
-        message,
-        optimisticTurnID,
-      );
-      const keepAcceptedTurn = alreadyAccepted && !interrupted;
-      const droppedState = optimisticTurnID
-        ? updateThreadByID(
-            appStateRef.current,
-            targetThread.id,
-            (thread) =>
-              interrupted
-                ? interruptOptimisticTurn(thread, optimisticTurnID, Date.now())
-                : keepAcceptedTurn
-                  ? thread
-                  : dropOptimisticTurn(thread, optimisticTurnID),
-          )
-        : appStateRef.current;
-      appStateRef.current = {
-        ...droppedState,
-        running: targetIsActive ? keepAcceptedTurn : appStateRef.current.running,
-        status: interrupted || keepAcceptedTurn ? "" : errorMessage,
-      };
-      if (!interrupted && !keepAcceptedTurn) discardSubmittedMessage(optimisticTurn.items[0].id);
-      setState((current) => ({
-        ...(optimisticTurnID
-          ? updateThreadByID(
-              current,
-              targetThread.id,
-              (thread) =>
-                interrupted
-                  ? interruptOptimisticTurn(thread, optimisticTurnID, Date.now())
-                  : keepAcceptedTurn
-                    ? thread
-                    : dropOptimisticTurn(thread, optimisticTurnID),
-            )
-          : current),
-        running: targetIsActive ? keepAcceptedTurn : current.running,
-        status: interrupted || keepAcceptedTurn ? "" : errorMessage,
-      }));
-      return interrupted || keepAcceptedTurn;
-    }
-    return true;
+    return sendComposerMessage(message, targetThread);
   }
+
+  const failedDraftTabID = failedDraftTabIDs[0];
+  const failedDraftNotice = failedDraftTabID ? (
+    <UILayerPortal layer="notice">
+      <TopNotice
+        key={failedDraftTabID}
+        message={t("composer.failedDraftSaved")}
+        icon={CircleAlert}
+        isError
+        persistent
+        action={{ label: t("composer.openFailedDraft"), onClick: () => { void selectSessionTab(failedDraftTabID); } }}
+        dismissAriaLabel={t("composer.discardFailedDraft")}
+        onDismiss={() => {
+          setFailedDraftTabIDs((ids) => ids.filter((id) => id !== failedDraftTabID));
+          setState((current) => ({ ...current, sessionTabs: current.sessionTabs.filter((tab) => tab.id !== failedDraftTabID) }));
+        }}
+      />
+    </UILayerPortal>
+  ) : null;
 
   const archiveTipNode = archiveTip ? (
     <UILayerPortal layer="notice">
@@ -5110,6 +4822,7 @@ export function App(): JSX.Element {
       <>
         {archiveTipNode}
         {modelCatalogTipNode}
+        {!archiveTip && !modelCatalogTip && failedDraftNotice}
         <SettingsShellRenderer
           initialized={state.initialized}
           initialPage={settingsInitialPage}
@@ -5223,6 +4936,7 @@ export function App(): JSX.Element {
     >
       {archiveTipNode}
       {modelCatalogTipNode}
+      {!archiveTip && !modelCatalogTip && failedDraftNotice}
       <ImagePreviewProvider>
       <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
       <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceArtifactTab}>
@@ -5386,6 +5100,16 @@ export function App(): JSX.Element {
             onNavigateAway={closeCompactSessionSwitcher}
             state={state}
             sidebarProjects={sidebarProjects}
+            pendingConversations={pendingThreadCreations.map((pending) => ({
+              id: pending.sessionTabID,
+              context: pending.context,
+              title: pending.turn.items[0].text || t("tabs.newConversation"),
+            }))}
+            onSelectPendingConversation={(tabID) => {
+              openHarnessView();
+              closeCompactSessionSwitcher();
+              void selectSessionTab(tabID);
+            }}
             activeProjectID={
               workspaceProjectSelectionEnabled && workspaceContext?.kind === "project"
                 ? workspaceContext.project_id
@@ -5790,7 +5514,7 @@ export function App(): JSX.Element {
                     splitLeftPercent={splitLeftPercent}
                     splitComposerDrafts={splitComposerDrafts}
                     splitPaneRefs={splitPaneRefs}
-                    viewSwitchPending={viewContextSwitchPending}
+                    viewSwitchPending={submissionTargetPending}
                     historyMessageEdit={historyMessageEdit}
                     onSplitResizeStart={startSplitResize}
                     onSplitSeparatorDoubleClick={resetSplitPercent}
@@ -5805,7 +5529,7 @@ export function App(): JSX.Element {
                     onRemoveFile={removeSplitComposerFile}
                     onRemoveImage={removeSplitComposerImage}
                     onSend={(pane, promptOverride, contentParts) =>
-                      void sendPromptForPane(pane, promptOverride, contentParts)
+                      sendPrompt("queue", promptOverride, contentParts, undefined, pane)
                     }
                     onInterrupt={(pane) => void interruptPane(pane)}
                     onForkMessage={(thread, turnID, itemID) =>

@@ -885,6 +885,22 @@ describe("Composer send control", () => {
     expect(textarea.value).toBe("");
   });
 
+  it("retains a rejected draft and permits another submission attempt", () => {
+    const onSend = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+    renderComposer({ prompt: "keep until accepted", onSend });
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(textarea.value).toBe("keep until accepted");
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(onSend).toHaveBeenCalledTimes(2);
+    expect(onSend).toHaveBeenLastCalledWith("keep until accepted");
+    expect(textarea.value).toBe("");
+  });
+
   it("submits one copy when duplicate gestures race the draft clear", () => {
     const onSteer = vi.fn();
     renderComposer({

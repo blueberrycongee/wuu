@@ -37,20 +37,17 @@ SuperGrok subscription login, Grok CLI login, and an `XAI_API_KEY` are separate 
 ## Check subscriptions in the desktop app
 
 **Settings → Subscriptions** groups installed external agents and built-in
-subscription services. Each source keeps its own model and authentication path;
-expand **Details** for request information and ACP sign-in.
-
-Request status, errors, and reported usage belong to the recorded request, even
-after a conversation changes providers. Usage from an earlier request is never
-shown as the usage of a later failure. Older records without a provable source
-remain unknown. A static CLI model list alone does not establish login status.
+subscription services. Choose models directly from each row. ACP agents that
+need account setup offer a sign-in button; choose a method to start authentication,
+which may open your browser. A model-loading failure is not proof that credentials
+are missing, and a static CLI model list does not establish login status.
 
 Codex account allowances come from the installed CLI and show remaining
 percentages and reset times. Refresh after a reset or when a snapshot is over
-five minutes old. Other sources show **Not provided** until an account-quota
-integration is available; ACP context-window occupancy is not subscription quota.
-**Used in Wuu** totals reported tokens in retained local history, including cached
-input. It excludes unreported usage and activity outside Wuu, and is not a bill.
+five minutes old. Sources without account-quota support have no allowance meter;
+ACP context-window occupancy and local token counts are not subscription quota.
+This page shows concise loading and sign-in failures rather than request history
+or raw agent logs. Use the refresh button to retry loading the catalog and quotas.
 
 ## Configure the CLI
 
@@ -79,6 +76,41 @@ Wuu follows the selected API's completion signals. A normal stop ends the turn e
 Anthropic Messages can explicitly request continuation with `pause_turn`. Responses-compatible services can use the optional `end_turn: false` extension on a successfully completed response; a missing, null, or true value does not request continuation. This extension is not required by the standard OpenAI Responses API. Chat Completions uses its own `finish_reason`; Wuu does not infer continuation from gateway-native reasons or fields belonging to another API. Output limits, filtering, errors, and unknown stop reasons do not by themselves request continuation.
 
 Each continuation is another model request and may incur charges. Wuu allows up to eight consecutive automatic tool-free continuations, then reports an error if the service still requests another. Client tool execution resets this count; configured step limits and cancellation still apply. An unfinished response cannot replace conversation history as a compact summary.
+
+## Let the agent inspect local images
+
+Ask the agent to inspect a local image by its path, for example: “Read
+`screenshots/settings.png` and check the alignment.” With Wuu's built-in tools,
+`read_file` returns PNG, JPEG, static GIF, and WebP files as visual input to an
+image-capable model. You do not need to attach the image in the composer first.
+Relative paths use the session workspace; absolute paths must satisfy the same
+file scope and sensitive-path rules as other reads. Generated images in the
+session artifact directory can also be read.
+
+The file's bytes determine its format. Large images are resized to a longest
+side of 2048 pixels using the shared attachment processor; the result reports
+source and delivered dimensions. A read accepts up to 20 MiB of source data and
+40 million source pixels, and the normalized image must fit the 2 MiB inline
+tool-result limit. Crop or resize a file if the tool reports a limit. Corrupt,
+animated, and unsupported image formats fail; SVG remains source text. Line
+ranges and continuations apply to text, not images.
+
+A model explicitly marked as text-only receives an unsupported-image marker,
+not the pixels. Choose an image-capable model to inspect the image. Original
+image results remain in history when the model changes. With optional Code Mode,
+forward image parts with `image(part)`; `text(result)` only prints text. For
+example:
+
+```javascript
+const result = await tools.read_file({path: "screenshots/settings.png"});
+for (const part of result.content) {
+  if (part.type === "image") image(part);
+  else if (part.type === "text") text(part.text);
+}
+```
+
+`present_artifact` displays a deliverable to the user; it does not inspect the
+image for the model. External agent engines use their own file and image tools.
 
 ## Large tool results
 

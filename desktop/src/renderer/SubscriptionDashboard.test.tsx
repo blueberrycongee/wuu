@@ -21,12 +21,14 @@ const inventory: EngineListResult = {
         { id: "grok-4.6", display_name: "Grok 4.6", is_default: true },
       ],
       latest_request: { status: "failed", model: "grok-4.5", error: "login expired" },
+      models_error: "catalog unavailable",
     },
     {
       id: "codex",
       display_name: "Codex",
       enabled: false,
       binary_ok: true,
+      models: [{ id: "gpt-5.4", display_name: "GPT-5.4" }],
     },
   ],
 };
@@ -84,17 +86,12 @@ async function render(onSelectBuiltinModel = vi.fn()) {
 describe("SubscriptionDashboard", () => {
   it("lists external engines and built-in subscriptions without merging their credentials", async () => {
     await render();
-    expect(container.querySelector('[data-testid="subscription-engine-grok"]')?.textContent).toContain("可用");
-    expect(container.querySelector('[data-testid="subscription-engine-codex"]')?.textContent).toContain("不可用");
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="subscription-engine-grok"] button[aria-haspopup="menu"]')?.disabled).toBe(false);
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="subscription-engine-codex"] button[aria-haspopup="menu"]')?.disabled).toBe(true);
     expect(container.querySelector('[data-testid="subscription-builtin-xai-subscription"] button[aria-haspopup="menu"]')).not.toBeNull();
     expect(container.textContent).not.toContain("openai");
-    const failed = container.querySelector('[data-testid="subscription-engine-grok"] details')!;
-    expect(failed.textContent).toContain("login expired");
-    expect(failed.textContent).toContain("grok-4.5");
+    const failed = container.querySelector('[data-testid="subscription-engine-grok"]')!;
     expect(failed.querySelector('[data-testid="engine-auth-discover"]')).not.toBeNull();
-    const completed = container.querySelector('[data-testid="subscription-builtin-xai-subscription"] details')!;
-    expect(completed.textContent).toContain("20");
-    expect(completed.textContent).toContain("5");
   });
 
   it("switches an external model through draft memory and a built-in model through the provider save", async () => {
@@ -138,24 +135,49 @@ describe("SubscriptionDashboard", () => {
   it("recovers from refresh failure without losing model controls", async () => {
     vi.mocked(window.wuu.listEngines).mockRejectedValueOnce(new Error("offline"));
     await render();
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain("offline");
+    expect(container.querySelector('[role="alert"]')?.textContent).toBeTruthy();
+    expect(container.textContent).not.toContain("offline");
     expect(container.querySelector('button[aria-haspopup="menu"]')).not.toBeNull();
     await act(async () => { container.querySelector<HTMLButtonElement>("header button")!.click(); });
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
-  it("refreshes the accepted catalog and replaces a failed request without retaining its error", async () => {
+  it("refreshes the accepted catalog after a failed discovery", async () => {
     await render();
     vi.mocked(window.wuu.listEngines).mockResolvedValue({ engines: [{
-      ...inventory.engines[0], models: [{ id: "new-model" }],
-      latest_request: { status: "completed", model: "new-model" },
+      id: "grok", display_name: "Grok", protocol: "acp", enabled: true, binary_ok: true,
+      models: [{ id: "new-model" }],
     }] });
     await act(async () => { container.querySelector<HTMLButtonElement>("header button")!.click(); });
     const source = container.querySelector('[data-testid="subscription-engine-grok"]')!;
-    expect(source.querySelector("details")?.textContent).toContain("new-model");
-    expect(source.textContent).not.toContain("login expired");
+    expect(source.querySelector('[data-testid="engine-auth-discover"]')).toBeNull();
     await act(async () => { source.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]')!.click(); });
     expect(document.querySelector('[role="menuitemradio"][data-value="new-model"]')).not.toBeNull();
     expect(document.querySelector('[role="menuitemradio"][data-value="grok-4.5"]')).toBeNull();
+  });
+
+  it("summarizes engine diagnostics and recovers through explicit sign-in without exposing raw logs", async () => {
+    const diagnostic = "session/new: engine RPC error -32603: Internal error\n" + "[WARNING] synthetic agent stderr /example/private/config\n".repeat(30);
+    vi.mocked(window.wuu.listEngines).mockResolvedValue({ engines: [{
+      ...inventory.engines[0], models: [], models_error: diagnostic,
+    }] });
+    window.wuu.listEngineAuthMethods = vi.fn().mockRejectedValueOnce(new Error(diagnostic))
+      .mockResolvedValue({ methods: [{ id: "browser", name: "Browser" }], authenticated: false });
+    window.wuu.authenticateEngine = vi.fn().mockResolvedValue({ methods: [], authenticated: true });
+    await render();
+    const source = container.querySelector('[data-testid="subscription-engine-grok"]')!;
+    expect(source.innerHTML).not.toContain("synthetic agent stderr");
+    expect(source.textContent).not.toContain("login expired");
+    expect(window.wuu.listEngineAuthMethods).not.toHaveBeenCalled();
+    await act(async () => source.querySelector<HTMLButtonElement>('[data-testid="engine-auth-discover"]')!.click());
+    expect(source.querySelector('[role="status"]')?.textContent).toBeTruthy();
+    expect(source.innerHTML).not.toContain("synthetic agent stderr");
+    await act(async () => source.querySelector<HTMLButtonElement>('[data-testid="engine-auth-discover"]')!.click());
+    expect(window.wuu.authenticateEngine).not.toHaveBeenCalled();
+    vi.mocked(window.wuu.listEngines).mockResolvedValue({ engines: [{ ...inventory.engines[0], models_error: undefined }] });
+    await act(async () => source.querySelector<HTMLButtonElement>('[data-testid="engine-auth-method"]')!.click());
+    expect(window.wuu.authenticateEngine).toHaveBeenCalledWith("grok", "browser");
+    expect(source.querySelector('[data-testid="engine-auth-discover"]')).toBeNull();
+    expect(source.querySelector('button[aria-haspopup="menu"]')).not.toBeNull();
   });
 });

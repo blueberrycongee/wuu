@@ -282,6 +282,12 @@
   gap: var(--conversation-process-answer-gap);
 }
 
+/* Placing a submission moves only what the user sent; the new turn's live
+ * status enters as the bubble lands (ConversationScrollState). */
+.scroll-region-content[data-submit-placing] .session-flow > .turn:last-of-type > .assistant-turn-shell {
+  opacity: 0;
+}
+
 .conversation-split-width .assistant-turn-shell {
                                                                   
                                                                  

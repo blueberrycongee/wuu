@@ -88,7 +88,7 @@ export type ConversationSplitPaneRendererProps = {
     pane: ConversationPaneID,
     promptOverride?: string,
     contentParts?: MessageContentPart[],
-  ) => void;
+  ) => boolean | void;
   onInterrupt: (pane: ConversationPaneID) => void;
   onForkMessage: (thread: Thread, turnID: string, itemID: string) => void;
   onOpenFile?: (thread: Thread, path: string) => void;

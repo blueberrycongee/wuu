@@ -8,7 +8,24 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Changed
+
+- Composer project and branch selectors use lightweight, arrow-free pills
+  instead of a full-width background. Their menus have roomier spacing,
+  aligned icon and selection columns, and separate branch status text.
+
+- Sending a message moves only the message bubble into place. The new turn's
+  in-progress status no longer travels with it; it fades in as the bubble lands,
+  for both the first message and follow-ups.
+
+## [2026.9.23] - 2026-09-23
+
 ### Added
+
+- Agents can inspect local PNG, JPEG, static GIF, and WebP images with
+  `read_file`, including generated session artifacts, without a composer
+  attachment. Image results retain the existing file scope and model capability
+  checks. Code Mode forwards emitted images as visual observations.
 
 - Image previews support smooth trackpad pinch zoom, two-finger panning, drag,
   fit-to-window and actual-size views, rotation, keyboard controls, and a desktop
@@ -17,11 +34,6 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Browser previews show an animated completion badge when the visible task
   finishes successfully, and clear it when work resumes. Hover reveals preview
   controls even while another application is active.
-
-- A subscription dashboard in desktop Settings shows source models, reported
-  Wuu token usage, and Codex account allowance windows with remaining percentages
-  and reset times. Unsupported account quotas stay unknown rather than being
-  inferred from local usage.
 
 - Model selection now includes GPT-6 Sol/Luna (including Fast mode) and
   Claude Opus 5.5, with current limits, pricing, and reasoning controls.
@@ -53,9 +65,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
-- Composer project and branch selectors use lightweight, arrow-free pills
-  instead of a full-width background. Their menus have roomier spacing,
-  aligned icon and selection columns, and separate branch status text.
+- The subscription dashboard stays development-only and is not exposed in
+  production Settings or extension-provided settings navigation.
 
 - Folder, conversation, and new-conversation icons use simpler contours and
   consistent rounded frames, matching the sidebar toggle controls. Single and
@@ -110,6 +121,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- New Harness conversations appear in the sidebar while creation is pending.
+  Stop remains available through background refreshes, restores the submitted
+  input, and cleans up an unused session if creation finishes after cancellation.
+  Concurrent drafts no longer share a single pending placeholder.
+
 - Inline artifact image previews fit the image's original proportions instead of
   adding white margins inside a fixed 4:3 frame, without cropping or stretching.
   Click-to-enlarge still opens the complete original image.
@@ -117,6 +133,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Conversation model changes no longer replace the selected model with workspace
   defaults. Model, reasoning-effort, and permission update failures use the shared
   top notification instead of duplicating errors in the composer status line.
+
+- Composer submissions no longer wait for cached conversation refreshes. Main
+  and split views accept normal follow-ups after a final answer, preserve the
+  original workspace across asynchronous preparation, and retain failed input
+  without overwriting newer drafts.
 
 - Responses image-generation results now appear as assistant image attachments
   and remain available when reopening the conversation, including replies with

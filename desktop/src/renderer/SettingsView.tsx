@@ -76,7 +76,7 @@ export type ArchivedRoomView = {
   created_at: string;
 };
 import { normalizedVariantForProviderModel, providerModelReasoningMode, providerModelVariantOptions, variantLabel } from "./RuntimeHelpers";
-import { ENABLE_REMOTE_CONTROL } from "./FeatureFlags";
+import { ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
 import { BackgroundSettings } from "./background/BackgroundSettings";
 import { SettingsRow } from "./SettingsRow";
@@ -117,6 +117,9 @@ const COPY_RESET_MS = 1500;
 
 function availableSettingsPage(page: SettingsPage | undefined): SettingsPage {
   const next = page ?? "providers";
+  if (next === "subscriptions" && !ENABLE_SUBSCRIPTIONS) {
+    return "providers";
+  }
   if (next === "remote" && (!ENABLE_REMOTE_CONTROL || !hostSupports("getRemoteControlSnapshot"))) {
     return "providers";
   }
@@ -892,7 +895,9 @@ export function SettingsView({
     ?? activeCustomPluginPage?.title
     ?? settingsPageTitle(activePage, t);
   const availablePages = useMemo<readonly SettingsPageSummaryV1[]>(() => Object.freeze([
-    Object.freeze({ id: "subscriptions", label: settingsPageTitle("subscriptions", t) }),
+    ...(ENABLE_SUBSCRIPTIONS
+      ? [Object.freeze({ id: "subscriptions", label: settingsPageTitle("subscriptions", t) })]
+      : []),
     Object.freeze({ id: "providers", label: settingsPageTitle("providers", t) }),
     Object.freeze({ id: "advanced", label: settingsPageTitle("advanced", t) }),
     Object.freeze({ id: "general", label: settingsPageTitle("general", t) }),
@@ -963,9 +968,11 @@ export function SettingsView({
           >
             <div className="settings-nav-group">
               <div className="settings-nav-group-label">{t("settings.groupModel")}</div>
-              <SettingsNavItem icon={<LayoutDashboard className="icon-lg" />} active={activePage === "subscriptions"} onClick={() => setActivePage("subscriptions")}>
-                {t("settings.subscriptions")}
-              </SettingsNavItem>
+              {ENABLE_SUBSCRIPTIONS ? (
+                <SettingsNavItem icon={<LayoutDashboard className="icon-lg" />} active={activePage === "subscriptions"} onClick={() => setActivePage("subscriptions")}>
+                  {t("settings.subscriptions")}
+                </SettingsNavItem>
+              ) : null}
               <SettingsNavItem icon={<KeyRound className="icon-lg" />} active={activePage === "providers"} onClick={() => setActivePage("providers")}>
                 {t("settings.providers")}
               </SettingsNavItem>
@@ -1059,9 +1066,11 @@ export function SettingsView({
             data-wuu-page={activePage}
             key={activePage}
           >
-            <header className="settings-page-header">
-              <h1 className="settings-page-title">{pageTitle}</h1>
-            </header>
+            {activePage !== "subscriptions" ? (
+              <header className="settings-page-header">
+                <h1 className="settings-page-title">{pageTitle}</h1>
+              </header>
+            ) : null}
   
             {activePluginSettingsRecord ? (
               <PluginSettingsEditor plugin={activePluginSettingsRecord} variant="page" />
@@ -1074,7 +1083,7 @@ export function SettingsView({
                 settings={settingsPageHost}
                 onFailure={() => setActivePage("providers")}
               />
-            ) : activePage === "subscriptions" ? (
+            ) : activePage === "subscriptions" && ENABLE_SUBSCRIPTIONS ? (
               <SubscriptionDashboard
                 inventory={engineInventory}
                 providers={providers}

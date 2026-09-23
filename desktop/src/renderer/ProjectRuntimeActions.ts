@@ -32,6 +32,7 @@ export type ProjectRuntimeActionsDeps = {
     carryDraft?: ComposerDraftState,
   ) => void;
   nextDraftSessionTab: (context: NonNullable<AppState["activeContext"]>) => SessionTab;
+  isDraftPending?: (tabID: string) => boolean;
   closeProjectMenus: () => void;
   
   beginViewSwitch: (kind: "thread" | "project" | "runtime", targetID: string) => number;
@@ -79,7 +80,7 @@ export function createProjectRuntimeActions(
       currentState.sessionTabs,
       context,
     );
-    if (existingDraft) {
+    if (existingDraft && !deps.isDraftPending?.(existingDraft.id)) {
       if (existingDraft.id === currentState.activeSessionTabID) {
         return;
       }
@@ -234,12 +235,11 @@ export function createProjectRuntimeActions(
       if (!loadedState.activeContext) {
         return false;
       }
-      if (
-        draftSessionTabForContext(
-          currentState.sessionTabs,
-          loadedState.activeContext,
-        )
-      ) {
+      const existingDraft = draftSessionTabForContext(
+        currentState.sessionTabs,
+        loadedState.activeContext,
+      );
+      if (existingDraft && !deps.isDraftPending?.(existingDraft.id)) {
         deps.restoreLoadedRuntimeComposerDraft(loadedState);
         deps.setAppState((current) => {
           const next = withLoadedRuntimeSessionTab(
@@ -494,7 +494,7 @@ export function createProjectRuntimeActions(
         currentState.sessionTabs,
         loadedState.activeContext,
       );
-      if (existingDraft) {
+      if (existingDraft && !deps.isDraftPending?.(existingDraft.id)) {
         deps.restoreLoadedRuntimeComposerDraft(loadedState);
         deps.setAppState((current) =>
           withLoadedRuntimeSessionTab(

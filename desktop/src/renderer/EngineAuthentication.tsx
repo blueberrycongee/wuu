@@ -3,7 +3,11 @@ import type { EngineAuthResult } from "../shared/protocol";
 import { useI18n } from "./i18n";
 
 /** Discovery never starts login. Only an explicit method selection does. */
-export function EngineAuthentication({ engineID }: { engineID: string }): JSX.Element {
+export function EngineAuthentication({ engineID, compact = false, onAuthenticated }: {
+  engineID: string;
+  compact?: boolean;
+  onAuthenticated?: () => void;
+}): JSX.Element {
   const { t } = useI18n();
   const [result, setResult] = useState<EngineAuthResult>();
   const [busy, setBusy] = useState(false);
@@ -26,7 +30,10 @@ export function EngineAuthentication({ engineID }: { engineID: string }): JSX.El
       const next = method
         ? await window.wuu.authenticateEngine(engineID, method)
         : await window.wuu.listEngineAuthMethods(engineID);
-      if (current === generation.current) setResult(next);
+      if (current === generation.current) {
+        setResult(next);
+        if (next.authenticated) onAuthenticated?.();
+      }
     } catch (e) {
       if (current === generation.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -44,7 +51,7 @@ export function EngineAuthentication({ engineID }: { engineID: string }): JSX.El
   }
 
   return (
-    <div className="settings-engine-auth" aria-busy={busy}>
+    <div className={`settings-engine-auth${compact ? " settings-engine-auth-compact" : ""}`} aria-busy={busy}>
       <div className="settings-engine-auth-actions">
         <button className="settings-button" type="button" disabled={busy} data-testid="engine-auth-discover" onClick={() => void run()}>
           {t("settings.engineSignIn")}
@@ -56,9 +63,11 @@ export function EngineAuthentication({ engineID }: { engineID: string }): JSX.El
           </button>
         ))}
       </div>
-      <small className="settings-muted-line settings-engine-detail" role="status">
-        {error || (busy ? t("settings.engineSigningIn") : result?.authenticated ? t("settings.engineSignedIn") : result?.methods.length === 0 ? t("settings.engineCLILogin") : t("settings.engineLoginHint"))}
-      </small>
+      {!compact || busy || result || error ? (
+        <small className="settings-muted-line settings-engine-detail" role="status">
+          {error ? compact ? t("settings.engineLoginFailed") : error : busy ? t("settings.engineSigningIn") : result?.authenticated ? t("settings.engineSignedIn") : result?.methods.length === 0 ? t("settings.engineCLILogin") : t(compact ? "settings.engineLoginMethodHint" : "settings.engineLoginHint")}
+        </small>
+      ) : null}
     </div>
   );
 }

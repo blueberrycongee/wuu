@@ -27,6 +27,7 @@ import {
   type BrowserTabAdopted,
   type RemoteControlEvent,
   type RunningThreadSnapshot,
+  type RuntimeContext,
   type ServerEvent,
   type SideThreadEventEnvelope,
   type SideThreadSendParams,
@@ -361,8 +362,8 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:codex-pet-runtime", runtime),
   updateCodexPetHints: (hints) =>
     ipcRenderer.invoke("wuu:codex-pet-hints", hints),
-  startThread: (params?: ThreadStartParams) =>
-    ipcRenderer.invoke("wuu:thread-start", params),
+  startThread: (params?: ThreadStartParams, targetContext?: RuntimeContext) =>
+    ipcRenderer.invoke("wuu:thread-start", params, targetContext),
   resumeThread: (sessionId?: string) =>
     ipcRenderer.invoke("wuu:thread-resume", sessionId),
   forkThread: (
@@ -493,15 +494,15 @@ const api: WuuDesktopApi = {
   },
   openExternal: (url: string) =>
     ipcRenderer.invoke("wuu:open-external", url),
-  startTurn: (threadId: string, prompt: string, images, files, permissionMode, activeDocument, contentParts) =>
-    ipcRenderer.invoke("wuu:turn-start", threadId, prompt, images, files, permissionMode, activeDocument, contentParts),
-  queueTurn: (threadId: string, prompt: string, images, clientId, files, permissionMode, activeDocument, contentParts) =>
-    ipcRenderer.invoke("wuu:turn-queue", threadId, prompt, images, clientId, files, permissionMode, activeDocument, contentParts),
+  startTurn: (threadId: string, prompt: string, images, files, permissionMode, activeDocument, contentParts, targetContext) =>
+    ipcRenderer.invoke("wuu:turn-start", threadId, prompt, images, files, permissionMode, activeDocument, contentParts, targetContext),
+  queueTurn: (threadId: string, prompt: string, images, clientId, files, permissionMode, activeDocument, contentParts, targetContext) =>
+    ipcRenderer.invoke("wuu:turn-queue", threadId, prompt, images, clientId, files, permissionMode, activeDocument, contentParts, targetContext),
   updateQueuedTurn: (threadId: string, queueId: string, prompt: string, images, files, contentParts) =>
     ipcRenderer.invoke("wuu:turn-update-queued", threadId, queueId, prompt, images, files, contentParts),
   dequeueTurn: (threadId: string, queueId: string) =>
     ipcRenderer.invoke("wuu:turn-dequeue", threadId, queueId),
-  steerTurn: (threadId: string, expectedTurnId: string, prompt: string, images, clientId, files, activeDocument, contentParts) =>
+  steerTurn: (threadId: string, expectedTurnId: string, prompt: string, images, clientId, files, activeDocument, contentParts, targetContext) =>
     ipcRenderer.invoke(
       "wuu:turn-steer",
       threadId,
@@ -512,6 +513,7 @@ const api: WuuDesktopApi = {
       files,
       activeDocument,
       contentParts,
+      targetContext,
     ),
   unsteerTurn: (threadId: string, steerId: string) =>
     ipcRenderer.invoke("wuu:turn-unsteer", threadId, steerId),

@@ -64,6 +64,7 @@ import { SCRATCH_PSEUDO_PROJECT_ID } from "./AppState";
 import {
   OrganizationThreadList,
   ProjectGroup,
+  type PendingConversation,
 } from "./ThreadSidebar";
 import { SidebarCollapseBody, SidebarSection } from "./SidebarSection";
 import { SidebarNameDialog } from "./SidebarNameDialog";
@@ -434,6 +435,8 @@ export function AppSidebar({
   onEditCollaborationAgent,
   onEditCollaborationRoom,
   onToggleConversationSearch,
+  pendingConversations = [],
+  onSelectPendingConversation,
   onSelectThread: selectNativeThread,
   onTogglePinned,
   onArchiveThread,
@@ -475,6 +478,8 @@ export function AppSidebar({
   // state.projects list is unchanged; sidebarProjects is what the sidebar
   // actually shows.
   sidebarProjects: DesktopProject[];
+  pendingConversations?: readonly PendingConversation[];
+  onSelectPendingConversation?: (id: string) => void;
   activeProjectID?: string;
   pinnedThreads: ThreadSummary[];
   activeThreadID?: string;
@@ -1464,6 +1469,11 @@ export function AppSidebar({
       >
         <ProjectGroup
           project={project}
+          pendingConversations={pendingConversations.filter((pending) => pending.context.kind === "project"
+            ? pending.context.project_id === project.id
+            : isScratchPseudo)}
+          activeSessionTabID={state.activeSessionTabID}
+          onSelectPendingConversation={onSelectPendingConversation}
           activeID={activeProjectID ?? state.activeProjectId}
           pendingProjectID={pendingProjectID}
           expandedSidebarSectionIDs={expandedSidebarSectionIDs}
@@ -1723,6 +1733,14 @@ export function AppSidebar({
             ? undefined
             : () => onSelectProjectWorkspace(projectID),
         });
+        for (const pending of pendingConversations) {
+          if (pending.context.kind === "project" ? pending.context.project_id !== projectID : !isScratch) continue;
+          functionalGroupNodes.workspace.push({
+            id: pending.id, kind: "thread", parentId: `project:${projectID}`, depth: 2,
+            label: pending.title, running: true, active: pending.id === state.activeSessionTabID,
+            onActivate: () => onSelectPendingConversation?.(pending.id),
+          });
+        }
         for (const thread of threads) {
           functionalGroupNodes.workspace.push(threadNavigationNode(
             thread,
@@ -1748,6 +1766,7 @@ export function AppSidebar({
     });
     return Object.freeze(nodes);
   }, [
+    pendingConversations, onSelectPendingConversation, state.activeSessionTabID,
     activateNative, activeProjectID, activeThreadID,
     hasPinnedRows,
     onOpenSettings,
