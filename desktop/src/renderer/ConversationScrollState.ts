@@ -240,7 +240,6 @@ export function useConversationScrollState({
   emptyConversation,
   initialized,
   running = false,
-  statusClusterNode = null,
   nativeScrollBounce = window.wuu?.platform === "darwin" && window.wuu?.hostKind !== "web",
 }: {
   activeThreadID?: string;
@@ -251,7 +250,6 @@ export function useConversationScrollState({
   emptyConversation: boolean;
   initialized: boolean;
   running?: boolean;
-  statusClusterNode?: HTMLElement | null;
   /** Use the macOS/AppKit rubber band instead of synthesizing wheel motion. */
   nativeScrollBounce?: boolean;
 }): {
@@ -267,6 +265,7 @@ export function useConversationScrollState({
    * measurement — see JumpToLatestPill's anchored mode.
    */
   dockComposerNode: HTMLElement | null;
+  statusClusterRef: (node: HTMLDivElement | null) => void;
   scheduleStreamScroll: () => void;
   handleConversationScroll: (scrolledNode?: HTMLElement) => void;
   enableConversationAutoFollow: () => void;
@@ -302,10 +301,14 @@ export function useConversationScrollState({
   const scrollModeRef = useRef<ConversationScrollMode>("following");
   const runningRef = useRef(running);
   runningRef.current = running;
-  // Read through a ref: mounting the status row must not re-run the thread
-  // restore, which would re-place a paused reader.
-  const statusClusterNodeRef = useRef(statusClusterNode);
-  statusClusterNodeRef.current = statusClusterNode;
+  const [statusClusterNode, setStatusClusterNode] = useState<HTMLDivElement | null>(null);
+  const statusClusterNodeRef = useRef<HTMLDivElement | null>(null);
+  const statusClusterRef = useCallback((node: HTMLDivElement | null) => {
+    // Ref attachment precedes layout effects; state alone still describes the
+    // outgoing row when the incoming conversation restores its reading position.
+    statusClusterNodeRef.current = node;
+    setStatusClusterNode(node);
+  }, []);
   function syncStreamFollowing(): void {
     // Scroll-linked fades and the live text wave repaint on every chunk
     // while the viewport is pinned to a running turn. The attribute lets
@@ -1822,6 +1825,7 @@ export function useConversationScrollState({
     conversationPaneRef,
     dockComposerRef,
     dockComposerNode,
+    statusClusterRef,
     scheduleStreamScroll,
     handleConversationScroll,
     enableConversationAutoFollow,

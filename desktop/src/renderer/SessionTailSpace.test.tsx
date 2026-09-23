@@ -47,9 +47,8 @@ function LayoutSignal() {
   return null;
 }
 function Probe({ id = "a", running = false, split = false, messageID, pluginHost, onOpenSession = () => undefined, signalLayout = false, item, mountKey, processItems, todoComplete, composer, processRow, navigation }: Props) {
-  const [statusClusterNode, setStatusClusterNode] = React.useState<HTMLDivElement | null>(null);
   const primaryTurns: Turn[] = messageID ? [{ id: "turn", items_view: "full", status: running ? "in_progress" : "completed", items: [{ ...item, id: messageID, type: "user_message" }] }] : [];
-  api = useConversationScrollState({ activeThreadID: id ?? undefined, activePane: "primary", splitConversation: split, primaryTurns, emptyConversation: !messageID, initialized: true, running, nativeScrollBounce: false, statusClusterNode });
+  api = useConversationScrollState({ activeThreadID: id ?? undefined, activePane: "primary", splitConversation: split, primaryTurns, emptyConversation: !messageID, initialized: true, running, nativeScrollBounce: false });
   return <main ref={api.conversationPaneRef}>
     <div data-viewport ref={node => {
       api.conversationScrollRef.current = node;
@@ -73,7 +72,7 @@ function Probe({ id = "a", running = false, split = false, messageID, pluginHost
     </div>
     {composer ? <div data-dock ref={api.dockComposerRef} /> : null}
     {pluginHost ? <ConversationStatusCluster host={pluginHost} visible threadId={id ?? undefined}
-      clusterRef={setStatusClusterNode}
+      clusterRef={api.statusClusterRef}
       navigation={navigation ? <button>Jump</button> : undefined}
       onOpenSession={onOpenSession}
       todoUpdate={{ todos: [{ content: "Keep history controls accessible", status: todoComplete ? "completed" : "in_progress" }] }}
@@ -429,6 +428,17 @@ it.each([false, true])("keeps materialized pending inputs in the current reading
   expect(scrollTop()).toBe(paused ? readingTop : naturalHeight - viewportHeight);
   grow(100);
   expect(scrollTop()).toBe(paused ? readingTop : naturalHeight - viewportHeight);
+});
+
+it("restores paused history when the incoming status row mounts during the switch", () => {
+  const pluginHost = new PluginHost({ react: React });
+  render({ messageID: "old", pluginHost });
+  scrollUp(400);
+  const savedTop = scrollTop();
+  render({ id: "b", messageID: "other" });
+  render({ messageID: "old", pluginHost });
+  expect(statusSpace()).toBe(statusHeight);
+  expect(scrollTop()).toBe(savedTop);
 });
 
 it.each(["scroll", "switch", "failure"])("does not reposition a delayed input after %s", reason => {
