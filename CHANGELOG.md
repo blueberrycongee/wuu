@@ -8,6 +8,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Changed
+
+- Sending a message moves only the message bubble into place. The new turn's
+  in-progress status no longer travels with it; it fades in as the bubble lands,
+  for both the first message and follow-ups.
+
 ## [2026.9.23] - 2026-09-23
 
 ### Added
