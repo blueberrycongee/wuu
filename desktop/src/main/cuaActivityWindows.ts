@@ -89,12 +89,10 @@ export function isObservableActivity(activity: ActivitySession): boolean {
 // CUA surfaces stay up: there the user controls the target app itself, not a
 // Wuu panel showing the same pixels.
 export function pipVisibleForActivity(activity: ActivitySession, inPanel = false): boolean {
-  // Browser work stays hidden unless the agent explicitly promotes it with
-  // set_visibility=true. Showing the native PiP for background operations can
-  // activate the desktop window and interrupt whatever the user is doing.
-  if (activity.kind === "browser") {
-    return activity.state === "foreground_controlled" && !inPanel;
-  }
+  // Ordinary browser actions report background control even after an explicit
+  // visibility promotion. That execution state must not hide the watch-only
+  // preview; only presenting the same page in the panel replaces it.
+  if (activity.kind === "browser") return !inPanel;
   return true;
 }
 
@@ -111,17 +109,19 @@ export type ObservationPiPHandle = Pick<CUANativePiP, "start" | "setVisible" | "
   setTurnCompleted?(completed: boolean): void;
   setAppearance?(dark: boolean): void;
   setHostLayout?(layout: BrowserPiPScreenLayout | null): void;
-  setHostParent?(parent: { isDestroyed(): boolean } | null): void;
+  setHostParent?(parent: BrowserPiPHostWindow | null): void;
   // Browser surfaces can swap tabs without replacing the user's window.
   retarget?(activity: ActivitySession, sink: ObservationPiPEventSink): void;
 };
 
 export interface BrowserPiPHostWindow {
   isDestroyed(): boolean;
+  isVisible(): boolean;
+  isMinimized(): boolean;
   getContentBounds(): Rectangle;
   readonly webContents: { getZoomFactor(): number };
-  on(event: "move" | "resize", listener: () => void): void;
-  removeListener(event: "move" | "resize", listener: () => void): void;
+  on(event: "move" | "resize" | "show" | "hide" | "minimize" | "restore", listener: () => void): void;
+  removeListener(event: "move" | "resize" | "show" | "hide" | "minimize" | "restore", listener: () => void): void;
   isFocused?(): boolean;
 }
 

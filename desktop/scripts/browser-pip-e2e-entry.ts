@@ -1,12 +1,14 @@
 // Runs the production browser host and PiP with isolated, synthetic pages.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { once } from "node:events";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { app, BrowserWindow, WebContentsView } from "electron";
 import type { ActivitySession } from "../src/shared/protocol";
-import { BrowserPiPSurface } from "../src/main/browserPiPWindow";
+import { createObservationPiPFactory } from "../src/main/browserPiPWindow";
+import { ObservationCoordinator } from "../src/main/cuaActivityWindows";
 import { BrowserHostCoordinator, defaultBrowserHostDeps, type BrowserHostWindowHandle, type BrowserViewHandle } from "../src/main/browserHostWindows";
 import type { WindowRegistry } from "../src/main/windowRegistry";
 
@@ -76,20 +78,61 @@ app.whenReady().then(async () => {
   }
   await request("browser/open_tab", { initial_url: `data:text/html,${encodeURIComponent(page)}` });
   const contents = views[0].webContents;
-  const surface = new BrowserPiPSurface({ activity, workdir, tabID, host, isPackaged: false,
-    bounds: { x: 120, y: 120, width: 384, height: 240 },
-    sink: { onEvent: () => undefined, onGone: () => undefined, onFailure: (error) => { throw error; } },
+  const factory = createObservationPiPFactory({ browserHost: host, isPackaged: false, parent: () => main });
+  const coordinator = new ObservationCoordinator(
+    { mainWindow: () => main } as unknown as WindowRegistry, undefined,
+    (next, key, sink) => factory(next, key, sink, () => ({ x: 120, y: 120, width: 384, height: 240 })),
+  );
+  coordinator.setBrowserInPanel((next) => host.isInPanel(next.workdir, next.target!));
+  host.setRendererSink({
+    surface: () => undefined, userInput: () => undefined, adopted: () => undefined,
+    presented: () => coordinator.refreshBrowserPresentation(),
   });
-  surface.start();
-  surface.setVisible(true);
-  const pip = BrowserWindow.getAllWindows().find((win) => win !== main && win.isVisible())!;
+  coordinator.setActiveThread(activity.thread_id);
+  coordinator.update(activity);
+  const pip = BrowserWindow.getAllWindows().find((win) => win.getParentWindow() === main)!;
   assert.ok(pip);
+  assert.equal(main.isVisible(), false, "Preview does not show the hidden main window");
+  assert.equal(pip.isVisible(), false, "Preview waits for its main window to be shown");
+  let shown = once(main, "show", { signal: AbortSignal.timeout(5000) });
+  main.show();
+  await shown;
+  await waitFor("default background preview", () => pip.isVisible());
+  assert.equal(pip.isFocused(), false, "Preview does not take keyboard focus");
   const overlay = (pip.contentView.children.find((view) => view !== views[0]) as WebContentsView).webContents;
   await waitFor("overlay ready", () => overlay.executeJavaScript(`typeof window.wuuPipInteract === 'function' && document.getElementById('ph').classList.contains('gone')`));
+  const hidden = once(main, "hide", { signal: AbortSignal.timeout(5000) });
+  main.hide();
+  await hidden;
+  coordinator.refreshBrowserPresentation();
+  assert.equal(main.isVisible(), false, "Activity refresh cannot reveal the hidden main window");
+  assert.equal(pip.isVisible(), false);
+  shown = once(main, "show", { signal: AbortSignal.timeout(5000) });
+  main.show();
+  await shown;
+  await waitFor("preview restored with main window", () => pip.isVisible());
+  const minimized = once(main, "minimize", { signal: AbortSignal.timeout(5000) });
+  main.minimize();
+  await minimized;
+  coordinator.refreshBrowserPresentation();
+  assert.equal(pip.isVisible(), false, "Minimizing the main window hides the preview");
+  const restored = once(main, "restore", { signal: AbortSignal.timeout(5000) });
+  main.restore();
+  await restored;
+  await waitFor("preview restored after minimize", () => pip.isVisible());
+  coordinator.setActiveThread("other-thread");
+  coordinator.refreshBrowserPresentation();
+  assert.equal(pip.isVisible(), false, "Switching conversations hides the preview");
+  coordinator.update({ ...activity, updated_at: new Date().toISOString() });
+  assert.equal(pip.isVisible(), false, "Background updates cannot reveal another conversation's preview");
+  coordinator.setActiveThread(activity.thread_id);
+  assert.equal(pip.isVisible(), true, "Returning to the owning conversation restores its preview");
   const click = () => request("browser/cdp", { method: "click", params: { x: 240, y: 200 } });
   const pointer = (wc: typeof contents) => wc.executeJavaScript(`(()=>{const el=document.getElementById('__wuu_agent_cursor');if(!el)return null;const m=new DOMMatrix(getComputedStyle(el).transform);return {x:m.e,y:m.f,width:el.offsetWidth,svg:el.querySelector('svg')?.outerHTML};})()`);
 
-  surface.setTurnCompleted(true);
+  coordinator.handleServerEvent({ workdir, kind: "notification", message: {
+    method: "turn/completed", params: { thread_id: activity.thread_id, turn: { status: "completed" } },
+  } });
   await waitFor("completion shown", () => overlay.executeJavaScript(`document.getElementById('completion').getAttribute('aria-hidden') === 'false'`));
   await overlay.executeJavaScript(`Promise.all(document.getElementById('completion').getAnimations({subtree:true}).map(a=>a.finished))`);
   capture(pip, "pip-completed.png");
@@ -110,9 +153,8 @@ app.whenReady().then(async () => {
   await contents.executeJavaScript("document.body.classList.add('dark')");
   capture(pip, "pip-dark.png");
 
-  surface.setVisible(false);
-  main.showInactive();
   host.reportBounds(workdir, tabID, main as unknown as BrowserHostWindowHandle, { x: 0, y: 42, width: 950, height: 620 }, 1, true);
+  assert.equal(pip.isVisible(), false, "Docking the page replaces its preview");
   await click();
   assert.equal(await contents.executeJavaScript("window.clicks"), 2);
   const panel = await pointer(contents);
@@ -133,10 +175,10 @@ app.whenReady().then(async () => {
   host.updateActivity({ ...activity, controller: "user", state: "foreground_controlled" });
   await waitFor("takeover clears pointer", async () => (await pointer(contents)) === null);
 
-  surface.stop();
+  await coordinator.shutdown();
   host.destroyAll();
   assert.ok(pip.isDestroyed());
-  console.log(`browser-pip-e2e: PASS (PiP/panel input, projection, resize, navigation, reduced motion, takeover; ${artifacts})`);
+  console.log(`browser-pip-e2e: PASS (default preview, session visibility, docking, completion, PiP/panel input, projection, resize, navigation, reduced motion, takeover; ${artifacts})`);
   main.destroy();
   app.exit(0);
 }).catch((error) => { console.error(error); app.exit(1); });

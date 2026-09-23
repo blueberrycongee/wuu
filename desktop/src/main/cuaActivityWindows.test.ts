@@ -265,8 +265,8 @@ describe("browser observation surface", () => {
     completed.mockClear();
     coordinator.update(browserActivity({ state: "background_controlled", updated_at: "2026-07-10T10:00:02Z" }));
     coordinator.handleServerEvent(event);
-    expect(completed).not.toHaveBeenCalled();
-    coordinator.update(browserActivity({ state: "foreground_controlled", updated_at: "2026-07-10T10:00:03Z" }));
+    expect(completed).toHaveBeenLastCalledWith(true);
+    completed.mockClear();
     coordinator.setBrowserInPanel(() => true);
     coordinator.handleServerEvent(event);
     expect(completed).not.toHaveBeenCalled();
@@ -311,6 +311,8 @@ describe("browser observation surface", () => {
     let content = { x: 100, y: 100, width: 1000, height: 800 };
     const win = Object.assign(new EventEmitter(), {
       isDestroyed: () => false,
+      isVisible: () => true,
+      isMinimized: () => false,
       getContentBounds: () => content,
       webContents: { getZoomFactor: () => 1 },
     });
@@ -334,16 +336,18 @@ describe("browser observation surface", () => {
     expect(win.listenerCount("move")).toBe(0);
   });
 
-  it("keeps background browser work hidden until visibility is explicitly promoted", () => {
+  it("previews default browser work across control-state updates until the page is docked", () => {
     const { coordinator, surfaces } = makeCoordinator();
     coordinator.setActiveThread("thread-1");
     coordinator.update(browserActivity());
     expect(surfaces).toHaveLength(1);
     expect(surfaces[0].start).toHaveBeenCalledTimes(1);
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
 
-    // Explicit visibility promotion shows the page until it is docked.
+    // A subsequent ordinary browser action returns to background control.
     coordinator.update(browserActivity({ state: "foreground_controlled", controller: "agent", updated_at: "2026-07-10T10:00:02Z" }));
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
+    coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:03Z" }));
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
     coordinator.setBrowserInPanel(() => true);
     coordinator.refreshBrowserPresentation();
@@ -356,7 +360,7 @@ describe("browser observation surface", () => {
   });
 
   it("hides the mirror while the same page is in the workspace panel", () => {
-    expect(pipVisibleForActivity(browserActivity(), false)).toBe(false);
+    expect(pipVisibleForActivity(browserActivity(), false)).toBe(true);
     expect(pipVisibleForActivity(browserActivity({ state: "foreground_controlled" }), false)).toBe(true);
     expect(pipVisibleForActivity(browserActivity(), true)).toBe(false);
     const { coordinator, surfaces } = makeCoordinator();
@@ -365,7 +369,6 @@ describe("browser observation surface", () => {
     coordinator.update(browserActivity());
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
     coordinator.setBrowserInPanel(() => false);
-    coordinator.update(browserActivity({ state: "foreground_controlled", updated_at: "2026-07-10T10:00:02Z" }));
     coordinator.refreshBrowserPresentation();
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
   });
@@ -373,7 +376,7 @@ describe("browser observation surface", () => {
   it.each(["thread-2", undefined])("keeps an inactive preview hidden during presentation refresh (%s)", async (threadID) => {
     const { coordinator, surfaces } = makeCoordinator();
     coordinator.setActiveThread("thread-1");
-    coordinator.update(browserActivity({ state: "foreground_controlled" }));
+    coordinator.update(browserActivity());
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
 
     coordinator.setActiveThread(threadID);
@@ -382,7 +385,7 @@ describe("browser observation surface", () => {
     coordinator.refreshBrowserPresentation();
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
 
-    coordinator.update(browserActivity({ state: "foreground_controlled", updated_at: "2026-07-10T10:00:02Z" }));
+    coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:02Z" }));
     coordinator.refreshBrowserPresentation();
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
     expect(surfaces).toHaveLength(1);
@@ -399,6 +402,7 @@ describe("browser observation surface", () => {
     coordinator.update(browserActivity());
     coordinator.update(browserActivity({ state: "stopped", controller: "none", updated_at: "2026-07-10T10:00:02Z" }));
     expect(surfaces[0].setLive).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
     expect(surfaces).toHaveLength(1); // kept, CUA observation semantics
 
     coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:03Z" }));
@@ -420,7 +424,7 @@ describe("browser observation surface", () => {
     expect(stops).toEqual([]);
     expect(surfaces).toHaveLength(1);
     expect(retarget).toHaveBeenCalledWith(next, expect.any(Object));
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
     // Controls from the reused window must address the new observation key.
     retarget.mock.calls[0][1].onEvent({ event: "user_close" });
     expect(stops).toHaveLength(1);

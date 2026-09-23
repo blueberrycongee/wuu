@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import type { Rectangle } from "electron";
 import { describe, expect, it, vi } from "vitest";
 import type { ActivitySession } from "../shared/protocol";
@@ -271,6 +272,45 @@ function makeSurface(opts?: { host?: FakeHost; bounds?: Rectangle; cursorPositio
 }
 
 describe("BrowserPiPSurface", () => {
+  it("waits for its host to be visible and restores after hide or minimize without new activity", () => {
+    let visible = false;
+    let minimized = false;
+    const parent = Object.assign(new EventEmitter(), {
+      isDestroyed: () => false,
+      isVisible: () => visible,
+      isMinimized: () => minimized,
+      getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
+      webContents: { getZoomFactor: () => 1 },
+    });
+    const { surface, win } = makeSurface();
+    surface.start();
+    surface.setHostParent(parent);
+    surface.setVisible(true);
+    win.emit("ready-to-show");
+    expect(win.isVisible()).toBe(false);
+
+    visible = true;
+    parent.emit("show");
+    expect(win.isVisible()).toBe(true);
+    visible = false;
+    parent.emit("hide");
+    surface.setVisible(true);
+    expect(win.isVisible()).toBe(false);
+    visible = true;
+    parent.emit("show");
+    expect(win.isVisible()).toBe(true);
+    minimized = true;
+    parent.emit("minimize");
+    win.emit("ready-to-show");
+    expect(win.isVisible()).toBe(false);
+    minimized = false;
+    parent.emit("restore");
+    expect(win.isVisible()).toBe(true);
+
+    surface.stop();
+    expect(parent.eventNames()).toEqual([]);
+  });
+
   it("tracks pointer entry without focus and releases tracking when hidden or closed", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     try {
