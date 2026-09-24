@@ -1,20 +1,20 @@
-// Shots 6–9, one continuous launch field (31 s – 59 s):
-//   6. A huge blueprint. Alone, Wuu barely builds one piece while day turns to night.
+// Shots 6–9, one continuous studio stage (31 s – 59 s):
+//   6. A huge blueprint. Alone, Wuu barely builds one piece as hours pass.
 //   7. Friends peek in. An idea: a headset drops on; Wuu becomes the coordinator.
 //   8. Each friend opens a session; Wuu hands out pieces and watches them all at
 //      once. One gets stuck, another helps. The pieces come home.
-//   9. Countdown, liftoff, fireworks.
+//   9. Countdown, continuous liftoff, then a push into Wuu's porthole.
 import {
-  drawBall, drawBlueprint, drawBubble, drawBurst, drawClock, drawFlame, drawPiece, drawPuff, drawShadow, drawSparkle,
-  drawWindow, extent, INK, pieceCenter, TITLE_BAR, WUU, type Ball, type Piece,
+  drawBall, drawBlueprint, drawBubble, drawClock, drawFlame, drawPiece, drawPuff, drawShadow,
+  drawWindow, extent, INK, pieceCenter, THEMES, TITLE_BAR, WUU, type Ball, type Piece,
 } from "./art";
 import {
   clamp, eyes, hop, hops, inCubic, inOut, keys, lerp, linear, mixColor, outBack, outCubic, seg, smooth, squash, wobble,
   type EyeKind, type Hop,
 } from "./motion";
 import {
-  agent, arc, BUILDER, CLAUDE, CODEX, CONFETTI, CORAL, CURSOR, drawCheck, drawDaze, drawOrb, fill, irisClose, LILAC,
-  look, MINT, OPENCODE, PI, SKY, stairs, stand, SUN, toScreen, W, H, withCamera, type Agent, type Camera, type Ctx,
+  agent, arc, BUILDER, CLAUDE, CODEX, CORAL, CREAM, CURSOR, drawCheck,
+  look, matchCamera, MINT, OPENCODE, PI, stairs, stand, SUN, toScreen, W, H, withCamera, type Agent, type Camera, type Ctx,
 } from "./cast";
 
 export const STAGE_START = 31;
@@ -26,13 +26,13 @@ export const STAGE_END = 59;
 const HORIZON = 820;
 const ROCKET = { x: 960, y: 595, s: 1.55 };
 const PAD = { x: 745, y: 798, w: 430, h: 46 };
-const BOARD = { x: 150, y: 180, w: 460, h: 540 };
+const BOARD = { x: 150, y: 240, w: 460, h: 480 };
 const WUU_R = 100;
 const HOME = { x: 1300, floor: 980 };
 const WORK = { x: 1125, floor: 965 };
 const CENTER = { x: 960, floor: 1000 };
 
-const CAM_OPEN: Camera = { x: 1240, y: 798, zoom: 1.35 };
+const CAM_OPEN = matchCamera(stand(WUU, HOME.x, HOME.floor, WUU_R));
 const CAM_WIDE: Camera = { x: 960, y: 540, zoom: 1 };
 const CAM_TEAM: Camera = { x: 960, y: 590, zoom: 0.78 };
 
@@ -80,7 +80,7 @@ const BOARD_ROCKET = 54.3;
 const LAMPS = [55.1, 55.5, 55.9];
 const IGNITION = 56.2;
 const LIFTOFF = 56.5;
-const BLOOM = 58.05;
+const PORTRAIT = 58.8;
 
 /** Shared piece progress in the team's sessions. */
 function progress(piece: Piece, t: number) {
@@ -107,13 +107,14 @@ function soloBuild(t: number) {
 
 // ---------------------------------------------------------------------------
 
-export function stageShot(ctx: Ctx, t: number) {
+export function stageShot(ctx: Ctx, t: number, showPortrait = true) {
   const cam = camera(t);
-  drawSky(ctx, t, cam);
+  ctx.fillStyle = CREAM;
+  ctx.fillRect(0, 0, W, H);
   withCamera(ctx, cam, () => {
     drawGround(ctx, t, cam);
     drawCodexPeek(ctx, t);
-    drawEasel(ctx, t);
+    drawPlan(ctx, t);
     drawPad(ctx, t);
     drawSmoke(ctx, t, true);
     drawRocket(ctx, t);
@@ -123,34 +124,38 @@ export function stageShot(ctx: Ctx, t: number) {
   });
   drawSessions(ctx, t, cam);
   drawTimeClock(ctx, t);
-  drawFireworks(ctx, t);
-  // Mirror of the previous iris: open on Wuu.
-  if (t < 31.8) {
-    const [sx, sy] = toScreen(cam, HOME.x, HOME.floor - WUU_R);
-    const hold = WUU_R * cam.zoom * 1.45;
-    irisClose(ctx, sx, sy, keys(t, [[31, 0], [31.2, hold, outCubic], [31.35, hold], [31.8, 1500, inCubic]]));
-  }
-  // The launch ends on a white flash.
-  const flash = seg(t, 58.6, 59);
-  if (flash > 0) {
-    ctx.globalAlpha = smooth(flash);
-    fill(ctx, "#FFFDF8");
-    ctx.globalAlpha = 1;
-  }
+  if (showPortrait && t >= PORTRAIT) drawBall(ctx, launchPortrait(t));
 }
 
 function camera(t: number): Camera {
   if (t < 31.4) return CAM_OPEN;
   if (t < 40.9) {
-    const e = inOut(seg(t, 31.4, 32.2));
+    const e = smooth(seg(t, 31.4, 32.6));
     return mixCam(CAM_OPEN, CAM_WIDE, e);
   }
   if (t < LIFTOFF + 0.3) {
-    const shake = t > 55.6 ? wobble(t, 5, 30) * lerp(1.5, 5, seg(t, 55.6, IGNITION)) : 0;
+    const shake = t > 55.6 ? wobble(t, 5, 18) * lerp(0.5, 2, seg(t, 55.6, IGNITION)) : 0;
     return { ...mixCam(CAM_WIDE, CAM_TEAM, inOut(seg(t, 40.9, 41.8))), x: 960 + shake };
   }
-  // Tilt up after the rocket, into the evening sky.
-  return { ...CAM_TEAM, y: CAM_TEAM.y - 620 * inOut(seg(t, LIFTOFF + 0.3, 57.9)), x: 960 + wobble(t, 5, 30) * 5 * (1 - seg(t, 56.8, 57.4)) };
+  // Ease into a tracking shot before pushing in. A screen-space target avoids
+  // overtaking the rocket and making it appear to fall back down during the pan.
+  const followStart = LIFTOFF + 0.3;
+  const startY = toScreen(CAM_TEAM, ROCKET.x, ROCKET.y - rise(followStart) - 63 * ROCKET.s)[1];
+  const push = smooth(seg(t, 57.8, 59.6));
+  const screenY = keys(t, [[followStart, startY], [57.35, startY - 55, outCubic], [57.8, startY - 55], [59.6, 480, smooth]]);
+  const zoom = lerp(CAM_TEAM.zoom, 210 / (24 * ROCKET.s), push);
+  return {
+    x: ROCKET.x,
+    y: ROCKET.y - rise(t) - 63 * ROCKET.s - (screenY - H / 2) / zoom,
+    zoom,
+  };
+}
+
+/** The same passenger pose continues into the end card; there is no second landing. */
+export function launchPortrait(t: number): Ball {
+  const cam = camera(t);
+  const [x, y] = toScreen(cam, ROCKET.x, ROCKET.y - rise(t) - 63 * ROCKET.s);
+  return { x, y, r: 24 * ROCKET.s * cam.zoom, skin: WUU, pitch: 0.2, eyes: { kind: "open", open: 1 } };
 }
 
 const mixCam = (a: Camera, b: Camera, e: number): Camera => ({ x: lerp(a.x, b.x, e), y: lerp(a.y, b.y, e), zoom: lerp(a.zoom, b.zoom, e) });
@@ -158,135 +163,41 @@ const mixCam = (a: Camera, b: Camera, e: number): Camera => ({ x: lerp(a.x, b.x,
 // ---------------------------------------------------------------------------
 // Sky and ground
 
-/** 0 is day, 1 is night. Night falls during the lonely build; the idea brings the dawn. */
-function night(t: number) {
-  if (t < IDEA) return smooth(seg(t, 33.2, 36.6));
-  if (t < LIFTOFF) return 1 - smooth(seg(t, IDEA + 0.1, IDEA + 0.9));
-  return smooth(seg(t, LIFTOFF + 0.4, 57.9)) * 0.92;
-}
-
-function three(a: string, b: string, c: string, k: number) {
-  return k < 0.5 ? mixColor(a, b, k * 2) : mixColor(b, c, k * 2 - 1);
-}
-
-function drawSky(ctx: Ctx, t: number, cam: Camera) {
-  const n = night(t);
-  const sky = ctx.createLinearGradient(0, 0, 0, H);
-  sky.addColorStop(0, three("#BFE3FF", "#FFA48F", "#1B2042", n));
-  sky.addColorStop(1, three("#FFF4DF", "#FFD6A4", "#3A3564", n));
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, W, H);
-  // Stars come out at night.
-  const stars = seg(n, 0.55, 1);
-  if (stars > 0) {
-    for (let i = 0; i < 70; i++) {
-      const x = (i * 283.7) % W;
-      const y = ((i * 157.3) % 760) + (cam.y < 540 ? (540 - cam.y) * 0.1 : 0);
-      const twinkle = 0.55 + 0.45 * Math.sin(t * 3 + i * 1.7);
-      if (i % 7 === 0) drawSparkle(ctx, x, y, 9, "#FFF6D8", stars * twinkle);
-      else {
-        ctx.fillStyle = `rgba(255, 246, 216, ${stars * twinkle * 0.9})`;
-        ctx.beginPath();
-        ctx.arc(x, y, 2.4, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-  }
-  // The sun sinks toward the horizon; the moon rises opposite.
-  const horizon = toScreen(cam, 0, HORIZON)[1];
-  const sunY = lerp(210, horizon + 120, smooth(seg(n, 0, 0.72)));
-  const sunX = lerp(1470, 1640, n);
-  ctx.fillStyle = mixColor(SUN, "#FF8E5E", seg(n, 0.2, 0.6));
-  ctx.beginPath();
-  ctx.arc(sunX, sunY, 72, 0, Math.PI * 2);
-  ctx.fill();
-  // Between the board and the rocket, so neither hides it.
-  const moon = seg(n, 0.55, 1);
-  if (moon > 0) {
-    const mx = 700, my = lerp(horizon + 80, 150, smooth(moon));
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(0, 0, W, H);
-    ctx.arc(mx + 24, my - 14, 48, 0, Math.PI * 2);
-    ctx.clip("evenodd");
-    ctx.fillStyle = "#FFF3C9";
-    ctx.beginPath();
-    ctx.arc(mx, my, 54, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-}
-
 function drawGround(ctx: Ctx, t: number, cam: Camera) {
-  const n = night(t);
-  const hill = three("#E3D9C2", "#E0B996", "#2C2A48", n);
-  ctx.fillStyle = hill;
-  ctx.beginPath();
-  ctx.ellipse(160, HORIZON + 30, 520, 120, 0, Math.PI, 0);
-  ctx.ellipse(1820, HORIZON + 40, 640, 150, 0, Math.PI, 0);
-  ctx.fill();
-  ctx.fillStyle = three("#EFE5D0", "#EBC9A6", "#262540", n);
+  ctx.save();
+  ctx.globalAlpha *= 1 - smooth(seg(t, 57.2, 58.4));
+  ctx.fillStyle = "#E9E9E3";
   ctx.fillRect(cam.x - 3000, HORIZON, 6000, 3000);
-  ctx.fillStyle = three("#E6DAC2", "#DDB896", "#211F38", n);
-  ctx.fillRect(cam.x - 3000, HORIZON, 6000, 6);
+  ctx.restore();
 }
 
 function drawPad(ctx: Ctx, t: number) {
-  const n = night(t);
-  ctx.fillStyle = mixColor("#CFC5B6", "#4A4760", n);
+  ctx.fillStyle = "#BFC6BD";
   ctx.beginPath();
-  ctx.roundRect(PAD.x, PAD.y, PAD.w, PAD.h, 16);
-  ctx.fill();
-  ctx.fillStyle = mixColor("#E2DACD", "#5B5875", n);
-  ctx.beginPath();
-  ctx.roundRect(PAD.x, PAD.y, PAD.w, 12, 6);
+  ctx.roundRect(PAD.x, PAD.y, PAD.w, PAD.h, 4);
   ctx.fill();
   LAMPS.forEach((at, i) => {
     const on = seg(t, at, at + 0.1) * (1 - seg(t, 57.2, 57.6));
     const x = PAD.x + PAD.w / 2 + (i - 1) * 58, y = PAD.y + 29;
-    if (on > 0) {
-      const glow = ctx.createRadialGradient(x, y, 0, x, y, 36);
-      glow.addColorStop(0, `rgba(255, 214, 110, ${0.7 * on})`);
-      glow.addColorStop(1, "rgba(255, 214, 110, 0)");
-      ctx.fillStyle = glow;
-      ctx.beginPath();
-      ctx.arc(x, y, 36, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.fillStyle = mixColor("#9C9384", i === 2 ? "#7FE0A8" : SUN, on);
+    ctx.fillStyle = mixColor("#92988F", i === 2 ? "#537E68" : SUN, on);
     ctx.beginPath();
-    ctx.arc(x, y, 11, 0, Math.PI * 2);
+    ctx.arc(x, y - 6, 8, 0, Math.PI * 2);
     ctx.fill();
   });
 }
 
-function drawEasel(ctx: Ctx, t: number) {
-  const n = night(t);
-  ctx.strokeStyle = mixColor("#B8906A", "#4E4258", n);
-  ctx.lineWidth = 14;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.moveTo(BOARD.x + 90, BOARD.y + 200); ctx.lineTo(BOARD.x + 40, HORIZON + 40);
-  ctx.moveTo(BOARD.x + BOARD.w - 90, BOARD.y + 200); ctx.lineTo(BOARD.x + BOARD.w - 40, HORIZON + 40);
-  ctx.stroke();
+function drawPlan(ctx: Ctx, t: number) {
   const land = seg(t, 31.7, BOARD_LAND);
-  if (land <= 0) return;
-  // The sheet floats down like paper, then settles with a bump.
-  const y = lerp(-BOARD.h - 60, BOARD.y, inCubic(land)) - (t > BOARD_LAND ? Math.sin(seg(t, BOARD_LAND, BOARD_LAND + 0.3) * Math.PI) * 16 : 0);
-  const sway = (1 - land) * Math.sin(land * 9) * 6;
+  const alpha = smooth(land) * (1 - smooth(seg(t, 41, WINDOWS_OPEN)));
+  if (alpha <= 0) return;
   ctx.save();
-  ctx.translate(BOARD.x + BOARD.w / 2, y + BOARD.h / 2);
-  ctx.rotate((sway * Math.PI) / 180);
-  ctx.translate(-BOARD.w / 2, -BOARD.h / 2);
+  ctx.globalAlpha *= alpha;
+  ctx.translate(BOARD.x, BOARD.y + 40 * (1 - smooth(land)));
   drawBlueprint(ctx, 0, 0, BOARD.w, BOARD.h);
   ctx.translate(BOARD.w / 2, BOARD.h / 2 + 60);
   ctx.scale(1.12, 1.12);
-  for (const id of ["finL", "finR", "nozzle", "hull", "cabin", "nose"] as Piece[]) drawPiece(ctx, id, 0, { ghost: "#5A7ED8" });
+  for (const id of ["finL", "finR", "nozzle", "hull", "cabin", "nose"] as Piece[]) drawPiece(ctx, id, 0, { ghost: "#7E9387" });
   ctx.restore();
-  if (t > BOARD_LAND && t < BOARD_LAND + 0.6) {
-    const k = seg(t, BOARD_LAND, BOARD_LAND + 0.6);
-    for (const side of [-1, 1]) drawPuff(ctx, BOARD.x + BOARD.w / 2 + side * (BOARD.w / 2 + 30 * k), BOARD.y + BOARD.h - 20 - 20 * k, 26 * (1 - k * 0.4), 0.8 * (1 - k));
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -295,7 +206,7 @@ function drawEasel(ctx: Ctx, t: number) {
 const ORDER: Piece[] = ["finL", "finR", "nozzle", "hull", "cabin", "nose"];
 
 function rise(t: number) {
-  return 2600 * inCubic(seg(t, LIFTOFF, 58.3));
+  return 650 * Math.max(0, t - LIFTOFF) ** 2;
 }
 
 function drawRocket(ctx: Ctx, t: number) {
@@ -307,24 +218,18 @@ function drawRocket(ctx: Ctx, t: number) {
   ctx.save();
   ctx.translate(ROCKET.x + rumble, y);
   ctx.scale(ROCKET.s * (1 + snap * 0.03), ROCKET.s * (1 - snap * 0.02));
-  ctx.globalAlpha *= ghost;
+  ctx.globalAlpha *= ghost * (1 - smooth(seg(t, PORTRAIT, 60)));
   if (t > IGNITION) drawFlame(ctx, 0, 128, clamp(seg(t, IGNITION, IGNITION + 0.25)) * (1 + seg(t, LIFTOFF, 57.2) * 0.5), t);
   for (const id of ORDER) {
     const state = pieceState(id, t);
     if (state === "away" || state === "flying") {
-      drawPiece(ctx, id, 0, { ghost: "rgba(111, 149, 230, 0.4)" });
+      drawPiece(ctx, id, 0, { ghost: "rgba(126, 147, 135, 0.45)" });
       continue;
     }
     const build = state === "home" ? 1 : id === "nozzle" ? soloBuild(t) : 0;
-    const glow = state === "home" ? 1 - seg(t, RETURN[id] + RETURN_TIME, RETURN[id] + RETURN_TIME + 0.5) : 0;
-    drawPiece(ctx, id, build, { glow, porthole: id === "cabin" ? (c) => drawPassenger(c, t) : undefined });
+    drawPiece(ctx, id, build, { porthole: id === "cabin" && t < PORTRAIT ? (c) => drawPassenger(c, t) : undefined });
   }
   ctx.restore();
-  for (const id of ORDER) {
-    const at = RETURN[id] + RETURN_TIME;
-    const [cx, cy] = pieceCenter(id);
-    drawBurst(ctx, ROCKET.x + cx * ROCKET.s, ROCKET.y + cy * ROCKET.s, seg(t, at, at + 0.45), { count: 10, inner: 50, outer: 120, width: 11, colors: CONFETTI });
-  }
 }
 
 type PieceState = "rocket" | "away" | "flying" | "home";
@@ -339,10 +244,9 @@ function pieceState(id: Piece, t: number): PieceState {
 /** Wuu's face in the porthole, after hopping aboard. */
 function drawPassenger(ctx: Ctx, t: number) {
   if (t < BOARD_ROCKET + 0.6) return;
-  const bob = Math.sin(t * 8) * 1.5;
   drawBall(ctx, {
-    x: 0, y: -52 + bob, r: 24, skin: WUU, gear: "headset",
-    eyes: eyes(t, [[0, "open"], [IGNITION, "squeeze"], [LIFTOFF + 0.5, "happy"]], [55.3]), pitch: 0.2,
+    x: 0, y: -63, r: 24, skin: WUU,
+    eyes: eyes(t, [[0, "open"], [IGNITION, "squeeze"], [LIFTOFF + 0.5, "happy"], [58.3, "open"]], [55.3]), pitch: 0.2,
   });
 }
 
@@ -355,7 +259,7 @@ function drawSmoke(ctx: Ctx, t: number, back: boolean) {
     const p = clamp(k * 1.6 - i * 0.07);
     const x = ROCKET.x + side * (60 + 260 * outCubic(p) * (0.5 + (i % 4) * 0.2));
     const y = PAD.y + 10 - 40 * p - (i % 3) * 18;
-    drawPuff(ctx, x, y, (40 + i * 7) * (0.5 + p), 0.95 * (1 - seg(k, 0.55, 1)), back ? "#EFE8DE" : "#FFFFFF");
+    drawPuff(ctx, x, y, (40 + i * 7) * (0.5 + p), 0.65 * (1 - seg(k, 0.55, 1)), back ? "#DEE3DB" : "#FAFBF7");
   }
 }
 
@@ -363,7 +267,7 @@ function drawSmoke(ctx: Ctx, t: number, back: boolean) {
 // Wuu
 
 const EXPRESSION: [number, EyeKind][] = [
-  [0, "happy"], [31.9, "wide"], [32.5, "open"], [34.9, "flat"], [35.7, "sleepy"], [37.3, "wide"], [IDEA, "star"],
+  [0, "open"], [31.9, "wide"], [32.5, "open"], [34.9, "flat"], [35.7, "sleepy"], [37.3, "wide"], [IDEA, "wide"],
   [HEADSET_LAND - 0.02, "squeeze"], [HEADSET_LAND + 0.25, "happy"], [40.6, "open"], [JUMP_IN + 0.5, "content"],
   [44.2, "open"], [STUCK + 0.3, "wide"], [CATCH + 0.1, "happy"], [47.7, "open"], [50.0, "content"], [52.2, "happy"],
 ];
@@ -377,7 +281,7 @@ function wuuPose(t: number): Pose {
   if (t > BOARD_ROCKET) {
     const p = seg(t, BOARD_ROCKET, BOARD_ROCKET + 0.6);
     if (p >= 1) return { x: -999, y: -999, floor: CENTER.floor, ball: { x: -999, y: -999, r: 0, alpha: 0 } };
-    const [px, py] = [ROCKET.x, ROCKET.y - 52 * ROCKET.s];
+    const [px, py] = [ROCKET.x, ROCKET.y - 63 * ROCKET.s];
     const [x, y] = arc(inOut(p), CENTER.x, CENTER.floor - WUU_R * ry, px, py, 260);
     const r = lerp(WUU_R, 24 * ROCKET.s, inCubic(p));
     return { x, y, floor: CENTER.floor, ball: { x, y, r, skin: WUU, gear: "headset", ground: p < 0.3 ? CENTER.floor : undefined, sx: 0.92, sy: 1.1 } };
@@ -455,20 +359,9 @@ function drawWuu(ctx: Ctx, t: number) {
     seg(t, 52.2, 52.5),
   );
   const sweat = seg(t, 34.6, 34.9) * (1 - seg(t, IDEA, IDEA + 0.2));
-  const blush = seg(t, 52.2, 52.6);
   const gear = t > 38.35 ? "headset" : undefined;
   const gearY = t < HEADSET_LAND ? -700 * (1 - outCubic(seg(t, 38.35, HEADSET_LAND))) ** 2 : 0;
-  drawBall(ctx, { ...pose.ball, ...face, eyes: eyes(t, EXPRESSION, BLINKS), marks, sweat, blush, gear, gearY });
-  // Idea sparkle ring and burst.
-  drawBurst(ctx, pose.x, pose.y, seg(t, IDEA, IDEA + 0.6), { count: 12, inner: WUU_R * 1.3, outer: WUU_R * 2.3, width: 12, colors: [SUN, CORAL, MINT, SKY], spin: 0.2 });
-  // Hammer taps on the lonely nozzle.
-  for (const h of HAMMER) {
-    const k = seg(t, h + 0.36, h + 0.7);
-    if (k > 0 && k < 1) {
-      drawSparkle(ctx, ROCKET.x + 70, PAD.y - 26 - 30 * k, 16 * Math.sin(k * Math.PI), SUN);
-      drawSparkle(ctx, ROCKET.x + 40, PAD.y - 60 - 20 * k, 10 * Math.sin(k * Math.PI), "#FFFFFF");
-    }
-  }
+  drawBall(ctx, { ...pose.ball, ...face, eyes: eyes(t, EXPRESSION, BLINKS), marks, sweat, gear, gearY });
 }
 
 // ---------------------------------------------------------------------------
@@ -508,13 +401,11 @@ function memberEyes(i: number, t: number): EyeKind {
 
 function drawMember(ctx: Ctx, i: number, t: number, x: number, floor: number, extra: Partial<Ball> = {}) {
   const m = TEAM[i];
-  const cheer = t > LIFTOFF ? hops(t, [LIFTOFF + 0.1 + i * 0.07, LIFTOFF + 0.6 + i * 0.07, LIFTOFF + 1.1 + i * 0.07], 0.45) : undefined;
-  const excited = t > LAMPS[0] && t < IGNITION ? hops(t, [LAMPS[0] + i * 0.05, LAMPS[1] + i * 0.05, LAMPS[2] + i * 0.05], 0.36) : undefined;
-  const h = cheer ?? excited;
-  const b = agent(m.agent, x, floor, m.r, h, 40);
+  const h = hop(t, LIFTOFF + 0.15 + i * 0.07, 0.6);
+  const b = agent(m.agent, x, floor, m.r, h, 24);
   const face = memberFace(t, b.x, b.y);
   drawBall(ctx, {
-    ...b, ...face, sway: Math.sin(t * 4 + i) * 0.3,
+    ...b, ...face, sway: Math.sin(t * 2 + i) * 0.08,
     eyes: eyes(t, [[0, memberEyes(i, t)]], [37.9 + i * 0.13, 41.2 + i * 0.1, 55.0 + i * 0.1]), ...extra,
   });
 }
@@ -586,11 +477,9 @@ function drawSessions(ctx: Ctx, t: number, cam: Camera) {
     const [[x0, y0], [x1, y1]] = lineEnds(i, t);
     const stuck = i === 1 && t > STUCK && t < CATCH;
     ctx.save();
-    ctx.strokeStyle = stuck ? `rgba(255, 110, 96, ${0.55 + 0.35 * Math.sin(t * 14)})` : "rgba(70, 60, 50, 0.32)";
-    ctx.lineWidth = stuck ? 6 : 4.5;
+    ctx.strokeStyle = stuck ? CORAL : "rgba(70, 80, 70, 0.2)";
+    ctx.lineWidth = stuck ? 3 : 2;
     ctx.lineCap = "round";
-    ctx.setLineDash([2, 14]);
-    ctx.lineDashOffset = -t * 60;
     ctx.beginPath();
     ctx.moveTo(x0, y0);
     ctx.lineTo(lerp(x0, x1, draw), lerp(y0, y1, draw));
@@ -603,7 +492,7 @@ function drawSessions(ctx: Ctx, t: number, cam: Camera) {
       if (p > 0 && p < 1) {
         ctx.fillStyle = TEAM[i].agent.skin.body;
         ctx.beginPath();
-        ctx.arc(lerp(x0, x1, p), lerp(y0, y1, p), 11, 0, Math.PI * 2);
+        ctx.arc(lerp(x0, x1, p), lerp(y0, y1, p), 7, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = "#FFFFFF";
         ctx.lineWidth = 3;
@@ -623,13 +512,14 @@ function drawSession(ctx: Ctx, i: number, t: number) {
   const m = TEAM[i];
   const s = SLOT[i];
   const stuck = i === 1 && t > STUCK && t < CATCH;
-  const tilt = stuck ? Math.sin(t * 30) * 0.8 : 0;
-  drawWindow(ctx, { x: s.x, y: s.y, w: SW, h: SH, theme: m.agent.theme, engine: m.agent.engine, scale, tilt }, (c, w, h) => {
+  // These sessions now share one host; identity lives in the cast and engine marks.
+  const theme = THEMES.wuu;
+  drawWindow(ctx, { x: s.x, y: s.y, w: SW, h: SH, theme, engine: m.agent.engine, scale }, (c, w, h) => {
     const piece = m.piece;
     const arrived = t > HAND_OUT + i * 0.1 + 0.6;
     const building = arrived ? progress(piece, t) : 0;
     // The piece sits on a small blueprint card while it is being made.
-    c.fillStyle = m.agent.theme === TEAM[1].agent.theme ? "rgba(255,255,255,0.06)" : "rgba(111,149,230,0.08)";
+    c.fillStyle = "rgba(126,147,135,0.07)";
     c.beginPath();
     c.roundRect(SLOT_WORK.x - 110, 16, 220, h - 32, 18);
     c.fill();
@@ -639,14 +529,11 @@ function drawSession(ctx: Ctx, i: number, t: number) {
       c.scale(SLOT_WORK.s, SLOT_WORK.s);
       const [px, py] = pieceCenter(piece);
       c.translate(-px, -py);
-      drawPiece(c, piece, building, { ghost: m.agent.theme === TEAM[1].agent.theme ? "#8FB2FF" : "#6F95E6" });
+      drawPiece(c, piece, building, { ghost: "#7E9387" });
       c.restore();
-      // Tiny sparks on each step of progress.
-      const tap = (building * 9) % 1;
-      if (building > 0 && building < 1 && tap < 0.35) drawSparkle(c, SLOT_WORK.x + 50, SLOT_WORK.y - 20 + tap * 30, 10 * Math.sin((tap / 0.35) * Math.PI), SUN);
     }
     // Progress bar.
-    c.fillStyle = m.agent.theme.text;
+    c.fillStyle = theme.text;
     c.beginPath();
     c.roundRect(200, h - 22, 230, 9, 4.5);
     c.fill();
@@ -669,21 +556,20 @@ function drawWorker(ctx: Ctx, i: number, t: number) {
   const land = squash(t, JUMP_IN + i * 0.1 + 0.55, 0.25, 0.45);
   let h: Hop = { lift: 0, sx: land.sx, sy: land.sy };
   if (working && !stuck) {
-    const beat = Math.sin(t * 13 + i * 1.3);
-    h = { lift: Math.max(0, beat) * 0.25, sx: 1 - beat * 0.03, sy: 1 + beat * 0.04 };
+    const beat = Math.sin(t * 5 + i * 1.3);
+    h = { lift: 0, sx: 1 - beat * 0.012, sy: 1 + beat * 0.015 };
   }
-  if (done) h = hops(t, [DONE[piece] + 0.05, 52.25 + i * 0.08, 52.75 + i * 0.08], 0.42);
+  if (done) h = hop(t, DONE[piece] + 0.05, 0.55);
   if (i === 0 && t > TOSS - 0.3 && t < TOSS + 0.3) h = hop(t, TOSS - 0.3, 0.6);
   const b = agent(m.agent, SLOT_CREATURE.x, SLOT_CREATURE.floor, SLOT_CREATURE.r, h, 36);
   let kind: EyeKind = done ? "happy" : "open";
-  if (stuck) kind = "dizzy";
-  if (i === 1 && t >= CATCH && t < CATCH + 0.5) kind = "star";
+  if (stuck) kind = "flat";
+  if (i === 1 && t >= CATCH && t < CATCH + 0.5) kind = "wide";
   if (done && t > DONE[piece] + 0.6 && t < 52.2) kind = "content";
   const face = working ? { yaw: 0.55, pitch: -0.12 } : { yaw: 0.1, pitch: 0.1 };
   if (i === 0 && t > 46.2 && t < CATCH) Object.assign(face, { yaw: 0.2, pitch: -0.3 });
-  drawBall(ctx, { ...b, ...face, eyes: { kind, open: 1, spin: t * 7 }, sway: Math.sin(t * 5 + i) * 0.3, sweat: stuck ? 1 : 0 });
+  drawBall(ctx, { ...b, ...face, eyes: { kind, open: 1 }, sway: Math.sin(t * 2 + i) * 0.08 });
   if (stuck) {
-    drawDaze(ctx, SLOT_CREATURE.x, SLOT_CREATURE.floor - SLOT_CREATURE.r * 2.2, 44, t, 1);
     drawBubble(ctx, SLOT_CREATURE.x + 56, SLOT_CREATURE.floor - SLOT_CREATURE.r * 2 - 10, outBack(seg(t, STUCK + 0.2, STUCK + 0.45)), t, "#FFFFFF", INK);
   }
 }
@@ -709,18 +595,14 @@ function drawHandOff(ctx: Ctx, t: number, cam: Camera) {
     ctx.rotate(Math.sin(p * Math.PI) * (i < 3 ? -0.5 : 0.5));
     ctx.scale(s, s);
     ctx.translate(-rcx, -rcy);
-    drawPiece(ctx, id, build, { ghost: "#6F95E6" });
+    drawPiece(ctx, id, build, { ghost: "#7E9387" });
     ctx.restore();
-    if (build === 1) drawSparkle(ctx, x + 30, y - 30, 12, SUN, 0.9);
   });
 }
 
 function drawOrbToss(ctx: Ctx, t: number) {
   const p = seg(t, TOSS, CATCH);
-  if (p <= 0 || p >= 1) {
-    drawBurst(ctx, ...creatureScreen(1).map((v, k) => v - (k ? SLOT_CREATURE.r : 0)) as [number, number], seg(t, CATCH, CATCH + 0.45), { count: 10, inner: 40, outer: 100, width: 9, colors: [SUN, "#FFFFFF", MINT] });
-    return;
-  }
+  if (p <= 0 || p >= 1) return;
   const [x0, y0] = creatureScreen(0);
   const [x1, y1] = creatureScreen(1);
   const e = inOut(p);
@@ -729,14 +611,10 @@ function drawOrbToss(ctx: Ctx, t: number) {
   const sx = y0 - SLOT_CREATURE.r * 1.3, ex = y1 - SLOT_CREATURE.r * 1.1;
   const x = (1 - e) * (1 - e) * (x0 + 40) + 2 * (1 - e) * e * cx + e * e * (x1 + 30);
   const y = (1 - e) * (1 - e) * sx + 2 * (1 - e) * e * cy + e * e * ex;
-  drawOrb(ctx, x, y, 16, t);
-  for (let k = 1; k <= 4; k++) {
-    const q = e - k * 0.05;
-    if (q <= 0) continue;
-    const tx = (1 - q) * (1 - q) * (x0 + 40) + 2 * (1 - q) * q * cx + q * q * (x1 + 30);
-    const ty = (1 - q) * (1 - q) * sx + 2 * (1 - q) * q * cy + q * q * ex;
-    drawSparkle(ctx, tx, ty, 10 - k * 1.8, SUN, 0.8 - k * 0.15);
-  }
+  ctx.fillStyle = MINT;
+  ctx.beginPath();
+  ctx.arc(x, y, 16, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 /** Friends hop from the field into their sessions, and back out for the launch. */
@@ -759,7 +637,7 @@ function drawJumps(ctx: Ctx, t: number, cam: Camera) {
 }
 
 // ---------------------------------------------------------------------------
-// Time and celebration
+// Time
 
 function drawTimeClock(ctx: Ctx, t: number) {
   const pop = outBack(seg(t, 32.9, 33.2)) * (1 - inCubic(seg(t, 53.4, 53.7)));
@@ -771,24 +649,4 @@ function drawTimeClock(ctx: Ctx, t: number) {
   ctx.scale(pop, pop);
   drawClock(ctx, 0, 0, 52, hours);
   ctx.restore();
-}
-
-function drawFireworks(ctx: Ctx, t: number) {
-  if (t < BLOOM) return;
-  const center: [number, number] = [960, 400];
-  const rings = [
-    { at: BLOOM, count: 16, inner: 40, outer: 380, width: 22, colors: CONFETTI, spin: 0 },
-    { at: BLOOM + 0.12, count: 12, inner: 30, outer: 240, width: 17, colors: [LILAC, SUN, MINT], spin: 0.26 },
-    { at: BLOOM + 0.3, count: 10, inner: 20, outer: 140, width: 13, colors: ["#FFFFFF", SUN], spin: 0.1 },
-  ];
-  for (const r of rings) drawBurst(ctx, center[0], center[1], seg(t, r.at, r.at + 0.9), r);
-  // Side blooms from the rest of the team.
-  drawBurst(ctx, 520, 300, seg(t, BLOOM + 0.2, BLOOM + 1.0), { count: 10, inner: 20, outer: 180, width: 14, colors: [CORAL, SUN] });
-  drawBurst(ctx, 1400, 280, seg(t, BLOOM + 0.28, BLOOM + 1.05), { count: 10, inner: 20, outer: 190, width: 14, colors: [SKY, MINT] });
-  const k = seg(t, BLOOM, BLOOM + 1.2);
-  for (let i = 0; i < 14; i++) {
-    const a = (i / 14) * Math.PI * 2 + 0.1;
-    const d = 180 + 220 * outCubic(k);
-    drawSparkle(ctx, center[0] + Math.cos(a) * d, center[1] + Math.sin(a) * d + 120 * k * k, 14 * (1 - k), CONFETTI[i % CONFETTI.length], 1 - k);
-  }
 }

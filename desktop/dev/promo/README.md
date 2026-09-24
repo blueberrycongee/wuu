@@ -6,15 +6,27 @@ exported video match frame for frame.
 
 | Time | Shot | File |
 | --- | --- | --- |
-| 0–5 s | Eyes open in the dark, the lights come on, Wuu strikes the icon pose | `bookends.ts` |
-| 5–31 s | Four harnesses in four windows wear Wuu out; Wuu opens one app, every window hops into its sidebar, and each session keeps its own engine | `desk.ts` |
-| 31–59 s | A rocket too big to build alone; Wuu coordinates six sessions at once, one gets stuck and another helps, liftoff | `stage.ts` |
-| 59–64 s | Wuu lands and the scene folds into the app icon | `bookends.ts` |
+| 0–5 s | Eyes open, lights come on, then Wuu moves continuously from the icon pose to the desk corner | `bookends.ts` |
+| 5–31 s | Four harnesses in four windows wear Wuu out; Wuu opens one app, every window hops into its sidebar, and each session keeps its own engine. The setting dissolves around a matched Wuu pose | `desk.ts` |
+| 31–59 s | A rocket too big to build alone; six sessions build it together, one helps another, then the camera follows liftoff into a porthole close-up | `stage.ts` |
+| 59–64 s | The same Wuu portrait carries through as the rocket fades, then folds into the app icon and holds | `bookends.ts` |
 
-`film.ts` sequences the shots. `art.ts` draws the characters and props from
-the production icon source, blobatar body geometry and engine logos. `cast.ts`
-holds the shared cast, camera and props, and `motion.ts` holds the easing and
-expression helpers.
+`film.ts` sequences the shots. `art.ts` uses the production icon source,
+blobatar's canonical silhouettes and palette, the desktop avatar hue wheel,
+and engine logos. Characters retain different shapes and colours, with flat
+fills and shared eye proportions. The film uses charcoal, off-white and muted
+sage for the set and props, with no simulated surface highlights. A simple
+studio floor replaces the outdoor scenery; the clock alone conveys time.
+The plan clears before collaboration begins, and the session windows share
+one host treatment. Eye-lines and deliberate holds carry the handoffs instead
+of sparkle trails, impact bursts or continuous bouncing.
+
+`assets/rocket.svg` is the original, editable source for all six rocket parts,
+including their colour fields, outlines and assembly bounds. Canvas rendering uses
+the same SVG groups for the blueprint, in-session work, assembly and launch.
+Preview and capture wait for those images to decode before rendering a frame.
+`cast.ts` holds the shared cast, camera and props, and `motion.ts` holds easing
+and expression helpers. No remote assets are loaded.
 
 Preview from `desktop`:
 

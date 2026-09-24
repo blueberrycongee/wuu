@@ -4,16 +4,16 @@
 //   4. Wuu lands, unfolds one app, and every window hops into its sidebar.
 //   5. Inside that app: switch sessions, pick another engine, all run at once.
 import {
-  drawBall, drawBubble, drawBurst, drawCursor, drawLines, drawPuff, drawRipple, drawSparkle, drawSweat,
+  drawBall, drawBubble, drawCursor, drawLines, drawRipple, drawSweat,
   drawToken, drawWindow, extent, ICON_POSE, INK, TITLE_BAR, THEMES, WUU, type Ball,
 } from "./art";
 import {
-  clamp, eyes, hop, hops, inCubic, inOut, keys, lerp, linear, outBack, outCubic, seg, smooth, squash, wobble,
+  clamp, eyes, hop, inCubic, inOut, keys, lerp, linear, outBack, outCubic, seg, smooth, squash, wobble,
   type EyeKind,
 } from "./motion";
 import {
-  agent, arc, CLAUDE, CODEX, CONFETTI, CORAL, CREAM, CURSOR, dotGrid, drawDaze, drawSpinner, drawThinking, fill,
-  irisClose, look, MINT, OPENCODE, PI, stand, SUN, toScreen, W, H, withCamera, type Agent, type Camera, type Ctx,
+  agent, arc, CLAUDE, CODEX, CORAL, CREAM, CURSOR, DESK_HOME, drawDaze, drawSpinner, drawThinking, fill,
+  look, matchCamera, OPENCODE, PI, stand, withCamera, type Agent, type Camera, type Ctx,
 } from "./cast";
 
 export const DESK_START = 5;
@@ -32,7 +32,7 @@ const DESK: DeskWindow[] = [
 const CREATURE = { x: 118, r: 64 };
 
 /** Wuu's usual spot, watching from the corner of the desk. */
-const CORNER = { x: 1745, floor: 1012, r: 118 };
+const CORNER = DESK_HOME;
 const MIDDLE = { x: 960, floor: 880 };
 
 const APP = { x: 250, y: 100, w: 1390, h: 850 };
@@ -81,41 +81,31 @@ export function deskShot(ctx: Ctx, t: number) {
   const cam = camera(t);
   fill(ctx, CREAM);
   withCamera(ctx, cam, () => {
-    dotGrid(ctx, cam.x - W / cam.zoom, cam.y - H / cam.zoom, cam.x + W / cam.zoom, cam.y + H / cam.zoom);
     drawApp(ctx, t);
     drawDeskWindows(ctx, t);
     drawTravellers(ctx, t);
     drawWuu(ctx, t);
     drawTheCursor(ctx, t);
   });
-  // Shot 5 closes on Wuu, and shot 6 opens from the same spot.
-  if (t > 30.2) {
-    const [sx, sy] = toScreen(cam, CORNER.x, CORNER.floor - CORNER.r);
-    const hold = CORNER.r * cam.zoom * 1.45;
-    irisClose(ctx, sx, sy, keys(t, [[30.2, 1500], [30.62, hold, outCubic], [30.78, hold], [31, 0, inCubic]]));
-  }
 }
 
 function camera(t: number): Camera {
-  const drift = t < 12.3 ? wobble(t, 3, 0.5) * 6 : 0;
-  const wide = { x: 960 + drift, y: 540, zoom: 1 };
+  const wide = { x: 960, y: 540, zoom: 1 };
   const close = { x: CORNER.x - 40, y: CORNER.floor - CORNER.r - 40, zoom: 2.05 };
-  const inApp = { x: 945, y: 540, zoom: 1.13 };
-  const onWuu = { x: CORNER.x - 60, y: CORNER.floor - 200, zoom: 1.35 };
+  const inApp = { x: 1000, y: 570, zoom: 1.04 };
+  const onWuu = matchCamera(stand(WUU, CORNER.x, CORNER.floor, CORNER.r));
   // [time, camera]: each entry is reached at that time.
   const track: [number, Camera][] = [
-    [12.3, wide], [13.0, close], [14.75, close], [15.35, wide],
-    [21.6, wide], [23.2, inApp], [28.1, inApp], [29.0, { x: 960, y: 530, zoom: 1.0 }], [29.8, { x: 960, y: 530, zoom: 1.0 }], [30.4, onWuu],
+    [12.0, wide], [13.1, close], [14.45, close], [15.65, wide],
+    [21.6, wide], [23.2, inApp], [28.1, inApp], [28.9, { x: 960, y: 540, zoom: 1 }], [29.15, { x: 960, y: 540, zoom: 1 }], [30.3, onWuu],
   ];
   if (t <= track[0][0]) return wide;
   for (let i = 1; i < track.length; i++) {
     const [t1, c1] = track[i];
     if (t <= t1) {
       const [t0, c0] = track[i - 1];
-      const e = inOut(seg(t, t0, t1));
-      let shake = 0;
-      if (t > LANDING && t < LANDING + 0.4) shake = Math.sin((t - LANDING) * 70) * 9 * (1 - (t - LANDING) / 0.4);
-      return { x: lerp(c0.x, c1.x, e), y: lerp(c0.y, c1.y, e) + shake, zoom: lerp(c0.zoom, c1.zoom, e) };
+      const e = smooth(seg(t, t0, t1));
+      return { x: lerp(c0.x, c1.x, e), y: lerp(c0.y, c1.y, e), zoom: lerp(c0.zoom, c1.zoom, e) };
     }
   }
   return track[track.length - 1][1];
@@ -153,17 +143,9 @@ function collectProgress(win: number, t: number) {
 
 function deskWindowPose(i: number, t: number) {
   const d = DESK[i];
-  let x = d.x, y = d.y, tilt = d.tilt, scale = 1;
-  const ask = asking(i, t);
-  if (ask && t - ask.ask < 0.4) tilt += Math.sin((t - ask.ask) * 38) * 1.6 * (1 - (t - ask.ask) / 0.4);
+  const { x, y, tilt } = d;
   const click = lastClick(i, t);
-  if (click > 0) scale *= squash(t, click, 0.06, 0.35).sx;
-  // The landing jolts every window.
-  if (t > LANDING && t < LANDING + 0.5) {
-    const k = (t - LANDING) / 0.5;
-    y -= Math.abs(Math.sin(k * Math.PI * 2.5)) * 26 * (1 - k);
-    tilt += Math.sin(k * 20 + i) * 2 * (1 - k);
-  }
+  const scale = click > 0 ? squash(t, click, 0.025, 0.35).sx : 1;
   return { x, y, w: d.w, h: d.h, tilt, scale };
 }
 
@@ -179,10 +161,11 @@ function drawDeskWindows(ctx: Ctx, t: number) {
     const [rx, ry] = app(row.x + row.w / 2, row.y + row.h / 2);
     const cx = lerp(pose.x + pose.w / 2, rx, e);
     const cy = lerp(pose.y + pose.h / 2, ry, e) - Math.sin(e * Math.PI) * 80;
-    const scale = pose.scale * lerp(1, row.w / pose.w, e);
+    const enter = smooth(seg(t, 5 + i * 0.1, 5.65 + i * 0.1));
+    const scale = pose.scale * lerp(1, row.w / pose.w, e) * lerp(0.96, 1, enter);
     drawWindow(ctx, {
       x: cx - pose.w / 2, y: cy - pose.h / 2, w: pose.w, h: pose.h, theme: d.agent.theme,
-      engine: d.agent.engine, tilt: lerp(pose.tilt, 0, e), scale, alpha: 1 - smooth(seg(p, 0.7, 1)),
+      engine: d.agent.engine, tilt: lerp(pose.tilt, 0, e), scale, alpha: enter * (1 - smooth(seg(p, 0.7, 1))),
     }, (c, _w, h) => {
       c.globalAlpha *= 1 - seg(p, 0, 0.35);
       drawLines(c, 232, 44, d.lines, typing(i, t), [d.agent.theme.text, d.agent.theme.accent], { gap: 34, thick: 14 });
@@ -203,11 +186,11 @@ function drawDeskCreature(ctx: Ctx, i: number, t: number, h: number) {
   const answered = lastClick(i, t);
   const startled = t > LANDING && t < 17.2;
   let kind: EyeKind = "open";
-  let hopState = { lift: 0, sx: 1 + Math.sin(t * 15 + i) * 0.02, sy: 1 - Math.sin(t * 15 + i) * 0.03 };
+  let hopState = { lift: 0, sx: 1, sy: 1 };
   let face = { yaw: 0.42, pitch: -0.22 };
   if (ask) {
     kind = "wide";
-    hopState = hops(t, [ask.ask, ask.ask + 0.55, ask.ask + 1.1, ask.ask + 1.65, ask.ask + 2.2, ask.ask + 2.75, ask.ask + 3.3, ask.ask + 3.85], 0.5);
+    hopState = hop(t, ask.ask, 0.5);
     face = { yaw: -0.1, pitch: 0.18 };
   } else if (answered > 0 && t - answered < 0.5) {
     kind = "happy";
@@ -220,7 +203,7 @@ function drawDeskCreature(ctx: Ctx, i: number, t: number, h: number) {
     face = look(pose.x + CREATURE.x, pose.y + h * 0.7, MIDDLE.x, MIDDLE.floor - 100, 1.2);
   }
   const ball = agent(a, CREATURE.x, floor, CREATURE.r, hopState, 34);
-  drawBall(ctx, { ...ball, ...face, eyes: { kind, open: blinkFor(t, i) }, sway: Math.sin(t * 5 + i) * 0.35 + (ask ? Math.sin(t * 22) * 0.4 : 0) });
+  drawBall(ctx, { ...ball, ...face, eyes: { kind, open: blinkFor(t, i) }, sway: Math.sin(t * 2 + i) * 0.08 });
   drawBubble(ctx, CREATURE.x + 58, floor - CREATURE.r * 2 - 44, bubbleScale(i, t) * 1.15, t, "#FFFFFF", INK);
 }
 
@@ -505,24 +488,11 @@ function drawTravellers(ctx: Ctx, t: number) {
     const row = rowRect(i);
     const [ex, ey] = app(row.x + 40, row.y + row.h / 2);
     const e = inOut(p);
-    const [x, y] = arc(e, start.x, start.y, ex, ey, 260);
+    const [x, y] = arc(e, start.x, start.y, ex, ey, 130);
     const r = lerp(CREATURE.r, 22, e);
-    const spin = Math.sin(p * Math.PI) * 18;
+    const spin = Math.sin(p * Math.PI) * 6;
     const a = DESK[i].agent;
     drawBall(ctx, { x, y, r, skin: a.skin, engine: a.engine, tilt: spin, eyes: { kind: "happy", open: 1 }, sy: 1 + Math.sin(p * Math.PI) * 0.12, sx: 1 - Math.sin(p * Math.PI) * 0.08 });
-    // A soft trail of sparkles marks the path.
-    for (let k = 1; k <= 3; k++) {
-      const q = e - k * 0.06;
-      if (q <= 0) continue;
-      const [tx, ty] = arc(q, start.x, start.y, ex, ey, 260);
-      drawSparkle(ctx, tx, ty, 10 - k * 2, CONFETTI[(i + k) % CONFETTI.length], 0.8 - k * 0.2);
-    }
-  }
-  // A little flash as each creature settles into its row.
-  for (let i = 0; i < 4; i++) {
-    const row = rowRect(i);
-    const [x, y] = app(row.x + 40, row.y + row.h / 2);
-    drawBurst(ctx, x, y, seg(t, COLLECT[i] + COLLECT_TIME, COLLECT[i] + COLLECT_TIME + 0.4), { count: 8, inner: 30, outer: 62, width: 7, colors: [SUN, CORAL, MINT] });
   }
 }
 
@@ -562,18 +532,16 @@ function wuuPose(t: number): Pose {
     const b = stand(WUU, MIDDLE.x, MIDDLE.floor, r, t < 16.7 ? { lift: 0, ...land } : h, 150);
     return { x: MIDDLE.x, y: b.y, ball: b };
   }
-  // Corner: small hops to call each window home, a happy bounce at the end.
-  const calls = COLLECT.map((c) => c - 0.3);
-  const cheers = [20.5, 28.4, 28.9];
-  const h = hops(t, [...calls, ...cheers], 0.42);
-  const pop = squash(t, 13.95, 0.22, 0.5);
-  const b = stand(WUU, CORNER.x, CORNER.floor, r, { lift: h.lift, sx: h.sx * pop.sx, sy: h.sy * pop.sy }, 60);
+  // Eye-lines carry the handoffs; reserve a small lift for the resolved beat.
+  const h = hop(t, 28.4, 0.6);
+  const pop = squash(t, 13.95, 0.08, 0.5);
+  const b = stand(WUU, CORNER.x, CORNER.floor, r, { lift: h.lift, sx: h.sx * pop.sx, sy: h.sy * pop.sy }, 24);
   return { x: CORNER.x, y: b.y, ball: b };
 }
 
 // Expression changes hide behind blinks, so faces never cross-fade.
 const EXPRESSION: [number, EyeKind][] = [
-  [0, "open"], [9.6, "wide"], [10.9, "flat"], [11.9, "squeeze"], [12.3, "flat"], [13.5, "open"], [13.95, "star"],
+  [0, "open"], [9.6, "wide"], [10.9, "flat"], [11.9, "squeeze"], [12.3, "flat"], [13.5, "open"], [13.95, "wide"],
   [14.35, "squeeze"], [LANDING + 0.1, "wide"], [16.0, "open"], [16.65, "happy"], [18.0, "open"],
   [COLLECT[3] + COLLECT_TIME, "happy"], [21.3, "open"], [28.2, "happy"], [29.8, "open"],
 ];
@@ -585,6 +553,7 @@ const mixFace = (a: Face, b: Face, k: number): Face => ({ yaw: lerp(a.yaw, b.yaw
 function wuuFace(t: number, pose: Pose): Face {
   const cur = cursorState(t);
   const atCursor = look(pose.x, pose.y, cur.x, cur.y, 1.1);
+  if (t < 5.6) return mixFace(ICON_POSE, atCursor, smooth(seg(t, 5, 5.6)));
   if (t < 13.5) return atCursor;
   if (t < 13.95) return mixFace(atCursor, { yaw: 0.3, pitch: 0.42 }, smooth(seg(t, 13.5, 13.75)));
   if (t < 14.35) return mixFace({ yaw: 0.3, pitch: 0.42 }, { yaw: 0, pitch: 0.05 }, smooth(seg(t, 13.9, 14.02)));
@@ -597,8 +566,7 @@ function wuuFace(t: number, pose: Pose): Face {
     return look(pose.x, pose.y, d.x + d.w / 2, d.y + d.h / 2, 1.2);
   }
   if (t < 29.8) return atCursor;
-  // Turn to the camera in the icon pose before the iris closes.
-  return mixFace(atCursor, ICON_POSE, outBack(seg(t, 29.8, 30.25)));
+  return mixFace(atCursor, { yaw: -0.1, pitch: 0.05 }, smooth(seg(t, 29.8, 30.3)));
 }
 
 function drawWuu(ctx: Ctx, t: number) {
@@ -612,26 +580,11 @@ function drawWuu(ctx: Ctx, t: number) {
     seg(t, 28.4, 28.7),
   );
   const sweat = seg(t, 11.3, 11.6) * (1 - seg(t, 13.4, 13.6));
-  const blush = t < 20.2 ? 0 : t < 28.2 ? 0.6 * seg(t, 20.2, 20.6) : lerp(0.6, 1, seg(t, 28.2, 28.6));
-  const roll = t > 29.8 ? ICON_POSE.roll * outBack(seg(t, 29.8, 30.25)) : 0;
-  drawBall(ctx, { ...pose.ball, ...face, roll, eyes: eyes(t, EXPRESSION, BLINKS), marks, sweat, blush });
+  const settle = 1 - smooth(seg(t, 29.8, 30.3));
+  const roll = ICON_POSE.roll * (1 - smooth(seg(t, 5, 5.6)));
+  drawBall(ctx, { ...pose.ball, ...face, roll, eyes: eyes(t, EXPRESSION, BLINKS), marks: Math.max(marks * settle, 1 - smooth(seg(t, 5, 5.6))), sweat });
   // Shot 3 flourishes around the close-up.
   if (t > 13.4 && t < 14.3) drawThinking(ctx, pose.x + CORNER.r * 0.7, pose.y - CORNER.r * 1.25, 1.1, seg(t, 13.4, 13.85) * (1 - seg(t, 13.9, 14.0)));
-  drawBurst(ctx, pose.x, pose.y, seg(t, 13.95, 14.55), { count: 12, inner: CORNER.r * 1.25, outer: CORNER.r * 2.1, width: 12, colors: [SUN, CORAL, MINT], spin: 0.26 });
-  if (t > 13.95 && t < 14.6) {
-    for (let i = 0; i < 5; i++) {
-      const a = i * 1.26 + 0.4;
-      const k = seg(t, 13.95 + i * 0.04, 14.5);
-      drawSparkle(ctx, pose.x + Math.cos(a) * CORNER.r * (1.4 + k * 0.5), pose.y + Math.sin(a) * CORNER.r * (1.3 + k * 0.4), 16 * Math.sin(k * Math.PI), SUN);
-    }
-  }
-  // Landing dust.
-  const dust = seg(t, LANDING, LANDING + 0.7);
-  if (dust > 0 && dust < 1) {
-    for (const side of [-1, 1]) {
-      drawPuff(ctx, MIDDLE.x + side * (CORNER.r + 70 * outCubic(dust)), MIDDLE.floor - 10 - 30 * dust, 34 * (1 - dust * 0.4), 0.9 * (1 - dust));
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------

@@ -1,55 +1,47 @@
-import { _layout } from "blobatar";
-import { superellipse } from "../../vendor/blobatar/src/shape";
+import { _layout, palette } from "blobatar";
+import { SHAPES as AVATAR_SHAPES, type Shape } from "blobatar/blob";
 import icon from "../../../assets/app-icon-source.json";
+import rocketSVG from "./assets/rocket.svg?raw";
 import { ENGINE_ICON_EVENODD, ENGINE_ICON_PATHS } from "../../src/renderer/EngineIcons";
 import { WUU_MASCOT_NAME, WUU_MASCOT_TRAITS } from "../../src/renderer/wuu-mascot-spec";
-import { clamp, outBack, outCubic, rad, smooth, type Eyes } from "./motion";
+import { clamp, mixColor, outBack, outCubic, rad, smooth, type Eyes } from "./motion";
 
 type Ctx = CanvasRenderingContext2D;
 
 export const INK = "#2A2B2E";
-export const PAPER = "#FFFDF8";
+export const PAPER = "#FAFAF8";
 
 // ---------------------------------------------------------------------------
 // Characters
 
-export type Shape = "round" | "squircle" | "capsule" | "diamond";
 export type Gear = "headset" | "hardhat" | "beanie" | "leaf" | "magnifier";
-export interface Skin { body: string; hi: string; lo: string; eye: string; shape: Shape }
+export interface Skin { body: string; lo: string; eye: string; shape: Shape }
 
-/** The approved app icon palette: the only charcoal character in the film. */
+/** The approved app icon palette, shared by Wuu and its builder teammate. */
 export const WUU: Skin = {
-  body: icon.bodyColor, hi: icon.bodyHighlight, lo: icon.bodyShadow, eye: icon.eyeColor, shape: "round",
+  body: icon.bodyColor, lo: icon.bodyShadow, eye: icon.eyeColor, shape: "round",
 };
 
-/** Agent bodies follow the product's hue wheel with dark eyes, like in-app avatars. */
-export function pastel(hue: number, shape: Shape): Skin {
+/** Product identity colours without simulated surface lighting. */
+export function agentSkin(hue: number, shape: Shape): Skin {
+  const colors = palette(hue);
   return {
-    body: `hsl(${hue} 72% 72%)`, hi: `hsl(${hue} 90% 85%)`, lo: `hsl(${hue} 48% 58%)`,
-    eye: "#2B2A33", shape,
+    body: colors.head!, lo: mixColor(colors.head!, "#101112", 0.16),
+    eye: colors.eye!, shape,
   };
 }
 
 // Bodies are authored at radius 100 and scaled to the requested radius.
 const identity = _layout(WUU_MASCOT_NAME, { traits: WUU_MASCOT_TRAITS });
-const body = identity.body;
-const SHAPES: Record<Shape, { path: Path2D; rx: number; ry: number }> = {
-  round: identityShape(),
-  squircle: shape(0.94, 0.94, 4),
-  capsule: shape(0.84, 1.08, 2.6),
-  diamond: shape(1.14, 1.14, 1.6),
-};
+const SHAPES = Object.fromEntries(AVATAR_SHAPES.map(({ id, trait }) => {
+  const { body } = _layout(WUU_MASCOT_NAME, { traits: { ...WUU_MASCOT_TRAITS, shape: trait } });
+  const path = new Path2D();
+  // One scale preserves the product's optical sizing across different shapes.
+  path.addPath(new Path2D(body.path), new DOMMatrix().scale(100 / identity.body.rx).translate(-body.cx, -body.cy));
+  return [id, { path, rx: body.rx / identity.body.rx, ry: body.ry / identity.body.rx }];
+})) as Record<Shape, { path: Path2D; rx: number; ry: number }>;
 /** Half-extents of a body relative to its radius, for standing it on a floor. */
 export const extent = (skin: Skin) => SHAPES[skin.shape];
-function shape(rx: number, ry: number, n: number) {
-  return { path: new Path2D(superellipse({ cx: 0, cy: 0, rx: rx * 100, ry: ry * 100, n })), rx, ry };
-}
-/** Wuu's own outline, recentred and scaled so its half-width is 100. */
-function identityShape() {
-  const path = new Path2D();
-  path.addPath(new Path2D(body.path), new DOMMatrix().scale(100 / body.rx).translate(-body.cx, -body.cy));
-  return { path, rx: 1, ry: body.ry / body.rx };
-}
 
 // Face proportions come straight from the approved icon, so the film's
 // character is the icon's character when posed like the icon.
@@ -73,7 +65,7 @@ export interface Ball {
   eyes?: Eyes;
   marks?: number; markAngle?: number; markColor?: string;
   skin?: Skin; gear?: Gear; engine?: string; sway?: number;
-  blush?: number; sweat?: number; alpha?: number;
+  sweat?: number; alpha?: number;
   /** Floor height for the contact shadow; omitted when the ball floats. */
   ground?: number;
   /** Body opacity alone, so eyes can glow in the dark before the lights come on. */
@@ -101,11 +93,7 @@ export function drawBall(ctx: Ctx, b: Ball) {
   ctx.save();
   ctx.globalAlpha *= b.bodyAlpha ?? 1;
   ctx.scale(r / 100, r / 100);
-  const light = ctx.createRadialGradient(-25, -45, 0, -25, -45, 150);
-  light.addColorStop(0, skin.hi);
-  light.addColorStop(0.52, skin.body);
-  light.addColorStop(1, skin.lo);
-  ctx.fillStyle = light;
+  ctx.fillStyle = skin.body;
   ctx.fill(form.path);
   ctx.restore();
   drawFace(ctx, r, b, skin);
@@ -138,14 +126,6 @@ function drawFace(ctx: Ctx, r: number, b: Ball, skin: Skin) {
   ctx.globalAlpha *= visible;
   ctx.translate(r * REACH * Math.sin(yaw), r * (REST_Y - REACH * Math.sin(pitch)));
   ctx.rotate(rad(b.roll ?? 0));
-  if (b.blush) {
-    ctx.fillStyle = `rgba(255, 138, 160, ${0.55 * b.blush})`;
-    for (const side of [-1, 1]) {
-      ctx.beginPath();
-      ctx.ellipse(side * gap * 0.92, h * 0.62, w * 0.8, w * 0.42, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
   ctx.fillStyle = skin.eye;
   ctx.strokeStyle = skin.eye;
   ctx.lineCap = "round";
@@ -288,12 +268,12 @@ function drawGear(ctx: Ctx, r: number, gear: Gear, ry: number) {
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   if (gear === "headset") {
-    ctx.strokeStyle = "#FF8A7A";
+    ctx.strokeStyle = "#BCC7C4";
     ctx.lineWidth = r * 0.12;
     ctx.beginPath();
     ctx.arc(0, -r * 0.02, r * 1.07, rad(192), rad(348));
     ctx.stroke();
-    ctx.fillStyle = "#FF7466";
+    ctx.fillStyle = "#90A49D";
     for (const side of [-1, 1]) {
       ctx.beginPath();
       ctx.roundRect(side * r * 1.0 - r * 0.15, -r * 0.3, r * 0.3, r * 0.52, r * 0.14);
@@ -309,15 +289,11 @@ function drawGear(ctx: Ctx, r: number, gear: Gear, ry: number) {
     ctx.fill();
   } else if (gear === "hardhat") {
     const top = -r * ry;
-    ctx.fillStyle = "#FFC93C";
+    ctx.fillStyle = "#C9AD77";
     ctx.beginPath();
     ctx.ellipse(0, top + r * 0.36, r * 0.66, r * 0.5, 0, Math.PI, 0);
     ctx.fill();
-    ctx.fillStyle = "#FFE089";
-    ctx.beginPath();
-    ctx.roundRect(-r * 0.09, top - r * 0.14, r * 0.18, r * 0.5, r * 0.09);
-    ctx.fill();
-    ctx.fillStyle = "#F2AE1C";
+    ctx.fillStyle = "#AF925E";
     ctx.beginPath();
     ctx.roundRect(-r * 0.92, top + r * 0.3, r * 1.84, r * 0.17, r * 0.085);
     ctx.fill();
@@ -374,7 +350,7 @@ function drawGear(ctx: Ctx, r: number, gear: Gear, ry: number) {
 
 export function drawShadow(ctx: Ctx, x: number, y: number, rx: number, lift: number) {
   const k = 1 - clamp(lift) * 0.55;
-  ctx.fillStyle = `rgba(74, 56, 34, ${0.13 * k})`;
+  ctx.fillStyle = `rgba(35, 38, 37, ${0.1 * k})`;
   ctx.beginPath();
   ctx.ellipse(x, y, rx * 0.88 * k, rx * 0.16 * k, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -384,15 +360,11 @@ export function drawSweat(ctx: Ctx, x: number, y: number, s: number, alpha: numb
   if (alpha <= 0) return;
   ctx.save();
   ctx.globalAlpha *= alpha;
-  ctx.fillStyle = "#A9DBFF";
+  ctx.fillStyle = "#8EA6B6";
   ctx.beginPath();
   ctx.moveTo(x, y - s);
   ctx.bezierCurveTo(x + s * 0.2, y - s * 0.4, x + s * 0.72, y + s * 0.1, x, y + s * 0.62);
   ctx.bezierCurveTo(x - s * 0.72, y + s * 0.1, x - s * 0.2, y - s * 0.4, x, y - s);
-  ctx.fill();
-  ctx.fillStyle = "rgba(255,255,255,0.8)";
-  ctx.beginPath();
-  ctx.arc(x - s * 0.16, y + s * 0.18, s * 0.13, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
@@ -420,30 +392,6 @@ export function drawSparkle(ctx: Ctx, x: number, y: number, r: number, color: st
   ctx.restore();
 }
 
-/** Capsules radiating from a point: impacts, snaps and fireworks. */
-export function drawBurst(ctx: Ctx, x: number, y: number, p: number, o: {
-  count?: number; inner?: number; outer?: number; width?: number; colors?: string[]; spin?: number;
-}) {
-  if (p <= 0 || p >= 1) return;
-  const { count = 8, inner = 30, outer = 90, width = 10, colors = [INK], spin = 0 } = o;
-  const travel = outCubic(p);
-  const length = (outer - inner) * 0.45 * (1 - p) + width;
-  ctx.save();
-  for (let i = 0; i < count; i++) {
-    const a = spin + (i / count) * Math.PI * 2;
-    const d = inner + (outer - inner) * travel;
-    ctx.fillStyle = colors[i % colors.length];
-    ctx.save();
-    ctx.translate(x + Math.cos(a) * d, y + Math.sin(a) * d);
-    ctx.rotate(a);
-    ctx.beginPath();
-    ctx.roundRect(-length / 2, -width / 2 * (1 - p * 0.5), length, width * (1 - p * 0.5), width / 2);
-    ctx.fill();
-    ctx.restore();
-  }
-  ctx.restore();
-}
-
 export function drawPuff(ctx: Ctx, x: number, y: number, r: number, alpha: number, color = "#FFFFFF") {
   if (alpha <= 0 || r <= 0) return;
   ctx.save();
@@ -459,11 +407,11 @@ export function drawPuff(ctx: Ctx, x: number, y: number, r: number, alpha: numbe
 
 export interface Theme { bg: string; bar: string; ink: string; line: string; text: string; accent: string }
 export const THEMES: Record<string, Theme> = {
-  paper: { bg: "#FFFDF8", bar: "#F3ECE0", ink: "#4A423A", line: "rgba(90,70,40,0.14)", text: "#E6DDCD", accent: "#F4B49C" },
+  paper: { bg: "#FDFCFB", bar: "#F0EEEB", ink: INK, line: "rgba(40,40,40,0.1)", text: "#DEDCD7", accent: "#C59A83" },
   terminal: { bg: "#23262C", bar: "#2F333A", ink: "#E9E6DF", line: "rgba(0,0,0,0.35)", text: "#3F4550", accent: "#7FD8A6" },
-  lilac: { bg: "#FCFAFF", bar: "#ECE6FA", ink: "#4B4262", line: "rgba(80,60,120,0.14)", text: "#E4DCF5", accent: "#B79CF0" },
-  butter: { bg: "#FFFCF1", bar: "#F6EDC6", ink: "#51462A", line: "rgba(110,90,30,0.14)", text: "#EDE3C0", accent: "#F0C44C" },
-  wuu: { bg: "#FFFFFF", bar: "#F6F3EE", ink: INK, line: "rgba(40,40,40,0.1)", text: "#ECE8E1", accent: "#8FD8C0" },
+  lilac: { bg: "#FCFCFD", bar: "#ECECEF", ink: INK, line: "rgba(40,40,40,0.1)", text: "#DEDEE5", accent: "#A6A1BB" },
+  butter: { bg: "#FDFCF9", bar: "#F0EEE7", ink: INK, line: "rgba(40,40,40,0.1)", text: "#E1DDD2", accent: "#C0AC7B" },
+  wuu: { bg: "#FFFFFF", bar: "#F1F2F0", ink: INK, line: "rgba(40,40,40,0.1)", text: "#E4E6E2", accent: "#90A49D" },
 };
 export const TITLE_BAR = 44;
 
@@ -489,9 +437,9 @@ export function drawWindow(ctx: Ctx, win: Win, content?: (ctx: Ctx, w: number, h
   ctx.scale(scale, scale);
   ctx.translate(-w / 2, -h / 2);
   ctx.save();
-  ctx.shadowColor = "rgba(80, 58, 30, 0.16)";
-  ctx.shadowBlur = 38;
-  ctx.shadowOffsetY = 14;
+  ctx.shadowColor = "rgba(30, 35, 34, 0.045)";
+  ctx.shadowBlur = 16;
+  ctx.shadowOffsetY = 6;
   ctx.fillStyle = theme.bg;
   ctx.beginPath();
   ctx.roundRect(0, 0, w, h, radius);
@@ -503,8 +451,8 @@ export function drawWindow(ctx: Ctx, win: Win, content?: (ctx: Ctx, w: number, h
   ctx.clip();
   ctx.fillStyle = theme.bar;
   ctx.fillRect(0, 0, w, TITLE_BAR);
-  ["#FF8A7A", "#FFCB5C", "#7FD3A8"].forEach((color, i) => {
-    ctx.fillStyle = color;
+  [0, 1, 2].forEach((i) => {
+    ctx.fillStyle = theme.text;
     ctx.beginPath();
     ctx.arc(24 + i * 20, TITLE_BAR / 2, 6.5, 0, Math.PI * 2);
     ctx.fill();
@@ -646,22 +594,22 @@ export function drawClock(ctx: Ctx, x: number, y: number, r: number, hours: numb
 
 export type Piece = "nose" | "cabin" | "hull" | "finL" | "finR" | "nozzle";
 export const PIECES: Piece[] = ["nose", "cabin", "hull", "finL", "finR", "nozzle"];
-const CORAL = "#FF8A7A";
-const HULL = "#FFF4E6";
-const PIECE_ART: Record<Piece, { d: string; fill: string; box: [number, number, number, number] }> = {
-  nose: { d: "M-68 -118C-66 -170 -40 -212 0 -238C40 -212 66 -170 68 -118Z", fill: CORAL, box: [-68, -238, 68, -118] },
-  cabin: { d: "M-68 -118L68 -118L70 -8L-70 -8Z", fill: HULL, box: [-70, -118, 70, -8] },
-  hull: { d: "M-70 -8L70 -8L62 92L-62 92Z", fill: HULL, box: [-70, -8, 70, 92] },
-  finL: { d: "M-67 20C-100 40 -124 82 -126 128L-110 132C-96 112 -80 102 -63 96Z", fill: CORAL, box: [-126, 20, -63, 132] },
-  finR: { d: "M67 20C100 40 124 82 126 128L110 132C96 112 80 102 63 96Z", fill: CORAL, box: [63, 20, 126, 132] },
-  nozzle: { d: "M-44 92L44 92L56 130L-56 130Z", fill: "#8E97A8", box: [-56, 92, 56, 130] },
-};
-const piecePaths = new Map<Piece, Path2D>();
-const piecePath = (id: Piece) => {
-  let path = piecePaths.get(id);
-  if (!path) piecePaths.set(id, (path = new Path2D(PIECE_ART[id].d)));
-  return path;
-};
+// SVG is the single source for geometry, colour and assembly bounds.
+const rocketDocument = new DOMParser().parseFromString(rocketSVG, "image/svg+xml");
+const rocketBox = rocketDocument.documentElement.getAttribute("viewBox")!.split(" ").map(Number) as [number, number, number, number];
+const PIECE_ART = Object.fromEntries(PIECES.map((id) => {
+  const group = rocketDocument.getElementById(id)!;
+  const path = new Path2D(group.querySelector("[data-outline]")!.getAttribute("d")!);
+  const box = group.getAttribute("data-box")!.split(" ").map(Number) as [number, number, number, number];
+  const image = new Image();
+  const source = rocketDocument.documentElement.cloneNode(true) as Element;
+  for (const other of source.querySelectorAll(":scope > g")) if (other.id !== id) other.remove();
+  image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(source))}`;
+  return [id, { path, box, image }];
+})) as Record<Piece, { path: Path2D; box: [number, number, number, number]; image: HTMLImageElement }>;
+
+/** Preview and export become available only after every SVG piece is decoded. */
+export const artReady = Promise.all(PIECES.map((id) => PIECE_ART[id].image.decode()));
 
 export function pieceCenter(id: Piece): [number, number] {
   const [x0, y0, x1, y1] = PIECE_ART[id].box;
@@ -672,16 +620,16 @@ export function pieceCenter(id: Piece): [number, number] {
  * Draws one piece in rocket space. build 0 is a dashed blueprint outline,
  * 1 is finished; in between, colour sweeps up from the bottom.
  */
-export function drawPiece(ctx: Ctx, id: Piece, build: number, o: { ghost?: string; glow?: number; porthole?: (ctx: Ctx) => void } = {}) {
+export function drawPiece(ctx: Ctx, id: Piece, build: number, o: { ghost?: string; porthole?: (ctx: Ctx) => void } = {}) {
   const art = PIECE_ART[id];
-  const path = piecePath(id);
+  const path = art.path;
   const [x0, y0, x1, y1] = art.box;
   ctx.save();
   ctx.lineJoin = "round";
   if (build < 1) {
     ctx.setLineDash([9, 8]);
-    ctx.strokeStyle = o.ghost ?? "#6F95E6";
-    ctx.lineWidth = 3.5;
+    ctx.strokeStyle = o.ghost ?? "#98A8A0";
+    ctx.lineWidth = 2.5;
     ctx.stroke(path);
     ctx.setLineDash([]);
   }
@@ -691,68 +639,24 @@ export function drawPiece(ctx: Ctx, id: Piece, build: number, o: { ghost?: strin
     ctx.beginPath();
     ctx.rect(x0 - 10, top, x1 - x0 + 20, y1 - top + 10);
     ctx.clip();
-    fillPiece(ctx, id, path, o.porthole);
-    ctx.restore();
-    if (build < 1) {
-      ctx.fillStyle = "rgba(255,255,255,0.9)";
-      ctx.beginPath();
-      ctx.roundRect(x0 - 6, y1 - (y1 - y0 + 8) * build - 3, x1 - x0 + 12, 6, 3);
-      ctx.fill();
-    }
-  }
-  if (o.glow) {
-    ctx.globalAlpha = o.glow;
-    ctx.strokeStyle = "#FFFFFF";
-    ctx.lineWidth = 10;
-    ctx.stroke(path);
-  }
-  ctx.restore();
-}
-
-function fillPiece(ctx: Ctx, id: Piece, path: Path2D, porthole?: (ctx: Ctx) => void) {
-  const art = PIECE_ART[id];
-  ctx.fillStyle = art.fill;
-  ctx.fill(path);
-  if (id === "hull") {
-    ctx.save();
-    ctx.clip(path);
-    ctx.fillStyle = "#8FD8C0";
-    ctx.fillRect(-80, 22, 160, 22);
-    ctx.restore();
-  }
-  if (id === "cabin") {
-    ctx.fillStyle = "#8EC5FF";
-    ctx.beginPath();
-    ctx.arc(0, -63, 36, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#DDEFFF";
-    ctx.beginPath();
-    ctx.arc(0, -63, 27, 0, Math.PI * 2);
-    ctx.fill();
-    if (porthole) {
+    ctx.drawImage(art.image, ...rocketBox);
+    if (id === "cabin" && o.porthole) {
       ctx.save();
       ctx.beginPath();
       ctx.arc(0, -63, 27, 0, Math.PI * 2);
       ctx.clip();
-      porthole(ctx);
+      o.porthole(ctx);
       ctx.restore();
     }
-    ctx.strokeStyle = "rgba(255,255,255,0.9)";
-    ctx.lineWidth = 5;
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.arc(0, -63, 18, rad(200), rad(250));
-    ctx.stroke();
+    ctx.restore();
   }
-  ctx.strokeStyle = "#3A3440";
-  ctx.lineWidth = 4;
-  ctx.stroke(path);
+  ctx.restore();
 }
 
 export function drawFlame(ctx: Ctx, x: number, y: number, s: number, time: number) {
   if (s <= 0) return;
-  const flicker = 1 + Math.sin(time * 40) * 0.08 + Math.sin(time * 23) * 0.06;
-  const layers: [string, number, number][] = [["#FF8A5B", 1, 1], ["#FFC24B", 0.72, 0.8], ["#FFF3C4", 0.42, 0.6]];
+  const flicker = 1 + Math.sin(time * 24) * 0.035 + Math.sin(time * 17) * 0.025;
+  const layers: [string, number, number][] = [["#D3BA87", 1, 1], ["#F0DDB1", 0.72, 0.8], ["#FFFCF0", 0.42, 0.6]];
   for (const [color, width, length] of layers) {
     const w = 46 * width * s, l = 150 * length * s * flicker;
     ctx.fillStyle = color;
@@ -767,36 +671,19 @@ export function drawFlame(ctx: Ctx, x: number, y: number, s: number, time: numbe
 
 export function drawBlueprint(ctx: Ctx, x: number, y: number, w: number, h: number) {
   ctx.save();
-  ctx.shadowColor = "rgba(40, 70, 140, 0.18)";
-  ctx.shadowBlur = 30;
-  ctx.shadowOffsetY = 12;
-  ctx.fillStyle = "#D9E8FF";
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, 26);
-  ctx.fill();
-  ctx.restore();
-  ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, 26);
-  ctx.clip();
-  ctx.strokeStyle = "rgba(255,255,255,0.75)";
+  ctx.fillStyle = "#E5E8E2";
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = "#B6BFB5";
   ctx.lineWidth = 2;
-  for (let gx = x + 30; gx < x + w; gx += 34) {
-    ctx.beginPath();
-    ctx.moveTo(gx, y);
-    ctx.lineTo(gx, y + h);
-    ctx.stroke();
-  }
-  for (let gy = y + 30; gy < y + h; gy += 34) {
-    ctx.beginPath();
-    ctx.moveTo(x, gy);
-    ctx.lineTo(x + w, gy);
-    ctx.stroke();
-  }
-  ctx.restore();
-  ctx.strokeStyle = "#A9C6F5";
-  ctx.lineWidth = 4;
+  // Registration corners and a centre axis read as a plan without a dense grid.
   ctx.beginPath();
-  ctx.roundRect(x, y, w, h, 26);
+  for (const [cx, cy, dx, dy] of [[x + 24, y + 24, 1, 1], [x + w - 24, y + 24, -1, 1], [x + 24, y + h - 24, 1, -1], [x + w - 24, y + h - 24, -1, -1]]) {
+    ctx.moveTo(cx, cy + dy * 18); ctx.lineTo(cx, cy); ctx.lineTo(cx + dx * 18, cy);
+  }
   ctx.stroke();
+  ctx.setLineDash([4, 12]);
+  ctx.beginPath();
+  ctx.moveTo(x + w / 2, y + 34); ctx.lineTo(x + w / 2, y + h - 34);
+  ctx.stroke();
+  ctx.restore();
 }

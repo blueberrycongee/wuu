@@ -1,4 +1,5 @@
 import { DURATION, renderFilm } from "./film";
+import { artReady } from "./art";
 
 // Preview: space plays/pauses, arrows step a frame (shift: one second), and
 // ?t=12.5 opens at a time. The capture script drives `window.promo.render`.
@@ -40,6 +41,7 @@ function toggle(play = !playing) {
   }
 }
 
+await artReady;
 button.addEventListener("click", () => toggle());
 scrubber.addEventListener("input", () => { toggle(false); draw(Number(scrubber.value)); });
 addEventListener("keydown", (event) => {

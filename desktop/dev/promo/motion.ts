@@ -16,7 +16,7 @@ export const outCubic: Ease = (t) => 1 - Math.pow(1 - t, 3);
 export const inCubic: Ease = (t) => t * t * t;
 export const outQuart: Ease = (t) => 1 - Math.pow(1 - t, 4);
 export const outBack: Ease = (t) => {
-  const c = 1.70158, u = t - 1;
+  const c = 0.35, u = t - 1;
   return 1 + (c + 1) * u * u * u + c * u * u;
 };
 export const inBack: Ease = (t) => 2.70158 * t * t * t - 1.70158 * t * t;
@@ -53,7 +53,7 @@ export function hop(t: number, start: number, duration: number): Hop {
   const air = p < 0.28 || p > 0.8 ? 0 : (p - 0.28) / 0.52;
   const land = p < 0.8 ? 0 : p < 0.9 ? smooth((p - 0.8) / 0.1) : 1 - smooth((p - 0.9) / 0.1);
   const stretch = air > 0 ? Math.sin(air * Math.PI) : 0;
-  const sy = 1 - 0.2 * crouch - 0.17 * land + 0.1 * Math.sin(Math.min(1, air * 2.2) * Math.PI) * (1 - air);
+  const sy = 1 - 0.09 * crouch - 0.08 * land + 0.05 * Math.sin(Math.min(1, air * 2.2) * Math.PI) * (1 - air);
   return { lift: stretch, sx: 1 + (1 - sy) * 0.6, sy };
 }
 
@@ -67,7 +67,7 @@ export function hops(t: number, starts: number[], duration: number): Hop {
 export function squash(t: number, at: number, amount = 0.18, duration = 0.45): { sx: number; sy: number } {
   const p = (t - at) / duration;
   if (p <= 0 || p >= 1) return { sx: 1, sy: 1 };
-  const k = Math.exp(-5 * p) * Math.cos(p * Math.PI * 3.2);
+  const k = Math.sin(p * Math.PI * 2) * Math.exp(-3 * p);
   return { sx: 1 + amount * 0.7 * k, sy: 1 - amount * k };
 }
 

@@ -1,30 +1,30 @@
-import { drawSparkle, extent, pastel, THEMES, WUU, type Ball, type Gear, type Skin, type Theme } from "./art";
+import { agentSkin, drawSparkle, extent, THEMES, WUU, type Ball, type Gear, type Skin, type Theme } from "./art";
+import { AVATAR_HUES } from "../../src/renderer/DefaultAvatar";
 import { clamp, lerp, outBack, rad, smooth, type Hop } from "./motion";
 
 export type Ctx = CanvasRenderingContext2D;
 export const W = 1920;
 export const H = 1080;
+export const DESK_HOME = { x: 1745, floor: 1012, r: 118 };
 
-export const CREAM = "#F7F2E8";
+export const CREAM = "#F5F5F2";
 export const NIGHT = "#15161A";
-export const CORAL = "#FF8A7A";
-export const SUN = "#FFD166";
-export const MINT = "#8FD8C0";
-export const SKY = "#8EC5FF";
-export const LILAC = "#C8B5F5";
-export const CONFETTI = [CORAL, SUN, MINT, SKY, LILAC];
+export const CORAL = "#CA9A86";
+export const SUN = "#CCB780";
+export const MINT = "#90AFA0";
+export const SKY = "#9AAEBF";
 
-// Each harness is a Wuu-family creature: a pastel body, dark eyes, and an
+// Each harness uses the product's shape and palette rules, with an
 // antenna carrying the engine's own mark, so no caption is needed.
 export interface Agent { engine: string; skin: Skin; theme: Theme; gear?: Gear }
 const MINT_THEME: Theme = {
-  bg: "#F7FFFB", bar: "#DDF3EA", ink: "#2F5446", line: "rgba(40,110,80,0.14)", text: "#D6EDE3", accent: "#5FC79E",
+  bg: "#FBFCFB", bar: "#EBF0EC", ink: "#35423C", line: "rgba(40,40,40,0.1)", text: "#DCE5DF", accent: MINT,
 };
-export const CLAUDE: Agent = { engine: "claude", skin: pastel(16, "round"), theme: THEMES.paper };
-export const CODEX: Agent = { engine: "codex", skin: pastel(205, "capsule"), theme: THEMES.terminal };
-export const CURSOR: Agent = { engine: "cursor", skin: pastel(266, "squircle"), theme: THEMES.lilac };
-export const OPENCODE: Agent = { engine: "opencode", skin: pastel(44, "diamond"), theme: THEMES.butter };
-export const PI: Agent = { engine: "pi", skin: pastel(156, "round"), theme: MINT_THEME, gear: "leaf" };
+export const CLAUDE: Agent = { engine: "claude", skin: agentSkin(AVATAR_HUES[0], "round"), theme: THEMES.paper };
+export const CODEX: Agent = { engine: "codex", skin: agentSkin(AVATAR_HUES[6], "capsule"), theme: THEMES.terminal };
+export const CURSOR: Agent = { engine: "cursor", skin: agentSkin(AVATAR_HUES[8], "rounded-square"), theme: THEMES.lilac };
+export const OPENCODE: Agent = { engine: "opencode", skin: agentSkin(AVATAR_HUES[2], "diamond"), theme: THEMES.butter };
+export const PI: Agent = { engine: "pi", skin: agentSkin(AVATAR_HUES[4], "triangle"), theme: MINT_THEME, gear: "leaf" };
 export const BUILDER: Agent = { engine: "wuu", skin: WUU, theme: THEMES.wuu, gear: "hardhat" };
 
 // ---------------------------------------------------------------------------
@@ -66,6 +66,12 @@ export function stairs(u: number, n: number) {
 
 export interface Camera { x: number; y: number; zoom: number; rot?: number }
 
+/** Match the outgoing and incoming hero on screen while the setting dissolves. */
+export function matchCamera(ball: Ball): Camera {
+  const zoom = 135 / ball.r;
+  return { x: ball.x - 100 / zoom, y: ball.y - 160 / zoom, zoom };
+}
+
 export function withCamera(ctx: Ctx, cam: Camera, draw: () => void) {
   ctx.save();
   ctx.translate(W / 2, H / 2);
@@ -80,47 +86,9 @@ export function toScreen(cam: Camera, x: number, y: number): [number, number] {
   return [W / 2 + (x - cam.x) * cam.zoom, H / 2 + (y - cam.y) * cam.zoom];
 }
 
-/** A classic cartoon iris: everything outside the circle goes dark. */
-export function iris(ctx: Ctx, x: number, y: number, r: number, inside: () => void) {
-  ctx.save();
-  ctx.fillStyle = NIGHT;
-  ctx.fillRect(0, 0, W, H);
-  if (r > 0) {
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.clip();
-    inside();
-  }
-  ctx.restore();
-}
-
 export function fill(ctx: Ctx, color: string) {
   ctx.fillStyle = color;
   ctx.fillRect(0, 0, W, H);
-}
-
-/** Paper-dot texture drawn in world space so it moves with the camera. */
-export function dotGrid(ctx: Ctx, x0: number, y0: number, x1: number, y1: number, color = "rgba(120, 96, 60, 0.13)", step = 48) {
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  for (let y = Math.floor(y0 / step) * step; y < y1; y += step) {
-    for (let x = Math.floor(x0 / step) * step; x < x1; x += step) {
-      ctx.moveTo(x + 2.6, y);
-      ctx.arc(x, y, 2.6, 0, Math.PI * 2);
-    }
-  }
-  ctx.fill();
-}
-
-/** Darken everything outside a circle, over whatever is already drawn. */
-export function irisClose(ctx: Ctx, x: number, y: number, r: number) {
-  ctx.save();
-  ctx.fillStyle = NIGHT;
-  ctx.beginPath();
-  ctx.rect(0, 0, W, H);
-  if (r > 0) ctx.arc(x, y, r, 0, Math.PI * 2, true);
-  ctx.fill("evenodd");
-  ctx.restore();
 }
 
 // ---------------------------------------------------------------------------
@@ -189,22 +157,4 @@ export function drawThinking(ctx: Ctx, x: number, y: number, s: number, p: numbe
     ctx.fill();
     ctx.stroke();
   });
-}
-
-export function drawOrb(ctx: Ctx, x: number, y: number, r: number, t: number) {
-  ctx.save();
-  const glow = ctx.createRadialGradient(x, y, 0, x, y, r * 2.4);
-  glow.addColorStop(0, "rgba(255, 236, 160, 0.9)");
-  glow.addColorStop(1, "rgba(255, 236, 160, 0)");
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(x, y, r * 2.4, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = SUN;
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fill();
-  drawSparkle(ctx, x, y, r * 0.8, "#FFFFFF", 0.9);
-  drawSparkle(ctx, x + Math.cos(t * 9) * r * 1.7, y + Math.sin(t * 9) * r * 1.7, r * 0.45, "#FFFFFF", 0.8);
-  ctx.restore();
 }
