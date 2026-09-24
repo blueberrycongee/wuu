@@ -220,7 +220,7 @@ export const enUS = {
   "settings.subscriptionRefreshFailed": "Could not refresh subscriptions. Try again.",
   "settings.subscriptionModelFailed": "Could not save the model. Try again.",
   "runtime.engineDefaultModel": "Agent default",
-  "runtime.engineDefaultModelHint": "This agent manages its own model. Configure it in the agent's CLI.",
+  "runtime.engineDefaultModelHint": "Switch models in {engine}",
   "settings.engineBinaryPath": "Binary path",
   "settings.engineBinaryPathPlaceholder": "Leave empty to look up on PATH",
   "settings.engineAutoBinary": "Auto-detected",

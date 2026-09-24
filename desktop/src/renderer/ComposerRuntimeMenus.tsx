@@ -805,23 +805,25 @@ function EngineRuntimeMenu({
         ) : null}
         {view === "models" ? (
           <>
-            <label className="menu-search select-menu-search">
-              <Search className="select-menu-search-icon icon-lg" />
-              <input
-                type="search"
-                value={query}
-                placeholder={t("runtime.searchModels")}
-                aria-label={t("runtime.searchModels")}
-                onChange={(event) => setQuery(event.currentTarget.value)}
-                onKeyDown={(event) => {
-                  const first = filteredModels[0];
-                  if (event.key === "Enter" && first && !disabled) {
-                    event.preventDefault();
-                    selectModel(first);
-                  }
-                }}
-              />
-            </label>
+            {models.length > 0 ? (
+              <label className="menu-search select-menu-search">
+                <Search className="select-menu-search-icon icon-lg" />
+                <input
+                  type="search"
+                  value={query}
+                  placeholder={t("runtime.searchModels")}
+                  aria-label={t("runtime.searchModels")}
+                  onChange={(event) => setQuery(event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    const first = filteredModels[0];
+                    if (event.key === "Enter" && first && !disabled) {
+                      event.preventDefault();
+                      selectModel(first);
+                    }
+                  }}
+                />
+              </label>
+            ) : null}
             <div className="codex-model-groups">
               {engine?.models_error ? (
                 <div className="composer-menu-note warning">
@@ -829,7 +831,13 @@ function EngineRuntimeMenu({
                   <span>{engine.models_error}</span>
                 </div>
               ) : null}
-              {models.length === 0 ? <div className="composer-menu-empty">{t(engine?.models_error ? "runtime.noModels" : "runtime.engineDefaultModelHint")}</div> : null}
+              {models.length === 0 ? (
+                <div className="composer-menu-empty">
+                  {engine?.models_error
+                    ? t("runtime.noModels")
+                    : t("runtime.engineDefaultModelHint", { engine: engineLabel(selectedEngine, engine) })}
+                </div>
+              ) : null}
               {models.length > 0 && filteredModels.length === 0 ? (
                 <div className="composer-menu-empty">{t("runtime.noMatchingModels")}</div>
               ) : null}
