@@ -18,6 +18,9 @@ import {
 
 export const DESK_START = 5;
 export const DESK_END = 31;
+/** The last desk framing and cursor spot; the next shot opens on exactly this frame. */
+export const HANDOFF_CAM = matchCamera(stand(WUU, DESK_HOME.x, DESK_HOME.floor, DESK_HOME.r));
+export const HANDOFF_CURSOR: [number, number] = [1370, 640];
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -93,11 +96,10 @@ function camera(t: number): Camera {
   const wide = { x: 960, y: 540, zoom: 1 };
   const close = { x: CORNER.x - 40, y: CORNER.floor - CORNER.r - 40, zoom: 2.05 };
   const inApp = { x: 1000, y: 570, zoom: 1.04 };
-  const onWuu = matchCamera(stand(WUU, CORNER.x, CORNER.floor, CORNER.r));
   // [time, camera]: each entry is reached at that time.
   const track: [number, Camera][] = [
     [12.0, wide], [13.1, close], [14.45, close], [15.65, wide],
-    [21.6, wide], [23.2, inApp], [28.1, inApp], [28.9, { x: 960, y: 540, zoom: 1 }], [29.15, { x: 960, y: 540, zoom: 1 }], [30.3, onWuu],
+    [21.6, wide], [23.2, inApp], [28.1, inApp], [28.9, { x: 960, y: 540, zoom: 1 }], [29.15, { x: 960, y: 540, zoom: 1 }], [30.3, HANDOFF_CAM],
   ];
   if (t <= track[0][0]) return wide;
   for (let i = 1; i < track.length; i++) {
@@ -639,7 +641,7 @@ const APP_STOPS: [number, number, number][] = [
     const hover = at - prev < 0.2;
     return hover ? [[at - 0.02, x, y]] : [[Math.max(prev + 0.1, at - 0.07), x, y], [at + 0.05, x, y]];
   }),
-  [28.4, 1330, 660], [29.6, 1370, 640],
+  [28.4, 1330, 660], [29.6, ...HANDOFF_CURSOR],
 ];
 
 function cursorState(t: number): CursorState {

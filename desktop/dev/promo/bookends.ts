@@ -1,17 +1,17 @@
 // Shot 1 (0–5 s): two eyes open in the dark, the lights come on, and Wuu
 // strikes its icon pose and says hi.
-// Shot 10 (59–64 s): the porthole portrait continues into the app icon.
+// Shot 10 (58–64 s): the frame closes around the giant Wuu until it is the
+// app icon, with the crew still standing beside it.
 import icon from "../../../assets/app-icon-source.json";
 import { drawBall, extent, ICON_POSE, WUU } from "./art";
 import { eyes, inOut, keys, lerp, mixColor, outBack, outCubic, seg, smooth, squash } from "./motion";
 import {
-  CREAM, DESK_HOME, fill, NIGHT, stand,
+  CREAM, DESK_HOME, fill, H, NIGHT, stand, W,
   withCamera, type Camera, type Ctx,
 } from "./cast";
-import { launchPortrait, stageShot } from "./stage";
+import { drawCrew, giant, STAGE_END } from "./stage";
 
 export const OPENING_END = 5;
-export const END_START = 59;
 export const END = 64;
 
 // ---------------------------------------------------------------------------
@@ -59,47 +59,25 @@ export function opening(ctx: Ctx, t: number) {
 // ---------------------------------------------------------------------------
 // Shot 10
 
-const POSE = 59.8;
-const FOLD = 60.3;
-const FOLDED = 62.2;
 // The desktop icon's geometry, rendered in the film's flat palette.
 const TILE = { x: 660, y: 240, s: 600 };
 const ICON = { x: TILE.x + TILE.s * (icon.bodyX / 1024), y: TILE.y + TILE.s * (icon.bodyY / 1024), r: TILE.s * (icon.radius / 1024) };
 
 export function endCard(ctx: Ctx, t: number) {
-  if (t < 60) stageShot(ctx, t, false);
-  else fill(ctx, CREAM);
-  const passenger = launchPortrait(t);
-  const fold = inOut(seg(t, FOLD, FOLDED));
-  const x = lerp(passenger.x, ICON.x, fold);
-  const y = lerp(passenger.y, ICON.y, fold);
-  const r = lerp(passenger.r, ICON.r, fold);
-  const pose = smooth(seg(t, POSE, POSE + 0.85));
-  const tileSize = lerp(880, TILE.s, fold);
-  const tileAlpha = smooth(seg(t, FOLD, FOLD + 0.8));
-  const tileX = 960 - tileSize / 2;
-  const tileY = 540 - tileSize / 2;
-  if (tileAlpha > 0) {
-    ctx.save();
-    ctx.globalAlpha = tileAlpha;
-    ctx.fillStyle = icon.background;
-    ctx.beginPath();
-    ctx.roundRect(tileX, tileY, tileSize, tileSize, tileSize * 0.22);
-    ctx.fill();
-    ctx.restore();
-  }
+  fill(ctx, CREAM);
+  const f = inOut(seg(t, STAGE_END + 0.2, STAGE_END + 2.2));
+  const g = giant(t);
+  const k = lerp(1, ICON.r / g.r, f);
   ctx.save();
-  if (tileAlpha > 0) {
-    ctx.beginPath();
-    ctx.roundRect(tileX, tileY, tileSize, tileSize, tileSize * 0.22);
-    ctx.clip();
-  }
-  drawBall(ctx, {
-    x, y, r, skin: WUU, yaw: ICON_POSE.yaw * pose,
-    pitch: lerp(passenger.pitch!, ICON_POSE.pitch, pose), roll: ICON_POSE.roll * pose,
-    eyes: eyes(t, [[END_START, "open"]], [60.05]),
-    marks: smooth(seg(t, 60.4, 61.1)),
-    markAngle: ICON_POSE.markAngle,
-  });
+  ctx.beginPath();
+  ctx.roundRect(lerp(0, TILE.x, f), lerp(0, TILE.y, f), lerp(W, TILE.s, f), lerp(H, TILE.s, f), TILE.s * 0.22 * f);
+  ctx.fillStyle = mixColor(CREAM, icon.background, f);
+  ctx.fill();
+  ctx.clip();
+  ctx.translate(lerp(g.x, ICON.x, f), lerp(g.y, ICON.y, f));
+  ctx.scale(k, k);
+  ctx.translate(-g.x, -g.y);
+  drawBall(ctx, { ...g, shadow: 1 - f });
   ctx.restore();
+  drawCrew(ctx, t);
 }

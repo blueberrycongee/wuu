@@ -1,7 +1,6 @@
 import { _layout, palette } from "blobatar";
 import { SHAPES as AVATAR_SHAPES, type Shape } from "blobatar/blob";
 import icon from "../../../assets/app-icon-source.json";
-import rocketSVG from "./assets/rocket.svg?raw";
 import { ENGINE_ICON_EVENODD, ENGINE_ICON_PATHS } from "../../src/renderer/EngineIcons";
 import { WUU_MASCOT_NAME, WUU_MASCOT_TRAITS } from "../../src/renderer/wuu-mascot-spec";
 import { clamp, mixColor, outBack, outCubic, rad, smooth, type Eyes } from "./motion";
@@ -9,15 +8,14 @@ import { clamp, mixColor, outBack, outCubic, rad, smooth, type Eyes } from "./mo
 type Ctx = CanvasRenderingContext2D;
 
 export const INK = "#2A2B2E";
-export const PAPER = "#FAFAF8";
 
 // ---------------------------------------------------------------------------
 // Characters
 
-export type Gear = "headset" | "hardhat" | "beanie" | "leaf" | "magnifier";
+export type Gear = "leaf";
 export interface Skin { body: string; lo: string; eye: string; shape: Shape }
 
-/** The approved app icon palette, shared by Wuu and its builder teammate. */
+/** The approved app icon palette. */
 export const WUU: Skin = {
   body: icon.bodyColor, lo: icon.bodyShadow, eye: icon.eyeColor, shape: "round",
 };
@@ -70,8 +68,10 @@ export interface Ball {
   ground?: number;
   /** Body opacity alone, so eyes can glow in the dark before the lights come on. */
   bodyAlpha?: number;
-  /** Vertical offset of the accessory, for dropping it onto the head. */
-  gearY?: number;
+  /** Contact shadow opacity, so a character can leave the floor it stood on. */
+  shadow?: number;
+  /** Antenna growth from 0 (none) to 1 (full), for characters that sprout one. */
+  antenna?: number;
 }
 
 export function drawBall(ctx: Ctx, b: Ball) {
@@ -83,13 +83,18 @@ export function drawBall(ctx: Ctx, b: Ball) {
   const bottom = r * form.ry;
   ctx.save();
   ctx.globalAlpha *= alpha;
-  if (b.ground !== undefined) drawShadow(ctx, x, b.ground, r * form.rx, (b.ground - y - bottom) / (r * 2.4));
+  if (b.ground !== undefined && (b.shadow ?? 1) > 0) {
+    ctx.save();
+    ctx.globalAlpha *= b.shadow ?? 1;
+    drawShadow(ctx, x, b.ground, r * form.rx, (b.ground - y - bottom) / (r * 2.4));
+    ctx.restore();
+  }
   // Squash and stretch pivot on the contact point, like a real soft ball.
   ctx.translate(x, y + bottom);
   ctx.rotate(rad(b.tilt ?? 0));
   ctx.scale(b.sx ?? 1, b.sy ?? 1);
   ctx.translate(0, -bottom);
-  if (b.engine) drawAntenna(ctx, r, b.engine, b.sway ?? 0, skin, form.ry);
+  if (b.engine && (b.antenna ?? 1) > 0) drawAntenna(ctx, r, b.engine, b.sway ?? 0, skin, form.ry, b.antenna ?? 1);
   ctx.save();
   ctx.globalAlpha *= b.bodyAlpha ?? 1;
   ctx.scale(r / 100, r / 100);
@@ -97,10 +102,7 @@ export function drawBall(ctx: Ctx, b: Ball) {
   ctx.fill(form.path);
   ctx.restore();
   drawFace(ctx, r, b, skin);
-  if (b.gear) {
-    ctx.translate(0, b.gearY ?? 0);
-    drawGear(ctx, r, b.gear, form.ry);
-  }
+  if (b.gear) drawGear(ctx, r, form.ry);
   ctx.restore();
   if (b.marks) {
     ctx.save();
@@ -222,10 +224,10 @@ export function drawMarks(ctx: Ctx, r: number, angle: number, amount: number, co
   });
 }
 
-function drawAntenna(ctx: Ctx, r: number, engine: string, sway: number, skin: Skin, ry: number) {
+function drawAntenna(ctx: Ctx, r: number, engine: string, sway: number, skin: Skin, ry: number, grow: number) {
   const baseY = -r * ry * 0.86;
-  const tipX = sway * r * 0.42;
-  const tipY = -r * ry - r * 0.5 + Math.abs(sway) * r * 0.08;
+  const tipX = sway * r * 0.42 * grow;
+  const tipY = baseY + (-r * ry - r * 0.5 + Math.abs(sway) * r * 0.08 - baseY) * grow;
   ctx.strokeStyle = skin.lo;
   ctx.lineWidth = r * 0.075;
   ctx.lineCap = "round";
@@ -233,7 +235,7 @@ function drawAntenna(ctx: Ctx, r: number, engine: string, sway: number, skin: Sk
   ctx.moveTo(0, baseY);
   ctx.quadraticCurveTo(sway * r * 0.04, (baseY + tipY) / 2, tipX, tipY);
   ctx.stroke();
-  const disc = r * 0.38;
+  const disc = r * 0.38 * grow;
   drawToken(ctx, engine, tipX + sway * r * 0.08, tipY - disc * 0.85, disc, skin.lo);
 }
 
@@ -263,87 +265,25 @@ export function drawLogo(ctx: Ctx, engine: string, x: number, y: number, size: n
   ctx.restore();
 }
 
-function drawGear(ctx: Ctx, r: number, gear: Gear, ry: number) {
+function drawGear(ctx: Ctx, r: number, ry: number) {
+  const top = -r * ry;
   ctx.save();
   ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  if (gear === "headset") {
-    ctx.strokeStyle = "#BCC7C4";
-    ctx.lineWidth = r * 0.12;
+  ctx.strokeStyle = "#5FAE5A";
+  ctx.lineWidth = r * 0.06;
+  ctx.beginPath();
+  ctx.moveTo(0, top + r * 0.06);
+  ctx.quadraticCurveTo(r * 0.02, top - r * 0.14, r * 0.06, top - r * 0.26);
+  ctx.stroke();
+  ctx.fillStyle = "#7BC96F";
+  for (const side of [-1, 1]) {
+    ctx.save();
+    ctx.translate(r * 0.06 + side * r * 0.14, top - r * 0.26);
+    ctx.rotate(rad(side * 32));
     ctx.beginPath();
-    ctx.arc(0, -r * 0.02, r * 1.07, rad(192), rad(348));
-    ctx.stroke();
-    ctx.fillStyle = "#90A49D";
-    for (const side of [-1, 1]) {
-      ctx.beginPath();
-      ctx.roundRect(side * r * 1.0 - r * 0.15, -r * 0.3, r * 0.3, r * 0.52, r * 0.14);
-      ctx.fill();
-    }
-    ctx.lineWidth = r * 0.065;
-    ctx.beginPath();
-    ctx.moveTo(r * 1.02, r * 0.14);
-    ctx.quadraticCurveTo(r * 1.02, r * 0.66, r * 0.56, r * 0.72);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(r * 0.54, r * 0.72, r * 0.1, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, r * 0.17, r * 0.08, 0, 0, Math.PI * 2);
     ctx.fill();
-  } else if (gear === "hardhat") {
-    const top = -r * ry;
-    ctx.fillStyle = "#C9AD77";
-    ctx.beginPath();
-    ctx.ellipse(0, top + r * 0.36, r * 0.66, r * 0.5, 0, Math.PI, 0);
-    ctx.fill();
-    ctx.fillStyle = "#AF925E";
-    ctx.beginPath();
-    ctx.roundRect(-r * 0.92, top + r * 0.3, r * 1.84, r * 0.17, r * 0.085);
-    ctx.fill();
-  } else if (gear === "beanie") {
-    const top = -r * ry;
-    ctx.fillStyle = "#7FA7FF";
-    ctx.beginPath();
-    ctx.moveTo(-r * 0.86, top + r * 0.5);
-    ctx.bezierCurveTo(-r * 0.86, top - r * 0.12, r * 0.86, top - r * 0.12, r * 0.86, top + r * 0.5);
-    ctx.fill();
-    ctx.fillStyle = "#5F8BF0";
-    ctx.beginPath();
-    ctx.roundRect(-r * 0.95, top + r * 0.4, r * 1.9, r * 0.24, r * 0.12);
-    ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.beginPath();
-    ctx.arc(0, top - r * 0.08, r * 0.16, 0, Math.PI * 2);
-    ctx.fill();
-  } else if (gear === "leaf") {
-    const top = -r * ry;
-    ctx.strokeStyle = "#5FAE5A";
-    ctx.lineWidth = r * 0.06;
-    ctx.beginPath();
-    ctx.moveTo(0, top + r * 0.06);
-    ctx.quadraticCurveTo(r * 0.02, top - r * 0.14, r * 0.06, top - r * 0.26);
-    ctx.stroke();
-    ctx.fillStyle = "#7BC96F";
-    for (const side of [-1, 1]) {
-      ctx.save();
-      ctx.translate(r * 0.06 + side * r * 0.14, top - r * 0.26);
-      ctx.rotate(rad(side * 32));
-      ctx.beginPath();
-      ctx.ellipse(0, 0, r * 0.17, r * 0.08, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-  } else if (gear === "magnifier") {
-    ctx.strokeStyle = "#6B5A4A";
-    ctx.lineWidth = r * 0.1;
-    ctx.beginPath();
-    ctx.moveTo(r * 1.08, r * 0.62);
-    ctx.lineTo(r * 1.34, r * 0.92);
-    ctx.stroke();
-    ctx.fillStyle = "rgba(210, 236, 255, 0.75)";
-    ctx.strokeStyle = "#8C7A68";
-    ctx.lineWidth = r * 0.08;
-    ctx.beginPath();
-    ctx.arc(r * 0.9, r * 0.4, r * 0.3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    ctx.restore();
   }
   ctx.restore();
 }
@@ -388,19 +328,6 @@ export function drawSparkle(ctx: Ctx, x: number, y: number, r: number, color: st
   ctx.fillStyle = color;
   ctx.beginPath();
   sparklePath(ctx, x, y, r, r * 0.22);
-  ctx.fill();
-  ctx.restore();
-}
-
-export function drawPuff(ctx: Ctx, x: number, y: number, r: number, alpha: number, color = "#FFFFFF") {
-  if (alpha <= 0 || r <= 0) return;
-  ctx.save();
-  ctx.globalAlpha *= alpha;
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.arc(x - r * 0.75, y + r * 0.25, r * 0.7, 0, Math.PI * 2);
-  ctx.arc(x + r * 0.78, y + r * 0.22, r * 0.66, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
@@ -548,142 +475,5 @@ export function drawBubble(ctx: Ctx, x: number, y: number, s: number, time: numb
     ctx.arc(-16 + i * 16, -31 - bounce, 5, 0, Math.PI * 2);
     ctx.fill();
   }
-  ctx.restore();
-}
-
-export function drawClock(ctx: Ctx, x: number, y: number, r: number, hours: number, alpha = 1) {
-  if (alpha <= 0) return;
-  ctx.save();
-  ctx.globalAlpha *= alpha;
-  ctx.translate(x, y);
-  ctx.fillStyle = PAPER;
-  ctx.strokeStyle = INK;
-  ctx.lineWidth = r * 0.1;
-  ctx.beginPath();
-  ctx.arc(0, 0, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-  ctx.lineCap = "round";
-  for (let i = 0; i < 12; i++) {
-    const a = (i / 12) * Math.PI * 2;
-    ctx.lineWidth = r * (i % 3 === 0 ? 0.07 : 0.04);
-    ctx.beginPath();
-    ctx.moveTo(Math.cos(a) * r * 0.72, Math.sin(a) * r * 0.72);
-    ctx.lineTo(Math.cos(a) * r * 0.82, Math.sin(a) * r * 0.82);
-    ctx.stroke();
-  }
-  const hand = (angle: number, length: number, width: number, color: string) => {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = width;
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(Math.cos(angle - Math.PI / 2) * length, Math.sin(angle - Math.PI / 2) * length);
-    ctx.stroke();
-  };
-  hand((hours / 12) * Math.PI * 2, r * 0.45, r * 0.1, INK);
-  hand(hours * Math.PI * 2, r * 0.66, r * 0.07, "#FF8A7A");
-  ctx.fillStyle = INK;
-  ctx.beginPath();
-  ctx.arc(0, 0, r * 0.08, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-}
-
-// ---------------------------------------------------------------------------
-// The rocket: the big job, authored as six pieces in rocket space.
-
-export type Piece = "nose" | "cabin" | "hull" | "finL" | "finR" | "nozzle";
-export const PIECES: Piece[] = ["nose", "cabin", "hull", "finL", "finR", "nozzle"];
-// SVG is the single source for geometry, colour and assembly bounds.
-const rocketDocument = new DOMParser().parseFromString(rocketSVG, "image/svg+xml");
-const rocketBox = rocketDocument.documentElement.getAttribute("viewBox")!.split(" ").map(Number) as [number, number, number, number];
-const PIECE_ART = Object.fromEntries(PIECES.map((id) => {
-  const group = rocketDocument.getElementById(id)!;
-  const path = new Path2D(group.querySelector("[data-outline]")!.getAttribute("d")!);
-  const box = group.getAttribute("data-box")!.split(" ").map(Number) as [number, number, number, number];
-  const image = new Image();
-  const source = rocketDocument.documentElement.cloneNode(true) as Element;
-  for (const other of source.querySelectorAll(":scope > g")) if (other.id !== id) other.remove();
-  image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(source))}`;
-  return [id, { path, box, image }];
-})) as Record<Piece, { path: Path2D; box: [number, number, number, number]; image: HTMLImageElement }>;
-
-/** Preview and export become available only after every SVG piece is decoded. */
-export const artReady = Promise.all(PIECES.map((id) => PIECE_ART[id].image.decode()));
-
-export function pieceCenter(id: Piece): [number, number] {
-  const [x0, y0, x1, y1] = PIECE_ART[id].box;
-  return [(x0 + x1) / 2, (y0 + y1) / 2];
-}
-
-/**
- * Draws one piece in rocket space. build 0 is a dashed blueprint outline,
- * 1 is finished; in between, colour sweeps up from the bottom.
- */
-export function drawPiece(ctx: Ctx, id: Piece, build: number, o: { ghost?: string; porthole?: (ctx: Ctx) => void } = {}) {
-  const art = PIECE_ART[id];
-  const path = art.path;
-  const [x0, y0, x1, y1] = art.box;
-  ctx.save();
-  ctx.lineJoin = "round";
-  if (build < 1) {
-    ctx.setLineDash([9, 8]);
-    ctx.strokeStyle = o.ghost ?? "#98A8A0";
-    ctx.lineWidth = 2.5;
-    ctx.stroke(path);
-    ctx.setLineDash([]);
-  }
-  if (build > 0) {
-    ctx.save();
-    const top = y1 - (y1 - y0 + 8) * clamp(build);
-    ctx.beginPath();
-    ctx.rect(x0 - 10, top, x1 - x0 + 20, y1 - top + 10);
-    ctx.clip();
-    ctx.drawImage(art.image, ...rocketBox);
-    if (id === "cabin" && o.porthole) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(0, -63, 27, 0, Math.PI * 2);
-      ctx.clip();
-      o.porthole(ctx);
-      ctx.restore();
-    }
-    ctx.restore();
-  }
-  ctx.restore();
-}
-
-export function drawFlame(ctx: Ctx, x: number, y: number, s: number, time: number) {
-  if (s <= 0) return;
-  const flicker = 1 + Math.sin(time * 24) * 0.035 + Math.sin(time * 17) * 0.025;
-  const layers: [string, number, number][] = [["#D3BA87", 1, 1], ["#F0DDB1", 0.72, 0.8], ["#FFFCF0", 0.42, 0.6]];
-  for (const [color, width, length] of layers) {
-    const w = 46 * width * s, l = 150 * length * s * flicker;
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.moveTo(x - w, y);
-    ctx.quadraticCurveTo(x - w * 0.9, y + l * 0.55, x, y + l);
-    ctx.quadraticCurveTo(x + w * 0.9, y + l * 0.55, x + w, y);
-    ctx.closePath();
-    ctx.fill();
-  }
-}
-
-export function drawBlueprint(ctx: Ctx, x: number, y: number, w: number, h: number) {
-  ctx.save();
-  ctx.fillStyle = "#E5E8E2";
-  ctx.fillRect(x, y, w, h);
-  ctx.strokeStyle = "#B6BFB5";
-  ctx.lineWidth = 2;
-  // Registration corners and a centre axis read as a plan without a dense grid.
-  ctx.beginPath();
-  for (const [cx, cy, dx, dy] of [[x + 24, y + 24, 1, 1], [x + w - 24, y + 24, -1, 1], [x + 24, y + h - 24, 1, -1], [x + w - 24, y + h - 24, -1, -1]]) {
-    ctx.moveTo(cx, cy + dy * 18); ctx.lineTo(cx, cy); ctx.lineTo(cx + dx * 18, cy);
-  }
-  ctx.stroke();
-  ctx.setLineDash([4, 12]);
-  ctx.beginPath();
-  ctx.moveTo(x + w / 2, y + 34); ctx.lineTo(x + w / 2, y + h - 34);
-  ctx.stroke();
   ctx.restore();
 }

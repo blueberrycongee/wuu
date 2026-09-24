@@ -1,652 +1,765 @@
-// Shots 6–9, one continuous studio stage (31 s – 59 s):
-//   6. A huge blueprint. Alone, Wuu barely builds one piece as hours pass.
-//   7. Friends peek in. An idea: a headset drops on; Wuu becomes the coordinator.
-//   8. Each friend opens a session; Wuu hands out pieces and watches them all at
-//      once. One gets stuck, another helps. The pieces come home.
-//   9. Countdown, continuous liftoff, then a push into Wuu's porthole.
+// Shots 6–9, one continuous world (31 s – 58 s):
+//   6. The cursor selects Wuu and drags out a job many times its size. Alone,
+//      Wuu can only puff itself up.
+//   7. An idea: Wuu splits into three, then nine. Each split tears the screen
+//      into more windows, and eight copies evolve into different harnesses.
+//   8. The original grows to fill the middle window and watches eight sessions
+//      fill in their part of the job. One gets stuck; a finished one hops over.
+//   9. The windows fuse into the finished job, a giant Wuu. The crew drops to
+//      the floor, and a click strikes the icon pose.
+import { AVATAR_HUES } from "../../src/renderer/DefaultAvatar";
 import {
-  drawBall, drawBlueprint, drawBubble, drawClock, drawFlame, drawPiece, drawPuff, drawShadow,
-  drawWindow, extent, INK, pieceCenter, THEMES, TITLE_BAR, WUU, type Ball, type Piece,
+  agentSkin, drawBall, drawBubble, drawCursor, drawLogo, drawRipple, drawShadow, extent,
+  ICON_POSE, INK, THEMES, TITLE_BAR, WUU, type Ball, type Skin,
 } from "./art";
 import {
-  clamp, eyes, hop, hops, inCubic, inOut, keys, lerp, linear, mixColor, outBack, outCubic, seg, smooth, squash, wobble,
-  type EyeKind, type Hop,
+  clamp, eyes, hop, hops, inCubic, inOut, keys, lerp, mixColor, outBack, outCubic, outElastic, seg, smooth,
+  squash, wobble, type EyeKind,
 } from "./motion";
 import {
-  agent, arc, BUILDER, CLAUDE, CODEX, CORAL, CREAM, CURSOR, drawCheck,
-  look, matchCamera, MINT, OPENCODE, PI, stairs, stand, SUN, toScreen, W, H, withCamera, type Agent, type Camera, type Ctx,
+  CLAUDE, CODEX, CREAM, CURSOR, drawCheck, drawThinking, fill, H, look, matchCamera, OPENCODE, PI,
+  stairs, stand, toScreen, W, withCamera, type Agent, type Camera, type Ctx,
 } from "./cast";
+import { HANDOFF_CAM, HANDOFF_CURSOR } from "./desk";
 
 export const STAGE_START = 31;
-export const STAGE_END = 59;
+export const STAGE_END = 58;
 
 // ---------------------------------------------------------------------------
-// World layout
+// Layout
 
-const HORIZON = 820;
-const ROCKET = { x: 960, y: 595, s: 1.55 };
-const PAD = { x: 745, y: 798, w: 430, h: 46 };
-const BOARD = { x: 150, y: 240, w: 460, h: 480 };
-const WUU_R = 100;
-const HOME = { x: 1300, floor: 980 };
-const WORK = { x: 1125, floor: 965 };
-const CENTER = { x: 960, floor: 1000 };
+const FLOOR = 1020;
+/** The job the cursor drags out; the finished team fills exactly this circle. */
+const GIANT = { x: 960, y: FLOOR - 440, r: 440 };
+// The screen tears into a 3×3 grid of 640×360 scene cells.
+const COLS = [320, 960, 1600];
+const FLOORS = [300, 660, 1020];
+// Splits conserve area, so daughters at one spot render exactly as their parent.
+const R0 = 100, R1 = 80, R2 = 62;
+const r1 = R0 / Math.sqrt(3), r2 = R1 / Math.sqrt(3);
+const SAGE = THEMES.wuu.accent;
+const GUTTER = "#E4E6E1";
+const HELP_SPOT = 790;
 
-const CAM_OPEN = matchCamera(stand(WUU, HOME.x, HOME.floor, WUU_R));
-const CAM_WIDE: Camera = { x: 960, y: 540, zoom: 1 };
-const CAM_TEAM: Camera = { x: 960, y: 590, zoom: 0.78 };
-
-// The team, in the order of their sessions: three on the left, three on the right.
-interface Member { agent: Agent; piece: Piece; lineup: { x: number; floor: number }; peek: Peek; r: number }
-type Peek = { from: [number, number]; to: [number, number]; at: number; floor?: boolean };
-const TEAM: Member[] = [
-  { agent: CLAUDE, piece: "nose", lineup: { x: 420, floor: 1030 }, r: 76, peek: { from: [-100, 1000], to: [40, 1000], at: 36.6, floor: true } },
-  { agent: CODEX, piece: "cabin", lineup: { x: 600, floor: 985 }, r: 72, peek: { from: [430, 400], to: [430, 240], at: 36.85 } },
-  { agent: CURSOR, piece: "finL", lineup: { x: 760, floor: 1052 }, r: 72, peek: { from: [250, 1260], to: [250, 1120], at: 37.05 } },
-  { agent: OPENCODE, piece: "hull", lineup: { x: 1160, floor: 1052 }, r: 76, peek: { from: [2030, 1000], to: [1880, 1000], at: 36.75, floor: true } },
-  { agent: PI, piece: "finR", lineup: { x: 1330, floor: 985 }, r: 72, peek: { from: [2090, 990], to: [2090, 990], at: 99 } },
-  { agent: BUILDER, piece: "nozzle", lineup: { x: 1510, floor: 1032 }, r: 68, peek: { from: [2120, 1030], to: [2120, 1030], at: 99 } },
-];
-const ARRIVE = [39.5, 39.66, 39.82, 39.6, 39.95, 40.12];
-const ARRIVE_TIME = 0.62;
-
-// Session windows are laid out on screen around the team camera.
-const SW = 460, SH = 272;
-const SLOT = [
-  { x: 44, y: 64 }, { x: 44, y: 404 }, { x: 44, y: 744 },
-  { x: 1416, y: 64 }, { x: 1416, y: 404 }, { x: 1416, y: 744 },
-];
-const SLOT_CREATURE = { x: 96, floor: SH - TITLE_BAR - 30, r: 50 };
-const SLOT_WORK = { x: 312, y: (SH - TITLE_BAR) / 2 - 6, s: 0.6 };
+const DEVIN: Agent = { engine: "devin", skin: agentSkin(AVATAR_HUES[10], "rounded-square"), theme: THEMES.wuu };
+const GROK: Agent = { engine: "grok", skin: agentSkin(AVATAR_HUES[3], "round"), theme: THEMES.wuu };
+const HERMES: Agent = { engine: "hermes", skin: agentSkin(AVATAR_HUES[9], "capsule"), theme: THEMES.wuu };
 
 // ---------------------------------------------------------------------------
 // Timeline
 
-const BOARD_LAND = 32.25;
-const HAMMER = [33.6, 34.1, 34.62, 35.2, 35.9, 36.55];
-const IDEA = 38.0;
-const HEADSET_LAND = 39.0;
-const WINDOWS_OPEN = 41.95;
-const JUMP_IN = 42.1;
-const LINES = 42.85;
-const HAND_OUT = 43.3;
-const STUCK = 45.6;
-const TOSS = 46.62;
-const CATCH = 47.12;
-const RETURN: Record<Piece, number> = { nozzle: 50.0, hull: 50.3, finL: 50.6, finR: 50.85, cabin: 51.15, nose: 51.5 };
-const RETURN_TIME = 0.55;
-const WINDOWS_CLOSE = 53.3;
-const BOARD_ROCKET = 54.3;
-const LAMPS = [55.1, 55.5, 55.9];
-const IGNITION = 56.2;
-const LIFTOFF = 56.5;
-const PORTRAIT = 58.8;
+const SELECT = 32.3;
+const GRAB = 33.05;
+const STRETCHED = 34.6;
+const IDEA = 37.7;
+const SPLIT3 = 38.0;
+const SPLIT3_END = 38.7;
+const SPREAD = 38.72;
+const TEAR_COLS = 39.2;
+const SPLIT9 = 40.5;
+const LAUNCH = 40.95;
+const TEAR_ROWS = 41.25;
+const LAND = 41.6;
+const EVOLVE = 42.0;
+const PUSH = 42.9;
+const STUCK = 46.1;
+const HELP = 47.35;
+const HELP_TIME = 0.6;
+const RETRACT = 50.6;
+const FUSE = 51.0;
+const FUSED = 52.0;
+const DROP = 52.35;
+const CHEER = 54.2;
+const CLICK = 56.0;
+const BOW = 60.4;
 
-/** Shared piece progress in the team's sessions. */
-function progress(piece: Piece, t: number) {
-  switch (piece) {
-    case "nose": return stairs(seg(t, 44.3, 46.1), 7);
-    case "cabin": return t < CATCH ? 0.42 * stairs(seg(t, 44.4, STUCK), 4) : lerp(0.42, 1, stairs(seg(t, CATCH + 0.1, 49.8), 6));
-    case "finL": return stairs(seg(t, 44.5, 48.6), 9);
-    case "hull": return stairs(seg(t, 44.3, 49.2), 10);
-    case "finR": return stairs(seg(t, 44.6, 48.9), 9);
-    // The builder picks up where Wuu's lonely attempt stopped.
-    case "nozzle": return lerp(SOLO_DONE, 1, stairs(seg(t, 44.4, 48.2), 4));
-  }
+/** [start, end, taps, share of the cell reached by the end]. */
+type Run = [number, number, number, number];
+interface Worker { agent: Agent; c: number; row: number; lineup: number; runs: Run[] }
+// Clockwise from the top, one window each around the original. The lineup
+// keeps everyone clear of the giant's silhouette.
+const TEAM: Worker[] = [
+  { agent: CLAUDE, c: 1, row: 0, lineup: 560, runs: [[43.7, STUCK, 4, 0.45], [48.1, 49.3, 5, 1]] },
+  { agent: CURSOR, c: 2, row: 0, lineup: 1510, runs: [[43.8, 48.7, 9, 1]] },
+  { agent: PI, c: 2, row: 1, lineup: 1810, runs: [[43.6, 47.5, 7, 1]] },
+  { agent: HERMES, c: 2, row: 2, lineup: 1660, runs: [[43.7, 49.5, 10, 1]] },
+  { agent: GROK, c: 1, row: 2, lineup: 1360, runs: [[43.8, 48.4, 8, 1]] },
+  { agent: DEVIN, c: 0, row: 2, lineup: 260, runs: [[43.9, 49.0, 9, 1]] },
+  { agent: OPENCODE, c: 0, row: 1, lineup: 110, runs: [[43.7, 48.1, 8, 1]] },
+  { agent: CODEX, c: 0, row: 0, lineup: 410, runs: [[43.6, 45.7, 6, 1]] },
+];
+const STUCK_ONE = 0;
+const HELPER = 7;
+/** Shelf-dwellers in the order they fall once the windows fuse. */
+const UPPER = [0, 7, 1, 6, 2];
+const LOWER = [3, 4, 5];
+const CHEER_RANK = TEAM.map((w) => [...TEAM].sort((a, b) => a.lineup - b.lineup).indexOf(w));
+
+const evolveAt = (i: number) => EVOLVE + 0.08 * i;
+const done = (w: Worker) => w.runs[w.runs.length - 1][1];
+const beats = ([start, end, n]: Run, offset = 0) => Array.from({ length: n }, (_, k) => start + ((end - start) * (k + offset)) / n);
+// The helper taps between the stuck one's beats, so the shared window fills twice as fast.
+const TAPS = TEAM.map((w, i) => [...w.runs.flatMap((run) => beats(run)), ...(i === HELPER ? beats(TEAM[STUCK_ONE].runs[1], 0.5) : [])]);
+const dropStart = (i: number) => DROP + 0.05 * UPPER.indexOf(i);
+const dropTime = (i: number) => 0.35 + (0.25 * (FLOOR - FLOORS[TEAM[i].row])) / 720;
+
+// ---------------------------------------------------------------------------
+// Camera and windows
+
+const CAM_START = matchCamera(stand(WUU, 960, FLOOR, R0));
+const CAM_MID: Camera = { x: 960, y: 830, zoom: 1.3 };
+const CAM_WIDE: Camera = { x: 960, y: 540, zoom: 1 };
+const mixCam = (a: Camera, b: Camera, k: number): Camera => ({ x: lerp(a.x, b.x, k), y: lerp(a.y, b.y, k), zoom: lerp(a.zoom, b.zoom, k) });
+
+function camera(t: number): Camera {
+  return mixCam(mixCam(CAM_START, CAM_MID, smooth(seg(t, 31.3, 32.2))), CAM_WIDE, inOut(seg(t, GRAB, 34.7)));
 }
-const DONE: Record<Piece, number> = { nose: 46.1, cabin: 49.8, finL: 48.6, hull: 49.2, finR: 48.9, nozzle: 48.2 };
 
-/** How far the lonely first attempt got: a tenth of the nozzle per hammer tap. */
-const SOLO_STEP = 0.1;
-const SOLO_DONE = HAMMER.length * SOLO_STEP;
-function soloBuild(t: number) {
-  const landed = HAMMER.filter((h) => t > h + 0.4).length;
-  const current = HAMMER.find((h) => t > h + 0.4 && t < h + 0.7);
-  return (landed + (current ? smooth(seg(t, current + 0.4, current + 0.7)) : 0) - (current ? 1 : 0)) * SOLO_STEP;
+const toScene = (cam: Camera, x: number, y: number): [number, number] => [cam.x + (x - W / 2) / cam.zoom, cam.y + (y - H / 2) / cam.zoom];
+
+const closing = (t: number) => inOut(seg(t, FUSE, FUSED));
+const rowOpen = (t: number) => outCubic(seg(t, TEAR_ROWS, LAND)) * (1 - closing(t));
+
+type Cell = [number, number];
+type Span = [number, number];
+interface Group { cells: Cell[]; x: number; y: number; w: number; h: number; ox: number; oy: number; radii: number[] }
+
+function layout(t: number) {
+  const col = outCubic(seg(t, TEAR_COLS, 39.65)) * (1 - closing(t));
+  const row = rowOpen(t);
+  const s = lerp(1, 0.9185, col);
+  const gx = 20 * col, gy = 20 * row;
+  return { col, row, s, gx, gy, x0: (W - W * s - 2 * gx) / 2, y0: (H - H * s - 2 * gy) / 2 };
+}
+
+/** Window groups on screen; neighbours merge back into one once their gutter closes. */
+function groups(t: number): { s: number; list: Group[] } {
+  const { col, row, s, gx, gy, x0, y0 } = layout(t);
+  const split = (gap: number): Span[] => (gap < 0.5 ? [[0, 3]] : [[0, 1], [1, 2], [2, 3]]);
+  const list: Group[] = [];
+  for (const [ra, rb] of split(gy)) {
+    for (const [a, b] of split(gx)) {
+      const cells: Cell[] = [];
+      for (let r = ra; r < rb; r++) for (let c = a; c < b; c++) cells.push([c, r]);
+      // Outer edges open with the columns; inner row edges open with the rows.
+      const top = 20 * Math.min(col, ra === 0 ? col : row);
+      const bottom = 20 * Math.min(col, rb === 3 ? col : row);
+      list.push({
+        cells,
+        x: x0 + a * (640 * s + gx), y: y0 + ra * (360 * s + gy),
+        w: (b - a) * 640 * s + (b - a - 1) * gx, h: (rb - ra) * 360 * s + (rb - ra - 1) * gy,
+        ox: x0 + a * gx, oy: y0 + ra * gy, radii: [top, top, bottom, bottom],
+      });
+    }
+  }
+  return { s, list };
+}
+
+const cellWorker = (c: number, row: number) => TEAM.findIndex((w) => w.c === c && w.row === row);
+const isCentre = ([c, row]: Cell) => c === 1 && row === 1;
+
+function windowOpen([c, row]: Cell, t: number) {
+  const i = cellWorker(c, row);
+  const at = i < 0 ? 41.9 : evolveAt(i);
+  return smooth(seg(t, at, at + 0.35)) * (1 - smooth(seg(t, RETRACT, RETRACT + 0.5)));
+}
+
+function drawGroup(ctx: Ctx, t: number, g: Group, s: number, cam: Camera) {
+  const single = g.cells.length === 1 ? g.cells[0] : undefined;
+  const win = single ? windowOpen(single, t) : 0;
+  const outline = () => { ctx.beginPath(); ctx.roundRect(g.x, g.y, g.w, g.h, g.radii); };
+  ctx.save();
+  ctx.fillStyle = mixColor(CREAM, "#FFFFFF", win);
+  outline();
+  if (win > 0) {
+    ctx.save();
+    ctx.globalAlpha *= win;
+    ctx.shadowColor = "rgba(30, 35, 34, 0.045)";
+    ctx.shadowBlur = 16;
+    ctx.shadowOffsetY = 6;
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  ctx.save();
+  ctx.translate(g.ox, g.oy);
+  ctx.scale(s, s);
+  withCamera(ctx, cam, () => drawScene(ctx, t, g.cells, s * cam.zoom));
+  ctx.restore();
+  if (single && win > 0) drawBar(ctx, t, g, single, win);
+  ctx.restore();
+  if (win > 0) {
+    ctx.globalAlpha *= win;
+    ctx.strokeStyle = THEMES.wuu.line;
+    ctx.lineWidth = 1.5;
+    outline();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawBar(ctx: Ctx, t: number, g: Group, [c, row]: Cell, open: number) {
+  const i = cellWorker(c, row);
+  const y = g.y - TITLE_BAR * (1 - open);
+  const mid = y + TITLE_BAR / 2;
+  ctx.fillStyle = THEMES.wuu.bar;
+  ctx.fillRect(g.x, y, g.w, TITLE_BAR);
+  ctx.fillStyle = THEMES.wuu.text;
+  for (let k = 0; k < 3; k++) {
+    ctx.beginPath();
+    ctx.arc(g.x + 24 + k * 20, mid, 6.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  drawLogo(ctx, i < 0 ? "wuu" : TEAM[i].agent.engine, g.x + g.w / 2, mid, 22, INK);
+  const finished = i < 0 ? 49.6 : done(TEAM[i]);
+  drawCheck(ctx, g.x + g.w - 30, mid, 12, seg(t, finished, finished + 0.5));
 }
 
 // ---------------------------------------------------------------------------
 
-export function stageShot(ctx: Ctx, t: number, showPortrait = true) {
+export function stageShot(ctx: Ctx, t: number) {
+  ctx.save();
+  fill(ctx, GUTTER);
   const cam = camera(t);
-  ctx.fillStyle = CREAM;
-  ctx.fillRect(0, 0, W, H);
-  withCamera(ctx, cam, () => {
-    drawGround(ctx, t, cam);
-    drawCodexPeek(ctx, t);
-    drawPlan(ctx, t);
-    drawPad(ctx, t);
-    drawSmoke(ctx, t, true);
-    drawRocket(ctx, t);
-    drawSmoke(ctx, t, false);
-    drawTeamOnGround(ctx, t);
-    drawWuu(ctx, t);
-  });
-  drawSessions(ctx, t, cam);
-  drawTimeClock(ctx, t);
-  if (showPortrait && t >= PORTRAIT) drawBall(ctx, launchPortrait(t));
+  const { s, list } = groups(t);
+  for (const g of list) drawGroup(ctx, t, g, s, cam);
+  drawHelper(ctx, t);
+  drawSelection(ctx, t);
+  drawPointer(ctx, t);
+  ctx.restore();
 }
 
-function camera(t: number): Camera {
-  if (t < 31.4) return CAM_OPEN;
-  if (t < 40.9) {
-    const e = smooth(seg(t, 31.4, 32.6));
-    return mixCam(CAM_OPEN, CAM_WIDE, e);
+/** Everything inside one window group, in scene coordinates. */
+function drawScene(ctx: Ctx, t: number, cells: Cell[], scale: number) {
+  const has = (c: number, row: number) => cells.some(([a, b]) => a === c && b === row);
+  drawJob(ctx, t, cells, scale);
+  if (t < SPLIT3) {
+    drawBall(ctx, hero(t));
+    drawThinking(ctx, 960 + R0 * 0.75, FLOOR - R0 * 2.25, 1, seg(t, 37.0, 37.45) * (1 - seg(t, 37.65, 37.75)));
+  } else if (t < SPLIT3_END) {
+    const { blobs, faces } = split3(t);
+    drawBlobs(ctx, blobs, faces, blobs);
+  } else if (t < SPLIT9) {
+    trio(t).forEach((b, c) => { if (has(c, 2)) drawBall(ctx, b); });
+  } else if (t < TEAR_ROWS) {
+    for (let c = 0; c < 3; c++) {
+      if (!has(c, 2)) continue;
+      const { blobs, faces } = column(t, c);
+      drawShadow(ctx, COLS[c], FLOOR, lerp(R1, r2, inOut(seg(t, SPLIT9, LAUNCH))), 0);
+      drawBlobs(ctx, blobs, faces);
+    }
+  } else {
+    if (has(1, 1)) drawBall(ctx, giant(t));
+    TEAM.forEach((w, i) => {
+      if (i === HELPER && t >= HELP && t < HELP + HELP_TIME) return;
+      const [c, row] = i === HELPER && t >= HELP ? [1, 0] : [w.c, w.row];
+      if (has(c, row)) drawBall(ctx, worker(i, t));
+    });
+    if (has(1, 0)) {
+      const b = worker(STUCK_ONE, t);
+      const pop = outBack(seg(t, STUCK + 0.15, STUCK + 0.45)) * (1 - smooth(seg(t, 47.85, 48.05)));
+      drawBubble(ctx, b.x + 70, b.y - 60, 1.1 * pop, t);
+    }
   }
-  if (t < LIFTOFF + 0.3) {
-    const shake = t > 55.6 ? wobble(t, 5, 18) * lerp(0.5, 2, seg(t, 55.6, IGNITION)) : 0;
-    return { ...mixCam(CAM_WIDE, CAM_TEAM, inOut(seg(t, 40.9, 41.8))), x: 960 + shake };
+}
+
+// ---------------------------------------------------------------------------
+// The job: a dashed outline that the team fills in, window by window
+
+/** How many times Wuu's size the dragged-out job is. */
+const stretch = (t: number) => lerp(1, GIANT.r / R0, inOut(seg(t, GRAB, STRETCHED)));
+
+function progress(w: Worker, t: number) {
+  let p = 0;
+  for (const [start, end, n, reached] of w.runs) p = lerp(p, reached, stairs(seg(t, start, end), n));
+  return p;
+}
+
+/** Distance from the job's centre to the nearest point of a cell. */
+function nearest(c: number, row: number) {
+  const dx = Math.max(640 * c - GIANT.x, 0, GIANT.x - 640 * (c + 1));
+  const dy = Math.max(360 * row - GIANT.y, 0, GIANT.y - 360 * (row + 1));
+  return Math.hypot(dx, dy);
+}
+
+/** Each outer window grows the job's disc from its nearest point out to the outline. */
+const fillRadius = (i: number, t: number) => lerp(nearest(TEAM[i].c, TEAM[i].row), GIANT.r, progress(TEAM[i], t));
+
+function drawJob(ctx: Ctx, t: number, cells: Cell[], scale: number) {
+  const outer = cells.filter((cell) => !isCentre(cell));
+  const reach = (outer.length ? outer : TEAM.map((w): Cell => [w.c, w.row])).map(([c, row]) => fillRadius(cellWorker(c, row), t));
+  const k = stretch(t);
+  const ghost = seg(k, 1.05, 1.3) * (1 - seg(Math.min(...reach), GIANT.r - 10, GIANT.r));
+  if (ghost > 0) {
+    ctx.save();
+    ctx.globalAlpha *= ghost;
+    ctx.beginPath();
+    ctx.arc(GIANT.x, FLOOR - R0 * k, R0 * k, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(144, 164, 157, 0.08)";
+    ctx.fill();
+    ctx.strokeStyle = SAGE;
+    ctx.lineWidth = 4 / scale;
+    ctx.setLineDash([14 / scale, 12 / scale]);
+    ctx.stroke();
+    ctx.restore();
   }
-  // Ease into a tracking shot before pushing in. A screen-space target avoids
-  // overtaking the rocket and making it appear to fall back down during the pan.
-  const followStart = LIFTOFF + 0.3;
-  const startY = toScreen(CAM_TEAM, ROCKET.x, ROCKET.y - rise(followStart) - 63 * ROCKET.s)[1];
-  const push = smooth(seg(t, 57.8, 59.6));
-  const screenY = keys(t, [[followStart, startY], [57.35, startY - 55, outCubic], [57.8, startY - 55], [59.6, 480, smooth]]);
-  const zoom = lerp(CAM_TEAM.zoom, 210 / (24 * ROCKET.s), push);
+  // The finished job's floor shadow arrives with the fusion. The giant draws
+  // its own once it shares a window with the floor.
+  if (closing(t) > 0 && !cells.some(isCentre) && cells.some(([, row]) => row === 2)) {
+    ctx.save();
+    ctx.globalAlpha *= closing(t);
+    drawShadow(ctx, GIANT.x, FLOOR, GIANT.r, 0);
+    ctx.restore();
+  }
+  if (outer.length !== 1 || cells.length !== 1) return;
+  const [c, row] = outer[0];
+  if (reach[0] <= nearest(c, row)) return;
+  ctx.fillStyle = WUU.body;
+  ctx.beginPath();
+  ctx.arc(GIANT.x, GIANT.y, reach[0], 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// ---------------------------------------------------------------------------
+// Shot 6: one Wuu against the job
+
+// One expression track follows the original through every split.
+const HERO_EYES: [number, EyeKind][] = [
+  [31, "open"], [33.35, "wide"], [34.9, "open"], [35.15, "squeeze"], [36.75, "flat"], [37.25, "open"],
+  [37.72, "wide"], [37.97, "squeeze"], [38.6, "open"], [40.05, "happy"], [40.45, "squeeze"], [LAUNCH, "wide"], [41.75, "open"],
+];
+const HERO_BLINKS = [31.9, 34.1, 37.35];
+
+type Face = { yaw: number; pitch: number };
+const FORWARD: Face = { yaw: 0, pitch: 0.05 };
+const mixFace = (a: Face, b: Face, k: number): Face => ({ yaw: lerp(a.yaw, b.yaw, k), pitch: lerp(a.pitch, b.pitch, k) });
+type Aim = Face | ((t: number) => Face);
+
+/** Gaze track: [time, target], each reached with a quick saccade. */
+function gaze(t: number, track: [number, Aim][], duration = 0.2): Face {
+  const value = (a: Aim) => (typeof a === "function" ? a(t) : a);
+  let i = 0;
+  while (i + 1 < track.length && t >= track[i + 1][0]) i++;
+  const k = i === 0 ? 1 : smooth(seg(t, track[i][0], track[i][0] + duration));
+  return k >= 1 ? value(track[i][1]) : mixFace(value(track[i - 1][1]), value(track[i][1]), k);
+}
+
+function hero(t: number): Ball {
+  // Three hard puffs, each gaining less, then all the air goes out.
+  const r = keys(t, [
+    [35.2, R0], [35.45, 124, outBack], [35.7, 126], [35.95, 146, outBack], [36.2, 148], [36.45, 166, outBack], [36.75, 168], [37.2, R0, outElastic],
+  ]);
+  const strain = seg(r, R0, 168);
+  const pop = squash(t, SELECT, 0.12, 0.4), idea = squash(t, IDEA, 0.14, 0.3);
+  const b = stand(WUU, 960 + wobble(t, 3, 30) * 2.5 * strain, FLOOR, r, { lift: 0, sx: pop.sx * idea.sx, sy: pop.sy * idea.sy });
   return {
-    x: ROCKET.x,
-    y: ROCKET.y - rise(t) - 63 * ROCKET.s - (screenY - H / 2) / zoom,
-    zoom,
+    ...b, ...heroAim(t, b), tilt: wobble(t, 5, 24) * 1.5 * strain,
+    eyes: eyes(t, HERO_EYES, HERO_BLINKS),
+    sweat: seg(t, 36.8, 37.1) * (1 - seg(t, 37.4, 37.6)),
+    marks: seg(t, IDEA, 37.85) * (1 - seg(t, 37.9, SPLIT3)), markAngle: ICON_POSE.markAngle,
   };
 }
 
-/** The same passenger pose continues into the end card; there is no second landing. */
-export function launchPortrait(t: number): Ball {
+function heroAim(t: number, b: Ball): Face {
+  const rest = { yaw: -0.1, pitch: 0.05 };
+  const atCursor = (at: number) => {
+    const p = pointer(at)!;
+    return look(b.x, b.y, ...toScene(camera(at), p.x, p.y), 1.1);
+  };
+  if (t < 31.3) return rest;
+  if (t < 34.75) return mixFace(rest, atCursor(t), smooth(seg(t, 31.3, 31.7)));
+  // Up at the job, down while puffing, deflated, then up at the thought.
+  const from = atCursor(34.75);
+  return {
+    yaw: keys(t, [[34.75, from.yaw], [35.0, 0], [36.95, 0], [37.25, 0.3], [37.6, 0.3], [37.75, 0]]),
+    pitch: keys(t, [
+      [34.75, from.pitch], [35.0, 0.45], [35.1, 0.45], [35.3, 0.05], [36.75, 0.05], [36.95, -0.1], [37.2, -0.1],
+      [37.4, 0.35], [37.6, 0.35], [37.75, 0.05],
+    ]),
+  };
+}
+
+// The selection box sits a few pixels outside the body; the cursor holds its corner handle.
+const BOX_PAD = 6;
+
+function selection(t: number) {
   const cam = camera(t);
-  const [x, y] = toScreen(cam, ROCKET.x, ROCKET.y - rise(t) - 63 * ROCKET.s);
-  return { x, y, r: 24 * ROCKET.s * cam.zoom, skin: WUU, pitch: 0.2, eyes: { kind: "open", open: 1 } };
+  const k = stretch(t);
+  const [ax, ay] = toScreen(cam, 960 - R0 * k, FLOOR - 2 * R0 * k);
+  const [bx, by] = toScreen(cam, 960 + R0 * k, FLOOR);
+  return { ax: ax - BOX_PAD, ay: ay - BOX_PAD, bx: bx + BOX_PAD, by: by + BOX_PAD };
 }
 
-const mixCam = (a: Camera, b: Camera, e: number): Camera => ({ x: lerp(a.x, b.x, e), y: lerp(a.y, b.y, e), zoom: lerp(a.zoom, b.zoom, e) });
-
-// ---------------------------------------------------------------------------
-// Sky and ground
-
-function drawGround(ctx: Ctx, t: number, cam: Camera) {
-  ctx.save();
-  ctx.globalAlpha *= 1 - smooth(seg(t, 57.2, 58.4));
-  ctx.fillStyle = "#E9E9E3";
-  ctx.fillRect(cam.x - 3000, HORIZON, 6000, 3000);
-  ctx.restore();
-}
-
-function drawPad(ctx: Ctx, t: number) {
-  ctx.fillStyle = "#BFC6BD";
-  ctx.beginPath();
-  ctx.roundRect(PAD.x, PAD.y, PAD.w, PAD.h, 4);
-  ctx.fill();
-  LAMPS.forEach((at, i) => {
-    const on = seg(t, at, at + 0.1) * (1 - seg(t, 57.2, 57.6));
-    const x = PAD.x + PAD.w / 2 + (i - 1) * 58, y = PAD.y + 29;
-    ctx.fillStyle = mixColor("#92988F", i === 2 ? "#537E68" : SUN, on);
-    ctx.beginPath();
-    ctx.arc(x, y - 6, 8, 0, Math.PI * 2);
-    ctx.fill();
-  });
-}
-
-function drawPlan(ctx: Ctx, t: number) {
-  const land = seg(t, 31.7, BOARD_LAND);
-  const alpha = smooth(land) * (1 - smooth(seg(t, 41, WINDOWS_OPEN)));
+function drawSelection(ctx: Ctx, t: number) {
+  const appear = seg(t, SELECT, SELECT + 0.25);
+  const alpha = appear * (1 - seg(t, 34.7, 35.0));
   if (alpha <= 0) return;
+  const { ax, ay, bx, by } = selection(t);
+  const pop = lerp(0.9, 1, outBack(appear));
+  const cx = (ax + bx) / 2, cy = (ay + by) / 2;
+  const hw = ((bx - ax) / 2) * pop, hh = ((by - ay) / 2) * pop;
   ctx.save();
   ctx.globalAlpha *= alpha;
-  ctx.translate(BOARD.x, BOARD.y + 40 * (1 - smooth(land)));
-  drawBlueprint(ctx, 0, 0, BOARD.w, BOARD.h);
-  ctx.translate(BOARD.w / 2, BOARD.h / 2 + 60);
-  ctx.scale(1.12, 1.12);
-  for (const id of ["finL", "finR", "nozzle", "hull", "cabin", "nose"] as Piece[]) drawPiece(ctx, id, 0, { ghost: "#7E9387" });
+  ctx.strokeStyle = SAGE;
+  ctx.lineWidth = 2.5;
+  ctx.strokeRect(cx - hw, cy - hh, hw * 2, hh * 2);
+  ctx.fillStyle = "#FFFFFF";
+  for (const [x, y] of [[cx - hw, cy - hh], [cx + hw, cy - hh], [cx + hw, cy + hh], [cx - hw, cy + hh]]) {
+    ctx.beginPath();
+    ctx.rect(x - 7, y - 7, 14, 14);
+    ctx.fill();
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
 // ---------------------------------------------------------------------------
-// The rocket
+// The user's cursor, in screen space
 
-const ORDER: Piece[] = ["finL", "finR", "nozzle", "hull", "cabin", "nose"];
+interface Pointer { x: number; y: number; scale: number; press: number; rot: number }
+const HANDOFF = toScreen(HANDOFF_CAM, ...HANDOFF_CURSOR);
+const HANDOFF_SCALE = 1.9 * HANDOFF_CAM.zoom;
+const PARK: [number, number] = [1270, 330];
 
-function rise(t: number) {
-  return 650 * Math.max(0, t - LIFTOFF) ** 2;
+function travel(t: number, t0: number, t1: number, from: [number, number], to: [number, number], ease = inOut): [number, number] {
+  const e = ease(seg(t, t0, t1));
+  const bend = Math.sin(e * Math.PI) * Math.min(60, Math.hypot(to[0] - from[0], to[1] - from[1]) * 0.12);
+  return [lerp(from[0], to[0], e) + bend * 0.3, lerp(from[1], to[1], e) - bend];
 }
 
-function drawRocket(ctx: Ctx, t: number) {
-  const ghost = seg(t, 32.45, 32.9);
-  if (ghost <= 0) return;
-  const rumble = t > 55.6 && t < LIFTOFF + 0.4 ? wobble(t, 9, 40) * 3 : 0;
-  const y = ROCKET.y - rise(t);
-  const snap = Math.max(0, ...ORDER.map((id) => (t > RETURN[id] + RETURN_TIME ? 1 - seg(t, RETURN[id] + RETURN_TIME, RETURN[id] + RETURN_TIME + 0.3) : 0)));
-  ctx.save();
-  ctx.translate(ROCKET.x + rumble, y);
-  ctx.scale(ROCKET.s * (1 + snap * 0.03), ROCKET.s * (1 - snap * 0.02));
-  ctx.globalAlpha *= ghost * (1 - smooth(seg(t, PORTRAIT, 60)));
-  if (t > IGNITION) drawFlame(ctx, 0, 128, clamp(seg(t, IGNITION, IGNITION + 0.25)) * (1 + seg(t, LIFTOFF, 57.2) * 0.5), t);
-  for (const id of ORDER) {
-    const state = pieceState(id, t);
-    if (state === "away" || state === "flying") {
-      drawPiece(ctx, id, 0, { ghost: "rgba(126, 147, 135, 0.45)" });
-      continue;
+function pointer(t: number): Pointer | undefined {
+  const click = (at: number) => Math.max(0, 1 - Math.abs(t - at) / 0.09);
+  const at = (x: number, y: number, o: Partial<Pointer> = {}): Pointer => ({ x, y, scale: 1.9, press: 0, rot: 0, ...o });
+  const handle = (): [number, number] => { const box = selection(t); return [box.ax, box.ay]; };
+  if (t < 31.3) return at(...HANDOFF, { scale: HANDOFF_SCALE });
+  const body = toScreen(camera(t), 905, 955);
+  if (t < 32.2) return at(...travel(t, 31.3, 32.2, HANDOFF, body), { scale: lerp(HANDOFF_SCALE, 1.9, smooth(seg(t, 31.3, 32.2))) });
+  if (t < 32.45) return at(...body, { press: click(SELECT) });
+  if (t < GRAB) return at(...travel(t, 32.45, 32.95, body, handle()), { press: smooth(seg(t, 32.96, GRAB)) });
+  if (t < 34.75) return at(...handle(), { press: 1 - smooth(seg(t, STRETCHED, 34.7)) });
+  if (t < 35.3) {
+    const box = selection(34.75);
+    return at(...travel(t, 34.75, 35.3, [box.ax, box.ay], [200, -120], inCubic));
+  }
+  if (t < 55.2 || t > 57.5) return undefined;
+  if (t < 55.95) return at(...travel(t, 55.2, 55.95, [2010, 1130], PARK));
+  if (t < 56.85) {
+    const wiggle = t > 56.15 ? Math.sin((t - 56.15) * 10) * 10 * (1 - seg(t, 56.35, 56.75)) : 0;
+    return at(...PARK, { press: click(CLICK), rot: wiggle });
+  }
+  return at(...travel(t, 56.85, 57.5, PARK, [2050, 200], inCubic));
+}
+
+function drawPointer(ctx: Ctx, t: number) {
+  for (const at of [SELECT, CLICK]) {
+    const p = pointer(at)!;
+    drawRipple(ctx, p.x, p.y, seg(t, at, at + 0.4));
+  }
+  const p = pointer(t);
+  if (p) drawCursor(ctx, p.x, p.y, p);
+}
+
+// ---------------------------------------------------------------------------
+// Shot 7: splitting
+
+interface Blob { x: number; y: number; r: number }
+
+/**
+ * Marching-squares outline of soft circles. Blobs more than 3r apart come out
+ * as exact circles, and every piece is clockwise and filled once, so shared
+ * cell edges never show a seam.
+ */
+function blobPath(blobs: Blob[], step = 3): Path2D {
+  const field = (x: number, y: number) => {
+    let v = -1;
+    for (const b of blobs) {
+      const d2 = (x - b.x) ** 2 + (y - b.y) ** 2;
+      const q = Math.sqrt(d2) / (3 * b.r);
+      if (q < 1) v += Math.min(50, (b.r * b.r) / d2) * (1 - smooth(seg(q, 0.6, 1)));
     }
-    const build = state === "home" ? 1 : id === "nozzle" ? soloBuild(t) : 0;
-    drawPiece(ctx, id, build, { porthole: id === "cabin" && t < PORTRAIT ? (c) => drawPassenger(c, t) : undefined });
-  }
-  ctx.restore();
-}
-
-type PieceState = "rocket" | "away" | "flying" | "home";
-function pieceState(id: Piece, t: number): PieceState {
-  const out = HAND_OUT + TEAM.findIndex((m) => m.piece === id) * 0.1;
-  if (t < out) return "rocket";
-  if (t < RETURN[id]) return "away";
-  if (t < RETURN[id] + RETURN_TIME) return "flying";
-  return "home";
-}
-
-/** Wuu's face in the porthole, after hopping aboard. */
-function drawPassenger(ctx: Ctx, t: number) {
-  if (t < BOARD_ROCKET + 0.6) return;
-  drawBall(ctx, {
-    x: 0, y: -63, r: 24, skin: WUU,
-    eyes: eyes(t, [[0, "open"], [IGNITION, "squeeze"], [LIFTOFF + 0.5, "happy"], [58.3, "open"]], [55.3]), pitch: 0.2,
-  });
-}
-
-function drawSmoke(ctx: Ctx, t: number, back: boolean) {
-  const k = seg(t, IGNITION, IGNITION + 2.2);
-  if (k <= 0) return;
-  for (let i = 0; i < 7; i++) {
-    const side = i % 2 ? 1 : -1;
-    if ((i % 3 === 0) !== back) continue;
-    const p = clamp(k * 1.6 - i * 0.07);
-    const x = ROCKET.x + side * (60 + 260 * outCubic(p) * (0.5 + (i % 4) * 0.2));
-    const y = PAD.y + 10 - 40 * p - (i % 3) * 18;
-    drawPuff(ctx, x, y, (40 + i * 7) * (0.5 + p), 0.65 * (1 - seg(k, 0.55, 1)), back ? "#DEE3DB" : "#FAFBF7");
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Wuu
-
-const EXPRESSION: [number, EyeKind][] = [
-  [0, "open"], [31.9, "wide"], [32.5, "open"], [34.9, "flat"], [35.7, "sleepy"], [37.3, "wide"], [IDEA, "wide"],
-  [HEADSET_LAND - 0.02, "squeeze"], [HEADSET_LAND + 0.25, "happy"], [40.6, "open"], [JUMP_IN + 0.5, "content"],
-  [44.2, "open"], [STUCK + 0.3, "wide"], [CATCH + 0.1, "happy"], [47.7, "open"], [50.0, "content"], [52.2, "happy"],
-];
-const BLINKS = [32.9, 33.9, 34.7, 40.4, 43.6, 45.2, 48.4, 49.5, 53.0];
-
-interface Pose { x: number; y: number; floor: number; ball: Ball }
-
-function wuuPose(t: number): Pose {
-  const ry = extent(WUU).ry;
-  // Hop to the rocket and climb aboard.
-  if (t > BOARD_ROCKET) {
-    const p = seg(t, BOARD_ROCKET, BOARD_ROCKET + 0.6);
-    if (p >= 1) return { x: -999, y: -999, floor: CENTER.floor, ball: { x: -999, y: -999, r: 0, alpha: 0 } };
-    const [px, py] = [ROCKET.x, ROCKET.y - 63 * ROCKET.s];
-    const [x, y] = arc(inOut(p), CENTER.x, CENTER.floor - WUU_R * ry, px, py, 260);
-    const r = lerp(WUU_R, 24 * ROCKET.s, inCubic(p));
-    return { x, y, floor: CENTER.floor, ball: { x, y, r, skin: WUU, gear: "headset", ground: p < 0.3 ? CENTER.floor : undefined, sx: 0.92, sy: 1.1 } };
-  }
-  if (t < 32.95) {
-    const h = hop(t, 32.0, 0.5);
-    const b = stand(WUU, HOME.x, HOME.floor, WUU_R, h, 70);
-    return { x: HOME.x, y: b.y, floor: HOME.floor, ball: b };
-  }
-  if (t < 33.5) {
-    const p = seg(t, 32.95, 33.5);
-    const h = hop(t, 32.95, 0.55);
-    const x = lerp(HOME.x, WORK.x, inOut(p)), floor = lerp(HOME.floor, WORK.floor, inOut(p));
-    const b = stand(WUU, x, floor, WUU_R, h, 110);
-    return { x, y: b.y, floor, ball: b };
-  }
-  if (t < 39.3) {
-    // Hammering hops that slow down, then slumping into a nap.
-    let h: Hop = hops(t, HAMMER, 0.45);
-    const sit = smooth(seg(t, 36.9, 37.2)) * (1 - smooth(seg(t, 37.3, 37.5)));
-    const breathe = sit > 0 ? Math.sin(t * 3) * 0.02 : 0;
-    const pop = squash(t, IDEA, 0.24, 0.5);
-    const land = squash(t, HEADSET_LAND, 0.2, 0.45);
-    h = { lift: h.lift, sx: h.sx * (1 + sit * 0.1) * pop.sx * land.sx, sy: h.sy * (1 - sit * 0.13 + breathe) * pop.sy * land.sy };
-    const b = stand(WUU, WORK.x, WORK.floor, WUU_R, h, 80);
-    return { x: WORK.x, y: b.y, floor: WORK.floor, ball: { ...b, tilt: -sit * 6 } };
-  }
-  if (t < 39.95) {
-    const p = seg(t, 39.3, 39.95);
-    const h = hop(t, 39.3, 0.65);
-    const x = lerp(WORK.x, CENTER.x, inOut(p)), floor = lerp(WORK.floor, CENTER.floor, inOut(p));
-    const b = stand(WUU, x, floor, WUU_R, h, 150);
-    return { x, y: b.y, floor, ball: b };
-  }
-  // Coordinating: little nods toward whoever it is talking to.
-  const nods = [...LOOKS.map(([at]) => at), 52.3, 52.75];
-  const h = hops(t, nods, 0.34);
-  const b = stand(WUU, CENTER.x, CENTER.floor, WUU_R, { lift: h.lift * 0.4, sx: h.sx, sy: h.sy }, 60);
-  return { x: CENTER.x, y: b.y, floor: CENTER.floor, ball: b };
-}
-
-// Whom Wuu is attending to during the team build: [time, session index].
-const LOOKS: [number, number][] = [
-  [HAND_OUT, 0], [HAND_OUT + 0.2, 3], [44.3, 1], [44.7, 4], [45.1, 2], [45.45, 5],
-  [STUCK + 0.3, 1], [46.2, 0], [CATCH, 1], [47.7, 3], [48.1, 5], [48.5, 2], [48.85, 4], [49.3, 3], [49.75, 1],
-];
-
-function attending(t: number) {
-  let s = -1;
-  for (const [at, i] of LOOKS) if (t >= at) s = i;
-  return s;
-}
-
-function drawWuu(ctx: Ctx, t: number) {
-  const pose = wuuPose(t);
-  if (pose.ball.alpha === 0) return;
-  let face = { yaw: -0.25, pitch: 0.05 };
-  if (t < 31.9) face = { yaw: -0.1, pitch: 0.05 };
-  else if (t < 32.5) face = look(pose.x, pose.y, BOARD.x + BOARD.w / 2, BOARD.y + 200, 1.2);
-  else if (t < 33.5) face = look(pose.x, pose.y, ROCKET.x, ROCKET.y - 100, 1.2);
-  else if (t < 36.9) face = look(pose.x, pose.y, ROCKET.x + 40, PAD.y - 30, 1.4);
-  else if (t < 37.3) face = { yaw: -0.2, pitch: -0.35 };
-  else if (t < IDEA) face = { yaw: keys(t, [[37.3, -0.2], [37.45, -0.75], [37.62, -0.75], [37.72, 0.7], [37.85, 0.7], [37.97, 0]]), pitch: 0.05 };
-  else if (t < 40.6) face = { yaw: 0, pitch: t < HEADSET_LAND ? 0.4 * seg(t, 38.35, 38.6) * (1 - seg(t, 38.9, 39.0)) : 0.05 };
-  else if (t < HAND_OUT) face = { yaw: 0, pitch: 0.05 };
-  else if (t < 52.2) {
-    const s = attending(t);
-    const [cx, cy] = slotCenter(s);
-    const [wx, wy] = toScreen(CAM_TEAM, pose.x, pose.y);
-    face = look(wx, wy, cx, cy, 1.25);
-  } else face = { yaw: 0, pitch: 0.1 };
-  const marks = Math.max(
-    outCubic(seg(t, IDEA, IDEA + 0.3)) * (1 - seg(t, 38.5, 38.8)),
-    seg(t, 39.55, 39.8) * (1 - seg(t, 40.4, 40.7)),
-    seg(t, 52.2, 52.5),
-  );
-  const sweat = seg(t, 34.6, 34.9) * (1 - seg(t, IDEA, IDEA + 0.2));
-  const gear = t > 38.35 ? "headset" : undefined;
-  const gearY = t < HEADSET_LAND ? -700 * (1 - outCubic(seg(t, 38.35, HEADSET_LAND))) ** 2 : 0;
-  drawBall(ctx, { ...pose.ball, ...face, eyes: eyes(t, EXPRESSION, BLINKS), marks, sweat, gear, gearY });
-}
-
-// ---------------------------------------------------------------------------
-// Friends: peeking, gathering, and waiting for the launch
-
-/** Codex peeks over the top of the blueprint, so it is drawn behind the board. */
-function drawCodexPeek(ctx: Ctx, t: number) {
-  if (t < TEAM[1].peek.at || t >= ARRIVE[1]) return;
-  drawMember(ctx, 1, t, ...memberGround(1, t));
-}
-
-/** Where a member stands on the field (x, floor) before the sessions open, or after they close. */
-function memberGround(i: number, t: number): [number, number] {
-  const m = TEAM[i];
-  if (t >= WINDOWS_CLOSE) return [m.lineup.x, m.lineup.floor];
-  if (t < ARRIVE[i]) {
-    const e = outBack(seg(t, m.peek.at, m.peek.at + 0.45));
-    return [lerp(m.peek.from[0], m.peek.to[0], e), lerp(m.peek.from[1], m.peek.to[1], e)];
-  }
-  return [m.lineup.x, m.lineup.floor];
-}
-
-function memberFace(t: number, x: number, y: number) {
-  const pose = wuuPose(t);
-  if (t > IGNITION - 0.8) return { yaw: (ROCKET.x - x) / 1400, pitch: 0.45 };
-  if (t > 40.8 && t < JUMP_IN) return { yaw: 0, pitch: 0.05 };
-  return look(x, y, pose.x, pose.y, 1.3);
-}
-
-function memberEyes(i: number, t: number): EyeKind {
-  if (t > IGNITION && t < IGNITION + 0.5) return "squeeze";
-  if (t > IGNITION + 0.5) return "happy";
-  if (t > IDEA && t < IDEA + 0.5) return "wide";
-  if (t >= ARRIVE[i] + ARRIVE_TIME && t < ARRIVE[i] + ARRIVE_TIME + 0.5) return "happy";
-  return i === 1 && t < ARRIVE[i] ? "wide" : "open";
-}
-
-function drawMember(ctx: Ctx, i: number, t: number, x: number, floor: number, extra: Partial<Ball> = {}) {
-  const m = TEAM[i];
-  const h = hop(t, LIFTOFF + 0.15 + i * 0.07, 0.6);
-  const b = agent(m.agent, x, floor, m.r, h, 24);
-  const face = memberFace(t, b.x, b.y);
-  drawBall(ctx, {
-    ...b, ...face, sway: Math.sin(t * 2 + i) * 0.08,
-    eyes: eyes(t, [[0, memberEyes(i, t)]], [37.9 + i * 0.13, 41.2 + i * 0.1, 55.0 + i * 0.1]), ...extra,
-  });
-}
-
-function drawTeamOnGround(ctx: Ctx, t: number) {
-  for (let i = 0; i < TEAM.length; i++) {
-    if (i === 1 && t < ARRIVE[i]) continue;
-    const m = TEAM[i];
-    // Before the sessions open: peeking, then hopping into the lineup.
-    if (t < JUMP_IN + i * 0.1) {
-      if (t < m.peek.at && t < ARRIVE[i]) continue;
-      if (t < ARRIVE[i]) {
-        const [x, floor] = memberGround(i, t);
-        drawMember(ctx, i, t, x, floor);
+    return v;
+  };
+  const x0 = Math.floor(Math.min(...blobs.map((b) => b.x - 3 * b.r)) / step) * step;
+  const y0 = Math.floor(Math.min(...blobs.map((b) => b.y - 3 * b.r)) / step) * step;
+  const nx = Math.ceil((Math.max(...blobs.map((b) => b.x + 3 * b.r)) - x0) / step);
+  const ny = Math.ceil((Math.max(...blobs.map((b) => b.y + 3 * b.r)) - y0) / step);
+  const v = new Float64Array((nx + 1) * (ny + 1));
+  for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) v[j * (nx + 1) + i] = field(x0 + i * step, y0 + j * step);
+  const path = new Path2D();
+  for (let j = 0; j < ny; j++) {
+    let run = -1;
+    for (let i = 0; i <= nx; i++) {
+      const at = j * (nx + 1) + i;
+      // The extra column past the grid closes any open run.
+      const corners = i < nx ? [v[at], v[at + 1], v[at + nx + 2], v[at + nx + 1]] : [-1, -1, -1, -1];
+      if (corners.every((value) => value >= 0)) {
+        if (run < 0) run = i;
         continue;
       }
-      const p = seg(t, ARRIVE[i], ARRIVE[i] + ARRIVE_TIME);
-      const [x0, f0] = [m.peek.at < 90 ? m.peek.to[0] : m.peek.from[0], m.peek.at < 90 ? m.peek.to[1] : m.peek.from[1]];
-      if (p < 1) {
-        const [x, f] = arc(inOut(p), x0, f0, m.lineup.x, m.lineup.floor, 180);
-        drawShadow(ctx, x, lerp(f0, m.lineup.floor, inOut(p)), m.r * extent(m.agent.skin).rx, Math.sin(p * Math.PI));
-        drawMember(ctx, i, t, x, f, { ground: undefined, sx: 0.94, sy: 1.08 });
-      } else drawMember(ctx, i, t, m.lineup.x, m.lineup.floor);
-      continue;
-    }
-    // After the sessions close: back on the field for the launch.
-    if (t > WINDOWS_CLOSE + i * 0.06) {
-      const p = seg(t, WINDOWS_CLOSE + i * 0.06, WINDOWS_CLOSE + i * 0.06 + 0.6);
-      if (p < 1) continue; // still flying; drawn by the session layer in screen space
-      drawMember(ctx, i, t, m.lineup.x, m.lineup.floor);
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Sessions: one window per friend, all running at once
-
-function slotCenter(i: number): [number, number] {
-  if (i < 0) return [W / 2, H / 2];
-  return [SLOT[i].x + SW / 2, SLOT[i].y + SH / 2];
-}
-
-function windowScale(i: number, t: number) {
-  const open = outBack(seg(t, WINDOWS_OPEN + i * 0.07, WINDOWS_OPEN + i * 0.07 + 0.35));
-  const close = inCubic(seg(t, WINDOWS_CLOSE + i * 0.06 + 0.15, WINDOWS_CLOSE + i * 0.06 + 0.45));
-  return open * (1 - close);
-}
-
-/** Line anchor on each window's inner edge, and on Wuu's headset. */
-function lineEnds(i: number, t: number): [[number, number], [number, number]] {
-  const s = SLOT[i];
-  const end: [number, number] = [i < 3 ? s.x + SW : s.x, s.y + SH / 2];
-  const pose = wuuPose(t);
-  const [wx, wy] = toScreen(CAM_TEAM, pose.x, pose.y - WUU_R * 0.3);
-  return [[wx + (i < 3 ? -30 : 30), wy], end];
-}
-
-function creatureScreen(i: number): [number, number] {
-  const s = SLOT[i];
-  return [s.x + SLOT_CREATURE.x, s.y + TITLE_BAR + SLOT_CREATURE.floor];
-}
-
-function drawSessions(ctx: Ctx, t: number, cam: Camera) {
-  if (t < WINDOWS_OPEN || t > WINDOWS_CLOSE + 1.2) return;
-  // Connection lines from Wuu to every session, with tasks and pings along them.
-  for (let i = 0; i < TEAM.length; i++) {
-    const draw = inOut(seg(t, LINES + i * 0.05, LINES + i * 0.05 + 0.4)) * (1 - seg(t, WINDOWS_CLOSE, WINDOWS_CLOSE + 0.3));
-    if (draw <= 0) continue;
-    const [[x0, y0], [x1, y1]] = lineEnds(i, t);
-    const stuck = i === 1 && t > STUCK && t < CATCH;
-    ctx.save();
-    ctx.strokeStyle = stuck ? CORAL : "rgba(70, 80, 70, 0.2)";
-    ctx.lineWidth = stuck ? 3 : 2;
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.lineTo(lerp(x0, x1, draw), lerp(y0, y1, draw));
-    ctx.stroke();
-    ctx.restore();
-    // Pings travel outward whenever Wuu checks in on a session.
-    for (const [at, s] of LOOKS) {
-      if (s !== i) continue;
-      const p = seg(t, at, at + 0.45);
-      if (p > 0 && p < 1) {
-        ctx.fillStyle = TEAM[i].agent.skin.body;
-        ctx.beginPath();
-        ctx.arc(lerp(x0, x1, p), lerp(y0, y1, p), 7, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = "#FFFFFF";
-        ctx.lineWidth = 3;
-        ctx.stroke();
+      // Fully covered cells merge into one rectangle per row.
+      if (run >= 0) {
+        path.rect(x0 + run * step, y0 + j * step, (i - run) * step, step);
+        run = -1;
       }
+      if (corners.every((value) => value < 0)) continue;
+      const x = x0 + i * step, y = y0 + j * step;
+      const points: [number, number][] = [[x, y], [x + step, y], [x + step, y + step], [x, y + step]];
+      const outline: [number, number][] = [];
+      for (let k = 0; k < 4; k++) {
+        const a = corners[k], b = corners[(k + 1) % 4];
+        const [ax, ay] = points[k], [bx, by] = points[(k + 1) % 4];
+        if (a >= 0) outline.push([ax, ay]);
+        if (a >= 0 !== b >= 0) {
+          const s = a / (a - b);
+          outline.push([ax + (bx - ax) * s, ay + (by - ay) * s]);
+        }
+      }
+      path.moveTo(...outline[0]);
+      for (const point of outline.slice(1)) path.lineTo(...point);
+      path.closePath();
     }
   }
-  for (let i = 0; i < TEAM.length; i++) drawSession(ctx, i, t);
-  drawHandOff(ctx, t, cam);
-  drawOrbToss(ctx, t);
-  drawJumps(ctx, t, cam);
+  return path;
 }
 
-function drawSession(ctx: Ctx, i: number, t: number) {
-  const scale = windowScale(i, t);
-  if (scale <= 0) return;
-  const m = TEAM[i];
-  const s = SLOT[i];
-  const stuck = i === 1 && t > STUCK && t < CATCH;
-  // These sessions now share one host; identity lives in the cast and engine marks.
-  const theme = THEMES.wuu;
-  drawWindow(ctx, { x: s.x, y: s.y, w: SW, h: SH, theme, engine: m.agent.engine, scale }, (c, w, h) => {
-    const piece = m.piece;
-    const arrived = t > HAND_OUT + i * 0.1 + 0.6;
-    const building = arrived ? progress(piece, t) : 0;
-    // The piece sits on a small blueprint card while it is being made.
-    c.fillStyle = "rgba(126,147,135,0.07)";
-    c.beginPath();
-    c.roundRect(SLOT_WORK.x - 110, 16, 220, h - 32, 18);
-    c.fill();
-    if (arrived && t < RETURN[piece]) {
-      c.save();
-      c.translate(SLOT_WORK.x, SLOT_WORK.y);
-      c.scale(SLOT_WORK.s, SLOT_WORK.s);
-      const [px, py] = pieceCenter(piece);
-      c.translate(-px, -py);
-      drawPiece(c, piece, building, { ghost: "#7E9387" });
-      c.restore();
-    }
-    // Progress bar.
-    c.fillStyle = theme.text;
-    c.beginPath();
-    c.roundRect(200, h - 22, 230, 9, 4.5);
-    c.fill();
-    c.fillStyle = stuck ? CORAL : m.agent.skin.body;
-    c.beginPath();
-    c.roundRect(200, h - 22, Math.max(9, 230 * building), 9, 4.5);
-    c.fill();
-    drawCheck(c, w - 40, 26, 17, seg(t, DONE[piece], DONE[piece] + 0.5));
-    // The worker.
-    if (t >= JUMP_IN + i * 0.1 + 0.55 && t < WINDOWS_CLOSE + i * 0.06) drawWorker(c, i, t);
-  });
-}
-
-function drawWorker(ctx: Ctx, i: number, t: number) {
-  const m = TEAM[i];
-  const piece = m.piece;
-  const working = t > HAND_OUT + 0.6 && t < DONE[piece];
-  const stuck = i === 1 && t > STUCK && t < CATCH;
-  const done = t >= DONE[piece];
-  const land = squash(t, JUMP_IN + i * 0.1 + 0.55, 0.25, 0.45);
-  let h: Hop = { lift: 0, sx: land.sx, sy: land.sy };
-  if (working && !stuck) {
-    const beat = Math.sin(t * 5 + i * 1.3);
-    h = { lift: 0, sx: 1 - beat * 0.012, sy: 1 + beat * 0.015 };
-  }
-  if (done) h = hop(t, DONE[piece] + 0.05, 0.55);
-  if (i === 0 && t > TOSS - 0.3 && t < TOSS + 0.3) h = hop(t, TOSS - 0.3, 0.6);
-  const b = agent(m.agent, SLOT_CREATURE.x, SLOT_CREATURE.floor, SLOT_CREATURE.r, h, 36);
-  let kind: EyeKind = done ? "happy" : "open";
-  if (stuck) kind = "flat";
-  if (i === 1 && t >= CATCH && t < CATCH + 0.5) kind = "wide";
-  if (done && t > DONE[piece] + 0.6 && t < 52.2) kind = "content";
-  const face = working ? { yaw: 0.55, pitch: -0.12 } : { yaw: 0.1, pitch: 0.1 };
-  if (i === 0 && t > 46.2 && t < CATCH) Object.assign(face, { yaw: 0.2, pitch: -0.3 });
-  drawBall(ctx, { ...b, ...face, eyes: { kind, open: 1 }, sway: Math.sin(t * 2 + i) * 0.08 });
-  if (stuck) {
-    drawBubble(ctx, SLOT_CREATURE.x + 56, SLOT_CREATURE.floor - SLOT_CREATURE.r * 2 - 10, outBack(seg(t, STUCK + 0.2, STUCK + 0.45)), t, "#FFFFFF", INK);
-  }
-}
-
-/** Pieces travel along the lines: out as tasks, home as finished parts. */
-function drawHandOff(ctx: Ctx, t: number, cam: Camera) {
-  TEAM.forEach((m, i) => {
-    const id = m.piece;
-    const [rcx, rcy] = pieceCenter(id);
-    const [rx, ry] = toScreen(cam, ROCKET.x + rcx * ROCKET.s, ROCKET.y + rcy * ROCKET.s);
-    const rs = ROCKET.s * cam.zoom;
-    const [wx, wy] = [SLOT[i].x + SLOT_WORK.x, SLOT[i].y + TITLE_BAR + SLOT_WORK.y];
-    const out = seg(t, HAND_OUT + i * 0.1, HAND_OUT + i * 0.1 + 0.6);
-    const back = seg(t, RETURN[id], RETURN[id] + RETURN_TIME);
-    let p: number, build: number;
-    if (out > 0 && out < 1) [p, build] = [inOut(out), progress(id, t)];
-    else if (back > 0 && back < 1) [p, build] = [1 - inOut(back), 1];
-    else return;
-    const [x, y] = arc(p, rx, ry, wx, wy, 120);
-    const s = lerp(rs, SLOT_WORK.s, p);
+function drawBlobs(ctx: Ctx, blobs: Blob[], faces: Ball[], shadow?: Blob[]) {
+  if (shadow) {
+    // The same field squashed onto the floor, so the contact shadow splits too.
     ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(Math.sin(p * Math.PI) * (i < 3 ? -0.5 : 0.5));
-    ctx.scale(s, s);
-    ctx.translate(-rcx, -rcy);
-    drawPiece(ctx, id, build, { ghost: "#7E9387" });
+    ctx.translate(0, FLOOR);
+    ctx.scale(1, 0.16 / 0.88);
+    ctx.fillStyle = "rgba(35, 38, 37, 0.1)";
+    ctx.fill(blobPath(shadow.map((b) => ({ x: b.x, y: 0, r: b.r * 0.88 }))));
     ctx.restore();
+  }
+  ctx.fillStyle = WUU.body;
+  ctx.fill(blobPath(blobs));
+  for (const face of faces) drawBall(ctx, { ...face, skin: WUU, bodyAlpha: 0 });
+}
+
+/** Newborn eyes: barely open. */
+const SLIT = { kind: "open" as const, open: 0.08 };
+
+function split3(t: number) {
+  const u = inOut(seg(t, SPLIT3, SPLIT3_END));
+  const d = 240 * u;
+  const y = lerp(FLOOR - R0, FLOOR - r1, u);
+  const blobs = [-1, 0, 1].map((side) => ({ x: 960 + side * d, y, r: r1 }));
+  const lids = eyes(t, HERO_EYES);
+  const reveal = smooth(seg(d, 2.9 * r1, 3.4 * r1));
+  const faces: Ball[] = [
+    { x: 960, y, r: lerp(R0, r1, u), ...FORWARD, eyes: t < 38.6 ? lids : { ...lids, open: Math.min(lids.open, SLIT.open) } },
+    ...[-1, 1].map((side) => ({ x: 960 + side * d, y, r: r1, ...FORWARD, eyes: SLIT, alpha: reveal })),
+  ];
+  return { blobs, faces };
+}
+
+function trio(t: number): Ball[] {
+  const r = lerp(r1, R1, inOut(seg(t, 39.6, 40.1)));
+  const h = hop(t, SPREAD, 0.55);
+  const slide = smooth(seg(seg(t, SPREAD, SPREAD + 0.55), 0.28, 0.8));
+  const snap = squash(t, SPLIT3_END, 0.12, 0.4);
+  const wake = lerp(SLIT.open, 1, smooth(seg(t, 39.35, 39.65)));
+  const lids = eyes(t, HERO_EYES);
+  return [-1, 0, 1].map((side, c) => {
+    const x = side === 0 ? 960 : lerp(960 + side * 240, COLS[c], slide);
+    const b = stand(WUU, x, FLOOR, r, side === 0 ? { lift: 0, ...snap } : h, 110);
+    // Three of me? Each glances across the new gutters at the others.
+    const yaw = side === 0
+      ? keys(t, [[39.55, 0], [39.7, -0.5], [39.85, -0.5], [39.98, 0.5], [40.1, 0.5], [40.3, 0]])
+      : keys(t, [[39.5, 0], [39.65, -side * 0.55], [40.1, -side * 0.55], [40.3, 0]]);
+    return { ...b, yaw, pitch: FORWARD.pitch, eyes: { ...lids, open: lids.kind === "open" ? Math.min(lids.open, wake) : lids.open } };
   });
 }
 
-function drawOrbToss(ctx: Ctx, t: number) {
-  const p = seg(t, TOSS, CATCH);
-  if (p <= 0 || p >= 1) return;
-  const [x0, y0] = creatureScreen(0);
-  const [x1, y1] = creatureScreen(1);
-  const e = inOut(p);
-  // A friendly lob that arcs out between the windows and back.
-  const cx = 640, cy = (y0 + y1) / 2 - 60;
-  const sx = y0 - SLOT_CREATURE.r * 1.3, ex = y1 - SLOT_CREATURE.r * 1.1;
-  const x = (1 - e) * (1 - e) * (x0 + 40) + 2 * (1 - e) * e * cx + e * e * (x1 + 30);
-  const y = (1 - e) * (1 - e) * sx + 2 * (1 - e) * e * cy + e * e * ex;
-  ctx.fillStyle = MINT;
-  ctx.beginPath();
-  ctx.arc(x, y, 16, 0, Math.PI * 2);
-  ctx.fill();
+/** Height of the bead that ends up in `row` while a column splits and launches. */
+function beadY(t: number, row: number) {
+  const u = inOut(seg(t, SPLIT9, LAUNCH));
+  const k = 2 - row;
+  const rest = lerp(FLOOR - R1, FLOOR - r2, u) - 150 * k * u;
+  if (k === 0 || t <= LAUNCH) return rest;
+  return keys(t, [[LAUNCH, rest], [TEAR_ROWS, k === 1 ? 510 : 150, outCubic], [LAND, FLOORS[row] - r2, inCubic]]);
 }
 
-/** Friends hop from the field into their sessions, and back out for the launch. */
-function drawJumps(ctx: Ctx, t: number, cam: Camera) {
-  TEAM.forEach((m, i) => {
-    const [gx, gfloor] = toScreen(cam, m.lineup.x, m.lineup.floor);
-    const [sx, sfloor] = creatureScreen(i);
-    const rIn = SLOT_CREATURE.r, rOut = m.r * cam.zoom;
-    const inP = seg(t, JUMP_IN + i * 0.1, JUMP_IN + i * 0.1 + 0.55);
-    const outP = seg(t, WINDOWS_CLOSE + i * 0.06, WINDOWS_CLOSE + i * 0.06 + 0.6);
-    let p: number;
-    if (inP > 0 && inP < 1) p = inOut(inP);
-    else if (outP > 0 && outP < 1) p = 1 - inOut(outP);
-    else return;
-    const [x, floor] = arc(p, gx, gfloor, sx, sfloor, 200);
-    const r = lerp(rOut, rIn, p);
-    const b = agent(m.agent, x, floor, r);
-    drawBall(ctx, { ...b, ground: undefined, eyes: { kind: "happy", open: 1 }, sx: 0.94, sy: 1.08, tilt: Math.sin(p * Math.PI) * (i < 3 ? -14 : 14) });
-  });
+function column(t: number, c: number) {
+  const u = inOut(seg(t, SPLIT9, LAUNCH));
+  const x = COLS[c];
+  const blobs = [2, 1, 0].map((row) => ({ x, y: beadY(t, row), r: r2 }));
+  const faces: Ball[] = [
+    { x, y: beadY(t, 1), r: lerp(R1, r2, u), ...FORWARD, eyes: eyes(t, HERO_EYES) },
+    ...[0, 2].map((row) => ({ x, y: beadY(t, row), r: r2, ...FORWARD, eyes: SLIT, alpha: smooth(seg(u, 0.9, 1)) })),
+  ];
+  return { blobs, faces };
 }
 
 // ---------------------------------------------------------------------------
-// Time
+// Shots 7–9: the coordinator and its crew
 
-function drawTimeClock(ctx: Ctx, t: number) {
-  const pop = outBack(seg(t, 32.9, 33.2)) * (1 - inCubic(seg(t, 53.4, 53.7)));
-  if (pop <= 0) return;
-  // Hours race by during the solo build, and barely move with the team.
-  const hours = keys(t, [[33.2, 9], [36.6, 23, linear], [IDEA + 0.1, 23], [IDEA + 0.9, 33], [44.2, 33], [52.0, 34.3, linear]]);
-  ctx.save();
-  ctx.translate(960, 116);
-  ctx.scale(pop, pop);
-  drawClock(ctx, 0, 0, 52, hours);
-  ctx.restore();
+/** Where the coordinator's face points to watch a window, kept clear of its own window's edges. */
+const cellAim = (c: number, row: number, k = 1): Face => ({ yaw: (c - 1) * 0.34 * k, pitch: [0.12, 0.02, -0.06][row] * k });
+
+/** Watching the evolution run clockwise around its window. */
+function ring(t: number): Face {
+  const at = clamp((t - EVOLVE - 0.1) / 0.08, 0, 7);
+  const a = Math.floor(at), b = Math.min(7, a + 1);
+  return mixFace(cellAim(TEAM[a].c, TEAM[a].row, 1.5), cellAim(TEAM[b].c, TEAM[b].row, 1.5), at - a);
+}
+
+const COORD_GAZE: [number, Aim][] = [
+  [0, FORWARD], [EVOLVE, ring], [42.75, FORWARD],
+  [43.7, cellAim(0, 0)], [44.3, cellAim(2, 1)], [44.9, cellAim(1, 2)], [45.4, cellAim(0, 0)], [45.9, cellAim(2, 0)],
+  [46.45, cellAim(1, 0)], [46.95, cellAim(0, 0)],
+  [47.4, (t) => mixFace(cellAim(0, 0), cellAim(1, 0), smooth(seg(t, 47.45, HELP + HELP_TIME)))],
+  [48.3, cellAim(2, 2)], [48.8, cellAim(0, 2)], [49.3, cellAim(1, 0)], [49.75, FORWARD],
+  // After the fusion: watching the crew fall left, hop right, and line up.
+  [52.3, { yaw: -0.35, pitch: -0.3 }], [52.9, { yaw: 0.35, pitch: -0.3 }], [53.4, { yaw: 0, pitch: -0.15 }],
+  [55.8, look(GIANT.x, GIANT.y, ...PARK)],
+];
+const COORD_EYES: [number, EyeKind][] = [
+  ...HERO_EYES, [PUSH, "squeeze"], [PUSH + 0.65, "open"], [49.9, "happy"], [51.3, "open"], [54.1, "happy"], [55.6, "open"],
+];
+const COORD_BLINKS = [44.3, 45.4, 46.45, 47.4, 48.8, 52.2, 53.4, 61.8];
+
+/** The original: a bead, then the face that fills the middle window, then the finished job. */
+export function giant(t: number): Ball {
+  const small = lerp(r2, R2, inOut(seg(t, 41.7, 42.1)));
+  const push = inOut(seg(t, PUSH, PUSH + 0.7));
+  const r = lerp(small, GIANT.r, push);
+  const y = t < LAND ? beadY(t, 1) : lerp(FLOORS[1] - small, GIANT.y, push);
+  const face = gaze(t, COORD_GAZE, 0.18);
+  const pose = outBack(seg(t, CLICK, CLICK + 0.5));
+  const land = squash(t, LAND, 0.2, 0.45), click = squash(t, CLICK, 0.06, 0.5);
+  // The shelf shadow fades as the body outgrows it; the floor shadow returns with the fusion.
+  const onShelf = t < PUSH + 0.2;
+  return {
+    x: GIANT.x, y, r, sx: land.sx * click.sx, sy: land.sy * click.sy, skin: WUU,
+    ground: onShelf ? FLOORS[1] : FLOOR,
+    shadow: onShelf ? rowOpen(t) * (1 - smooth(seg(t, PUSH, PUSH + 0.2))) : closing(t),
+    yaw: lerp(face.yaw, ICON_POSE.yaw, pose), pitch: lerp(face.pitch, ICON_POSE.pitch, pose), roll: ICON_POSE.roll * pose,
+    eyes: eyes(t, COORD_EYES, COORD_BLINKS),
+    marks: outCubic(seg(t, CLICK + 0.05, CLICK + 0.6)), markAngle: ICON_POSE.markAngle,
+  };
+}
+
+/** WUU's charcoal shifts into the harness colours while the eyes are shut; the shape swaps mid-blink. */
+function skinAt(w: Worker, e: number, t: number): Skin {
+  const k = smooth(seg(t, e + 0.04, e + 0.2));
+  if (k <= 0) return WUU;
+  if (k >= 1) return w.agent.skin;
+  const to = w.agent.skin;
+  return {
+    body: mixColor(WUU.body, to.body, k), lo: mixColor(WUU.lo, to.lo, k), eye: mixColor(WUU.eye, to.eye, k),
+    shape: t < e + 0.12 ? WUU.shape : to.shape,
+  };
+}
+
+const EYE_TRACKS = TEAM.map((w, i) => {
+  const e = evolveAt(i);
+  const track: [number, EyeKind][] = [
+    ...(w.row === 1 ? HERO_EYES : [[0, "open"] as [number, EyeKind]]),
+    [e + 0.12, "open"], [e + 0.25, "happy"], [e + 1.0, "open"], [done(w), "happy"],
+  ];
+  if (i === STUCK_ONE) track.push([STUCK, "flat"], [48.0, "happy"], [48.3, "open"]);
+  if (i === HELPER) track.push([46.5, "open"]);
+  if (UPPER.includes(i)) track.push([52.1, "wide"], [dropStart(i) + dropTime(i) + 0.15, "open"]);
+  else track.push([52.3, "open"]);
+  track.push([CHEER + 0.07 * CHEER_RANK[i] - 0.05, "happy"], [55.5, "open"]);
+  return track.sort((a, b) => a[0] - b[0]);
+});
+
+/** A damped wiggle for antennas after a tap. */
+function kick(t: number, at: number, duration: number) {
+  const p = (t - at) / duration;
+  return p > 0 && p < 1 ? Math.sin(p * Math.PI * 3) * Math.exp(-4 * p) : 0;
+}
+
+function worker(i: number, t: number): Ball {
+  const w = TEAM[i];
+  const e = evolveAt(i);
+  const skin = skinAt(w, e, t);
+  const r = lerp(r2, R2, inOut(seg(t, 41.7, 42.1)));
+  const shelf = w.row < 2;
+  const home = i === HELPER && t >= HELP ? HELP_SPOT : COLS[w.c];
+  const floor = FLOORS[w.row];
+  const rank = CHEER_RANK[i];
+  const pulses = [squash(t, e, 0.22, 0.5), ...TAPS[i].map((at) => squash(t, at, 0.1, 0.3))];
+  let x = home, ground = floor, shadow = shelf ? rowOpen(t) : 1, fall = 0, height = r * 1.4;
+  let h = hops(t, [CHEER + 0.07 * rank, BOW + 0.05 * rank], 0.5);
+  if (shelf) {
+    // The shelves vanish with the windows: hang, look down, drop into the lineup.
+    const start = dropStart(i), end = start + dropTime(i);
+    fall = seg(t, start, end);
+    x = lerp(home, w.lineup, fall);
+    if (fall > 0) { ground = FLOOR; shadow = fall; }
+    pulses.push(squash(t, LAND, 0.2, 0.45), squash(t, end, 0.25, 0.45));
+  } else {
+    const start = 52.5 + 0.06 * LOWER.indexOf(i);
+    x = lerp(home, w.lineup, smooth(seg(seg(t, start, start + 0.5), 0.28, 0.8)));
+    if (t < start + 0.5) { h = hop(t, start, 0.5); height = 90; }
+  }
+  const sq = pulses.reduce((a, p) => ({ sx: a.sx * p.sx, sy: a.sy * p.sy }), { sx: h.sx, sy: h.sy });
+  const b: Ball = { ...stand(skin, x, ground, r, { lift: h.lift, ...sq }, height), shadow };
+  if (fall > 0 && fall < 1) b.y = lerp(floor, FLOOR, fall * fall) - r * extent(skin).ry;
+  else if (shelf && t < LAND) b.y = beadY(t, w.row);
+  const lids = eyes(t, EYE_TRACKS[i], [61.8 + 0.04 * rank]);
+  // Newborns open their eyes a beat after landing in their own window.
+  if (w.row !== 1 && lids.kind === "open") lids.open = Math.min(lids.open, lerp(SLIT.open, 1, smooth(seg(t, 41.75, 42.05))));
+  const evolved = t >= e + 0.12;
+  return {
+    ...b, ...workerAim(i, t, b),
+    eyes: lids,
+    engine: evolved ? w.agent.engine : undefined, gear: evolved ? w.agent.gear : undefined,
+    antenna: outBack(seg(t, e + 0.12, e + 0.5)),
+    sway: TAPS[i].reduce((sum, at) => sum + kick(t, at, 0.5) * 0.3, 0) + kick(t, e + 0.2, 0.9) * 0.5
+      + (shelf ? kick(t, dropStart(i) + dropTime(i), 0.6) * 0.5 : 0),
+    sweat: i === STUCK_ONE ? seg(t, 46.4, 46.7) * (1 - seg(t, 47.9, 48.1)) : 0,
+  };
+}
+
+function workerAim(i: number, t: number, b: Ball): Face {
+  const w = TEAM[i];
+  const e = evolveAt(i);
+  const toward = (x: number, y: number): Aim => () => look(b.x, b.y, x, y);
+  // Watch the edge of the fill; the soft norm keeps the gaze steady as the
+  // edge rises past the worker.
+  const fillEdge = (cell: number): Aim => () => {
+    const reach = fillRadius(cell, t);
+    const dx = b.x - GIANT.x, dy = b.y - GIANT.y, d = Math.hypot(dx, dy);
+    const ex = GIANT.x + (dx / d) * reach - b.x, ey = GIANT.y + (dy / d) * reach - b.y;
+    const n = Math.max(Math.hypot(ex, ey), 160);
+    return { yaw: (ex / n) * 0.5, pitch: (-ey / n) * 0.4 + 0.05 };
+  };
+  const centre = toward(GIANT.x, GIANT.y);
+  const track: [number, Aim][] = [
+    [0, FORWARD], [e + 0.4, { yaw: 0, pitch: 0.42 }], [e + 0.95, FORWARD], [w.runs[0][0] - 0.25, fillEdge(i)], [done(w), centre],
+  ];
+  if (i === STUCK_ONE) track.push([47.75, toward(HELP_SPOT - 100, b.y)], [48.1, fillEdge(i)]);
+  if (i === HELPER) {
+    // A nod to the coordinator, a hop over, and a hand with the stuck window.
+    track.push(
+      [47.05, { yaw: 0.5, pitch: -0.45 }], [47.2, centre], [HELP - 0.02, { yaw: 0.55, pitch: 0.1 }],
+      [HELP + HELP_TIME + 0.05, fillEdge(STUCK_ONE)], [done(TEAM[STUCK_ONE]), centre],
+    );
+  }
+  if (UPPER.includes(i)) track.push([52.1, { yaw: 0, pitch: -0.45 }]);
+  else track.push([52.15, toward(GIANT.x, 240)]);
+  track.push([53.1, toward(GIANT.x, 360)], [58.5, toward(1080, 620)]);
+  return gaze(t, track.sort((a, c) => a[0] - c[0]));
+}
+
+/** The helper's hop crosses a gutter, so it is drawn over the windows in screen space. */
+function drawHelper(ctx: Ctx, t: number) {
+  if (t < HELP || t >= HELP + HELP_TIME) return;
+  const { s, gx, x0, y0 } = layout(t);
+  const from = x0 + s * COLS[0], to = x0 + gx + s * HELP_SPOT;
+  const b = worker(HELPER, t);
+  const x = lerp(from, to, smooth(seg(seg(t, HELP, HELP + HELP_TIME), 0.28, 0.8)));
+  drawBall(ctx, { ...b, ...stand(b.skin!, x, y0 + s * FLOORS[0], b.r * s, hop(t, HELP, HELP_TIME), 100 * s) });
+}
+
+/** The eight harnesses where the film leaves them, for the end card. */
+export function drawCrew(ctx: Ctx, t: number) {
+  TEAM.forEach((_, i) => drawBall(ctx, worker(i, t)));
 }

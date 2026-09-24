@@ -1,4 +1,4 @@
-import { agentSkin, drawSparkle, extent, THEMES, WUU, type Ball, type Gear, type Skin, type Theme } from "./art";
+import { agentSkin, drawSparkle, extent, THEMES, type Ball, type Gear, type Skin, type Theme } from "./art";
 import { AVATAR_HUES } from "../../src/renderer/DefaultAvatar";
 import { clamp, lerp, outBack, rad, smooth, type Hop } from "./motion";
 
@@ -25,7 +25,6 @@ export const CODEX: Agent = { engine: "codex", skin: agentSkin(AVATAR_HUES[6], "
 export const CURSOR: Agent = { engine: "cursor", skin: agentSkin(AVATAR_HUES[8], "rounded-square"), theme: THEMES.lilac };
 export const OPENCODE: Agent = { engine: "opencode", skin: agentSkin(AVATAR_HUES[2], "diamond"), theme: THEMES.butter };
 export const PI: Agent = { engine: "pi", skin: agentSkin(AVATAR_HUES[4], "triangle"), theme: MINT_THEME, gear: "leaf" };
-export const BUILDER: Agent = { engine: "wuu", skin: WUU, theme: THEMES.wuu, gear: "hardhat" };
 
 // ---------------------------------------------------------------------------
 // Staging
