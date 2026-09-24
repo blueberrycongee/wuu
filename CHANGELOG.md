@@ -8,6 +8,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+## [2026.9.24] - 2026-09-24
+
 ### Added
 
 - Conversation image previews support previous/next buttons, left/right arrow
