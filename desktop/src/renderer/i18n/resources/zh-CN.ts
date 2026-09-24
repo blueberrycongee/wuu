@@ -217,7 +217,7 @@ export const zhCN = {
   "settings.subscriptionRefreshFailed": "订阅刷新失败，请重试。",
   "settings.subscriptionModelFailed": "模型保存失败，请重试。",
   "runtime.engineDefaultModel": "Agent 默认模型",
-  "runtime.engineDefaultModelHint": "此 Agent 自行管理模型，请在它的 CLI 中配置。",
+  "runtime.engineDefaultModelHint": "在 {engine} 中切换模型",
   "settings.engineBinaryPath": "二进制路径",
   "settings.engineBinaryPathPlaceholder": "留空自动从 PATH 查找",
   "settings.engineAutoBinary": "自动检测",
