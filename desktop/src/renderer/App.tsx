@@ -4222,7 +4222,7 @@ export function App(): JSX.Element {
     const submissionKey = targetThread?.id ?? currentState.activeSessionTabID;
     const admission = turnAdmissionsRef.current.get(submissionKey);
     const busy = targetThread && isThreadRunning(targetThread) && !activeTurnIsAnswerReady(targetThread);
-    const operation = admission || queueLanesRef.current.has(submissionKey)
+    const operation = admission || (!busy && queueLanesRef.current.has(submissionKey))
       ? queueComposerMessage(message, targetThread, admission)
       : busy
       ? resolveComposerRunningAction(runningAction, targetThread) === "steer"

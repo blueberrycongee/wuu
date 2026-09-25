@@ -805,7 +805,9 @@ describe("queued turn reconciliation", () => {
     expect(composerProbe().dataset.queuedIds).toBe("");
   });
 
-  it("shows a steer in pending state before the IPC response resolves", async () => {
+  it("steers a running turn while an earlier queue submission is still pending", async () => {
+    let resolveQueue!: (value: Awaited<ReturnType<WuuDesktopApi["queueTurn"]>>) => void;
+    const queueTurn = vi.fn(() => new Promise<Awaited<ReturnType<WuuDesktopApi["queueTurn"]>>>((resolve) => { resolveQueue = resolve; }));
     let resolveSteer: ((value: { turn_id: string }) => void) | undefined;
     const steerTurn = vi.fn(
       () =>
@@ -813,7 +815,7 @@ describe("queued turn reconciliation", () => {
           resolveSteer = resolve;
         }),
     );
-    installWuuApi({ steerTurn: steerTurn as WuuDesktopApi["steerTurn"] });
+    installWuuApi({ steerTurn: steerTurn as WuuDesktopApi["steerTurn"], queueTurn });
     await act(async () => {
       root = createRoot(container);
       root.render(<App />);
@@ -821,6 +823,12 @@ describe("queued turn reconciliation", () => {
     await flushAsync();
 
     const textarea = composerProbe().querySelector("textarea");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, "queued follow-up");
+      textarea!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { composerProbe().querySelector<HTMLButtonElement>("button")!.click(); });
+    expect(queueTurn).toHaveBeenCalledTimes(1);
     const steer = composerProbe().querySelector<HTMLButtonElement>(
       'button[aria-label="steer"]',
     );
@@ -842,6 +850,7 @@ describe("queued turn reconciliation", () => {
 
     await act(async () => {
       resolveSteer?.({ turn_id: "turn-current" });
+      resolveQueue({ queued: { id: "queued-follow-up", thread_id: threadID } });
       await Promise.resolve();
     });
   });
