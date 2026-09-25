@@ -94,6 +94,7 @@ func (t *ApplyPatchTool) executeFusedPatch(ctx context.Context, args applyPatchA
 		return toolresult.FromErrorText(fmt.Sprintf("Patch outcome unavailable: %v. then_run was not started. Recover the tool records and inspect files before retrying the patch.", err)), nil
 	}
 	if patch.IsError {
+		patch.ModelText = nil
 		patch.Content = append(patch.Content, toolresult.ContentPart{Type: toolresult.ContentTypeText, Text: "[then_run:skipped] The patch failed; the command was not run."})
 		return patch, nil
 	}
@@ -102,6 +103,10 @@ func (t *ApplyPatchTool) executeFusedPatch(ctx context.Context, args applyPatchA
 		command = toolresult.FromErrorText(fmt.Sprintf("Follow-up outcome unavailable: %v. Inspect process and tool records before retrying the command.", err))
 	}
 	status := fusedCommandStatus(command)
+	// The patch child is already settled. This parent adds command evidence,
+	// so its model view must be settled again from the combined content, not
+	// inherited from the child; otherwise the model never sees the command.
+	patch.ModelText = nil
 	patch.Content = append(patch.Content, toolresult.ContentPart{
 		Type: toolresult.ContentTypeText,
 		Text: fmt.Sprintf("[then_run:%s] Patch applied and retained.\n%s", status, command.TextProjection()),
@@ -136,7 +141,7 @@ func fusedCommandStatus(result toolresult.Result) string {
 			} `json:"failure_summary"`
 		} `json:"verification"`
 	}
-	if err := json.Unmarshal([]byte(result.TextProjection()), &outcome); err != nil {
+	if err := json.Unmarshal([]byte(producerText(result)), &outcome); err != nil {
 		return "failed"
 	}
 	if outcome.TimedOut && outcome.PromotedProcessID != "" {
@@ -147,4 +152,15 @@ func fusedCommandStatus(result toolresult.Result) string {
 		return "failed"
 	}
 	return "completed"
+}
+
+// producerText returns the tool's own text payload, ignoring any settled model
+// view, for callers that need the structured envelope.
+func producerText(result toolresult.Result) string {
+	for _, part := range result.Content {
+		if part.Type == toolresult.ContentTypeText {
+			return part.Text
+		}
+	}
+	return ""
 }

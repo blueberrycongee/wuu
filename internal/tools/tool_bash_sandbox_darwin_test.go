@@ -48,16 +48,15 @@ func TestBashStartBackgroundDefaultTTYEnforcesSandbox(t *testing.T) {
 	insideFile := filepath.Join(workspace, "inside")
 	outsideFile := filepath.Join(outside, "outside")
 	arguments, err := json.Marshal(map[string]any{
-		"action":  "start_background",
-		"command": `printf temp > "$TMPDIR/background"; printf inside > "` + insideFile + `"; printf outside > "` + outsideFile + `"`,
-		"wait_ms": 2000,
+		"command":           `printf temp > "$TMPDIR/background"; printf inside > "` + insideFile + `"; printf outside > "` + outsideFile + `"`,
+		"run_in_background": true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := kit.Execute(context.Background(), providers.ToolCall{Name: "bash", Arguments: string(arguments)})
+	response, err := executeEnvelope(kit, context.Background(), providers.ToolCall{Name: "bash", Arguments: string(arguments)})
 	if err != nil {
-		t.Fatalf("start_background: %v", err)
+		t.Fatalf("background start: %v", err)
 	}
 	var started proc.Process
 	if err := json.Unmarshal([]byte(response), &started); err != nil {
