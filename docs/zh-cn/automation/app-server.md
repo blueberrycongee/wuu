@@ -101,3 +101,31 @@ wuu debug app-server send --workdir /path/to/project config/read '{}'
 stdio 协议是受信任的本地控制接口，不是带认证的网络服务。远程或托管部署必须在外围提供
 传输安全和隔离。[协议参考](../../en/integrations/app-server-protocol.md)（英文）说明消息
 格式、能力协商、选择规则和云端进程身份。
+
+## Collaboration 任务与候选控制
+
+`channel/direct/open` 接受 `workspace_root` 和 `workspace_id`。私聊按人、具名
+Agent 和工作区唯一确定。省略字段保留旧客户端兼容性，由 host 解析当前工作区。
+执行默认使用该对话绑定的已登记项目。
+
+`channel/task/update` 接受读取所得 Work 版本 `expected_revision`。模型更新任务
+必须携带它，旧的人类客户端可以省略。版本过期时拒绝更新；修改目标或约束会递增
+目标版本，使旧执行权限失效。
+
+`channel/work/candidate` 接受 `work_id`、`artifact_id` 和 `action`
+（`get`、`apply` 或 `discard`）。修改必须携带审查结果中的 `expected_revision`，
+只有 host 生成的不可变快照可供应用。返回 `candidate`、`artifact`、
+`work_revision` 和 `stale`。候选包含 Git 基线与版本、diff、来源会话和回合、
+结构化报告。补丁冲突时保持工作树不变，应用不会暂存文件。
+
+`thread/control/return` 接受 `thread_id` 和当前控制版本 `revision`。这个人类动作
+恢复 Collaboration 托管，向原协调者投递持久通知；已撤销的排队输入不会复活。
+
+执行报告包含 `result`、`implicit_choices`、`evidence_refs` 和
+`unresolved_items`。host 生成候选、记录用量，并按任务要求启动独立验证。
+验证者可用 `chat_verify` 记录结论，但只有对应执行成功结束后，host 才发布验证
+记录。执行者收到房间出处和共享 Work 决策，无权访问具名身份的私有对话。
+
+桌面扩展可注册带 `work-candidate.publish` 上下文的命令。候选审查以
+`{ candidate, title }` 调用它，并展示返回的 `{ url }`。卸载扩展会移除动作。
+发布凭据、远端策略和 PR 生命周期属于该受信任扩展。

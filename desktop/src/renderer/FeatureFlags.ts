@@ -37,3 +37,6 @@ export const ENABLE_SUBSCRIPTIONS = import.meta.env.DEV;
  */
 export const ENABLE_EMBEDDED_BROWSER =
   import.meta.env.VITE_ENABLE_BROWSER !== "false";
+
+/** Preserve channel data while Collaboration focuses on direct conversations. */
+export const ENABLE_COLLABORATION_CHANNELS = false;

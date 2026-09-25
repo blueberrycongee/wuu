@@ -1,3 +1,4 @@
+import { showErrorToast } from "./Toast";
 import {
   lazy,
   Suspense,
@@ -401,10 +402,12 @@ export function ConversationTitleActions({
   onToggleRightPanel,
 }: ConversationTitleActionsProps): JSX.Element {
   const { t } = useI18n();
-  const control = (state.activePane === "secondary" ? state.secondaryThread : state.thread)?.session_control;
+  const controlledThread = state.activePane === "secondary" ? state.secondaryThread : state.thread;
+  const control = controlledThread?.session_control;
   const controlLabel = control ? t(`channels.sessions.control.${control.state === "taken_over" ? "takenOver" : control.state}`) : "";
-  const management = control ? <span className="session-control-label" title={`${control.manager_name} · ${controlLabel}`}>
+  const management = control ? <span className="session-control-label" title={control.state === "active" ? t("channels.sessions.takeoverHint") : `${control.manager_name} · ${controlLabel}`}>
     {control.manager_name} · {controlLabel}
+    {control.room_id && control.state !== "active" ? <button type="button" onClick={() => void window.wuu!.returnManagedSession({ thread_id: controlledThread!.id, revision: control.revision }).catch(reason => showErrorToast(reason))}>{t("channels.sessions.returnControl")}</button> : null}
   </span> : null;
   if (compactNavigation) {
     return <div className="title-actions">{management}<CompactConversationActions

@@ -245,3 +245,50 @@ func TestRecurringFollowupCoalescesBacklogAndDirectMessageSkipsModel(t *testing.
 		}
 	}
 }
+
+func TestFollowupDMSubscriptionSurvivesOriginSession(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	s, err := Open(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := createTestAgent(t, s, "Owner")
+	room, err := s.OpenDirectMessage(ctx, "local-user", owner.Agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := flexibleTestSession(t, s, owner.Agent.ID, room.ID, "timer-origin")
+	f, err := client.SetFollowup(ctx, FollowupSetParams{After: "1h", Note: "Review project status", RequestID: "timer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Scope != "conversation" || f.SessionRef != "" {
+		t.Fatalf("timer tied to transient session: %#v", f)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	advanceFollowupClock(s, f.NextAt.Add(time.Second))
+	for range 2 {
+		if _, err := s.FireDueFollowups(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stored, err := s.ListRoomFollowups(ctx, room.ID)
+	if err != nil || len(stored) != 1 || stored[0].State != "done" {
+		t.Fatalf("subscription: %#v %v", stored, err)
+	}
+	var delivered int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM collaboration_messages WHERE correlation_id=? AND room_id=? AND target_session_ref IS NULL`, f.ID, room.ID).Scan(&delivered); err != nil {
+		t.Fatal(err)
+	}
+	if delivered != 1 {
+		t.Fatalf("conversation occurrences=%d", delivered)
+	}
+}

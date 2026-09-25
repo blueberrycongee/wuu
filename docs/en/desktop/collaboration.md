@@ -1,50 +1,56 @@
 # Collaboration
 
-Collaboration provides channels and direct messages for working with named agents. An agent's identity has a continuing conversation and can manage separate work sessions, so discussions can continue across requests without putting every task into one execution session.
+Collaboration is a project conversation with a named agent. The agent reads and coordinates; ordinary execution sessions do the implementation. Group channels are hidden in desktop and native navigation. Existing channel data and protocol methods remain available.
 
-## Start with a named agent
+## Start a project conversation
 
-Open **Collaboration**, create an agent, and configure its name, avatar, role, and model. Open a direct message or add it to a channel. In a group conversation, mention the agent you want to address.
+Open **Collaboration** and start a new conversation. Choose an existing agent or create one and set its model and name. The project control above the message box selects the registered workspace for the conversation; a new agent's first conversation opens there too. The same agent can have conversations for different projects; the navigation label and conversation header include the project name.
 
-State the target project, the result you need, and the limits on the work. For example:
+State the result and constraints, for example:
 
 ```text
-Review the search changes in the catalog project. Explain any regressions with
-file references. Do not edit files or create a commit.
+Switch catalog search to server-side pagination, with 50 results per page.
+Preserve the public API. Show me the candidate diff before delivery.
 ```
 
-Named agents can discover registered projects and communicate with other identities. A clear project name matters: switching your foreground workspace does not redirect a work session already assigned elsewhere.
+The conversation's project is the default for delegated execution. Switching the foreground workspace does not redirect existing work. An unavailable project produces an error. Existing unbound conversations keep their history; start a project-bound conversation to use explicit project routing.
 
-When human messages and background reports are waiting, the agent handles human directions first in its next coordination turn. Work sessions continue independently, and earlier reports remain queued for their original room and task.
+The coordinator can read files, discuss decisions, maintain tasks and manage sessions. It cannot edit files, execute commands or operate a browser itself. A read-only judgment can be delivered directly; changes go to an execution session. Sessions inherit the named agent's model configuration.
 
-## Follow the execution
+## Follow and control execution
 
-Project work runs in ordinary work conversations, also called Harness sessions in tool activity. Open the linked session from an agent's activity details to see file changes, commands, and results. It remains bound to its project and execution configuration; an unavailable or conflicting project binding produces an error rather than falling back to another project.
+Task cards appear in the timeline with status, linked sessions and cancellation. The conversation's session panel opens any managed execution. Execution reports distinguish completion, failure and interruption; finishing a turn alone does not complete the task.
 
-Session reports distinguish completed, failed, and interrupted execution. A control change or an evidence message does not claim successful completion. Ending an execution turn does not complete its task; the named agent still needs to assess the result against your request.
+Opening a session does not take control. Sending a message does: automatic instructions for that session pause. **Return to manager** explicitly restores management so the agent can inspect your changes before continuing. You can also interrupt the coordinator from the conversation composer.
 
-Looking at the conversation does not take control. Sending a message does: Wuu pauses Collaboration's automatic instructions and follow-up for that session so you can continue the work yourself. If you want the named agent to manage it again, explicitly ask it to resume management.
+Cancellation stops execution and follow-up associated with the task. It does not undo commands or file changes. Held replies and completed turns without a published reply are visible in the conversation, so silence can be distinguished from unfinished delivery.
 
-In tool activity, `chat_session` handles communication between named identities, while `session` manages ordinary execution sessions. You can work through natural-language requests rather than calling these tools yourself.
+A task has a versioned goal, constraints and recorded decisions. Updates use the current revision. A changed goal or constraint invalidates old execution results and interrupts their turns; the existing session can continue with corrected instructions. Parallel Git implementations use separate worktrees by default. Explicit shared-directory execution permits one writer at a time. Project routing is not a filesystem sandbox; the applicable [permissions](../reference/permissions.md) still apply.
 
-When delegating a task, a named agent can select images or supported attachments from the current channel or direct message. The work session receives the stored media and its source context; unselected attachments are not forwarded. Missing, inaccessible, or unsupported evidence produces an error. Choose a compatible model or reattach the evidence before continuing. Developers can consult the [media handoff contract](../automation/app-server.md#named-agent-media-handoff).
+## Review a candidate
 
-## Track and cancel a task
+Expand **Review candidate** on a task card. A candidate contains a frozen Git diff, the execution's conclusion, recorded checks, unresolved questions and a link to its session. Implementation decisions are recorded with the Work. Tasks that require verification receive a separate read-only reviewer on the frozen candidate; a missing or inconclusive receipt is not a passing check.
 
-The task view shows ownership, progress, and results. Cancelling a task stops the execution and follow-up linked to that task; unrelated sessions keep running. If a session has no task link, open it and stop it separately.
+Choose one of these delivery actions:
 
-Cancellation does not roll back file changes or completed commands. Check the [current diff and command results](workspace-tools.md) before accepting or resuming the work. Project routing keeps the task attached to the right project, but does not itself provide a filesystem sandbox; execution uses the applicable [permissions](../reference/permissions.md).
+- **Apply to project** applies the reviewed patch without staging it. Conflicts stop application and preserve existing changes. Goal changes require another review.
+- **Open PR** uses an installed Git delivery extension. The optional [Git Delivery example](../../../examples/plugins/git-delivery/README.md) creates a draft GitHub PR from only the candidate patch in a separate checkout. It requires Git, Node and authenticated `gh`; disabling it removes the action. Core Collaboration does not publish or merge PRs.
+- **Discard** records your decision and keeps the execution history. Discarding the current candidate invalidates its verification and asks the coordinator to reassess.
 
-## Delete a named agent
+A recorded check is evidence supplied by the execution, not proof of production acceptance. Inspect the diff, commands and unresolved questions before choosing a delivery action. Candidates without Git changes can still be read but do not provide a Git delivery action.
 
-Deleting an agent removes it from the agent list and its channels, deletes its direct messages and identity memory, and revokes its credentials. Task history does not prevent deletion. Unfinished tasks it owns, leads, or is actively executing are cancelled; its conversation and managed execution sessions stop, including sessions without a task link.
+## Memory and scheduled follow-up
 
-Shared channel messages and completed task history retain their original attribution. Ordinary project session history and file changes remain available; deletion does not undo completed commands.
+Use **Memory** in the conversation header to read, edit, add, or delete project or identity memory in the side panel. Project memory is shared by conversations bound to that workspace and is injected into their coordination and delegated execution. Identity memory belongs to the named agent across projects. Work decisions provide task-specific context; workers can read the original room messages and their own history, but cannot read the coordinator's private transcript or pending private deliveries.
+
+Ask the agent in the conversation to schedule a one-time or recurring follow-up. Conversation timers survive the originating execution session. **Timers** in the conversation header shows how many are pending; its panel lists each timer's next occurrence and offers pause, resume and cancel. Work states also have host-managed progress deadlines. A stalled task moves to a visible state requiring attention rather than waiting indefinitely for a model to remember it.
+
+The host must be running to execute work or timers. Persistent scheduling does not make a sleeping or powered-off computer available.
+
+## Delete a conversation or agent
+
+Deleting a project conversation removes that DM, not the named agent. Deleting the agent revokes its credentials, removes its DMs and identity memory, cancels unfinished work it owns or executes, and stops its managed sessions. Completed history retains attribution. Ordinary execution history and file changes remain; deletion does not undo completed commands.
 
 Sessions still managed by the deleted agent, including paused sessions, move to **Settings → Archive → Agent archive**. They do not appear in workspace navigation, unread lists, or the ordinary conversation archive. You can restore them as independent conversations. Sessions you already took over or released from management stay where they are. Wuu also moves orphaned managed sessions left by earlier versions into this archive.
 
-## Keep work available
-
-Room memory is shared within its room; identity memory belongs to the named agent. Agents can use these stores and saved plans as part of continuing work. Scheduled execution needs the host to be running: a sleeping or powered-off machine cannot carry out the task on time.
-
-For temporary delegation inside a normal conversation, use [subagents](subagents.md). For message, archive, and fork controls, see [conversations](conversations.md).
+For temporary delegation inside a normal conversation, use [subagents](subagents.md). Developers can consult the [media handoff contract](../automation/app-server.md#named-agent-media-handoff).

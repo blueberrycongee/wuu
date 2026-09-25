@@ -28,6 +28,11 @@ const (
 )
 
 type Work struct {
+	StateDeadlineAt            time.Time              `json:"state_deadline_at,omitempty"`
+	Revision                   int                    `json:"revision"`
+	Constraints                string                 `json:"constraints"`
+	Decisions                  []string               `json:"decisions"`
+	DecisionHistory            []WorkDecisionDocument `json:"decision_history,omitempty"`
 	ID                         string                 `json:"id"`
 	RoomID                     string                 `json:"room_id"`
 	SourceMessageID            string                 `json:"source_message_id"`
@@ -156,6 +161,7 @@ const (
 )
 
 type WorkArtifact struct {
+	Disposition       string           `json:"disposition,omitempty"`
 	ID                string           `json:"id"`
 	WorkID            string           `json:"work_id"`
 	RunID             string           `json:"run_id,omitempty"`
@@ -168,6 +174,7 @@ type WorkArtifact struct {
 }
 
 type WorkRunStartParams struct {
+	harness           bool
 	SourceSessionRef  string
 	WorkID            string
 	NamedAgentID      string

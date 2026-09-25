@@ -255,6 +255,17 @@ func TestDraftBasisUsesTargetScope(t *testing.T) {
 	if got := scopeSeq(check.Scopes, room.ID, root.Message.ID); got != thread.Message.Seq {
 		t.Fatalf("thread scope seq = %d, want %d", got, thread.Message.Seq)
 	}
+	session := flexibleTestSession(t, service, alpha.Agent.ID, room.ID, "mainline-reply")
+	check, err = session.Check(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	posted, err := session.Send(ctx, AgentSendParams{
+		RoomID: room.ID, Body: "follow up on the main point", BasisSeq: scopeSeq(check.Scopes, room.ID, ""),
+	})
+	if err != nil || posted.Status != SendCommitted {
+		t.Fatalf("session check included thread traffic in main basis: %#v, %v", posted, err)
+	}
 }
 
 func TestHeldDraftExpiresAfterTwentyFourHours(t *testing.T) {

@@ -221,92 +221,135 @@ func TestM3TaskAuth(t *testing.T) {
 }
 
 func TestM3ReminderSelfWakeExactlyOnceAndCancel(t *testing.T) {
-	ctx := context.Background()
-	sink := &recordingWakeSink{}
-	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
-	fixedNow := now
-	service := openTestService(t, sink)
-	service.now = func() time.Time { return fixedNow }
-	alpha := createTestAgent(t, service, "Alpha")
-	room := createTestRoom(t, service, alpha)
+	for _, sessionBound := range []bool{false, true} {
+		t.Run(fmt.Sprintf("session=%t", sessionBound), func(t *testing.T) {
+			ctx := context.Background()
+			sink := &recordingWakeSink{}
+			now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+			fixedNow := now
+			service := openTestService(t, sink)
+			service.now = func() time.Time { return fixedNow }
+			alpha := createTestAgent(t, service, "Alpha")
+			room := createTestRoom(t, service, alpha)
 
-	reminder, err := service.SetReminder(ctx, ReminderSetParams{
-		AgentID:  alpha.Agent.ID,
-		Token:    alpha.Token,
-		FireAt:   now.Add(2 * time.Minute),
-		Note:     "ping",
-		RoomID:   room.ID,
-		ThreadID: "",
-	})
-	if err != nil {
-		t.Fatalf("SetReminder() error = %v", err)
-	}
-	if reminder.State != ReminderPending {
-		t.Fatalf("reminder state = %q", reminder.State)
-	}
+			checkInbox := func() (CheckResult, error) { return service.Check(ctx, alpha.Agent.ID, alpha.Token) }
+			var session *AgentClient
+			if sessionBound {
+				client, err := service.BindAgent(ctx, alpha.Agent.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				binding, err := client.BindCollaborationSession(ctx, CollaborationSessionBindParams{
+					SessionRef: "reminder-conversation", RoomID: room.ID, Purpose: CollaborationSessionConversation,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				session, err = service.BindAgentSession(ctx, alpha.Agent.ID, binding.SessionRef)
+				if err != nil {
+					t.Fatal(err)
+				}
+				checkInbox = func() (CheckResult, error) { return session.Check(ctx) }
+			}
 
-	if _, err := service.SetReminder(ctx, ReminderSetParams{
-		AgentID: alpha.Agent.ID,
-		Token:   alpha.Token,
-		FireAt:  now.Add(30 * time.Second),
-		Note:    "too soon",
-	}); err == nil {
-		t.Fatal("reminder too soon accepted")
-	}
+			reminder, err := service.SetReminder(ctx, ReminderSetParams{
+				AgentID:  alpha.Agent.ID,
+				Token:    alpha.Token,
+				FireAt:   now.Add(2 * time.Minute),
+				Note:     "ping",
+				RoomID:   room.ID,
+				ThreadID: "",
+			})
+			if err != nil {
+				t.Fatalf("SetReminder() error = %v", err)
+			}
+			if reminder.State != ReminderPending {
+				t.Fatalf("reminder state = %q", reminder.State)
+			}
 
-	wake, err := service.FireDueReminders(ctx)
-	if err != nil || len(wake) != 0 {
-		t.Fatalf("FireDueReminders early = %v, err = %v", wake, err)
-	}
+			if _, err := service.SetReminder(ctx, ReminderSetParams{
+				AgentID: alpha.Agent.ID,
+				Token:   alpha.Token,
+				FireAt:  now.Add(30 * time.Second),
+				Note:    "too soon",
+			}); err == nil {
+				t.Fatal("reminder too soon accepted")
+			}
 
-	fixedNow = now.Add(2 * time.Minute)
-	wake, err = service.FireDueReminders(ctx)
-	if err != nil || len(wake) != 1 || wake[0] != alpha.Agent.ID {
-		t.Fatalf("FireDueReminders fire = %v, err = %v", wake, err)
-	}
-	if got := sink.take(); len(got) != 1 || got[0] != alpha.Agent.ID {
-		t.Fatalf("reminder wake delivered = %v, want alpha", got)
-	}
-	wake, err = service.FireDueReminders(ctx)
-	if err != nil || len(wake) != 0 {
-		t.Fatalf("FireDueReminders repeat = %v, err = %v", wake, err)
-	}
+			wake, err := service.FireDueReminders(ctx)
+			if err != nil || len(wake) != 0 {
+				t.Fatalf("FireDueReminders early = %v, err = %v", wake, err)
+			}
 
-	check, err := service.Check(ctx, alpha.Agent.ID, alpha.Token)
-	if err != nil || len(check.Reminders) != 1 || check.Reminders[0].ID != reminder.ID {
-		t.Fatalf("check reminders = %#v, err = %v", check.Reminders, err)
-	}
-	check, err = service.Check(ctx, alpha.Agent.ID, alpha.Token)
-	if err != nil || len(check.Reminders) != 0 {
-		t.Fatalf("check after pull reminders = %#v, err = %v", check.Reminders, err)
-	}
+			fixedNow = now.Add(2 * time.Minute)
+			wake, err = service.FireDueReminders(ctx)
+			if err != nil || len(wake) != 1 || wake[0] != alpha.Agent.ID {
+				t.Fatalf("FireDueReminders fire = %v, err = %v", wake, err)
+			}
+			if got := sink.take(); len(got) != 1 || got[0] != alpha.Agent.ID {
+				t.Fatalf("reminder wake delivered = %v, want alpha", got)
+			}
+			wake, err = service.FireDueReminders(ctx)
+			if err != nil || len(wake) != 0 {
+				t.Fatalf("FireDueReminders repeat = %v, err = %v", wake, err)
+			}
 
-	pendingReminder, err := service.SetReminder(ctx, ReminderSetParams{
-		AgentID: alpha.Agent.ID,
-		Token:   alpha.Token,
-		FireAt:  now.Add(5 * time.Minute),
-		Note:    "later",
-	})
-	if err != nil {
-		t.Fatalf("SetReminder pending error = %v", err)
-	}
-	cancelled, err := service.CancelReminder(ctx, ReminderCancelParams{
-		AgentID:    alpha.Agent.ID,
-		Token:      alpha.Token,
-		ReminderID: pendingReminder.ID,
-	})
-	if err != nil || cancelled.State != ReminderCancelled {
-		t.Fatalf("cancel = %#v, err = %v", cancelled, err)
-	}
-	fixedNow = now.Add(6 * time.Minute)
-	wake, err = service.FireDueReminders(ctx)
-	if err != nil || len(wake) != 0 {
-		t.Fatalf("FireDueReminders after cancel = %v, err = %v", wake, err)
-	}
+			if session != nil {
+				for range 2 {
+					peek, err := session.PeekInbox(ctx)
+					if err != nil || peek.Unread != 1 {
+						t.Fatalf("reminder peek = %+v, %v", peek, err)
+					}
+				}
+			}
+			check, err := checkInbox()
+			if err != nil || len(check.Reminders) != 1 || check.Reminders[0].ID != reminder.ID {
+				t.Fatalf("check reminders = %#v, err = %v", check.Reminders, err)
+			}
+			check, err = checkInbox()
+			if err != nil || len(check.Reminders) != 0 {
+				t.Fatalf("check after pull reminders = %#v, err = %v", check.Reminders, err)
+			}
 
-	state, err := service.WakeState(ctx, alpha.Agent.ID)
-	if err != nil || state.Outstanding {
-		t.Fatalf("wake state after check = %#v, err = %v", state, err)
+			if session != nil {
+				peek, err := session.PeekInbox(ctx)
+				if err != nil || peek.Unread != 0 {
+					t.Fatalf("consumed reminder peek = %+v, %v", peek, err)
+				}
+			}
+			wakeState, err := service.WakeState(ctx, alpha.Agent.ID)
+			if err != nil || wakeState.Outstanding || wakeState.Pending {
+				t.Fatalf("consumed reminder wake = %+v, %v", wakeState, err)
+			}
+
+			pendingReminder, err := service.SetReminder(ctx, ReminderSetParams{
+				AgentID: alpha.Agent.ID,
+				Token:   alpha.Token,
+				FireAt:  now.Add(5 * time.Minute),
+				Note:    "later",
+			})
+			if err != nil {
+				t.Fatalf("SetReminder pending error = %v", err)
+			}
+			cancelled, err := service.CancelReminder(ctx, ReminderCancelParams{
+				AgentID:    alpha.Agent.ID,
+				Token:      alpha.Token,
+				ReminderID: pendingReminder.ID,
+			})
+			if err != nil || cancelled.State != ReminderCancelled {
+				t.Fatalf("cancel = %#v, err = %v", cancelled, err)
+			}
+			fixedNow = now.Add(6 * time.Minute)
+			wake, err = service.FireDueReminders(ctx)
+			if err != nil || len(wake) != 0 {
+				t.Fatalf("FireDueReminders after cancel = %v, err = %v", wake, err)
+			}
+
+			state, err := service.WakeState(ctx, alpha.Agent.ID)
+			if err != nil || state.Outstanding {
+				t.Fatalf("wake state after check = %#v, err = %v", state, err)
+			}
+		})
 	}
 }
 

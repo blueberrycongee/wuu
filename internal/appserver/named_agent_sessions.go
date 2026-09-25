@@ -222,23 +222,10 @@ func (s *Server) ensureNamedAgentProducerRun(ctx context.Context, client *channe
 		return "", err
 	}
 	if binding.Primary {
-		// Results retain their task scope, but receiving one does not request
-		// another producer. Only an assignment or explicit continuation does.
-		messages, err := sessionClient.ReceiveCollaboration(ctx, 32)
-		if err != nil {
-			return "", err
-		}
-		requested := false
-		for _, message := range messages {
-			if message.WorkID == binding.WorkID && (message.Kind == channels.CollaborationAssignment || message.Kind == channels.CollaborationControl) {
-				requested = true
-				break
-			}
-		}
-		if !requested {
-			return "", nil
-		}
+		// Identity turns coordinate the Work; ordinary Harness sessions own runs.
+		return "", nil
 	}
+
 	run, err := sessionClient.StartWorkRun(ctx, channels.WorkRunStartParams{
 		WorkID: binding.WorkID, Kind: channels.WorkRunProducer, Profile: binding.NamedAgentID,
 	})

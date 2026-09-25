@@ -128,6 +128,7 @@ export { permissionModeFromSummary, permissionModeHasAdvancedOverrides } from ".
 export function Composer({
   variant = "dock",
   canSelectProject = variant === "hero",
+  projectFolderActions = true,
   mainConversation = false,
   topAccessory,
   leadingActions,
@@ -230,6 +231,8 @@ export function Composer({
 }: {
   variant?: ComposerVariant;
   canSelectProject?: boolean;
+  /** Surfaces bound to registered projects hide the folder and no-project actions. */
+  projectFolderActions?: boolean;
   mainConversation?: boolean;
   topAccessory?: ReactNode;
   leadingActions?: ReactNode;
@@ -1173,6 +1176,7 @@ export function Composer({
                       onSelectNoProject={onSelectNoProject}
                       onCreateProject={onCreateProject}
                       onOpenProject={onOpenProject}
+                      folderActions={projectFolderActions}
                     />
                   </FloatingMenuPortal>
                 ) : null}

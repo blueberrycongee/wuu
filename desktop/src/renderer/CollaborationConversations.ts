@@ -1,3 +1,4 @@
+import { ENABLE_COLLABORATION_CHANNELS } from "./FeatureFlags";
 import type { ChannelRoom, NamedAgent } from "../shared/protocol";
 import type { ThreadSummary } from "./AppState";
 
@@ -32,6 +33,11 @@ export function managedSidebarThreads(
   return { byAgentID, threadIDs };
 }
 
+/** Direct conversations are bound to a project; its folder name identifies them. */
+export function conversationProjectName(room: Pick<ChannelRoom, "workspace_root">): string {
+  return room.workspace_root?.split(/[\\/]/).filter(Boolean).at(-1) ?? "";
+}
+
 function searchable(value: string): string {
   return value.normalize("NFKD").replace(/\p{M}/gu, "").toLocaleLowerCase();
 }
@@ -42,13 +48,14 @@ export function collaborationConversations(
 ): CollaborationConversation[] {
   const agentsByID = new Map(agents.map((agent) => [agent.id, agent]));
   const representedAgents = new Set<string>();
-  const conversations: CollaborationConversation[] = rooms.map((room) => {
+  const conversations: CollaborationConversation[] = rooms.filter(room => ENABLE_COLLABORATION_CHANNELS || room.kind === "dm").map((room) => {
     const agentID = room.kind === "dm"
       ? room.members.find((member) => member.member_type === "agent")?.member_id : undefined;
     if (agentID) representedAgents.add(agentID);
     const agent = agentID ? agentsByID.get(agentID) : undefined;
+    const project = conversationProjectName(room);
     return {
-      id: room.id, room, agent, name: agent?.name ?? room.name,
+      id: room.id, room, agent, name: `${agent?.name ?? room.name}${project ? ` · ${project}` : ""}`,
       updatedAt: room.last_message?.created_at ?? room.created_at,
       pinned: pinnedRoomIDs.includes(room.id),
     };

@@ -176,6 +176,17 @@ func (s *Server) startSubmittedSessionTurn(ctx context.Context, th *threadState,
 	if !ok {
 		return startedThreadTurn{}, false, nil
 	}
+	// Record the execution before the model can use verification tools or finish.
+	// The caller attaches the same idempotent run to its durable operation.
+	if snapshot.Control != nil && s.channelService != nil {
+		link, linkErr := s.channelService.HarnessLink(ctx, th.ID)
+		if linkErr == nil && link.Active && link.WorkID != "" {
+			_, runErr := s.channelService.StartHarnessWorkRun(ctx, th.ID, "harness-turn:"+th.ID+":"+started.turnID)
+			if runErr != nil {
+				return startedThreadTurn{}, false, errors.Join(runErr, s.abortStartedThreadTurnDurably(th, started, runErr))
+			}
+		}
+	}
 	launch, accepted := s.reserveBackground(func() {
 		s.runTurn(started.ctx, th, threadRuntime, started.turnID, started.runtime, started.history)
 	})

@@ -173,7 +173,7 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 	}
 	if params.State != "" && params.State != TaskStateOpen && params.State != TaskStateDoing &&
 		params.State != TaskStateChecking && params.State != TaskStateRevising &&
-		params.State != TaskStateNeedsHuman && params.State != TaskStateDone {
+		params.State != TaskStateNeedsHuman && params.State != TaskStateDone && params.State != "cancelled" {
 		return Message{}, fmt.Errorf("invalid task state %q", params.State)
 	}
 	if utf8.RuneCountInString(params.GoalCorrection) > MaxMessageRunes {
@@ -224,8 +224,12 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 	if err != nil {
 		return Message{}, err
 	}
+	if params.ExpectedRevision > 0 && terminalWork.Revision != params.ExpectedRevision {
+		return Message{}, fmt.Errorf("%w: task revision changed; read the current task before retrying", ErrConflict)
+	}
+	goalChanged := params.GoalCorrection != "" || params.Constraints != nil && *params.Constraints != terminalWork.Constraints
 	workState := terminalWork.State
-	if terminalWorkState(workState) && params.GoalCorrection == "" {
+	if terminalWorkState(workState) && !goalChanged {
 		return Message{}, fmt.Errorf("%w: work is %s", ErrConflict, workState)
 	}
 	if params.AgentID != "" {
@@ -242,7 +246,30 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 			return Message{}, err
 		}
 	}
-	if params.GoalCorrection != "" || (params.OwnerID != "" && params.OwnerID != message.TaskOwner) {
+	if params.State == "cancelled" {
+		targets, wakes, err := s.cancelWorkTx(ctx, tx, terminalWork, "Cancelled by user")
+		if err != nil {
+			return Message{}, err
+		}
+		admitted, err := s.admitQueuedWorkRunsTx(ctx, tx, s.now())
+		if err != nil {
+			return Message{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return Message{}, err
+		}
+		s.interruptWorkSessions(targets)
+		if s.wake != nil {
+			for _, id := range appendUniqueStrings(wakes, admitted...) {
+				s.wake.Deliver(id)
+			}
+		}
+		message.TaskState = "cancelled"
+		work, err := s.GetWork(ctx, message.ID)
+		message.Work = &work
+		return message, err
+	}
+	if goalChanged || (params.OwnerID != "" && params.OwnerID != message.TaskOwner) {
 		// Fence the current task turn even though it has no separate Work run.
 		// Its durable correction will continue in the same conversation.
 		if _, err := tx.ExecContext(ctx, `UPDATE collaboration_session_bindings SET state='interrupted', updated_at=?
@@ -263,13 +290,13 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 	updatedAt := fromMillis(toMillis(s.now()))
 	interruptTargets := make([]workSessionInterruptTarget, 0)
 	interruptedRuns := make([]WorkRun, 0)
-	if params.GoalCorrection != "" || ownerChanged {
+	if goalChanged || ownerChanged {
 		activeTargets, err := activeWorkSessionInterruptTargetsTx(ctx, tx, message.ID)
 		if err != nil {
 			return Message{}, err
 		}
 		for _, target := range activeTargets {
-			if params.GoalCorrection != "" || target.agentID == oldOwner {
+			if goalChanged || target.agentID == oldOwner {
 				interruptTargets = append(interruptTargets, target)
 			}
 		}
@@ -283,7 +310,7 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 				rows.Close()
 				return Message{}, err
 			}
-			if params.GoalCorrection != "" || run.NamedAgentID == oldOwner {
+			if goalChanged || run.NamedAgentID == oldOwner {
 				interruptedRuns = append(interruptedRuns, run)
 			}
 		}
@@ -295,12 +322,14 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 	if params.State != "" {
 		setState = string(params.State)
 	}
-	if params.GoalCorrection != "" {
+	if goalChanged {
 		correctionFromType, correctionFromID := MemberAgent, params.AgentID
 		if params.HumanID != "" {
 			correctionFromType, correctionFromID = MemberHuman, params.HumanID
 		}
-		message.Body = params.GoalCorrection
+		if params.GoalCorrection != "" {
+			message.Body = params.GoalCorrection
+		}
 		message.TaskGoalRevision++
 		setState = string(TaskStateOpen)
 		if _, err := tx.ExecContext(ctx, `
@@ -398,6 +427,9 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 		}
 		setState = string(TaskStateOpen)
 	}
+	if !goalChanged && !ownerChanged && !validTaskTransition(TaskState(message.TaskState), TaskState(setState)) {
+		return Message{}, fmt.Errorf("%w: task cannot move from %s to %s", ErrConflict, message.TaskState, setState)
+	}
 	if message.TaskVerificationRequired && setState == string(TaskStateDone) {
 		if message.TaskState != string(TaskStateChecking) {
 			return Message{}, fmt.Errorf("%w: verified task completion must follow checking", ErrConflict)
@@ -445,6 +477,16 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 	if err := syncWorkFromTaskTx(ctx, tx, message, updatedAt); err != nil {
 		return Message{}, err
 	}
+	if params.Constraints != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE works SET constraints=? WHERE id=?`, *params.Constraints, message.ID); err != nil {
+			return Message{}, err
+		}
+	}
+	if params.Decision != "" {
+		if err := appendWorkDecisionsTx(ctx, tx, message.ID, []string{params.Decision}); err != nil {
+			return Message{}, err
+		}
+	}
 	if message.TaskState == string(TaskStateDone) {
 		if _, err := tx.ExecContext(ctx, `UPDATE inbox_items SET pulled_at = COALESCE(pulled_at, ?) WHERE member_type = 'agent' AND message_id = ? AND kind = 'task'`, toMillis(updatedAt), message.ID); err != nil {
 			return Message{}, err
@@ -476,7 +518,7 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 	var terminalWakeIDs []string
 	for _, run := range interruptedRuns {
 		run.State, run.EndedAt = WorkRunInterrupted, updatedAt
-		if params.GoalCorrection != "" {
+		if goalChanged {
 			run.Outcome = "goal revised"
 		} else {
 			run.Outcome = "owner reassigned"
@@ -723,4 +765,24 @@ func (s *Service) requireHumanMember(ctx context.Context, roomID, humanID string
 		return fmt.Errorf("validate human room membership: %w", err)
 	}
 	return nil
+}
+
+// Candidate promotion and goal correction own their transitions separately.
+func validTaskTransition(from, to TaskState) bool {
+	if from == to {
+		return true
+	}
+	allowed := map[TaskState][]TaskState{
+		TaskStateOpen:       {TaskStateDoing, TaskStateNeedsHuman, TaskStateDone},
+		TaskStateDoing:      {TaskStateRevising, TaskStateNeedsHuman, TaskStateDone},
+		TaskStateChecking:   {TaskStateDoing, TaskStateRevising, TaskStateNeedsHuman, TaskStateDone},
+		TaskStateRevising:   {TaskStateDoing, TaskStateNeedsHuman},
+		TaskStateNeedsHuman: {TaskStateOpen, TaskStateDoing, TaskStateRevising, TaskStateDone},
+	}
+	for _, next := range allowed[from] {
+		if next == to {
+			return true
+		}
+	}
+	return false
 }

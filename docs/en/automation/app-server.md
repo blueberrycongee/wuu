@@ -100,3 +100,38 @@ The stdio protocol is a trusted local control surface, not an authenticated netw
 service. A remote or hosted deployment must provide its own transport security and
 isolation around it. The [protocol reference](../integrations/app-server-protocol.md)
 covers message shapes, capabilities, selection rules, and cloud process identity.
+
+## Collaboration task and candidate control
+
+`channel/direct/open` accepts `workspace_root` and `workspace_id`. A DM is unique
+per human, named agent and workspace. Omission retains compatibility with legacy
+clients; the host resolves the current workspace. Execution defaults to the DM's
+registered project.
+
+`channel/task/update` accepts `expected_revision` with the Work revision returned
+by reads. Model task updates require it; older human clients can omit it. A stale
+revision fails without applying the requested change. Goal and constraint updates
+advance the goal revision and invalidate prior execution authority.
+
+`channel/work/candidate` accepts `work_id`, `artifact_id`, and `action` (`get`,
+`apply`, or `discard`). Mutation requires `expected_revision` from candidate review.
+Only host-created immutable snapshots can be applied. The response contains
+`candidate`, `artifact`, `work_revision`, and `stale`; candidate includes its Git
+base and revision, diff, source session/turn and structured report. Applying a
+conflicting diff leaves the checkout unchanged and does not stage files.
+
+`thread/control/return` accepts `thread_id` and the current control `revision`.
+This human action restores Collaboration management and sends a durable notice to
+the originating coordinator. Revoked queued inputs remain revoked.
+
+Execution reports contain `result`, `implicit_choices`, `evidence_refs`, and
+`unresolved_items`. The host creates the candidate, records accounting and starts
+independent verification when required. A verifier can record its conclusion with
+`chat_verify`; the host publishes a receipt only after that exact execution
+completes successfully. Workers receive room provenance and shared Work decisions,
+not access to the named identity's private conversation.
+
+Desktop extensions may register a command with context `work-candidate.publish`.
+The candidate review invokes it with `{ candidate, title }` and displays a returned
+`{ url }`. Unloading the extension removes the action. Publication credentials,
+remote policy and PR lifecycle belong to that trusted extension.

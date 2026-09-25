@@ -1935,6 +1935,8 @@ export interface SurfaceRegistration {
 }
 
 export interface CommandRegistration {
+  /** Host action contexts in which this command can accept structured input. */
+  contexts?: readonly string[];
   id: string;
   title: string;
   order?: number;

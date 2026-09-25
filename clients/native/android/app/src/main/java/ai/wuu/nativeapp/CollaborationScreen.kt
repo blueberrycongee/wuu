@@ -106,11 +106,11 @@ import org.json.JSONObject
                 } else {
                     Text("协作", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                     ChromeButton(if (searching) Icons.Default.Close else Icons.Default.Search, if (searching) "关闭搜索" else "搜索协作") { searching = !searching; query = "" }
-                    ChromeButton(Icons.Default.Add, "新对话或群聊", model.connected) { create = true }
+                    ChromeButton(Icons.Default.Add, "新对话", model.connected) { create = true }
                 }
             }
             if (searching && room == null) TextField(query, { query = it }, singleLine = true,
-                placeholder = { Text("搜索对话或群聊") }, leadingIcon = { Icon(Icons.Default.Search, null, Modifier.size(20.dp)) },
+                placeholder = { Text("搜索对话") }, leadingIcon = { Icon(Icons.Default.Search, null, Modifier.size(20.dp)) },
                 shape = MaterialTheme.shapes.large, colors = wuuFieldColors(), modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp))
             if (!model.connected) Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(if (model.connecting) "正在连接…" else "电脑离线 · 消息只读", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -153,23 +153,8 @@ import org.json.JSONObject
             state.error?.let { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.error) }
             if (state.loading && state.rooms.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (room == null) {
-                val groups = state.rooms.filter { it.optString("kind") != "dm" }
-                val rows = state.rooms.filter { if (query.isBlank()) it.optString("kind") == "dm" else state.roomName(it).contains(query, ignoreCase = true) }
+                val rows = state.rooms.filter { it.optString("kind") == "dm" && (query.isBlank() || state.roomName(it).contains(query, ignoreCase = true)) }
                 LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
-                    if (groups.isNotEmpty() && query.isBlank()) item(key = "groups") {
-                        LazyRow(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(groups, key = { it.getString("id") }) { group ->
-                                Column(Modifier.width(80.dp).clickable { state.select(group.getString("id")) }.padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Box {
-                                        RoomMark(group, state.agents, 52.dp)
-                                        if (group.optInt("unread_count") > 0) Box(Modifier.align(Alignment.TopEnd).size(7.dp).background(MaterialTheme.colorScheme.primary, CircleShape))
-                                    }
-                                    Spacer(Modifier.height(6.dp))
-                                    Text(state.roomName(group), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                }
-                            }
-                        }
-                    }
                     if (state.rooms.isEmpty() && !state.loading) item {
                         Column(Modifier.fillMaxWidth().padding(40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Default.Forum, null, Modifier.size(32.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -459,31 +444,30 @@ private fun collaborationStatus(state: String): String = when (state) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun NewCollaborationSheet(model: AppModel, dismiss: () -> Unit) {
     val state = model.collaboration
-    var group by remember { mutableStateOf(false) }
-    var name by remember { mutableStateOf("") }
-    var members by remember { mutableStateOf(emptySet<String>()) }
+    var workspace by remember { mutableStateOf(model.workspace) }
+    var workspaceMenu by remember { mutableStateOf(false) }
     var creating by remember { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = { if (!creating) dismiss() }) {
         LazyColumn(Modifier.fillMaxWidth().heightIn(max = 560.dp), contentPadding = PaddingValues(16.dp)) {
             item {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (group) "新群聊" else "新对话", style = MaterialTheme.typography.titleMedium)
-                    TextButton(onClick = { group = !group }) { Text(if (group) "私聊" else "建群") }
+                    Text("新对话", style = MaterialTheme.typography.titleMedium)
                 }
-                if (group) OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("群名") }, singleLine = true)
+                Box {
+                    TextButton(onClick = { workspaceMenu = true }, enabled = !creating) { Text("项目：" + (model.workspaces.firstOrNull { it.optString("path") == workspace }?.optString("name")?.ifBlank { workspace } ?: workspace)) }
+                    DropdownMenu(expanded = workspaceMenu, onDismissRequest = { workspaceMenu = false }) {
+                        model.workspaces.forEach { project -> DropdownMenuItem(text = { Text(project.optString("name").ifBlank { project.optString("path") }) }, onClick = { workspace = project.optString("path"); workspaceMenu = false }) }
+                    }
+                }
                 if (state.agents.isEmpty()) Text("在电脑上创建 Agent 后开始对话", Modifier.padding(vertical = 16.dp))
             }
             items(state.agents, key = { it.getString("id") }) { agent ->
                 val id = agent.getString("id")
                 ListItem(headlineContent = { Text(agent.optString("name")) }, leadingContent = { AgentMark(agent) }, modifier = Modifier.testTag("new-agent-${agent.optString("name")}").clickable(enabled = model.connected && !creating) {
-                    if (group) members = if (id in members) members - id else members + id
-                    else { creating = true; model.perform { try { state.direct(id); dismiss() } finally { creating = false } } }
-                }, trailingContent = { if (group) Checkbox(id in members, null) })
+                    run { creating = true; model.perform { try { state.direct(id, workspace); dismiss() } finally { creating = false } } }
+                })
             }
-            if (group) item {
-                Button(onClick = { creating = true; model.perform { try { state.create(name, members); dismiss() } finally { creating = false } } },
-                    enabled = model.connected && !creating && name.isNotBlank() && members.isNotEmpty(), modifier = Modifier.fillMaxWidth()) { Text("创建群聊") }
-            }
+
         }
     }
 }

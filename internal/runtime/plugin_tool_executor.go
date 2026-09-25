@@ -167,6 +167,13 @@ func (e *pluginToolExecutor) pluginToolAllowed(name string) bool {
 	if !ok {
 		return false
 	}
+	if kit, ok := e.inner.(*tools.Toolkit); ok && kit.CollaborationReadOnly() && (tool.Registration.Activity == nil || !tool.Registration.Activity.ReadOnly) {
+		// Trusted extensions must explicitly opt in to collaboration management.
+		// Verification never inherits that ability to delegate effects.
+		if !kit.CollaborationCoordinates() || e.scope != "collaboration" {
+			return false
+		}
+	}
 	if e.scope != "" {
 		for _, allowed := range tool.Registration.ExecutionScopes {
 			if allowed == e.scope {

@@ -6,7 +6,7 @@ import { AgentOnboardingHistory } from "./AgentOnboardingHistory";
 import { AgentOnboardingAvatar, AGENT_BUBBLE_DELAY_MS } from "./AgentOnboardingAvatar";
 import { useChannelMessageMotion } from "./useChannelMessageMotion";
 import { motionDurationMs, prefersReducedMotion } from "./motion";
-import { ChannelComposer, type ChannelComposerHandle } from "./ChannelComposer";
+import { ChannelComposer, type ChannelComposerHandle, type ChannelComposerProject } from "./ChannelComposer";
 import { providerModelVariantOptions } from "./RuntimeHelpers";
 import { MessageBubble, MessageBubbleRow } from "./MessageBubbleFlow";
 import { RuntimeModelMenu } from "./ComposerRuntimeMenus";
@@ -34,6 +34,8 @@ type AgentOnboardingProps = {
   onCreate: (params: ChannelAgentCreateParams) => Promise<NamedAgent>;
   onOpenConversation: (agent: NamedAgent, onboarding: ChannelRoomOnboarding) => Promise<void>;
   onManageProviders?: () => void;
+  /** Where the new agent's first conversation opens. */
+  project?: ChannelComposerProject;
   onClose: () => void;
 };
 
@@ -91,7 +93,7 @@ export function createAgentOnboardingDraft(initialized?: InitializeResult): Agen
   };
 }
 
-export function AgentOnboarding({ draft, onDraftChange, initialized, navigation, onCreate, onOpenConversation, onManageProviders, onClose }: AgentOnboardingProps): JSX.Element {
+export function AgentOnboarding({ draft, onDraftChange, initialized, navigation, onCreate, onOpenConversation, onManageProviders, project, onClose }: AgentOnboardingProps): JSX.Element {
   const { t } = useI18n();
   const [busy, setBusy] = useState<"creating" | "opening" | null>(null);
   const [error, setError] = useState("");
@@ -253,7 +255,7 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, navigation,
           composerRef.current?.focus();
         }}><Shuffle size={14} />{t("agentOnboarding.randomName")}</button>
       </div>
-      <ChannelComposer allowAttachments={false} ref={composerRef} draft={draft.name} placeholder={t("agentOnboarding.namePlaceholder")} compact disabled={locked} sending={Boolean(busy)} files={[]} images={[]} onPasteAttachmentFiles={() => {}} onRemoveFile={() => {}} onRemoveImage={() => {}} onChangeDraft={(name) => update({ name })} onSend={() => void submit()} />
+      <ChannelComposer allowAttachments={false} ref={composerRef} draft={draft.name} placeholder={t("agentOnboarding.namePlaceholder")} compact disabled={locked} sending={Boolean(busy)} files={[]} images={[]} project={project} onPasteAttachmentFiles={() => {}} onRemoveFile={() => {}} onRemoveImage={() => {}} onChangeDraft={(name) => update({ name })} onSend={() => void submit()} />
     </div> : null}
   </section>;
 }

@@ -261,6 +261,9 @@ type Env struct {
 	ProcessSandboxProvider processsandbox.Provider
 	AgentControl           *agentcontrol.AgentControl
 	ChatAgent              *channels.AgentClient
+	CollaborationPurpose   channels.CollaborationSessionPurpose
+	CollaborationRoomID    string
+	CollaborationWorkID    string
 	// BrowserBridge routes the browser tool's actions to the desktop host that
 	// owns the hidden WebContentsView + CDP session. Nil means no embedded
 	// browser backend is attached (for example the CLI/headless runtime), and

@@ -19,6 +19,7 @@ import {
   type ChannelRoomPreferences,
   type ChannelTaskCreateParams,
   type ChannelTaskUpdateParams,
+ type ChannelWorkCandidateParams,
   type MessageFlowFontSize,
   type PopOutInitResult,
   type BrowserCommandParams,
@@ -296,6 +297,7 @@ const api: WuuDesktopApi = {
   readChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-read", params),
   sendChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-send", params),
   stopChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-stop", params),
+  returnManagedSession: (params) => ipcRenderer.invoke("wuu:session-control-return", params),
   resumeChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-resume", params),
   listNamedAgents: () => ipcRenderer.invoke("wuu:channel-agent-list"),
   getNamedAgentInsights: () => ipcRenderer.invoke("wuu:channel-agent-insights"),
@@ -329,6 +331,7 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:channel-message-send", params),
   createChannelTask: (params: ChannelTaskCreateParams) =>
     ipcRenderer.invoke("wuu:channel-task-create", params),
+  channelWorkCandidate: (params: ChannelWorkCandidateParams) => ipcRenderer.invoke("wuu:channel-work-candidate", params),
   updateChannelTask: (params: ChannelTaskUpdateParams) =>
     ipcRenderer.invoke("wuu:channel-task-update", params),
   getChannelHumanMentionStatus: () =>

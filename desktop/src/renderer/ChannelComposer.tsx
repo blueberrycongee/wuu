@@ -1,11 +1,11 @@
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
 import { Plus } from "./WuuIcons";
 import { forwardRef, type KeyboardEvent, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import type { NamedAgent } from "../shared/protocol";
+import type { DesktopProject, NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark } from "./AgentAvatarMark";
 import type { ComposerFile, ComposerImage } from "./ComposerMessages";
 import { Composer, type CodexModelLoadState } from "./ComposerView";
-import { FloatingMenuPortal } from "./ComposerFloatingMenu";
+import { FloatingMenuPortal, isInsideFloatingMenu } from "./ComposerFloatingMenu";
 import { focusComposerTextarea } from "./ComposerFocus";
 import { useI18n } from "./i18n";
 
@@ -18,6 +18,13 @@ const EMPTY_MODEL_STATE: CodexModelLoadState = {
 const noop = () => {};
 
 type MentionRange = { start: number; end: number; query: string };
+
+/** A new direct conversation binds to one registered project. */
+export type ChannelComposerProject = {
+  projects: DesktopProject[];
+  selectedID: string;
+  onSelect: (id: string) => void;
+};
 
 export type ChannelComposerHandle = {
   focus: () => void;
@@ -53,12 +60,15 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
   placeholder: string;
   disabled: boolean;
   sending: boolean;
+  running?: boolean;
+  onInterrupt?: () => void;
   files: ComposerFile[];
   images: ComposerImage[];
   allowAttachments?: boolean;
   hideExpandButton?: boolean;
   compact?: boolean;
   mentionAgents?: NamedAgent[];
+  project?: ChannelComposerProject;
   queryHistorySessionID?: string;
   onChangeDraft: (draft: string) => void;
   onPasteAttachmentFiles: (files: File[]) => void;
@@ -71,12 +81,15 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
   placeholder,
   disabled,
   sending,
+  running = false,
+  onInterrupt = noop,
   files,
   images,
   allowAttachments = true,
   hideExpandButton = false,
   compact = false,
   mentionAgents = [],
+  project,
   queryHistorySessionID,
   onChangeDraft,
   onPasteAttachmentFiles,
@@ -100,6 +113,27 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
       composerRef.current?.querySelector<HTMLElement>(".composer-stack") ??
       composerRef.current;
   });
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [projectFilter, setProjectFilter] = useState("");
+  const selectedProject = project?.projects.find((item) => item.id === project.selectedID);
+  useEffect(() => {
+    if (!projectMenuOpen) return;
+    const dismiss = (event: PointerEvent) => {
+      if (event.target instanceof Node && (menuRef.current?.contains(event.target) || isInsideFloatingMenu(event.target, "composer-runtime"))) return;
+      setProjectMenuOpen(false);
+    };
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setProjectMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", dismiss, true);
+    document.addEventListener("keydown", escape, true);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss, true);
+      document.removeEventListener("keydown", escape, true);
+    };
+  }, [projectMenuOpen]);
   const [mentionRange, setMentionRange] = useState<MentionRange | null>(null);
   const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
   const matchingAgents = useMemo(() => {
@@ -211,6 +245,8 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
       ) : null}
       <Composer
         variant="dock"
+        canSelectProject={Boolean(project)}
+        projectFolderActions={false}
         hideRuntimeControls
         leadingActions={allowAttachments ? <>
           <input ref={attachmentInputRef} className="channel-attachment-input" type="file" accept={COMPOSER_ATTACHMENT_ACCEPT} multiple onChange={(event) => {
@@ -237,25 +273,27 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
         images={images}
         queuedMessages={[]}
         guideMessages={[]}
-        running={false}
+        running={running}
         sendDisabled={sending}
         runtimeControlsDisabled
         tokensPerSecond={0}
         status=""
         statusLiveProgress={false}
         readOnly={disabled}
-        projects={[]}
+        projects={project?.projects ?? []}
+        activeProject={selectedProject}
+        activeContext={selectedProject ? { kind: "project", project_id: selectedProject.id, cwd: selectedProject.path } : undefined}
         codexModels={EMPTY_MODEL_STATE}
         codexRuntimeMenu={null}
         codexRuntimeRef={runtimeRef}
-        menuOpen={false}
+        menuOpen={projectMenuOpen}
         accessMenuOpen={false}
         branchMenuOpen={false}
         menuRef={menuRef}
         accessMenuRef={accessMenuRef}
-        projectFilter=""
-        setProjectFilter={noop}
-        onToggleMenu={noop}
+        projectFilter={projectFilter}
+        setProjectFilter={setProjectFilter}
+        onToggleMenu={() => { setProjectMenuOpen((open) => !open); setProjectFilter(""); }}
         onToggleAccessMenu={noop}
         onToggleBranchMenu={noop}
         onToggleCodexRuntimeMenu={noop}
@@ -264,7 +302,7 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
         onSelectPermissionMode={noop}
         onOpenSettings={noop}
         onOpenSkillsCatalog={noop}
-        onSelectProject={noop}
+        onSelectProject={(id) => { setProjectMenuOpen(false); project?.onSelect(id); }}
         onSelectNoProject={noop}
         onSelectGitBranch={noop}
         onCreateProject={noop}
@@ -281,7 +319,7 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
         onEditQueuedMessage={noop}
         onEditGuideMessage={noop}
         onSend={onSend}
-        onInterrupt={noop}
+        onInterrupt={onInterrupt}
       />
     </div>
   );

@@ -217,10 +217,12 @@ type RoomOnboarding struct {
 }
 
 type Room struct {
-	Onboarding *RoomOnboarding `json:"onboarding,omitempty"`
-	ID         string          `json:"id"`
-	Kind       RoomKind        `json:"kind"`
-	Name       string          `json:"name"`
+	WorkspaceRoot string          `json:"workspace_root,omitempty"`
+	WorkspaceID   string          `json:"workspace_id,omitempty"`
+	Onboarding    *RoomOnboarding `json:"onboarding,omitempty"`
+	ID            string          `json:"id"`
+	Kind          RoomKind        `json:"kind"`
+	Name          string          `json:"name"`
 	// RuntimeID is internal routing state, not a participant identity.
 	RuntimeID string `json:"-"`
 	// AgentID is a source-compatible internal alias for migrations and tests.
@@ -657,6 +659,8 @@ type Reminder struct {
 }
 
 type TaskCreateParams struct {
+	Constraints          string
+	Decisions            []string
 	SourceSessionRef     string
 	RoomID               string
 	ThreadID             string
@@ -673,15 +677,18 @@ type TaskCreateParams struct {
 }
 
 type TaskUpdateParams struct {
-	TaskID         string
-	RoomID         string
-	State          TaskState
-	OwnerID        string
-	GoalCorrection string
-	SessionRef     string
-	AgentID        string
-	Token          string
-	HumanID        string
+	ExpectedRevision int
+	Constraints      *string
+	Decision         string
+	TaskID           string
+	RoomID           string
+	State            TaskState
+	OwnerID          string
+	GoalCorrection   string
+	SessionRef       string
+	AgentID          string
+	Token            string
+	HumanID          string
 }
 
 type TaskListParams struct {

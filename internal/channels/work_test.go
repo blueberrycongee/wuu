@@ -359,3 +359,65 @@ func TestCancelWorkRetiresPendingTaskWake(t *testing.T) {
 		t.Fatalf("wake after cancellation = %#v, want idle", wake)
 	}
 }
+
+func TestWorkDecisionsRejectStaleUpdatesAndPersistRevisions(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	s, err := Open(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := s.CreateNamedAgent(ctx, CreateNamedAgentParams{Name: "Owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	room, err := s.OpenDirectMessage(ctx, "local-user", owner.Agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.CreateTaskHuman(ctx, TaskCreateParams{RoomID: room.ID, HumanID: "local-user", Title: "Search", Constraints: "Preserve the public API", OwnerID: owner.Agent.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := task.Work.Revision
+	updated, err := s.UpdateTaskHuman(ctx, TaskUpdateParams{TaskID: task.ID, HumanID: "local-user", ExpectedRevision: first, Decision: "Use a cursor"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Work.Revision <= first || len(updated.Work.Decisions) != 1 {
+		t.Fatalf("lost decision: %#v", updated.Work)
+	}
+	if _, err := s.UpdateTaskHuman(ctx, TaskUpdateParams{TaskID: task.ID, HumanID: "local-user", ExpectedRevision: first, State: TaskStateDone}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale completion: %v", err)
+	}
+	constraint := "Preserve the public API; page size is 50"
+	revised, err := s.UpdateTaskHuman(ctx, TaskUpdateParams{TaskID: task.ID, HumanID: "local-user", ExpectedRevision: updated.Work.Revision, Constraints: &constraint})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revised.TaskGoalRevision != task.TaskGoalRevision+1 {
+		t.Fatal("constraint change did not revise goal")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	work, err := s.GetWork(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if work.Constraints != constraint || work.DecisionHistory[0].Constraints != "Preserve the public API" || len(work.Decisions) != 1 {
+		t.Fatalf("history lost: %#v", work)
+	}
+	cancelled, err := s.UpdateTaskHuman(ctx, TaskUpdateParams{TaskID: task.ID, HumanID: "local-user", ExpectedRevision: work.Revision, State: "cancelled"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.Work.State != WorkCancelled {
+		t.Fatalf("cancel = %#v", cancelled.Work)
+	}
+}

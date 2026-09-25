@@ -1,0 +1,7 @@
+{
+  "name": "wuu-git-delivery",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test publish.test.mjs" },
+  "dependencies": { "@wuu/plugin-sdk": "file:../../../packages/plugin-sdk" }
+}
