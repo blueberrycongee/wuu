@@ -385,8 +385,11 @@ export function useConversationScrollState({
     return true;
   }, []);
   const setAutoFollow = useCallback((next: boolean): void => {
-    // A later ownership change supersedes a pending click's restoration.
-    if (pointerScrollGestureRef.current) pointerScrollGestureRef.current.resumeScrollTop = undefined;
+    // A later ownership change supersedes a pending gesture's restoration.
+    if (pointerScrollGestureRef.current) {
+      pointerScrollGestureRef.current.resumeScrollTop = undefined;
+      pointerScrollGestureRef.current.followOnRelease = false;
+    }
     writeScrollMode(next ? "following" : "paused");
   }, []);
   const lastConversationScrollTopRef = useRef(0);
@@ -400,7 +403,13 @@ export function useConversationScrollState({
   const positionSubmittedMessageRef = useRef<((animate: boolean) => boolean) | undefined>(undefined);
   const selectionPausedAutoFollowRef = useRef(false);
   const pointerScrollGestureRef = useRef<
-    { node: HTMLElement; scrollTop: number; scrollHeight: number; resumeScrollTop?: number } | undefined
+    {
+      node: HTMLElement;
+      scrollTop: number;
+      scrollHeight: number;
+      resumeScrollTop?: number;
+      followOnRelease?: boolean;
+    } | undefined
   >(undefined);
   const userScrollIntentRef = useRef<"away" | "latest" | undefined>(undefined);
   const userScrollIntentTimerRef = useRef<number | undefined>(undefined);
@@ -1294,7 +1303,16 @@ export function useConversationScrollState({
       node.scrollTop < scrollAwayStartTop - 1;
     const movedAbovePreviousScroll = userScrollAwayIntent && scrolledUp;
     let nextAutoFollow = isFollowing();
-    if (
+    if (pointerGesture?.node === node) {
+      // Returning to the bottom band does not release a held scrollbar.
+      // Defer follow until pointerup so stream frames cannot fight the drag.
+      if (scrolledUp || scrolledDown) {
+        setAutoFollow(false);
+        pointerGesture.followOnRelease = atLatestView && scrolledDown && !selectionPausedAutoFollowRef.current;
+      }
+      nextAutoFollow = false;
+      setAutoFollowOverflowAnchor(node, false);
+    } else if (
       (movedAboveUserIntentStart || movedAbovePreviousScroll) &&
       node.scrollTop < maxScrollTop(node) - 1
     ) {
@@ -1581,8 +1599,9 @@ export function useConversationScrollState({
       // A press on empty surface is not necessarily a scroll. Do not leave
       // following disabled when it ends without movement or another owner.
       if (event.type === "pointerup" && gesture?.node === node &&
-        gesture.resumeScrollTop !== undefined &&
-        Math.abs(clampScrollTop(node, node.scrollTop) - gesture.resumeScrollTop) <= 1) {
+        ((gesture.resumeScrollTop !== undefined &&
+          Math.abs(clampScrollTop(node, node.scrollTop) - gesture.resumeScrollTop) <= 1) ||
+          (gesture.followOnRelease && atLatestScrollView(node, CONVERSATION_AUTO_SCROLL_THRESHOLD_PX)))) {
         enableConversationAutoFollow();
         scrollConversationToBottom();
       }
