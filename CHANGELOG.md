@@ -28,6 +28,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- The macOS DMG installer window has a Retina-ready background with English
+  and Chinese drag-to-install instructions: a slingshot beside the app fires
+  Wuu along a dotted arc into the Applications folder.
+
 - Pasted or attached images, videos, PDFs, and folded long text now wait in a
   single-row tray that slides out from behind the top of the composer instead
   of growing the input box. Cards show a thumbnail, or a title with size or
