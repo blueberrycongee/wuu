@@ -30,7 +30,7 @@ import {
 import { markScrollbarRevealSelfManaged, revealScrollbar } from "./ScrollbarReveal";
 import { isWindowResizing } from "./WindowResizeState";
 import { markSessionSwitch } from "./SessionSwitchPerformance";
-import { messageMotionTime, motionDurationMs, motionEasing, prefersReducedMotion, cubicBezier } from "./motion";
+import { messageMotionTime, motionDurationMs, motionEasing, prefersReducedMotion, subscribeReducedMotion, cubicBezier } from "./motion";
 import { createScrollGlide } from "./ScrollGlide";
 import { useSessionTailSpace } from "./SessionTailSpace";
 import { conversationDisclosureHeight, eventTargetsConversationDisclosure } from "./ConversationDisclosure";
@@ -1049,12 +1049,10 @@ export function useConversationScrollState({
   useLayoutEffect(() => cancelSubmittedQueryScroll, [cancelSubmittedQueryScroll]);
 
   useEffect(() => {
-    const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-    const reduce = () => { if (media?.matches) cancelSubmittedQueryScroll(); };
+    const stopReducedMotion = subscribeReducedMotion((reduced) => { if (reduced) cancelSubmittedQueryScroll(); });
     const hide = () => { if (document.hidden) cancelSubmittedQueryScroll(); };
-    media?.addEventListener("change", reduce);
     document.addEventListener("visibilitychange", hide);
-    return () => { media?.removeEventListener("change", reduce); document.removeEventListener("visibilitychange", hide); };
+    return () => { stopReducedMotion(); document.removeEventListener("visibilitychange", hide); };
   }, [cancelSubmittedQueryScroll]);
 
   const scheduleStreamScroll = useCallback((): void => {

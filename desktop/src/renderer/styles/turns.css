@@ -456,7 +456,7 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .user-message-block.user-message-jump-flash > .user-message-motion > .user-message,
   .user-message-block.user-message-jump-flash > .user-message-motion > .user-message-edit {
     animation: none;
@@ -1627,7 +1627,7 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .agent-actions-enter .agent-message-actions {
     animation-delay: 0ms;
   }
@@ -1850,7 +1850,7 @@
 }
 
                                                         
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .streaming-markdown[data-cursor-state="fading"] .stream-cursor {
     transition: none;
   }
@@ -2046,7 +2046,7 @@
   animation: wuu-pulse 1.2s ease-in-out infinite;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .turn-process-live-dot {
     animation: none;
     opacity: 1;
@@ -2323,7 +2323,7 @@
   animation: wuu-pulse 1.5s ease-in-out infinite;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .tool-activity-marker.is-running {
     animation: none;
   }
@@ -2720,7 +2720,7 @@
   mask-image: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .process-surface-summary-text.wuu-live-text-wave {
     animation: none;
     mask-image: none;
@@ -2899,7 +2899,7 @@
   color: var(--ink-muted);
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .stream-reconnect-progress { transition: none; }
 }
 
@@ -2940,7 +2940,7 @@
   animation-play-state: paused;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .process-surface-count.is-changing {
     animation: none;
   }
@@ -4703,7 +4703,7 @@ pre {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .wuu-launch-glass,
   .wuu-launch-mark::after,
   .wuu-launch-mark span,
@@ -5440,7 +5440,7 @@ pre {
   transform: rotate(90deg);
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .turn-edit-presentation {
     transition: none;
   }
@@ -5923,7 +5923,7 @@ button.turn-sources-pill:focus-visible {
 /* Honor the OS-level "reduce motion" preference — the hover lift
  * transitions from `transition: transform` are motion rather than
  * decorative; users who opted out shouldn't see them. */
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .turn-source-icon {
     transition: none;
   }

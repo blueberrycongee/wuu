@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import type { ChannelAgentInsight, ChannelRoom, NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark } from "./AgentAvatarMark";
 import { useI18n } from "./i18n";
+import { cubicBezier, motionDurationMs, motionEasing, prefersReducedMotion } from "./motion";
 
 const GRAPH_WIDTH = 960;
 const GRAPH_HEIGHT = 560;
@@ -416,13 +417,20 @@ export function AgentRelationshipGraph({ agents, rooms, insights, inheritedProvi
     }
   }
 
-  function animateViewportTo(target: { x: number; y: number; scale: number }, duration = 420): void {
+  function animateViewportTo(target: { x: number; y: number; scale: number }): void {
     cancelViewportTween();
+    const duration = prefersReducedMotion() ? 0 : motionDurationMs("--motion-slower", 440);
+    if (duration <= 0) {
+      viewportRef.current = { ...target };
+      applyViewport();
+      return;
+    }
+    const easing = motionEasing("--ease-out", cubicBezier(0.16, 1, 0.3, 1));
     const from = { ...viewportRef.current };
     const start = performance.now();
     const step = (now: number): void => {
       const progress = Math.min((now - start) / duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
+      const eased = easing(progress);
       viewportRef.current = {
         x: from.x + (target.x - from.x) * eased,
         y: from.y + (target.y - from.y) * eased,

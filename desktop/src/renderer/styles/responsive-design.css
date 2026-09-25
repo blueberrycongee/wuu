@@ -5,7 +5,7 @@
   --responsive-secondary-button-text: var(--wuu-color-text, #3c4145);
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .project-add-menu,
   .codex-runtime-menu,
   .composer-project-menu,
@@ -168,7 +168,7 @@
   color: var(--wuu-color-text, var(--responsive-secondary-button-text));
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .app-shell,
   .sidebar,
   .sidebar-content,

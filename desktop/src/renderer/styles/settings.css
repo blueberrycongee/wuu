@@ -1982,7 +1982,7 @@
   justify-self: end;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .settings-usage-loading,
   .settings-subscription-skeleton {
     animation: none;
@@ -2784,7 +2784,7 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .settings-button,
   .settings-input,
   .settings-nav-item,

@@ -1,5 +1,5 @@
 import { Children, isValidElement, useEffect, useLayoutEffect, useState, type ReactElement, type ReactNode } from "react";
-import { motionDurationMs, prefersReducedMotion } from "./motion";
+import { motionDurationMs, prefersReducedMotion, subscribeReducedMotion } from "./motion";
 
 /** Retain departing activities only for their exit; their controls stop immediately. */
 export function ChannelActivityPresence({ children }: { children: ReactNode }): JSX.Element {
@@ -21,11 +21,9 @@ export function ChannelActivityPresence({ children }: { children: ReactNode }): 
   useEffect(() => {
     if (retained.every(node => current.some(item => item.key === node.key))) return;
     const finish = () => setRetained(previous => previous.filter(node => current.some(item => item.key === node.key)));
-    const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const timer = window.setTimeout(finish, prefersReducedMotion() ? 0 : motionDurationMs("--motion-base", 180));
-    const reduce = () => { if (media?.matches) finish(); };
-    media?.addEventListener("change", reduce);
-    return () => { window.clearTimeout(timer); media?.removeEventListener("change", reduce); };
+    const stopReducedMotion = subscribeReducedMotion((reduced) => { if (reduced) finish(); });
+    return () => { window.clearTimeout(timer); stopReducedMotion(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature]);
   return <>{retained.map(node => {

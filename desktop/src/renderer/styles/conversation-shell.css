@@ -234,7 +234,7 @@
   transition: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .conversation-pane {
     transition: none;
   }
@@ -1601,7 +1601,7 @@ button.conversation-status-capsule,
  * macOS Dock-style motion: smooth spring with slight overshoot
  * (cubic-bezier(0.34, 1.56, 0.64, 1) ≈ easeOutBack) so the magnified bar
  * settles with a natural "spring then rest" feel rather than a linear
- * slide. prefers-reduced-motion collapses the easing to a 1ms step.
+ * slide. Reduced motion zeroes the ladder, so the bar snaps instead.
  */
 .conversation-pane {
   position: relative;
@@ -1750,7 +1750,7 @@ button.conversation-status-capsule,
   pointer-events: auto;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .conversation-turn-rail-bar,
   .conversation-turn-rail-preview {
     transform: none;

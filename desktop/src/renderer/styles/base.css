@@ -265,7 +265,8 @@
    * Durations that stay literal are rhythms rather than transitions:
    * --motion-spin, ambient loops, and choreography paced by a JS clock. Each
    * stops or holds a static pose under reduced motion next to where it is
-   * defined. JS reads these tokens through motion.ts when motion starts. */
+   * defined (see the --motion-reduced block after this :root block). JS
+   * reads these tokens through motion.ts when motion starts. */
   --motion-fast: var(--wuu-motion-duration-fast, 120ms);
   --motion-base: var(--wuu-motion-duration-normal, 180ms);
   --motion-slow: 280ms;
@@ -299,7 +300,7 @@
   --sheet-exit-duration: 220ms;
   --sheet-exit-easing: var(--ease-in);
   /* Collapsed-sidebar hover drawer: same enter-heavy/exit-light pairing as
-   * the sheet. Enter rides the ladder (so prefers-reduced-motion zeroes it);
+   * the sheet. Enter rides the ladder (so reduced motion zeroes it);
    * exit is pinned shorter and accelerates off-screen. JS reads the exit
    * token for the closing-phase timer (SIDEBAR_DRAWER_EXIT_MS). */
   --sidebar-drawer-enter-duration: var(--motion-slow);
@@ -411,13 +412,27 @@
   --window-controls-inset-right: 0px;
 }
 
-/* Reduced motion: collapse the ladder and every pinned alias at the token
- * layer, so token-driven transitions, entrances, and exits become instant.
- * A pinned alias that is missing here keeps animating. Spin rhythms stay
- * non-zero: spinners communicate ongoing work, and a 0ms infinite animation
- * would busy-loop. */
+/* Reduced motion has two sources, the OS setting and the in-app Motion
+ * preference (data-appearance-motion, AppearancePreferences.ts). Both
+ * resolve here into one signal, --motion-reduced: 1, and collapse the
+ * ladder and every pinned alias at the token layer, so token-driven
+ * transitions, entrances, and exits become instant with no per-component
+ * rule. The two blocks must stay identical: a pinned alias missing from
+ * them keeps animating. Spin rhythms stay non-zero: spinners communicate
+ * ongoing work, and a 0ms infinite animation would busy-loop.
+ *
+ * Motion the ladder cannot reach — loops, literal rhythms, a static pose
+ * that replaces a transform — opts out next to where it is defined:
+ *
+ *   @container style(--motion-reduced: 1) { .pulse { animation: none; } }
+ *
+ * Every element is a style container, so the query reads the flag its
+ * parent inherits from :root. JS reads the same two sources through
+ * motion.ts (prefersReducedMotion, subscribeReducedMotion,
+ * useReducedMotion). */
 @media (prefers-reduced-motion: reduce) {
   :root {
+    --motion-reduced: 1;
     --motion-fast: 0ms;
     --motion-base: 0ms;
     --motion-slow: 0ms;
@@ -430,6 +445,21 @@
     --sheet-exit-duration: 0ms;
     --sidebar-drawer-exit-duration: 0ms;
   }
+}
+
+:root[data-appearance-motion="reduce"] {
+  --motion-reduced: 1;
+  --motion-fast: 0ms;
+  --motion-base: 0ms;
+  --motion-slow: 0ms;
+  --motion-slower: 0ms;
+  --query-submit-duration: 0ms;
+  --environment-panel-motion-duration: 0ms;
+  --environment-panel-exit-duration: 0ms;
+  --environment-flow-motion-duration: 0ms;
+  --environment-flow-motion-delay: 0ms;
+  --sheet-exit-duration: 0ms;
+  --sidebar-drawer-exit-duration: 0ms;
 }
 
 /* Glyph-only running-state feedback. The real text remains normally painted;
@@ -494,7 +524,7 @@
   animation: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .wuu-live-text-wave::after {
     content: none;
     animation: none;

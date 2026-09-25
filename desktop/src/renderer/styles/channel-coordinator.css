@@ -126,7 +126,7 @@
   .channel-activity-region.channel-activity-motion { min-height: 70px; }
   .channel-activity-motion .channel-activity-inspect { min-width: 44px; min-height: 44px; }
 }
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .channel-activity-slot, .channel-activity-motion .channel-activity-inspect { transition: none; transform: none; }
   .channel-activity-motion .channel-animated-activity .channel-response-status-avatar,
   .channel-activity-motion .channel-animated-activity .channel-coordinator-mascot { animation: none; }

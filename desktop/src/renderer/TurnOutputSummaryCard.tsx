@@ -3,7 +3,7 @@ import { ChevronRight } from "./WuuIcons";
 
 import type { Turn } from "../shared/protocol";
 import { turnIsAnswerReady } from "./AppState";
-import { motionDurationMs } from "./motion";
+import { motionDurationMs, prefersReducedMotion } from "./motion";
 import { Tooltip } from "./Tooltip";
 import { useI18n } from "./i18n";
 
@@ -165,7 +165,7 @@ export function TurnOutputSummaryPresentation({
       setRetained(false);
       onCollapseComplete?.();
     };
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+    if (prefersReducedMotion()) {
       finish();
       return;
     }

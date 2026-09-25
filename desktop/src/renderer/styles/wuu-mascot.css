@@ -22,7 +22,7 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   [data-wuu-mascot-presence] { animation: none; }
   [data-wuu-mascot-presence="exit"] { opacity: 0; }
 }
@@ -68,7 +68,7 @@
   transform-origin: 0 0;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .wuu-accessory-motion { transform: none; }
 }
 
@@ -322,7 +322,7 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   [data-wuu-mascot-activity] {
     transition: none;
   }

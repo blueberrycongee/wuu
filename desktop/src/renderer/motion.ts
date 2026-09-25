@@ -1,28 +1,79 @@
 /* The single JS-side bridge to the motion tokens in styles/base.css.
  * WUU_TEST_MARKER
  * CSS owns the values. JS reads them at call time, so a timeout that waits
- * for a transition always matches the stylesheet, and prefers-reduced-motion
- * (which zeroes the token ladder) collapses the JS waits with it.
+ * for a transition always matches the stylesheet, and reduced motion (which
+ * zeroes the token ladder) collapses the JS waits with it.
  * Fallbacks only cover environments without real computed styles (jsdom). */
+import { useSyncExternalStore } from "react";
 
-export function prefersReducedMotion(): boolean {
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+function reducedMotionMedia(): MediaQueryList | undefined {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-    return false;
+    return undefined;
   }
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return window.matchMedia(REDUCED_MOTION_QUERY);
 }
 
-export function motionDurationMs(token: string, fallbackMs: number): number {
+/**
+ * Whether motion should be reduced: the OS setting or the in-app Motion
+ * preference (`data-appearance-motion="reduce"`). This is the same pair of
+ * sources that sets `--motion-reduced` in base.css, so frame loops, WAAPI,
+ * and scroll behavior agree with the stylesheet.
+ */
+export function prefersReducedMotion(): boolean {
+  if (typeof document !== "undefined" && document.documentElement.dataset.appearanceMotion === "reduce") {
+    return true;
+  }
+  return reducedMotionMedia()?.matches ?? false;
+}
+
+/**
+ * Calls `listener` with the new value whenever `prefersReducedMotion()`
+ * changes, from either source. Returns the unsubscribe function.
+ */
+export function subscribeReducedMotion(listener: (reduced: boolean) => void): () => void {
+  const media = reducedMotionMedia();
+  let reduced = prefersReducedMotion();
+  const check = (): void => {
+    const next = prefersReducedMotion();
+    if (next === reduced) return;
+    reduced = next;
+    listener(next);
+  };
+  media?.addEventListener("change", check);
+  const observer = new MutationObserver(check);
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-appearance-motion"],
+  });
+  return () => {
+    media?.removeEventListener("change", check);
+    observer.disconnect();
+  };
+}
+
+/** `prefersReducedMotion()` as React state that follows both sources. */
+export function useReducedMotion(): boolean {
+  return useSyncExternalStore(subscribeReducedMotion, prefersReducedMotion, () => false);
+}
+
+/** A token's computed text on the root, or "" where styles never resolved. */
+function readMotionToken(token: string): string {
   if (
     typeof window === "undefined" ||
     typeof window.getComputedStyle !== "function"
   ) {
-    return fallbackMs;
+    return "";
   }
-  const raw = window
+  return window
     .getComputedStyle(document.documentElement)
     .getPropertyValue(token)
     .trim();
+}
+
+export function motionDurationMs(token: string, fallbackMs: number): number {
+  const raw = readMotionToken(token);
   if (raw === "") {
     return fallbackMs;
   }
@@ -137,18 +188,18 @@ function parseEasing(value: string): Easing | undefined {
  * [`motionDurationMs`].
  */
 export function motionEasing(token: string, fallback: Easing): Easing {
-  if (
-    typeof window === "undefined" ||
-    typeof window.getComputedStyle !== "function"
-  ) {
-    return fallback;
-  }
-  const raw = window
-    .getComputedStyle(document.documentElement)
-    .getPropertyValue(token)
-    .trim();
+  const raw = readMotionToken(token);
   if (raw === "") {
     return fallback;
   }
   return parseEasing(raw) ?? fallback;
+}
+
+/**
+ * The CSS text of an easing token, for APIs that take a timing function as
+ * a string, such as `Element.animate`. Falls back when the token never
+ * resolved (jsdom), like [`motionDurationMs`].
+ */
+export function motionCurve(token: string, fallback: string): string {
+  return readMotionToken(token) || fallback;
 }

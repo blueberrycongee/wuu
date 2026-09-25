@@ -64,7 +64,7 @@
 .agent-onboarding-intro-avatar { position: absolute; top: 12px; left: calc(23px - var(--channel-avatar-size) / 2); width: var(--channel-avatar-size); height: var(--channel-avatar-size); }
 .agent-onboarding-name-prompt { margin: 0; }
 .agent-onboarding-bubble > form { animation: wuu-fade-in var(--motion-base) var(--ease-out) 100ms both; }
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .agent-onboarding-bubble > form { animation-delay: 0s; }
 }
 

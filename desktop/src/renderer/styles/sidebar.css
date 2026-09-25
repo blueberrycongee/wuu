@@ -2775,7 +2775,7 @@ html[data-focus-modality="keyboard"] :is(
   right: calc(var(--sidebar-row-pad-x) + var(--sidebar-thread-actions-width) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .sidebar-notifications-button[data-holding="true"]::after,
   .sidebar-notifications-button[data-holding="true"] svg {
     animation: none;
@@ -2853,7 +2853,7 @@ html[data-focus-modality="keyboard"] :is(
   transition-delay: 0s;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .thread-row-main > .thread-row-title {
     transition: none;
   }

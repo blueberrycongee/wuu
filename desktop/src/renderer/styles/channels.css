@@ -1959,7 +1959,7 @@
 .channel-agent-preview-loading i { height: 6px; border-radius: var(--radius-pill); background: var(--ink-overlay-6); --pulse-opacity: 0.45; animation: wuu-pulse 1.4s ease-in-out infinite; }
 .channel-agent-preview-loading i:nth-child(2) { width: 64%; animation-delay: 0.15s; }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .channel-agent-preview-loading i { animation: none; }
 }
 

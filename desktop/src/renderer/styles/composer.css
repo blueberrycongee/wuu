@@ -706,7 +706,7 @@
   pointer-events: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .composer-expand-button {
     transition: none;
   }
@@ -939,7 +939,7 @@
   color: var(--danger);
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .composer-pending-arrival,
   .composer-queue-row {
     animation: none;
@@ -1055,7 +1055,7 @@
   animation: wuu-enter var(--motion-fast) var(--ease-out);
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .composer-accessory-drawer { transition: none !important; }
 }
 
@@ -1486,7 +1486,7 @@
   flex: 0 0 auto;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .group-members-capsule {
     transition: none;
   }
@@ -2534,7 +2534,7 @@
   :root[data-host-kind="web"] .composer-camera-dialog { border-radius: 24px; }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   :root[data-host-kind="web"] .composer-camera-flash { display: none; }
 }
 

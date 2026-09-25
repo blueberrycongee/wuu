@@ -112,7 +112,7 @@
   pointer-events: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .composer-token-gauge,
   .composer-token-gauge-progress,
   .composer-token-gauge-needle,

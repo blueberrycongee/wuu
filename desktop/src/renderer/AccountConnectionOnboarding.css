@@ -39,7 +39,7 @@
 }
 @keyframes account-phone-receive { 0%, 35%, 60%, 100% { opacity: .35; } 44% { opacity: 1; } }
 @keyframes account-computer-receive { 0%, 77%, 100% { opacity: .35; } 86% { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .account-device-animation * { animation: none; }
   .account-transfer-out { transform: translateX(48px); }
   .account-transfer-in { transform: translateX(-48px); }

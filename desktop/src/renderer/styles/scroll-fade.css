@@ -107,12 +107,14 @@
 
 /* Keep high-contrast/print output fully legible. Reduced motion and older
  * engines degrade to ordinary clipping rather than a permanent fade. */
-:root[data-appearance-motion="reduce"] [data-scroll-fade] {
-  animation: none;
-  mask-image: none;
+@media (forced-colors: active), print {
+  [data-scroll-fade] {
+    animation: none;
+    mask-image: none;
+  }
 }
 
-@media (forced-colors: active), (prefers-reduced-motion: reduce), print {
+@container style(--motion-reduced: 1) {
   [data-scroll-fade] {
     animation: none;
     mask-image: none;

@@ -772,7 +772,7 @@
   animation: content-swap-enter var(--content-swap-duration) var(--content-swap-easing) both;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .workspace-panel-content-swap,
   .workspace-file-resource.active {
     animation: none;
@@ -829,7 +829,7 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .workspace-panel-loading-rail::after {
     animation: none;
   }
@@ -1259,7 +1259,7 @@ html.resizing-workspace-file-split * {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .workspace-document-turn-waiting-query {
     background: none;
     color: var(--ink-muted);
@@ -4937,7 +4937,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   margin: 4px 4px 0;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .codex-model-menu.runtime-panel {
     transition: none;
   }

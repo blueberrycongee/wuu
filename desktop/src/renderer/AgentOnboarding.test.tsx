@@ -7,12 +7,13 @@ import type { InitializeResult, NamedAgent } from "../shared/protocol";
 import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft } from "./AgentOnboarding";
 import { agentAvatarConfig } from "./AgentAvatarMark";
 
-vi.mock("./motion", () => ({
+vi.mock("./motion", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./motion")>()),
   prefersReducedMotion: vi.fn(() => true),
+  subscribeReducedMotion: () => () => {},
+  useReducedMotion: () => true,
   motionDurationMs: () => 0,
   messageMotionTime: () => undefined,
-  motionEasing: (_token: string, fallback: (progress: number) => number) => fallback,
-  cubicBezier: () => () => 0,
 }));
 
 vi.mock("blobatar/react", () => ({ Blobatar: () => null }));

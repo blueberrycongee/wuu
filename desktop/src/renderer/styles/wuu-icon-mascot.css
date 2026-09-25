@@ -23,7 +23,7 @@
   18% { transform: scaleY(0.08); }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .wuu-icon-gaze, .wuu-icon-blink {
     animation: none;
     transition: none;

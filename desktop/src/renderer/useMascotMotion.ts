@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
 import type { WuuMascotActivity } from "./wuu-mascot-spec";
 
 /** Decorative attention never changes the caller's semantic activity. */
@@ -7,11 +8,10 @@ export function useMascotAttention(activity: WuuMascotActivity, enabled: boolean
   useEffect(() => {
     setGlance(null);
     if (!enabled || (activity !== "idle" && activity !== "compose")) return;
-    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     let timer: number | undefined;
     let away = false;
     const schedule = () => {
-      if (reduced?.matches || document.hidden) return;
+      if (prefersReducedMotion() || document.hidden) return;
       timer = window.setTimeout(() => {
         away = !away;
         setGlance(away ? { source: activity, pose: activity === "idle" ? "compose" : "idle" } : null);
@@ -25,11 +25,11 @@ export function useMascotAttention(activity: WuuMascotActivity, enabled: boolean
       schedule();
     };
     schedule();
-    reduced?.addEventListener("change", reset);
+    const stopReducedMotion = subscribeReducedMotion(reset);
     document.addEventListener("visibilitychange", reset);
     return () => {
       window.clearTimeout(timer);
-      reduced?.removeEventListener("change", reset);
+      stopReducedMotion();
       document.removeEventListener("visibilitychange", reset);
     };
   }, [activity, enabled]);
