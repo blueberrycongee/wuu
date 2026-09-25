@@ -28,7 +28,8 @@ func collaborationTokenUsage(ctx context.Context, reader tokenUsageReader, roomI
 		UNION ALL
 		SELECT room_id,work_id,input_tokens,output_tokens FROM collaboration_turn_scopes WHERE run_id=''
 		UNION ALL
-		SELECT room_id,work_id,input_tokens,output_tokens FROM harness_session_usage
+		SELECT usage.room_id,usage.work_id,usage.input_tokens,usage.output_tokens FROM harness_session_usage usage
+        WHERE NOT EXISTS (SELECT 1 FROM work_runs run WHERE run.session_ref=usage.session_id AND run.turn_id=usage.turn_id)
 	)`+where, args...).Scan(&input, &output)
 	return
 }

@@ -442,6 +442,9 @@ func (t *Toolkit) SetChatAgent(client *channels.AgentClient) {
 	t.env.ChatAgent = client
 	t.rebuildRegistry()
 	kind := modelprofile.SurfaceNamedAgent
+	if client == nil {
+		kind = modelprofile.SurfaceMain
+	}
 	if client != nil && client.IsRoomRuntime() {
 		kind = modelprofile.SurfaceRoomAgent
 	}

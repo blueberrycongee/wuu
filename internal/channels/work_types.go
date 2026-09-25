@@ -168,6 +168,7 @@ type WorkArtifact struct {
 }
 
 type WorkRunStartParams struct {
+	harness           bool
 	SourceSessionRef  string
 	WorkID            string
 	NamedAgentID      string

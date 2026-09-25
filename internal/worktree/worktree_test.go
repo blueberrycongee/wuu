@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -880,5 +881,38 @@ func TestIsGitRepo(t *testing.T) {
 	initRepo(t, gitDir)
 	if !IsGitRepo(gitDir) {
 		t.Error("initialized dir should be a git repo")
+	}
+}
+
+func TestSnapshotPreservesWorkingTreeAndFreezesCandidate(t *testing.T) {
+	root := t.TempDir()
+	initRepo(t, root)
+	base := runGit(t, root, "rev-parse", "HEAD")
+	write := func(name, value string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), []byte(value), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("README.md", "staged\n")
+	runGit(t, root, "add", "README.md")
+	write("README.md", "unstaged\n")
+	write("new.txt", "untracked\n")
+	before := runGit(t, root, "status", "--porcelain=v1")
+	index := runGit(t, root, "write-tree")
+	revision, diff, err := Snapshot(context.Background(), root, base, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diff, "+unstaged") || !strings.Contains(diff, "+untracked") {
+		t.Fatalf("incomplete candidate: %s", diff)
+	}
+	if before != runGit(t, root, "status", "--porcelain=v1") || index != runGit(t, root, "write-tree") || base != runGit(t, root, "rev-parse", "HEAD") {
+		t.Fatal("snapshot changed user's git state")
+	}
+	write("README.md", "later edit\n")
+	replay, replayDiff, err := Snapshot(context.Background(), root, base, "run-1")
+	if err != nil || replay != revision || replayDiff != diff {
+		t.Fatalf("candidate changed on replay: %s %v", replay, err)
 	}
 }

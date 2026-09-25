@@ -11,6 +11,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/worktree"
 )
 
 type harnessSessionView struct {
@@ -97,7 +98,10 @@ func (s *Server) HarnessSession(ctx context.Context, actor channels.HarnessSessi
 		}
 		actor.WorkID, actor.GoalRevision = work.ID, work.GoalRevision
 	}
-	if err := s.validateHarnessActor(ctx, actor); err != nil {
+	if (p.Purpose != "" || p.BaseRevision != "") && !p.HostVerification {
+		return nil, errors.New("session purpose is assigned by the host")
+	}
+	if err := s.validateHarnessScope(ctx, actor, !p.HostVerification); err != nil {
 		return nil, err
 	}
 	p.Prompt = strings.TrimSpace(p.Prompt)
@@ -356,7 +360,7 @@ func (s *Server) applyHarnessOperationLocked(ctx context.Context, op *channels.H
 		if _, ok, err := session.Find(s.rt.SessionDir, p.SessionID); err != nil {
 			return err
 		} else if !ok {
-			if _, err := s.createHostSessionThread("user", "collaboration", p.SessionID, pluginhost.SessionCreateParams{RequestID: op.ID, Name: p.Title, Visibility: "user", ContextSource: "fresh", ParentSessionID: op.Actor.SessionRef, Workspace: p.Workspace, WorkspaceID: p.WorkspaceID, WorkspaceRoot: p.WorkspaceRoot, Provider: p.Provider, Model: p.Model, Effort: p.Effort}); err != nil {
+			if _, err := s.createHostSessionThreadAtRevision("user", "collaboration", p.SessionID, pluginhost.SessionCreateParams{RequestID: op.ID, Name: p.Title, Visibility: "user", ContextSource: "fresh", ParentSessionID: op.Actor.SessionRef, Workspace: p.Workspace, WorkspaceID: p.WorkspaceID, WorkspaceRoot: p.WorkspaceRoot, Provider: p.Provider, Model: p.Model, Effort: p.Effort}, p.BaseRevision); err != nil {
 				return err
 			}
 		}
@@ -412,6 +416,27 @@ func (s *Server) applyHarnessOperationLocked(ctx context.Context, op *channels.H
 		if p.Prompt != "" {
 			link.Objective = p.Prompt
 		}
+		if p.Action == "create" {
+			metadata, err := s.sharedHarnessSession(p.SessionID)
+			if err != nil {
+				return err
+			}
+			link.BaseRevision = metadata.WorktreeBaseHEAD
+			if link.BaseRevision == "" && op.Actor.WorkID != "" && worktree.IsGitRepo(metadata.CWD) {
+				head, err := workspaceGitList(ctx, metadata.CWD, "rev-parse", "HEAD")
+				if err != nil {
+					return err
+				}
+				link.BaseRevision, _, err = worktree.Snapshot(ctx, metadata.CWD, strings.TrimSpace(string(head)), "base-"+p.SessionID)
+				if err != nil {
+					return err
+				}
+			}
+			link.Purpose = p.Purpose
+			if link.Purpose == "" {
+				link.Purpose = channels.CollaborationSessionWork
+			}
+		}
 		link.Active, link.ControlRevision = state == session.ControlActive, c.Revision
 		if p.Mode == "resume" {
 			metadata, err := s.sharedHarnessSession(p.SessionID)
@@ -424,6 +449,7 @@ func (s *Server) applyHarnessOperationLocked(ctx context.Context, op *channels.H
 		if err := s.channelService.PutHarnessLink(ctx, link); err != nil {
 			return err
 		}
+		linkErr = nil
 		if p.Action == "manage" {
 			op.State = "completed"
 			return s.channelService.PutHarnessOperation(ctx, *op)
@@ -486,9 +512,19 @@ func (s *Server) applyHarnessOperationLocked(ctx context.Context, op *channels.H
 	if err != nil {
 		return err
 	}
+	if op.Actor.WorkID != "" {
+		work, err := s.channelService.GetWork(ctx, op.Actor.WorkID)
+		if err != nil {
+			return err
+		}
+		msg.Content += fmt.Sprintf("\n\nHost delegation context: room_id=%s work_id=%s goal_revision=%d parent_session_ref=%s. Use chat_read for the original room messages and work_get for current decisions. Your parent's private transcript is unavailable.\nGoal: %s\n\nReturn ONLY a JSON report with four required fields: result (string), implicit_choices (array of strings), evidence_refs (array of strings), unresolved_items (array of strings). Include empty arrays when appropriate.", op.Actor.RoomID, work.ID, work.GoalRevision, op.Actor.SessionRef, work.Brief)
+		if link.Purpose == channels.CollaborationSessionVerification {
+			msg.Content += " Include decision: pass, block or unknown. Do not change any files or run commands."
+		}
+	}
 	msg.ClientID, msg.Origin, msg.OriginID = op.ID, "plugin", op.Actor.AgentID
 	msg.Cause = "session_management"
-	msg.PresentationKind, msg.DisplayContent, msg.RelatedSessionID = "session_message", msg.Content, op.Actor.SessionRef
+	msg.PresentationKind, msg.DisplayContent, msg.RelatedSessionID = "session_message", p.Prompt, op.Actor.SessionRef
 	if identity, err := s.channelService.GetAgentRuntime(ctx, op.Actor.AgentID); err == nil {
 		msg.Name = identity.Name
 	}
@@ -509,6 +545,17 @@ func (s *Server) applyHarnessOperationLocked(ctx context.Context, op *channels.H
 		return err
 	}
 	if ok {
+		if linkErr == nil && link.Active && link.WorkID != "" && op.RunID == "" {
+			run, err := s.channelService.StartHarnessWorkRun(ctx, link.SessionID, "harness-turn:"+link.SessionID+":"+result.TurnID)
+			if err != nil {
+				return err
+			}
+			op.RunID = run.ID
+			if err := s.channelService.PutHarnessOperation(ctx, *op); err != nil {
+				return err
+			}
+		}
+
 		if linkErr == nil && link.Active && link.RoomID == op.Actor.RoomID && link.WorkID == op.Actor.WorkID {
 			if p.Mode == "steer" {
 				link.ControlRevision = op.Revision
@@ -698,6 +745,7 @@ func (s *Server) deliverHarnessResult(ctx context.Context, link *channels.Harnes
 	// A queued follow-up must never relabel a late result from the previous goal.
 	actor := channels.HarnessSessionActor{AgentID: link.AgentID, SessionRef: link.SourceSessionRef, TurnID: link.SourceTurnID, RoomID: link.RoomID, WorkID: link.WorkID, GoalRevision: link.GoalRevision}
 	revision := link.ControlRevision
+	var acceptedOperation channels.HarnessOperation
 	for _, item := range turn.Items {
 		if item.Type != ThreadItemUserMessage || item.SourceID == "" {
 			continue
@@ -710,6 +758,27 @@ func (s *Server) deliverHarnessResult(ctx context.Context, link *channels.Harnes
 			return err
 		}
 		actor, revision = op.Actor, op.Revision
+		acceptedOperation = op
+	}
+	if err := s.completeHarnessWork(ctx, *link, acceptedOperation, turn, text); err != nil {
+		return err
+	}
+	if acceptedOperation.RunID != "" {
+		work, err := s.channelService.GetWork(ctx, actor.WorkID)
+		if err != nil {
+			return err
+		}
+		for _, run := range work.Runs {
+			if run.ID == acceptedOperation.RunID {
+				text = fmt.Sprintf("Work run %s: %s. Session history: %s, turn %s.\n%s", run.ID, run.State, link.SessionID, turn.ID, run.Outcome)
+				for _, artifact := range work.Artifacts {
+					if artifact.RunID == run.ID {
+						text += "\nCandidate artifact: " + artifact.ID + " (" + artifact.URI + ")"
+					}
+				}
+				break
+			}
+		}
 	}
 	c, _, err := session.ReadControl(s.rt.SessionDir, link.SessionID)
 	if err != nil {

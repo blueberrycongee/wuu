@@ -293,6 +293,30 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 		}
 		threadRuntime.StreamRunner.BeforeRequestContext = requestContext
 	}
+	if th.NamedAgentID == "" && s.channelService != nil && threadRuntime.Toolkit != nil {
+		link, err := s.channelService.HarnessLink(context.Background(), th.ID)
+		control, _, controlErr := session.ReadControl(s.rt.SessionDir, th.ID)
+		if controlErr != nil {
+			return nil, controlErr
+		}
+		if err == nil && link.Active && control.State == session.ControlActive {
+			client, err := s.channelService.BindAgent(context.Background(), link.AgentID)
+			if err != nil {
+				return nil, err
+			}
+			purpose := link.Purpose
+			if purpose == "" {
+				purpose = channels.CollaborationSessionWork
+			}
+			threadRuntime.Toolkit.SetChatAgent(client)
+			threadRuntime.Toolkit.SetCollaborationScope(purpose, link.RoomID, link.WorkID)
+		} else if err != nil && !errors.Is(err, channels.ErrNotFound) {
+			return nil, err
+		} else {
+			threadRuntime.Toolkit.SetChatAgent(nil)
+			threadRuntime.Toolkit.SetCollaborationScope("", "", "")
+		}
+	}
 	if err := s.refreshThreadGitAttribution(threadRuntime); err != nil {
 		// Attribution is metadata, not a reason to block the user's turn when a
 		// concurrently edited or test-only config cannot be reloaded. Preserve

@@ -27,44 +27,50 @@ type HarnessSessionActor struct {
 }
 
 type HarnessSessionParams struct {
-	Action        string            `json:"action"`
-	WorkID        string            `json:"work_id,omitempty"`
-	SessionID     string            `json:"session_id,omitempty"`
-	WorkspaceRoot string            `json:"workspace_root,omitempty"`
-	WorkspaceID   string            `json:"workspace_id,omitempty"`
-	Workspace     string            `json:"workspace,omitempty"`
-	Title         string            `json:"title,omitempty"`
-	Prompt        string            `json:"prompt,omitempty"`
-	Media         []HarnessMediaRef `json:"media,omitempty"`
-	Query         string            `json:"query,omitempty"`
-	Mode          string            `json:"mode,omitempty"`
-	Provider      string            `json:"provider,omitempty"`
-	Model         string            `json:"model,omitempty"`
-	Effort        string            `json:"effort,omitempty"`
-	Limit         int               `json:"limit,omitempty"`
-	Before        int               `json:"before,omitempty"`
-	OperationID   string            `json:"-"`
+	BaseRevision     string                      `json:"base_revision,omitempty"`
+	Purpose          CollaborationSessionPurpose `json:"purpose,omitempty"`
+	HostVerification bool                        `json:"-"`
+	Action           string                      `json:"action"`
+	WorkID           string                      `json:"work_id,omitempty"`
+	SessionID        string                      `json:"session_id,omitempty"`
+	WorkspaceRoot    string                      `json:"workspace_root,omitempty"`
+	WorkspaceID      string                      `json:"workspace_id,omitempty"`
+	Workspace        string                      `json:"workspace,omitempty"`
+	Title            string                      `json:"title,omitempty"`
+	Prompt           string                      `json:"prompt,omitempty"`
+	Media            []HarnessMediaRef           `json:"media,omitempty"`
+	Query            string                      `json:"query,omitempty"`
+	Mode             string                      `json:"mode,omitempty"`
+	Provider         string                      `json:"provider,omitempty"`
+	Model            string                      `json:"model,omitempty"`
+	Effort           string                      `json:"effort,omitempty"`
+	Limit            int                         `json:"limit,omitempty"`
+	Before           int                         `json:"before,omitempty"`
+	OperationID      string                      `json:"-"`
 }
 
 type HarnessSessionLink struct {
-	SessionID        string `json:"session_id"`
-	AgentID          string `json:"agent_id"`
-	SourceSessionRef string `json:"source_session_ref"`
-	SourceTurnID     string `json:"source_turn_id"`
-	RoomID           string `json:"room_id"`
-	WorkID           string `json:"work_id,omitempty"`
-	GoalRevision     int    `json:"goal_revision,omitempty"`
-	Objective        string `json:"objective"`
-	ControlRevision  int64  `json:"control_revision"`
-	Active           bool   `json:"active"`
-	LastTurnID       string `json:"last_turn_id,omitempty"`
-	Turns            int    `json:"turns"`
-	Failures         int    `json:"failures"`
+	BaseRevision     string                      `json:"base_revision,omitempty"`
+	Purpose          CollaborationSessionPurpose `json:"purpose,omitempty"`
+	SessionID        string                      `json:"session_id"`
+	AgentID          string                      `json:"agent_id"`
+	SourceSessionRef string                      `json:"source_session_ref"`
+	SourceTurnID     string                      `json:"source_turn_id"`
+	RoomID           string                      `json:"room_id"`
+	WorkID           string                      `json:"work_id,omitempty"`
+	GoalRevision     int                         `json:"goal_revision,omitempty"`
+	Objective        string                      `json:"objective"`
+	ControlRevision  int64                       `json:"control_revision"`
+	Active           bool                        `json:"active"`
+	LastTurnID       string                      `json:"last_turn_id,omitempty"`
+	Turns            int                         `json:"turns"`
+	Failures         int                         `json:"failures"`
 }
 
 // HarnessOperation is an outbox command. Pending commands survive host restarts;
 // the executor reconciles their stable input IDs with durable Harness history.
 type HarnessOperation struct {
+	RunID    string               `json:"run_id,omitempty"`
 	ID       string               `json:"id"`
 	Actor    HarnessSessionActor  `json:"actor"`
 	Params   HarnessSessionParams `json:"params"`

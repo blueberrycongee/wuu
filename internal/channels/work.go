@@ -414,20 +414,41 @@ func (s *Service) StartWorkRun(ctx context.Context, params WorkRunStartParams) (
 		}
 	}
 	namedAgentID := params.NamedAgentID
-	if params.Kind == WorkRunVerifier && params.Profile != "" && params.Profile != WorkVerifierProfileIndependent {
-		if namedAgentID != "" && namedAgentID != params.Profile {
-			return WorkRun{}, fmt.Errorf("%w: verifier profile and named session owner must match", ErrConflict)
-		}
-		namedAgentID = params.Profile
-	} else if namedAgentID == "" && params.Kind != WorkRunVerifier {
-		namedAgentID = actor.ID
-	}
-	if namedAgentID == "" {
-		return WorkRun{}, fmt.Errorf("%w: a verifier run requires a visible named agent distinct from the task owner", ErrUnauthorized)
-	}
-	if namedAgentID != "" {
-		if err := s.requireRoomAgentMemberTx(ctx, tx, work.RoomID, namedAgentID); err != nil {
+	if params.harness {
+		var payload string
+		if err := tx.QueryRowContext(ctx, `SELECT payload FROM harness_session_links WHERE session_id=? AND active=1`, params.SessionRef).Scan(&payload); err != nil {
 			return WorkRun{}, err
+		}
+		var link HarnessSessionLink
+		if err := json.Unmarshal([]byte(payload), &link); err != nil {
+			return WorkRun{}, err
+		}
+		if link.AgentID != actor.ID || link.WorkID != work.ID || link.GoalRevision != work.GoalRevision {
+			return WorkRun{}, ErrUnauthorized
+		}
+		if (params.Kind == WorkRunVerifier) != (link.Purpose == CollaborationSessionVerification) {
+			return WorkRun{}, ErrUnauthorized
+		}
+		namedAgentID = ""
+		if params.Kind == WorkRunVerifier {
+			params.Profile = WorkVerifierProfileIndependent
+		}
+	} else {
+		if params.Kind == WorkRunVerifier && params.Profile != "" && params.Profile != WorkVerifierProfileIndependent {
+			if namedAgentID != "" && namedAgentID != params.Profile {
+				return WorkRun{}, fmt.Errorf("%w: verifier profile and named session owner must match", ErrConflict)
+			}
+			namedAgentID = params.Profile
+		} else if namedAgentID == "" && params.Kind != WorkRunVerifier {
+			namedAgentID = actor.ID
+		}
+		if namedAgentID == "" {
+			return WorkRun{}, fmt.Errorf("%w: a verifier run requires a visible named agent distinct from the task owner", ErrUnauthorized)
+		}
+		if namedAgentID != "" {
+			if err := s.requireRoomAgentMemberTx(ctx, tx, work.RoomID, namedAgentID); err != nil {
+				return WorkRun{}, err
+			}
 		}
 	}
 	freshNamedSession := false
@@ -467,31 +488,33 @@ func (s *Service) StartWorkRun(ctx context.Context, params WorkRunStartParams) (
 		if work.State != WorkChecking || work.CandidateRevision == 0 || work.CandidateArtifactRef == "" {
 			return WorkRun{}, fmt.Errorf("%w: verifier run requires a checking candidate", ErrConflict)
 		}
-		verifierID := strings.TrimSpace(params.Profile)
-		if verifierID == "" {
-			verifierID = namedAgentID
+		if !params.harness {
+			verifierID := strings.TrimSpace(params.Profile)
 			if verifierID == "" {
-				verifierID = WorkVerifierProfileIndependent
+				verifierID = namedAgentID
+				if verifierID == "" {
+					verifierID = WorkVerifierProfileIndependent
+				}
+				params.Profile = verifierID
 			}
-			params.Profile = verifierID
-		}
-		if namedAgentID != "" && verifierID != namedAgentID {
-			return WorkRun{}, fmt.Errorf("%w: verifier profile and named session owner must match", ErrConflict)
-		}
-		if verifierID == work.OwnerNamedAgentID {
-			return WorkRun{}, fmt.Errorf("%w: verifier run requires a different named agent", ErrConflict)
-		}
-		if verifierID != WorkVerifierProfileIndependent {
-			var verifierMember int
-			if err := tx.QueryRowContext(ctx, `
+			if namedAgentID != "" && verifierID != namedAgentID {
+				return WorkRun{}, fmt.Errorf("%w: verifier profile and named session owner must match", ErrConflict)
+			}
+			if verifierID == work.OwnerNamedAgentID {
+				return WorkRun{}, fmt.Errorf("%w: verifier run requires a different named agent", ErrConflict)
+			}
+			if verifierID != WorkVerifierProfileIndependent {
+				var verifierMember int
+				if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(*) FROM room_members member
 			JOIN named_agents agent ON agent.id = member.member_id AND agent.kind = 'named'
 			WHERE member.room_id = ? AND member.member_type = 'agent' AND member.member_id = ?`,
-				work.RoomID, verifierID).Scan(&verifierMember); err != nil {
-				return WorkRun{}, fmt.Errorf("validate named verifier: %w", err)
-			}
-			if verifierMember == 0 {
-				return WorkRun{}, fmt.Errorf("%w: named verifier must be a current room member", ErrUnauthorized)
+					work.RoomID, verifierID).Scan(&verifierMember); err != nil {
+					return WorkRun{}, fmt.Errorf("validate named verifier: %w", err)
+				}
+				if verifierMember == 0 {
+					return WorkRun{}, fmt.Errorf("%w: named verifier must be a current room member", ErrUnauthorized)
+				}
 			}
 		}
 		if work.CurrentRunRef != "" {
@@ -552,9 +575,12 @@ func (s *Service) StartWorkRun(ctx context.Context, params WorkRunStartParams) (
 	if !work.DeadlineAt.IsZero() && work.DeadlineAt.Before(deadline) {
 		deadline = work.DeadlineAt
 	}
-	state, queueReason, err := s.workRunAdmissionTx(ctx, tx, work.RoomID, namedAgentID, params.SessionRef)
-	if err != nil {
-		return WorkRun{}, err
+	state, queueReason := WorkRunRunning, ""
+	if !params.harness {
+		state, queueReason, err = s.workRunAdmissionTx(ctx, tx, work.RoomID, namedAgentID, params.SessionRef)
+		if err != nil {
+			return WorkRun{}, err
+		}
 	}
 	run := WorkRun{
 		ID: id, WorkID: work.ID, NamedAgentID: namedAgentID, Kind: params.Kind, Profile: params.Profile,
@@ -717,7 +743,7 @@ func (s *Service) FinishWorkRun(ctx context.Context, params WorkRunFinishParams)
 	} else if run.State == WorkRunFailed {
 		nextState = CollaborationSessionFailed
 	}
-	if run.SessionRef != "" {
+	if run.SessionRef != "" && run.NamedAgentID != "" {
 		if run.State == WorkRunCompleted {
 			waiting, err := collaborationSessionWaitingTx(ctx, tx, run.SessionRef)
 			if err != nil {
