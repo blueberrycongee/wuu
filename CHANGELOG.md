@@ -19,6 +19,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Collaboration replies no longer become held drafts just because a thread
+  reply is newer than the conversation's main timeline.
+
 - Reduce long conversation switching stalls by assembling core responses once
   per message and reusing resume responses instead of transmitting history twice.
 

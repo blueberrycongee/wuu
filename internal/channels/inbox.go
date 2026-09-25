@@ -197,7 +197,7 @@ func (s *Service) CheckSession(ctx context.Context, agentID, token, sessionRef s
 	scopes := make([]ScopeSequence, 0, 1)
 	if binding.RoomID != "" {
 		var seq int64
-		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM room_messages WHERE room_id = ?`, binding.RoomID).Scan(&seq); err == nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM room_messages WHERE room_id = ? AND thread_id IS NULL`, binding.RoomID).Scan(&seq); err == nil {
 			scopes = append(scopes, ScopeSequence{RoomID: binding.RoomID, Seq: seq})
 		}
 	}
