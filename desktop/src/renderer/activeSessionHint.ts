@@ -6,14 +6,10 @@ import {
 } from "../shared/protocol";
 import { translateCurrent } from "./i18n";
 
-// The bubble's preview text is the latest STABLE agent_message from the
-// top-ranked thread. We deliberately do NOT fall back to Thread.preview
-// (a denormalized field that typically holds the first turn's user query):
-// surfacing that as "latest commentary" reads as stale/early text and is
-// exactly the failure mode the pet bubble should avoid. When the top-ranked
-// thread has no stable agent_message anywhere, the preview is empty so the
-// pet window hides its bubble card entirely — the sprite keeps its
-// running/idle/failed state and no stale fallback text is shown.
+// The bubble's preview text is the latest stable agent_message. Thread.preview
+// is not a fallback: it typically holds the first turn's user query, and
+// showing that reads as stale commentary. Threads with no agent_message are
+// omitted from the feed.
 // REVIEW_RE matches both Chinese affordance words and English ones, but only
 // the English alternatives get \b word boundaries — \b requires a word/non-word
 // transition, and Chinese characters are word characters, so \b between two
@@ -163,21 +159,8 @@ function hintFromScored(entry: ScoredThread): CodexPetHint {
   };
 }
 
-// Single-hint view of the ranking: the top-ranked thread regardless of
-// whether it has commentary yet (an empty preview is a meaningful "hide
-// the bubble but keep the sprite state" signal for that contract).
-export function deriveActiveSessionHint(
-  input: ActiveSessionHintInput,
-): CodexPetHint | null {
-  const scored = scoreThreads(input);
-  return scored.length ? hintFromScored(scored[0]) : null;
-}
-
-// Multi-row bubble feed: the top-ranked threads that actually have
-// commentary to show, capped at CODEX_PET_HINTS_MAX. Unlike the
-// single-hint contract there is no empty-preview placeholder — a row
-// with nothing to say is just omitted, and an empty array means the
-// bubble hides entirely.
+// Top-ranked threads that have commentary, capped at CODEX_PET_HINTS_MAX.
+// A row with nothing to say is omitted. An empty array hides the bubble.
 export function deriveActiveSessionHints(
   input: ActiveSessionHintInput,
   limit: number = CODEX_PET_HINTS_MAX,

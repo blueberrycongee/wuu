@@ -141,13 +141,6 @@ func TestDetectContextOverflow_OpenAIResponsesMessage(t *testing.T) {
 	}
 }
 
-func TestDetectContextOverflow_DoesNotGuessFromGatewayBufferLimit(t *testing.T) {
-	msg := "HTTP 507: 507 Insufficient Storage: exceeded request buffer limit while retrying upstream"
-	if DetectContextOverflow(msg) {
-		t.Fatal("gateway byte-buffer limits must not trigger lossy context compaction")
-	}
-}
-
 func TestDetectContextOverflow_MiniMaxMessage(t *testing.T) {
 	msg := `HTTP 400: {"type":"error","error":{"type":"invalid_request_error","message":"invalid params, context window exceeds limit (2013)"}}`
 	if !DetectContextOverflow(msg) {

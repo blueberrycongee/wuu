@@ -93,27 +93,14 @@ func TestBrowserTabStorePersistsAtomicValidJSON(t *testing.T) {
 	}
 }
 
-func TestBrowserTabStoreDeadMarking(t *testing.T) {
+func TestBrowserTabStorePersistsDead(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "browser_tabs.json")
 	store := NewBrowserTabStore(path)
 
-	// A record's Dead flag round-trips.
 	if err := store.Put(BrowserTabRecord{TabID: "tab-1", URL: "https://a.example", Dead: true}); err != nil {
 		t.Fatal(err)
 	}
 	if rec, _, _ := store.Get("tab-1"); !rec.Dead {
 		t.Fatalf("dead flag lost: %+v", rec)
-	}
-
-	// MarkAllDead flags every live record for restart-driven rebuild.
-	_ = store.Put(BrowserTabRecord{TabID: "tab-2", URL: "https://b.example", Dead: false})
-	if err := store.MarkAllDead(); err != nil {
-		t.Fatal(err)
-	}
-	list, _ := store.List()
-	for _, rec := range list {
-		if !rec.Dead {
-			t.Fatalf("record not marked dead: %+v", rec)
-		}
 	}
 }

@@ -847,7 +847,7 @@ func TestMissingRequiredToolSequence(t *testing.T) {
 	outOfOrder := []providers.ChatMessage{{
 		Role: "assistant",
 		ToolCalls: []providers.ToolCall{
-			{Name: "checkpoint", Arguments: `{"action":"restore","checkpoint_id":"before_bad_edit"}`},
+			{Name: "apply_patch", Arguments: "*** Update File: target.txt\n*** Add File: scratch.txt\n"},
 			{Name: "checkpoint", Arguments: `{"action":"create","checkpoint_id":"before_bad_edit"}`},
 		},
 	}}
