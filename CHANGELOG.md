@@ -8,6 +8,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Fixed
+
+- Reduce long conversation switching stalls by assembling core responses once
+  per message and reusing resume responses instead of transmitting history twice.
+
 ## [2026.9.24] - 2026-09-24
 
 ### Added
