@@ -198,6 +198,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	userMsg.ClientID = strings.TrimSpace(params.ClientID)
 	if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}

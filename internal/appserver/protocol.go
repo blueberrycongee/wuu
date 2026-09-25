@@ -1782,6 +1782,8 @@ type GitCommitMessageResult struct {
 }
 
 type TurnStartParams struct {
+	// ClientID correlates renderer intent with the persisted user item.
+	ClientID       string                         `json:"client_id,omitempty"`
 	ThreadID       string                         `json:"thread_id"`
 	Prompt         string                         `json:"prompt"`
 	Images         []TurnStartImage               `json:"images,omitempty"`

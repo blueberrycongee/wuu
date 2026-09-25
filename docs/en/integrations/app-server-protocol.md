@@ -140,7 +140,11 @@ base64 `data`, and optional `filename`; the file path supports PDFs and supporte
 [video inputs](../customize/video-input.md).
 These are attachment bytes, not local path strings. Image normalization and model
 capability checks occur in the core. `turn/start` additionally supports
-`active_document` and ordered `content_parts` for interactive clients.
+`active_document` and ordered `content_parts` for interactive clients. An optional
+`client_id` is preserved as the user item's `source_id` in notifications, responses,
+and stored history so clients can reconcile a local send regardless of arrival
+order. It is a correlation identifier, not a promise of idempotent `turn/start`.
+Client waiting-time displays are separate from server execution timestamps.
 
 Named agents can separately select stored room attachments through their `session`
 tool. That [media handoff contract](../automation/app-server.md#named-agent-media-handoff)

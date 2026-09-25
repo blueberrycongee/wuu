@@ -1,3 +1,4 @@
+import { localTurnTiming } from "./LocalTurnTiming";
 import { ChevronRight } from "./WuuIcons";
 import {
   type SyntheticEvent,
@@ -318,7 +319,10 @@ function TurnProcessFold({
       : reportedDuration ?? settledTimestampDuration;
   // The visible timer stops at answer readiness. Provider cleanup can continue
   // internally, but must not make a completed-looking answer keep aging.
-  const completedDuration = answerReadyDuration ?? settledDuration;
+  const localTiming = localTurnTiming(turn);
+  const completedDuration = localTiming
+    ? localTiming.finished ? localTiming.elapsed : undefined
+    : answerReadyDuration ?? settledDuration;
   const liveDuration =
     completedDuration === undefined &&
     turn.status === "in_progress";
@@ -335,7 +339,7 @@ function TurnProcessFold({
   }
   const liveNow = useLiveNow(liveDuration && renderActive);
   const liveElapsedMs = liveDuration
-    ? Math.max(0, liveNow - startedAt)
+    ? localTiming?.elapsed ?? Math.max(0, liveNow - startedAt)
     : undefined;
   // Keep the last live elapsed value outside the component lifecycle. A
   // paused turn settles as "interrupted" and its server snapshot usually

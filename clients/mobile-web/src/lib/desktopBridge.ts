@@ -739,9 +739,10 @@ export class RemoteDesktopBridge {
       resumeChannelSession: (params) => this.call("channel/session/resume", params),
       listNamedAgents: () => this.call("channel/agent/list"),
 
-      startTurn: (threadId, prompt, images, files, permissionMode, activeDocument, contentParts) =>
+      startTurn: (threadId, prompt, images, files, permissionMode, activeDocument, contentParts, _targetContext, clientId) =>
         this.call("turn/start", {
           thread_id: threadId,
+          ...(clientId === undefined ? {} : { client_id: clientId }),
           prompt,
           images: images ?? [],
           files: files ?? [],

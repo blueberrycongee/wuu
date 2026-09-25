@@ -17,6 +17,7 @@ import type {
 } from "../shared/protocol";
 import {
   OPTIMISTIC_TURN_ID_PREFIX,
+  reconcileOptimisticTurns,
   type ComposerFile,
   type ComposerImage,
 } from "./ComposerMessages";
@@ -1357,7 +1358,7 @@ export function reconcileResumedThreadTurns(
   resumed: Thread,
   local: Thread | undefined,
 ): Thread {
-  const localTurns = local?.turns;
+  const localTurns = local ? reconcileOptimisticTurns(local.turns, resumed.turns) : undefined;
   if (!localTurns || localTurns.length < resumed.turns.length) {
     return resumed;
   }
@@ -1396,6 +1397,11 @@ export function reconcileResumedThreadTurns(
 // started after the previous answer is ready is the same shape: keep an
 // in-progress tail when a stale snapshot still omits it.
 function mergeThreadUpdatedTurns(incoming: Turn[], current: Turn[]): Turn[] {
+  current = reconcileOptimisticTurns(current, incoming);
+  incoming = incoming.map((turn) => {
+    const previous = current.find((candidate) => candidate.id === turn.id);
+    return previous && previous.status !== "in_progress" && turn.status === "in_progress" ? previous : turn;
+  });
   if (incoming.length === 0) {
     return current;
   }
@@ -1739,6 +1745,7 @@ function mergeListedThread(existing: Thread, listed: Thread): Thread {
 }
 
 function mergeListedThreadTurns(existing: Turn[], listed: Turn[]): Turn[] {
+  existing = reconcileOptimisticTurns(existing, listed);
   if (listed.length === 0) {
     return existing.length === 0 ? listed : existing;
   }
@@ -3050,7 +3057,10 @@ function isAnyThreadRunning(state: AppState): boolean {
 }
 
 function upsertTurn(thread: Thread, turn: Turn): Thread {
+  const reconciled = reconcileOptimisticTurns(thread.turns, [turn]);
+  if (reconciled !== thread.turns) thread = { ...thread, turns: reconciled };
   const index = thread.turns.findIndex((item) => item.id === turn.id);
+  if (index >= 0 && thread.turns[index].status !== "in_progress" && turn.status === "in_progress") return thread;
   const status = turn.status === "in_progress" ? "in_progress" : "idle";
   if (index < 0) {
     return threadWithTurnSummary(

@@ -2442,9 +2442,11 @@ app.whenReady().then(async () => {
       activeDocument?: ActiveDocumentContext,
       contentParts?: import("../shared/protocol").MessageContentPart[],
       targetContext?: RuntimeContext,
+      clientId?: string,
     ) =>
       appServerRequest<{ turn: Turn }>(event, "turn/start", {
         thread_id: threadId,
+        ...(clientId === undefined ? {} : { client_id: clientId }),
         prompt,
         images: images ?? [],
         files: files ?? [],

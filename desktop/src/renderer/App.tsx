@@ -4658,6 +4658,7 @@ export function App(): JSX.Element {
         message.activeDocument,
         message.contentParts,
         activeContext,
+        message.id,
       );
       const interruptedBeforeAcceptance = isOptimisticTurnInterrupted(
         appStateRef.current.threads.find((candidate) => candidate.id === thread.id),
