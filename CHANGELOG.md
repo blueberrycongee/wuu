@@ -19,8 +19,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   daily activity heatmap for the past year. New installs show zero totals.
   The new `usage/overview` app-server method reads only token usage records,
   not conversation content. After 20 seconds without input, the greeting
-  mascot sends a small ball bouncing across the heatmap to today and catches
-  it on the way back; any input stops it, and reduced motion turns it off.
+  mascot plays short bouncing-ball, snake, and breakout scenes on the heatmap,
+  rotating without consecutive repeats. Each scene ends on the heatmap: the
+  ball settles into today, the snake bites its tail and the days it ate grow
+  back, and the last breakout shot drills through the wall before it rebuilds.
+  Any input stops the scene, and reduced motion turns it off; the underlying
+  activity data is never changed.
 
 ### Changed
 
