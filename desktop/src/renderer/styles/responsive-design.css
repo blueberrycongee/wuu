@@ -105,7 +105,6 @@
 }
 
 @container composer-toolbar (max-width: 680px) {
-  .status-label,
   .composer-context-meter-label,
   .composer-token-gauge-label {
     display: none;

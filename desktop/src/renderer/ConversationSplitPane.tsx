@@ -130,11 +130,7 @@ export function ConversationSplitPane({
   };
   const paneRunning = isThreadRunning(thread);
   const paneReadOnly = Boolean(thread.read_only);
-  const paneStatus = paneRunning
-    ? t("messageFlow.stillGenerating")
-    : active && appStatus !== "ready"
-      ? appStatus
-      : "";
+  const paneStatus = active ? appStatus : "";
 
   return (
     <section
