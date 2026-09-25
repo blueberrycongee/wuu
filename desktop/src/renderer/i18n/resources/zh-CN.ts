@@ -2248,6 +2248,7 @@ export const zhCN = {
   "thread.archive.force": "仍然归档",
   "thread.archive.failed": "归档会话失败",
   "thread.rename.failed": "重命名对话失败",
+  "thread.rename.editNamed": "修改会话标题：{title}",
   "thread.memberRemove.failed": "移除 Thread 成员失败",
   "thread.archive.noWorkspace": "当前没有可用的工作区，无法归档",
   "project.threadsLoadFailed": "加载项目会话失败",

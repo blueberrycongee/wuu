@@ -294,12 +294,55 @@
 }
 
 .conversation-title-heading h1 {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
-  max-width: none;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.conversation-title-heading h1.is-editing {
+  flex: 1 1 16ch;
+}
+
+.conversation-title-rename,
+.conversation-title-edit {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: start;
+  -webkit-app-region: no-drag;
+}
+
+.conversation-title-rename {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+}
+
+.conversation-title-rename:hover,
+.conversation-title-rename:focus-visible {
+  background: var(--ink-overlay-8);
+  box-shadow: 0 0 0 4px var(--ink-overlay-8);
+}
+
+.conversation-title-edit {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  outline: none;
+  border-radius: 0;
+  box-shadow: inset 0 -1px 0 var(--ink-tertiary);
 }
 
 .conversation-title-heading .icon-button {

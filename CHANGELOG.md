@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Click the conversation title in the title bar to rename it. An existing
+  conversation saves immediately. A new conversation keeps the name when the
+  first message creates the session.
+
 - Video output cards and workspace video files open an inline player with
   playback, seeking, volume, and fullscreen controls. Unsupported codecs show
   a message while keeping the download action available.
