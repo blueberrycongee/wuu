@@ -4448,8 +4448,11 @@ export function App(): JSX.Element {
       await previous;
       if (admission) targetThread = await admission.ready;
       if (!targetThread) {
+        const stillPending = Boolean(pendingComposerMessagesByThreadRef.current[pendingKey()]?.queued.some(
+          (candidate) => candidate.id === message.id,
+        ));
         removePendingComposerMessageByID(pendingKey(), message.id, "queue");
-        return false;
+        return !stillPending;
       }
       const targetContext = resolveThreadRuntimeContext(targetThread, currentState.projects);
       const encodedImages = await awaitComposerImages(message.images);

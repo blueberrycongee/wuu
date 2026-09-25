@@ -40,6 +40,9 @@ vi.mock("./ComposerView", async (importOriginal) => {
           }
         >
           <button aria-label="stop-probe" onClick={props.onInterrupt}>stop</button>
+          {props.queuedMessages.map((message) => (
+            <button key={message.id} aria-label={`remove ${message.text}`} onClick={() => props.onRemoveQueuedMessage(message.id)}>remove</button>
+          ))}
           <textarea
             aria-label={label}
             value={prompt}
@@ -782,17 +785,25 @@ describe("main composer focus continuity", () => {
     expect(window.wuu.startTurn).not.toHaveBeenCalled();
   });
 
-  it("preserves every accepted draft when creation fails", async () => {
+  it.each([false, true])("recovers only retained inputs when creation fails (removed=%s)", async (removed) => {
     await renderApp(false, { deferThreadStart: true, rejectThreadStart: true });
     await enterCommand(mainComposer("dock"), "first retained");
     await enterCommand(mainComposer("dock"), "second retained");
+    if (removed) {
+      await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="remove second retained"]')!.click(); });
+      expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-queued")).toBe("");
+    }
     await act(async () => { releaseThreadStart!(); });
     await flushAsync();
     expect(mainComposer("dock").value).toBe("first retained");
     const recovery = document.querySelector<HTMLButtonElement>('[role="alert"] .archive-tip-action');
-    expect(recovery).not.toBeNull();
-    await act(async () => { recovery!.click(); });
-    expect(mainComposer("dock").value).toBe("second retained");
+    if (removed) {
+      expect(recovery).toBeNull();
+    } else {
+      expect(recovery).not.toBeNull();
+      await act(async () => { recovery!.click(); });
+      expect(mainComposer("dock").value).toBe("second retained");
+    }
     expect(window.wuu.startTurn).not.toHaveBeenCalled();
   });
 
