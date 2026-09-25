@@ -254,6 +254,7 @@ import { isForegroundControlled, useBrowserVisibility } from "./BrowserVisibilit
 import { useSideThreadController } from "./SideThreadController";
 import {
   isCancellationMessage,
+  isCoreExitError,
   rawErrorMessage,
   statusMessageForError,
 } from "./UserFacingErrors";
@@ -423,6 +424,21 @@ function formatUserQuestionSteerPrompt(
     if (item?.custom?.trim()) parts.push(item.custom.trim());
     return `${question.question}\n${parts.join(", ") || "(no answer)"}`;
   }).join("\n\n");
+}
+
+function showCoreExitNotice(message: string): void {
+  showToast({
+    message: translateCurrent("appState.coreStoppedNotice"),
+    tone: "error",
+    action: {
+      label: translateCurrent("appState.copyCoreDiagnostics"),
+      onClick: () => {
+        void navigator.clipboard.writeText(message).catch((error) => {
+          showErrorToast(error, translateCurrent("common.copyFailed"));
+        });
+      },
+    },
+  });
 }
 
 export function App(): JSX.Element {
@@ -1945,6 +1961,9 @@ export function App(): JSX.Element {
       if (!serverEventTargetsActiveContext(event, appStateRef.current)) {
         return;
       }
+      if (event.kind === "server-exit") {
+        showCoreExitNotice(event.message);
+      }
       const handling = handleStreamingNotification(event, appStateRef.current);
       if (handling === "stream" || handling === "stream-state") {
         // The first visible delta still needs to mount and reveal the live
@@ -2018,9 +2037,12 @@ export function App(): JSX.Element {
         if (!mounted) {
           return;
         }
+        const message = rawErrorMessage(error, t("runtime.startFailed"));
+        const coreStopped = isCoreExitError(message);
+        if (coreStopped) showCoreExitNotice(message);
         setState((current) => ({
           ...current,
-          status: error instanceof Error ? error.message : t("runtime.startFailed"),
+          status: coreStopped ? "" : message,
         }));
       }
     })();

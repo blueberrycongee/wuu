@@ -1450,6 +1450,8 @@ export const zhCN = {
   "time.hoursAgo": "{count} 小时前",
   "time.dayAgo": "{count} 天前",
   "time.daysAgo": "{count} 天前",
+  "appState.coreStoppedNotice": "当前工作区的后台服务已停止，可以重试操作。",
+  "appState.copyCoreDiagnostics": "复制诊断信息",
   "appState.coreExited": "wuu core 已退出",
   "appState.streamInterrupted": "{subject}中断",
   "appState.transportFallback": "{failed} 不可用，已切到 {fallback}",

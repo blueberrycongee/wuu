@@ -543,7 +543,13 @@ function isLocalOperationError(message: string): boolean {
   );
 }
 
+export function isCoreExitError(message: string): boolean {
+  return /(?:^|Error:\s*)wuu core exited(?:$|[\s(:])/.test(message);
+}
+
 export function statusMessageForError(error: unknown, fallback: string): string {
+  // The process lifecycle event owns the notice, including pending RPC failures.
+  if (isCoreExitError(rawErrorMessage(error, fallback))) return "";
   // The composer status row renders a single-line label between two
   // dividers, so return the same single user-facing label as the inline
   // turn event. Machine identifiers remain diagnostic-only.

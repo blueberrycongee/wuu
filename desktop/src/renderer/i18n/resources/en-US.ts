@@ -1453,6 +1453,8 @@ export const enUS = {
   "time.hoursAgo": "{count} hours ago",
   "time.dayAgo": "{count} day ago",
   "time.daysAgo": "{count} days ago",
+  "appState.coreStoppedNotice": "The workspace background service stopped. You can retry your operation.",
+  "appState.copyCoreDiagnostics": "Copy diagnostics",
   "appState.coreExited": "wuu core exited",
   "appState.streamInterrupted": "{subject} interrupted",
   "appState.transportFallback": "{failed} unavailable; switched to {fallback}",
