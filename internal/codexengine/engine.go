@@ -40,6 +40,9 @@ func (e *Engine) Descriptor(context.Context) (agentengine.Descriptor, error) {
 			"native-tool-loop",
 			"native-session-resume",
 			"approval-requests",
+			// engine/list with include_quota reads this engine's account
+			// allowance, so clients can reserve room for it beforehand.
+			"account-quota",
 		},
 	}, nil
 }
