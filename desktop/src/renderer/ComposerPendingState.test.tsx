@@ -719,11 +719,16 @@ describe("useComposerPendingState", () => {
     const dequeueTurn = vi.fn().mockResolvedValue({ ok: true });
     installWuuStub({ dequeueTurn });
     const hook = await renderComposerPendingState();
+    const queued: QueuedComposerMessage = {
+      ...message("queue-1", "Edit me"),
+      images: [{ id: "image-1", media_type: "image/png", data: "aA==" }],
+      files: [{ id: "file-1", filename: "notes.pdf", media_type: "application/pdf", data: "aA==" }],
+    };
 
     act(() => {
       hook
         .get()
-        .enqueueComposerMessage("thread-a", message("queue-1", "Edit me"));
+        .enqueueComposerMessage("thread-a", queued);
     });
     await act(async () => {
       await hook.get().editQueuedMessage("queue-1");
@@ -731,16 +736,14 @@ describe("useComposerPendingState", () => {
 
     expect(hook.restorePrimaryComposerDraft).toHaveBeenCalledWith({
       prompt: "Edit me",
-      images: [],
-      files: [],
+      images: queued.images,
+      files: queued.files,
     });
     expect(dequeueTurn).toHaveBeenCalledWith("thread-a", "queue-1");
     expect(
       hook.get().pendingComposerMessagesByThread["thread-a"],
     ).toBeUndefined();
-    expect(resolveLocalizedText(hook.setStatus.mock.calls[0][0] as string)).toBe(
-      "已撤回排队消息，可编辑后重新发送",
-    );
+    expect(hook.setStatus).toHaveBeenCalledWith("ready");
   });
 
   it("refuses to edit pending messages while the primary composer has content", async () => {

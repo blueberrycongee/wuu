@@ -720,8 +720,10 @@
 }
 
 .composer {
-  --composer-text-start: 16px;
-  --composer-control-icon-inset: 8px;
+  /* Text and toolbar glyphs share the card inset used by code blocks and
+   * bubbles; the toolbar subtracts its 32px buttons' glyph offset. */
+  --composer-text-start: var(--card-padding);
+  --composer-control-icon-inset: calc((32px - var(--icon-size)) / 2);
   position: relative;
   width: 100%;
   min-height: var(--composer-collapsed-min-height);
@@ -740,7 +742,7 @@
 }
 
 .hero-composer-wrap .composer {
-  --composer-text-start: 16px;
+  --composer-text-start: var(--card-padding);
   min-height: var(--composer-collapsed-min-height);
 }
 
@@ -1361,7 +1363,7 @@
   align-items: center;
   gap: 8px;
   overflow: hidden;
-  padding: 0 8px 4px calc(var(--composer-text-start) - var(--composer-control-icon-inset));
+  padding: 0 calc(var(--composer-text-start) - var(--composer-control-icon-inset)) 4px;
   container: composer-toolbar / inline-size;
 }
 
@@ -1702,40 +1704,16 @@
   flex: 1 1 8px;
 }
 
-/* The main composer status row is a filled chip — same family as the inline
-   turn notices above. Split panes use a quieter inline status because their
-   toolbar is narrower and already sits beside the attachment control. */
-.status-label {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.composer-feedback {
   min-width: 0;
-  flex: 0 0 auto;
-  background: var(--surface-3);
+  max-height: 6em;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
   color: var(--ink);
-  border-radius: var(--radius-pill);
-  padding: 4px 12px;
+  padding: var(--space-2) var(--space-3);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  line-height: 1.4;
-  max-width: min(360px, 100%);
-}
-
-.status-label::before,
-.status-label::after {
-  display: none;
-}
-
-.status-label-text,
-.split-composer-status-text {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-  max-width: 100%;
-  color: inherit;
-  font-size: inherit;
-  font-weight: inherit;
+  line-height: var(--line-ui);
 }
 
 .composer-action-button {

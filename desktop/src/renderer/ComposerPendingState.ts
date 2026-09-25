@@ -572,7 +572,7 @@ export function useComposerPendingState({
       return;
     }
     restorePendingComposerMessage(target.threadID, target.message);
-    setStatus(localizedText("composer.queueRestoredForEditing"));
+    setStatus("ready");
   }
 
   async function editGuideMessage(id: string): Promise<void> {

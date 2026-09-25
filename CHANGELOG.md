@@ -18,6 +18,32 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   animations, and provider remove controls keep their icon centered and color
   stable on hover.
 
+## [2026.9.25] - 2026-09-25
+
+### Changed
+
+- The composer model picker adapts to larger UI text and supports keyboard
+  navigation, focused search, and clearer engine-managed model guidance.
+
+- Desktop titlebars, tab bars, and the sidebar place their first and last
+  icons 20px from the pane edge on both sides. In the message column, tables
+  start on the same edge as paragraphs, while code blocks, the composer, and
+  message bubbles share one 16px inner inset. Derived text, icon, and line
+  sizes land on whole pixels, sidebar group headings keep one height, and
+  message headings step more clearly above body text.
+
+### Fixed
+
+- Reduce long conversation switching stalls by assembling core responses once
+  per message and reusing resume responses instead of transmitting history twice.
+
+- Message table headers no longer render bold, and narrow tables keep words
+  whole instead of breaking them mid-word.
+
+- The workspace file tree now fits a narrow panel when the panel opens after
+  launch, so the file preview keeps a usable width instead of wrapping one
+  character per line.
+
 ## [2026.9.24] - 2026-09-24
 
 ### Added
@@ -54,6 +80,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   for both the first message and follow-ups.
 
 ### Fixed
+
+- Composer feedback no longer crowds the send toolbar. Redundant queue-edit,
+  commit, and pull-request confirmations are removed; errors and restrictions
+  remain readable above the input in both main and split conversations.
 
 - Desktop conversation refresh and session resume discard obsolete cached
   messages when a full completed turn arrives, preventing duplicate replies

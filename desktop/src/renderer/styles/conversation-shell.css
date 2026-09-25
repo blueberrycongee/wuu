@@ -103,7 +103,7 @@
    * Prose, previews and composer share the same column measure. */
   /* A relaxed body line makes mixed CJK, Latin and inline code read as one
      continuous answer instead of a stack of dense rows. */
-  --conversation-reading-line-height: 1.85;
+  --conversation-reading-line-height: round(nearest, calc(var(--conversation-message-font-size) * 1.8), 2px);
   /* Providers may confirm an answer only after streaming finishes. Its
      provisional process placement must use the final reading rhythm. */
   --conversation-commentary-line-height: var(--conversation-reading-line-height);
@@ -118,7 +118,9 @@
      not a smaller/heavier type style, make them read as secondary. */
   --conversation-process-font-size: var(--conversation-message-font-size);
   --conversation-process-font-weight: var(--conversation-message-font-weight);
-  --conversation-process-line-height: 1.6;
+  /* Reading and process leading are whole-pixel lengths (their text is always
+     the message size), so stacked rows and cards land on shared edges. */
+  --conversation-process-line-height: round(nearest, calc(var(--conversation-process-font-size) * 1.6), 2px);
   /* Expanded process folds (tool trail, reasoning) stay compact: bounded
      by an absolute ceiling and a viewport share, whichever is smaller. */
   --conversation-process-fold-max-height: min(320px, 40vh);
@@ -256,8 +258,11 @@
   column-gap: var(--control-toolbar-gap);
   overflow: hidden;
   /* Right side clears the Windows controls overlay; a no-op elsewhere
-   * (the inset is 0 and max() collapses to the neutral padding). */
-  padding: 0 max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0 var(--window-titlebar-padding-inline);
+   * (the inset is 0 and max() collapses to the neutral padding). The row
+   * always starts with an icon button (new conversation or back), so its
+   * glyph, not its box, sits on the pane inset. */
+  padding: 0 max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0
+    calc(var(--window-titlebar-padding-inline) - var(--control-toolbar-glyph-offset));
   transition: padding-left var(--sidebar-motion-duration) var(--sidebar-motion-ease);
   -webkit-app-region: drag;
 }

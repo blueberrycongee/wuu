@@ -4337,7 +4337,9 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   position: relative;
   display: inline-flex;
   min-width: 0;
-  max-width: 280px;
+  /* Grows with UI text like the panel it opens; narrow toolbars cap it in
+   * responsive-design.css. */
+  max-width: max(280px, calc(var(--font-ui) * 280 / 14.5));
   flex: 0 1 auto;
   align-items: center;
   gap: 2px;
@@ -4356,6 +4358,28 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   font-size: var(--font-sm);
   font-weight: var(--weight-semibold);
   padding: 0 9px;
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.codex-runtime-trigger:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.codex-runtime-label {
+  display: inline-flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: inherit;
+}
+
+/* A committed choice swaps the label with the shared content-swap motion. */
+.codex-runtime-label.is-changed {
+  animation: content-swap-enter var(--content-swap-duration) var(--content-swap-easing) both;
+}
+
+.codex-runtime-model {
+  flex: 1 1 auto;
 }
 
 .codex-runtime-effort {
@@ -4382,17 +4406,33 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   white-space: nowrap;
 }
 
-.codex-runtime-trigger > span:not(.codex-runtime-effort) {
-  flex: 1 1 auto;
-}
-
+/* The brand mark identifies the engine without outweighing the model name:
+ * solid marks such as Wuu's disk read darker than text at the same ink. */
 .codex-runtime-trigger .engine-icon {
-  color: inherit;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  color: var(--ink-soft);
+  transition: color var(--motion-base) var(--ease-out);
 }
 
+.codex-runtime-trigger:hover:not(:disabled) .engine-icon,
+.codex-runtime-trigger[aria-expanded="true"] .engine-icon {
+  color: var(--ink);
+}
+
+/* The chevron is a secondary affordance; it turns over while the panel is
+ * open so the trigger also reads as the way to close it. */
 .codex-runtime-trigger > svg.icon {
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
   flex: 0 0 auto;
   color: var(--codex-runtime-trigger-icon);
+  transition: transform var(--motion-base) var(--ease-out), color var(--motion-base) var(--ease-out);
+}
+
+.codex-runtime-trigger[aria-expanded="true"] > svg.icon {
+  color: var(--ink-soft);
+  transform: rotate(180deg);
 }
 
 .codex-runtime-menu {
@@ -4574,7 +4614,12 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   background: var(--slider-thumb-bg);
   box-shadow: var(--shadow-soft);
   pointer-events: none;
-  transition: left var(--motion-base) var(--ease-bounce);
+  transition: left var(--motion-base) var(--ease-bounce), transform var(--motion-fast) var(--ease-out);
+}
+
+/* The knob gives under the pointer while a level is being chosen. */
+.codex-effort-slider:not(.is-disabled):active .codex-effort-knob {
+  transform: translateX(-50%) scale(0.92);
 }
 
 .codex-effort-slider input[type="range"] {
@@ -4653,18 +4698,27 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
 }
 
 /* Runtime choice is a compact overview with drill-in pages, not a settings
-   form. Heights must match the summary stack so leftover space cannot collect
+   form. Heights must match each page's stack so leftover space cannot collect
    at the bottom; the popover still morphs in place as pages change.
-   Summary stack: 1px border, --menu-inset, 2px gap, 22px context, 36px model.
+   Row metrics are drawn for the default 14.5px UI size and grow with larger
+   UI text, the same proportion the panel width follows in
+   ComposerRuntimeMenus.tsx. --runtime-rows is the row count of the current
+   page, set on the panel.
+   Summary stack: 1px border, --menu-inset, 2px gap, context row, model row.
    With slider: +6px group gap (2px row gap + 4px slider margin) and 30px control. */
 .codex-model-menu.runtime-panel {
+  --runtime-row: max(36px, calc(var(--font-ui) * 36 / 14.5));
+  --runtime-context-row: max(22px, calc(var(--font-ui) * 22 / 14.5));
+  --runtime-header: max(40px, calc(var(--font-ui) * 40 / 14.5));
+  --runtime-list: calc(var(--runtime-rows, 1) * (var(--runtime-row) + 1px) - 1px);
+  --runtime-summary: calc(2px + var(--menu-inset) * 2 + var(--runtime-context-row) + 2px + var(--runtime-row));
   position: relative;
   display: block;
-  width: min(224px, calc(100vw - 16px));
-  height: 74px;
+  width: min(var(--runtime-panel-width, 224px), calc(100vw - 16px));
+  height: var(--runtime-summary);
   max-height: min(
     var(--floating-menu-available-height, 999px),
-    320px,
+    max(320px, calc(var(--runtime-row) * 8.5)),
     calc(100vh - 180px)
   );
   overflow: hidden;
@@ -4675,29 +4729,22 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
 }
 
 .codex-model-menu.runtime-panel.is-summary:has(.codex-effort-slider) {
-  height: 110px;
+  height: calc(var(--runtime-summary) + 36px);
 }
 
-.codex-model-menu.runtime-panel.is-engines,
+.codex-model-menu.runtime-panel.is-engines {
+  height: calc(2px + var(--runtime-header) + var(--runtime-list) + var(--menu-inset));
+}
+
+/* Provider rows already return to the summary, so that page has no back
+ * header and takes the inset on both sides. */
 .codex-model-menu.runtime-panel.is-providers {
-  height: min(
-    var(--runtime-chooser-height, 194px),
-    var(--floating-menu-available-height, 320px),
-    calc(100vh - 180px)
-  );
+  height: calc(2px + var(--runtime-list) + var(--menu-inset) * 2);
 }
 
 .codex-model-menu.runtime-panel.is-models {
-  /* --runtime-models-height covers the rows, their inset, and the shell
-   * border; the search row above them follows the control height token, so it
-   * is added here rather than approximated in the shell height calculation. */
   --runtime-models-search-row: var(--control-field-height);
-  height: min(
-    calc(var(--runtime-models-height, 320px) + var(--runtime-models-search-row)),
-    var(--floating-menu-available-height, 999px),
-    320px,
-    calc(100vh - 180px)
-  );
+  height: calc(2px + var(--runtime-models-search-row) + var(--runtime-list) + var(--menu-inset));
 }
 
 /* Without a search field the rows reach the top of the page, so the shell adds
@@ -4748,7 +4795,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
 .runtime-panel-context {
   display: flex;
   min-width: 0;
-  height: 22px;
+  height: var(--runtime-context-row);
   flex: 0 0 auto;
   align-items: center;
   gap: 4px;
@@ -4757,18 +4804,23 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
 
 .codex-runtime-menu .runtime-panel-context button {
   width: auto;
-  height: 22px;
+  height: var(--runtime-context-row);
   flex: 0 1 auto;
   gap: 4px;
   padding: 0 4px;
   color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-medium);
+  transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
 }
 
-.runtime-panel-context button > svg {
-  width: 11px;
-  height: 11px;
+.codex-runtime-menu .runtime-panel-context button:hover {
+  color: var(--ink);
+}
+
+.codex-runtime-menu .runtime-panel-context button > svg {
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
   color: var(--ink-tertiary);
 }
 
@@ -4783,7 +4835,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
 }
 
 .codex-runtime-menu .runtime-panel-model {
-  height: 36px;
+  height: var(--runtime-row);
   flex: 0 0 auto;
   gap: 8px;
   padding: 0 4px;
@@ -4820,7 +4872,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
 .runtime-panel-header {
   position: relative;
   display: flex;
-  height: 40px;
+  height: var(--runtime-header);
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
@@ -4831,7 +4883,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
 
 .codex-runtime-menu .runtime-panel-back {
   position: absolute;
-  top: 4px;
+  top: calc((var(--runtime-header) - 32px) / 2);
   left: 8px;
   width: 32px;
   height: 32px;
@@ -4861,7 +4913,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
 .runtime-provider-options {
   display: grid;
   align-content: start;
-  grid-auto-rows: 36px;
+  grid-auto-rows: var(--runtime-row);
   gap: 1px;
 }
 
@@ -4869,7 +4921,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
 .codex-runtime-menu .runtime-provider-option,
 .runtime-panel .codex-model-item {
   width: 100%;
-  height: 36px;
+  height: var(--runtime-row);
   flex: 0 0 auto;
   padding: 0 10px;
   color: var(--ink);
@@ -4892,7 +4944,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
 .runtime-panel .codex-model-group {
   display: grid;
   align-content: start;
-  grid-auto-rows: 36px;
+  grid-auto-rows: var(--runtime-row);
   gap: 1px;
 }
 
@@ -4907,8 +4959,15 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   }
 
   .runtime-panel-page.is-forward,
-  .runtime-panel-page.is-back {
+  .runtime-panel-page.is-back,
+  .codex-runtime-label.is-changed {
     animation: none;
+  }
+
+  .codex-runtime-trigger,
+  .codex-runtime-trigger > svg.icon,
+  .codex-effort-knob {
+    transition: none;
   }
 }
 
@@ -5112,32 +5171,6 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
 .split-composer .composer-collapsed-prompt-list {
   margin: 0;
   max-height: min(120px, 18vh);
-}
-
-.split-composer-bar {
-  container: split-composer-toolbar / inline-size;
-}
-
-.split-composer-status {
-  display: flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  align-items: center;
-  overflow: hidden;
-  padding: 0;
-  background: transparent;
-  color: var(--ink-tertiary);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-medium);
-  line-height: var(--line-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-@container split-composer-toolbar (max-width: 300px) {
-  .split-composer-status {
-    display: none;
-  }
 }
 
 /* Global scrollbar styling lives in styles/scrollbars.css. The conversation

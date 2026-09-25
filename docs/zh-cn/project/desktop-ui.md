@@ -35,6 +35,8 @@ npm --prefix desktop run dev:onboarding
 
 ## 共享字体与尺寸关系
 
+输入框反馈放在输入区域上方的共享阅读区，不放在发送按钮旁。主输入框和分屏都在这里保留错误、操作限制与操作进度，长文本换行并可滚动。恢复的草稿和更新的 Git 结果已表达成功，不再通过全局状态字段重复确认。
+
 [`base.css`](../../../desktop/src/renderer/styles/base.css)定义字体、颜色、圆角、焦点和层级等基础角色；[`spacing.css`](../../../desktop/src/renderer/styles/spacing.css)定义间距角色、密度边界和控件最小尺寸。优先使用已有角色，不为每个组件另设常量。
 
 鼠标点击不额外画外框。输入框只保留光标，其他控件保持静止和悬停表面。Tab，或在非文本控件上按方向键时，才显示 2px 的 `--focus-ring` 指示框。输入框和多行文本里的方向键不算键盘焦点切换。Chromium 在点击输入框时仍会匹配 `:focus-visible`，因此描边由 [`FocusModality.ts`](../../../desktop/src/renderer/FocusModality.ts) 写在 `html[data-focus-modality]` 上的状态决定，而不是单独依赖该伪类。不要为点击再写一层描边，也不要在已有边框外再套一圈。

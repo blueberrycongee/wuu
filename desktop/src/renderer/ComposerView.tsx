@@ -61,7 +61,7 @@ import {
 } from "./HandoffDraft";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
-import { TruncatedText } from "./TruncatedText";
+import { ComposerFeedback } from "./ComposerFeedback";
 import {
   CollapsedComposerPromptCard,
   useCollapsedComposerPrompt
@@ -89,6 +89,7 @@ import {
   ProjectPickerMenu,
   RuntimePicker,
   RuntimeModelMenu,
+  runtimePanelWidth,
   SlashCommandIcon,
   permissionModeFromSummary,
   permissionModeOption
@@ -567,6 +568,7 @@ export function Composer({
   const handoffUnavailableReason = handoffDisabledReason
     || (running ? t("slash.taskRunning") : readOnly || effectiveSendDisabled || !onHandoffSession ? t("handoff.card.disabled") : undefined);
   const canConfirmHandoff = canSubmitHandoffDraft(handoffDraft) && !handoffUnavailableReason;
+  const handoffPanelWidth = handoffMode ? runtimePanelWidth() : 0;
   const slashQuery = slashDraft?.query ?? "";
   const slashSkillContextKey = activeContext ? composerRuntimeContextKey(activeContext) : "";
   const slashSkillCountKey = initialized?.extension_trust?.main_session?.skills?.count ?? 0;
@@ -1131,6 +1133,7 @@ export function Composer({
           onEditQueuedMessage={onEditQueuedMessage}
         />
         <div className="composer-frame-shell">
+          <ComposerFeedback text={statusText} liveProgress={statusIsLiveProgress} />
           {canSelectProject ? (
             <div className="composer-workspace-bar" ref={menuRef}>
               <div className="hero-project-pill-anchor composer-project-control">
@@ -1403,14 +1406,6 @@ export function Composer({
                     )}
                   </>
                 )}
-                {statusText ? (
-                  <span className="status-label">
-                    <TruncatedText
-                      className={`status-label-text${statusIsLiveProgress ? " live-progress-chip" : ""}`}
-                      text={statusText}
-                    />
-                  </span>
-                ) : null}
                 <button
                   className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
                   data-wuu-component="composer-send"
@@ -1444,9 +1439,10 @@ export function Composer({
             owner="composer-handoff"
             placement="above"
             align="left"
-            width={224}
+            width={handoffPanelWidth}
           >
             <RuntimeModelMenu
+              width={handoffPanelWidth}
               initialized={initialized}
               state={codexModels}
               selectedProvider={handoffDraft.providerId || initialized.provider}
