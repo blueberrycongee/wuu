@@ -541,6 +541,13 @@ func (c *controller) fire(ctx context.Context, task Task, now time.Time) {
 			c.runs[index].Status = "failed"
 			c.runs[index].CompletedAt = &finished
 			c.runs[index].Error = err.Error()
+		} else if c.runs[index].Status == "running" && sent.State != "running" {
+			// A running lifecycle event arrived while the send call was still in
+			// flight; do not downgrade the run back to the queued state reported
+			// by the late response. Only backfill the queue identity if missing.
+			if c.runs[index].QueueID == "" {
+				c.runs[index].QueueID = sent.QueueID
+			}
 		} else {
 			c.runs[index].Status = sent.State
 			c.runs[index].TurnID = sent.TurnID
@@ -552,7 +559,7 @@ func (c *controller) fire(ctx context.Context, task Task, now time.Time) {
 }
 
 func (c *controller) settle(ctx context.Context, input pluginapi.TurnLifecycleInput) error {
-	if input.State != "completed" && input.State != "failed" && input.State != "interrupted" && input.State != "discarded" {
+	if input.State != "running" && input.State != "completed" && input.State != "failed" && input.State != "interrupted" && input.State != "discarded" {
 		return nil
 	}
 	c.mu.Lock()
@@ -560,6 +567,27 @@ func (c *controller) settle(ctx context.Context, input pluginapi.TurnLifecycleIn
 	for index := range c.runs {
 		if c.runs[index].RequestID != input.RequestID {
 			continue
+		}
+		if input.State == "running" {
+			// The queued run started executing. Record the session/turn identity so
+			// the UI can show "running" instead of "queued" until a terminal event.
+			// Terminal states are never reverted by a late running event.
+			if runSettled(c.runs[index].Status) {
+				return nil
+			}
+			if c.runs[index].Status != "running" {
+				c.runs[index].Status = "running"
+			}
+			if input.ThreadID != "" {
+				c.runs[index].SessionID = input.ThreadID
+			}
+			if input.TurnID != "" {
+				c.runs[index].TurnID = input.TurnID
+			}
+			if input.QueueID != "" {
+				c.runs[index].QueueID = input.QueueID
+			}
+			return c.saveLocked(ctx)
 		}
 		finished := c.now().UTC()
 		c.runs[index].Status = input.State
