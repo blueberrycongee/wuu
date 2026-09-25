@@ -188,17 +188,15 @@ function toolResultRecord(item: ThreadItem): Record<string, unknown> | undefined
   if (isRecord(structured)) {
     return structured;
   }
-  const direct = parseRecord(item.result);
-  if (direct) {
-    return direct;
-  }
+  // The model view may itself be JSON stdout, not execution metadata.
+  // Prefer the retained producer envelope before legacy text-only results.
   for (const part of item.result_detail?.content ?? []) {
     const parsed = parseRecord(part.text);
     if (parsed) {
       return parsed;
     }
   }
-  return undefined;
+  return parseRecord(item.result);
 }
 
 function parseRecord(value: string | undefined): Record<string, unknown> | undefined {

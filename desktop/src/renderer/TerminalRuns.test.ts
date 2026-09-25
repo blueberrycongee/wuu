@@ -40,8 +40,24 @@ describe("terminal run records", () => {
     expect(isCommandToolCall(commandItem({ type: "agent_message" }))).toBe(false);
   });
 
-  it("extracts retained output and command metadata", () => {
-    const [run] = agentRunsForTurn("thread-1", turn([commandItem()]));
+  it.each([
+    undefined,
+    "ok\n",
+    '{"ok":true}',
+    '{"exit_code":7,"stdout_tail":"not real output"}',
+  ])("extracts retained output and command metadata with model text %j", (modelText) => {
+    const item = commandItem();
+    const stdout = modelText ?? "ok\n";
+    if (modelText !== undefined) {
+      item.result_detail = {
+        content: [{
+          type: "text",
+          text: JSON.stringify({ ...JSON.parse(item.result!), stdout_tail: stdout }),
+        }],
+      };
+      item.result = modelText;
+    }
+    const [run] = agentRunsForTurn("thread-1", turn([item]));
 
     expect(run).toMatchObject({
       kind: "agent_run",
@@ -52,7 +68,7 @@ describe("terminal run records", () => {
       command: "npm test",
       capability: "command.bash",
       status: "completed",
-      stdout: "ok\n",
+      stdout,
       exitCode: 0,
       durationMs: 1234,
       timedOut: false,

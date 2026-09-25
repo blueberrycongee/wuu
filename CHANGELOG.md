@@ -43,6 +43,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Terminal run details preserve output, exit status, and log links when a
+  command's model-facing output is JSON, rather than treating that output as
+  execution metadata.
+
 - Ready Agent Core entries show an external agent's detected executable path in
   its override field without repeating it in the status or help text.
 
