@@ -5533,7 +5533,6 @@ export function App(): JSX.Element {
                 }}
                 onOpenConversation={(agent, onboarding) => openCollaborationAgentConversation(agent.id, onboarding, collaborationProject?.path)}
                 onManageProviders={openAgentProviderSettings}
-                project={collaborationProjectPicker}
                 onClose={() => { setAgentOnboardingDraft(null); setAgentOnboardingActive(false); }}
               />
             ) : <ChannelView
