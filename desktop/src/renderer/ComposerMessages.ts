@@ -551,7 +551,9 @@ export function interruptOptimisticTurn<T extends { turns: Turn[] }>(
       Number.isFinite(startedAtMs) ? Math.max(0, nowMs - startedAtMs) : 0,
     );
     changed = true;
-    return { ...turn, status: "interrupted" as const };
+    const interrupted = { ...turn, status: "interrupted" as const };
+    localTurnTiming(interrupted, nowMs);
+    return interrupted;
   });
   return changed ? withSettledOptimisticTurns(thread, turns) : thread;
 }

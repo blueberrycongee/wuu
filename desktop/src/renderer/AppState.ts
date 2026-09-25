@@ -22,6 +22,7 @@ import {
   type ComposerImage,
 } from "./ComposerMessages";
 import { parseRequestedHandoffIntent } from "./HandoffDraft";
+import { localTurnTiming } from "./LocalTurnTiming";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
 import { threadDisplayTitle } from "./ThreadTitles";
 import { sortChildAgents } from "./ThreadAgents";
@@ -3182,11 +3183,13 @@ function markTurnAnswerReady(
 ): Thread {
   return {
     ...thread,
-    turns: thread.turns.map((turn) =>
-      turn.id === turnID && !turn.answer_ready_at
-        ? { ...turn, answer_ready_at: answerReadyAt }
-        : turn,
-    ),
+    turns: thread.turns.map((turn) => {
+      if (turn.id !== turnID || turn.answer_ready_at) return turn;
+      const ready = { ...turn, answer_ready_at: answerReadyAt };
+      // Background conversations may not render before provider cleanup ends.
+      localTurnTiming(ready);
+      return ready;
+    }),
   };
 }
 
