@@ -108,7 +108,29 @@ npm --prefix desktop run dev:onboarding
 
 ## 动画
 
-动画 token 只有一处来源：[`base.css`](../../../desktop/src/renderer/styles/base.css) 中的阶梯。逐帧代码不要从那套阶梯里复制时长或曲线。[`motion.ts`](../../../desktop/src/renderer/motion.ts) 是唯一的 JS 桥接层：`motionDurationMs` 读取时长 token，`motionEasing` 按 token 名求值对应的 cubic-bezier，`messageMotionTime` 提供逐帧循环与 WAAPI 入场共用的文档时钟。请保持这个结构：在 `cubic-bezier()` token 旁边手写一个 `1 - (1 - p) ** 3`，两者很容易和它原本要对齐的过渡逐渐偏离。
+动画 token 只有一处来源：[`base.css`](../../../desktop/src/renderer/styles/base.css) 中的阶梯。`--motion-fast`（120ms）用于指针反馈，`--motion-base`（180ms）用于菜单、弹层和内容切换，`--motion-slow`（280ms）用于结构位移，`--motion-slower`（440ms）用于较大的折叠。入场使用 `--ease-out`，退出使用 `--ease-in`。过渡、入场和退出都读取阶梯中的一级或旁边的语义别名。字面时长只留给节奏类动画，例如使用 `--motion-spin` 的 spinner、环境循环动画，或由 JS 时钟驱动的编排；这类规则要在旁边写明减少动态效果时的行为。
+
+入场和退出使用共享 keyframe，不要为每个界面复制一份。`wuu-enter` 和 `wuu-exit` 从被动画元素上的 `--enter-x`、`--enter-y`、`--enter-scale`、`--enter-opacity`（或对应的 `--exit-*` 属性）读取偏移：
+
+```css
+.toast {
+  --enter-y: 8px;
+  --exit-y: -4px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
+}
+
+.toast.closing {
+  animation: wuu-exit var(--motion-base) var(--ease-in) both;
+}
+```
+
+它们驱动的是独立的 `translate` 和 `scale` 属性，因此界面自身的 `transform`（例如居中或悬停上浮）仍然生效。这些偏移属性注册为不继承，嵌套界面不会拿到父级的距离。`wuu-fade-in` 和 `wuu-fade-out` 是纯淡入淡出，`wuu-pulse` 是环境不透明度脉冲（`--pulse-opacity`），`wuu-spin` 是唯一的 spinner。`menu-enter`、`content-swap-enter` 和环境面板的进出场保留各自的命名角色。`/dev/motion/` 夹具展示阶梯、共享 keyframe，以及使用它们的真实界面。
+
+减少动态效果有两个来源：系统设置和应用内的“动态效果”偏好，结果只有一个。`base.css` 把任一来源解析为 `--motion-reduced: 1`，并把阶梯和固定别名归零，因此 token 驱动的动画无需组件规则即可瞬时完成。让入场元素的静止样式保持可见，由归零的时长承担减少动态效果；`animation: none` 还会去掉 fill，而静止样式本身隐藏的界面正靠 fill 才能显示。阶梯管不到的动画，在定义旁边用 `@container style(--motion-reduced: 1) { ... }` 退出。不要使用 `@media (prefers-reduced-motion)`，它只能看到系统设置。spinner 保持转动，因为它表示正在进行的工作。
+
+[`motion.ts`](../../../desktop/src/renderer/motion.ts) 是唯一的 JS 桥接层。`motionDurationMs` 和 `motionCurve` 在动画开始时读取 token；在模块加载时固化的值会错过之后的偏好变化或主题覆盖。`motionEasing` 为逐帧循环求值 token 对应的 cubic-bezier，`messageMotionTime` 提供逐帧循环与 WAAPI 入场共用的文档时钟。请保持这个结构：在 `cubic-bezier()` token 旁边手写一个 `1 - (1 - p) ** 3`，两者很容易和它原本要对齐的过渡逐渐偏离。`prefersReducedMotion`、`subscribeReducedMotion` 和 `useReducedMotion` 与样式表读取同样的两个来源，不要直接查询媒体特性。样式表管不到的动画要显式检查它们：WAAPI、逐帧循环、`scrollTo({ behavior: "smooth" })`，以及 dnd-kit 的内联排序过渡和放下动画；后者由 [`SortableMotion.ts`](../../../desktop/src/renderer/SortableMotion.ts) 接到阶梯上。退出动画期间需要保持挂载的内容使用 [`useExitPresence`](../../../desktop/src/renderer/useExitPresence.ts)：它在退出开始时读取时长，也可以由动画结束事件提前释放。
+
+新增动画后，在 `/dev/motion/` 把 Motion 开关切到 reduce 检查一次，再在 DevTools 中模拟系统设置（Rendering > prefers-reduced-motion）检查一次，两者的效果必须一致。
 
 会话内的程序化滚动统一走一条轨迹：[`ScrollGlide`](../../../desktop/src/renderer/ScrollGlide.ts)。每个 60fps 帧保留剩余距离的 `0.85`，因此速率与需要移动的距离无关；逼近过程不会反向或过冲，掉帧最多按八个基准帧补齐，最后 1px 精确落位。目标位置每帧重新读取，所以流式输出、输入框收起或迟到的重排都只会延长同一次运动，而不会重新开始；也是因此，发送后的气泡能在文档位移时保持屏幕位置不动。
 

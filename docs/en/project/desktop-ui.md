@@ -127,7 +127,29 @@ Preview `/dev/sidebar-collapse/` with optional `theme=dark`, `size=20`, and `wid
 
 ## Motion
 
-Motion tokens live in one place: the ladder in [`base.css`](../../../desktop/src/renderer/styles/base.css). Frame-driven code never copies a duration or a curve out of that ladder. [`motion.ts`](../../../desktop/src/renderer/motion.ts) is the only JS bridge — `motionDurationMs` reads a duration token, `motionEasing` evaluates the cubic-bezier a token names, and `messageMotionTime` is the shared document clock that frame loops and WAAPI entrances both read. Keep it that way: a hand-rolled `1 - (1 - p) ** 3` next to a `cubic-bezier()` token can drift away from the transition it was meant to match.
+Motion tokens live in one place: the ladder in [`base.css`](../../../desktop/src/renderer/styles/base.css). `--motion-fast` (120ms) is pointer feedback, `--motion-base` (180ms) covers menus, popovers, and content swaps, `--motion-slow` (280ms) structural moves, and `--motion-slower` (440ms) large folds. `--ease-out` carries entrances and `--ease-in` exits. Transitions, entrances, and exits read a rung or one of the semantic aliases beside it. A literal duration is reserved for a rhythm, such as a spinner on `--motion-spin`, an ambient loop, or choreography paced by a JS clock, and its rule states its reduced-motion behavior next to it.
+
+Entrances and exits use the shared keyframes rather than a new copy per surface. `wuu-enter` and `wuu-exit` read their offsets from `--enter-x`, `--enter-y`, `--enter-scale`, and `--enter-opacity` (or the matching `--exit-*` properties) on the animated element:
+
+```css
+.toast {
+  --enter-y: 8px;
+  --exit-y: -4px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
+}
+
+.toast.closing {
+  animation: wuu-exit var(--motion-base) var(--ease-in) both;
+}
+```
+
+They move the individual `translate` and `scale` properties, so a surface's own `transform`, such as centering or a hover lift, still applies. The offsets are registered as non-inheriting, so a nested surface never picks up its parent's distance. `wuu-fade-in` and `wuu-fade-out` are pure fades, `wuu-pulse` is the ambient opacity pulse (`--pulse-opacity`), and `wuu-spin` is the only spinner. `menu-enter`, `content-swap-enter`, and the environment panel pair keep their named roles. The `/dev/motion/` fixture shows the ladder, the shared keyframes, and production surfaces that use them.
+
+Reduced motion has two sources, the OS setting and the in-app Motion preference, and one result. `base.css` resolves either into `--motion-reduced: 1` and zeroes the ladder and its pinned aliases, so token-driven motion becomes instant without a component rule. Leave an entrance's resting style visible and let the zeroed duration carry reduced motion; `animation: none` also removes the fill that reveals a surface whose resting style starts hidden. Motion the ladder cannot reach opts out next to its definition with `@container style(--motion-reduced: 1) { ... }`. Do not use `@media (prefers-reduced-motion)`, which only sees the OS setting. Spinners keep turning, because they report ongoing work.
+
+[`motion.ts`](../../../desktop/src/renderer/motion.ts) is the only JS bridge. `motionDurationMs` and `motionCurve` read a token when the motion starts; a value captured at module load misses a later preference change or theme override. `motionEasing` evaluates the cubic-bezier a token names for frame loops, and `messageMotionTime` is the shared document clock that frame loops and WAAPI entrances both read. Keep it that way: a hand-rolled `1 - (1 - p) ** 3` next to a `cubic-bezier()` token can drift away from the transition it was meant to match. `prefersReducedMotion`, `subscribeReducedMotion`, and `useReducedMotion` report the same two sources as the stylesheet, so never query the media feature directly. Motion the stylesheet cannot reach checks them explicitly: WAAPI, frame loops, `scrollTo({ behavior: "smooth" })`, and dnd-kit's inline sortable transitions and drop animations, which [`SortableMotion.ts`](../../../desktop/src/renderer/SortableMotion.ts) puts on the ladder. Content that stays mounted through its exit uses [`useExitPresence`](../../../desktop/src/renderer/useExitPresence.ts), which reads the exit duration when the exit starts and can release early from the motion's end event.
+
+Check new motion at `/dev/motion/` with its Motion switch set to reduce, and again with the OS setting emulated in DevTools (Rendering > prefers-reduced-motion). Both must look the same.
 
 Programmatic conversation scrolling uses one trajectory, [`ScrollGlide`](../../../desktop/src/renderer/ScrollGlide.ts). Each 60fps frame it keeps `0.85` of the distance still to travel, so the rate does not depend on how far the viewport has to move, the approach never reverses or overshoots, a dropped frame catches up over at most eight reference frames, and the last pixel lands exactly. The target is re-read every frame, which is what lets streaming output, a collapsing composer, or a late reflow extend the same motion instead of restarting it, and what makes the send bubble hold its screen position while the document shifts under it.
 
