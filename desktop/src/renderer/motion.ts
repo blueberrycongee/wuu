@@ -28,18 +28,19 @@ export function prefersReducedMotion(): boolean {
   return reducedMotionMedia()?.matches ?? false;
 }
 
-/**
- * Calls `listener` with the new value whenever `prefersReducedMotion()`
- * changes, from either source. Returns the unsubscribe function.
- */
-export function subscribeReducedMotion(listener: (reduced: boolean) => void): () => void {
+// Every subscriber shares one media listener and one attribute observer:
+// sortable rows and process surfaces subscribe per instance.
+const reducedMotionListeners = new Set<(reduced: boolean) => void>();
+let reducedMotion = false;
+let stopWatchingReducedMotion: (() => void) | undefined;
+
+function watchReducedMotion(): () => void {
   const media = reducedMotionMedia();
-  let reduced = prefersReducedMotion();
   const check = (): void => {
     const next = prefersReducedMotion();
-    if (next === reduced) return;
-    reduced = next;
-    listener(next);
+    if (next === reducedMotion) return;
+    reducedMotion = next;
+    for (const listener of [...reducedMotionListeners]) listener(next);
   };
   media?.addEventListener("change", check);
   const observer = new MutationObserver(check);
@@ -50,6 +51,26 @@ export function subscribeReducedMotion(listener: (reduced: boolean) => void): ()
   return () => {
     media?.removeEventListener("change", check);
     observer.disconnect();
+  };
+}
+
+/**
+ * Calls `listener` with the new value whenever `prefersReducedMotion()`
+ * changes, from either source. Returns the unsubscribe function.
+ */
+export function subscribeReducedMotion(listener: (reduced: boolean) => void): () => void {
+  if (reducedMotionListeners.size === 0) {
+    reducedMotion = prefersReducedMotion();
+    stopWatchingReducedMotion = watchReducedMotion();
+  }
+  // A wrapper per subscription, so one function subscribed twice needs two
+  // unsubscribes.
+  const entry = (reduced: boolean): void => listener(reduced);
+  reducedMotionListeners.add(entry);
+  return () => {
+    if (!reducedMotionListeners.delete(entry) || reducedMotionListeners.size > 0) return;
+    stopWatchingReducedMotion?.();
+    stopWatchingReducedMotion = undefined;
   };
 }
 
