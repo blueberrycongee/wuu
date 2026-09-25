@@ -28,6 +28,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Desktop motion shares one duration ladder and one reduced-motion signal.
+  The in-app Motion preference and the OS setting both collapse token-driven
+  transitions, entrances, exits, drag movement, and frame-driven motion;
+  spinners keep turning because they report ongoing work. Closing the
+  conversation search overlay and the sidebar rename sheet no longer keeps a
+  full-window click target for the whole exit.
+
 - The macOS DMG installer window has a Retina-ready background with English
   and Chinese drag-to-install instructions: a slingshot beside the app fires
   Wuu along a dotted arc into the Applications folder.
