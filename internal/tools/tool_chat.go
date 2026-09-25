@@ -10,6 +10,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -99,6 +100,14 @@ func (t *ChatReadTool) Execute(ctx context.Context, argsJSON string) (string, er
 	if err != nil {
 		return "", err
 	}
+	if t.env.CollaborationPurpose == channels.CollaborationSessionWork || t.env.CollaborationPurpose == channels.CollaborationSessionVerification {
+		for i := range messages {
+			if messages[i].Work != nil {
+				messages[i].Work.Deliveries = nil
+				messages[i].Work.PendingDeliveryRefs = nil
+			}
+		}
+	}
 	scopes := make([]channels.ScopeSequence, 0, len(messages))
 	for _, message := range messages {
 		scopes = append(scopes, channels.ScopeSequence{RoomID: message.RoomID, ThreadID: message.ThreadID, Seq: message.Seq})
@@ -174,6 +183,13 @@ func (t *ChatSendTool) Definition() providers.ToolDefinition {
 	}
 }
 func (t *ChatSendTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	return t.execute(ctx, argsJSON, session.NewID())
+}
+func (t *ChatSendTool) ExecuteResultCall(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+	text, err := t.execute(ctx, call.Arguments, call.ID)
+	return toolresult.FromText(text), err
+}
+func (t *ChatSendTool) execute(ctx context.Context, argsJSON, requestID string) (string, error) {
 	if t == nil || t.env == nil || t.env.ChatAgent == nil {
 		return "", errors.New("chat_send is available only in a named-agent session")
 	}
@@ -208,6 +224,15 @@ func (t *ChatSendTool) Execute(ctx context.Context, argsJSON string) (string, er
 				if err != nil {
 					return "", err
 				}
+				if result.Delta != nil {
+					var scopes []channels.ScopeSequence
+					for _, item := range result.Delta.Items {
+						scopes = append(scopes, channels.ScopeSequence{RoomID: draft.RoomID, ThreadID: draft.ThreadID, Seq: item.Seq})
+					}
+					if err := t.env.ChatAgent.RememberChatScopes(ctx, scopes); err != nil {
+						return "", err
+					}
+				}
 				if result.Message != nil {
 					if err := t.env.ChatAgent.RememberChatScopes(ctx, []channels.ScopeSequence{{RoomID: result.Message.RoomID, ThreadID: result.Message.ThreadID, Seq: result.Message.Seq}}); err != nil {
 						return "", err
@@ -219,7 +244,7 @@ func (t *ChatSendTool) Execute(ctx context.Context, argsJSON string) (string, er
 		return "", channels.ErrNotFound
 	}
 	if args.TargetAgentID != "" {
-		result, err := t.env.ChatAgent.SendCollaboration(ctx, channels.CollaborationSendParams{RoomID: args.RoomID, ToAgentID: args.TargetAgentID, Body: args.Body, Kind: channels.CollaborationControl})
+		result, err := t.env.ChatAgent.SendCollaboration(ctx, channels.CollaborationSendParams{RoomID: args.RoomID, ToAgentID: args.TargetAgentID, Body: args.Body, Kind: channels.CollaborationControl, RequestID: requestID})
 		if err != nil {
 			return "", err
 		}
@@ -522,10 +547,8 @@ func (t *ChatVerifyTool) IsReadOnly() bool        { return false }
 func (t *ChatVerifyTool) IsConcurrencySafe() bool { return false }
 func (t *ChatVerifyTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
-		Name: "chat_verify",
-		Description: "Submit one independent verification decision for a room task. " +
-			"The host persists the three-state decision and privately delivers the natural-language report to the visible owner. " +
-			"Work owners and leads may submit a completed independent verifier run; assigned verifiers may submit their own completed run.",
+		Name:        "chat_verify",
+		Description: "Record pass, block or unknown with evidence. In an independent verification session the host supplies Work and candidate identity, and publishes the receipt after the session completes. Do not repair the candidate.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -543,7 +566,7 @@ func (t *ChatVerifyTool) Definition() providers.ToolDefinition {
 				"evidence_refs": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 				"run_ref":       map[string]any{"type": "string"},
 			},
-			"required": []string{"room_id", "task_id", "goal_revision", "candidate_revision", "decision", "report"},
+			"required": []string{"decision", "report"},
 		},
 	}
 }
@@ -564,6 +587,13 @@ func (t *ChatVerifyTool) Execute(ctx context.Context, argsJSON string) (string, 
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", err
+	}
+	if t.env.CollaborationPurpose == channels.CollaborationSessionVerification && t.env.SessionID != "" && t.env.ChatAgent.SessionRef() == "" {
+		err := t.env.ChatAgent.RecordHarnessVerification(ctx, t.env.SessionID, channels.HarnessVerificationReport{Decision: channels.VerificationDecision(args.Decision), Report: args.Report, EvidenceRefs: args.EvidenceRefs})
+		if err != nil {
+			return "", err
+		}
+		return mustJSON(map[string]any{"recorded": true, "decision": args.Decision, "published": false})
 	}
 	result, err := t.env.ChatAgent.SubmitTaskVerification(ctx, channels.TaskVerificationSubmitParams{
 		RoomID: args.RoomID, TaskID: args.TaskID,

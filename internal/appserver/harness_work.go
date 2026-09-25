@@ -53,6 +53,9 @@ func (s *Server) completeHarnessWork(ctx context.Context, link channels.HarnessS
 	}
 	// A host timeout or goal correction already settled this execution.
 	for _, run := range work.Runs {
+		if run.ID == op.RunID && link.Purpose == channels.CollaborationSessionVerification && run.CandidateRevision != work.CandidateRevision {
+			return nil
+		}
 		if run.ID == op.RunID && run.State != channels.WorkRunQueued && run.State != channels.WorkRunRunning && run.State != channels.WorkRunCompleted && run.State != channels.WorkRunFailed {
 			return nil
 		}
@@ -61,6 +64,19 @@ func (s *Server) completeHarnessWork(ctx context.Context, link channels.HarnessS
 	state := channels.WorkRunCompleted
 	if turn.Status != TurnStatusCompleted {
 		state = channels.WorkRunState(turn.Status)
+	}
+	if state == channels.WorkRunCompleted && link.Purpose == channels.CollaborationSessionVerification {
+		recorded, err := s.channelService.HarnessVerificationReport(ctx, op.RunID)
+		if err != nil {
+			return err
+		}
+		if recorded != nil {
+			data, err := json.Marshal(harnessReport{Result: recorded.Report, Decision: recorded.Decision, EvidenceRefs: append([]string{}, recorded.EvidenceRefs...), ImplicitChoices: []string{}, UnresolvedItems: []string{}})
+			if err != nil {
+				return err
+			}
+			text = string(data)
+		}
 	}
 	if state == channels.WorkRunCompleted {
 		decoder := json.NewDecoder(strings.NewReader(text))

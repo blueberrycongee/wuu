@@ -279,7 +279,7 @@ func TestIdentityConversationRecoveryRetainsHistoryAndFutureWake(t *testing.T) {
 	readerFixture := &collaborationRPCFixture{server: reader, out: reader.out.(*lockedBuffer)}
 	var read ChannelSessionReadResult
 	readerFixture.rpc(t, MethodChannelSessionRead, ChannelSessionRefParams{SessionRef: created.Session.SessionRef}, &read)
-	if len(read.Thread.Turns) != 1 || read.Session.State != channels.CollaborationSessionWaiting {
+	if len(read.Thread.Turns) != 1 || read.Session.State != channels.CollaborationSessionIdle {
 		t.Fatalf("reconstructed history: %+v", read)
 	}
 	pending, err := client.ListFollowups(ctx, f.room.ID)

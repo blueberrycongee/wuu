@@ -58,3 +58,42 @@ func Snapshot(ctx context.Context, root, base, key string) (string, string, erro
 	diff, err := run("", "diff", "--no-ext-diff", "--no-textconv", "--binary", base, revision, "--")
 	return revision, diff, err
 }
+
+// ApplySnapshot applies only the frozen candidate, preserving unrelated changes
+// and the target's index. A conflicting patch leaves the target untouched.
+func ApplySnapshot(ctx context.Context, target, base, revision string) error {
+	if len(base) != 40 && len(base) != 64 || len(revision) != 40 && len(revision) != 64 {
+		return fmt.Errorf("candidate requires immutable Git revisions")
+	}
+	for _, value := range []string{base, revision} {
+		for _, c := range value {
+			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+				return fmt.Errorf("invalid candidate revision")
+			}
+		}
+	}
+	command := exec.CommandContext(ctx, "git", "--no-pager", "-C", target, "diff", "--no-ext-diff", "--no-textconv", "--binary", base, revision, "--")
+	patch, err := command.Output()
+	if err != nil {
+		return fmt.Errorf("read candidate patch: %w", err)
+	}
+	if len(patch) == 0 {
+		return nil
+	}
+	apply := func(args ...string) error {
+		command := exec.CommandContext(ctx, "git", append([]string{"-C", target, "apply", "--whitespace=nowarn"}, args...)...)
+		command.Stdin = bytes.NewReader(patch)
+		output, err := command.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("apply candidate: %s: %w", strings.TrimSpace(string(output)), err)
+		}
+		return nil
+	}
+	if err := apply("--check"); err != nil {
+		if reverseErr := apply("--reverse", "--check"); reverseErr == nil {
+			return nil
+		}
+		return err
+	}
+	return apply()
+}

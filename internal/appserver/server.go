@@ -1213,6 +1213,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleChannelMessageSend(ctx, req)
 	case MethodChannelTaskCreate:
 		return s.handleChannelTaskCreate(ctx, req)
+	case MethodChannelWorkCandidate:
+		return s.handleChannelWorkCandidate(ctx, req)
 	case MethodChannelTaskUpdate:
 		return s.handleChannelTaskUpdate(ctx, req)
 	case MethodChannelMentionStatus:

@@ -592,7 +592,14 @@ func TestHarnessWorkAutomaticallyCreatesIndependentVerification(t *testing.T) {
 	if err != nil || string(content) != "Installation complete\n" || metadata.CWD == f.server.rt.RootDir {
 		t.Fatalf("review did not get frozen candidate: %q %s %v", content, metadata.CWD, err)
 	}
-	verifier.response <- providers.ChatResponse{Content: `{"result":"Changes satisfy requirements","implicit_choices":[],"evidence_refs":["README.md"],"unresolved_items":[],"decision":"pass"}`}
+	if _, err := f.server.thread(review.SessionRef).execRuntime.Toolkit.Execute(ctx, providers.ToolCall{ID: "verdict", Name: "chat_verify", Arguments: `{"decision":"pass","report":"Changes satisfy requirements","evidence_refs":["README.md"]}`}); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := client.GetWork(ctx, task.ID)
+	if err != nil || pending.VerificationState == channels.WorkVerificationPass {
+		t.Fatal("active review published a receipt before completion")
+	}
+	verifier.response <- providers.ChatResponse{Content: "Recorded the independent review."}
 	waitForThreadLeaseRelease(t, f.server.rt.SessionDir, review.SessionRef)
 	for range 2 {
 		if err := f.server.reconcileHarnessSessions(ctx); err != nil {
@@ -609,6 +616,20 @@ func TestHarnessWorkAutomaticallyCreatesIndependentVerification(t *testing.T) {
 	}
 	if _, err = client.UpdateTask(ctx, channels.TaskUpdateParams{RoomID: actor.RoomID, TaskID: task.ID, State: channels.TaskStateDone}); err != nil {
 		t.Fatal(err)
+	}
+	var preview struct {
+		Candidate    workCandidate `json:"candidate"`
+		WorkRevision int           `json:"work_revision"`
+	}
+	f.rpc(t, MethodChannelWorkCandidate, ChannelWorkCandidateParams{WorkID: task.ID, ArtifactID: work.CandidateArtifactRef, Action: "get"}, &preview)
+	if !strings.Contains(preview.Candidate.Diff, "Installation complete") {
+		t.Fatal("review omitted candidate diff")
+	}
+	var applied map[string]any
+	f.rpc(t, MethodChannelWorkCandidate, ChannelWorkCandidateParams{WorkID: task.ID, ArtifactID: work.CandidateArtifactRef, Action: "apply", ExpectedRevision: preview.WorkRevision}, &applied)
+	contents, err := os.ReadFile(filepath.Join(f.server.rt.RootDir, "README.md"))
+	if err != nil || string(contents) != "Installation complete\n" {
+		t.Fatalf("human apply: %s %v", contents, err)
 	}
 	decision.response <- providers.ChatResponse{StopReason: "completed"}
 	f.waitForCompletion(t)

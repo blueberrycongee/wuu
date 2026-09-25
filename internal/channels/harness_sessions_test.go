@@ -177,3 +177,64 @@ func TestHarnessParallelCandidateDoesNotLoseItsArtifact(t *testing.T) {
 		t.Fatalf("lost parallel result: %#v", work)
 	}
 }
+
+func TestDiscardCandidateStopsItsVerification(t *testing.T) {
+	ctx := context.Background()
+	s := openTestService(t, nil)
+	owner := createTestAgent(t, s, "Owner")
+	room := createTestRoom(t, s, owner)
+	client, err := s.BindAgent(ctx, owner.Agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := client.CreateTask(ctx, TaskCreateParams{RoomID: room.ID, OwnerID: owner.Agent.ID, Title: "Review", VerificationRequired: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []struct {
+		id      string
+		purpose CollaborationSessionPurpose
+	}{{"producer", CollaborationSessionWork}, {"verifier", CollaborationSessionVerification}} {
+		if err := s.PutHarnessLink(ctx, HarnessSessionLink{SessionID: entry.id, AgentID: owner.Agent.ID, RoomID: room.ID, WorkID: task.ID, GoalRevision: 1, Active: true, Purpose: entry.purpose}); err != nil {
+			t.Fatal(err)
+		}
+		run, err := s.StartHarnessWorkRun(ctx, entry.id, entry.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if entry.id == "producer" {
+			artifact, err := client.AddWorkArtifact(ctx, WorkArtifactAddParams{WorkID: task.ID, RunID: run.ID, Kind: WorkArtifactCandidate, URI: "artifact://result"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = s.FinishHarnessWorkRun(ctx, entry.id, "turn", WorkRunFinishParams{RunID: run.ID, State: WorkRunCompleted, Qualified: true}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = client.PromoteWorkCandidate(ctx, WorkCandidatePromoteParams{WorkID: task.ID, RunID: run.ID, ArtifactRef: artifact.ID, RequestID: "promote"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	work, err := s.GetWork(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetCandidateDisposition(ctx, work.ID, work.CandidateArtifactRef, "discarded", work.Revision, nil); err != nil {
+		t.Fatal(err)
+	}
+	work, err = s.GetWork(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if work.CandidateArtifactRef != "" || work.State != WorkNeedsHuman {
+		t.Fatalf("discard: %#v", work)
+	}
+	for _, run := range work.Runs {
+		if run.Kind == WorkRunVerifier && run.State != WorkRunInterrupted {
+			t.Fatalf("review still active: %#v", run)
+		}
+	}
+	if err := client.RecordHarnessVerification(ctx, "verifier", HarnessVerificationReport{Decision: VerificationPass, Report: "Late review"}); err == nil {
+		t.Fatal("discarded candidate accepted a late verdict")
+	}
+}

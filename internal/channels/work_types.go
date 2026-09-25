@@ -161,6 +161,7 @@ const (
 )
 
 type WorkArtifact struct {
+	Disposition       string           `json:"disposition,omitempty"`
 	ID                string           `json:"id"`
 	WorkID            string           `json:"work_id"`
 	RunID             string           `json:"run_id,omitempty"`

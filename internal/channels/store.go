@@ -864,6 +864,7 @@ func (s *Service) ensureLegacyColumns() error {
 		name       string
 		definition string
 	}{
+		{table: "work_artifacts", name: "disposition", definition: "TEXT NOT NULL DEFAULT ''"},
 		{table: "works", name: "state_deadline_at", definition: "INTEGER"},
 		{table: "works", name: "revision", definition: "INTEGER NOT NULL DEFAULT 1"},
 		{table: "works", name: "constraints", definition: "TEXT NOT NULL DEFAULT ''"},

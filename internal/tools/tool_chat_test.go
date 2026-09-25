@@ -195,6 +195,19 @@ func TestNamedAgentChatToolsAreIsolatedAndRoundTrip(t *testing.T) {
 	if err := json.Unmarshal([]byte(taskJSON), &taskResult); err != nil || taskResult.Task.TaskState != string(channels.TaskStateOpen) {
 		t.Fatalf("chat_task create = %s, err %v", taskJSON, err)
 	}
+	kit.SetCollaborationScope(channels.CollaborationSessionVerification, room.ID, taskResult.Task.ID)
+	privateWork, err := client.GetWork(ctx, taskResult.Task.ID)
+	if err != nil || len(privateWork.Deliveries) == 0 {
+		t.Fatalf("missing private fixture: %#v %v", privateWork, err)
+	}
+	readJSON, err = kit.Execute(ctx, providers.ToolCall{Name: "chat_read", Arguments: `{"room_id":"` + room.ID + `"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(readJSON, `"deliveries"`) || strings.Contains(readJSON, `"pending_delivery_refs"`) {
+		t.Fatal("reviewer room history exposed private coordinator deliveries")
+	}
+	kit.SetCollaborationScope(channels.CollaborationSessionConversation, room.ID, taskResult.Task.ID)
 	updatedTaskJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_task", Arguments: `{"action":"update","task_id":"` + taskResult.Task.ID + `","state":"done","expected_revision":` + fmt.Sprint(taskResult.Task.Work.Revision) + `}`})
 	if err != nil || !strings.Contains(updatedTaskJSON, `"task_state":"done"`) {
 		t.Fatalf("chat_task update = %s, err %v", updatedTaskJSON, err)

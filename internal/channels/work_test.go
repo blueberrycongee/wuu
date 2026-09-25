@@ -375,7 +375,7 @@ func TestWorkDecisionsRejectStaleUpdatesAndPersistRevisions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := s.CreateTaskHuman(ctx, TaskCreateParams{RoomID: room.ID, HumanID: "local-user", Title: "Search", Body: "Paginate results", Constraints: "Preserve the public API", OwnerID: owner.Agent.ID})
+	task, err := s.CreateTaskHuman(ctx, TaskCreateParams{RoomID: room.ID, HumanID: "local-user", Title: "Search", Constraints: "Preserve the public API", OwnerID: owner.Agent.ID})
 	if err != nil {
 		t.Fatal(err)
 	}

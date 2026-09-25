@@ -227,11 +227,9 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 	if params.ExpectedRevision > 0 && terminalWork.Revision != params.ExpectedRevision {
 		return Message{}, fmt.Errorf("%w: task revision changed; read the current task before retrying", ErrConflict)
 	}
-	if params.Constraints != nil && *params.Constraints != terminalWork.Constraints && params.GoalCorrection == "" {
-		params.GoalCorrection = message.Body
-	}
+	goalChanged := params.GoalCorrection != "" || params.Constraints != nil && *params.Constraints != terminalWork.Constraints
 	workState := terminalWork.State
-	if terminalWorkState(workState) && params.GoalCorrection == "" {
+	if terminalWorkState(workState) && !goalChanged {
 		return Message{}, fmt.Errorf("%w: work is %s", ErrConflict, workState)
 	}
 	if params.AgentID != "" {
@@ -271,7 +269,7 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 		message.Work = &work
 		return message, err
 	}
-	if params.GoalCorrection != "" || (params.OwnerID != "" && params.OwnerID != message.TaskOwner) {
+	if goalChanged || (params.OwnerID != "" && params.OwnerID != message.TaskOwner) {
 		// Fence the current task turn even though it has no separate Work run.
 		// Its durable correction will continue in the same conversation.
 		if _, err := tx.ExecContext(ctx, `UPDATE collaboration_session_bindings SET state='interrupted', updated_at=?
@@ -292,13 +290,13 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 	updatedAt := fromMillis(toMillis(s.now()))
 	interruptTargets := make([]workSessionInterruptTarget, 0)
 	interruptedRuns := make([]WorkRun, 0)
-	if params.GoalCorrection != "" || ownerChanged {
+	if goalChanged || ownerChanged {
 		activeTargets, err := activeWorkSessionInterruptTargetsTx(ctx, tx, message.ID)
 		if err != nil {
 			return Message{}, err
 		}
 		for _, target := range activeTargets {
-			if params.GoalCorrection != "" || target.agentID == oldOwner {
+			if goalChanged || target.agentID == oldOwner {
 				interruptTargets = append(interruptTargets, target)
 			}
 		}
@@ -312,7 +310,7 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 				rows.Close()
 				return Message{}, err
 			}
-			if params.GoalCorrection != "" || run.NamedAgentID == oldOwner {
+			if goalChanged || run.NamedAgentID == oldOwner {
 				interruptedRuns = append(interruptedRuns, run)
 			}
 		}
@@ -324,12 +322,14 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 	if params.State != "" {
 		setState = string(params.State)
 	}
-	if params.GoalCorrection != "" {
+	if goalChanged {
 		correctionFromType, correctionFromID := MemberAgent, params.AgentID
 		if params.HumanID != "" {
 			correctionFromType, correctionFromID = MemberHuman, params.HumanID
 		}
-		message.Body = params.GoalCorrection
+		if params.GoalCorrection != "" {
+			message.Body = params.GoalCorrection
+		}
 		message.TaskGoalRevision++
 		setState = string(TaskStateOpen)
 		if _, err := tx.ExecContext(ctx, `
@@ -427,7 +427,7 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 		}
 		setState = string(TaskStateOpen)
 	}
-	if params.GoalCorrection == "" && !ownerChanged && !validTaskTransition(TaskState(message.TaskState), TaskState(setState)) {
+	if !goalChanged && !ownerChanged && !validTaskTransition(TaskState(message.TaskState), TaskState(setState)) {
 		return Message{}, fmt.Errorf("%w: task cannot move from %s to %s", ErrConflict, message.TaskState, setState)
 	}
 	if message.TaskVerificationRequired && setState == string(TaskStateDone) {
@@ -518,7 +518,7 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 	var terminalWakeIDs []string
 	for _, run := range interruptedRuns {
 		run.State, run.EndedAt = WorkRunInterrupted, updatedAt
-		if params.GoalCorrection != "" {
+		if goalChanged {
 			run.Outcome = "goal revised"
 		} else {
 			run.Outcome = "owner reassigned"

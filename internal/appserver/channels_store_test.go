@@ -350,9 +350,9 @@ func TestEnsureNamedAgentThreadReplacesOrdinaryRuntimeAfterLoad(t *testing.T) {
 		t.Fatal("ordinary restored runtime was reused without named-agent identity")
 	}
 	wantTools := map[string]bool{
-		"chat_check": false, "chat_read": false, "chat_send": false, "collaboration_send": false,
-		"chat_draft": false, "chat_task": false, "chat_work": false, "chat_remind": false,
-		"read_file": false, "list_files": false, "bash": false,
+		"chat_check": false, "chat_read": false, "chat_send": false, "session": false,
+		"chat_task": false, "chat_work": false, "chat_wake": false,
+		"read_file": false, "list_files": false,
 	}
 	for _, definition := range loaded.execRuntime.Toolkit.Definitions() {
 		if _, ok := wantTools[definition.Name]; ok {

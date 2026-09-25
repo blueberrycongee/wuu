@@ -727,7 +727,7 @@ func (s *Service) FinishWorkRun(ctx context.Context, params WorkRunFinishParams)
 	if run.GoalRevision != work.GoalRevision {
 		return WorkRun{}, fmt.Errorf("%w: work run revisions are stale", ErrConflict)
 	}
-	supersededCandidateRevision := run.CandidateRevision != work.CandidateRevision && !promotedByRun && run.Kind != WorkRunProducer
+	supersededCandidateRevision := run.CandidateRevision != work.CandidateRevision && !promotedByRun && !(run.Kind == WorkRunProducer && run.NamedAgentID == "")
 	now := fromMillis(toMillis(s.now()))
 	run.State, run.Outcome, run.Provider, run.Model = params.State, strings.TrimSpace(params.Outcome), strings.TrimSpace(params.Provider), strings.TrimSpace(params.Model)
 	run.InputTokens, run.OutputTokens, run.CostUSD, run.ChecksRerun = params.InputTokens, params.OutputTokens, params.CostUSD, params.ChecksRerun
@@ -992,7 +992,7 @@ func (s *Service) AddWorkArtifact(ctx context.Context, params WorkArtifactAddPar
 		if !canManage && run.NamedAgentID != actor.ID {
 			return WorkArtifact{}, ErrUnauthorized
 		}
-		if run.GoalRevision != work.GoalRevision || run.Kind != WorkRunProducer && run.CandidateRevision != work.CandidateRevision {
+		if run.GoalRevision != work.GoalRevision || !(run.Kind == WorkRunProducer && run.NamedAgentID == "") && run.CandidateRevision != work.CandidateRevision {
 			return WorkArtifact{}, fmt.Errorf("%w: artifact run revisions are stale", ErrConflict)
 		}
 	}
@@ -1806,7 +1806,7 @@ func (s *Service) listWorkRuns(ctx context.Context, workID string) ([]WorkRun, e
 
 func (s *Service) listWorkArtifacts(ctx context.Context, workID string) ([]WorkArtifact, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, work_id, COALESCE(run_id, ''), kind, uri, label, summary, workspace_revision, created_at
+		SELECT id, work_id, COALESCE(run_id, ''), kind, uri, label, summary, workspace_revision, created_at, disposition
 		FROM work_artifacts WHERE work_id = ? ORDER BY created_at, id`, workID)
 	if err != nil {
 		return nil, err
@@ -1816,7 +1816,7 @@ func (s *Service) listWorkArtifacts(ctx context.Context, workID string) ([]WorkA
 	for rows.Next() {
 		var artifact WorkArtifact
 		var createdAt int64
-		if err := rows.Scan(&artifact.ID, &artifact.WorkID, &artifact.RunID, &artifact.Kind, &artifact.URI, &artifact.Label, &artifact.Summary, &artifact.WorkspaceRevision, &createdAt); err != nil {
+		if err := rows.Scan(&artifact.ID, &artifact.WorkID, &artifact.RunID, &artifact.Kind, &artifact.URI, &artifact.Label, &artifact.Summary, &artifact.WorkspaceRevision, &createdAt, &artifact.Disposition); err != nil {
 			return nil, err
 		}
 		artifact.CreatedAt = fromMillis(createdAt)
