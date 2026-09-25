@@ -2933,10 +2933,17 @@
   min-width: 0;
 }
 
+/* Ambient loops pause while nobody can see them: a hidden window, or a
+ * cached conversation kept mounted behind the active pane. */
 :root[data-renderer-hidden] .turn-process-live-dot,
+:root[data-renderer-hidden] .tool-activity-marker.is-running,
+:root[data-renderer-hidden] .turn-source-avatar[data-load-state="loading"]::before,
 :root[data-renderer-hidden] .wuu-launch-mark::after,
 :root[data-renderer-hidden] .wuu-launch-mark span,
-:root[data-renderer-hidden] .wuu-launch-rail::after {
+:root[data-renderer-hidden] .wuu-launch-rail::after,
+.cached-conversation-pane[data-active="false"] .turn-process-live-dot,
+.cached-conversation-pane[data-active="false"] .tool-activity-marker.is-running,
+.cached-conversation-pane[data-active="false"] .turn-source-avatar[data-load-state="loading"]::before {
   animation-play-state: paused;
 }
 

@@ -585,7 +585,10 @@
   animation: wuu-fade-in var(--search-enter-duration) var(--search-motion-easing) both;
 }
 
+/* A fading overlay no longer takes clicks: they reach the surface it is
+ * revealing instead of re-running the close. */
 .conversation-search-overlay.closing {
+  pointer-events: none;
   animation: wuu-fade-out var(--search-exit-duration) var(--search-motion-easing) both;
 }
 
@@ -1224,10 +1227,6 @@
 
 .sidebar-name-dialog-drawer .sidebar-name-dialog-title {
   font-size: 16px;
-}
-
-.sidebar-name-dialog-overlay-drawer.closing {
-  pointer-events: none;
 }
 
 .sidebar-name-dialog-overlay.backgrounded {
