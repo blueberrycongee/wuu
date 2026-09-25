@@ -8,10 +8,22 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Changed
+
+- Desktop titlebars, tab bars, and the sidebar place their first and last
+  icons 20px from the pane edge on both sides. In the message column, tables
+  start on the same edge as paragraphs, while code blocks, the composer, and
+  message bubbles share one 16px inner inset. Derived text, icon, and line
+  sizes land on whole pixels, sidebar group headings keep one height, and
+  message headings step more clearly above body text.
+
 ### Fixed
 
 - Reduce long conversation switching stalls by assembling core responses once
   per message and reusing resume responses instead of transmitting history twice.
+
+- Message table headers no longer render bold, and narrow tables keep words
+  whole instead of breaking them mid-word.
 
 ## [2026.9.24] - 2026-09-24
 

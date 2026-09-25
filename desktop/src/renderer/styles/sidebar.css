@@ -329,12 +329,15 @@
 }
 
 .sidebar-content {
-  --sidebar-row-pad-x: var(--control-padding-inline);
+  /* Rows are inset from the rail so their selection surface floats; the row
+   * padding takes up the rest, putting the leading glyph on the pane inset. */
+  --sidebar-content-pad-x: var(--space-2);
+  --sidebar-row-pad-x: calc(var(--pane-inset) - var(--sidebar-content-pad-x));
   --sidebar-label-weight: 400;
   --sidebar-selected-weight: 500;
   --sidebar-label-size: var(--font-ui);
-  --sidebar-heading-size: max(12px, calc(var(--sidebar-label-size) - 2px));
-  --sidebar-row-height: max(32px, calc(var(--sidebar-label-size) * 2.25));
+  --sidebar-heading-size: max(12px, round(nearest, calc(var(--sidebar-label-size) - 2px), 1px));
+  --sidebar-row-height: max(32px, round(nearest, calc(var(--sidebar-label-size) * 2.25), 4px));
   /* One icon and text axis for navigation, plugins, collaboration, projects,
    * and account controls. Avatars occupy this same glyph slot. */
   --sidebar-primary-icon-size: 16px;
@@ -376,7 +379,7 @@
   min-height: 0;
   height: 100%;
   flex-direction: column;
-  padding: 0 8px 8px;
+  padding: 0 var(--sidebar-content-pad-x) var(--space-2);
   transform: translate3d(0, 0, 0) scale(1);
   transform-origin: left center;
   opacity: 1;
@@ -1693,7 +1696,9 @@ html[data-focus-modality="keyboard"] :is(
   display: flex;
   column-gap: var(--sidebar-action-gap);
   min-width: 0;
-  min-height: 24px;
+  /* Reserve the heading accessory's footprint whether or not the section has
+   * one, so group spacing does not depend on which headings offer "+". */
+  min-height: var(--sidebar-row-action-size);
   align-items: center;
   padding: 0 var(--sidebar-row-pad-x);
 }
