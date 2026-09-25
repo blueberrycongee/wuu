@@ -1,5 +1,4 @@
 .agent-onboarding.channel-view {
-  --channel-header-height: 48px;
   outline: none;
   display: flex;
   flex: 1;
@@ -14,15 +13,12 @@
 .agent-onboarding-name {
   flex: 1;
   min-width: 0;
-  border: 0;
-  background: transparent;
+  overflow: hidden;
   color: var(--ink);
-  font: inherit;
   font-weight: 550;
-  -webkit-app-region: no-drag;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.agent-onboarding .agent-onboarding-name:disabled { opacity: 1; }
-.agent-onboarding-name::placeholder { color: var(--ink); opacity: 1; }
 .agent-onboarding-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; display: flex; flex-direction: column; gap: 6px; padding: 12px var(--channel-horizontal-gutter) 20px; }
 .agent-onboarding-name-actions {
   display: flex;

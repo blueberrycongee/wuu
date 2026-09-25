@@ -82,6 +82,8 @@
      composer column. The previous 100% cap made long replies fill the pane. */
   --channel-agent-message-max-width: min(640px, 78%);
   --channel-horizontal-gutter: clamp(16px, 2vw, 24px);
+  /* Conversation and agent setup headers share the window's titlebar row. */
+  --channel-header-height: var(--window-titlebar-height);
   --bg-primary: var(--paper);
   --bg-secondary: var(--surface-1);
   --surface-raised: var(--surface-2);
@@ -447,7 +449,6 @@
 }
 
 .channel-conversation {
-  --channel-header-height: var(--window-titlebar-height);
   --channel-inspector-width: clamp(420px, 44%, 600px);
   position: relative;
   min-width: 0;
@@ -3486,7 +3487,7 @@ html[data-focus-modality="keyboard"] .agent-avatar-color-control input[type="ran
   border-left: 0;
 }
 @media (max-width: 760px) {
-  .channel-conversation { --channel-header-height: calc(var(--window-titlebar-height) + env(safe-area-inset-top, 0px)); }
+  .channel-view { --channel-header-height: calc(var(--window-titlebar-height) + env(safe-area-inset-top, 0px)); }
   .session-inspector-header { padding-top: env(safe-area-inset-top, 0px); }
 }
 .channel-session-history pre { max-width: 100%; overflow-x: auto; }

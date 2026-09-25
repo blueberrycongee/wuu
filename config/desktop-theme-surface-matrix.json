@@ -415,7 +415,7 @@
     {
       "name": "unanchored:agent-onboarding.css",
       "synthetic": true,
-      "rows": 18
+      "rows": 17
     },
     {
       "name": "unanchored:archive-tip.css",
@@ -695,7 +695,6 @@
     {"anchor":"unanchored:agent-onboarding.css","state":"default","file":"agent-onboarding.css","selector":".agent-onboarding-history-effort","prop":"color","variable":"--text-secondary","status":"bridged","tokens":["--wuu-color-text-muted"]},
     {"anchor":"unanchored:agent-onboarding.css","state":"default","file":"agent-onboarding.css","selector":".agent-onboarding-manage","prop":"color","variable":"--ink-soft","status":"bridged","tokens":["--wuu-color-text-muted"]},
     {"anchor":"unanchored:agent-onboarding.css","state":"default","file":"agent-onboarding.css","selector":".agent-onboarding-name","prop":"color","variable":"--ink","status":"bridged","tokens":["--wuu-color-text"]},
-    {"anchor":"unanchored:agent-onboarding.css","state":"default","file":"agent-onboarding.css","selector":".agent-onboarding-name::placeholder","prop":"color","variable":"--ink","status":"bridged","tokens":["--wuu-color-text"]},
     {"anchor":"unanchored:agent-onboarding.css","state":"default","file":"agent-onboarding.css","selector":".agent-onboarding-runtime .runtime-panel .runtime-panel-context button, .agent-onboarding-runtime .runtime-panel .runtime-panel-model","prop":"color","variable":"--ink","status":"bridged","tokens":["--wuu-color-text"]},
     {"anchor":"unanchored:agent-onboarding.css","state":"default","file":"agent-onboarding.css","selector":".agent-onboarding-runtime .runtime-panel .runtime-panel-effort-value","prop":"color","variable":"--ink-muted","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-text-muted"]},
     {"anchor":"unanchored:agent-onboarding.css","state":"default","file":"agent-onboarding.css","selector":".agent-onboarding-runtime .runtime-panel-context::after","prop":"color","variable":"--ink-muted","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-text-muted"]},
