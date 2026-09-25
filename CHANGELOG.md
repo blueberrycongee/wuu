@@ -74,6 +74,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - `apply_patch` with `then_run` now shows the model the follow-up command's
   outcome; the parent result previously kept the patch-only view.
 
+- Link context menus in messages list only their actions instead of repeating
+  the full URL, so the menu no longer spreads across the message. Context menus
+  stay inside the window, truncate long labels, and scroll long lists. Opening
+  one closes any other open context menu, including the composer edit menu, and
+  hides hover tooltips until it closes.
+
 ## [2026.9.25] - 2026-09-25
 
 ### Changed

@@ -85,6 +85,8 @@ Respect the user's separate UI and code font preferences. Let rows grow with the
 
 Compact menus use `--menu-inset`, `--menu-item-gap`, and `--menu-shell-radius`. The shell radius combines the inner radius with the inset to keep nested corners related. Panel and dialog overlays use their own radius role. Reusing one numeric radius on every padded layer does not produce the same geometry. Click-open overlay cards — context menus, permission pickers, and select panels — use `--font-menu` (one step below `--font-ui`) for item labels, with `--weight-medium`. Group labels and secondary hints use `--font-xs`. Compact composer chips and triggers share `--font-sm` with that overlay step. Question cards above the composer stay on `--font-ui`; they are reading surfaces.
 
+Context menu items name actions, not the data they act on: "Open in system browser", not the full URL. Show a destination in the trigger's tooltip or a separate secondary line. Context menus size to their actions, stay inside the viewport, and ellipsize or scroll instead of spreading across the reading column. Only one context menu is open at a time, and tooltips stay closed while it is open, matching native menus.
+
 Public plugin theme tokens are a smaller contract than all internal CSS variables. Consult the [theme reference](../customize/theme-surface-matrix.md) before exposing a new token or telling plugin authors to depend on an internal variable.
 
 ## SVG artwork

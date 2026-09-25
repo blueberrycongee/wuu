@@ -1663,6 +1663,7 @@ export const enUS = {
   "rich.codePlainOnly": "Too large to highlight",
   "rich.openFile": "Open file: {reference}",
   "rich.openLink": "Open in workspace browser: {url}",
+  "rich.openLinkInWorkspace": "Open in workspace browser",
   "rich.openLinkExternal": "Open in system browser",
   "rich.enlargeNamed": "Enlarge: {alt}",
   "rich.enlargeImage": "Enlarge image",

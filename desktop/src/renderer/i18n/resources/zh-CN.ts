@@ -1660,6 +1660,7 @@ export const zhCN = {
   "rich.codePlainOnly": "代码过长，保持纯文本",
   "rich.openFile": "打开文件：{reference}",
   "rich.openLink": "在工作区浏览器打开：{url}",
+  "rich.openLinkInWorkspace": "在工作区浏览器打开",
   "rich.openLinkExternal": "在系统浏览器打开",
   "rich.enlargeNamed": "放大查看：{alt}",
   "rich.enlargeImage": "放大查看图片",
