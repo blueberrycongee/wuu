@@ -1,3 +1,4 @@
+import { localTurnTiming } from "./LocalTurnTiming";
 import { ChevronRight } from "./WuuIcons";
 import {
   type SyntheticEvent,
@@ -170,6 +171,7 @@ export function AssistantTurnShell({
     Boolean(display.latestProcessPreview) ||
     turn.status === "in_progress" ||
     turn.status === "interrupted" ||
+    turn.status === "failed" ||
     hasAnswer;
   const answerHandoffRequested = answerEntries.some(
     (entry) =>
@@ -318,7 +320,10 @@ function TurnProcessFold({
       : reportedDuration ?? settledTimestampDuration;
   // The visible timer stops at answer readiness. Provider cleanup can continue
   // internally, but must not make a completed-looking answer keep aging.
-  const completedDuration = answerReadyDuration ?? settledDuration;
+  const localTiming = localTurnTiming(turn);
+  const completedDuration = localTiming
+    ? localTiming.finished ? localTiming.elapsed : undefined
+    : answerReadyDuration ?? settledDuration;
   const liveDuration =
     completedDuration === undefined &&
     turn.status === "in_progress";
@@ -335,7 +340,7 @@ function TurnProcessFold({
   }
   const liveNow = useLiveNow(liveDuration && renderActive);
   const liveElapsedMs = liveDuration
-    ? Math.max(0, liveNow - startedAt)
+    ? localTiming?.elapsed ?? Math.max(0, liveNow - startedAt)
     : undefined;
   // Keep the last live elapsed value outside the component lifecycle. A
   // paused turn settles as "interrupted" and its server snapshot usually
@@ -366,7 +371,7 @@ function TurnProcessFold({
   const metaParts = turnProcessMetaParts(
     turn,
     elapsedMs,
-    pausedElapsedMs !== undefined,
+    pausedElapsedMs !== undefined || completedDuration !== undefined,
     answerReady,
   );
 
@@ -783,12 +788,9 @@ function turnProcessTitle(
       ? taskFinishedLabel(elapsedMs)
       : translate("task.status.completed");
   }
-  if (turn.status === "completed" || turn.status === "interrupted") {
-    if (!hasKnownDuration) {
-      return turn.status === "interrupted"
-        ? turnProgressContent(turn, elapsedMs, hasFinalText).label
-        : translate("task.status.completed");
-    }
+  if (turn.status === "interrupted") return translate("turn.orchestrationPaused");
+  if (turn.status === "completed") {
+    if (!hasKnownDuration) return translate("task.status.completed");
     return taskFinishedLabel(elapsedMs);
   }
   return turnProgressContent(turn, elapsedMs, hasFinalText).label;

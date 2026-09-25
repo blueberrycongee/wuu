@@ -115,6 +115,7 @@ function renderComposer(props: {
   mainConversation?: boolean;
   prompt?: string;
   running?: boolean;
+  stopState?: "pending" | "retry";
   queuedMessages?: QueuedComposerMessage[];
   guideMessages?: QueuedComposerMessage[];
   status?: string;
@@ -172,6 +173,7 @@ function renderComposer(props: {
           images={[]}
           queuedMessages={props.queuedMessages ?? []}
           guideMessages={props.guideMessages ?? []}
+          stopState={props.stopState}
           running={props.running ?? false}
           runtimeControlsDisabled={props.runtimeControlsDisabled}
           status={props.status ?? "ready"}
@@ -345,6 +347,7 @@ function renderSplitPaneComposer(props: {
   connectionAvailable?: boolean;
   prompt?: string;
   running?: boolean;
+  stopState?: "pending" | "retry";
   status?: string;
   statusLiveProgress?: boolean;
   onSend?: () => void;
@@ -360,6 +363,7 @@ function renderSplitPaneComposer(props: {
           setPrompt={() => {}}
           files={[]}
           images={[]}
+          stopState={props.stopState}
           running={props.running ?? false}
           readOnly={false}
           status={props.status ?? "ready"}
@@ -1293,6 +1297,19 @@ describe("Composer send control", () => {
     expect(onSteer).toHaveBeenCalledTimes(1);
     expect(onSend).not.toHaveBeenCalled();
     expect(onInterrupt).not.toHaveBeenCalled();
+  });
+
+  it.each([["main", "pending"], ["main", "retry"], ["split", "pending"], ["split", "retry"]] as const)("keeps the %s stop action visible with a draft while %s", (surface, stopState) => {
+    const onInterrupt = vi.fn();
+    const onSend = vi.fn();
+    (surface === "main" ? renderComposer : renderSplitPaneComposer)({ running: true, prompt: "keep this draft", stopState, onInterrupt, onSend });
+    const button = container.querySelector<HTMLButtonElement>(".composer-stop-button")!;
+    expect(button).not.toBeNull();
+    expect(button.disabled).toBe(stopState === "pending");
+    act(() => button.click());
+    expect(onSend).not.toHaveBeenCalled();
+    expect(onInterrupt).toHaveBeenCalledTimes(stopState === "retry" ? 1 : 0);
+    expect(container.querySelector("textarea")?.value).toBe("keep this draft");
   });
 
   it("shows a stop button while running only when the input is empty", () => {

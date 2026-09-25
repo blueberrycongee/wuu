@@ -77,7 +77,11 @@ The response contains `turn`; consume `turn/started`, item updates,
 snapshot. The legacy `permission_mode` request field must match the thread's
 selection rather than override it. `turn/queue`, `turn/update-queued`,
 `turn/dequeue`, `turn/steer`, and `turn/unsteer` manage pending user input;
-they are distinct from starting another concurrent turn.
+they are distinct from starting another concurrent turn. `turn/queue` accepts
+optional `hold: true` to persist input as held work without dispatching it, even
+when the interrupted turn has already settled. This lets clients retain messages
+whose preparation or admission finishes after a Stop request. Held input remains
+available through the existing pending-input controls and resume snapshots.
 
 Failed Wuu-engine streams can include `turn.error.recovery`. Its `attempt_count`
 and `retry_count` count recovery-executor calls that actually started; a prepared
@@ -140,7 +144,11 @@ base64 `data`, and optional `filename`; the file path supports PDFs and supporte
 [video inputs](../customize/video-input.md).
 These are attachment bytes, not local path strings. Image normalization and model
 capability checks occur in the core. `turn/start` additionally supports
-`active_document` and ordered `content_parts` for interactive clients.
+`active_document` and ordered `content_parts` for interactive clients. An optional
+`client_id` is preserved as the user item's `source_id` in notifications, responses,
+and stored history so clients can reconcile a local send regardless of arrival
+order. It is a correlation identifier, not a promise of idempotent `turn/start`.
+Client waiting-time displays are separate from server execution timestamps.
 
 Named agents can separately select stored room attachments through their `session`
 tool. That [media handoff contract](../automation/app-server.md#named-agent-media-handoff)

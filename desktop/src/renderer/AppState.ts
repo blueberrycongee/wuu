@@ -17,10 +17,12 @@ import type {
 } from "../shared/protocol";
 import {
   OPTIMISTIC_TURN_ID_PREFIX,
+  reconcileOptimisticTurns,
   type ComposerFile,
   type ComposerImage,
 } from "./ComposerMessages";
 import { parseRequestedHandoffIntent } from "./HandoffDraft";
+import { localTurnTiming } from "./LocalTurnTiming";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
 import { threadDisplayTitle } from "./ThreadTitles";
 import { sortChildAgents } from "./ThreadAgents";
@@ -794,12 +796,8 @@ function reduceNotification(
       }
       const threadID = threadIDFromParams(params);
       const threadIsActive = threadID === activeThreadIDForState(state);
-      return updateThreadByID(
-        state,
-        threadID,
-        (thread) => upsertTurn(thread, turn),
-        threadIsActive ? { running: true } : {},
-      );
+      const next = updateThreadByID(state, threadID, (thread) => upsertTurn(thread, turn));
+      return threadIsActive ? { ...next, running: isThreadRunning(activeThreadForState(next)) } : next;
     }
     case "item/started":
     case "item/completed": {
@@ -1357,7 +1355,14 @@ export function reconcileResumedThreadTurns(
   resumed: Thread,
   local: Thread | undefined,
 ): Thread {
-  const localTurns = local?.turns;
+  const localTurns = local ? reconcileOptimisticTurns(local.turns, resumed.turns) : undefined;
+  if (localTurns) {
+    const turns = resumed.turns.map((turn) => {
+      const previous = localTurns.find((candidate) => candidate.id === turn.id);
+      return previous && previous.status !== "in_progress" && turn.status === "in_progress" ? previous : turn;
+    });
+    if (turns.some((turn, index) => turn !== resumed.turns[index])) resumed = { ...resumed, turns };
+  }
   if (!localTurns || localTurns.length < resumed.turns.length) {
     return resumed;
   }
@@ -1396,6 +1401,11 @@ export function reconcileResumedThreadTurns(
 // started after the previous answer is ready is the same shape: keep an
 // in-progress tail when a stale snapshot still omits it.
 function mergeThreadUpdatedTurns(incoming: Turn[], current: Turn[]): Turn[] {
+  current = reconcileOptimisticTurns(current, incoming);
+  incoming = incoming.map((turn) => {
+    const previous = current.find((candidate) => candidate.id === turn.id);
+    return previous && previous.status !== "in_progress" && turn.status === "in_progress" ? previous : turn;
+  });
   if (incoming.length === 0) {
     return current;
   }
@@ -1739,6 +1749,7 @@ function mergeListedThread(existing: Thread, listed: Thread): Thread {
 }
 
 function mergeListedThreadTurns(existing: Turn[], listed: Turn[]): Turn[] {
+  existing = reconcileOptimisticTurns(existing, listed);
   if (listed.length === 0) {
     return existing.length === 0 ? listed : existing;
   }
@@ -3050,20 +3061,14 @@ function isAnyThreadRunning(state: AppState): boolean {
 }
 
 function upsertTurn(thread: Thread, turn: Turn): Thread {
+  const reconciled = reconcileOptimisticTurns(thread.turns, [turn]);
+  if (reconciled !== thread.turns) thread = { ...thread, turns: reconciled };
   const index = thread.turns.findIndex((item) => item.id === turn.id);
-  const status = turn.status === "in_progress" ? "in_progress" : "idle";
-  if (index < 0) {
-    return threadWithTurnSummary(
-      {
-        ...thread,
-        turns: [...thread.turns, { ...turn, items: orderedTurnItems(turn.items) }],
-        status,
-      },
-      turn,
-    );
-  }
+  if (index >= 0 && thread.turns[index].status !== "in_progress" && turn.status === "in_progress") return thread;
   const turns = thread.turns.slice();
-  turns[index] = { ...turn, items: mergeTurnItemsInOrder(turns[index], turn) };
+  if (index < 0) turns.push({ ...turn, items: orderedTurnItems(turn.items) });
+  else turns[index] = { ...turn, items: mergeTurnItemsInOrder(turns[index], turn) };
+  const status = turns.some((item) => item.status === "in_progress") ? "in_progress" : "idle";
   return threadWithTurnSummary({ ...thread, turns, status }, turn);
 }
 
@@ -3178,11 +3183,13 @@ function markTurnAnswerReady(
 ): Thread {
   return {
     ...thread,
-    turns: thread.turns.map((turn) =>
-      turn.id === turnID && !turn.answer_ready_at
-        ? { ...turn, answer_ready_at: answerReadyAt }
-        : turn,
-    ),
+    turns: thread.turns.map((turn) => {
+      if (turn.id !== turnID || turn.answer_ready_at) return turn;
+      const ready = { ...turn, answer_ready_at: answerReadyAt };
+      // Background conversations may not render before provider cleanup ends.
+      localTurnTiming(ready);
+      return ready;
+    }),
   };
 }
 

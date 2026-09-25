@@ -7,7 +7,6 @@ import {
   FolderX,
   ArrowUp,
   ShieldCheck,
-  Square
 } from "./WuuIcons";
 import {
   type ClipboardEvent as ReactClipboardEvent,
@@ -74,7 +73,7 @@ import {
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { ComposerBranchPicker } from "./ComposerBranchPicker";
 import { ComposerContextMenu } from "./ComposerContextMenu";
-import { ComposerQueueStrip } from "./ComposerInputSections";
+import { ComposerQueueStrip, ComposerStopIcon } from "./ComposerInputSections";
 import { ComposerCameraPanel } from "./ComposerCamera";
 import { WorkspaceDocumentDrawerContext } from "./WorkspaceDocumentTurnDock";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
@@ -143,6 +142,7 @@ export function Composer({
   running,
   sendDisabled = false,
   forceStopWhileRunning = false,
+  stopState,
   runtimeControlsDisabled = running,
   status,
   statusLiveProgress,
@@ -247,6 +247,7 @@ export function Composer({
   running: boolean;
   sendDisabled?: boolean;
   forceStopWhileRunning?: boolean;
+  stopState?: "pending" | "retry";
   runtimeControlsDisabled?: boolean;
   status: string;
   statusLiveProgress?: boolean;
@@ -357,7 +358,7 @@ export function Composer({
   // A disconnected remote workbench keeps every composer draft editable (the
   // textarea stays enabled and focused), but sending and runtime controls must
   // not dispatch into a dead bridge. Gate only the action paths, never readOnly.
-  const effectiveSendDisabled = sendDisabled || !workbenchConnected;
+  const effectiveSendDisabled = sendDisabled || Boolean(stopState) || !workbenchConnected;
   const effectiveRuntimeControlsDisabled = runtimeControlsDisabled || !workbenchConnected;
   // Keep the controlled textarea on a small, synchronous state path. The
   // canonical draft still lives above Composer, but updating it makes App
@@ -436,7 +437,7 @@ export function Composer({
   // is empty. The moment there is something to send, it flips back to a send
   // button. Its submit action below deliberately follows the same steer/queue
   // decision as Enter, while preserving the stop affordance for an empty input.
-  const showComposerStop = running && (forceStopWhileRunning || !hasDraft);
+  const showComposerStop = Boolean(stopState) || (running && (forceStopWhileRunning || !hasDraft));
   const composerSendLabel = running && hasDraft && onSteer
     ? t("composer.steerSend")
     : running
@@ -1119,6 +1120,7 @@ export function Composer({
           </FloatingMenuPortal>
         ) : null}
         <ComposerQueueStrip
+          dispatchDisabled={Boolean(stopState)}
           guideMessages={guideMessages}
           queuedMessages={queuedMessages}
           expanded={expandedDrawer === "pending"}
@@ -1402,7 +1404,8 @@ export function Composer({
                 <button
                   className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
                   data-wuu-component="composer-send"
-                  data-wuu-state={showComposerStopAction ? "stop" : "send"}
+                  data-wuu-state={stopState ?? (showComposerStopAction ? "stop" : "send")}
+                  aria-busy={stopState === "pending" || undefined}
                   type="button"
                   onPointerDown={(event) => {
                     if (!showComposerStopAction && event.button === 0 && document.activeElement === textareaRef.current) {
@@ -1412,14 +1415,14 @@ export function Composer({
                     }
                   }}
                   onClick={showComposerStopAction ? (disconnected ? undefined : onInterrupt) : submitComposer}
-                  aria-label={showComposerStopAction ? t("composer.pause") : voiceActionLabel}
-                  title={showComposerStopAction ? t("composer.pauseShortcut") : voiceActionLabel}
+                  aria-label={stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pause") : voiceActionLabel}
+                  title={stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pauseShortcut") : voiceActionLabel}
                   disabled={
-                    !showComposerStopAction &&
-                    (effectiveSendDisabled || readOnly || (!hasDraft) || (handoffMode && !canConfirmHandoff))
+                    stopState === "pending" || (!showComposerStopAction &&
+                    (effectiveSendDisabled || readOnly || (!hasDraft) || (handoffMode && !canConfirmHandoff)))
                   }
                 >
-                  {showComposerStopAction ? <Square aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
+                  {showComposerStopAction ? <ComposerStopIcon state={stopState} /> : <ArrowUp aria-hidden="true" />}
                 </button>
               </div>
             </div>

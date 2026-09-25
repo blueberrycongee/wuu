@@ -73,6 +73,7 @@ export type ConversationSplitPaneRendererProps = {
   splitComposerDrafts: Record<ConversationPaneID, ComposerDraftState>;
   splitPaneRefs: MutableRefObject<Record<ConversationPaneID, HTMLElement | null>>;
   viewSwitchPending: boolean;
+  stopRequests?: Record<string, "pending" | "retry">;
   historyMessageEdit?: HistoryMessageEditState;
   onActivatePane: (pane: ConversationPaneID) => void;
   onClosePane: (pane: ConversationPaneID) => void;
@@ -126,6 +127,7 @@ export function ConversationSplitPaneRenderer({
   splitComposerDrafts,
   splitPaneRefs,
   viewSwitchPending,
+  stopRequests,
   historyMessageEdit,
   onActivatePane,
   onClosePane,
@@ -160,6 +162,7 @@ export function ConversationSplitPaneRenderer({
       streamStatus={turnStreamStatusForThread(state, thread)}
       draft={splitComposerDrafts[pane] ?? emptyComposerDraft()}
       viewSwitchPending={viewSwitchPending}
+      stopState={stopRequests?.[thread.id]}
       queryHistory={queryTextsForThread(thread)}
       requestedHandoffIntent={requestedHandoffIntentForThread(thread)}
       editingMessage={

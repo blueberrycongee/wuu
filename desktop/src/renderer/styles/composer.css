@@ -2621,3 +2621,22 @@
     flex-basis: 14px;
   }
 }
+
+
+.composer-stop-button svg.composer-stop-progress {
+  width: 14px;
+  height: 14px;
+  fill: none;
+}
+.composer-stop-progress.is-spinning {
+  animation: composer-stop-spin 900ms linear infinite;
+}
+@keyframes composer-stop-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .composer-stop-progress.is-spinning { animation: none; }
+}
+
+.composer-stop-button[aria-busy="true"] {
+  opacity: 1;
+  cursor: progress;
+}

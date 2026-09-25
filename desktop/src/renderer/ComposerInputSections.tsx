@@ -12,6 +12,8 @@ import {
   PencilLine,
   Send,
   Square,
+  LoaderCircle,
+  RotateCw,
   X
 } from "./WuuIcons";
 import { type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -77,6 +79,12 @@ export function ComposerAttachmentStrip({
   );
 }
 
+export function ComposerStopIcon({ state }: { state?: "pending" | "retry" }): JSX.Element {
+  if (state === "pending") return <LoaderCircle className="composer-stop-progress is-spinning" aria-hidden="true" />;
+  if (state === "retry") return <RotateCw className="composer-stop-progress" aria-hidden="true" />;
+  return <Square aria-hidden="true" />;
+}
+
 export function SplitPaneComposer({
   prompt,
   setPrompt,
@@ -85,6 +93,7 @@ export function SplitPaneComposer({
   running,
   readOnly,
   sendDisabled: requestedSendDisabled = false,
+  stopState,
   status,
   statusLiveProgress,
   queryHistorySessionID,
@@ -105,6 +114,7 @@ export function SplitPaneComposer({
   /** Instant view switches keep `running` on for the spinner but must not
    * allow a send/stop against the previous pane's thread. */
   sendDisabled?: boolean;
+  stopState?: "pending" | "retry";
   status: string;
   statusLiveProgress?: boolean;
   queryHistorySessionID?: string;
@@ -118,7 +128,7 @@ export function SplitPaneComposer({
 }): JSX.Element {
   const { t } = useI18n();
   const connected = useWorkbenchConnected();
-  const sendDisabled = requestedSendDisabled || !connected;
+  const sendDisabled = requestedSendDisabled || Boolean(stopState) || !connected;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const photosInputRef = useRef<HTMLInputElement>(null);
@@ -135,7 +145,7 @@ export function SplitPaneComposer({
   // Match the dock composer: the button is a stop control only while running
   // with an empty input. Once there is a draft, it flips to send (queuing
   // mid-turn) so a typed follow-up is never blocked by the stop state.
-  const showStop = running && !sendDisabled && !hasDraft;
+  const showStop = Boolean(stopState) || (running && !sendDisabled && !hasDraft);
   const sendLabel = running ? t("composer.queueSend") : t("composer.send");
   const statusText = composerStatusText(status);
   const statusIsLiveProgress = composerStatusIsLiveProgress(statusLiveProgress);
@@ -389,10 +399,12 @@ export function SplitPaneComposer({
                         className="composer-action-button composer-stop-button"
                         type="button"
                         onClick={onInterrupt}
-                        aria-label={t("composer.pause")}
-                        title={t("composer.pauseShortcut")}
+                        disabled={stopState === "pending" || !connected}
+                        aria-busy={stopState === "pending" || undefined}
+                        aria-label={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pause")}
+                        title={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pauseShortcut")}
                       >
-                        <Square aria-hidden="true" />
+                        <ComposerStopIcon state={stopState} />
                       </button>
                     ) : (
                       <button
@@ -459,6 +471,7 @@ function buildQueueRows(
 
 export function ComposerQueueStrip({
   guideMessages,
+  dispatchDisabled = false,
   queuedMessages,
   expanded: controlledExpanded,
   onExpandedChange,
@@ -469,6 +482,7 @@ export function ComposerQueueStrip({
   onEditQueuedMessage
 }: {
   guideMessages: QueuedComposerMessage[];
+  dispatchDisabled?: boolean;
   queuedMessages: QueuedComposerMessage[];
   expanded?: boolean;
   onExpandedChange?: (expanded: boolean) => void;
@@ -538,6 +552,7 @@ export function ComposerQueueStrip({
               position={index + 1}
               message={row.message}
               kind={row.kind}
+              dispatchDisabled={dispatchDisabled}
               onGuide={
                 !row.message.operationState
                   ? () => onGuideQueuedMessage(row.message.id)
@@ -566,6 +581,7 @@ function ComposerQueueItem({
   message,
   kind,
   onGuide,
+  dispatchDisabled,
   onEdit,
   onRemove
 }: {
@@ -573,6 +589,7 @@ function ComposerQueueItem({
   message: QueuedComposerMessage;
   kind: QueueRowKind;
   onGuide?: () => void;
+  dispatchDisabled: boolean;
   onEdit: () => void;
   onRemove: () => void;
 }): JSX.Element {
@@ -636,6 +653,7 @@ function ComposerQueueItem({
                   : t("composer.convertToGuideTitle")
             }
             onClick={onGuide}
+            disabled={dispatchDisabled}
           >
             {kind === "guide" && !message.held ? (
               <CornerUpLeft className="icon-sm" aria-hidden="true" />

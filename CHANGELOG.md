@@ -55,6 +55,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Sending a message keeps one local waiting timer across admission, events,
+  snapshots, and conversation switches without changing server timestamps.
+  Follow-up messages can queue during new-conversation creation. Stop uses an
+  immediate progress icon until execution ends and retains pending input without
+  automatically dispatching it after cancellation.
+
 - Terminal run details preserve output, exit status, and log links when a
   command's model-facing output is JSON, rather than treating that output as
   execution metadata.

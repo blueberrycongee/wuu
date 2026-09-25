@@ -1,3 +1,6 @@
+import { createOptimisticTurn, replaceOptimisticTurn } from "./ComposerMessages";
+import { localTurnTiming, forgetLocalTurnTiming } from "./LocalTurnTiming";
+import { upsertTurn } from "./AppState";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Agent,
@@ -3860,5 +3863,50 @@ describe("configuration refresh recovery", () => {
     expect(repaired.status).toBe("ready");
     expect(repaired.initialized?.providers).toEqual(providers);
     expect(reduceServerEvent({ ...failed, status: "another error" }, recovery).status).toBe("another error");
+  });
+});
+
+
+describe("local send timing across server reconciliation", () => {
+  it.each(["event-first", "rpc-first"])("keeps one clock and server timestamps for %s", (order) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    const optimistic = createOptimisticTurn({ id: `clock-${order}`, text: "same prompt", images: [], files: [] }, Date.now());
+    const base = { ...threadWithUserTexts([]), turns: [optimistic] };
+    let state: AppState = { ...initialState, activeContext: { kind: "no_project", cwd: base.cwd }, thread: base, threads: [base] };
+    const real: Turn = { ...optimistic, id: `real-${order}`, started_at: new Date(105_000).toISOString() };
+    const event = (method: string, params: Record<string, unknown>) => {
+      state = reduceServerEvent(state, { kind: "notification", workdir: base.cwd, message: { method, params } });
+    };
+    const rpc = () => {
+      const thread = replaceOptimisticTurn(state.thread!, optimistic.id, real, upsertTurn);
+      state = { ...state, thread, threads: [thread] };
+    };
+    vi.setSystemTime(108_000);
+    if (order === "rpc-first") rpc();
+    event("turn/started", { thread_id: base.id, turn: real });
+    if (order === "event-first") rpc();
+    expect(state.thread!.turns).toHaveLength(1);
+    expect(state.thread!.turns[0].started_at).toBe(real.started_at);
+    expect(localTurnTiming(state.thread!.turns[0])?.elapsed).toBe(8000);
+    vi.setSystemTime(110_000);
+    event("thread/updated", { thread: { ...base, turns: [real] } });
+    const resumed = reconcileResumedThreadTurns({ ...base, turns: [real] }, state.thread);
+    expect(localTurnTiming(resumed.turns[0])?.elapsed).toBe(10000);
+    vi.setSystemTime(111_000);
+    event("item/completed", { thread_id: base.id, turn_id: real.id, completed_at_ms: 111_000,
+      item: { id: "answer", type: "agent_message", status: "completed", terminal: true, text: "done" } });
+    // No renderer reads the clock while this background turn finishes cleanup.
+    vi.setSystemTime(112_000);
+    event("turn/completed", { thread_id: base.id, turn: { ...real, status: "completed", duration_ms: 1000 } });
+    rpc(); // Late acceptance cannot resurrect a completed turn.
+    event("turn/started", { thread_id: base.id, turn: real });
+    expect(state.running).toBe(false);
+    expect(reconcileResumedThreadTurns({ ...base, turns: [real] }, state.thread).turns[0].status).toBe("completed");
+    vi.setSystemTime(130_000);
+    expect(state.thread!.turns[0].status).toBe("completed");
+    expect(localTurnTiming(state.thread!.turns[0])?.elapsed).toBe(11000);
+    forgetLocalTurnTiming(optimistic.id);
+    vi.useRealTimers();
   });
 });
