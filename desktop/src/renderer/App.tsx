@@ -2251,7 +2251,7 @@ export function App(): JSX.Element {
     cancelPreparation: () => void;
   };
   const turnAdmissionsRef = useRef(new Map<string, TurnAdmission>());
-  const queueLanesRef = useRef(new Map<string, { tail: Promise<void>; stopped: boolean }>());
+  const queueLanesRef = useRef(new Map<string, { tail: Promise<void>; stopVersion: number }>());
   const stopDeliveredRef = useRef(new Map<string, symbol>());
   const stopTargetsRef = useRef(new Map<string, string>());
   const stopRequestsRef = useRef<Record<string, "pending" | "retry">>({});
@@ -2293,7 +2293,7 @@ export function App(): JSX.Element {
       if (!admission.sent) admission.cancelPreparation();
     }
     const lane = queueLanesRef.current.get(thread.id);
-    if (lane) lane.stopped = true;
+    if (lane) lane.stopVersion += 1;
     if (stopRequestsRef.current[thread.id] === "pending") return;
     const target = thread.turns.at(-1);
     if (target) stopTargetsRef.current.set(thread.id, target.id);
@@ -4219,9 +4219,10 @@ export function App(): JSX.Element {
     }
     // Capture the destination and install pending state before preparation yields.
     let submittedThread = targetThread;
-    const admission = turnAdmissionsRef.current.get(targetThread?.id ?? currentState.activeSessionTabID);
+    const submissionKey = targetThread?.id ?? currentState.activeSessionTabID;
+    const admission = turnAdmissionsRef.current.get(submissionKey);
     const busy = targetThread && isThreadRunning(targetThread) && !activeTurnIsAnswerReady(targetThread);
-    const operation = admission
+    const operation = admission || queueLanesRef.current.has(submissionKey)
       ? queueComposerMessage(message, targetThread, admission)
       : busy
       ? resolveComposerRunningAction(runningAction, targetThread) === "steer"
@@ -4434,7 +4435,10 @@ export function App(): JSX.Element {
       ...message,
       operationState: "preparing",
     });
-    const lane = queueLanesRef.current.get(queueKey) ?? { tail: Promise.resolve(), stopped: false };
+    const lane = queueLanesRef.current.get(queueKey) ?? { tail: Promise.resolve(), stopVersion: 0 };
+    // Stop holds messages already waiting; later user sends keep their order
+    // behind them without inheriting that earlier stop request.
+    const stopVersion = lane.stopVersion;
     const previous = lane.tail;
     let release!: () => void;
     const tail = new Promise<void>((resolve) => { release = resolve; });
@@ -4475,7 +4479,7 @@ export function App(): JSX.Element {
         message.activeDocument,
         message.contentParts,
         targetContext,
-        lane.stopped || Boolean(admission?.stopRequested),
+        lane.stopVersion !== stopVersion || Boolean(admission?.stopRequested),
       );
       updateThreadPendingComposerMessages(targetThread.id, (previous) => ({
         ...previous,
@@ -4728,7 +4732,10 @@ export function App(): JSX.Element {
         turnAdmissionsRef.current.set(thread.id, admission);
         turnAdmissionsRef.current.delete(admissionKey);
         const lane = queueLanesRef.current.get(admissionKey);
-        if (lane) queueLanesRef.current.set(thread.id, lane);
+        if (lane) {
+          queueLanesRef.current.set(thread.id, lane);
+          queueLanesRef.current.delete(admissionKey);
+        }
         const pending = pendingComposerMessagesByThreadRef.current[admissionKey];
         if (pending) {
           updateThreadPendingComposerMessages(thread.id, (previous) => ({

@@ -720,14 +720,28 @@ describe("main composer focus continuity", () => {
     await act(async () => { accept({ turn: { id: "accepted-first", status: "in_progress", items_view: "full", items: [] } }); });
     expect(window.wuu.queueTurn).toHaveBeenCalledTimes(1);
     expect(vi.mocked(window.wuu.queueTurn).mock.calls[0][1]).toBe("second");
+    await act(async () => {
+      for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: scratchCwd,
+        message: { method: "turn/completed", params: { thread_id: newThread().id,
+          turn: { id: "accepted-first", status: "completed", items_view: "full", items: [] } } } });
+    });
+    await enterCommand(mainComposer("dock"), "fourth after completion");
+    expect(window.wuu.startTurn).toHaveBeenCalledTimes(1);
+    expect(window.wuu.queueTurn).toHaveBeenCalledTimes(1);
     await act(async () => { acceptQueue({ queued: { id: "second", thread_id: newThread().id } }); });
-    expect(window.wuu.queueTurn).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(window.wuu.queueTurn).mock.calls[1][1]).toBe("third");
+    expect(vi.mocked(window.wuu.queueTurn).mock.calls.map((call) => call[1])).toEqual([
+      "second", "third", "fourth after completion",
+    ]);
     expect(vi.mocked(window.wuu.queueTurn).mock.calls.every((call) => call[0] === newThread().id)).toBe(true);
   });
 
-  it("holds buffered follow-ups when Stop wins before first admission", async () => {
+  it("holds buffered follow-ups at Stop while later sends resume in order", async () => {
     await renderApp(false, { deferThreadStart: true });
+    let finishEncoding!: (images: []) => void;
+    vi.spyOn(composerMessages, "awaitComposerImages")
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(() => new Promise((resolve) => { finishEncoding = resolve; }))
+      .mockResolvedValue([]);
     let accept!: (value: { turn: Turn }) => void;
     window.wuu.startTurn = vi.fn(() => new Promise<{ turn: Turn }>((resolve) => { accept = resolve; }));
     window.wuu.interruptTurn = vi.fn().mockResolvedValue({ ok: true });
@@ -739,7 +753,19 @@ describe("main composer focus continuity", () => {
     await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="stop-probe"]')!.click(); });
     await act(async () => { accept({ turn: { id: "late-first", status: "in_progress", items_view: "full", items: [] } }); });
     expect(window.wuu.interruptTurn).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(window.wuu.queueTurn).mock.calls[0][9]).toBe(true);
+    expect(window.wuu.queueTurn).not.toHaveBeenCalled();
+    await act(async () => {
+      for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: scratchCwd,
+        message: { method: "turn/completed", params: { thread_id: newThread().id,
+          turn: { id: "late-first", status: "interrupted", items_view: "full", items: [] } } } });
+    });
+    await enterCommand(mainComposer("dock"), "third after stop");
+    expect(window.wuu.startTurn).toHaveBeenCalledTimes(1);
+    expect(window.wuu.queueTurn).not.toHaveBeenCalled();
+    await act(async () => { finishEncoding([]); });
+    expect(vi.mocked(window.wuu.queueTurn).mock.calls.map((call) => [call[1], call[9]])).toEqual([
+      ["second", true], ["third after stop", false],
+    ]);
   });
 
   it("cancels attachment preparation without waiting for encoding or starting execution", async () => {
