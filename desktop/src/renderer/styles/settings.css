@@ -86,7 +86,7 @@
   font-weight: var(--weight-medium);
   padding: 0 12px;
   text-align: left;
-  transition: background var(--motion-fast) var(--menu-enter-easing), color var(--motion-fast) var(--menu-enter-easing);
+  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }
 
 .settings-back-button:hover {
@@ -140,7 +140,7 @@
   font-weight: 400;
   padding: 0 12px;
   text-align: left;
-  transition: background var(--motion-fast) var(--menu-enter-easing), color var(--motion-fast) var(--menu-enter-easing);
+  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }
 
 .settings-nav-item:hover {
@@ -440,9 +440,9 @@
   font-weight: 400;
   padding: var(--control-padding-block) var(--control-padding-inline);
   transition:
-    background var(--motion-fast) var(--menu-enter-easing),
-    border-color var(--motion-fast) var(--menu-enter-easing),
-    box-shadow var(--motion-fast) var(--menu-enter-easing);
+    background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
 .settings-input::placeholder {
@@ -593,9 +593,9 @@
   font-weight: var(--weight-medium);
   padding: var(--control-padding-block) var(--control-padding-inline);
   transition:
-    background var(--motion-fast) var(--menu-enter-easing),
-    color var(--motion-fast) var(--menu-enter-easing),
-    transform var(--motion-fast) var(--menu-enter-easing);
+    background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
 }
 
 .settings-button > span {
@@ -792,7 +792,7 @@
 }
 
 .settings-engine-expand-chevron {
-  transition: transform var(--motion-fast) var(--menu-enter-easing);
+  transition: transform var(--motion-fast) var(--ease-out);
 }
 
 .settings-engine-expand-chevron.open {
@@ -1190,7 +1190,7 @@
   padding: var(--card-padding);
   padding-right: calc(var(--card-padding) + 24px + var(--space-2));
   text-align: left;
-  transition: background var(--motion-fast);
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
 .settings-provider-button:hover:not(:disabled) {
@@ -1455,8 +1455,8 @@
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   transition:
-    border-color var(--motion-fast) var(--menu-enter-easing),
-    box-shadow var(--motion-fast) var(--menu-enter-easing);
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
 .settings-theme-card:hover .settings-theme-preview {
@@ -1708,7 +1708,7 @@
   min-height: 0;
   border-radius: 2px 2px 0 0;
   background: var(--settings-heatmap-level-4);
-  transition: height 180ms var(--ease-out), opacity var(--motion-fast) var(--ease-out);
+  transition: height var(--motion-base) var(--ease-out), opacity var(--motion-fast) var(--ease-out);
 }
 
 .settings-usage-trend-day:hover i {
@@ -1774,7 +1774,7 @@
   height: 100%;
   border-radius: inherit;
   background: var(--settings-heatmap-level-4);
-  transition: width 180ms var(--ease-out);
+  transition: width var(--motion-base) var(--ease-out);
 }
 
 .settings-model-chart-share {
@@ -1787,7 +1787,8 @@
 
 .settings-usage-loading,
 .settings-subscription-skeleton {
-  animation: settings-usage-skeleton-pulse 2.4s ease-in-out infinite;
+  --pulse-opacity: 0.55;
+  animation: wuu-pulse 2.4s ease-in-out infinite;
 }
 
 .settings-usage-skeleton-stats {
@@ -1981,11 +1982,6 @@
   justify-self: end;
 }
 
-@keyframes settings-usage-skeleton-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.55; }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .settings-usage-loading,
   .settings-subscription-skeleton {
@@ -2059,7 +2055,7 @@
   display: block;
   height: 100%;
   background: var(--settings-usage-accent);
-  transition: width 180ms ease;
+  transition: width var(--motion-base) var(--ease-out);
 }
 
 .settings-skill-usage-value {
@@ -2441,9 +2437,9 @@
   background: var(--field-bg);
   color: var(--ink-tertiary);
   transition:
-    background var(--motion-fast) var(--menu-enter-easing),
-    border-color var(--motion-fast) var(--menu-enter-easing),
-    box-shadow var(--motion-fast) var(--menu-enter-easing);
+    background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
 .settings-archive-search:hover {

@@ -1204,7 +1204,8 @@
   margin-inline: auto;
   transform: translateY(0);
   z-index: 20;
-  animation: jump-to-latest-enter var(--motion-base) var(--ease-out) both;
+  --enter-y: 8px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
   pointer-events: none;
   -webkit-app-region: no-drag;
 }
@@ -1555,6 +1556,7 @@ button.conversation-status-capsule,
   opacity: 0;
   overflow: hidden;
   transition:
+    margin-left var(--motion-base) var(--ease-out),
     max-height var(--motion-base) var(--ease-out),
     max-width var(--motion-base) var(--ease-out),
     opacity var(--motion-fast) var(--ease-out);
@@ -1587,17 +1589,6 @@ button.conversation-status-capsule,
   background: var(--shell-jump-progress-step-in-progress-bg);
   color: var(--ink);
   /* Keep the in_progress step a solid darker badge inside the outer pill. */
-}
-
-@keyframes jump-to-latest-enter {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 /*
@@ -1762,7 +1753,6 @@ button.conversation-status-capsule,
 @media (prefers-reduced-motion: reduce) {
   .conversation-turn-rail-bar,
   .conversation-turn-rail-preview {
-    transition: opacity 1ms linear;
     transform: none;
   }
 }

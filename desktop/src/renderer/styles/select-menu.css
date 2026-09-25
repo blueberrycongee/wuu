@@ -37,9 +37,9 @@
   text-align: left;
   cursor: pointer;
   transition:
-    background var(--motion-fast) var(--menu-enter-easing),
-    border-color var(--motion-fast) var(--menu-enter-easing),
-    box-shadow var(--motion-fast) var(--menu-enter-easing);
+    background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
 .select-menu-trigger:hover:not(:disabled) {
@@ -71,7 +71,7 @@
 .select-menu-chevron {
   flex: 0 0 auto;
   color: var(--ink-tertiary);
-  transition: transform var(--motion-fast) var(--menu-enter-easing);
+  transition: transform var(--motion-fast) var(--ease-out);
 }
 
 .select-menu-trigger[aria-expanded="true"] .select-menu-chevron {

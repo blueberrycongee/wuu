@@ -2042,17 +2042,8 @@
                                                                     
                                                                  
                                 
-  animation: turn-process-live-pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes turn-process-live-pulse {
-  0%,
-  100% {
-    opacity: 0.4;
-  }
-  50% {
-    opacity: 1;
-  }
+  --pulse-opacity: 0.4;
+  animation: wuu-pulse 1.2s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2329,13 +2320,7 @@
 }
 
 .tool-activity-marker.is-running {
-  animation: tool-activity-marker-pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes tool-activity-marker-pulse {
-  50% {
-    opacity: 0.45;
-  }
+  animation: wuu-pulse 1.5s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2501,37 +2486,6 @@
   color: var(--diff-delete-color);
 }
 
-@keyframes process-surface-count-jump {
-  0% {
-    opacity: 0.45;
-    transform: translateY(4px);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes process-text-rise-in {
-  0% {
-    transform: translateY(4px);
-  }
-  100% {
-    transform: translateY(0);
-  }
-}
-
-@keyframes process-text-rise-out {
-  0% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-}
-
 .process-text-motion {
   display: inline-grid;
   min-width: 0;
@@ -2551,16 +2505,19 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  will-change: opacity, transform;
+  will-change: opacity, translate;
 }
 
 .process-text-motion-current.process-text-motion-enter {
-  animation: process-text-rise-in var(--motion-base) var(--ease-out) both;
+  --enter-opacity: 1;
+  --enter-y: 4px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
 }
 
 .process-text-motion-exit {
   pointer-events: none;
-  animation: process-text-rise-out var(--motion-base) var(--ease-out) both;
+  --exit-y: -4px;
+  animation: wuu-exit var(--motion-base) var(--ease-out) both;
 }
 
 .process-surface,
@@ -2669,7 +2626,7 @@
  * Collaboration wrappers publish the same morph attribute on the slot. */
 :is(.process-surface-summary-line, .turn-reasoning-summary) > .process-surface-blobatar[data-wuu-mascot-morph] {
   translate: calc(-1 * var(--process-mascot-inset, 4px)) 0;
-  transition: translate 280ms ease-out;
+  transition: translate var(--motion-slow) var(--ease-out);
 }
 
 .process-surface-blobatar:is([data-wuu-mascot-morph="radar"], [data-wuu-mascot-morph="gather"]) {
@@ -2700,12 +2657,6 @@
 
 .process-surface-blobatar[data-wuu-mascot-morph="bang"] {
   --process-mascot-inset: 12px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  :is(.process-surface-summary-line, .turn-reasoning-summary) > .process-surface-blobatar[data-wuu-mascot-morph] {
-    transition: none;
-  }
 }
 
 .process-surface-condensed-summary {
@@ -2930,6 +2881,8 @@
   inset: 0;
   background: color-mix(in srgb, var(--ink) 14%, transparent);
   transform-origin: left center;
+  /* One step per countdown tick (TurnNotice updates every 100ms), so the
+   * bar reads as continuous travel rather than a ladder transition. */
   transition: transform 100ms linear;
 }
 
@@ -2964,7 +2917,9 @@
 }
 
 .process-surface-count.is-changing {
-  animation: process-surface-count-jump var(--motion-base) var(--ease-out);
+  --enter-opacity: 0.45;
+  --enter-y: 4px;
+  animation: wuu-enter var(--motion-base) var(--ease-out);
 }
 
 .process-surface-row.is-live-gray .process-surface-summary-line {
@@ -4262,14 +4217,8 @@ pre {
   border-radius: var(--message-flow-card-radius);
   background: var(--surface-1);
   padding: var(--panel-padding);
-  animation: empty-home-overview-in var(--motion-slow) var(--ease-out) backwards;
-}
-
-@keyframes empty-home-overview-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
+  --enter-y: 6px;
+  animation: wuu-enter var(--motion-slow) var(--ease-out) both;
 }
 
 /* Stats wrap to fewer columns before a number would need truncating;
@@ -4280,8 +4229,9 @@ pre {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 6em), 1fr));
   gap: var(--space-4);
   margin: 0;
-  animation: empty-home-overview-in var(--motion-slow) var(--ease-out)
-    calc(var(--motion-fast) / 2) backwards;
+  --enter-y: 6px;
+  animation: wuu-enter var(--motion-slow) var(--ease-out) both;
+  animation-delay: calc(var(--motion-fast) / 2);
 }
 
 .empty-home-stats > div {
@@ -4351,7 +4301,8 @@ pre {
   grid-template-columns: var(--empty-home-heatmap-cell);
   grid-template-rows: var(--empty-home-heatmap-label) repeat(7, var(--empty-home-heatmap-cell));
   row-gap: var(--empty-home-heatmap-gap);
-  animation: empty-home-overview-in var(--motion-slow) var(--ease-out) backwards;
+  --enter-y: 6px;
+  animation: wuu-enter var(--motion-slow) var(--ease-out) both;
   animation-delay: calc(
     var(--motion-fast) + var(--motion-slow) *
       max(0, var(--empty-home-heatmap-visible) - 1 - var(--empty-home-heatmap-week)) /
@@ -4588,7 +4539,9 @@ pre {
   border-radius: 31%;
   background: var(--surface-2);
   box-shadow: var(--shadow-modal);
-  animation: wuu-launch-glass-enter 620ms var(--ease-out) both;
+  --enter-y: 8px;
+  --enter-scale: 0.96;
+  animation: wuu-enter 620ms var(--ease-out) both;
 }
 
 .wuu-launch-mascot {
@@ -4685,17 +4638,11 @@ pre {
   z-index: 30;
   background: var(--paper);
   pointer-events: auto;
-  animation: view-switch-enter var(--motion-base) var(--ease-out) both;
+  animation: wuu-fade-in var(--motion-base) var(--ease-out) both;
 }
 
 .conversation-pane.environment-panel-reserved .view-switch-loading-conversation {
   padding-right: var(--environment-panel-content-inset);
-}
-
-@keyframes view-switch-enter {
-  from {
-    opacity: 0;
-  }
 }
 
 .view-switch-mark {
@@ -4756,30 +4703,12 @@ pre {
   }
 }
 
-@keyframes wuu-launch-glass-enter {
-  from {
-    opacity: 0;
-    transform: translate3d(0, 8px, 0) scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .wuu-launch-glass,
   .wuu-launch-mark::after,
   .wuu-launch-mark span,
-  .wuu-launch-rail::after,
-  .view-switch-loading-conversation,
-  .project-row .project-row-loading,
-  .project-row.pending-switch::before,
-  .thread-row.pending-switch::before,
-  .thread-row.running::before,
-  .thread-row-spinner {
+  .wuu-launch-rail::after {
     animation: none;
-    transition: none;
   }
 
   .wuu-launch-mark span {

@@ -1107,7 +1107,8 @@
   box-shadow: var(--shadow-card);
   color: var(--ink-soft);
   pointer-events: auto;
-  animation: sidebar-clear-unread-hint-in 140ms ease-out;
+  --enter-y: 2px;
+  animation: wuu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
 }
 
 .sidebar-clear-unread-hint::before {
@@ -1158,24 +1159,6 @@
   width: 12px;
   height: 12px;
   stroke-width: 2;
-}
-
-@keyframes sidebar-clear-unread-hint-in {
-  from {
-    opacity: 0;
-    transform: translateY(2px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sidebar-clear-unread-hint {
-    animation: none;
-  }
 }
 
 .collaboration-sidebar .sidebar-content {
@@ -2760,18 +2743,8 @@ html[data-focus-modality="keyboard"] :is(
 }
 
 .thread-row-main > .thread-row-title[data-title-swap] {
-  animation: thread-row-title-settle 220ms ease both;
-}
-
-@keyframes thread-row-title-settle {
-  from {
-    opacity: 0;
-    transform: translateY(-1px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  --enter-y: -1px;
+  animation: wuu-enter var(--content-swap-duration) var(--content-swap-easing) both;
 }
 
 /* The fork marker stays between the title and right-edge accessories. */

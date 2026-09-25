@@ -49,10 +49,10 @@
   padding-inline-end: 8px;
   opacity: 1;
   transform: none;
-  transition: grid-template-columns var(--motion-normal, 180ms) var(--ease-out, ease-out),
-    padding var(--motion-normal, 180ms) var(--ease-out, ease-out),
-    opacity var(--motion-normal, 180ms) ease,
-    transform var(--motion-normal, 180ms) var(--ease-out, ease-out);
+  transition: grid-template-columns var(--motion-base) var(--ease-out),
+    padding var(--motion-base) var(--ease-out),
+    opacity var(--motion-base) var(--ease-out),
+    transform var(--motion-base) var(--ease-out);
 }
 
 .channel-activity-slot-content { min-width: 0; overflow: hidden; padding-block: 3px; }
@@ -88,7 +88,7 @@
   border-radius: 0;
   overflow: visible;
   background: transparent;
-  transition: background var(--motion-fast, 120ms) ease, transform var(--motion-fast, 120ms) ease;
+  transition: background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out);
 }
 .channel-activity-motion .channel-activity-inspect:enabled:hover { transform: translateY(-1px); }
 .channel-activity-motion .channel-activity-inspect:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 1px; }

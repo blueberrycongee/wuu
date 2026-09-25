@@ -23,7 +23,7 @@
   line-height: 1;
   cursor: default;
   transition:
-    color 420ms var(--ease-out),
+    color var(--motion-slower) var(--ease-out),
     opacity var(--motion-slow) var(--ease-out);
 }
 
@@ -63,7 +63,7 @@
   stroke-width: 2;
   transition:
     stroke-dashoffset 620ms var(--ease-out),
-    stroke 420ms var(--ease-out);
+    stroke var(--motion-slower) var(--ease-out);
   will-change: stroke-dashoffset;
 }
 
@@ -74,7 +74,7 @@
 
 .composer-token-gauge-needle-shape {
   stroke-width: 2.2;
-  transition: stroke 420ms var(--ease-out);
+  transition: stroke var(--motion-slower) var(--ease-out);
 }
 
 .composer-token-gauge-hub {

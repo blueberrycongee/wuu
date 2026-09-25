@@ -1,4 +1,4 @@
-.account-onboarding { animation: account-onboarding-enter 240ms ease-out both; }
+.account-onboarding { --enter-y: 8px; animation: wuu-enter var(--motion-slow) var(--ease-out) both; }
 .account-onboarding-heading { margin-bottom: 24px; }
 .account-onboarding-heading h2:focus { outline: none; }
 .account-onboarding-heading p { margin: 12px 0 0; line-height: 1.7; }
@@ -39,9 +39,8 @@
 }
 @keyframes account-phone-receive { 0%, 35%, 60%, 100% { opacity: .35; } 44% { opacity: 1; } }
 @keyframes account-computer-receive { 0%, 77%, 100% { opacity: .35; } 86% { opacity: 1; } }
-@keyframes account-onboarding-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) {
-  .account-onboarding, .account-device-animation * { animation: none; }
+  .account-device-animation * { animation: none; }
   .account-transfer-out { transform: translateX(48px); }
   .account-transfer-in { transform: translateX(-48px); }
 }

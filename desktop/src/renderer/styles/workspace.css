@@ -585,12 +585,12 @@
   }
 }
 
-/* Two-stage entrance, same as the session strip: shell width leads, label
- * joins late and lands on the shell's beat (60 + 120 = 180ms), which is also
- * the panel body's content-swap rhythm — chrome and content arrive as one
- * gesture. */
+/* Two-stage entrance: shell width leads, label joins late and lands on the
+ * shell's beat (base - fast + fast = base), which is also the panel body's
+ * content-swap rhythm — chrome and content arrive as one gesture. Deriving
+ * the delay from the ladder lets reduced motion collapse it too. */
 .workspace-tool-tab .workspace-tool-tab-main {
-  transition: opacity var(--motion-fast) var(--ease-out) 60ms;
+  transition: opacity var(--motion-fast) var(--ease-out) calc(var(--motion-base) - var(--motion-fast));
 }
 
 .workspace-tool-tab.closing .workspace-tool-tab-main {
@@ -1184,7 +1184,7 @@ html.resizing-workspace-file-split * {
   box-shadow: var(--shadow-tray);
   pointer-events: auto;
   transition:
-    max-height 180ms var(--ease-out),
+    max-height var(--motion-base) var(--ease-out),
     transform var(--motion-fast) var(--ease-out),
     translate var(--motion-fast) var(--ease-out),
     border-color var(--motion-fast) var(--ease-out),
@@ -1569,7 +1569,8 @@ html.resizing-workspace-file-split * {
   border: 1px solid var(--menu-border);
   border-radius: var(--menu-shell-radius);
   box-shadow: var(--menu-shadow);
-  animation: workspace-tree-context-menu-in var(--motion-fast) var(--ease-out);
+  --enter-y: -2px;
+  animation: wuu-enter var(--motion-fast) var(--ease-out) both;
 }
 
 .workspace-tree-context-menu-item {
@@ -1594,17 +1595,6 @@ html.resizing-workspace-file-split * {
 .workspace-tree-context-menu-item:focus-visible {
   background: var(--menu-hover);
   outline: none;
-}
-
-@keyframes workspace-tree-context-menu-in {
-  from {
-    opacity: 0;
-    transform: translateY(-2px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
 }
 
 .workspace-panel-empty {
@@ -2180,7 +2170,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   background: var(--field-bg);
   color: var(--ink-muted);
   padding: 0 14px;
-  transition: background var(--motion-fast);
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
 .catalog-search svg {
@@ -2994,8 +2984,8 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   opacity: 0;
   transform: translateX(-3px);
   transition:
-    opacity 120ms ease,
-    transform 120ms ease;
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
 }
 
 .skills-empty {
@@ -4724,7 +4714,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   padding: 0;
   border-color: var(--hairline-soft);
   box-shadow: var(--menu-shadow);
-  transition: height 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: height var(--motion-base) var(--ease-out);
 }
 
 .codex-model-menu.runtime-panel.is-summary:has(.codex-effort-slider) {
@@ -4760,25 +4750,17 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  will-change: opacity, transform;
+  will-change: opacity, translate;
 }
 
 .runtime-panel-page.is-forward {
-  animation: runtime-panel-forward 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  --enter-x: 18px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
 }
 
 .runtime-panel-page.is-back {
-  animation: runtime-panel-back 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-@keyframes runtime-panel-forward {
-  from { opacity: 0; transform: translateX(18px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
-@keyframes runtime-panel-back {
-  from { opacity: 0; transform: translateX(-18px); }
-  to { opacity: 1; transform: translateX(0); }
+  --enter-x: -18px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
 }
 
 .runtime-panel-summary {
@@ -4852,18 +4834,9 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   color: var(--ink-soft);
   font-size: var(--font-sm);
   font-weight: var(--weight-medium);
-  animation: runtime-effort-enter 160ms ease-out;
-}
-
-@keyframes runtime-effort-enter {
-  from {
-    opacity: 0.4;
-    transform: translateY(3px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  --enter-opacity: 0.4;
+  --enter-y: 3px;
+  animation: wuu-enter var(--motion-base) var(--ease-out);
 }
 
 .runtime-panel-model > svg:last-child {

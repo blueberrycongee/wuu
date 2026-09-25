@@ -29,17 +29,18 @@
   box-shadow: var(--shadow-pop);
   font-size: var(--font-ui, 13px);
   line-height: 1.4;
-  transform: translate(-50%, -8px);
-  opacity: 0;
+  transform: translate(-50%, 0);
   pointer-events: auto;
-  animation: archive-tip-enter var(--motion-slow) var(--ease-out) forwards;
+  --enter-y: -12px;
+  --exit-y: -4px;
+  animation: wuu-enter var(--motion-slow) var(--ease-out) both;
 }
 
 /* `.leaving` is set shortly before onDismiss fires. Disable hit testing so a
    fading toast cannot queue duplicate close or navigation actions. */
 .archive-tip.leaving {
   pointer-events: none;
-  animation: archive-tip-leave var(--motion-base) var(--ease-in) forwards;
+  animation: wuu-exit var(--motion-base) var(--ease-in) both;
 }
 
 .archive-tip-icon {
@@ -122,37 +123,6 @@
 .archive-tip-dismiss:focus-visible {
   outline: 2px solid var(--info, #1a73e8);
   outline-offset: 2px;
-}
-
-@keyframes archive-tip-enter {
-  from {
-    opacity: 0;
-    transform: translate(-50%, -12px);
-  }
-  to {
-    opacity: 1;
-    transform: translate(-50%, 0);
-  }
-}
-
-@keyframes archive-tip-leave {
-  from {
-    opacity: 1;
-    transform: translate(-50%, 0);
-  }
-  to {
-    opacity: 0;
-    transform: translate(-50%, -4px);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .archive-tip,
-  .archive-tip.leaving {
-    animation: none;
-    opacity: 1;
-    transform: translate(-50%, 0);
-  }
 }
 
 @media (max-width: 480px) {

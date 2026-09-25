@@ -1,7 +1,7 @@
 /* Small glances stay around the icon's authored upper-left gaze. */
 .wuu-icon-gaze {
   animation: wuu-icon-glance 2.8s ease-in-out infinite;
-  transition: translate 400ms ease;
+  transition: translate var(--motion-slower) var(--ease-out);
 }
 
 .wuu-icon-mascot[data-composing] .wuu-icon-gaze {

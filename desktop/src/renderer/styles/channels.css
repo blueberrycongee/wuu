@@ -414,7 +414,7 @@
   opacity: 0;
   pointer-events: none;
   transform: translateY(-3px);
-  transition: opacity 120ms ease, transform 120ms ease;
+  transition: opacity var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out);
 }
 
 .channel-agent-status-card > span {
@@ -694,7 +694,7 @@
   background: var(--surface-2);
   font-weight: 500;
   cursor: pointer;
-  transition: background 150ms ease;
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
 .channel-agent-proposal-actions button:hover,
@@ -793,7 +793,7 @@
   max-width: 0;
   overflow: hidden;
   opacity: 0;
-  transition: max-width 120ms ease, opacity 120ms ease;
+  transition: max-width var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out);
 }
 
 .channel-author-mention:hover,
@@ -1036,7 +1036,7 @@
   padding: 0;
   border-radius: var(--radius-sm);
   background: var(--surface-1);
-  transition: background 150ms ease;
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
 .channel-orchestration-summary:hover {
@@ -1059,7 +1059,7 @@
   font-weight: 500;
   text-align: left;
   cursor: pointer;
-  transition: color 150ms ease;
+  transition: color var(--motion-fast) var(--ease-out);
 }
 
 .channel-orchestration-summary > button:hover,
@@ -1314,7 +1314,7 @@
   font-weight: var(--weight-medium);
   text-align: left;
   cursor: pointer;
-  transition: background var(--motion-fast) var(--menu-enter-easing);
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
 .channel-mention-menu button:hover {
@@ -1367,7 +1367,7 @@
   font-size: var(--font-xs);
   line-height: 1;
   opacity: 0;
-  transition: opacity var(--motion-fast) var(--menu-enter-easing);
+  transition: opacity var(--motion-fast) var(--ease-out);
 }
 
 .channel-mention-menu button.selected .channel-mention-key {
@@ -1745,7 +1745,7 @@
 
 .channel-agent-graph-links line,
 .channel-agent-graph-node {
-  transition: opacity 160ms ease, filter 160ms ease;
+  transition: opacity var(--motion-base) var(--ease-out), filter var(--motion-base) var(--ease-out);
 }
 
 .channel-agent-graph-links line.is-muted,
@@ -1824,12 +1824,8 @@
   border-radius: var(--radius-sm);
   background: var(--bg-primary);
   box-shadow: var(--shadow-pop);
-  animation: channel-agent-preview-in 140ms ease-out;
-}
-
-@keyframes channel-agent-preview-in {
-  from { opacity: 0; transform: translateY(-3px); }
-  to { opacity: 1; transform: translateY(0); }
+  --enter-y: -3px;
+  animation: wuu-enter var(--motion-fast) var(--ease-out) both;
 }
 
 .channel-agent-preview-header {
@@ -1960,16 +1956,11 @@
 }
 
 .channel-agent-preview-loading { display: grid; gap: 6px; margin-top: 10px; }
-.channel-agent-preview-loading i { height: 6px; border-radius: var(--radius-pill); background: var(--ink-overlay-6); animation: channel-agent-preview-pulse 1.4s ease-in-out infinite; }
+.channel-agent-preview-loading i { height: 6px; border-radius: var(--radius-pill); background: var(--ink-overlay-6); --pulse-opacity: 0.45; animation: wuu-pulse 1.4s ease-in-out infinite; }
 .channel-agent-preview-loading i:nth-child(2) { width: 64%; animation-delay: 0.15s; }
 
-@keyframes channel-agent-preview-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
-
 @media (prefers-reduced-motion: reduce) {
-  .channel-agent-preview-card,
   .channel-agent-preview-loading i { animation: none; }
-  .channel-agent-graph-links line,
-  .channel-agent-graph-node { transition: none; }
 }
 
 .channel-agent-graph-empty {
