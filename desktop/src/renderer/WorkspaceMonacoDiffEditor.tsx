@@ -45,13 +45,17 @@ export function WorkspaceMonacoDiffEditor({
       language,
       workspaceMonacoModelURI(`diff/modified/${resourceID}`),
     );
+    const typography = codeEditorTypography();
     const editor = monaco.editor.createDiffEditor(host, {
       automaticLayout: true,
       contextmenu: false,
       diffCodeLens: false,
-      diffWordWrap: "on",
+      // Word wrap + hideUnchangedRegions mis-positions view-lines so wrapped
+      // or deleted content paints over neighboring sparse rows. Keep horizontal
+      // scroll instead; sparse gutters still come from hideUnchangedRegions.
+      diffWordWrap: "off",
       enableSplitViewResizing: true,
-      ...codeEditorTypography(),
+      ...typography,
       glyphMargin: false,
       hideUnchangedRegions: {
         enabled: true,
@@ -79,13 +83,21 @@ export function WorkspaceMonacoDiffEditor({
         verticalSliderSize: Math.max(4, scrollbarSize - 2),
       },
       theme: workspaceMonacoTheme(currentAppliedTheme()),
-      useInlineViewWhenSpaceIsLimited: true,
+      // Narrow panels used to flip into inline mode. Inline + hideUnchangedRegions
+      // leaves ghost view-lines at top:0 that paint over the first visible rows.
+      useInlineViewWhenSpaceIsLimited: false,
     });
     editor.setModel({ original: originalModel, modified: modifiedModel });
     const stopObservingTheme = observeAppliedTheme((theme) => {
       monaco.editor.setTheme(workspaceMonacoTheme(theme));
     });
-    const stopObservingAppearance = observeAppearance(() => editor.updateOptions(codeEditorTypography()));
+    const applyTypography = () => {
+      const next = codeEditorTypography();
+      editor.updateOptions(next);
+      editor.getOriginalEditor().updateOptions(next);
+      editor.getModifiedEditor().updateOptions(next);
+    };
+    const stopObservingAppearance = observeAppearance(applyTypography);
 
     return () => {
       stopObservingTheme();

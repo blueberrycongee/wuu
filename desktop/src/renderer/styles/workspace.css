@@ -3587,6 +3587,15 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   min-height: 0;
 }
 
+/* Isolate Monaco from shell typography (palt / prose line-height). Sparse
+   hideUnchangedRegions layouts measure with Monaco's own fontInfo; inherited
+   features can desync glyph paint from view-line tops. */
+.workspace-monaco-editor .monaco-editor,
+.workspace-monaco-diff-editor .monaco-editor {
+  letter-spacing: normal;
+  font-feature-settings: "liga" 0, "calt" 0;
+}
+
 .workspace-file-code {
   min-width: max-content;
   min-height: 100%;
