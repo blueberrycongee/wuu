@@ -4,7 +4,7 @@ An external engine runs an installed agent with its own account, model configura
 
 ## Install and select an engine
 
-Install the agent or adapter yourself using its upstream instructions. Wuu does not download executables. Open the engine section in Settings to check detection, set an executable path, or disable an engine. Then choose an available engine in the composer, or set the default for new conversations.
+Install the agent or adapter yourself using its upstream instructions. Wuu does not download executables. Open **Settings → Agents** to check detection, set an executable path, or disable an engine. Choose the default for new conversations there, or pick an available engine in the composer.
 
 | Engine ID | Launch command | Integration and setup |
 |---|---|---|

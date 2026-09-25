@@ -69,6 +69,16 @@ Preview `/dev/composer-attachments/` with optional `theme=dark`, `size=20`,
 `width=420`, `hero`, `queued`, and `seed` parameters. Its buttons paste
 synthetic files through the real textarea paste handler.
 
+## Settings pages
+
+Settings groups pages by task: **Agents & models** (model providers, agents, runtime), **App** (general, appearance), **Extensions** (MCP servers and plugin pages), and **Data** (usage, archive). Page IDs are part of the plugin settings snapshot, so they stay stable when a label or group changes; the runtime page keeps the `advanced` ID.
+
+Every page shares one column measured in UI text, so the title stays in place while navigating and a label stays within a glance of its control at large sizes. A page opens with its title, an optional line that states a non-obvious scope, and page actions beside the title. Section titles are the only other semibold text; rows stay regular inside one bordered group. Keep a row description only for units, constraints, or consequences the title does not already state.
+
+Status labels carry their meaning in text; the dot beside them repeats the tone for scanning. Model providers and agents expand in place under their own row. Rows without a disclosure reserve its footprint so status labels end on one axis. The titlebar gains its hairline only after content scrolls beneath it.
+
+Preview `/dev/settings/` with `page` set to a page ID, and optional `theme=dark`, `size=20`, `lang=en`, `rail=` (sidebar width), `collapsed`, `long`, and `empty` parameters. Providers, agents, MCP servers, usage, and archive rows are synthetic; nothing is saved.
+
 ## Shared typography and geometry
 
 Composer feedback belongs in the shared reading area above the input, not beside

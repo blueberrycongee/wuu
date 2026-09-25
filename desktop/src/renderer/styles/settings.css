@@ -14,8 +14,6 @@
   --settings-preview-dark-canvas: #1d2024;
   --settings-preview-dark-sidebar: #141618;
   --settings-preview-dark-line: #3a4046;
-  /* Sanctioned data-viz accent for the skill usage bar. */
-  --settings-usage-accent: var(--wuu-color-warning, #e8a23a);
   /* The remote-control QR keeps a white quiet zone so phones can scan
      it in dark theme too. */
   --settings-remote-qr-quiet-zone: #ffffff;
@@ -118,6 +116,12 @@
   gap: 2px;
 }
 
+/* Plugin pages keep their public anchor inside the Extensions group without
+ * adding a layout box between the group and its rows. */
+.settings-nav-plugins {
+  display: contents;
+}
+
 .settings-nav-group-label {
   padding: 0 12px 6px;
   color: var(--ink-tertiary);
@@ -198,8 +202,32 @@
   /* Right side clears the Windows controls overlay; a no-op elsewhere
    * (the inset is 0 and max() collapses to the neutral padding). */
   padding: 0 max(var(--window-titlebar-padding-inline), var(--window-controls-inset-right)) 0 var(--window-titlebar-padding-inline);
-  box-shadow: inset 0 -1px 0 var(--hairline);
   -webkit-app-region: drag;
+}
+
+/* The strip carries no edge at rest, like the conversation titlebar. Once the
+ * page scrolls under it, a hairline separates the fixed strip from the moving
+ * content. Engines without scroll timelines keep the edge-free strip. */
+@supports (timeline-scope: --settings-scroll) and (animation-timeline: --settings-scroll) {
+  .settings-main {
+    timeline-scope: --settings-scroll;
+  }
+
+  .settings-scroll {
+    scroll-timeline: --settings-scroll block;
+  }
+
+  .settings-titlebar {
+    animation: settings-titlebar-edge linear both;
+    /* Must follow the shorthand, which resets timeline and range. */
+    animation-timeline: --settings-scroll;
+    animation-range: 0px 16px;
+  }
+
+  @keyframes settings-titlebar-edge {
+    from { box-shadow: inset 0 -1px 0 transparent; }
+    to { box-shadow: inset 0 -1px 0 var(--hairline); }
+  }
 }
 
 
@@ -217,7 +245,7 @@
 }
 
 /* Column direction is load-bearing, not cosmetic: .settings-page carries
- * `flex: 1` (to fill the viewport height) alongside `width: min(800px, …)`
+ * `flex: 1` (to fill the viewport height) alongside `width: min(…)`
  * and `margin: 0 auto` (to cap and center the content column). In a row flex
  * the `flex: 1` basis wins over `width`, so the page would stretch
  * edge-to-edge and the cap + centering would never apply. */
@@ -233,7 +261,10 @@
   scrollbar-gutter: stable;
 }
 
-/* Page inset and section spacing share a 32px rhythm. */
+/* Every page shares one column so the title stays put while navigating. The
+ * column is measured in UI text so rows keep their proportions at large
+ * sizes; forms read best when a label and its control stay within one
+ * glance, which a full reading column would pull apart. */
 .settings-page {
   display: flex;
   min-height: 100%;
@@ -243,31 +274,37 @@
    * hundreds of px of slack left in the column. */
   container-name: settings-page;
   container-type: inline-size;
-  --settings-page-max-width: calc(var(--content-column-width) + var(--settings-pad) * 2);
+  --settings-column-width: calc(var(--font-ui) * 50);
   --settings-pad: var(--page-padding);
   --settings-gap: var(--section-gap);
-  width: min(var(--settings-page-max-width), 100%);
+  width: min(calc(var(--settings-column-width) + var(--settings-pad) * 2), 100%);
   /* flex-shrink: 0 keeps the bottom padding inside the scrollable area
    * when content exceeds the viewport height. */
   flex: 1 0 auto;
   flex-direction: column;
   gap: var(--settings-gap);
   margin: 0 auto;
-  padding: var(--settings-pad);
+  padding: var(--space-4) var(--settings-pad) calc(var(--settings-pad) * 2);
   animation: content-swap-enter var(--content-swap-duration) var(--content-swap-easing) both;
 }
 
-/* The archive list benefits from the same wide surface as the workspace. */
-.settings-page-archive {
-  --settings-page-max-width: 1088px;
-}
-
-/* --- Page header ---------------------------------------------------------- */
+/* --- Page header ----------------------------------------------------------
+ * Title, an optional line that states the page's scope, and page actions
+ * aligned with the title line.
+ * ------------------------------------------------------------------------- */
 
 .settings-page-header {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  --settings-title-line: calc(var(--font-heading) * 1.3);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-2) var(--space-6);
+}
+
+.settings-page-heading {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
 }
 
 .settings-page-title {
@@ -279,82 +316,161 @@
   line-height: 1.3;
 }
 
-/* Sections separate by 32px; headings sit 16px above grouped rows. */
+.settings-page-description {
+  max-width: 60ch;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
+  line-height: 1.5;
+}
+
+/* Controls are taller than the title line; centering them on it keeps the
+ * description directly under the title. */
+.settings-page-actions {
+  display: flex;
+  min-height: var(--settings-title-line);
+  align-items: center;
+  gap: var(--space-2);
+  margin-block: calc((var(--settings-title-line) - var(--control-field-height)) / 2);
+}
+
+@container settings-page (max-width: 32em) {
+  .settings-page-header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-page-actions {
+    flex-wrap: wrap;
+    margin-block: 0;
+  }
+}
+
+/* --- Section --------------------------------------------------------------
+ * A section title labels its group; it is the only semibold text on the
+ * page besides the page title. Rows stay regular so the hierarchy reads
+ * page → section → setting.
+ * ------------------------------------------------------------------------- */
 
 .settings-section {
   display: flex;
   flex-direction: column;
-  gap: var(--section-heading-gap);
+  gap: var(--space-3);
 }
 
 .settings-section-header {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.settings-section-heading {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
 }
 
 .settings-section-title {
   margin: 0;
   color: var(--ink-strong);
-  font-size: var(--font-body);
+  font-size: var(--font-ui);
   font-weight: var(--weight-semibold);
-  line-height: 1.3;
+  line-height: 1.4;
 }
 
 .settings-section-description {
-  margin: 0;
   max-width: 60ch;
-  color: var(--ink-muted);
-  font-size: var(--font-ui);
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
   line-height: 1.5;
 }
 
-/* A single quiet enclosure groups related settings; children do not get cards. */
+/* Section actions are compact; negative block margins keep them from
+ * growing the header, so every section's heading-to-group gap matches. */
+.settings-section-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-2);
+  margin-block: calc((var(--font-ui) * 1.4 - var(--control-field-height)) / 2);
+}
+
+/* Notes below a group: font loading, save failures, list errors. */
+.settings-section-note {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+/* --- Group ----------------------------------------------------------------
+ * One hairline enclosure per group; rows inside are separated by the
+ * softer tier and never carry their own frames.
+ * ------------------------------------------------------------------------- */
+
 .settings-group {
   display: flex;
+  min-width: 0;
   flex-direction: column;
-}
-
-.settings-section > .settings-group {
-  padding: 0 var(--card-padding);
   border: 1px solid var(--hairline);
-  /* Control-wrapping shell: one tier below panel. */
   border-radius: var(--radius-sm);
+  padding-inline: var(--card-padding);
 }
 
-.settings-group .settings-row:last-child {
+.settings-group > .settings-row:last-child {
   border-bottom: 0;
+}
+
+/* Empty and loading lines stand in for rows at a row's height. */
+.settings-group-empty {
+  display: flex;
+  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  align-items: center;
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--font-ui);
 }
 
 /* --- Row -------------------------------------------------------------------
  * Two columns: a growing label on the left, a natural-width control pinned
- * right. Rows sit directly on the canvas: text starts at the column's left
- * axis (x=0), controls end at its right edge, and the separator hairline
- * runs the full column width. `settings-row-block` stacks label over a
- * full-width control for form-style rows (inputs, textareas, compound
- * controls).
+ * right. Every row reserves a control's height plus its padding, so rows
+ * with and without descriptions share one rhythm. `settings-row-block`
+ * stacks label over a full-width control for form-style rows.
  * ------------------------------------------------------------------------- */
 
 .settings-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px var(--space-6);
+  gap: var(--space-2) var(--space-6);
+  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
   border-bottom: 1px solid var(--hairline-soft);
-  padding: var(--card-padding) 0;
+  padding: var(--space-3) 0;
 }
 
 .settings-row-block {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 8px;
+  gap: var(--space-2);
+}
+
+/* A supporting row (hints, load state) under the row it explains. */
+.settings-row-note {
+  min-height: 0;
+  gap: var(--space-1);
+  padding-top: 0;
+}
+
+.settings-row:has(+ .settings-row-note) {
+  border-bottom: 0;
 }
 
 .settings-row-label {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -367,14 +483,14 @@
 .settings-row-label-title {
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
   line-height: 1.4;
 }
 
 .settings-row-label-description {
   color: var(--ink-soft);
   font-size: var(--font-sm);
-  font-weight: 400;
+  font-weight: var(--weight-regular);
   line-height: 1.5;
 }
 
@@ -382,15 +498,22 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
+}
+
+/* Icon actions sit tighter than separate controls so they read as one set. */
+.settings-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .settings-row-control-block {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
   width: 100%;
 }
@@ -416,12 +539,58 @@
 .settings-row-control-value {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   color: var(--ink-soft);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+/* --- Status ----------------------------------------------------------------
+ * The label carries the meaning; the dot repeats it for scanning.
+ * ------------------------------------------------------------------------- */
+
+.settings-status {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.settings-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-circle);
+  background: var(--ink-faint);
+}
+
+.settings-status[data-tone="success"]::before {
+  background: var(--success);
+}
+
+.settings-status[data-tone="warning"]::before {
+  background: var(--warning);
+}
+
+.settings-status[data-tone="danger"]::before {
+  background: var(--danger);
+}
+
+/* Disclosure rows (services, agents) turn one chevron. */
+.settings-disclosure-chevron {
+  flex: 0 0 auto;
+  color: var(--ink-tertiary);
+  transition: transform var(--motion-fast) var(--menu-enter-easing);
+}
+
+:is([aria-expanded="true"] > .settings-disclosure-chevron, .settings-disclosure-chevron.open) {
+  transform: rotate(90deg);
 }
 
 /* --- Inputs (32px, the one control height) --------------------------------- */
@@ -509,14 +678,6 @@
   opacity: 1;
 }
 
-/* Card footer row: feedback text left, the form's submit action right. */
-.settings-row-footer {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
 .settings-voice-permission {
   display: inline-flex;
   min-height: 24px;
@@ -549,30 +710,6 @@
   resize: vertical;
   line-height: var(--line-body);
   padding: var(--compact-padding-block) var(--control-padding-inline);
-}
-
-/* Inline flag occupying a control slot (e.g. "新的模型服务", "暂无模型服务").
- * Matches the 32px control height so it aligns with adjacent buttons. */
-.settings-inline-flag {
-  display: inline-flex;
-  align-items: center;
-  height: 32px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
-  padding: 0 12px;
-}
-
-.settings-inline-flag.success {
-  background: var(--success-soft);
-  color: var(--success);
-}
-
-.settings-inline-flag.danger {
-  background: var(--danger-soft);
-  color: var(--danger);
 }
 
 /* --- Buttons (32px, same rhythm as inputs) ---------------------------------- */
@@ -665,6 +802,16 @@
   color: var(--danger);
 }
 
+.settings-page :is(p.settings-error, .settings-hint) {
+  margin-block: 0;
+}
+
+.settings-hint {
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
 .settings-empty {
   display: flex;
   align-items: center;
@@ -682,39 +829,23 @@
   line-height: 1.5;
 }
 
-/* --- Agent engines section --------------------------------------------------
- * One row per agent: detection state sits next to the name and the row's
- * radio is the default-agent choice. Path overrides and enable/disable live
- * behind the row's own expand control.
+/* --- Agent page ---------------------------------------------------------------
+ * One row per agent: the radio picks the default, the status sits at the
+ * trailing edge, and path overrides and enable/disable live behind the
+ * row's own disclosure. Rows without a disclosure keep its footprint so
+ * every status label ends on the same axis.
  * ----------------------------------------------------------------------------- */
-
-/* The refresh control lives in the header, not on a row of its own. */
-.settings-agent-header {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.settings-engine-body {
-  padding: 0 var(--card-padding);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-}
-
-.settings-engine-body .settings-row {
-  padding: var(--card-padding) 0;
-  border: 0;
-}
 
 .settings-engine-item + .settings-engine-item {
   border-top: 1px solid var(--hairline-soft);
 }
 
-.settings-engine-body .settings-engine-row {
+.settings-engine-row {
   display: flex;
+  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
   align-items: center;
-  gap: 10px;
-  padding: 12px 0;
+  gap: var(--space-3);
+  padding-block: var(--space-2);
 }
 
 .settings-engine-radio {
@@ -735,7 +866,7 @@
   min-width: 0;
   flex: 1 1 auto;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
   cursor: pointer;
 }
 
@@ -750,31 +881,30 @@
 
 .settings-engine-row-icon {
   display: inline-flex;
-  width: 14px;
+  width: var(--icon-size);
   flex: 0 0 auto;
   align-items: center;
+  justify-content: center;
   color: var(--ink);
+}
+
+.settings-engine-row-icon .engine-icon {
+  width: var(--icon-size);
+  height: var(--icon-size);
 }
 
 .settings-engine-row-name {
-  flex-shrink: 0;
-  color: var(--ink);
-  font-weight: var(--weight-medium);
-}
-
-.settings-engine-row-status {
   min-width: 0;
   overflow: hidden;
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
+  color: var(--ink);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .settings-engine-expand {
   display: inline-flex;
-  width: 28px;
-  height: 28px;
+  width: var(--control-field-height);
+  height: var(--control-field-height);
   padding: 0;
   flex: 0 0 auto;
   align-items: center;
@@ -786,31 +916,22 @@
   cursor: pointer;
 }
 
-.settings-engine-expand:hover {
-  background: var(--menu-hover);
-  color: var(--ink-muted);
+button.settings-engine-expand:hover {
+  background: var(--ink-overlay-6);
 }
 
-.settings-engine-expand-chevron {
-  transition: transform var(--motion-fast) var(--menu-enter-easing);
-}
-
-.settings-engine-expand-chevron.open {
-  transform: rotate(90deg);
-}
-
-/* Indent aligns the override controls with the row content past the radio. */
+/* The overrides align with the agent name, past the radio and the mark. */
 .settings-engine-advanced {
   display: grid;
   justify-items: start;
-  gap: 12px;
-  padding: 0 0 12px 24px;
+  gap: var(--space-3);
+  padding: 0 0 var(--space-4) calc(14px + var(--icon-size) + var(--space-3) * 2);
 }
 
 .settings-engine-path-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   width: 100%;
   min-width: 0;
 }
@@ -850,10 +971,7 @@
 }
 
 .settings-subscriptions {
-  width: 100%;
-  max-width: 680px;
-  align-self: center;
-  gap: var(--space-5);
+  gap: var(--settings-gap);
 }
 
 .settings-subscription-list {
@@ -869,14 +987,6 @@
 
 .settings-subscription + .settings-subscription {
   border-top: 1px solid var(--hairline);
-}
-
-.settings-subscription-header {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
 }
 
 .settings-subscription-row {
@@ -1091,27 +1201,13 @@
   }
 }
 
-.settings-engine-refresh {
-  flex: 0 0 auto;
-  gap: 6px;
-  padding: 0 8px;
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-}
-
 /* This fallback is visible only before the session-level inventory resolves.
  * Static shapes preserve the final row geometry without adding ambient motion
  * to a state that is normally gone before Settings opens. */
-.settings-engine-skeleton-line,
-.settings-engine-skeleton-control {
+.settings-engine-skeleton-line {
   display: block;
   border-radius: var(--radius-sm);
   background: var(--surface-2);
-}
-
-.settings-engine-skeleton-line {
-  width: 104px;
-  height: 10px;
 }
 
 .settings-engine-skeleton-title {
@@ -1121,12 +1217,8 @@
 
 .settings-engine-skeleton-description {
   width: 152px;
-}
-
-.settings-engine-skeleton-control {
-  width: 160px;
-  height: 32px;
-  justify-self: end;
+  height: 10px;
+  margin-left: auto;
 }
 
 .settings-xai-login {
@@ -1136,76 +1228,67 @@
   gap: 8px;
 }
 
-/* Service selection and editing are separate tasks within one workspace. */
-.settings-page-providers {
-  --settings-page-max-width: 1040px;
+/* --- Model services ---------------------------------------------------------
+ * One list of services. The selected service opens its editor under its
+ * own row, so choosing a service and editing it stay in one column.
+ * ----------------------------------------------------------------------------- */
+
+.settings-provider-list {
+  /* Shared by the monogram and the editor indent that aligns with the name. */
+  --settings-provider-mark-size: round(up, calc(var(--font-ui) * 2), 2px);
 }
 
-.settings-services-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+.settings-provider-item + .settings-provider-item {
+  border-top: 1px solid var(--hairline-soft);
 }
 
-.settings-services-header > div:first-child {
-  min-width: 0;
-}
-
-.settings-services-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-  flex: 0 0 auto;
-}
-
-.settings-services-layout {
+.settings-provider-button,
+.settings-provider-heading {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr);
-  gap: 24px;
-  align-items: start;
-}
-
-.settings-provider-overview {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-
-.settings-provider-card {
-  position: relative;
-  min-width: 0;
-}
-
-.settings-provider-button {
-  display: flex;
   width: 100%;
-  min-height: 64px;
+  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border: 0;
   background: transparent;
   color: var(--ink);
-  padding: var(--card-padding);
-  padding-right: calc(var(--card-padding) + 24px + var(--space-2));
+  font: inherit;
   text-align: left;
-  transition: background var(--motion-fast);
 }
 
-.settings-provider-button:hover:not(:disabled) {
-  background: var(--surface-1);
+.settings-provider-heading {
+  grid-template-columns: auto minmax(0, 1fr);
 }
 
-.settings-provider-button.active,
-.settings-provider-button.active:hover:not(:disabled) {
-  background: var(--selection-surface);
+.settings-provider-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.settings-provider-button:hover:not(:disabled) .settings-disclosure-chevron {
+  color: var(--ink);
+}
+
+/* A monogram anchors each service in the leading column. */
+.settings-provider-mark {
+  display: inline-grid;
+  width: var(--settings-provider-mark-size);
+  height: var(--settings-provider-mark-size);
+  place-items: center;
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
 }
 
 .settings-provider-copy {
   display: grid;
   min-width: 0;
-  gap: 4px;
+  gap: 2px;
 }
 
 .settings-provider-copy strong,
@@ -1216,143 +1299,35 @@
 }
 
 .settings-provider-copy strong {
-  line-height: 1.4;
+  color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
+  line-height: 1.4;
 }
 
 .settings-provider-copy small {
-  line-height: 1.5;
   color: var(--ink-soft);
   font-size: var(--font-sm);
+  line-height: 1.5;
 }
 
-.settings-provider-button.active strong {
-  font-weight: var(--weight-semibold);
+.settings-provider-item.open .settings-provider-copy strong {
+  font-weight: var(--weight-medium);
 }
 
-.settings-provider-remove {
-  position: absolute;
-  top: 50%;
-  right: var(--card-padding);
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--ink-tertiary);
-  transform: translateY(-50%);
-}
-
-.settings-provider-remove:hover:not(:disabled) {
-  background: var(--ink-overlay-8);
-}
-
-.settings-provider-button:disabled,
-.settings-provider-remove:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
+/* The editor aligns with the service name, past the monogram. */
 .settings-provider-editor {
+  display: grid;
   min-width: 0;
-  padding: var(--card-padding);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-}
-
-.settings-provider-editor-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-}
-
-.settings-provider-editor-header h3 {
-  margin: 0;
-  font-size: var(--font-body);
-  line-height: 1.4;
-  font-weight: var(--weight-semibold);
-  overflow-wrap: anywhere;
-}
-
-.settings-provider-editor-header p {
-  margin: 4px 0 0;
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.settings-provider-form-section {
-  margin-top: 24px;
-}
-
-.settings-provider-form-section + .settings-provider-form-section {
-  padding-top: 16px;
-  border-top: 1px solid var(--hairline-soft);
-  margin-top: 16px;
+  gap: var(--space-4);
+  padding: 0 0 var(--card-padding) calc(var(--settings-provider-mark-size) + var(--space-3));
 }
 
 .settings-provider-editor .settings-row {
+  min-height: 0;
   border: 0;
   padding: 0;
-  margin: 0;
-  gap: 8px;
-}
-
-.settings-provider-editor > .settings-row {
-  margin-top: 16px;
-}
-
-.settings-provider-form-section > .settings-row + .settings-row {
-  margin-top: 16px;
-}
-
-.settings-provider-model-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: auto auto;
-  column-gap: 16px;
-  row-gap: 8px;
-}
-
-.settings-provider-model-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  max-height: 180px;
-  overflow: auto;
-  margin-bottom: 16px;
-}
-
-.settings-provider-model-list .settings-button {
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  white-space: normal;
-  transition: none;
-}
-
-.settings-provider-model-list .settings-button:active:not(:disabled) {
-  transform: none;
-}
-
-.settings-provider-model-list [aria-pressed="true"],
-.settings-provider-model-list [aria-pressed="true"]:hover:not(:disabled) {
-  background: var(--ink-strong);
-  color: var(--paper);
-}
-
-/* Shared label/control rows keep adjacent inputs aligned when help text wraps. */
-.settings-provider-model-fields > .settings-row {
-  display: grid;
-  grid-row: span 2;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: subgrid;
-  align-items: start;
+  gap: var(--space-2);
 }
 
 .settings-provider-editor .settings-row-label-title {
@@ -1362,7 +1337,6 @@
 
 .settings-provider-editor .settings-input,
 .settings-provider-editor .settings-select-trigger {
-  min-height: 36px;
   width: 100%;
   min-width: 0;
   border: 1px solid var(--hairline);
@@ -1374,8 +1348,60 @@
   display: block;
 }
 
-.settings-provider-editor .settings-row-control-block > .settings-input {
-  width: 100%;
+.settings-provider-model-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: auto auto;
+  column-gap: var(--space-4);
+  row-gap: var(--space-2);
+}
+
+/* Shared label/control rows keep adjacent inputs aligned when help text wraps. */
+.settings-provider-model-fields > .settings-row {
+  display: grid;
+  grid-row: span 2;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: subgrid;
+  align-items: start;
+}
+
+.settings-provider-model-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  max-height: 180px;
+  overflow: auto;
+}
+
+.settings-provider-model-list .settings-button {
+  max-width: 100%;
+  min-height: 0;
+  border-radius: var(--radius-pill);
+  padding: 3px var(--space-3);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-regular);
+  overflow-wrap: anywhere;
+  white-space: normal;
+  transition: none;
+}
+
+.settings-provider-model-list .settings-button:hover:not(:disabled) {
+  background: var(--ink-overlay-4);
+  color: var(--ink);
+}
+
+.settings-provider-model-list .settings-button:active:not(:disabled) {
+  transform: none;
+}
+
+.settings-provider-model-list [aria-pressed="true"],
+.settings-provider-model-list [aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--ink-strong);
+  box-shadow: none;
+  color: var(--paper);
 }
 
 .settings-managed-value {
@@ -1385,64 +1411,70 @@
   overflow-wrap: anywhere;
 }
 
-.settings-provider-editor .settings-row-footer {
+.settings-provider-editor-footer {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
-@container settings-page (max-width: 700px) {
-  .settings-services-layout {
-    grid-template-columns: 1fr;
-    gap: 24px;
-  }
-  .settings-provider-overview {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+.settings-button-ghost.settings-provider-remove {
+  color: var(--danger);
 }
 
-@container settings-page (max-width: 420px) {
-  .settings-services-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 16px;
-  }
-  .settings-services-actions {
-    justify-content: flex-start;
+.settings-button-ghost.settings-provider-remove:hover:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+@container settings-page (max-width: 32em) {
+  .settings-provider-button {
+    grid-template-columns: auto minmax(0, 1fr) auto;
   }
 
-  .settings-provider-model-fields,
-  .settings-provider-overview {
-    grid-template-columns: 1fr;
+  .settings-provider-button .settings-status {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .settings-provider-button .settings-disclosure-chevron {
+    grid-column: 3;
+    grid-row: 1 / 3;
+  }
+
+  .settings-provider-editor {
+    padding-left: 0;
+  }
+
+  .settings-provider-model-fields {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
 /* --- Theme picker ------------------------------------------------------------
- * Visual radio cards. Selection lives on the preview window itself (a
- * stronger hairline) so the active state does not flood the whole card
- * with a gray fill at this compact scale. Each preview is a tiny window
- * mockup of the theme. "System" uses the same geometry as the other
- * options and splits its surfaces into light/dark, so there are no
- * overlapping sidebars or clipped layers. Preview colors are fixed local
- * colors, never theme tokens.
+ * Visual radio cards, each a miniature window of the theme. "System" uses
+ * the same geometry and splits its surfaces into light/dark. Selection is a
+ * ring on the preview plus a stronger label, so the choice reads without a
+ * fill across the card. Preview colors are fixed local colors, never theme
+ * tokens.
  * ----------------------------------------------------------------------------- */
 
 .settings-theme-options {
   display: flex;
-  gap: 16px;
   flex-wrap: wrap;
+  gap: var(--space-4);
   min-width: 0;
 }
 
 .settings-theme-card {
   display: flex;
+  width: calc(var(--font-ui) * 9);
   flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  flex: 0 0 104px;
+  align-items: stretch;
+  gap: var(--space-2);
   min-width: 0;
-  background: transparent;
   padding: 0;
+  background: transparent;
   border-radius: var(--radius-sm);
 }
 
@@ -1451,7 +1483,7 @@
   display: block;
   overflow: hidden;
   width: 100%;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 16 / 10;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   transition:
@@ -1464,7 +1496,8 @@
 }
 
 .settings-theme-card.active .settings-theme-preview {
-  border-color: var(--ink-soft);
+  border-color: var(--ink-strong);
+  box-shadow: 0 0 0 1px var(--ink-strong);
 }
 
 .settings-theme-card-label {
@@ -1476,20 +1509,9 @@
   text-align: center;
 }
 
-.settings-theme-card-source {
-  margin-top: -4px;
-  color: var(--ink-muted);
-  font-size: var(--font-xs);
-}
-
 .settings-theme-card.active .settings-theme-card-label {
   color: var(--ink);
   font-weight: var(--weight-medium);
-}
-
-.settings-theme-card.active .settings-theme-card-source {
-  color: var(--ink-muted);
-  font-weight: 400;
 }
 
 .settings-theme-preview-window {
@@ -1506,8 +1528,8 @@
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 6px;
-  padding: 12px 14px;
+  gap: 5px;
+  padding: 10px 12px;
 }
 
 .settings-theme-preview-line {
@@ -1563,41 +1585,19 @@
   background: linear-gradient(90deg, var(--settings-preview-light-line) 0 32.5%, var(--settings-preview-dark-line) 32.5% 100%);
 }
 
-/* --- MCP list + extensions + pets ------------------------------------------------ */
-
-.settings-mcp-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.settings-mcp-row .settings-row-control {
-  gap: 12px;
-}
-
-.settings-mcp-row .settings-row-control-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.settings-mcp-error {
-  color: var(--danger);
-}
+/* --- MCP servers + pets --------------------------------------------------------- */
 
 .settings-mcp-code-input {
   width: 140px;
   min-width: 112px;
 }
 
-/* Empty / loading states are quiet inline lines, left-aligned with the
- * rows they stand in for — not centered boxes. */
-.settings-mcp-empty {
+/* The status leads the meta line; the dot must not wrap away from its label. */
+.settings-row-label-description:has(> .settings-status) {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  min-height: 48px;
-  color: var(--ink-muted);
-  font-size: var(--font-ui);
-  padding: 8px 0;
+  column-gap: 0.25em;
 }
 
 .settings-codex-pet-select {
@@ -1612,37 +1612,49 @@
   flex-direction: column;
   container-name: settings-usage;
   container-type: inline-size;
-  gap: var(--settings-gap, 40px);
+  gap: var(--settings-gap);
 }
 
-/* Stat strip: one full-width row of quiet data modules, big tabular number
- * over a label. Data modules are content, not group containers: they may
- * carry one --surface-1 fill, no border. Five fit side by side at the
- * default column width; they fold evenly below it. */
+/* Section headers on this page pair a title with a scope note. */
+.settings-section-meta {
+  flex: 0 0 auto;
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-usage-card {
+  padding-block: var(--card-padding);
+}
+
+/* Headline numbers share one card, divided like a table row. Four fit side
+ * by side in the column; they fold two by two in a narrow one. */
 .settings-usage-stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 8px;
-  min-width: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 0;
 }
 
 .settings-usage-stat {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
-  border-radius: var(--radius-sm);
-  background: var(--surface-1);
-  padding: 12px 14px;
+  padding: var(--card-padding);
+}
+
+.settings-usage-stat + .settings-usage-stat {
+  box-shadow: inset 1px 0 0 var(--hairline-soft);
 }
 
 .settings-usage-stat-value {
   max-width: 100%;
   overflow: hidden;
   color: var(--ink-strong);
-  font-size: 18px;
+  font-size: var(--font-heading);
   font-weight: var(--weight-semibold);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1650,33 +1662,26 @@
 }
 
 .settings-usage-stat-label {
-  color: var(--ink-muted);
+  color: var(--ink-soft);
   font-size: var(--font-sm);
 }
 
-.settings-usage-chart,
-.settings-model-chart {
-  min-width: 0;
-}
+@container settings-usage (max-width: 32em) {
+  .settings-usage-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 
-.settings-model-chart {
-  border-top: 1px solid var(--hairline-soft);
-  padding-top: 24px;
-}
+  .settings-usage-stat:nth-child(odd) {
+    box-shadow: none;
+  }
 
-.settings-usage-chart-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 18px;
-}
+  .settings-usage-stat:nth-child(n + 3) {
+    box-shadow: inset 0 1px 0 var(--hairline-soft);
+  }
 
-.settings-usage-chart-header > span {
-  flex: none;
-  color: var(--ink-tertiary);
-  font-size: var(--font-xs);
-  font-variant-numeric: tabular-nums;
+  .settings-usage-stat:nth-child(4) {
+    box-shadow: inset 1px 0 0 var(--hairline-soft), inset 0 1px 0 var(--hairline-soft);
+  }
 }
 
 .settings-usage-trend {
@@ -1707,34 +1712,34 @@
   width: 100%;
   min-height: 0;
   border-radius: 2px 2px 0 0;
-  background: var(--settings-heatmap-level-4);
-  transition: height 180ms var(--ease-out), opacity var(--motion-fast) var(--ease-out);
+  background: var(--settings-heatmap-level-3);
+  transition: height 180ms var(--ease-out), background-color var(--motion-fast) var(--ease-out);
 }
 
 .settings-usage-trend-day:hover i {
-  opacity: 0.72;
+  background: var(--settings-heatmap-level-4);
 }
 
 .settings-usage-chart-axis {
   display: flex;
   justify-content: space-between;
-  margin-top: 7px;
+  margin-top: var(--space-2);
   color: var(--ink-tertiary);
-  font-size: 10px;
+  font-size: var(--font-xs);
   font-variant-numeric: tabular-nums;
 }
 
 .settings-model-chart-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .settings-model-chart-row {
   display: grid;
   grid-template-columns: minmax(120px, 0.8fr) minmax(120px, 1.7fr) 44px;
   align-items: center;
-  gap: 14px;
+  gap: var(--space-4);
 }
 
 .settings-model-chart-label {
@@ -1754,7 +1759,7 @@
 .settings-model-chart-label strong {
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
 }
 
 .settings-model-chart-label small {
@@ -1762,18 +1767,20 @@
   font-size: var(--font-xs);
 }
 
-.settings-model-chart-bar {
+.settings-model-chart-bar,
+.settings-skill-usage-bar {
   height: 6px;
   overflow: hidden;
   border-radius: var(--radius-pill);
   background: var(--surface-2);
 }
 
-.settings-model-chart-bar span {
+.settings-model-chart-bar span,
+.settings-skill-usage-bar span {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--settings-heatmap-level-4);
+  background: var(--settings-heatmap-level-3);
   transition: width 180ms var(--ease-out);
 }
 
@@ -1790,22 +1797,6 @@
   animation: settings-usage-skeleton-pulse 2.4s ease-in-out infinite;
 }
 
-.settings-usage-skeleton-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 8px;
-}
-
-.settings-usage-skeleton-stat {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 8px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-1);
-  padding: 12px 14px;
-}
-
 .settings-usage-skeleton-line {
   display: block;
   max-width: 100%;
@@ -1814,7 +1805,7 @@
 
 .settings-usage-skeleton-stat-value {
   width: 76px;
-  height: 22px;
+  height: 24px;
   border-radius: 4px;
 }
 
@@ -1836,17 +1827,10 @@
   border-radius: 3px;
 }
 
-.settings-usage-skeleton-chart {
-  min-width: 0;
-}
-
-.settings-usage-skeleton-chart-header,
-.settings-usage-skeleton-list-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 18px;
+.settings-usage-skeleton-heading {
+  width: 112px;
+  height: 12px;
+  border-radius: 3px;
 }
 
 .settings-usage-skeleton-period {
@@ -1875,7 +1859,7 @@
 .settings-usage-skeleton-axis {
   display: flex;
   justify-content: space-between;
-  margin-top: 7px;
+  margin-top: var(--space-2);
 }
 
 .settings-usage-skeleton-axis .settings-usage-skeleton-line {
@@ -1886,9 +1870,7 @@
 
 .settings-usage-skeleton-heatmap,
 .settings-usage-skeleton-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .settings-usage-skeleton-months {
@@ -1900,12 +1882,6 @@
 .settings-usage-skeleton-months .settings-usage-skeleton-line {
   width: 34px;
   height: 8px;
-  border-radius: 3px;
-}
-
-.settings-usage-skeleton-heading {
-  width: 112px;
-  height: 12px;
   border-radius: 3px;
 }
 
@@ -1923,23 +1899,6 @@
   aspect-ratio: 1;
   border-radius: 2px;
   background: var(--surface-2);
-}
-
-.settings-usage-skeleton-legend {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-.settings-usage-skeleton-legend .settings-usage-skeleton-line {
-  width: 28px;
-  height: 8px;
-  border-radius: 3px;
-}
-
-.settings-usage-skeleton-list {
-  border-top: 1px solid var(--hairline-soft);
-  padding-top: 24px;
 }
 
 .settings-usage-skeleton-row {
@@ -1964,15 +1923,15 @@
   width: 80%;
 }
 
-.settings-usage-skeleton-row:nth-child(3) .settings-usage-skeleton-line:nth-child(2) {
+.settings-usage-skeleton-row:nth-child(2) .settings-usage-skeleton-line:nth-child(2) {
   width: 62%;
 }
 
-.settings-usage-skeleton-row:nth-child(4) .settings-usage-skeleton-line:nth-child(2) {
+.settings-usage-skeleton-row:nth-child(3) .settings-usage-skeleton-line:nth-child(2) {
   width: 48%;
 }
 
-.settings-usage-skeleton-row:nth-child(5) .settings-usage-skeleton-line:nth-child(2) {
+.settings-usage-skeleton-row:nth-child(4) .settings-usage-skeleton-line:nth-child(2) {
   width: 34%;
 }
 
@@ -1993,52 +1952,31 @@
   }
 }
 
-.settings-skill-usage {
-  min-width: 0;
-  border-top: 1px solid var(--hairline-soft);
-  padding-top: 24px;
-}
-
-.settings-skill-usage-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 20px;
-}
-
-.settings-skill-usage-count {
-  flex: none;
-  color: var(--ink-muted);
-  font-size: var(--font-xs);
-  padding-top: 3px;
-}
-
 .settings-skill-usage-list {
   display: flex;
   flex-direction: column;
-  gap: 13px;
+  gap: var(--space-3);
 }
 
 .settings-skill-usage-row {
   display: grid;
   grid-template-columns: minmax(130px, 0.7fr) minmax(100px, 1.6fr) 52px;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .settings-skill-usage-label {
   display: flex;
   align-items: center;
   min-width: 0;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .settings-skill-usage-label strong {
   overflow: hidden;
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2049,38 +1987,21 @@
   font-variant-numeric: tabular-nums;
 }
 
-.settings-skill-usage-bar {
-  height: 5px;
-  overflow: hidden;
-  background: var(--surface-2);
-}
-
-.settings-skill-usage-bar span {
-  display: block;
-  height: 100%;
-  background: var(--settings-usage-accent);
-  transition: width 180ms ease;
-}
-
 .settings-skill-usage-value {
   color: var(--ink-soft);
-  font-size: var(--font-ui);
+  font-size: var(--font-sm);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 
-.settings-skill-usage-empty {
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  padding: 6px 0 2px;
+.settings-usage-card > .settings-group-empty {
+  min-height: 0;
 }
 
-/* Heatmap grid: flat on the canvas, no panel — the cells, their month
- * labels, and the legend carry themselves. */
+/* Heatmap grid: the cells, their month labels, and the legend carry
+ * themselves inside the card. */
 .settings-heatmap-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 /* Month labels: same column grid as the cell grid, labels positioned by col */
@@ -2090,8 +2011,7 @@
   width: 100%;
   min-height: 14px;
   color: var(--ink-tertiary);
-  font-size: 10px;
-  font-weight: var(--weight-medium);
+  font-size: var(--font-xs);
   user-select: none;
 }
 
@@ -2117,7 +2037,7 @@
   min-width: 0;
   min-height: 0;
   border-radius: 2px;
-  background: var(--gray-100);
+  background: var(--hairline-soft);
   cursor: default;
   transition: opacity var(--motion-fast) var(--ease-out);
 }
@@ -2128,7 +2048,7 @@
 
 .settings-usage-heatmap-cell[data-level="0"],
 .settings-heatmap-legend-cell[data-level="0"] {
-  background: var(--gray-100);
+  background: var(--hairline-soft);
 }
 
 .settings-usage-heatmap-cell[data-level="1"],
@@ -2156,11 +2076,10 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-top: 4px;
+  margin-top: var(--space-1);
   margin-left: auto;
   color: var(--ink-tertiary);
-  font-size: 10px;
-  font-weight: var(--weight-medium);
+  font-size: var(--font-xs);
   user-select: none;
 }
 
@@ -2169,38 +2088,26 @@
   width: 10px;
   height: 10px;
   border-radius: 2px;
-  background: var(--gray-100);
+  background: var(--hairline-soft);
 }
 
-/* The usage empty state reads as one quiet filled module, not a bare line. */
+/* The usage empty state reads as one quiet module, not a bare line. */
 .settings-usage-page > .settings-empty {
   justify-content: center;
   min-height: 0;
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
-  background: var(--surface-1);
   padding: 48px 16px;
 }
 
-/* Usage table: a card with an inset title and full-bleed rows. */
 .settings-usage-table-wrap {
   min-width: 0;
   overflow: visible;
 }
 
-/* The model table reads as one group: a quiet group label over full-width
- * rows, same language as the grouped list. */
-.settings-usage-table-title {
-  margin: 0;
-  padding: 0 0 8px;
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  font-weight: 400;
-  line-height: 1.3;
-}
-
 /* The model table is a content-sized grid: number columns are nowrap
  * shrink-to-fit, so width pressure folds the model column's whitespace
- * first and the rightmost value always ends flush with the column edge. */
+ * first and the rightmost value always ends flush with the card's inset. */
 .settings-usage-table {
   width: 100%;
   min-width: 0;
@@ -2211,17 +2118,17 @@
 .settings-usage-table th,
 .settings-usage-table td {
   border-bottom: 1px solid var(--hairline-soft);
-  padding: 12px 0 12px 16px;
+  padding: var(--space-3) 0 var(--space-3) var(--space-4);
   text-align: right;
   vertical-align: middle;
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
   font-variant-numeric: tabular-nums;
 }
 
 .settings-usage-table th {
-  color: var(--ink-muted);
+  color: var(--ink-soft);
   font-size: var(--font-sm);
 }
 
@@ -2255,6 +2162,10 @@
   gap: 2px;
 }
 
+.settings-usage-model strong {
+  font-weight: var(--weight-regular);
+}
+
 .settings-usage-model small {
   color: var(--ink-muted);
   font-size: var(--font-sm);
@@ -2270,9 +2181,7 @@
  * horizontal scroller. Once four columns stop reading comfortably — model
  * name + three nowrap numbers + gaps ≈ 440px, so fold below 520 — each row
  * folds into a model heading followed by the three values, right-aligned so
- * the last metric still lands on the column's right edge. The threshold
- * moved with the content column: at the column's own 640px cap the full
- * table always fits. */
+ * the last metric still lands on the card's right inset. */
 @container settings-usage (max-width: 520px) {
   .settings-usage-trend,
   .settings-usage-skeleton-trend {
@@ -2339,22 +2248,12 @@
     text-align: right;
   }
 
-  .settings-usage-table tbody td:nth-child(n + 2)::before {
+  /* The column header is hidden here, so each value carries its own label. */
+  .settings-usage-table tbody td[data-label]::before {
+    content: attr(data-label);
     color: var(--ink-muted);
     font-size: var(--font-xs);
     font-weight: var(--weight-semibold);
-  }
-
-  .settings-usage-table tbody td:nth-child(2)::before {
-    content: "输入";
-  }
-
-  .settings-usage-table tbody td:nth-child(3)::before {
-    content: "输出";
-  }
-
-  .settings-usage-table tbody td:nth-child(4)::before {
-    content: "命中率";
   }
 }
 
@@ -2413,41 +2312,50 @@
 }
 
 .settings-archive-page {
-  gap: 24px;
+  gap: var(--settings-gap);
 }
 
 .settings-archive-groups {
-  gap: 40px;
+  gap: var(--settings-gap);
 }
 
 .settings-archive-toolbar {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(180px, 280px);
-  gap: 8px;
+  grid-template-columns: auto minmax(160px, 1fr) minmax(140px, 220px);
+  align-items: center;
+  gap: var(--space-2);
 }
 
-/* Archive toolbar controls share the settings input chrome: a surface-1
- * box with a functional boundary at rest, one step deeper on hover, and the
- * stable appearance while editing. */
+.settings-archive-toolbar .theme-segmented button {
+  white-space: nowrap;
+}
+
+.settings-archive-project-filter,
+.settings-archive-project-filter .select-menu-trigger {
+  width: 100%;
+  min-width: 0;
+}
+
+/* The search field shares the settings input chrome: a field box with the
+ * subtle boundary at rest, one step deeper on hover. */
 .settings-archive-search {
   display: flex;
   min-width: 0;
-  height: 32px;
+  min-height: var(--control-field-height);
   align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  border: 1px solid var(--field-border);
+  gap: var(--space-2);
+  padding: 0 var(--control-padding-inline);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   background: var(--field-bg);
   color: var(--ink-tertiary);
   transition:
     background var(--motion-fast) var(--menu-enter-easing),
-    border-color var(--motion-fast) var(--menu-enter-easing),
-    box-shadow var(--motion-fast) var(--menu-enter-easing);
+    border-color var(--motion-fast) var(--menu-enter-easing);
 }
 
 .settings-archive-search:hover {
-  background: var(--wuu-control-field-background, var(--surface-2));
+  background: var(--field-hover-bg);
 }
 
 .settings-archive-search input {
@@ -2465,38 +2373,33 @@
   color: var(--ink-tertiary);
 }
 
-.select-menu-trigger.settings-archive-filter-trigger {
-  height: 32px;
-  border-color: var(--control-boundary);
-  border-radius: var(--radius-sm);
-  background: var(--field-bg);
-}
-
-.select-menu-trigger.settings-archive-filter-trigger:hover:not(:disabled) {
-  border-color: var(--control-boundary);
-  background: var(--wuu-control-field-background, var(--surface-2));
-}
-
 .settings-archive-group {
+  display: flex;
   min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
 .settings-archive-group-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 0 0 8px;
+  gap: var(--space-4);
 }
 
 .settings-archive-group-name {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 10px;
-  color: var(--ink);
+  gap: var(--space-2);
+  color: var(--ink-strong);
   font-size: var(--font-ui);
   font-weight: var(--weight-semibold);
+  line-height: 1.4;
+}
+
+.settings-archive-group-name .icon {
+  color: var(--ink-tertiary);
 }
 
 .settings-archive-group-name span {
@@ -2507,22 +2410,19 @@
 
 .settings-archive-group-count {
   flex: 0 0 auto;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
-}
-
-.settings-archive-list {
-  min-width: 0;
 }
 
 .settings-archive-row {
   display: flex;
   min-width: 0;
+  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-4);
   border-bottom: 1px solid var(--hairline-soft);
-  padding: 8px 0;
+  padding: var(--space-2) 0;
 }
 
 .settings-archive-row:last-child {
@@ -2544,16 +2444,16 @@
   overflow: hidden;
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
   line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .settings-archive-time {
-  color: var(--ink-muted);
+  color: var(--ink-soft);
   font-size: var(--font-sm);
   line-height: 1.4;
+  font-variant-numeric: tabular-nums;
 }
 
 .settings-archive-restore {
@@ -2564,15 +2464,17 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 48px 16px;
+  gap: var(--space-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 48px var(--card-padding);
   text-align: center;
 }
 
 .settings-archive-empty-icon {
   width: 20px;
   height: 20px;
-  margin-bottom: 4px;
+  margin-bottom: var(--space-1);
   color: var(--ink-faint);
 }
 
@@ -2580,7 +2482,7 @@
   margin: 0;
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-medium);
 }
 
 .settings-archive-empty-hint {
@@ -2666,9 +2568,15 @@
   }
 }
 
-@container settings-page (max-width: 440px) {
+@container settings-page (max-width: 36em) {
   .settings-archive-toolbar {
     grid-template-columns: minmax(0, 1fr);
+    justify-items: start;
+  }
+
+  .settings-archive-search,
+  .settings-archive-project-filter {
+    justify-self: stretch;
   }
 }
 

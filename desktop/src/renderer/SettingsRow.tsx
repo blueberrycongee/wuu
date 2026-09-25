@@ -10,7 +10,7 @@ export function SettingsRow({
   block = false,
 }: {
   title: string;
-  description?: string;
+  description?: ReactNode;
   hint?: string;
   error?: string;
   children: ReactNode;

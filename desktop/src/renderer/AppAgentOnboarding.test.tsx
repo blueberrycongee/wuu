@@ -401,7 +401,7 @@ it("preserves the agent draft across provider settings and returns to the model 
   await click(t("agentOnboarding.manageProviders"));
   await act(async () => { await vi.dynamicImportSettled(); });
   expect(container.querySelector('[data-wuu-component="settings-shell"]')).toBeTruthy();
-  expect(container.querySelector(".settings-provider-card")?.textContent).toContain("reasoner");
+  expect(container.querySelector(".settings-provider-list")?.textContent).toContain("reasoner");
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   await act(async () => { window.dispatchEvent(new Event("wuu:workbench-back")); });
   await confirmModel();
