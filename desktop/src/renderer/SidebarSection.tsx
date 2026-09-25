@@ -4,11 +4,10 @@ import {
   type HTMLAttributes,
   type ReactNode,
   useContext,
-  useEffect,
-  useState,
 } from "react";
 import { SectionRowIcon } from "./ThreadSidebar";
 import { motionDurationMs, prefersReducedMotion } from "./motion";
+import { useExitPresence } from "./useExitPresence";
 
 /**
  * Sidebar folds share a native 0/auto height transition. Keep the empty shell
@@ -25,41 +24,27 @@ export function SidebarCollapseBody({
   children?: ReactNode;
   className?: string;
 }): JSX.Element | null {
-  const [retained, setRetained] = useState(expanded);
-  useEffect(() => {
-    if (expanded) {
-      setRetained(true);
-      return;
-    }
-    if (!retained) return;
-    // The fold rides .sidebar's --section-fold-ms, an alias scoped below the
-    // root that motionDurationMs cannot read; it names this rung.
-    const duration = prefersReducedMotion() ? 0 : motionDurationMs("--motion-slow", 280);
-    if (duration <= 0) {
-      setRetained(false);
-      return;
-    }
-    // transitionend normally releases the rows. Empty bodies, disabled CSS
-    // transitions and background windows still need a bounded cleanup path.
-    const timer = window.setTimeout(() => setRetained(false), duration + 32);
-    return () => window.clearTimeout(timer);
-  }, [expanded, retained]);
+  // transitionend normally releases the rows; the timer is the bounded
+  // fallback. The fold rides .sidebar's --section-fold-ms, an alias scoped
+  // below the root that motionDurationMs cannot read; it names this rung.
+  const [present, release] = useExitPresence(expanded, () =>
+    prefersReducedMotion() ? 0 : motionDurationMs("--motion-slow", 280) + 32);
 
   if (!children) return null;
   const collapseClassName = ["thread-list-collapse", className].filter(Boolean).join(" ");
   return (
     <div
       className={collapseClassName}
-      data-state={expanded ? "open" : retained ? "closing" : "closed"}
+      data-state={expanded ? "open" : present ? "closing" : "closed"}
       aria-hidden={!expanded || undefined}
       inert={!expanded}
       onTransitionEnd={(event) => {
         if (!expanded && event.target === event.currentTarget && event.propertyName === "height") {
-          setRetained(false);
+          release();
         }
       }}
     >
-      <div className="thread-list-collapse-inner">{expanded || retained ? children : null}</div>
+      <div className="thread-list-collapse-inner">{present ? children : null}</div>
     </div>
   );
 }

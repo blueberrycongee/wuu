@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
+import { useExitPresence } from "./useExitPresence";
 import type { WuuMascotActivity } from "./wuu-mascot-spec";
 
 /** Decorative attention never changes the caller's semantic activity. */
@@ -40,19 +41,6 @@ export const MASCOT_EXIT_MS = 180;
 
 /** Keep the same instance through a cancelled exit; ignore child animation events. */
 export function useMascotPresence(visible: boolean, animate = true): boolean {
-  const [retained, setRetained] = useState(visible);
-  useEffect(() => {
-    if (visible) {
-      setRetained(true);
-      return;
-    }
-    if (!retained) return;
-    if (!animate) {
-      setRetained(false);
-      return;
-    }
-    const timer = window.setTimeout(() => setRetained(false), MASCOT_EXIT_MS);
-    return () => window.clearTimeout(timer);
-  }, [animate, visible, retained]);
-  return visible || retained;
+  const [present] = useExitPresence(visible, () => animate && !prefersReducedMotion() ? MASCOT_EXIT_MS : 0);
+  return present;
 }
