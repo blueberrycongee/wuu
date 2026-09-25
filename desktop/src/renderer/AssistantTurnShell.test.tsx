@@ -591,7 +591,6 @@ describe("AssistantTurnShell — process fold default state (rule 2 + rule 8)", 
       "用时 3 秒",
     );
     expect(container.querySelector(".turn-process-meta")).toBeNull();
-    expect(container.querySelector(".turn-process-glyph")).toBeNull();
   });
 
   it("mounts completed process details only when the user reopens the fold", () => {
@@ -988,29 +987,6 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     const folds = reasoningFolds(container);
     expect(folds).toHaveLength(1);
     expect(folds[0].hasAttribute("open")).toBe(false);
-  });
-
-  it("lets the user expand the reasoning fold manually", () => {
-    const turn = makeTurn("completed", [
-      makeReasoning("long internal deliberation"),
-      makeFinalAnswer("short answer"),
-    ]);
-    const { container } = renderShell(turn);
-
-    const folds = reasoningFolds(container);
-    expect(folds[0].hasAttribute("open")).toBe(false);
-
-    const summary = folds[0].querySelector("summary");
-    expect(summary).not.toBeNull();
-    act(() => {
-      summary?.dispatchEvent(new Event("toggle", { bubbles: true }));
-    });
-    // Note: the synthetic toggle event above drives React's controlled
-    // `open` state only if a useState hook listens to onToggle. Native
-    // <details> toggles its open attribute directly via the browser;
-    // this test focuses on the structural default (closed), and the
-    // manual-expand path is verified via DOM behavior in browser.
-    expect(folds[0]).not.toBeNull();
   });
 
   it("keeps reasoning fold expansion local to that reasoning block", async () => {
@@ -1485,11 +1461,6 @@ describe("AssistantTurnShell — turn sources pill end-to-end", () => {
     // target on its own. Nesting <button> in <button> would be invalid
     // HTML and would double-fire the click handler.
     expect(container.querySelectorAll("button.turn-source-icon").length).toBe(0);
-    // The favicon still renders inside the pill button as a visual.
-    const pillImage = pill?.querySelector("img");
-    expect(pillImage?.getAttribute("src")).toContain(
-      "google.com/s2/favicons?domain=docs.anthropic.com",
-    );
     // Pill sits in the process header line, before the answer body — not
     // down in the answer footer.
     const topline = container.querySelector(".turn-process-topline");

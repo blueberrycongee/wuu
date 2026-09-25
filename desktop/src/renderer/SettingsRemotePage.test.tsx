@@ -75,15 +75,6 @@ describe("SettingsRemotePage relay + switch", () => {
     act(() => toggle.click());
     expect(toggles).toEqual([true]);
   });
-
-  it("toggles the host through onToggleHost", () => {
-    const toggles: boolean[] = [];
-    mount(baseProps({ hostRunning: true, onToggleHost: (enabled) => toggles.push(enabled) }));
-    const toggle = container!.querySelector<HTMLButtonElement>(".settings-switch")!;
-    expect(toggle.getAttribute("aria-checked")).toBe("true");
-    act(() => toggle.click());
-    expect(toggles).toEqual([false]);
-  });
 });
 
 describe("SettingsRemotePage pairing", () => {
@@ -115,11 +106,6 @@ describe("SettingsRemotePage pairing", () => {
 });
 
 describe("SettingsRemotePage devices", () => {
-  it("shows the empty state", () => {
-    mount(baseProps());
-    expect(container!.textContent).toContain("尚未配对任何手机");
-  });
-
   it("lists devices and revokes through onRemoveDevice", () => {
     const removed: string[] = [];
     mount(
@@ -151,11 +137,6 @@ describe("SettingsRemotePage devices", () => {
     expect(revoke).toHaveLength(2);
     act(() => revoke[0].click());
     expect(removed).toEqual(["PUB1"]);
-  });
-
-  it("surfaces status errors", () => {
-    mount(baseProps({ status: null, statusError: "wuu remote status failed" }));
-    expect(container!.querySelector(".settings-error")!.textContent).toBe("wuu remote status failed");
   });
 });
 

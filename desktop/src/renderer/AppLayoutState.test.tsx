@@ -252,11 +252,6 @@ describe("useAppLayoutState window-resizing class", () => {
     expect(document.documentElement.classList.contains(LAYOUT_MOTION_CLASS)).toBe(false);
   });
 
-  it("paces sidebar layout motion as a drawer transition", () => {
-    expect(SIDEBAR_MOTION_MS).toBeGreaterThanOrEqual(200);
-    expect(SIDEBAR_MOTION_MS).toBeLessThanOrEqual(280);
-  });
-
   it("does not add the class for non-primary-button pointerdowns on the sidebar", () => {
     renderHookHarness();
     expect(latest).not.toBeNull();

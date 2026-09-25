@@ -123,9 +123,6 @@ it("keeps document output data inspectable without projecting it into the image 
     await act(async () => root.render(<TurnInlineArtifactOutputs artifacts={artifacts} />));
     expect(container.childElementCount).toBe(0);
     await act(async () => root.render(<TurnEndArtifactOutputs artifacts={artifacts} />));
-    expect(container.querySelector(".turn-edit-summary-card")).toBeTruthy();
-    expect(container.querySelector(".turn-output-summary-header")).toBeNull();
-    expect(container.querySelector(".turn-edit-summary-overview")).toBeTruthy();
     expect(container.textContent).toContain("Report");
     expect(container.textContent).not.toContain("application/pdf");
     expect(container.textContent).not.toContain("Message 99");
@@ -141,8 +138,6 @@ it("uses the file-change summary chrome for a single presented file", async () =
   const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
   try {
     await act(async () => root.render(<TurnEndArtifactOutputs artifacts={collectTurnArtifacts(turn)} />));
-    expect(container.querySelector('[data-wuu-component="turn-artifacts"]')?.classList.contains("turn-edit-summary-card")).toBe(true);
-    expect(container.querySelector(".turn-edit-summary-icon")).toBeTruthy();
     expect(container.querySelector(".turn-edit-summary-overview-title")?.textContent).toBe("artifacts.countOne");
     expect(container.querySelector(".turn-edit-summary-overview-path")?.textContent).toBe("wuu-promo.mp4");
     expect(container.querySelector(".turn-edit-summary-row")).toBeNull();

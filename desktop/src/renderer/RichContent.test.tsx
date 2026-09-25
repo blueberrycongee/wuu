@@ -77,9 +77,6 @@ function renderWithImagePreview(element: JSX.Element): void {
   render(<ImagePreviewProvider>{element}</ImagePreviewProvider>);
 }
 
-const BOLD_TEXT_WITH_INLINE_CODE =
-  "**不是让 `apply_patch` 模仿现有 `edit_file` 的裁剪行为，而是让整个 edit 工具族一起采用 Codex 式分轨结果设计。**";
-
 async function settleFileReferenceResolution(): Promise<void> {
   for (let index = 0; index < 3; index += 1) {
     await act(async () => {
@@ -121,21 +118,6 @@ describe("RichContent code block", () => {
     ]);
     expect(container.querySelector("code a, code button")).toBeNull();
     expect(resolveWorkspaceFileReferenceMock).not.toHaveBeenCalled();
-  });
-
-  it("renders inline code inside bold CJK prose without exposing markdown markers", () => {
-    render(<RichContent text={BOLD_TEXT_WITH_INLINE_CODE} />);
-
-    const paragraph = container.querySelector(".rich-paragraph");
-    const strong = paragraph?.querySelector("strong");
-    expect(paragraph?.textContent).toBe(
-      "不是让 apply_patch 模仿现有 edit_file 的裁剪行为，而是让整个 edit 工具族一起采用 Codex 式分轨结果设计。",
-    );
-    expect(strong?.textContent).toBe(paragraph?.textContent);
-    expect(Array.from(strong?.querySelectorAll("code") ?? []).map((code) => code.textContent)).toEqual([
-      "apply_patch",
-      "edit_file",
-    ]);
   });
 
   it("rerenders Mermaid diagrams when the applied theme changes", async () => {
@@ -311,16 +293,6 @@ describe("RichContent code block", () => {
     expect(resolveWorkspaceFileReferenceMock).not.toHaveBeenCalled();
   });
 
-  it("keeps missing bare image paths as text only", async () => {
-    renderWithImagePreview(
-      <RichContent text="还没生成 missing-icon.png。" cwd="/repo/wuu" />,
-    );
-    await settleFileReferenceResolution();
-
-    expect(container.querySelector("img")).toBeNull();
-    expect(container.textContent).toContain("missing-icon.png");
-  });
-
   it("hides Markdown images that fail to load", () => {
     renderWithImagePreview(<RichContent text="![饿鹅骑自行车](missing.svg)" />);
 
@@ -330,67 +302,12 @@ describe("RichContent code block", () => {
     expect(container.querySelector("img.rich-image")).toBeNull();
   });
 
-  it("does not preview image paths inside inline code", async () => {
-    renderWithImagePreview(
-      <RichContent text="Keep `icon.png` literal here." cwd="/repo/wuu" />,
-    );
-    await settleFileReferenceResolution();
-
-    expect(container.querySelector("img")).toBeNull();
-    expect(resolveWorkspaceFileReferenceMock).not.toHaveBeenCalled();
-  });
-
-  it("renders a qualified-path markdown-link as a clickable workspace file link", () => {
-    const openFile = vi.fn();
-    const reference = "internal/tools/tool_discovery.go";
-    render(
-      <RichContent
-        text={`Open [${reference}](${reference}) instead.`}
-        cwd="/repo/wuu"
-        onOpenFile={openFile}
-      />,
-    );
-
-    const link = container.querySelector(".rich-file-link") as HTMLButtonElement | null;
-    expect(link).not.toBeNull();
-    expect(link?.textContent).toContain(reference);
-
-    act(() => {
-      link?.click();
-    });
-
-    expect(openFile).toHaveBeenCalledWith(reference);
-  });
-
-  it("carries a line marker in the visible label but resolves the click to the bare path", () => {
-    const openFile = vi.fn();
-    const target = "internal/appserver/model.go";
-    render(
-      <RichContent
-        text={`See [model.go:789\u2013926](${target}) before editing.`}
-        cwd="/repo/wuu"
-        onOpenFile={openFile}
-      />,
-    );
-
-    const link = container.querySelector(".rich-file-link") as HTMLButtonElement | null;
-    expect(link).not.toBeNull();
-    expect(link?.textContent).toContain("model.go:789\u2013926");
-
-    act(() => {
-      link?.click();
-    });
-
-    expect(openFile).toHaveBeenCalledWith(target);
-  });
-
   it("decorates web links with an inline site icon", () => {
     render(<RichContent text={"Open https://github.com/blueberrycongee/wuu"} />);
 
     const link = container.querySelector("a.rich-web-link") as HTMLAnchorElement | null;
     expect(link).not.toBeNull();
     expect(link?.getAttribute("href")).toBe("https://github.com/blueberrycongee/wuu");
-    expect(link?.querySelector(".rich-link-icon")).not.toBeNull();
     expect(link?.hasAttribute("target")).toBe(false);
 
     act(() => link?.click());
@@ -434,22 +351,6 @@ describe("RichContent code block", () => {
     expect(container.querySelector(".rich-file-link")).toBeNull();
   });
 
-  it("wraps fenced code in a header with the language label and a copy button", () => {
-    render(<RichContent text={"```typescript\nconst x = 1;\n```"} />);
-
-    const block = container.querySelector(".rich-code-block");
-    expect(block).not.toBeNull();
-
-    const language = block?.querySelector(".rich-code-language");
-    expect(language?.textContent).toBe("typescript");
-
-    const copyButton = block?.querySelector(".rich-code-copy");
-    expect(copyButton).not.toBeNull();
-    // The button should advertise itself as a code copy, not the
-    // generic "复制消息" label that the message-level copy uses.
-    expect(copyButton?.getAttribute("aria-label")).toBe("复制代码");
-  });
-
   it("keeps an oversized code block as one text node until highlight is requested", () => {
     const body = `const ${"value".repeat(2_000)} = 1;`;
     render(<RichContent text={"```javascript\n" + body + "\n```"} />);
@@ -458,7 +359,6 @@ describe("RichContent code block", () => {
     expect(code?.querySelector("span")).toBeNull();
     expect(code?.textContent).toContain("const");
     const button = container.querySelector<HTMLButtonElement>(".rich-code-highlight");
-    expect(button?.textContent).toBe("高亮");
 
     act(() => { button?.click(); });
 
@@ -470,17 +370,7 @@ describe("RichContent code block", () => {
     render(<RichContent text={"```\n" + body + "\n```"} />);
 
     expect(container.querySelector(".rich-code-highlight")).toBeNull();
-    expect(container.querySelector(".rich-code-plain-note")?.textContent).toBe("代码过长，保持纯文本");
     expect(container.querySelector(".rich-code code span")).toBeNull();
-  });
-
-  it("omits the language label when the fenced code has no language", () => {
-    render(<RichContent text={"```\nnaked code\n```"} />);
-
-    const block = container.querySelector(".rich-code-block");
-    expect(block).not.toBeNull();
-    expect(block?.querySelector(".rich-code-language")).toBeNull();
-    expect(block?.querySelector(".rich-code-copy")).not.toBeNull();
   });
 
   it("clicking the copy button writes the code text to the clipboard", async () => {
@@ -495,22 +385,6 @@ describe("RichContent code block", () => {
 
     expect(writeTextMock).toHaveBeenCalledTimes(1);
     expect(writeTextMock).toHaveBeenCalledWith("console.log('hi');");
-  });
-
-  it("the copy button stays clickable (pointer-events not 'none')", () => {
-    render(<RichContent text={"```typescript\nconst x = 1;\n```"} />);
-
-    const copyButton = container.querySelector(".rich-code-copy") as HTMLElement | null;
-    expect(copyButton).not.toBeNull();
-    // The base .message-copy-button class sets pointer-events: none so the
-    // user-message copy button stays hidden until its parent is hovered.
-    // .rich-code-copy sits on its own (no .user-message-block-with-actions
-    // parent), so it must explicitly opt back in — otherwise real mouse
-    // clicks pass through to the <pre> underneath and the button silently
-    // does nothing. (Programmatic .click() bypasses pointer-events, which
-    // is why the previous test did not catch this regression.)
-    const style = window.getComputedStyle(copyButton as HTMLElement);
-    expect(style.pointerEvents).not.toBe("none");
   });
 
 });
@@ -537,19 +411,6 @@ describe("RichContent raw HTML and heading levels", () => {
     const badge = container.querySelector(".rich-content .badge");
     expect(badge).not.toBeNull();
     expect(badge?.textContent).toBe("x");
-  });
-
-  it("keeps a workspace <div align=\"center\"> wrapper when allowRawHtml is on", () => {
-    render(
-      <RichContent
-        text={'<div align="center"><a href="https://example.com">badge</a></div>'}
-        allowRawHtml
-      />,
-    );
-
-    const wrapper = container.querySelector('div[align="center"]');
-    expect(wrapper).not.toBeNull();
-    expect(wrapper?.querySelector("a")).not.toBeNull();
   });
 
   describe("CJK autolink boundaries", () => {

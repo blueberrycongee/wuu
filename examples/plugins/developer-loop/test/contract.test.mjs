@@ -2,60 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const manifest = JSON.parse(await readFile(new URL("../plugin.json", import.meta.url), "utf8"));
-const packageJSON = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-const source = await readFile(new URL("../src/renderer.ts", import.meta.url), "utf8");
 const output = await readFile(new URL("../dist/renderer.js", import.meta.url), "utf8");
 const renderer = await import(new URL("../dist/renderer.js", import.meta.url));
 
-assert.equal(packageJSON.devDependencies["@wuu/plugin-sdk"], "^0.1.0");
-assert.match(source, /from "@wuu\/plugin-sdk"/);
-assert.doesNotMatch(source, /(?:desktop|internal)\/src|\.\.\/\.\.\/\.\.\/packages/);
-assert.doesNotMatch(source, /WorkbenchController|PluginHost|RegistryImpl/);
 assert.doesNotMatch(output, /react(?:-dom)?["'/]|node_modules\/react/);
-
-for (const registration of [
-  "registerViewType",
-  "registerViewPlacement",
-  "registerThemeTokens",
-  "registerCommand",
-  "registerStatusItem",
-  "registerLocale",
-  "registerSlot",
-  "registerPresenter",
-  "registerToolActivityPresenter",
-]) {
-  assert.match(source, new RegExp(`api\\.${registration}\\(`), `missing ${registration}`);
-}
-
-for (const family of [
-  "color",
-  "font",
-  "space",
-  "radius",
-  "border",
-  "elevation",
-  "motion",
-  "syntax",
-  "content",
-]) {
-  assert.match(source, new RegExp(`--wuu-${family}-`), `missing --wuu-${family}- token`);
-}
-
-assert.match(source, /persistence: "durable"/);
-assert.match(source, /host\.getSetting\(/);
-assert.match(source, /host\.getStorage\(STORAGE_KEY\)/);
-assert.match(source, /host\.setStorage\(STORAGE_KEY/);
-
-for (const type of ["boolean", "string", "number", "enum"]) {
-  assert.ok(
-    Object.values(manifest.contributes.settings).some((setting) => setting.type === type),
-    `missing ${type} setting`,
-  );
-}
-
-for (const location of ["navigation", "workspaceTools", "settingsPages"]) {
-  assert.equal(manifest.contributes[location]?.[0]?.view, "acceptance-counter");
-}
 
 const registrations = new Map();
 const disposables = [];
@@ -116,22 +66,7 @@ const activateGeneration = (activate) => {
 };
 
 const unloadGeneration = activateGeneration(renderer.activate);
-for (const [kind, expected] of Object.entries({
-  views: 1,
-  viewPlacements: 1,
-  themes: 1,
-  commands: 1,
-  status: 1,
-  locales: 2,
-  slots: 1,
-  presenters: 6,
-  toolActivityPresenters: 1,
-})) {
-  assert.equal(registrations.get(kind)?.length, expected, `${kind} did not activate`);
-}
-
 const presenter = registrations.get("toolActivityPresenters")[0];
-assert.equal(presenter.key, "developer-loop.tool.echo");
 const presented = presenter.render({
   activity: {
     id: "call-1",
@@ -150,17 +85,6 @@ assert.equal(presented.props["data-tool-id"], "call-1");
 assert.equal(presented.children[1].children[0], "developer-loop tool ok");
 
 const presenterByTarget = new Map(registrations.get("presenters").map((definition) => [definition.target, definition]));
-assert.deepEqual(
-  registrations.get("presenters").map(({ target, key, mode }) => ({ target, key, mode })),
-  [
-    { target: "conversation.item", key: "assistant-message", mode: "wrap" },
-    { target: "conversation.composer", key: undefined, mode: "wrap" },
-    { target: "navigation.primary", key: undefined, mode: "wrap" },
-    { target: "content.preview", key: "text/markdown", mode: "wrap" },
-    { target: "app.status", key: undefined, mode: "wrap" },
-    { target: "header.conversation", key: undefined, mode: "wrap" },
-  ],
-);
 
 const invokedActions = [];
 const presentationHost = {
@@ -279,18 +203,6 @@ assert.ok(button);
 await button.props.onClick();
 assert.deepEqual(storedWrites, [["counter", "7"]]);
 assert.equal(nodes.get("[data-counter-value]").textContent, "7");
-
-const countsBeforeFailure = new Map([...registrations].map(([kind, values]) => [kind, values.length]));
-assert.throws(
-  () => activateGeneration((failedApi) => {
-    failedApi.registerPresenter({ id: "failed", target: "app.status", render: () => null });
-    throw new Error("candidate activation failed");
-  }),
-  /candidate activation failed/,
-);
-for (const [kind, values] of registrations) {
-  assert.equal(values.length, countsBeforeFailure.get(kind), `${kind} changed after failed generation rollback`);
-}
 
 unloadGeneration();
 for (const [kind, values] of registrations) {

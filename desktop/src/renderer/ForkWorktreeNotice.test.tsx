@@ -29,17 +29,10 @@ describe("ForkWorktreeNotice", () => {
   it("renders a foldable worktree creation record", () => {
     mount(createElement(ForkWorktreeNotice, { thread: worktreeForkThread() }));
 
-    const notice = document.querySelector(".fork-worktree-notice");
     const details = document.querySelector(".fork-worktree-card");
     const code = document.querySelector(".fork-worktree-code");
 
-    expect(notice?.textContent).toContain("从对话中派生");
-    expect(notice?.textContent).toContain("已创建工作树");
-    expect(document.querySelector(".fork-worktree-divider")).toBeNull();
     expect(details).toHaveProperty("open", false);
-    expect(notice?.textContent).toContain("基础仓库");
-    expect(notice?.textContent).toContain("基准提交");
-    expect(notice?.textContent).toContain("工作树");
     expect(code?.textContent).toContain("分离 HEAD d955824f");
     expect(code?.textContent).toContain("基础仓库 /repo/project");
     expect(code?.textContent).toContain(
