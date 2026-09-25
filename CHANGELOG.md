@@ -24,8 +24,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
-- The macOS DMG installer has a Retina-ready branded background, aligned app
-  and Applications icons, and English and Chinese drag-to-install instructions.
+- The macOS DMG installer window has a Retina-ready background with English
+  and Chinese drag-to-install instructions: a slingshot beside the app fires
+  Wuu along a dotted arc into the Applications folder.
 
 - `bash` starts background processes with a single `run_in_background` flag
   instead of its seven background actions. A new `process` tool reads output

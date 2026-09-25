@@ -31,15 +31,27 @@ All production desktop builds hide account, remote-control, and subscription-das
 
 Before publication, the workflow verifies the app's signature and bundle identity, required executables, absence of CUA helpers, and clean packaged-core version. It also runs `hdiutil verify` on the DMG and `unzip -t` on the ZIP. These checks establish packaging properties; they do not replace opening the app and testing affected user flows.
 
-The DMG window layout is configured in `desktop/package.json`. Its background
-source is `desktop/build/dmg-background.svg`; after editing it, run
-`npm --prefix desktop run dmg-background:generate` on macOS and commit both the
-1x and 2x PNGs. Packaging consumes those committed images and combines them into
-a HiDPI TIFF, without requiring artwork regeneration on release machines. Keep
-the artwork dimensions and icon positions aligned with the DMG configuration.
-Open the built DMG in Finder to check text, icon labels, clipping and scrolling
-at standard and Retina resolution, then verify copying to Applications and
-launching the app. A background-only preview does not validate the Finder layout.
+The DMG window layout is configured in `desktop/package.json`.
+`desktop/scripts/generate-dmg-background.cjs` draws the background around the
+icon positions in `dmg.contents`, using the face and colours in
+`assets/app-icon-source.json`. After changing any of these, run
+`npm --prefix desktop run dmg-background:generate` on macOS, so the text uses
+the system fonts Finder users see, and commit both the 1x and 2x PNGs.
+Packaging consumes those committed images and combines them into a HiDPI TIFF,
+without requiring artwork regeneration on release machines.
+
+Finder imposes four constraints on the artwork, which the script encodes. The
+window takes the size of the 1x background, and `dmg.window` is ignored while a
+background is set. Finder draws the picture below the title bar without
+shrinking it, so a strip at the bottom as tall as the title bar (32 pt on macOS
+26) stays hidden. Over a background picture, Finder draws icon labels in black
+in both Light and Dark Mode, so the areas under the icons must stay light.
+Selecting an icon draws a translucent box about 72 pt around its centre, so
+artwork stays out of that box and its label rather than tucking behind an icon.
+
+Open the built DMG in Finder to check icon labels, both selection states,
+clipping and scrolling at standard and Retina resolution, then verify copying
+to Applications and launching the app. A background-only preview does not validate the Finder layout.
 
 ## Signing configuration
 

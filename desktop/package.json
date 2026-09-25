@@ -123,15 +123,11 @@
     "dmg": {
       "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
       "background": "build/dmg-background.png",
-      "window": {
-        "width": 660,
-        "height": 400
-      },
       "iconSize": 128,
       "iconTextSize": 14,
       "contents": [
-        { "x": 170, "y": 212, "type": "file" },
-        { "x": 490, "y": 212, "type": "link", "path": "/Applications" }
+        { "x": 170, "y": 262, "type": "file" },
+        { "x": 530, "y": 262, "type": "link", "path": "/Applications" }
       ]
     },
     "win": {
