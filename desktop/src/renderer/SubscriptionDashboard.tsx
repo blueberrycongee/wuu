@@ -25,7 +25,9 @@ export function SubscriptionDashboard({
   const [pending, setPending] = useState("");
   const [revision, setRevision] = useState(0);
   const [loadedInventory, setLoadedInventory] = useState<EngineListResult>();
-  const [refreshing, setRefreshing] = useState(false);
+  // The mount effect always starts a load; begin busy so the first frame
+  // already reserves the quota placeholders.
+  const [refreshing, setRefreshing] = useState(true);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -57,6 +59,13 @@ export function SubscriptionDashboard({
     [loadedInventory, inventory, providers, revision],
   );
 
+  // Quota arrives only with this dashboard's own snapshot. Until the first one
+  // lands, reserve its block on rows that can report one: built-in sources
+  // carry no quota and unavailable engines are never queried. The inventory
+  // does not say which runnable engines have an allowance API, so a runnable
+  // engine without one collapses its placeholder when the snapshot arrives.
+  const quotaLoading = refreshing && !loadedInventory;
+
   async function choose(source: SubscriptionSource, modelID: string): Promise<void> {
     if (!modelID || modelID === source.selectedModel || pending) return;
     setError("");
@@ -80,11 +89,28 @@ export function SubscriptionDashboard({
       <header className="settings-page-header settings-subscription-header">
         <h1 className="settings-page-title">{t("settings.subscriptions")}</h1>
         <button type="button" className="settings-button settings-button-ghost settings-icon-button" disabled={refreshing} onClick={() => setRefreshVersion((value) => value + 1)} aria-label={t(refreshing ? "settings.subscriptionRefreshing" : "settings.subscriptionRefresh")} title={t("settings.subscriptionRefresh")}>
-          <RefreshCw size={16} aria-hidden="true" />
+          <RefreshCw size={16} className={refreshing ? "settings-spin" : undefined} aria-hidden="true" />
         </button>
       </header>
       {sources.length === 0 ? (
-        <p className="settings-muted-line">{inventory || loadedInventory ? t("settings.subscriptionsEmpty") : t("settings.engineDetecting")}</p>
+        inventory || loadedInventory ? <p className="settings-muted-line">{t("settings.subscriptionsEmpty")}</p>
+          : refreshing ? (
+            <div className="settings-subscription-list settings-subscription-skeleton" role="status" aria-label={t("settings.engineDetecting")} aria-busy="true">
+              {[0, 1, 2].map((item) => (
+                <div key={item} className="settings-subscription" aria-hidden="true">
+                  <div className="settings-subscription-row">
+                    <div className="settings-subscription-main">
+                      <span className="settings-usage-skeleton-line settings-subscription-skeleton-icon" />
+                      <span className="settings-usage-skeleton-line settings-subscription-skeleton-text settings-subscription-skeleton-name" />
+                    </div>
+                    <div className="settings-subscription-actions">
+                      <span className="settings-usage-skeleton-line settings-subscription-skeleton-model" />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null
       ) : (
         <div className="settings-subscription-list">
           {sources.map((source) => {
@@ -119,7 +145,9 @@ export function SubscriptionDashboard({
                     {showAuthentication ? <EngineAuthentication engineID={source.id} compact onAuthenticated={() => setRefreshVersion((value) => value + 1)} /> : null}
                   </div>
                 </div>
-                <Quota quota={source.quota} now={now} />
+                {quotaLoading && source.kind === "engine" && source.login !== "unavailable"
+                  ? <QuotaSkeleton />
+                  : <Quota quota={source.quota} now={now} />}
               </article>
             );
           })}
@@ -128,6 +156,23 @@ export function SubscriptionDashboard({
       {error ? <p className="settings-subscription-status" role="alert">{t(error)}</p> : null}
     </section>
   );
+}
+
+// Mirrors Quota's layout line for line (usage, meter, reset). Two windows
+// match the usual short and long allowance pair at every width.
+function QuotaSkeleton(): JSX.Element {
+  return <div className="settings-subscription-quota settings-subscription-skeleton" aria-hidden="true">
+    {[0, 1].map((item) => (
+      <div key={item} className="settings-subscription-window">
+        <div className="settings-subscription-usage">
+          <span className="settings-usage-skeleton-line settings-subscription-skeleton-text settings-subscription-skeleton-period" />
+          <span className="settings-usage-skeleton-line settings-subscription-skeleton-text settings-subscription-skeleton-remaining" />
+        </div>
+        <span className="settings-usage-skeleton-line settings-subscription-skeleton-meter" />
+        <span className="settings-usage-skeleton-line settings-subscription-skeleton-text settings-subscription-skeleton-reset" />
+      </div>
+    ))}
+  </div>;
 }
 
 function Quota({ quota, now }: { quota?: SubscriptionQuota; now: number }): JSX.Element | null {

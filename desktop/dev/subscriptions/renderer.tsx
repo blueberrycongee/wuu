@@ -43,10 +43,17 @@ if (params.has("failures")) {
   );
   providers.push({ name: "openai-codex", type: "openai", reuse_codex_credentials: true, model: "gpt-5.4", api_key_configured: false });
 }
+// Like the product, the parent inventory has no quota; only the dashboard's
+// own request returns it, after `delay` ms (or rejects with `fail`).
+// `detecting` withholds the parent inventory and providers entirely.
+const parentInventory: EngineListResult = { engines: inventory.engines.map(({ quota, ...engine }) => engine) };
+const delay = Number(params.get("delay") || 0);
 window.wuu = {
   ...window.wuu,
   initialLanguagePreference: params.get("lang") === "en" ? "en-US" : "zh-CN",
-  listEngines: async () => structuredClone(inventory),
+  listEngines: () => new Promise((resolve, reject) => setTimeout(() => params.has("fail")
+    ? reject(new Error("Synthetic quota failure"))
+    : resolve({ ...structuredClone(inventory), subscription_providers: structuredClone(providers) }), delay)),
   listEngineAuthMethods: async () => ({ methods: [{ id: "browser", name: "Browser" }], authenticated: false }),
   authenticateEngine: async (id) => {
     const engine = inventory.engines.find((item) => item.id === id)!;
@@ -60,7 +67,7 @@ window.wuu = {
 function Preview() {
   const [sources, setSources] = useState(providers);
   return <main style={{ height: "100vh", overflow: "auto" }}><div className="settings-page">
-    <SubscriptionDashboard inventory={inventory} providers={sources} onSelectBuiltinModel={async (name, model) => setSources((current) => current.map((source) => source.name === name ? { ...source, model } : source))} />
+    <SubscriptionDashboard inventory={params.has("detecting") ? undefined : parentInventory} providers={params.has("detecting") ? undefined : sources} onSelectBuiltinModel={async (name, model) => setSources((current) => current.map((source) => source.name === name ? { ...source, model } : source))} />
   </div></main>;
 }
 createRoot(document.getElementById("root")!).render(<I18nProvider><Preview /></I18nProvider>);

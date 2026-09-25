@@ -1025,6 +1025,52 @@
   color: var(--danger);
 }
 
+/* Loading placeholders reuse the loaded row and quota containers. Each text
+ * placeholder fills the line box of the text it stands for, so the loaded
+ * content lands without moving the row at any font size. */
+.settings-subscription-skeleton-text {
+  height: 0.75em;
+  margin-block: calc((1lh - 0.75em) / 2);
+  border-radius: var(--radius-xs);
+}
+
+.settings-subscription-skeleton-icon {
+  width: var(--icon-size-lg);
+  height: var(--icon-size-lg);
+  flex: 0 0 auto;
+  border-radius: var(--radius-xs);
+}
+
+.settings-subscription-skeleton-name {
+  width: 7em;
+}
+
+/* Stands in for the borderless model trigger's label and chevron, inside the
+ * trigger's own height and inline padding, in both the wide and stacked rows. */
+.settings-subscription-skeleton-model {
+  width: 6em;
+  height: 0.75em;
+  margin: calc((var(--control-field-height) - 0.75em) / 2) var(--control-padding-inline);
+  border-radius: var(--radius-xs);
+}
+
+.settings-subscription-skeleton-period {
+  width: 3em;
+}
+
+.settings-subscription-skeleton-remaining {
+  width: 4.5em;
+}
+
+.settings-subscription-skeleton-reset {
+  width: 9em;
+}
+
+.settings-subscription-skeleton-meter {
+  height: 6px;
+  border-radius: var(--radius-xs);
+}
+
 @container settings-page (max-width: 32em) {
   .settings-subscription-row {
     grid-template-columns: minmax(0, 1fr);
@@ -1738,7 +1784,8 @@
   text-align: right;
 }
 
-.settings-usage-loading {
+.settings-usage-loading,
+.settings-subscription-skeleton {
   animation: settings-usage-skeleton-pulse 2.4s ease-in-out infinite;
 }
 
@@ -1939,7 +1986,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .settings-usage-loading {
+  .settings-usage-loading,
+  .settings-subscription-skeleton {
     animation: none;
   }
 }
