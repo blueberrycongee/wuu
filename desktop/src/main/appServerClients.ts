@@ -402,7 +402,7 @@ export class AppServerClient {
   private runningThreadIDs = new Set<string>();
   private queuedTurnKeys = new Set<string>();
   private nextRequestID = 1;
-  private stdoutBuffer = "";
+  private stdoutChunks: string[] = [];
   private disposing = false;
   private lastUsedAt = Date.now();
   private lastStderr = "";
@@ -588,7 +588,7 @@ export class AppServerClient {
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.child = child;
-    this.stdoutBuffer = "";
+    this.stdoutChunks = [];
     this.lastStderr = "";
 
     child.stdout.setEncoding("utf8");
@@ -708,7 +708,7 @@ export class AppServerClient {
     // renderer event may immediately start a replacement process; late
     // error/exit/close events from this child must not touch that new child.
     this.child = null;
-    this.stdoutBuffer = "";
+    this.stdoutChunks = [];
     this.lastStderr = "";
     this.pending.clear();
     this.threadCwdsByID.clear();
@@ -734,16 +734,29 @@ export class AppServerClient {
   }
 
   private readStdout(chunk: string): void {
-    this.stdoutBuffer += chunk;
+    // A history response can span hundreds of pipe reads. Scan each new chunk
+    // once and join only at a line boundary, rather than repeatedly flattening
+    // and searching the entire growing response.
+    const child = this.child;
+    let start = 0;
     for (;;) {
-      const index = this.stdoutBuffer.indexOf("\n");
+      const index = chunk.indexOf("\n", start);
       if (index < 0) {
+        if (start < chunk.length) this.stdoutChunks.push(chunk.slice(start));
         return;
       }
-      const line = this.stdoutBuffer.slice(0, index).trim();
-      this.stdoutBuffer = this.stdoutBuffer.slice(index + 1);
+      const tail = chunk.slice(start, index);
+      let line = tail;
+      if (this.stdoutChunks.length > 0) {
+        this.stdoutChunks.push(tail);
+        line = this.stdoutChunks.join("");
+        this.stdoutChunks = [];
+      }
+      line = line.trim();
+      start = index + 1;
       if (line) {
         this.handleLine(line);
+        if (this.child !== child) return;
       }
     }
   }
