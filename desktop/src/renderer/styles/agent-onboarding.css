@@ -38,7 +38,7 @@
 }
 .agent-onboarding-name-actions > :last-child { margin-inline-start: auto; }
 .agent-onboarding-bubble { max-width: 100%; padding: 12px; }
-.agent-onboarding-form { min-width: 0; width: 208px; max-width: 100%; transition: width 220ms cubic-bezier(0.22, 1, 0.36, 1); }
+.agent-onboarding-form { min-width: 0; width: 208px; max-width: 100%; transition: width var(--motion-base) var(--ease-out); }
 .agent-onboarding-form:has(.runtime-panel.is-providers) { width: 180px; }
 .agent-onboarding-form:has(.runtime-panel.is-models) { width: 224px; }
 .agent-onboarding-author { font-size: var(--font-sm); font-weight: 550; overflow-wrap: anywhere; }
@@ -63,10 +63,9 @@
 .agent-onboarding-first-message { display: flow-root; position: relative; width: min(100%, var(--channel-content-max-width)); margin-inline: auto; }
 .agent-onboarding-intro-avatar { position: absolute; top: 12px; left: calc(23px - var(--channel-avatar-size) / 2); width: var(--channel-avatar-size); height: var(--channel-avatar-size); }
 .agent-onboarding-name-prompt { margin: 0; }
-.agent-onboarding-bubble > form { animation: onboarding-content-in var(--motion-normal, 180ms) var(--ease-out) 100ms both; }
-@keyframes onboarding-content-in { from { opacity: 0; } to { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) {
-  .agent-onboarding-bubble > form { animation: none; transition: none; }
+.agent-onboarding-bubble > form { animation: wuu-fade-in var(--motion-base) var(--ease-out) 100ms both; }
+@container style(--motion-reduced: 1) {
+  .agent-onboarding-bubble > form { animation-delay: 0s; }
 }
 
 .agent-onboarding-runtime { border: 0; padding: 0; margin: 0; min-width: 0; }

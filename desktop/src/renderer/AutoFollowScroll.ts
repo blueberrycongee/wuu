@@ -9,7 +9,7 @@ import {
 } from "react";
 import { isWindowResizing } from "./WindowResizeState";
 import { createScrollGlide } from "./ScrollGlide";
-import { prefersReducedMotion } from "./motion";
+import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
 import { markScrollbarRevealSelfManaged, revealScrollbar } from "./ScrollbarReveal";
 
 export const AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 16;
@@ -582,16 +582,15 @@ export function useAutoFollowScrollContainer({
   useLayoutEffect(() => cancelMotion, [cancelMotion, observeKey, open]);
 
   useEffect(() => {
-    const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const settle = () => {
-      if (motionFrameRef.current === undefined || (!document.hidden && !media?.matches)) return;
+      if (motionFrameRef.current === undefined || (!document.hidden && !prefersReducedMotion())) return;
       cancelMotion();
       scrollToBottom();
     };
-    media?.addEventListener("change", settle);
+    const stopReducedMotion = subscribeReducedMotion(settle);
     document.addEventListener("visibilitychange", settle);
     return () => {
-      media?.removeEventListener("change", settle);
+      stopReducedMotion();
       document.removeEventListener("visibilitychange", settle);
     };
   }, [cancelMotion, scrollToBottom]);

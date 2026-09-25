@@ -414,7 +414,7 @@
   opacity: 0;
   pointer-events: none;
   transform: translateY(-3px);
-  transition: opacity 120ms ease, transform 120ms ease;
+  transition: opacity var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out);
 }
 
 .channel-agent-status-card > span {
@@ -694,7 +694,7 @@
   background: var(--surface-2);
   font-weight: 500;
   cursor: pointer;
-  transition: background 150ms ease;
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
 .channel-agent-proposal-actions button:hover,
@@ -793,7 +793,7 @@
   max-width: 0;
   overflow: hidden;
   opacity: 0;
-  transition: max-width 120ms ease, opacity 120ms ease;
+  transition: max-width var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out);
 }
 
 .channel-author-mention:hover,
@@ -973,46 +973,6 @@
   gap: 8px;
 }
 
-.channel-assignment-item {
-  width: 100%;
-  min-width: 0;
-  transform-origin: center;
-  animation: channel-assignment-arrive 380ms cubic-bezier(.2, .85, .25, 1) both;
-  animation-delay: calc(var(--channel-assignment-index, 0) * 120ms);
-}
-
-.channel-assignment-item[data-state="done"],
-.channel-assignment-item[data-state="completed"] {
-  animation: channel-assignment-arrive-subtle 320ms ease-out both;
-  animation-delay: calc(var(--channel-assignment-index, 0) * 80ms);
-}
-
-@keyframes channel-assignment-arrive {
-  0% {
-    opacity: 0;
-    transform: translateY(8px) scale(.96);
-  }
-  70% {
-    opacity: 1;
-    transform: translateY(0) scale(1.01);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes channel-assignment-arrive-subtle {
-  0% {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 .channel-assignment-heading {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) 14px;
@@ -1071,17 +1031,12 @@
   color: var(--success);
 }
 
-@keyframes channel-status-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
-}
-
 .channel-orchestration-summary {
   width: min(100%, 540px);
   padding: 0;
   border-radius: var(--radius-sm);
   background: var(--surface-1);
-  transition: background 150ms ease;
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
 .channel-orchestration-summary:hover {
@@ -1104,7 +1059,7 @@
   font-weight: 500;
   text-align: left;
   cursor: pointer;
-  transition: color 150ms ease;
+  transition: color var(--motion-fast) var(--ease-out);
 }
 
 .channel-orchestration-summary > button:hover,
@@ -1145,26 +1100,6 @@
   margin-bottom: 5px;
 }
 
-@keyframes channel-assignment-arrive {
-  0% {
-    opacity: 0;
-    transform: translateY(6px) scale(.9);
-  }
-  72% {
-    opacity: 1;
-    transform: translateY(0) scale(1.02);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes channel-assignment-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
 @media (max-width: 720px) {
   .channel-orchestration-message.chat-row > .channel-message-content {
     width: 100%;
@@ -1189,15 +1124,6 @@
     grid-row: 2;
   }
 
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .channel-assignment-item {
-    transform: none;
-    animation-name: channel-assignment-fade;
-    animation-duration: 160ms;
-    animation-timing-function: ease-out;
-  }
 }
 
 .channel-message-content > .composer-attachments {
@@ -1388,7 +1314,7 @@
   font-weight: var(--weight-medium);
   text-align: left;
   cursor: pointer;
-  transition: background var(--motion-fast) var(--menu-enter-easing);
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
 .channel-mention-menu button:hover {
@@ -1441,7 +1367,7 @@
   font-size: var(--font-xs);
   line-height: 1;
   opacity: 0;
-  transition: opacity var(--motion-fast) var(--menu-enter-easing);
+  transition: opacity var(--motion-fast) var(--ease-out);
 }
 
 .channel-mention-menu button.selected .channel-mention-key {
@@ -1819,7 +1745,7 @@
 
 .channel-agent-graph-links line,
 .channel-agent-graph-node {
-  transition: opacity 160ms ease, filter 160ms ease;
+  transition: opacity var(--motion-base) var(--ease-out), filter var(--motion-base) var(--ease-out);
 }
 
 .channel-agent-graph-links line.is-muted,
@@ -1898,12 +1824,8 @@
   border-radius: var(--radius-sm);
   background: var(--bg-primary);
   box-shadow: var(--shadow-pop);
-  animation: channel-agent-preview-in 140ms ease-out;
-}
-
-@keyframes channel-agent-preview-in {
-  from { opacity: 0; transform: translateY(-3px); }
-  to { opacity: 1; transform: translateY(0); }
+  --enter-y: -3px;
+  animation: wuu-enter var(--motion-fast) var(--ease-out) both;
 }
 
 .channel-agent-preview-header {
@@ -2034,16 +1956,11 @@
 }
 
 .channel-agent-preview-loading { display: grid; gap: 6px; margin-top: 10px; }
-.channel-agent-preview-loading i { height: 6px; border-radius: var(--radius-pill); background: var(--ink-overlay-6); animation: channel-agent-preview-pulse 1.4s ease-in-out infinite; }
+.channel-agent-preview-loading i { height: 6px; border-radius: var(--radius-pill); background: var(--ink-overlay-6); --pulse-opacity: 0.45; animation: wuu-pulse 1.4s ease-in-out infinite; }
 .channel-agent-preview-loading i:nth-child(2) { width: 64%; animation-delay: 0.15s; }
 
-@keyframes channel-agent-preview-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
-
-@media (prefers-reduced-motion: reduce) {
-  .channel-agent-preview-card,
+@container style(--motion-reduced: 1) {
   .channel-agent-preview-loading i { animation: none; }
-  .channel-agent-graph-links line,
-  .channel-agent-graph-node { transition: none; }
 }
 
 .channel-agent-graph-empty {
@@ -3656,9 +3573,6 @@ html[data-focus-modality="keyboard"] .agent-avatar-color-control input[type="ran
   .channel-conversation-footer .channel-composer { --session-outer-padding-inline: 12px; }
   .channel-mention-menu button { min-height: 44px; }
   .channel-agent-proposal { padding: 12px; gap: 10px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .channel-typing-dots i { animation: none; opacity: 0.7; }
 }
 
 .channel-activity-session-list { padding: 12px; }

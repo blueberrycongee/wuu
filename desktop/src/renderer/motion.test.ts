@@ -1,8 +1,68 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cubicBezier, motionEasing } from "./motion";
+import { cubicBezier, motionEasing, prefersReducedMotion, subscribeReducedMotion } from "./motion";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  delete document.documentElement.dataset.appearanceMotion;
+});
+
+/** An OS reduced-motion query the test can flip, as the platform would. */
+function stubSystemReducedMotion(initial: boolean): (matches: boolean) => void {
+  const listeners = new Set<() => void>();
+  const media = {
+    matches: initial,
+    addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+    removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+  };
+  vi.spyOn(window, "matchMedia").mockReturnValue(media as unknown as MediaQueryList);
+  return (matches) => {
+    media.matches = matches;
+    for (const listener of listeners) listener();
+  };
+}
+
+const flushMutations = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+describe("reduced motion", () => {
+  it("follows the OS setting while the in-app preference follows the system", () => {
+    stubSystemReducedMotion(true);
+    document.documentElement.dataset.appearanceMotion = "system";
+    expect(prefersReducedMotion()).toBe(true);
+  });
+
+  it("reduces motion from the in-app preference even when the OS does not", () => {
+    stubSystemReducedMotion(false);
+    expect(prefersReducedMotion()).toBe(false);
+    document.documentElement.dataset.appearanceMotion = "reduce";
+    expect(prefersReducedMotion()).toBe(true);
+  });
+
+  it("notifies once per change from either source and stops after unsubscribing", async () => {
+    const setSystem = stubSystemReducedMotion(false);
+    const listener = vi.fn();
+    const unsubscribe = subscribeReducedMotion(listener);
+
+    document.documentElement.dataset.appearanceMotion = "reduce";
+    await flushMutations();
+    expect(listener).toHaveBeenLastCalledWith(true);
+
+    // Still reduced by the preference: the OS turning on changes nothing.
+    setSystem(true);
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    document.documentElement.dataset.appearanceMotion = "system";
+    await flushMutations();
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    setSystem(false);
+    expect(listener).toHaveBeenLastCalledWith(false);
+    expect(listener).toHaveBeenCalledTimes(2);
+
+    unsubscribe();
+    document.documentElement.dataset.appearanceMotion = "reduce";
+    await flushMutations();
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
 });
 
 function stubComputedValue(value: string): void {

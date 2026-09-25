@@ -20,6 +20,7 @@ import {
   isWindowResizing,
 } from "./WindowResizeState";
 import { useI18n } from "./i18n";
+import { prefersReducedMotion } from "./motion";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 
 /**
@@ -319,7 +320,7 @@ export function JumpToLatestPill({
     if (!node) {
       return;
     }
-    node.scrollTo({ top: latestFollowScrollTop(node), behavior: "smooth" });
+    node.scrollTo({ top: latestFollowScrollTop(node), behavior: prefersReducedMotion() ? "auto" : "smooth" });
   };
 
   const pillBody = (

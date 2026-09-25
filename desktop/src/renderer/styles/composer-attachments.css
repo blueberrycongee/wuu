@@ -290,7 +290,7 @@ button.composer-document-card-main:hover .composer-document-card-icon {
   flex: 0 0 auto;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .composer-media-card[data-pending]::before {
     animation: none;
   }

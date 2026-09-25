@@ -56,6 +56,4 @@
 
 .managed-agent-work-pill { font-variant-numeric: tabular-nums; }
 
-.managed-session-spinner { animation: managed-session-spin 1s linear infinite; }
-@keyframes managed-session-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .managed-session-spinner { animation: none; } }
+.managed-session-spinner { animation: wuu-spin var(--motion-spin) linear infinite; }

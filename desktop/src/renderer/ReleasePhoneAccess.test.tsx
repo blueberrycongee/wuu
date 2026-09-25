@@ -72,7 +72,6 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
         resizingSidebar={false}
         sidebarCollapsed={false}
         sidebarAnimating={false}
-        sidebarMotionMs={0}
         onToggleSidebar={vi.fn()}
         onBack={vi.fn()}
         onSave={vi.fn()}

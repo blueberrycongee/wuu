@@ -582,12 +582,14 @@
   align-items: start;
   justify-items: center;
   padding: min(148px, 16vh) 24px 32px;
-  opacity: 0;
-  animation: conversation-search-overlay-in var(--search-enter-duration) var(--search-motion-easing) both;
+  animation: wuu-fade-in var(--search-enter-duration) var(--search-motion-easing) both;
 }
 
+/* A fading overlay no longer takes clicks: they reach the surface it is
+ * revealing instead of re-running the close. */
 .conversation-search-overlay.closing {
-  animation: conversation-search-overlay-out var(--search-exit-duration) var(--search-motion-easing) both;
+  pointer-events: none;
+  animation: wuu-fade-out var(--search-exit-duration) var(--search-motion-easing) both;
 }
 
 .conversation-search-dialog {
@@ -606,12 +608,15 @@
   box-shadow: var(--shadow-modal);
   padding: 10px;
   transform-origin: top center;
-  will-change: opacity, transform;
-  animation: conversation-search-dialog-in var(--search-enter-duration) var(--search-motion-easing) both;
+  --enter-y: -8px;
+  --enter-scale: 0.982;
+  --exit-y: -6px;
+  --exit-scale: 0.986;
+  animation: wuu-enter var(--search-enter-duration) var(--search-motion-easing) both;
 }
 
 .conversation-search-overlay.closing .conversation-search-dialog {
-  animation: conversation-search-dialog-out var(--search-exit-duration) var(--search-motion-easing) both;
+  animation: wuu-exit var(--search-exit-duration) var(--search-motion-easing) both;
 }
 
 .conversation-search-input-wrap {
@@ -645,8 +650,8 @@
   background: transparent;
   color: var(--env-search-clear-btn-text);
   transition:
-    opacity var(--motion-base) var(--ease-out),
-    transform var(--motion-base) var(--search-motion-easing);
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
 }
 
 .conversation-search-clear:hover,
@@ -681,7 +686,7 @@
   font-size: var(--font-sm);
   font-weight: var(--weight-medium);
   padding: 8px 10px;
-  animation: menu-enter var(--motion-base) var(--search-motion-easing) both;
+  animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
 }
 
 .conversation-search-results {
@@ -707,9 +712,8 @@
   padding: 6px 10px 6px 12px;
   text-align: left;
   transition:
-    opacity var(--motion-base) var(--ease-out),
-    transform var(--motion-base) var(--search-motion-easing);
-  will-change: opacity, transform;
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
 }
 
 .conversation-search-result:hover {
@@ -789,7 +793,7 @@
   color: var(--ink-muted);
   font-size: var(--font-body);
   font-weight: var(--weight-medium);
-  animation: menu-enter var(--motion-base) var(--search-motion-easing) both;
+  animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
 }
 
 /* Two-pane body — result list on the left, preview pane on the right. The
@@ -1192,7 +1196,13 @@
   border-radius: 0;
   box-shadow: var(--shadow-drawer-left);
   transform-origin: right center;
-  animation: sidebar-name-dialog-drawer-in var(--search-enter-duration) var(--search-motion-easing) both;
+  --enter-x: 100%;
+  --enter-y: 0px;
+  --enter-scale: 1;
+  --exit-x: 100%;
+  --exit-y: 0px;
+  --exit-scale: 1;
+  animation: wuu-enter var(--search-enter-duration) var(--search-motion-easing) both;
 }
 
 .sidebar-name-dialog.sidebar-name-dialog-drawer {
@@ -1219,16 +1229,14 @@
   font-size: 16px;
 }
 
-.sidebar-name-dialog-overlay-drawer.closing {
-  pointer-events: none;
-}
-
 .sidebar-name-dialog-overlay.backgrounded {
   pointer-events: none;
 }
 
-.sidebar-name-dialog-drawer.closing {
-  animation: sidebar-name-dialog-drawer-out var(--search-exit-duration) var(--ease-in) both;
+/* The dialog-shell exit rule outranks a plain drawer selector; the drawer
+ * only swaps the curve, since its offsets already point off the right edge. */
+.conversation-search-overlay.closing .sidebar-name-dialog-drawer {
+  animation-timing-function: var(--ease-in);
 }
 
 .sidebar-name-dialog-drawer > :nth-child(2) {
@@ -1323,8 +1331,8 @@
   font-weight: var(--weight-semibold);
   padding: 7px 12px;
   transition:
-    opacity var(--motion-base) var(--ease-out),
-    transform var(--motion-base) var(--search-motion-easing);
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
 }
 
 .sidebar-name-dialog-actions button:hover {
@@ -1588,8 +1596,8 @@
   font-weight: var(--weight-semibold);
   padding: 7px 12px;
   transition:
-    opacity var(--motion-base) var(--ease-out),
-    transform var(--motion-base) var(--search-motion-easing);
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
 }
 
 .new-participant-actions button svg {
@@ -1664,7 +1672,7 @@
   text-align: left;
   padding: var(--compact-padding-inline);
   cursor: pointer;
-  transition: background var(--menu-enter-duration) var(--menu-enter-easing);
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
 .fork-dialog-option:hover:not(:disabled) {

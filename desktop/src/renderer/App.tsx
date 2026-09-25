@@ -195,11 +195,11 @@ import {
 import { DIRECTORY_POLL_BASE_MS, nextDirectoryPollDelay } from "./ChannelDirectoryPoll";
 import { sameChannelRooms, sameNamedAgents } from "./ChannelRoomState";
 import {
-  RIGHT_PANEL_MOTION_MS,
-  SIDEBAR_DRAWER_EXIT_MS,
+  rightPanelMotionMs,
+  sidebarDrawerExitMs,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
-  SIDEBAR_MOTION_MS,
+  sidebarMotionMs,
   WORKSPACE_RIGHT_PANEL_MAX_WIDTH,
   WORKSPACE_RIGHT_PANEL_MIN_WIDTH,
   useAppLayoutState,
@@ -338,11 +338,6 @@ import {
 } from "./SessionRuntimeState";
 export { SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./SidebarDrawerState";
 
-const ENVIRONMENT_PANEL_MOTION_MS = motionDurationMs(
-  "--environment-panel-motion-duration",
-  260,
-);
-const WORKSPACE_SHEET_EXIT_MS = motionDurationMs("--sheet-exit-duration", 220);
 const ENGINE_INVENTORY_STALE_MS = 6 * 60 * 60 * 1000;
 // Globalized-sheet phases: docked (grid child) → arming (promoted to a
 // full-window fixed sheet, teleported over its dock slot for one frame) →
@@ -543,7 +538,7 @@ export function App(): JSX.Element {
     setWorkspaceSheetPhase("exiting");
     const timer = window.setTimeout(
       () => setWorkspaceSheetPhase("docking"),
-      WORKSPACE_SHEET_EXIT_MS,
+      motionDurationMs("--sheet-exit-duration", 220),
     );
     return () => window.clearTimeout(timer);
   }, [rightPanelGlobalized, workspaceSheetPhase]);
@@ -586,8 +581,8 @@ export function App(): JSX.Element {
     appShellRef,
     sidebarCollapsed: sidebarDrawerMode,
     resizingSidebar,
-    motionMs: SIDEBAR_DRAWER_EXIT_MS,
-    dockingMotionMs: SIDEBAR_MOTION_MS,
+    motionMs: sidebarDrawerExitMs,
+    dockingMotionMs: sidebarMotionMs,
   });
   const sidebarDrawerVisible = sidebarDrawerPhase === "open";
   const toggleSessionSwitcher = useCallback((): void => {
@@ -3018,7 +3013,7 @@ export function App(): JSX.Element {
       setEnvironmentPanelMounted(false);
       setEnvironmentPanelClosing(false);
       setEnvironmentPanelReserved(false);
-    }, ENVIRONMENT_PANEL_MOTION_MS);
+    }, motionDurationMs("--environment-panel-exit-duration", 220));
     return () => window.clearTimeout(timer);
   }, [
     environmentPanelHasRoom,
@@ -5007,7 +5002,6 @@ export function App(): JSX.Element {
           sidebarCollapsed={sidebarCollapsed}
           sidebarAnimating={sidebarAnimating}
           onToggleSidebar={toggleSidebar}
-          sidebarMotionMs={SIDEBAR_MOTION_MS}
           onBack={() => {
             setSettingsOpen(false);
           }}

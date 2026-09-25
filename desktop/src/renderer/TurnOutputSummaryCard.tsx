@@ -1,9 +1,10 @@
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { ChevronRight } from "./WuuIcons";
 
 import type { Turn } from "../shared/protocol";
 import { turnIsAnswerReady } from "./AppState";
-import { motionDurationMs } from "./motion";
+import { motionDurationMs, prefersReducedMotion } from "./motion";
+import { useExitPresence } from "./useExitPresence";
 import { Tooltip } from "./Tooltip";
 import { useI18n } from "./i18n";
 
@@ -153,27 +154,13 @@ export function TurnOutputSummaryPresentation({
   onCollapseComplete?: () => void;
   children: ReactNode;
 }): JSX.Element | null {
-  const [retained, setRetained] = useState(visible);
+  const [present] = useExitPresence(
+    visible,
+    () => prefersReducedMotion() ? 0 : motionDurationMs("--query-submit-duration", 220),
+    onCollapseComplete,
+  );
 
-  useEffect(() => {
-    if (visible) {
-      setRetained(true);
-      return;
-    }
-    if (!retained) return;
-    const finish = (): void => {
-      setRetained(false);
-      onCollapseComplete?.();
-    };
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-      finish();
-      return;
-    }
-    const timer = window.setTimeout(finish, motionDurationMs("--query-submit-duration", 220));
-    return () => window.clearTimeout(timer);
-  }, [visible, retained, onCollapseComplete]);
-
-  if (!visible && !retained) return null;
+  if (!present) return null;
   return (
     <div
       className={`turn-edit-presentation${visible ? "" : " is-exiting"}`}

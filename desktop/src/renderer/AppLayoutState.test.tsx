@@ -3,12 +3,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as ComposerFocus from "./ComposerFocus";
 import {
-  RIGHT_PANEL_MOTION_MS,
+  rightPanelMotionMs,
   SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH,
   SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
-  SIDEBAR_MOTION_MS,
+  sidebarMotionMs,
   WORKSPACE_RIGHT_PANEL_DEFAULT_WIDTH,
   clampSidebarWidthForWindow,
   useAppLayoutState
@@ -217,7 +217,7 @@ describe("useAppLayoutState window-resizing class", () => {
     expect(latest!.rightPanelAnimating).toBe(true);
 
     act(() => {
-      vi.advanceTimersByTime(RIGHT_PANEL_MOTION_MS);
+      vi.advanceTimersByTime(rightPanelMotionMs());
     });
     expect(latest!.rightPanelAnimating).toBe(false);
   });
@@ -232,7 +232,7 @@ describe("useAppLayoutState window-resizing class", () => {
     expect(latest!.rightPanelAnimating).toBe(true);
 
     act(() => {
-      vi.advanceTimersByTime(RIGHT_PANEL_MOTION_MS);
+      vi.advanceTimersByTime(rightPanelMotionMs());
     });
     expect(latest!.rightPanelAnimating).toBe(false);
   });
@@ -247,7 +247,7 @@ describe("useAppLayoutState window-resizing class", () => {
     expect(document.documentElement.classList.contains(LAYOUT_MOTION_CLASS)).toBe(true);
 
     act(() => {
-      vi.advanceTimersByTime(SIDEBAR_MOTION_MS);
+      vi.advanceTimersByTime(sidebarMotionMs());
     });
     expect(document.documentElement.classList.contains(LAYOUT_MOTION_CLASS)).toBe(false);
   });

@@ -66,10 +66,8 @@
   border: 1.5px solid var(--hairline);
   border-top-color: var(--ink);
   background: transparent;
-  animation: mobile-session-spin 1s linear infinite;
+  animation: wuu-spin var(--motion-spin) linear infinite;
 }
-@keyframes mobile-session-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .mobile-session-status.running { animation: none; } }
 
 .mobile-sidebar-choice { display: flex; align-items: center; justify-content: flex-start; gap: 12px; width: 100%; padding: 12px; }
 .mobile-sidebar-choice span { flex: 1; min-width: 0; }

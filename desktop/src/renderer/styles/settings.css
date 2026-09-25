@@ -84,7 +84,7 @@
   font-weight: var(--weight-medium);
   padding: 0 12px;
   text-align: left;
-  transition: background var(--motion-fast) var(--menu-enter-easing), color var(--motion-fast) var(--menu-enter-easing);
+  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }
 
 .settings-back-button:hover {
@@ -144,7 +144,7 @@
   font-weight: 400;
   padding: 0 12px;
   text-align: left;
-  transition: background var(--motion-fast) var(--menu-enter-easing), color var(--motion-fast) var(--menu-enter-easing);
+  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }
 
 .settings-nav-item:hover {
@@ -609,9 +609,9 @@
   font-weight: 400;
   padding: var(--control-padding-block) var(--control-padding-inline);
   transition:
-    background var(--motion-fast) var(--menu-enter-easing),
-    border-color var(--motion-fast) var(--menu-enter-easing),
-    box-shadow var(--motion-fast) var(--menu-enter-easing);
+    background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
 .settings-input::placeholder {
@@ -730,9 +730,9 @@
   font-weight: var(--weight-medium);
   padding: var(--control-padding-block) var(--control-padding-inline);
   transition:
-    background var(--motion-fast) var(--menu-enter-easing),
-    color var(--motion-fast) var(--menu-enter-easing),
-    transform var(--motion-fast) var(--menu-enter-easing);
+    background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
 }
 
 .settings-button > span {
@@ -1487,8 +1487,8 @@ button.settings-engine-expand:hover {
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   transition:
-    border-color var(--motion-fast) var(--menu-enter-easing),
-    box-shadow var(--motion-fast) var(--menu-enter-easing);
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
 .settings-theme-card:hover .settings-theme-preview {
@@ -1713,7 +1713,7 @@ button.settings-engine-expand:hover {
   min-height: 0;
   border-radius: 2px 2px 0 0;
   background: var(--settings-heatmap-level-3);
-  transition: height 180ms var(--ease-out), background-color var(--motion-fast) var(--ease-out);
+  transition: height var(--motion-base) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
 }
 
 .settings-usage-trend-day:hover i {
@@ -1781,7 +1781,7 @@ button.settings-engine-expand:hover {
   height: 100%;
   border-radius: inherit;
   background: var(--settings-heatmap-level-3);
-  transition: width 180ms var(--ease-out);
+  transition: width var(--motion-base) var(--ease-out);
 }
 
 .settings-model-chart-share {
@@ -1794,7 +1794,8 @@ button.settings-engine-expand:hover {
 
 .settings-usage-loading,
 .settings-subscription-skeleton {
-  animation: settings-usage-skeleton-pulse 2.4s ease-in-out infinite;
+  --pulse-opacity: 0.55;
+  animation: wuu-pulse 2.4s ease-in-out infinite;
 }
 
 .settings-usage-skeleton-line {
@@ -1940,12 +1941,7 @@ button.settings-engine-expand:hover {
   justify-self: end;
 }
 
-@keyframes settings-usage-skeleton-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.55; }
-}
-
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .settings-usage-loading,
   .settings-subscription-skeleton {
     animation: none;
@@ -2350,8 +2346,8 @@ button.settings-engine-expand:hover {
   background: var(--field-bg);
   color: var(--ink-tertiary);
   transition:
-    background var(--motion-fast) var(--menu-enter-easing),
-    border-color var(--motion-fast) var(--menu-enter-easing);
+    background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
 }
 
 .settings-archive-search:hover {
@@ -2696,9 +2692,8 @@ button.settings-engine-expand:hover {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .settings-button,
-  .settings-group,
   .settings-input,
   .settings-nav-item,
   .settings-provider-button,

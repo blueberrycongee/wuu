@@ -264,9 +264,9 @@
   line-height: 1.5;
   font-weight: var(--weight-medium);
   transition:
-    background-color var(--wuu-motion-duration-fast, var(--motion-fast)) var(--wuu-motion-easing-standard, var(--ease-out)),
-    color var(--wuu-motion-duration-fast, var(--motion-fast)) var(--wuu-motion-easing-standard, var(--ease-out)),
-    transform var(--wuu-motion-duration-fast, var(--motion-fast)) var(--wuu-motion-easing-standard, var(--ease-out));
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
 }
 
 .plugin-ui-button[data-wuu-variant="primary"] {
@@ -323,9 +323,9 @@
   cursor: pointer;
   font: inherit;
   transition:
-    color var(--wuu-motion-duration-fast, var(--motion-fast)) var(--wuu-motion-easing-standard, var(--ease-out)),
-    background-color var(--wuu-motion-duration-fast, var(--motion-fast)) var(--wuu-motion-easing-standard, var(--ease-out)),
-    transform var(--wuu-motion-duration-fast, var(--motion-fast)) var(--wuu-motion-easing-standard, var(--ease-out));
+    color var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
 }
 
 .plugin-ui-toolbar-toggle:not(:disabled):hover {
@@ -387,9 +387,9 @@
   font-size: var(--font-ui);
   line-height: 1.5;
   transition:
-    background-color var(--wuu-motion-duration-fast, var(--motion-fast)) var(--wuu-motion-easing-standard, var(--ease-out)),
-    border-color var(--wuu-motion-duration-fast, var(--motion-fast)) var(--wuu-motion-easing-standard, var(--ease-out)),
-    box-shadow var(--wuu-motion-duration-fast, var(--motion-fast)) var(--wuu-motion-easing-standard, var(--ease-out));
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
 .plugin-ui-input::placeholder,
@@ -417,9 +417,9 @@
   font-size: var(--font-ui);
   line-height: var(--wuu-line-height-body, 1.5);
   transition:
-    background-color var(--wuu-motion-duration-fast, var(--motion-fast)) var(--wuu-motion-easing-standard, var(--ease-out)),
-    border-color var(--wuu-motion-duration-fast, var(--motion-fast)) var(--wuu-motion-easing-standard, var(--ease-out)),
-    box-shadow var(--wuu-motion-duration-fast, var(--motion-fast)) var(--wuu-motion-easing-standard, var(--ease-out));
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
 /* Boolean rows read like native settings rows: the copy grows on the left,
@@ -459,7 +459,7 @@
   border: 2px solid var(--wuu-color-border-subtle, var(--hairline));
   border-top-color: var(--wuu-color-text, var(--ink-strong));
   border-radius: var(--radius-circle);
-  animation: plugin-ui-state-spin 800ms linear infinite;
+  animation: wuu-spin var(--motion-spin) linear infinite;
 }
 
 .plugin-ui-state-actions {
@@ -467,16 +467,6 @@
   flex-wrap: wrap;
   justify-content: center;
   gap: var(--space-2);
-}
-
-@keyframes plugin-ui-state-spin {
-  to { transform: rotate(360deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .plugin-ui-state-spinner {
-    animation-duration: 1600ms;
-  }
 }
 
 .plugin-workbench-error {

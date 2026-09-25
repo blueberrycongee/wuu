@@ -148,7 +148,7 @@
   animation-play-state: paused !important;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .agent-avatar-mark[data-agent-avatar-state][data-agent-avatar-motion] > [data-wuu-mascot-activity] {
     transform: none;
     transition: none;

@@ -174,7 +174,6 @@ function Fixture(): JSX.Element {
         sidebarCollapsed={collapsed}
         sidebarAnimating={false}
         onToggleSidebar={() => setCollapsed((value) => !value)}
-        sidebarMotionMs={0}
       />
     </div>
   );

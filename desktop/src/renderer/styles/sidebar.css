@@ -1107,7 +1107,8 @@
   box-shadow: var(--shadow-card);
   color: var(--ink-soft);
   pointer-events: auto;
-  animation: sidebar-clear-unread-hint-in 140ms ease-out;
+  --enter-y: 2px;
+  animation: wuu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
 }
 
 .sidebar-clear-unread-hint::before {
@@ -1158,24 +1159,6 @@
   width: 12px;
   height: 12px;
   stroke-width: 2;
-}
-
-@keyframes sidebar-clear-unread-hint-in {
-  from {
-    opacity: 0;
-    transform: translateY(2px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sidebar-clear-unread-hint {
-    animation: none;
-  }
 }
 
 .collaboration-sidebar .sidebar-content {
@@ -2204,12 +2187,6 @@ html[data-focus-modality="keyboard"] :is(
   transform-origin: center;
 }
 
-.project-row.expanded .project-row-icon-state {
-  transition:
-    opacity var(--section-fold-fade-ms) var(--ease-out),
-    transform var(--section-fold-ms) var(--section-fold-ease);
-}
-
 .project-row-icon-state.collapsed {
   opacity: 1;
   transform: translate3d(0, 0, 0) scale(1);
@@ -2766,18 +2743,8 @@ html[data-focus-modality="keyboard"] :is(
 }
 
 .thread-row-main > .thread-row-title[data-title-swap] {
-  animation: thread-row-title-settle 220ms ease both;
-}
-
-@keyframes thread-row-title-settle {
-  from {
-    opacity: 0;
-    transform: translateY(-1px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  --enter-y: -1px;
+  animation: wuu-enter var(--content-swap-duration) var(--content-swap-easing) both;
 }
 
 /* The fork marker stays between the title and right-edge accessories. */
@@ -2808,7 +2775,7 @@ html[data-focus-modality="keyboard"] :is(
   right: calc(var(--sidebar-row-pad-x) + var(--sidebar-thread-actions-width) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .sidebar-notifications-button[data-holding="true"]::after,
   .sidebar-notifications-button[data-holding="true"] svg {
     animation: none;
@@ -2822,8 +2789,7 @@ html[data-focus-modality="keyboard"] :is(
 
   .project-row-chevron,
   .project-row-icon-state,
-  .thread-list-collapse,
-  .thread-list-collapse-inner {
+  .thread-list-collapse {
     transition: none;
   }
 
@@ -2887,7 +2853,7 @@ html[data-focus-modality="keyboard"] :is(
   transition-delay: 0s;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .thread-row-main > .thread-row-title {
     transition: none;
   }

@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { motionDurationMs } from "./motion";
+import type { ReactNode } from "react";
+import { motionDurationMs, prefersReducedMotion } from "./motion";
+import { useExitPresence } from "./useExitPresence";
 
 const COLLAPSE_MOTION_FALLBACK_MS = 440;
 const COLLAPSED_CONTENT_RELEASE_BUFFER_MS = 32;
@@ -17,33 +18,15 @@ export function CollapsibleDetails({
   id?: string;
   innerClassName?: string;
 }): JSX.Element {
-  const [renderChildren, setRenderChildren] = useState(expanded);
-  useEffect(() => {
-    if (expanded) {
-      setRenderChildren(true);
-      return undefined;
-    }
-    if (!renderChildren) {
-      return undefined;
-    }
-    // Keep the body mounted through the 440ms close motion, then release the
-    // hidden Markdown/tool tree. Long conversations otherwise retain every
-    // completed process row even though the folds are collapsed.
-    const motionDuration = motionDurationMs(
-      "--collapse-motion-duration",
-      COLLAPSE_MOTION_FALLBACK_MS,
-    );
-    const retention =
-      motionDuration > 0
-        ? motionDuration + COLLAPSED_CONTENT_RELEASE_BUFFER_MS
-        : 0;
-    const timer = window.setTimeout(
-      () => setRenderChildren(false),
-      retention,
-    );
-    return () => window.clearTimeout(timer);
-  }, [expanded, renderChildren]);
-  const shouldRenderChildren = expanded || renderChildren;
+  // Keep the body mounted through the close motion, then release the hidden
+  // Markdown/tool tree. Long conversations otherwise retain every completed
+  // process row even though the folds are collapsed.
+  const [shouldRenderChildren] = useExitPresence(expanded, () => {
+    const motionDuration = prefersReducedMotion()
+      ? 0
+      : motionDurationMs("--collapse-motion-duration", COLLAPSE_MOTION_FALLBACK_MS);
+    return motionDuration > 0 ? motionDuration + COLLAPSED_CONTENT_RELEASE_BUFFER_MS : 0;
+  });
   const detailsClassName = [
     "collapsible-details",
     expanded ? "expanded" : "collapsed",

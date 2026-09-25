@@ -9,7 +9,7 @@ import { ComposerDocumentCard } from "./ComposerDocumentCard";
 import { isComposerImagePending, type ComposerFile, type ComposerImage } from "./ComposerMessages";
 import { useOptionalImagePreview } from "./ImagePreview";
 import { useI18n } from "./i18n";
-import { motionDurationMs, prefersReducedMotion } from "./motion";
+import { motionCurve, motionDurationMs, prefersReducedMotion } from "./motion";
 import { formatVideoDuration, useVideoObjectURL } from "./VideoAttachment";
 import { FileText, Film, X } from "./WuuIcons";
 
@@ -126,9 +126,8 @@ export function ComposerAttachmentTray({
     }
     const slow = motionDurationMs("--motion-slow", 280);
     const base = motionDurationMs("--motion-base", 180);
-    const rootStyle = getComputedStyle(document.documentElement);
-    const easeOut = rootStyle.getPropertyValue("--ease-out").trim() || "cubic-bezier(0.16, 1, 0.3, 1)";
-    const easeIn = rootStyle.getPropertyValue("--ease-in").trim() || "cubic-bezier(0.4, 0, 1, 1)";
+    const easeOut = motionCurve("--ease-out", "cubic-bezier(0.16, 1, 0.3, 1)");
+    const easeIn = motionCurve("--ease-in", "cubic-bezier(0.4, 0, 1, 1)");
     const tray = trayRef.current;
     const list = listRef.current;
     const animate = !reset && !document.hidden && !prefersReducedMotion() && slow > 0 &&
@@ -252,7 +251,7 @@ export function ComposerAttachmentTray({
       const left = end > list.scrollLeft + list.clientWidth
         ? end - list.clientWidth
         : start < list.scrollLeft ? start : undefined;
-      if (left !== undefined) list.scrollTo({ left, behavior: "smooth" });
+      if (left !== undefined) list.scrollTo({ left, behavior: prefersReducedMotion() ? "auto" : "smooth" });
     }
   }, [signature, resetKey, exiting]);
 

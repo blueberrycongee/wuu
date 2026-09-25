@@ -16,10 +16,6 @@ import {
 import { motionDurationMs, prefersReducedMotion } from "./motion";
 import { translateCurrent } from "./i18n";
 
-const CONVERSATION_SEARCH_EXIT_MS = motionDurationMs(
-  "--search-exit-duration",
-  180,
-);
 const CONVERSATION_SEARCH_RESULT_LIMIT = 100;
 const CONVERSATION_SEARCH_PREVIEW_LIMIT = 4;
 
@@ -263,7 +259,7 @@ export function useConversationSearch({
       setConversationSearch((current) =>
         current.open ? current : { ...current, closing: false },
       );
-    }, CONVERSATION_SEARCH_EXIT_MS);
+    }, motionDurationMs("--search-exit-duration", 180));
   }
 
   async function refreshConversationSearchThreads(

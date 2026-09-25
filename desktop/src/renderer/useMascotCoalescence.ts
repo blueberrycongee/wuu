@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef } from "react";
+import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -12,7 +13,6 @@ export function useMascotCoalescence(svg: SVGSVGElement | null, mode: "idle" | "
     if (!svg) return;
     const body = svg.querySelector<SVGPathElement>(".mo-bob > g:not(.mo-eyes) > path");
     if (!body || typeof body.getTotalLength !== "function") return;
-    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     let timer: number | undefined;
     let frame: number | undefined;
     let liquid: SVGGElement | null = null;
@@ -21,7 +21,7 @@ export function useMascotCoalescence(svg: SVGSVGElement | null, mode: "idle" | "
     let amount = 0;
     let returnFrom = 0;
     const originalVisibility = body.style.visibility;
-    const paintable = () => !document.hidden && !reduced?.matches
+    const paintable = () => !document.hidden && !prefersReducedMotion()
       && !svg.closest(':root[data-renderer-hidden], .cached-conversation-pane[data-active="false"]');
     const clearArt = () => {
       if (frame !== undefined) window.cancelAnimationFrame(frame);
@@ -116,7 +116,7 @@ export function useMascotCoalescence(svg: SVGSVGElement | null, mode: "idle" | "
     document.addEventListener("keydown", interact, true);
     svg.addEventListener("pointerenter", interact);
     document.addEventListener("visibilitychange", reset);
-    reduced?.addEventListener("change", reset);
+    const stopReducedMotion = subscribeReducedMotion(reset);
     return () => {
       changeMode.current = () => {};
       window.clearTimeout(timer);
@@ -126,7 +126,7 @@ export function useMascotCoalescence(svg: SVGSVGElement | null, mode: "idle" | "
       document.removeEventListener("keydown", interact, true);
       svg.removeEventListener("pointerenter", interact);
       document.removeEventListener("visibilitychange", reset);
-      reduced?.removeEventListener("change", reset);
+      stopReducedMotion();
     };
   }, [svg, identity, filterID]);
   useEffect(() => { changeMode.current(); }, [mode]);

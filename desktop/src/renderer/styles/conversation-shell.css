@@ -234,7 +234,7 @@
   transition: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .conversation-pane {
     transition: none;
   }
@@ -1204,7 +1204,8 @@
   margin-inline: auto;
   transform: translateY(0);
   z-index: 20;
-  animation: jump-to-latest-enter var(--motion-base) var(--ease-out) both;
+  --enter-y: 8px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
   pointer-events: none;
   -webkit-app-region: no-drag;
 }
@@ -1555,6 +1556,7 @@ button.conversation-status-capsule,
   opacity: 0;
   overflow: hidden;
   transition:
+    margin-left var(--motion-base) var(--ease-out),
     max-height var(--motion-base) var(--ease-out),
     max-width var(--motion-base) var(--ease-out),
     opacity var(--motion-fast) var(--ease-out);
@@ -1589,17 +1591,6 @@ button.conversation-status-capsule,
   /* Keep the in_progress step a solid darker badge inside the outer pill. */
 }
 
-@keyframes jump-to-latest-enter {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 /*
  * Conversation turn rail on the left edge of the message stream.
  *
@@ -1610,7 +1601,7 @@ button.conversation-status-capsule,
  * macOS Dock-style motion: smooth spring with slight overshoot
  * (cubic-bezier(0.34, 1.56, 0.64, 1) ≈ easeOutBack) so the magnified bar
  * settles with a natural "spring then rest" feel rather than a linear
- * slide. prefers-reduced-motion collapses the easing to a 1ms step.
+ * slide. Reduced motion zeroes the ladder, so the bar snaps instead.
  */
 .conversation-pane {
   position: relative;
@@ -1759,10 +1750,9 @@ button.conversation-status-capsule,
   pointer-events: auto;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .conversation-turn-rail-bar,
   .conversation-turn-rail-preview {
-    transition: opacity 1ms linear;
     transform: none;
   }
 }

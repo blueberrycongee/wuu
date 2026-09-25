@@ -42,6 +42,7 @@ import {
   useAutoFollowScrollContainer,
 } from "./AutoFollowScroll";
 import { AnimatedProcessText } from "./ProcessTextMotion";
+import { motionDurationMs } from "./motion";
 import {
   useConversationRenderActive,
   useConversationRevealSnap,
@@ -410,7 +411,7 @@ function TurnProcessFold({
         if (autoCollapse) {
           onCollapseComplete?.();
         }
-      }, 440);
+      }, motionDurationMs("--collapse-motion-duration", 440) + 32);
       previousExpanded.current = expanded;
       return () => window.clearTimeout(timeoutId);
     }
@@ -722,8 +723,9 @@ function ReasoningFold({
     };
     body.addEventListener("transitionend", snapToBottom);
     // Fallback when transitionend never fires (reduced motion, or the
-    // grid already settled before the listener attached).
-    window.setTimeout(snapToBottom, 280);
+    // grid already settled before the listener attached). The body's
+    // grid-template-rows transition runs on --motion-slow.
+    window.setTimeout(snapToBottom, motionDurationMs("--motion-slow", 280));
   }, [reasoningScroll]);
   return (
     <details

@@ -706,11 +706,7 @@
   pointer-events: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .composer-stack,
-  .composer,
-  .composer-pending-drawer,
-  .composer textarea,
+@container style(--motion-reduced: 1) {
   .composer-expand-button {
     transition: none;
   }
@@ -883,12 +879,8 @@
 /* A queue acknowledges receipt locally; it never launches the conversation. */
 .composer-pending-arrival,
 .composer-queue-row {
-  animation: composer-pending-received var(--motion-fast) var(--ease-out);
-}
-
-@keyframes composer-pending-received {
-  from { opacity: 0.75; }
-  to { opacity: 1; }
+  --enter-opacity: 0.75;
+  animation: wuu-enter var(--motion-fast) var(--ease-out);
 }
 
 .composer-queue-row:hover .composer-queue-preview,
@@ -947,7 +939,7 @@
   color: var(--danger);
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .composer-pending-arrival,
   .composer-queue-row {
     animation: none;
@@ -1059,17 +1051,12 @@
   max-height: max(0px, calc(var(--composer-drawer-max-height) - var(--composer-drawer-row-height) - var(--composer-drawer-overlap)));
   overflow-y: auto;
   overscroll-behavior: contain;
-  animation: composer-drawer-reveal 120ms var(--ease-out);
+  --enter-y: 2px;
+  animation: wuu-enter var(--motion-fast) var(--ease-out);
 }
 
-@keyframes composer-drawer-reveal {
-  from { opacity: 0; transform: translateY(2px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .composer-accessory-drawer { transition: none !important; }
-  .composer-drawer-details { animation: none; }
 }
 
 @media (pointer: coarse) {
@@ -1137,10 +1124,10 @@
 
 .document-composer-wrap .composer-accessory-drawer {
   transition:
-    max-height 180ms var(--ease-out),
+    max-height var(--motion-base) var(--ease-out),
     transform var(--motion-fast) var(--ease-out),
     translate var(--motion-fast) var(--ease-out),
-    border-radius 180ms var(--ease-out),
+    border-radius var(--motion-base) var(--ease-out),
     border-color var(--motion-fast) var(--ease-out),
     box-shadow var(--motion-fast) var(--ease-out);
 }
@@ -1499,7 +1486,7 @@
   flex: 0 0 auto;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .group-members-capsule {
     transition: none;
   }
@@ -1655,8 +1642,8 @@
   padding: 0 8px;
   cursor: pointer;
   transition:
-    background-color var(--motion-fast) var(--menu-enter-easing),
-    color var(--motion-fast) var(--menu-enter-easing);
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
 }
 
 .hero-project-pill:hover,
@@ -2396,22 +2383,11 @@
   background: var(--surface-2);
   box-shadow: var(--composer-frame-shadow);
   transform-origin: bottom center;
-  animation: composer-camera-enter 420ms cubic-bezier(.16, 1, .3, 1) both;
+  --enter-y: 100%;
+  animation: wuu-enter var(--motion-slower) var(--ease-out) both;
 }
 
 :root[data-host-kind="web"] .composer-camera[data-exiting] { pointer-events: none; }
-
-@keyframes composer-camera-enter {
-  from {
-    opacity: 0;
-    transform: translateY(100%);
-  }
-
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
 
 :root[data-host-kind="web"] .composer-camera-viewport {
   position: relative;
@@ -2498,7 +2474,7 @@
   color: var(--paper);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  transition: transform 140ms ease-out;
+  transition: transform var(--motion-fast) var(--ease-out);
   cursor: pointer;
 }
 
@@ -2519,7 +2495,7 @@
   border-radius: 50%;
   background: var(--paper);
   background-clip: padding-box;
-  transition: transform 140ms ease-out, opacity 140ms ease-out;
+  transition: transform var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out);
   cursor: pointer;
 }
 
@@ -2545,7 +2521,7 @@
   inset: 0;
   background: var(--paper);
   pointer-events: none;
-  animation: composer-camera-flash 200ms ease-out both;
+  animation: composer-camera-flash var(--motion-base) var(--ease-out) both;
 }
 
 @keyframes composer-camera-flash {
@@ -2558,13 +2534,8 @@
   :root[data-host-kind="web"] .composer-camera-dialog { border-radius: 24px; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  :root[data-host-kind="web"] .composer-camera,
-  :root[data-host-kind="web"] .composer-camera-flash {
-    animation: none;
-  }
+@container style(--motion-reduced: 1) {
   :root[data-host-kind="web"] .composer-camera-flash { display: none; }
-  :root[data-host-kind="web"] .composer-camera-controls button { transition: none; }
 }
 
 .composer-workspace-bar > .composer-project-control {
@@ -2629,11 +2600,7 @@
   fill: none;
 }
 .composer-stop-progress.is-spinning {
-  animation: composer-stop-spin 900ms linear infinite;
-}
-@keyframes composer-stop-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) {
-  .composer-stop-progress.is-spinning { animation: none; }
+  animation: wuu-spin var(--motion-spin) linear infinite;
 }
 
 .composer-stop-button[aria-busy="true"] {

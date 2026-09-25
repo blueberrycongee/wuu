@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
 
 // Short, autonomous idle scenes, never games that capture keyboard input.
 // Heatmap effects are temporary animations; usage data remains untouched.
@@ -75,7 +76,6 @@ type Trajectory = ReturnType<typeof trajectory>;
 export function useEmptyHomePlay(card: HTMLElement | null): void {
   useEffect(() => {
     if (!card) return;
-    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     let lastInput = performance.now();
     let playedAt = -Infinity;
     let play: Play | undefined;
@@ -88,7 +88,7 @@ export function useEmptyHomePlay(card: HTMLElement | null): void {
     const arm = () => {
       window.clearTimeout(timer);
       timerAt = Infinity;
-      if (play || document.hidden || reduced?.matches) return;
+      if (play || document.hidden || prefersReducedMotion()) return;
       timerAt = dueAt();
       timer = window.setTimeout(fire, timerAt - performance.now());
     };
@@ -134,7 +134,7 @@ export function useEmptyHomePlay(card: HTMLElement | null): void {
     const inputs = ["pointermove", "pointerdown", "keydown", "wheel", "scroll", "resize"] as const;
     for (const type of inputs) window.addEventListener(type, input, { capture: true, passive: true });
     document.addEventListener("visibilitychange", restart);
-    reduced?.addEventListener("change", restart);
+    const stopReducedMotion = subscribeReducedMotion(restart);
     const observer = new ResizeObserver(restart);
     observer.observe(card);
     arm();
@@ -143,7 +143,7 @@ export function useEmptyHomePlay(card: HTMLElement | null): void {
       play?.stop();
       for (const type of inputs) window.removeEventListener(type, input, { capture: true });
       document.removeEventListener("visibilitychange", restart);
-      reduced?.removeEventListener("change", restart);
+      stopReducedMotion();
       observer.disconnect();
     };
   }, [card]);

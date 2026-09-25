@@ -1,0 +1,51 @@
+/* Fixture layout only. Samples use the production keyframes and tokens as a
+ * surface would; the stylesheet owns every duration, curve, and keyframe. */
+body { overflow: auto; }
+.motion-review { max-width: 1120px; margin: 0 auto; padding: 40px 48px 72px; color: var(--ink); }
+.motion-review h1 { margin: 0 0 8px; font-size: var(--font-display); font-weight: var(--weight-semibold); }
+.motion-review header > p { margin: 0 0 20px; color: var(--ink-muted); }
+.motion-review nav { display: flex; flex-wrap: wrap; gap: 8px; }
+.motion-review nav button { border: 1px solid var(--hairline); border-radius: var(--radius-sm); padding: 6px 12px; background: var(--surface-1); color: var(--ink); }
+.motion-review nav button[aria-pressed="true"] { background: var(--surface-3); }
+.motion-review h2 { margin: 40px 0 16px; color: var(--ink-muted); font-size: var(--font-sm); font-weight: var(--weight-medium); }
+.motion-review code { color: var(--ink-soft); font-size: var(--font-sm); }
+
+.motion-ladder { display: grid; grid-template-columns: 136px 64px minmax(0, 1fr); align-items: center; gap: 12px 16px; }
+.motion-track { position: relative; height: 12px; border-radius: var(--radius-pill); background: var(--surface-2); }
+.motion-knob { position: absolute; top: 0; left: 0; width: 12px; height: 12px; border-radius: var(--radius-circle); background: var(--ink); transition: left var(--motion-track-duration) var(--ease-out); }
+.motion-track[data-on] .motion-knob { left: calc(100% - 12px); }
+
+.motion-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
+.motion-tile { display: grid; gap: 8px; align-content: start; }
+.motion-stage { display: grid; height: 88px; place-items: center; overflow: hidden; border-radius: var(--radius-md); background: var(--surface-1); }
+.motion-card { width: 96px; height: 40px; border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--menu-bg); box-shadow: var(--shadow-card); }
+.motion-dot { width: 10px; height: 10px; border-radius: var(--radius-circle); background: var(--ink); }
+.motion-ring { width: 16px; height: 16px; border: 2px solid var(--hairline); border-top-color: var(--ink); border-radius: var(--radius-circle); }
+
+.motion-sample-fade { animation: wuu-fade-in var(--motion-base) var(--ease-out) both; }
+.motion-sample-rise { --enter-y: 8px; animation: wuu-enter var(--motion-slow) var(--ease-out) both; }
+.motion-sample-drop { --enter-y: -8px; --enter-scale: 0.982; animation: wuu-enter var(--motion-base) var(--ease-out) both; }
+.motion-sample-slide { --enter-x: 100%; animation: wuu-enter var(--motion-slow) var(--ease-out) both; }
+.motion-sample-exit { --exit-y: -4px; animation: wuu-exit var(--motion-base) var(--ease-in) both; }
+.motion-sample-menu { animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both; }
+.motion-sample-swap { animation: content-swap-enter var(--content-swap-duration) var(--content-swap-easing) both; }
+.motion-sample-panel { animation: environment-panel-enter var(--environment-panel-motion-duration) var(--environment-panel-motion-easing) both; }
+.motion-sample-pulse { animation: wuu-pulse 1.4s ease-in-out infinite; }
+.motion-sample-spin { animation: wuu-spin var(--motion-spin) linear infinite; }
+
+@container style(--motion-reduced: 1) {
+  .motion-sample-pulse { animation: none; }
+}
+
+/* Fixed-position production surfaces resolve against this box, not the window. */
+.motion-surfaces { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.motion-surface { position: relative; height: 260px; overflow: hidden; border: 1px solid var(--hairline-soft); border-radius: var(--radius-md); transform: translateZ(0); }
+.motion-surface .conversation-search-overlay { position: absolute; padding: 32px 16px; }
+.motion-surface .conversation-search-dialog { width: min(100%, 280px); min-height: 120px; }
+.motion-surface .sidebar-name-dialog-drawer { width: 200px; }
+.motion-surface .archive-tip { position: absolute; top: 24px; left: 50%; }
+
+@media (max-width: 760px) {
+  .motion-review { padding: 24px; }
+  .motion-ladder { grid-template-columns: 1fr; }
+}

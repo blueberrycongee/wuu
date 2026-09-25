@@ -753,7 +753,7 @@ describe("AssistantTurnShell — process fold default state (rule 2 + rule 8)", 
     expect(processFoldOpen(container)).toBe(false);
 
     act(() => {
-      vi.advanceTimersByTime(440);
+      vi.advanceTimersByTime(1000);
     });
     expect(collapseCompletions).toBe(1);
 
