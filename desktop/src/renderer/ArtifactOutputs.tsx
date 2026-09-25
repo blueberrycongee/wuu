@@ -438,11 +438,13 @@ function ArtifactCard({
 
 export function ArtifactPreview({
   artifact,
+  active = true,
   cwd,
   onClose,
   mode = "overlay",
 }: {
   artifact: TurnArtifact;
+  active?: boolean;
   cwd?: string;
   onClose: () => void;
   mode?: "overlay" | "panel";
@@ -529,7 +531,7 @@ export function ArtifactPreview({
   } else if (artifact.mimeType.startsWith("audio/")) {
     body = <audio className="artifact-preview-audio" src={source} controls />;
   } else if (artifact.mimeType.startsWith("video/")) {
-    body = <VideoPreview src={source} title={artifact.name} />;
+    body = <VideoPreview src={source} title={artifact.name} active={active} />;
   } else if (artifact.mimeType.startsWith("text/") || artifact.text !== undefined) {
     body = <ArtifactTextPreview artifact={artifact} source={source} />;
   } else {
