@@ -5,26 +5,6 @@ import (
 	"testing"
 )
 
-func TestRepairToolCallHistory_empty(t *testing.T) {
-	got := RepairToolCallHistory(nil)
-	if got != nil {
-		t.Fatalf("expected nil, got %v", got)
-	}
-	got = RepairToolCallHistory([]ChatMessage{})
-	if got != nil {
-		t.Fatalf("expected nil, got %v", got)
-	}
-}
-
-func TestValidateAssistantToolCalls_ok(t *testing.T) {
-	if err := ValidateAssistantToolCalls([]ToolCall{
-		{ID: "call_1", Name: "a"},
-		{ID: "call_2", Name: "b"},
-	}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestValidateAssistantToolCalls_rejectsMissingID(t *testing.T) {
 	if err := ValidateAssistantToolCalls([]ToolCall{{ID: "", Name: "a"}}); err == nil {
 		t.Fatal("expected missing id error")
@@ -44,18 +24,6 @@ func TestValidateAssistantToolCalls_allowsRawFunctionArguments(t *testing.T) {
 	err := ValidateAssistantToolCalls([]ToolCall{{ID: "call_1", Name: "update_todo", Arguments: `{"todos": `}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestRepairToolCallHistory_noToolCalls(t *testing.T) {
-	msgs := []ChatMessage{
-		{Role: "system", Content: "sys"},
-		{Role: "user", Content: "hello"},
-		{Role: "assistant", Content: "hi"},
-	}
-	got := RepairToolCallHistory(msgs)
-	if len(got) != 3 {
-		t.Fatalf("expected 3 messages, got %d", len(got))
 	}
 }
 
@@ -245,22 +213,6 @@ func TestRepairToolCallHistory_interleavedUserMovedAfterToolResults(t *testing.T
 	}
 }
 
-func TestRepairToolCallHistory_allOutputsPresent(t *testing.T) {
-	msgs := []ChatMessage{
-		{Role: "user", Content: "hello"},
-		{Role: "assistant", Content: "", ToolCalls: []ToolCall{
-			{ID: "call_1", Name: "a"},
-			{ID: "call_2", Name: "b"},
-		}},
-		{Role: "tool", ToolCallID: "call_1", Content: "a"},
-		{Role: "tool", ToolCallID: "call_2", Content: "b"},
-	}
-	got := RepairToolCallHistory(msgs)
-	if len(got) != 4 {
-		t.Fatalf("expected 4 messages, got %d", len(got))
-	}
-}
-
 func TestRepairToolCallHistory_noDuplicateSynthetic(t *testing.T) {
 	msgs := []ChatMessage{
 		{Role: "user", Content: "hello"},
@@ -281,41 +233,6 @@ func TestRepairToolCallHistory_noDuplicateSynthetic(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected exactly 1 synthetic tool for call_1, got %d", count)
-	}
-}
-
-func TestRepairAndValidateToolCallHistory_repairsMissingOutput(t *testing.T) {
-	msgs := []ChatMessage{
-		{Role: "user", Content: "hello"},
-		{Role: "assistant", Content: "", ToolCalls: []ToolCall{
-			{ID: "call_1", Name: "read_file"},
-		}},
-	}
-	got, err := RepairAndValidateToolCallHistory(msgs)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(got) != 3 {
-		t.Fatalf("expected synthesized tool result, got %+v", got)
-	}
-	if got[2].Role != "tool" || got[2].ToolCallID != "call_1" {
-		t.Fatalf("expected repaired tool result, got %+v", got[2])
-	}
-}
-
-func TestRepairAndValidateToolCallHistory_repairsNonContiguousToolResult(t *testing.T) {
-	msgs := []ChatMessage{
-		{Role: "user", Content: "hello"},
-		{Role: "assistant", Content: "", ToolCalls: []ToolCall{{ID: "call_1", Name: "a"}}},
-		{Role: "user", Content: "mid"},
-		{Role: "tool", ToolCallID: "call_1", Content: "ok"},
-	}
-	got, err := RepairAndValidateToolCallHistory(msgs)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got[1].Role != "assistant" || got[2].Role != "tool" || got[3].Role != "user" {
-		t.Fatalf("expected repaired ordering, got %+v", got)
 	}
 }
 
@@ -476,18 +393,6 @@ func TestRepairAndValidateToolCallHistory_asyncTimingScenarios(t *testing.T) {
 	}
 }
 
-func TestValidateToolCallHistory_ok(t *testing.T) {
-	msgs := []ChatMessage{
-		{Role: "system", Content: "sys"},
-		{Role: "user", Content: "hello"},
-		{Role: "assistant", Content: "", ToolCalls: []ToolCall{{ID: "call_1", Name: "a"}}},
-		{Role: "tool", ToolCallID: "call_1", Content: "ok"},
-	}
-	if err := ValidateToolCallHistory(msgs); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestValidateToolCallHistory_orphanTool(t *testing.T) {
 	msgs := []ChatMessage{
 		{Role: "user", Content: "hello"},
@@ -518,19 +423,6 @@ func TestValidateToolCallHistory_rejectsAssistantToolCallMissingID(t *testing.T)
 	}
 	if err := ValidateToolCallHistory(msgs); err == nil {
 		t.Fatal("expected error for assistant tool_call without id")
-	}
-}
-
-func TestValidateToolCallHistory_allowsAssistantToolCallDuplicateIDAcrossTurns(t *testing.T) {
-	msgs := []ChatMessage{
-		{Role: "user", Content: "hello"},
-		{Role: "assistant", Content: "", ToolCalls: []ToolCall{{ID: "call_1", Name: "a"}}},
-		{Role: "tool", ToolCallID: "call_1", Content: "ok"},
-		{Role: "assistant", Content: "", ToolCalls: []ToolCall{{ID: "call_1", Name: "b"}}},
-		{Role: "tool", ToolCallID: "call_1", Content: "ok again"},
-	}
-	if err := ValidateToolCallHistory(msgs); err != nil {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

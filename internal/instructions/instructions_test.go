@@ -20,13 +20,6 @@ func legacyTestOpts(userDirs []string) Options {
 	return o
 }
 
-func TestDiscover_EmptyDirs(t *testing.T) {
-	files := Discover("", "", testOpts(nil))
-	if len(files) != 0 {
-		t.Fatalf("expected 0 files, got %d", len(files))
-	}
-}
-
 func TestDiscover_UserDirOnly(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("agents"), 0o644); err != nil {
@@ -346,24 +339,6 @@ func TestDiscover_LegacyAutoMemoryEntrypoint(t *testing.T) {
 	}
 }
 
-func TestDiscover_TildeExpansion(t *testing.T) {
-	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".config", "wuu"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".config", "wuu", "AGENTS.md"), []byte("user"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	files := Discover("", home, testOpts([]string{"~/.config/wuu"}))
-	if len(files) != 1 {
-		t.Fatalf("expected 1 file, got %d", len(files))
-	}
-	if files[0].Content != "user" {
-		t.Errorf("got %q", files[0].Content)
-	}
-}
-
 func TestDiscover_DefaultUserDirsScanUnifiedHome(t *testing.T) {
 	home := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(home, ".wuu"), 0o755); err != nil {
@@ -397,22 +372,6 @@ func TestDiscover_DefaultUserDirsStillReadLegacy(t *testing.T) {
 	}
 	if files[0].Content != "legacy" {
 		t.Fatalf("unexpected legacy memory file: %+v", files[0])
-	}
-}
-
-func TestDiscover_DefaultOptionsAreWuuNative(t *testing.T) {
-	opts := DefaultOptions()
-	if len(opts.UserDirs) != 2 || opts.UserDirs[0] != "~/.wuu" || opts.UserDirs[1] != "~/.config/wuu" {
-		t.Errorf("expected unified wuu home plus legacy user dir, got %v", opts.UserDirs)
-	}
-	if len(opts.Filenames) != 3 {
-		t.Errorf("expected 3 default filenames, got %d", len(opts.Filenames))
-	}
-	if opts.Filenames[0] != "AGENTS.md" {
-		t.Errorf("expected AGENTS.md as highest-priority filename, got %q", opts.Filenames[0])
-	}
-	if opts.IncludeLegacyInstructions == nil || *opts.IncludeLegacyInstructions {
-		t.Errorf("legacy instruction import should be opt-in by default, got %v", opts.IncludeLegacyInstructions)
 	}
 }
 

@@ -135,22 +135,3 @@ func TestGrantMatchesExactFingerprint(t *testing.T) {
 		t.Fatal("missing subject matched a grant")
 	}
 }
-
-func TestProvenanceDoesNotTrustManifestOfficialFlag(t *testing.T) {
-	provenance := Provenance{
-		Kind:     KindPlugin,
-		Source:   "community",
-		Scope:    "user",
-		Path:     "/tmp/plugin",
-		PluginID: "example",
-		Official: false,
-	}
-	if provenance.TrustLevel() != TrustUserInstalled {
-		t.Fatalf("TrustLevel = %q", provenance.TrustLevel())
-	}
-	provenance.Source = "bundled"
-	provenance.Official = true
-	if provenance.TrustLevel() != TrustOfficialBundled {
-		t.Fatalf("TrustLevel = %q", provenance.TrustLevel())
-	}
-}

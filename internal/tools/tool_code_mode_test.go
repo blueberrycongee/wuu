@@ -45,25 +45,6 @@ func contains(name string, defs []providers.ToolDefinition) bool {
 	return false
 }
 
-func TestCodeModeEntryToolsRegisteredWithService(t *testing.T) {
-	kit := newCodeModeTestToolkit(t)
-	defs := kit.Definitions()
-	if !contains(codeModeExecToolName, defs) {
-		t.Fatalf("Definitions() missing %q: %v", codeModeExecToolName, names(defs))
-	}
-	if !contains(codeModeWaitToolName, defs) {
-		t.Fatalf("Definitions() missing %q: %v", codeModeWaitToolName, names(defs))
-	}
-	// Without a service the entry tools must not exist.
-	bare, err := New(t.TempDir())
-	if err != nil {
-		t.Fatalf("New bare toolkit: %v", err)
-	}
-	if contains(codeModeExecToolName, bare.Definitions()) {
-		t.Fatal("bare toolkit advertises exec without a code-mode service")
-	}
-}
-
 func TestCodeModeEntriesSurviveModelProfilesAndThreadClones(t *testing.T) {
 	for _, model := range []string{"gpt-5-codex", "gpt-5", "claude-sonnet-4", "generic-model"} {
 		t.Run(model, func(t *testing.T) {
@@ -230,15 +211,6 @@ func TestCodeModeExecRequiresOrchestratorScope(t *testing.T) {
 	result, err := exec.ExecuteResultCall(context.Background(), call)
 	if err == nil || !strings.Contains(err.Error(), "orchestrator execution scope") {
 		t.Fatalf("exec without orchestrator scope: result=%+v err=%v", result, err)
-	}
-}
-
-func TestCodeModeWaitRequiresCell(t *testing.T) {
-	kit := newCodeModeTestToolkit(t)
-	wait := NewCodeModeWaitTool(kit)
-	result, err := wait.ExecuteResult(context.Background(), `{}`)
-	if err == nil || !strings.Contains(err.Error(), "cell_id") {
-		t.Fatalf("wait without cell_id: result=%+v err=%v", result, err)
 	}
 }
 

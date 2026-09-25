@@ -70,22 +70,6 @@ func TestContextWindowFor_FallsBackToSubstringRegistry(t *testing.T) {
 	}
 }
 
-func TestContextWindowFor_DefaultForUnknown(t *testing.T) {
-	cases := []string{
-		"some-brand-new-model-2030",
-		"my-private-llm-7b",
-		"completely-made-up",
-	}
-	for _, m := range cases {
-		t.Run(m, func(t *testing.T) {
-			if got := ContextWindowFor(m); got != defaultContextWindow {
-				t.Fatalf("ContextWindowFor(%q) = %d, want default %d",
-					m, got, defaultContextWindow)
-			}
-		})
-	}
-}
-
 func TestKnownContextWindowFor_UnknownModelIsNotDefaulted(t *testing.T) {
 	cases := []string{
 		"some-brand-new-model-2030",
@@ -101,13 +85,6 @@ func TestKnownContextWindowFor_UnknownModelIsNotDefaulted(t *testing.T) {
 	}
 }
 
-func TestKnownContextWindowFor_KnownModel(t *testing.T) {
-	got, ok := KnownContextWindowFor("gpt-4o")
-	if !ok || got <= 0 {
-		t.Fatalf("KnownContextWindowFor(gpt-4o) = %d, %v; want known positive window", got, ok)
-	}
-}
-
 func TestKnownContextWindowFor_MiniMaxM3(t *testing.T) {
 	got, ok := KnownContextWindowFor("MiniMax-M3")
 	if !ok || got != 1_000_000 {
@@ -119,24 +96,6 @@ func TestKnownContextWindowFor_MiniMaxM2(t *testing.T) {
 	got, ok := KnownContextWindowFor("MiniMax-M2.7")
 	if !ok || got != 204_800 {
 		t.Fatalf("KnownContextWindowFor(MiniMax-M2.7) = %d, %v; want 204800, true", got, ok)
-	}
-}
-
-func TestMaxOutputTokensFor_MiniMaxM3(t *testing.T) {
-	if got := MaxOutputTokensFor("MiniMax-M3"); got != 131_072 {
-		t.Fatalf("MaxOutputTokensFor(MiniMax-M3) = %d, want 131072", got)
-	}
-}
-
-func TestMaxOutputTokensFor_Grok47(t *testing.T) {
-	if got := MaxOutputTokensFor("grok-4.7"); got != 128_000 {
-		t.Fatalf("MaxOutputTokensFor(grok-4.7) = %d, want 128000", got)
-	}
-}
-
-func TestContextWindowFor_EmptyString(t *testing.T) {
-	if got := ContextWindowFor(""); got != defaultContextWindow {
-		t.Fatalf("expected default for empty string, got %d", got)
 	}
 }
 

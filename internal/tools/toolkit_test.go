@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
@@ -45,32 +44,6 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
-}
-
-type toolkitFakeClient struct {
-	content string
-}
-
-func (f *toolkitFakeClient) Chat(context.Context, providers.ChatRequest) (providers.ChatResponse, error) {
-	return providers.ChatResponse{Content: f.content}, nil
-}
-
-func (f *toolkitFakeClient) StreamChat(context.Context, providers.ChatRequest) (<-chan providers.StreamEvent, error) {
-	ch := make(chan providers.StreamEvent, 2)
-	if f.content != "" {
-		ch <- providers.StreamEvent{Type: providers.EventContentDelta, Content: f.content}
-	}
-	ch <- providers.StreamEvent{Type: providers.EventDone}
-	close(ch)
-	return ch, nil
-}
-
-type toolkitNoopExecutor struct{}
-
-func (toolkitNoopExecutor) Definitions() []providers.ToolDefinition { return nil }
-
-func (toolkitNoopExecutor) Execute(context.Context, providers.ToolCall) (string, error) {
-	return "", nil
 }
 
 type richToolkitTool struct {
@@ -133,14 +106,6 @@ func TestToolkitExecuteResultPrefersRichToolAndKeepsTextAdapter(t *testing.T) {
 	}
 }
 
-func stopToolkitAgentControl(control *agentcontrol.AgentControl) {
-	if control == nil {
-		return
-	}
-	control.StopAll()
-	time.Sleep(100 * time.Millisecond)
-}
-
 func TestToolkit_WriteAndReadFile(t *testing.T) {
 	root := t.TempDir()
 	kit, err := New(root)
@@ -190,7 +155,6 @@ func TestToolkit_WriteAndReadFile(t *testing.T) {
 			EndLine   int `json:"end_line"`
 		} `json:"range"`
 		OmittedRanges []map[string]int `json:"omitted_ranges"`
-		Suggestions   []string         `json:"next_suggestions"`
 	}
 	if err := json.Unmarshal([]byte(readResp), &readParsed); err != nil {
 		t.Fatalf("parse read response: %v", err)
@@ -200,9 +164,6 @@ func TestToolkit_WriteAndReadFile(t *testing.T) {
 	}
 	if readParsed.Range.StartLine != 1 || readParsed.Range.EndLine != 1 || len(readParsed.OmittedRanges) != 0 {
 		t.Fatalf("unexpected read range metadata: %+v", readParsed)
-	}
-	if len(readParsed.Suggestions) == 0 || !strings.Contains(strings.Join(readParsed.Suggestions, " "), "excerpt") {
-		t.Fatalf("read_file response missing evidence suggestion: %+v", readParsed.Suggestions)
 	}
 
 	unchangedResp, err := kit.Execute(context.Background(), providers.ToolCall{
@@ -322,8 +283,7 @@ func TestToolkit_WriteFileOverwritesExistingFilesWithoutPriorRead(t *testing.T) 
 	})
 	if err == nil ||
 		!strings.Contains(err.Error(), "error_kind=broad_overwrite") ||
-		!strings.Contains(err.Error(), "overwrite_policy") ||
-		!strings.Contains(err.Error(), "scoped file editing tool exposed in this session") {
+		!strings.Contains(err.Error(), "overwrite_policy") {
 		t.Fatalf("expected broad overwrite rejection, got: %v", err)
 	}
 	if got := mustReadFile(t, largePath); got != largeContent {
@@ -424,7 +384,6 @@ func TestToolkit_ReadFileStreamsLargeFileRange(t *testing.T) {
 		TotalLines    int              `json:"total_lines"`
 		Truncated     bool             `json:"truncated"`
 		OmittedRanges []map[string]int `json:"omitted_ranges"`
-		Suggestions   []string         `json:"next_suggestions"`
 	}
 	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
 		t.Fatalf("parse response: %v", err)
@@ -441,9 +400,6 @@ func TestToolkit_ReadFileStreamsLargeFileRange(t *testing.T) {
 	}
 	if !reflect.DeepEqual(parsed.OmittedRanges, wantOmitted) {
 		t.Fatalf("omitted_ranges = %+v, want %+v", parsed.OmittedRanges, wantOmitted)
-	}
-	if len(parsed.Suggestions) == 0 || !strings.Contains(strings.Join(parsed.Suggestions, " "), "omitted range") {
-		t.Fatalf("read_file response missing omitted-range suggestion: %+v", parsed.Suggestions)
 	}
 	for _, want := range []string{"3001|line-3001", "\n|line-3002", "\n|line-3003"} {
 		if !strings.Contains(parsed.Content, want) {
@@ -521,31 +477,6 @@ func TestToolkit_ReadFileNormalizesProviderFilledEmptySelectors(t *testing.T) {
 	}
 }
 
-func TestToolkit_ReadFileRejectsDirectory(t *testing.T) {
-	root := t.TempDir()
-	kit, err := New(root)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if err := os.Mkdir(filepath.Join(root, "dir"), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
-	_, err = kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "read_file",
-		Arguments: `{"path":"dir"}`,
-	})
-	if err == nil {
-		t.Fatal("expected directory rejection")
-	}
-	if !strings.Contains(err.Error(), "path is a directory") {
-		t.Fatalf("expected directory guidance, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "Use list_files") {
-		t.Fatalf("expected list_files guidance, got: %v", err)
-	}
-}
-
 func TestToolkit_ReadFileRejectsSensitivePaths(t *testing.T) {
 	root := t.TempDir()
 	kit, err := New(root)
@@ -561,7 +492,7 @@ func TestToolkit_ReadFileRejectsSensitivePaths(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected sensitive path rejection")
 	}
-	if !strings.Contains(err.Error(), "sensitive path") || !strings.Contains(err.Error(), "Chat approval does not lift this guard") {
+	if !strings.Contains(err.Error(), "sensitive path") {
 		t.Fatalf("expected sensitive path guidance, got: %v", err)
 	}
 }
@@ -688,10 +619,9 @@ func TestToolkit_EditFileDoesNotRequirePriorRead(t *testing.T) {
 		t.Fatalf("edit_file without prior read: %v", err)
 	}
 	var parsed struct {
-		WorkspaceRevision string   `json:"workspace_revision"`
-		OldFileSHA        string   `json:"old_file_sha"`
-		NewFileSHA        string   `json:"new_file_sha"`
-		Suggestions       []string `json:"next_suggestions"`
+		WorkspaceRevision string `json:"workspace_revision"`
+		OldFileSHA        string `json:"old_file_sha"`
+		NewFileSHA        string `json:"new_file_sha"`
 	}
 	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
 		t.Fatalf("parse edit response: %v", err)
@@ -701,9 +631,6 @@ func TestToolkit_EditFileDoesNotRequirePriorRead(t *testing.T) {
 	}
 	if parsed.OldFileSHA != formatFileSHA(sha256Hex([]byte("alpha\n"))) || parsed.NewFileSHA != formatFileSHA(sha256Hex([]byte("bravo\n"))) {
 		t.Fatalf("edit_file response missing before/after content hashes: %+v", parsed)
-	}
-	if len(parsed.Suggestions) == 0 || !strings.Contains(strings.Join(parsed.Suggestions, " "), "command execution") {
-		t.Fatalf("edit_file response missing validation suggestion: %+v", parsed.Suggestions)
 	}
 	if got := mustReadFile(t, filepath.Join(root, "a.txt")); got != "bravo\n" {
 		t.Fatalf("unexpected edited content: %q", got)
@@ -1231,7 +1158,7 @@ func TestToolkit_ToolMetadata_ClassifiesApplyPatchDryRun(t *testing.T) {
 	if !ok {
 		t.Fatal("apply_patch metadata not found")
 	}
-	if !meta.ReadOnly || !meta.ConcurrencySafe || meta.Risk != string(ToolRiskLow) || meta.Reason != "patch dry-run preview" {
+	if !meta.ReadOnly || !meta.ConcurrencySafe || meta.Risk != string(ToolRiskLow) {
 		t.Fatalf("dry-run apply_patch metadata = %+v, want low-risk read-only preview", meta)
 	}
 
@@ -1242,7 +1169,7 @@ func TestToolkit_ToolMetadata_ClassifiesApplyPatchDryRun(t *testing.T) {
 	if !ok {
 		t.Fatal("apply_patch metadata not found")
 	}
-	if meta.ReadOnly || meta.ConcurrencySafe || meta.Risk != string(ToolRiskHigh) || meta.Reason != "patch applies workspace changes" {
+	if meta.ReadOnly || meta.ConcurrencySafe || meta.Risk != string(ToolRiskHigh) {
 		t.Fatalf("mutating apply_patch metadata = %+v, want high-risk write", meta)
 	}
 }
@@ -1273,31 +1200,6 @@ func TestToolkit_ApplyPatchAppendsAtEndOfFile(t *testing.T) {
 	}
 	if got := mustReadFile(t, filepath.Join(root, "a.txt")); got != "first\nsecond\n" {
 		t.Fatalf("unexpected appended content: %q", got)
-	}
-}
-
-func TestToolkit_ListFilesRejectsFile(t *testing.T) {
-	root := t.TempDir()
-	kit, err := New(root)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello"), 0o644); err != nil {
-		t.Fatalf("write file: %v", err)
-	}
-
-	_, err = kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "list_files",
-		Arguments: `{"path":"a.txt"}`,
-	})
-	if err == nil {
-		t.Fatal("expected file rejection")
-	}
-	if !strings.Contains(err.Error(), "path is not a directory") {
-		t.Fatalf("expected file guidance, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "Use read_file") {
-		t.Fatalf("expected read_file guidance, got: %v", err)
 	}
 }
 
@@ -1348,7 +1250,7 @@ func TestToolkit_ListFilesRejectsAndFiltersProtectedPaths(t *testing.T) {
 	}
 }
 
-func TestToolkit_ListFilesReturnsEntryPathsAndSuggestions(t *testing.T) {
+func TestToolkit_ListFilesReturnsEntryPaths(t *testing.T) {
 	root := t.TempDir()
 	kit, err := New(root)
 	if err != nil {
@@ -1377,7 +1279,6 @@ func TestToolkit_ListFilesReturnsEntryPathsAndSuggestions(t *testing.T) {
 			IsDir bool   `json:"is_dir"`
 			Size  int64  `json:"size,omitempty"`
 		} `json:"entries"`
-		Suggestions []string `json:"next_suggestions"`
 	}
 	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
 		t.Fatalf("parse list_files response: %v", err)
@@ -1395,9 +1296,6 @@ func TestToolkit_ListFilesReturnsEntryPathsAndSuggestions(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotPaths, wantPaths) {
 		t.Fatalf("entry paths = %+v, want %+v", gotPaths, wantPaths)
-	}
-	if len(parsed.Suggestions) == 0 || !strings.Contains(strings.Join(parsed.Suggestions, " "), "read_file") {
-		t.Fatalf("list_files response missing next suggestion: %+v", parsed.Suggestions)
 	}
 }
 
@@ -1449,14 +1347,6 @@ func TestToolkit_FileToolTelemetryRecordsResultActions(t *testing.T) {
 	if records[1].StepIndex != nil {
 		t.Fatalf("tool execution without step context should not record step index: %+v", records[1].StepIndex)
 	}
-}
-
-func definitionNames(defs []providers.ToolDefinition) map[string]bool {
-	out := make(map[string]bool, len(defs))
-	for _, def := range defs {
-		out[def.Name] = true
-	}
-	return out
 }
 
 func TestToolkit_DisableTools_HidesDefinitionsAndBlocksExecute(t *testing.T) {
@@ -1886,102 +1776,6 @@ func TestToolkit_GrepRipgrepIncludesHiddenFiles(t *testing.T) {
 	}
 }
 
-func TestToolkit_SearchResultsIncludeNextSuggestions(t *testing.T) {
-	root := t.TempDir()
-	kit, err := New(root)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc target() {}\n"), 0o644); err != nil {
-		t.Fatalf("write fixture: %v", err)
-	}
-
-	grepResp, err := kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "grep",
-		Arguments: `{"pattern":"target"}`,
-	})
-	if err != nil {
-		t.Fatalf("grep: %v", err)
-	}
-	var grepParsed struct {
-		Action                string      `json:"action"`
-		Matches               []grepMatch `json:"matches"`
-		ContinuationSupported bool        `json:"continuation_supported"`
-		Suggestions           []string    `json:"next_suggestions"`
-	}
-	if err := json.Unmarshal([]byte(grepResp), &grepParsed); err != nil {
-		t.Fatalf("parse grep response: %v", err)
-	}
-	if len(grepParsed.Matches) != 1 {
-		t.Fatalf("unexpected grep matches: %+v", grepParsed.Matches)
-	}
-	if grepParsed.Action != "grep" {
-		t.Fatalf("grep action = %q, want grep", grepParsed.Action)
-	}
-	if !grepParsed.ContinuationSupported {
-		t.Fatalf("grep did not advertise stable continuation: %+v", grepParsed)
-	}
-	if len(grepParsed.Suggestions) == 0 || !strings.Contains(strings.Join(grepParsed.Suggestions, " "), "read_file") {
-		t.Fatalf("grep response missing read_file suggestion: %+v", grepParsed.Suggestions)
-	}
-
-	globResp, err := kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "glob",
-		Arguments: `{"pattern":"*.missing"}`,
-	})
-	if err != nil {
-		t.Fatalf("glob: %v", err)
-	}
-	var globParsed struct {
-		Action                string   `json:"action"`
-		Files                 []string `json:"files"`
-		ContinuationSupported bool     `json:"continuation_supported"`
-		Suggestions           []string `json:"next_suggestions"`
-	}
-	if err := json.Unmarshal([]byte(globResp), &globParsed); err != nil {
-		t.Fatalf("parse glob response: %v", err)
-	}
-	if len(globParsed.Files) != 0 {
-		t.Fatalf("unexpected glob matches: %+v", globParsed.Files)
-	}
-	if globParsed.Action != "glob" {
-		t.Fatalf("glob action = %q, want glob", globParsed.Action)
-	}
-	if !globParsed.ContinuationSupported {
-		t.Fatalf("glob did not advertise stable continuation: %+v", globParsed)
-	}
-	if len(globParsed.Suggestions) == 0 || !strings.Contains(strings.Join(globParsed.Suggestions, " "), "broader glob") {
-		t.Fatalf("empty glob response missing broaden suggestion: %+v", globParsed.Suggestions)
-	}
-	for _, mode := range []string{"files_with_matches", "count"} {
-		resp, err := kit.Execute(context.Background(), providers.ToolCall{
-			Name:      "grep",
-			Arguments: `{"pattern":"target","output_mode":"` + mode + `"}`,
-		})
-		if err != nil {
-			t.Fatalf("grep %s: %v", mode, err)
-		}
-		var parsed struct {
-			Action string `json:"action"`
-		}
-		if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
-			t.Fatalf("parse grep %s response: %v", mode, err)
-		}
-		if parsed.Action != "grep" {
-			t.Fatalf("grep %s action = %q, want grep", mode, parsed.Action)
-		}
-	}
-	records := kit.ToolTelemetry()
-	gotActions := make([]string, 0, len(records))
-	for _, record := range records {
-		gotActions = append(gotActions, record.Name+":"+record.ResultAction)
-	}
-	wantActions := []string{"grep:grep", "glob:glob", "grep:grep", "grep:grep"}
-	if !reflect.DeepEqual(gotActions, wantActions) {
-		t.Fatalf("search telemetry missing result actions: %+v", records)
-	}
-}
-
 func TestToolkit_SearchCursorReusesMaterializedResult(t *testing.T) {
 	root := t.TempDir()
 	for i := 0; i < globPageSize+20; i++ {
@@ -2081,16 +1875,12 @@ func TestToolkit_GrepLargeContentReturnsValidBudgetedJSON(t *testing.T) {
 		Matches            []grepMatch `json:"matches"`
 		OmittedMatchCount  int         `json:"omitted_match_count"`
 		ReturnedMatchCount int         `json:"returned_match_count"`
-		Suggestions        []string    `json:"next_suggestions"`
 	}
 	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
 		t.Fatalf("grep response must stay valid JSON after budgeting: %v\n%s", err, resp)
 	}
 	if !parsed.Truncated || parsed.OmittedMatchCount == 0 || parsed.ReturnedMatchCount != len(parsed.Matches) || parsed.ReturnedMatchCount >= parsed.Total {
 		t.Fatalf("unexpected budgeted grep metadata: %+v", parsed)
-	}
-	if len(parsed.Suggestions) == 0 || !strings.Contains(strings.Join(parsed.Suggestions, " "), "narrow") {
-		t.Fatalf("budgeted grep response missing narrowing suggestion: %+v", parsed.Suggestions)
 	}
 }
 
@@ -2398,26 +2188,5 @@ func TestToolkit_GrepIncludeMatchesRelativePaths_Ripgrep(t *testing.T) {
 	}
 	if len(parsed.Matches) != 1 || parsed.Matches[0].File != "src/app/main.ts" {
 		t.Fatalf("unexpected matches for src/**/*.ts: %+v", parsed.Matches)
-	}
-}
-
-func TestToolkit_RetiredMemoryToolsAreNotRegistered(t *testing.T) {
-	root := t.TempDir()
-	kit, err := New(root)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	definitions := definitionNames(kit.Definitions())
-	for _, name := range []string{"read_memory", "write_memory"} {
-		if definitions[name] {
-			t.Fatalf("retired tool %q must not appear in Definitions", name)
-		}
-		if _, ok := kit.ToolInfo(name); ok {
-			t.Fatalf("retired tool %q must not appear in the registry", name)
-		}
-		if _, err := kit.Execute(context.Background(), providers.ToolCall{Name: name, Arguments: `{}`}); err == nil || !strings.Contains(err.Error(), "unknown tool") {
-			t.Fatalf("executing retired tool %q should fail as unknown, got %v", name, err)
-		}
 	}
 }

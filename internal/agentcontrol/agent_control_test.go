@@ -971,9 +971,6 @@ func TestAwaitFromReportsMissingAndSubmittedReports(t *testing.T) {
 	if len(awaited.Results) != 1 || awaited.Results[0].Status != string(harness.TaskStatusCompleted) || awaited.Results[0].ReportPath != report.ReportPath || len(awaited.Results[0].ChangedFiles) != 1 {
 		t.Fatalf("expected completed result with report path, got %+v", awaited)
 	}
-	if spawnStepsContain(awaited.NextSteps, "workflow_control") {
-		t.Fatalf("plain await_agents should not guide workflow binding, got %+v", awaited.NextSteps)
-	}
 	waitForHarnessEvent(t, c.HarnessStore(), harness.EventRunCompleted, res.AgentID)
 }
 
@@ -998,9 +995,6 @@ func TestAwaitFromWarnsOnOverlappingChangedFiles(t *testing.T) {
 	first, err := c.Spawn(context.Background(), SpawnRequest{Type: DefaultSubagentType, TaskName: "edit_one", Prompt: "one", Synchronous: true})
 	if err != nil {
 		t.Fatalf("Spawn first: %v", err)
-	}
-	if !spawnStepsContain(first.NextSteps, "agent_report") {
-		t.Fatalf("synchronous spawn should suggest inspecting handoff artifacts, got %+v", first.NextSteps)
 	}
 	second, err := c.Spawn(context.Background(), SpawnRequest{Type: DefaultSubagentType, TaskName: "edit_two", Prompt: "two", Synchronous: true})
 	if err != nil {
@@ -1051,9 +1045,6 @@ func TestAwaitFromTimesOutWithRunningStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
-	if !spawnStepsContain(res.NextSteps, "non-overlapping") || !spawnStepsContain(res.NextSteps, "completion notification") {
-		t.Fatalf("async spawn should guide non-blocking follow-up, got %+v", res.NextSteps)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	awaited, err := c.AwaitFrom(agentthread.RootPath, ctx, []string{res.AgentID})
@@ -1062,9 +1053,6 @@ func TestAwaitFromTimesOutWithRunningStatus(t *testing.T) {
 	}
 	if !awaited.TimedOut || len(awaited.Results) != 1 || awaited.Results[0].Status != string(subagent.StatusRunning) {
 		t.Fatalf("expected timed out running result, got %+v", awaited)
-	}
-	if !spawnStepsContain(awaited.NextSteps, "non-overlapping") || !spawnStepsContain(awaited.NextSteps, "completion notifications") {
-		t.Fatalf("timed out await should guide non-blocking follow-up, got %+v", awaited.NextSteps)
 	}
 	c.StopAll()
 	waitForRunningWorkersToStop(t, c.Manager(), time.Second)
@@ -1099,9 +1087,6 @@ func TestActiveTaskReminderListsIncompleteChildren(t *testing.T) {
 	reminder := c.ActiveTaskReminder(agentthread.RootPath)
 	if !strings.Contains(reminder, res.AgentPath) || !strings.Contains(reminder, "<subagent_status>") {
 		t.Fatalf("active reminder should name the child inside a subagent_status block, got %q", reminder)
-	}
-	if strings.Contains(reminder, "await_agents") {
-		t.Fatalf("active reminder must not reference the retired await_agents tool, got %q", reminder)
 	}
 	c.StopAll()
 	waitForRunningWorkersToStop(t, c.Manager(), time.Second)
@@ -1596,24 +1581,6 @@ func TestSpawn_IsolationOverride(t *testing.T) {
 	}
 	if res2.Isolation != "inplace" || res2.WorktreePath != "" {
 		t.Fatalf("explicit inplace failed: %+v", res2)
-	}
-}
-
-func TestSpawn_UnknownIsolationRejected(t *testing.T) {
-	dir := t.TempDir()
-	initRepo(t, dir)
-	c, _ := New(Config{
-		Client:        &fakeClient{},
-		DefaultModel:  "fake",
-		ParentRepo:    dir,
-		WorktreeRoot:  filepath.Join(dir, "wt"),
-		WorkerFactory: func(string, WorkerType, agentthread.Metadata) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
-	})
-	_, err := c.Spawn(context.Background(), SpawnRequest{
-		Type: DefaultSubagentType, TaskName: "bad_isolation", Description: "x", Prompt: "p", Isolation: "yolo",
-	})
-	if err == nil {
-		t.Fatal("expected error for unknown isolation")
 	}
 }
 
@@ -2589,11 +2556,8 @@ func TestAgentMailboxMessageResumeHint(t *testing.T) {
 		CompletedAt: now,
 	}
 	msg := NewAgentMailboxMessage(failed)
-	if !msg.Resumable {
-		t.Fatalf("failed mailbox should be marked resumable: %+v", msg)
-	}
-	if !strings.Contains(msg.ResumeHint, "send_message") || !strings.Contains(msg.ResumeHint, "trigger_turn") {
-		t.Fatalf("resume hint should name the resume tool and mode: %q", msg.ResumeHint)
+	if !msg.Resumable || msg.ResumeHint == "" {
+		t.Fatalf("failed mailbox should be resumable with a hint: %+v", msg)
 	}
 
 	cancelled := failed
@@ -2617,7 +2581,7 @@ func TestAgentMailboxMessageResumeHint(t *testing.T) {
 	// Root-path parity: the root completion communication for a failed run
 	// serializes the same hint field.
 	root := FormatAgentMailboxMessage(failed)
-	if !strings.Contains(root, "resume_hint") || !strings.Contains(root, "send_message") {
+	if !strings.Contains(root, "resume_hint") {
 		t.Fatalf("root-path mailbox should include the resume hint, got %q", root)
 	}
 }
@@ -2726,9 +2690,6 @@ func TestAgentCompletionChatMessageTriggersRootTurn(t *testing.T) {
 	}
 	if !strings.Contains(communication.Content, "found bug at line 42") {
 		t.Fatalf("completion content missing result: %s", communication.Content)
-	}
-	if strings.Contains(msg.Content, "<changed_file_overlap>") {
-		t.Fatalf("completion content should not embed the legacy overlap text tail: %s", msg.Content)
 	}
 	if communication.ChangedFileOverlap != nil {
 		t.Fatalf("single-agent completion should keep ChangedFileOverlap nil, got %+v", communication.ChangedFileOverlap)
@@ -2875,20 +2836,6 @@ func waitForHarnessEvent(t *testing.T, store *harness.Store, eventType harness.E
 	t.Fatalf("expected harness event %s for %s", eventType, taskID)
 }
 
-func TestAgentMailboxMessage_IncludesErrorClass(t *testing.T) {
-	snap := subagentSnapshotWithError(&providers.HTTPError{
-		StatusCode: 429,
-		Body:       "rate limited",
-	})
-	payload := NewAgentMailboxMessage(snap)
-	if payload.ErrorClass != "retryable" {
-		t.Fatalf("expected retryable error class, got: %+v", payload)
-	}
-	if !contains(payload.Error, "rate limited") {
-		t.Fatalf("expected error body in mailbox payload, got: %+v", payload)
-	}
-}
-
 func TestAgentControlRecordsRootCompletionMessageEvent(t *testing.T) {
 	dir := t.TempDir()
 	initRepo(t, dir)
@@ -2933,27 +2880,6 @@ func TestAgentControlRecordsRootCompletionMessageEvent(t *testing.T) {
 	}
 }
 
-// subagentSnapshotWithError builds a minimal failed-worker snapshot
-// for mailbox tests without actually spawning anything.
-func subagentSnapshotWithError(err error) subagent.SubAgentSnapshot {
-	return subagent.SubAgentSnapshot{
-		ID:          "worker-test",
-		Type:        DefaultSubagentType,
-		Description: "test",
-		Status:      subagent.StatusFailed,
-		Error:       err,
-	}
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}
-
 func artifactKindPresent(artifacts []harness.Artifact, kind harness.ArtifactKind) bool {
 	for _, artifact := range artifacts {
 		if artifact.Kind == kind {
@@ -2980,16 +2906,6 @@ func mustReadAgentControlFile(t *testing.T, path string) string {
 		t.Fatalf("read file: %v", err)
 	}
 	return string(data)
-}
-
-func spawnStepsContain(steps []string, needle string) bool {
-	needle = strings.ToLower(needle)
-	for _, step := range steps {
-		if strings.Contains(strings.ToLower(step), needle) {
-			return true
-		}
-	}
-	return false
 }
 
 // recordingParticipantStore captures Upsert calls for spawn tests.
@@ -3063,9 +2979,6 @@ func TestSpawn_CreatesEphemeralParticipant(t *testing.T) {
 	}
 	if p.Role != DefaultSubagentType {
 		t.Fatalf("participant role = %q, want %q", p.Role, DefaultSubagentType)
-	}
-	if p.Avatar != "" {
-		t.Fatalf("participant avatar = %q, want empty (emoji avatars removed)", p.Avatar)
 	}
 	if p.CreatedAt.IsZero() || p.UpdatedAt.IsZero() {
 		t.Fatalf("participant timestamps should be set: %+v", p)

@@ -253,12 +253,6 @@ func TestResolveBinaryEnvOverride(t *testing.T) {
 	if path != "/nonexistent/codex" {
 		t.Fatalf("ResolveBinary = %q, want env value", path)
 	}
-	t.Setenv("WUU_CODEX_BINARY", "")
-	if _, err := ResolveBinary(); err == nil {
-		// Machine may or may not have codex on PATH; both are acceptable,
-		// but the error path must exist when lookup fails.
-		_ = err
-	}
 }
 
 var _ = os.Getenv

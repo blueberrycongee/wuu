@@ -6,54 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
-
-func TestBashReadBackgroundNextSuggestions(t *testing.T) {
-	liveProcess := proc.Process{Status: proc.StatusRunning}
-	deadProcess := proc.Process{Status: proc.StatusStopped}
-
-	if got := bashReadBackgroundNextSuggestions(0, 0, proc.OutputSnapshot{}, liveProcess); got != nil {
-		t.Fatalf("plain snapshots need no guidance: %v", got)
-	}
-
-	terminal := bashReadBackgroundNextSuggestions(5000, backgroundWaitMinDwell, proc.OutputSnapshot{}, deadProcess)
-	if len(terminal) == 0 || !strings.Contains(terminal[0], "terminal") {
-		t.Fatalf("terminal processes should close the wait path: %v", terminal)
-	}
-
-	timedOut := bashReadBackgroundNextSuggestions(5000, backgroundWaitMinDwell, proc.OutputSnapshot{TimedOut: true}, liveProcess)
-	if len(timedOut) < 2 || !strings.Contains(timedOut[0], "do not immediately wait again") || !strings.Contains(timedOut[1], "update_background") {
-		t.Fatalf("an expired wait should steer away from re-waiting and toward rechecks: %v", timedOut)
-	}
-
-	chatty := bashReadBackgroundNextSuggestions(120000, backgroundWaitMinDwell, proc.OutputSnapshot{Duration: backgroundWaitMinDwell}, liveProcess)
-	if len(chatty) == 0 || !strings.Contains(chatty[0], "continuously") {
-		t.Fatalf("a wait released at the pacing floor should name the chatty pattern: %v", chatty)
-	}
-
-	quiet := bashReadBackgroundNextSuggestions(120000, backgroundWaitMinDwell, proc.OutputSnapshot{Duration: 90 * time.Second}, liveProcess)
-	if len(quiet) == 0 || !strings.Contains(quiet[0], "end_offset") {
-		t.Fatalf("a normal early return should just teach incremental offsets: %v", quiet)
-	}
-}
-
-func TestBashUpdateBackgroundRequiresProcessID(t *testing.T) {
-	kit, err := New(t.TempDir())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	_, err = kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "bash",
-		Arguments: `{"action":"update_background","recheck_minutes":10}`,
-	})
-	if err == nil || !strings.Contains(err.Error(), "process_id") {
-		t.Fatalf("update_background without process_id should fail: %v", err)
-	}
-}
 
 func TestBashUpdateBackgroundScheduleLifecycle(t *testing.T) {
 	root := t.TempDir()

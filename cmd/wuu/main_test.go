@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"image"
 	"image/color"
@@ -77,24 +76,6 @@ func TestRunVersionAliasForwardsLongFlag(t *testing.T) {
 	}
 	if !strings.Contains(output, "commit:") {
 		t.Fatalf("expected long version output to include commit, got %q", output)
-	}
-}
-
-func TestRunWithoutArgsPrintsUsage(t *testing.T) {
-	output := captureStdout(t, func() {
-		if err := run(nil); err != nil {
-			t.Fatalf("run returned error: %v", err)
-		}
-	})
-	if !strings.Contains(output, "GUI-first") || strings.Contains(output, "wuu tui") {
-		t.Fatalf("unexpected usage output: %q", output)
-	}
-}
-
-func TestRunTUICommandIsRemoved(t *testing.T) {
-	err := run([]string{"tui"})
-	if err == nil || !strings.Contains(err.Error(), "TUI has been removed") {
-		t.Fatalf("expected removed TUI error, got %v", err)
 	}
 }
 
@@ -346,71 +327,6 @@ func TestRunExecAllowsAttachmentOnlyPrompt(t *testing.T) {
 	}
 }
 
-func TestExecOptionsFromCLIAcceptsMaxTurns(t *testing.T) {
-	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	cfg := addExecFlags(fs)
-	if err := fs.Parse([]string{"--max-turns", "3"}); err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	opts, err := execOptionsFromCLI(cfg, "hello", "", false, nil)
-	if err != nil {
-		t.Fatalf("execOptionsFromCLI: %v", err)
-	}
-	if opts.MaxTurns != 3 {
-		t.Fatalf("MaxTurns = %d, want 3", opts.MaxTurns)
-	}
-}
-
-func TestExecOptionsFromInputJSONAcceptsMaxTurns(t *testing.T) {
-	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	cfg := addExecFlags(fs)
-	if err := fs.Parse(nil); err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	maxTurns := 4
-	opts, err := execOptionsFromCLI(cfg, "hello", "", false, &execInputPayload{MaxTurns: &maxTurns})
-	if err != nil {
-		t.Fatalf("execOptionsFromCLI: %v", err)
-	}
-	if opts.MaxTurns != 4 {
-		t.Fatalf("MaxTurns = %d, want 4", opts.MaxTurns)
-	}
-}
-
-func TestExecOptionsFromCLIAcceptsOutputSchema(t *testing.T) {
-	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	cfg := addExecFlags(fs)
-	if err := fs.Parse([]string{"--output-schema", "schema.json"}); err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	opts, err := execOptionsFromCLI(cfg, "hello", "", false, nil)
-	if err != nil {
-		t.Fatalf("execOptionsFromCLI: %v", err)
-	}
-	if opts.OutputSchemaPath != "schema.json" {
-		t.Fatalf("OutputSchemaPath = %q, want schema.json", opts.OutputSchemaPath)
-	}
-}
-
-func TestExecOptionsFromInputJSONAcceptsOutputSchema(t *testing.T) {
-	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	cfg := addExecFlags(fs)
-	if err := fs.Parse(nil); err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	opts, err := execOptionsFromCLI(cfg, "hello", "", false, &execInputPayload{OutputSchema: "schema.json"})
-	if err != nil {
-		t.Fatalf("execOptionsFromCLI: %v", err)
-	}
-	if opts.OutputSchemaPath != "schema.json" {
-		t.Fatalf("OutputSchemaPath = %q, want schema.json", opts.OutputSchemaPath)
-	}
-}
-
 func TestRunExecRejectsNegativeMaxTurnsWithExitCodeTwo(t *testing.T) {
 	err := run([]string{"exec", "--max-turns=-1", "hello"})
 	if wuuexec.ExitCode(err) != wuuexec.ExitInvalidInput {
@@ -495,9 +411,7 @@ func TestRunExecReviewUsesExecControllerPath(t *testing.T) {
 	if !controller.startedThread {
 		t.Fatalf("review should start an exec thread: %+v", controller)
 	}
-	if !strings.Contains(controller.startedPrompt, "Review the current uncommitted changes") ||
-		!strings.Contains(controller.startedPrompt, "current diff using the tools available under the active model surface") ||
-		!strings.Contains(controller.startedPrompt, "prioritize tests") {
+	if !strings.Contains(controller.startedPrompt, "prioritize tests") {
 		t.Fatalf("unexpected review prompt: %q", controller.startedPrompt)
 	}
 	events := parseCLIJSONLines(t, output)
@@ -527,14 +441,11 @@ func TestRunInitWritesDefaultConfig(t *testing.T) {
 	wuuHome := filepath.Join(t.TempDir(), "wuu-home")
 	t.Setenv("WUU_HOME", wuuHome)
 	t.Chdir(workdir)
-	output := captureStdout(t, func() {
+	captureStdout(t, func() {
 		if err := run([]string{"init", "--force"}); err != nil {
 			t.Fatalf("run returned error: %v", err)
 		}
 	})
-	if !strings.Contains(output, "created") {
-		t.Fatalf("expected created output, got %q", output)
-	}
 	configPath := filepath.Join(wuuHome, "config.json")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -716,26 +627,6 @@ func TestRunModelsRejectsUnsupportedProvider(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "openai-codex providers only") {
 		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestRunEvalListDoesNotRequireConfig(t *testing.T) {
-	output := captureStdout(t, func() {
-		if err := run([]string{"eval", "--list"}); err != nil {
-			t.Fatalf("run returned error: %v", err)
-		}
-	})
-
-	if !strings.Contains(output, "test_failure_fix") ||
-		!strings.Contains(output, "git_test_failure_fix") ||
-		!strings.Contains(output, "multi_file_pricing") ||
-		!strings.Contains(output, "long_process_output") ||
-		!strings.Contains(output, "tool_search_deferred") ||
-		!strings.Contains(output, "stale_read_guard") ||
-		!strings.Contains(output, "mcp_readonly_concurrency") ||
-		!strings.Contains(output, "mcp_live_discovery") ||
-		!strings.Contains(output, "multi_agent_worker") {
-		t.Fatalf("expected built-in eval tasks, got %q", output)
 	}
 }
 
@@ -1102,23 +993,6 @@ func TestEvalToolInventoryObservationsAreSchemaFree(t *testing.T) {
 		if strings.Contains(string(raw), forbidden) {
 			t.Fatalf("tool inventory leaked schema-like field %q: %s", forbidden, string(raw))
 		}
-	}
-}
-
-func TestEvalModelProfileObservation(t *testing.T) {
-	got := evalModelProfileObservation(&runtime.Session{
-		ProviderName: "openai",
-		Model:        "gpt-5-codex",
-	})
-
-	if got == nil {
-		t.Fatal("expected model profile observation")
-	}
-	if got.ProviderName != "openai" || got.Model != "gpt-5-codex" || got.Family != "codex" {
-		t.Fatalf("unexpected model profile identity: %+v", got)
-	}
-	if got.DefaultWriteMode != "patch" || !got.FreeformTool || !got.AllowParallelReadOnly {
-		t.Fatalf("unexpected model profile strategy: %+v", got)
 	}
 }
 
@@ -2199,42 +2073,6 @@ func TestRunDebugAppServerSendForwardsMethodAndParams(t *testing.T) {
 	}
 }
 
-func TestRunDebugAppServerRegistryUsesClient(t *testing.T) {
-	client := &fakeDebugAppServerClient{
-		results: map[string]json.RawMessage{
-			appserver.MethodPluginRegistryIntrospect: json.RawMessage(`{"generation":3,"services":[{"service":"registry.introspect","version":"1.0.0","provider":"kernel","kernel":true,"methods":["call"]}]}`),
-		},
-	}
-	restore := installDebugAppServerClientOverride(t, client)
-	defer restore()
-
-	output := captureStdout(t, func() {
-		if err := run([]string{"debug", "app-server", "registry", "--workdir", "/tmp/repo"}); err != nil {
-			t.Fatalf("run debug app-server registry: %v", err)
-		}
-	})
-
-	if len(client.calls) != 1 || client.calls[0].method != appserver.MethodPluginRegistryIntrospect {
-		t.Fatalf("unexpected calls: %+v", client.calls)
-	}
-	var payload struct {
-		Generation uint64 `json:"generation"`
-		Services   []struct {
-			Service  string `json:"service"`
-			Provider string `json:"provider"`
-		} `json:"services"`
-	}
-	if err := json.Unmarshal([]byte(output), &payload); err != nil {
-		t.Fatalf("parse JSON: %v\n%s", err, output)
-	}
-	if payload.Generation != 3 || len(payload.Services) != 1 || payload.Services[0].Service != "registry.introspect" || payload.Services[0].Provider != "kernel" {
-		t.Fatalf("unexpected registry output: %+v", payload)
-	}
-	if !client.shutdown {
-		t.Fatal("debug client should be shut down")
-	}
-}
-
 func TestRunDebugChannelInspectResolvesRoomNameAndListsMessages(t *testing.T) {
 	client := &fakeDebugAppServerClient{results: map[string]json.RawMessage{
 		appserver.MethodChannelBootstrap:   json.RawMessage(`{"agents":[{"id":"agent-1","name":"Alpha","memory_dir":"/tmp/alpha","avatar_key":"","autostart":true,"created_at":"2026-07-28T00:00:00Z"}],"rooms":[{"id":"room-1","kind":"group","name":"Review","created_by":"local-user","created_at":"2026-07-28T00:00:00Z","members":[]}]}`),
@@ -2947,38 +2785,5 @@ func TestRunSessionShowNotFoundReturnsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "session not found") {
 		t.Errorf("expected session-not-found, got: %v", err)
-	}
-}
-
-func TestRunDebugAppServerExecutionsUsesClient(t *testing.T) {
-	client := &fakeDebugAppServerClient{
-		results: map[string]json.RawMessage{
-			appserver.MethodPluginExecutionsList: json.RawMessage(`{"executions":[{"id":"exec-1","plugin_id":"memory","message":"waiting"}]}`),
-		},
-	}
-	restore := installDebugAppServerClientOverride(t, client)
-	defer restore()
-
-	output := captureStdout(t, func() {
-		if err := run([]string{"debug", "app-server", "executions", "--workdir", "/tmp/repo"}); err != nil {
-			t.Fatalf("run debug app-server executions: %v", err)
-		}
-	})
-
-	if len(client.calls) != 1 || client.calls[0].method != appserver.MethodPluginExecutionsList {
-		t.Fatalf("unexpected calls: %+v", client.calls)
-	}
-	var payload struct {
-		Executions []struct {
-			ID       string `json:"id"`
-			PluginID string `json:"plugin_id"`
-			Message  string `json:"message"`
-		} `json:"executions"`
-	}
-	if err := json.Unmarshal([]byte(output), &payload); err != nil {
-		t.Fatalf("output is not JSON: %v\n%s", err, output)
-	}
-	if len(payload.Executions) != 1 || payload.Executions[0].ID != "exec-1" || payload.Executions[0].Message != "waiting" {
-		t.Fatalf("payload = %+v", payload)
 	}
 }

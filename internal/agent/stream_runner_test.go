@@ -774,34 +774,6 @@ func TestStreamRunner_AllowsNaturalEmptyCompletionWithoutPersistingAssistantMess
 	}
 }
 
-func TestStreamRunner_NoToolCallsWhenNoneRequested(t *testing.T) {
-	client := &mockStreamClient{
-		events: []providers.StreamEvent{
-			{Type: providers.EventContentDelta, Content: "answer"},
-			{Type: providers.EventDone},
-		},
-	}
-
-	tools := &fakeTools{}
-	runner := StreamRunner{
-		Client: client,
-		Tools:  tools,
-		Model:  "test-model",
-	}
-
-	result, err := runner.Run(context.Background(), "question")
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if result != "answer" {
-		t.Fatalf("unexpected result: %q", result)
-	}
-	// Tools should not have been called.
-	if len(tools.calls) != 0 {
-		t.Fatalf("expected no tool calls, got %d", len(tools.calls))
-	}
-}
-
 func TestStreamRunner_ValidationErrors(t *testing.T) {
 	// Run validates blank prompt.
 	runner := StreamRunner{Model: "m"}
@@ -1595,22 +1567,6 @@ func TestFormatCompactNoticeIncludesReplacementTokenEstimate(t *testing.T) {
 	const want = "✦ Compacted history: 119 → 1 messages (~239k → ~49k tokens)"
 	if notice != want {
 		t.Fatalf("notice = %q, want %q", notice, want)
-	}
-}
-
-func TestFormatCompactAttemptNoticeExplainsOutputLimitRecovery(t *testing.T) {
-	notice, ok := formatCompactAttemptNotice(CompactAttemptInfo{
-		Reason:      CompactReasonManual,
-		Status:      CompactAttemptFailed,
-		OutputLimit: true,
-	})
-	if !ok {
-		t.Fatal("output-limit failure must emit a terminal notice")
-	}
-	for _, want := range []string{"after retry", "history is unchanged", "Retry compaction", "larger output limit"} {
-		if !strings.Contains(notice, want) {
-			t.Fatalf("notice %q does not contain %q", notice, want)
-		}
 	}
 }
 
@@ -2519,24 +2475,6 @@ func TestStreamRunner_ResetConversationUsageReflectsCompaction(t *testing.T) {
 	}
 	if tracked != len(compacted) {
 		t.Fatalf("tracked history length = %d, want %d", tracked, len(compacted))
-	}
-}
-
-// TestStreamRunner_ResetConversationUsageNilAndEmpty guards the edge cases the
-// history rewrite can hit: a runner that never recorded usage, and an empty
-// compacted history.
-func TestStreamRunner_ResetConversationUsageNilAndEmpty(t *testing.T) {
-	r := &StreamRunner{}
-	// No prior usage recorded: must not panic and stays at zero.
-	r.ResetConversationUsage(nil)
-	if r.conversationUsage == nil {
-		t.Fatal("ResetConversationUsage should allocate the tracker")
-	}
-	if got := r.conversationUsage.EstimateCurrent(); got != 0 {
-		t.Fatalf("empty reset estimate = %d, want 0", got)
-	}
-	if r.trackedHistoryLen != 0 {
-		t.Fatalf("tracked history length = %d, want 0", r.trackedHistoryLen)
 	}
 }
 

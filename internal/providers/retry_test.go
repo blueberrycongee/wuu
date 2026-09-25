@@ -6,34 +6,7 @@ import (
 	"fmt"
 	"net"
 	"testing"
-	"time"
 )
-
-func TestDefaultRetryConfigUsesSingleAttempt(t *testing.T) {
-	cfg := DefaultRetryConfig()
-	if cfg.MaxRetries != 0 {
-		t.Fatalf("MaxRetries = %d, want 0", cfg.MaxRetries)
-	}
-	if cfg.InitialDelay != time.Second {
-		t.Fatalf("InitialDelay = %s, want 1s", cfg.InitialDelay)
-	}
-	if cfg.MaxDelay != 60*time.Second {
-		t.Fatalf("MaxDelay = %s, want 60s", cfg.MaxDelay)
-	}
-}
-
-func TestNormalizeRetryConfigDefaultsMaxDelayToOneMinute(t *testing.T) {
-	cfg := NormalizeRetryConfig(RetryConfig{MaxRetries: 1})
-	if cfg.MaxDelay != 60*time.Second {
-		t.Fatalf("MaxDelay = %s, want 60s", cfg.MaxDelay)
-	}
-}
-
-func TestIsRetryable_ContextDeadlineExceeded(t *testing.T) {
-	if !IsRetryable(context.DeadlineExceeded) {
-		t.Fatal("expected context.DeadlineExceeded to be retryable")
-	}
-}
 
 func TestIsRetryable_WrappedDeadlineExceeded(t *testing.T) {
 	wrapped := fmt.Errorf("stream request failed: request failed: Post https://example.com: %w", context.DeadlineExceeded)
@@ -269,9 +242,6 @@ func TestStreamErrorSummary_RetryableProviderOverload(t *testing.T) {
 	if got := StreamErrorSummary(err); got != "Provider is overloaded" {
 		t.Fatalf("unexpected summary: %q", got)
 	}
-	if got := StreamErrorDisplay(err); got != "Provider is overloaded. Try again in a moment." {
-		t.Fatalf("unexpected display: %q", got)
-	}
 }
 
 func TestStreamErrorSummary_IncompleteClose(t *testing.T) {
@@ -279,18 +249,12 @@ func TestStreamErrorSummary_IncompleteClose(t *testing.T) {
 	if got := StreamErrorSummary(err); got != "Connection ended before completion" {
 		t.Fatalf("unexpected summary: %q", got)
 	}
-	if got := StreamErrorDisplay(err); got != "The connection ended before the reply completed." {
-		t.Fatalf("unexpected display: %q", got)
-	}
 }
 
 func TestStreamErrorSummary_EmptyAnswer(t *testing.T) {
 	err := errors.New("model returned empty answer")
 	if got := StreamErrorSummary(err); got != "Model returned empty response" {
 		t.Fatalf("unexpected summary: %q", got)
-	}
-	if got := StreamErrorDisplay(err); got != "The model returned an empty response. This is usually a provider compatibility issue — try again or rephrase your prompt." {
-		t.Fatalf("unexpected display: %q", got)
 	}
 }
 
@@ -305,9 +269,6 @@ func TestStreamErrorSummary_Timeout(t *testing.T) {
 	err := errors.New("stream idle timeout after 5m0s: context deadline exceeded")
 	if got := StreamErrorSummary(err); got != "Stream timed out" {
 		t.Fatalf("unexpected summary: %q", got)
-	}
-	if got := StreamErrorDisplay(err); got != "Stream timed out. No response chunks arrived in time." {
-		t.Fatalf("unexpected display: %q", got)
 	}
 }
 

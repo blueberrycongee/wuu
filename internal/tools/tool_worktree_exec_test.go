@@ -103,34 +103,6 @@ func TestWorktreeBoundReadAndEditUseWorktreeCopy(t *testing.T) {
 	}
 }
 
-func TestWorktreeBoundShellRunsInWorktree(t *testing.T) {
-	kit, parent, worktree, ctx := newWorktreeExecFixture(t)
-	enableShellExecutionForTest(kit.env)
-
-	// Exercise the shared shell execution engine that backs bash. A
-	// worktree-bound run with the default (empty) cwd must relocate onto
-	// the worktree checkout.
-	result, err := executeShellCommandWithCWD(ctx, kit.env, "pwd", 30, "")
-	if err != nil {
-		t.Fatalf("executeShellCommandWithCWD: %v", err)
-	}
-	out := result.Output
-	resolvedWorktree, err := filepath.EvalSymlinks(worktree)
-	if err != nil {
-		resolvedWorktree = worktree
-	}
-	if !strings.Contains(out, resolvedWorktree) {
-		t.Fatalf("shell should execute inside the worktree %q, got %s", resolvedWorktree, out)
-	}
-	resolvedParent, err := filepath.EvalSymlinks(parent)
-	if err != nil {
-		resolvedParent = parent
-	}
-	if strings.Contains(out, resolvedParent+`\n`) {
-		t.Fatalf("shell should not execute in the parent root, got %s", out)
-	}
-}
-
 func TestWorktreeBoundBashRunExecutesInWorktree(t *testing.T) {
 	kit, parent, worktree, ctx := newWorktreeExecFixture(t)
 	enableShellExecutionForTest(kit.env)

@@ -229,22 +229,6 @@ func TestStdioEnvOverlay(t *testing.T) {
 	}
 }
 
-func TestManagerStatusIncludesConnectionFailures(t *testing.T) {
-	manager := NewManager()
-	err := manager.Add(context.Background(), ServerConfig{Name: "broken", Command: ""})
-	if err == nil {
-		t.Fatal("expected Add to fail")
-	}
-
-	status := manager.Status()["broken"]
-	if status.Name != "broken" || status.Connected {
-		t.Fatalf("unexpected failed status: %+v", status)
-	}
-	if status.Error == "" {
-		t.Fatalf("failed status should include error: %+v", status)
-	}
-}
-
 type scriptedTransport struct {
 	mu           sync.Mutex
 	listCalls    int

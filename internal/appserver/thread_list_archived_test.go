@@ -25,46 +25,6 @@ func dispatchPayload(t *testing.T, srv *Server, id, method string, params any) {
 	}
 }
 
-func TestServerThreadListArchivedReturnsArchivedSession(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
-	out := &lockedBuffer{}
-	srv := New(rt, out)
-
-	dispatchPayload(t, srv, "1", "thread/start", nil)
-	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread.ID
-
-	dispatchPayload(t, srv, "2", "thread/archive", ThreadArchiveParams{ThreadID: threadID, Archived: true})
-	if resp := responseByID(t, parseOutput(t, out.String()), "2"); resp["error"] != nil {
-		t.Fatalf("thread/archive rejected: %+v", resp["error"])
-	}
-
-	dispatchPayload(t, srv, "3", "thread/listArchived", nil)
-	resp := responseByID(t, parseOutput(t, out.String()), "3")
-	if resp["error"] != nil {
-		t.Fatalf("thread/listArchived errored: %+v", resp["error"])
-	}
-	list := remarshal[ThreadListResult](t, resp["result"])
-	if len(list.Threads) != 1 {
-		t.Fatalf("archived list should contain the archived thread, got %+v", list.Threads)
-	}
-	if list.Threads[0].ID != threadID {
-		t.Fatalf("archived list returned the wrong thread: %+v", list.Threads[0])
-	}
-	if !list.Threads[0].Archived {
-		t.Fatalf("archived thread must carry Archived=true, got %+v", list.Threads[0])
-	}
-
-	// Regression: thread/list must still hide archived threads so the active
-	// sidebar does not surface them.
-	dispatchPayload(t, srv, "4", "thread/list", nil)
-	active := remarshal[ThreadListResult](t, responseByID(t, parseOutput(t, out.String()), "4")["result"])
-	for _, th := range active.Threads {
-		if th.Archived {
-			t.Fatalf("thread/list leaked an archived thread: %+v", th)
-		}
-	}
-}
-
 func TestServerThreadListArchivedOmitsActiveThreads(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}

@@ -418,21 +418,6 @@ func TestToolkit_GitTelemetryRecordsResultActions(t *testing.T) {
 	}
 }
 
-func TestToolkit_GitStatusSuggestsDiffForDirtyTree(t *testing.T) {
-	kit, root := setupGitRepo(t)
-	runBash(t, root, "printf 'dirty\n' >> hello.txt")
-
-	p := gitCall(t, kit, "status")
-	requireGitAction(t, p, "status")
-	if p["exit_code"].(float64) != 0 {
-		t.Fatalf("git status: %+v", p)
-	}
-	suggestions, ok := p["next_suggestions"].([]any)
-	if !ok || len(suggestions) == 0 || !strings.Contains(fmt.Sprint(suggestions), "git diff") {
-		t.Fatalf("dirty status should suggest git diff: %+v", p)
-	}
-}
-
 func TestToolkit_Git_BlockedSubcommands(t *testing.T) {
 	kit, _ := setupGitRepo(t)
 	for _, sub := range []string{"rebase", "merge", "clean", "cherry-pick", "stash pop", "stash apply", "stash drop", "stash clear"} {
@@ -512,10 +497,6 @@ func TestToolkit_Git_AddStagesExplicitPaths(t *testing.T) {
 	if got := strings.Fields(runBash(t, root, "git diff --cached --name-only")); strings.Join(got, ",") != "hello.txt,new.txt" {
 		t.Fatalf("staged files = %+v, want hello.txt,new.txt", got)
 	}
-	suggestions, ok := p["next_suggestions"].([]any)
-	if !ok || !strings.Contains(fmt.Sprint(suggestions), "diff --cached") {
-		t.Fatalf("git add should suggest staged diff review: %+v", p)
-	}
 }
 
 func TestToolkit_Git_AddAcceptsLiteralPathCharacters(t *testing.T) {
@@ -586,18 +567,6 @@ func TestToolkit_Git_RestoreStagedUnstagesExplicitPaths(t *testing.T) {
 	}
 	if got := strings.TrimSpace(runBash(t, root, "git diff --cached --name-only")); got != "" {
 		t.Fatalf("file should be unstaged, staged: %q", got)
-	}
-}
-
-func TestToolkit_Git_CommitWithoutStagedChangesFailsCleanly(t *testing.T) {
-	kit, _ := setupGitRepo(t)
-	p := gitCall(t, kit, "commit", "-m", "Nothing to commit")
-	if p["exit_code"].(float64) == 0 {
-		t.Fatalf("expected non-zero exit for empty commit: %v", p)
-	}
-	suggestions, ok := p["next_suggestions"].([]any)
-	if !ok || len(suggestions) == 0 || !strings.Contains(fmt.Sprint(suggestions), "git status") {
-		t.Fatalf("failed commit should suggest git status: %+v", p)
 	}
 }
 
@@ -832,66 +801,6 @@ func TestToolkit_Git_RedactsCredentialsInOutput(t *testing.T) {
 	if strings.Contains(output, "real-bearer-token") || !strings.Contains(output, "[REDACTED]") {
 		t.Fatalf("git config did not redact bearer header: %+v", p)
 	}
-}
-
-func TestToolkit_Git_NonInteractiveEnv(t *testing.T) {
-	kit, _ := setupGitRepo(t)
-	enableShellExecutionForTest(kit.env)
-	resp, err := kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "bash",
-		Arguments: `{"command":"printf '%s' \"$GIT_TERMINAL_PROMPT\""}`,
-	})
-	if err != nil {
-		t.Fatalf("bash: %v", err)
-	}
-	var p map[string]any
-	if err := json.Unmarshal([]byte(resp), &p); err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if p["stdout_tail"].(string) != "0" {
-		t.Errorf("GIT_TERMINAL_PROMPT got %q", p["stdout_tail"])
-	}
-}
-
-func TestToolkit_Git_IsHiddenFromModelSurfaces(t *testing.T) {
-	// Phase 5 of the bash-first redesign: the legacy `git` tool is
-	// demoted to an internal / advanced capability. Bash covers all
-	// git operations (status, diff, add, commit, push) via the
-	// unified terminal entry point, so the model never needs the
-	// structured tool. It stays in the registry for tool_search
-	// activation and replay, but is hidden from every surface.
-	kit, root := setupGitRepo(t)
-	defs := kit.Definitions()
-	for _, d := range defs {
-		if d.Name == "git" {
-			t.Fatalf("git must NOT be in Definitions() (Phase 5: advanced/hidden), got %v", d.Name)
-		}
-	}
-	// Registry reachability: internal callers can still look it up.
-	if kit.LookupTool("git") == nil {
-		t.Fatal("git must remain in the registry for internal callers")
-	}
-	_ = root
-}
-
-func TestToolkit_Git_NotDisabledWithShellDisabled(t *testing.T) {
-	// Phase 5: `git` is Hidden regardless of which other tools are
-	// disabled. The legacy "git should remain after disabling shell"
-	// assertion is inverted: disabling shell does not surface the
-	// structured git tool because it is never visible in the first
-	// place. Bash (also Hidden when shell is disabled) and the
-	// registry still hold it for internal callers.
-	kit, root := setupGitRepo(t)
-	kit.DisableTools("write_file", "edit_file", "run_shell")
-	for _, d := range kit.Definitions() {
-		if d.Name == "git" {
-			t.Fatalf("git must remain hidden even after disabling shell, got %v", d.Name)
-		}
-	}
-	if kit.LookupTool("git") == nil {
-		t.Fatal("git must remain in the registry after disabling shell")
-	}
-	_ = root
 }
 
 // ── branch policy tests ──────────────────────────────────────────

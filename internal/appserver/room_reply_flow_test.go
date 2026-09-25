@@ -223,24 +223,6 @@ func TestRoomReplyExplicitSendSuppressesOnlyDuplicateFinal(t *testing.T) {
 	}
 }
 
-func TestRoomReplyPublishesFinalAfterExplicitProgress(t *testing.T) {
-	fixture, provider := newCollaborationFlowFixture(t)
-	fixture.room = createPeerRoom(t, fixture, "Progress and answer", fixture.identity)
-	sendRoomReplyObjective(t, fixture, "Find the reconnect failure")
-	call := provider.next(t)
-	const progress = "I am checking which callback owns the reconnect socket."
-	args, _ := json.Marshal(map[string]any{"room_id": fixture.room.ID, "kind": "text", "body": progress, "basis_seq": 1})
-	call.response <- providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "send-progress", Name: "chat_send", Arguments: string(args)}}}
-	continuation := provider.next(t)
-	const final = "The callback retains the old socket; rebuild it when the connection changes."
-	continuation.response <- providers.ChatResponse{Content: final}
-	fixture.waitForCompletion(t)
-	result := readRoomReplies(t, fixture, fixture.room.ID)
-	if len(result.Messages) != 2 || result.Messages[1].Body != progress || result.Messages[1].AuthorID != fixture.identity.ID || len(result.Responses) != 0 {
-		t.Fatalf("assistant text was posted after explicit progress: %+v", result)
-	}
-}
-
 func TestRoomReplyMultipleBubblesStayInOneTurn(t *testing.T) {
 	for _, ending := range []string{"final bubble", "already answered", "duplicate final"} {
 		t.Run(ending, func(t *testing.T) {

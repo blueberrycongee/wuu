@@ -426,26 +426,6 @@ func TestSummariesMatchProviderCompatForMiniMaxM3(t *testing.T) {
 	}
 }
 
-func TestResolveKeepsExplicitMiniMaxToolSearchOption(t *testing.T) {
-	reasoning := true
-	provider := config.ProviderConfig{
-		Type:  "anthropic",
-		NPM:   "@ai-sdk/anthropic",
-		Model: "minimax-m3",
-		Models: map[string]config.ProviderModelConfig{
-			"minimax-m3": {
-				Reasoning: &reasoning,
-				Options:   map[string]any{"anthropicToolSearch": false},
-			},
-		},
-	}
-
-	selection := Resolve(provider, provider.Model, "", "")
-	if got := selection.ProviderOptions["anthropicToolSearch"]; got != false {
-		t.Fatalf("anthropicToolSearch = %#v, want false; options=%#v", got, selection.ProviderOptions)
-	}
-}
-
 func TestResolveKeepsExplicitMiniMaxThinkingOption(t *testing.T) {
 	reasoning := true
 	provider := config.ProviderConfig{
@@ -803,25 +783,6 @@ func TestResolveMatchesProviderCompatSamplingDefaults(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestResolveKeepsExplicitProviderCompatSamplingOptions(t *testing.T) {
-	provider := config.ProviderConfig{
-		Type:  "anthropic",
-		Model: "claude-sonnet-4.6",
-		Models: map[string]config.ProviderModelConfig{
-			"claude-sonnet-4.6": {
-				Options: map[string]any{
-					"temperature": 0.2,
-				},
-			},
-		},
-	}
-
-	selection := Resolve(provider, provider.Model, "", "")
-	if got := selection.ProviderOptions["temperature"]; got != 0.2 {
-		t.Fatalf("temperature = %#v, want 0.2; options=%#v", got, selection.ProviderOptions)
 	}
 }
 

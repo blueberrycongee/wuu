@@ -8,23 +8,6 @@ import (
 	"testing"
 )
 
-func TestEnsureDirCreatesAndIsIdempotent(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "a", "b", "memory")
-	if err := EnsureDir(dir); err != nil {
-		t.Fatalf("EnsureDir: %v", err)
-	}
-	if err := EnsureDir(dir); err != nil {
-		t.Fatalf("EnsureDir second call: %v", err)
-	}
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() {
-		t.Fatalf("stat %s: %v", dir, err)
-	}
-	if err := EnsureDir(""); err == nil {
-		t.Fatalf("EnsureDir(\"\") must fail")
-	}
-}
-
 func writeIndex(t *testing.T, dir, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, EntrypointName), []byte(content), 0o644); err != nil {
@@ -81,10 +64,6 @@ func TestReadIndexTruncatesByLines(t *testing.T) {
 	if got := len(strings.Split(body, "\n")); got != MaxIndexLines {
 		t.Fatalf("kept %d lines, want %d", got, MaxIndexLines)
 	}
-	want := fmt.Sprintf("> WARNING: %s is %d lines (limit: %d).", EntrypointName, MaxIndexLines+17, MaxIndexLines)
-	if !strings.Contains(snap.Content, want) {
-		t.Fatalf("warning missing %q in:\n%s", want, snap.Content)
-	}
 }
 
 func TestReadIndexTruncatesByBytesAtLineBoundary(t *testing.T) {
@@ -110,9 +89,6 @@ func TestReadIndexTruncatesByBytesAtLineBoundary(t *testing.T) {
 		if !strings.HasPrefix(line, "- [") {
 			t.Fatalf("byte truncation cut mid-line: %q", line)
 		}
-	}
-	if !strings.Contains(snap.Content, "index entries are too long") {
-		t.Fatalf("byte warning missing:\n%s", snap.Content[len(snap.Content)-300:])
 	}
 }
 

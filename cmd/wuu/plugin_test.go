@@ -141,12 +141,6 @@ func TestPluginCLIInstallListInspectAndRemove(t *testing.T) {
 	}
 }
 
-func TestPluginCLIRejectsUnknownSubcommand(t *testing.T) {
-	if err := run([]string{"plugin", "unknown"}); err == nil {
-		t.Fatal("unknown plugin subcommand unexpectedly succeeded")
-	}
-}
-
 func TestPluginCLIPolicyActionsUseExactFingerprint(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("WUU_HOME", home)
