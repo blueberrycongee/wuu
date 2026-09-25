@@ -834,8 +834,6 @@ export const enUS = {
   "provider.modelCount": "{count} models",
   "provider.selectedModel": "Selected: {model}",
   "provider.availableModels": "Available models",
-  "provider.removeModel": "Remove {model}",
-  "provider.keepOneModel": "Keep at least one model",
   "provider.removeNamed": "Remove {name}",
   "provider.removeTitle": "Remove this model provider",
   "provider.inUse": "This model provider is used by a running conversation. Wait for the current response to finish before removing it.",

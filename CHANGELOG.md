@@ -16,6 +16,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Ready Agent Core entries show an external agent's detected executable path in
+  its override field without repeating it in the status or help text.
+
+- Model choices in desktop settings keep a stable order and selected styling.
+  The catalog no longer shows ineffective per-model remove controls or selection
+  animations, and provider remove controls keep their icon centered and color
+  stable on hover.
+
 - Deleting an agent archives sessions still under its management in a separate
   Agent archive, keeping them out of workspace and unread lists. Previously
   orphaned sessions are reconciled, and user-taken-over sessions stay available.

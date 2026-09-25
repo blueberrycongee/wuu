@@ -90,8 +90,7 @@ export function EngineSettingsSection({
     engine: EngineInfo | undefined,
   ): { text: string; selectable: boolean } => {
     if (engine?.enabled && engine.binary_ok) {
-      const detail = engine.binary_path || t("settings.engineAutoBinary");
-      return { text: `${t("settings.engineReady")} · ${detail}`, selectable: true };
+      return { text: t("settings.engineReady"), selectable: true };
     }
     if (engine && (binarySettings[engine.id]?.enabled === false || (engine.binary_ok && !engine.enabled))) {
       return { text: t("settings.engineDisabled"), selectable: false };
@@ -251,7 +250,9 @@ export function EngineSettingsSection({
                       <span className="settings-switch-thumb" aria-hidden="true" />
                     </button>
                   </div>
-                  <small className="settings-muted-line settings-engine-detail">{statusLine(engine)}</small>
+                  {!engine.binary_ok ? (
+                    <small className="settings-muted-line settings-engine-detail">{statusLine(engine)}</small>
+                  ) : null}
                   {engine.install_url ? (
                     <button className="settings-button" type="button" onClick={() => void window.wuu.openExternal(engine.install_url!).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))}>
                       {t("settings.engineInstall")}
