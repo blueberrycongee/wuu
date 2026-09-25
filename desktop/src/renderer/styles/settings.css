@@ -1045,12 +1045,13 @@
   width: 7em;
 }
 
-/* Stands in for the borderless model trigger's label and chevron, inside the
- * trigger's own height and inline padding, in both the wide and stacked rows. */
+/* Stands in for the model trigger's label and chevron, inside the trigger's
+ * height, inline padding, and 1px transparent border, so it lines up with the
+ * loaded label in both the wide and stacked rows. */
 .settings-subscription-skeleton-model {
   width: 6em;
   height: 0.75em;
-  margin: calc((var(--control-field-height) - 0.75em) / 2) var(--control-padding-inline);
+  margin: calc((var(--control-field-height) - 0.75em) / 2) calc(var(--control-padding-inline) + 1px);
   border-radius: var(--radius-xs);
 }
 

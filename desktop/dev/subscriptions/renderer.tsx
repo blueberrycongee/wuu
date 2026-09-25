@@ -14,7 +14,7 @@ document.body.style.background = "var(--paper)";
 document.documentElement.style.setProperty("--conversation-message-font-size", `${params.get("size") || 14}px`);
 const usage = { input_tokens: 146800, output_tokens: 24100, cache_creation_tokens: 0, cache_read_tokens: 31000, reported_turns: 12 };
 const inventory: EngineListResult = { engines: params.has("empty") ? [] : [
-  { id: "codex", display_name: "Codex", enabled: true, binary_ok: true, models: [{ id: "gpt-5.4", display_name: "GPT-5.4", is_default: true }], local_usage: usage,
+  { id: "codex", display_name: "Codex", capabilities: ["account-quota"], enabled: true, binary_ok: true, models: [{ id: "gpt-5.4", display_name: "GPT-5.4", is_default: true }], local_usage: usage,
     quota: { status: "available", checked_at: new Date().toISOString(), windows: [
       { id: "short", used_percent: 36, window_minutes: 300, resets_at: new Date(Date.now() + 7200000).toISOString() },
       { id: "weekly", used_percent: 71, window_minutes: 10080, resets_at: new Date(Date.now() + 172800000).toISOString() },
@@ -29,6 +29,7 @@ if (params.has("states") && inventory.engines.length) {
   inventory.engines[0].quota!.windows![1].resets_at = new Date(Date.now() - 60_000).toISOString();
   inventory.engines[1].models = [];
   inventory.engines[1].models_error = "Synthetic catalog failure";
+  inventory.engines[2].capabilities = ["account-quota"];
   inventory.engines[2].quota = { status: "unavailable", checked_at: new Date().toISOString() };
   inventory.engines[3].models = [{ id: "auto", display_name: "Auto" }];
 }

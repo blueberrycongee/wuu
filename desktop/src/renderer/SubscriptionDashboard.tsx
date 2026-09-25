@@ -60,10 +60,8 @@ export function SubscriptionDashboard({
   );
 
   // Quota arrives only with this dashboard's own snapshot. Until the first one
-  // lands, reserve its block on rows that can report one: built-in sources
-  // carry no quota and unavailable engines are never queried. The inventory
-  // does not say which runnable engines have an allowance API, so a runnable
-  // engine without one collapses its placeholder when the snapshot arrives.
+  // lands, reserve its block on runnable engines that advertise an account
+  // allowance; the snapshot omits every other row's quota.
   const quotaLoading = refreshing && !loadedInventory;
 
   async function choose(source: SubscriptionSource, modelID: string): Promise<void> {
@@ -145,7 +143,7 @@ export function SubscriptionDashboard({
                     {showAuthentication ? <EngineAuthentication engineID={source.id} compact onAuthenticated={() => setRefreshVersion((value) => value + 1)} /> : null}
                   </div>
                 </div>
-                {quotaLoading && source.kind === "engine" && source.login !== "unavailable"
+                {quotaLoading && source.engine?.enabled && source.engine.binary_ok && source.engine.capabilities?.includes("account-quota")
                   ? <QuotaSkeleton />
                   : <Quota quota={source.quota} now={now} />}
               </article>
