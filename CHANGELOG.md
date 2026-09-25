@@ -14,6 +14,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   playback, seeking, volume, and fullscreen controls. Unsupported codecs show
   a message while keeping the download action available.
 
+### Fixed
+
+- Preserve sidebar folder and collaboration folds when returning from settings,
+  including after switching between light and dark themes.
+
 ## [2026.9.25] - 2026-09-25
 
 ### Changed

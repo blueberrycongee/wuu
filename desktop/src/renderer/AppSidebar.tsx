@@ -19,9 +19,11 @@ import {
   type PointerEvent as ReactPointerEvent,
   type DragEvent as ReactDragEvent,
   type CSSProperties,
+  type Dispatch,
   type HTMLAttributes,
   type ReactNode,
   type RefObject,
+  type SetStateAction,
   useCallback,
   useEffect,
   useMemo,
@@ -411,6 +413,8 @@ export function AppSidebar({
   pendingThreadID,
   pendingProjectID,
   collapsedSidebarSectionIDs,
+  collapsedFolderIDs,
+  setCollapsedFolderIDs,
   expandedSidebarSectionIDs,
   loadingProjectThreadIDs,
   projectThreadsByProjectID,
@@ -486,6 +490,8 @@ export function AppSidebar({
   pendingThreadID?: string;
   pendingProjectID?: string;
   collapsedSidebarSectionIDs: Set<string>;
+  collapsedFolderIDs: ReadonlySet<string>;
+  setCollapsedFolderIDs: Dispatch<SetStateAction<Set<string>>>;
   expandedSidebarSectionIDs: Set<string>;
   loadingProjectThreadIDs?: ReadonlySet<string>;
   projectThreadsByProjectID: Record<string, ThreadSummary[]>;
@@ -595,7 +601,6 @@ export function AppSidebar({
     return [...byID.values()];
   }, [pinnedThreads, projectThreadsByProjectID]);
   const organization = useSessionOrganization(organizationSourceThreads);
-  const [collapsedFolderIDs, setCollapsedFolderIDs] = useState<Set<string>>(() => new Set());
   const [pinnedItems, setPinnedItems] = useState<SidebarPinnedItem[]>(
     loadSidebarPinnedItems,
   );
