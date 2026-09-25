@@ -8,7 +8,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+## [2026.9.25] - 2026-09-25
+
 ### Changed
+
+- The composer model picker adapts to larger UI text and supports keyboard
+  navigation, focused search, and clearer engine-managed model guidance.
 
 - Desktop titlebars, tab bars, and the sidebar place their first and last
   icons 20px from the pane edge on both sides. In the message column, tables
