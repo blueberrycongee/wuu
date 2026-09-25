@@ -9849,3 +9849,103 @@ func TestSettingsUsageModelBreakdownsCoverFullHistory(t *testing.T) {
 		t.Fatalf("unexpected headline usage: %+v", result.Metrics)
 	}
 }
+
+func TestUsageOverviewBucketsTokenUsageByRequestedTimeZone(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	// 06:30 UTC on March 10 is still March 9 in Los Angeles (PDT, UTC-7).
+	evening := time.Date(2026, time.March, 10, 6, 30, 0, 0, time.UTC)
+	morning := time.Date(2026, time.March, 10, 18, 0, 0, 0, time.UTC)
+
+	first, err := session.CreateWithMetadata(rt.SessionDir, "usage-overview-first", rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rec := range []session.HistoryRecord{
+		{Role: "user", Content: "first session"},
+		{
+			Role: "meta", Content: "token_usage", Provider: "openai", Model: "gpt-4o",
+			At: evening, InputTokens: 100, OutputTokens: 20,
+		},
+		// Provider-tagged terminals carry their own usage snapshot; only
+		// token_usage rows may count toward the overview.
+		{
+			Role: "meta", Content: "turn_terminal", Provider: "openai", Model: "gpt-4o",
+			At: evening, InputTokens: 100, OutputTokens: 20,
+		},
+	} {
+		if err := session.AppendHistoryRecord(rt.SessionDir, first.ID, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	second, err := session.CreateWithMetadata(rt.SessionDir, "usage-overview-second", rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rec := range []session.HistoryRecord{
+		{Role: "user", Content: "second session"},
+		{
+			Role: "meta", Content: "token_usage", Provider: "anthropic", Model: "claude-sonnet-4-6",
+			At: morning, InputTokens: 50, CacheReadTokens: 30,
+		},
+	} {
+		if err := session.AppendHistoryRecord(rt.SessionDir, second.ID, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	raw, err := json.Marshal(map[string]any{
+		"id":     "1",
+		"method": MethodUsageOverview,
+		"params": map[string]any{"timezone": "America/Los_Angeles"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.handleLine(context.Background(), raw); err != nil {
+		t.Fatalf("handleLine: %v", err)
+	}
+	result := remarshal[UsageOverviewResponse](t, waitForResponseByID(t, out, "1")["result"])
+
+	if result.TotalSessions != 2 {
+		t.Fatalf("total_sessions=%d, want 2", result.TotalSessions)
+	}
+	if result.Metrics.InputTokens != 150 || result.Metrics.OutputTokens != 20 || result.Metrics.CacheReadTokens != 30 {
+		t.Fatalf("unexpected totals: %+v", result.Metrics)
+	}
+	if result.Metrics.ActiveDays != 2 {
+		t.Fatalf("active_days=%d, want 2", result.Metrics.ActiveDays)
+	}
+	if len(result.Days) != 2 ||
+		result.Days[0].Date != "2026-03-09" || result.Days[0].InputTokens != 100 ||
+		result.Days[1].Date != "2026-03-10" || result.Days[1].CacheReadTokens != 30 {
+		t.Fatalf("days=%+v, want March 9 and March 10 in Los Angeles", result.Days)
+	}
+}
+
+func TestUsageOverviewReportsZeroWithoutRecordedUsage(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	raw, err := json.Marshal(map[string]any{
+		"id":     "1",
+		"method": MethodUsageOverview,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.handleLine(context.Background(), raw); err != nil {
+		t.Fatalf("handleLine: %v", err)
+	}
+	response := waitForResponseByID(t, out, "1")
+	if response["error"] != nil {
+		t.Fatalf("overview without usage failed: %+v", response["error"])
+	}
+	// A new user's home shows zero totals and an empty heatmap, so days must
+	// be an empty list rather than null.
+	result := remarshal[UsageOverviewResponse](t, response["result"])
+	if result.TotalSessions != 0 || result.Metrics.ActiveDays != 0 || result.Days == nil || len(result.Days) != 0 {
+		t.Fatalf("unexpected overview without usage: %+v", result)
+	}
+}

@@ -246,6 +246,19 @@ support Codex, Claude Code, or OpenCode; use their native login flows. See
 [external engines](../getting-started/external-engines.md) for installation,
 protocol versions, model selection, and permission boundaries.
 
+## Usage overview
+
+`usage/overview` summarizes token usage recorded in retained Wuu history. It
+returns `total_sessions` (sessions with at least one usage record), `metrics`
+(the same totals object as `settings/usage`, including `active_days`), and
+`days`, one entry per active calendar day in ascending order. It reads only
+usage records, not conversation content. Optional
+`{ "timezone": "America/Los_Angeles" }` selects the IANA zone for day
+boundaries; omitted means UTC, and an unknown zone is a request error. A store
+without records returns zero totals and an empty `days` list. Like
+`local_usage`, these values exclude unreported and external activity and are
+not billing totals.
+
 ## Notifications
 
 | Family | Client handling |

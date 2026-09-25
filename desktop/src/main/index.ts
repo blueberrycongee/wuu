@@ -128,6 +128,8 @@ import type {
   RuntimeGeneralSettingsUpdate,
   GitCommitMessageResult,
   SettingsUsageResponse,
+  UsageOverviewParams,
+  UsageOverviewResponse,
   TerminalSessionStartParams,
   TextPolishResult,
   Thread,
@@ -1998,6 +2000,9 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("wuu:settings-usage", (event) =>
     appServerRequest<SettingsUsageResponse>(event, "settings/usage"),
+  );
+  ipcMain.handle("wuu:usage-overview", (event, params: UsageOverviewParams) =>
+    appServerRequest<UsageOverviewResponse>(event, "usage/overview", params),
   );
   ipcMain.handle("wuu:mcp-list", (event) =>
     appServerRequest<MCPListResult>(event, "mcp/list"),

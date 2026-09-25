@@ -830,6 +830,7 @@ export class RemoteDesktopBridge {
       ackChannelHumanMentions: () => this.call("channel/human-mention/ack"),
       getSessionOrganization: () => this.call("sessionOrganization/list"),
       getSettingsUsage: () => this.call("settings/usage"),
+      getUsageOverview: (params) => this.call("usage/overview", params),
       refreshExtensionCatalog: () => this.call("extension/catalog/refresh"),
       updateAdvancedSettings: (params) => this.call("config/advanced/update", params),
       updateGeneralSettings: (params) => this.call("config/general/update", params),
