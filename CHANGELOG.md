@@ -59,6 +59,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Desktop core exits now use the shared notification banner with a copy-diagnostics
+  action instead of displaying process stderr and stack traces above the composer.
+
 - Sending a message keeps one local waiting timer across admission, events,
   snapshots, and conversation switches without changing server timestamps.
   Follow-up messages can queue during new-conversation creation. Stop uses an

@@ -1,6 +1,7 @@
 import { CircleAlert } from "./WuuIcons";
 import { useSyncExternalStore } from "react";
-import { useI18n } from "./i18n";
+import { translateCurrent, useI18n } from "./i18n";
+import { isCoreExitError } from "./UserFacingErrors";
 import { TopNotice, type TopNoticeAction } from "./TopNotice";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 
@@ -108,6 +109,7 @@ export function toastErrorMessage(error: unknown, fallback = ""): string {
   while (/^Error:\s*/i.test(message)) {
     message = message.replace(/^Error:\s*/i, "");
   }
+  if (isCoreExitError(message)) return translateCurrent("appState.coreStoppedNotice");
   return message.trim() || fallback;
 }
 

@@ -323,7 +323,7 @@ function reduceServerEvent(state: AppState, event: ServerEvent): AppState {
       return {
         ...state,
         running: false,
-        status: event.message.trim() || localizedText("appState.coreExited"),
+        status: "",
       };
   }
 }

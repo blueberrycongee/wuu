@@ -3607,21 +3607,22 @@ describe("AppState English localization", () => {
     expect(resolveLocalizedText(attachmentPreview)).toBe("[图片 #1]");
   });
 
+  it("clears the running state and composer status when the core exits", () => {
+    const exited = reduceServerEvent({ ...initialState, running: true, status: "sending" }, {
+      kind: "server-exit", workdir: "", code: null,
+      message: "wuu core exited: goroutine 42\n/private/server.go:469",
+    });
+    expect(exited.running).toBe(false);
+    expect(exited.status).toBe("");
+  });
+
   it("re-resolves persisted app labels after the locale changes", () => {
     setActiveLocale("en-US");
     const skills = createSkillsSessionTab({ kind: "no_project", cwd: "/scratch" });
-    const exited = reduceServerEvent(initialState, {
-      kind: "server-exit",
-      workdir: "",
-      code: 0,
-      message: "",
-    });
     expect(sessionTabLabel(skills, initialState)).toBe("Extensions");
-    expect(resolveLocalizedText(exited.status)).toBe("wuu core exited");
 
     setActiveLocale("zh-CN");
     expect(sessionTabLabel(skills, initialState)).toBe("扩展");
-    expect(resolveLocalizedText(exited.status)).toBe("wuu core 已退出");
   });
 });
 

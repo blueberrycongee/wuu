@@ -104,6 +104,9 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 }));
 
 import { App } from "./App";
+import { clearToasts, showErrorToast, ToastViewport } from "./Toast";
+import { WuuUIRoot } from "./ui/layers/UILayerHost";
+import { statusMessageForError } from "./UserFacingErrors";
 
 const workspace = "/tmp/wuu-queued-turn-reconciliation-test";
 const threadID = "thread-queued-reconciliation";
@@ -309,6 +312,7 @@ function composerProbe(): HTMLElement {
 
 describe("queued turn reconciliation", () => {
   beforeEach(() => {
+    clearToasts();
     installWindowStubs();
     serverEventHandlers = [];
     container = document.createElement("div");
@@ -321,10 +325,53 @@ describe("queued turn reconciliation", () => {
       root?.unmount();
     });
     root = null;
+    clearToasts();
     container.remove();
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
     vi.restoreAllMocks();
+  });
+
+  it("shows a core exit during initialization without putting stderr in the startup status", async () => {
+    installWuuApi();
+    vi.mocked(window.wuu.initialize).mockRejectedValue(new Error("wuu core exited (code 2): /private/startup.go:42"));
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WuuUIRoot><App /><ToastViewport /></WuuUIRoot>);
+    });
+    await flushAsync();
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    expect(container.textContent).not.toContain("/private/startup.go");
+  });
+
+  it.each([null, 2])("routes core exits (%s) to a notice and keeps diagnostics out of the composer", async code => {
+    installWuuApi();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WuuUIRoot><App /><ToastViewport /></WuuUIRoot>);
+    });
+    await flushAsync();
+    const message = `wuu core exited${code === null ? "" : ` (code ${code})`}: goroutine 42\n/private/core/server.go:469`;
+    await act(async () => {
+      for (const handler of serverEventHandlers) handler({ kind: "server-exit", workdir: workspace, code, message });
+      // A rejected in-flight IPC request must not re-expose stderr or queue a duplicate.
+      showErrorToast(new Error(`Error invoking remote method 'wuu:request': Error: ${message}`));
+    });
+    const notice = container.querySelector<HTMLElement>('[role="alert"]')!;
+    expect(notice).not.toBeNull();
+    expect(container.textContent).not.toContain("/private/core/server.go");
+    expect(statusMessageForError(new Error(message), "failure")).toBe("");
+    await act(async () => {
+      notice.querySelector<HTMLButtonElement>(".archive-tip-action")!.click();
+    });
+    expect(writeText).toHaveBeenCalledWith(message);
+    vi.useFakeTimers();
+    act(() => { notice.querySelector<HTMLButtonElement>(".archive-tip-dismiss")!.click(); });
+    act(() => { vi.advanceTimersByTime(200); });
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    vi.useRealTimers();
   });
 
   it.each(["queue", "steer"])("preserves reading flow when a %s message enters the conversation", async mode => {
