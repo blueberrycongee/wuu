@@ -8,6 +8,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Video output cards and workspace video files open an inline player with
+  playback, seeking, volume, and fullscreen controls. Unsupported codecs show
+  a message while keeping the download action available.
+
 ### Changed
 
 - Collaboration now centers on project-bound DMs, with visible task controls,
@@ -23,6 +29,24 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   coordinate, execution sessions can write, and verification sessions only read.
   Continuing identities refresh their role instructions on every turn.
 
+### Fixed
+
+- Collaboration conversations can receive due room reminders, include them in
+  unread counts, and clear their wake state after consumption.
+
+- Collaboration replies no longer become held drafts just because a thread
+  reply is newer than the conversation's main timeline.
+
+- Preserve sidebar folder and collaboration folds when returning from settings,
+  including after switching between light and dark themes.
+
+## [2026.9.25] - 2026-09-25
+
+### Changed
+
+- The composer model picker adapts to larger UI text and supports keyboard
+  navigation, focused search, and clearer engine-managed model guidance.
+
 - Desktop titlebars, tab bars, and the sidebar place their first and last
   icons 20px from the pane edge on both sides. In the message column, tables
   start on the same edge as paragraphs, while code blocks, the composer, and
@@ -31,12 +55,6 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   message headings step more clearly above body text.
 
 ### Fixed
-
-- Collaboration conversations can receive due room reminders, include them in
-  unread counts, and clear their wake state after consumption.
-
-- Collaboration replies no longer become held drafts just because a thread
-  reply is newer than the conversation's main timeline.
 
 - Reduce long conversation switching stalls by assembling core responses once
   per message and reusing resume responses instead of transmitting history twice.
@@ -84,6 +102,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   for both the first message and follow-ups.
 
 ### Fixed
+
+- Composer feedback no longer crowds the send toolbar. Redundant queue-edit,
+  commit, and pull-request confirmations are removed; errors and restrictions
+  remain readable above the input in both main and split conversations.
 
 - Desktop conversation refresh and session resume discard obsolete cached
   messages when a full completed turn arrives, preventing duplicate replies

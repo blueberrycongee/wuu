@@ -22,6 +22,7 @@ import type {
 import {
   isRenderableImageFile,
   isRenderablePdfFile,
+  isRenderableVideoFile,
   renderableFileURL,
 } from "./renderableFileURLs";
 import { writeTextFileAtomicSync } from "./atomicFile";
@@ -194,7 +195,9 @@ function readWorkspaceFileResult(
     ? ("image" as const)
     : isRenderablePdfFile(absolutePath)
       ? ("pdf" as const)
-      : undefined;
+      : isRenderableVideoFile(absolutePath)
+        ? ("video" as const)
+        : undefined;
 
   return {
     root: context.cwd,

@@ -982,6 +982,7 @@ export function WorkspaceRightPanel({
                   />
                 ) : activeTab.kind === "artifact" ? (
                   <ArtifactPreview
+                    active={open}
                     artifact={activeTab.artifact}
                     cwd={activeTab.cwd}
                     mode="panel"

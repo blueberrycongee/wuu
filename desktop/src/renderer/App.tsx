@@ -101,6 +101,7 @@ import { firstUserMessageText } from "./TurnViewHelpers";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import {
   AppSidebar,
+  SIDEBAR_SECTION_COLLAB,
 } from "./AppSidebar";
 import { ChannelView, type ChannelConversationSnapshot, type ChannelSection } from "./ChannelView";
 import { collaborationConversations, managedSidebarThreads, orderedPinnedCollaborationConversations, type CollaborationConversation } from "./CollaborationConversations";
@@ -643,6 +644,8 @@ export function App(): JSX.Element {
       })),
   });
   const syncSidebarServerEventStable = useStableCallback(syncSidebarServerEvent);
+  // Settings and account pages unmount the sidebar; keep manual folds here.
+  const [collapsedFolderIDs, setCollapsedFolderIDs] = useState<Set<string>>(() => new Set());
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
   const [accessMenuOpen, setAccessMenuOpen] = useState(false);
   const [codexRuntimeMenu, setCodexRuntimeMenu] =
@@ -5006,6 +5009,8 @@ export function App(): JSX.Element {
             collaborationNavigation={ENABLE_GROUP_CHAT ? (
             <CollaborationSidebar
               embedded
+              sectionCollapsed={collapsedSidebarSectionIDs.has(SIDEBAR_SECTION_COLLAB)}
+              onToggleSectionCollapsed={() => toggleSidebarSectionCollapsed(SIDEBAR_SECTION_COLLAB)}
               initialized={Boolean(state.initialized)}
               agents={namedAgents}
               rooms={channelRooms}
@@ -5091,6 +5096,8 @@ export function App(): JSX.Element {
             pendingThreadID={visiblePendingThreadID}
             pendingProjectID={visiblePendingProjectID}
             collapsedSidebarSectionIDs={collapsedSidebarSectionIDs}
+            collapsedFolderIDs={collapsedFolderIDs}
+            setCollapsedFolderIDs={setCollapsedFolderIDs}
             expandedSidebarSectionIDs={expandedSidebarSectionIDs}
             loadingProjectThreadIDs={loadingProjectThreadIDs}
             projectThreadsByProjectID={sidebarThreadsByProjectID}

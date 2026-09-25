@@ -49,6 +49,7 @@ window.wuu = {
 
 function Preview() {
   const [collapsed, setCollapsed] = useState(false);
+  const [sectionCollapsed, setSectionCollapsed] = useState(false);
   const [empty, setEmpty] = useState(false);
   Object.assign(window, { layoutFixture: { setEmpty } });
   if (params.has('session')) return <main className="conversation-pane" style={{ height: '100dvh', overflow: 'auto', padding: 32 }}>
@@ -63,6 +64,7 @@ function Preview() {
   return <div className="app-shell" style={{ height: "100dvh", display: "grid", gridTemplateColumns: `${collapsed ? 0 : 240}px minmax(0, 1fr)` }}>
     {params.has('bubbles') && !collapsed ? <div className="sidebar-resizer" role="separator" aria-label="Existing sidebar divider reference" style={{ left: 235 }} /> : null}
     <div style={{ minWidth: 0, overflow: "hidden" }}><CollaborationSidebar embedded initialized agents={[agent]} rooms={[room]} pinnedRoomIDs={[]}
+      sectionCollapsed={sectionCollapsed} onToggleSectionCollapsed={() => setSectionCollapsed((value) => !value)}
       selectedRoomID={room.id} onSelectRoom={() => {}} onSelectAgent={() => {}} onManageAgents={() => {}}
       onCreateRoom={() => {}} onSwitchToHarness={() => {}} onOpenSettings={() => {}} /></div>
     <div className="conversation-pane collaboration-room-pane" style={{ minWidth: 0, height: "100dvh", display: "flex" }}><ChannelView selectedRoomID={room.id}
