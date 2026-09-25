@@ -30,12 +30,7 @@
   --browser-retry-hover-bg: #93190f;
   --browser-loading-dot-bg: var(--wuu-color-info, #2f98ff);
   --skills-section-border: var(--wuu-color-border-subtle, var(--hairline-soft));
-  --skill-row-chevron: var(--wuu-color-text-muted, #a3a7aa);
-  --skill-artwork-border: var(--wuu-color-border-subtle, var(--hairline-soft));
   --skill-artwork-neutral-bg: var(--wuu-color-surface-muted, #f4f4f1);
-  --skill-artwork-neutral-fg: var(--wuu-color-text-muted, #696e72);
-  --skill-artwork-official-bg: var(--wuu-color-surface-elevated, #ffffff);
-  --skill-artwork-official-fg: var(--wuu-color-on-accent, #ffffff);
   --skill-mark-highlight: rgba(255, 255, 255, 0.54);
   /* Skill artwork mark palettes. --wuu-skill-mark-* are the public
      skin-overridable tokens; --skill-mark-* stay as component-local
@@ -110,8 +105,6 @@
   --review-overlay-bg: rgba(251, 251, 250, 0.92);
   --provider-pill-bg: var(--wuu-color-surface-muted, #f2f2ef);
   --provider-pill-text: var(--wuu-color-text-muted, #555a5f);
-  --skill-tag-bundled-bg: rgba(255, 90, 38, 0.12);
-  --skill-tag-bundled-fg: #c14a13;
   --codex-runtime-effort-text: var(--wuu-color-text-muted, #74797d);
   --codex-effort-sheen: rgba(255, 255, 255, 0.22);
   --codex-effort-sheen-soft: rgba(255, 255, 255, 0.1);
@@ -2112,70 +2105,28 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   background: var(--paper);
 }
 
-.skills-catalog {
-  display: grid;
-  grid-template-columns: minmax(0, 1080px);
-  justify-content: center;
-  min-height: 100%;
-  align-content: start;
-  padding: 42px clamp(32px, 6vw, 88px) 64px;
-}
-
-.catalog-page-header {
-  display: grid;
-  min-width: 0;
-  gap: 26px;
-  padding-bottom: 2px;
-}
-
-.catalog-page-title {
-  display: grid;
-  min-width: 0;
-  gap: 8px;
-  color: var(--ink);
-}
-
-.catalog-page-title strong {
-  font-size: 32px;
-  font-weight: var(--weight-medium);
-  letter-spacing: -0.035em;
-  line-height: 1.15;
-}
-
-.catalog-page-title span {
-  color: var(--ink-tertiary);
-  font-size: 17px;
-  font-weight: var(--weight-regular);
-  letter-spacing: -0.015em;
-  line-height: 1.4;
-}
-
-.catalog-page-controls {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  align-items: center;
-  gap: 10px;
-}
+/* The extensions catalog is a .settings-page: the same UI-text column, page
+ * header, and section rhythm as Settings, so a plugin's status reads the
+ * same here as a model service's does there. */
 
 .catalog-search {
   display: flex;
   min-width: 0;
-  height: 44px;
-  flex: 1 1 auto;
+  min-height: var(--control-search-height);
   align-items: center;
-  gap: 11px;
+  gap: var(--space-2);
   border: 1px solid var(--field-border);
   border-radius: var(--radius-sm);
   background: var(--field-bg);
   color: var(--ink-muted);
-  padding: 0 14px;
+  padding: 0 var(--control-padding-inline);
   transition: background var(--motion-fast) var(--ease-out);
 }
 
 .catalog-search svg {
-  width: 18px;
-  height: 18px;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  flex: 0 0 auto;
 }
 
 .catalog-search input {
@@ -2185,33 +2136,8 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   outline: 0;
   background: transparent;
   color: var(--ink);
-  font-size: 15px;
-  font-weight: var(--weight-regular);
-}
-
-.catalog-search input::placeholder {
-  color: var(--ink-muted);
-}
-
-.catalog-refresh {
-  width: 44px;
-  height: 44px;
-  flex: 0 0 auto;
-  border-radius: var(--radius-sm);
-}
-
-.catalog-install {
-  display: inline-flex;
-  min-height: 44px;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 7px;
-  white-space: nowrap;
-}
-
-.catalog-install .icon {
-  width: 17px;
-  height: 17px;
+  font: inherit;
+  font-size: var(--font-ui);
 }
 
 .skills-catalog-error {
@@ -2220,125 +2146,116 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   color: var(--danger);
   font-size: var(--font-ui);
   line-height: 1.45;
-  padding: 10px 12px;
-  margin-top: 20px;
+  padding: var(--compact-padding-block) var(--compact-padding-inline);
 }
 
-.skills-section {
+/* One row anatomy for plugins and skills, matching the settings service
+ * rows: mark, name over a one-line description, trailing status or source,
+ * and a disclosure chevron. The chevron owns the last column, so trailing
+ * labels end on one axis whether or not a row has one. */
+.catalog-row {
   display: grid;
-  min-width: 0;
-  gap: 0;
-  margin-top: 42px;
-}
-
-.skills-section + .skills-section {
-  margin-top: 36px;
-}
-
-.skills-section-heading {
-  display: flex;
   width: 100%;
   min-width: 0;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 14px;
-  border-bottom: 1px solid var(--skills-section-border);
-  padding: 0 0 13px;
-}
-
-.skills-section-heading strong {
+  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  border: 0;
+  padding: var(--space-3) 0;
+  background: transparent;
   color: var(--ink);
-  font-size: 16px;
-  font-weight: var(--weight-semibold);
-  letter-spacing: -0.015em;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
 }
 
-.skills-list {
-  display: grid;
-  width: 100%;
-  min-width: 0;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 38px;
-  row-gap: 0;
-  padding-top: 4px;
+.catalog-row + .catalog-row {
+  border-top: 1px solid var(--hairline-soft);
 }
 
-/* Keep plugins on the same two-column catalog grid as the skill sections.
- * Each plugin row owns its internal tracks for artwork, copy, status, and
- * chevron. */
-.extension-package-list {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 38px;
+.catalog-row > .settings-disclosure-chevron {
+  grid-column: 4;
 }
 
-.skill-row.extension-package-row {
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) max-content 16px;
-  min-height: 72px;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 8px;
+.catalog-row:hover .settings-disclosure-chevron {
+  color: var(--ink);
 }
 
-.extension-package-actions {
+.catalog-row-copy {
   display: grid;
   min-width: 0;
-  grid-template-columns: 96px 32px;
-  align-items: center;
-  gap: 6px;
+  gap: 2px;
 }
 
-.extension-package-actions button {
-  min-height: 32px;
+.catalog-row-title,
+.catalog-row-description {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.extension-package-primary-action,
-.extension-package-primary-placeholder {
-  display: block;
-  width: 96px;
-}
-
-.extension-package-primary-placeholder {
-  height: 32px;
-}
-
-.extension-package-more,
-.extension-package-more-placeholder {
-  display: block;
-  width: 32px;
-  height: 32px;
-}
-
-.extension-package-more {
-  border-radius: var(--radius-sm);
-}
-
-.extension-package-meta,
-.extension-package-permissions {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 5px 9px;
-  color: var(--ink-tertiary);
-  font-size: 11px;
+.catalog-row-title {
+  color: var(--ink);
+  font-size: var(--font-ui);
   line-height: 1.4;
 }
 
-.extension-package-permissions strong {
-  color: var(--ink-secondary);
-  font-weight: var(--weight-medium);
+.catalog-row-description {
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: 1.5;
 }
 
-.extension-package-permissions code {
-  border: 1px solid var(--wuu-color-border-subtle, var(--skills-section-border));
-  border-radius: var(--radius-pill);
-  padding: 1px 7px;
-  background: var(--wuu-badge-neutral-background, var(--skill-artwork-neutral-bg));
-  color: var(--wuu-color-text-muted, var(--ink-secondary));
-  font-family: var(--font-mono);
-  font-size: 10px;
+.catalog-row-meta {
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+/* The mark tile takes the settings row mark footprint, so plugin glyphs,
+ * skill marks, and package artwork sit in one column at any size. */
+.skill-artwork {
+  display: grid;
+  width: var(--settings-mark-size);
+  height: var(--settings-mark-size);
+  flex: 0 0 auto;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.skill-artwork svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.skill-artwork-plugin-brand .plugin-icon-asset {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* In a narrow column the trailing label moves under the description, so
+ * the name keeps the width it needs. */
+@container settings-page (max-width: 32em) {
+  .catalog-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    row-gap: var(--space-1);
+  }
+
+  .catalog-row > :is(.settings-status, .catalog-row-meta) {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+  }
+
+  .catalog-row > .settings-disclosure-chevron {
+    grid-column: 3;
+  }
 }
 
 .plugin-settings-editor {
@@ -2368,36 +2285,19 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 }
 
 .plugin-detail-dialog .environment-dialog-icon .skill-artwork {
-  width: 44px;
-  height: 44px;
-  border-radius: var(--radius-xs);
+  width: round(up, calc(var(--font-ui) * 3), 2px);
+  height: round(up, calc(var(--font-ui) * 3), 2px);
   box-shadow: var(--shadow-soft);
 }
 
 .plugin-detail-dialog .environment-dialog-icon .skill-artwork svg {
-  width: 22px;
-  height: 22px;
+  width: var(--icon-size-xl);
+  height: var(--icon-size-xl);
 }
 
 .plugin-detail-dialog h2 {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 10px;
-}
-
-.plugin-detail-name {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-
-.plugin-detail-version {
-  flex: none;
-  color: var(--ink-muted);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 400;
-  letter-spacing: 0;
 }
 
 .skill-preview-dialog.plugin-detail-dialog .environment-dialog-footer {
@@ -2408,20 +2308,20 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-4);
   border-top: 1px solid var(--hairline);
-  padding: 16px 0 0;
+  padding: var(--space-4) 0 0;
 }
 
-/* One quiet status line: the state pill first, then source identity and
- * grant scope as plain text separated by dots. */
+/* One quiet status line, the same status label as the catalog row, then
+ * source identity and grant scope as plain text separated by dots. */
 .plugin-detail-meta {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
   align-items: center;
-  column-gap: 12px;
-  row-gap: 4px;
+  column-gap: var(--space-2);
+  row-gap: var(--space-1);
 }
 
 .plugin-detail-meta-item {
@@ -2430,39 +2330,10 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   line-height: 1.4;
 }
 
-.plugin-detail-meta-item + .plugin-detail-meta-item::before {
+.plugin-detail-meta-item::before {
   content: "·";
-  margin-right: 12px;
+  margin-right: var(--space-2);
   color: var(--ink-muted);
-}
-
-.plugin-detail-status {
-  gap: 6px;
-}
-
-.plugin-detail-status-dot {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: var(--radius-circle);
-  background: currentColor;
-}
-
-/* The base .skill-row-tag paints a bundled orange regardless of tone; the
- * detail badge borrows its pill chrome but must carry the status tone. */
-.plugin-detail-status.extension-status-good {
-  background: var(--success-soft);
-  color: var(--success);
-}
-
-.plugin-detail-status.extension-status-warning {
-  background: var(--warning-soft);
-  color: var(--warning);
-}
-
-.plugin-detail-status.extension-status-danger {
-  background: var(--danger-soft);
-  color: var(--danger);
 }
 
 /* Alerts are the one boxed element in this panel: they carry a state, not a
@@ -2530,19 +2401,19 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 }
 
 /* Permissions are grouped by capability and rendered as readable chips;
- * the raw manifest code stays available as a tooltip. */
+ * the raw manifest code stays available as a tooltip. Groups share one
+ * label column sized by the longest label, so chips start on one edge in
+ * every language and font size. */
 .plugin-permission-groups {
   display: grid;
   min-width: 0;
-  gap: 8px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
 }
 
 .plugin-permission-group {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: 44px minmax(0, 1fr);
-  align-items: baseline;
-  gap: 12px;
+  display: contents;
 }
 
 .plugin-permission-group-label {
@@ -2562,7 +2433,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   border: 1px solid var(--skills-section-border);
   border-radius: var(--radius-pill);
   padding: 1px 10px;
-  background: var(--skill-artwork-neutral-bg);
+  background: var(--wuu-badge-neutral-background, var(--skill-artwork-neutral-bg));
   color: var(--ink-secondary);
   font-size: var(--font-sm);
   line-height: 1.7;
@@ -2628,7 +2499,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 
 .plugin-detail-provenance code {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--appearance-code-size);
 }
 
 .plugin-detail-dialog .plugin-settings-editor {
@@ -2681,7 +2552,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   column-gap: 24px;
 }
 
-.plugin-settings-editor-page .plugin-setting:last-child {
+.plugin-settings-editor .plugin-setting:last-child {
   border-bottom: 0;
 }
 
@@ -2731,7 +2602,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   padding: 10px;
   background: var(--warning-soft);
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--font-sm);
 }
 
 .plugin-contribution-conflict > div,
@@ -2834,160 +2705,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   padding: 0;
 }
 
-.extension-status-good {
-  background: var(--success-soft);
-  color: var(--success);
-}
-
-.extension-status-warning {
-  background: var(--warning-soft);
-  color: var(--warning);
-}
-
-.extension-status-danger {
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-
-.skill-row {
-  display: grid;
-  min-width: 0;
-  min-height: 72px;
-  grid-template-columns: 36px minmax(0, 1fr) 16px;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 8px;
-}
-
-.skill-artwork {
-  display: grid;
-  width: 36px;
-  height: 36px;
-  place-items: center;
-  overflow: hidden;
-  border-radius: var(--radius-xs);
-  color: var(--ink);
-}
-
-.skill-artwork svg {
-  width: 28px;
-  height: 28px;
-}
-
-.skill-artwork-plugin-brand .plugin-icon-asset {
-  width: 26px;
-  height: 26px;
-}
-
-.skill-row-copy {
-  display: grid;
-  min-width: 0;
-  gap: 5px;
-}
-
-.skill-row-titlebar {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 7px;
-}
-
-.skill-row h2 {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ink);
-  font-size: 15px;
-  font-weight: var(--weight-medium);
-  letter-spacing: -0.015em;
-  line-height: 1.3;
-  margin: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The pill chrome below stays reserved for the detail dialog badge and
- * plugin-sourced skill source tags. Plugin rows keep the typographic rhythm of
- * skill rows; runtime state is a right-aligned dot + label in its own column. */
-.skill-row-tag {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  border-radius: var(--radius-pill);
-  padding: 2px 8px;
-  font-size: 11px;
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.01em;
-  line-height: 1.4;
-  background: var(--skill-tag-bundled-bg);
-  color: var(--skill-tag-bundled-fg);
-}
-
-.skill-row-tag-neutral {
-  background: var(--wuu-badge-neutral-background, var(--skill-artwork-neutral-bg));
-  color: var(--wuu-color-text-muted, var(--skill-artwork-neutral-fg));
-}
-
-.skill-row-status {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: transparent;
-  color: var(--ink-secondary);
-  font-size: 11px;
-  font-weight: var(--weight-medium);
-  letter-spacing: 0.01em;
-  line-height: 1.4;
-  white-space: nowrap;
-}
-
-.skill-row-status-dot {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: var(--radius-circle);
-  background: var(--ink-tertiary);
-}
-
-.skill-row-status.extension-status-good .skill-row-status-dot {
-  background: var(--success);
-}
-
-.skill-row-status.extension-status-warning .skill-row-status-dot {
-  background: var(--warning);
-}
-
-.skill-row-status.extension-status-danger .skill-row-status-dot {
-  background: var(--danger);
-}
-
-.skill-row-status.extension-status-danger {
-  color: var(--danger);
-}
-
-.skill-row p {
-  overflow: hidden;
-  color: var(--ink-tertiary);
-  font-size: 13px;
-  font-weight: var(--weight-regular);
-  letter-spacing: -0.01em;
-  line-height: 1.4;
-  margin: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.skill-row-chevron {
-  width: 16px;
-  height: 16px;
-  color: var(--skill-row-chevron);
-  opacity: 0;
-  transform: translateX(-3px);
-  transition:
-    opacity var(--motion-fast) var(--ease-out),
-    transform var(--motion-fast) var(--ease-out);
-}
-
 .skills-empty {
   display: grid;
   min-height: 260px;
@@ -3010,107 +2727,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 .skills-empty span {
   color: var(--ink-muted);
   font-size: var(--font-body);
-}
-
-@media (max-width: 720px) {
-  .skills-catalog {
-    padding: 28px 20px 40px;
-  }
-
-  .skills-catalog-header {
-    gap: 20px;
-  }
-
-  .skills-catalog-title strong {
-    font-size: 28px;
-  }
-
-  .skills-catalog-title span {
-    font-size: 15px;
-  }
-
-  .skills-catalog-controls {
-    width: 100%;
-  }
-
-  .skills-section {
-    margin-top: 34px;
-  }
-
-  .skills-section + .skills-section {
-    margin-top: 30px;
-  }
-
-  .skills-list {
-    width: 100%;
-    grid-template-columns: 1fr;
-  }
-
-  .skill-row {
-    min-height: 72px;
-    grid-template-columns: 36px minmax(0, 1fr) 16px;
-    gap: 11px;
-    padding: 9px 6px;
-  }
-
-  .extension-package-list {
-    grid-template-columns: 1fr;
-  }
-
-  .skill-row.extension-package-row {
-    grid-template-columns: 36px minmax(0, 1fr) max-content 16px;
-    min-height: 72px;
-    align-items: center;
-    gap: 12px;
-    padding: 9px 6px;
-  }
-
-  .extension-package-actions {
-    grid-column: 2;
-    width: auto;
-    min-width: 0;
-    justify-self: start;
-  }
-
-  .skill-artwork {
-    width: 36px;
-    height: 36px;
-    border-radius: var(--radius-xs);
-  }
-
-  .skill-artwork svg {
-    width: 18px;
-    height: 18px;
-  }
-
-  .skill-artwork[class*="skill-artwork-official-"] svg,
-  .skill-artwork-custom-skill svg,
-  .skill-artwork-custom-plugin svg {
-    width: 26px;
-    height: 26px;
-  }
-
-}
-
-.skill-row-button {
-  width: 100%;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.skill-row-button:hover {
-  background: var(--wuu-control-secondary-background, var(--ink-overlay-6));
-}
-
-.skill-row-button:hover .skill-row-chevron,
-.skill-row-button:focus-visible .skill-row-chevron {
-  opacity: 1;
-  transform: translateX(0);
 }
 
 .environment-modal-backdrop:has(.skill-preview-dialog) {
