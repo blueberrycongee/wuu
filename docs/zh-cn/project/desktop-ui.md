@@ -52,6 +52,9 @@ npm --prefix desktop run dev:onboarding
 相邻卡片滑动补位；发送或切换草稿时托盘直接清空。托盘始终只有一行，
 横向滚动，边缘渐隐见“滚动边缘渐隐”。
 
+不支持的附件类型及附件添加失败统一使用胶囊通知，不在输入框上方常驻显示；
+普通对话和分屏对话保持一致。
+
 使用 `/dev/composer-attachments/` 预览，可选参数有 `theme=dark`、`size=20`、
 `width=420`、`hero`、`queued` 和 `seed`。页面按钮通过真实的输入框粘贴处理
 粘贴合成文件。

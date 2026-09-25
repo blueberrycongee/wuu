@@ -29,6 +29,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   of growing the input box. Cards show a thumbnail, or a title with size or
   line count; removing one lets the rest slide into place, and the input keeps
   its size throughout. Overflowing trays scroll horizontally with faded edges.
+  Unsupported attachment types and import failures use the shared capsule
+  notification instead of a persistent composer status line.
 
 - `bash` starts background processes with a single `run_in_background` flag
   instead of its seven background actions. A new `process` tool reads output

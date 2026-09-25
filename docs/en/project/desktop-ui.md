@@ -61,6 +61,10 @@ gap. Sending or switching drafts clears the tray at once. The tray keeps a
 single row and scrolls horizontally, with the inline edge fade described under
 scroll-edge fading.
 
+Unsupported attachment types and attachment failures use the shared capsule
+notification, rather than a persistent status line above the input, in both
+normal and split conversations.
+
 Preview `/dev/composer-attachments/` with optional `theme=dark`, `size=20`,
 `width=420`, `hero`, `queued`, and `seed` parameters. Its buttons paste
 synthetic files through the real textarea paste handler.

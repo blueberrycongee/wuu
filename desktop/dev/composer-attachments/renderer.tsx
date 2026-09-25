@@ -1,11 +1,12 @@
 // Production Composer with synthetic attachments; no product bridge or user data.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { Composer, type CodexModelLoadState } from "../../src/renderer/ComposerView";
 import { useComposerDraftState } from "../../src/renderer/ComposerDraftState";
 import type { QueuedComposerMessage } from "../../src/renderer/ComposerMessages";
 import { ImagePreviewProvider } from "../../src/renderer/ImagePreview";
 import { I18nProvider } from "../../src/renderer/i18n";
+import { ToastViewport } from "../../src/renderer/Toast";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { startFocusModality } from "../../src/renderer/FocusModality";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
@@ -116,8 +117,7 @@ function run(task: () => Promise<void> | void): Promise<void> {
 Object.assign(window, { fixtureIdle: () => queue });
 
 function Fixture(): JSX.Element {
-  const [status, setStatus] = useState("");
-  const draft = useComposerDraftState({ setStatus });
+  const draft = useComposerDraftState();
   const seeded = useRef(false);
   const hero = params.has("hero");
 
@@ -143,7 +143,7 @@ function Fixture(): JSX.Element {
         <button onClick={() => void run(async () => pasteFiles([await videoFile()]))}>粘贴视频</button>
         <button onClick={() => void run(() => pasteText(longText()))}>粘贴长文本</button>
         <button onClick={() => void run(() => { draft.setPrompt(""); draft.setComposerImages([]); draft.setComposerFiles([]); })}>模拟发送</button>
-        {status ? <span className="fixture-status">{status}</span> : null}
+        <button onClick={() => pasteFiles([new File(["unsupported"], "archive.zip", { type: "application/zip" })])}>粘贴不支持的附件</button>
       </div>
       <main className={`fixture-pane${hero ? " fixture-pane-hero" : ""}`}>
         {hero ? null : (
@@ -213,5 +213,5 @@ function Fixture(): JSX.Element {
 }
 
 createRoot(document.getElementById("root")!).render(
-  <I18nProvider><WuuUIRoot><ImagePreviewProvider><Fixture /></ImagePreviewProvider></WuuUIRoot></I18nProvider>,
+  <I18nProvider><WuuUIRoot><ImagePreviewProvider><Fixture /></ImagePreviewProvider><ToastViewport /></WuuUIRoot></I18nProvider>,
 );
