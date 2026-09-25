@@ -38,6 +38,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   project chosen for the new conversation, shown in its header; the model stays
   editable in the agent's settings.
 
+- The Extensions page follows the settings layout: a titled page with its
+  actions beside the title, then plugins, official skills, and your skills as
+  bordered lists in one column. Plugins come first and show their status on a
+  shared axis; each row has a one-line description and opens its details. Text
+  and icons follow the UI font size, a search hides lists without matches, and
+  the plugin detail shows the same status label as its row.
+
 - Desktop motion shares one duration ladder and one reduced-motion signal.
   The in-app Motion preference and the OS setting both collapse token-driven
   transitions, entrances, exits, drag movement, and frame-driven motion;

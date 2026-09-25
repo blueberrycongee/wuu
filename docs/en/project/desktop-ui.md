@@ -79,6 +79,14 @@ Status labels carry their meaning in text; the dot beside them repeats the tone 
 
 Preview `/dev/settings/` with `page` set to a page ID, and optional `theme=dark`, `size=20`, `lang=en`, `rail=` (sidebar width), `collapsed`, `long`, and `empty` parameters. Providers, agents, MCP servers, usage, and archive rows are synthetic; nothing is saved.
 
+## Extensions catalog
+
+The Extensions page uses the settings page column, header, and groups. Plugins come first because their runtime and approval state may need a decision; official skills and your skills follow. Every row shows a mark, the name over a one-line description, and a trailing status or owning plugin, then a chevron that opens the plugin detail or skill preview. A search hides every group it leaves empty. In a narrow column the trailing label moves under the description.
+
+The plugin detail repeats the row's status label, followed by source and grant scope. Permissions are grouped by capability, and all groups share one label column.
+
+Preview `/dev/extensions/` with optional `theme=dark`, `size=20`, `lang=en`, `long`, and `empty` parameters. Skills and plugin packages are synthetic and cover every status tone; actions in the detail dialog change only the preview's state.
+
 ## Shared typography and geometry
 
 Composer feedback belongs in the shared reading area above the input, not beside
