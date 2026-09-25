@@ -16,6 +16,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Deleting an agent archives sessions still under its management in a separate
+  Agent archive, keeping them out of workspace and unread lists. Previously
+  orphaned sessions are reconciled, and user-taken-over sessions stay available.
+  Agent deletion updates navigation immediately and reconciles cleanup errors.
+
 - Preserve sidebar folder and collaboration folds when returning from settings,
   including after switching between light and dark themes.
 

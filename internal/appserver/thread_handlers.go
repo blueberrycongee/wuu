@@ -929,6 +929,7 @@ func (s *Server) handleThreadList(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	s.refreshListedSessionMetadata(sessions)
 	// Agent worker sessions are persisted alongside regular conversations, but
 	// their worker-only parent/path metadata lives in the agent thread store
 	// rather than the session index. Build this set once before constructing
@@ -1028,6 +1029,7 @@ func (s *Server) handleThreadListAll(req Request) error {
 	}
 	agentThreadIDs := make(map[string]struct{})
 	rootIDs, err := s.rootThreadIDs()
+	s.refreshListedSessionMetadata(sessions)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -1104,6 +1106,7 @@ func (s *Server) handleThreadListArchived(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	entries := make(map[string]threadListEntry, len(sessions))
+	s.refreshListedSessionMetadata(sessions)
 	for _, sess := range sessions {
 		if sess.Visibility == pluginhost.SessionVisibilityPlugin {
 			continue
@@ -1392,6 +1395,7 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	th.PinnedAt = metadata.PinnedAt
 	th.FolderID = metadata.FolderID
 	th.ArchivedAt = metadata.ArchivedAt
+	th.ArchiveReason = metadata.ArchiveReason
 }
 
 // persistThreadEngineRef stores the engine's native session reference for a
@@ -1472,6 +1476,7 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 			Pinned:                sess.PinnedAt != nil,
 			FolderID:              sess.FolderID,
 			Archived:              sess.ArchivedAt != nil,
+			ArchiveReason:         sess.ArchiveReason,
 			ForkedFromID:          sess.ForkedFromID,
 			ForkedFromTurnID:      sess.ForkedFromTurnID,
 			ForkedFromItemID:      sess.ForkedFromItemID,
@@ -2041,6 +2046,7 @@ func (s *Server) threadAfterMetadataUpdate(metadata session.Session) (Thread, er
 	if th := s.thread(metadata.ID); th != nil {
 		th.mu.Lock()
 		applySessionMetadata(th, metadata)
+		th.SessionControl = control
 		thread := th.snapshotLocked()
 		th.mu.Unlock()
 		thread.SessionControl = control
@@ -2049,6 +2055,21 @@ func (s *Server) threadAfterMetadataUpdate(metadata session.Session) (Thread, er
 	thread := threadEntryFromSession(metadata, s.rt.ProviderName, s.rt.Model).thread
 	thread.SessionControl = control
 	return s.threadWithChildAgents(thread)
+}
+
+// Shared metadata wins over snapshots cached by another workspace app-server.
+func (s *Server) refreshListedSessionMetadata(sessions []session.Session) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, metadata := range sessions {
+		if th := s.threads[metadata.ID]; th != nil {
+			th.mu.Lock()
+			th.ArchivedAt = metadata.ArchivedAt
+			th.ArchiveReason = metadata.ArchiveReason
+			th.PinnedAt = metadata.PinnedAt
+			th.mu.Unlock()
+		}
+	}
 }
 
 func (s *Server) hasRunningThread() bool {
