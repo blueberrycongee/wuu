@@ -35,6 +35,7 @@ import {
   type ThreadForkTarget,
   type ThemePreference,
   type LanguagePreference,
+  type UsageOverviewParams,
   type WindowResizeState,
   type WuuDesktopApi,
 } from "../shared/protocol";
@@ -335,6 +336,8 @@ const api: WuuDesktopApi = {
   ackChannelHumanMentions: () =>
     ipcRenderer.invoke("wuu:channel-human-mention-ack"),
   getSettingsUsage: () => ipcRenderer.invoke("wuu:settings-usage"),
+  getUsageOverview: (params: UsageOverviewParams) =>
+    ipcRenderer.invoke("wuu:usage-overview", params),
   listMCPServers: () => ipcRenderer.invoke("wuu:mcp-list"),
   connectMCPServer: (name: string) => ipcRenderer.invoke("wuu:mcp-connect", name),
   disconnectMCPServer: (name: string) =>

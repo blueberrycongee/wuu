@@ -4822,7 +4822,7 @@ func (s *Server) handleSettingsUsage(req Request) error {
 	}
 	rows := scan.TokenRows
 
-	metrics, days := aggregateUsageRows(rows)
+	metrics, days := aggregateUsageRows(rows, time.UTC)
 
 	response := SettingsUsageResponse{
 		TotalSessions:   countUsageSessions(rows),
@@ -4836,6 +4836,34 @@ func (s *Server) handleSettingsUsage(req Request) error {
 	// Keep the full-history scan out of the normal interaction path for two hours.
 	s.settingsUsageCache = &settingsUsageCacheEntry{response: response, expiresAt: now.Add(2 * time.Hour)}
 	return s.writeResponse(req.ID, response, nil)
+}
+
+// handleUsageOverview returns the empty conversation home's usage summary.
+// Unlike handleSettingsUsage it reads only token_usage rows, so it needs no
+// cache, and it buckets days in the caller's time zone so they line up with
+// the calendar the desktop draws.
+func (s *Server) handleUsageOverview(req Request) error {
+	var params UsageOverviewParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	loc := time.UTC
+	if zone := strings.TrimSpace(params.TimeZone); zone != "" {
+		var err error
+		if loc, err = time.LoadLocation(zone); err != nil {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("invalid timezone: %w", err))
+		}
+	}
+	rows, err := session.ListTokenUsage(s.rt.SessionDir)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("collect usage: %w", err))
+	}
+	metrics, days := aggregateUsageRows(rows, loc)
+	return s.writeResponse(req.ID, UsageOverviewResponse{
+		TotalSessions: countUsageSessions(rows),
+		Metrics:       metrics,
+		Days:          days,
+	}, nil)
 }
 
 // countUsageSessions returns the number of distinct session IDs present
@@ -4891,10 +4919,11 @@ func buildUsageModelBreakdowns(rows []insight.TokenUsageRow) []insight.ModelUsag
 }
 
 // aggregateUsageRows is the single source of truth for the desktop
-// usage page's metrics and daily series. It never reads from session
+// usage views' metrics and daily series. It never reads from session
 // metadata — only the per-row token_usage trail — so the headline
-// numbers and the heatmap stay numerically consistent.
-func aggregateUsageRows(rows []insight.TokenUsageRow) (SettingsUsageMetrics, []SettingsUsageDay) {
+// numbers and the heatmap stay numerically consistent. Days and the date
+// range are calendar dates in loc.
+func aggregateUsageRows(rows []insight.TokenUsageRow, loc *time.Location) (SettingsUsageMetrics, []SettingsUsageDay) {
 	metrics := SettingsUsageMetrics{}
 	type dayBucket struct {
 		input, output, cacheRead, cacheCreation int
@@ -4916,7 +4945,7 @@ func aggregateUsageRows(rows []insight.TokenUsageRow) (SettingsUsageMetrics, []S
 			if r.At.After(maxAt) {
 				maxAt = r.At
 			}
-			date := r.At.UTC().Format("2006-01-02")
+			date := r.At.In(loc).Format("2006-01-02")
 			bucket, ok := daysByDate[date]
 			if !ok {
 				bucket = &dayBucket{}
@@ -4936,7 +4965,7 @@ func aggregateUsageRows(rows []insight.TokenUsageRow) (SettingsUsageMetrics, []S
 		metrics.CacheHitRate = float64(metrics.CacheReadTokens) / float64(metrics.PromptTokens)
 	}
 	if !minAt.IsZero() {
-		metrics.DateRange = [2]string{minAt.UTC().Format("2006-01-02"), maxAt.UTC().Format("2006-01-02")}
+		metrics.DateRange = [2]string{minAt.In(loc).Format("2006-01-02"), maxAt.In(loc).Format("2006-01-02")}
 		metrics.ActiveDays = len(daysByDate)
 	}
 

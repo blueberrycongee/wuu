@@ -2720,6 +2720,22 @@ export type SettingsUsageResponse = {
   days: SettingsUsageDay[];
 };
 
+// UsageOverviewParams selects the IANA time zone whose calendar days bucket
+// usage/overview. Omitted means UTC; an unknown zone is a request error.
+export type UsageOverviewParams = {
+  timezone?: string;
+};
+
+// UsageOverviewResponse summarizes the same token_usage trail as
+// settings/usage without reading conversation content, so it has no model or
+// skill breakdowns. Days are dates in the requested zone. An empty store
+// reports zero totals and no days.
+export type UsageOverviewResponse = {
+  total_sessions: number;
+  metrics: SettingsUsageMetrics;
+  days: SettingsUsageDay[];
+};
+
 // Appearance preference for the desktop shell. "system" follows the OS
 // light/dark setting via prefers-color-scheme.
 // UI and message-stream size in CSS pixels. The renderer clamps incoming
@@ -3303,6 +3319,7 @@ export type WuuDesktopApi = {
   // can't escalate arbitrary schemes via this channel.
   openExternal: (url: string) => Promise<void>;
   getSettingsUsage: () => Promise<SettingsUsageResponse>;
+  getUsageOverview: (params: UsageOverviewParams) => Promise<UsageOverviewResponse>;
   /**
    * Pop-out session IPC (Plan §2.2 `wuu:pop-out-session`). Renderer
    * sends either a thread tab or a draft tab plus its runtime context.

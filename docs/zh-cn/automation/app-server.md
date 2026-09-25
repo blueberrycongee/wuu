@@ -56,6 +56,10 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 
 引擎及订阅来源的 `local_usage` 汇总本地保留历史中已上报的输入、输出、缓存 token 和 `reported_turns`，不含未上报或 Wuu 外用量，也不是账单。可选 `latest_request` 提供最近请求的 `status`、`error`、`at`、`model`、`usage_reported`，有上报时附带 token 计数。新旧顺序按请求时间判断，来源按持久记录归属；对话编辑和供应商切换不改变历史归属，旧请求用量不得填充到新请求。
 
+## 查询用量概览
+
+`usage/overview` 汇总本地保留历史中已记录的 token 用量：`total_sessions`（至少有一条用量记录的会话数）、`metrics`（与 `settings/usage` 相同的汇总对象，含 `active_days`）和 `days`（每个活跃日一条，按日期升序）。它只读取用量记录，不读取对话内容。可选参数 `{ "timezone": "America/Los_Angeles" }` 按 IANA 时区划分日期；省略时使用 UTC，未知时区返回请求错误。没有记录时返回零值和空的 `days`。与 `local_usage` 一样，这些值不含未上报或 Wuu 外的用量，也不是账单。
+
 ## Named Agent 媒体交接
 
 具名 Agent 的 `session` 工具可以在创建工作会话或向其发送消息时附上选中的房间媒体，包括 queue 和 steer 模式。这是工具契约，不是新的 JSON-RPC 方法：

@@ -4196,15 +4196,14 @@ pre {
   min-height: 100%;
   align-items: start;
   background: var(--paper);
-  padding: clamp(96px, 18vh, 192px) 0 clamp(72px, 12vh, 128px);
+  padding: clamp(56px, 12vh, 128px) 0 clamp(32px, 6vh, 72px);
   color: var(--ink);
 }
 
 .empty-home-inner {
   /* Outer width, horizontal padding, and 12-col grid come from .session-flow
      (applied via className in JSX). View-specific rules stay here. */
-  justify-items: center;
-  row-gap: clamp(132px, 18vh, 192px);
+  row-gap: var(--space-6);
 }
 
 .empty-home h2 {
@@ -4221,13 +4220,12 @@ pre {
 }
 
 .empty-home-header {
-  /* Span the full inner width so the greeting + mascot read as one row
-     with breathing room on each side; the row is then centered in the
-     session column via flex justify-content. */
+  /* Span the full inner width and start at the column edge, so the
+     greeting shares its left edge with the usage overview and composer. */
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 20px;
   max-width: 100%;
   min-width: 0;
@@ -4245,6 +4243,132 @@ pre {
   flex: 0 0 auto;
   -webkit-user-drag: none;
   user-select: none;
+}
+
+/* Usage overview under the greeting: one quiet card groups the totals with
+   their heatmap. It appears only once the host answers, so it fades in. */
+.empty-home-overview {
+  grid-column: 1 / -1;
+  display: grid;
+  row-gap: var(--space-5);
+  min-width: 0;
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--message-flow-card-radius);
+  background: var(--surface-1);
+  padding: var(--panel-padding);
+  animation: empty-home-overview-in var(--motion-base) var(--ease-out);
+}
+
+@keyframes empty-home-overview-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Stats wrap to fewer columns before a number would need truncating;
+   6em of UI text holds a six-character value such as "12.3M" or "12,345"
+   at the heading size. */
+.empty-home-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 6em), 1fr));
+  gap: var(--space-4);
+  margin: 0;
+}
+
+.empty-home-stats > div {
+  display: grid;
+  align-content: start;
+  row-gap: var(--space-1);
+  min-width: 0;
+}
+
+.empty-home-stats dt {
+  overflow-wrap: anywhere;
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  line-height: 1.3;
+}
+
+.empty-home-stats dd {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--font-heading);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-medium);
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Square cells stay between a readable floor and ceiling. When the column
+   cannot fit every week at the floor, whole older weeks wrap onto a clipped
+   second line instead of shrinking the cells further. The newest week is
+   the first child, so row-reverse keeps it at the right edge. */
+.empty-home-heatmap {
+  container-type: inline-size;
+  min-width: 0;
+}
+
+.empty-home-heatmap-weeks {
+  --empty-home-heatmap-gap: 3px;
+  --empty-home-heatmap-label: calc(var(--font-xs) * 1.25);
+  --empty-home-heatmap-cell: clamp(
+    8px,
+    calc(
+      (100cqi - (var(--empty-home-heatmap-weeks) - 1) * var(--empty-home-heatmap-gap)) /
+        var(--empty-home-heatmap-weeks)
+    ),
+    14px
+  );
+  display: flex;
+  flex-flow: row-reverse wrap;
+  align-content: flex-start;
+  justify-content: space-between;
+  column-gap: var(--empty-home-heatmap-gap);
+  height: calc(
+    var(--empty-home-heatmap-label) +
+      7 * (var(--empty-home-heatmap-cell) + var(--empty-home-heatmap-gap))
+  );
+  overflow: hidden;
+}
+
+.empty-home-heatmap-week {
+  display: grid;
+  flex: none;
+  grid-template-columns: var(--empty-home-heatmap-cell);
+  grid-template-rows: var(--empty-home-heatmap-label) repeat(7, var(--empty-home-heatmap-cell));
+  row-gap: var(--empty-home-heatmap-gap);
+}
+
+/* A month label starts at its week and runs across the following weeks. */
+.empty-home-heatmap-month {
+  color: var(--ink-muted);
+  font-size: var(--font-xs);
+  line-height: 1.25;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.empty-home-heatmap-week i {
+  border-radius: 2px;
+  background: var(--hairline-soft);
+}
+
+.empty-home-heatmap-week i[data-level="1"] {
+  background: var(--settings-heatmap-level-1);
+}
+
+.empty-home-heatmap-week i[data-level="2"] {
+  background: var(--settings-heatmap-level-2);
+}
+
+.empty-home-heatmap-week i[data-level="3"] {
+  background: var(--settings-heatmap-level-3);
+}
+
+.empty-home-heatmap-week i[data-level="4"] {
+  background: var(--settings-heatmap-level-4);
 }
 
 .empty-home-inner > .hero-composer-wrap {

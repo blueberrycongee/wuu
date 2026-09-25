@@ -219,6 +219,7 @@ import {
   EmptyConversationHome,
   RuntimeLoading,
 } from "./LoadingViews";
+import { EmptyHomeOverview } from "./EmptyHomeOverview";
 import { WuuMascotRuntimeProvider } from "./WuuMascot";
 import { deriveActiveSessionHints } from "./activeSessionHint";
 import {
@@ -5564,7 +5565,9 @@ export function App(): JSX.Element {
                     ? "compose"
                     : "idle"
                 }
-              />
+              >
+                <EmptyHomeOverview />
+              </EmptyConversationHome>
               )
             ) : (
               <CachedConversationPanes

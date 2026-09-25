@@ -1399,6 +1399,18 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return errShutdown
 	case MethodSettingsUsage:
 		return s.handleSettingsUsage(req)
+	case MethodUsageOverview:
+		// Every visit to the empty conversation home requests this summary.
+		// Keep the store read off the serial stdio loop so a prompt sent right
+		// away does not wait behind it.
+		if !s.startBackground(func() {
+			if err := s.handleUsageOverview(req); err != nil {
+				log.Printf("wuu: usage/overview: %v", err)
+			}
+		}) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
 	case MethodDevicePushRegister:
 		return s.handleDevicePushRegister(req)
 	case MethodDevicePushUnregister:

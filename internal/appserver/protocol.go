@@ -140,6 +140,9 @@ const (
 	MethodActivityRelease                 = "activity/release"
 	MethodActivityStop                    = "activity/stop"
 	MethodShutdown                        = "shutdown"
+	// MethodUsageOverview returns the desktop empty-home usage summary from
+	// token_usage rows alone, with days in the caller's time zone.
+	MethodUsageOverview = "usage/overview"
 	// MethodSettingsUsage returns the aggregated per-provider/model token
 	// usage snapshot for the desktop settings page. Range filter selects
 	// the time window ("all", "7d", "30d", "90d"); empty defaults to "all".
@@ -2514,8 +2517,9 @@ type SettingsUsageMetrics struct {
 }
 
 // SettingsUsageDay is one calendar day of token activity, bucketed by the
-// token_usage row's At timestamp (UTC). Days are emitted in ascending
-// date order; gaps in the visible window are filled in by the desktop.
+// token_usage row's At timestamp (UTC for settings/usage, the requested zone
+// for usage/overview). Days are emitted in ascending date order; gaps in the
+// visible window are filled in by the desktop.
 type SettingsUsageDay struct {
 	Date                string  `json:"date"`
 	InputTokens         int     `json:"input_tokens"`
@@ -2540,6 +2544,22 @@ type SettingsUsageResponse struct {
 	ModelBreakdowns []insight.ModelUsage `json:"model_breakdowns"`
 	SkillUsage      []insight.SkillUsage `json:"skill_usage"`
 	Days            []SettingsUsageDay   `json:"days"`
+}
+
+// UsageOverviewParams selects the IANA time zone, such as
+// "America/Los_Angeles", whose calendar days bucket usage/overview. Empty
+// means UTC; an unknown zone is an error rather than a silent UTC fallback.
+type UsageOverviewParams struct {
+	TimeZone string `json:"timezone,omitempty"`
+}
+
+// UsageOverviewResponse summarizes the same token_usage trail as
+// settings/usage without reading conversation content, so it has no model or
+// skill breakdowns. An empty store reports zero totals and no days.
+type UsageOverviewResponse struct {
+	TotalSessions int                  `json:"total_sessions"`
+	Metrics       SettingsUsageMetrics `json:"metrics"`
+	Days          []SettingsUsageDay   `json:"days"`
 }
 
 type ChannelAgentListResult struct {
