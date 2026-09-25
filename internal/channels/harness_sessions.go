@@ -82,7 +82,8 @@ type HarnessOperation struct {
 }
 
 func (s *Service) migrateHarnessSessions() error {
-	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS harness_session_links (
+	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS chat_send_bases (context_ref TEXT NOT NULL,room_id TEXT NOT NULL,thread_id TEXT NOT NULL,seq INTEGER NOT NULL,PRIMARY KEY(context_ref,room_id,thread_id));
+ CREATE TABLE IF NOT EXISTS harness_session_links (
 		session_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, room_id TEXT NOT NULL,
 		active INTEGER NOT NULL, payload TEXT NOT NULL);
 		CREATE TABLE IF NOT EXISTS harness_session_operations (

@@ -7,6 +7,8 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 type ChatWakeTool struct{ env *Env }
@@ -17,10 +19,17 @@ func (t *ChatWakeTool) IsReadOnly() bool        { return false }
 func (t *ChatWakeTool) IsConcurrencySafe() bool { return false }
 func (t *ChatWakeTool) Definition() providers.ToolDefinition {
 	str := func() map[string]any { return map[string]any{"type": "string"} }
-	return providers.ToolDefinition{Name: t.Name(), Description: "Persist future work or a user reminder. Set/update with exactly one trigger: after (at least 1m), RFC3339 fire_at, five-field cron schedule plus timezone (IANA region or Local for this execution host), or when_session (another room session becomes idle or terminal). scope=session resumes this exact session; agent/room survives this session and routes to the identity/coordinator. mode=wake invokes the model; message posts the note directly without a model. Finish your turn while waiting; the host queues execution when capacity is full. The host must be running; overdue occurrences recover once, without replaying every missed interval. List returns a next cursor; pass it as after_id to continue. List before updating, pausing or cancelling; revision prevents overwriting another change. Use stable request_id for creation retries. A schedule carries existing authorization, never expands it.", InputSchema: map[string]any{"type": "object", "properties": map[string]any{
-		"action": map[string]any{"type": "string", "enum": []string{"set", "list", "pause", "resume", "cancel"}}, "after_id": str(), "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}, "id": str(), "revision": map[string]any{"type": "integer"}, "request_id": str(), "room_id": str(), "scope": map[string]any{"type": "string", "enum": []string{"session", "agent", "room"}}, "mode": map[string]any{"type": "string", "enum": []string{"wake", "message"}}, "note": str(), "after": str(), "fire_at": str(), "schedule": str(), "timezone": str(), "when_session": str(), "work_id": str(), "refs": map[string]any{"type": "array", "items": str()}}, "required": []string{"action"}}}
+	return providers.ToolDefinition{Name: t.Name(), Description: "Persist future work or a user reminder. Set/update with exactly one trigger: after (at least 1m), RFC3339 fire_at, five-field cron schedule plus timezone (IANA region or Local for this execution host), or when_session (another room session becomes idle or terminal). scope=session resumes this exact session; agent/room survives this session and routes to the identity/coordinator. mode=wake invokes the model; message posts the note directly without a model. Finish your turn while waiting; the host queues execution when capacity is full. The host must be running; overdue occurrences recover once, without replaying every missed interval. List returns a next cursor; pass it as after_id to continue. List before updating, pausing or cancelling; revision prevents overwriting another change. The host supplies creation idempotency. A schedule carries existing authorization, never expands it.", InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+		"action": map[string]any{"type": "string", "enum": []string{"set", "list", "pause", "resume", "cancel"}}, "after_id": str(), "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}, "id": str(), "revision": map[string]any{"type": "integer"}, "room_id": str(), "scope": map[string]any{"type": "string", "enum": []string{"session", "agent", "room"}}, "mode": map[string]any{"type": "string", "enum": []string{"wake", "message"}}, "note": str(), "after": str(), "fire_at": str(), "schedule": str(), "timezone": str(), "when_session": str(), "work_id": str(), "refs": map[string]any{"type": "array", "items": str()}}, "required": []string{"action"}}}
 }
 func (t *ChatWakeTool) Execute(ctx context.Context, args string) (string, error) {
+	return t.execute(ctx, args, session.NewID())
+}
+func (t *ChatWakeTool) ExecuteResultCall(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+	text, err := t.execute(ctx, call.Arguments, call.ID)
+	return toolresult.FromText(text), err
+}
+func (t *ChatWakeTool) execute(ctx context.Context, args string, requestID string) (string, error) {
 	if t.env == nil || t.env.ChatAgent == nil {
 		return "", errors.New("chat_wake requires a collaboration session")
 	}
@@ -32,6 +41,9 @@ func (t *ChatWakeTool) Execute(ctx context.Context, args string) (string, error)
 	}
 	if err := json.Unmarshal([]byte(args), &p); err != nil {
 		return "", err
+	}
+	if p.RequestID == "" {
+		p.RequestID = requestID
 	}
 	c := t.env.ChatAgent
 	if p.Action == "list" {

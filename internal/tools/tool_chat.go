@@ -99,6 +99,13 @@ func (t *ChatReadTool) Execute(ctx context.Context, argsJSON string) (string, er
 	if err != nil {
 		return "", err
 	}
+	scopes := make([]channels.ScopeSequence, 0, len(messages))
+	for _, message := range messages {
+		scopes = append(scopes, channels.ScopeSequence{RoomID: message.RoomID, ThreadID: message.ThreadID, Seq: message.Seq})
+	}
+	if err := t.env.ChatAgent.RememberChatScopes(ctx, scopes); err != nil {
+		return "", err
+	}
 	return mustJSON(map[string]any{"messages": messages})
 }
 
@@ -149,21 +156,20 @@ func (t *ChatSendTool) IsReadOnly() bool        { return false }
 func (t *ChatSendTool) IsConcurrencySafe() bool { return false }
 func (t *ChatSendTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
-		Name: "chat_send",
-		Description: "Publish one conversational bubble as this named agent immediately, without ending the turn. " +
-			"Assistant text stays private; only this tool (or collaboration_send with target_kind=room) posts to the room. " +
-			"For several complete thoughts, send short bubbles sequentially in the same turn; each committed message.seq is the next basis_seq. " +
-			"basis_seq is required and records the room version used to compose the message. A stale basis is held as a draft, not delivered; read the delta before continuing. " +
-			"End without another reply when the complete answer has already been sent.",
+		Name:        "chat_send",
+		Description: "Publish a conversational bubble immediately. The host tracks message freshness from chat_check, chat_read and committed sends. Held drafts are not delivered: read the returned delta, then revise with body or resolve with draft_id and resolution as_is or silent. target_agent_id sends a private request to another room member. End your turn without repeating delivered text.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"room_id":   map[string]any{"type": "string"},
-				"kind":      map[string]any{"type": "string", "enum": []string{"text"}},
-				"body":      map[string]any{"type": "string", "maxLength": channels.MaxMessageRunes},
-				"basis_seq": map[string]any{"type": "integer", "minimum": 0},
+				"room_id":         map[string]any{"type": "string"},
+				"kind":            map[string]any{"type": "string", "enum": []string{"text"}},
+				"body":            map[string]any{"type": "string", "maxLength": channels.MaxMessageRunes},
+				"thread_id":       map[string]any{"type": "string"},
+				"draft_id":        map[string]any{"type": "string"},
+				"resolution":      map[string]any{"type": "string", "enum": []string{"as_is", "silent"}},
+				"target_agent_id": map[string]any{"type": "string"},
 			},
-			"required": []string{"room_id", "kind", "body", "basis_seq"},
+			"required": []string{"room_id"},
 		},
 	}
 }
@@ -172,28 +178,80 @@ func (t *ChatSendTool) Execute(ctx context.Context, argsJSON string) (string, er
 		return "", errors.New("chat_send is available only in a named-agent session")
 	}
 	var args struct {
-		RoomID   string `json:"room_id"`
-		Kind     string `json:"kind"`
-		Body     string `json:"body"`
-		BasisSeq *int64 `json:"basis_seq"`
+		RoomID        string `json:"room_id"`
+		Kind          string `json:"kind"`
+		Body          string `json:"body"`
+		BasisSeq      *int64 `json:"basis_seq"`
+		ThreadID      string `json:"thread_id"`
+		DraftID       string `json:"draft_id"`
+		Resolution    string `json:"resolution"`
+		TargetAgentID string `json:"target_agent_id"`
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(args.Kind) != string(channels.MessageText) {
+	if args.Kind != "" && strings.TrimSpace(args.Kind) != string(channels.MessageText) {
 		return "", errors.New("chat_send kind must be text")
 	}
+	if args.DraftID != "" {
+		drafts, err := t.env.ChatAgent.ListDrafts(ctx)
+		if err != nil {
+			return "", err
+		}
+		for _, draft := range drafts {
+			if draft.ID == args.DraftID && draft.RoomID == args.RoomID {
+				basis, err := t.env.ChatAgent.ObservedChatBasis(ctx, draft.RoomID, draft.ThreadID)
+				if err != nil {
+					return "", err
+				}
+				result, err := t.env.ChatAgent.ResolveDraft(ctx, channels.ResolveDraftParams{DraftID: draft.ID, Resolution: channels.DraftResolution(args.Resolution), BasisSeq: &basis})
+				if err != nil {
+					return "", err
+				}
+				if result.Message != nil {
+					if err := t.env.ChatAgent.RememberChatScopes(ctx, []channels.ScopeSequence{{RoomID: result.Message.RoomID, ThreadID: result.Message.ThreadID, Seq: result.Message.Seq}}); err != nil {
+						return "", err
+					}
+				}
+				return mustJSON(result)
+			}
+		}
+		return "", channels.ErrNotFound
+	}
+	if args.TargetAgentID != "" {
+		result, err := t.env.ChatAgent.SendCollaboration(ctx, channels.CollaborationSendParams{RoomID: args.RoomID, ToAgentID: args.TargetAgentID, Body: args.Body, Kind: channels.CollaborationControl})
+		if err != nil {
+			return "", err
+		}
+		return mustJSON(result)
+	}
 	if args.BasisSeq == nil {
-		return "", errors.New("chat_send basis_seq is required")
+		basis, err := t.env.ChatAgent.ObservedChatBasis(ctx, args.RoomID, args.ThreadID)
+		if err != nil {
+			return "", err
+		}
+		args.BasisSeq = &basis
 	}
 	result, err := t.env.ChatAgent.Send(ctx, channels.AgentSendParams{
-		RoomID: args.RoomID, Body: args.Body, BasisSeq: *args.BasisSeq,
+		RoomID: args.RoomID, ThreadID: args.ThreadID, Body: args.Body, BasisSeq: *args.BasisSeq,
 	})
 	if err != nil {
 		return "", err
 	}
 	if result.Status == channels.SendHeld {
-		return mustJSON(map[string]any{"status": result.Status, "draft": result.Draft, "delta": result.Delta})
+		scopes := []channels.ScopeSequence{}
+		for _, item := range result.Delta.Items {
+			scopes = append(scopes, channels.ScopeSequence{RoomID: args.RoomID, ThreadID: args.ThreadID, Seq: item.Seq})
+		}
+		if err := t.env.ChatAgent.RememberChatScopes(ctx, scopes); err != nil {
+			return "", err
+		}
+		return mustJSON(map[string]any{"status": result.Status, "draft": result.Draft, "delta": result.Delta, "resolutions": []string{"revise body", "as_is", "silent"}})
+	}
+	if result.Message.ID != "" {
+		if err := t.env.ChatAgent.RememberChatScopes(ctx, []channels.ScopeSequence{{RoomID: result.Message.RoomID, ThreadID: result.Message.ThreadID, Seq: result.Message.Seq}}); err != nil {
+			return "", err
+		}
 	}
 	return mustJSON(map[string]any{"status": result.Status, "message": result.Message})
 }

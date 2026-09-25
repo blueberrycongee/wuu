@@ -19,9 +19,9 @@ func (t *Toolkit) collaborationToolAllowed(name string) bool {
 	}
 	coordinator := purpose == channels.CollaborationSessionConversation || purpose == channels.CollaborationSessionCoordination
 	switch name {
-	case "chat_check", "chat_send", "chat_task", "session", "chat_memory", "chat_wake", "chat_roster", "chat_work", "chat_draft", "chat_remind", "chat_session":
+	case "chat_check", "chat_send", "chat_task", "session", "chat_memory", "chat_wake", "chat_roster", "chat_work":
 		return coordinator
-	case "collaboration_send":
+	case "collaboration_send", "chat_draft", "chat_remind", "chat_session":
 		return false
 	case "chat_read":
 		return true

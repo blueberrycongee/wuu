@@ -49,18 +49,18 @@ func TestNamedAgentChatToolsAreIsolatedAndRoundTrip(t *testing.T) {
 		t.Fatalf("BindAgent() error = %v", err)
 	}
 	kit.SetChatAgent(client)
-	for _, name := range []string{"chat_check", "chat_read", "chat_send", "collaboration_send", "chat_draft", "chat_task", "chat_work", "chat_remind", "chat_verify", "chat_roster"} {
+	for _, name := range []string{"chat_check", "chat_read", "chat_send", "chat_task", "chat_work", "chat_wake", "chat_verify", "chat_roster"} {
 		assertDefinitionPresent(t, kit.Definitions(), name)
 	}
-	assertDefinitionProperties(t, kit.Definitions(), "collaboration_send", "target_session_ref", "work_id")
+	assertDefinitionProperties(t, kit.Definitions(), "chat_send", "target_agent_id", "draft_id")
 	assertDefinitionProperties(t, kit.Definitions(), "chat_task", "target_session_ref")
 	for _, definition := range kit.Definitions() {
 		if definition.Name != "chat_send" {
 			continue
 		}
 		properties, _ := definition.InputSchema["properties"].(map[string]any)
-		if _, ok := properties["thread_id"]; ok {
-			t.Fatal("chat_send unexpectedly exposes thread_id")
+		if _, ok := properties["basis_seq"]; ok {
+			t.Fatal("chat_send asks the model to maintain host freshness")
 		}
 		if _, ok := properties["reply_to"]; ok {
 			t.Fatal("chat_send unexpectedly exposes reply_to")
@@ -71,7 +71,7 @@ func TestNamedAgentChatToolsAreIsolatedAndRoundTrip(t *testing.T) {
 		t.Fatal("collaboration_send accepted a retired room runtime target")
 	}
 
-	sentJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_send", Arguments: `{"room_id":"` + room.ID + `","kind":"text","body":"reviewed","basis_seq":0}`})
+	sentJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_send", Arguments: `{"room_id":"` + room.ID + `","kind":"text","body":"reviewed"}`})
 	if err != nil {
 		t.Fatalf("chat_send error = %v", err)
 	}
@@ -162,7 +162,10 @@ func TestNamedAgentChatToolsAreIsolatedAndRoundTrip(t *testing.T) {
 		}
 	}
 
-	heldJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_send", Arguments: `{"room_id":"` + room.ID + `","kind":"text","body":"stale answer","basis_seq":1}`})
+	if _, err := service.SendHuman(ctx, channels.HumanSendParams{RoomID: room.ID, HumanID: "human-1", Body: "One more constraint"}); err != nil {
+		t.Fatal(err)
+	}
+	heldJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_send", Arguments: `{"room_id":"` + room.ID + `","kind":"text","body":"stale answer"}`})
 	if err != nil {
 		t.Fatalf("stale chat_send error = %v", err)
 	}
@@ -177,13 +180,9 @@ func TestNamedAgentChatToolsAreIsolatedAndRoundTrip(t *testing.T) {
 	if held.Status != "held" || held.Draft.ID == "" || held.Delta.Count != 1 {
 		t.Fatalf("held chat_send result = %#v", held)
 	}
-	listJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_draft", Arguments: `{"action":"list"}`})
-	if err != nil || !strings.Contains(listJSON, held.Draft.ID) {
-		t.Fatalf("chat_draft list = %s, err = %v", listJSON, err)
-	}
-	resolvedJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_draft", Arguments: `{"action":"resolve","draft_id":"` + held.Draft.ID + `","resolution":"silent"}`})
+	resolvedJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_send", Arguments: `{"room_id":"` + room.ID + `","draft_id":"` + held.Draft.ID + `","resolution":"silent"}`})
 	if err != nil || !strings.Contains(resolvedJSON, `"state":"dropped"`) {
-		t.Fatalf("chat_draft silent = %s, err = %v", resolvedJSON, err)
+		t.Fatalf("resolve held draft: %s %v", resolvedJSON, err)
 	}
 
 	taskJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_task", Arguments: `{"action":"create","room_id":"` + room.ID + `","title":"Review","owner_id":"` + credential.Agent.ID + `"}`})
@@ -205,24 +204,6 @@ func TestNamedAgentChatToolsAreIsolatedAndRoundTrip(t *testing.T) {
 		t.Fatalf("chat_task list = %s, err %v", listedTaskJSON, err)
 	}
 
-	reminderJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_remind", Arguments: `{"action":"set","after":"1m","note":"resume"}`})
-	if err != nil {
-		t.Fatalf("chat_remind set error = %v", err)
-	}
-	var reminderResult struct {
-		Reminder channels.Reminder `json:"reminder"`
-	}
-	if err := json.Unmarshal([]byte(reminderJSON), &reminderResult); err != nil || reminderResult.Reminder.State != channels.ReminderPending {
-		t.Fatalf("chat_remind set = %s, err %v", reminderJSON, err)
-	}
-	listedReminderJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_remind", Arguments: `{"action":"list","state":"pending"}`})
-	if err != nil || !strings.Contains(listedReminderJSON, reminderResult.Reminder.ID) {
-		t.Fatalf("chat_remind list = %s, err %v", listedReminderJSON, err)
-	}
-	cancelledReminderJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_remind", Arguments: `{"action":"cancel","reminder_id":"` + reminderResult.Reminder.ID + `"}`})
-	if err != nil || !strings.Contains(cancelledReminderJSON, `"state":"cancelled"`) {
-		t.Fatalf("chat_remind cancel = %s, err %v", cancelledReminderJSON, err)
-	}
 }
 
 func TestNamedAgentToolsVerifyAssignedIndependentRun(t *testing.T) {
@@ -323,13 +304,11 @@ func TestNamedAgentToolsVerifyAssignedIndependentRun(t *testing.T) {
 		t.Fatalf("start verifier run: %v", err)
 	}
 	kit.SetChatAgent(reviewerClient)
-	reportArgs := fmt.Sprintf(`{"action":"add_artifact","work_id":%q,"run_id":%q,"artifact_kind":"report","uri":"artifact://review-report"}`, taskResult.Task.ID, verifierRun.ID)
-	if _, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_work", Arguments: reportArgs}); err != nil {
-		t.Fatalf("record verifier report: %v", err)
+	if _, err := reviewerClient.AddWorkArtifact(ctx, channels.WorkArtifactAddParams{WorkID: taskResult.Task.ID, RunID: verifierRun.ID, Kind: channels.WorkArtifactReport, URI: "artifact://review-report"}); err != nil {
+		t.Fatal(err)
 	}
-	finishArgs := fmt.Sprintf(`{"action":"finish_run","work_id":%q,"run_id":%q,"run_state":"completed","outcome":"block"}`, taskResult.Task.ID, verifierRun.ID)
-	if _, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_work", Arguments: finishArgs}); err != nil {
-		t.Fatalf("finish verifier run: %v", err)
+	if _, err := reviewerClient.FinishWorkRun(ctx, channels.WorkRunFinishParams{WorkID: taskResult.Task.ID, RunID: verifierRun.ID, State: channels.WorkRunCompleted, Outcome: "block"}); err != nil {
+		t.Fatal(err)
 	}
 	verifyArgs := fmt.Sprintf(
 		`{"room_id":%q,"task_id":%q,"goal_revision":%d,"candidate_revision":%d,"decision":"block","report":"Replay still succeeds.","run_ref":%q}`,
