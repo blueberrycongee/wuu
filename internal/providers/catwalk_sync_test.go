@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -152,22 +153,23 @@ func TestCatwalkSync_GetIsIdempotent(t *testing.T) {
 func TestCatwalkSync_RefreshSendsCachedETag(t *testing.T) {
 	client := &fakeCatwalkClient{response: sampleProviders()}
 	s := NewCatwalkSync(CatwalkSyncConfig{Client: client})
+	body, err := json.Marshal(client.response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The remote snapshot defines the protocol ETag independently of the syncer's state.
+	wantETag := catwalk.Etag(body)
 
 	// First Get populates and computes an ETag.
 	if _, err := s.Get(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	firstETag := s.CachedETag()
-	if firstETag == "" {
-		t.Fatal("expected non-empty ETag after successful fetch")
-	}
-
 	// Refresh should send the stored ETag.
 	if err := s.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if client.gotETag != firstETag {
-		t.Fatalf("Refresh sent ETag %q, want %q", client.gotETag, firstETag)
+	if client.gotETag != wantETag {
+		t.Fatalf("Refresh sent ETag %q, want %q", client.gotETag, wantETag)
 	}
 }
 
