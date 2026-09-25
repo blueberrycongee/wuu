@@ -69,6 +69,7 @@ export type ArchivedSessionView = {
   updated_at: string;
   archive_project_id?: string;
   archive_project_name?: string;
+  archive_reason?: string;
 };
 export type ArchivedRoomView = {
   id: string;
@@ -2266,9 +2267,12 @@ function SettingsArchivePage({
   const { t, formatDate } = useI18n();
   const [query, setQuery] = useState("");
   const [projectFilter, setProjectFilter] = useState("all");
+  const [archiveSection, setArchiveSection] = useState("ordinary");
   const sortedThreads = useMemo(
-    () => [...archivedThreads].sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
-    [archivedThreads],
+    () => archivedThreads
+      .filter((thread) => (thread.archive_reason === "agent_deleted") === (archiveSection === "agents"))
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+    [archivedThreads, archiveSection],
   );
   const sortedRooms = useMemo(
     () => [...archivedRooms].sort((a, b) => b.created_at.localeCompare(a.created_at)),
@@ -2312,14 +2316,23 @@ function SettingsArchivePage({
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filteredRooms = sortedRooms.filter(
     (room) =>
-      projectFilter === "all" &&
+      archiveSection === "ordinary" && projectFilter === "all" &&
       (!normalizedQuery || room.name.toLocaleLowerCase().includes(normalizedQuery)),
   );
-  const archivedItemCount = sortedThreads.length + sortedRooms.length;
+  const archivedItemCount = sortedThreads.length + (archiveSection === "ordinary" ? sortedRooms.length : 0);
   const noMatches = archivedItemCount > 0 && groups.length === 0 && filteredRooms.length === 0;
 
   return (
     <div className="settings-archive-page">
+      <SelectMenu
+        value={archiveSection}
+        onChange={(value) => { setArchiveSection(value); setProjectFilter("all"); }}
+        ariaLabel={t("settings.archiveSection")}
+        options={[
+          { value: "ordinary", label: t("settings.ordinaryArchive") },
+          { value: "agents", label: t("settings.agentArchive") },
+        ]}
+      />
       <div className="settings-archive-toolbar" role="search" aria-label={t("settings.archiveFilter")}>
         <label className="settings-archive-search">
           <Search className="icon" aria-hidden="true" />
@@ -2347,7 +2360,7 @@ function SettingsArchivePage({
           <p className="settings-archive-empty-title">
             {noMatches ? t("settings.noArchiveMatches") : t("settings.noArchivedItems")}
           </p>
-          {noMatches || isTouchWebShell() ? null : (
+          {noMatches || archiveSection === "agents" || isTouchWebShell() ? null : (
             <p className="settings-archive-empty-hint">
               {t("settings.archiveHint")}
             </p>

@@ -1822,6 +1822,27 @@ describe("SettingsView archive page", () => {
     expect(onUnarchiveThread).toHaveBeenCalledWith(target);
   });
 
+  it("keeps deleted-agent history in a separate restorable archive section", async () => {
+    const onUnarchiveThread = vi.fn();
+    const managed = archivedThread("managed", { title: "Managed work", archive_reason: "agent_deleted" });
+    renderSettings({
+      initialized: baseInitialized(), initialPage: "archive", onUnarchiveThread,
+      archivedThreads: [archivedThread("ordinary", { title: "My conversation" }), managed],
+      archivedRooms: [{ id: "room", name: "My group", created_at: managed.updated_at }],
+    });
+    await act(async () => {});
+    expect(container.textContent).toContain("My conversation");
+    expect(container.textContent).not.toContain("Managed work");
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="归档分区"]')!.click());
+    const option = [...document.querySelectorAll<HTMLButtonElement>(".select-menu-item")].find((node) => node.textContent?.includes("Agent"))!;
+    act(() => option.click());
+    expect(container.textContent).toContain("Managed work");
+    expect(container.textContent).not.toContain("My conversation");
+    expect(container.textContent).not.toContain("My group");
+    act(() => container.querySelector<HTMLButtonElement>(".settings-archive-restore")!.click());
+    expect(onUnarchiveThread).toHaveBeenCalledWith(managed);
+  });
+
   it("lists archived group chats and restores them independently", () => {
     const onUnarchiveRoom = vi.fn();
     const room: ArchivedRoomView = {

@@ -86,6 +86,7 @@ type threadState struct {
 	PinnedAt                 *time.Time
 	FolderID                 string
 	ArchivedAt               *time.Time
+	ArchiveReason            string
 	Turns                    []Turn
 	PersistHistory           bool
 	ReadOnly                 bool

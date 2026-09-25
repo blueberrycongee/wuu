@@ -33,9 +33,13 @@ func TestServerThreadListArchivedReturnsArchivedSession(t *testing.T) {
 	dispatchPayload(t, srv, "1", "thread/start", nil)
 	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread.ID
 
-	dispatchPayload(t, srv, "2", "thread/archive", ThreadArchiveParams{ThreadID: threadID, Archived: true})
-	if resp := responseByID(t, parseOutput(t, out.String()), "2"); resp["error"] != nil {
-		t.Fatalf("thread/archive rejected: %+v", resp["error"])
+	// Another workspace process archives the session while this server caches it.
+	control, err := session.ChangeControl(rt.SessionDir, threadID, "manager", session.ControlActive, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.ArchiveControlled(rt.SessionDir, control, "agent_deleted"); err != nil {
+		t.Fatal(err)
 	}
 
 	dispatchPayload(t, srv, "3", "thread/listArchived", nil)
@@ -50,7 +54,7 @@ func TestServerThreadListArchivedReturnsArchivedSession(t *testing.T) {
 	if list.Threads[0].ID != threadID {
 		t.Fatalf("archived list returned the wrong thread: %+v", list.Threads[0])
 	}
-	if !list.Threads[0].Archived {
+	if !list.Threads[0].Archived || list.Threads[0].ArchiveReason != "agent_deleted" {
 		t.Fatalf("archived thread must carry Archived=true, got %+v", list.Threads[0])
 	}
 
@@ -62,6 +66,14 @@ func TestServerThreadListArchivedReturnsArchivedSession(t *testing.T) {
 		if th.Archived {
 			t.Fatalf("thread/list leaked an archived thread: %+v", th)
 		}
+	}
+	if _, err := session.UpdateArchived(rt.SessionDir, threadID, false); err != nil {
+		t.Fatal(err)
+	}
+	dispatchPayload(t, srv, "5", "thread/listArchived", nil)
+	restored := remarshal[ThreadListResult](t, responseByID(t, parseOutput(t, out.String()), "5")["result"])
+	if len(restored.Threads) != 0 {
+		t.Fatalf("stale cache re-archived a restored session: %+v", restored.Threads)
 	}
 }
 
