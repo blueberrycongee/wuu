@@ -42,7 +42,10 @@ class Collaboration(private val call: suspend (String, JSONObject) -> JSONObject
     fun agentName(id: String) = agents.firstOrNull { it.optString("id") == id }?.optString("name")?.takeIf { it.isNotBlank() } ?: id
     fun roomName(room: JSONObject): String {
         if (room.optString("kind") == "dm") room.optJSONArray("members")?.objects()
-            ?.firstOrNull { it.optString("member_type") == "agent" }?.let { return agentName(it.optString("member_id")) }
+            ?.firstOrNull { it.optString("member_type") == "agent" }?.let {
+                val project = room.optString("workspace_root").trimEnd('/').substringAfterLast('/')
+                return agentName(it.optString("member_id")) + if (project.isBlank()) "" else " · $project"
+            }
         return room.optString("name").ifBlank { "群聊" }
     }
 
@@ -136,9 +139,9 @@ class Collaboration(private val call: suspend (String, JSONObject) -> JSONObject
         call("channel/session/resume", json("sessionRef" to current.getString("session_ref"))); check(stamp)
         if (selectedID == id) refresh()
     }
-    suspend fun direct(agentID: String) {
+    suspend fun direct(agentID: String, workspaceRoot: String = "") {
         val stamp = epoch
-        val result = call("channel/direct-message/open", json("agent_id" to agentID)); check(stamp)
+        val result = call("channel/direct-message/open", json("agent_id" to agentID, "workspace_root" to workspaceRoot)); check(stamp)
         val room = result.getJSONObject("room")
         rooms = rooms.filterNot { it.optString("id") == room.getString("id") } + room
         select(room.getString("id"))

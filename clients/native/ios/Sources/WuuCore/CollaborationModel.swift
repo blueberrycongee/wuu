@@ -170,8 +170,8 @@ import Observation
          "after_seq": .number(Double(after)), "before_seq": .number(Double(before)), "attachment_metadata_only": true]
     }
 
-    public func openAgent(_ id: String, app: any CollaborationConnection) async throws {
-        try await open("channel/direct-message/open", params: ["agent_id": .string(id)], app: app)
+    public func openAgent(_ id: String, workspace: String = "", app: any CollaborationConnection) async throws {
+        try await open("channel/direct-message/open", params: ["agent_id": .string(id), "workspace_root": .string(workspace)], app: app)
     }
     public func createRoom(name: String, agents: Set<String>, app: any CollaborationConnection) async throws {
         try await open("channel/room/create", params: ["name": .string(name), "agent_ids": .array(agents.sorted().map(JSONValue.string))], app: app)

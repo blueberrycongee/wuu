@@ -2173,6 +2173,7 @@ const (
 )
 
 type ThreadSessionControl struct {
+	RoomID      string `json:"room_id,omitempty"`
 	ManagerID   string `json:"manager_id"`
 	ManagerName string `json:"manager_name"`
 	State       string `json:"state"`
@@ -2684,8 +2685,10 @@ type ChannelRoomCreateResult struct {
 }
 
 type ChannelDirectMessageOpenParams struct {
-	Onboarding *channels.RoomOnboarding `json:"onboarding,omitempty"`
-	AgentID    string                   `json:"agent_id"`
+	WorkspaceRoot string                   `json:"workspace_root,omitempty"`
+	WorkspaceID   string                   `json:"workspace_id,omitempty"`
+	Onboarding    *channels.RoomOnboarding `json:"onboarding,omitempty"`
+	AgentID       string                   `json:"agent_id"`
 }
 
 type ChannelDirectMessageOpenResult struct {
@@ -2755,9 +2758,13 @@ type ChannelTaskCreateResult struct {
 }
 
 type ChannelTaskUpdateParams struct {
-	TaskID  string `json:"task_id"`
-	State   string `json:"state,omitempty"`
-	OwnerID string `json:"owner_id,omitempty"`
+	ExpectedRevision int     `json:"expected_revision,omitempty"`
+	GoalCorrection   string  `json:"goal_correction,omitempty"`
+	Constraints      *string `json:"constraints,omitempty"`
+	Decision         string  `json:"decision,omitempty"`
+	TaskID           string  `json:"task_id"`
+	State            string  `json:"state,omitempty"`
+	OwnerID          string  `json:"owner_id,omitempty"`
 }
 
 type ChannelTaskUpdateResult struct {

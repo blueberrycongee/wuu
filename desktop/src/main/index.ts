@@ -89,6 +89,8 @@ import type {
   ChannelTaskCreateParams,
   ChannelTaskCreateResult,
   ChannelTaskUpdateParams,
+ ChannelWorkCandidateParams,
+ ChannelWorkCandidateResult,
   ChannelTaskUpdateResult,
   ChannelHumanMentionStatusResult,
   ChannelHumanMentionAckResult,
@@ -1905,6 +1907,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:channel-session-stop", (event, params: ChannelSessionRefParams) =>
     appServerRequest<ChannelSessionResult>(event, "channel/session/stop", params),
   );
+  ipcMain.handle("wuu:session-control-return", (event, params: { thread_id: string; revision: number }) => appServerRequest(event, "thread/control/return", params));
   ipcMain.handle("wuu:channel-session-resume", (event, params: ChannelSessionRefParams) =>
     appServerRequest<ChannelSessionResult>(event, "channel/session/resume", params),
   );
@@ -1962,6 +1965,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:channel-task-create", (event, params: ChannelTaskCreateParams) =>
     appServerRequest<ChannelTaskCreateResult>(event, "channel/task/create", params),
   );
+  ipcMain.handle("wuu:channel-work-candidate", (event, params: ChannelWorkCandidateParams) => appServerRequest<ChannelWorkCandidateResult>(event, "channel/work/candidate", params));
   ipcMain.handle("wuu:channel-task-update", (event, params: ChannelTaskUpdateParams) =>
     appServerRequest<ChannelTaskUpdateResult>(event, "channel/task/update", params),
   );

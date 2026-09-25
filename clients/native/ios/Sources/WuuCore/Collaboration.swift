@@ -19,7 +19,8 @@ public struct CollaborationRoom: Identifiable, Equatable, Sendable {
     public func title(agents: [CollaborationAgent]) -> String {
         guard value["kind"].string == "dm", let member = members.first(where: { $0["member_type"].string == "agent" }),
               let agent = agents.first(where: { $0.id == member["member_id"].string }) else { return name }
-        return agent.name
+        let project = value["workspace_root"].string.map { URL(fileURLWithPath: $0).lastPathComponent } ?? ""
+        return project.isEmpty ? agent.name : "\(agent.name) · \(project)"
     }
 }
 

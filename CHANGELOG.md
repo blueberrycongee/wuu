@@ -28,6 +28,19 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Collaboration now centers on project-bound DMs, with visible task controls,
+  managed-session takeover and return, project and identity memory editing, and
+  persistent conversation timers. Group navigation is hidden while data remains.
+- Work execution uses isolated Git worktrees, versioned shared decisions and
+  structured reports. Host-managed candidates and independent verification expose
+  reviewable diffs with apply, optional Git-extension PR, and discard actions.
+  Progress deadlines, revision checks and private-history boundaries protect
+  continuing work from stale updates and silent stalls.
+
+- Collaboration tools follow each admitted session role: conversations read and
+  coordinate, execution sessions can write, and verification sessions only read.
+  Continuing identities refresh their role instructions on every turn.
+
 - Pasted or attached images, videos, PDFs, and folded long text now wait in a
   single-row tray that slides out from behind the top of the composer instead
   of growing the input box. Cards show a thumbnail, or a title with size or
@@ -54,6 +67,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   of 2048, so a typical source file or document is read in one call.
 
 ### Fixed
+
+- Work delivery reads structured reports from the final answer, so commentary
+  before tool calls no longer causes completed executions to fail validation.
+
+- Collaboration conversations can receive due room reminders, include them in
+  unread counts, and clear their wake state after consumption.
+
+- Collaboration replies no longer become held drafts just because a thread
+  reply is newer than the conversation's main timeline.
 
 - Sending a message keeps one local waiting timer across admission, events,
   snapshots, and conversation switches without changing server timestamps.

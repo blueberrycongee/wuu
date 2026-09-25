@@ -12,6 +12,9 @@ import { userFacingErrorForMessage } from "./UserFacingErrors";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import type { ThreadSummary } from "./AppState";
 
+// Retained channel rendering stays testable behind the product feature switch.
+vi.mock("./FeatureFlags", async importOriginal => ({ ...await importOriginal<typeof import("./FeatureFlags")>(), ENABLE_COLLABORATION_CHANNELS: true }));
+
 let container: HTMLDivElement;
 let root: Root | null = null;
 
@@ -559,7 +562,7 @@ describe("ChannelView", () => {
     expect(card?.querySelector(".channel-agent-proposal-actions")).toBeNull();
   });
 
-  it("keeps task records out of chat while retaining them in the task board", async () => {
+  it("shows task progress and execution links in chat and the task board", async () => {
     const api = createApi();
     api.listChannelMessages = vi.fn(async ({ room_id }) => ({ messages: room_id === "room-1" ? [{
       id: "work-1", room_id, seq: 1, author_type: "agent" as const, author_id: "agent-1",
@@ -592,13 +595,18 @@ describe("ChannelView", () => {
       },
     }] : [] }));
     Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    api.updateChannelTask = vi.fn().mockResolvedValue({});
     const onOpenSession = vi.fn();
     root = createRoot(container);
     act(() => root?.render(<ChannelView selectedRoomID="room-1" onOpenSession={onOpenSession} />));
     await settle();
 
-    expect(container.querySelector('[role="log"]')?.textContent).not.toContain("Fix callback");
-    expect(container.querySelector('[role="log"]')?.textContent).not.toContain("Reject callback replay");
+    expect(container.querySelector('[role="log"]')?.textContent).toContain("Fix callback");
+    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>(".channel-task-actions button")).find(button => button.textContent?.includes("验证"))!.click());
+    expect(onOpenSession).toHaveBeenCalledWith("session-check-1");
+    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>(".channel-task-actions button")).find(button => button.textContent === "取消")!.click());
+    expect(api.updateChannelTask).toHaveBeenCalledWith({ task_id: "work-1", state: "cancelled" });
+    expect(container.querySelector('[role="log"]')?.textContent).toContain("Reject callback replay");
     act(() => root?.render(<ChannelView section="tasks" onOpenSession={onOpenSession} />));
     await settle();
     expect(container.querySelector(".channel-task-board")?.textContent).toContain("Fix callback");
@@ -1126,7 +1134,7 @@ describe("ChannelView", () => {
     expect(container.querySelector(".channel-message.own .channel-human-avatar")).toBeNull();
     expect(container.querySelector(".channel-message.own .channel-message-meta strong")).toBeNull();
     expect(container.querySelector(".channel-task-card")).toBeNull();
-    expect(container.querySelector(".channel-message-stream")?.textContent).not.toContain("Investigate flaky build");
+    expect(container.querySelector(".channel-message-stream")?.textContent).toContain("Investigate flaky build");
     expect(container.querySelector('[aria-label="Alpha: 处理中"]')).not.toBeNull();
     expect(container.querySelector(".channel-agent-status-card")?.textContent).toBe("处理中");
     expect(container.querySelector(".channel-agent-status-card strong")).toBeNull();

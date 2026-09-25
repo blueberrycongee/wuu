@@ -16,7 +16,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
-	"github.com/blueberrycongee/wuu/internal/worktree"
+	worktreepkg "github.com/blueberrycongee/wuu/internal/worktree"
 )
 
 type pluginTurnReference struct {
@@ -467,7 +467,7 @@ func (s *Server) discardPluginWorkspace(_ context.Context, pluginID string, para
 	return pluginhost.WorkspaceDiscardResult{SessionID: metadata.ID, Discarded: true}, nil
 }
 
-func (s *Server) pluginWorkspaceTarget(pluginID, sessionID string) (session.Session, *worktree.Manager, *worktree.Worktree, error) {
+func (s *Server) pluginWorkspaceTarget(pluginID, sessionID string) (session.Session, *worktreepkg.Manager, *worktreepkg.Worktree, error) {
 	pluginID = strings.TrimSpace(pluginID)
 	sessionID = strings.TrimSpace(sessionID)
 	if pluginID == "" || sessionID == "" {
@@ -490,7 +490,7 @@ func (s *Server) pluginWorkspaceTarget(pluginID, sessionID string) (session.Sess
 	if err != nil {
 		return session.Session{}, nil, nil, err
 	}
-	target := &worktree.Worktree{
+	target := &worktreepkg.Worktree{
 		Path: metadata.WorktreePath, SessionID: metadata.ID, WorkerID: "plugin",
 		HEAD: metadata.WorktreeBaseHEAD, BaseRepo: metadata.WorktreeBaseRepo,
 	}
@@ -788,6 +788,10 @@ func (s *Server) createPluginSessionThread(owner string, params pluginhost.Sessi
 }
 
 func (s *Server) createHostSessionThread(owner, source, id string, params pluginhost.SessionCreateParams) (*threadState, error) {
+	return s.createHostSessionThreadAtRevision(owner, source, id, params, "")
+}
+
+func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, params pluginhost.SessionCreateParams, baseRevision string) (*threadState, error) {
 	if s.rt == nil || s.rt.StreamRunner == nil {
 		return nil, errors.New("runtime session is required")
 	}
@@ -885,7 +889,7 @@ func (s *Server) createHostSessionThread(owner, source, id string, params plugin
 		if err != nil {
 			return nil, err
 		}
-		createdWorktree, err := manager.Create(id, "plugin", "")
+		createdWorktree, err := manager.OpenOrCreate(worktreepkg.OpenOrCreateOptions{SessionID: id, WorkerID: "plugin", BaseRevision: baseRevision})
 		if err != nil {
 			return nil, err
 		}

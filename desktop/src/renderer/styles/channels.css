@@ -3721,3 +3721,28 @@ html[data-focus-modality="keyboard"] .agent-avatar-color-control input[type="ran
 .channel-managed-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .channel-managed-session .icon { flex-shrink: 0; }
 .session-control-label { color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: min(12em, 24vw); }
+
+.channel-task-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-3); }
+.channel-task-actions button, .conversation-context button { font: inherit; color: var(--text-secondary); background: transparent; border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); padding: 4px 8px; }
+
+.work-candidate-review { margin-top: var(--space-3); border-top: 1px solid var(--border-subtle); padding-top: var(--space-2); min-width: 0; }
+.work-candidate-review > summary { cursor: pointer; color: var(--text-primary); padding-block: var(--space-2); }
+.work-candidate-review > button { font: inherit; color: var(--text-secondary); background: transparent; border: 0; padding: var(--space-2) 0; text-decoration: underline; }
+.work-candidate-evidence { margin-block: var(--space-3); overflow-wrap: anywhere; }
+.work-candidate-evidence strong { font-weight: 500; }
+.work-candidate-evidence ul { padding-left: 1.5em; }
+.work-candidate-diff { max-height: 24rem; overflow: auto; background: var(--bg-secondary); padding: var(--space-3); font-size: var(--code-font-size, 11px); line-height: 1.5; white-space: pre; border-radius: var(--radius-xs); }
+.channel-work-deadline { color: var(--text-secondary); margin-top: var(--space-2); }
+.channel-task-actions button:disabled, .conversation-context button:disabled { opacity: .55; cursor: default; }
+.channel-task-actions button:focus-visible, .work-candidate-review button:focus-visible, .work-candidate-review summary:focus-visible, .work-candidate-diff:focus-visible, .conversation-context :is(button, input, textarea, summary):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.conversation-context { flex: 0 0 auto; margin-inline: var(--space-4); color: var(--text-secondary); border-bottom: 1px solid var(--border-subtle); }
+.conversation-context > summary { cursor: pointer; padding-block: var(--space-2); }
+.conversation-context-body { max-height: min(50vh, 32rem); overflow: auto; padding: var(--space-2) var(--space-2) var(--space-4); color: var(--text-primary); }
+.conversation-context button, .conversation-context input, .conversation-context textarea { font: inherit; }
+.conversation-context input, .conversation-context textarea { background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); padding: var(--space-2); min-width: 0; }
+.conversation-context [aria-pressed="true"] { color: var(--text-primary); border-color: currentColor; }
+.conversation-memory-editor { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-3); }
+.conversation-memory-editor textarea { min-height: 10rem; resize: vertical; }
+.conversation-memory-editor > button { align-self: flex-start; }
+.conversation-timer { padding-block: var(--space-3); border-bottom: 1px solid var(--border-subtle); overflow-wrap: anywhere; }
+.conversation-timer > span { color: var(--text-secondary); }

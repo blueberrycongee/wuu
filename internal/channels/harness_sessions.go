@@ -18,6 +18,8 @@ type HarnessSessionController interface {
 }
 
 type HarnessSessionActor struct {
+	UserSeqStart int64  `json:"user_seq_start,omitempty"`
+	UserSeqEnd   int64  `json:"user_seq_end,omitempty"`
 	AgentID      string `json:"agent_id"`
 	SessionRef   string `json:"session_ref"`
 	TurnID       string `json:"turn_id"`
@@ -27,44 +29,51 @@ type HarnessSessionActor struct {
 }
 
 type HarnessSessionParams struct {
-	Action        string            `json:"action"`
-	WorkID        string            `json:"work_id,omitempty"`
-	SessionID     string            `json:"session_id,omitempty"`
-	WorkspaceRoot string            `json:"workspace_root,omitempty"`
-	WorkspaceID   string            `json:"workspace_id,omitempty"`
-	Workspace     string            `json:"workspace,omitempty"`
-	Title         string            `json:"title,omitempty"`
-	Prompt        string            `json:"prompt,omitempty"`
-	Media         []HarnessMediaRef `json:"media,omitempty"`
-	Query         string            `json:"query,omitempty"`
-	Mode          string            `json:"mode,omitempty"`
-	Provider      string            `json:"provider,omitempty"`
-	Model         string            `json:"model,omitempty"`
-	Effort        string            `json:"effort,omitempty"`
-	Limit         int               `json:"limit,omitempty"`
-	Before        int               `json:"before,omitempty"`
-	OperationID   string            `json:"-"`
+	BaseRevision     string                      `json:"base_revision,omitempty"`
+	Purpose          CollaborationSessionPurpose `json:"purpose,omitempty"`
+	HostVerification bool                        `json:"-"`
+	Action           string                      `json:"action"`
+	WorkID           string                      `json:"work_id,omitempty"`
+	SessionID        string                      `json:"session_id,omitempty"`
+	WorkspaceRoot    string                      `json:"workspace_root,omitempty"`
+	WorkspaceID      string                      `json:"workspace_id,omitempty"`
+	Workspace        string                      `json:"workspace,omitempty"`
+	Title            string                      `json:"title,omitempty"`
+	Prompt           string                      `json:"prompt,omitempty"`
+	Media            []HarnessMediaRef           `json:"media,omitempty"`
+	Query            string                      `json:"query,omitempty"`
+	Mode             string                      `json:"mode,omitempty"`
+	Provider         string                      `json:"provider,omitempty"`
+	Model            string                      `json:"model,omitempty"`
+	Effort           string                      `json:"effort,omitempty"`
+	Limit            int                         `json:"limit,omitempty"`
+	Before           int                         `json:"before,omitempty"`
+	OperationID      string                      `json:"-"`
 }
 
 type HarnessSessionLink struct {
-	SessionID        string `json:"session_id"`
-	AgentID          string `json:"agent_id"`
-	SourceSessionRef string `json:"source_session_ref"`
-	SourceTurnID     string `json:"source_turn_id"`
-	RoomID           string `json:"room_id"`
-	WorkID           string `json:"work_id,omitempty"`
-	GoalRevision     int    `json:"goal_revision,omitempty"`
-	Objective        string `json:"objective"`
-	ControlRevision  int64  `json:"control_revision"`
-	Active           bool   `json:"active"`
-	LastTurnID       string `json:"last_turn_id,omitempty"`
-	Turns            int    `json:"turns"`
-	Failures         int    `json:"failures"`
+	ExecutionRoot    string                      `json:"execution_root,omitempty"`
+	BaseRevision     string                      `json:"base_revision,omitempty"`
+	Purpose          CollaborationSessionPurpose `json:"purpose,omitempty"`
+	SessionID        string                      `json:"session_id"`
+	AgentID          string                      `json:"agent_id"`
+	SourceSessionRef string                      `json:"source_session_ref"`
+	SourceTurnID     string                      `json:"source_turn_id"`
+	RoomID           string                      `json:"room_id"`
+	WorkID           string                      `json:"work_id,omitempty"`
+	GoalRevision     int                         `json:"goal_revision,omitempty"`
+	Objective        string                      `json:"objective"`
+	ControlRevision  int64                       `json:"control_revision"`
+	Active           bool                        `json:"active"`
+	LastTurnID       string                      `json:"last_turn_id,omitempty"`
+	Turns            int                         `json:"turns"`
+	Failures         int                         `json:"failures"`
 }
 
 // HarnessOperation is an outbox command. Pending commands survive host restarts;
 // the executor reconciles their stable input IDs with durable Harness history.
 type HarnessOperation struct {
+	RunID    string               `json:"run_id,omitempty"`
 	ID       string               `json:"id"`
 	Actor    HarnessSessionActor  `json:"actor"`
 	Params   HarnessSessionParams `json:"params"`
@@ -76,7 +85,9 @@ type HarnessOperation struct {
 }
 
 func (s *Service) migrateHarnessSessions() error {
-	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS harness_session_links (
+	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS harness_verification_reports (run_id TEXT PRIMARY KEY REFERENCES work_runs(id) ON DELETE CASCADE,payload TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS chat_send_bases (context_ref TEXT NOT NULL,room_id TEXT NOT NULL,thread_id TEXT NOT NULL,seq INTEGER NOT NULL,PRIMARY KEY(context_ref,room_id,thread_id));
+ CREATE TABLE IF NOT EXISTS harness_session_links (
 		session_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, room_id TEXT NOT NULL,
 		active INTEGER NOT NULL, payload TEXT NOT NULL);
 		CREATE TABLE IF NOT EXISTS harness_session_operations (
@@ -116,6 +127,15 @@ func (s *Service) ReserveHarnessExecution(ctx context.Context, link HarnessSessi
 			return err
 		}
 		work = &w
+	}
+	if link.ExecutionRoot != "" && link.Purpose != CollaborationSessionVerification {
+		var occupied bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM harness_session_admissions admission JOIN harness_session_links link ON link.session_id=admission.session_id WHERE admission.session_id!=? AND json_extract(link.payload,'$.execution_root')=? AND COALESCE(json_extract(link.payload,'$.purpose'),'work')!='verification')`, link.SessionID, link.ExecutionRoot).Scan(&occupied); err != nil {
+			return err
+		}
+		if occupied {
+			return ErrHarnessCapacity
+		}
 	}
 	if err := s.checkCollaborationTokenBudgetTx(ctx, tx, link.RoomID, work); err != nil {
 		return err

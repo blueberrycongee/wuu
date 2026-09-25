@@ -53,30 +53,52 @@ func (s *Service) CheckSession(ctx context.Context, agentID, token, sessionRef s
 	}
 	checkedAt := fromMillis(toMillis(s.now()))
 	items := make([]CheckItem, 0, 1)
+	reminders := make([]Reminder, 0)
+	inboxIDs := make([]string, 0)
+	hasMore := false
 	inboxScope, inboxArgs := sessionPublicInboxScope(binding)
 	if inboxScope != "" {
 		inboxArgs = append([]any{actor.ID}, inboxArgs...)
+		inboxArgs = append(inboxArgs, checkLimit+1)
 		rows, err := tx.QueryContext(ctx, `
-			SELECT inbox.id, inbox.room_id, inbox.message_id, inbox.kind, inbox.created_at,
-				COALESCE(message.thread_id, ''), message.author_type, message.author_id,
-				message.body, message.seq
+			SELECT inbox.id, COALESCE(inbox.room_id, ''), COALESCE(inbox.message_id, ''), inbox.kind, inbox.created_at,
+				COALESCE(message.thread_id, ''), COALESCE(message.author_type, ''), COALESCE(message.author_id, ''),
+				COALESCE(message.body, ''), COALESCE(message.seq, 0),
+				COALESCE(reminder.id, ''), COALESCE(reminder.agent_id, ''), COALESCE(reminder.fire_at, 0),
+				COALESCE(reminder.note, ''), COALESCE(reminder.room_id, ''),
+				COALESCE(reminder.thread_id, ''), COALESCE(reminder.created_at, 0)
 			FROM inbox_items inbox
-			JOIN room_messages message ON message.id = inbox.message_id
+			LEFT JOIN room_messages message ON message.id = inbox.message_id
+			LEFT JOIN reminders reminder ON reminder.id = inbox.reminder_id
 			WHERE inbox.member_type = 'agent' AND inbox.member_id = ?`+inboxScope+`
-			ORDER BY inbox.created_at, inbox.rowid`, inboxArgs...)
+			ORDER BY inbox.created_at, inbox.rowid LIMIT ?`, inboxArgs...)
 		if err != nil {
 			return CheckResult{}, fmt.Errorf("query collaboration session task inbox: %w", err)
 		}
 		for rows.Next() {
 			var item CheckItem
 			var authorType string
-			var createdAt int64
+			var createdAt, fireAt, reminderCreatedAt int64
+			var reminder Reminder
 			if err := rows.Scan(
 				&item.ID, &item.RoomID, &item.MessageID, &item.Kind, &createdAt,
 				&item.ThreadID, &authorType, &item.AuthorID, &item.Preview, &item.Seq,
+				&reminder.ID, &reminder.AgentID, &fireAt, &reminder.Note, &reminder.RoomID, &reminder.ThreadID, &reminderCreatedAt,
 			); err != nil {
 				rows.Close()
 				return CheckResult{}, fmt.Errorf("scan collaboration session task inbox: %w", err)
+			}
+			if len(inboxIDs) == checkLimit {
+				hasMore = true
+				continue
+			}
+			inboxIDs = append(inboxIDs, item.ID)
+			if reminder.ID != "" {
+				reminder.FireAt = fromMillis(fireAt)
+				reminder.CreatedAt = fromMillis(reminderCreatedAt)
+				reminder.State = ReminderFired
+				reminders = append(reminders, reminder)
+				continue
 			}
 			item.AuthorType = MemberType(authorType)
 			item.Preview = preview(item.Preview, checkPreviewRunes)
@@ -89,11 +111,11 @@ func (s *Service) CheckSession(ctx context.Context, agentID, token, sessionRef s
 		if err := rows.Err(); err != nil {
 			return CheckResult{}, fmt.Errorf("iterate collaboration session task inbox: %w", err)
 		}
-		for _, item := range items {
+		for _, id := range inboxIDs {
 			if _, err := tx.ExecContext(ctx, `
 				UPDATE inbox_items SET pulled_at = ?
 				WHERE id = ? AND member_type = 'agent' AND member_id = ? AND pulled_at IS NULL`,
-				toMillis(checkedAt), item.ID, actor.ID); err != nil {
+				toMillis(checkedAt), id, actor.ID); err != nil {
 				return CheckResult{}, fmt.Errorf("claim collaboration session task inbox: %w", err)
 			}
 		}
@@ -119,7 +141,7 @@ func (s *Service) CheckSession(ctx context.Context, agentID, token, sessionRef s
 		ORDER BY ` + collaborationDeliveryPriority + `, delivery.created_at, delivery.rowid LIMIT ?`
 	args := []any{actor.ID, binding.Primary, binding.RoomID, binding.SessionRef}
 	args = append(args, scopeArgs...)
-	remaining := max(0, checkLimit-len(items))
+	remaining := max(0, checkLimit-len(inboxIDs))
 	args = append(args, remaining+1)
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -127,7 +149,6 @@ func (s *Service) CheckSession(ctx context.Context, agentID, token, sessionRef s
 	}
 	messages := make([]CollaborationMessage, 0, checkLimit)
 	messageIDs := make([]string, 0, checkLimit)
-	hasMore := false
 	for rows.Next() {
 		var message CollaborationMessage
 		var artifactRefsJSON string
@@ -197,12 +218,12 @@ func (s *Service) CheckSession(ctx context.Context, agentID, token, sessionRef s
 	scopes := make([]ScopeSequence, 0, 1)
 	if binding.RoomID != "" {
 		var seq int64
-		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM room_messages WHERE room_id = ?`, binding.RoomID).Scan(&seq); err == nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM room_messages WHERE room_id = ? AND thread_id IS NULL`, binding.RoomID).Scan(&seq); err == nil {
 			scopes = append(scopes, ScopeSequence{RoomID: binding.RoomID, Seq: seq})
 		}
 	}
 	return CheckResult{
-		Items: items, Collaboration: messages, Reminders: []Reminder{},
+		Items: items, Collaboration: messages, Reminders: reminders,
 		Scopes: scopes, HasMore: hasMore, CheckedAt: checkedAt,
 	}, nil
 }

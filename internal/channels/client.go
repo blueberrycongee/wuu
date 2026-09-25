@@ -109,10 +109,17 @@ func (c *AgentClient) Check(ctx context.Context) (CheckResult, error) {
 	if c == nil || c.service == nil {
 		return CheckResult{}, errors.New("chat agent is not bound")
 	}
+	var result CheckResult
+	var err error
 	if c.sessionRef != "" {
-		return c.service.CheckSession(ctx, c.agentID, c.token, c.sessionRef)
+		result, err = c.service.CheckSession(ctx, c.agentID, c.token, c.sessionRef)
+	} else {
+		result, err = c.service.Check(ctx, c.agentID, c.token)
 	}
-	return c.service.Check(ctx, c.agentID, c.token)
+	if err != nil {
+		return result, err
+	}
+	return result, c.RememberChatScopes(ctx, result.Scopes)
 }
 
 func (c *AgentClient) ReadInbox(ctx context.Context, itemIDs []string) ([]Message, error) {
