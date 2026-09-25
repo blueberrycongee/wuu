@@ -1,13 +1,20 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UsageOverviewResponse, WuuDesktopApi } from "../shared/protocol";
 import { EmptyHomeOverview } from "./EmptyHomeOverview";
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
 const animateDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "animate");
+const getAnimationsDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "getAnimations");
 const hitTestDescriptor = Object.getOwnPropertyDescriptor(document, "elementFromPoint");
+
+// JSDOM has no Web Animations: the card mounts with no entrance running
+// unless a test supplies one.
+beforeEach(() => {
+  Object.defineProperty(Element.prototype, "getAnimations", { configurable: true, value: () => [] });
+});
 
 afterEach(() => {
   act(() => root?.unmount());
@@ -18,6 +25,8 @@ afterEach(() => {
   vi.useRealTimers();
   if (animateDescriptor) Object.defineProperty(Element.prototype, "animate", animateDescriptor);
   else Reflect.deleteProperty(Element.prototype, "animate");
+  if (getAnimationsDescriptor) Object.defineProperty(Element.prototype, "getAnimations", getAnimationsDescriptor);
+  else Reflect.deleteProperty(Element.prototype, "getAnimations");
   if (hitTestDescriptor) Object.defineProperty(document, "elementFromPoint", hitTestDescriptor);
   else Reflect.deleteProperty(document, "elementFromPoint");
   delete (window as unknown as { wuu?: unknown }).wuu;
@@ -62,9 +71,13 @@ function storeWithoutUsage(): UsageOverviewResponse {
 }
 
 describe("EmptyHomeOverview", () => {
-  it("resumes idle play after input interrupts an animation", async () => {
+  it("starts idle play after the entrance and resumes it after input interrupts", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     installWuuStub({ getUsageOverview: vi.fn().mockResolvedValue(storeWithoutUsage()) });
+    // The card's entrance runs until the test finishes it.
+    let finishEntrance!: () => void;
+    const entrance = { finished: new Promise<void>((resolve) => (finishEntrance = resolve)) };
+    Object.defineProperty(Element.prototype, "getAnimations", { configurable: true, value: () => [entrance] });
     const view = await renderOverview();
     view.className = "empty-home";
     const mascot = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -86,7 +99,14 @@ describe("EmptyHomeOverview", () => {
     }));
     Object.defineProperty(Element.prototype, "animate", { configurable: true, value: animate });
 
+    // Scenes measure cell positions, so the idle wait starts only once the
+    // entrance has settled the cells.
     act(() => vi.advanceTimersByTime(20_000));
+    expect(animate).not.toHaveBeenCalled();
+    await act(async () => finishEntrance());
+    act(() => vi.advanceTimersByTime(19_000));
+    expect(animate).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1_000));
     expect(animate).toHaveBeenCalled();
     act(() => window.dispatchEvent(new Event("pointermove")));
     const callsAfterInput = animate.mock.calls.length;

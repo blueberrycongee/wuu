@@ -16,7 +16,12 @@ app.whenReady().then(async () => {
     let frames = 0;
     const check = () => {
       frames++;
-      if (document.querySelector(".empty-home-overview") && frames > 5) resolve();
+      const card = document.querySelector(".empty-home-overview");
+      // Scenes measure settled cells, and idle play arms only after the
+      // entrance. Two more frames let it arm and take its first resize
+      // callback on the real clock, before the idle checks switch to virtual time.
+      const armed = () => requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      if (card && frames > 5) void Promise.allSettled(card.getAnimations({ subtree: true }).map((animation) => animation.finished)).then(armed);
       else if (frames > 120) reject(new Error("Overview did not mount"));
       else requestAnimationFrame(check);
     };
