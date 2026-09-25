@@ -1746,7 +1746,7 @@ export type WorkspaceFileReadResult = {
   truncated: boolean;
   text?: string;
   renderable_url?: string;
-  renderable_kind?: "image" | "pdf";
+  renderable_kind?: "image" | "pdf" | "video";
 };
 
 export type WorkspaceFileSaveParams = {

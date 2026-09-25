@@ -1,12 +1,14 @@
 import { net, protocol } from "electron";
 import { pathToFileURL } from "node:url";
-import { pdfResponseHeaders, rangedPdfResponse } from "./renderableFileRange";
+import { renderableResponseHeaders, rangedFileResponse } from "./renderableFileRange";
+import { videoMimeType } from "../shared/videoMimeType";
 import {
   managedArtifactFileFromURL,
   filePathFromRenderableURL,
   isRenderableHtmlFile,
   isRenderableImageFile,
   isRenderablePdfFile,
+  isRenderableVideoFile,
   verifyManagedArtifactFile,
 } from "./renderableFileURLs";
 
@@ -33,19 +35,8 @@ export function registerRenderableFileProtocol(wuuHome: string): void {
     if (!filePath) {
       return new Response("Not found", { status: 404 });
     }
-    if (isRenderablePdfFile(filePath)) {
-      // The viewer switches to range requests once it sees Accept-Ranges;
-      // serving 206 chunks lets large PDFs render their first page without
-      // downloading the whole document.
-      const ranged = rangedPdfResponse(request, filePath);
-      if (ranged) {
-        return ranged;
-      }
-      const response = await net.fetch(pathToFileURL(filePath).toString());
-      return new Response(response.body, {
-        status: response.status,
-        headers: pdfResponseHeaders(response.headers),
-      });
+    if (isRenderablePdfFile(filePath) || isRenderableVideoFile(filePath)) {
+      return rangedRenderableResponse(request, filePath, videoMimeType(filePath) ?? "application/pdf");
     }
     if (!isRenderableImageFile(filePath)) {
       return new Response("Not found", { status: 404 });
@@ -58,14 +49,8 @@ export function registerRenderableFileProtocol(wuuHome: string): void {
       return new Response("Not found", { status: 404 });
     }
     const filePath = artifact.filePath;
-    if (isRenderablePdfFile(filePath)) {
-      const ranged = rangedPdfResponse(request, filePath);
-      if (ranged) return ranged;
-      const response = await net.fetch(pathToFileURL(filePath).toString());
-      return new Response(response.body, {
-        status: response.status,
-        headers: pdfResponseHeaders(response.headers),
-      });
+    if (isRenderablePdfFile(filePath) || isRenderableVideoFile(filePath)) {
+      return rangedRenderableResponse(request, filePath, videoMimeType(filePath) ?? "application/pdf");
     }
     const response = await net.fetch(pathToFileURL(filePath).toString());
     if (!isRenderableHtmlFile(filePath)) return response;
@@ -77,5 +62,15 @@ export function registerRenderableFileProtocol(wuuHome: string): void {
       status: response.status,
       headers,
     });
+  });
+}
+
+async function rangedRenderableResponse(request: Request, filePath: string, mimeType: string): Promise<Response> {
+  const ranged = rangedFileResponse(request, filePath, mimeType);
+  if (ranged) return ranged;
+  const response = await net.fetch(pathToFileURL(filePath).toString());
+  return new Response(response.body, {
+    status: response.status,
+    headers: renderableResponseHeaders(mimeType, response.headers),
   });
 }

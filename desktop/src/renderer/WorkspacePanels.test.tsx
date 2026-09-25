@@ -13,6 +13,7 @@ import {
 import type { RuntimeContext } from "../shared/protocol";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import {
+  workspaceArtifactViewTab,
   workspaceDiffViewTab,
   workspaceFileViewTab,
   workspaceToolViewTab,
@@ -390,6 +391,45 @@ describe("WorkspaceRightPanel", () => {
     const panel = container?.querySelector<HTMLElement>(".workspace-right-panel");
     expect(panel?.hasAttribute("inert")).toBe(true);
     expect(panel?.querySelector(".workspace-monaco-editor")).toBeNull();
+  });
+
+  it("pauses a retained artifact video when the panel closes without resuming on reopen", async () => {
+    const fileTab = workspaceFileViewTab({
+      context: { kind: "project", project_id: "project-1", cwd: "/repo/project" },
+      path: "src/App.tsx",
+    });
+    const artifactTab = workspaceArtifactViewTab({
+      threadID: "thread-1",
+      artifact: {
+        id: "video", itemId: "delivery", index: 0, type: "file",
+        name: "clip.webm", mimeType: "video/webm", placement: "turn_end",
+        uri: "wuu-artifact://workspace/thread/snapshot/clip.webm?sha256=hash",
+      },
+    });
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const props = { ...baseProps(), tabs: [fileTab, artifactTab], activeTabID: artifactTab.id };
+    try {
+      mount(<WorkspaceRightPanel {...props} />);
+      await act(async () => Promise.resolve());
+      const video = container!.querySelector("video")!;
+      expect(video).not.toBeNull();
+      expect(pause).not.toHaveBeenCalled();
+      await act(async () => video.play());
+      play.mockClear();
+
+      await act(async () => root!.render(<WorkspaceRightPanel {...props} open={false} present={false} />));
+      expect(container!.querySelector("video")).toBe(video);
+      expect(pause).toHaveBeenCalledTimes(1);
+      expect(pause.mock.contexts[0]).toBe(video);
+
+      await act(async () => root!.render(<WorkspaceRightPanel {...props} />));
+      expect(container!.querySelector("video")).toBe(video);
+      expect(play).not.toHaveBeenCalled();
+    } finally {
+      pause.mockRestore();
+      play.mockRestore();
+    }
   });
 
   it("renders file content on the left and the persistent file tree on the right", async () => {

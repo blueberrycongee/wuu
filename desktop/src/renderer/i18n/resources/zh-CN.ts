@@ -729,6 +729,7 @@ export const zhCN = {
   "artifacts.previewNamed": "预览 {name}",
   "artifacts.downloadNamed": "下载 {name}",
   "artifacts.previewUnavailable": "此格式暂不支持预览，你仍可以下载或在工作区中打开。",
+  "artifacts.videoUnavailable": "无法播放此视频，文件可能不可用或使用了不支持的编码。你可以下载后使用其他播放器打开。",
   "pluginCard.renderFailed": "无法显示此插件卡片。",
   "settings.autoCompact": "自动压缩",
   "settings.autoCompactDescription": "接近上下文上限时自动整理旧历史",

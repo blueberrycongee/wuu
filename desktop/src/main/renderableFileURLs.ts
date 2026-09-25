@@ -1,6 +1,7 @@
 import { createReadStream, readFileSync, realpathSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, extname, join, relative, resolve } from "node:path";
+import { videoMimeType } from "../shared/videoMimeType";
 
 const RENDERABLE_IMAGE_EXTENSIONS = new Set([
   ".apng",
@@ -147,6 +148,14 @@ export function isRenderableImageFile(filePath: string): boolean {
 
 export function isRenderablePdfFile(filePath: string): boolean {
   return isRenderableFileWithExtensions(filePath, RENDERABLE_PDF_EXTENSIONS);
+}
+
+export function isRenderableVideoFile(filePath: string): boolean {
+  try {
+    return Boolean(videoMimeType(filePath)) && statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
 }
 
 export function isRenderableHtmlFile(filePath: string): boolean {
