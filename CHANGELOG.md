@@ -48,6 +48,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   coordinate, execution sessions can write, and verification sessions only read.
   Continuing identities refresh their role instructions on every turn.
 
+- Settings pages are grouped by task: Agents & models, App, Extensions, and
+  Data. Each page uses one column, with its title and page actions on the
+  first line and settings in bordered groups. Model providers and agents open
+  in place under their own row. Page identifiers are unchanged, including
+  `advanced` for the runtime page.
+
 - Pasted or attached images, videos, PDFs, and folded long text now wait in a
   single-row tray that slides out from behind the top of the composer instead
   of growing the input box. Cards show a thumbnail, or a title with size or

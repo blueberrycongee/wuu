@@ -5,6 +5,7 @@ import { EngineIcon } from "./EngineIcons";
 import { EngineAuthentication } from "./EngineAuthentication";
 import { SelectMenu } from "./SelectMenu";
 import { useI18n } from "./i18n";
+import { SettingsPageHeader } from "./SettingsSection";
 import {
   selectSubscriptionModel,
   subscriptionSources,
@@ -84,12 +85,14 @@ export function SubscriptionDashboard({
 
   return (
     <section className="settings-section settings-subscriptions" data-testid="settings-subscriptions" aria-busy={refreshing}>
-      <header className="settings-page-header settings-subscription-header">
-        <h1 className="settings-page-title">{t("settings.subscriptions")}</h1>
-        <button type="button" className="settings-button settings-button-ghost settings-icon-button" disabled={refreshing} onClick={() => setRefreshVersion((value) => value + 1)} aria-label={t(refreshing ? "settings.subscriptionRefreshing" : "settings.subscriptionRefresh")} title={t("settings.subscriptionRefresh")}>
-          <RefreshCw size={16} className={refreshing ? "settings-spin" : undefined} aria-hidden="true" />
-        </button>
-      </header>
+      <SettingsPageHeader
+        title={t("settings.subscriptions")}
+        actions={
+          <button type="button" className="settings-button settings-button-ghost settings-icon-button" disabled={refreshing} onClick={() => setRefreshVersion((value) => value + 1)} aria-label={t(refreshing ? "settings.subscriptionRefreshing" : "settings.subscriptionRefresh")} title={t("settings.subscriptionRefresh")}>
+            <RefreshCw className={refreshing ? "icon settings-spin" : "icon"} aria-hidden="true" />
+          </button>
+        }
+      />
       {sources.length === 0 ? (
         inventory || loadedInventory ? <p className="settings-muted-line">{t("settings.subscriptionsEmpty")}</p>
           : refreshing ? (
