@@ -462,32 +462,50 @@ func (c *controller) fireDue(ctx context.Context) {
 	now := c.now().UTC()
 	c.mu.Lock()
 	var due []Task
-	for id, task := range c.tasks {
+	for _, task := range c.tasks {
 		if task.Paused || task.NextRunAt.After(now) {
 			continue
 		}
 		due = append(due, task)
-		if task.Recurring {
-			next, err := nextRun(task, now)
-			if err == nil {
-				task.NextRunAt = next
-				c.tasks[id] = task
-			} else {
-				task.Paused = true
-				c.tasks[id] = task
-			}
-		} else {
-			delete(c.tasks, id)
-		}
 	}
-	_ = c.saveLocked(ctx)
 	c.mu.Unlock()
+	// The dispatch opportunity is spent only once the execution service
+	// accepted the task (see consume). During startup the plugin activates
+	// before the host binds the session service; firing into that window used
+	// to delete one-shot tasks and advance recurring ones without ever
+	// running them, so the catch-up run was lost.
 	for _, task := range due {
-		c.fire(ctx, task, now)
+		if c.fire(ctx, task, now) {
+			c.consume(ctx, task, now)
+		}
 	}
 }
 
-func (c *controller) fire(ctx context.Context, task Task, now time.Time) {
+// consume spends one dispatch opportunity for a task that fire() reported as
+// dispatched: one-shot tasks leave the schedule, and recurring tasks move to
+// their next occurrence.
+func (c *controller) consume(ctx context.Context, task Task, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	existing, ok := c.tasks[task.ID]
+	if !ok || existing.Paused {
+		return
+	}
+	if existing.Recurring {
+		next, err := nextRun(existing, now)
+		if err == nil {
+			existing.NextRunAt = next
+		} else {
+			existing.Paused = true
+		}
+		c.tasks[task.ID] = existing
+	} else {
+		delete(c.tasks, task.ID)
+	}
+	_ = c.saveLocked(ctx)
+}
+
+func (c *controller) fire(ctx context.Context, task Task, now time.Time) bool {
 	scheduledAt := task.NextRunAt.UTC()
 	if scheduledAt.IsZero() {
 		scheduledAt = now
@@ -532,15 +550,25 @@ func (c *controller) fire(ctx context.Context, task Task, now time.Time) {
 			continue
 		}
 		if runSettled(c.runs[index].Status) {
-			return
+			return true
 		}
 		c.runs[index].SessionID = sessionID
 		c.runs[index].WorkspaceRoot = executionRoot
 		if err != nil {
+			if sessionServiceUnavailable(err) {
+				// Nothing was ever dispatched: the host has not bound the
+				// session service yet, so the startup catch-up must not be
+				// burned here. Drop the placeholder run and let a later tick
+				// retry the task while it is still due.
+				c.runs = append(c.runs[:index], c.runs[index+1:]...)
+				_ = c.saveLocked(ctx)
+				return false
+			}
 			finished := c.now().UTC()
 			c.runs[index].Status = "failed"
 			c.runs[index].CompletedAt = &finished
 			c.runs[index].Error = err.Error()
+			return true
 		} else if c.runs[index].Status == "running" && sent.State != "running" {
 			// A running lifecycle event arrived while the send call was still in
 			// flight; do not downgrade the run back to the queued state reported
@@ -556,6 +584,15 @@ func (c *controller) fire(ctx context.Context, task Task, now time.Time) {
 		break
 	}
 	_ = c.saveLocked(ctx)
+	return true
+}
+
+// sessionServiceUnavailable reports a host that accepted the call but has not
+// bound the session service yet, which is the window between plugin activation
+// and appserver startup. The plugin runs in its own process and only sees the
+// error text, so that window is detected by message.
+func sessionServiceUnavailable(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "session service is unavailable")
 }
 
 func (c *controller) settle(ctx context.Context, input pluginapi.TurnLifecycleInput) error {
