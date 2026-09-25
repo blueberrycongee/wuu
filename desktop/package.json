@@ -126,8 +126,17 @@
       "iconSize": 128,
       "iconTextSize": 14,
       "contents": [
-        { "x": 170, "y": 262, "type": "file" },
-        { "x": 530, "y": 262, "type": "link", "path": "/Applications" }
+        {
+          "x": 170,
+          "y": 262,
+          "type": "file"
+        },
+        {
+          "x": 530,
+          "y": 262,
+          "type": "link",
+          "path": "/Applications"
+        }
       ]
     },
     "win": {
