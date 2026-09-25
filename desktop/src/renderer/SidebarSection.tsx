@@ -32,6 +32,8 @@ export function SidebarCollapseBody({
       return;
     }
     if (!retained) return;
+    // The fold rides .sidebar's --section-fold-ms, an alias scoped below the
+    // root that motionDurationMs cannot read; it names this rung.
     const duration = prefersReducedMotion() ? 0 : motionDurationMs("--motion-slow", 280);
     if (duration <= 0) {
       setRetained(false);

@@ -181,7 +181,7 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, navigation,
       }
       setBusy("opening");
       // Let the shared outgoing entrance finish before replacing the setup stream.
-      if (!prefersReducedMotion()) await new Promise(resolve => window.setTimeout(resolve, motionDurationMs("--motion-slow", 280)));
+      if (!prefersReducedMotion()) await new Promise(resolve => window.setTimeout(resolve, motionDurationMs("--motion-base", 180)));
       await onOpenConversation(agent, {
         model_prompt: t("agentOnboarding.selectBeforeChat"),
         name_prompt: t("agentOnboarding.askName"),

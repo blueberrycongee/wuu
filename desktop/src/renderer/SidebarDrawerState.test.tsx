@@ -52,7 +52,7 @@ async function renderSidebarDrawerState({
       appShellRef,
       sidebarCollapsed: collapsed,
       resizingSidebar: false,
-      motionMs: 120,
+      motionMs: () => 120,
       closeOnWindowResize,
     });
     latest = drawer;

@@ -42,7 +42,7 @@ import {
 } from "react";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { useSidebarDrawerState } from "./SidebarDrawerState";
-import { SIDEBAR_DRAWER_EXIT_MS, SIDEBAR_MOTION_MS } from "./AppLayoutState";
+import { sidebarDrawerExitMs, sidebarMotionMs } from "./AppLayoutState";
 import { SelectMenu } from "./SelectMenu";
 import type {
   CodexPetsSnapshot,
@@ -174,7 +174,6 @@ export function SettingsView({
   sidebarCollapsed,
   sidebarAnimating,
   onToggleSidebar,
-  sidebarMotionMs,
   pluginHost = desktopPluginHost,
   workbenchController = desktopWorkbenchController,
 }: {
@@ -215,7 +214,6 @@ export function SettingsView({
   sidebarCollapsed: boolean;
   sidebarAnimating: boolean;
   onToggleSidebar: () => void;
-  sidebarMotionMs: number;
   pluginHost?: PluginHost;
   workbenchController?: WorkbenchController;
 }): JSX.Element {
@@ -842,8 +840,7 @@ export function SettingsView({
     // `--sidebar-open-width` remembers the open width for the hover drawer)
     // so sidebar.css and settings.css read one vocabulary for both shells.
     "--sidebar-width": `${sidebarCollapsed ? 0 : sidebarWidth}px`,
-    "--sidebar-open-width": `${sidebarWidth}px`,
-    "--sidebar-motion-duration": `${sidebarMotionMs}ms`
+    "--sidebar-open-width": `${sidebarWidth}px`
   } as CSSProperties;
 
   // Mirror the main view's sidebar collapse/hover logic so the settings shell
@@ -864,8 +861,8 @@ export function SettingsView({
     appShellRef: effectiveShellRef,
     sidebarCollapsed,
     resizingSidebar,
-    motionMs: SIDEBAR_DRAWER_EXIT_MS,
-    dockingMotionMs: SIDEBAR_MOTION_MS,
+    motionMs: sidebarDrawerExitMs,
+    dockingMotionMs: sidebarMotionMs,
     closeOnWindowResize: true
   });
   const shellClassName = `settings-shell${resizingSidebar ? " resizing-sidebar" : ""}${
