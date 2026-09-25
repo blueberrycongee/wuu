@@ -1230,7 +1230,7 @@ func (s *Session) ConfigureNamedAgentThreadRuntime(threadRuntime *ThreadRuntime,
 	if err := memdir.EnsureDir(memoryDir); err != nil {
 		return fmt.Errorf("ensure named agent memory: %w", err)
 	}
-	teaching := memdir.IdentityTeaching(memoryDir)
+	teaching := fmt.Sprintf("Your private identity memory is stored at %s. Use chat_memory with scope=identity to read and update durable preferences. Use scope=room for shared knowledge; never publish private memory without the user asking.", memoryDir)
 	index := ""
 	toolkit := threadRuntime.Toolkit
 	if toolkit != nil && toolkit.IsRoomAgent() {

@@ -77,6 +77,12 @@ func (t *ChatReadTool) Execute(ctx context.Context, argsJSON string) (string, er
 		return "", err
 	}
 	itemMode := len(args.ItemIDs) > 0
+	if t.env.CollaborationPurpose == channels.CollaborationSessionWork || t.env.CollaborationPurpose == channels.CollaborationSessionVerification {
+		if itemMode || args.RoomID != "" && args.RoomID != t.env.CollaborationRoomID {
+			return "", channels.ErrUnauthorized
+		}
+		args.RoomID = t.env.CollaborationRoomID
+	}
 	roomMode := strings.TrimSpace(args.RoomID) != ""
 	if itemMode == roomMode {
 		return "", errors.New("chat_read requires exactly one of item_ids or room_id")

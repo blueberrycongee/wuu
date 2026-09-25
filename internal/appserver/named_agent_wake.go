@@ -299,33 +299,9 @@ func (s *Server) newAgentExecutionRuntimeForSession(threadID, collaborationSessi
 	if agentengine.NormalizeEngineID(agent.EngineOverride) != agentengine.EngineWuu {
 		return nil, errors.New("collaboration requires a BYOK model on the Wuu execution runtime")
 	}
-	orientation := agentRuntimeOrientation(agent)
-	if collaborationSessionRef != "" {
-		binding, err := s.channelService.LookupCollaborationSession(context.Background(), collaborationSessionRef)
-		if err != nil {
-			return nil, err
-		}
-		if binding.RuntimeVersion != "" && binding.RuntimeVersion != runtime.CollaborationRuntimeVersion {
-			return nil, fmt.Errorf("session execution runtime %q is unavailable", binding.RuntimeVersion)
-		}
-		if binding.Primary && binding.Purpose == channels.CollaborationSessionConversation {
-			orientation += fmt.Sprintf("\n\nYour continuing session_ref is %s. Each wake identifies the active room for this turn. Publish with chat_send; assistant text stays private. You can send several public bubbles in this same turn and continue working between them. If the room already has the complete answer, end without another reply. Keep internal coordination private.", binding.SessionRef)
-		} else {
-			orientation += fmt.Sprintf("\n\nYour session_ref is %s, your room_id is %s, and your session purpose is %s. Use the current request and relevant task state to determine your objective.", binding.SessionRef, binding.RoomID, binding.Purpose)
-		}
-		if !agent.IsRoomRuntime() {
-			switch binding.Purpose {
-			case channels.CollaborationSessionWork:
-				orientation += " This is an execution session. Advance the assigned objective and return usable results, evidence and remaining blockers to the requester. Your normal final answer is a private execution result; the responsible room conversation handles public delivery. Publish directly only when your assignment calls for it."
-			case channels.CollaborationSessionVerification:
-				orientation += " This is an independent verification session. Assess the assigned candidate against the current goal and acceptance criteria, and return a verdict supported by evidence. Keep checking separate from repairing the candidate; the responsible executor handles revisions and public delivery."
-			case channels.CollaborationSessionCoordination:
-				orientation += " This is a coordination session under your named identity. Organize the assigned scope, connect relevant sessions and return results to the requester. Your coordination assignment does not make you the owner of all work in the room."
-			}
-		}
-		if !binding.Primary && isRoomConversation(binding, agent) {
-			orientation += fmt.Sprintf("\n\nThis session is your public conversation in room %s. Only chat_send publishes there; assistant text stays private. For several complete thoughts, send short bubbles sequentially in this same turn. If the complete answer was already sent, end without another reply. Each successful send is already visible; continue with new content. Reasoning, tool details and independent worker-session results remain private. When waiting for delegated work, briefly tell the room what is underway, then finish the turn to release capacity.", binding.RoomID)
-		}
+	orientation, err := s.collaborationOrientation(agent, collaborationSessionRef)
+	if err != nil {
+		return nil, err
 	}
 
 	agentHome := filepath.Dir(agent.MemoryDir)
@@ -355,6 +331,40 @@ func (s *Server) newAgentExecutionRuntimeForSession(threadID, collaborationSessi
 	s.attachNamedAgentRoomContext(threadRuntime, agent.ID)
 	attachNamedAgentInboxContext(threadRuntime, chatAgent)
 	return threadRuntime, nil
+}
+
+func (s *Server) collaborationOrientation(agent channels.AgentRuntime, collaborationSessionRef string) (string, error) {
+	orientation := agentRuntimeOrientation(agent)
+	if collaborationSessionRef != "" {
+		binding, err := s.channelService.LookupCollaborationSession(context.Background(), collaborationSessionRef)
+		if err != nil {
+			return "", err
+		}
+		if binding.RuntimeVersion != "" && binding.RuntimeVersion != runtime.CollaborationRuntimeVersion {
+			return "", fmt.Errorf("session execution runtime %q is unavailable", binding.RuntimeVersion)
+		}
+		if binding.Primary && binding.Purpose == channels.CollaborationSessionConversation {
+			orientation += fmt.Sprintf("\n\nYour continuing session_ref is %s. Each wake identifies the active room for this turn. Publish with chat_send; assistant text stays private. You can send several public bubbles in this same turn and continue working between them. If the room already has the complete answer, end without another reply. Keep internal coordination private.", binding.SessionRef)
+		} else {
+			orientation += fmt.Sprintf("\n\nYour session_ref is %s, your room_id is %s, and your session purpose is %s. Use the current request and relevant task state to determine your objective.", binding.SessionRef, binding.RoomID, binding.Purpose)
+		}
+		if !agent.IsRoomRuntime() {
+			switch binding.Purpose {
+			case channels.CollaborationSessionWork:
+				orientation += " This is an execution session. Advance the assigned objective and return usable results, evidence and remaining blockers to the requester. Your normal final answer is a private execution result; the responsible room conversation handles public delivery. Publish directly only when your assignment calls for it."
+			case channels.CollaborationSessionVerification:
+				orientation += " This is an independent verification session. Assess the assigned candidate against the current goal and acceptance criteria, and return a verdict supported by evidence. Keep checking separate from repairing the candidate; the responsible executor handles revisions and public delivery."
+			case channels.CollaborationSessionCoordination:
+				orientation += " This is a coordination session under your named identity. Organize the assigned scope, connect relevant sessions and return results to the requester. Your coordination assignment does not make you the owner of all work in the room."
+			}
+		}
+		if !binding.Primary && isRoomConversation(binding, agent) {
+			orientation += fmt.Sprintf("\n\nThis session is your public conversation in room %s. Only chat_send publishes there; assistant text stays private. For several complete thoughts, send short bubbles sequentially in this same turn. If the complete answer was already sent, end without another reply. Each successful send is already visible; continue with new content. Reasoning, tool details and independent worker-session results remain private. When waiting for delegated work, briefly tell the room what is underway, then finish the turn to release capacity.", binding.RoomID)
+		}
+	}
+
+	orientation += "\n\nConversation and coordination roles may read and make judgments but cannot write files, run commands, or operate browsers. Delegate changes to ordinary execution sessions. Complete read-only judgments yourself when delegation adds no value. Verification sessions inspect and report; they never repair the candidate."
+	return orientation, nil
 }
 
 func (s *Server) startNamedAgentWakeLocked(agent channels.NamedAgent, th *threadState) error {

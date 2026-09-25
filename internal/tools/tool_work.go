@@ -214,3 +214,24 @@ func (t *ChatWorkTool) Execute(ctx context.Context, argsJSON string) (string, er
 		return "", errors.New("chat_work action is invalid")
 	}
 }
+
+// WorkGetTool exposes the delegated work without granting lifecycle mutations.
+type WorkGetTool struct{ env *Env }
+
+func NewWorkGetTool(env *Env) *WorkGetTool     { return &WorkGetTool{env} }
+func (t *WorkGetTool) Name() string            { return "work_get" }
+func (t *WorkGetTool) IsReadOnly() bool        { return true }
+func (t *WorkGetTool) IsConcurrencySafe() bool { return true }
+func (t *WorkGetTool) Definition() providers.ToolDefinition {
+	return providers.ToolDefinition{Name: t.Name(), Description: "Read the current delegated Work, its goal revision, candidate and evidence.", InputSchema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}}
+}
+func (t *WorkGetTool) Execute(ctx context.Context, raw string) (string, error) {
+	if t.env.ChatAgent == nil || t.env.CollaborationWorkID == "" {
+		return "", errors.New("this session has no delegated Work")
+	}
+	work, err := t.env.ChatAgent.GetWork(ctx, t.env.CollaborationWorkID)
+	if err != nil {
+		return "", err
+	}
+	return mustJSON(map[string]any{"work": work})
+}

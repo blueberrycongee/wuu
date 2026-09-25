@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -268,7 +269,29 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 		return threadRuntime, err
 	}
 	if th.NamedAgentID != "" {
-		s.rt.ConfigureCollaborationTools(threadRuntime, th.ID)
+		identity, err := s.channelService.GetAgentRuntime(context.Background(), th.NamedAgentID)
+		if err != nil {
+			return nil, err
+		}
+		binding := channels.CollaborationSessionBinding{Purpose: channels.CollaborationSessionConversation}
+		if th.CollaborationSessionRef != "" {
+			binding, err = s.channelService.LookupCollaborationSession(context.Background(), th.CollaborationSessionRef)
+			if err != nil {
+				return nil, err
+			}
+		}
+		orientation, err := s.collaborationOrientation(identity, binding.SessionRef)
+		if err != nil {
+			return nil, err
+		}
+		threadRuntime.Toolkit.SetCollaborationScope(binding.Purpose, binding.RoomID, binding.WorkID)
+		// Refresh the prompt while retaining the request-time room/inbox providers
+		// installed on this continuing identity. They resolve the active scope live.
+		requestContext := threadRuntime.StreamRunner.BeforeRequestContext
+		if err := s.rt.ConfigureNamedAgentThreadRuntime(threadRuntime, filepath.Dir(identity.MemoryDir), identity.MemoryDir, orientation); err != nil {
+			return nil, err
+		}
+		threadRuntime.StreamRunner.BeforeRequestContext = requestContext
 	}
 	if err := s.refreshThreadGitAttribution(threadRuntime); err != nil {
 		// Attribution is metadata, not a reason to block the user's turn when a

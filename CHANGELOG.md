@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Collaboration tools follow each admitted session role: conversations read and
+  coordinate, execution sessions can write, and verification sessions only read.
+  Continuing identities refresh their role instructions on every turn.
+
 - Desktop titlebars, tab bars, and the sidebar place their first and last
   icons 20px from the pane edge on both sides. In the message column, tables
   start on the same edge as paragraphs, while code blocks, the composer, and
