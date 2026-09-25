@@ -732,6 +732,7 @@ export const enUS = {
   "artifacts.previewNamed": "Preview {name}",
   "artifacts.downloadNamed": "Download {name}",
   "artifacts.previewUnavailable": "Preview is unavailable for this format. You can still download it or open it from the workspace.",
+  "artifacts.videoUnavailable": "This video could not be played. The file may be unavailable or use an unsupported codec. Download it to try another player.",
   "pluginCard.renderFailed": "This plugin card could not be displayed.",
   "settings.autoCompact": "Automatic compaction",
   "settings.autoCompactDescription": "Summarize older history near the context limit",

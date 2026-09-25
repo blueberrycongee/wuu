@@ -8,6 +8,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Video output cards and workspace video files open an inline player with
+  playback, seeking, volume, and fullscreen controls. Unsupported codecs show
+  a message while keeping the download action available.
+
 ### Fixed
 
 - Ready Agent Core entries show an external agent's detected executable path in
@@ -17,6 +23,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   The catalog no longer shows ineffective per-model remove controls or selection
   animations, and provider remove controls keep their icon centered and color
   stable on hover.
+
+- Preserve sidebar folder and collaboration folds when returning from settings,
+  including after switching between light and dark themes.
 
 ## [2026.9.25] - 2026-09-25
 

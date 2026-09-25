@@ -56,6 +56,8 @@ const threads: ThreadSummary[] = [
 function Fixture() {
   const [active, setActive] = useState(params.has("agents") ? "dm-0" : "idle");
   const [expanded, setExpanded] = useState(new Set([project.id]));
+  const [collapsedFolderIDs, setCollapsedFolderIDs] = useState<Set<string>>(() => new Set());
+  const [sectionCollapsed, setSectionCollapsed] = useState(false);
   useLayoutEffect(() => {
     applyMessageFlowFontSize(Number(params.get("size")) || 14);
     document.documentElement.dataset.theme = params.get("theme") || "light";
@@ -79,12 +81,14 @@ function Fixture() {
       }}
       sidebarProjects={[project]} pinnedThreads={empty ? [] : [threads[0]]}
       collaborationNavigation={agentNav ? <CollaborationSidebar embedded initialized
+        sectionCollapsed={sectionCollapsed} onToggleSectionCollapsed={() => setSectionCollapsed((value) => !value)}
         agents={empty ? [] : agents} rooms={empty ? [] : rooms} selectedRoomID={active}
         pinnedRoomIDs={["dm-1"]}
         onSelectAgent={select} onSelectRoom={select} onManageAgents={noop}
         onCreateRoom={noop} onSwitchToHarness={noop} onOpenSettings={noop} /> : undefined}
       activeThreadID={agentNav ? undefined : active} activeProjectID={project.id}
       collapsedSidebarSectionIDs={new Set()} expandedSidebarSectionIDs={expanded}
+      collapsedFolderIDs={collapsedFolderIDs} setCollapsedFolderIDs={setCollapsedFolderIDs}
       projectThreadsByProjectID={{ [project.id]: visible }}
       projectMenuOpen={false} projectMenuRef={createRef()} searchOpen={false}
       sectionOrder={[project.id]} onStartNewThread={noop} onOpenSkillsTab={noop}

@@ -217,15 +217,19 @@ describe("WorkspaceFileService file save", () => {
     expect(result.mtime_ms).toBeGreaterThan(0);
   });
 
-  it("returns a renderable URL when reading an image file", () => {
+  it.each([
+    ["assets/mascot/wuu-mascot-concept-01.png", "image"],
+    ["videos/demo.MP4", "video"],
+  ])("returns a renderable URL when reading %s", (path, kind) => {
     const root = createWorkspace();
-    const imagePath = join(root, "assets", "mascot", "wuu-mascot-concept-01.png");
+    const imagePath = join(root, path);
     mkdirSync(dirname(imagePath), { recursive: true });
     writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01]));
 
-    const result = createService(root).readFile("assets/mascot/wuu-mascot-concept-01.png");
+    const result = createService(root).readFile(path);
 
     expect(result.binary).toBe(true);
+    expect(result.renderable_kind).toBe(kind);
     expect(result.text).toBeUndefined();
     expect(result.renderable_url).toBe(
       `wuu-file://local/${Buffer.from(imagePath, "utf8").toString("base64url")}`,

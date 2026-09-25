@@ -12,6 +12,7 @@ import { useI18n } from "./i18n";
 export function CollaborationSidebar({
   initialized, agents, rooms, pinnedRoomIDs = [], archivedRoomIDs = [], selectedAgentID, selectedRoomID,
   collapsed = false, onToggleCollapsed, embedded = false,
+  sectionCollapsed = false, onToggleSectionCollapsed,
   onSelectAgent, onSelectRoom, onCreateRoom, draftAgent, draftSelected, onSelectDraft,
   onEditAgent, onEditRoom,
   onTogglePinned, onHideConversation, onDeleteConversation,
@@ -21,6 +22,8 @@ export function CollaborationSidebar({
   embedded?: boolean;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
+  sectionCollapsed?: boolean;
+  onToggleSectionCollapsed?: () => void;
   agents: NamedAgent[];
   rooms: ChannelRoom[];
   pinnedRoomIDs?: readonly string[];
@@ -50,7 +53,6 @@ export function CollaborationSidebar({
   const sectionDragHandle = useSidebarSectionDragHandle();
   const dragHandle = embedded ? sectionDragHandle : null;
   const [query, setQuery] = useState("");
-  const [sectionCollapsed, setSectionCollapsed] = useState(false);
   const conversations = useMemo(() => {
     const items = collaborationConversations(agents, rooms, pinnedRoomIDs, collapsed ? "" : query, archivedRoomIDs);
     // Embedded in the shared sidebar, pinning leaves this section for the
@@ -75,7 +77,7 @@ export function CollaborationSidebar({
         {embedded ? <div className="sidebar-functional-heading">
           <button type="button" className="sidebar-functional-heading-toggle" aria-expanded={!sectionCollapsed}
             onPointerDown={dragHandle?.dragHandleProps.onPointerDown}
-            onClick={() => { if (!dragHandle?.isDragging) setSectionCollapsed((value) => !value); }}>
+            onClick={() => { if (!dragHandle?.isDragging) onToggleSectionCollapsed?.(); }}>
             <span className="sidebar-functional-heading-label">{t("sidebar.collaboration")}</span>
             <ChevronRight className="sidebar-functional-heading-chevron" data-expanded={!sectionCollapsed || undefined} aria-hidden="true" />
           </button>

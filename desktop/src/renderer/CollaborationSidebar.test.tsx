@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ChannelRoom, NamedAgent } from "../shared/protocol";
@@ -154,8 +154,13 @@ it("opens the conversation picker directly from the add button", () => {
 });
 
 it("keeps embedded navigation flat and opens each conversation directly after collapsing the section", () => {
-  act(() => root.render(<WuuUIRoot><CollaborationSidebar embedded initialized agents={[agent]} rooms={[dm, group]}
-    {...callbacks} /></WuuUIRoot>));
+  function Harness() {
+    const [sectionCollapsed, setSectionCollapsed] = useState(false);
+    return <CollaborationSidebar embedded initialized agents={[agent]} rooms={[dm, group]}
+      {...callbacks} sectionCollapsed={sectionCollapsed}
+      onToggleSectionCollapsed={() => setSectionCollapsed((value) => !value)} />;
+  }
+  act(() => root.render(<WuuUIRoot><Harness /></WuuUIRoot>));
   const toggle = host.querySelector<HTMLButtonElement>('button[aria-expanded]')!;
   const nav = host.querySelector("nav")!;
   expect(nav.children).toHaveLength(2);

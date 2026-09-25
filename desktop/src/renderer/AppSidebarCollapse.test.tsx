@@ -39,6 +39,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 }));
 
 import { App } from "./App";
+import { translateCurrent } from "./i18n";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -121,6 +122,12 @@ function installWuuApi(): void {
     initialize: vi.fn().mockResolvedValue(initialized()),
     listThreads: vi.fn().mockResolvedValue({ threads: [pinnedThread] }),
     listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
+    getSessionOrganization: vi.fn().mockResolvedValue({
+      organization: { folders: [{ id: "folder-collapse", name: "Collapse probe" }] },
+    }),
+    setThemePreference: vi.fn().mockResolvedValue({ ok: true }),
+    getBuildInfo: vi.fn().mockResolvedValue({ desktop: { version: "test" } }),
+    listMCPServers: vi.fn().mockResolvedValue({ servers: [] }),
     resumeThread: vi.fn().mockResolvedValue({ thread: pinnedThread }),
     getActiveGoalSummary: vi.fn().mockResolvedValue(null),
     gitStatus: vi.fn().mockResolvedValue({
@@ -184,6 +191,7 @@ describe("sidebar collapse-state independence", () => {
     });
     root = null;
     container.remove();
+    delete document.documentElement.dataset.theme;
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
   });
@@ -211,6 +219,48 @@ describe("sidebar collapse-state independence", () => {
     await act(async () => expandedToggle?.click());
     expect(accountTrigger()?.getAttribute("aria-expanded")).toBe("false");
     expect(document.querySelector(".sidebar-account-menu")).toBeNull();
+  });
+
+  it.each([
+    ['folder', '[data-section-id="__wuu_folder_sort__:folder-collapse"] button[aria-expanded]'],
+    ['collaboration', '.collaboration-sidebar-section button[aria-expanded]'],
+    ['pinned', '[data-functional-group-id="pinned"] button[aria-expanded]'],
+    ['workspace', '[data-functional-group-id="workspace"] button[aria-expanded]'],
+    ['scratch', 'button[aria-label="收起 对话 的会话"], button[aria-label="展开 对话 的会话"]'],
+  ])("preserves the %s fold across settings visits and theme changes", async (_section, selector) => {
+    installWuuApi();
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+    await flushAsync();
+    const header = () => container.querySelector<HTMLButtonElement>(selector);
+    const click = async (button: HTMLButtonElement | null | undefined) => {
+      expect(button).toBeTruthy();
+      await act(async () => button!.click());
+      await flushAsync();
+    };
+    expect(header()?.getAttribute("aria-expanded")).toBe("true");
+    await click(header());
+    expect(header()?.getAttribute("aria-expanded")).toBe("false");
+
+    for (const theme of [null, "dark", "light"] as const) {
+      await click(container.querySelector(".sidebar-account-trigger"));
+      await click(container.querySelector('[data-settings-page="providers"]'));
+      await act(async () => { await import("./SettingsView"); });
+      expect(container.querySelector(".settings-back-button")).not.toBeNull();
+      if (theme) {
+        await click([...container.querySelectorAll<HTMLButtonElement>(".settings-nav button")]
+          .find((button) => button.textContent === translateCurrent("settings.general")));
+        await click(container.querySelector(`[data-testid="settings-theme-${theme}"]`));
+        expect(document.documentElement.dataset.theme).toBe(theme);
+        expect(window.wuu.setThemePreference).toHaveBeenLastCalledWith(theme);
+      }
+      await click(container.querySelector(".settings-back-button"));
+      expect(header()?.getAttribute("aria-expanded")).toBe("false");
+    }
+    await click(header());
+    expect(header()?.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("collapses the active 对话 section on the first header click", async () => {

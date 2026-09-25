@@ -4853,6 +4853,18 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   color: var(--ink-soft);
   font-size: var(--font-sm);
   font-weight: var(--weight-medium);
+  animation: runtime-effort-enter 160ms ease-out;
+}
+
+@keyframes runtime-effort-enter {
+  from {
+    opacity: 0.4;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .runtime-panel-model > svg:last-child {
@@ -4960,6 +4972,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
 
   .runtime-panel-page.is-forward,
   .runtime-panel-page.is-back,
+  .runtime-panel-effort-value,
   .codex-runtime-label.is-changed {
     animation: none;
   }
