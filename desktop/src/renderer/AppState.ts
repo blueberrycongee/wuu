@@ -17,6 +17,7 @@ import type {
 } from "../shared/protocol";
 import {
   OPTIMISTIC_TURN_ID_PREFIX,
+  earlierStartedAt,
   type ComposerFile,
   type ComposerImage,
 } from "./ComposerMessages";
@@ -1400,11 +1401,11 @@ function mergeThreadUpdatedTurns(incoming: Turn[], current: Turn[]): Turn[] {
     return current;
   }
   if (incoming.length >= current.length) {
-    return incoming;
+    return withEarlierStarts(incoming, current);
   }
   for (let index = 0; index < incoming.length; index += 1) {
     if (incoming[index].id !== current[index].id) {
-      return incoming;
+      return withEarlierStarts(incoming, current);
     }
   }
   const localTail = current.slice(incoming.length);
@@ -1413,8 +1414,33 @@ function mergeThreadUpdatedTurns(incoming: Turn[], current: Turn[]): Turn[] {
       turn.status === "in_progress" ||
       turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX),
   )
-    ? [...incoming, ...localTail]
-    : incoming;
+    ? [...withEarlierStarts(incoming, current), ...localTail]
+    : withEarlierStarts(incoming, current);
+}
+
+// A thread snapshot replays turns with the server's own timestamps. Reusing
+// them verbatim can push a turn's start later than the click the user already
+// saw counting, which rewinds or zeroes the "正在处理" timer. Keep the earlier
+// start per turn id, matching the RPC return path.
+function withEarlierStarts(incoming: Turn[], current: Turn[]): Turn[] {
+  if (current.length === 0) {
+    return incoming;
+  }
+  const byID = new Map(current.map((turn) => [turn.id, turn]));
+  let changed = false;
+  const merged = incoming.map((turn) => {
+    const existing = byID.get(turn.id);
+    if (!existing) {
+      return turn;
+    }
+    const startedAt = earlierStartedAt(existing.started_at, turn.started_at) ?? turn.started_at;
+    if (startedAt === turn.started_at) {
+      return turn;
+    }
+    changed = true;
+    return { ...turn, started_at: startedAt };
+  });
+  return changed ? merged : incoming;
 }
 
 function turnItemsArePrefix(resumed: Turn, local: Turn): boolean {
@@ -3063,7 +3089,15 @@ function upsertTurn(thread: Thread, turn: Turn): Thread {
     );
   }
   const turns = thread.turns.slice();
-  turns[index] = { ...turn, items: mergeTurnItemsInOrder(turns[index], turn) };
+  const existing = turns[index];
+  turns[index] = {
+    ...turn,
+    // A turn/started notification must not rewind the live timer: keep the
+    // earlier of the local optimistic start and the server start, exactly as
+    // the RPC return path does.
+    started_at: earlierStartedAt(existing.started_at, turn.started_at) ?? turn.started_at,
+    items: mergeTurnItemsInOrder(existing, turn),
+  };
   return threadWithTurnSummary({ ...thread, turns, status }, turn);
 }
 

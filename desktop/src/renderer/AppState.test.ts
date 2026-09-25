@@ -586,6 +586,76 @@ describe("AppState protocol normalization", () => {
     ]);
   });
 
+  it("keeps the earlier local start when turn/started replays a later server time", () => {
+    const thread = threadWithUserTexts(["first query"]);
+    const localStart = "2026-08-08T09:00:00.000Z";
+    thread.status = "in_progress";
+    thread.turns = [
+      { ...thread.turns[0], status: "in_progress", started_at: localStart, items: [] },
+    ];
+    const next = reduceServerEvent(
+      {
+        ...initialState,
+        activeContext: { kind: "no_project", cwd: "/repo" },
+        thread,
+        threads: [thread],
+      },
+      {
+        kind: "notification",
+        workdir: "/repo",
+        message: {
+          method: "turn/started",
+          params: {
+            thread_id: thread.id,
+            turn: {
+              id: "turn-1",
+              items_view: "full",
+              status: "in_progress",
+              items: [],
+              started_at: "2026-08-08T09:00:05.000Z",
+            },
+          },
+        },
+      },
+    );
+    expect(next.thread?.turns.find((turn) => turn.id === "turn-1")?.started_at).toBe(
+      localStart,
+    );
+  });
+
+  it("keeps the earlier local start when a thread/updated snapshot replays a later server time", () => {
+    const thread = threadWithUserTexts(["first query"]);
+    const localStart = "2026-08-08T09:00:00.000Z";
+    thread.status = "in_progress";
+    thread.turns = [
+      { ...thread.turns[0], status: "in_progress", started_at: localStart, items: [] },
+    ];
+    const next = reduceServerEvent(
+      {
+        ...initialState,
+        activeContext: { kind: "no_project", cwd: "/repo" },
+        thread,
+        threads: [thread],
+      },
+      {
+        kind: "notification",
+        workdir: "/repo",
+        message: {
+          method: "thread/updated",
+          params: {
+            thread: {
+              ...thread,
+              turns: [{ ...thread.turns[0], started_at: "2026-08-08T09:00:05.000Z" }],
+            },
+          },
+        },
+      },
+    );
+    expect(next.thread?.turns.find((turn) => turn.id === "turn-1")?.started_at).toBe(
+      localStart,
+    );
+  });
+
   it("keeps a live follow-up turn when a stale thread/updated snapshot omits it", () => {
     const current = threadWithUserTexts(["first query"]);
     current.status = "in_progress";
