@@ -229,6 +229,7 @@ import {
   ENABLE_CONVERSATION_TURN_RAIL,
   ENABLE_EMBEDDED_BROWSER,
   ENABLE_GROUP_CHAT,
+  ENABLE_COLLABORATION_CHANNELS,
   ENABLE_ACCOUNT,
 } from "./FeatureFlags";
 import { ArchiveTip } from "./ArchiveTip";
@@ -1149,7 +1150,7 @@ export function App(): JSX.Element {
     [channelRoomPreferences, channelRooms],
   );
   const archivedChannelRooms = useMemo(
-    () => channelRooms.filter((room) => channelRoomPreferences.archivedRoomIDs.includes(room.id)),
+    () => channelRooms.filter((room) => (ENABLE_COLLABORATION_CHANNELS || room.kind === "dm") && channelRoomPreferences.archivedRoomIDs.includes(room.id)),
     [channelRoomPreferences.archivedRoomIDs, channelRooms],
   );
   const selectedChannelRoomID = selectedCollaborationAgentID
@@ -3932,7 +3933,7 @@ export function App(): JSX.Element {
   async function deleteCollaborationConversation(conversation: CollaborationConversation): Promise<void> {
     const { agent, room, name } = conversation;
     if (!agent && !room) return;
-    if (!window.confirm(t(room ? "channels.deleteRoomConfirm" : "channels.deleteAgentConfirm", { name }))) return;
+    if (!window.confirm(t(room?.kind === "dm" ? "channels.deleteConversationConfirm" : room ? "channels.deleteRoomConfirm" : "channels.deleteAgentConfirm", { name }))) return;
     try {
       if (room) await window.wuu.deleteChannelRoom({ room_id: room.id });
       else await window.wuu.deleteNamedAgent({ agent_id: agent!.id });

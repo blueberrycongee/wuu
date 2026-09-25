@@ -404,7 +404,7 @@ export function ConversationTitleActions({
   const controlLabel = control ? t(`channels.sessions.control.${control.state === "taken_over" ? "takenOver" : control.state}`) : "";
   const management = control ? <span className="session-control-label" title={control.state === "active" ? t("channels.sessions.takeoverHint") : `${control.manager_name} · ${controlLabel}`}>
     {control.manager_name} · {controlLabel}
-    {control.state !== "active" ? <button type="button" onClick={() => void window.wuu!.returnManagedSession({ thread_id: controlledThread!.id, revision: control.revision }).catch(reason => showErrorToast(reason))}>{t("channels.sessions.returnControl")}</button> : null}
+    {control.room_id && control.state !== "active" ? <button type="button" onClick={() => void window.wuu!.returnManagedSession({ thread_id: controlledThread!.id, revision: control.revision }).catch(reason => showErrorToast(reason))}>{t("channels.sessions.returnControl")}</button> : null}
   </span> : null;
   if (compactNavigation) {
     return <div className="title-actions">{management}<CompactConversationActions

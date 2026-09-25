@@ -1,4 +1,6 @@
 import { ENABLE_COLLABORATION_CHANNELS } from "./FeatureFlags";
+import { ConversationContext } from "./ConversationContext";
+import { WorkCandidateReview } from "./WorkCandidateReview";
 import { AgentOnboardingHistory } from "./AgentOnboardingHistory";
 import { hostSupports } from "./HostCapabilities";
 import { Bot, ChevronDown, ChevronUp, ClipboardList, ImagePlus, MessageCircle, Network, PanelLeftClose, PanelLeftOpen, Plus, Settings2, X } from "./WuuIcons";
@@ -216,9 +218,11 @@ function ChannelMessageBubble({
           ) ? <RichContent text={message.body} /> : null}
           {message.kind === "task" ? <div className="channel-task-actions">
             <span>{ownerName}</span>
-            {message.work?.runs?.filter(run => run.session_ref).map(run => <button type="button" key={run.id} onClick={() => onOpenSession?.(run.session_ref!)}>{t("channels.sessions.title")} · {run.kind} · {run.state}</button>)}
+            {message.work?.runs?.filter(run => run.session_ref).map(run => <button type="button" key={run.id} onClick={() => onOpenSession?.(run.session_ref!)}>{t("channels.sessions.title")} · {t(`channels.run.kind.${run.kind}`)} · {t(`channels.run.state.${run.state === "timed_out" ? "timedOut" : run.state}`)}</button>)}
             {!['done', 'cancelled', 'failed'].includes(message.task_state ?? 'open') ? <button type="button" onClick={onCancelTask}>{t("common.cancel")}</button> : null}
           </div> : null}
+          {message.work?.artifacts?.filter(artifact => artifact.kind === "candidate").map(artifact => <WorkCandidateReview key={artifact.id} work={message.work!} artifact={artifact} onOpenSession={onOpenSession} />)}
+          {message.work?.state_deadline_at && !message.work.state_deadline_at.startsWith("0001-") ? <p className="channel-work-deadline">{t("channels.candidate.deadline", { time: new Date(message.work.state_deadline_at).toLocaleTimeString() })}</p> : null}
           {canCollapse ? (
             <button
               className="channel-message-expand-toggle"
@@ -2103,6 +2107,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
               void updateRoomAvatarFromFile(file).finally(() => { input.value = ""; });
             }}
           />
+          {selectedRoom?.kind === "dm" && typeof window.wuu?.channelContinuity === "function" ? <ConversationContext key={selectedRoom.id} roomID={selectedRoom.id} agentID={selectedRoomAgents[0]?.id} /> : null}
           {loadError ? <div className="channel-error" role="alert">{loadError}</div> : null}
         <div ref={messageScroll.scrollRef} className="channel-message-stream" role="log" aria-live="polite">
           {selectedRoom?.onboarding ? <AgentOnboardingHistory onboarding={selectedRoom.onboarding} /> : null}

@@ -941,6 +941,7 @@ export type ChannelWorkRun = {
 };
 
 export type ChannelWorkArtifact = {
+  disposition?: "applied" | "discarded";
   id: string;
   work_id: string;
   run_id?: string;
@@ -1273,6 +1274,34 @@ export type ChannelTaskUpdateParams = {
   task_id: string;
   state?: "open" | "doing" | "checking" | "revising" | "needs_human" | "done" | "cancelled";
   owner_id?: string;
+};
+export type ChannelWorkCandidateParams = {
+  work_id: string;
+  artifact_id: string;
+  action: "get" | "apply" | "discard";
+  expected_revision?: number;
+};
+export type ChannelWorkCandidateResult = {
+  candidate: {
+    session_id: string;
+    turn_id: string;
+    work_id: string;
+    goal_revision: number;
+    root: string;
+    base_repo: string;
+    base_revision: string;
+    revision: string;
+    diff: string;
+    report: {
+      result: string;
+      implicit_choices: string[];
+      evidence_refs: string[];
+      unresolved_items: string[];
+    };
+  };
+  artifact: ChannelWorkArtifact;
+  work_revision: number;
+  stale: boolean;
 };
 export type ChannelTaskUpdateResult = { task: ChannelMessage };
 export type ChannelHumanMentionStatusResult = { count: number };
@@ -3098,6 +3127,7 @@ export type WuuDesktopApi = {
   listChannelMessages: (params: ChannelMessageListParams) => Promise<ChannelMessageListResult>;
   sendChannelMessage: (params: ChannelMessageSendParams) => Promise<ChannelMessageSendResult>;
   createChannelTask: (params: ChannelTaskCreateParams) => Promise<ChannelTaskCreateResult>;
+  channelWorkCandidate: (params: ChannelWorkCandidateParams) => Promise<ChannelWorkCandidateResult>;
   updateChannelTask: (params: ChannelTaskUpdateParams) => Promise<ChannelTaskUpdateResult>;
   getChannelHumanMentionStatus: () => Promise<ChannelHumanMentionStatusResult>;
   ackChannelHumanMentions: () => Promise<ChannelHumanMentionAckResult>;

@@ -129,7 +129,7 @@ it("exposes pin, hide, delete and ID copying for the exact conversation", async 
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
   render([dm, group], ["dm"]);
   for (const [key, callback] of [
-    ["sidebar.unpin", callbacks.onTogglePinned], ["channels.hideConversation", callbacks.onHideConversation], ["channels.deleteAgent", callbacks.onDeleteConversation],
+    ["sidebar.unpin", callbacks.onTogglePinned], ["channels.hideConversation", callbacks.onHideConversation], ["channels.deleteConversation", callbacks.onDeleteConversation],
   ] as const) {
     rightClick(rows()[0]);
     const item = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(button => button.textContent === t(key))!;

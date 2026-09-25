@@ -89,6 +89,8 @@ import type {
   ChannelTaskCreateParams,
   ChannelTaskCreateResult,
   ChannelTaskUpdateParams,
+ ChannelWorkCandidateParams,
+ ChannelWorkCandidateResult,
   ChannelTaskUpdateResult,
   ChannelHumanMentionStatusResult,
   ChannelHumanMentionAckResult,
@@ -1961,6 +1963,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:channel-task-create", (event, params: ChannelTaskCreateParams) =>
     appServerRequest<ChannelTaskCreateResult>(event, "channel/task/create", params),
   );
+  ipcMain.handle("wuu:channel-work-candidate", (event, params: ChannelWorkCandidateParams) => appServerRequest<ChannelWorkCandidateResult>(event, "channel/work/candidate", params));
   ipcMain.handle("wuu:channel-task-update", (event, params: ChannelTaskUpdateParams) =>
     appServerRequest<ChannelTaskUpdateResult>(event, "channel/task/update", params),
   );

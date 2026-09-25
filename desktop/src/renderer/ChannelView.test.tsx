@@ -602,7 +602,7 @@ describe("ChannelView", () => {
     await settle();
 
     expect(container.querySelector('[role="log"]')?.textContent).toContain("Fix callback");
-    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>(".channel-task-actions button")).find(button => button.textContent?.includes("verifier"))!.click());
+    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>(".channel-task-actions button")).find(button => button.textContent?.includes("验证"))!.click());
     expect(onOpenSession).toHaveBeenCalledWith("session-check-1");
     await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>(".channel-task-actions button")).find(button => button.textContent === "取消")!.click());
     expect(api.updateChannelTask).toHaveBeenCalledWith({ task_id: "work-1", state: "cancelled" });

@@ -19,6 +19,7 @@ import {
   type ChannelRoomPreferences,
   type ChannelTaskCreateParams,
   type ChannelTaskUpdateParams,
+ type ChannelWorkCandidateParams,
   type MessageFlowFontSize,
   type PopOutInitResult,
   type BrowserCommandParams,
@@ -329,6 +330,7 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:channel-message-send", params),
   createChannelTask: (params: ChannelTaskCreateParams) =>
     ipcRenderer.invoke("wuu:channel-task-create", params),
+  channelWorkCandidate: (params: ChannelWorkCandidateParams) => ipcRenderer.invoke("wuu:channel-work-candidate", params),
   updateChannelTask: (params: ChannelTaskUpdateParams) =>
     ipcRenderer.invoke("wuu:channel-task-update", params),
   getChannelHumanMentionStatus: () =>
