@@ -562,12 +562,16 @@ func TestHarnessWorkAutomaticallyCreatesIndependentVerification(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(execution.CWD, "README.md"), []byte("Installation complete\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	worker.response <- providers.ChatResponse{
+		Content:   "I will check the updated installation instructions before reporting the result.",
+		ToolCalls: []providers.ToolCall{{ID: "inspect-readme", Name: "read_file", Arguments: `{"path":"README.md"}`}},
+	}
+	worker = provider.next(t)
 	worker.response <- providers.ChatResponse{Content: `{"result":"Installation documented","implicit_choices":[],"evidence_refs":["README.md"],"unresolved_items":[]}`}
 	waitForThreadLeaseRelease(t, f.server.rt.SessionDir, id)
 	if err := f.server.reconcileHarnessSessions(ctx); err != nil {
 		t.Fatal(err)
 	}
-	verifier := provider.next(t)
 	work, err := client.GetWork(ctx, task.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -575,6 +579,7 @@ func TestHarnessWorkAutomaticallyCreatesIndependentVerification(t *testing.T) {
 	if work.State != channels.WorkChecking || len(work.Artifacts) != 1 || len(work.Runs) != 2 {
 		t.Fatalf("candidate did not reach verification: %+v", work)
 	}
+	verifier := provider.next(t)
 	var review channels.WorkRun
 	for _, run := range work.Runs {
 		if run.Kind == channels.WorkRunVerifier {
@@ -633,4 +638,53 @@ func TestHarnessWorkAutomaticallyCreatesIndependentVerification(t *testing.T) {
 	}
 	decision.response <- providers.ChatResponse{StopReason: "completed"}
 	f.waitForCompletion(t)
+}
+
+func TestHarnessWorkRejectsNonFinalReports(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		final string
+	}{
+		{name: "missing final report"},
+		{name: "malformed final report", final: "The work is done."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, provider := newCollaborationFlowFixture(t)
+			ctx := context.Background()
+			var parent ChannelSessionResult
+			f.rpc(t, MethodChannelSessionCreate, ChannelSessionCreateParams{AgentID: f.identity.ID, RoomID: f.room.ID, Prompt: "Inspect the project", RequestID: "request"}, &parent)
+			decision := provider.next(t)
+			actor := harnessTestActor(t, f, parent.Session.SessionRef)
+			client, err := f.server.channelService.BindAgent(ctx, actor.AgentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			task, err := client.CreateTask(ctx, channels.TaskCreateParams{RoomID: actor.RoomID, Title: "Inspect project", Body: "Report the project contents", OwnerID: actor.AgentID, VerificationRequired: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			actor.WorkID, actor.GoalRevision = task.ID, task.TaskGoalRevision
+			id, _, _ := harnessTestCreate(t, f, actor)
+			worker := provider.next(t)
+			worker.response <- providers.ChatResponse{
+				Content:   `{"result":"Provisional result","implicit_choices":[],"evidence_refs":[],"unresolved_items":[]}`,
+				ToolCalls: []providers.ToolCall{{ID: "inspect-project", Name: "list_files", Arguments: `{}`}},
+			}
+			worker = provider.next(t)
+			worker.response <- providers.ChatResponse{Content: tc.final, StopReason: "completed"}
+			waitForThreadLeaseRelease(t, f.server.rt.SessionDir, id)
+			if err := f.server.reconcileHarnessSessions(ctx); err != nil {
+				t.Fatal(err)
+			}
+			work, err := client.GetWork(ctx, task.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(work.Runs) != 1 || work.Runs[0].State != channels.WorkRunFailed || len(work.Artifacts) != 0 {
+				t.Fatalf("non-final report produced a candidate or verification: %+v", work)
+			}
+			decision.response <- providers.ChatResponse{StopReason: "completed"}
+			f.waitForCompletion(t)
+		})
+	}
 }

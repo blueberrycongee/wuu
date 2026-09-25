@@ -31,6 +31,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Work delivery reads structured reports from the final answer, so commentary
+  before tool calls no longer causes completed executions to fail validation.
+
 - Collaboration conversations can receive due room reminders, include them in
   unread counts, and clear their wake state after consumption.
 

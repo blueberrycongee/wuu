@@ -65,6 +65,17 @@ func (s *Server) completeHarnessWork(ctx context.Context, link channels.HarnessS
 	if turn.Status != TurnStatusCompleted {
 		state = channels.WorkRunState(turn.Status)
 	}
+	if state == channels.WorkRunCompleted {
+		// Tool-call commentary is execution history, not part of the final report.
+		text = ""
+		for i := len(turn.Items) - 1; i >= 0; i-- {
+			item := turn.Items[i]
+			if item.Type == ThreadItemAgentMessage && item.Status == ThreadItemStatusCompleted && item.Terminal {
+				text = item.Text
+				break
+			}
+		}
+	}
 	if state == channels.WorkRunCompleted && link.Purpose == channels.CollaborationSessionVerification {
 		recorded, err := s.channelService.HarnessVerificationReport(ctx, op.RunID)
 		if err != nil {
