@@ -442,6 +442,11 @@ func (s *Service) StartWorkRun(ctx context.Context, params WorkRunStartParams) (
 		if (params.Kind == WorkRunVerifier) != (link.Purpose == CollaborationSessionVerification) {
 			return WorkRun{}, ErrUnauthorized
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE works SET max_candidates=MAX(max_candidates,4),max_verifier_attempts=MAX(max_verifier_attempts,4) WHERE id=?`, work.ID); err != nil {
+			return WorkRun{}, err
+		}
+		work.MaxCandidates = max(work.MaxCandidates, 4)
+		work.MaxVerifierAttempts = max(work.MaxVerifierAttempts, 4)
 		namedAgentID = ""
 		if params.Kind == WorkRunVerifier {
 			params.Profile = WorkVerifierProfileIndependent
@@ -711,7 +716,7 @@ func (s *Service) FinishWorkRun(ctx context.Context, params WorkRunFinishParams)
 	if run.GoalRevision != work.GoalRevision {
 		return WorkRun{}, fmt.Errorf("%w: work run revisions are stale", ErrConflict)
 	}
-	supersededCandidateRevision := run.CandidateRevision != work.CandidateRevision && !promotedByRun
+	supersededCandidateRevision := run.CandidateRevision != work.CandidateRevision && !promotedByRun && run.Kind != WorkRunProducer
 	now := fromMillis(toMillis(s.now()))
 	run.State, run.Outcome, run.Provider, run.Model = params.State, strings.TrimSpace(params.Outcome), strings.TrimSpace(params.Provider), strings.TrimSpace(params.Model)
 	run.InputTokens, run.OutputTokens, run.CostUSD, run.ChecksRerun = params.InputTokens, params.OutputTokens, params.CostUSD, params.ChecksRerun
@@ -956,15 +961,17 @@ func (s *Service) AddWorkArtifact(ctx context.Context, params WorkArtifactAddPar
 	if !canManage && strings.TrimSpace(params.RunID) == "" {
 		return WorkArtifact{}, ErrUnauthorized
 	}
+	harnessProducer := false
 	if runID := strings.TrimSpace(params.RunID); runID != "" {
 		run, err := scanWorkRun(tx.QueryRowContext(ctx, workRunSelect+` WHERE run.id = ? AND run.work_id = ?`, runID, work.ID))
 		if err != nil {
 			return WorkArtifact{}, err
 		}
+		harnessProducer = run.NamedAgentID == "" && run.Kind == WorkRunProducer
 		if !canManage && run.NamedAgentID != actor.ID {
 			return WorkArtifact{}, ErrUnauthorized
 		}
-		if run.GoalRevision != work.GoalRevision || run.CandidateRevision != work.CandidateRevision {
+		if run.GoalRevision != work.GoalRevision || run.Kind != WorkRunProducer && run.CandidateRevision != work.CandidateRevision {
 			return WorkArtifact{}, fmt.Errorf("%w: artifact run revisions are stale", ErrConflict)
 		}
 	}
@@ -977,8 +984,8 @@ func (s *Service) AddWorkArtifact(ctx context.Context, params WorkArtifactAddPar
 			SELECT COUNT(*) FROM work_artifacts artifact
 			JOIN work_runs run ON run.id = artifact.run_id
 			WHERE artifact.work_id = ? AND artifact.kind = 'candidate'
-				AND run.goal_revision = ? AND run.candidate_revision = ?`,
-			work.ID, work.GoalRevision, work.CandidateRevision).Scan(&currentCandidates); err != nil {
+				AND run.goal_revision = ? AND (run.candidate_revision = ? OR ?)`,
+			work.ID, work.GoalRevision, work.CandidateRevision, harnessProducer).Scan(&currentCandidates); err != nil {
 			return WorkArtifact{}, fmt.Errorf("count current candidate artifacts: %w", err)
 		}
 		if currentCandidates >= work.MaxCandidates {
@@ -1051,7 +1058,7 @@ func (s *Service) PromoteWorkCandidate(ctx context.Context, params WorkCandidate
 	if run.State != WorkRunRunning && run.State != WorkRunCompleted {
 		return Work{}, fmt.Errorf("%w: promotion run is not active or completed", ErrConflict)
 	}
-	legalSingleCandidate := work.MaxCandidates <= 1 && run.Kind == WorkRunProducer
+	legalSingleCandidate := (work.MaxCandidates <= 1 || run.NamedAgentID == "") && run.Kind == WorkRunProducer
 	if !legalSingleCandidate && run.Kind != WorkRunSelector && run.Kind != WorkRunIntegration {
 		return Work{}, fmt.Errorf("%w: multi-candidate promotion requires selector or integration", ErrUnauthorized)
 	}

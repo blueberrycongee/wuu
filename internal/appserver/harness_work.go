@@ -51,6 +51,12 @@ func (s *Server) completeHarnessWork(ctx context.Context, link channels.HarnessS
 	if work.GoalRevision != op.Actor.GoalRevision || work.State == channels.WorkCancelled {
 		return nil
 	}
+	// A host timeout or goal correction already settled this execution.
+	for _, run := range work.Runs {
+		if run.ID == op.RunID && run.State != channels.WorkRunQueued && run.State != channels.WorkRunRunning && run.State != channels.WorkRunCompleted && run.State != channels.WorkRunFailed {
+			return nil
+		}
+	}
 	var report harnessReport
 	state := channels.WorkRunCompleted
 	if turn.Status != TurnStatusCompleted {
@@ -122,6 +128,11 @@ func (s *Server) completeHarnessWork(ctx context.Context, link channels.HarnessS
 	}
 	if err := s.channelService.RecordHarnessDecisions(ctx, link.SessionID, run.ID, report.ImplicitChoices); err != nil {
 		return err
+	}
+	// Preserve concurrently completed routes as reviewable alternatives. They
+	// must not invalidate the independent review of the canonical candidate.
+	if work.CandidateArtifactRef != "" && run.CandidateRevision != work.CandidateRevision && work.CandidateArtifactRef != artifact.ID {
+		return nil
 	}
 	work, err = client.PromoteWorkCandidate(ctx, channels.WorkCandidatePromoteParams{WorkID: work.ID, RunID: run.ID, ArtifactRef: artifact.ID, RequestID: "harness-candidate:" + run.ID, SelectionReason: "Completed execution candidate ready for independent review"})
 	if err != nil {

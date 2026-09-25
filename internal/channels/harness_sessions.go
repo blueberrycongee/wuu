@@ -18,6 +18,8 @@ type HarnessSessionController interface {
 }
 
 type HarnessSessionActor struct {
+	UserSeqStart int64  `json:"user_seq_start,omitempty"`
+	UserSeqEnd   int64  `json:"user_seq_end,omitempty"`
 	AgentID      string `json:"agent_id"`
 	SessionRef   string `json:"session_ref"`
 	TurnID       string `json:"turn_id"`
@@ -50,6 +52,7 @@ type HarnessSessionParams struct {
 }
 
 type HarnessSessionLink struct {
+	ExecutionRoot    string                      `json:"execution_root,omitempty"`
 	BaseRevision     string                      `json:"base_revision,omitempty"`
 	Purpose          CollaborationSessionPurpose `json:"purpose,omitempty"`
 	SessionID        string                      `json:"session_id"`
@@ -123,6 +126,15 @@ func (s *Service) ReserveHarnessExecution(ctx context.Context, link HarnessSessi
 			return err
 		}
 		work = &w
+	}
+	if link.ExecutionRoot != "" && link.Purpose != CollaborationSessionVerification {
+		var occupied bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM harness_session_admissions admission JOIN harness_session_links link ON link.session_id=admission.session_id WHERE admission.session_id!=? AND json_extract(link.payload,'$.execution_root')=? AND COALESCE(json_extract(link.payload,'$.purpose'),'work')!='verification')`, link.SessionID, link.ExecutionRoot).Scan(&occupied); err != nil {
+			return err
+		}
+		if occupied {
+			return ErrHarnessCapacity
+		}
 	}
 	if err := s.checkCollaborationTokenBudgetTx(ctx, tx, link.RoomID, work); err != nil {
 		return err

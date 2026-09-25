@@ -101,3 +101,79 @@ func TestHarnessStaleRecoveryCannotRestoreReleasedManagement(t *testing.T) {
 		t.Fatalf("released management changed: %+v %v", actual, err)
 	}
 }
+
+func TestHarnessExecutionSerializesSharedWriters(t *testing.T) {
+	ctx := context.Background()
+	s := openTestService(t, nil)
+	agent := createTestAgent(t, s, "Manager")
+	room := createTestRoom(t, s, agent)
+	s.agentRunLimit, s.roomRunLimit, s.globalRunLimit = 4, 4, 4
+	first := HarnessSessionLink{SessionID: "writer-one", AgentID: agent.Agent.ID, RoomID: room.ID, Active: true, ExecutionRoot: "/project"}
+	second := first
+	second.SessionID = "writer-two"
+	for _, link := range []HarnessSessionLink{first, second} {
+		if err := s.PutHarnessLink(ctx, link); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.ReserveHarnessExecution(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReserveHarnessExecution(ctx, second); !errors.Is(err, ErrHarnessCapacity) {
+		t.Fatalf("shared writers overlapped: %v", err)
+	}
+	second.ExecutionRoot = "/isolated-project"
+	if err := s.PutHarnessLink(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReserveHarnessExecution(ctx, second); err != nil {
+		t.Fatalf("isolated writer blocked: %v", err)
+	}
+}
+
+func TestHarnessParallelCandidateDoesNotLoseItsArtifact(t *testing.T) {
+	ctx := context.Background()
+	s := openTestService(t, nil)
+	owner := createTestAgent(t, s, "Owner")
+	room := createTestRoom(t, s, owner)
+	client, err := s.BindAgent(ctx, owner.Agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := client.CreateTask(ctx, TaskCreateParams{RoomID: room.ID, OwnerID: owner.Agent.ID, Title: "Two routes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs := []WorkRun{}
+	for _, id := range []string{"first-route", "second-route"} {
+		if err := s.PutHarnessLink(ctx, HarnessSessionLink{SessionID: id, AgentID: owner.Agent.ID, RoomID: room.ID, WorkID: task.ID, GoalRevision: 1, Active: true, Purpose: CollaborationSessionWork}); err != nil {
+			t.Fatal(err)
+		}
+		run, err := s.StartHarnessWorkRun(ctx, id, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runs = append(runs, run)
+	}
+	for i, run := range runs {
+		artifact, err := client.AddWorkArtifact(ctx, WorkArtifactAddParams{WorkID: task.ID, RunID: run.ID, Kind: WorkArtifactCandidate, URI: "artifact://" + run.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.FinishHarnessWorkRun(ctx, run.SessionRef, "turn", WorkRunFinishParams{RunID: run.ID, State: WorkRunCompleted, Qualified: true}); err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			if _, err := client.PromoteWorkCandidate(ctx, WorkCandidatePromoteParams{WorkID: task.ID, RunID: run.ID, ArtifactRef: artifact.ID, RequestID: "promote"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	work, err := s.GetWork(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(work.Artifacts) != 2 || work.CandidateRevision != 1 || !work.Runs[1].Qualified {
+		t.Fatalf("lost parallel result: %#v", work)
+	}
+}

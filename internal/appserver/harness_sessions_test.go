@@ -379,6 +379,7 @@ func TestDeletingManagingAgentStopsTasklessHarnessExecution(t *testing.T) {
 
 func TestHarnessTaskCancellationStopsOnlyItsExecution(t *testing.T) {
 	f, provider := newCollaborationFlowFixture(t)
+	initAppserverGitRepo(t, f.server.rt.RootDir)
 	ctx := context.Background()
 	var parent ChannelSessionResult
 	f.rpc(t, MethodChannelSessionCreate, ChannelSessionCreateParams{AgentID: f.identity.ID, RoomID: f.room.ID, Prompt: "Inspect docs and branches", RequestID: "request"}, &parent)
@@ -397,7 +398,7 @@ func TestHarnessTaskCancellationStopsOnlyItsExecution(t *testing.T) {
 	if _, err := f.server.HarnessSession(ctx, actor, channels.HarnessSessionParams{Action: "manage", SessionID: id, WorkID: task.ID, OperationID: "bind-task"}); err != nil {
 		t.Fatal(err)
 	}
-	other, err := f.server.createHostSessionThread("user", "", "", pluginhost.SessionCreateParams{Name: "Other task", Visibility: "user", ContextSource: "fresh"})
+	other, err := f.server.createHostSessionThread("user", "", "", pluginhost.SessionCreateParams{Name: "Other task", Visibility: "user", ContextSource: "fresh", Workspace: "worktree"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -551,7 +552,14 @@ func TestHarnessWorkAutomaticallyCreatesIndependentVerification(t *testing.T) {
 	actor.WorkID, actor.GoalRevision = task.ID, task.TaskGoalRevision
 	id, _, _ := harnessTestCreate(t, f, actor)
 	worker := provider.next(t)
-	if err := os.WriteFile(filepath.Join(f.server.rt.RootDir, "README.md"), []byte("Installation complete\n"), 0600); err != nil {
+	execution, err := f.server.sharedHarnessSession(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if execution.CWD == f.server.rt.RootDir {
+		t.Fatal("producer did not use an isolated workspace")
+	}
+	if err := os.WriteFile(filepath.Join(execution.CWD, "README.md"), []byte("Installation complete\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	worker.response <- providers.ChatResponse{Content: `{"result":"Installation documented","implicit_choices":[],"evidence_refs":["README.md"],"unresolved_items":[]}`}

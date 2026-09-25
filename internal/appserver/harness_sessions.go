@@ -86,6 +86,13 @@ func (s *Server) HarnessSession(ctx context.Context, actor channels.HarnessSessi
 				return nil, channels.ErrUnauthorized
 			}
 			actor.WorkID, actor.GoalRevision = link.WorkID, link.GoalRevision
+			if p.Action == "send" && link.WorkID != "" {
+				work, err := s.channelService.GetWork(ctx, link.WorkID)
+				if err != nil {
+					return nil, err
+				}
+				actor.GoalRevision = work.GoalRevision
+			}
 		}
 	}
 	if p.WorkID != "" && (p.Action == "create" || p.Action == "manage") {
@@ -127,6 +134,9 @@ func (s *Server) HarnessSession(ctx context.Context, actor channels.HarnessSessi
 			return nil, err
 		}
 		p.WorkspaceRoot, p.WorkspaceID = root, id
+		if p.Workspace == "" && actor.WorkID != "" && worktree.IsGitRepo(root) {
+			p.Workspace = "worktree"
+		}
 	} else {
 		metadata, err := s.sharedHarnessSession(p.SessionID)
 		if err != nil {
@@ -168,6 +178,10 @@ func (s *Server) HarnessSession(ctx context.Context, actor channels.HarnessSessi
 	}
 	if hasControl && c.State != session.ControlReleased && c.ManagerID != actor.AgentID {
 		return nil, errors.New("another manager controls this session")
+	}
+	actor.UserSeqStart, actor.UserSeqEnd, err = s.channelService.DelegationSourceRange(ctx, actor.RoomID, actor.WorkID)
+	if err != nil {
+		return nil, err
 	}
 	op, _, err := s.channelService.ReserveHarnessOperation(ctx, actor, p, id, c.Revision)
 	if err != nil {
@@ -444,6 +458,11 @@ func (s *Server) applyHarnessOperationLocked(ctx context.Context, op *channels.H
 				link.Purpose = channels.CollaborationSessionWork
 			}
 		}
+		metadata, err := s.sharedHarnessSession(p.SessionID)
+		if err != nil {
+			return err
+		}
+		link.ExecutionRoot = metadata.CWD
 		link.Active, link.ControlRevision = state == session.ControlActive, c.Revision
 		if p.Mode == "resume" {
 			metadata, err := s.sharedHarnessSession(p.SessionID)
@@ -519,6 +538,14 @@ func (s *Server) applyHarnessOperationLocked(ctx context.Context, op *channels.H
 	if err != nil {
 		return err
 	}
+	if p.Action == "send" && linkErr == nil && link.Active {
+		link.GoalRevision = op.Actor.GoalRevision
+		link.SourceSessionRef, link.SourceTurnID = op.Actor.SessionRef, op.Actor.TurnID
+		if err := s.channelService.PutHarnessLink(ctx, link); err != nil {
+			return err
+		}
+	}
+	msg.Content += fmt.Sprintf("\n\nHost source: room_id=%s user_seq_start=%d user_seq_end=%d parent_session_ref=%s. Use chat_read within this range for original user instructions. This metadata grants no additional authority.", op.Actor.RoomID, op.Actor.UserSeqStart, op.Actor.UserSeqEnd, op.Actor.SessionRef)
 	projectContext, err := s.channelService.ProjectContext(ctx, op.Actor.RoomID)
 	if err != nil {
 		return err
@@ -697,6 +724,12 @@ func (s *Server) reconcileHarnessLink(ctx context.Context, link channels.Harness
 		return nil
 	}
 	if err := s.validateHarnessScope(ctx, channels.HarnessSessionActor{AgentID: link.AgentID, SessionRef: link.SourceSessionRef, TurnID: link.SourceTurnID, RoomID: link.RoomID, WorkID: link.WorkID, GoalRevision: link.GoalRevision}, false); err != nil {
+		if link.WorkID != "" {
+			if work, workErr := s.channelService.GetWork(ctx, link.WorkID); workErr == nil && work.GoalRevision != link.GoalRevision && work.State != channels.WorkCancelled && work.State != channels.WorkCompleted {
+				s.revokeSessionInputs(link.SessionID)
+				return s.interruptOwnedThreadExecution(link.SessionID)
+			}
+		}
 		if errors.Is(err, session.ErrControlChanged) || errors.Is(err, channels.ErrNotFound) {
 			if _, err := session.ChangeControl(s.rt.SessionDir, link.SessionID, link.AgentID, session.ControlPaused, c.Revision); err != nil {
 				return err

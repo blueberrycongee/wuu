@@ -49,3 +49,10 @@ func (s *Service) FinishHarnessWorkRun(ctx context.Context, sessionID, turnID st
 	params.RequestID = "harness-result:" + sessionID + ":" + turnID
 	return s.FinishWorkRun(ctx, params)
 }
+
+// DelegationSourceRange captures room provenance when input is accepted.
+func (s *Service) DelegationSourceRange(ctx context.Context, roomID, workID string) (int64, int64, error) {
+	var first, last int64
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MIN(seq),0),COALESCE(MAX(seq),0) FROM room_messages WHERE room_id=? AND author_type='human' AND seq>=COALESCE((SELECT MAX(source.seq) FROM room_messages source JOIN works work ON work.source_message_id=source.id WHERE work.id=? AND source.author_type='human'),0)`, roomID, workID).Scan(&first, &last)
+	return first, last, err
+}
