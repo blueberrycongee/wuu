@@ -1,3 +1,4 @@
+import { ENABLE_COLLABORATION_CHANNELS } from "./FeatureFlags";
 import type { ChannelRoom, NamedAgent } from "../shared/protocol";
 import type { ThreadSummary } from "./AppState";
 
@@ -37,7 +38,7 @@ export function collaborationConversations(
 ): CollaborationConversation[] {
   const agentsByID = new Map(agents.map((agent) => [agent.id, agent]));
   const representedAgents = new Set<string>();
-  const conversations: CollaborationConversation[] = rooms.map((room) => {
+  const conversations: CollaborationConversation[] = rooms.filter(room => ENABLE_COLLABORATION_CHANNELS || room.kind === "dm").map((room) => {
     const agentID = room.kind === "dm"
       ? room.members.find((member) => member.member_type === "agent")?.member_id : undefined;
     if (agentID) representedAgents.add(agentID);

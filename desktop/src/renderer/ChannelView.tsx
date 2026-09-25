@@ -1,3 +1,4 @@
+import { ENABLE_COLLABORATION_CHANNELS } from "./FeatureFlags";
 import { AgentOnboardingHistory } from "./AgentOnboardingHistory";
 import { hostSupports } from "./HostCapabilities";
 import { Bot, ChevronDown, ChevronUp, ClipboardList, ImagePlus, MessageCircle, Network, PanelLeftClose, PanelLeftOpen, Plus, Settings2, X } from "./WuuIcons";
@@ -69,7 +70,7 @@ type AgentDetailDraft = {
 };
 export type ChannelSection = "rooms" | "agents" | "tasks";
 type AgentActivityStatus = "idle" | "thinking" | "sending";
-type ChannelResponseActivity = Omit<ChannelResponse, "body">;
+type ChannelResponseActivity = ChannelResponse;
 
 const CHANNEL_SPLIT_WIDTH_KEY = "wuu.channels.splitPaneWidth";
 const LEGACY_CHANNEL_LIST_WIDTH_KEY = "wuu.channels.listWidth";
@@ -139,7 +140,8 @@ async function readChannelMessages(roomID: string): Promise<ChannelMessageListRe
   return { ...result, messages };
 }
 
-export function assignmentState(state?: string): "open" | "doing" | "checking" | "revising" | "needs_human" | "done" {
+export function assignmentState(state?: string): "open" | "doing" | "checking" | "revising" | "needs_human" | "done" | "cancelled" | "failed" | "interrupted" {
+  if (state === "cancelled" || state === "failed" || state === "interrupted") return state;
   if (state === "checking") return "checking";
   if (state === "revising") return "revising";
   if (state === "needs_human") return "needs_human";
@@ -148,7 +150,7 @@ export function assignmentState(state?: string): "open" | "doing" | "checking" |
   return "open";
 }
 
-function assignmentStatusKey(state: ReturnType<typeof assignmentState>): "open" | "doing" | "checking" | "revising" | "needsHuman" | "done" {
+function assignmentStatusKey(state: ReturnType<typeof assignmentState>): "open" | "doing" | "checking" | "revising" | "needsHuman" | "done" | "cancelled" | "failed" | "interrupted" {
   return state === "needs_human" ? "needsHuman" : state;
 }
 
@@ -159,6 +161,9 @@ function ChannelMessageBubble({
   onExpand,
   attachmentIDPrefix,
   beforeBody,
+  onCancelTask,
+  onOpenSession,
+  ownerName,
 }: {
   message: ChannelMessage;
   outgoing: boolean;
@@ -166,6 +171,9 @@ function ChannelMessageBubble({
   onExpand?: () => void;
   attachmentIDPrefix: string;
   beforeBody?: JSX.Element;
+  onCancelTask?: () => void;
+  onOpenSession?: (id: string) => void;
+  ownerName?: string;
 }): JSX.Element {
   const { t } = useI18n();
   const { collapsible, expanded, toggleExpanded } = useLongTextCollapse(message.body);
@@ -176,7 +184,7 @@ function ChannelMessageBubble({
     }
     toggleExpanded();
   };
-  const hasBubble = Boolean(message.body || beforeBody);
+  const hasBubble = Boolean(message.body || beforeBody || message.kind === "task");
 
   return (
     <>
@@ -206,6 +214,11 @@ function ChannelMessageBubble({
             message.kind !== "task"
             || Boolean(message.task_title?.trim() && message.body.trim() !== message.task_title.trim())
           ) ? <RichContent text={message.body} /> : null}
+          {message.kind === "task" ? <div className="channel-task-actions">
+            <span>{ownerName}</span>
+            {message.work?.runs?.filter(run => run.session_ref).map(run => <button type="button" key={run.id} onClick={() => onOpenSession?.(run.session_ref!)}>{t("channels.sessions.title")} · {run.kind} · {run.state}</button>)}
+            {!['done', 'cancelled', 'failed'].includes(message.task_state ?? 'open') ? <button type="button" onClick={onCancelTask}>{t("common.cancel")}</button> : null}
+          </div> : null}
           {canCollapse ? (
             <button
               className="channel-message-expand-toggle"
@@ -264,7 +277,7 @@ function ChannelAgentActivity({ agent, agentID, state, error, selected = false, 
         title={`${agent?.name ?? agentID} · ${status}`}
         aria-label={`${agent?.name ?? agentID} · ${status} · ${t("channels.sessions.history")}`}>
       <span className="channel-response-status-avatar" aria-hidden="true">
-        <AgentAvatarMark seed={agentID} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={state} turnSignal={avatarTurn} motion="expressive" />
+        <AgentAvatarMark seed={agentID} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={state === "held" || state === "unpublished" ? "idle" : state} turnSignal={avatarTurn} motion="expressive" />
       </span>
       <span className="channel-response-status-copy channel-activity-accessible">
         <strong>{agent?.name ?? agentID}</strong>
@@ -381,7 +394,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
   const [agentInsights, setAgentInsights] = useState<Record<string, ChannelAgentInsight>>({});
   const [localRooms, setLocalRooms] = useState<ChannelRoom[]>([]);
   const agents = directoryAgents ?? localAgents;
-  const rooms = directoryRooms ?? localRooms;
+  const rooms = useMemo(() => (directoryRooms ?? localRooms).filter(room => ENABLE_COLLABORATION_CHANNELS || room.kind === "dm"), [directoryRooms, localRooms]);
   const setAgents = onDirectoryAgentsChange ?? setLocalAgents;
   const setRooms = onDirectoryRoomsChange ?? setLocalRooms;
   const directoryIsControlled =
@@ -800,9 +813,9 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
         : (taskOwnerAgents[0]?.id ?? "")
     ));
   }, [setupPanel, taskOwnerAgents]);
-  // Keep task records for the board and read cursors, but out of the chat stream.
+  // Task state and delivery belong beside the conversation that requested them.
   const channelTimeline = useMemo(() => [
-    ...messages.filter((message) => message.kind !== "task").map((message) => {
+    ...messages.map((message) => {
       const presentation = sentPresentationRef.current.get(message.id);
       return presentation ? { ...message, created_at: presentation.createdAt } : message;
     }),
@@ -933,7 +946,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
       if (result.responses !== undefined) {
         // Only committed messages belong in the transcript. Token updates must
         // not rerender it, scroll it, or expose incomplete answers as messages.
-        const nextResponses = result.responses.map(({ body: _body, ...activity }) => activity);
+        const nextResponses = result.responses;
         setResponsesByRoomID((current) => JSON.stringify(current[roomID]) === JSON.stringify(nextResponses) ? current : { ...current, [roomID]: nextResponses });
       }
       // A poll can see the durable send before its RPC returns its identity.
@@ -2022,7 +2035,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
                   agents={agents}
                   selectedAgentIDs={roomAgentIDs}
                   onCreateAgent={!newConversationGroup ? openAgentOnboarding : undefined}
-                  onCreateGroup={!newConversationGroup ? () => setNewConversationGroup(true) : undefined}
+                  onCreateGroup={ENABLE_COLLABORATION_CHANNELS && !newConversationGroup ? () => setNewConversationGroup(true) : undefined}
                   onConfirmGroup={newConversationGroup ? () => void createNewRoom() : undefined}
                   onToggle={(agentID) => {
                     if (newConversationGroup) toggleRoomAgent(agentID);
@@ -2195,6 +2208,9 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
                 <ChannelMessageBubble
                   message={message}
                   outgoing={own}
+                  ownerName={agentNames.get(message.task_owner ?? "")}
+                  onOpenSession={onOpenSession}
+                  onCancelTask={() => void window.wuu!.updateChannelTask({ task_id: message.id, state: "cancelled" }).then(() => refreshMessages(selectedRoomID, true)).catch(reason => showErrorToast(reason))}
                   allowCollapse={own}
                   onExpand={messageScroll.pauseAutoFollow}
                   attachmentIDPrefix={sentPresentationRef.current.get(message.id)?.key ?? message.id}
@@ -2205,7 +2221,10 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
               </Fragment>
             );
           })}
-
+          {responses.filter(response => response.state === "held" || response.state === "unpublished").map(response => <details className="channel-unpublished-response" key={response.id}>
+            <summary>{agentNames.get(response.agent_id)} · {t(response.state === "held" ? "channels.sessions.state.held" : "channels.sessions.state.unpublished")}</summary>
+            <RichContent text={response.drafts?.map(draft => draft.body).join("\n\n") || response.body} />
+          </details>)}
         </div>
         {selectedRoom ? (
           <div ref={setComposerFooterNode} className="channel-conversation-footer">
@@ -2256,9 +2275,11 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
               compact
               disabled={false}
               sending={sending}
+              running={responseActivities.some(response => ["thinking", "responding", "queued"].includes(response.state))}
+              onInterrupt={() => void Promise.all(responseActivities.filter(response => ["thinking", "responding", "queued"].includes(response.state)).map(response => window.wuu!.stopChannelSession({ sessionRef: response.session_ref }))).then(() => refreshMessages(selectedRoomID, true)).catch(reason => showErrorToast(reason))}
               files={composerFiles}
               images={composerImages}
-              mentionAgents={selectedRoomAgents}
+              mentionAgents={ENABLE_COLLABORATION_CHANNELS && selectedRoom.kind === "channel" ? selectedRoomAgents : []}
               queryHistorySessionID={selectedRoomID}
               onChangeDraft={setBody}
               onPasteAttachmentFiles={(files) => void attachMessageFiles(files)}

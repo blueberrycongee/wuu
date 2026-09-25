@@ -3728,3 +3728,6 @@ html[data-focus-modality="keyboard"] .agent-avatar-color-control input[type="ran
 .channel-managed-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .channel-managed-session .icon { flex-shrink: 0; }
 .session-control-label { color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: min(12em, 24vw); }
+
+.channel-task-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-3); }
+.channel-task-actions button { font: inherit; color: var(--text-secondary); background: transparent; border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); padding: 4px 8px; }

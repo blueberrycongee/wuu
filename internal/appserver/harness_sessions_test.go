@@ -282,6 +282,21 @@ func TestHarnessTakeoverFencesQueuedWorkAndLeavesHistory(t *testing.T) {
 	if err != nil || !found || m.Entries == 0 {
 		t.Fatalf("takeover lost session history: %+v %v", m, err)
 	}
+	c, _, err = session.ReadControl(f.server.rt.SessionDir, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var returned struct {
+		Control ThreadSessionControl `json:"control"`
+	}
+	f.rpc(t, "thread/control/return", map[string]any{"thread_id": id, "revision": c.Revision}, &returned)
+	if returned.Control.State != session.ControlActive || returned.Control.Revision <= c.Revision {
+		t.Fatalf("explicit return lost control fence: %+v", returned)
+	}
+	link, err := f.server.channelService.HarnessLink(context.Background(), id)
+	if err != nil || link.LastTurnID != m.LatestCompletedTurnID {
+		t.Fatalf("returned control would replay user turns: %+v %v", link, err)
+	}
 	decision.response <- providers.ChatResponse{StopReason: "completed"}
 	f.waitForCompletion(t)
 }

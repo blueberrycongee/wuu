@@ -1903,6 +1903,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:channel-session-stop", (event, params: ChannelSessionRefParams) =>
     appServerRequest<ChannelSessionResult>(event, "channel/session/stop", params),
   );
+  ipcMain.handle("wuu:session-control-return", (event, params: { thread_id: string; revision: number }) => appServerRequest(event, "thread/control/return", params));
   ipcMain.handle("wuu:channel-session-resume", (event, params: ChannelSessionRefParams) =>
     appServerRequest<ChannelSessionResult>(event, "channel/session/resume", params),
   );

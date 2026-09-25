@@ -129,8 +129,8 @@ func TestRoomReplyLivePreviewDoesNotPersistWithoutSendTool(t *testing.T) {
 	if len(result.Messages) != 1 || result.Messages[0].AuthorType != channels.MemberHuman {
 		t.Fatalf("assistant text was posted without chat_send: %+v", result)
 	}
-	if len(result.Responses) != 0 {
-		t.Fatalf("finished turn still has an active preview: %+v", result.Responses)
+	if len(result.Responses) != 1 || result.Responses[0].State != "unpublished" {
+		t.Fatalf("finished turn lost its unpublished result: %+v", result.Responses)
 	}
 	encoded, _ := json.Marshal(result)
 	if strings.Contains(string(encoded), privateReasoning) {
@@ -213,7 +213,7 @@ func TestRoomReplyExplicitSendSuppressesOnlyDuplicateFinal(t *testing.T) {
 			if delivered {
 				wantMessages = 2
 			}
-			if len(result.Messages) != wantMessages || len(result.Responses) != 0 {
+			if len(result.Messages) != wantMessages || delivered && len(result.Responses) != 0 || !delivered && (len(result.Responses) != 1 || result.Responses[0].State != "held" || len(result.Responses[0].Drafts) != 1) {
 				t.Fatalf("send result did not govern final publication: delivered=%t result=%+v", delivered, result)
 			}
 			if delivered && (result.Messages[1].Body != final || result.Messages[1].AuthorID != fixture.identity.ID) {
@@ -236,7 +236,7 @@ func TestRoomReplyPublishesFinalAfterExplicitProgress(t *testing.T) {
 	continuation.response <- providers.ChatResponse{Content: final}
 	fixture.waitForCompletion(t)
 	result := readRoomReplies(t, fixture, fixture.room.ID)
-	if len(result.Messages) != 2 || result.Messages[1].Body != progress || result.Messages[1].AuthorID != fixture.identity.ID || len(result.Responses) != 0 {
+	if len(result.Messages) != 2 || result.Messages[1].Body != progress || result.Messages[1].AuthorID != fixture.identity.ID || len(result.Responses) != 1 || result.Responses[0].State != "unpublished" {
 		t.Fatalf("assistant text was posted after explicit progress: %+v", result)
 	}
 }
@@ -357,11 +357,10 @@ func TestRoomReplyFailureIsVisibleAndRecoverable(t *testing.T) {
 			}
 			call.response <- providers.ChatResponse{Content: "Recovered: the reconnect callback retains the old socket."}
 			fixture.waitForCompletion(t)
-			// A client retains the failed preview until the wire response explicitly
-			// replaces it with an empty array; an omitted field leaves it visible.
+			// Recovery replaces the old failure with the current unpublished result.
 			result := ChannelMessageListResult{Responses: []ChannelResponse{failed}}
 			fixture.rpc(t, MethodChannelMessageList, ChannelMessageListParams{RoomID: fixture.room.ID, Limit: 100}, &result)
-			if result.Responses == nil || len(result.Responses) != 0 {
+			if len(result.Responses) != 1 || result.Responses[0].State != "unpublished" || result.Responses[0].Error != "" {
 				t.Fatalf("recovered turn did not clear the failed response: %+v", result)
 			}
 			for _, message := range result.Messages {
@@ -391,7 +390,7 @@ func TestRoomReplyInterruptionRemainsVisibleUntilResumed(t *testing.T) {
 	provider.next(t).response <- providers.ChatResponse{Content: "The resumed investigation confirms the stale callback."}
 	fixture.waitForCompletion(t)
 	result := readRoomReplies(t, fixture, fixture.room.ID)
-	if len(result.Messages) != 1 || result.Messages[0].AuthorType != channels.MemberHuman || len(result.Responses) != 0 {
+	if len(result.Messages) != 1 || result.Messages[0].AuthorType != channels.MemberHuman || len(result.Responses) != 1 || result.Responses[0].State != "unpublished" {
 		t.Fatalf("resumed assistant text was posted without chat_send: %+v", result)
 	}
 }

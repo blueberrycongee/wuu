@@ -53,6 +53,8 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
   placeholder: string;
   disabled: boolean;
   sending: boolean;
+  running?: boolean;
+  onInterrupt?: () => void;
   files: ComposerFile[];
   images: ComposerImage[];
   allowAttachments?: boolean;
@@ -71,6 +73,8 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
   placeholder,
   disabled,
   sending,
+  running = false,
+  onInterrupt = noop,
   files,
   images,
   allowAttachments = true,
@@ -237,7 +241,7 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
         images={images}
         queuedMessages={[]}
         guideMessages={[]}
-        running={false}
+        running={running}
         sendDisabled={sending}
         runtimeControlsDisabled
         tokensPerSecond={0}
@@ -281,7 +285,7 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
         onEditQueuedMessage={noop}
         onEditGuideMessage={noop}
         onSend={onSend}
-        onInterrupt={noop}
+        onInterrupt={onInterrupt}
       />
     </div>
   );

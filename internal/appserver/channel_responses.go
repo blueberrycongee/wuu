@@ -13,15 +13,16 @@ import (
 // ChannelResponse is the visible room conversation's current reply. Private
 // worker sessions, reasoning and tool results never enter this projection.
 type ChannelResponse struct {
-	ID         string    `json:"id"`
-	RoomID     string    `json:"room_id"`
-	AgentID    string    `json:"agent_id"`
-	SessionRef string    `json:"session_ref"`
-	TurnID     string    `json:"turn_id"`
-	State      string    `json:"state"`
-	Body       string    `json:"body"`
-	Error      string    `json:"error,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	Drafts     []channels.Draft `json:"drafts,omitempty"`
+	ID         string           `json:"id"`
+	RoomID     string           `json:"room_id"`
+	AgentID    string           `json:"agent_id"`
+	SessionRef string           `json:"session_ref"`
+	TurnID     string           `json:"turn_id"`
+	State      string           `json:"state"`
+	Body       string           `json:"body"`
+	Error      string           `json:"error"`
+	CreatedAt  time.Time        `json:"created_at"`
 }
 
 func isRoomConversation(binding channels.CollaborationSessionBinding, agent channels.AgentRuntime) bool {
@@ -76,10 +77,10 @@ func (s *Server) channelResponses(ctx context.Context, roomID string) ([]Channel
 		case channels.CollaborationSessionInterrupted, channels.CollaborationSessionCancelled:
 			response.State = "interrupted"
 		default:
-			if binding.FailureReason == "" {
-				continue
+			response.State = "unpublished"
+			if binding.FailureReason != "" {
+				response.State = "failed"
 			}
-			response.State = "failed"
 		}
 		if binding.TurnID != "" && response.State != "queued" && response.State != "waiting" {
 			turn := s.roomResponseTurn(binding.SessionRef, binding.TurnID)
@@ -93,6 +94,9 @@ func (s *Server) channelResponses(ctx context.Context, roomID string) ([]Channel
 				if turn.Error != nil {
 					response.Error = turn.Error.Message
 				}
+				if turn.Status == TurnStatusCompleted {
+					response.Error = ""
+				}
 				if turn.Status == TurnStatusFailed {
 					response.State = "failed"
 				} else if turn.Status == TurnStatusInterrupted {
@@ -101,6 +105,25 @@ func (s *Server) channelResponses(ctx context.Context, roomID string) ([]Channel
 					response.State = "responding"
 				}
 			}
+		}
+		client, err := s.channelService.BindAgentSession(ctx, agent.ID, binding.SessionRef)
+		if err != nil {
+			return nil, err
+		}
+		drafts, err := client.ListDrafts(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, draft := range drafts {
+			if draft.RoomID == roomID {
+				response.Drafts = append(response.Drafts, draft)
+			}
+		}
+		if len(response.Drafts) > 0 {
+			response.State = "held"
+		}
+		if response.State == "unpublished" && response.Body == "" {
+			continue
 		}
 		responses = append(responses, response)
 	}

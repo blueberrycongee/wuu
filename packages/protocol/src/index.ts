@@ -1230,8 +1230,9 @@ export type ChannelResponse = {
   agent_id: string;
   session_ref: string;
   turn_id: string;
-  state: "queued" | "thinking" | "responding" | "waiting" | "failed" | "interrupted";
+  state: "queued" | "thinking" | "responding" | "waiting" | "failed" | "interrupted" | "held" | "unpublished";
   body: string;
+  drafts?: { id: string; body: string; state: string }[];
   error?: string;
   created_at: string;
 };
@@ -1257,7 +1258,7 @@ export type ChannelTaskCreateParams = {
 export type ChannelTaskCreateResult = { task: ChannelMessage };
 export type ChannelTaskUpdateParams = {
   task_id: string;
-  state?: "open" | "doing" | "done";
+  state?: "open" | "doing" | "checking" | "revising" | "needs_human" | "done" | "cancelled";
   owner_id?: string;
 };
 export type ChannelTaskUpdateResult = { task: ChannelMessage };
@@ -3064,6 +3065,7 @@ export type WuuDesktopApi = {
   readChannelSession: (params: ChannelSessionRefParams & { requestId?: string }) => Promise<ChannelSessionReadResult>;
   sendChannelSession: (params: ChannelSessionSendParams) => Promise<ChannelSessionResult>;
   stopChannelSession: (params: ChannelSessionRefParams) => Promise<ChannelSessionResult>;
+  returnManagedSession: (params: { thread_id: string; revision: number }) => Promise<{ control: NonNullable<Thread["session_control"]> }>;
   resumeChannelSession: (params: ChannelSessionRefParams) => Promise<ChannelSessionResult>;
   listNamedAgents: () => Promise<ChannelAgentListResult>;
   getNamedAgentInsights: () => Promise<ChannelAgentInsightsResult>;

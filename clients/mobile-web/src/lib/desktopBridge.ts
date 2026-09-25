@@ -736,6 +736,7 @@ export class RemoteDesktopBridge {
       readChannelSession: (params) => this.call("channel/session/read", params),
       sendChannelSession: (params) => this.call("channel/session/send", params),
       stopChannelSession: (params) => this.call("channel/session/stop", params),
+      returnManagedSession: (params) => this.call("thread/control/return", params),
       resumeChannelSession: (params) => this.call("channel/session/resume", params),
       listNamedAgents: () => this.call("channel/agent/list"),
 

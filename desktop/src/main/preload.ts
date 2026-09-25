@@ -295,6 +295,7 @@ const api: WuuDesktopApi = {
   readChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-read", params),
   sendChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-send", params),
   stopChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-stop", params),
+  returnManagedSession: (params) => ipcRenderer.invoke("wuu:session-control-return", params),
   resumeChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-resume", params),
   listNamedAgents: () => ipcRenderer.invoke("wuu:channel-agent-list"),
   getNamedAgentInsights: () => ipcRenderer.invoke("wuu:channel-agent-insights"),

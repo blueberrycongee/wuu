@@ -95,26 +95,10 @@ struct CollaborationView: View {
         if let error = model.error { Text(error).font(.caption).foregroundStyle(.red).padding(12) }
     }
     private var directory: some View {
-        let groups = model.rooms.filter { $0.value["kind"].string != "dm" }
-        let rows = model.rooms.filter { query.isEmpty ? $0.value["kind"].string == "dm" : $0.title(agents: model.agents).localizedCaseInsensitiveContains(query) }
+        let rows = model.rooms.filter { $0.value["kind"].string == "dm" && (query.isEmpty || $0.title(agents: model.agents).localizedCaseInsensitiveContains(query)) }
         return ScrollView {
             LazyVStack(spacing: 0) {
                 if model.loading && model.rooms.isEmpty { ProgressView().padding(24) }
-                if !groups.isEmpty && query.isEmpty {
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 8) {
-                            ForEach(groups) { room in
-                                Button { model.select(room.id) } label: {
-                                    VStack(spacing: 6) {
-                                        RoomMark(room: room, agents: model.agents, size: 52)
-                                            .overlay(alignment: .topTrailing) { if room.unread > 0 { Circle().fill(Color.primary).frame(width: 7, height: 7) } }
-                                        Text(room.title(agents: model.agents)).font(.caption).lineLimit(1)
-                                    }.frame(width: 80).padding(.vertical, 4)
-                                }.buttonStyle(.plain)
-                            }
-                        }.padding(.horizontal, 14).padding(.vertical, 16)
-                    }.scrollIndicators(.hidden)
-                }
                 if model.rooms.isEmpty && !model.loading {
                     VStack(spacing: 16) {
                         Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 30)).foregroundStyle(.secondary)
@@ -341,29 +325,19 @@ private struct NewCollaborationView: View {
     @Bindable var app: AppModel
     @Bindable var model: CollaborationModel
     @Environment(\.dismiss) private var dismiss
-    @State private var group = false
-    @State private var name = ""
-    @State private var selected: Set<String> = []
     var body: some View {
         NavigationStack {
             Form {
-                Toggle("创建群聊", isOn: $group)
-                if group { TextField("群聊名称", text: $name) }
                 Section("Agent") {
                     if model.agents.isEmpty { Text("请先在电脑上创建 Agent").foregroundStyle(.secondary) }
                     ForEach(model.agents) { agent in
                         Button {
-                            if group {
-                                if !selected.insert(agent.id).inserted { selected.remove(agent.id) }
-                            } else {
-                                app.perform { try await model.openAgent(agent.id, app: app); dismiss() }
-                            }
+                            app.perform { try await model.openAgent(agent.id, app: app); dismiss() }
                         } label: {
                             HStack(spacing: 12) {
                                 AgentMark(agent: agent)
                                 Text(agent.name)
                                 Spacer()
-                                if group, selected.contains(agent.id) { Image(systemName: "checkmark") }
                             }
                         }.disabled(!app.connected || model.creating)
                     }
@@ -371,12 +345,7 @@ private struct NewCollaborationView: View {
             }.navigationTitle("新协作对话").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("取消") { model.select(model.roomID); dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) {
-                        if group {
-                            Button("创建") { app.perform { try await model.createRoom(name: name.trimmingCharacters(in: .whitespacesAndNewlines), agents: selected, app: app); dismiss() } }
-                                .disabled(!app.connected || model.creating || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || selected.isEmpty)
-                        }
-                    }
+
                 }
         }.interactiveDismissDisabled(model.creating)
     }

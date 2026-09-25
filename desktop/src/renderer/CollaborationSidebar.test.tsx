@@ -6,6 +6,9 @@ import { CollaborationSidebar } from "./CollaborationSidebar";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import { translateCurrent as t } from "./i18n";
 
+const channelFeatures = vi.hoisted(() => ({ enabled: true }));
+vi.mock("./FeatureFlags", async importOriginal => ({ ...await importOriginal<typeof import("./FeatureFlags")>(), get ENABLE_COLLABORATION_CHANNELS() { return channelFeatures.enabled; } }));
+
 const agent: NamedAgent = { id: "alpha", name: "Alpha", memory_dir: "", avatar_key: "abstract-1", autostart: true, created_at: "2026-09-01T00:00:00Z" };
 const dm: ChannelRoom = {
   id: "dm", kind: "dm", name: "Old agent name", created_by: "human", created_at: agent.created_at,
@@ -35,6 +38,7 @@ function rightClick(row: HTMLButtonElement) {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  channelFeatures.enabled = true;
   Object.defineProperty(window, "wuu", { configurable: true, value: {} });
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
 });
@@ -237,4 +241,12 @@ it.each([false, true])("keeps an agent active across group work until all its wo
   update([]);
   expect(identity.getAttribute("data-agent-avatar-state")).toBe("idle");
   expect(identity.hasAttribute("data-agent-avatar-turn")).toBe(false);
+});
+
+it("keeps DMs available while channel navigation is hidden", () => {
+ channelFeatures.enabled = false;
+ render([dm, group], ["group"]);
+ expect(rows().map(row => row.querySelector("strong")?.textContent)).toEqual(["Alpha", "Beta"]);
+ act(() => rows()[0].click());
+ expect(callbacks.onSelectRoom).toHaveBeenCalledWith("dm");
 });

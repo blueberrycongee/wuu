@@ -3,6 +3,8 @@ package appserver
 import (
 	"context"
 	"errors"
+	"fmt"
+	"github.com/blueberrycongee/wuu/internal/channels"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -90,4 +92,50 @@ func (s *Server) publishSessionControl(id string) {
 	snapshot := th.snapshotLocked()
 	th.mu.Unlock()
 	_ = s.notifyThreadUpdated(snapshot)
+}
+
+// handleThreadControl is a human action. Model and extension control continues
+// through its owner-fenced API; it cannot invoke this return-to-manager path.
+func (s *Server) handleThreadControl(ctx context.Context, req Request) error {
+	var p struct {
+		ThreadID string `json:"thread_id"`
+		Revision int64  `json:"revision"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	s.harnessMu.Lock()
+	defer s.harnessMu.Unlock()
+	c, exists, err := session.ReadControl(s.rt.SessionDir, p.ThreadID)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if !exists || c.Revision != p.Revision {
+		return s.writeResponse(req.ID, nil, session.ErrControlChanged)
+	}
+	link, err := s.channelService.HarnessLink(ctx, p.ThreadID)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	metadata, err := s.sharedHarnessSession(p.ThreadID)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if c.State != session.ControlActive {
+		c, err = session.ChangeControl(s.rt.SessionDir, p.ThreadID, link.AgentID, session.ControlActive, p.Revision)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+	}
+	link.Active, link.ControlRevision, link.LastTurnID = true, c.Revision, metadata.LatestCompletedTurnID
+	link.Turns, link.Failures = 0, 0
+	if err := s.channelService.PutHarnessLink(ctx, link); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	_, err = s.channelService.EnqueueSessionResult(ctx, channels.SessionResultEnqueueParams{ParentSessionRef: link.SourceSessionRef, ParentTurnID: link.SourceTurnID, SourceSessionRef: link.SessionID, RequestID: fmt.Sprintf("human-return:%s:%d", link.SessionID, c.Revision), Body: "The user explicitly returned this session to your management. Inspect the user's changes and current Work before continuing. Revoked automatic instructions remain revoked."})
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	s.publishSessionControl(p.ThreadID)
+	return s.writeResponse(req.ID, map[string]any{"control": s.threadSessionControl(c)}, nil)
 }
