@@ -39,7 +39,7 @@ struct CollaborationView: View {
                 if searching {
                     HStack(spacing: 8) {
                         Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                        TextField("搜索对话或群聊", text: $query).font(.subheadline)
+                        TextField("搜索对话", text: $query).font(.subheadline)
                     }.padding(12).background(Color(uiColor: .secondarySystemBackground), in: Capsule()).padding(.horizontal, 16).padding(.vertical, 6)
                 }
                 directory
@@ -54,7 +54,7 @@ struct CollaborationView: View {
                     Button { searching.toggle(); query = "" } label: { Image(systemName: searching ? "xmark" : "magnifyingglass") }.accessibilityLabel(searching ? "关闭搜索" : "搜索协作")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { compose = true } label: { Image(systemName: "plus") }.accessibilityLabel("新对话或群聊").disabled(!app.connected)
+                    Button { compose = true } label: { Image(systemName: "plus") }.accessibilityLabel("新对话").disabled(!app.connected)
                 }
             }
             .navigationDestination(isPresented: roomPresented) {
@@ -324,15 +324,24 @@ private struct CollaborationBubble<Content: View, Attachments: View>: View {
 private struct NewCollaborationView: View {
     @Bindable var app: AppModel
     @Bindable var model: CollaborationModel
+    @State private var workspace = ""
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
             Form {
+                Section("项目") {
+                    Picker("工作区", selection: $workspace) {
+                        ForEach(app.workspaces.indices, id: \.self) { index in
+                            let item = app.workspaces[index]
+                            Text(item["name"].string ?? item["path"].string ?? "").tag(item["path"].string ?? "")
+                        }
+                    }
+                }
                 Section("Agent") {
                     if model.agents.isEmpty { Text("请先在电脑上创建 Agent").foregroundStyle(.secondary) }
                     ForEach(model.agents) { agent in
                         Button {
-                            app.perform { try await model.openAgent(agent.id, app: app); dismiss() }
+                            app.perform { try await model.openAgent(agent.id, workspace: workspace, app: app); dismiss() }
                         } label: {
                             HStack(spacing: 12) {
                                 AgentMark(agent: agent)
@@ -347,7 +356,7 @@ private struct NewCollaborationView: View {
                     ToolbarItem(placement: .cancellationAction) { Button("取消") { model.select(model.roomID); dismiss() } }
 
                 }
-        }.interactiveDismissDisabled(model.creating)
+        }.onAppear { workspace = app.workspace }.interactiveDismissDisabled(model.creating)
     }
 }
 

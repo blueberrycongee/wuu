@@ -106,11 +106,11 @@ import org.json.JSONObject
                 } else {
                     Text("协作", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                     ChromeButton(if (searching) Icons.Default.Close else Icons.Default.Search, if (searching) "关闭搜索" else "搜索协作") { searching = !searching; query = "" }
-                    ChromeButton(Icons.Default.Add, "新对话或群聊", model.connected) { create = true }
+                    ChromeButton(Icons.Default.Add, "新对话", model.connected) { create = true }
                 }
             }
             if (searching && room == null) TextField(query, { query = it }, singleLine = true,
-                placeholder = { Text("搜索对话或群聊") }, leadingIcon = { Icon(Icons.Default.Search, null, Modifier.size(20.dp)) },
+                placeholder = { Text("搜索对话") }, leadingIcon = { Icon(Icons.Default.Search, null, Modifier.size(20.dp)) },
                 shape = MaterialTheme.shapes.large, colors = wuuFieldColors(), modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp))
             if (!model.connected) Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(if (model.connecting) "正在连接…" else "电脑离线 · 消息只读", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -444,6 +444,8 @@ private fun collaborationStatus(state: String): String = when (state) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun NewCollaborationSheet(model: AppModel, dismiss: () -> Unit) {
     val state = model.collaboration
+    var workspace by remember { mutableStateOf(model.workspace) }
+    var workspaceMenu by remember { mutableStateOf(false) }
     var creating by remember { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = { if (!creating) dismiss() }) {
         LazyColumn(Modifier.fillMaxWidth().heightIn(max = 560.dp), contentPadding = PaddingValues(16.dp)) {
@@ -451,12 +453,18 @@ private fun collaborationStatus(state: String): String = when (state) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("新对话", style = MaterialTheme.typography.titleMedium)
                 }
+                Box {
+                    TextButton(onClick = { workspaceMenu = true }, enabled = !creating) { Text("项目：" + (model.workspaces.firstOrNull { it.optString("path") == workspace }?.optString("name")?.ifBlank { workspace } ?: workspace)) }
+                    DropdownMenu(expanded = workspaceMenu, onDismissRequest = { workspaceMenu = false }) {
+                        model.workspaces.forEach { project -> DropdownMenuItem(text = { Text(project.optString("name").ifBlank { project.optString("path") }) }, onClick = { workspace = project.optString("path"); workspaceMenu = false }) }
+                    }
+                }
                 if (state.agents.isEmpty()) Text("在电脑上创建 Agent 后开始对话", Modifier.padding(vertical = 16.dp))
             }
             items(state.agents, key = { it.getString("id") }) { agent ->
                 val id = agent.getString("id")
                 ListItem(headlineContent = { Text(agent.optString("name")) }, leadingContent = { AgentMark(agent) }, modifier = Modifier.testTag("new-agent-${agent.optString("name")}").clickable(enabled = model.connected && !creating) {
-                    run { creating = true; model.perform { try { state.direct(id); dismiss() } finally { creating = false } } }
+                    run { creating = true; model.perform { try { state.direct(id, workspace); dismiss() } finally { creating = false } } }
                 })
             }
 
