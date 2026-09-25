@@ -4,20 +4,25 @@ import {
   ArrowLeft,
   Archive,
   BarChart3,
+  Bot,
   Check,
+  ChevronRight,
   Folder,
+  Gauge,
   Hash,
   KeyRound,
   LayoutDashboard,
+  LogOut,
+  Monitor,
   Plug,
   PlugZap,
   Plus,
   RefreshCw,
   Search,
   Settings,
-  SlidersHorizontal,
   Smartphone,
-  X
+  X,
+  type IconComponent
 } from "./WuuIcons";
 import type {
   CodexPetSettingsUpdate,
@@ -34,6 +39,7 @@ import {
   type ReactNode,
   type RefObject,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -81,6 +87,7 @@ import { ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
 import { BackgroundSettings } from "./background/BackgroundSettings";
 import { SettingsRow } from "./SettingsRow";
+import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsStatus, type SettingsStatusTone } from "./SettingsSection";
 import { toastErrorMessage } from "./Toast";
 import { EngineSettingsSection } from "./EngineSettingsSection";
 import { SubscriptionDashboard } from "./SubscriptionDashboard";
@@ -88,6 +95,7 @@ import { SettingsRemotePage } from "./SettingsRemotePage";
 import { ThemePreferenceControl } from "./ThemePreferenceSection";
 import { LanguagePreferenceControl } from "./LanguagePreferenceSection";
 import { formatCurrentNumber, useI18n } from "./i18n";
+import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { Tooltip } from "./Tooltip";
 import { TruncatedText } from "./TruncatedText";
 import {
@@ -106,18 +114,59 @@ import type { PluginHost } from "./plugins/PluginHost";
 import { PluginViewContent, type WorkbenchController } from "./plugins/Workbench";
 import { PluginSettingsEditor } from "./PluginSettingsEditor";
 import { PluginIcon } from "./PublicIcon";
+import { PluginBlocksIcon } from "./PluginBlocksIcon";
 import type { SettingsPageHostAPI, SettingsPageSummaryV1, SettingsValueMapV1 } from "../shared/workbench";
 
-export type SettingsPage =
-  | "subscriptions"
+type NativeSettingsPage =
   | "providers"
-  | "general"
+  | "agents"
+  | "subscriptions"
   | "advanced"
-  | "usage"
+  | "general"
+  | "appearance"
   | "remote"
-  | "archive"
+  | "mcp"
+  | "usage"
+  | "archive";
+
+export type SettingsPage =
+  | NativeSettingsPage
   | `plugin-settings:${string}`
   | `plugin-view:${string}:${string}`;
+
+// Page ids are part of the plugin settings snapshot, so they stay stable when
+// labels or grouping change ("advanced" is the runtime page).
+const NATIVE_PAGE_ICONS: Record<NativeSettingsPage, IconComponent> = {
+  providers: KeyRound,
+  agents: Bot,
+  subscriptions: LayoutDashboard,
+  advanced: Gauge,
+  general: Settings,
+  appearance: Monitor,
+  remote: Smartphone,
+  mcp: Plug,
+  usage: BarChart3,
+  archive: Archive,
+};
+
+function remoteControlAvailable(): boolean {
+  return ENABLE_REMOTE_CONTROL && hostSupports("getRemoteControlSnapshot");
+}
+
+function nativeSettingsGroups(): { label: TranslationKey; pages: NativeSettingsPage[] }[] {
+  return [
+    {
+      label: "settings.groupAgent",
+      pages: ["providers", "agents", ...(ENABLE_SUBSCRIPTIONS ? ["subscriptions" as const] : []), "advanced"],
+    },
+    {
+      label: "settings.groupApp",
+      pages: ["general", "appearance", ...(remoteControlAvailable() ? ["remote" as const] : [])],
+    },
+    { label: "settings.groupExtensions", pages: ["mcp"] },
+    { label: "settings.groupData", pages: ["usage", "archive"] },
+  ];
+}
 
 type CopyState = "idle" | "copying" | "copied";
 
@@ -128,7 +177,7 @@ function availableSettingsPage(page: SettingsPage | undefined): SettingsPage {
   if (next === "subscriptions" && !ENABLE_SUBSCRIPTIONS) {
     return "providers";
   }
-  if (next === "remote" && (!ENABLE_REMOTE_CONTROL || !hostSupports("getRemoteControlSnapshot"))) {
+  if (next === "remote" && !remoteControlAvailable()) {
     return "providers";
   }
   return next;
@@ -234,6 +283,9 @@ export function SettingsView({
   // saving.
   const [providerTypeDraft, setProviderTypeDraft] = useState("openai-compatible");
   const [addingProvider, setAddingProvider] = useState(false);
+  // The selected service's editor opens under its row; collapsing it keeps
+  // the selection so reopening restores the same service.
+  const [providerEditorOpen, setProviderEditorOpen] = useState(true);
   const [error, setError] = useState("");
   const [xaiLogin, setXAILogin] = useState<{
     loginId: string;
@@ -287,7 +339,8 @@ export function SettingsView({
   const [maxContextTokensDraft, setMaxContextTokensDraft] = useState("");
   const [maxStepsDraft, setMaxStepsDraft] = useState("0");
   const [temperatureDraft, setTemperatureDraft] = useState("");
-  const [advancedError, setAdvancedError] = useState("");
+  // Runtime errors stay beside the field that failed to validate or save.
+  const [advancedError, setAdvancedError] = useState<{ field: AdvancedField; message: string } | null>(null);
   const [copyState, setCopyState] = useState<CopyState>("idle");
   const settingsScrollRef = useRef<HTMLDivElement>(null);
   // Last persisted draft of each numeric advanced field, recorded when
@@ -390,7 +443,7 @@ export function SettingsView({
     setMaxStepsDraft(synced.maxSteps);
     setTemperatureDraft(synced.temperature);
     advancedCommittedRef.current = synced;
-    setAdvancedError("");
+    setAdvancedError(null);
   }, [initialized?.advanced_settings, initialized?.provider, initialized?.model]);
 
   // Browsing providers is local UI state; it never changes a session or defaults.
@@ -414,6 +467,15 @@ export function SettingsView({
     setVariantDraft(variant);
     setBaseURLDraft(summary.base_url ?? "");
     setAPIKeyDraft("");
+  }
+
+  function toggleProvider(provider: string): void {
+    if (!addingProvider && provider === providerDraft && providerEditorOpen) {
+      setProviderEditorOpen(false);
+      return;
+    }
+    selectProvider(provider);
+    setProviderEditorOpen(true);
   }
 
   function startAddingProvider(): void {
@@ -617,6 +679,7 @@ export function SettingsView({
       }
       await onSave(providerDraft, modelDraft, undefined, connection, variantDraft);
       setAddingProvider(false);
+      setProviderEditorOpen(true);
       setAPIKeyDraft("");
       setXAILogin(null);
     } catch (saveError) {
@@ -746,10 +809,10 @@ export function SettingsView({
   function toggleAutoCompact(): void {
     const next = !autoCompactDraft;
     setAutoCompactDraft(next);
-    setAdvancedError("");
+    setAdvancedError(null);
     void onAdvancedSave({ disable_auto_compact: !next }).catch((saveError: unknown) => {
       setAutoCompactDraft(!next);
-      setAdvancedError(saveError instanceof Error ? saveError.message : t("settings.saveFailed"));
+      setAdvancedError({ field: "autoCompact", message: saveError instanceof Error ? saveError.message : t("settings.saveFailed") });
     });
   }
 
@@ -812,15 +875,15 @@ export function SettingsView({
       }
     }
     if (validationError || !update) {
-      setAdvancedError(validationError);
+      setAdvancedError(validationError ? { field, message: validationError } : null);
       return;
     }
-    setAdvancedError("");
+    setAdvancedError(null);
     try {
       await onAdvancedSave(update);
       advancedCommittedRef.current[field] = draft;
     } catch (saveError) {
-      setAdvancedError(saveError instanceof Error ? saveError.message : t("settings.saveFailed"));
+      setAdvancedError({ field, message: saveError instanceof Error ? saveError.message : t("settings.saveFailed") });
     }
   }
 
@@ -879,21 +942,13 @@ export function SettingsView({
       : ""
   }${sidebarAnimating ? " sidebar-animating" : ""}`;
 
-  const pageTitle = activePluginSettingsRecord?.name
-    ?? activeCustomPluginPage?.title
-    ?? settingsPageTitle(activePage, t);
+  const pluginPageTitle = activePluginSettingsRecord?.name ?? activeCustomPluginPage?.title;
+  const navigationGroups = nativeSettingsGroups();
   const availablePages = useMemo<readonly SettingsPageSummaryV1[]>(() => Object.freeze([
-    ...(ENABLE_SUBSCRIPTIONS
-      ? [Object.freeze({ id: "subscriptions", label: settingsPageTitle("subscriptions", t) })]
-      : []),
-    Object.freeze({ id: "providers", label: settingsPageTitle("providers", t) }),
-    Object.freeze({ id: "advanced", label: settingsPageTitle("advanced", t) }),
-    Object.freeze({ id: "general", label: settingsPageTitle("general", t) }),
-    ...(ENABLE_REMOTE_CONTROL && hostSupports("getRemoteControlSnapshot")
-      ? [Object.freeze({ id: "remote", label: settingsPageTitle("remote", t) })]
-      : []),
-    Object.freeze({ id: "usage", label: settingsPageTitle("usage", t) }),
-    Object.freeze({ id: "archive", label: settingsPageTitle("archive", t) }),
+    ...navigationGroups.flatMap((group) => group.pages.map((page) => Object.freeze({
+      id: page,
+      label: settingsPageTitle(page, t),
+    }))),
     ...pluginSettingsRecords.map((plugin) => Object.freeze({
       id: pluginSettingsPageId(plugin.id),
       label: plugin.name,
@@ -902,6 +957,9 @@ export function SettingsView({
       id: pluginViewSettingsPageId(entry.pluginId, entry.id),
       label: entry.title,
     })),
+    // navigationGroups is derived from build flags and host capabilities,
+    // which do not change while the page is mounted.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   ]), [customPluginSettingsPages, pluginSettingsRecords, t]);
 
   const sidebarToggle = (
@@ -954,74 +1012,49 @@ export function SettingsView({
             data-wuu-component="settings-navigation"
             aria-label={t("settings.navigation")}
           >
-            <div className="settings-nav-group">
-              <div className="settings-nav-group-label">{t("settings.groupModel")}</div>
-              {ENABLE_SUBSCRIPTIONS ? (
-                <SettingsNavItem icon={<LayoutDashboard className="icon-lg" />} active={activePage === "subscriptions"} onClick={() => setActivePage("subscriptions")}>
-                  {t("settings.subscriptions")}
-                </SettingsNavItem>
-              ) : null}
-              <SettingsNavItem icon={<KeyRound className="icon-lg" />} active={activePage === "providers"} onClick={() => setActivePage("providers")}>
-                {t("settings.providers")}
-              </SettingsNavItem>
-              <SettingsNavItem icon={<SlidersHorizontal className="icon-lg" />} active={activePage === "advanced"} onClick={() => setActivePage("advanced")}>
-                {t("settings.advanced")}
-              </SettingsNavItem>
-            </div>
-            <div className="settings-nav-group">
-              <div className="settings-nav-group-label">{t("settings.groupApp")}</div>
-              <SettingsNavItem icon={<Settings className="icon-lg" />} active={activePage === "general"} onClick={() => setActivePage("general")}>
-                {t("settings.general")}
-              </SettingsNavItem>
-              {ENABLE_REMOTE_CONTROL && hostSupports("getRemoteControlSnapshot") ? (
-                <SettingsNavItem icon={<Smartphone className="icon-lg" />} active={activePage === "remote"} onClick={() => setActivePage("remote")}>
-                  {t("settings.remote")}
-                </SettingsNavItem>
-              ) : null}
-            </div>
-            <div className="settings-nav-group">
-              <div className="settings-nav-group-label">{t("settings.groupData")}</div>
-              <SettingsNavItem icon={<BarChart3 className="icon-lg" />} active={activePage === "usage"} onClick={() => setActivePage("usage")}>
-                {t("settings.usage")}
-              </SettingsNavItem>
-              <SettingsNavItem icon={<Archive className="icon-lg" />} active={activePage === "archive"} onClick={() => setActivePage("archive")}>
-                {t("settings.archive")}
-              </SettingsNavItem>
-            </div>
-            {pluginSettingsRecords.length > 0 || customPluginSettingsPages.length > 0 ? (
-              <div
-                className="settings-nav-group"
-                data-wuu-component="plugin-settings-navigation"
-              >
-                <div className="settings-nav-group-label">{t("skills.sectionPlugins")}</div>
-                {pluginSettingsRecords.map((plugin) => {
-                  const pageId = pluginSettingsPageId(plugin.id);
+            {navigationGroups.map((group) => (
+              <div className="settings-nav-group" key={group.label}>
+                <div className="settings-nav-group-label">{t(group.label)}</div>
+                {group.pages.map((page) => {
+                  const Icon = NATIVE_PAGE_ICONS[page];
                   return (
-                    <SettingsNavItem
-                      key={pageId}
-                      icon={<Plug className="icon-lg" />}
-                      active={activePage === pageId}
-                      onClick={() => setActivePage(pageId)}
-                    >
-                      {plugin.name}
+                    <SettingsNavItem key={page} icon={<Icon className="icon-lg" />} active={activePage === page} onClick={() => setActivePage(page)}>
+                      {settingsPageTitle(page, t)}
                     </SettingsNavItem>
                   );
                 })}
-                {customPluginSettingsPages.map((entry) => {
-                  const pageId = pluginViewSettingsPageId(entry.pluginId, entry.id);
-                  return (
-                    <SettingsNavItem
-                      key={pageId}
-                      icon={<PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />}
-                      active={activePage === pageId}
-                      onClick={() => setActivePage(pageId)}
-                    >
-                      {entry.title}
-                    </SettingsNavItem>
-                  );
-                })}
+                {group.label === "settings.groupExtensions" && (pluginSettingsRecords.length > 0 || customPluginSettingsPages.length > 0) ? (
+                  <div className="settings-nav-plugins" data-wuu-component="plugin-settings-navigation">
+                    {pluginSettingsRecords.map((plugin) => {
+                      const pageId = pluginSettingsPageId(plugin.id);
+                      return (
+                        <SettingsNavItem
+                          key={pageId}
+                          icon={<PluginBlocksIcon className="icon-lg" />}
+                          active={activePage === pageId}
+                          onClick={() => setActivePage(pageId)}
+                        >
+                          {plugin.name}
+                        </SettingsNavItem>
+                      );
+                    })}
+                    {customPluginSettingsPages.map((entry) => {
+                      const pageId = pluginViewSettingsPageId(entry.pluginId, entry.id);
+                      return (
+                        <SettingsNavItem
+                          key={pageId}
+                          icon={<PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />}
+                          active={activePage === pageId}
+                          onClick={() => setActivePage(pageId)}
+                        >
+                          {entry.title}
+                        </SettingsNavItem>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
-            ) : null}
+            ))}
           </nav>
         </div>
       </aside>
@@ -1049,28 +1082,28 @@ export function SettingsView({
         </div>
         <div ref={settingsScrollRef} className="settings-scroll">
           <div
-            className={`settings-page${activePage === "archive" ? " settings-page-archive" : ""}${activePage === "providers" ? " settings-page-providers" : ""}`}
+            className="settings-page"
             data-wuu-component="settings-page"
             data-wuu-page={activePage}
             key={activePage}
           >
-            {activePage !== "subscriptions" ? (
-              <header className="settings-page-header">
-                <h1 className="settings-page-title">{pageTitle}</h1>
-              </header>
-            ) : null}
-  
             {activePluginSettingsRecord ? (
-              <PluginSettingsEditor plugin={activePluginSettingsRecord} variant="page" />
+              <>
+                <SettingsPageHeader title={activePluginSettingsRecord.name} />
+                <PluginSettingsEditor plugin={activePluginSettingsRecord} variant="page" />
+              </>
             ) : activeCustomPluginPage ? (
-              <PluginViewContent
-                controller={workbenchController}
-                pluginId={activeCustomPluginPage.pluginId}
-                viewTypeId={activeCustomPluginPage.view}
-                context={Object.freeze({ surface: "settings" })}
-                settings={settingsPageHost}
-                onFailure={() => setActivePage("providers")}
-              />
+              <>
+                <SettingsPageHeader title={pluginPageTitle ?? activeCustomPluginPage.title} />
+                <PluginViewContent
+                  controller={workbenchController}
+                  pluginId={activeCustomPluginPage.pluginId}
+                  viewTypeId={activeCustomPluginPage.view}
+                  context={Object.freeze({ surface: "settings" })}
+                  settings={settingsPageHost}
+                  onFailure={() => setActivePage("providers")}
+                />
+              </>
             ) : activePage === "subscriptions" && ENABLE_SUBSCRIPTIONS ? (
               <SubscriptionDashboard
                 inventory={engineInventory}
@@ -1078,108 +1111,115 @@ export function SettingsView({
                 onSelectBuiltinModel={(provider, model) => onSave(provider, model)}
               />
             ) : activePage === "providers" ? (
-              <>
-                <EngineSettingsSection
-                  result={engineInventory}
-                  loadError={engineInventoryError}
-                  onRefresh={onRefreshEngineInventory}
-                  onUpdate={onUpdateEngineInventory}
-                />
-                <SettingsProvidersPage
-                  providers={providers}
-                  providerLabels={providerLabels}
-                  running={running}
-                  providerDraft={providerDraft}
-                  providerTypeDraft={providerTypeDraft}
-                  modelDraft={modelDraft}
-                  variantDraft={variantDraft}
-                  baseURLDraft={baseURLDraft}
-                  apiKeyDraft={apiKeyDraft}
-                  addingProvider={addingProvider}
-                  error={error}
-                  selectedProvider={selectedProvider}
-                  connectionLocked={connectionLocked}
-                  variantOptions={variantOptions}
-                  providerNameTaken={Boolean(providerNameTaken)}
-                  onProviderChange={selectProvider}
-                  onStartAddingProvider={startAddingProvider}
-                  onCancelAddingProvider={cancelAddingProvider}
-                  onProviderDraftChange={setProviderDraft}
-                  onProviderTypeDraftChange={changeProviderTypeDraft}
-                  onModelDraftChange={(value) => {
-                    setModelDraft(value);
-                    setVariantDraft("");
-                  }}
-                  onVariantDraftChange={changeVariant}
-                  onBaseURLDraftChange={setBaseURLDraft}
-                  onAPIKeyDraftChange={setAPIKeyDraft}
-                  onCommitModel={commitModelName}
-                  onCommitBaseURL={commitBaseURL}
-                  onCommitAPIKey={commitAPIKey}
-                  onSubmit={submit}
-                  onRemoveProvider={requestRemoveProvider}
-                  onRefreshModelCatalog={onRefreshModelCatalog}
-                  runningProviderNames={runningProviderNameSet}
-                  disabled={addSubmitDisabled}
-                  xaiLogin={xaiLogin}
-                  xaiLoginBusy={xaiLoginBusy}
-                  onStartXAILogin={() => void startXAILogin()}
-                />
-              </>
+              <SettingsProvidersPage
+                providers={providers}
+                providerLabels={providerLabels}
+                running={running}
+                providerDraft={providerDraft}
+                providerTypeDraft={providerTypeDraft}
+                modelDraft={modelDraft}
+                variantDraft={variantDraft}
+                baseURLDraft={baseURLDraft}
+                apiKeyDraft={apiKeyDraft}
+                addingProvider={addingProvider}
+                editorOpen={providerEditorOpen}
+                error={error}
+                selectedProvider={selectedProvider}
+                connectionLocked={connectionLocked}
+                variantOptions={variantOptions}
+                providerNameTaken={Boolean(providerNameTaken)}
+                onProviderToggle={toggleProvider}
+                onStartAddingProvider={startAddingProvider}
+                onCancelAddingProvider={cancelAddingProvider}
+                onProviderDraftChange={setProviderDraft}
+                onProviderTypeDraftChange={changeProviderTypeDraft}
+                onModelDraftChange={(value) => {
+                  setModelDraft(value);
+                  setVariantDraft("");
+                }}
+                onVariantDraftChange={changeVariant}
+                onBaseURLDraftChange={setBaseURLDraft}
+                onAPIKeyDraftChange={setAPIKeyDraft}
+                onCommitModel={commitModelName}
+                onCommitBaseURL={commitBaseURL}
+                onCommitAPIKey={commitAPIKey}
+                onSubmit={submit}
+                onRemoveProvider={requestRemoveProvider}
+                onRefreshModelCatalog={onRefreshModelCatalog}
+                runningProviderNames={runningProviderNameSet}
+                disabled={addSubmitDisabled}
+                xaiLogin={xaiLogin}
+                xaiLoginBusy={xaiLoginBusy}
+                onStartXAILogin={() => void startXAILogin()}
+              />
+            ) : activePage === "agents" ? (
+              <EngineSettingsSection
+                result={engineInventory}
+                loadError={engineInventoryError}
+                onRefresh={onRefreshEngineInventory}
+                onUpdate={onUpdateEngineInventory}
+              />
             ) : activePage === "advanced" ? (
-              <>
-                <SettingsAdvancedPage
-                  initialized={initialized}
-                  running={running}
-                  autoCompact={autoCompactDraft}
-                  compactThreshold={compactThresholdDraft}
-                  compactKeepRecent={compactKeepRecentDraft}
-                  providerContextWindow={providerContextWindowDraft}
-                  providerContextWindowCurrent={formatOptionalTokenCount(
-                    initialized?.advanced_settings?.context_window_tokens,
-                  )}
-                  providerContextWindowSource={advancedContextSourceLabel(
-                    initialized?.advanced_settings?.context_window_source,
-                    t,
-                  )}
-                  maxContextTokens={maxContextTokensDraft}
-                  maxSteps={maxStepsDraft}
-                  temperature={temperatureDraft}
-                  error={advancedError}
-                  onAutoCompactToggle={toggleAutoCompact}
-                  onCompactThresholdChange={setCompactThresholdDraft}
-                  onCompactKeepRecentChange={setCompactKeepRecentDraft}
-                  onProviderContextWindowChange={setProviderContextWindowDraft}
-                  onMaxContextTokensChange={setMaxContextTokensDraft}
-                  onMaxStepsChange={setMaxStepsDraft}
-                  onTemperatureChange={setTemperatureDraft}
-                  onCommitField={commitAdvancedField}
-                />
-              </>
-            ) : activePage === "general" ? (
-              <SettingsGeneralPage
+              <SettingsRuntimePage
                 initialized={initialized}
                 running={running}
+                autoCompact={autoCompactDraft}
+                compactThreshold={compactThresholdDraft}
+                compactKeepRecent={compactKeepRecentDraft}
+                providerContextWindow={providerContextWindowDraft}
+                providerContextWindowCurrent={formatOptionalTokenCount(
+                  initialized?.advanced_settings?.context_window_tokens,
+                )}
+                providerContextWindowSource={advancedContextSourceLabel(
+                  initialized?.advanced_settings?.context_window_source,
+                  t,
+                )}
+                maxContextTokens={maxContextTokensDraft}
+                maxSteps={maxStepsDraft}
+                temperature={temperatureDraft}
+                error={advancedError}
+                onAutoCompactToggle={toggleAutoCompact}
+                onCompactThresholdChange={setCompactThresholdDraft}
+                onCompactKeepRecentChange={setCompactKeepRecentDraft}
+                onProviderContextWindowChange={setProviderContextWindowDraft}
+                onMaxContextTokensChange={setMaxContextTokensDraft}
+                onMaxStepsChange={setMaxStepsDraft}
+                onTemperatureChange={setTemperatureDraft}
+                onCommitField={commitAdvancedField}
+                onGeneralSave={onGeneralSave}
+              />
+            ) : activePage === "general" ? (
+              <SettingsGeneralPage
                 desktopBuild={desktopBuild}
-                mcpServers={mcpServers}
-                mcpLoading={mcpLoading}
-                mcpError={mcpError}
-                mcpBusyServer={mcpBusyServer}
                 codexPets={codexPets}
                 codexPetsLoading={codexPetsLoading}
                 codexPetsError={codexPetsError}
-                onGeneralSave={onGeneralSave}
-                onMCPAction={runMCPAction}
-                onMCPAuthStart={startMCPAuth}
-                onMCPAuthFinish={finishMCPAuth}
-                onMCPAuthRemove={removeMCPAuth}
                 onCodexPetsRefresh={onCodexPetsRefresh}
                 onCodexPetsUpdate={onCodexPetsUpdate}
                 copyState={copyState}
                 onCopyVersion={copyVersionInfo}
               />
-            ) : activePage === "remote" && ENABLE_REMOTE_CONTROL && hostSupports("getRemoteControlSnapshot") ? (
-              <SettingsRemotePageContainer />
+            ) : activePage === "appearance" ? (
+              <SettingsAppearancePage />
+            ) : activePage === "mcp" ? (
+              <SettingsMCPPage
+                initialized={initialized}
+                running={running}
+                mcpServers={mcpServers}
+                mcpLoading={mcpLoading}
+                mcpError={mcpError}
+                mcpBusyServer={mcpBusyServer}
+                onGeneralSave={onGeneralSave}
+                onMCPAction={runMCPAction}
+                onMCPAuthStart={startMCPAuth}
+                onMCPAuthFinish={finishMCPAuth}
+                onMCPAuthRemove={removeMCPAuth}
+              />
+            ) : activePage === "remote" && remoteControlAvailable() ? (
+              <>
+                <SettingsPageHeader title={t("settings.remote")} />
+                <SettingsRemotePageContainer />
+              </>
             ) : activePage === "archive" ? (
               <SettingsArchivePage
                 archivedThreads={archivedThreads ?? []}
@@ -1245,43 +1285,6 @@ function SettingsNavItem({
   );
 }
 
-// 小节只有一个安静的小标签；描述性文字一律省略——语义由行本身携带,
-// 只在个别行的 description 里保留单位、约束或禁用原因。
-function SettingsSection({
-  title,
-  description,
-  testID,
-  children
-}: {
-  title?: string;
-  description?: string;
-  testID?: string;
-  children: ReactNode;
-}): JSX.Element {
-  return (
-    <section
-      className="settings-section"
-      data-wuu-component="settings-section"
-      {...(testID ? { "data-testid": testID } : {})}
-    >
-      {title || (description && !isTouchWebShell()) ? (
-        <header className="settings-section-header">
-          {title ? <h2 className="settings-section-title">{title}</h2> : null}
-          {description && !isTouchWebShell() ? <p className="settings-section-description">{description}</p> : null}
-        </header>
-      ) : null}
-      {children}
-    </section>
-  );
-}
-
-function SettingsCard({ children }: { children: ReactNode }): JSX.Element {
-  return <div className="settings-group" data-wuu-component="settings-group">{children}</div>;
-}
-
-
-
-
 /* -------------------------------------------------------------------------- */
 /*  Providers page                                                             */
 /* -------------------------------------------------------------------------- */
@@ -1297,12 +1300,13 @@ function SettingsProvidersPage({
   baseURLDraft,
   apiKeyDraft,
   addingProvider,
+  editorOpen,
   error,
   selectedProvider,
   connectionLocked,
   variantOptions,
   providerNameTaken,
-  onProviderChange,
+  onProviderToggle,
   onStartAddingProvider,
   onCancelAddingProvider,
   onProviderDraftChange,
@@ -1333,12 +1337,13 @@ function SettingsProvidersPage({
   baseURLDraft: string;
   apiKeyDraft: string;
   addingProvider: boolean;
+  editorOpen: boolean;
   error: string;
   selectedProvider: ProviderSummary | undefined;
   connectionLocked: boolean;
   variantOptions: string[];
   providerNameTaken: boolean;
-  onProviderChange: (provider: string) => void;
+  onProviderToggle: (provider: string) => void;
   onStartAddingProvider: () => void;
   onCancelAddingProvider: () => void;
   onProviderDraftChange: (value: string) => void;
@@ -1360,6 +1365,7 @@ function SettingsProvidersPage({
   onStartXAILogin: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const editorID = useId();
   const [catalogRefreshing, setCatalogRefreshing] = useState(false);
   function modelIDs(provider: ProviderSummary | undefined): string[] {
     // Provider summaries put the selected model first; keep button positions stable when selection changes.
@@ -1375,6 +1381,8 @@ function SettingsProvidersPage({
     ? isGrokBuildType(providerTypeDraft)
     : isGrokBuildType(selectedProvider?.type);
   const oauthLocked = connectionLocked || xaiType || grokBuildType;
+  const removable = Boolean(onRemoveProvider) && selectedProvider !== undefined && !selectedProvider.auto_discovered
+    && (!selectedProvider.connection_locked || isXAISubscriptionType(selectedProvider.type) || isGrokBuildType(selectedProvider.type));
   // Text fields commit on blur, or on Enter — except while creating a
   // provider, where Enter submits the create transaction instead.
   const commitOnEnter =
@@ -1387,96 +1395,28 @@ function SettingsProvidersPage({
       commit();
       event.currentTarget.blur();
     };
-  return (
-    <SettingsSection testID="settings-providers">
-      <header className="settings-services-header">
-        <div>
-          <h2 className="settings-section-title">{t("settings.providerServices")}</h2>
-        </div>
-        <div className="settings-services-actions">
-          <button
-            className="settings-button settings-button-ghost"
-            type="button"
-            data-testid="settings-model-catalog-refresh"
-            disabled={catalogRefreshing}
-            onClick={() => {
-              setCatalogRefreshing(true);
-              void onRefreshModelCatalog().finally(() => setCatalogRefreshing(false));
-            }}
-          >
-            <RefreshCw className={`icon${catalogRefreshing ? " settings-spin" : ""}`} />
-            {catalogRefreshing ? t("settings.modelCatalogUpdating") : t("settings.modelCatalogUpdate")}
-          </button>
-          <button
-            className="settings-button"
-            type="button"
-            data-testid="settings-provider-add-card"
-            disabled={running || addingProvider}
-            onClick={onStartAddingProvider}
-          >
-            <Plus className="icon" />
-            {t("provider.add")}
-          </button>
-        </div>
-      </header>
-      <div className="settings-services-layout">
-      {providers.length > 0 ? (
-        <div className="settings-provider-overview" data-testid="settings-provider-overview" role="group" aria-label={t("settings.providerServices")}>
-          {providers.map((provider) => (
-            <div className="settings-provider-card" key={provider.name}>
-              <button
-                className={`settings-provider-button${!addingProvider && providerDraft === provider.name ? " active" : ""}`}
-                type="button"
-                aria-pressed={!addingProvider && providerDraft === provider.name}
-                disabled={running}
-                onClick={() => onProviderChange(provider.name)}
-              >
-                <span className="settings-provider-copy">
-                  <strong>{providerLabels.get(provider.name) ?? providerServiceLabel(provider, t)}</strong>
-                  <small>{t("provider.modelCount", { count: modelIDs(provider).length })} · {provider.model ? t("provider.selectedModel", { model: provider.model }) : t("provider.noModel")}</small>
-                </span>
-              </button>
-              {onRemoveProvider && !provider.auto_discovered && (!provider.connection_locked || isXAISubscriptionType(provider.type) || isGrokBuildType(provider.type)) ? (
-                <button
-                  className="settings-provider-remove"
-                  type="button"
-                  aria-label={t("provider.removeNamed", { name: providerServiceLabel(provider, t) })}
-                  title={t("provider.removeTitle")}
-                  disabled={running}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (runningProviderNames.has(provider.name.trim())) {
-                      window.alert(t("provider.inUse"));
-                      return;
-                    }
-                    if (
-                      typeof window !== "undefined" &&
-                      typeof window.confirm === "function" &&
-                      !window.confirm(
-                        t("provider.removeConfirm", { name: providerServiceLabel(provider, t) }),
-                      )
-                    ) {
-                      return;
-                    }
-                    void onRemoveProvider(provider.name);
-                  }}
-                >
-                  <X className="icon" />
-                </button>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : <p className="settings-muted-line">{t("provider.none")}</p>}
-      <form className="settings-provider-editor" onSubmit={onSubmit}>
-        <header className="settings-provider-editor-header">
-          <div>
-            <h3>{addingProvider ? t("provider.add") : selectedProvider ? providerServiceLabel(selectedProvider, t) : t("provider.none")}</h3>
-            {selectedProvider && !addingProvider ? <p>{providerConnectionStatus(selectedProvider, t)}</p> : null}
-          </div>
-        </header>
-        {addingProvider ? (
-          <SettingsRow title={t("provider.type")}>
+
+  function requestRemove(provider: ProviderSummary): void {
+    if (!onRemoveProvider) return;
+    if (runningProviderNames.has(provider.name.trim())) {
+      window.alert(t("provider.inUse"));
+      return;
+    }
+    if (
+      typeof window !== "undefined" &&
+      typeof window.confirm === "function" &&
+      !window.confirm(t("provider.removeConfirm", { name: providerServiceLabel(provider, t) }))
+    ) {
+      return;
+    }
+    void onRemoveProvider(provider.name);
+  }
+
+  const editor = (
+    <form className="settings-provider-editor" id={editorID} onSubmit={onSubmit}>
+      {addingProvider ? (
+        <div className="settings-provider-model-fields">
+          <SettingsRow title={t("provider.type")} block>
             <SelectMenu
               triggerClassName="settings-select-trigger"
               ariaLabel={t("provider.type")}
@@ -1492,11 +1432,10 @@ function SettingsProvidersPage({
               ]}
             />
           </SettingsRow>
-        ) : null}
-        {addingProvider ? (
           <SettingsRow
             title={t("provider.identifier")}
             description={providerNameTaken ? t("provider.nameExists") : undefined}
+            block
           >
             <input
               className="settings-input"
@@ -1506,21 +1445,23 @@ function SettingsProvidersPage({
               disabled={running}
             />
           </SettingsRow>
-        ) : null}
-        <section className="settings-provider-form-section">
-          {!addingProvider && modelIDs(selectedProvider).length > 0 && <SettingsRow title={t("provider.availableModels")} block>
-            <div className="settings-provider-model-list" role="group" aria-label={t("provider.availableModels")}>
-              {modelIDs(selectedProvider).map((model) => <button
-                key={model}
-                type="button"
-                className="settings-button"
-                aria-pressed={modelDraft === model}
-                disabled={running}
-                onClick={() => onCommitModel(model)}
-              >{model}</button>)}
-            </div>
-          </SettingsRow>}
-          <div className="settings-provider-model-fields">
+        </div>
+      ) : null}
+      {!addingProvider && modelIDs(selectedProvider).length > 0 ? (
+        <SettingsRow title={t("provider.availableModels")} block>
+          <div className="settings-provider-model-list" role="group" aria-label={t("provider.availableModels")}>
+            {modelIDs(selectedProvider).map((model) => <button
+              key={model}
+              type="button"
+              className="settings-button"
+              aria-pressed={modelDraft === model}
+              disabled={running}
+              onClick={() => onCommitModel(model)}
+            >{model}</button>)}
+          </div>
+        </SettingsRow>
+      ) : null}
+      <div className="settings-provider-model-fields">
         <SettingsRow title={t("provider.modelName")} block>
           <input
             className="settings-input"
@@ -1549,51 +1490,46 @@ function SettingsProvidersPage({
             }))}
           />
         </SettingsRow>
-          </div>
-        </section>
-        <section className="settings-provider-form-section">
-        <SettingsRow
-          title={t("settings.baseURL")}
-          block
-        >
-          {oauthLocked ? (
-            <span className="settings-managed-value">{baseURLDraft || (xaiType ? t("provider.xaiOAuthManaged") : grokBuildType ? t("provider.grokBuildManaged") : t("provider.oauthManaged"))}</span>
-          ) : (
+      </div>
+      <SettingsRow title={t("settings.baseURL")} block>
+        {oauthLocked ? (
+          <span className="settings-managed-value">{baseURLDraft || (xaiType ? t("provider.xaiOAuthManaged") : grokBuildType ? t("provider.grokBuildManaged") : t("provider.oauthManaged"))}</span>
+        ) : (
           <input
             className="settings-input"
             aria-label={t("settings.baseURL")}
             value={baseURLDraft}
-            placeholder={oauthLocked ? (xaiType ? t("provider.xaiOAuthManaged") : grokBuildType ? t("provider.grokBuildManaged") : t("provider.oauthManaged")) : "https://api.openai.com/v1"}
+            placeholder="https://api.openai.com/v1"
             onChange={(event) => onBaseURLDraftChange(event.target.value)}
             onBlur={() => onCommitBaseURL()}
             onKeyDown={commitOnEnter(onCommitBaseURL)}
-            disabled={running || oauthLocked}
+            disabled={running}
           />
-          )}
+        )}
+      </SettingsRow>
+      {xaiType ? (
+        <SettingsRow title={t("provider.xaiLogin")} hint={t("provider.xaiLoginHint")} block>
+          <div className="settings-xai-login">
+            <button
+              className="settings-button settings-button-primary"
+              type="button"
+              onClick={onStartXAILogin}
+              disabled={running || xaiLoginBusy}
+            >
+              {xaiLoginBusy ? t("provider.xaiLoggingIn") : selectedProvider?.api_key_configured ? t("provider.xaiLoggedIn") : t("provider.xaiLogin")}
+            </button>
+            {xaiLogin ? (
+              <p className="settings-hint">
+                {t("provider.xaiLoginCode", { code: xaiLogin.userCode })}
+              </p>
+            ) : null}
+          </div>
         </SettingsRow>
-        {xaiType ? (
-          <SettingsRow title={t("provider.xaiLogin")} hint={t("provider.xaiLoginHint")} block>
-            <div className="settings-xai-login">
-              <button
-                className="settings-button settings-button-primary"
-                type="button"
-                onClick={onStartXAILogin}
-                disabled={running || xaiLoginBusy}
-              >
-                {xaiLoginBusy ? t("provider.xaiLoggingIn") : selectedProvider?.api_key_configured ? t("provider.xaiLoggedIn") : t("provider.xaiLogin")}
-              </button>
-              {xaiLogin ? (
-                <p className="settings-hint">
-                  {t("provider.xaiLoginCode", { code: xaiLogin.userCode })}
-                </p>
-              ) : null}
-            </div>
-          </SettingsRow>
-        ) : grokBuildType ? (
-          (addingProvider || !selectedProvider?.api_key_configured) && !isTouchWebShell() ? (
-            <p className="settings-hint">{t("provider.grokBuildLoginHint")}</p>
-          ) : null
-        ) : connectionLocked ? null : (
+      ) : grokBuildType ? (
+        (addingProvider || !selectedProvider?.api_key_configured) && !isTouchWebShell() ? (
+          <p className="settings-hint">{t("provider.grokBuildLoginHint")}</p>
+        ) : null
+      ) : connectionLocked ? null : (
         <SettingsRow title={authFieldLabel} block>
           <input
             className="settings-input"
@@ -1602,54 +1538,142 @@ function SettingsProvidersPage({
             type="password"
             autoComplete="new-password"
             placeholder={
-              connectionLocked
-                ? t("provider.authNotNeeded", { field: authFieldLabel })
-                : addingProvider
-                  ? t("provider.enterAuth", { field: authFieldLabel })
-                  : selectedProvider?.api_key_configured
-                    ? t("provider.keepCurrentAuth")
-                    : t("provider.enterAuth", { field: authFieldLabel })
+              !addingProvider && selectedProvider?.api_key_configured
+                ? t("provider.keepCurrentAuth")
+                : t("provider.enterAuth", { field: authFieldLabel })
             }
             onChange={(event) => onAPIKeyDraftChange(event.target.value)}
             onBlur={() => onCommitAPIKey()}
             onKeyDown={commitOnEnter(onCommitAPIKey)}
-            disabled={running || connectionLocked}
+            disabled={running}
           />
         </SettingsRow>
-        )}
-        </section>
-        {addingProvider ? (
-          <div className="settings-row settings-row-footer">
-            {error ? <div className="settings-error">{error}</div> : null}
+      )}
+      {addingProvider ? (
+        <div className="settings-provider-editor-footer">
+          {error ? <div className="settings-error" role="alert">{error}</div> : null}
+          <button
+            className="settings-button settings-button-ghost"
+            type="button"
+            onClick={onCancelAddingProvider}
+            disabled={running}
+          >
+            {t("common.cancel")}
+          </button>
+          <button
+            className="settings-button settings-button-primary"
+            type="submit"
+            disabled={disabled}
+          >
+            {t("provider.addAction")}
+          </button>
+        </div>
+      ) : error || removable ? (
+        <div className="settings-provider-editor-footer">
+          {error ? <div className="settings-error" role="alert">{error}</div> : null}
+          {removable && selectedProvider ? (
             <button
-              className="settings-button settings-button-ghost"
+              className="settings-button settings-button-ghost settings-provider-remove"
               type="button"
-              onClick={onCancelAddingProvider}
+              aria-label={t("provider.removeNamed", { name: providerServiceLabel(selectedProvider, t) })}
               disabled={running}
+              onClick={() => requestRemove(selectedProvider)}
             >
-              {t("common.cancel")}
+              {t("provider.removeAction")}
             </button>
-            <button
-              className="settings-button settings-button-primary"
-              type="submit"
-              disabled={disabled}
-            >
-              {t("provider.addAction")}
-            </button>
-          </div>
-        ) : error ? (
-          <div className="settings-row settings-row-footer">
-            <div className="settings-error">{error}</div>
-          </div>
-        ) : null}
-      </form>
-      </div>
-    </SettingsSection>
+          ) : null}
+        </div>
+      ) : null}
+    </form>
+  );
+
+  return (
+    <>
+      <SettingsPageHeader
+        title={t("settings.providers")}
+        description={t("settings.providersDescription")}
+        actions={<>
+          <button
+            className="settings-button settings-button-ghost"
+            type="button"
+            data-testid="settings-model-catalog-refresh"
+            disabled={catalogRefreshing}
+            onClick={() => {
+              setCatalogRefreshing(true);
+              void onRefreshModelCatalog().finally(() => setCatalogRefreshing(false));
+            }}
+          >
+            <RefreshCw className={`icon${catalogRefreshing ? " settings-spin" : ""}`} />
+            {catalogRefreshing ? t("settings.modelCatalogUpdating") : t("settings.modelCatalogUpdate")}
+          </button>
+          <button
+            className="settings-button"
+            type="button"
+            data-testid="settings-provider-add-card"
+            disabled={running || addingProvider}
+            onClick={onStartAddingProvider}
+          >
+            <Plus className="icon" />
+            {t("provider.add")}
+          </button>
+        </>}
+      />
+      <SettingsSection testID="settings-providers">
+        <div
+          className="settings-group settings-provider-list"
+          data-testid="settings-provider-overview"
+          role="group"
+          aria-label={t("settings.providerServices")}
+        >
+          {addingProvider ? (
+            <div className="settings-provider-item open">
+              <div className="settings-provider-heading">
+                <span className="settings-provider-mark" aria-hidden="true"><Plus className="icon" /></span>
+                <span className="settings-provider-copy"><strong>{t("provider.add")}</strong></span>
+              </div>
+              {editor}
+            </div>
+          ) : null}
+          {providers.map((provider) => {
+            const label = providerLabels.get(provider.name) ?? providerServiceLabel(provider, t);
+            const open = !addingProvider && editorOpen && providerDraft === provider.name;
+            const modelCount = modelIDs(provider).length;
+            return (
+              <div className={`settings-provider-item${open ? " open" : ""}`} key={provider.name}>
+                <button
+                  className="settings-provider-button"
+                  type="button"
+                  aria-expanded={open}
+                  aria-controls={open ? editorID : undefined}
+                  disabled={running}
+                  onClick={() => onProviderToggle(provider.name)}
+                >
+                  <span className="settings-provider-mark" aria-hidden="true">{providerMonogram(label)}</span>
+                  <span className="settings-provider-copy">
+                    <strong>{label}</strong>
+                    <small>
+                      {provider.model || t("provider.noModel")}
+                      {modelCount > 1 ? ` · ${t("provider.modelCount", { count: modelCount })}` : ""}
+                    </small>
+                  </span>
+                  <SettingsStatus tone={providerConnectionTone(provider)}>{providerConnectionStatus(provider, t)}</SettingsStatus>
+                  <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
+                </button>
+                {open ? editor : null}
+              </div>
+            );
+          })}
+          {providers.length === 0 && !addingProvider ? (
+            <p className="settings-group-empty">{t("provider.none")}</p>
+          ) : null}
+        </div>
+      </SettingsSection>
+    </>
   );
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Advanced page                                                              */
+/*  Runtime page ("advanced" page id)                                          */
 /* -------------------------------------------------------------------------- */
 
 type AdvancedNumericField =
@@ -1660,7 +1684,9 @@ type AdvancedNumericField =
   | "maxSteps"
   | "temperature";
 
-function SettingsAdvancedPage({
+type AdvancedField = AdvancedNumericField | "autoCompact";
+
+function SettingsRuntimePage({
   initialized,
   running,
   autoCompact,
@@ -1680,7 +1706,8 @@ function SettingsAdvancedPage({
   onMaxContextTokensChange,
   onMaxStepsChange,
   onTemperatureChange,
-  onCommitField
+  onCommitField,
+  onGeneralSave
 }: {
   initialized: InitializeResult | undefined;
   running: boolean;
@@ -1693,7 +1720,7 @@ function SettingsAdvancedPage({
   maxContextTokens: string;
   maxSteps: string;
   temperature: string;
-  error: string;
+  error: { field: AdvancedField; message: string } | null;
   onAutoCompactToggle: () => void;
   onCompactThresholdChange: (value: string) => void;
   onCompactKeepRecentChange: (value: string) => void;
@@ -1702,133 +1729,175 @@ function SettingsAdvancedPage({
   onMaxStepsChange: (value: string) => void;
   onTemperatureChange: (value: string) => void;
   onCommitField: (field: AdvancedNumericField) => void;
+  onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
+  const [gitAttributionBusy, setGitAttributionBusy] = useState(false);
+  const [gitAttributionError, setGitAttributionError] = useState("");
+  const gitAttributionEnabled = initialized?.general_settings?.git_attribution_enabled ?? true;
+  const fieldsDisabled = running || !initialized;
+  const fieldError = (field: AdvancedField): string | undefined => (error?.field === field ? error.message : undefined);
+
+  async function toggleGitAttribution(): Promise<void> {
+    if (!initialized || gitAttributionBusy) {
+      return;
+    }
+    setGitAttributionBusy(true);
+    setGitAttributionError("");
+    try {
+      await onGeneralSave({
+        git_attribution_enabled: !gitAttributionEnabled,
+      });
+    } catch (saveError) {
+      setGitAttributionError(
+        toastErrorMessage(saveError, t("settings.saveGitAttributionFailed")),
+      );
+    } finally {
+      setGitAttributionBusy(false);
+    }
+  }
+
   // Enter and blur both commit through onCommitField; the ref-guard inside
   // makes the blur that follows Enter a no-op, so there is one effective
   // commit per edit.
-  const commitOnEnter =
-    (field: AdvancedNumericField) =>
-    (event: ReactKeyboardEvent<HTMLInputElement>): void => {
-      if (event.key === "Enter") {
-        onCommitField(field);
-        event.currentTarget.blur();
-      }
-    };
+  const numericInput = (
+    field: AdvancedNumericField,
+    value: string,
+    onChange: (value: string) => void,
+    options: { label: string; placeholder?: string; inputMode?: "numeric" | "decimal" },
+  ): JSX.Element => (
+    <input
+      className="settings-input settings-input-num"
+      aria-label={options.label}
+      value={value}
+      aria-invalid={error?.field === field || undefined}
+      inputMode={options.inputMode ?? "numeric"}
+      placeholder={options.placeholder}
+      onChange={(event) => onChange(event.target.value)}
+      onBlur={() => onCommitField(field)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          onCommitField(field);
+          event.currentTarget.blur();
+        }
+      }}
+      disabled={fieldsDisabled}
+    />
+  );
+
   return (
-    <SettingsSection testID="settings-advanced">
-      <div className="settings-group">
-        <SettingsRow
-          title={t("settings.autoCompact")}
-          hint={t("settings.autoCompactDescription")}
-        >
-          <button
-            className="settings-switch"
-            type="button"
-            role="switch"
-            aria-checked={autoCompact}
-            disabled={running || !initialized}
-            onClick={onAutoCompactToggle}
+    <>
+      <SettingsPageHeader title={t("settings.runtime")} description={t("settings.runtimeDescription")} />
+      <SettingsSection title={t("settings.sectionCompaction")} testID="settings-advanced">
+        <SettingsGroup>
+          <SettingsRow
+            title={t("settings.autoCompact")}
+            hint={t("settings.autoCompactDescription")}
+            error={fieldError("autoCompact")}
           >
-            <span className="settings-switch-thumb" aria-hidden="true" />
-            <span className="sr-only">{autoCompact ? t("settings.disableAutoCompact") : t("settings.enableAutoCompact")}</span>
-          </button>
-        </SettingsRow>
-        <SettingsRow
-          title={t("settings.compactThreshold")}
-          hint={t("settings.compactThresholdDescription")}
-        >
-          <input
-            className="settings-input settings-input-num"
-            value={compactThreshold}
-            inputMode="numeric"
-            placeholder={t("settings.automatic")}
-            onChange={(event) => onCompactThresholdChange(event.target.value)}
-            onBlur={() => onCommitField("compactThreshold")}
-            onKeyDown={commitOnEnter("compactThreshold")}
-            disabled={running || !initialized}
-          />
-        </SettingsRow>
-        <SettingsRow
-          title={t("settings.keepRecentContext")}
-          hint={t("settings.keepRecentContextDescription")}
-        >
-          <input
-            className="settings-input settings-input-num"
-            value={compactKeepRecent}
-            inputMode="numeric"
-            placeholder="20,000"
-            onChange={(event) => onCompactKeepRecentChange(event.target.value)}
-            onBlur={() => onCommitField("compactKeepRecent")}
-            onKeyDown={commitOnEnter("compactKeepRecent")}
-            disabled={running || !initialized}
-          />
-        </SettingsRow>
-        <SettingsRow
-          title={t("settings.providerContextLimit")}
-          description={`${providerContextWindowSource}${
-            providerContextWindowCurrent ? `；${t("settings.currentTokenLimit", { count: providerContextWindowCurrent })}` : ""
-          }`}
-        >
-          <input
-            className="settings-input settings-input-num"
-            value={providerContextWindow}
-            inputMode="numeric"
-            placeholder={t("settings.detectAutomatically")}
-            onChange={(event) => onProviderContextWindowChange(event.target.value)}
-            onBlur={() => onCommitField("providerContextWindow")}
-            onKeyDown={commitOnEnter("providerContextWindow")}
-            disabled={running || !initialized}
-          />
-        </SettingsRow>
-        <SettingsRow
-          title={t("settings.unknownModelLimit")}
-          hint={t("settings.unknownModelLimitDescription")}
-        >
-          <input
-            className="settings-input settings-input-num"
-            value={maxContextTokens}
-            inputMode="numeric"
-            placeholder={t("settings.automatic")}
-            onChange={(event) => onMaxContextTokensChange(event.target.value)}
-            onBlur={() => onCommitField("maxContextTokens")}
-            onKeyDown={commitOnEnter("maxContextTokens")}
-            disabled={running || !initialized}
-          />
-        </SettingsRow>
-        <SettingsRow
-          title={t("settings.maxSteps")}
-          hint={t("settings.unlimitedAtZero")}
-        >
-          <input
-            className="settings-input settings-input-num"
-            value={maxSteps}
-            inputMode="numeric"
-            onChange={(event) => onMaxStepsChange(event.target.value)}
-            onBlur={() => onCommitField("maxSteps")}
-            onKeyDown={commitOnEnter("maxSteps")}
-            disabled={running || !initialized}
-          />
-        </SettingsRow>
-        <SettingsRow title={t("settings.temperature")} hint={t("settings.temperatureRange")}>
-          <input
-            className="settings-input settings-input-num"
-            value={temperature}
-            inputMode="decimal"
-            placeholder={t("settings.automatic")}
-            onChange={(event) => onTemperatureChange(event.target.value)}
-            onBlur={() => onCommitField("temperature")}
-            onKeyDown={commitOnEnter("temperature")}
-            disabled={running || !initialized}
-          />
-        </SettingsRow>
-        {error ? (
-          <div className="settings-row settings-row-footer">
-            <div className="settings-error">{error}</div>
-          </div>
-        ) : null}
-      </div>
-    </SettingsSection>
+            <button
+              className="settings-switch"
+              type="button"
+              role="switch"
+              aria-checked={autoCompact}
+              disabled={fieldsDisabled}
+              onClick={onAutoCompactToggle}
+            >
+              <span className="settings-switch-thumb" aria-hidden="true" />
+              <span className="sr-only">{autoCompact ? t("settings.disableAutoCompact") : t("settings.enableAutoCompact")}</span>
+            </button>
+          </SettingsRow>
+          <SettingsRow
+            title={t("settings.compactThreshold")}
+            hint={t("settings.compactThresholdDescription")}
+            error={fieldError("compactThreshold")}
+          >
+            {numericInput("compactThreshold", compactThreshold, onCompactThresholdChange, {
+              label: t("settings.compactThreshold"),
+              placeholder: t("settings.automatic"),
+            })}
+          </SettingsRow>
+          <SettingsRow
+            title={t("settings.keepRecentContext")}
+            hint={t("settings.keepRecentContextDescription")}
+            error={fieldError("compactKeepRecent")}
+          >
+            {numericInput("compactKeepRecent", compactKeepRecent, onCompactKeepRecentChange, {
+              label: t("settings.keepRecentContext"),
+              placeholder: "20,000",
+            })}
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
+      <SettingsSection title={t("settings.sectionContextWindow")}>
+        <SettingsGroup>
+          <SettingsRow
+            title={t("settings.providerContextLimit")}
+            description={`${providerContextWindowSource}${
+              providerContextWindowCurrent ? `；${t("settings.currentTokenLimit", { count: providerContextWindowCurrent })}` : ""
+            }`}
+            error={fieldError("providerContextWindow")}
+          >
+            {numericInput("providerContextWindow", providerContextWindow, onProviderContextWindowChange, {
+              label: t("settings.providerContextLimit"),
+              placeholder: t("settings.detectAutomatically"),
+            })}
+          </SettingsRow>
+          <SettingsRow
+            title={t("settings.unknownModelLimit")}
+            hint={t("settings.unknownModelLimitDescription")}
+            error={fieldError("maxContextTokens")}
+          >
+            {numericInput("maxContextTokens", maxContextTokens, onMaxContextTokensChange, {
+              label: t("settings.unknownModelLimit"),
+              placeholder: t("settings.automatic"),
+            })}
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
+      <SettingsSection title={t("settings.sectionExecution")}>
+        <SettingsGroup>
+          <SettingsRow
+            title={t("settings.maxSteps")}
+            hint={t("settings.unlimitedAtZero")}
+            error={fieldError("maxSteps")}
+          >
+            {numericInput("maxSteps", maxSteps, onMaxStepsChange, { label: t("settings.maxSteps") })}
+          </SettingsRow>
+          <SettingsRow title={t("settings.temperature")} hint={t("settings.temperatureRange")} error={fieldError("temperature")}>
+            {numericInput("temperature", temperature, onTemperatureChange, {
+              label: t("settings.temperature"),
+              placeholder: t("settings.automatic"),
+              inputMode: "decimal",
+            })}
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
+      <SettingsSection title={t("settings.sectionGit")} testID="settings-git">
+        <SettingsGroup>
+          <SettingsRow
+            title={t("settings.gitAttribution")}
+            hint={t("settings.gitAttributionDescription")}
+            error={gitAttributionError}
+          >
+            <button
+              className="settings-switch"
+              type="button"
+              role="switch"
+              aria-checked={gitAttributionEnabled}
+              data-testid="settings-git-attribution"
+              disabled={!initialized || gitAttributionBusy}
+              onClick={() => void toggleGitAttribution()}
+            >
+              <span className="settings-switch-thumb" aria-hidden="true" />
+              <span className="sr-only">
+                {gitAttributionEnabled ? t("settings.disableGitAttribution") : t("settings.enableGitAttribution")}
+              </span>
+            </button>
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
+    </>
   );
 }
 
@@ -1837,59 +1906,214 @@ function SettingsAdvancedPage({
 /* -------------------------------------------------------------------------- */
 
 function SettingsGeneralPage({
-  initialized,
-  running,
   desktopBuild,
-  mcpServers,
-  mcpLoading,
-  mcpError,
-  mcpBusyServer,
   codexPets,
   codexPetsLoading,
   codexPetsError,
-  onGeneralSave,
-  onMCPAction,
-  onMCPAuthStart,
-  onMCPAuthFinish,
-  onMCPAuthRemove,
   onCodexPetsRefresh,
   onCodexPetsUpdate,
   copyState,
   onCopyVersion
 }: {
-  initialized: InitializeResult | undefined;
-  running: boolean;
   desktopBuild: DesktopBuildInfo | undefined;
-  mcpServers: MCPServerStatus[];
-  mcpLoading: boolean;
-  mcpError: string;
-  mcpBusyServer: string;
   codexPets: CodexPetsSnapshot | undefined;
   codexPetsLoading: boolean;
   codexPetsError: string;
-  onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
-  onMCPAction: (name: string, action: "connect" | "disconnect" | "refresh") => Promise<void>;
-  onMCPAuthStart: (name: string) => Promise<MCPAuthStartResult | undefined>;
-  onMCPAuthFinish: (name: string, state: string, code: string) => Promise<boolean>;
-  onMCPAuthRemove: (name: string) => Promise<void>;
   onCodexPetsRefresh: () => Promise<CodexPetsSnapshot>;
   onCodexPetsUpdate: (settings: CodexPetSettingsUpdate) => Promise<CodexPetsSnapshot>;
   copyState: CopyState;
   onCopyVersion: () => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
-  const generalSettings = initialized?.general_settings;
-  const configuredMCPEnabled = generalSettings?.mcp_server_enabled ?? {};
+  const [codexPetBusy, setCodexPetBusy] = useState(false);
+  const [codexPetLocalError, setCodexPetLocalError] = useState("");
+  const codexPetOptions = codexPets?.pets ?? [];
+  const codexPetSelectedID = codexPets?.selected_id ?? "";
+  const codexPetEnabled = Boolean(codexPets?.enabled);
+  const codexPetStatus = codexPetLocalError || codexPetsError;
+
+  async function refreshCodexPets(): Promise<void> {
+    setCodexPetBusy(true);
+    setCodexPetLocalError("");
+    try {
+      await onCodexPetsRefresh();
+    } catch (error) {
+      setCodexPetLocalError(error instanceof Error ? error.message : t("settings.refreshFailed"));
+    } finally {
+      setCodexPetBusy(false);
+    }
+  }
+
+  async function updateCodexPets(settings: CodexPetSettingsUpdate): Promise<void> {
+    setCodexPetBusy(true);
+    setCodexPetLocalError("");
+    try {
+      await onCodexPetsUpdate(settings);
+    } catch (error) {
+      setCodexPetLocalError(error instanceof Error ? error.message : t("settings.saveFailed"));
+    } finally {
+      setCodexPetBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <SettingsPageHeader title={t("settings.general")} />
+      <SettingsSection testID="settings-general">
+        <SettingsGroup>
+          <SettingsRow title={t("settings.language")}>
+            <LanguagePreferenceControl />
+          </SettingsRow>
+          {hostSupports("listCodexPets") ? <>
+          <SettingsRow
+            title={t("settings.codexPet")}
+            description={isTouchWebShell() ? undefined : t("settings.petSource", { path: codexPets?.home ?? "~/.wuu/pets" })}
+          >
+            {codexPetOptions.length > 0 ? (
+              <SelectMenu
+                className="settings-codex-pet-select"
+                triggerClassName="settings-select-trigger"
+                ariaLabel={t("settings.selectPet")}
+                dataTestid="settings-codex-pet-select"
+                value={codexPetSelectedID}
+                disabled={codexPetsLoading || codexPetBusy || !codexPetEnabled}
+                onChange={(next) => void updateCodexPets({ selected_id: next })}
+                options={codexPetOptions.map((pet) => ({
+                  value: pet.id,
+                  label: pet.display_name
+                }))}
+              />
+            ) : (
+              <span className="settings-row-control-value">{t("settings.noLocalPets")}</span>
+            )}
+            <button
+              className="settings-button settings-button-ghost settings-icon-button"
+              type="button"
+              title={t("settings.refreshPets")}
+              aria-label={t("settings.refreshPets")}
+              disabled={codexPetsLoading || codexPetBusy}
+              onClick={() => void refreshCodexPets()}
+            >
+              <RefreshCw className="icon" aria-hidden="true" />
+            </button>
+            <button
+              className="settings-switch"
+              type="button"
+              role="switch"
+              aria-checked={codexPetEnabled}
+              data-testid="settings-codex-pet-enabled"
+              disabled={codexPetsLoading || codexPetBusy || codexPetOptions.length === 0}
+              onClick={() => void updateCodexPets({ enabled: !codexPetEnabled })}
+            >
+              <span className="settings-switch-thumb" aria-hidden="true" />
+              <span className="sr-only">{codexPetEnabled ? t("settings.disablePet") : t("settings.enablePet")}</span>
+            </button>
+          </SettingsRow>
+          {codexPetsLoading ||
+          codexPetOptions.length === 0 ||
+          codexPets?.errors.length ||
+          codexPetStatus ? (
+            <div className="settings-row settings-row-block settings-row-note">
+              {codexPetsLoading ? <small className="settings-muted-line">{t("settings.loadingPets")}</small> : null}
+              {!codexPetsLoading && codexPetOptions.length === 0 ? (
+                <small className="settings-muted-line">
+                  {t("settings.petInstallHint")}
+                </small>
+              ) : null}
+              {codexPets?.errors.length ? (
+                <small className="settings-muted-line settings-error">
+                  {codexPets.errors[0]}
+                </small>
+              ) : null}
+              {codexPetStatus ? <small className="settings-muted-line settings-error">{codexPetStatus}</small> : null}
+            </div>
+          ) : null}
+          </> : null}
+        </SettingsGroup>
+      </SettingsSection>
+
+      <SettingsSection title={t("settings.about")} testID="settings-about">
+        <SettingsGroup>
+          <SettingsRow title={t("settings.version")}>
+            <span className="settings-row-control-value">
+              {desktopBuild ? versionLabel(desktopBuild.version) : t("settings.loading")}
+            </span>
+            <button
+              className="settings-button"
+              type="button"
+              aria-label={t("settings.copyVersion")}
+              onClick={() => void onCopyVersion()}
+              disabled={!desktopBuild || copyState === "copying"}
+            >
+              {copyState === "copied" ? t("settings.copied") : t("settings.copy")}
+            </button>
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
+    </>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Appearance page                                                            */
+/* -------------------------------------------------------------------------- */
+
+function SettingsAppearancePage(): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <>
+      <SettingsPageHeader title={t("settings.appearance")} />
+      <SettingsSection title={t("settings.sectionTheme")} testID="settings-appearance">
+        <ThemePreferenceControl />
+      </SettingsSection>
+      {isTouchWebShell() ? null : (
+        <SettingsSection title={t("settings.sectionBackground")} testID="settings-background">
+          <SettingsGroup><BackgroundSettings /></SettingsGroup>
+        </SettingsSection>
+      )}
+      <AppearanceTypography section="text" />
+      <AppearanceTypography section="motion" />
+    </>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  MCP servers page                                                           */
+/* -------------------------------------------------------------------------- */
+
+function SettingsMCPPage({
+  initialized,
+  running,
+  mcpServers,
+  mcpLoading,
+  mcpError,
+  mcpBusyServer,
+  onGeneralSave,
+  onMCPAction,
+  onMCPAuthStart,
+  onMCPAuthFinish,
+  onMCPAuthRemove,
+}: {
+  initialized: InitializeResult | undefined;
+  running: boolean;
+  mcpServers: MCPServerStatus[];
+  mcpLoading: boolean;
+  mcpError: string;
+  mcpBusyServer: string;
+  onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
+  onMCPAction: (name: string, action: "connect" | "disconnect" | "refresh") => Promise<void>;
+  onMCPAuthStart: (name: string) => Promise<MCPAuthStartResult | undefined>;
+  onMCPAuthFinish: (name: string, state: string, code: string) => Promise<boolean>;
+  onMCPAuthRemove: (name: string) => Promise<void>;
+}): JSX.Element {
+  const { t } = useI18n();
+  const configuredMCPEnabled = initialized?.general_settings?.mcp_server_enabled ?? {};
   const configuredMCPKey = stableBoolRecordSignature(configuredMCPEnabled);
   const [mcpEnabledDraft, setMCPEnabledDraft] = useState<Record<string, boolean>>(() => ({ ...configuredMCPEnabled }));
   const [mcpToggleBusy, setMCPToggleBusy] = useState("");
   const [mcpToggleError, setMCPToggleError] = useState("");
   const [mcpAuthStates, setMCPAuthStates] = useState<Record<string, string>>({});
   const [mcpAuthCodes, setMCPAuthCodes] = useState<Record<string, string>>({});
-  const [codexPetBusy, setCodexPetBusy] = useState(false);
-  const [codexPetLocalError, setCodexPetLocalError] = useState("");
-  const [gitAttributionBusy, setGitAttributionBusy] = useState(false);
-  const [gitAttributionError, setGitAttributionError] = useState("");
 
   useEffect(() => {
     setMCPEnabledDraft({ ...configuredMCPEnabled });
@@ -1908,25 +2132,6 @@ function SettingsGeneralPage({
       setMCPToggleError(toastErrorMessage(toggleError, t("settings.saveFailed")));
     } finally {
       setMCPToggleBusy("");
-    }
-  }
-
-  async function toggleGitAttribution(): Promise<void> {
-    if (!initialized || gitAttributionBusy) {
-      return;
-    }
-    setGitAttributionBusy(true);
-    setGitAttributionError("");
-    try {
-      await onGeneralSave({
-        git_attribution_enabled: !gitAttributionEnabled,
-      });
-    } catch (error) {
-      setGitAttributionError(
-        toastErrorMessage(error, t("settings.saveGitAttributionFailed")),
-      );
-    } finally {
-      setGitAttributionBusy(false);
     }
   }
 
@@ -1955,151 +2160,14 @@ function SettingsGeneralPage({
   const mcpRowNames = Array.from(
     new Set([...mcpServers.map((server) => server.name), ...Object.keys(mcpEnabledDraft)]),
   ).sort((a, b) => a.localeCompare(b));
-  const codexPetOptions = codexPets?.pets ?? [];
-  const codexPetSelectedID = codexPets?.selected_id ?? "";
-  const codexPetEnabled = Boolean(codexPets?.enabled);
-  const codexPetStatus = codexPetLocalError || codexPetsError;
-  const gitAttributionEnabled = generalSettings?.git_attribution_enabled ?? true;
-
-  async function refreshCodexPets(): Promise<void> {
-    setCodexPetBusy(true);
-    setCodexPetLocalError("");
-    try {
-      await onCodexPetsRefresh();
-    } catch (error) {
-      setCodexPetLocalError(error instanceof Error ? error.message : t("settings.refreshFailed"));
-    } finally {
-      setCodexPetBusy(false);
-    }
-  }
-
-  async function updateCodexPets(settings: CodexPetSettingsUpdate): Promise<void> {
-    setCodexPetBusy(true);
-    setCodexPetLocalError("");
-    try {
-      await onCodexPetsUpdate(settings);
-    } catch (error) {
-      setCodexPetLocalError(error instanceof Error ? error.message : t("settings.saveFailed"));
-    } finally {
-      setCodexPetBusy(false);
-    }
-  }
 
   return (
     <>
-      <SettingsSection title={t("settings.appearance")} testID="settings-appearance">
-        <ThemePreferenceControl />
-        {!isTouchWebShell() && <SettingsCard><BackgroundSettings /></SettingsCard>}
-      </SettingsSection>
-      <SettingsSection title={t("settings.typography")} testID="settings-typography">
-        <SettingsCard><AppearanceTypography /></SettingsCard>
-      </SettingsSection>
-      <SettingsSection title={t("settings.fonts")} testID="settings-fonts">
-        <SettingsCard><AppearanceTypography section="fonts" /></SettingsCard>
-      </SettingsSection>
-      <SettingsSection title={t("settings.personalization")} testID="settings-personalization">
-        <SettingsCard>
-          <AppearanceTypography section="motion" />
-          <SettingsRow title={t("settings.language")}>
-            <LanguagePreferenceControl />
-          </SettingsRow>
-          {hostSupports("listCodexPets") ? <>
-          <SettingsRow
-            title={t("settings.codexPet")}
-            description={isTouchWebShell() ? undefined : t("settings.petSource", { path: codexPets?.home ?? "~/.wuu/pets" })}
-          >
-            {codexPetOptions.length > 0 ? (
-              <SelectMenu
-                className="settings-codex-pet-select"
-                triggerClassName="settings-select-trigger"
-                ariaLabel={t("settings.selectPet")}
-                dataTestid="settings-codex-pet-select"
-                value={codexPetSelectedID}
-                disabled={codexPetsLoading || codexPetBusy || !codexPetEnabled}
-                onChange={(next) => void updateCodexPets({ selected_id: next })}
-                options={codexPetOptions.map((pet) => ({
-                  value: pet.id,
-                  label: pet.display_name
-                }))}
-              />
-            ) : (
-              <span className="settings-inline-flag">{t("settings.noLocalPets")}</span>
-            )}
-            <button
-              className="settings-button settings-icon-button"
-              type="button"
-              title={t("settings.refreshPets")}
-              aria-label={t("settings.refreshPets")}
-              disabled={codexPetsLoading || codexPetBusy}
-              onClick={() => void refreshCodexPets()}
-            >
-              <RefreshCw size={15} aria-hidden="true" />
-            </button>
-            <button
-              className="settings-switch"
-              type="button"
-              role="switch"
-              aria-checked={codexPetEnabled}
-              data-testid="settings-codex-pet-enabled"
-              disabled={codexPetsLoading || codexPetBusy || codexPetOptions.length === 0}
-              onClick={() => void updateCodexPets({ enabled: !codexPetEnabled })}
-            >
-              <span className="settings-switch-thumb" aria-hidden="true" />
-              <span className="sr-only">{codexPetEnabled ? t("settings.disablePet") : t("settings.enablePet")}</span>
-            </button>
-          </SettingsRow>
-          {codexPetsLoading ||
-          (!codexPetsLoading && codexPetOptions.length === 0) ||
-          codexPets?.errors.length ||
-          codexPetStatus ? (
-            <div className="settings-row settings-row-block">
-              {codexPetsLoading ? <small className="settings-muted-line">{t("settings.loadingPets")}</small> : null}
-              {!codexPetsLoading && codexPetOptions.length === 0 ? (
-                <small className="settings-muted-line">
-                  {t("settings.petInstallHint")}
-                </small>
-              ) : null}
-              {codexPets?.errors.length ? (
-                <small className="settings-muted-line settings-error">
-                  {codexPets.errors[0]}
-                </small>
-              ) : null}
-              {codexPetStatus ? <small className="settings-muted-line settings-error">{codexPetStatus}</small> : null}
-            </div>
-          ) : null}
-          </> : null}
-        </SettingsCard>
-      </SettingsSection>
-
-      <SettingsSection title={t("settings.behavior")} testID="settings-general">
-        <SettingsCard>
-          <SettingsRow
-            title={t("settings.gitAttribution")}
-            hint={t("settings.gitAttributionDescription")}
-            error={gitAttributionError}
-          >
-            <button
-              className="settings-switch"
-              type="button"
-              role="switch"
-              aria-checked={gitAttributionEnabled}
-              data-testid="settings-git-attribution"
-              disabled={!initialized || gitAttributionBusy}
-              onClick={() => void toggleGitAttribution()}
-            >
-              <span className="settings-switch-thumb" aria-hidden="true" />
-              <span className="sr-only">
-                {gitAttributionEnabled ? t("settings.disableGitAttribution") : t("settings.enableGitAttribution")}
-              </span>
-            </button>
-          </SettingsRow>
-        </SettingsCard>
-      </SettingsSection>
-
-      <SettingsSection title={t("settings.mcpServers")} testID="settings-mcp">
-        <SettingsCard>
+      <SettingsPageHeader title={t("settings.mcpServers")} description={t("settings.mcpDescription")} />
+      <SettingsSection testID="settings-mcp">
+        <SettingsGroup>
           {mcpLoading && mcpRowNames.length === 0 ? (
-            <div className="settings-mcp-empty">{t("settings.loading")}</div>
+            <p className="settings-group-empty">{t("settings.loading")}</p>
           ) : mcpRowNames.length > 0 ? (
             mcpRowNames.map((name) => {
               const server = mcpServerByName.get(name);
@@ -2113,100 +2181,100 @@ function SettingsGeneralPage({
                 <SettingsRow
                   key={name}
                   title={name}
-                  description={server ? formatMCPServerMeta(server, t) : undefined}
+                  description={server ? (
+                    <>
+                      <SettingsStatus tone={mcpStateTone(server.state)}>{mcpStateLabel(server.state, t)}</SettingsStatus>
+                      {` · ${formatMCPServerMeta(server, t)}`}
+                    </>
+                  ) : undefined}
                   error={server?.error}
                 >
                   {server ? (
-                    <span className="settings-row-control-value">
-                      <span className={`settings-status-pill ${mcpStateTone(server.state)}`}>
-                        {mcpStateLabel(server.state, t)}
-                      </span>
-                    </span>
-                  ) : null}
-                  {server ? (
-                    <>
-                      {oauthPending ? (
-                        <>
-                          <input
-                            className="settings-input settings-mcp-code-input"
-                            aria-label={t("mcp.authCodeNamed", { name })}
-                            autoComplete="off"
-                            placeholder={t("mcp.authCode")}
-                            value={oauthCode}
-                            disabled={busy}
-                            onChange={(event) => {
-                              const value = event.currentTarget.value;
-                              setMCPAuthCodes((codes) => ({ ...codes, [name]: value }));
-                            }}
-                          />
-                          <button
-                            className="settings-button settings-icon-button"
-                            type="button"
-                            title={t("mcp.finishLogin")}
-                            aria-label={t("mcp.finishLoginNamed", { name })}
-                            disabled={busy || oauthCode.trim() === ""}
-                            onClick={() => void completeMCPAuth(name)}
-                          >
-                            <Check size={15} aria-hidden="true" />
-                          </button>
-                          <button
-                            className="settings-button settings-icon-button"
-                            type="button"
-                            title={t("mcp.cancelLogin")}
-                            aria-label={t("mcp.cancelLoginNamed", { name })}
-                            disabled={busy}
-                            onClick={() => {
-                              setMCPAuthStates((states) => withoutRecordKey(states, name));
-                              setMCPAuthCodes((codes) => withoutRecordKey(codes, name));
-                            }}
-                          >
-                            <X size={15} aria-hidden="true" />
-                          </button>
-                        </>
-                      ) : server.auth_status === "not_logged_in" ? (
-                        <button
-                          className="settings-button settings-icon-button"
-                          type="button"
-                          title={t("mcp.oauthLogin")}
-                          aria-label={t("mcp.loginNamed", { name })}
-                          disabled={busy || disabledByConfig}
-                          onClick={() => void beginMCPAuth(name)}
-                        >
-                          <KeyRound size={15} aria-hidden="true" />
-                        </button>
-                      ) : server.auth_status === "oauth" ? (
-                        <button
-                          className="settings-button settings-icon-button"
-                          type="button"
-                          title={t("mcp.removeLogin")}
-                          aria-label={t("mcp.removeLoginNamed", { name })}
+                    oauthPending ? (
+                      <>
+                        <input
+                          className="settings-input settings-mcp-code-input"
+                          aria-label={t("mcp.authCodeNamed", { name })}
+                          autoComplete="off"
+                          placeholder={t("mcp.authCode")}
+                          value={oauthCode}
                           disabled={busy}
-                          onClick={() => void onMCPAuthRemove(name)}
+                          onChange={(event) => {
+                            const value = event.currentTarget.value;
+                            setMCPAuthCodes((codes) => ({ ...codes, [name]: value }));
+                          }}
+                        />
+                        <button
+                          className="settings-button settings-button-ghost settings-icon-button"
+                          type="button"
+                          title={t("mcp.finishLogin")}
+                          aria-label={t("mcp.finishLoginNamed", { name })}
+                          disabled={busy || oauthCode.trim() === ""}
+                          onClick={() => void completeMCPAuth(name)}
                         >
-                          <X size={15} aria-hidden="true" />
+                          <Check className="icon" aria-hidden="true" />
                         </button>
-                      ) : null}
-                      <button
-                        className="settings-button settings-icon-button"
-                        type="button"
-                        title={t("mcp.refresh")}
-                        aria-label={t("mcp.refreshNamed", { name })}
-                        disabled={busy || disabledByConfig}
-                        onClick={() => void onMCPAction(name, "refresh")}
-                      >
-                        <RefreshCw size={15} aria-hidden="true" />
-                      </button>
-                      <button
-                        className="settings-button settings-icon-button"
-                        type="button"
-                        title={disabledByConfig ? t("mcp.disabledByConfig") : connected ? t("mcp.disconnect") : t("mcp.connect")}
-                        aria-label={`${connected ? t("mcp.disconnect") : t("mcp.connect")} ${name}`}
-                        disabled={busy || disabledByConfig}
-                        onClick={() => void onMCPAction(name, connected ? "disconnect" : "connect")}
-                      >
-                        {connected ? <PlugZap size={15} aria-hidden="true" /> : <Plug size={15} aria-hidden="true" />}
-                      </button>
-                    </>
+                        <button
+                          className="settings-button settings-button-ghost settings-icon-button"
+                          type="button"
+                          title={t("mcp.cancelLogin")}
+                          aria-label={t("mcp.cancelLoginNamed", { name })}
+                          disabled={busy}
+                          onClick={() => {
+                            setMCPAuthStates((states) => withoutRecordKey(states, name));
+                            setMCPAuthCodes((codes) => withoutRecordKey(codes, name));
+                          }}
+                        >
+                          <X className="icon" aria-hidden="true" />
+                        </button>
+                      </>
+                    ) : (
+                      <div className="settings-row-actions">
+                        {server.auth_status === "not_logged_in" ? (
+                          <button
+                            className="settings-button settings-button-ghost settings-icon-button"
+                            type="button"
+                            title={t("mcp.oauthLogin")}
+                            aria-label={t("mcp.loginNamed", { name })}
+                            disabled={busy || disabledByConfig}
+                            onClick={() => void beginMCPAuth(name)}
+                          >
+                            <KeyRound className="icon" aria-hidden="true" />
+                          </button>
+                        ) : server.auth_status === "oauth" ? (
+                          <button
+                            className="settings-button settings-button-ghost settings-icon-button"
+                            type="button"
+                            title={t("mcp.removeLogin")}
+                            aria-label={t("mcp.removeLoginNamed", { name })}
+                            disabled={busy}
+                            onClick={() => void onMCPAuthRemove(name)}
+                          >
+                            <LogOut className="icon" aria-hidden="true" />
+                          </button>
+                        ) : null}
+                        <button
+                          className="settings-button settings-button-ghost settings-icon-button"
+                          type="button"
+                          title={t("mcp.refresh")}
+                          aria-label={t("mcp.refreshNamed", { name })}
+                          disabled={busy || disabledByConfig}
+                          onClick={() => void onMCPAction(name, "refresh")}
+                        >
+                          <RefreshCw className="icon" aria-hidden="true" />
+                        </button>
+                        <button
+                          className="settings-button settings-button-ghost settings-icon-button"
+                          type="button"
+                          title={disabledByConfig ? t("mcp.disabledByConfig") : connected ? t("mcp.disconnect") : t("mcp.connect")}
+                          aria-label={`${connected ? t("mcp.disconnect") : t("mcp.connect")} ${name}`}
+                          disabled={busy || disabledByConfig}
+                          onClick={() => void onMCPAction(name, connected ? "disconnect" : "connect")}
+                        >
+                          {connected ? <PlugZap className="icon" aria-hidden="true" /> : <Plug className="icon" aria-hidden="true" />}
+                        </button>
+                      </div>
+                    )
                   ) : null}
                   <button
                     className="settings-switch"
@@ -2224,30 +2292,11 @@ function SettingsGeneralPage({
               );
             })
           ) : (
-            <div className="settings-mcp-empty">{t("settings.noMcpServers")}</div>
+            <p className="settings-group-empty">{t("settings.noMcpServers")}</p>
           )}
-          {mcpError ? <div className="settings-mcp-empty settings-mcp-error">{mcpError}</div> : null}
-          {mcpToggleError ? <div className="settings-mcp-empty settings-mcp-error">{mcpToggleError}</div> : null}
-        </SettingsCard>
-      </SettingsSection>
-
-      <SettingsSection title={t("settings.about")} testID="settings-about">
-        <SettingsCard>
-          <SettingsRow title={t("settings.version")}>
-            <span className="settings-row-control-value">
-              {desktopBuild ? versionLabel(desktopBuild.version) : t("settings.loading")}
-            </span>
-            <button
-              className="settings-button"
-              type="button"
-              aria-label={t("settings.copyVersion")}
-              onClick={() => void onCopyVersion()}
-              disabled={!desktopBuild || copyState === "copying"}
-            >
-              {copyState === "copied" ? t("settings.copied") : t("settings.copy")}
-            </button>
-          </SettingsRow>
-        </SettingsCard>
+        </SettingsGroup>
+        {mcpError ? <p className="settings-error" role="alert">{mcpError}</p> : null}
+        {mcpToggleError ? <p className="settings-error" role="alert">{mcpToggleError}</p> : null}
       </SettingsSection>
     </>
   );
@@ -2326,126 +2375,135 @@ function SettingsArchivePage({
   const archivedItemCount = sortedThreads.length + (archiveSection === "ordinary" ? sortedRooms.length : 0);
   const noMatches = archivedItemCount > 0 && groups.length === 0 && filteredRooms.length === 0;
 
+  const archiveSections = [
+    { value: "ordinary", label: t("settings.ordinaryArchive") },
+    { value: "agents", label: t("settings.agentArchive") },
+  ];
+
   return (
-    <div className="settings-archive-page">
-      <SelectMenu
-        value={archiveSection}
-        onChange={(value) => { setArchiveSection(value); setProjectFilter("all"); }}
-        ariaLabel={t("settings.archiveSection")}
-        options={[
-          { value: "ordinary", label: t("settings.ordinaryArchive") },
-          { value: "agents", label: t("settings.agentArchive") },
-        ]}
-      />
-      <div className="settings-archive-toolbar" role="search" aria-label={t("settings.archiveFilter")}>
-        <label className="settings-archive-search">
-          <Search className="icon" aria-hidden="true" />
-          <span className="sr-only">{t("settings.archiveSearch")}</span>
-          <input
-            type="search"
-            value={query}
-            placeholder={t("settings.archiveSearch")}
-            onChange={(event) => setQuery(event.currentTarget.value)}
+    <>
+      <SettingsPageHeader title={t("settings.archive")} />
+      <div className="settings-archive-page">
+        <div className="settings-archive-toolbar" role="search" aria-label={t("settings.archiveFilter")}>
+          <div className="theme-segmented" role="group" aria-label={t("settings.archiveSection")}>
+            {archiveSections.map((section) => (
+              <button
+                key={section.value}
+                type="button"
+                aria-pressed={archiveSection === section.value}
+                onClick={() => { setArchiveSection(section.value); setProjectFilter("all"); }}
+              >
+                {section.label}
+              </button>
+            ))}
+          </div>
+          <label className="settings-archive-search">
+            <Search className="icon" aria-hidden="true" />
+            <span className="sr-only">{t("settings.archiveSearch")}</span>
+            <input
+              type="search"
+              value={query}
+              placeholder={t("settings.archiveSearch")}
+              onChange={(event) => setQuery(event.currentTarget.value)}
+            />
+          </label>
+          <SelectMenu
+            className="settings-archive-project-filter"
+            triggerClassName="settings-select-trigger"
+            value={projectFilter}
+            onChange={setProjectFilter}
+            ariaLabel={t("settings.archiveProjectFilter")}
+            options={[{ value: "all", label: t("settings.allProjects") }, ...projectOptions]}
+            flip
           />
-        </label>
-        <SelectMenu
-          className="settings-archive-project-filter"
-          triggerClassName="settings-archive-filter-trigger"
-          value={projectFilter}
-          onChange={setProjectFilter}
-          ariaLabel={t("settings.archiveProjectFilter")}
-          options={[{ value: "all", label: t("settings.allProjects") }, ...projectOptions]}
-          flip
-        />
-      </div>
-      {archivedItemCount === 0 || noMatches ? (
-        <div className="settings-archive-empty" role="status">
-          <Archive className="settings-archive-empty-icon" aria-hidden="true" />
-          <p className="settings-archive-empty-title">
-            {noMatches ? t("settings.noArchiveMatches") : t("settings.noArchivedItems")}
-          </p>
-          {noMatches || archiveSection === "agents" || isTouchWebShell() ? null : (
-            <p className="settings-archive-empty-hint">
-              {t("settings.archiveHint")}
-            </p>
-          )}
         </div>
-      ) : (
-        <div className="settings-archive-groups" aria-label={t("settings.archivedList")}>
-          {filteredRooms.length > 0 ? (
-            <section className="settings-archive-group" data-archive-kind="rooms">
-              <header className="settings-archive-group-header">
-                <div className="settings-archive-group-name">
-                  <Hash className="icon" aria-hidden="true" />
-                  <span>{t("settings.archivedRooms")}</span>
-                </div>
-                <span className="settings-archive-group-count">
-                  {t("settings.roomCount", { count: filteredRooms.length })}
-                </span>
-              </header>
-              <div className="settings-archive-list">
-                {filteredRooms.map((room) => (
-                  <div className="settings-archive-row" key={room.id}>
-                    <div className="settings-archive-row-copy">
-                      <TruncatedText className="settings-archive-title" text={room.name} />
-                      <time className="settings-archive-time" dateTime={room.created_at}>
-                        {formatArchiveTime(room.created_at, formatDate)}
-                      </time>
-                    </div>
-                    <button
-                      type="button"
-                      className="settings-button settings-archive-restore"
-                      aria-label={t("settings.restoreRoom", { title: room.name })}
-                      onClick={() => onUnarchiveRoom(room)}
-                    >
-                      <Archive className="icon-sm" aria-hidden="true" />
-                      {t("settings.restore")}
-                    </button>
+        {archivedItemCount === 0 || noMatches ? (
+          <div className="settings-archive-empty" role="status">
+            <Archive className="settings-archive-empty-icon" aria-hidden="true" />
+            <p className="settings-archive-empty-title">
+              {noMatches ? t("settings.noArchiveMatches") : t("settings.noArchivedItems")}
+            </p>
+            {noMatches || archiveSection === "agents" || isTouchWebShell() ? null : (
+              <p className="settings-archive-empty-hint">
+                {t("settings.archiveHint")}
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="settings-archive-groups" aria-label={t("settings.archivedList")}>
+            {filteredRooms.length > 0 ? (
+              <section className="settings-archive-group" data-archive-kind="rooms">
+                <header className="settings-archive-group-header">
+                  <div className="settings-archive-group-name">
+                    <Hash className="icon" aria-hidden="true" />
+                    <span>{t("settings.archivedRooms")}</span>
                   </div>
-                ))}
-              </div>
-            </section>
-          ) : null}
-          {groups.map((group) => (
-            <section className="settings-archive-group" key={group.projectID}>
-              <header className="settings-archive-group-header">
-                <div className="settings-archive-group-name">
-                  <Folder className="icon" aria-hidden="true" />
-                  <span>{group.projectName}</span>
-                </div>
-                <span className="settings-archive-group-count">
-                  {t("settings.conversationCount", { count: group.threads.length })}
-                </span>
-              </header>
-              <div className="settings-archive-list">
-                {group.threads.map((thread) => {
-                  const title = archiveThreadTitle(thread, t("settings.untitledConversation"));
-                  return (
-                    <div className="settings-archive-row" key={thread.id}>
+                  <span className="settings-archive-group-count">
+                    {t("settings.roomCount", { count: filteredRooms.length })}
+                  </span>
+                </header>
+                <div className="settings-group settings-archive-list">
+                  {filteredRooms.map((room) => (
+                    <div className="settings-archive-row" key={room.id}>
                       <div className="settings-archive-row-copy">
-                        <TruncatedText className="settings-archive-title" text={title} />
-                        <time className="settings-archive-time" dateTime={thread.updated_at}>
-                          {formatArchiveTime(thread.updated_at, formatDate)}
+                        <TruncatedText className="settings-archive-title" text={room.name} />
+                        <time className="settings-archive-time" dateTime={room.created_at}>
+                          {formatArchiveTime(room.created_at, formatDate)}
                         </time>
                       </div>
                       <button
                         type="button"
                         className="settings-button settings-archive-restore"
-                        aria-label={t("settings.restoreConversation", { title })}
-                        onClick={() => onUnarchiveThread(thread)}
+                        aria-label={t("settings.restoreRoom", { title: room.name })}
+                        onClick={() => onUnarchiveRoom(room)}
                       >
-                        <Archive className="icon-sm" aria-hidden="true" />
                         {t("settings.restore")}
                       </button>
                     </div>
-                  );
-                })}
-              </div>
-            </section>
-          ))}
-        </div>
-      )}
-    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+            {groups.map((group) => (
+              <section className="settings-archive-group" key={group.projectID}>
+                <header className="settings-archive-group-header">
+                  <div className="settings-archive-group-name">
+                    <Folder className="icon" aria-hidden="true" />
+                    <span>{group.projectName}</span>
+                  </div>
+                  <span className="settings-archive-group-count">
+                    {t("settings.conversationCount", { count: group.threads.length })}
+                  </span>
+                </header>
+                <div className="settings-group settings-archive-list">
+                  {group.threads.map((thread) => {
+                    const title = archiveThreadTitle(thread, t("settings.untitledConversation"));
+                    return (
+                      <div className="settings-archive-row" key={thread.id}>
+                        <div className="settings-archive-row-copy">
+                          <TruncatedText className="settings-archive-title" text={title} />
+                          <time className="settings-archive-time" dateTime={thread.updated_at}>
+                            {formatArchiveTime(thread.updated_at, formatDate)}
+                          </time>
+                        </div>
+                        <button
+                          type="button"
+                          className="settings-button settings-archive-restore"
+                          aria-label={t("settings.restoreConversation", { title })}
+                          onClick={() => onUnarchiveThread(thread)}
+                        >
+                          {t("settings.restore")}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -2561,188 +2619,209 @@ function SettingsUsagePage({
       }
     }
   }
+  const header = <SettingsPageHeader title={t("settings.usage")} />;
   if (loading) {
     return (
-      <div className="settings-usage-page settings-usage-loading" data-testid="settings-usage" aria-busy="true">
-        <SettingsUsageSkeleton />
-      </div>
+      <>
+        {header}
+        <div className="settings-usage-page settings-usage-loading" data-testid="settings-usage" aria-busy="true">
+          <SettingsUsageSkeleton />
+        </div>
+      </>
     );
   }
   if (!usage) {
     return (
-      <div className="settings-usage-page" data-testid="settings-usage">
-        <div className="settings-empty" role={error ? "alert" : undefined}>
-          {error || t("settings.noUsage")}
+      <>
+        {header}
+        <div className="settings-usage-page" data-testid="settings-usage">
+          <div className="settings-empty" role={error ? "alert" : undefined}>
+            {error || t("settings.noUsage")}
+          </div>
         </div>
-      </div>
+      </>
     );
   }
   return (
+    <>
+    {header}
     <div className="settings-usage-page" data-testid="settings-usage">
-      {usage && (
-        <div className="settings-usage-stats">
-          <UsageStat
-            label={t("settings.usageInput")}
-            value={formatCompactUsageNumber(usage.metrics.input_tokens, locale)}
-            title={formatUsageValue(usage.metrics.input_tokens)}
-          />
-          <UsageStat
-            label={t("settings.usageContext")}
-            value={formatCompactUsageNumber(usage.metrics.context_tokens, locale)}
-            title={formatUsageValue(usage.metrics.context_tokens)}
-          />
-          <UsageStat
-            label={t("settings.usageOutput")}
-            value={formatCompactUsageNumber(usage.metrics.output_tokens, locale)}
-            title={formatUsageValue(usage.metrics.output_tokens)}
-          />
-          <UsageStat label={t("settings.cacheHitRate")} value={formatPercent(usage.metrics.cache_hit_rate)} />
-        </div>
-      )}
-
-      <section className="settings-usage-chart" aria-labelledby="settings-usage-trend-title">
-        <div className="settings-usage-chart-header">
-          <h2 id="settings-usage-trend-title" className="settings-usage-table-title">
-            {t("settings.usageTrend")}
-          </h2>
-          <span>{t("settings.last30Days")}</span>
-        </div>
-        <div className="settings-usage-trend" role="list" aria-label={t("settings.usageTrend")}>
-          {usageTrend.map((day) => {
-            const total = usageTokenTotal(day);
-            const height = maxTrendTotal > 0 && total > 0 ? Math.max(3, (total / maxTrendTotal) * 100) : 0;
-            return (
-              <Tooltip content={formatUsageDayTitle(day, t, formatCompactUsageValue)} key={day.date}>
-                <span
-                  className="settings-usage-trend-day"
-                  role="listitem"
-                  aria-label={formatUsageDayTitle(day, t, formatCompactUsageValue)}
-                >
-                  <i style={{ height: `${height}%` }} />
-                </span>
-              </Tooltip>
-            );
-          })}
-        </div>
-        <div className="settings-usage-chart-axis" aria-hidden="true">
-          <span>{formatUsageChartDate(usageTrend[0]?.date, locale)}</span>
-          <span>{formatUsageChartDate(usageTrend.at(-1)?.date, locale)}</span>
-        </div>
-      </section>
-
-      <div className="settings-heatmap-panel">
-        {/* Month labels row */}
-        <div
-          className="settings-heatmap-months"
-          aria-hidden="true"
-          style={{ "--heatmap-cols": heatmapCols } as CSSProperties}
-        >
-          {monthLabels.map(({ col, label }) => (
-            <span
-              key={col}
-              className="settings-heatmap-month-label"
-              style={{ gridColumn: col + 1 } as CSSProperties}
-            >
-              {label}
-            </span>
-          ))}
-        </div>
-        {/* Grid */}
-        <div
-          ref={heatmapRef}
-          className="settings-usage-heatmap"
-          aria-label={t("settings.usageHeatmap")}
-          role="grid"
-          style={{
-            "--heatmap-cols": heatmapCols,
-            ...(heatmapHeight !== undefined ? { height: `${heatmapHeight}px` } : {})
-          } as CSSProperties}
-        >
-          {heatmap.map((day) => (
-            <Tooltip content={formatHeatmapTitle(day, t, formatCompactUsageValue)} key={day.date}>
-              <span
-                className="settings-usage-heatmap-cell"
-                data-level={day.level}
-                role="gridcell"
-                aria-label={formatHeatmapTitle(day, t, formatCompactUsageValue)}
-              />
-            </Tooltip>
-          ))}
-        </div>
-        <div className="settings-heatmap-legend" aria-hidden="true">
-          <span>{t("settings.less")}</span>
-          {[0, 1, 2, 3, 4].map((level) => (
-            <i className="settings-heatmap-legend-cell" data-level={level} key={level} />
-          ))}
-          <span>{t("settings.more")}</span>
-        </div>
+      <div className="settings-group settings-usage-stats">
+        <UsageStat
+          label={t("settings.usageInput")}
+          value={formatCompactUsageNumber(usage.metrics.input_tokens, locale)}
+          title={formatUsageValue(usage.metrics.input_tokens)}
+        />
+        <UsageStat
+          label={t("settings.usageContext")}
+          value={formatCompactUsageNumber(usage.metrics.context_tokens, locale)}
+          title={formatUsageValue(usage.metrics.context_tokens)}
+        />
+        <UsageStat
+          label={t("settings.usageOutput")}
+          value={formatCompactUsageNumber(usage.metrics.output_tokens, locale)}
+          title={formatUsageValue(usage.metrics.output_tokens)}
+        />
+        <UsageStat label={t("settings.cacheHitRate")} value={formatPercent(usage.metrics.cache_hit_rate)} />
       </div>
 
-      <section className="settings-skill-usage" aria-labelledby="settings-skill-usage-title">
-        <div className="settings-skill-usage-header">
-          <h2 id="settings-skill-usage-title" className="settings-usage-table-title">
-            {t("settings.skillUsage")}
+      <section className="settings-section settings-usage-chart" aria-labelledby="settings-usage-trend-title">
+        <header className="settings-section-header">
+          <h2 id="settings-usage-trend-title" className="settings-section-title">
+            {t("settings.usageTrend")}
           </h2>
-          <span className="settings-skill-usage-count">{t("settings.skillUsageCount")}</span>
-        </div>
-        {skillUsage.length ? (
-          <div className="settings-skill-usage-list">
-            {skillUsage.slice(0, 8).map((skill, index) => {
-              const count = Number.isFinite(skill.count) ? Math.max(0, skill.count) : undefined;
-              const width = count !== undefined && maxSkillCount > 0 ? Math.max(6, (count / maxSkillCount) * 100) : 0;
+          <span className="settings-section-meta">{t("settings.last30Days")}</span>
+        </header>
+        <div className="settings-group settings-usage-card">
+          <div className="settings-usage-trend" role="list" aria-label={t("settings.usageTrend")}>
+            {usageTrend.map((day) => {
+              const total = usageTokenTotal(day);
+              const height = maxTrendTotal > 0 && total > 0 ? Math.max(3, (total / maxTrendTotal) * 100) : 0;
               return (
-                <div className="settings-skill-usage-row" key={skill.name}>
-                  <div className="settings-skill-usage-label">
-                    <span className="settings-skill-usage-rank">{String(index + 1).padStart(2, "0")}</span>
-                    <strong>{skill.name}</strong>
-                  </div>
-                  <div className="settings-skill-usage-bar" aria-hidden="true">
-                    <span style={{ width: `${width}%` }} />
-                  </div>
-                  <span className="settings-skill-usage-value">{formatUsageNumber(count, formatNumber)}</span>
-                </div>
+                <Tooltip content={formatUsageDayTitle(day, t, formatCompactUsageValue)} key={day.date}>
+                  <span
+                    className="settings-usage-trend-day"
+                    role="listitem"
+                    aria-label={formatUsageDayTitle(day, t, formatCompactUsageValue)}
+                  >
+                    <i style={{ height: `${height}%` }} />
+                  </span>
+                </Tooltip>
               );
             })}
           </div>
-        ) : (
-          <div className="settings-skill-usage-empty">{t("settings.noSkillUsage")}</div>
-        )}
+          <div className="settings-usage-chart-axis" aria-hidden="true">
+            <span>{formatUsageChartDate(usageTrend[0]?.date, locale)}</span>
+            <span>{formatUsageChartDate(usageTrend.at(-1)?.date, locale)}</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="settings-section" aria-labelledby="settings-usage-heatmap-title">
+        <header className="settings-section-header">
+          <h2 id="settings-usage-heatmap-title" className="settings-section-title">
+            {t("settings.usageHeatmap")}
+          </h2>
+        </header>
+        <div className="settings-group settings-usage-card settings-heatmap-panel">
+          <div
+            className="settings-heatmap-months"
+            aria-hidden="true"
+            style={{ "--heatmap-cols": heatmapCols } as CSSProperties}
+          >
+            {monthLabels.map(({ col, label }) => (
+              <span
+                key={col}
+                className="settings-heatmap-month-label"
+                style={{ gridColumn: col + 1 } as CSSProperties}
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+          <div
+            ref={heatmapRef}
+            className="settings-usage-heatmap"
+            aria-label={t("settings.usageHeatmap")}
+            role="grid"
+            style={{
+              "--heatmap-cols": heatmapCols,
+              ...(heatmapHeight !== undefined ? { height: `${heatmapHeight}px` } : {})
+            } as CSSProperties}
+          >
+            {heatmap.map((day) => (
+              <Tooltip content={formatHeatmapTitle(day, t, formatCompactUsageValue)} key={day.date}>
+                <span
+                  className="settings-usage-heatmap-cell"
+                  data-level={day.level}
+                  role="gridcell"
+                  aria-label={formatHeatmapTitle(day, t, formatCompactUsageValue)}
+                />
+              </Tooltip>
+            ))}
+          </div>
+          <div className="settings-heatmap-legend" aria-hidden="true">
+            <span>{t("settings.less")}</span>
+            {[0, 1, 2, 3, 4].map((level) => (
+              <i className="settings-heatmap-legend-cell" data-level={level} key={level} />
+            ))}
+            <span>{t("settings.more")}</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="settings-section settings-skill-usage" aria-labelledby="settings-skill-usage-title">
+        <header className="settings-section-header">
+          <h2 id="settings-skill-usage-title" className="settings-section-title">
+            {t("settings.skillUsage")}
+          </h2>
+          <span className="settings-section-meta">{t("settings.skillUsageCount")}</span>
+        </header>
+        <div className="settings-group settings-usage-card">
+          {skillUsage.length ? (
+            <div className="settings-skill-usage-list">
+              {skillUsage.slice(0, 8).map((skill, index) => {
+                const count = Number.isFinite(skill.count) ? Math.max(0, skill.count) : undefined;
+                const width = count !== undefined && maxSkillCount > 0 ? Math.max(6, (count / maxSkillCount) * 100) : 0;
+                return (
+                  <div className="settings-skill-usage-row" key={skill.name}>
+                    <div className="settings-skill-usage-label">
+                      <span className="settings-skill-usage-rank">{String(index + 1).padStart(2, "0")}</span>
+                      <strong>{skill.name}</strong>
+                    </div>
+                    <div className="settings-skill-usage-bar" aria-hidden="true">
+                      <span style={{ width: `${width}%` }} />
+                    </div>
+                    <span className="settings-skill-usage-value">{formatUsageNumber(count, formatNumber)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="settings-group-empty">{t("settings.noSkillUsage")}</p>
+          )}
+        </div>
       </section>
 
       {modelChart.length > 0 ? (
-        <section className="settings-model-chart" aria-labelledby="settings-model-chart-title">
-          <div className="settings-usage-chart-header">
-            <h2 id="settings-model-chart-title" className="settings-usage-table-title">
+        <section className="settings-section settings-model-chart" aria-labelledby="settings-model-chart-title">
+          <header className="settings-section-header">
+            <h2 id="settings-model-chart-title" className="settings-section-title">
               {t("settings.modelDistribution")}
             </h2>
-            <span>{t("settings.tokenShare")}</span>
-          </div>
-          <div className="settings-model-chart-list">
-            {modelChart.map((model) => {
-              const width = maxModelTotal > 0 ? Math.max(2, (model.total / maxModelTotal) * 100) : 0;
-              const share = allModelTotal > 0 ? model.total / allModelTotal : 0;
-              return (
-                <div className="settings-model-chart-row" key={`${model.provider}\n${model.model}`}>
-                  <div className="settings-model-chart-label">
-                    <strong>{model.model || t("settings.unknownModel")}</strong>
-                    <small>{model.provider || t("settings.unknownProvider")}</small>
+            <span className="settings-section-meta">{t("settings.tokenShare")}</span>
+          </header>
+          <div className="settings-group settings-usage-card">
+            <div className="settings-model-chart-list">
+              {modelChart.map((model) => {
+                const width = maxModelTotal > 0 ? Math.max(2, (model.total / maxModelTotal) * 100) : 0;
+                const share = allModelTotal > 0 ? model.total / allModelTotal : 0;
+                return (
+                  <div className="settings-model-chart-row" key={`${model.provider}\n${model.model}`}>
+                    <div className="settings-model-chart-label">
+                      <strong>{model.model || t("settings.unknownModel")}</strong>
+                      <small>{model.provider || t("settings.unknownProvider")}</small>
+                    </div>
+                    <div className="settings-model-chart-bar" aria-hidden="true">
+                      <span style={{ width: `${width}%` }} />
+                    </div>
+                    <Tooltip content={formatCompactUsageValue(model.total)}>
+                      <span className="settings-model-chart-share">{formatPercent(share)}</span>
+                    </Tooltip>
                   </div>
-                  <div className="settings-model-chart-bar" aria-hidden="true">
-                    <span style={{ width: `${width}%` }} />
-                  </div>
-                  <Tooltip content={formatCompactUsageValue(model.total)}>
-                    <span className="settings-model-chart-share">{formatPercent(share)}</span>
-                  </Tooltip>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         </section>
       ) : null}
 
-      {usage.model_breakdowns.length > 0 ? (
+      <section className="settings-section" aria-labelledby="settings-model-usage-title">
+        <header className="settings-section-header">
+          <h2 id="settings-model-usage-title" className="settings-section-title">{t("settings.modelUsage")}</h2>
+        </header>
+        {usage.model_breakdowns.length > 0 ? (
           <div className="settings-group settings-usage-table-wrap">
-            <h2 className="settings-usage-table-title">{t("settings.modelUsage")}</h2>
             <table className="settings-usage-table">
               <thead>
                 <tr>
@@ -2764,21 +2843,21 @@ function SettingsUsagePage({
                           <small>{b.model || t("settings.unknownModel")}</small>
                         </div>
                       </td>
-                      <td className="settings-usage-num">
+                      <td className="settings-usage-num" data-label={t("settings.usageInput")}>
                         <Tooltip content={formatUsageValue(b.input_tokens)}>
                           <span className="settings-usage-number">
                             {formatCompactUsageNumber(b.input_tokens, locale)}
                           </span>
                         </Tooltip>
                       </td>
-                      <td className="settings-usage-num">
+                      <td className="settings-usage-num" data-label={t("settings.usageOutput")}>
                         <Tooltip content={formatUsageValue(b.output_tokens)}>
                           <span className="settings-usage-number">
                             {formatCompactUsageNumber(b.output_tokens, locale)}
                           </span>
                         </Tooltip>
                       </td>
-                      <td className="settings-usage-num">
+                      <td className="settings-usage-num" data-label={t("settings.hitRate")}>
                         <span className="settings-usage-number">{formatPercent(rate)}</span>
                       </td>
                     </tr>
@@ -2788,62 +2867,71 @@ function SettingsUsagePage({
             </table>
           </div>
         ) : (
-          <div className="settings-empty">{t("settings.noUsage")}</div>
+          <div className="settings-group">
+            <p className="settings-group-empty">{t("settings.noUsage")}</p>
+          </div>
         )}
+      </section>
     </div>
+    </>
   );
 }
 
 function SettingsUsageSkeleton(): JSX.Element {
   return (
     <>
-      <div className="settings-usage-skeleton-stats" aria-hidden="true">
+      <div className="settings-group settings-usage-stats settings-usage-skeleton-stats" aria-hidden="true">
         {[0, 1, 2, 3].map((item) => (
-          <div className="settings-usage-skeleton-stat" key={item}>
+          <div className="settings-usage-stat" key={item}>
             <span className={`settings-usage-skeleton-line settings-usage-skeleton-stat-value settings-usage-skeleton-stat-value-${item}`} />
             <span className="settings-usage-skeleton-line settings-usage-skeleton-stat-label" />
           </div>
         ))}
       </div>
-      <section className="settings-usage-skeleton-chart" aria-hidden="true">
-        <div className="settings-usage-skeleton-chart-header">
+      <section className="settings-section" aria-hidden="true">
+        <div className="settings-section-header">
           <span className="settings-usage-skeleton-line settings-usage-skeleton-heading" />
           <span className="settings-usage-skeleton-line settings-usage-skeleton-period" />
         </div>
-        <div className="settings-usage-skeleton-trend">
-          {[24, 28, 34, 30, 38, 44, 50, 46, 40, 34, 38, 46, 54, 62, 56, 48, 42, 46, 52, 60, 68, 62, 54, 48, 42, 46, 54, 60, 56, 50].map((height, index) => (
-            <i className="settings-usage-skeleton-trend-day" key={index} style={{ height: `${height}%` }} />
-          ))}
-        </div>
-        <div className="settings-usage-skeleton-axis">
-          <span className="settings-usage-skeleton-line" />
-          <span className="settings-usage-skeleton-line" />
-        </div>
-      </section>
-      <div className="settings-usage-skeleton-heatmap" aria-hidden="true">
-        <div className="settings-usage-skeleton-months">
-          {[0, 1, 2, 3].map((item) => <span className="settings-usage-skeleton-line" key={item} />)}
-        </div>
-        <div className="settings-usage-skeleton-grid">
-          {Array.from({ length: 53 * 7 }, (_, index) => <i key={index} />)}
-        </div>
-        <div className="settings-usage-skeleton-legend">
-          <span className="settings-usage-skeleton-line" />
-          <span className="settings-usage-skeleton-line" />
-        </div>
-      </div>
-      <section className="settings-usage-skeleton-list" aria-hidden="true">
-        <div className="settings-usage-skeleton-list-header">
-          <span className="settings-usage-skeleton-line settings-usage-skeleton-heading" />
-          <span className="settings-usage-skeleton-line settings-usage-skeleton-period" />
-        </div>
-        {[0, 1, 2, 3].map((item) => (
-          <div className="settings-usage-skeleton-row" key={item}>
-            <span className="settings-usage-skeleton-line" />
+        <div className="settings-group settings-usage-card">
+          <div className="settings-usage-skeleton-trend">
+            {[24, 28, 34, 30, 38, 44, 50, 46, 40, 34, 38, 46, 54, 62, 56, 48, 42, 46, 52, 60, 68, 62, 54, 48, 42, 46, 54, 60, 56, 50].map((height, index) => (
+              <i className="settings-usage-skeleton-trend-day" key={index} style={{ height: `${height}%` }} />
+            ))}
+          </div>
+          <div className="settings-usage-skeleton-axis">
             <span className="settings-usage-skeleton-line" />
             <span className="settings-usage-skeleton-line" />
           </div>
-        ))}
+        </div>
+      </section>
+      <section className="settings-section" aria-hidden="true">
+        <div className="settings-section-header">
+          <span className="settings-usage-skeleton-line settings-usage-skeleton-heading" />
+        </div>
+        <div className="settings-group settings-usage-card settings-usage-skeleton-heatmap">
+          <div className="settings-usage-skeleton-months">
+            {[0, 1, 2, 3].map((item) => <span className="settings-usage-skeleton-line" key={item} />)}
+          </div>
+          <div className="settings-usage-skeleton-grid">
+            {Array.from({ length: 53 * 7 }, (_, index) => <i key={index} />)}
+          </div>
+        </div>
+      </section>
+      <section className="settings-section" aria-hidden="true">
+        <div className="settings-section-header">
+          <span className="settings-usage-skeleton-line settings-usage-skeleton-heading" />
+          <span className="settings-usage-skeleton-line settings-usage-skeleton-period" />
+        </div>
+        <div className="settings-group settings-usage-card settings-usage-skeleton-list">
+          {[0, 1, 2, 3].map((item) => (
+            <div className="settings-usage-skeleton-row" key={item}>
+              <span className="settings-usage-skeleton-line" />
+              <span className="settings-usage-skeleton-line" />
+              <span className="settings-usage-skeleton-line" />
+            </div>
+          ))}
+        </div>
       </section>
     </>
   );
@@ -2871,24 +2959,28 @@ function formatUsageNumber(value: number | undefined, formatNumber: (value: numb
 
 type Translate = ReturnType<typeof useI18n>["t"];
 
-function settingsPageTitle(page: SettingsPage, t: Translate): string {
+function settingsPageTitle(page: NativeSettingsPage, t: Translate): string {
   switch (page) {
-    case "subscriptions":
-      return t("settings.subscriptions");
     case "providers":
       return t("settings.providers");
+    case "agents":
+      return t("settings.agents");
+    case "subscriptions":
+      return t("settings.subscriptions");
     case "advanced":
-      return t("settings.advanced");
+      return t("settings.runtime");
     case "general":
       return t("settings.general");
-    case "usage":
-      return t("settings.usage");
+    case "appearance":
+      return t("settings.appearance");
     case "remote":
       return t("settings.remote");
+    case "mcp":
+      return t("settings.mcpServers");
+    case "usage":
+      return t("settings.usage");
     case "archive":
       return t("settings.archive");
-    default:
-      return t("skills.sectionPlugins");
   }
 }
 
@@ -3012,6 +3104,21 @@ function providerConnectionStatus(provider: ProviderSummary, t: Translate): stri
   return provider.api_key_configured
     ? t("provider.authConfigured", { field: label })
     : t("provider.authMissing", { field: label });
+}
+
+function providerConnectionTone(provider: ProviderSummary): SettingsStatusTone {
+  if (provider.api_key_configured) {
+    return "success";
+  }
+  // OpenAI OAuth services keep their credentials outside the key field.
+  if (provider.connection_locked && !isXAISubscriptionType(provider.type) && !isGrokBuildType(provider.type)) {
+    return "neutral";
+  }
+  return "warning";
+}
+
+function providerMonogram(label: string): string {
+  return Array.from(label.trim())[0]?.toLocaleUpperCase() ?? "";
 }
 
 function isAnthropicProviderType(type: string | undefined): boolean {
@@ -3174,20 +3281,17 @@ function mcpStateLabel(state: string, t: Translate): string {
   }
 }
 
-function mcpStateTone(state: string): string {
+function mcpStateTone(state: string): SettingsStatusTone {
   switch (state) {
     case "ready":
     case "connected":
       return "success";
     case "error":
     case "failed":
+      return "danger";
     case "auth_required":
     case "needs_auth":
     case "needs_client_registration":
-      return "danger";
-    case "starting":
-    case "reconnecting":
-    case "connecting":
       return "warning";
     default:
       return "neutral";

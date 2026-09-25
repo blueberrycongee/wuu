@@ -23,7 +23,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 async function mount() {
-  await act(async () => root.render(<I18nProvider><AppearanceTypography section="fonts" /></I18nProvider>));
+  await act(async () => root.render(<I18nProvider><AppearanceTypography section="text" /></I18nProvider>));
 }
 async function click(element: Element) {
   await act(async () => element.dispatchEvent(new MouseEvent("click", { bubbles: true })));

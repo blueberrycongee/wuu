@@ -211,7 +211,7 @@ describe("SettingsView shell", () => {
     await act(async () => { await Promise.resolve(); });
     expect(window.wuu.getBuildInfo).not.toHaveBeenCalled();
     expect(container.querySelector('[data-testid="settings-codex-pet-enabled"]')).toBeNull();
-    expect(container.querySelector('[data-testid="settings-appearance"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="settings-general"]')).not.toBeNull();
   });
 
   it("exposes phone access on a native host", async () => {
@@ -341,17 +341,17 @@ describe("SettingsView shell", () => {
     const scroll = container.querySelector<HTMLElement>(".settings-scroll")!;
     const providersPage = container.querySelector<HTMLElement>(".settings-page")!;
     scroll.scrollTop = 420;
-    const advancedButton = Array.from(
+    const runtimeButton = Array.from(
       container.querySelectorAll<HTMLButtonElement>(".settings-nav-item"),
-    ).find((button) => button.textContent?.includes("高级"));
+    ).find((button) => button.textContent?.includes("运行"));
 
     act(() => {
-      advancedButton?.click();
+      runtimeButton?.click();
     });
 
     expect(scroll.scrollTop).toBe(0);
     expect(container.querySelector(".settings-page")).not.toBe(providersPage);
-    expect(container.querySelector(".settings-page-title")?.textContent).toBe("高级");
+    expect(container.querySelector(".settings-page-title")?.textContent).toBe("运行");
   });
 });
 
@@ -435,8 +435,8 @@ describe("SettingsView provider configuration", () => {
     const options = container.querySelectorAll<HTMLButtonElement>(".settings-provider-button");
     await act(async () => { options[1].click(); });
     expect(onSave).not.toHaveBeenCalled();
-    expect(options[1].getAttribute("aria-pressed")).toBe("true");
-    expect(options[0].getAttribute("aria-pressed")).toBe("false");
+    expect(options[1].getAttribute("aria-expanded")).toBe("true");
+    expect(options[0].getAttribute("aria-expanded")).toBe("false");
     const model = container.querySelector<HTMLInputElement>('input[aria-label="模型名称"]')!;
     expect(model.value).toBe("second-model");
     await act(async () => { setInputValue(model, "updated-model"); });
@@ -459,7 +459,7 @@ describe("SettingsView provider configuration", () => {
     const model = container.querySelector<HTMLInputElement>('input[aria-label="模型名称"]')!;
     await act(async () => { setInputValue(model, "draft-model"); });
     renderSettings({ initialized: { ...initial, providers: initial.providers?.map((p) => ({ ...p })) }, initialPage: "providers", onSave, runningProviderNames: ["grok"] });
-    expect(container.querySelectorAll(".settings-provider-button")[1].getAttribute("aria-pressed")).toBe("true");
+    expect(container.querySelectorAll(".settings-provider-button")[1].getAttribute("aria-expanded")).toBe("true");
     expect(model.value).toBe("draft-model");
     expect(onSave).not.toHaveBeenCalled();
   });
@@ -753,10 +753,14 @@ describe("SettingsView provider configuration", () => {
       onRemoveProvider,
     });
 
-    const removeButtons = Array.from(container.querySelectorAll<HTMLButtonElement>(".settings-provider-remove"));
-    expect(removeButtons).toHaveLength(2);
+    // Removal lives in the open service's editor, so open "drop" first.
     await act(async () => {
-      removeButtons[1].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      container.querySelectorAll<HTMLButtonElement>(".settings-provider-button")[1].click();
+    });
+    const removeButtons = Array.from(container.querySelectorAll<HTMLButtonElement>(".settings-provider-remove"));
+    expect(removeButtons).toHaveLength(1);
+    await act(async () => {
+      removeButtons[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -1053,7 +1057,7 @@ describe("SettingsView general settings", () => {
       initialized: baseInitialized({
         general_settings: { git_attribution_enabled: true, mcp_server_enabled: {} },
       }),
-      initialPage: "general",
+      initialPage: "advanced",
       onGeneralSave,
     });
     const attributionSwitch = container.querySelector<HTMLButtonElement>(
@@ -1064,7 +1068,7 @@ describe("SettingsView general settings", () => {
     expect(attributionSwitch.disabled).toBe(true);
     await act(async () => { rejectSave(failure); });
 
-    const generalSection = container.querySelector('[data-testid="settings-general"]')!;
+    const generalSection = container.querySelector('[data-testid="settings-git"]')!;
     expect(generalSection.querySelector('[role="alert"]')?.textContent).toBe(reason);
     expect(container.textContent).not.toContain("wuu:config-general-update");
     expect(attributionSwitch.getAttribute("aria-checked")).toBe("true");
@@ -1091,7 +1095,7 @@ describe("SettingsView general settings", () => {
           mcp_server_enabled: {},
         },
       }),
-      initialPage: "general",
+      initialPage: "advanced",
       onGeneralSave,
     });
     await act(async () => {
@@ -1123,7 +1127,7 @@ describe("SettingsView general settings", () => {
     });
     const onGeneralSave = vi.fn().mockResolvedValue(undefined);
     const { rootText } = renderSettings({
-      initialPage: "general",
+      initialPage: "mcp",
       initialized: baseInitialized({
         general_settings: {
           mcp_server_enabled: {
@@ -1137,7 +1141,7 @@ describe("SettingsView general settings", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(container.querySelector("[data-testid=\"settings-general\"]")).not.toBeNull();
+    expect(container.querySelector("[data-testid=\"settings-mcp\"]")).not.toBeNull();
     expect(rootText()).toContain("docs");
     expect(rootText()).toContain("search");
 
@@ -1362,7 +1366,7 @@ describe("SettingsView About section", () => {
         },
       ],
     });
-    const { rootText } = renderSettings({ initialized: baseInitialized() });
+    const { rootText } = renderSettings({ initialized: baseInitialized(), initialPage: "mcp" });
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
@@ -1418,7 +1422,7 @@ describe("SettingsView About section", () => {
     });
     api.openExternal = vi.fn().mockResolvedValue(undefined);
 
-    renderSettings({ initialized: baseInitialized() });
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp" });
     const rendered = container;
     await act(async () => {
       await Promise.resolve();
@@ -1832,9 +1836,10 @@ describe("SettingsView archive page", () => {
     await act(async () => {});
     expect(container.textContent).toContain("My conversation");
     expect(container.textContent).not.toContain("Managed work");
-    act(() => container.querySelector<HTMLButtonElement>('[aria-label="归档分区"]')!.click());
-    const option = [...document.querySelectorAll<HTMLButtonElement>(".select-menu-item")].find((node) => node.textContent?.includes("Agent"))!;
-    act(() => option.click());
+    const sections = container.querySelector('[aria-label="归档分区"]')!;
+    const agentSection = [...sections.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.includes("Agent"))!;
+    act(() => agentSection.click());
+    expect(agentSection.getAttribute("aria-pressed")).toBe("true");
     expect(container.textContent).toContain("Managed work");
     expect(container.textContent).not.toContain("My conversation");
     expect(container.textContent).not.toContain("My group");
