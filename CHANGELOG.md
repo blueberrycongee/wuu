@@ -25,6 +25,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Message table headers no longer render bold, and narrow tables keep words
   whole instead of breaking them mid-word.
 
+- The workspace file tree now fits a narrow panel when the panel opens after
+  launch, so the file preview keeps a usable width instead of wrapping one
+  character per line.
+
 ## [2026.9.24] - 2026-09-24
 
 ### Added

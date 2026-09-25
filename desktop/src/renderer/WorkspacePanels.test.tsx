@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clampWorkspaceFileTreeWidth,
+  WORKSPACE_FILE_CONTENT_MIN_WIDTH,
   WORKSPACE_FILE_TREE_DEFAULT_WIDTH,
   WORKSPACE_FILE_TREE_MAX_WIDTH,
   WORKSPACE_FILE_TREE_MIN_WIDTH,
@@ -673,6 +674,56 @@ describe("WorkspaceRightPanel", () => {
       panelWidth = 600;
       act(() => resizeCallback?.([], {} as ResizeObserver));
       expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe("320px");
+    } finally {
+      if (originalResizeObserver) {
+        globalThis.ResizeObserver = originalResizeObserver;
+      } else {
+        Reflect.deleteProperty(globalThis, "ResizeObserver");
+      }
+    }
+  });
+
+  it("fits the stored tree width when a panel that started closed opens", async () => {
+    const originalResizeObserver = globalThis.ResizeObserver;
+    let resizeCallback: ResizeObserverCallback | undefined;
+    class MockResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback;
+      }
+      observe(): void {}
+      disconnect(): void {}
+    }
+    globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
+
+    try {
+      window.localStorage.setItem("wuu.desktop.fileTreeWidth", "320");
+      const context: RuntimeContext = {
+        kind: "project",
+        project_id: "project-1",
+        cwd: "/repo/project",
+      };
+      const filesTab = workspaceToolViewTab("files");
+      const props = { ...baseProps(), workspaceContext: context };
+      mount(<WorkspaceRightPanel {...props} open={false} present={false} />);
+      await act(async () => Promise.resolve());
+      expect(container!.querySelector(".workspace-files-split")).toBeNull();
+
+      act(() => {
+        root!.render(
+          <WorkspaceRightPanel {...props} tabs={[filesTab]} activeTabID={filesTab.id} />,
+        );
+      });
+      await act(async () => Promise.resolve());
+
+      const split = container!.querySelector<HTMLElement>(".workspace-files-split")!;
+      Object.defineProperty(split, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ width: 479 }),
+      });
+      act(() => resizeCallback?.([], {} as ResizeObserver));
+      expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe(
+        `${479 - WORKSPACE_FILE_CONTENT_MIN_WIDTH}px`,
+      );
     } finally {
       if (originalResizeObserver) {
         globalThis.ResizeObserver = originalResizeObserver;
