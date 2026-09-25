@@ -23,13 +23,19 @@ import (
 	"github.com/blueberrycongee/wuu/internal/stringutil"
 )
 
-const maxShellTailBytes = 8 * 1024
+// Model-facing excerpt of one output stream. Test runners and build tools put
+// failure summaries at either end, so the excerpt keeps the head and the tail
+// and marks the omitted middle; the complete stream stays in the full log.
+const (
+	maxShellExcerptBytes  = 12 * 1024
+	shellExcerptHeadBytes = 4 * 1024
+)
 
 // defaultPromotedRecheckMinutes is the safety-net recheck schedule armed on
 // a run command whose timeout promoted it to a background process. A
 // promoted command is an underestimate by definition, so the schedule
 // replaces the kill safety net the timeout used to be; the model can change
-// or clear it with bash action=update_background.
+// or clear it with process action=update.
 const defaultPromotedRecheckMinutes = 30
 
 type synchronizedBuffer struct {
@@ -50,10 +56,12 @@ func (b *synchronizedBuffer) String() string {
 }
 
 // The shell classification and execution engine below is shared
-// infrastructure for the unified bash tool (see tool_bash.go). The former
-// standalone run_shell tool was removed; bash is the only model-facing
-// command entry point.
-
+// infrastructure for the bash tool (see tool_bash.go). The former standalone
+// run_shell tool was removed; bash is the only model-facing foreground command
+// entry point.
+//
+// StdoutTail and StderrTail keep the JSON names clients already read; each
+// holds the bounded head+tail excerpt produced by excerptString.
 type shellExecutionResult struct {
 	Action              string                  `json:"action"`
 	Command             string                  `json:"command"`
@@ -329,8 +337,8 @@ func executeShellCommandInDir(ctx context.Context, env *Env, command string, tim
 	redactedCommand := env.RedactToolOutput(command)
 	output := redactedStdout + redactedStderr
 	trimmed, truncated := truncate(output, maxShellOutputBytes)
-	stdoutTail, stdoutTailTruncated := tailString(redactedStdout, maxShellTailBytes)
-	stderrTail, stderrTailTruncated := tailString(redactedStderr, maxShellTailBytes)
+	stdoutTail, stdoutTailTruncated := excerptString(redactedStdout, maxShellExcerptBytes)
+	stderrTail, stderrTailTruncated := excerptString(redactedStderr, maxShellExcerptBytes)
 	classification := classifyShellCommand(command)
 	timedOut := interrupted && errors.Is(runCtx.Err(), context.DeadlineExceeded)
 
@@ -349,7 +357,7 @@ func executeShellCommandInDir(ctx context.Context, env *Env, command string, tim
 	if promotedID != "" {
 		nextSuggestions = []string{
 			"the command exceeded its timeout and keeps running as background process " + promotedID + " with its output so far attached; do NOT rerun the same command — its completion will start a new turn automatically",
-			"progress wake-ups are scheduled every " + strconv.Itoa(defaultPromotedRecheckMinutes) + " minutes as a safety net; use bash action=read_background with process_id for a snapshot, stop_background to cancel it, or update_background with recheck_minutes to change or clear the schedule",
+			"progress wake-ups are scheduled every " + strconv.Itoa(defaultPromotedRecheckMinutes) + " minutes as a safety net; use process action=read with process_id for a snapshot, action=stop to cancel it, or action=update with recheck_minutes to change or clear the schedule",
 		}
 	}
 
@@ -452,10 +460,10 @@ func resolveShellWorkingDir(ctx context.Context, env *Env, cwd string) (string, 
 
 func shellNextSuggestions(exitCode int, timedOut bool, classification ToolClassification) []string {
 	if timedOut {
-		return []string{"if this was a dev server, watch mode, or other long-lived command, rerun it with bash action=start_background and inspect it with bash action=read_background; otherwise narrow the command scope or set a bounded timeout only when necessary"}
+		return []string{"if this was a dev server, watch mode, or other long-lived command, start it with the process tool instead; otherwise narrow the command or raise timeout_seconds"}
 	}
 	if exitCode != 0 {
-		return []string{"inspect the redacted stdout/stderr tails and full_log_ref when present, then retry the corrected command with bash action=run"}
+		return []string{"inspect the output and the full log when present, then retry the corrected command"}
 	}
 	if classification.ReadOnly {
 		return []string{"use the returned observation as evidence for the next action"}
@@ -463,11 +471,18 @@ func shellNextSuggestions(exitCode int, timedOut bool, classification ToolClassi
 	return []string{"inspect git diff or relevant artifacts before continuing"}
 }
 
-func tailString(value string, maxBytes int) (string, bool) {
+// excerptString bounds one stream to maxBytes, keeping its head and tail and
+// marking how much of the middle was omitted.
+func excerptString(value string, maxBytes int) (string, bool) {
 	if maxBytes <= 0 || len(value) <= maxBytes {
 		return value, false
 	}
-	return stringutil.HeadTail(value, 0, maxBytes, ""), true
+	head := shellExcerptHeadBytes
+	if head > maxBytes/2 {
+		head = maxBytes / 2
+	}
+	marker := fmt.Sprintf("\n... %d bytes omitted ...\n", len(value)-maxBytes)
+	return stringutil.HeadTail(value, head, maxBytes-head, marker), true
 }
 
 func classifyShellCommand(command string) ToolClassification {

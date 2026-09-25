@@ -22,7 +22,7 @@ func startBackgroundForRootThreadTest(t *testing.T, arguments string, bind func(
 	kit.SetProcessManager(manager)
 	bind(kit)
 
-	startResponse, err := kit.Execute(context.Background(), providers.ToolCall{Name: "bash", Arguments: arguments})
+	startResponse, err := kit.Execute(context.Background(), providers.ToolCall{Name: "process", Arguments: arguments})
 	if err != nil {
 		t.Fatalf("start background: %v", err)
 	}
@@ -34,13 +34,13 @@ func startBackgroundForRootThreadTest(t *testing.T, arguments string, bind func(
 	if len(list) != 1 {
 		t.Fatalf("expected exactly one command session, got %d", len(list))
 	}
-	listResponse, err := kit.Execute(context.Background(), providers.ToolCall{Name: "bash", Arguments: `{"action":"list_background"}`})
+	listResponse, err := kit.Execute(context.Background(), providers.ToolCall{Name: "process", Arguments: `{"action":"list"}`})
 	if err != nil {
 		t.Fatalf("list background: %v", err)
 	}
 	readResponse, err := kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "bash",
-		Arguments: `{"action":"read_background","process_id":"` + list[0].ID + `"}`,
+		Name:      "process",
+		Arguments: `{"action":"read","process_id":"` + list[0].ID + `"}`,
 	})
 	if err != nil {
 		t.Fatalf("read background: %v", err)
@@ -52,7 +52,7 @@ func startBackgroundForRootThreadTest(t *testing.T, arguments string, bind func(
 // claiming lifecycle cleanup behavior in this step.
 func TestStartBackgroundStampsBoundThreadOnRecord(t *testing.T) {
 	_, got := startBackgroundForRootThreadTest(t,
-		`{"action":"start_background","command":"sleep 60"}`,
+		`{"action":"start","command":"sleep 60"}`,
 		func(kit *Toolkit) { kit.SetSessionID("thread-abc") },
 	)
 	if got.RootThreadID != "thread-abc" {
@@ -64,7 +64,7 @@ func TestStartBackgroundStampsBoundThreadOnRecord(t *testing.T) {
 // must not be able to point durable ownership at another conversation.
 func TestStartBackgroundIgnoresModelSuppliedRootThread(t *testing.T) {
 	_, got := startBackgroundForRootThreadTest(t,
-		`{"action":"start_background","command":"sleep 60","root_thread_id":"someone-elses-thread"}`,
+		`{"action":"start","command":"sleep 60","root_thread_id":"someone-elses-thread"}`,
 		func(kit *Toolkit) { kit.SetSessionID("thread-abc") },
 	)
 	if got.RootThreadID != "thread-abc" {
@@ -87,11 +87,11 @@ func TestStartBackgroundRejectsUnboundOrPendingSession(t *testing.T) {
 	for _, sessionID := range []string{"", "session-pending"} {
 		kit.SetSessionID(sessionID)
 		_, err = kit.Execute(context.Background(), providers.ToolCall{
-			Name:      "bash",
-			Arguments: `{"action":"start_background","command":"sleep 60","root_thread_id":"model-invented"}`,
+			Name:      "process",
+			Arguments: `{"action":"start","command":"sleep 60","root_thread_id":"model-invented"}`,
 		})
 		if err == nil || !strings.Contains(err.Error(), "bound session ID") {
-			t.Fatalf("session %q start_background error = %v, want bound session requirement", sessionID, err)
+			t.Fatalf("session %q process start error = %v, want bound session requirement", sessionID, err)
 		}
 	}
 	list, listErr := manager.List()
@@ -105,7 +105,7 @@ func TestStartBackgroundRejectsUnboundOrPendingSession(t *testing.T) {
 
 func TestBashResponsesOmitInternalCommandIdentityFields(t *testing.T) {
 	responses, stored := startBackgroundForRootThreadTest(t,
-		`{"action":"start_background","command":"sleep 60"}`,
+		`{"action":"start","command":"sleep 60"}`,
 		func(kit *Toolkit) { kit.SetSessionID("thread-redaction") },
 	)
 	for i, response := range responses {

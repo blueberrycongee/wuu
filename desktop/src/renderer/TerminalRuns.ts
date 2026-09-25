@@ -122,12 +122,15 @@ function agentRunFromToolCall(
 ): AgentRunRecord | undefined {
   const args = parseRecord(item.arguments);
   const result = toolResultRecord(item);
+  // bash runs are foreground; the process tool starts managed processes.
+  // "start_background" is the retired bash action kept for saved transcripts.
   const action = nonEmptyString(args, "action") ?? "run";
-  if (action !== "run" && action !== "start_background") {
+  if (action !== "run" && action !== "start" && action !== "start_background") {
     return undefined;
   }
+  const resultAction = nonEmptyString(result, "action");
   const processID =
-    nonEmptyString(result, "action") === "start_background"
+    resultAction === "start" || resultAction === "start_background"
       ? nonEmptyString(result, "id")
       : undefined;
   const exitCode = numberValue(result, "exit_code");

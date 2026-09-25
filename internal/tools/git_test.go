@@ -180,7 +180,7 @@ func TestBashGitAttributionRejectsWrapperSelfResolution(t *testing.T) {
 		"command":         `env -i PATH="$PATH" git status`,
 		"timeout_seconds": 10,
 	})
-	response, err := kit.Execute(context.Background(), providers.ToolCall{Name: "bash", Arguments: string(args)})
+	response, err := executeEnvelope(kit, context.Background(), providers.ToolCall{Name: "bash", Arguments: string(args)})
 	if err != nil {
 		t.Fatalf("bash self-resolution check: %v", err)
 	}
@@ -207,12 +207,12 @@ func TestBashBackgroundGitAttributionUsesWrapper(t *testing.T) {
 	kit.SetSessionID("thread-background-git-attribution")
 	runBash(t, root, "printf 'background\\n' > hello.txt")
 	args, _ := json.Marshal(map[string]any{
-		"action":          "start_background",
+		"action":          "start",
 		"command":         "git add hello.txt && git commit -m 'Background commit'",
 		"completion_mode": "detached",
 		"wait_ms":         10000,
 	})
-	response, err := kit.Execute(context.Background(), providers.ToolCall{Name: "bash", Arguments: string(args)})
+	response, err := kit.Execute(context.Background(), providers.ToolCall{Name: "process", Arguments: string(args)})
 	if err != nil {
 		t.Fatalf("start background commit: %v", err)
 	}
@@ -837,7 +837,7 @@ func TestToolkit_Git_RedactsCredentialsInOutput(t *testing.T) {
 func TestToolkit_Git_NonInteractiveEnv(t *testing.T) {
 	kit, _ := setupGitRepo(t)
 	enableShellExecutionForTest(kit.env)
-	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
 		Name:      "bash",
 		Arguments: `{"command":"printf '%s' \"$GIT_TERMINAL_PROMPT\""}`,
 	})

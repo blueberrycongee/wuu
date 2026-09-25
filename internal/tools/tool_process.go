@@ -93,7 +93,7 @@ func markProcessCompletionObserved(m *proc.Manager, p proc.Process) proc.Process
 		(p.Status != proc.StatusStopped && p.Status != proc.StatusFailed) {
 		return p
 	}
-	if updated, err := m.MarkCompletionDelivered(p.ID, "bash_result"); err == nil && updated != nil {
+	if updated, err := m.MarkCompletionDelivered(p.ID, "process_result"); err == nil && updated != nil {
 		return *updated
 	}
 	return p

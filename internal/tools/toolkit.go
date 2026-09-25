@@ -344,10 +344,11 @@ func (t *Toolkit) rebuildRegistry() {
 		// Search
 		NewGrepTool(e),
 		NewGlobTool(e),
-		// Bash is the unified command entry point emitted by the model
-		// profile compiler. It covers foreground commands, local
-		// verification, and the full background-process lifecycle.
+		// bash runs bounded foreground commands and local verification;
+		// process owns the background-process lifecycle. Both are emitted by
+		// the model profile compiler.
 		NewBashTool(e),
+		NewProcessTool(e),
 		// Git
 		NewGitTool(e),
 		// Web

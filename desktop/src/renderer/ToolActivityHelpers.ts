@@ -245,6 +245,10 @@ function readableToolActivityCommandInner(
       return command
         ? t("toolActivity.runTarget", { target: truncateText(command, 100) })
         : t("toolActivity.runCommand");
+    case "process": {
+      const processAction = stringValue(args, "action") ?? stringValue(result, "action") ?? "";
+      return readableBackgroundCommandLabel(processAction, command);
+    }
     case "edit_file":
       return t("toolActivity.updateTarget", { target: formatPathTarget(path, t("toolActivity.file")) });
     case "write_file":
@@ -361,6 +365,7 @@ function toolActivitySectionKey(item: ThreadItem): string {
     case "apply_patch":
       return "change";
     case "bash":
+    case "process":
       return "command";
     case "browser":
       return "browser";
@@ -990,13 +995,7 @@ function readableCommandLabel(
   const action = stringValue(result, "action") ?? stringValue(args, "action") ?? "";
   const subcommand =
     stringValue(result, "subcommand") ?? stringValue(args, "subcommand") ?? "";
-  if (
-    action === "start_background" ||
-    action === "read_background" ||
-    action === "list_background" ||
-    action === "stop_background" ||
-    action === "write_background"
-  ) {
+  if (isBackgroundProcessAction(action)) {
     return readableBackgroundCommandLabel(action, command);
   }
   if (command.startsWith("git ")) {
@@ -1049,20 +1048,50 @@ function readableCommandLabel(
     : t("toolActivity.runCommand");
 }
 
+// The process tool uses start/read/list/stop/write/update; the *_background
+// spellings are the retired bash actions still present in saved transcripts.
+function isBackgroundProcessAction(action: string): boolean {
+  switch (action) {
+    case "start":
+    case "read":
+    case "list":
+    case "stop":
+    case "write":
+    case "update":
+    case "start_background":
+    case "read_background":
+    case "list_background":
+    case "stop_background":
+    case "write_background":
+    case "update_background":
+      return true;
+    default:
+      return false;
+  }
+}
+
 function readableBackgroundCommandLabel(action: string, command: string): string {
   switch (action) {
+    case "start":
     case "start_background":
       return command
         ? t("toolActivity.startTarget", { target: truncateText(command, 100) })
         : t("toolActivity.startBackgroundTask");
+    case "read":
     case "read_background":
       return t("toolActivity.readBackgroundOutput");
+    case "list":
     case "list_background":
       return t("toolActivity.viewBackgroundTasks");
+    case "stop":
     case "stop_background":
       return t("toolActivity.stopBackgroundTask");
+    case "write":
     case "write_background":
       return t("toolActivity.writeBackgroundInput");
+    case "update":
+    case "update_background":
+      return t("toolActivity.backgroundTask");
     default:
       return command
         ? t("toolActivity.startTarget", { target: truncateText(command, 100) })
@@ -1115,6 +1144,8 @@ export function readableToolName(name: string | undefined): string {
       return t("toolActivity.readWeb");
     case "bash":
       return t("toolActivity.runCommand");
+    case "process":
+      return t("toolActivity.backgroundTask");
     case "tool_search":
       return t("toolActivity.searchTools");
     case "load_skill":
@@ -1228,7 +1259,7 @@ export function summarizeToolActivity(items: ThreadItem[]): ToolActivitySummary 
       listCount++;
       continue;
     }
-    if (name === "bash" || capability?.startsWith("command.")) {
+    if (name === "bash" || name === "process" || capability?.startsWith("command.")) {
       primaryKind = primaryKind === "unknown" ? "command" : primaryKind;
       commandCount++;
       continue;

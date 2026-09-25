@@ -8,6 +8,24 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Changed
+
+- The `bash` tool now runs foreground commands only, with a five-parameter
+  schema. Background processes moved to a separate `process` tool with
+  `start`, `read`, `write`, `stop`, `list`, and `update` actions. Older
+  transcripts that used `bash` background actions still render on the desktop.
+- Command results reach the model as plain text (exit line, stdout, stderr,
+  and only the facts that change the next step) instead of the JSON envelope;
+  clients and durable records keep the envelope. Each output stream keeps its
+  head and tail instead of only the tail.
+- `read_file` and `bash` results are bounded at 8192 estimated tokens instead
+  of 2048, so a typical source file or document is read in one call.
+
+### Fixed
+
+- `apply_patch` with `then_run` now shows the model the follow-up command's
+  outcome; the parent result previously kept the patch-only view.
+
 ### Added
 
 - Video output cards and workspace video files open an inline player with

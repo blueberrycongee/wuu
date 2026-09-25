@@ -70,7 +70,7 @@ func TestSharedProcessManagerKeepsEachSessionWorkspaceAfterRebind(t *testing.T) 
 		t.Fatal(err)
 	}
 	for _, env := range []*Env{first, second} {
-		result, err := NewBashTool(env).Execute(context.Background(), `{"action":"start_background","command":"pwd -P","tty":false,"wait_ms":2000}`)
+		result, err := NewProcessTool(env).Execute(context.Background(), `{"action":"start","command":"pwd -P","tty":false,"wait_ms":2000}`)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -38,7 +38,7 @@ func newWorktreeExecFixture(t *testing.T) (kit *Toolkit, parent, worktree string
 
 func executeToolForWorktreeTest(t *testing.T, kit *Toolkit, ctx context.Context, name, args string) string {
 	t.Helper()
-	out, err := kit.Execute(ctx, providers.ToolCall{Name: name, Arguments: args})
+	out, err := executeEnvelope(kit, ctx, providers.ToolCall{Name: name, Arguments: args})
 	if err != nil {
 		t.Fatalf("%s: %v", name, err)
 	}

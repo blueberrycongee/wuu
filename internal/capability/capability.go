@@ -42,10 +42,10 @@ const (
 	// across separate shell / test / process / git tools.
 	CapabilityCommandBash Capability = "command.bash"
 
-	// Long-running managed processes. Profiles that hide this
-	// capability still let the runtime manage processes as a backend
-	// for bash background mode; they just do not advertise the
-	// background process actions as part of the model surface.
+	// Long-running managed processes, exposed through the process
+	// tool. Profiles that hide this capability still let the runtime
+	// adopt a timed-out bash run as a background process; they just do
+	// not advertise process management as part of the model surface.
 	CapabilityCommandBackground Capability = "command.background"
 
 	// External network surface.

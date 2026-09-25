@@ -90,10 +90,30 @@ describe("terminal run records", () => {
     expect(missingID.processID).toBeUndefined();
   });
 
+  it("binds process tool starts with a managed process id", () => {
+    const [live] = agentRunsForTurn("thread-1", turn([
+      commandItem({
+        id: "call-process",
+        name: "process",
+        arguments: JSON.stringify({ action: "start", command: "npm run dev", tty: true }),
+        display: { kind: "command", capability: "command.background" },
+        result: JSON.stringify({ action: "start", id: "proc-456", status: "running", tty: true }),
+      }),
+    ]));
+
+    expect(live).toMatchObject({ execution: "managed", processID: "proc-456", command: "npm run dev", tty: true });
+  });
+
   it("does not model background process management actions as terminal sessions", () => {
     const runs = agentRunsForTurn("thread-1", turn([
       commandItem({ arguments: JSON.stringify({ action: "read_background", process_id: "proc-123" }) }),
       commandItem({ id: "call-2", arguments: JSON.stringify({ action: "stop_background", process_id: "proc-123" }) }),
+      commandItem({
+        id: "call-3",
+        name: "process",
+        display: { kind: "command", capability: "command.background" },
+        arguments: JSON.stringify({ action: "read", process_id: "proc-456" }),
+      }),
     ]));
 
     expect(runs).toEqual([]);

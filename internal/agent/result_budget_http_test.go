@@ -40,7 +40,7 @@ func TestSettledResultProviderHTTP(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					small = toolresult.FromText(`{"output":"started\nwarning: deprecated\nFAIL: assertion\n","stdout_tail":"started\n","stderr_tail":"warning: deprecated\nFAIL: assertion\n","stdout_tail_truncated":false,"stderr_tail_truncated":false,"exit_code":1}`)
+					small = toolresult.FromText(`{"action":"run","output":"started\nwarning: deprecated\nFAIL: assertion\n","stdout_tail":"started\n","stderr_tail":"warning: deprecated\nFAIL: assertion\n","stdout_tail_truncated":false,"stderr_tail_truncated":false,"exit_code":1,"duration_ms":7}`)
 					small.IsError = true
 					small = kit.FinalizeToolResult(providers.ToolCall{ID: "call_1", Name: "bash"}, small)
 					if small.ModelText == nil {
@@ -156,12 +156,8 @@ func TestSettledResultProviderHTTP(t *testing.T) {
 						t.Error("smaller output changed")
 					}
 					if index == 1 && !zero {
-						var envelope map[string]any
-						if err := json.Unmarshal([]byte(text), &envelope); err != nil {
-							t.Fatal(err)
-						}
-						if _, exists := envelope["output"]; exists || envelope["stderr_tail"] != "warning: deprecated\nFAIL: assertion\n" || envelope["stdout_tail"] != "started\n" || envelope["exit_code"] != float64(1) {
-							t.Fatalf("wire restored duplicates or lost failure evidence: %s", text)
+						if strings.HasPrefix(text, "{") || !strings.HasPrefix(text, "exit 1 · 7ms\nstarted\n--- stderr ---\nwarning: deprecated\nFAIL: assertion") {
+							t.Fatalf("wire restored the JSON envelope or lost failure evidence: %s", text)
 						}
 					}
 					if zero && index == 0 && text != "" {

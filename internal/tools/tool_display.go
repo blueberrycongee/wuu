@@ -30,16 +30,11 @@ func (t *Toolkit) ToolDisplay(call providers.ToolCall) (providers.ToolCallDispla
 
 func (t *Toolkit) displayCapabilityForTool(call providers.ToolCall) string {
 	name := strings.TrimSpace(call.Name)
-	if name == "bash" {
-		var args bashArgs
-		if err := decodeArgs(call.Arguments, &args); err == nil {
-			switch normalizeBashAction(args) {
-			case bashActionStartBackground, bashActionListBackground, bashActionReadBackground, bashActionWriteBackground, bashActionStopBackground:
-				return "command.background"
-			default:
-				return "command.bash"
-			}
-		}
+	switch name {
+	case "bash":
+		return "command.bash"
+	case "process":
+		return "command.background"
 	}
 	surface := t.activeCompiledSurface()
 	if surface.ProfileName == "" {
@@ -114,6 +109,8 @@ func builtInToolDisplay(call providers.ToolCall) providers.ToolCallDisplay {
 		return toolDisplay("search", "搜索工具 "+displayTruncate(query, 90))
 	case "bash":
 		return displayBashLabel(args)
+	case "process":
+		return displayProcessLabel(args)
 	case "git":
 		return toolDisplay("command", displayGitLabel(args))
 	case "web_search":
@@ -151,36 +148,36 @@ func builtInToolDisplay(call providers.ToolCall) providers.ToolCallDisplay {
 }
 
 func displayBashLabel(args map[string]any) providers.ToolCallDisplay {
-	action := normalizeBashAction(bashArgs{
-		Action:     displayString(args, "action"),
-		Command:    displayString(args, "command"),
-		ProcessID:  displayString(args, "process_id"),
-		Background: displayBool(args, "background"),
-	})
-	switch action {
-	case bashActionStartBackground:
+	command := displayString(args, "command")
+	if command == "" {
+		return toolDisplay("command", "运行命令")
+	}
+	if bashCommandLooksLikeVerification(command) {
+		return toolDisplay("test", "验证 "+displayTruncate(command, 100))
+	}
+	return toolDisplay("command", "运行 "+displayTruncate(command, 100))
+}
+
+func displayProcessLabel(args map[string]any) providers.ToolCallDisplay {
+	switch strings.TrimSpace(displayString(args, "action")) {
+	case processActionStart:
 		command := displayString(args, "command")
 		if command == "" {
 			return toolDisplay("command", "启动后台任务")
 		}
 		return toolDisplay("command", "启动 "+displayTruncate(command, 100))
-	case bashActionListBackground:
+	case processActionList:
 		return toolDisplay("command", "查看后台任务")
-	case bashActionReadBackground:
+	case processActionRead:
 		return toolDisplay("command", "读取后台输出 "+displayTarget(displayString(args, "process_id"), ""))
-	case bashActionWriteBackground:
+	case processActionWrite:
 		return toolDisplay("command", "写入后台输入 "+displayTarget(displayString(args, "process_id"), ""))
-	case bashActionStopBackground:
+	case processActionStop:
 		return toolDisplay("command", "停止后台任务 "+displayTarget(displayString(args, "process_id"), ""))
+	case processActionUpdate:
+		return toolDisplay("command", "调整后台任务 "+displayTarget(displayString(args, "process_id"), ""))
 	default:
-		command := displayString(args, "command")
-		if command == "" {
-			return toolDisplay("command", "运行命令")
-		}
-		if bashCommandLooksLikeVerification(command) {
-			return toolDisplay("test", "验证 "+displayTruncate(command, 100))
-		}
-		return toolDisplay("command", "运行 "+displayTruncate(command, 100))
+		return toolDisplay("command", "后台任务")
 	}
 }
 

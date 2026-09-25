@@ -80,7 +80,7 @@ func processCompletionChatMessage(manager *process.Manager, event process.Event)
 		ExitCode:      event.Process.ExitCode,
 		Command:       tools.RedactToolOutput(event.Process.Command),
 		OutputLogPath: tools.RedactToolOutput(event.Process.LogPath),
-		Instruction:   "This background command has finished. Continue from this result; do not poll it again. The full log is stored at output_log_path; use bash action=read_background with process_id, offset_bytes, and max_bytes to page omitted output when needed.",
+		Instruction:   "This background command has finished. Continue from this result; do not poll it again. The full log is stored at output_log_path; use process action=read with process_id, offset_bytes, and max_bytes to page omitted output when needed.",
 	}
 	if manager != nil {
 		snapshot, err := manager.ReadOutputSnapshot(context.Background(), event.Process.ID, process.OutputReadOptions{MaxBytes: processCompletionOutputBytes})
@@ -122,7 +122,7 @@ func processRecheckChatMessage(manager *process.Manager, p process.Process) prov
 		Command:        tools.RedactToolOutput(p.Command),
 		RecheckMinutes: p.RecheckMinutes,
 		OutputLogPath:  tools.RedactToolOutput(p.LogPath),
-		Instruction:    "This is a scheduled progress recheck for a still-running background process. Review the output tail and decide: intervene with bash action=write_background/stop_background, adjust the schedule with bash action=update_background (recheck_minutes=0 cancels), or do nothing — the next recheck or the completion notification will start another turn. Do not chain read_background waits to keep this turn open.",
+		Instruction:    "This is a scheduled progress recheck for a still-running background process. Review the output tail and decide: intervene with process action=write or action=stop, adjust the schedule with process action=update (recheck_minutes=0 cancels), or do nothing — the next recheck or the completion notification will start another turn. Do not chain process action=read waits to keep this turn open.",
 	}
 	if manager != nil {
 		snapshot, err := manager.ReadOutputSnapshot(context.Background(), p.ID, process.OutputReadOptions{MaxBytes: processCompletionOutputBytes})

@@ -44,8 +44,8 @@ func TestToolkitToolDisplayFormatsBuiltInTools(t *testing.T) {
 			want: providers.ToolCallDisplay{Kind: "test", Text: "验证 go test ./...", Capability: "command.bash"},
 		},
 		{
-			name: "bash background",
-			call: providers.ToolCall{Name: "bash", Arguments: `{"action":"start_background","command":"npm run dev"}`},
+			name: "process start",
+			call: providers.ToolCall{Name: "process", Arguments: `{"action":"start","command":"npm run dev"}`},
 			want: providers.ToolCallDisplay{Kind: "command", Text: "启动 npm run dev", Capability: "command.background"},
 		},
 	}
@@ -89,7 +89,7 @@ func TestToolkitToolDisplayAddsCapabilityForActiveSurface(t *testing.T) {
 		t.Fatalf("Capability = %q, want command.bash; display=%+v", got.Capability, got)
 	}
 
-	got, ok = kit.ToolDisplay(providers.ToolCall{Name: "bash", Arguments: `{"action":"start_background","command":"npm run dev"}`})
+	got, ok = kit.ToolDisplay(providers.ToolCall{Name: "process", Arguments: `{"action":"start","command":"npm run dev"}`})
 	if !ok {
 		t.Fatal("expected display metadata")
 	}
