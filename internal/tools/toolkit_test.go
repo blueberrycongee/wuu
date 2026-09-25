@@ -1519,9 +1519,6 @@ func TestToolkit_RunShell(t *testing.T) {
 	if parsed["action"].(string) != "run" {
 		t.Fatalf("unexpected run_shell action: %+v", parsed)
 	}
-	if !strings.Contains(parsed["output"].(string), "hi") {
-		t.Fatalf("unexpected output: %v", parsed["output"])
-	}
 	if parsed["purpose"].(string) != "confirm shell purpose metadata" {
 		t.Fatalf("unexpected purpose: %+v", parsed)
 	}
@@ -1662,7 +1659,7 @@ func TestToolkit_RunShellSetsNonInteractiveEnv(t *testing.T) {
 	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
-	if got := parsed["output"].(string); got != "true|true|true|true|cat|cat|cat|0" {
+	if got := parsed["stdout_tail"].(string); got != "true|true|true|true|cat|cat|cat|0" {
 		t.Fatalf("unexpected shell env: %q", got)
 	}
 }

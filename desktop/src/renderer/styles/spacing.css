@@ -12,6 +12,10 @@
   --space-8: calc(var(--space-1) * 8);
 
   --page-padding: var(--space-8);
+  /* Pane edge to the first and last visible glyph (text or icon ink, not a
+   * button box) in chrome rows: sidebar rows, titlebars, tab bars. Controls
+   * whose box is larger than their glyph subtract their own optical offset. */
+  --pane-inset: var(--space-5);
   --content-column-width: 816px;
   --section-gap: var(--space-8);
   --section-heading-gap: var(--space-4);
@@ -29,9 +33,10 @@
   --menu-shell-radius: calc(var(--radius-xs) + var(--menu-inset));
 
   /* Density changes whitespace, never the minimum target. Text can grow
-   * beyond these floors; consumers use auto height and natural line boxes. */
-  --control-field-height: max(32px, calc(var(--font-ui) * 1.5 + var(--control-padding-block) * 2 + 2px));
-  --control-row-height: max(32px, calc(var(--font-ui) * 1.4 + var(--menu-item-padding-block) * 2));
+   * beyond these floors; consumers use auto height and natural line boxes.
+   * Floors land on the 4px grid so adjacent rows and fields share edges. */
+  --control-field-height: max(32px, round(up, calc(var(--font-ui) * 1.5 + var(--control-padding-block) * 2 + 2px), 4px));
+  --control-row-height: max(32px, round(up, calc(var(--font-ui) * 1.4 + var(--menu-item-padding-block) * 2), 4px));
   --control-search-height: var(--control-field-height);
 }
 
@@ -39,6 +44,7 @@
   :root,
   [data-wuu-density] {
     --page-padding: var(--space-4);
+    --pane-inset: var(--space-4);
     --panel-padding: var(--space-4);
     --card-padding: var(--space-3);
   }
@@ -47,7 +53,7 @@
 @media (pointer: coarse) {
   :root,
   [data-wuu-density] {
-    --control-field-height: max(44px, calc(var(--font-ui) * 1.5 + var(--control-padding-block) * 2 + 2px));
-    --control-row-height: max(44px, calc(var(--font-ui) * 1.4 + var(--menu-item-padding-block) * 2));
+    --control-field-height: max(44px, round(up, calc(var(--font-ui) * 1.5 + var(--control-padding-block) * 2 + 2px), 4px));
+    --control-row-height: max(44px, round(up, calc(var(--font-ui) * 1.4 + var(--menu-item-padding-block) * 2), 4px));
   }
 }

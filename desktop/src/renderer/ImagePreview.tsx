@@ -6,19 +6,21 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState
 } from "react";
-import { Download, Maximize2, Minus, RotateCw, X, ZoomIn } from "./WuuIcons";
+import { ChevronLeft, ChevronRight, Download, Maximize2, Minus, RotateCw, X, ZoomIn } from "./WuuIcons";
 import { useI18n } from "./i18n";
+import { imagePreviewSelection } from "./ImagePreviewGallery";
 
 export type ImagePreviewItem =
-  | { src: string; alt?: string; title?: string; svg?: undefined }
+  | { src: string; alt?: string; title?: string; svg?: undefined; loadSource?: () => Promise<string> }
   | { src?: undefined; alt?: string; title?: string; svg: string };
 
 export type ImagePreviewContextValue = {
-  openPreview: (item: ImagePreviewItem) => void;
+  openPreview: (item: ImagePreviewItem, origin?: HTMLElement) => void;
   closePreview: () => void;
 };
 
@@ -37,12 +39,15 @@ export function useOptionalImagePreview(): ImagePreviewContextValue | null {
 }
 
 export function ImagePreviewProvider({ children }: { children: ReactNode }): JSX.Element {
-  const [item, setItem] = useState<ImagePreviewItem | null>(null);
+  const [selection, setSelection] = useState<{ items: ImagePreviewItem[]; index: number } | null>(null);
 
-  const openPreview = useCallback((next: ImagePreviewItem) => {
-    setItem(next);
+  const openPreview = useCallback((next: ImagePreviewItem, origin?: HTMLElement) => {
+    setSelection(imagePreviewSelection(next, origin));
   }, []);
-  const closePreview = useCallback(() => setItem(null), []);
+  const closePreview = useCallback(() => setSelection(null), []);
+  const navigate = useCallback((direction: number) => {
+    setSelection(current => current && ({ ...current, index: Math.max(0, Math.min(current.items.length - 1, current.index + direction)) }));
+  }, []);
 
   const value = useMemo<ImagePreviewContextValue>(
     () => ({ openPreview, closePreview }),
@@ -52,7 +57,8 @@ export function ImagePreviewProvider({ children }: { children: ReactNode }): JSX
   return (
     <ImagePreviewContext.Provider value={value}>
       {children}
-      {item ? <ImagePreviewOverlay key={item.src ?? item.svg} item={item} onClose={closePreview} /> : null}
+      {selection ? <ImagePreviewOverlay item={selection.items[selection.index]} index={selection.index}
+        count={selection.items.length} onNavigate={navigate} onClose={closePreview} /> : null}
     </ImagePreviewContext.Provider>
   );
 }
@@ -60,8 +66,11 @@ export function ImagePreviewProvider({ children }: { children: ReactNode }): JSX
 type View = { scale: number | null; x: number; y: number };
 const fittedView: View = { scale: null, x: 0, y: 0 };
 
-function ImagePreviewOverlay({ item, onClose }: {
+function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
   item: ImagePreviewItem;
+  index: number;
+  count: number;
+  onNavigate: (direction: number) => void;
   onClose: () => void;
 }): JSX.Element {
   const { t, formatNumber } = useI18n();
@@ -73,7 +82,9 @@ function ImagePreviewOverlay({ item, onClose }: {
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const generation = useRef(0);
   const [dragging, setDragging] = useState(false);
+  const [source, setSource] = useState(item.src);
   const overlayRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<HTMLDivElement>(null);
@@ -127,26 +138,46 @@ function ImagePreviewOverlay({ item, onClose }: {
     savingRef.current = true;
     setSaving(true);
     setSaveError("");
-    const source = item.svg == null ? item.src : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(item.svg)}`;
+    const savedGeneration = generation.current;
+    const saveSource = item.svg == null ? source! : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(item.svg)}`;
     try {
-      await window.wuu.saveArtifactFile(item.title || (item.svg == null ? "image" : "image.svg"), source);
+      await window.wuu.saveArtifactFile(item.title || (item.svg == null ? "image" : "image.svg"), saveSource);
     } catch (error) {
-      setSaveError(String(error));
+      if (savedGeneration === generation.current) setSaveError(String(error));
     } finally {
       savingRef.current = false;
       setSaving(false);
     }
-  }, [item]);
+  }, [item, source]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    let cancelled = false;
+    generation.current++;
+    setView(fittedView);
+    setRotation(0);
+    setImageSize({ width: 0, height: 0 });
+    setLoadStatus("loading");
+    setSaveError("");
+    setDragging(false);
+    pointers.current.clear();
+    suppressClick.current = false;
+    setSource(item.src);
     if (item.svg != null) {
       const svg = svgRef.current!.querySelector("svg")!;
       const box = svg.getAttribute("viewBox")?.trim().split(/[\s,]+/).map(Number);
       const bounds = svg.getBoundingClientRect();
       setImageSize({ width: box?.[2] || bounds.width, height: box?.[3] || bounds.height });
       setLoadStatus("loaded");
+    } else if (item.loadSource) {
+      setSource(undefined);
+      void item.loadSource().then(src => {
+        if (!cancelled) setSource(src);
+      }).catch(() => {
+        if (!cancelled) setLoadStatus("error");
+      });
     }
-  }, [item.src, item.svg]);
+    return () => { cancelled = true; };
+  }, [item, index]);
 
   useEffect(() => {
     const stage = stageRef.current!;
@@ -203,7 +234,13 @@ function ImagePreviewOverlay({ item, onClose }: {
         if (ready) void saveImage();
         return;
       }
-      if (!ready || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (!event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+        event.preventDefault();
+        onNavigate(event.key === "ArrowLeft" ? -1 : 1);
+        return;
+      }
+      if (!ready) return;
       switch (event.key) {
         case "+": case "=": zoomAt(1.25); break;
         case "-": zoomAt(1 / 1.25); break;
@@ -220,7 +257,7 @@ function ImagePreviewOverlay({ item, onClose }: {
     }
     document.addEventListener("keydown", keydown, true);
     return () => document.removeEventListener("keydown", keydown, true);
-  }, [onClose, ready, saveImage, zoomAt, pan, rotate]);
+  }, [onClose, onNavigate, ready, saveImage, zoomAt, pan, rotate]);
 
   function pointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
     if (!ready || event.button !== 0) return;
@@ -268,6 +305,19 @@ function ImagePreviewOverlay({ item, onClose }: {
     <div ref={overlayRef} className="image-preview-overlay" role="dialog" aria-modal="true"
       aria-label={t("imagePreview.label")} tabIndex={-1}>
       <div className="image-preview-toolbar">
+        {count > 1 && <div className="image-preview-toolbar-actions image-preview-navigation">
+          <button type="button" className="image-preview-toolbar-button" disabled={index === 0}
+            onClick={() => onNavigate(-1)} aria-label={t("imagePreview.previous")} title={t("imagePreview.previous")}>
+            <ChevronLeft className="icon" aria-hidden="true" />
+          </button>
+          <span className="image-preview-position" aria-live="polite" aria-atomic="true">
+            {formatNumber(index + 1)} / {formatNumber(count)}
+          </span>
+          <button type="button" className="image-preview-toolbar-button" disabled={index === count - 1}
+            onClick={() => onNavigate(1)} aria-label={t("imagePreview.next")} title={t("imagePreview.next")}>
+            <ChevronRight className="icon" aria-hidden="true" />
+          </button>
+        </div>}
         <div className="image-preview-toolbar-actions">
           {window.wuu?.saveArtifactFile && <button type="button" className="image-preview-toolbar-button"
             onClick={() => void saveImage()} disabled={!ready || saving}
@@ -319,14 +369,14 @@ function ImagePreviewOverlay({ item, onClose }: {
           <div ref={svgRef} className="image-preview-image image-preview-svg loaded" role="img" aria-label={item.alt ?? ""}
             style={{ transform, width: imageSize.width || undefined, height: imageSize.height || undefined }}
             dangerouslySetInnerHTML={{ __html: item.svg }} />
-        ) : (
-          <img className={`image-preview-image${ready ? " loaded" : ""}`} src={item.src} alt={item.alt ?? ""}
+        ) : source ? (
+          <img key={`${index}:${source}`} className={`image-preview-image${ready ? " loaded" : ""}`} src={source} alt={item.alt ?? ""}
             draggable={false} style={{ transform, width: imageSize.width || undefined, height: imageSize.height || undefined }}
             onLoad={event => {
               setImageSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight });
               setLoadStatus("loaded");
             }} onError={() => setLoadStatus("error")} />
-        )}
+        ) : null}
       </div>
     </div>
   );

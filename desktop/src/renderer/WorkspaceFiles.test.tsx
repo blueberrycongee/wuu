@@ -232,7 +232,7 @@ describe("WorkspaceFileTree", () => {
       "style[data-file-tree-unsafe-css]",
     );
     expect(unsafeStyle?.textContent).toMatch(
-      /\[data-file-tree-search-container\]\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*100%;[^}]*margin-inline:\s*0;[^}]*padding-inline:\s*8px;/s,
+      /\[data-file-tree-search-container\]\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*100%;[^}]*margin-inline:\s*0;[^}]*padding-inline:\s*var\(--trees-item-margin-x\);/s,
     );
     expect(unsafeStyle?.textContent).toMatch(
       /\[data-file-tree-search-input\]\s*\{[^}]*min-width:\s*0;[^}]*margin-inline-end:\s*40px;[^}]*border:\s*var\(--wuu-workspace-file-tree-search-border,\s*1px solid var\(--hairline-strong\)\);[^}]*border-radius:\s*var\(--wuu-workspace-file-tree-search-radius,\s*var\(--radius-sm\)\);/s,

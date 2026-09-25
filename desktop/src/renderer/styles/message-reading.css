@@ -129,6 +129,24 @@
   margin-block: 0;
 }
 
+/* Prose may break anywhere, but in a table that shrinks every column's
+ * min-content to one character and splits words ("stat/us") in narrow panes.
+ * Keep whole words and let the wrapper scroll instead. */
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-table-wrap :is(th, td) {
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+/* Message tables have no side frame, so their outer columns sit on the prose
+ * axis: rules span the column and cell text starts where paragraphs start. */
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-table-wrap :is(th, td):first-child {
+  padding-inline-start: 0;
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-table-wrap :is(th, td):last-child {
+  padding-inline-end: 0;
+}
+
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading {
   font-size: 1em;
   line-height: 1.4;
@@ -139,9 +157,11 @@
   text-wrap: balance;
 }
 
-:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading--h1 { font-size: 1.3em; }
-:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading--h2 { font-size: 1.12em; }
-:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading--h3 { font-size: 1.04em; }
+/* Each level is a visible step above the next (22/18/16 over 14.5 body) and
+ * lands on a whole pixel, so hierarchy does not rest on weight alone. */
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading--h1 { font-size: round(nearest, 1.5em, 1px); }
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading--h2 { font-size: round(nearest, 1.25em, 1px); }
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading--h3 { font-size: round(nearest, 1.1em, 1px); }
 
 /* Assistant code identifiers should sit in the sentence instead of making
  * every technical term look like a control. User-authored messages keep the

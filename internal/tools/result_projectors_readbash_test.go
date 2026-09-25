@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -108,6 +110,131 @@ func bashEnvelope(m map[string]any) string {
 		base[k] = v
 	}
 	return mustMarshalMap(base)
+}
+
+func TestFinalizeBashLosslessDeduplication(t *testing.T) {
+	for _, tc := range []struct {
+		name, stdout, stderr string
+		fields               map[string]any
+	}{
+		{"stdout", "ok\n", "", nil},
+		{"stderr", "", "warning\n", nil},
+		{"empty", "", "", nil},
+		{"warning", "build succeeded\n", "warning: deprecated\n", map[string]any{"exit_code": 0}},
+		{"failure", "test started\n", "FAIL: assertion\n", map[string]any{"exit_code": 1}},
+		{"timeout", "running\n", "", map[string]any{"exit_code": -1, "timed_out": true, "promoted_process_id": "proc-test"}},
+		{"denied", "", "permission denied\n", map[string]any{"exit_code": 1, "sandbox": map[string]any{"denied": true, "mode": "workspace"}}},
+		{"whitespace", "  界🙂\r\n\r\n\tline  \n", "\nerror\t ", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fields := map[string]any{
+				"output": tc.stdout + tc.stderr, "stdout_tail": tc.stdout, "stderr_tail": tc.stderr,
+				"stdout_tail_truncated": false, "stderr_tail_truncated": false, "truncated": false,
+				"stdout_bytes": len(tc.stdout), "stderr_bytes": len(tc.stderr),
+				"verification":     map[string]any{"passed": false, "summary": "preserve verification"},
+				"next_suggestions": []string{"inspect evidence"},
+				"extension":        map[string]any{"integer": json.Number("9007199254740993"), "decimal": json.Number("1.234567890123456789"), "null": nil},
+			}
+			for key, value := range tc.fields {
+				fields[key] = value
+			}
+			raw := toolresult.FromText(bashEnvelope(fields))
+			raw.IsError = tc.name == "failure" || tc.name == "denied"
+			before := raw.Clone()
+			got, d := finalizeBuiltInToolResult("", "bash", "dedup", raw, 0)
+			if !d.Applied || d.Reason != reasonDeduplicated || got.ModelText == nil {
+				t.Fatalf("lossless candidate not settled: %+v", d)
+			}
+			original, _ := parseToolEnvelope(raw.TextProjection())
+			restored, _ := parseToolEnvelope(got.TextProjection())
+			if _, exists := restored["output"]; exists {
+				t.Fatal("duplicate output retained")
+			}
+			restored["output"] = restored["stdout_tail"].(string) + restored["stderr_tail"].(string)
+			if !reflect.DeepEqual(restored, original) {
+				t.Fatalf("inverse transform changed evidence: got %#v want %#v", restored, original)
+			}
+			producer := got.Clone()
+			producer.ModelText = nil
+			if !reflect.DeepEqual(raw, before) || !reflect.DeepEqual(producer, before) {
+				t.Fatal("producer payload changed")
+			}
+			if d.OmittedBytes != 0 || d.OmittedLines != 0 || d.OmittedRecords != 0 || d.ArtifactRef != "" || d.ArtifactWritten || d.ArtifactReused || d.ArtifactFailed {
+				t.Fatalf("deduplication reported missing evidence: %+v", d)
+			}
+			if d.OriginalBytes != len(raw.TextProjection()) || d.ProjectedBytes != len(got.TextProjection()) || d.ProjectedTokens != estimateResultTokens(got.TextProjection()) || d.ProjectionHash != projectionHash(got.TextProjection()) || d.OriginalHash != projectionHash(raw.TextProjection()) {
+				t.Fatalf("incorrect size/hash diagnostics: %+v", d)
+			}
+			for _, input := range []toolresult.Result{got, toolresult.FromText(got.TextProjection())} {
+				again, _ := finalizeBuiltInToolResult("", "bash", "dedup", input, 0)
+				if !reflect.DeepEqual(again, input) {
+					t.Fatal("deduplication is not idempotent")
+				}
+			}
+			t.Logf("model bytes %d -> %d; estimated tokens %d -> %d", d.OriginalBytes, d.ProjectedBytes, d.OriginalTokens, d.ProjectedTokens)
+		})
+	}
+}
+
+func TestFinalizeBashDeduplicationRejectsIncompleteEvidence(t *testing.T) {
+	base := map[string]any{"output": "", "stdout_tail": "", "stderr_tail": "", "stdout_tail_truncated": false, "stderr_tail_truncated": false}
+	for key := range base {
+		for _, mutation := range []string{"missing", "null", "wrong_type", "different"} {
+			t.Run(key+"/"+mutation, func(t *testing.T) {
+				m := cloneShallow(base)
+				switch mutation {
+				case "missing":
+					delete(m, key)
+				case "null":
+					m[key] = nil
+				case "wrong_type":
+					m[key] = 0
+				case "different":
+					if strings.HasSuffix(key, "truncated") {
+						m[key] = true
+					} else {
+						m[key] = "unique evidence\n"
+					}
+				}
+				raw := toolresult.FromText(mustMarshalMap(m))
+				got, d := finalizeBuiltInToolResult("", "bash", "invalid", raw, 0)
+				if !reflect.DeepEqual(got, raw) || d.Applied {
+					t.Fatalf("incomplete evidence rewritten: %+v", d)
+				}
+			})
+		}
+	}
+	for _, text := range []string{mustMarshalMap(base) + "\nwarning", mustMarshalMap(base) + "\n{}", "null", "[]"} {
+		raw := toolresult.FromText(text)
+		got, d := finalizeBuiltInToolResult("", "bash", "invalid-json", raw, 0)
+		if !reflect.DeepEqual(got, raw) || d.Applied {
+			t.Fatalf("non-envelope text rewritten: %q", text)
+		}
+	}
+}
+
+func TestFinalizeBashDeduplicationBudgetBoundary(t *testing.T) {
+	m := map[string]any{
+		"output": strings.Repeat("line\n", 1000), "stdout_tail": strings.Repeat("line\n", 1000), "stderr_tail": "",
+		"stdout_tail_truncated": false, "stderr_tail_truncated": false,
+	}
+	raw := toolresult.FromText(mustMarshalMap(m))
+	delete(m, "output")
+	candidate, _ := marshalEnvelope(m)
+	budget := estimateResultTokens(candidate)
+	got, d := finalizeBuiltInToolResult("", "bash", "boundary", raw, budget)
+	if d.Reason != reasonDeduplicated || got.TextProjection() != candidate || estimateResultTokens(raw.TextProjection()) <= budget {
+		t.Fatalf("candidate at budget boundary not settled: %+v", d)
+	}
+	// With no writable artifact, an oversized candidate must not be settled.
+	got, d = finalizeBuiltInToolResult("", "bash", "boundary", raw, budget-1)
+	if !reflect.DeepEqual(got, raw) || !d.ArtifactFailed || d.Applied {
+		t.Fatalf("oversized candidate bypassed recovery: %+v", d)
+	}
+	got, d = finalizeBuiltInToolResult(t.TempDir(), "bash", "boundary", raw, budget-1)
+	if !d.Applied || d.Reason != reasonProjected || !d.ArtifactWritten || estimateResultTokens(got.TextProjection()) > budget-1 {
+		t.Fatalf("oversized candidate bypassed existing projection: %+v", d)
+	}
 }
 
 func TestProjectBash_DropsRedundantOutput(t *testing.T) {

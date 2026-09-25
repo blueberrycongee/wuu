@@ -848,8 +848,8 @@ func TestToolkit_Git_NonInteractiveEnv(t *testing.T) {
 	if err := json.Unmarshal([]byte(resp), &p); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if p["output"].(string) != "0" {
-		t.Errorf("GIT_TERMINAL_PROMPT got %q", p["output"])
+	if p["stdout_tail"].(string) != "0" {
+		t.Errorf("GIT_TERMINAL_PROMPT got %q", p["stdout_tail"])
 	}
 }
 

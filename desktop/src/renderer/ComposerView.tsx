@@ -89,6 +89,7 @@ import {
   ProjectPickerMenu,
   RuntimePicker,
   RuntimeModelMenu,
+  runtimePanelWidth,
   SlashCommandIcon,
   permissionModeFromSummary,
   permissionModeOption
@@ -567,6 +568,7 @@ export function Composer({
   const handoffUnavailableReason = handoffDisabledReason
     || (running ? t("slash.taskRunning") : readOnly || effectiveSendDisabled || !onHandoffSession ? t("handoff.card.disabled") : undefined);
   const canConfirmHandoff = canSubmitHandoffDraft(handoffDraft) && !handoffUnavailableReason;
+  const handoffPanelWidth = handoffMode ? runtimePanelWidth() : 0;
   const slashQuery = slashDraft?.query ?? "";
   const slashSkillContextKey = activeContext ? composerRuntimeContextKey(activeContext) : "";
   const slashSkillCountKey = initialized?.extension_trust?.main_session?.skills?.count ?? 0;
@@ -1437,9 +1439,10 @@ export function Composer({
             owner="composer-handoff"
             placement="above"
             align="left"
-            width={224}
+            width={handoffPanelWidth}
           >
             <RuntimeModelMenu
+              width={handoffPanelWidth}
               initialized={initialized}
               state={codexModels}
               selectedProvider={handoffDraft.providerId || initialized.provider}

@@ -107,6 +107,17 @@ describe("RuntimePicker", () => {
     expect(onToggleMenu).toHaveBeenCalledWith("model");
   });
 
+  it("names no level for a model without levels", () => {
+    const initialized = runtimeWithEffort();
+    delete initialized.providers![0].models![0].supported_efforts;
+    initialized.variant = "";
+    renderPicker(null, initialized);
+
+    const trigger = document.querySelector<HTMLButtonElement>(".codex-runtime-trigger");
+    expect(trigger?.querySelector(".codex-runtime-effort")).toBeNull();
+    expect(trigger?.getAttribute("aria-label")).not.toContain("Default");
+  });
+
   it("shows the level stored in effort when the variant column is empty", () => {
     const initialized = runtimeWithEffort();
     initialized.variant = "";
@@ -160,58 +171,72 @@ describe("RuntimePicker", () => {
     expect(modelItems[0]?.getAttribute("aria-checked")).toBe("true");
   });
 
-  it("fits the model page to the visible rows instead of stretching them", () => {
+  it("sizes each page to the rows it shows", () => {
+    const rows = (): string =>
+      document.querySelector<HTMLElement>(".codex-model-menu")?.style.getPropertyValue("--runtime-rows") ?? "";
     const initialized = runtimeWithEffort();
     initialized.providers![0].models = [
       { id: "grok-4.6", display_name: "Grok 4.6", supported_efforts: ["low", "medium", "high"] },
       { id: "grok-4.5", display_name: "Grok 4.5", supported_efforts: ["low", "medium", "high"] }
     ];
-    renderPicker("model", initialized);
-    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")?.click());
-    const two = Number.parseInt(
-      document.querySelector<HTMLElement>(".codex-model-menu")?.style.getPropertyValue("--runtime-models-height") ?? "",
-      10
-    );
+    initialized.model = "grok-4.6";
+    initialized.providers![0].model = "grok-4.6";
+    renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), createRef<HTMLDivElement>(), {
+      engines: Array.from({ length: 7 }, (_, index) => ({
+        id: index === 0 ? "wuu" : `engine-${index}`,
+        enabled: true,
+        binary_ok: true
+      })),
+      onSelectEngine: vi.fn()
+    });
 
-    initialized.providers![0].models = [
-      { id: "grok-4.6", display_name: "Grok 4.6", supported_efforts: ["low", "medium", "high"] }
-    ];
-    renderPicker("model", initialized);
-    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")?.click());
-    const one = Number.parseInt(
-      document.querySelector<HTMLElement>(".codex-model-menu")?.style.getPropertyValue("--runtime-models-height") ?? "",
-      10
-    );
+    // The shell height morphs between pages instead of following its
+    // content, so a count that misses a row clips the last one.
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-context button")?.click());
+    expect(rows()).toBe("7");
 
-    expect(two).toBeGreaterThan(one);
-    expect(two - one).toBe(37);
-    expect(two).toBeLessThan(320);
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-back")?.click());
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")?.click());
+    expect(rows()).toBe("2");
+
+    const search = document.querySelector<HTMLInputElement>(".select-menu-search input")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "4.6");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(rows()).toBe("1");
   });
 
-  it("reserves a row and its separator for every engine", () => {
-    const chooserHeight = (count: number): number => {
-      renderPicker("model", runtimeWithEffort(), vi.fn(), vi.fn(), vi.fn(), createRef<HTMLDivElement>(), {
-        engines: Array.from({ length: count }, (_, index) => ({
-          id: index === 0 ? "wuu" : `engine-${index}`,
-          enabled: true,
-          binary_ok: true
-        })),
-        onSelectEngine: vi.fn()
-      });
-      act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-context button")?.click());
-      return Number.parseFloat(
-        document.querySelector<HTMLElement>(".codex-model-menu")?.style.getPropertyValue("--runtime-chooser-height") ?? ""
-      );
-    };
+  it("steps back with Escape before closing the panel", () => {
+    const onToggleMenu = vi.fn();
+    renderPicker("model", runtimeWithEffort(), onToggleMenu);
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")?.click());
+    const search = document.querySelector<HTMLInputElement>(".select-menu-search input")!;
 
-    const six = chooserHeight(6);
-    const seven = chooserHeight(7);
+    act(() => { search.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    expect(document.querySelector(".runtime-panel.is-summary")).not.toBeNull();
+    expect(onToggleMenu).not.toHaveBeenCalled();
 
-    // The engine page is a fixed-height shell over a scrolling list, so a
-    // height that forgets a row's separator clips the last engine instead of
-    // showing the page inset below it.
-    expect(seven - six).toBe(37);
-    expect(seven).toBeGreaterThanOrEqual(7 * 36 + 6);
+    const model = document.querySelector<HTMLButtonElement>(".runtime-panel-model")!;
+    act(() => { model.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    expect(onToggleMenu).toHaveBeenCalledWith("model");
+  });
+
+  it("picks the first matching model when Enter is pressed in search", () => {
+    const onSelectModel = vi.fn();
+    const initialized = runtimeWithEffort();
+    initialized.providers![0].models!.push({ id: "claude-opus", display_name: "Claude Opus", supported_efforts: ["low", "high"] });
+    renderPicker("model", initialized, vi.fn(), vi.fn(), onSelectModel);
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")?.click());
+    const search = document.querySelector<HTMLInputElement>(".select-menu-search input")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "opus");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => { search.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); });
+
+    expect(onSelectModel).toHaveBeenCalledWith("work", "claude-opus", "");
+    expect(document.querySelector(".runtime-panel.is-summary")).not.toBeNull();
   });
 
   it("presents engines as the parent navigation for the selected engine's models", () => {

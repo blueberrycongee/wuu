@@ -38,7 +38,7 @@ for (const locale of customizePages.slice(1)) {
 const routeFromPage = (page) => page.replace(/\.md$/, "").replace(/\/index$/, "")
 
 function rewriteMarkdownLinks(markdown, page) {
-  return markdown.replace(/\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (match, rawHref) => {
+  return markdown.replace(/(!?\[[^\]\n]*\])\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (match, label, rawHref) => {
     const hashIndex = rawHref.indexOf("#")
     const href = hashIndex === -1 ? rawHref : rawHref.slice(0, hashIndex)
     const fragment = hashIndex === -1 ? "" : rawHref.slice(hashIndex)
@@ -58,7 +58,13 @@ function rewriteMarkdownLinks(markdown, page) {
     if (target.startsWith("../")) {
       const repositoryPath = path.posix.normalize(path.posix.join("docs", target))
       const view = href.endsWith("/") ? "tree" : "blob"
-      return `](https://github.com/blueberrycongee/wuu/${view}/main/${repositoryPath}${fragment})`
+      return `${label}(https://github.com/blueberrycongee/wuu/${view}/main/${repositoryPath}${fragment})`
+    }
+    // Astro transforms embedded images, but ordinary download links need an
+    // original asset at a public URL relative to the rendered page route.
+    if (!label.startsWith("!") && localeRoots.some((root) => target.startsWith(`${root}/assets/`))) {
+      const relative = path.posix.relative(routeFromPage(page), `docs-assets/${target}`)
+      return `${label}(${relative}${fragment})`
     }
     if (!href.endsWith(".md")) return match
     if (!publishedPages.has(target)) {
@@ -66,7 +72,7 @@ function rewriteMarkdownLinks(markdown, page) {
     }
 
     const relative = path.posix.relative(routeFromPage(page), routeFromPage(target)) || "."
-    return `](${relative}/${fragment})`
+    return `${label}(${relative}/${fragment})`
   })
 }
 
@@ -91,10 +97,13 @@ for (const page of pages) {
 }
 
 const assetDirectories = ["zh-cn/assets", "en/assets"]
+const publicAssets = path.join(siteRoot, "public/docs-assets")
+await rm(publicAssets, { recursive: true, force: true })
 for (const directory of assetDirectories) {
   const source = path.join(docsRoot, directory)
   try {
     await cp(source, path.join(outputRoot, directory), { recursive: true })
+    await cp(source, path.join(publicAssets, directory), { recursive: true })
   } catch (error) {
     if (error.code !== "ENOENT") throw error
   }

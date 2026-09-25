@@ -104,7 +104,7 @@ it("renders only the managed SVG image and opens that exact snapshot", async () 
     expect(container.querySelector(".composer-image-attachment")).toBeNull();
     expect(container.querySelector(".turn-artifact-image-preview svg, iframe")).toBeNull();
     await act(async () => container.querySelector("button")!.click());
-    expect(openPreview).toHaveBeenCalledWith({ src: artifact.uri, alt: "chart.svg", title: "chart.svg" });
+    expect(openPreview).toHaveBeenCalledWith({ src: artifact.uri, alt: "chart.svg", title: "chart.svg" }, container.querySelector("button"));
     await act(async () => container.querySelector("img")!.dispatchEvent(new Event("error")));
     expect(container.querySelector(".turn-artifact-unavailable")?.textContent).toBe("imagePreview.loadFailed");
     expect(container.querySelector("button")?.disabled).toBe(true);

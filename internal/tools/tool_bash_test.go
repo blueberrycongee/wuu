@@ -197,7 +197,7 @@ func TestBashRunResolvesLocalNpxTypecheckRunner(t *testing.T) {
 	if parsed.Verification == nil || !parsed.Verification.Passed {
 		t.Fatalf("local tsc verification should pass: %+v", parsed.Verification)
 	}
-	if !strings.Contains(parsed.Output, "local tsc --noEmit") {
+	if !strings.Contains(parsed.StdoutTail, "local tsc --noEmit") {
 		t.Fatalf("local tsc output missing: %+v", parsed)
 	}
 }
@@ -231,7 +231,7 @@ func TestBashRunResolvesLocalNpxTypecheckRunnerWithProjectOptionOrder(t *testing
 	if parsed.Verification == nil || !parsed.Verification.Passed {
 		t.Fatalf("local tsc verification should pass: %+v", parsed.Verification)
 	}
-	if !strings.Contains(parsed.Output, "local tsc -p tsconfig.json --noEmit") {
+	if !strings.Contains(parsed.StdoutTail, "local tsc -p tsconfig.json --noEmit") {
 		t.Fatalf("local tsc output missing: %+v", parsed)
 	}
 }
@@ -279,7 +279,7 @@ func TestBashRunResolvesWrappedLocalNpxVerificationRunner(t *testing.T) {
 	if parsed.Verification == nil || !parsed.Verification.Passed {
 		t.Fatalf("wrapped local vitest verification should pass: %+v", parsed.Verification)
 	}
-	if !strings.Contains(parsed.Output, "wrapped local vitest --run") {
+	if !strings.Contains(parsed.StdoutTail, "wrapped local vitest --run") {
 		t.Fatalf("wrapped local vitest output missing: %+v", parsed)
 	}
 }
@@ -398,7 +398,7 @@ func TestBashRunWithCWDResolvesLocalNpxVerificationRunner(t *testing.T) {
 	if parsed.Command != "./node_modules/.bin/vitest --run" || parsed.ResolvedCommand != parsed.Command {
 		t.Fatalf("npx command was not resolved relative to cwd: %+v", parsed)
 	}
-	if !strings.Contains(parsed.Output, "desktop vitest --run") {
+	if !strings.Contains(parsed.StdoutTail, "desktop vitest --run") {
 		t.Fatalf("cwd-local vitest output missing: %+v", parsed)
 	}
 	if parsed.Verification == nil || !parsed.Verification.Passed {

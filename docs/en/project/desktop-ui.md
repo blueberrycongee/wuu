@@ -2,6 +2,8 @@
 
 Use the renderer's shared components and design variables when changing the desktop interface. Check the result in a real browser or Electron window: type checks and jsdom tests cannot establish readable spacing, working scroll effects, or a visible keyboard focus ring.
 
+The [Wuu design system](design-system.md) defines color, typography, spacing, radius, elevation, and interaction guidance, with regenerable light/dark boards. Use it for design roles and this page for real component previews and acceptance entry points.
+
 ## Preview real components
 
 After [development setup](development.md), start a renderer preview server:
@@ -22,6 +24,18 @@ npm --prefix desktop run dev:onboarding
 It renders the real first-run component without the product preload, app-server, or persistent profile. Choices are not saved; use dummy model credentials. Reload with Cmd+R or Ctrl+R to start again. The temporary profile is removed on normal exit. This preview checks presentation, not login or settings persistence.
 
 The [mascot lab](../../../desktop/dev/mascot/README.md) uses `npm --prefix desktop run lab:mascot`. Use the full `make dev` path when the change depends on native behavior, IPC, or real session state. Keep temporary screenshots in ignored output directories and use synthetic content in committed fixtures.
+
+## Conversation image previews
+
+Image previews group the current conversation's displayed uploads, tool-result
+images, and message images in display order. Previous/next buttons and the left
+and right arrow keys move through the group; the counter shows the position.
+Navigation stops at either end, and a single image has no navigation controls.
+Expand collapsed content or load earlier history before opening its images.
+The group stays fixed while the preview is open, so streaming output does not
+shift the current position. Each image starts fitted and unrotated; Shift with
+the left/right arrow keys pans a zoomed image. Escape closes the preview and
+returns focus to the opener.
 
 ## Shared typography and geometry
 

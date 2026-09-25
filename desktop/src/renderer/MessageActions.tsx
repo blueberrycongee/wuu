@@ -219,7 +219,7 @@ export function MessageImageGrid({
         return (
           <div className="message-image-frame" key={`${image.media_type}-${index}`}>
             <AttachmentImage image={image} label={label} className="message-image" previewDisabled={overflowPreview}
-              onOpen={src => openPreview({ src, alt: label, title: label })} />
+              onOpen={(src, origin) => openPreview({ src, alt: label, title: label }, origin)} />
             {overflowPreview ? (
               <button
                 type="button"

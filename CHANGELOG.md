@@ -8,7 +8,45 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+## [2026.9.25] - 2026-09-25
+
 ### Changed
+
+- The composer model picker adapts to larger UI text and supports keyboard
+  navigation, focused search, and clearer engine-managed model guidance.
+
+- Desktop titlebars, tab bars, and the sidebar place their first and last
+  icons 20px from the pane edge on both sides. In the message column, tables
+  start on the same edge as paragraphs, while code blocks, the composer, and
+  message bubbles share one 16px inner inset. Derived text, icon, and line
+  sizes land on whole pixels, sidebar group headings keep one height, and
+  message headings step more clearly above body text.
+
+### Fixed
+
+- Reduce long conversation switching stalls by assembling core responses once
+  per message and reusing resume responses instead of transmitting history twice.
+
+- Message table headers no longer render bold, and narrow tables keep words
+  whole instead of breaking them mid-word.
+
+- The workspace file tree now fits a narrow panel when the panel opens after
+  launch, so the file preview keeps a usable width instead of wrapping one
+  character per line.
+
+## [2026.9.24] - 2026-09-24
+
+### Added
+
+- Conversation image previews support previous/next buttons, left/right arrow
+  keys, and a position counter for displayed uploads, tool images, and message
+  images. Navigation stops at the first and last image.
+
+### Changed
+
+- Short bash results omit the duplicate combined output from model context when
+  the complete stdout and stderr reproduce it exactly. Original results and all
+  diagnostic evidence remain intact.
 
 - Text file reads show a line number on the first line of each page and at
   every tenth file line. Each line retains a separator so source indentation

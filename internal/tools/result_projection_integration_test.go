@@ -3,11 +3,13 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -154,9 +156,8 @@ func TestChokePoint_OverBudgetBashUsesGenericSettlement(t *testing.T) {
 	kit.env.SessionDir = t.TempDir()
 	kit.env.ToolResultProjectionMode = "active"
 	raw := bashEnvelope(map[string]any{
-		"output":      "ok\n",
-		"stdout_tail": "ok\n",
-		"stderr_tail": "",
+		"output": "ok\n", "stdout_tail": "ok\n", "stderr_tail": "",
+		"stdout_tail_truncated": false, "stderr_tail_truncated": false,
 		"verification": map[string]any{
 			"passed":  false,
 			"summary": strings.Repeat("failing assertion detail ", 4000),
@@ -172,6 +173,125 @@ func TestChokePoint_OverBudgetBashUsesGenericSettlement(t *testing.T) {
 	rec := recordFor(kit.ToolTelemetry(), call.ID)
 	if rec == nil || rec.Projection == nil || rec.Projection.Applied {
 		t.Fatalf("over-budget bash must fail open into generic settlement: %+v", rec)
+	}
+	archived, err := os.ReadFile(parseOut(t, returned.TextProjection())["artifact_ref"].(string))
+	if err != nil || string(archived) != raw {
+		t.Fatalf("generic archive lost original evidence: %v", err)
+	}
+	// A file cannot serve as the session directory: both archival paths must
+	// fail open without prematurely settling the oversized deduplicated text.
+	kit.env.SessionDir = parseOut(t, returned.TextProjection())["artifact_ref"].(string)
+	input := toolresult.FromText(raw)
+	if got := kit.FinalizeToolResult(call, input); !reflect.DeepEqual(got, input) {
+		t.Fatal("archival failure changed the original result")
+	}
+}
+
+func TestBashDeduplicationModesAndEligibility(t *testing.T) {
+	t.Setenv(projectionModeEnvVar, "")
+	raw := toolresult.FromText(`{"output":"ok\nwarning\n","stdout_tail":"ok\n","stderr_tail":"warning\n","stdout_tail_truncated":false,"stderr_tail_truncated":false}`)
+	for _, mode := range []string{"off", "shadow", "active"} {
+		t.Run(mode, func(t *testing.T) {
+			kit := &Toolkit{env: &Env{ToolResultProjectionMode: mode}}
+			got, _, _, diag := kit.finalizeToolResult(providers.ToolCall{Name: "bash"}, raw)
+			if mode == "off" {
+				if diag != nil {
+					t.Fatal("off mode computed projection")
+				}
+			} else if diag == nil || diag.Reason != reasonDeduplicated {
+				t.Fatalf("missing lossless diagnostics: %+v", diag)
+			}
+			_, outputPresent := parseOut(t, got.TextProjection())["output"]
+			if outputPresent != (mode != "active") || (mode != "active" && got.TextProjection() != raw.TextProjection()) {
+				t.Fatal("projection mode changed the wrong model text")
+			}
+			// A later mode change must not rewrite an already settled history.
+			kit.env.ToolResultProjectionMode = "active"
+			if again := kit.FinalizeToolResult(providers.ToolCall{Name: "bash"}, got); !reflect.DeepEqual(again, got) {
+				t.Fatal("settled history was retroactively rewritten")
+			}
+		})
+	}
+	for _, name := range []string{"mcp_server_bash", "custom_bash", "Bash", "bash"} {
+		for _, rich := range []bool{false, true} {
+			if name == "bash" && !rich {
+				continue
+			}
+			input := raw.Clone()
+			if rich {
+				input.StructuredContent = json.RawMessage(`{"private":"metadata"}`)
+			}
+			got, d := finalizeBuiltInToolResult("", name, "ineligible", input, 0)
+			if d.Applied || !reflect.DeepEqual(got, input) {
+				t.Fatalf("ineligible %s rich=%v was rewritten", name, rich)
+			}
+		}
+	}
+}
+
+func TestBashDeduplicationSurvivesStorageAndRequestPreparation(t *testing.T) {
+	t.Setenv(projectionModeEnvVar, "active")
+	kit, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := providers.ToolCall{ID: "bash-storage", Name: "bash", Arguments: `{}`}
+	raw := `{"output":"ok\nwarning\n","stdout_tail":"ok\n","stderr_tail":"warning\n","stdout_tail_truncated":false,"stderr_tail_truncated":false}`
+	result, err := kit.executeKnownToolResultWithRepeatPolicy(context.Background(), call, fakeBashTool{text: raw}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ModelText == nil || result.TextProjection() == raw || result.Content[0].Text != raw {
+		t.Fatal("execution did not settle the lossless projection separately")
+	}
+	record := recordFor(kit.ToolTelemetry(), call.ID)
+	if record == nil || record.Projection == nil || !record.Projection.Applied || record.Projection.Reason != reasonDeduplicated {
+		t.Fatalf("execution did not record lossless diagnostics: %+v", record)
+	}
+	if record.ResultBudgeted || record.ResultRef != "" {
+		t.Fatalf("lossless settlement reported omitted evidence: %+v", record)
+	}
+	envelope := record.ResultEnvelope()
+	if envelope.Truncated || len(envelope.Warnings) != 0 || envelope.DataRef != "" {
+		t.Fatalf("lossless settlement advertised truncation or recovery: %+v", envelope)
+	}
+	dir := t.TempDir()
+	if _, err := session.CreateWithMetadata(dir, "bash-replay", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AppendHistoryRecord(dir, "bash-replay", session.HistoryRecord{Role: "tool", ToolCallID: call.ID, Content: result.TextProjection(), ToolResult: payload}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.MaintainRedundantStorage(context.Background(), dir); err != nil {
+		t.Fatal(err)
+	}
+	records, err := session.LoadHistoryRecords(dir, "bash-replay", false)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("load history: records=%d err=%v", len(records), err)
+	}
+	var restored toolresult.Result
+	if err := json.Unmarshal(records[0].ToolResult, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(restored, result) || records[0].Content != result.TextProjection() {
+		t.Fatal("storage changed producer or settled model text")
+	}
+	for _, input := range []toolresult.Result{result, restored} {
+		input = kit.FinalizeToolResult(call, input)
+		messages := []providers.ChatMessage{
+			{Role: "assistant", ToolCalls: []providers.ToolCall{call}},
+			{Role: "tool", ToolCallID: call.ID, Content: input.TextProjection(), ToolResult: &input},
+		}
+		for range 2 {
+			messages, err = providers.PrepareMessagesForModelRequest("gpt-5", messages)
+			if err != nil || toolContent(messages, call.ID) != result.TextProjection() {
+				t.Fatalf("request preparation restored duplicate evidence: %v", err)
+			}
+		}
 	}
 }
 

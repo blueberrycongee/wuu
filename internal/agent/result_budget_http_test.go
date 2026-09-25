@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"context"
@@ -17,11 +17,13 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers/anthropic"
 	"github.com/blueberrycongee/wuu/internal/providers/openai"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
+	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 // Exercise each real serializer, not only shared preparation. In particular,
 // Responses must also replay historical settlements with explicit empty text.
 func TestSettledResultProviderHTTP(t *testing.T) {
+	t.Setenv("WUU_TOOL_RESULT_PROJECTION", "active")
 	for _, api := range []string{"chat", "responses", "anthropic"} {
 		for _, zero := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/zero=%v", api, zero), func(t *testing.T) {
@@ -33,14 +35,36 @@ func TestSettledResultProviderHTTP(t *testing.T) {
 				small := toolresult.FromText("untrimmed")
 				if zero {
 					small = toolresult.FromText(strings.Repeat("b", 200000))
+				} else {
+					kit, err := tools.New(t.TempDir())
+					if err != nil {
+						t.Fatal(err)
+					}
+					small = toolresult.FromText(`{"output":"started\nwarning: deprecated\nFAIL: assertion\n","stdout_tail":"started\n","stderr_tail":"warning: deprecated\nFAIL: assertion\n","stdout_tail_truncated":false,"stderr_tail_truncated":false,"exit_code":1}`)
+					small.IsError = true
+					small = kit.FinalizeToolResult(providers.ToolCall{ID: "call_1", Name: "bash"}, small)
+					if small.ModelText == nil {
+						t.Fatal("bash model text was not settled")
+					}
 				}
+				smallText := small.TextProjection()
 				small.Content = append(small.Content, toolresult.ContentPart{Type: "file", MIMEType: "application/pdf", Data: "cGRm", Name: "synthetic.pdf"})
 				page := `{"content":"界🙂","continuation":{"has_more":true,"next":{"continuation":"synthetic-cursor"}}}`
 				if zero {
 					page = ""
 				}
 				large.ModelText = &page
-				history := budgetHistory(large, small)
+				history := []providers.ChatMessage{
+					{Role: "assistant", ToolCalls: []providers.ToolCall{
+						{ID: "call_0", Name: "lookup", Arguments: `{}`},
+						{ID: "call_1", Name: "lookup", Arguments: `{}`},
+					}},
+					{Role: "tool", ToolCallID: "call_0", Content: large.TextProjection(), ToolResult: &large},
+					{Role: "tool", ToolCallID: "call_1", Content: small.TextProjection(), ToolResult: &small},
+				}
+				if !zero {
+					history[0].ToolCalls[1].Name = "bash"
+				}
 				before := providers.CloneChatMessages(history)
 				bodies := make(chan []byte, 1)
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -128,8 +152,17 @@ func TestSettledResultProviderHTTP(t *testing.T) {
 					if index == 0 && text != history[1].Content {
 						t.Errorf("budgeted text restored: wire=%d settled=%d", len(text), len(history[1].Content))
 					}
-					if index == 1 && text != small.Content[0].Text {
+					if index == 1 && text != smallText {
 						t.Error("smaller output changed")
+					}
+					if index == 1 && !zero {
+						var envelope map[string]any
+						if err := json.Unmarshal([]byte(text), &envelope); err != nil {
+							t.Fatal(err)
+						}
+						if _, exists := envelope["output"]; exists || envelope["stderr_tail"] != "warning: deprecated\nFAIL: assertion\n" || envelope["stdout_tail"] != "started\n" || envelope["exit_code"] != float64(1) {
+							t.Fatalf("wire restored duplicates or lost failure evidence: %s", text)
+						}
 					}
 					if zero && index == 0 && text != "" {
 						t.Error("zero allocation was restored")

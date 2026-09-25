@@ -312,92 +312,124 @@ func TestServeAllowsBackgroundHostCallAfterCapabilityReturns(t *testing.T) {
 	}
 }
 
-func TestExecutionCancelPreemptsRunningTool(t *testing.T) {
-	input := strings.Join([]string{
-		`{"id":"1","method":"initialize","params":{"protocol_version":1,"capability_protocol_version":3,"plugin_id":"slow"}}`,
-		`{"id":"2","method":"tool.execute","params":{"tool_id":"wait","execution_id":"exec-1","call_id":"c1","tool":"wait","arguments":{}}}`,
-		`{"id":"3","method":"execution.cancel","params":{"execution_id":"exec-1"}}`,
-		`{"id":"4","method":"shutdown"}`,
-	}, "\n") + "\n"
-	var output bytes.Buffer
-	observedCancel := make(chan error, 1)
-	err := ServeIO(context.Background(), strings.NewReader(input), &output, Handler{
-		Definition: Definition{Tools: []Tool{{ID: "wait", Description: "block until canceled", InputSchema: map[string]any{"type": "object"}}}},
-		ExecuteTool: func(ctx context.Context, _ Host, call ToolCall) (ToolResult, error) {
-			if call.ExecutionID != "exec-1" {
-				observedCancel <- nil
-				return TextResult("wrong execution"), nil
-			}
-			<-ctx.Done()
-			observedCancel <- ctx.Err()
-			return TextResult("canceled"), nil
+func TestExecutionCancelPreemptsRunning(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		request    string
+		wantResult any
+	}{
+		{
+			name:       "Tool",
+			request:    `{"id":"invoke","method":"tool.execute","params":{"tool_id":"wait","execution_id":"exec-1","call_id":"c1","tool":"wait","arguments":{}}}`,
+			wantResult: map[string]any{"result": TextResult("canceled")},
 		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ctxErr := <-observedCancel; ctxErr == nil {
-		t.Fatal("tool handler context was not canceled")
-	}
-	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
-	if len(lines) != 4 {
-		t.Fatalf("responses = %s", output.String())
-	}
-	// The cancel acknowledgement (id 3) is written before the tool result
-	// (id 2): proof the cancel preempted the serial dispatch queue.
-	cancelAck, toolResult := -1, -1
-	for index, line := range lines {
-		if strings.Contains(line, `"id":"3"`) {
-			cancelAck = index
-		}
-		if strings.Contains(line, `"id":"2"`) {
-			toolResult = index
-		}
-	}
-	if cancelAck == -1 || toolResult == -1 || cancelAck > toolResult || !strings.Contains(lines[toolResult], "canceled") {
-		t.Fatalf("preemption order = %s", output.String())
-	}
-}
-
-func TestExecutionCancelPreemptsRunningService(t *testing.T) {
-	input := strings.Join([]string{
-		`{"id":"1","method":"initialize","params":{"protocol_version":1,"capability_protocol_version":3,"plugin_id":"slow-service"}}`,
-		`{"id":"2","method":"service.invoke","params":{"service":"search.provider","method":"query","caller":"notes","execution_id":"exec-service"}}`,
-		`{"id":"3","method":"execution.cancel","params":{"execution_id":"exec-service"}}`,
-		`{"id":"4","method":"shutdown"}`,
-	}, "\n") + "\n"
-	var output bytes.Buffer
-	observedCancel := make(chan error, 1)
-	err := ServeIO(context.Background(), strings.NewReader(input), &output, Handler{
-		Definition: Definition{ProvidedServices: []Service{{Name: "search.provider", Version: "1.0.0"}}},
-		InvokeService: func(ctx context.Context, _ Host, call ServiceCall) (json.RawMessage, error) {
-			if call.ExecutionID != "exec-service" {
-				observedCancel <- nil
-				return json.RawMessage(`{"state":"wrong execution"}`), nil
-			}
-			<-ctx.Done()
-			observedCancel <- ctx.Err()
-			return json.RawMessage(`{"state":"cancelled"}`), nil
+		{
+			name:       "Service",
+			request:    `{"id":"invoke","method":"service.invoke","params":{"service":"search.provider","method":"query","caller":"notes","execution_id":"exec-1"}}`,
+			wantResult: map[string]string{"state": "cancelled"},
 		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ctxErr := <-observedCancel; ctxErr == nil {
-		t.Fatal("service handler context was not canceled")
-	}
-	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
-	cancelAck, serviceResult := -1, -1
-	for index, line := range lines {
-		if strings.Contains(line, `"id":"3"`) {
-			cancelAck = index
-		}
-		if strings.Contains(line, `"id":"2"`) {
-			serviceResult = index
-		}
-	}
-	if cancelAck == -1 || serviceResult == -1 || cancelAck > serviceResult || !strings.Contains(lines[serviceResult], "cancelled") {
-		t.Fatalf("service preemption order = %s", output.String())
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reader, writer := io.Pipe()
+			defer reader.Close()
+			defer writer.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			responses := make(responseSink, 4)
+			started := make(chan error, 1)
+			observedCancel := make(chan error, 1)
+			done := make(chan error, 1)
+			waitForCancel := func(ctx context.Context, executionID string) {
+				err := ctx.Err()
+				if executionID != "exec-1" {
+					err = fmt.Errorf("execution ID = %q, want exec-1", executionID)
+				}
+				started <- err
+				<-ctx.Done()
+				observedCancel <- ctx.Err()
+			}
+			go func() {
+				done <- ServeIO(ctx, reader, responses, Handler{
+					ExecuteTool: func(ctx context.Context, _ Host, call ToolCall) (ToolResult, error) {
+						waitForCancel(ctx, call.ExecutionID)
+						return TextResult("canceled"), nil
+					},
+					InvokeService: func(ctx context.Context, _ Host, call ServiceCall) (json.RawMessage, error) {
+						waitForCancel(ctx, call.ExecutionID)
+						return json.RawMessage(`{"state":"cancelled"}`), nil
+					},
+				})
+			}()
+			write := func(line string) {
+				t.Helper()
+				if _, err := io.WriteString(writer, line+"\n"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			await := func(ch <-chan error, stage string) error {
+				t.Helper()
+				select {
+				case err := <-ch:
+					return err
+				case <-time.After(3 * time.Second):
+					t.Fatalf("timed out waiting for %s", stage)
+					return nil
+				}
+			}
+			next := func() rpcResponse {
+				t.Helper()
+				select {
+				case r := <-responses:
+					if r.Error != nil {
+						t.Fatalf("response %q: %+v", r.ID, r.Error)
+					}
+					return r
+				case <-time.After(3 * time.Second):
+					t.Fatal("missing runtime response")
+					return rpcResponse{}
+				}
+			}
+			write(`{"id":"init","method":"initialize","params":{"protocol_version":1,"capability_protocol_version":3,"plugin_id":"slow"}}`)
+			if r := next(); r.ID != "init" {
+				t.Fatalf("initialize response = %+v", r)
+			}
+			write(test.request)
+			if err := await(started, "handler start"); err != nil {
+				t.Fatalf("handler started with invalid execution: %v", err)
+			}
+			// Keep the input open and the parent context live: only this frame
+			// can cancel the already-running handler, bypassing serial dispatch.
+			write(`{"id":"cancel","method":"execution.cancel","params":{"execution_id":"exec-1"}}`)
+			if err := await(observedCancel, "handler cancellation"); err != context.Canceled {
+				t.Fatalf("handler context error = %v, want context.Canceled", err)
+			}
+			// The host discards cancellation acknowledgements. Their order
+			// relative to the invocation result is not a protocol guarantee.
+			wantResult, err := json.Marshal(test.wantResult)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := map[string]string{"invoke": string(wantResult), "cancel": `{}`}
+			for range 2 {
+				r := next()
+				result, ok := want[r.ID]
+				if !ok || string(r.Result) != result {
+					t.Fatalf("unexpected response: id=%q result=%s, remaining=%v", r.ID, r.Result, want)
+				}
+				delete(want, r.ID)
+			}
+			write(`{"id":"shutdown","method":"shutdown"}`)
+			if r := next(); r.ID != "shutdown" {
+				t.Fatalf("shutdown response = %+v", r)
+			}
+			writer.Close()
+			if err := await(done, "runtime shutdown"); err != nil {
+				t.Fatal(err)
+			}
+			if len(responses) != 0 {
+				t.Fatalf("unexpected extra response: %+v", <-responses)
+			}
+		})
 	}
 }
 
