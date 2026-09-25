@@ -2979,7 +2979,6 @@
 }
 
 :root[data-renderer-hidden] .turn-process-live-dot,
-:root[data-renderer-hidden] .wuu-launch-glass::after,
 :root[data-renderer-hidden] .wuu-launch-mark::after,
 :root[data-renderer-hidden] .wuu-launch-mark span,
 :root[data-renderer-hidden] .wuu-launch-rail::after {
@@ -4768,35 +4767,17 @@ pre {
   }
 }
 
-@keyframes thinking-icon-breathe {
-  0%,
-  100% {
-    opacity: 0.72;
-    transform: scale(1);
-  }
-  42% {
-    opacity: 1;
-    transform: scale(1.05);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .wuu-launch-glass,
   .wuu-launch-mark::after,
   .wuu-launch-mark span,
   .wuu-launch-rail::after,
-  .view-switch-loading,
   .view-switch-loading-conversation,
   .project-row .project-row-loading,
   .project-row.pending-switch::before,
   .thread-row.pending-switch::before,
   .thread-row.running::before,
-  .thread-row-spinner,
-  .session-tab.running .session-tab-status,
-  .session-tab.pending-switch .session-tab-status,
-  .turn-progress.in_progress .turn-progress-label svg,
-  .turn-progress.in_progress .turn-progress-title,
-  .turn-progress.in_progress .turn-progress-rule::after {
+  .thread-row-spinner {
     animation: none;
     transition: none;
   }
@@ -4804,20 +4785,6 @@ pre {
   .wuu-launch-mark span {
     opacity: 1;
     transform: none;
-  }
-
-  .turn-progress.in_progress .turn-progress-rule {
-    height: 1px;
-    background: var(--surface-4);
-  }
-
-  .turn-progress.in_progress .turn-progress-rule::before {
-    display: none;
-  }
-
-  .turn-progress.in_progress .turn-progress-title {
-    background: none;
-    color: var(--ink-tertiary);
   }
 }
 

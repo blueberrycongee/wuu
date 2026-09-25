@@ -1187,7 +1187,6 @@ html.resizing-workspace-file-split * {
     max-height 180ms var(--ease-out),
     transform var(--motion-fast) var(--ease-out),
     translate var(--motion-fast) var(--ease-out),
-    border-radius 180ms var(--ease-out),
     border-color var(--motion-fast) var(--ease-out),
     box-shadow var(--motion-fast) var(--ease-out);
 }

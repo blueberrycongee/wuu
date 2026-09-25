@@ -707,10 +707,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .composer-stack,
-  .composer,
-  .composer-pending-drawer,
-  .composer textarea,
   .composer-expand-button {
     transition: none;
   }

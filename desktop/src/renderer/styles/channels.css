@@ -973,46 +973,6 @@
   gap: 8px;
 }
 
-.channel-assignment-item {
-  width: 100%;
-  min-width: 0;
-  transform-origin: center;
-  animation: channel-assignment-arrive 380ms cubic-bezier(.2, .85, .25, 1) both;
-  animation-delay: calc(var(--channel-assignment-index, 0) * 120ms);
-}
-
-.channel-assignment-item[data-state="done"],
-.channel-assignment-item[data-state="completed"] {
-  animation: channel-assignment-arrive-subtle 320ms ease-out both;
-  animation-delay: calc(var(--channel-assignment-index, 0) * 80ms);
-}
-
-@keyframes channel-assignment-arrive {
-  0% {
-    opacity: 0;
-    transform: translateY(8px) scale(.96);
-  }
-  70% {
-    opacity: 1;
-    transform: translateY(0) scale(1.01);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes channel-assignment-arrive-subtle {
-  0% {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 .channel-assignment-heading {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) 14px;
@@ -1069,11 +1029,6 @@
 
 .channel-assignment-status[data-state="done"] {
   color: var(--success);
-}
-
-@keyframes channel-status-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
 }
 
 .channel-orchestration-summary {
@@ -1145,26 +1100,6 @@
   margin-bottom: 5px;
 }
 
-@keyframes channel-assignment-arrive {
-  0% {
-    opacity: 0;
-    transform: translateY(6px) scale(.9);
-  }
-  72% {
-    opacity: 1;
-    transform: translateY(0) scale(1.02);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes channel-assignment-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
 @media (max-width: 720px) {
   .channel-orchestration-message.chat-row > .channel-message-content {
     width: 100%;
@@ -1189,15 +1124,6 @@
     grid-row: 2;
   }
 
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .channel-assignment-item {
-    transform: none;
-    animation-name: channel-assignment-fade;
-    animation-duration: 160ms;
-    animation-timing-function: ease-out;
-  }
 }
 
 .channel-message-content > .composer-attachments {
@@ -3656,9 +3582,6 @@ html[data-focus-modality="keyboard"] .agent-avatar-color-control input[type="ran
   .channel-conversation-footer .channel-composer { --session-outer-padding-inline: 12px; }
   .channel-mention-menu button { min-height: 44px; }
   .channel-agent-proposal { padding: 12px; gap: 10px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .channel-typing-dots i { animation: none; opacity: 0.7; }
 }
 
 .channel-activity-session-list { padding: 12px; }

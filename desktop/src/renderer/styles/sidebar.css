@@ -2204,12 +2204,6 @@ html[data-focus-modality="keyboard"] :is(
   transform-origin: center;
 }
 
-.project-row.expanded .project-row-icon-state {
-  transition:
-    opacity var(--section-fold-fade-ms) var(--ease-out),
-    transform var(--section-fold-ms) var(--section-fold-ease);
-}
-
 .project-row-icon-state.collapsed {
   opacity: 1;
   transform: translate3d(0, 0, 0) scale(1);
@@ -2822,8 +2816,7 @@ html[data-focus-modality="keyboard"] :is(
 
   .project-row-chevron,
   .project-row-icon-state,
-  .thread-list-collapse,
-  .thread-list-collapse-inner {
+  .thread-list-collapse {
     transition: none;
   }
 
