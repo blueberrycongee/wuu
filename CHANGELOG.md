@@ -19,6 +19,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Collaboration conversations can receive due room reminders, include them in
+  unread counts, and clear their wake state after consumption.
+
 - Collaboration replies no longer become held drafts just because a thread
   reply is newer than the conversation's main timeline.
 

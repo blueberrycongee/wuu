@@ -61,7 +61,7 @@ func (c *AgentClient) PeekInbox(ctx context.Context) (InboxSummary, error) {
 		// including after that delivery was received through the wake input.
 		var count int
 		err = tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(MAX(inbox.rowid), 0)
-			FROM inbox_items inbox JOIN room_messages message ON message.id = inbox.message_id
+			FROM inbox_items inbox LEFT JOIN room_messages message ON message.id = inbox.message_id
 			WHERE inbox.member_type = 'agent' AND inbox.member_id = ?`+publicScope+`
 			AND NOT EXISTS (SELECT 1 FROM collaboration_messages delivery
 				WHERE delivery.to_agent_id = inbox.member_id AND delivery.invalidated_at IS NULL
