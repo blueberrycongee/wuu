@@ -19,6 +19,7 @@ import { translateCurrent, useI18n } from "./i18n";
 import { desktopPlatform } from "./platform";
 import { FilePreviewPresentation } from "./plugins/FilePreviewPresentation";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
+import { VideoPreview } from "./VideoPreview";
 
 // monaco-editor is several MB of JS; a static import here would drag it into
 // the eager startup chunk. Load it only when a code editor actually mounts.
@@ -755,7 +756,11 @@ export function WorkspaceFilePreview({
         <span>{selectedWorkspaceFilePath}</span>
       </div>
     ) : file.renderable_url ? (
-      file.renderable_kind === "pdf" ? (
+      file.renderable_kind === "video" ? (
+        <article className="workspace-file-preview readonly">
+          <VideoPreview src={file.renderable_url} title={file.path} active={active} />
+        </article>
+      ) : file.renderable_kind === "pdf" ? (
         <article className="workspace-file-preview readonly">
           <Suspense fallback={<div className="workspace-file-pdf-preview" />}>
             <WorkspacePdfPreview url={file.renderable_url} title={file.path} />

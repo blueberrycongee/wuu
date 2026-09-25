@@ -8,6 +8,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Video output cards and workspace video files open an inline player with
+  playback, seeking, volume, and fullscreen controls. Unsupported codecs show
+  a message while keeping the download action available.
+
 ## [2026.9.25] - 2026-09-25
 
 ### Changed

@@ -20,6 +20,8 @@ import {
 } from "./TurnOutputSummaryCard";
 import { Tooltip } from "./Tooltip";
 import { useArtifactPreview } from "./ArtifactPreviewContext";
+import { VideoPreview } from "./VideoPreview";
+import { videoMimeType } from "../shared/videoMimeType";
 
 const WorkspacePdfPreview = lazy(async () => ({
   default: (await import("./WorkspacePdfPreview")).WorkspacePdfPreview,
@@ -456,7 +458,7 @@ export function ArtifactPreview({
       : undefined;
     const focusable = (): HTMLElement[] => Array.from(
       dialogRef.current?.querySelectorAll<HTMLElement>(
-        "button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), iframe, audio[controls], [tabindex]:not([tabindex='-1'])",
+        "button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), iframe, audio[controls], video[controls], [tabindex]:not([tabindex='-1'])",
       ) ?? [],
     );
     focusable()[0]?.focus();
@@ -526,6 +528,8 @@ export function ArtifactPreview({
     body = <img className="artifact-preview-image" src={source} alt={artifact.name} />;
   } else if (artifact.mimeType.startsWith("audio/")) {
     body = <audio className="artifact-preview-audio" src={source} controls />;
+  } else if (artifact.mimeType.startsWith("video/")) {
+    body = <VideoPreview src={source} title={artifact.name} />;
   } else if (artifact.mimeType.startsWith("text/") || artifact.text !== undefined) {
     body = <ArtifactTextPreview artifact={artifact} source={source} />;
   } else {
@@ -805,6 +809,8 @@ function firstString(...values: unknown[]): string | undefined {
 }
 
 function inferMimeType(name: string | undefined, uri: string | undefined, type: string): string {
+  const video = videoMimeType(name ?? "") ?? videoMimeType(artifactNameFromURI(uri) ?? "");
+  if (video) return video;
   const target = `${name ?? ""} ${uri ?? ""}`.toLowerCase().split(/[?#]/, 1)[0];
   if (/\.html?\b/.test(target)) return "text/html";
   if (/\.pdf\b/.test(target)) return "application/pdf";
@@ -848,5 +854,5 @@ function isHtmlMimeType(mimeType: string): boolean {
 }
 
 function isHostRenderableMimeType(mimeType: string): boolean {
-  return mimeType.startsWith("image/") || mimeType === "application/pdf" || isHtmlMimeType(mimeType);
+  return mimeType.startsWith("image/") || mimeType.startsWith("video/") || mimeType === "application/pdf" || isHtmlMimeType(mimeType);
 }
