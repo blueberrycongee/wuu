@@ -8,6 +8,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Changed
+
+- The macOS DMG installer has a Retina-ready branded background, aligned app
+  and Applications icons, and English and Chinese drag-to-install instructions.
+
 ## [2026.9.24] - 2026-09-24
 
 ### Added

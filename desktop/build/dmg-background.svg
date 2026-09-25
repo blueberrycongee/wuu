@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="400" viewBox="0 0 660 400">
+  <!-- Finder places wuu.app at (170, 212) and Applications at (490, 212);
+       keep the artwork clear of both 128 px icons and their labels. -->
+  <defs>
+    <radialGradient id="ball" gradientUnits="userSpaceOnUse" cx="41.472" cy="32.421" r="58.5">
+      <stop offset="0" stop-color="#454647"/>
+      <stop offset="0.52" stop-color="#353637"/>
+      <stop offset="1" stop-color="#242526"/>
+    </radialGradient>
+  </defs>
+  <rect width="660" height="400" fill="#f0eee6"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" text-anchor="middle">
+    <text x="330" y="72" font-size="18" font-weight="600" fill="#191a18">Drag wuu to Applications</text>
+    <text x="330" y="98" font-size="13" fill="#5a5a54">将 wuu 拖到 Applications 即可安装</text>
+  </g>
+  <!-- The ball's hop from the app toward Applications is the drag cue. -->
+  <path d="M252 180 Q330 112 398 166" fill="none" stroke="#a8a59a" stroke-width="3" stroke-linecap="round" stroke-dasharray="0 9"/>
+  <g transform="translate(412 178)">
+    <!-- Body and eye proportions from assets/app-icon-source.svg. -->
+    <g transform="scale(0.4615) translate(-51.222 -49.971)">
+      <path fill="url(#ball)" d="M90.22 49.97C90.22 70.8 72.05 88.97 51.22 88.97C30.39 88.97 12.22 70.8 12.22 49.97C12.22 29.14 30.39 10.97 51.22 10.97C72.05 10.97 90.22 29.14 90.22 49.97Z"/>
+    </g>
+    <g fill="#ffffff" transform="translate(5.4 0.6) rotate(-8)">
+      <rect x="-5.5" y="-3.7" width="3.4" height="7.4" rx="1.7"/>
+      <rect x="2.1" y="-3.7" width="3.4" height="7.4" rx="1.7"/>
+    </g>
+  </g>
+</svg>

@@ -31,6 +31,16 @@ All production desktop builds hide account, remote-control, and subscription-das
 
 Before publication, the workflow verifies the app's signature and bundle identity, required executables, absence of CUA helpers, and clean packaged-core version. It also runs `hdiutil verify` on the DMG and `unzip -t` on the ZIP. These checks establish packaging properties; they do not replace opening the app and testing affected user flows.
 
+The DMG window layout is configured in `desktop/package.json`. Its background
+source is `desktop/build/dmg-background.svg`; after editing it, run
+`npm --prefix desktop run dmg-background:generate` on macOS and commit both the
+1x and 2x PNGs. Packaging consumes those committed images and combines them into
+a HiDPI TIFF, without requiring artwork regeneration on release machines. Keep
+the artwork dimensions and icon positions aligned with the DMG configuration.
+Open the built DMG in Finder to check text, icon labels, clipping and scrolling
+at standard and Retina resolution, then verify copying to Applications and
+launching the app. A background-only preview does not validate the Finder layout.
+
 ## Signing configuration
 
 The macOS preview uses certificate-free ad-hoc signatures. No Apple Developer membership, signing certificate, or repository signing secrets are required. GitHub supplies `GITHUB_TOKEN` for publication. With `CSC_IDENTITY_AUTO_DISCOVERY=false`, the custom signer seals nested code and the outer app without selecting a local certificate. See the [signing reference](../../../desktop/scripts/RELEASE-SIGNING.md) for optional certificate-backed local builds.
