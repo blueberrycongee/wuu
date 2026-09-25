@@ -5,19 +5,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
+	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
-// BashTool runs one bounded, non-interactive command in the workspace. It is
-// the only model-facing command entry point on the Codex / GPT / Claude /
-// generic surfaces; long-lived and interactive processes belong to the
-// process tool. A run that outlives its timeout is handed to the process
-// manager instead of being killed, so the model never loses a slow build.
+// BashTool is the only model-facing way to start a command on the Codex /
+// GPT / Claude / generic surfaces. A foreground run is bounded and
+// non-interactive; run_in_background hands the command to the process
+// manager, and the process tool then observes or controls it. A foreground
+// run that outlives its timeout is also handed over instead of being killed.
 //
-// The model sees a plain-text view of the run (see bash_model_view.go); the
-// JSON envelope produced here is what clients render and durable records keep.
+// Keeping every launch in one tool follows the bash-first surface: the model
+// never chooses between competing entry points to start a command.
+//
+// The model sees a plain-text view (see command_model_view.go); the JSON
+// envelope produced here is what clients render and durable records keep.
 type BashTool struct{ env *Env }
 
 func NewBashTool(env *Env) *BashTool { return &BashTool{env: env} }
@@ -36,7 +41,21 @@ func (t *BashTool) Classify(argsJSON string) ToolClassification {
 			Reason:          "invalid bash invocation",
 		}
 	}
-	return classifyShellCommand(args.Command)
+	classification := classifyShellCommand(args.Command)
+	if !args.RunInBackground {
+		return classification
+	}
+	reason := "managed background process"
+	if classification.Reason != "" {
+		reason = "background command: " + classification.Reason
+	}
+	return ToolClassification{
+		ReadOnly:        false,
+		ConcurrencySafe: false,
+		Destructive:     classification.Destructive,
+		Risk:            ToolRiskHigh,
+		Reason:          reason,
+	}
 }
 
 func (t *BashTool) ValidateInput(argsJSON string) error {
@@ -50,27 +69,31 @@ func (t *BashTool) ValidateInput(argsJSON string) error {
 func (t *BashTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name: "bash",
-		Description: "Run a non-interactive bash command in the workspace: tests, builds, lint, git, package managers, scripts. " +
-			"Returns the exit code, duration, and bounded stdout/stderr (head and tail of each stream) with a full log path when output was cut. " +
+		Description: "Run a bash command in the workspace: tests, builds, lint, git, package managers, scripts. " +
+			"Returns stdout and stderr (head and tail of long output, with the full log path), plus the exit code when it is not 0. " +
 			"Each call starts a fresh shell; state does not persist between calls. " +
-			"A command that exceeds its timeout keeps running as a managed background process and its completion starts a new turn; do not rerun it. " +
-			"Use the process tool for servers, watchers, and interactive programs instead of appending '&'. " +
-			"Prefer read_file, grep, glob, and the edit tools over shell equivalents for reading, searching, and changing files. " +
-			"A sandbox denial means the OS blocked a write outside the workspace boundary; do not retry it through another command.",
+			"Commands must not wait for input. A command that exceeds its timeout keeps running in the background and its completion starts a new turn; do not rerun it. " +
+			"Set run_in_background for servers, watchers, and other long-lived commands instead of appending '&'; " +
+			"you are notified when the process exits, so do not poll. Use the process tool to read its output, send input, or stop it. " +
+			"Prefer read_file, grep, glob, and the edit tools over shell equivalents for reading, searching, and changing files.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"command": map[string]any{
 					"type":        "string",
-					"description": "Shell command to run. Must not rely on editors, pagers, or terminal prompts.",
+					"description": "Shell command to run.",
 				},
 				"timeout_seconds": map[string]any{
 					"type":        "integer",
-					"description": "Max runtime in seconds (1-3600, default 300).",
+					"description": "Max runtime in seconds for a foreground run (1-3600, default 300).",
 				},
 				"cwd": map[string]any{
 					"type":        "string",
 					"description": "Working directory. Defaults to the workspace root.",
+				},
+				"run_in_background": map[string]any{
+					"type":        "boolean",
+					"description": "Start the command as a managed background process and return its process_id immediately.",
 				},
 				"purpose": map[string]any{
 					"type":        "string",
@@ -95,27 +118,33 @@ func (t *BashTool) Execute(ctx context.Context, argsJSON string) (string, error)
 	if err := args.validate(); err != nil {
 		return "", err
 	}
+	if args.RunInBackground {
+		return t.executeStartBackground(ctx, args)
+	}
 	return t.executeRun(ctx, args)
 }
 
 type bashArgs struct {
-	Command        string `json:"command"`
-	TimeoutSeconds int    `json:"timeout_seconds"`
-	Purpose        string `json:"purpose"`
-	Scope          string `json:"scope"`
-	CWD            string `json:"cwd"`
-	// Action is not part of the schema. Older transcripts and models that
-	// learned the previous surface may still send background actions; those
-	// now belong to the process tool and get a pointed error instead of a
-	// silent foreground run.
+	Command         string `json:"command"`
+	TimeoutSeconds  int    `json:"timeout_seconds"`
+	Purpose         string `json:"purpose"`
+	Scope           string `json:"scope"`
+	CWD             string `json:"cwd"`
+	RunInBackground bool   `json:"run_in_background"`
+	// Action is not part of the schema. Sessions recorded before the process
+	// tool existed show bash background actions in their history, and a
+	// resumed model may imitate them; they get a pointed error instead of a
+	// silent foreground run. Remove once such sessions have aged out.
 	Action string `json:"action"`
 }
 
 func (args bashArgs) validate() error {
 	switch action := strings.TrimSpace(args.Action); action {
 	case "", "run":
-	case "start_background", "list_background", "read_background", "write_background", "stop_background", "update_background":
-		return fmt.Errorf("bash no longer manages background processes; use the process tool (action=%s)", strings.TrimSuffix(action, "_background"))
+	case "start_background":
+		return errors.New("bash no longer takes action; set run_in_background=true to start a background process")
+	case "list_background", "read_background", "write_background", "stop_background", "update_background":
+		return fmt.Errorf("bash only starts commands; use the process tool with action=%s", strings.TrimSuffix(action, "_background"))
 	default:
 		return fmt.Errorf("bash does not accept action %q", action)
 	}
@@ -124,6 +153,63 @@ func (args bashArgs) validate() error {
 	}
 	return nil
 }
+
+func (t *BashTool) executeStartBackground(ctx context.Context, args bashArgs) (string, error) {
+	commandPrefix := ""
+	if t.env.gitAttributionEnabled() {
+		var err error
+		commandPrefix, err = t.env.gitAttributionShellPrefix()
+		if err != nil {
+			return "", err
+		}
+	}
+	rootThreadID := processRootThreadID(t.env)
+	if rootThreadID == "" {
+		return "", errors.New("bash run_in_background requires a bound session ID")
+	}
+	m, err := t.env.ProcessManager()
+	if err != nil {
+		return "", err
+	}
+	sandboxPolicy, sandboxTempDir, err := t.env.processSandboxPolicy(ctx)
+	if err != nil {
+		return "", fmt.Errorf("prepare filesystem process sandbox: %w", err)
+	}
+	commandEnv := shellCommandEnvForTool(os.Environ(), t.env)
+	if sandboxTempDir != "" {
+		commandEnv = replaceCommandEnv(commandEnv, "TMPDIR", sandboxTempDir)
+	}
+	// Background commands run in a pseudo-terminal so the desktop can take
+	// them over interactively; the model view strips terminal control codes.
+	p, startErr := m.Start(context.WithoutCancel(ctx), proc.StartOptions{
+		Command:               args.Command,
+		CommandPrefix:         commandPrefix,
+		CWD:                   args.CWD,
+		WorkspaceRoot:         t.env.RootDir,
+		OwnerKind:             proc.OwnerKind(defaultProcessOwnerKind(t.env, "")),
+		OwnerID:               defaultProcessOwnerID(t.env),
+		RootThreadID:          rootThreadID,
+		TTY:                   true,
+		AllowOutsideWorkspace: t.env.BypassToolHardProtections(),
+		SandboxPolicy:         sandboxPolicy,
+		SandboxProvider:       t.env.ProcessSandboxProvider,
+		Env:                   commandEnv,
+	})
+	response := proc.Process{}
+	if p != nil {
+		response = redactProcess(t.env, *p)
+		response.Action = bashResultActionStart
+	}
+	out, _ := mustJSON(response)
+	if startErr != nil {
+		return out, startErr
+	}
+	return out, nil
+}
+
+// bashResultActionStart marks the envelope of a background start. Clients use
+// it to bind the tool call to its managed process.
+const bashResultActionStart = "start"
 
 type bashVerificationResult struct {
 	Kind              string             `json:"kind"`

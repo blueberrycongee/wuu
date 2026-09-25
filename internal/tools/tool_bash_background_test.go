@@ -19,25 +19,19 @@ func TestProcessReadNextSuggestions(t *testing.T) {
 	if got := processReadNextSuggestions(0, 0, proc.OutputSnapshot{}, liveProcess); got != nil {
 		t.Fatalf("plain snapshots need no guidance: %v", got)
 	}
-
-	terminal := processReadNextSuggestions(5000, processWaitMinDwell, proc.OutputSnapshot{}, deadProcess)
-	if len(terminal) == 0 || !strings.Contains(terminal[0], "terminal") {
-		t.Fatalf("terminal processes should close the wait path: %v", terminal)
+	if got := processReadNextSuggestions(5000, processWaitMinDwell, proc.OutputSnapshot{}, deadProcess); got != nil {
+		t.Fatalf("terminal processes need no wait guidance: %v", got)
 	}
-
 	timedOut := processReadNextSuggestions(5000, processWaitMinDwell, proc.OutputSnapshot{TimedOut: true}, liveProcess)
-	if len(timedOut) < 2 || !strings.Contains(timedOut[0], "do not immediately wait again") || !strings.Contains(timedOut[1], "process action=update") {
+	if len(timedOut) != 1 || !strings.Contains(timedOut[0], "Do not wait on it again") || !strings.Contains(timedOut[0], "recheck_minutes") {
 		t.Fatalf("an expired wait should steer away from re-waiting and toward rechecks: %v", timedOut)
 	}
-
 	chatty := processReadNextSuggestions(120000, processWaitMinDwell, proc.OutputSnapshot{Duration: processWaitMinDwell}, liveProcess)
-	if len(chatty) == 0 || !strings.Contains(chatty[0], "continuously") {
+	if len(chatty) != 1 || !strings.Contains(chatty[0], "continuously") {
 		t.Fatalf("a wait released at the pacing floor should name the chatty pattern: %v", chatty)
 	}
-
-	quiet := processReadNextSuggestions(120000, processWaitMinDwell, proc.OutputSnapshot{Duration: 90 * time.Second}, liveProcess)
-	if len(quiet) == 0 || !strings.Contains(quiet[0], "end_offset") {
-		t.Fatalf("a normal early return should just teach incremental offsets: %v", quiet)
+	if quiet := processReadNextSuggestions(120000, processWaitMinDwell, proc.OutputSnapshot{Duration: 90 * time.Second}, liveProcess); quiet != nil {
+		t.Fatalf("a normal early return needs no guidance: %v", quiet)
 	}
 }
 
@@ -66,21 +60,9 @@ func TestProcessUpdateScheduleLifecycle(t *testing.T) {
 	kit.SetProcessManager(manager)
 	kit.SetSessionID("thread-update-background")
 
-	startResp, err := kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "process",
-		Arguments: `{"action":"start","command":"sleep 60"}`,
-	})
-	if err != nil {
-		t.Fatalf("start background: %v", err)
-	}
-	var started struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal([]byte(startResp), &started); err != nil || started.ID == "" {
-		t.Fatalf("parse start response: %v\n%s", err, startResp)
-	}
+	started := startBackgroundForTest(t, kit, map[string]any{"command": "sleep 60"})
 
-	updateResp, err := kit.Execute(context.Background(), providers.ToolCall{
+	updateResp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
 		Name:      "process",
 		Arguments: `{"action":"update","process_id":"` + started.ID + `","recheck_minutes":10}`,
 	})
@@ -107,7 +89,7 @@ func TestProcessUpdateScheduleLifecycle(t *testing.T) {
 		t.Fatalf("background commands should default to an interactive PTY: %+v", record)
 	}
 
-	cancelResp, err := kit.Execute(context.Background(), providers.ToolCall{
+	cancelResp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
 		Name:      "process",
 		Arguments: `{"action":"update","process_id":"` + started.ID + `","recheck_minutes":0}`,
 	})
@@ -117,42 +99,27 @@ func TestProcessUpdateScheduleLifecycle(t *testing.T) {
 	if !strings.Contains(cancelResp, `"recheck_minutes":0`) {
 		t.Fatalf("cancellation should report recheck_minutes 0: %s", cancelResp)
 	}
-}
 
-func TestProcessStartAllowsExplicitLogOnlyMode(t *testing.T) {
-	root := t.TempDir()
-	kit := newShellTestToolkit(t, root)
-	manager, err := proc.NewManager(root, filepath.Join(t.TempDir(), "runtime"))
-	if err != nil {
-		t.Fatalf("NewManager: %v", err)
+	// A resume-mode process holds the owning turn open; detaching releases it.
+	if record.CompletionMode != proc.CompletionModeResume {
+		t.Fatalf("background commands should default to resume mode: %+v", record)
 	}
-	defer func() { _ = manager.CleanupSession() }()
-	kit.SetProcessManager(manager)
-	kit.SetSessionID("thread-log-only-background")
-
-	response, err := kit.Execute(context.Background(), providers.ToolCall{
+	if _, err := kit.Execute(context.Background(), providers.ToolCall{
 		Name:      "process",
-		Arguments: `{"action":"start","command":"sleep 60","tty":false}`,
-	})
-	if err != nil {
-		t.Fatalf("start background: %v", err)
+		Arguments: `{"action":"update","process_id":"` + started.ID + `","completion_mode":"detached"}`,
+	}); err != nil {
+		t.Fatalf("detach process: %v", err)
 	}
-	var started struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal([]byte(response), &started); err != nil || started.ID == "" {
-		t.Fatalf("parse start response: %v\n%s", err, response)
-	}
-	record, err := manager.Get(started.ID)
+	record, err = manager.Get(started.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.TTY {
-		t.Fatalf("tty=false should preserve log-only background execution: %+v", record)
+	if record.CompletionMode != proc.CompletionModeDetached || record.RecheckMinutes != 0 {
+		t.Fatalf("completion mode update not persisted or clobbered the schedule: %+v", record)
 	}
 }
 
-func TestProcessStartRejectsInvalidRecheck(t *testing.T) {
+func TestProcessUpdateRejectsInvalidValues(t *testing.T) {
 	root := t.TempDir()
 	kit := newShellTestToolkit(t, root)
 	manager, err := proc.NewManager(root, filepath.Join(t.TempDir(), "runtime"))
@@ -161,14 +128,16 @@ func TestProcessStartRejectsInvalidRecheck(t *testing.T) {
 	}
 	defer func() { _ = manager.CleanupSession() }()
 	kit.SetProcessManager(manager)
-	kit.SetSessionID("thread-invalid-recheck")
+	kit.SetSessionID("thread-invalid-update")
+	started := startBackgroundForTest(t, kit, map[string]any{"command": "sleep 5"})
 
-	_, err = kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "process",
-		Arguments: `{"action":"start","command":"sleep 5","recheck_minutes":-3}`,
-	})
-	if err == nil || !strings.Contains(err.Error(), "recheck_minutes") {
-		t.Fatalf("negative recheck_minutes should fail: %v", err)
+	for args, want := range map[string]string{
+		`{"action":"update","process_id":"` + started.ID + `","recheck_minutes":-3}`:          "recheck_minutes",
+		`{"action":"update","process_id":"` + started.ID + `","completion_mode":"sometimes"}`: "completion_mode",
+	} {
+		if _, err := kit.Execute(context.Background(), providers.ToolCall{Name: "process", Arguments: args}); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s should fail on %s: %v", args, want, err)
+		}
 	}
 }
 

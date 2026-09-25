@@ -156,7 +156,7 @@ func TestSettledResultProviderHTTP(t *testing.T) {
 						t.Error("smaller output changed")
 					}
 					if index == 1 && !zero {
-						if strings.HasPrefix(text, "{") || !strings.HasPrefix(text, "exit 1 · 7ms\nstarted\n--- stderr ---\nwarning: deprecated\nFAIL: assertion") {
+						if text != "started\nwarning: deprecated\nFAIL: assertion\nExit code 1" {
 							t.Fatalf("wire restored the JSON envelope or lost failure evidence: %s", text)
 						}
 					}

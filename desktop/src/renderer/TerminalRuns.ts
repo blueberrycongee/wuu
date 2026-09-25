@@ -122,10 +122,10 @@ function agentRunFromToolCall(
 ): AgentRunRecord | undefined {
   const args = parseRecord(item.arguments);
   const result = toolResultRecord(item);
-  // bash runs are foreground; the process tool starts managed processes.
-  // "start_background" is the retired bash action kept for saved transcripts.
+  // bash with run_in_background reports result action "start"; sessions
+  // recorded before the process tool used the bash action "start_background".
   const action = nonEmptyString(args, "action") ?? "run";
-  if (action !== "run" && action !== "start" && action !== "start_background") {
+  if (action !== "run" && action !== "start_background") {
     return undefined;
   }
   const resultAction = nonEmptyString(result, "action");

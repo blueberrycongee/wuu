@@ -160,7 +160,7 @@ func TestChokePoint_OverBudgetBashUsesGenericSettlement(t *testing.T) {
 		locations[i] = map[string]any{"path": "handlers_test.go", "line": 42 + i, "text": strings.Repeat("failing assertion detail ", 400)}
 	}
 	raw := bashEnvelope(map[string]any{
-		"exit_code": 1, "stdout_tail": "ok\n", "stderr_tail": "",
+		"exit_code": 1, "stdout_tail": "... 900 bytes omitted ...\nok\n", "stdout_tail_truncated": true, "stderr_tail": "",
 		"verification": map[string]any{
 			"kind": "verification", "scope": "targeted", "passed": false,
 			"failure_summary": map[string]any{"failed": true, "locations": locations},
@@ -204,7 +204,7 @@ func TestBashViewModesAndEligibility(t *testing.T) {
 			} else if diag == nil || diag.Reason != reasonRendered {
 				t.Fatalf("missing view diagnostics: %+v", diag)
 			}
-			rendered := strings.HasPrefix(got.TextProjection(), "exit 0 · 5ms\nok\n--- stderr ---\nwarning")
+			rendered := got.TextProjection() == "ok\nwarning"
 			if rendered != (mode == "active") || (mode != "active" && got.TextProjection() != raw.TextProjection()) {
 				t.Fatalf("projection mode %s changed the wrong model text: %q", mode, got.TextProjection())
 			}
@@ -247,7 +247,7 @@ func TestBashViewSurvivesStorageAndRequestPreparation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.ModelText == nil || !strings.HasPrefix(result.TextProjection(), "exit 0") || result.Content[0].Text != raw {
+	if result.ModelText == nil || result.TextProjection() != "ok\nwarning" || result.Content[0].Text != raw {
 		t.Fatal("execution did not settle the view separately from the producer payload")
 	}
 	record := recordFor(kit.ToolTelemetry(), call.ID)

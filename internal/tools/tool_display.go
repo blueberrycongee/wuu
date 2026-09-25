@@ -32,6 +32,10 @@ func (t *Toolkit) displayCapabilityForTool(call providers.ToolCall) string {
 	name := strings.TrimSpace(call.Name)
 	switch name {
 	case "bash":
+		var args bashArgs
+		if err := decodeArgs(call.Arguments, &args); err == nil && args.RunInBackground {
+			return "command.background"
+		}
 		return "command.bash"
 	case "process":
 		return "command.background"
@@ -149,6 +153,12 @@ func builtInToolDisplay(call providers.ToolCall) providers.ToolCallDisplay {
 
 func displayBashLabel(args map[string]any) providers.ToolCallDisplay {
 	command := displayString(args, "command")
+	if displayBool(args, "run_in_background") {
+		if command == "" {
+			return toolDisplay("command", "启动后台任务")
+		}
+		return toolDisplay("command", "启动 "+displayTruncate(command, 100))
+	}
 	if command == "" {
 		return toolDisplay("command", "运行命令")
 	}
@@ -160,12 +170,6 @@ func displayBashLabel(args map[string]any) providers.ToolCallDisplay {
 
 func displayProcessLabel(args map[string]any) providers.ToolCallDisplay {
 	switch strings.TrimSpace(displayString(args, "action")) {
-	case processActionStart:
-		command := displayString(args, "command")
-		if command == "" {
-			return toolDisplay("command", "启动后台任务")
-		}
-		return toolDisplay("command", "启动 "+displayTruncate(command, 100))
 	case processActionList:
 		return toolDisplay("command", "查看后台任务")
 	case processActionRead:

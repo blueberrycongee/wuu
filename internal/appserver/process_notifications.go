@@ -2,7 +2,7 @@ package appserver
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -15,20 +15,6 @@ import (
 )
 
 const processCompletionOutputBytes = 2 * 1024
-
-type processCompletionPayload struct {
-	ProcessID         string         `json:"process_id"`
-	Status            process.Status `json:"status"`
-	ExitCode          int            `json:"exit_code"`
-	Command           string         `json:"command,omitempty"`
-	OutputLogPath     string         `json:"output_log_path,omitempty"`
-	OutputTail        string         `json:"output_tail,omitempty"`
-	OutputTruncated   bool           `json:"output_truncated,omitempty"`
-	OutputStartOffset int64          `json:"output_start_offset,omitempty"`
-	OutputEndOffset   int64          `json:"output_end_offset,omitempty"`
-	OutputTotalBytes  int64          `json:"output_total_bytes,omitempty"`
-	Instruction       string         `json:"instruction"`
-}
 
 func (s *Server) forwardProcessNotifications(threadID string, control *agentcontrol.AgentControl, manager *process.Manager, ch <-chan process.Event, done <-chan struct{}) {
 	for {
@@ -73,74 +59,51 @@ func processEventBelongsToThread(threadID string, control *agentcontrol.AgentCon
 	return false
 }
 
+// Notifications reach the model as plain text inside their tags, like other
+// command results: what happened, the output tail, and how to read the rest.
 func processCompletionChatMessage(manager *process.Manager, event process.Event) providers.ChatMessage {
-	payload := processCompletionPayload{
-		ProcessID:     event.Process.ID,
-		Status:        event.Process.Status,
-		ExitCode:      event.Process.ExitCode,
-		Command:       tools.RedactToolOutput(event.Process.Command),
-		OutputLogPath: tools.RedactToolOutput(event.Process.LogPath),
-		Instruction:   "This background command has finished. Continue from this result; do not poll it again. The full log is stored at output_log_path; use process action=read with process_id, offset_bytes, and max_bytes to page omitted output when needed.",
-	}
-	if manager != nil {
-		snapshot, err := manager.ReadOutputSnapshot(context.Background(), event.Process.ID, process.OutputReadOptions{MaxBytes: processCompletionOutputBytes})
-		if err == nil {
-			payload.OutputTail = tools.RedactToolOutput(snapshot.Output)
-			payload.OutputTruncated = snapshot.Truncated
-			payload.OutputStartOffset = snapshot.StartOffset
-			payload.OutputEndOffset = snapshot.EndOffset
-			payload.OutputTotalBytes = snapshot.TotalBytes
-		}
-	}
-	encoded, _ := json.Marshal(payload)
+	lines := []string{fmt.Sprintf("Background process %s exited with code %d: %s", event.Process.ID, event.Process.ExitCode, tools.RedactToolOutput(event.Process.Command))}
+	lines = append(lines, processOutputTailLines(manager, event.Process.ID)...)
+	lines = append(lines, "This is the final result; continue from it without polling the process again.")
 	return providers.ChatMessage{
 		Role:     "user",
 		Name:     wuucontext.ProcessNotificationMessageName,
 		ClientID: processCompletionClientID([]string{event.Process.ID}),
-		Content:  "<process_notification>" + string(encoded) + "</process_notification>",
+		Content:  "<process_notification>\n" + strings.Join(lines, "\n") + "\n</process_notification>",
 	}
-}
-
-type processRecheckPayload struct {
-	ProcessID         string         `json:"process_id"`
-	Status            process.Status `json:"status"`
-	Command           string         `json:"command,omitempty"`
-	RecheckMinutes    int            `json:"recheck_minutes,omitempty"`
-	OutputLogPath     string         `json:"output_log_path,omitempty"`
-	OutputTail        string         `json:"output_tail,omitempty"`
-	OutputTruncated   bool           `json:"output_truncated,omitempty"`
-	OutputStartOffset int64          `json:"output_start_offset,omitempty"`
-	OutputEndOffset   int64          `json:"output_end_offset,omitempty"`
-	OutputTotalBytes  int64          `json:"output_total_bytes,omitempty"`
-	Instruction       string         `json:"instruction"`
 }
 
 func processRecheckChatMessage(manager *process.Manager, p process.Process) providers.ChatMessage {
-	payload := processRecheckPayload{
-		ProcessID:      p.ID,
-		Status:         p.Status,
-		Command:        tools.RedactToolOutput(p.Command),
-		RecheckMinutes: p.RecheckMinutes,
-		OutputLogPath:  tools.RedactToolOutput(p.LogPath),
-		Instruction:    "This is a scheduled progress recheck for a still-running background process. Review the output tail and decide: intervene with process action=write or action=stop, adjust the schedule with process action=update (recheck_minutes=0 cancels), or do nothing — the next recheck or the completion notification will start another turn. Do not chain process action=read waits to keep this turn open.",
-	}
-	if manager != nil {
-		snapshot, err := manager.ReadOutputSnapshot(context.Background(), p.ID, process.OutputReadOptions{MaxBytes: processCompletionOutputBytes})
-		if err == nil {
-			payload.OutputTail = tools.RedactToolOutput(snapshot.Output)
-			payload.OutputTruncated = snapshot.Truncated
-			payload.OutputStartOffset = snapshot.StartOffset
-			payload.OutputEndOffset = snapshot.EndOffset
-			payload.OutputTotalBytes = snapshot.TotalBytes
-		}
-	}
-	encoded, _ := json.Marshal(payload)
+	lines := []string{fmt.Sprintf("Scheduled check (every %d min): background process %s is still running: %s", p.RecheckMinutes, p.ID, tools.RedactToolOutput(p.Command))}
+	lines = append(lines, processOutputTailLines(manager, p.ID)...)
+	lines = append(lines, "Send input or stop it with the process tool, change the schedule with process action=update (recheck_minutes=0 cancels), or do nothing; the next check or its exit starts another turn. Do not chain waits.")
 	return providers.ChatMessage{
 		Role:     "user",
 		Name:     wuucontext.ProcessNotificationMessageName,
 		ClientID: processRecheckClientID(p.ID),
-		Content:  "<process_recheck>" + string(encoded) + "</process_recheck>",
+		Content:  "<process_recheck>\n" + strings.Join(lines, "\n") + "\n</process_recheck>",
 	}
+}
+
+// processOutputTailLines returns the last processCompletionOutputBytes of a
+// process log and, when earlier output exists, how to page it.
+func processOutputTailLines(manager *process.Manager, id string) []string {
+	if manager == nil {
+		return nil
+	}
+	snapshot, err := manager.ReadOutputSnapshot(context.Background(), id, process.OutputReadOptions{MaxBytes: processCompletionOutputBytes})
+	if err != nil {
+		return nil
+	}
+	output := strings.TrimRight(tools.StripTerminalControls(tools.RedactToolOutput(snapshot.Output)), " \t\n")
+	if strings.TrimSpace(output) == "" {
+		output = "(no output)"
+	}
+	lines := []string{output}
+	if snapshot.StartOffset > 0 {
+		lines = append(lines, fmt.Sprintf("[last %d of %d output bytes; read earlier output with process action=read process_id=%s offset_bytes=0]", snapshot.EndOffset-snapshot.StartOffset, snapshot.TotalBytes, id))
+	}
+	return lines
 }
 
 func (s *Server) replayPendingProcessRechecks(threadID string, control *agentcontrol.AgentControl, manager *process.Manager) {

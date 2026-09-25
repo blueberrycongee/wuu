@@ -207,16 +207,14 @@ func TestBashBackgroundGitAttributionUsesWrapper(t *testing.T) {
 	kit.SetSessionID("thread-background-git-attribution")
 	runBash(t, root, "printf 'background\\n' > hello.txt")
 	args, _ := json.Marshal(map[string]any{
-		"action":          "start",
-		"command":         "git add hello.txt && git commit -m 'Background commit'",
-		"completion_mode": "detached",
-		"wait_ms":         10000,
+		"command":           "git add hello.txt && git commit -m 'Background commit'",
+		"run_in_background": true,
 	})
-	response, err := kit.Execute(context.Background(), providers.ToolCall{Name: "process", Arguments: string(args)})
+	response, err := executeEnvelope(kit, context.Background(), providers.ToolCall{Name: "bash", Arguments: string(args)})
 	if err != nil {
 		t.Fatalf("start background commit: %v", err)
 	}
-	var started startProcessResponse
+	var started proc.Process
 	if err := json.Unmarshal([]byte(response), &started); err != nil {
 		t.Fatalf("parse background commit response: %v\n%s", err, response)
 	}

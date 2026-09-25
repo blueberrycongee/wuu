@@ -8,34 +8,35 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
-### Changed
-
-- The `bash` tool now runs foreground commands only, with a five-parameter
-  schema. Background processes moved to a separate `process` tool with
-  `start`, `read`, `write`, `stop`, `list`, and `update` actions. Older
-  transcripts that used `bash` background actions still render on the desktop.
-- Command results reach the model as plain text (exit line, stdout, stderr,
-  and only the facts that change the next step) instead of the JSON envelope;
-  clients and durable records keep the envelope. Each output stream keeps its
-  head and tail instead of only the tail.
-- `read_file` and `bash` results are bounded at 8192 estimated tokens instead
-  of 2048, so a typical source file or document is read in one call.
-
-### Fixed
-
-- `apply_patch` with `then_run` now shows the model the follow-up command's
-  outcome; the parent result previously kept the patch-only view.
-
 ### Added
 
 - Video output cards and workspace video files open an inline player with
   playback, seeking, volume, and fullscreen controls. Unsupported codecs show
   a message while keeping the download action available.
 
+### Changed
+
+- `bash` starts background processes with a single `run_in_background` flag
+  instead of its seven background actions. A new `process` tool reads output
+  from, writes input to, stops, lists, and updates running processes,
+  including switching a long-lived service to `completion_mode=detached`.
+  Older transcripts that used `bash` background actions still render on the
+  desktop.
+- Command results reach the model as terminal-style text: the output, plus an
+  exit code, full-log path, timeout hand-off, or sandbox denial only when they
+  apply. Terminal color codes and progress redraws are stripped, and each
+  output stream keeps its head and tail instead of only the tail. `process`
+  results and background completion notifications use the same plain text.
+  Clients and durable records keep the JSON envelope.
+- `read_file` and `bash` results are bounded at 8192 estimated tokens instead
+  of 2048, so a typical source file or document is read in one call.
+
 ### Fixed
 
 - Preserve sidebar folder and collaboration folds when returning from settings,
   including after switching between light and dark themes.
+- `apply_patch` with `then_run` now shows the model the follow-up command's
+  outcome; the parent result previously kept the patch-only view.
 
 ## [2026.9.25] - 2026-09-25
 

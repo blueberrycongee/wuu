@@ -1048,8 +1048,9 @@ function readableCommandLabel(
     : t("toolActivity.runCommand");
 }
 
-// The process tool uses start/read/list/stop/write/update; the *_background
-// spellings are the retired bash actions still present in saved transcripts.
+// bash background starts report "start" and the process tool uses
+// read/list/stop/write/update; the *_background spellings are the bash actions
+// of sessions recorded before the process tool existed.
 function isBackgroundProcessAction(action: string): boolean {
   switch (action) {
     case "start":

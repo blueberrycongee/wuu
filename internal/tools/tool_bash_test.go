@@ -14,70 +14,53 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
-func TestBashDefinitionIsForegroundOnly(t *testing.T) {
+func TestBashDefinitionKeepsOneLaunchEntryPoint(t *testing.T) {
 	def := NewBashTool(&Env{}).Definition()
-	for _, want := range []string{"exceeds its timeout keeps running", "process tool", "head and tail"} {
+	for _, want := range []string{"run_in_background", "process tool", "exceeds its timeout keeps running", "do not poll"} {
 		if !strings.Contains(def.Description, want) {
 			t.Fatalf("bash description must explain %q: %q", want, def.Description)
 		}
 	}
-	properties, ok := def.InputSchema["properties"].(map[string]any)
-	if !ok {
-		t.Fatalf("bash properties schema has unexpected type: %T", def.InputSchema["properties"])
+	properties := def.InputSchema["properties"].(map[string]any)
+	if _, ok := properties["run_in_background"]; !ok {
+		t.Fatal("bash must start background processes itself")
 	}
-	for _, retired := range []string{"action", "wait_ms", "process_id", "tty", "recheck_minutes", "completion_mode", "lifecycle", "input"} {
+	for _, retired := range []string{"action", "wait_ms", "process_id", "tty", "recheck_minutes", "completion_mode", "lifecycle", "input", "max_bytes"} {
 		if _, present := properties[retired]; present {
-			t.Fatalf("bash schema must not carry background parameter %q", retired)
+			t.Fatalf("bash schema must not carry process-management parameter %q", retired)
 		}
 	}
-	if len(properties) != 5 {
-		t.Fatalf("bash schema should stay small, got %d properties", len(properties))
-	}
-	for _, args := range []string{`{"action":"start_background","command":"npm run dev"}`, `{"action":"read_background","process_id":"p"}`} {
-		err := NewBashTool(&Env{}).ValidateInput(args)
-		if err == nil || !strings.Contains(err.Error(), "process tool") {
-			t.Fatalf("legacy background action must point at the process tool, got %v", err)
+	for args, want := range map[string]string{
+		`{"action":"start_background","command":"npm run dev"}`: "run_in_background",
+		`{"action":"read_background","process_id":"p"}`:         "process tool",
+	} {
+		if err := NewBashTool(&Env{}).ValidateInput(args); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("legacy action %s must point at %q, got %v", args, want, err)
 		}
 	}
 }
 
-func TestProcessDefinitionExplainsBackgroundFlow(t *testing.T) {
+func TestProcessDefinitionOnlyControlsRunningProcesses(t *testing.T) {
 	def := NewProcessTool(&Env{}).Definition()
-	for _, want := range []string{"action=start", "pseudo-terminal", "starts a new turn", "action=read", "action=write", "action=stop", "run the command with bash"} {
+	for _, want := range []string{"run_in_background", "action=read", "action=write", "action=stop", "completion_mode=detached", "do not chain waits"} {
 		if !strings.Contains(def.Description, want) {
-			t.Fatalf("process description must teach %q: %q", want, def.Description)
+			t.Fatalf("process description must explain %q: %q", want, def.Description)
 		}
 	}
 	properties := def.InputSchema["properties"].(map[string]any)
-	wait, ok := properties["wait_ms"].(map[string]any)
-	if !ok || !strings.Contains(wait["description"].(string), "Do not chain waits") {
-		t.Fatalf("process wait_ms description does not explain bounded waits: %+v", wait)
-	}
-	recheck, ok := properties["recheck_minutes"].(map[string]any)
-	if !ok || !strings.Contains(recheck["description"].(string), "wake-ups") {
-		t.Fatalf("process recheck_minutes does not explain scheduled wake-ups: %+v", recheck)
-	}
-	completionMode, ok := properties["completion_mode"].(map[string]any)
-	if !ok || !strings.Contains(completionMode["description"].(string), "long-lived services") {
-		t.Fatalf("process completion_mode does not explain detached services: %+v", completionMode)
-	}
-	if err := NewProcessTool(&Env{}).ValidateInput(`{"action":"read"}`); err == nil || !strings.Contains(err.Error(), "process_id") {
-		t.Fatalf("read without process_id must be rejected, got %v", err)
-	}
-}
-
-func TestProcessStartSuggestionsExplainTurnHandoff(t *testing.T) {
-	for _, waitMS := range []int{0, 500} {
-		suggestions := strings.Join(processStartNextSuggestions(waitMS, ""), " ")
-		for _, want := range []string{"only remaining dependency", "end this turn", "start a new turn"} {
-			if !strings.Contains(suggestions, want) {
-				t.Fatalf("start suggestions for wait_ms=%d omitted %q: %s", waitMS, want, suggestions)
-			}
+	for _, retired := range []string{"command", "cwd", "tty", "lifecycle"} {
+		if _, present := properties[retired]; present {
+			t.Fatalf("process must not start commands, found %q", retired)
 		}
 	}
-	detached := strings.Join(processStartNextSuggestions(0, "detached"), " ")
-	if !strings.Contains(detached, "will not start another model turn") {
-		t.Fatalf("detached suggestions omitted non-resume behavior: %s", detached)
+	for args, want := range map[string]string{
+		`{"action":"read"}`:                    "process_id",
+		`{"action":"start","command":"x"}`:     "must be one of",
+		`{"action":"update","process_id":"p"}`: "completion_mode or recheck_minutes",
+	} {
+		if err := NewProcessTool(&Env{}).ValidateInput(args); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s must be rejected with %q, got %v", args, want, err)
+		}
 	}
 }
 
@@ -436,23 +419,11 @@ func TestBashBackgroundModeUsesManagedProcessBackend(t *testing.T) {
 	kit.SetProcessManager(manager)
 	kit.SetSessionID("thread-bash-background")
 
-	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
-		Name:      "process",
-		Arguments: `{"action":"start","command":"printf 'ready\n'; sleep 5","wait_ms":500,"max_bytes":4096}`,
-	})
-	if err != nil {
-		t.Fatalf("start background: %v", err)
-	}
-	var started startProcessResponse
-	if err := json.Unmarshal([]byte(resp), &started); err != nil {
-		t.Fatalf("parse start background: %v\n%s", err, resp)
-	}
-	if started.Action != processActionStart || started.ID == "" {
+	started := startBackgroundForTest(t, kit, map[string]any{"command": "printf 'ready\n'; sleep 5"})
+	if started.Action != bashResultActionStart || !started.TTY {
 		t.Fatalf("unexpected start response: %+v", started)
 	}
-	if !strings.Contains(started.InitialOutput, "ready") {
-		t.Fatalf("initial output should include readiness line: %+v", started)
-	}
+	waitProcessOutputForTest(t, kit, started.ID, "ready")
 
 	listResp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
 		Name:      "process",
@@ -498,20 +469,7 @@ func TestBashReadBackgroundConsumesCompletionWhenTerminalResultIsReturned(t *tes
 	kit.SetProcessManager(manager)
 	kit.SetSessionID("thread-bash-completion")
 
-	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
-		Name:      "process",
-		Arguments: `{"action":"start","command":"printf 'done\\n'; sleep 0.2","wait_ms":2000,"max_bytes":4096}`,
-	})
-	if err != nil {
-		t.Fatalf("start background: %v", err)
-	}
-	var started startProcessResponse
-	if err := json.Unmarshal([]byte(resp), &started); err != nil {
-		t.Fatalf("parse start background: %v\n%s", err, resp)
-	}
-	if !strings.Contains(started.InitialOutput, "done") {
-		t.Fatalf("initial process output was not returned: %+v", started)
-	}
+	started := startBackgroundForTest(t, kit, map[string]any{"command": "printf 'done\\n'; sleep 0.2"})
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		pending, pendingErr := manager.CompletionPending(started.ID)
@@ -652,17 +610,7 @@ func TestBashBackgroundUsesCWD(t *testing.T) {
 	kit.SetProcessManager(manager)
 	kit.SetSessionID("thread-bash-background-cwd")
 
-	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
-		Name:      "process",
-		Arguments: `{"action":"start","command":"pwd -P; sleep 5","cwd":"server","wait_ms":500,"max_bytes":4096}`,
-	})
-	if err != nil {
-		t.Fatalf("start background: %v", err)
-	}
-	var started startProcessResponse
-	if err := json.Unmarshal([]byte(resp), &started); err != nil {
-		t.Fatalf("parse start background: %v\n%s", err, resp)
-	}
+	started := startBackgroundForTest(t, kit, map[string]any{"command": "pwd -P; sleep 5", "cwd": "server"})
 	defer func() {
 		_, _ = executeEnvelope(kit, context.Background(), providers.ToolCall{Name: "process", Arguments: `{"action":"stop","process_id":"` + started.ID + `"}`})
 	}()
@@ -671,9 +619,7 @@ func TestBashBackgroundUsesCWD(t *testing.T) {
 	if got != want {
 		t.Fatalf("background cwd = %q, want %q", got, want)
 	}
-	if !strings.Contains(started.InitialOutput, want) {
-		t.Fatalf("initial output should include background cwd %q: %+v", want, started)
-	}
+	waitProcessOutputForTest(t, kit, started.ID, want)
 }
 
 func canonicalTestPath(t *testing.T, path string) string {

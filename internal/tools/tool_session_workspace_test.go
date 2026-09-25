@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/process"
 )
@@ -70,16 +71,22 @@ func TestSharedProcessManagerKeepsEachSessionWorkspaceAfterRebind(t *testing.T) 
 		t.Fatal(err)
 	}
 	for _, env := range []*Env{first, second} {
-		result, err := NewProcessTool(env).Execute(context.Background(), `{"action":"start","command":"pwd -P","tty":false,"wait_ms":2000}`)
+		result, err := NewBashTool(env).Execute(context.Background(), `{"command":"pwd -P","run_in_background":true}`)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var launched startProcessResponse
+		var launched process.Process
 		if err := json.Unmarshal([]byte(result), &launched); err != nil {
 			t.Fatal(err)
 		}
-		if !sameRuntimeFileScopePath(launched.CWD, env.RootDir) || !sameRuntimeFileScopePath(strings.TrimSpace(launched.InitialOutput), env.RootDir) {
-			t.Fatalf("session %q launched outside its workspace: cwd=%q output=%q want=%q", env.SessionID, launched.CWD, launched.InitialOutput, env.RootDir)
+		zero := int64(0)
+		snapshot, err := manager.ReadOutputSnapshot(context.Background(), launched.ID, process.OutputReadOptions{OffsetBytes: &zero, Wait: 2 * time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		output := strings.TrimSpace(StripTerminalControls(snapshot.Output))
+		if !sameRuntimeFileScopePath(launched.CWD, env.RootDir) || !sameRuntimeFileScopePath(output, env.RootDir) {
+			t.Fatalf("session %q launched outside its workspace: cwd=%q output=%q want=%q", env.SessionID, launched.CWD, output, env.RootDir)
 		}
 		stored, err := manager.Get(launched.ID)
 		if err != nil {

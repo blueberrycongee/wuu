@@ -90,14 +90,13 @@ describe("terminal run records", () => {
     expect(missingID.processID).toBeUndefined();
   });
 
-  it("binds process tool starts with a managed process id", () => {
+  it("binds bash background starts with a managed process id", () => {
     const [live] = agentRunsForTurn("thread-1", turn([
       commandItem({
-        id: "call-process",
-        name: "process",
-        arguments: JSON.stringify({ action: "start", command: "npm run dev", tty: true }),
+        id: "call-background",
+        arguments: JSON.stringify({ command: "npm run dev", run_in_background: true }),
         display: { kind: "command", capability: "command.background" },
-        result: JSON.stringify({ action: "start", id: "proc-456", status: "running", tty: true }),
+        result: JSON.stringify({ action: "start", id: "proc-456", status: "running", command: "npm run dev", tty: true }),
       }),
     ]));
 

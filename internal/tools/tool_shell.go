@@ -460,7 +460,7 @@ func resolveShellWorkingDir(ctx context.Context, env *Env, cwd string) (string, 
 
 func shellNextSuggestions(exitCode int, timedOut bool, classification ToolClassification) []string {
 	if timedOut {
-		return []string{"if this was a dev server, watch mode, or other long-lived command, start it with the process tool instead; otherwise narrow the command or raise timeout_seconds"}
+		return []string{"if this was a dev server, watch mode, or other long-lived command, rerun it with run_in_background; otherwise narrow the command or raise timeout_seconds"}
 	}
 	if exitCode != 0 {
 		return []string{"inspect the output and the full log when present, then retry the corrected command"}

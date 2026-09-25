@@ -228,11 +228,11 @@ describe("readableToolActivityCommand", () => {
     ).toBe("更新文件");
   });
 
-  it("renders process tool actions as background tasks", () => {
+  it("renders background starts and process tool actions as background tasks", () => {
     expect(
       readableToolActivityCommand({
-        name: "process",
-        arguments: JSON.stringify({ action: "start", command: "npm run dev" }),
+        name: "bash",
+        arguments: JSON.stringify({ command: "npm run dev", run_in_background: true }),
         display: { capability: "command.background" }
       })
     ).toBe("启动 npm run dev — command.background");

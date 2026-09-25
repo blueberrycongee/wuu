@@ -39,10 +39,11 @@ const (
 	// offset/limit.
 	readFileProjectionTokenBudget = 8192
 
-	// bashProjectionTokenBudget bounds the rendered bash view. The producer
-	// already excerpts each stream (maxShellExcerptBytes), so this only trims
-	// dense output such as CJK logs that the byte excerpt underestimates.
-	bashProjectionTokenBudget = 8192
+	// commandProjectionTokenBudget bounds the rendered bash and process views.
+	// Producers already bound their output (maxShellExcerptBytes per stream, a
+	// 32 KiB default process read), so this only trims dense output such as
+	// CJK logs that byte limits underestimate.
+	commandProjectionTokenBudget = 8192
 
 	// projectorVersion is recorded in diagnostics so telemetry can attribute a
 	// projected result to the exact projector revision that produced it. Bump
@@ -50,14 +51,20 @@ const (
 	projectorVersion = "8"
 )
 
+// commandViewRenderers render the plain-text model view of command tools.
+var commandViewRenderers = map[string]func(rawText string, budgetTokens int) (string, projectionOmission, bool){
+	"bash":    renderBashModelView,
+	"process": renderProcessModelView,
+}
+
 // projectionTokenBudget returns the per-result budget for a tool; tools without
 // a dedicated budget share the default.
 func projectionTokenBudget(toolName string) int {
 	switch toolName {
 	case "read_file":
 		return readFileProjectionTokenBudget
-	case "bash":
-		return bashProjectionTokenBudget
+	case "bash", "process":
+		return commandProjectionTokenBudget
 	default:
 		return defaultProjectionTokenBudget
 	}
@@ -118,6 +125,7 @@ var builtInProjectionAllowlist = map[string]bool{
 	"read_file":  true,
 	"list_files": true,
 	"bash":       true,
+	"process":    true,
 	"thread_get": true,
 }
 
@@ -301,11 +309,12 @@ func finalizeBuiltInToolResult(sessionDir, toolName, callID string, raw toolresu
 	}
 	diag.Eligible = true
 
-	// bash renders a plain-text view instead of paging its JSON envelope. The
-	// producer already bounds each stream and embeds the full log reference,
-	// so no separate artifact is needed to recover omitted output.
-	if toolName == "bash" {
-		if view, om, ok := renderBashModelView(rawText, budgetTokens); ok {
+	// Command tools render a plain-text view instead of paging their JSON
+	// envelope. The producers already bound their output and name how to
+	// recover the rest (the full log, or process reads by offset), so no
+	// separate artifact is needed.
+	if render := commandViewRenderers[toolName]; render != nil {
+		if view, om, ok := render(rawText, budgetTokens); ok {
 			stable := settleModelText(raw, view)
 			diag.Applied = true
 			diag.Reason = reasonRendered

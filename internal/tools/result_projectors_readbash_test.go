@@ -115,103 +115,174 @@ func TestRenderBashModelView(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		fields map[string]any
-		want   []string
-		absent []string
+		want   string
 	}{
 		{
-			name:   "success",
-			fields: map[string]any{"stdout_tail": "ok\n", "stderr_tail": "", "duration_ms": 83},
-			want:   []string{"exit 0 · 83ms\nok"},
-			absent: []string{"classification", "full_log", "note:", "go test ./..."},
+			name:   "success is just the output",
+			fields: map[string]any{"stdout_tail": "\nok\n", "stderr_tail": ""},
+			want:   "ok",
 		},
 		{
-			name:   "empty",
+			name:   "empty success",
 			fields: map[string]any{"stdout_tail": "", "stderr_tail": ""},
-			want:   []string{"(no output)"},
+			want:   "(no output)",
 		},
 		{
-			name:   "failure",
-			fields: map[string]any{"exit_code": 1, "stdout_tail": "started\n", "stderr_tail": "FAIL: assertion\n", "next_suggestions": []string{"inspect the output"}},
-			want:   []string{"exit 1", "started\n--- stderr ---\nFAIL: assertion", "note: inspect the output"},
+			name:   "failure appends the exit code",
+			fields: map[string]any{"exit_code": 1, "stdout_tail": "started\n", "stderr_tail": "FAIL: assertion\n", "next_suggestions": []string{"generic advice"}},
+			want:   "started\nFAIL: assertion\nExit code 1",
 		},
 		{
-			name:   "timeout promoted",
+			name:   "silent failure",
+			fields: map[string]any{"exit_code": 2, "stdout_tail": "", "stderr_tail": ""},
+			want:   "Exit code 2",
+		},
+		{
+			name:   "timeout handed to the background",
 			fields: map[string]any{"exit_code": -1, "timed_out": true, "promoted_process_id": "proc-9", "stdout_tail": "running\n", "stderr_tail": "", "duration_ms": 300000},
-			want:   []string{"timed out after 5m00s · still running as background process proc-9", "running"},
-			absent: []string{"exit -1"},
+			want:   "running\nTimed out after 5m00s; still running in the background as process proc-9. You will be notified when it exits; do not rerun the command.",
 		},
 		{
-			name:   "sandbox denied",
+			name:   "sandbox denial",
 			fields: map[string]any{"exit_code": 1, "stdout_tail": "", "stderr_tail": "permission denied\n", "sandbox": map[string]any{"mode": "workspace", "enforcement": "full", "denied": true}},
-			want:   []string{"sandbox: a file write outside the current workspace boundary was denied"},
+			want:   "permission denied\nExit code 1\nThe sandbox blocked a write outside the workspace boundary; do not retry it through another command. Use a workspace path, ask the user to add the directory as a workspace, or explain that the session must be switched to unconfined mode.",
 		},
 		{
-			name: "verification failed",
-			fields: map[string]any{"exit_code": 1, "stdout_tail": "--- FAIL: TestThing\n", "stderr_tail": "", "verification": map[string]any{
-				"kind": "verification", "scope": "targeted", "passed": false,
-				"failure_summary": map[string]any{"failed": true, "failing_tests": []string{"TestThing"}},
-				"repeat_guard":    map[string]any{"previous_failed_runs": 2, "max_failed_runs_without_revision_change": 3},
-			}},
-			want: []string{"verification: failed (scope targeted)", "- TestThing", "repeat guard: 2 of 3 failed runs"},
-		},
-		{
-			name:   "verification passed",
-			fields: map[string]any{"stdout_tail": "ok\n", "stderr_tail": "", "verification": map[string]any{"kind": "verification", "scope": "full", "passed": true, "failure_summary": map[string]any{"failed": false}}},
-			want:   []string{"verification: passed (scope full)"},
-		},
-		{
-			name:   "truncated streams point at the full log",
+			name:   "truncated stream names the full log",
 			fields: map[string]any{"stdout_tail": "head\n... 500 bytes omitted ...\ntail\n", "stderr_tail": "", "stdout_tail_truncated": true, "stdout_bytes": 600},
-			want:   []string{"[stdout: ", " of 600 bytes shown; full log: /s/tool-results/shell-logs/x.log]"},
+			want:   "head\n... 500 bytes omitted ...\ntail\n[full log: /s/tool-results/shell-logs/x.log]",
 		},
 		{
 			name:   "rewritten verification command",
 			fields: map[string]any{"stdout_tail": "ok\n", "stderr_tail": "", "requested_command": "npx vitest", "resolved_command": "./node_modules/.bin/vitest"},
-			want:   []string{"ran: ./node_modules/.bin/vitest"},
+			want:   "ok\n(ran as: ./node_modules/.bin/vitest)",
+		},
+		{
+			name: "passing verification adds nothing",
+			fields: map[string]any{"stdout_tail": "ok\n", "stderr_tail": "", "verification": map[string]any{
+				"kind": "verification", "scope": "full", "passed": true, "failure_summary": map[string]any{"failed": false},
+			}},
+			want: "ok",
+		},
+		{
+			name: "failing verification with complete output adds only the repeat guard",
+			fields: map[string]any{"exit_code": 1, "stdout_tail": "--- FAIL: TestThing\n", "stderr_tail": "", "verification": map[string]any{
+				"kind": "verification", "scope": "targeted", "passed": false,
+				"failure_summary": map[string]any{"failed": true, "failing_tests": []string{"TestThing"}},
+				"repeat_guard":    map[string]any{"previous_failed_runs": 1, "max_failed_runs_without_revision_change": 2},
+			}},
+			want: "--- FAIL: TestThing\nExit code 1\nThis check has failed 2 times at the same workspace revision; rerunning it is blocked until files change.",
+		},
+		{
+			name: "failing verification with cut output keeps the failure summary",
+			fields: map[string]any{"exit_code": 1, "stdout_tail": "... 900 bytes omitted ...\nok\n", "stdout_tail_truncated": true, "stderr_tail": "", "verification": map[string]any{
+				"kind": "verification", "scope": "targeted", "passed": false,
+				"failure_summary": map[string]any{"failed": true, "failing_tests": []string{"TestThing"}},
+				"repeat_guard":    map[string]any{"previous_failed_runs": 0, "max_failed_runs_without_revision_change": 2},
+			}},
+			want: "... 900 bytes omitted ...\nok\n[full log: /s/tool-results/shell-logs/x.log]\nExit code 1\nfailing_tests:\n- TestThing",
+		},
+		{
+			name:   "terminal control codes are stripped",
+			fields: map[string]any{"stdout_tail": "\x1b[32mPASS\x1b[0m\r\nbuilding 10%\rbuilding 100%\n", "stderr_tail": ""},
+			want:   "PASS\nbuilding 100%",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			view, om, ok := renderBashModelView(bashEnvelope(tc.fields), bashProjectionTokenBudget)
+			view, om, ok := renderBashModelView(bashEnvelope(tc.fields), commandProjectionTokenBudget)
 			if !ok || om.Lines != 0 {
 				t.Fatalf("view not rendered: ok=%v om=%+v", ok, om)
 			}
-			if strings.HasPrefix(view, "{") {
-				t.Fatalf("model view is still JSON: %s", view)
-			}
-			for _, want := range tc.want {
-				if !strings.Contains(view, want) {
-					t.Fatalf("view missing %q:\n%s", want, view)
-				}
-			}
-			for _, absent := range tc.absent {
-				if strings.Contains(view, absent) {
-					t.Fatalf("view leaked %q:\n%s", absent, view)
-				}
+			if view != tc.want {
+				t.Fatalf("view mismatch\n got: %q\nwant: %q", view, tc.want)
 			}
 		})
 	}
 }
 
-func TestFinalizeBashRendersViewAndKeepsProducer(t *testing.T) {
-	raw := toolresult.FromText(bashEnvelope(map[string]any{"exit_code": 1, "stdout_tail": "started\n", "stderr_tail": "FAIL\n"}))
-	raw.IsError = true
-	before := raw.Clone()
-	got, d := finalizeBuiltInToolResult("", "bash", "view", raw, 0)
-	if !d.Applied || d.Reason != reasonRendered || got.ModelText == nil || d.OmittedLines != 0 {
-		t.Fatalf("view not settled: %+v", d)
+func TestRenderBashModelViewBackgroundStart(t *testing.T) {
+	raw := mustMarshalMap(map[string]any{"action": "start", "id": "proc-7", "status": "running", "command": "npm run dev", "tty": true})
+	view, _, ok := renderBashModelView(raw, commandProjectionTokenBudget)
+	if !ok || view != "Running in background as process proc-7. You will be notified when it exits; use process to read its output or stop it." {
+		t.Fatalf("background start view = %q ok=%v", view, ok)
 	}
-	if !strings.HasPrefix(got.TextProjection(), "exit 1") || got.Content[0].Text != before.Content[0].Text {
-		t.Fatalf("producer payload changed or view wrong: %s", got.TextProjection())
+}
+
+func TestRenderProcessModelView(t *testing.T) {
+	running := map[string]any{"id": "proc-1", "status": "running", "command": "npm run dev"}
+	exited := map[string]any{"id": "proc-2", "status": "stopped", "command": "npm test", "exit_code": 1, "terminal_cause": "natural_exit", "completion_mode": "detached"}
+	for _, tc := range []struct {
+		name string
+		raw  map[string]any
+		want string
+	}{
+		{
+			name: "live read shows where to continue",
+			raw: map[string]any{"action": "read", "process_id": "proc-1", "output": "\x1b[1mready\x1b[0m\r\n", "start_offset": 0, "end_offset": 18, "total_bytes": 18,
+				"status": "running", "process": running, "next_suggestions": []string{"This process writes output continuously; do not chain waits on it."}},
+			want: "Process proc-1 running.\nready\n[output bytes 0-18 of 18; continue with offset_bytes=18]\nThis process writes output continuously; do not chain waits on it.",
+		},
+		{
+			name: "complete read of an exited process",
+			raw:  map[string]any{"action": "read", "process_id": "proc-2", "output": "", "start_offset": 0, "end_offset": 0, "total_bytes": 0, "process": exited},
+			want: "Process proc-2 exited with code 1.\n(no new output)",
+		},
+		{
+			name: "list",
+			raw:  map[string]any{"action": "list", "processes": []any{running, exited}},
+			want: "proc-1 running · npm run dev\nproc-2 exited with code 1 · npm test (detached)",
+		},
+		{
+			name: "empty list",
+			raw:  map[string]any{"action": "list", "processes": []any{}},
+			want: "No background processes.",
+		},
+		{
+			name: "write",
+			raw:  map[string]any{"action": "write", "process_id": "proc-1", "bytes_written": 6, "process": running},
+			want: "Sent 6 bytes to process proc-1.",
+		},
+		{
+			name: "stop",
+			raw:  map[string]any{"action": "stop", "id": "proc-1", "status": "stopped", "terminal_cause": "requested_stop"},
+			want: "Process proc-1 was stopped.",
+		},
+		{
+			name: "update",
+			raw:  map[string]any{"action": "update", "process_id": "proc-1", "completion_mode": "detached", "recheck_minutes": 10},
+			want: "Process proc-1: its exit does not resume this task; progress check every 10 min.",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			view, _, ok := renderProcessModelView(mustMarshalMap(tc.raw), commandProjectionTokenBudget)
+			if !ok || view != tc.want {
+				t.Fatalf("view mismatch ok=%v\n got: %q\nwant: %q", ok, view, tc.want)
+			}
+		})
 	}
-	if d.ArtifactRef != "/s/tool-results/shell-logs/x.log" || !d.ArtifactReused || d.ArtifactWritten {
-		t.Fatalf("view must reference the embedded full log without writing a copy: %+v", d)
-	}
-	if d.ProjectedBytes != len(got.TextProjection()) || d.ProjectionHash != projectionHash(got.TextProjection()) || d.OriginalHash != projectionHash(raw.TextProjection()) {
-		t.Fatalf("incorrect size/hash diagnostics: %+v", d)
-	}
-	again, _ := finalizeBuiltInToolResult("", "bash", "view", got, 0)
-	if !reflect.DeepEqual(again, got) {
-		t.Fatal("settled view was rewritten")
+}
+
+func TestFinalizeCommandViewsKeepProducerPayload(t *testing.T) {
+	for _, tc := range []struct{ tool, text, prefix string }{
+		{"bash", bashEnvelope(map[string]any{"exit_code": 1, "stdout_tail": "started\n", "stderr_tail": "FAIL\n"}), "started\nFAIL\nExit code 1"},
+		{"process", mustMarshalMap(map[string]any{"action": "write", "process_id": "proc-1", "bytes_written": 3}), "Sent 3 bytes"},
+	} {
+		raw := toolresult.FromText(tc.text)
+		before := raw.Clone()
+		got, d := finalizeBuiltInToolResult("", tc.tool, "view", raw, 0)
+		if !d.Applied || d.Reason != reasonRendered || got.ModelText == nil || d.OmittedLines != 0 {
+			t.Fatalf("%s view not settled: %+v", tc.tool, d)
+		}
+		if !strings.HasPrefix(got.TextProjection(), tc.prefix) || got.Content[0].Text != before.Content[0].Text {
+			t.Fatalf("%s producer payload changed or view wrong: %q", tc.tool, got.TextProjection())
+		}
+		if d.ProjectedBytes != len(got.TextProjection()) || d.ProjectionHash != projectionHash(got.TextProjection()) || d.OriginalHash != projectionHash(raw.TextProjection()) {
+			t.Fatalf("%s incorrect size/hash diagnostics: %+v", tc.tool, d)
+		}
+		again, _ := finalizeBuiltInToolResult("", tc.tool, "view", got, 0)
+		if !reflect.DeepEqual(again, got) {
+			t.Fatalf("settled %s view was rewritten", tc.tool)
+		}
 	}
 }
 
@@ -226,37 +297,39 @@ func TestRenderBashModelViewTrimsStdoutBeforeStderr(t *testing.T) {
 	if got := estimateResultTokens(view); got > defaultProjectionTokenBudget {
 		t.Fatalf("view = %d tokens, over budget %d", got, defaultProjectionTokenBudget)
 	}
-	if !strings.Contains(view, stderr[:len(stderr)-1]) {
-		t.Fatalf("stderr must survive intact:\n%s", view)
+	if !strings.Contains(view, stderr[:len(stderr)-1]) || !strings.HasSuffix(view, "Exit code 1") {
+		t.Fatalf("stderr and exit code must survive intact:\n%s", view)
 	}
-	if !strings.Contains(view, "lines omitted; full log: /s/tool-results/shell-logs/x.log") || !strings.HasPrefix(view, "exit 1") {
-		t.Fatalf("trimmed view lacks recovery marker:\n%s", view)
+	if !strings.Contains(view, "lines omitted; full log: /s/tool-results/shell-logs/x.log") || !strings.HasPrefix(view, "stdout progress line") {
+		t.Fatalf("trimmed view lacks the head or the recovery marker:\n%s", view)
 	}
-	if !strings.Contains(view, "stdout progress line") {
-		t.Fatal("trimmed view dropped all stdout instead of keeping head and tail")
-	}
-	// The facts alone can exceed the budget; then the view declines so generic
-	// settlement archives the envelope.
-	if _, _, ok := renderBashModelView(raw, 8); ok {
-		t.Fatal("view must decline when even the facts exceed the budget")
+	// The status lines alone can exceed the budget; then the view declines so
+	// generic settlement archives the envelope.
+	if _, _, ok := renderBashModelView(raw, 2); ok {
+		t.Fatal("view must decline when even the status lines exceed the budget")
 	}
 }
 
-func TestRenderBashModelViewDeclinesNonRunEnvelopes(t *testing.T) {
+func TestRenderCommandViewsDeclineUnknownEnvelopes(t *testing.T) {
 	for _, text := range []string{
 		`{"action":"start_background","id":"proc-1","status":"running"}`,
-		`{"action":"list","processes":[]}`,
+		`{"action":"start"}`,
 		`{"output":"ok"}` + "\nwarning",
 		"null",
 		"plain text",
 	} {
-		if view, _, ok := renderBashModelView(text, bashProjectionTokenBudget); ok {
-			t.Fatalf("non-run envelope rendered: %q -> %q", text, view)
+		if view, _, ok := renderBashModelView(text, commandProjectionTokenBudget); ok {
+			t.Fatalf("unknown bash envelope rendered: %q -> %q", text, view)
 		}
 		raw := toolresult.FromText(text)
 		got, d := finalizeBuiltInToolResult("", "bash", "legacy", raw, 0)
 		if d.Applied || !reflect.DeepEqual(got, raw) {
-			t.Fatalf("non-run envelope rewritten: %+v", d)
+			t.Fatalf("unknown bash envelope rewritten: %+v", d)
+		}
+	}
+	for _, text := range []string{`{"action":"start","id":"proc-1"}`, `{"action":"read"`, "[]"} {
+		if view, _, ok := renderProcessModelView(text, commandProjectionTokenBudget); ok {
+			t.Fatalf("unknown process envelope rendered: %q -> %q", text, view)
 		}
 	}
 }

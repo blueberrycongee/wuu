@@ -1,10 +1,10 @@
 # Agent command system
 
-The built-in Wuu engine uses two tools for commands. `bash` runs one bounded, non-interactive command: tests, builds, lint, git, scripts. `process` manages long-lived or interactive programs: servers, watchers, REPLs, downloads. Both run on the host machine in the session's workspace and share one process manager. External engines have their own command implementations; this page describes Wuu's tools.
+The built-in Wuu engine starts every command with `bash`: tests, builds, lint, git, scripts, and, with `run_in_background`, servers and watchers. `process` inspects and controls commands that are already running in the background. Both run on the host machine in the session's workspace and share one process manager. External engines have their own command implementations; this page describes Wuu's tools.
 
 ## Run a command
 
-`bash` takes `command`, `timeout_seconds`, `cwd`, `purpose`, and `scope`:
+`bash` takes `command`, `timeout_seconds`, `cwd`, `run_in_background`, `purpose`, and `scope`:
 
 ```json
 {
@@ -15,7 +15,7 @@ The built-in Wuu engine uses two tools for commands. `bash` runs one bounded, no
 }
 ```
 
-The model receives plain text: an exit line with the duration, the bounded stdout and stderr excerpts, and only the facts that change the next step, such as a truncated stream with its full-log path, a sandbox denial, a timeout hand-off, or the verification outcome. Each stream keeps its head and tail, so a test runner's summary survives even when the middle is cut. Recognized test, build, lint, and type-check commands add verification metadata; `scope` describes the intended coverage (`targeted`, `affected`, or `full`) and does not change which tests run. `purpose` is kept in the audit log only.
+The model receives the command's output as a terminal would show it: stdout, then stderr. A successful run adds nothing else. The model sees extra lines only when they change the next step: `Exit code N` for a failure, the full-log path when a stream was cut, a timeout hand-off, or a sandbox denial. Each stream keeps its head and tail, so a test runner's summary survives even when the middle is cut. Terminal color codes and progress-bar redraws are removed from this view. Recognized test, build, lint, and type-check commands also record verification metadata; the model sees the failure summary only when the output was cut, plus a warning once repeated failures at the same workspace revision will block a rerun. `scope` describes the intended coverage (`targeted`, `affected`, or `full`) and does not change which tests run. `purpose` is kept in the audit log only.
 
 Clients and durable records keep the full JSON envelope: exit code, duration, both excerpts, byte counts, classification, workspace revision, the full-log reference and hash, and verification details. The desktop terminal panel renders from that envelope.
 
@@ -23,41 +23,40 @@ Commands must be non-interactive: do not depend on an editor, pager, or terminal
 
 ## Background and interactive work
 
-Start a server, watcher, or interactive command with `process` rather than appending `&`:
+Start a server, watcher, or interactive command with `run_in_background` rather than appending `&`:
 
 ```json
 {
-  "action": "start",
   "command": "npm run dev",
-  "completion_mode": "detached"
+  "run_in_background": true
 }
 ```
 
-Starts use a pseudo-terminal by default. Set `tty=false` for log-only automation. macOS and Linux support PTYs; Windows falls back to pipes, so terminal behavior is different.
+The call returns the process ID immediately. Background commands run in a pseudo-terminal so the desktop can take them over; macOS and Linux support PTYs, while Windows falls back to pipes. A natural exit starts a new turn in the owning conversation, and `wuu exec` waits for that continuation. For a long-lived service whose exit should not resume or hold open the task, set `completion_mode=detached` with `process action=update`.
 
-`completion_mode=resume`, the default, makes a natural exit schedule a continuation in the owning conversation. It also keeps `wuu exec` waiting for that continuation. Choose `detached` for a long-lived service whose eventual exit should not resume or hold open the current task.
+`process` works on running processes:
 
 | Action | Use |
 | --- | --- |
-| `list` | Inspect the session's managed processes |
-| `read` | Read output using `process_id`; pass the previous `end_offset` as `offset_bytes` for incremental reads |
+| `read` | Read output using `process_id`; pass the returned next offset as `offset_bytes` for incremental reads |
 | `write` | Send `input` to a process with a live input handle; include a newline when needed |
 | `stop` | Stop the process tree |
-| `update` | Change `recheck_minutes`; `0` cancels the schedule |
+| `list` | Inspect the session's managed processes |
+| `update` | Change `completion_mode` (`resume` or `detached`) or `recheck_minutes` (`0` cancels) |
 
-Reads return up to 32 KiB by default. Without `wait_ms`, a read is a snapshot. With it, the call waits for new output or exit, up to 300,000 ms; a start can wait up to 60,000 ms. Continuously arriving output is paced rather than returning on every byte.
+Reads return up to 32 KiB by default. Without `wait_ms`, a read is a snapshot. With it, the call waits for new output or exit, up to 300,000 ms. Continuously arriving output is paced rather than returning on every byte. Like `bash`, `process` results reach the model as short plain text, while clients keep the JSON envelope.
 
-Use `recheck_minutes` from 1 to 1440 for progress wake-ups on long or quiet tasks. Completion cancels the schedule. Do not chain waits just to keep a turn open: use a foreground `bash` run for an immediate dependency, or let completion and scheduled wake-ups resume the conversation.
+Use `recheck_minutes` from 1 to 1440 for progress wake-ups on long or quiet tasks. Completion cancels the schedule. Do not chain waits just to keep a turn open: use a foreground `bash` run for an immediate dependency, or let completion and scheduled wake-ups resume the conversation. Completion and recheck notifications are also plain text: the outcome, the output tail, and how to read earlier output.
 
-Transcripts recorded before the split show the background actions under `bash` (`start_background`, `read_background`, and so on). The desktop still renders those items; new sessions use `process`.
+Sessions recorded before this change show background actions under `bash` (`start_background`, `read_background`, and so on). The desktop still renders those items; a model that repeats them gets an error naming the replacement.
 
 ## Directory, environment, and permissions
 
 `cwd` defaults to the workspace root and must resolve to an existing, permitted directory. Worktree-bound workers execute in their assigned checkout. Each `bash` call starts a new shell; `cd`, aliases, and temporary environment changes do not persist between calls.
 
-Wuu resolves Bash through its shell launcher, including Git Bash on Windows. Both tools use the shared environment preparation: inherited build-time `GOROOT` is removed and non-interactive defaults are applied. PTY startup restores terminal-oriented settings where needed.
+Wuu resolves Bash through its shell launcher, including Git Bash on Windows. Foreground and background commands use the shared environment preparation: inherited build-time `GOROOT` is removed and non-interactive defaults are applied. PTY startup restores terminal-oriented settings where needed.
 
-Command classification helps with permission checks and scheduling, but is not the filesystem sandbox. In confined modes, both tools use the configured filesystem process sandbox. A missing enforcement provider causes launch failure rather than silently running unconfined. The built-in provider is currently macOS-only; network isolation is outside this contract. See [permissions](permissions.md) for modes and platform limits.
+Command classification helps with permission checks and scheduling, but is not the filesystem sandbox. In confined modes, foreground and background commands use the configured filesystem process sandbox. A missing enforcement provider causes launch failure rather than silently running unconfined. The built-in provider is currently macOS-only; network isolation is outside this contract. See [permissions](permissions.md) for modes and platform limits.
 
 A denied write is not an invitation to retry through another shell command. Add an authorized workspace root or explicitly change the session mode when the task requires access outside its boundary. Wuu does not offer per-command approval prompts.
 
