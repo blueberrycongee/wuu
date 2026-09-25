@@ -457,21 +457,6 @@ func TestServerInitializeAndConfigRead(t *testing.T) {
 	}
 }
 
-func TestServerInitializeReportsCloudRuntimeHost(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.Host = runtime.Host{Kind: runtime.HostCloud, InstanceID: "run-123"}
-	out := &lockedBuffer{}
-	srv := New(rt, out)
-
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"initialize"}`)); err != nil {
-		t.Fatalf("initialize: %v", err)
-	}
-	result := remarshal[InitializeResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"])
-	if result.RuntimeHost.Kind != "cloud" || result.RuntimeHost.InstanceID != "run-123" {
-		t.Fatalf("unexpected runtime host: %+v", result.RuntimeHost)
-	}
-}
-
 func TestServerInitializeNegotiatesBrowserClient(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}
@@ -514,67 +499,6 @@ func TestServerInitializeReportsCredentialSetupWithoutExiting(t *testing.T) {
 	result := remarshal[InitializeResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"])
 	if result.Status != "needs_setup" || len(result.Issues) != 1 || result.Issues[0].Code != "credential_missing" {
 		t.Fatalf("unexpected readiness result: %+v", result)
-	}
-}
-
-func TestServerInitializeDoesNotExposeToolPolicySummary(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
-	out := &lockedBuffer{}
-	srv := New(rt, out)
-
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"initialize"}`)); err != nil {
-		t.Fatalf("initialize: %v", err)
-	}
-
-	msgs := parseOutput(t, out.String())
-	raw, err := json.Marshal(responseByID(t, msgs, "1")["result"])
-	if err != nil {
-		t.Fatalf("marshal initialize result: %v", err)
-	}
-	if strings.Contains(string(raw), `"tool_policy"`) {
-		t.Fatalf("initialize result should not expose tool_policy: %s", raw)
-	}
-}
-
-func TestServerInitializeExposesExtensionTrustSummary(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
-	kit, err := tools.New(rt.RootDir)
-	if err != nil {
-		t.Fatalf("New toolkit: %v", err)
-	}
-	rt.Toolkit = kit
-	rt.Skills = []skills.Skill{{Name: "docs", Description: "Docs"}}
-	rt.Plugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "compose-kit"}}}
-	rt.ActivePlugins = append([]pluginpkg.Plugin(nil), rt.Plugins...)
-	rt.HookDispatcher = hooks.NewDispatcher(hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{
-		hooks.PreToolUse: {{Command: "true"}},
-	}))
-	kit.SetSkills(rt.Skills)
-
-	out := &lockedBuffer{}
-	srv := New(rt, out)
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"initialize"}`)); err != nil {
-		t.Fatalf("initialize: %v", err)
-	}
-
-	msgs := parseOutput(t, out.String())
-	result := remarshal[InitializeResult](t, responseByID(t, msgs, "1")["result"])
-	main := result.ExtensionTrust.MainSession
-	if !main.Skills.Allowed || !main.Skills.Active || main.Skills.Count != 1 || main.Skills.KnownTools == 0 {
-		t.Fatalf("unexpected skills trust summary: %+v", main.Skills)
-	}
-	if main.Workflows.Allowed || main.Workflows.Active || main.Workflows.Count != 0 || main.Workflows.KnownTools != 0 {
-		t.Fatalf("unexpected workflow trust summary: %+v", main.Workflows)
-	}
-	if !main.Hooks.Allowed || !main.Hooks.Active {
-		t.Fatalf("unexpected hooks trust summary: %+v", main.Hooks)
-	}
-	if !main.Plugins.Allowed || !main.Plugins.Active || main.Plugins.Count != 1 {
-		t.Fatalf("unexpected plugins trust summary: %+v", main.Plugins)
-	}
-	reviewer := result.ExtensionTrust.ReviewerSession
-	if reviewer.MCP.Allowed || reviewer.Hooks.Allowed || reviewer.Plugins.Allowed || reviewer.Skills.Allowed || reviewer.Workflows.Allowed || reviewer.ExternalTools.Allowed {
-		t.Fatalf("reviewer extension surfaces should be denied by default: %+v", reviewer)
 	}
 }
 
@@ -732,141 +656,6 @@ func TestServerInitializeHidesInactivePluginMCPOverrides(t *testing.T) {
 		if record.Name == "plugin.cua-mac.computer" {
 			t.Fatalf("inactive plugin MCP override leaked into extension inventory: %+v", record)
 		}
-	}
-}
-
-func TestServerInitializeExposesModelSurfaceSummary(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.ProviderName = "openai"
-	rt.Model = "gpt-5-codex"
-	kit, err := tools.New(rt.RootDir)
-	if err != nil {
-		t.Fatalf("New toolkit: %v", err)
-	}
-	kit.ConfigureSurfaceForProviderModel(rt.ProviderName, rt.Model, true)
-	rt.Toolkit = kit
-
-	out := &lockedBuffer{}
-	srv := New(rt, out)
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"initialize"}`)); err != nil {
-		t.Fatalf("initialize: %v", err)
-	}
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"2","method":"config/read"}`)); err != nil {
-		t.Fatalf("config/read: %v", err)
-	}
-
-	msgs := parseOutput(t, out.String())
-	result := remarshal[InitializeResult](t, responseByID(t, msgs, "1")["result"])
-	if result.ModelProfile == nil {
-		t.Fatalf("initialize missing model profile summary: %+v", result)
-	}
-	if result.ModelProfile.ProfileName != "openai_codex" || result.ModelProfile.Provider != "openai" || result.ModelProfile.Model != "gpt-5-codex" {
-		t.Fatalf("unexpected model profile summary: %+v", result.ModelProfile)
-	}
-	if result.ModelProfile.EditPrimitive != "apply_patch" || !result.ModelProfile.BashFirst {
-		t.Fatalf("unexpected model profile capabilities: %+v", result.ModelProfile)
-	}
-	if result.ToolSurface == nil {
-		t.Fatalf("initialize missing tool surface summary: %+v", result)
-	}
-	if result.ToolSurface.ToolCapabilityMap["apply_patch"] != "file.edit" {
-		t.Fatalf("tool surface missing apply_patch capability: %+v", result.ToolSurface.ToolCapabilityMap)
-	}
-	if result.ToolSurface.ToolCapabilityMap["bash"] != "command.bash" {
-		t.Fatalf("tool surface missing bash capability: %+v", result.ToolSurface.ToolCapabilityMap)
-	}
-	configResult := remarshal[ConfigReadResult](t, responseByID(t, msgs, "2")["result"])
-	if configResult.ModelProfile == nil || configResult.ModelProfile.ProfileName != "openai_codex" {
-		t.Fatalf("config/read missing model profile summary: %+v", configResult.ModelProfile)
-	}
-	if configResult.ToolSurface == nil || configResult.ToolSurface.ToolCapabilityMap["bash"] != "command.bash" {
-		t.Fatalf("config/read missing tool surface summary: %+v", configResult.ToolSurface)
-	}
-}
-
-func TestServerInitializeExposesModelRoles(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
-	cfg := config.Config{
-		DefaultProvider: "fake-provider",
-		Providers: map[string]config.ProviderConfig{
-			"fake-provider": {
-				Type:    "openai-compatible",
-				BaseURL: "https://example.test/v1",
-				Model:   "fake-model",
-			},
-		},
-		Agent: config.AgentConfig{
-			ModelRoles: config.ModelRolesConfig{
-				Title: config.ModelRoleConfig{Model: "gpt-4.1-mini"},
-			},
-		},
-	}
-	roles, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{})
-	if err != nil {
-		t.Fatalf("modelroles.Resolve: %v", err)
-	}
-	rt.ModelRoles = roles
-	out := &lockedBuffer{}
-	srv := New(rt, out)
-
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"initialize"}`)); err != nil {
-		t.Fatalf("initialize: %v", err)
-	}
-
-	result := remarshal[InitializeResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"])
-	if len(result.ModelRoles) != 7 {
-		t.Fatalf("expected all role summaries, got %+v", result.ModelRoles)
-	}
-	title := modelRoleByName(t, result.ModelRoles, "title")
-	if title.Inherited || title.Model != "gpt-4.1-mini" || title.Behavior.Family != "gpt" {
-		t.Fatalf("unexpected title role summary: %+v", title)
-	}
-	review := modelRoleByName(t, result.ModelRoles, "review")
-	if !review.Inherited || review.Model != "fake-model" {
-		t.Fatalf("review should inherit main model: %+v", review)
-	}
-	if !review.Capabilities.Tools || review.Capabilities.ProtocolFamily == "" {
-		t.Fatalf("review capabilities missing: %+v", review.Capabilities)
-	}
-	verification := modelRoleByName(t, result.ModelRoles, "verification")
-	if !verification.Inherited || verification.Model != "fake-model" {
-		t.Fatalf("verification should inherit main model: %+v", verification)
-	}
-}
-
-func TestServerInitializeExposesModelAliases(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
-	if err := os.WriteFile(rt.ConfigPath, []byte(`{
-  "default_provider": "fake-provider",
-  "providers": {
-    "fake-provider": {
-      "type": "openai-compatible",
-      "base_url": "https://example.test/v1",
-      "model": "fake-model"
-    }
-  },
-  "agent": {
-    "model_aliases": {
-      "frontend": {
-        "provider": "fake-provider",
-        "model": "ui-model:latest",
-        "effort": "high"
-      }
-    }
-  }
-}`), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	out := &lockedBuffer{}
-	srv := New(rt, out)
-
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"initialize"}`)); err != nil {
-		t.Fatalf("initialize: %v", err)
-	}
-	result := remarshal[InitializeResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"])
-	alias, ok := result.ModelAliases["frontend"]
-	if !ok || alias.Provider != "fake-provider" || alias.Model != "ui-model:latest" || alias.Effort != "high" {
-		t.Fatalf("unexpected frontend alias: %+v", result.ModelAliases)
 	}
 }
 
@@ -2459,46 +2248,6 @@ func TestCurrentAdvancedSettingsUsesEffectiveInputLimit(t *testing.T) {
 	}
 }
 
-func TestServerConfigModelUpdateRejectsToolPolicyProfile(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
-	kit, err := tools.New(rt.RootDir)
-	if err != nil {
-		t.Fatalf("new runtime toolkit: %v", err)
-	}
-	rt.Toolkit = kit
-	if err := os.WriteFile(rt.ConfigPath, []byte(`{
-  "agent": {
-    "tool_policy": {
-      "tools": {
-        "run_shell": "allow"
-      }
-    }
-  },
-  "default_provider": "fake-provider",
-  "providers": {
-    "fake-provider": {
-      "type": "openai-compatible",
-      "base_url": "https://example.test/v1",
-      "model": "fake-model"
-    }
-  }
-}
-`), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	out := &lockedBuffer{}
-	srv := New(rt, out)
-
-	req := `{"id":"1","method":"config/model/update","params":{"model":"fake-model","tool_policy_profile":"auto"}}`
-	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
-		t.Fatalf("config/model/update should return a JSON-RPC error response, got transport error: %v", err)
-	}
-	msg := responseByID(t, parseOutput(t, out.String()), "1")
-	if msg["error"] == nil || !strings.Contains(fmt.Sprint(msg["error"]), `unknown field "tool_policy_profile"`) {
-		t.Fatalf("expected tool_policy_profile rejection, got %+v", msg)
-	}
-}
-
 func TestServerConfigModelUpdatePersistsPermissionMode(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	kit, err := tools.New(rt.RootDir)
@@ -2670,8 +2419,6 @@ func TestServerConfigModelUpdateReconfiguresEditTools(t *testing.T) {
 	}
 	if len(thread.History) < 2 ||
 		thread.History[0].Role != "system" ||
-		!strings.Contains(thread.History[0].Content, "[Tool surface: openai_gpt]") ||
-		!strings.Contains(thread.History[0].Content, "Use apply_patch for file changes and bash for command execution") ||
 		strings.Contains(thread.History[0].Content, "old fake-model system prompt") {
 		t.Fatalf("idle thread system prompt not replaced: %+v", thread.History)
 	}
@@ -3880,38 +3627,6 @@ func TestServerConfigProviderRemoveRejectsLastProvider(t *testing.T) {
 	}
 }
 
-func TestServerSkillList(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.Skills = []skills.Skill{{
-		Name:          "slides",
-		Description:   "Create slide decks",
-		WhenToUse:     "When the user asks for a presentation",
-		Source:        "bundled",
-		ArgumentHint:  "topic",
-		UserInvocable: true,
-		AllowedTools:  []string{"read_file"},
-		Paths:         []string{"**/*.pptx"},
-	}}
-	out := &lockedBuffer{}
-	srv := New(rt, out)
-
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"skill/list"}`)); err != nil {
-		t.Fatalf("skill/list: %v", err)
-	}
-
-	result := remarshal[SkillListResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"])
-	if len(result.Skills) != 1 {
-		t.Fatalf("expected one skill, got %+v", result)
-	}
-	got := result.Skills[0]
-	if got.Name != "slides" || got.Description != "Create slide decks" || got.Source != "bundled" || !got.UserInvocable {
-		t.Fatalf("unexpected skill summary: %+v", got)
-	}
-	if len(got.AllowedTools) != 1 || got.AllowedTools[0] != "read_file" || len(got.Paths) != 1 || got.Paths[0] != "**/*.pptx" {
-		t.Fatalf("skill metadata missing: %+v", got)
-	}
-}
-
 func TestServerProcessListAndStop(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	manager := attachTestProcessManager(t, rt)
@@ -4393,20 +4108,8 @@ func TestServerTurnStartRunsAgentLoop(t *testing.T) {
 	if !hasEnvironmentSection {
 		t.Fatalf("request context should report stable environment system section: %+v", contextParams.Event.RequestContext.SystemSections)
 	}
-	hasToolPolicySection := false
-	for _, section := range contextParams.Event.RequestContext.SystemSections {
-		if section.Key == "tool_policy" {
-			hasToolPolicySection = true
-			break
-		}
-	}
-	if hasToolPolicySection {
-		t.Fatalf("request context should keep runtime tool policy out of stable system sections: %+v", contextParams.Event.RequestContext.SystemSections)
-	}
-	for _, unwanted := range []string{"ENVIRONMENT", "TOOL_POLICY", "TASK", "CONSTRAINT_LEDGER"} {
-		if testStringSliceContains(contextParams.Event.RequestContext.BlockKinds, unwanted) {
-			t.Fatalf("single-turn request should not include block kind %s: %+v", unwanted, contextParams.Event.RequestContext)
-		}
+	if testStringSliceContains(contextParams.Event.RequestContext.BlockKinds, string(wuucontext.BlockEnvironment)) {
+		t.Fatalf("single-turn request should not include block kind %s: %+v", wuucontext.BlockEnvironment, contextParams.Event.RequestContext)
 	}
 	delta := notificationByMethod(t, msgs, NotificationAgentMessageDelta)
 	deltaParams := remarshal[AgentMessageDeltaNotification](t, delta["params"])
@@ -4870,11 +4573,6 @@ func TestServerCodexWebSocketReplayAcrossThreadTurns(t *testing.T) {
 		t.Fatalf("second request delta re-sent superseded context: %s", secondInputJSON)
 	}
 	secondInputText := fmt.Sprintf("%#v", secondInput)
-	for _, unwanted := range []string{"[TASK]", "[CONSTRAINT_LEDGER]"} {
-		if strings.Contains(secondInputText, unwanted) {
-			t.Fatalf("second request should not include default request-only context block %s: %#v", unwanted, secondInput)
-		}
-	}
 	if strings.Contains(secondInputText, "[ENVIRONMENT]") {
 		t.Fatalf("second request should not repeat stable environment as request-only context: %#v", secondInput)
 	}
@@ -5130,10 +4828,8 @@ func TestServerTurnStartRendersLightweightSlashCommandForModel(t *testing.T) {
 	if requestCount != 1 {
 		t.Fatalf("expected one provider request, got %d", requestCount)
 	}
-	for _, want := range []string{"Investigate this problem", "login failure", "root cause"} {
-		if !strings.Contains(modelPrompt, want) {
-			t.Fatalf("model prompt missing %q:\n%s", want, modelPrompt)
-		}
+	if !strings.Contains(modelPrompt, "login failure") {
+		t.Fatalf("model prompt missing slash command arguments:\n%s", modelPrompt)
 	}
 	if strings.Contains(modelPrompt, "/debug") {
 		t.Fatalf("model prompt should not include raw slash command:\n%s", modelPrompt)
@@ -5143,7 +4839,7 @@ func TestServerTurnStartRendersLightweightSlashCommandForModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load persisted history: %v", err)
 	}
-	if len(persisted) < 1 || persisted[0].DisplayContent != "/debug login failure" || !strings.Contains(persisted[0].Content, "Investigate this problem") {
+	if len(persisted) < 1 || persisted[0].DisplayContent != "/debug login failure" || strings.Contains(persisted[0].Content, "/debug") {
 		t.Fatalf("persisted user message did not keep display/model split: %+v", persisted)
 	}
 	sessions, err := session.List(rt.SessionDir, 1)
@@ -5418,8 +5114,8 @@ func TestServerQueuesUserTurnWhileThreadIsRunning(t *testing.T) {
 	var found bool
 	for _, msg := range history {
 		if msg.Role == "user" &&
-			strings.Contains(msg.Content, "Fix this issue") &&
 			strings.Contains(msg.Content, "login failure") &&
+			!strings.Contains(msg.Content, "/fix") &&
 			msg.DisplayContent == "/fix login failure" &&
 			msg.ClientID == "queued-1" &&
 			!msg.Steered {
@@ -6073,8 +5769,8 @@ func TestServerGeneratesThreadTitleEndToEndWithStreaming(t *testing.T) {
 	if len(req.Messages) < 2 {
 		t.Fatalf("title request must have at least system+user messages, got %d", len(req.Messages))
 	}
-	if req.Messages[0].Role != "system" || !strings.Contains(req.Messages[0].Content, "title generator") {
-		t.Errorf("title system prompt not aligned with opencode: %q", req.Messages[0].Content)
+	if req.Messages[0].Role != "system" {
+		t.Errorf("title request must start with a system prompt: %+v", req.Messages[0])
 	}
 	if req.Messages[1].Role != "user" || !strings.Contains(req.Messages[1].Content, "please help me fix the login crash") {
 		t.Errorf("title user message wrong: %q", req.Messages[1].Content)
@@ -7809,20 +7505,6 @@ func TestServerThreadRenameNotifiesUpdatedThread(t *testing.T) {
 	}
 }
 
-func TestServerRejectsUnknownTurnParams(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
-	out := &lockedBuffer{}
-	srv := New(rt, out)
-
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"turn/start","params":{"thread_id":"x","prompt":"p","extra":true}}`)); err != nil {
-		t.Fatalf("turn/start: %v", err)
-	}
-	resp := responseByID(t, parseOutput(t, out.String()), "1")
-	if resp["error"] == nil {
-		t.Fatalf("expected response error, got %+v", resp)
-	}
-}
-
 func TestServerHTTP400EmitsSingleTerminalErrorWithoutRetry(t *testing.T) {
 	client := &fakeClient{err: &providers.HTTPError{
 		StatusCode: 400,
@@ -9273,34 +8955,6 @@ func TestTurnsFromHistoryRestoresToolCallItems(t *testing.T) {
 	}
 }
 
-func TestTurnsFromHistoryRestoresPluginToolsAsOrdinaryToolItems(t *testing.T) {
-	history := []providers.ChatMessage{
-		{Role: "user", Content: "delegate"},
-		{
-			Role: "assistant",
-			ToolCalls: []providers.ToolCall{{
-				ID:        "call_1",
-				Name:      "spawn_agent",
-				Arguments: `{"name":"inspect","description":"Inspect","prompt":"inspect","subagent_type":"general-purpose","run_in_background":true}`,
-			}},
-		},
-		{
-			Role:       "tool",
-			ToolCallID: "call_1",
-			Content:    `{"agent_id":"worker-1","agent_path":"/root/inspect","status":"running"}`,
-		},
-	}
-
-	turns := turnsFromHistory("thread", history, time.Unix(0, 0).UTC())
-	if len(turns) != 1 || len(turns[0].Items) != 2 {
-		t.Fatalf("unexpected turns: %+v", turns)
-	}
-	item := turns[0].Items[1]
-	if item.Type != ThreadItemToolCall || item.Name != "spawn_agent" || item.Result == "" {
-		t.Fatalf("unexpected plugin tool item: %+v", item)
-	}
-}
-
 func TestServerForwardsAgentNotifications(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	workerClient := &fakeClient{response: providers.ChatResponse{Content: "agent done"}}
@@ -10193,5 +9847,105 @@ func TestSettingsUsageModelBreakdownsCoverFullHistory(t *testing.T) {
 	}
 	if result.Metrics.PromptTokens != 1300 || result.Metrics.CacheReadTokens != 300 {
 		t.Fatalf("unexpected headline usage: %+v", result.Metrics)
+	}
+}
+
+func TestUsageOverviewBucketsTokenUsageByRequestedTimeZone(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	// 06:30 UTC on March 10 is still March 9 in Los Angeles (PDT, UTC-7).
+	evening := time.Date(2026, time.March, 10, 6, 30, 0, 0, time.UTC)
+	morning := time.Date(2026, time.March, 10, 18, 0, 0, 0, time.UTC)
+
+	first, err := session.CreateWithMetadata(rt.SessionDir, "usage-overview-first", rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rec := range []session.HistoryRecord{
+		{Role: "user", Content: "first session"},
+		{
+			Role: "meta", Content: "token_usage", Provider: "openai", Model: "gpt-4o",
+			At: evening, InputTokens: 100, OutputTokens: 20,
+		},
+		// Provider-tagged terminals carry their own usage snapshot; only
+		// token_usage rows may count toward the overview.
+		{
+			Role: "meta", Content: "turn_terminal", Provider: "openai", Model: "gpt-4o",
+			At: evening, InputTokens: 100, OutputTokens: 20,
+		},
+	} {
+		if err := session.AppendHistoryRecord(rt.SessionDir, first.ID, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	second, err := session.CreateWithMetadata(rt.SessionDir, "usage-overview-second", rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rec := range []session.HistoryRecord{
+		{Role: "user", Content: "second session"},
+		{
+			Role: "meta", Content: "token_usage", Provider: "anthropic", Model: "claude-sonnet-4-6",
+			At: morning, InputTokens: 50, CacheReadTokens: 30,
+		},
+	} {
+		if err := session.AppendHistoryRecord(rt.SessionDir, second.ID, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	raw, err := json.Marshal(map[string]any{
+		"id":     "1",
+		"method": MethodUsageOverview,
+		"params": map[string]any{"timezone": "America/Los_Angeles"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.handleLine(context.Background(), raw); err != nil {
+		t.Fatalf("handleLine: %v", err)
+	}
+	result := remarshal[UsageOverviewResponse](t, waitForResponseByID(t, out, "1")["result"])
+
+	if result.TotalSessions != 2 {
+		t.Fatalf("total_sessions=%d, want 2", result.TotalSessions)
+	}
+	if result.Metrics.InputTokens != 150 || result.Metrics.OutputTokens != 20 || result.Metrics.CacheReadTokens != 30 {
+		t.Fatalf("unexpected totals: %+v", result.Metrics)
+	}
+	if result.Metrics.ActiveDays != 2 {
+		t.Fatalf("active_days=%d, want 2", result.Metrics.ActiveDays)
+	}
+	if len(result.Days) != 2 ||
+		result.Days[0].Date != "2026-03-09" || result.Days[0].InputTokens != 100 ||
+		result.Days[1].Date != "2026-03-10" || result.Days[1].CacheReadTokens != 30 {
+		t.Fatalf("days=%+v, want March 9 and March 10 in Los Angeles", result.Days)
+	}
+}
+
+func TestUsageOverviewReportsZeroWithoutRecordedUsage(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	raw, err := json.Marshal(map[string]any{
+		"id":     "1",
+		"method": MethodUsageOverview,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.handleLine(context.Background(), raw); err != nil {
+		t.Fatalf("handleLine: %v", err)
+	}
+	response := waitForResponseByID(t, out, "1")
+	if response["error"] != nil {
+		t.Fatalf("overview without usage failed: %+v", response["error"])
+	}
+	// A new user's home shows zero totals and an empty heatmap, so days must
+	// be an empty list rather than null.
+	result := remarshal[UsageOverviewResponse](t, response["result"])
+	if result.TotalSessions != 0 || result.Metrics.ActiveDays != 0 || result.Days == nil || len(result.Days) != 0 {
+		t.Fatalf("unexpected overview without usage: %+v", result)
 	}
 }

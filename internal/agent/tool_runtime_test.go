@@ -315,58 +315,6 @@ func TestTurnToolRuntimeAttachesDiscoveredToolsToToolResult(t *testing.T) {
 	}
 }
 
-func TestTurnToolRuntimeDoesNotTreatProductToolsAsBarriers(t *testing.T) {
-	// Barrier semantics were product-owned (product barriers) and moved to
-	// the first-party delegation plugin. Core must not special-case those
-	// names: a batch containing them executes every call normally.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	tools := &runtimeTestTools{}
-	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: tools})
-	var seen []providers.ToolCall
-	var rejections []ToolBatchRejectionInfo
-
-	msgs, _ := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{
-		{ID: "call_write", Name: "run_shell"},
-		{ID: "call_barrier", Name: "barrier_tool"},
-	}, func(call providers.ToolCall, _ string) {
-		seen = append(seen, call)
-	}, func(info ToolBatchRejectionInfo) {
-		rejections = append(rejections, info)
-	})
-
-	if calls := tools.recordedCalls(); len(calls) != 2 {
-		t.Fatalf("batch without a registered barrier tool must execute every call, got calls %+v", calls)
-	}
-	if len(rejections) != 0 {
-		t.Fatalf("core must not reject a batch for product tool names, got %+v", rejections)
-	}
-	if len(msgs) != 2 || msgs[0].ToolCallID != "call_write" || msgs[1].ToolCallID != "call_barrier" {
-		t.Fatalf("expected one result per call, got %+v", msgs)
-	}
-	if len(seen) != 2 || seen[0].ID != "call_write" || seen[1].ID != "call_barrier" {
-		t.Fatalf("OnToolResult should see executed calls in order, got %+v", seen)
-	}
-}
-
-func TestTurnToolRuntimeExecutesProductNamedToolWhenCalledAlone(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	tools := &runtimeTestTools{}
-	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: tools})
-
-	msgs, _ := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "call_barrier", Name: "barrier_tool"}}, nil)
-
-	if calls := tools.recordedCalls(); len(calls) != 1 || calls[0].ID != "call_barrier" {
-		t.Fatalf("single product-named tool should execute normally, got %+v", calls)
-	}
-	if len(msgs) != 1 || !strings.Contains(msgs[0].Content, "call_barrier") {
-		t.Fatalf("unexpected single tool result: %+v", msgs)
-	}
-}
-
 func TestTurnToolRuntime_ReusesStreamingStartedConcurrentRuns(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()

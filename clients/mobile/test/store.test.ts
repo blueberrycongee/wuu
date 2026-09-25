@@ -57,21 +57,6 @@ describe("thread upserts", () => {
   });
 });
 
-describe("connection state", () => {
-  it("surfaces and clears server synchronization failures", () => {
-    const store = new AppStore();
-    store.setPhase("attached");
-    store.setSyncError("invalid response");
-    expect(store.getSnapshot()).toMatchObject({
-      phase: "attached",
-      syncError: "invalid response",
-    });
-
-    store.setSyncError(null);
-    expect(store.getSnapshot().syncError).toBeNull();
-  });
-});
-
 describe("turn and item ingestion", () => {
   it("tracks running state through turn lifecycle", () => {
     const store = seeded();

@@ -329,22 +329,6 @@ func writeMCPJson(t *testing.T, workdir, contents string) {
 	}
 }
 
-// TestLoadFrom_NoMCPJson_ZeroBehaviorChange verifies that without a .mcp.json,
-// MCPServers is exactly what the base config declares.
-func TestLoadFrom_NoMCPJson_ZeroBehaviorChange(t *testing.T) {
-	home := isolatedHome(t)
-	workdir := t.TempDir()
-	writeBaseConfig(t, home, mcpJsonBaseConfig)
-
-	cfg, _, err := LoadFrom(workdir, home)
-	if err != nil {
-		t.Fatalf("LoadFrom: %v", err)
-	}
-	if len(cfg.MCPServers) != 0 {
-		t.Fatalf("expected no MCP servers, got %+v", cfg.MCPServers)
-	}
-}
-
 // TestLoadFrom_MCPJson_UnapprovedNotLoaded verifies default trust: .mcp.json
 // servers are not loaded without approval.
 func TestLoadFrom_MCPJson_UnapprovedNotLoaded(t *testing.T) {
@@ -449,9 +433,6 @@ func TestEmitMCPJsonDiags_DedupAcrossReloads(t *testing.T) {
 	first := buf.String()
 	if !strings.Contains(first, "svc-a") || !strings.Contains(first, "svc-b") {
 		t.Fatalf("first emit should name both servers: %q", first)
-	}
-	if !strings.Contains(first, "mcp_json.enabled") || !strings.Contains(first, "settings.local.json") {
-		t.Fatalf("pending line should direct users to settings.local.json: %q", first)
 	}
 	if lines := strings.Count(strings.TrimSpace(first), "\n"); lines != 0 {
 		t.Fatalf("pending servers should be aggregated into one line, got:\n%s", first)

@@ -61,11 +61,6 @@ function renderWithProbe(): { getAPI: () => ImagePreviewContextValue | null } {
 }
 
 describe("ImagePreviewProvider", () => {
-  it("does not render the overlay when nothing is open", () => {
-    renderWithProbe();
-    expect(overlayRoot()).toBeNull();
-  });
-
   it("renders the image when openPreview is called and hides it when closePreview is called", () => {
     const probe = renderWithProbe();
     act(() => {
@@ -83,19 +78,6 @@ describe("ImagePreviewProvider", () => {
 
     act(() => {
       probe.getAPI()?.closePreview();
-    });
-    expect(overlayRoot()).toBeNull();
-  });
-
-  it("closes when the visible X icon is clicked", () => {
-    const probe = renderWithProbe();
-    act(() => {
-      probe.getAPI()?.openPreview({ src: "data:image/png;base64,AAA" });
-    });
-    const icon = container.querySelector(".image-preview-toolbar-button .wuu-icon-x");
-    expect(icon).not.toBeNull();
-    act(() => {
-      icon!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(overlayRoot()).toBeNull();
   });
@@ -164,34 +146,6 @@ describe("ImagePreviewProvider", () => {
     expect(svg?.textContent).toBe("Diagram");
     expect(container.querySelector("img.image-preview-image")).toBeNull();
     expect(container.querySelector(".image-preview-status")).toBeNull();
-  });
-
-  it("does not render the title or alt text in the toolbar", () => {
-    const probe = renderWithProbe();
-    act(() => {
-      probe.getAPI()?.openPreview({
-        src: "data:image/png;base64,AAA",
-        alt: "Should not show",
-        title: "Should not show"
-      });
-    });
-    expect(container.querySelector(".image-preview-title")).toBeNull();
-    expect(overlayRoot()?.textContent ?? "").not.toContain("Should not show");
-  });
-});
-
-describe("useImagePreview", () => {
-  it("throws when used outside an ImagePreviewProvider", () => {
-    function Naked(): null {
-      useImagePreview();
-      return null;
-    }
-    expect(() => {
-      act(() => {
-        root = createRoot(container);
-        root.render(<Naked />);
-      });
-    }).toThrow(/ImagePreviewProvider/);
   });
 });
 

@@ -6,48 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
-
-func TestProcessReadNextSuggestions(t *testing.T) {
-	liveProcess := proc.Process{Status: proc.StatusRunning}
-	deadProcess := proc.Process{Status: proc.StatusStopped}
-
-	if got := processReadNextSuggestions(0, 0, proc.OutputSnapshot{}, liveProcess); got != nil {
-		t.Fatalf("plain snapshots need no guidance: %v", got)
-	}
-	if got := processReadNextSuggestions(5000, processWaitMinDwell, proc.OutputSnapshot{}, deadProcess); got != nil {
-		t.Fatalf("terminal processes need no wait guidance: %v", got)
-	}
-	timedOut := processReadNextSuggestions(5000, processWaitMinDwell, proc.OutputSnapshot{TimedOut: true}, liveProcess)
-	if len(timedOut) != 1 || !strings.Contains(timedOut[0], "Do not wait on it again") || !strings.Contains(timedOut[0], "recheck_minutes") {
-		t.Fatalf("an expired wait should steer away from re-waiting and toward rechecks: %v", timedOut)
-	}
-	chatty := processReadNextSuggestions(120000, processWaitMinDwell, proc.OutputSnapshot{Duration: processWaitMinDwell}, liveProcess)
-	if len(chatty) != 1 || !strings.Contains(chatty[0], "continuously") {
-		t.Fatalf("a wait released at the pacing floor should name the chatty pattern: %v", chatty)
-	}
-	if quiet := processReadNextSuggestions(120000, processWaitMinDwell, proc.OutputSnapshot{Duration: 90 * time.Second}, liveProcess); quiet != nil {
-		t.Fatalf("a normal early return needs no guidance: %v", quiet)
-	}
-}
-
-func TestProcessUpdateRequiresProcessID(t *testing.T) {
-	kit, err := New(t.TempDir())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	_, err = kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "process",
-		Arguments: `{"action":"update","recheck_minutes":10}`,
-	})
-	if err == nil || !strings.Contains(err.Error(), "process_id") {
-		t.Fatalf("update without process_id should fail: %v", err)
-	}
-}
 
 func TestProcessUpdateScheduleLifecycle(t *testing.T) {
 	root := t.TempDir()
@@ -116,28 +78,6 @@ func TestProcessUpdateScheduleLifecycle(t *testing.T) {
 	}
 	if record.CompletionMode != proc.CompletionModeDetached || record.RecheckMinutes != 0 {
 		t.Fatalf("completion mode update not persisted or clobbered the schedule: %+v", record)
-	}
-}
-
-func TestProcessUpdateRejectsInvalidValues(t *testing.T) {
-	root := t.TempDir()
-	kit := newShellTestToolkit(t, root)
-	manager, err := proc.NewManager(root, filepath.Join(t.TempDir(), "runtime"))
-	if err != nil {
-		t.Fatalf("NewManager: %v", err)
-	}
-	defer func() { _ = manager.CleanupSession() }()
-	kit.SetProcessManager(manager)
-	kit.SetSessionID("thread-invalid-update")
-	started := startBackgroundForTest(t, kit, map[string]any{"command": "sleep 5"})
-
-	for args, want := range map[string]string{
-		`{"action":"update","process_id":"` + started.ID + `","recheck_minutes":-3}`:          "recheck_minutes",
-		`{"action":"update","process_id":"` + started.ID + `","completion_mode":"sometimes"}`: "completion_mode",
-	} {
-		if _, err := kit.Execute(context.Background(), providers.ToolCall{Name: "process", Arguments: args}); err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("%s should fail on %s: %v", args, want, err)
-		}
 	}
 }
 

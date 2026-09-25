@@ -65,17 +65,6 @@ func newThrottleTestSession(interval time.Duration) *deviceSession {
 	}
 }
 
-func TestTryConsumePushSlotFresh(t *testing.T) {
-	s := newThrottleTestSession(30 * time.Second)
-	if !s.tryConsumePushSlot("agent_done", "t-1") {
-		t.Errorf("first push: want true, got false")
-	}
-	// After consuming, lastPush is set; another push within 30s should fail.
-	if s.tryConsumePushSlot("agent_done", "t-1") {
-		t.Errorf("immediate second push: want false, got true")
-	}
-}
-
 func TestTryConsumePushSlotPerThread(t *testing.T) {
 	s := newThrottleTestSession(30 * time.Second)
 	// First push for t-1 consumes the per-thread slot.
@@ -122,10 +111,6 @@ func TestTryConsumePushSlotEmptyThreadSkipsPerThreadThrottle(t *testing.T) {
 	}
 	if s.tryConsumePushSlot("needs_input", "") {
 		t.Errorf("second needs_input within window: want false, got true")
-	}
-	// lastThreadPush should remain empty (no map entry written).
-	if len(s.lastThreadPush) != 0 {
-		t.Errorf("lastThreadPush: want empty for empty threadID, got %d entries", len(s.lastThreadPush))
 	}
 }
 

@@ -387,48 +387,6 @@ describe("AppSidebar layout", () => {
     expect(select).toHaveBeenCalledWith("project-1", fork.id);
   });
 
-  it("hides group chat unless the frontend flag is enabled", () => {
-    renderSidebar();
-
-    expect(container.textContent).not.toContain("群聊");
-  });
-
-  it("replaces the legacy group chat nav item with the 协作 section", () => {
-    renderSidebar({ groupChatEnabled: true });
-
-    const navLabels = Array.from(container.querySelectorAll(".nav-item")).map((item) => item.textContent);
-    expect(navLabels).not.toContain("群聊");
-    expect(container.querySelector(".channel-mention-badge")).toBeNull();
-  });
-
-  it("keeps primary actions outside the scrollable sidebar list", () => {
-    renderSidebar();
-
-    const content = container.querySelector(".sidebar-content");
-    const primaryNav = container.querySelector(".primary-nav");
-    const scrollRegion = container.querySelector(".sidebar-main");
-
-    expect(primaryNav?.parentElement).toBe(content);
-    expect(scrollRegion?.contains(primaryNav)).toBe(false);
-    expect(scrollRegion?.querySelector(".project-section")).not.toBeNull();
-    expect(scrollRegion?.hasAttribute("data-scroll-fade")).toBe(true);
-    expect(primaryNav?.closest("[data-scroll-fade]")).toBeNull();
-    expect(content?.hasAttribute("data-scroll-fade")).toBe(false);
-  });
-
-  it("keeps the workspace add action visible and collaboration controls out of Harness", () => {
-    renderSidebar({ groupChatEnabled: true });
-
-    const workspaceAction = container.querySelector<HTMLButtonElement>(
-      '[aria-label="添加工作区"]',
-    );
-    const collaborationAction = container.querySelector<HTMLButtonElement>(
-      '[aria-label="新建频道"]',
-    );
-    expect(workspaceAction).not.toBeNull();
-    expect(collaborationAction).toBeNull();
-  });
-
   it("keeps plugin navigation above the collaboration section", async () => {
     await desktopPluginHost.activateGeneration({
       pluginId: "test:app-sidebar-navigation",

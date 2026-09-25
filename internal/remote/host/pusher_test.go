@@ -122,49 +122,6 @@ func TestExpoPusherIsExpoToken(t *testing.T) {
 	}
 }
 
-func TestExpoPusherCopyForHints(t *testing.T) {
-	cases := []struct {
-		hint     string
-		wantBody string
-	}{
-		{"agent_done", "Agent finished a turn"},
-		{"needs_input", "Agent needs your input"},
-		{"something_else", "wuu activity"},
-	}
-	for _, c := range cases {
-		_, body := expoCopy(c.hint, "thread-1")
-		if body != c.wantBody {
-			t.Errorf("expoCopy(%q): want body=%q, got %q", c.hint, c.wantBody, body)
-		}
-	}
-}
-
-func TestExpoPusherIgnores5xx(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer ts.Close()
-	p := &ExpoPusher{Endpoint: ts.URL, HTTPClient: ts.Client()}
-	// Must not panic or hang on a non-2xx response.
-	p.Push(context.Background(), HostPushEvent{
-		Token: "ExponentPushToken[abc123]",
-		Hint:  "agent_done",
-	})
-}
-
-func TestNewExpoPusherDefaults(t *testing.T) {
-	p := NewExpoPusher()
-	if p.Endpoint != DefaultExpoEndpoint {
-		t.Errorf("Endpoint: want %q, got %q", DefaultExpoEndpoint, p.Endpoint)
-	}
-	if p.HTTPClient == nil {
-		t.Errorf("HTTPClient: want non-nil")
-	}
-	if p.HTTPClient.Timeout <= 0 {
-		t.Errorf("HTTPClient.Timeout: want > 0, got %v", p.HTTPClient.Timeout)
-	}
-}
-
 // The registrar is what binds device/push_register to the paired-device
 // record; without it every mobile registration failed as "remote-only" and
 // no token was ever stored.

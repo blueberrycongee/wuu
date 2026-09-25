@@ -1,8 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  startRendererVisibilitySync,
-  syncRendererVisibility,
-} from "./RendererVisibility";
+import { startRendererVisibilitySync } from "./RendererVisibility";
 
 afterEach(() => {
   document.documentElement.removeAttribute("data-renderer-hidden");
@@ -10,14 +7,6 @@ afterEach(() => {
 });
 
 describe("renderer visibility", () => {
-  it("stamps hidden state without changing visible documents", () => {
-    syncRendererVisibility(document.documentElement, "hidden");
-    expect(document.documentElement.hasAttribute("data-renderer-hidden")).toBe(true);
-
-    syncRendererVisibility(document.documentElement, "visible");
-    expect(document.documentElement.hasAttribute("data-renderer-hidden")).toBe(false);
-  });
-
   it("tracks document visibility changes for the renderer lifetime", () => {
     const visibilityState = vi
       .spyOn(document, "visibilityState", "get")

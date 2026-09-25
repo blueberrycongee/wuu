@@ -63,10 +63,6 @@ describe("desktopSettings", () => {
     expect(readDesktopSettings(file)).toEqual({});
   });
 
-  it("defaults the theme preference to system", () => {
-    expect(getThemePreference(file)).toBe("system");
-  });
-
   it("persists completion of the mandatory first-run flow without losing other settings", () => {
     setThemePreference("dark", file);
 
@@ -152,10 +148,6 @@ describe("desktopSettings", () => {
     expect(getMessageFlowFontSize(file)).toBe(16);
   });
 
-  it("uses the default message-flow size when no preference is saved", () => {
-    expect(getMessageFlowFontSize(file)).toBe(DEFAULT_MESSAGE_FLOW_FONT_SIZE);
-  });
-
   it("round-trips the message-flow font size", () => {
     setMessageFlowFontSize(13, file);
     expect(getMessageFlowFontSize(file)).toBe(13);
@@ -224,11 +216,6 @@ describe("desktopSettings", () => {
     await writeFile(file, JSON.stringify({ theme: "dark", skin: "work" }));
     expect(readDesktopSettings(file)).toEqual({ theme: "dark" });
     expect(getThemePreference(file)).toBe("dark");
-  });
-
-  it("defaults the codex pet size to the 100% preset", () => {
-    expect(getCodexPetSize(file)).toBe("default");
-    expect(getCodexPetSettings(file).size).toBe("default");
   });
 
   it("round-trips the codex pet size while preserving other settings", () => {

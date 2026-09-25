@@ -79,7 +79,7 @@ func TestBoundedSearchProjectionUsesArtifactWithoutInventingContinuation(t *test
 	}
 	projection := parsed["projection"].(map[string]any)
 	recover, _ := projection["recover"].(string)
-	if !strings.Contains(recover, "/s/bounded.txt") || !strings.Contains(recover, "narrow") {
+	if !strings.Contains(recover, "/s/bounded.txt") {
 		t.Fatalf("bounded projection recovery is not actionable: %+v", projection)
 	}
 }

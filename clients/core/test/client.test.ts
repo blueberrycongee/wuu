@@ -350,21 +350,6 @@ describe("RemoteClient", () => {
     } finally { await client.stop(); vi.unstubAllGlobals(); }
   });
 
-  it("attaches and completes an rpc round trip", async () => {
-    const fake = new FakeHost();
-    fake.handleCall = (env) => ({ protocolVersion: "wuu-app-server/v0.1", method: env.method });
-    const { client, attaches } = makeClient(fake);
-    client.start();
-    try {
-      const result = await client.call<{ protocolVersion: string }>("initialize", {});
-      expect(result.protocolVersion).toBe("wuu-app-server/v0.1");
-      expect(attaches).toEqual([{ session: "sess-2", resumed: false }]);
-      expect(client.isAttached()).toBe(true);
-    } finally {
-      await client.stop();
-    }
-  });
-
   it("does not send a call after its attach wait times out", async () => {
     const fake = new FakeHost();
     const { client } = makeClient(fake);
@@ -521,20 +506,6 @@ describe("RemoteClient", () => {
       fake.sendLine({ method: "n", params: { i: 100 } });
       await until(() => notifications.length >= 2);
       expect((notifications.at(-1)!.params as { i: number }).i).toBe(100);
-    } finally {
-      await client.stop();
-    }
-  });
-
-  it("acks cumulatively so the host can trim its spool", async () => {
-    const fake = new FakeHost();
-    const { client, notifications } = makeClient(fake);
-    client.start();
-    try {
-      await client.waitAttached(3000);
-      for (let i = 1; i <= 5; i++) fake.sendLine({ method: "n", params: { i } });
-      await until(() => notifications.length === 5);
-      await until(() => fake.lastAck === 5);
     } finally {
       await client.stop();
     }

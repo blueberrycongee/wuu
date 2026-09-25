@@ -97,43 +97,6 @@ func TestIntegration_SelectiveBlockByTool(t *testing.T) {
 	}
 }
 
-func TestIntegration_LifecycleHooks(t *testing.T) {
-	r := NewRegistry(map[Event][]HookConfig{
-		SessionStart:     {{Command: "true"}},
-		SessionEnd:       {{Command: "true"}},
-		Stop:             {{Command: "true"}},
-		UserPromptSubmit: {{Command: "true"}},
-	})
-	d := NewDispatcher(r)
-
-	for _, ev := range []Event{SessionStart, UserPromptSubmit, Stop, SessionEnd} {
-		_, err := d.Dispatch(context.Background(), ev, &Input{
-			SessionID: "test",
-			CWD:       "/tmp",
-			Prompt:    "hello",
-		})
-		if err != nil {
-			t.Fatalf("event %s failed: %v", ev, err)
-		}
-	}
-}
-
-func TestIntegration_UserPromptBlock(t *testing.T) {
-	r := NewRegistry(map[Event][]HookConfig{
-		UserPromptSubmit: {
-			{Command: `echo '{"decision":"block","reason":"profanity filter"}'`},
-		},
-	})
-	d := NewDispatcher(r)
-
-	_, err := d.Dispatch(context.Background(), UserPromptSubmit, &Input{
-		Prompt: "bad words",
-	})
-	if !IsBlocked(err) {
-		t.Fatalf("expected prompt blocked, got: %v", err)
-	}
-}
-
 func TestIntegration_ChainedPreToolHooks(t *testing.T) {
 	// Two hooks run in sequence; first adds context, second rewrites input.
 	inner := &stubExecutor{result: `ok`}

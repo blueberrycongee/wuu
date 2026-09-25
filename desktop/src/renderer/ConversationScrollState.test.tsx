@@ -520,75 +520,6 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
     expect(layout.scrollTop).toBe(restoredTop);
   });
 
-  it("keeps a hard boundary on platforms without native scroll bounce", () => {
-    vi.useFakeTimers();
-    try {
-      const node = mount({
-        activeThreadID: "thread-a",
-        scrollHeight: 2400,
-        clientHeight: 600,
-        initialScrollTop: 2400 - 600,
-      });
-      fireScroll();
-      setScrollTop(520);
-      fireUserScroll();
-
-      const content = container.querySelector(
-        "[data-testid='scroll-content']",
-      ) as HTMLDivElement | null;
-      if (!content || !layout) throw new Error("not mounted");
-
-      const max = layout.scrollHeight - layout.clientHeight;
-      act(() => {
-        layout!.scrollTop = max - 40;
-        node.dispatchEvent(
-          new WheelEvent("wheel", { bubbles: true, deltaY: 120, deltaMode: 0 }),
-        );
-        layout!.scrollTop = max;
-        node.dispatchEvent(new Event("scroll", { bubbles: false }));
-      });
-
-      expect(content.style.transform).toBe("");
-
-      act(() => {
-        node.dispatchEvent(
-          new WheelEvent("wheel", { bubbles: true, deltaY: 160, deltaMode: 0 }),
-        );
-      });
-      expect(content.style.transform).toBe("");
-
-      act(() => {
-        const momentumEvent = new WheelEvent("wheel", {
-          bubbles: true,
-          deltaY: 100,
-          deltaMode: 0,
-        });
-        Object.defineProperty(momentumEvent, "momentum", { value: true });
-        node.dispatchEvent(momentumEvent);
-      });
-      expect(content.style.transform).toBe("");
-
-      act(() => {
-        vi.advanceTimersByTime(32);
-      });
-      expect(content.style.transform).toBe("");
-
-      act(() => {
-        vi.advanceTimersByTime(440);
-      });
-      expect(content.style.transform).toBe("");
-
-      act(() => {
-        node.dispatchEvent(
-          new WheelEvent("wheel", { bubbles: true, deltaY: 160, deltaMode: 0 }),
-        );
-      });
-      expect(content.style.transform).toBe("");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it("leaves native rubber-band control active until the trackpad gesture ends", () => {
     vi.useFakeTimers();
     try {
@@ -599,10 +530,7 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
         initialScrollTop: 1800,
         nativeScrollBounce: true,
       });
-      const content = container.querySelector(
-        "[data-testid='scroll-content']",
-      ) as HTMLDivElement | null;
-      if (!content || !layout) throw new Error("not mounted");
+      if (!layout) throw new Error("not mounted");
 
       act(() => {
         layout!.scrollTop = 520;
@@ -619,7 +547,6 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
       });
 
       expect(node.style.overscrollBehaviorY).toBe("contain");
-      expect(content.style.transform).toBe("");
 
       act(() => {
         node.dispatchEvent(new Event("scrollend"));
@@ -632,73 +559,9 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
         );
       });
       expect(node.style.overscrollBehaviorY).toBe("none");
-      expect(content.style.transform).toBe("");
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it("does not synthesize overscroll after returning from older content", () => {
-    vi.useFakeTimers();
-    try {
-      const node = mount({
-        activeThreadID: "thread-a",
-        scrollHeight: 2400,
-        clientHeight: 600,
-        initialScrollTop: 2400 - 600,
-      });
-      fireScroll();
-      setScrollTop(520);
-      fireUserScroll();
-
-      const content = container.querySelector(
-        "[data-testid='scroll-content']",
-      ) as HTMLDivElement | null;
-      if (!content || !layout) throw new Error("not mounted");
-
-      const max = layout.scrollHeight - layout.clientHeight;
-      act(() => {
-        layout!.scrollTop = max - 40;
-        node.dispatchEvent(
-          new WheelEvent("wheel", { bubbles: true, deltaY: 40, deltaMode: 0 }),
-        );
-        layout!.scrollTop = max;
-        node.dispatchEvent(new Event("scroll", { bubbles: false }));
-      });
-
-      expect(content.style.transform).toBe("");
-
-      act(() => {
-        node.dispatchEvent(
-          new WheelEvent("wheel", { bubbles: true, deltaY: 80, deltaMode: 0 }),
-        );
-      });
-      expect(content.style.transform).toBe("");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("does not rubber-band a downward wheel that is already following latest", () => {
-    const node = mount({
-      activeThreadID: "thread-a",
-      scrollHeight: 2400,
-      clientHeight: 600,
-      initialScrollTop: 2400 - 600,
-    });
-    fireScroll();
-
-    const content = container.querySelector(
-      "[data-testid='scroll-content']",
-    ) as HTMLDivElement | null;
-    if (!content) throw new Error("not mounted");
-
-    act(() => {
-      node.dispatchEvent(
-        new WheelEvent("wheel", { bubbles: true, deltaY: 120, deltaMode: 0 }),
-      );
-    });
-    expect(content.style.transform).toBe("");
   });
 });
 

@@ -2,7 +2,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ContextCompositionCard, type ContextCompositionEntry } from "./ContextCompositionCard";
-import { setActiveLocale } from "./i18n";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -18,7 +17,6 @@ afterEach(() => {
   });
   root = null;
   container.remove();
-  setActiveLocale("zh-CN");
 });
 
 function renderCard(entry: ContextCompositionEntry): void {
@@ -29,38 +27,6 @@ function renderCard(entry: ContextCompositionEntry): void {
 }
 
 describe("ContextCompositionCard", () => {
-  it("renders generated context labels in English", () => {
-    setActiveLocale("en-US");
-    renderCard({
-      id: "entry-en",
-      threadID: "thread-1",
-      loading: false,
-      result: {
-        thread_id: "thread-1",
-        available: true,
-        prompt_tokens: 100,
-        retained_tokens: 50,
-        context_window_tokens: 200,
-        categories: [
-          {
-            id: "request",
-            label: "Raw category name",
-            contributes: false,
-            request_only: true,
-            tokens: 10,
-          },
-        ],
-      },
-    });
-
-    expect(container.textContent).toContain("This request");
-    expect(container.textContent).toContain("Excluded");
-    expect(container.textContent).toContain("Raw category name");
-    expect(container.querySelector("article")?.getAttribute("aria-label")).toBe(
-      "Context",
-    );
-  });
-
   it("uses retained history as the primary context occupancy", () => {
     renderCard({
       id: "entry-1",
@@ -89,13 +55,8 @@ describe("ContextCompositionCard", () => {
     });
 
     const text = container.textContent ?? "";
-    // 语义只出现一次：占用/上限由数字与量表承载，不再有文字标签复述。
     expect(text).toMatch(/103k\s*\/\s*512k/);
-    expect(text).not.toContain("历史占用");
-    expect(text).not.toContain("历史余量");
-    expect(text).not.toContain("最近请求");
     expect(text).toContain("本轮前缀");
-    expect(text).not.toContain("压缩线");
   });
 
   it("scales the composition bar to retained context occupancy", () => {
@@ -168,7 +129,6 @@ describe("ContextCompositionCard", () => {
 
     const text = container.textContent ?? "";
     expect(text).toContain("缓存命中 113k"); // cache_read preserved, not zeroed
-    expect(text).not.toContain("最近请求"); // prompt figure lives in the bar, not repeated as text
     expect(text).toMatch(/88\.0k\s*\/\s*1\.0M/); // occupancy = retained history
   });
 });

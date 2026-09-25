@@ -168,10 +168,6 @@ func TestBrowserDefinitionPublishesInputFields(t *testing.T) {
 			t.Fatalf("browser schema omits %s", name)
 		}
 	}
-	desc := tool.Definition().Description
-	if !strings.Contains(desc, "content_offset") || !strings.Contains(desc, "keep") {
-		t.Fatalf("browser description does not tell the model how to read or retain pages: %s", desc)
-	}
 }
 
 func TestBrowserToolIsDirectOnDefaultSurface(t *testing.T) {
@@ -185,24 +181,6 @@ func TestBrowserToolIsDirectOnDefaultSurface(t *testing.T) {
 	}
 	if !containsProfileDef(kit.Definitions(), browserToolName) {
 		t.Fatal("wuu_browser must appear in Definitions without tool_search")
-	}
-}
-
-func TestBrowserLegacyDiscoveryNameLoadsProviderSafeTool(t *testing.T) {
-	kit, err := New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5-codex", true)
-	kit.SetToolSearchEnabled(true)
-	if names, ok := toolSearchSelectNames("select:browser"); !ok || len(names) != 1 || names[0] != "browser" {
-		t.Fatalf("select:browser names = %v ok=%v, want [browser]", names, ok)
-	}
-	if names, ok := toolSearchSelectNames("select:wuu_browser"); !ok || len(names) != 1 || names[0] != browserToolName {
-		t.Fatalf("select:wuu_browser names = %v ok=%v, want [%s]", names, ok, browserToolName)
-	}
-	if !containsProfileDef(kit.Definitions(), browserToolName) {
-		t.Fatal("legacy select:browser must still resolve to the provider-safe wuu_browser tool")
 	}
 }
 

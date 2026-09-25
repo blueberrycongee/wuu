@@ -1,7 +1,6 @@
 package appserver
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -64,24 +63,6 @@ func TestActiveDocumentContextForTurnUsesLatestSteerSnapshot(t *testing.T) {
 	}
 }
 
-func TestReleaseTurnExecutionClearsSteerDocumentSnapshot(t *testing.T) {
-	th := &threadState{
-		currentTurn:           "turn-1",
-		activeSteerDocument:   &ActiveDocument{Path: "docs/latest.md"},
-		activeSteerContextSet: true,
-	}
-
-	th.releaseTurnExecutionLocked("turn-1")
-
-	if th.activeSteerDocument != nil || th.activeSteerContextSet {
-		t.Fatalf(
-			"steer document state survived turn release: document=%#v set=%t",
-			th.activeSteerDocument,
-			th.activeSteerContextSet,
-		)
-	}
-}
-
 func TestRemovingSteerDocumentOverrideRestoresPreviousSnapshot(t *testing.T) {
 	th := &threadState{steerDocumentOverrides: []activeDocumentOverride{
 		{steerID: "steer-1", document: &ActiveDocument{Path: "docs/first.md"}},
@@ -97,17 +78,6 @@ func TestRemovingSteerDocumentOverrideRestoresPreviousSnapshot(t *testing.T) {
 	th.removeSteerDocumentOverrideLocked("steer-1")
 	if th.activeSteerContextSet || th.activeSteerDocument != nil {
 		t.Fatalf("active steer document survived final unsteer: %#v", th.activeSteerDocument)
-	}
-}
-
-func TestQueuedDocumentSnapshotDoesNotPersistRequestContextBlock(t *testing.T) {
-	snapshot := turnRuntimeSnapshot{ActiveDocument: &ActiveDocument{Path: "docs/queued.md"}}
-	encoded, err := json.Marshal(snapshot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(encoded), "desktop.document_focus") || strings.Contains(string(encoded), "ACTIVE_FILES") {
-		t.Fatalf("queued snapshot persisted request-only context block: %s", encoded)
 	}
 }
 

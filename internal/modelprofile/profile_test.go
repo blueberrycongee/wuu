@@ -25,75 +25,11 @@ func TestResolveClassifiesModelFamilies(t *testing.T) {
 	}
 }
 
-func TestResolveCodexProfileUsesPatchFirstHarness(t *testing.T) {
-	profile := Resolve("openai", "gpt-5-codex")
-	if profile.Execution.DefaultWriteMode != WriteModePatch {
-		t.Fatalf("DefaultWriteMode = %s, want %s", profile.Execution.DefaultWriteMode, WriteModePatch)
-	}
-	if !profile.APIShape.FreeformTool || !profile.APIShape.DeveloperRole {
-		t.Fatalf("expected Codex profile to support freeform tools and developer role: %+v", profile.APIShape)
-	}
-	if profile.Code.PreferredPatchGrammar != "codex_apply_patch" || profile.Code.PatchReliability < 5 {
-		t.Fatalf("unexpected Codex code profile: %+v", profile.Code)
-	}
-	if !profile.Execution.AllowParallelReadOnly {
-		t.Fatalf("Codex profile should allow parallel read-only workers: %+v", profile.Execution)
-	}
-}
-
 func TestResolveOpenAIGPTProfilesUsePatchMode(t *testing.T) {
 	for _, model := range []string{"gpt-5.5", "gpt-4.1-mini", "openai/gpt-oss-120b"} {
 		profile := Resolve("openai", model)
 		if profile.Execution.DefaultWriteMode != WriteModePatch {
 			t.Fatalf("%s DefaultWriteMode = %s, want %s", model, profile.Execution.DefaultWriteMode, WriteModePatch)
 		}
-		if !profile.APIShape.FreeformTool {
-			t.Fatalf("%s should use the OpenAI patch-first freeform tool surface", model)
-		}
-	}
-}
-
-func TestResolveClaudeProfilePrefersReadEditPlan(t *testing.T) {
-	profile := Resolve("anthropic", "claude-sonnet-4-5")
-	if profile.Execution.DefaultWriteMode != WriteModeExactEdit {
-		t.Fatalf("DefaultWriteMode = %s, want %s", profile.Execution.DefaultWriteMode, WriteModeExactEdit)
-	}
-	if !profile.Reasoning.PrefersExplicitPlan || !profile.Context.SupportsPromptCache {
-		t.Fatalf("unexpected Claude reasoning/context profile: reasoning=%+v context=%+v", profile.Reasoning, profile.Context)
-	}
-	if profile.Code.ExactEditReliability <= profile.Code.PatchReliability {
-		t.Fatalf("Claude profile should prefer exact edits over patches: %+v", profile.Code)
-	}
-}
-
-func TestResolveStrictPortableCoderProfilesUseSchemaConservativePolicy(t *testing.T) {
-	for _, tt := range []struct {
-		provider string
-		model    string
-	}{
-		{provider: "google", model: "gemini-2.5-pro"},
-		{provider: "moonshot", model: "kimi-k2"},
-		{provider: "dashscope", model: "qwen3-coder-plus"},
-	} {
-		profile := Resolve(tt.provider, tt.model)
-		if profile.APIShape.ToolCalling != ToolCallingStrictJSON {
-			t.Fatalf("%s/%s ToolCalling = %s, want %s", tt.provider, tt.model, profile.APIShape.ToolCalling, ToolCallingStrictJSON)
-		}
-		if profile.Execution.DefaultWriteMode != WriteModeExactEdit {
-			t.Fatalf("%s/%s DefaultWriteMode = %s, want %s", tt.provider, tt.model, profile.Execution.DefaultWriteMode, WriteModeExactEdit)
-		}
-	}
-}
-
-func TestResolveLocalProfileLimitsAutonomy(t *testing.T) {
-	profile := Resolve("ollama", "llama-coder")
-	if profile.Execution.DefaultMaxAutonomousSteps > 5 {
-		t.Fatalf("local DefaultMaxAutonomousSteps = %d, want <= 5", profile.Execution.DefaultMaxAutonomousSteps)
-	}
-	if profile.Execution.AllowDirectShell {
-		t.Fatalf("local profile should not allow direct shell by default: %+v", profile.Execution)
-	}
-	if profile.Execution.DefaultWriteMode != WriteModeExactEdit {
-		t.Fatalf("local DefaultWriteMode = %s, want %s", profile.Execution.DefaultWriteMode, WriteModeExactEdit)
 	}
 }

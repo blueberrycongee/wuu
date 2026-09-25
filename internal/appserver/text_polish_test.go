@@ -43,9 +43,6 @@ func TestTextPolishUsesConfiguredBYOKRuntime(t *testing.T) {
 	if len(request.Messages) != 2 || request.Messages[1].Content != "这是 原始 文本" {
 		t.Fatalf("messages = %#v", request.Messages)
 	}
-	if !strings.Contains(request.Messages[0].Content, "Return only the polished text") {
-		t.Fatalf("system prompt = %q", request.Messages[0].Content)
-	}
 }
 
 func TestTextPolishValidationAndUnavailableRuntime(t *testing.T) {

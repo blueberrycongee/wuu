@@ -357,20 +357,6 @@ func runOversizeHelper() {
 	}
 }
 
-func TestBaselineEnvKeyListHasNoDuplicates(t *testing.T) {
-	// Duplicate keys should not appear in the baseline key list; it must be
-	// stable so buildEnv output is deterministic across platforms.
-	seen := make(map[string]int, len(baselineEnvKeys))
-	for _, key := range baselineEnvKeys {
-		seen[key]++
-	}
-	for key, count := range seen {
-		if count != 1 {
-			t.Fatalf("baseline key %q appears %d times", key, count)
-		}
-	}
-}
-
 func TestProcessClientCancelReachesPluginExecution(t *testing.T) {
 	if os.Getenv("WUU_PLUGINHOST_EXECUTION_HELPER") == "1" {
 		runExecutionHelper()

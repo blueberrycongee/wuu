@@ -7,13 +7,14 @@ import { WorkspaceRightPanel, type WorkspacePanelView } from "../../src/renderer
 import type { WorkspaceViewTab } from "../../src/renderer/WorkspaceViewTabs";
 import { initialState, type ThreadSummary } from "../../src/renderer/AppState";
 import { ConversationTitleActions } from "../../src/renderer/ConversationShellRenderers";
-import type { WuuDesktopApi, Turn } from "../../src/shared/protocol";
+import type { SettingsUsageDay, WuuDesktopApi, Turn, UsageOverviewResponse } from "../../src/shared/protocol";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { ImagePreviewProvider } from "../../src/renderer/ImagePreview";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import { AppBackground } from "../../src/renderer/background/AppBackground";
 import { BackgroundSettings } from "../../src/renderer/background/BackgroundSettings";
 import { EmptyConversationHome } from "../../src/renderer/LoadingViews";
+import { EmptyHomeOverview } from "../../src/renderer/EmptyHomeOverview";
 import "../../src/renderer/styles.css";
 import "./fixture.css";
 
@@ -43,6 +44,23 @@ const turn: Turn = { id: "sample-turn", status: "completed", duration_ms: 9000, 
   { id: "sample-answer", type: "agent_message", terminal: true, status: "completed", text: answer },
 ] };
 const titles = ["优化软件排版问题", "检查长标题、运行中与未读状态的组合", "消息流阅读节奏与输入框对齐", "修复导航节点重复", "检查分叉会话与项目层级"];
+// Deterministic synthetic activity for the empty-home overview; `new-user`
+// previews a store without usage, which the overview reports as zeros.
+function sampleUsageOverview(newUser: boolean): UsageOverviewResponse {
+  const days: SettingsUsageDay[] = newUser ? [] : Array.from({ length: 320 }, (_, back) => {
+    const day = new Date(); day.setDate(day.getDate() - back);
+    const tokens = back % 7 === 5 || back % 11 === 3 ? 0 : ((back * 37) % 23 + 1) * 9_000;
+    const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+    return { date, input_tokens: tokens, output_tokens: tokens / 4, cache_creation_tokens: 0, cache_read_tokens: tokens * 3, cache_hit_rate: 0.75, turns: tokens ? 4 : 0, agents: 0 };
+  }).filter(day => day.turns > 0).reverse();
+  const sum = (key: "input_tokens" | "output_tokens" | "cache_read_tokens") => days.reduce((total, day) => total + day[key], 0);
+  const input = sum("input_tokens"), output = sum("output_tokens"), cacheRead = sum("cache_read_tokens");
+  return { total_sessions: newUser ? 0 : 128, days, metrics: {
+    prompt_tokens: input + cacheRead, context_tokens: input + cacheRead + output, input_tokens: input, output_tokens: output,
+    cache_read_tokens: cacheRead, cache_creation_tokens: 0, cache_hit_rate: newUser ? 0 : 0.75, turns: days.length * 4, agents: 0,
+    date_range: [days[0]?.date ?? "", days.at(-1)?.date ?? ""], active_days: days.length,
+  } };
+}
 const threads: ThreadSummary[] = titles.map((preview, i) => ({ id: `sample-${i}`, preview, model_provider: "preview", model: "preview", cwd: "/preview", status: i === 1 ? "in_progress" : "idle", created_at: date, updated_at: date, turn_count: 1, latest_completed_turn_id: "sample-turn", turns: [], ...(i === 4 ? { forked_from_id: "sample-0" } : {}) }));
 
 function Fixture() {
@@ -87,7 +105,7 @@ function Fixture() {
             rightPanelOpen={rightOpen} onToggleRightPanel={() => setRightOpen(value => !value)} />
         </header>
         <div className={`scroll-region${params.has("empty") ? " empty-scroll-region" : ""}`}>
-          {params.has("empty") ? <EmptyConversationHome title="晚上好，今天还想在 wuu 里处理什么？" />
+          {params.has("empty") ? <EmptyConversationHome title="晚上好，今天还想在 wuu 里处理什么？"><EmptyHomeOverview /></EmptyConversationHome>
             : <div className="conversation-width session-flow">{params.has("background") ? <div className="sample-background-settings"><BackgroundSettings /></div> : <TurnView turn={turn} onStreamFrame={noop} isLatestTurn latestAgentMessageID="sample-answer"/>}</div>}
         </div>
         <footer ref={dock} className="composer-wrap dock-composer-wrap"><div className="composer-stack"><div className="composer-shell"><div className="composer-frame-shell"><div className="composer-frame"><div className="composer"><textarea aria-label="示例输入" placeholder="即刻开始"/><div className="composer-bar"><div className="composer-bar-left"><button className="composer-tool-button" aria-label="附件"><Plus className="icon"/></button></div><div className="composer-bar-right"><button className="codex-runtime-trigger">Wuu · 示例模型</button><button className="composer-action-button composer-send-button" disabled aria-label="发送"><ArrowUp className="icon"/></button></div></div></div></div></div></div></div></footer>
@@ -101,6 +119,7 @@ if (import.meta.env.DEV) {
   // This standalone entry uses synthetic files only; no product preload or core.
   window.wuu = {
     listWorkspaceDirectory: async (path = "") => ({ root: "/preview", path, truncated: false, entries: path ? [] : ["README.md", "排版验收说明.md", "long-file-name-for-truncation-review.ts", ...Array.from({ length: 40 }, (_, i) => `component-${i}.tsx`)].map(name => ({ name, path: name, kind: "file" })) }),
+    getUsageOverview: async () => sampleUsageOverview(new URLSearchParams(location.search).has("new-user")),
   } as unknown as WuuDesktopApi;
   createRoot(document.getElementById("root")!).render(<Fixture/>);
 }

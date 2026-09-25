@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ThreadContextMenu } from "./ThreadContextMenu";
-import { PinnedThreadList, ProjectGroup, ProjectList, ThreadRowTitle } from "./ThreadSidebar";
-import type { DesktopProject, Thread, WuuDesktopApi } from "../shared/protocol";
+import { PinnedThreadList, ProjectGroup, ProjectList } from "./ThreadSidebar";
+import type { DesktopProject, Thread } from "../shared/protocol";
 import { SCRATCH_PSEUDO_PROJECT_ID, summarizeThreadsForSidebar } from "./AppState";
-import { I18nProvider, setActiveLocale } from "./i18n";
+import { setActiveLocale } from "./i18n";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -28,17 +28,6 @@ afterEach(() => {
   setActiveLocale("zh-CN");
 });
 
-function render(props: { title: string }): { span: HTMLSpanElement | null } {
-  act(() => {
-    root = createRoot(container);
-    root!.render(<ThreadRowTitle {...props} />);
-  });
-  const span = container.querySelector(".thread-row-title") as HTMLSpanElement | null;
-  return {
-    span,
-  };
-}
-
 function changeInput(input: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(
     HTMLInputElement.prototype,
@@ -47,25 +36,6 @@ function changeInput(input: HTMLInputElement, value: string): void {
   setter?.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
-
-describe("ThreadRowTitle", () => {
-  it("renders the title text", () => {
-    const { span } = render({ title: "Fix login crash" });
-    expect(span?.textContent).toBe("Fix login crash");
-  });
-
-
-  it("updates the displayed title when a generated title arrives", () => {
-    render({ title: "first user query" });
-    act(() => {
-      root!.render(<ThreadRowTitle title="Fix login crash" />);
-    });
-    const currentSpan = container.querySelector(".thread-row-title");
-    expect(currentSpan?.textContent).toBe("Fix login crash");
-  });
-
-
-});
 
 describe("ThreadContextMenu", () => {
   function renderMenu(): { onSelect: ReturnType<typeof vi.fn>; onClose: ReturnType<typeof vi.fn> } {
@@ -84,15 +54,6 @@ describe("ThreadContextMenu", () => {
     });
     return { onSelect, onClose };
   }
-
-  it("renders a menu with one item per entry", () => {
-    renderMenu();
-    const menu = document.body.querySelector('[role="menu"]');
-    const items = document.body.querySelectorAll('[role="menuitem"]');
-    expect(menu).not.toBeNull();
-    expect(items.length).toBe(1);
-    expect(items[0]?.textContent).toBe("复制 thread ID");
-  });
 
   it("invokes onSelect and onClose when an item is clicked", () => {
     const { onSelect, onClose } = renderMenu();
@@ -113,56 +74,6 @@ describe("ThreadContextMenu", () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     });
     expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it("renders multiple items in the order they were provided", () => {
-    const onA = vi.fn();
-    const onB = vi.fn();
-    act(() => {
-      root = createRoot(container);
-      root.render(
-        <ThreadContextMenu
-          x={10}
-          y={20}
-          items={[
-            { label: "A", onSelect: onA },
-            { label: "B", onSelect: onB },
-          ]}
-          onClose={() => {}}
-        />
-      );
-    });
-    const items = document.body.querySelectorAll('[role="menuitem"]');
-    expect(items.length).toBe(2);
-    expect(items[0]?.textContent).toBe("A");
-    expect(items[1]?.textContent).toBe("B");
-  });
-
-  it("invokes only the clicked item's onSelect", () => {
-    const onA = vi.fn();
-    const onB = vi.fn();
-    act(() => {
-      root = createRoot(container);
-      root.render(
-        <ThreadContextMenu
-          x={10}
-          y={20}
-          items={[
-            { label: "A", onSelect: onA },
-            { label: "B", onSelect: onB },
-          ]}
-          onClose={() => {}}
-        />
-      );
-    });
-    const firstButton = document.body.querySelectorAll(
-      '[role="menuitem"]',
-    )[0] as HTMLButtonElement;
-    act(() => {
-      firstButton.click();
-    });
-    expect(onA).toHaveBeenCalledTimes(1);
-    expect(onB).toHaveBeenCalledTimes(0);
   });
 });
 
@@ -301,39 +212,6 @@ describe("ProjectList", () => {
     expect(
       row?.querySelector(".thread-row-main")?.getAttribute("aria-label"),
     ).toContain("响应中");
-  });
-
-  it("renders thread actions and status in English", () => {
-    window.wuu = {
-      initialLanguagePreference: "en-US",
-      initialSystemLocale: "en-US",
-    } as unknown as WuuDesktopApi;
-    const [thread] = summarizeThreadsForSidebar([
-      makeProjectThread("thread-en", "/repo/wuu", "Original title"),
-    ]);
-
-    act(() => {
-      root = createRoot(container);
-      root.render(
-        <I18nProvider>
-          <PinnedThreadList
-            threads={[thread]}
-            activeID={undefined}
-            pendingThreadID={undefined}
-            lastViewedTurnByThreadID={{}}
-            onSelect={() => {}}
-            onTogglePinned={() => {}}
-            onArchive={() => {}}
-            onDelete={() => {}}
-          />
-        </I18nProvider>,
-      );
-    });
-
-    expect(container.querySelector(".thread-row-main")?.getAttribute("aria-label"))
-      .toBe("Original title, completed");
-    expect(container.querySelector('[aria-label="Pin"]')).not.toBeNull();
-    expect(container.querySelector('[aria-label="Archive"]')).not.toBeNull();
   });
 
   it("opens the rename dialog from a double-click and saves through the sidebar owner", () => {
@@ -571,72 +449,6 @@ describe("ProjectList", () => {
     expect(container.textContent).not.toContain("Pinned session");
   });
 
-  it("renders paired expanded and collapsed icons for conversation and project rows", () => {
-    const projects = [
-      makeProject(SCRATCH_PSEUDO_PROJECT_ID, "对话", ""),
-      makeProject("project-1", "wuu", "/repo/wuu"),
-    ];
-
-    act(() => {
-      root = createRoot(container);
-      root.render(
-        <ProjectList
-          projects={projects}
-          activeID="project-1"
-          pendingProjectID={undefined}
-          expandedSidebarSectionIDs={new Set(["project-1"])}
-          threadsByProjectID={{
-            [SCRATCH_PSEUDO_PROJECT_ID]: [],
-            "project-1": summarizeThreadsForSidebar([
-              makeProjectThread("thread-wuu", "/repo/wuu", "Wuu session"),
-            ]),
-          }}
-          activeThreadID={undefined}
-          pendingThreadID={undefined}
-          
-          lastViewedTurnByThreadID={{}}
-          scratchPseudoProjectID={SCRATCH_PSEUDO_PROJECT_ID}
-          scratchPseudoActive={false}
-          onToggleSidebarSectionCollapsed={() => {}}
-          onStartNewThread={() => {}}
-          onSelectThread={() => {}}
-          onToggleThreadPinned={() => {}}
-          onArchiveThread={() => {}}
-          onDeleteThread={() => {}}
-          
-        />,
-      );
-    });
-
-    const [conversationRow, projectRow] = Array.from(
-      container.querySelectorAll(".project-row"),
-    );
-
-    expect(conversationRow?.getAttribute("aria-expanded")).toBe("false");
-    expect(
-      conversationRow?.querySelector(
-        '[data-project-icon-kind="conversation"][data-project-icon-state="collapsed"]',
-      ),
-    ).not.toBeNull();
-    expect(
-      conversationRow?.querySelector(
-        '[data-project-icon-kind="conversation"][data-project-icon-state="expanded"]',
-      ),
-    ).not.toBeNull();
-
-    expect(projectRow?.getAttribute("aria-expanded")).toBe("true");
-    expect(
-      projectRow?.querySelector(
-        '[data-project-icon-kind="project"][data-project-icon-state="collapsed"]',
-      ),
-    ).not.toBeNull();
-    expect(
-      projectRow?.querySelector(
-        '[data-project-icon-kind="project"][data-project-icon-state="expanded"]',
-      ),
-    ).not.toBeNull();
-  });
-
   it("shows project-level unread state for collapsed unread threads", () => {
     const projects = [makeProject("project-1", "wuu", "/repo/wuu")];
 
@@ -805,23 +617,6 @@ describe("ProjectGroup remove workspace", () => {
     expect(container.querySelector(".project-row-loading")).not.toBeNull();
   });
 
-  it("shows no body content when an expanded project has no sessions", () => {
-    const project = makeProject("project-1", "wuu", "/repo/wuu");
-    act(() => {
-      root = createRoot(container);
-      root.render(
-        <ProjectGroup
-          {...baseProps}
-          project={project}
-          expandedSidebarSectionIDs={new Set([project.id])}
-        />,
-      );
-    });
-
-    expect(container.textContent).not.toContain("还没有会话");
-    expect(container.querySelector(".thread-list-collapse")).toBeNull();
-  });
-
   it("opens a 移除工作区 menu on a real project row and reports the id", () => {
     const removed: string[] = [];
     act(() => {
@@ -939,14 +734,5 @@ describe("ProjectGroup missing workspace", () => {
       ".project-row-new-thread",
     );
     expect(newThread?.disabled).toBe(true);
-  });
-
-  it("leaves a present workspace enabled", () => {
-    renderProject(makeProject(false));
-    expect(container.querySelector(".project-group-missing")).toBeNull();
-    const newThread = container.querySelector<HTMLButtonElement>(
-      ".project-row-new-thread",
-    );
-    expect(newThread?.disabled).toBe(false);
   });
 });

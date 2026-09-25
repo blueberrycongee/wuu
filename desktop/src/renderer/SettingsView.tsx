@@ -69,6 +69,7 @@ export type ArchivedSessionView = {
   updated_at: string;
   archive_project_id?: string;
   archive_project_name?: string;
+  archive_reason?: string;
 };
 export type ArchivedRoomView = {
   id: string;
@@ -89,6 +90,13 @@ import { LanguagePreferenceControl } from "./LanguagePreferenceSection";
 import { formatCurrentNumber, useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
 import { TruncatedText } from "./TruncatedText";
+import {
+  buildUsageHeatmap,
+  buildUsageTrend,
+  formatCompactUsageNumber,
+  usageTokenTotal,
+  type UsageHeatmapCell,
+} from "./UsageActivity";
 import { SettingsPresentation } from "./plugins/SettingsPresentation";
 import {
   desktopPluginHost,
@@ -549,23 +557,6 @@ export function SettingsView({
       await onSave(providerDraft, modelDraft, undefined, undefined, variant);
     } catch (saveError) {
       setVariantDraft(previous);
-      setError(saveError instanceof Error ? saveError.message : t("provider.saveFailed"));
-    }
-  }
-
-  async function removeModel(model: string): Promise<void> {
-    if (addingProvider || !selectedProvider || running) return;
-    const remaining = [...new Set([selectedProvider.model, ...(selectedProvider.models ?? []).map((item) => item.id)])]
-      .filter((id) => id && id !== model);
-    if (!remaining.length) return;
-    const nextModel = selectedProvider.model === model ? remaining[0] : selectedProvider.model;
-    const variant = normalizedVariantForProviderModel(variantDraft, selectedProvider, nextModel);
-    setError("");
-    try {
-      await onSave(providerDraft, nextModel, undefined, { remove_model: model }, variant);
-      setModelDraft(nextModel);
-      setVariantDraft(variant);
-    } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : t("provider.saveFailed"));
     }
   }
@@ -1126,7 +1117,6 @@ export function SettingsView({
                   onBaseURLDraftChange={setBaseURLDraft}
                   onAPIKeyDraftChange={setAPIKeyDraft}
                   onCommitModel={commitModelName}
-                  onRemoveModel={removeModel}
                   onCommitBaseURL={commitBaseURL}
                   onCommitAPIKey={commitAPIKey}
                   onSubmit={submit}
@@ -1325,7 +1315,6 @@ function SettingsProvidersPage({
   onBaseURLDraftChange,
   onAPIKeyDraftChange,
   onCommitModel,
-  onRemoveModel,
   onCommitBaseURL,
   onCommitAPIKey,
   onSubmit,
@@ -1362,7 +1351,6 @@ function SettingsProvidersPage({
   onBaseURLDraftChange: (value: string) => void;
   onAPIKeyDraftChange: (value: string) => void;
   onCommitModel: (selection?: string) => void;
-  onRemoveModel: (model: string) => Promise<void>;
   onCommitBaseURL: () => void;
   onCommitAPIKey: () => void;
   onSubmit: (event: ReactFormEvent<HTMLFormElement>) => Promise<void>;
@@ -1376,9 +1364,10 @@ function SettingsProvidersPage({
 }): JSX.Element {
   const { t } = useI18n();
   const [catalogRefreshing, setCatalogRefreshing] = useState(false);
-  const [removingModel, setRemovingModel] = useState(false);
   function modelIDs(provider: ProviderSummary | undefined): string[] {
-    return [...new Set([provider?.model ?? "", ...(provider?.models ?? []).map((model) => model.id)].filter(Boolean))];
+    // Provider summaries put the selected model first; keep button positions stable when selection changes.
+    return [...new Set([provider?.model ?? "", ...(provider?.models ?? []).map((model) => model.id)].filter(Boolean))]
+      .sort((left, right) => left.toLowerCase().localeCompare(right.toLowerCase()) || left.localeCompare(right));
   }
   const reasoningMode = providerModelReasoningMode(selectedProvider, modelDraft);
   const authFieldLabel = t("provider.apiKey");
@@ -1524,23 +1513,14 @@ function SettingsProvidersPage({
         <section className="settings-provider-form-section">
           {!addingProvider && modelIDs(selectedProvider).length > 0 && <SettingsRow title={t("provider.availableModels")} block>
             <div className="settings-provider-model-list" role="group" aria-label={t("provider.availableModels")}>
-              {modelIDs(selectedProvider).map((model) => <span key={model} className="settings-provider-model-tag"><button
+              {modelIDs(selectedProvider).map((model) => <button
+                key={model}
                 type="button"
                 className="settings-button"
                 aria-pressed={modelDraft === model}
-                disabled={running || removingModel}
+                disabled={running}
                 onClick={() => onCommitModel(model)}
-              >{model}</button><button
-                type="button"
-                className="settings-provider-model-remove"
-                aria-label={t("provider.removeModel", { model })}
-                title={modelIDs(selectedProvider).length < 2 ? t("provider.keepOneModel") : t("provider.removeModel", { model })}
-                disabled={running || removingModel || modelIDs(selectedProvider).length < 2}
-                onClick={() => {
-                  setRemovingModel(true);
-                  void onRemoveModel(model).finally(() => setRemovingModel(false));
-                }}
-              ><X className="icon" /></button></span>)}
+              >{model}</button>)}
             </div>
           </SettingsRow>}
           <div className="settings-provider-model-fields">
@@ -2294,9 +2274,12 @@ function SettingsArchivePage({
   const { t, formatDate } = useI18n();
   const [query, setQuery] = useState("");
   const [projectFilter, setProjectFilter] = useState("all");
+  const [archiveSection, setArchiveSection] = useState("ordinary");
   const sortedThreads = useMemo(
-    () => [...archivedThreads].sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
-    [archivedThreads],
+    () => archivedThreads
+      .filter((thread) => (thread.archive_reason === "agent_deleted") === (archiveSection === "agents"))
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+    [archivedThreads, archiveSection],
   );
   const sortedRooms = useMemo(
     () => [...archivedRooms].sort((a, b) => b.created_at.localeCompare(a.created_at)),
@@ -2340,14 +2323,23 @@ function SettingsArchivePage({
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filteredRooms = sortedRooms.filter(
     (room) =>
-      projectFilter === "all" &&
+      archiveSection === "ordinary" && projectFilter === "all" &&
       (!normalizedQuery || room.name.toLocaleLowerCase().includes(normalizedQuery)),
   );
-  const archivedItemCount = sortedThreads.length + sortedRooms.length;
+  const archivedItemCount = sortedThreads.length + (archiveSection === "ordinary" ? sortedRooms.length : 0);
   const noMatches = archivedItemCount > 0 && groups.length === 0 && filteredRooms.length === 0;
 
   return (
     <div className="settings-archive-page">
+      <SelectMenu
+        value={archiveSection}
+        onChange={(value) => { setArchiveSection(value); setProjectFilter("all"); }}
+        ariaLabel={t("settings.archiveSection")}
+        options={[
+          { value: "ordinary", label: t("settings.ordinaryArchive") },
+          { value: "agents", label: t("settings.agentArchive") },
+        ]}
+      />
       <div className="settings-archive-toolbar" role="search" aria-label={t("settings.archiveFilter")}>
         <label className="settings-archive-search">
           <Search className="icon" aria-hidden="true" />
@@ -2375,7 +2367,7 @@ function SettingsArchivePage({
           <p className="settings-archive-empty-title">
             {noMatches ? t("settings.noArchiveMatches") : t("settings.noArchivedItems")}
           </p>
-          {noMatches || isTouchWebShell() ? null : (
+          {noMatches || archiveSection === "agents" || isTouchWebShell() ? null : (
             <p className="settings-archive-empty-hint">
               {t("settings.archiveHint")}
             </p>
@@ -2871,34 +2863,6 @@ function UsageStat({ label, value, title }: { label: string; value: string; titl
   );
 }
 
-function formatCompactUsageNumber(value: number, locale: string): string {
-  if (!Number.isFinite(value)) {
-    return "—";
-  }
-  const units = [
-    { threshold: 1_000, suffix: "k" },
-    { threshold: 1_000_000, suffix: "M" },
-    { threshold: 1_000_000_000, suffix: "B" },
-  ];
-  const absoluteValue = Math.abs(value);
-  if (absoluteValue < units[0].threshold) {
-    return new Intl.NumberFormat(locale).format(value);
-  }
-
-  let unitIndex = 0;
-  while (unitIndex < units.length - 1 && absoluteValue >= units[unitIndex + 1].threshold) {
-    unitIndex += 1;
-  }
-
-  let scaled = value / units[unitIndex].threshold;
-  if (Math.abs(Math.round(scaled * 10) / 10) >= 1_000 && unitIndex < units.length - 1) {
-    unitIndex += 1;
-    scaled = value / units[unitIndex].threshold;
-  }
-
-  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(scaled)}${units[unitIndex].suffix}`;
-}
-
 function formatUsageNumber(value: number | undefined, formatNumber: (value: number) => string): string {
   return value === undefined || !Number.isFinite(value) ? "—" : formatNumber(value);
 }
@@ -3073,10 +3037,6 @@ function isGrokBuildType(type: string | undefined): boolean {
   return normalized === "grok-build" || normalized === "xai-grok-build" || normalized === "grok-cli";
 }
 
-type UsageHeatmapCell = SettingsUsageDay & {
-  level: number;
-};
-
 function formatTokenCount(value: number): string {
   return formatCurrentNumber(Math.max(0, value));
 }
@@ -3093,74 +3053,6 @@ function formatPercent(value: number | undefined): string {
     return "—";
   }
   return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
-}
-
-function buildUsageHeatmap(days: SettingsUsageDay[]): UsageHeatmapCell[] {
-  const byDate = new Map(days.map((day) => [day.date, day]));
-  const end = startOfLocalDay(new Date());
-  const start = startOfWeek(addDays(end, -364));
-  const startKey = localDateKey(start);
-  const endKey = localDateKey(end);
-  const activeTotals = days
-    .filter((day) => day.date >= startKey && day.date <= endKey)
-    .map(usageTokenTotal)
-    .filter((total) => total > 0)
-    .sort((a, b) => a - b);
-  const cells: UsageHeatmapCell[] = [];
-  for (let cursor = start; cursor.getTime() <= end.getTime(); cursor = addDays(cursor, 1)) {
-    const date = localDateKey(cursor);
-    const day = byDate.get(date) ?? {
-      date,
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_creation_tokens: 0,
-      cache_read_tokens: 0,
-      cache_hit_rate: 0,
-      turns: 0,
-      agents: 0,
-    };
-    cells.push({
-      ...day,
-      level: usageHeatmapLevel(day, activeTotals),
-    });
-  }
-  return cells;
-}
-
-function usageHeatmapLevel(day: SettingsUsageDay, activeTotals: number[]): number {
-  const total = usageTokenTotal(day);
-  if (total <= 0 || activeTotals.length === 0) {
-    return 0;
-  }
-  const upperRank = activeTotals.findLastIndex((candidate) => candidate <= total) + 1;
-  return Math.min(4, Math.max(1, Math.ceil((upperRank / activeTotals.length) * 4)));
-}
-
-function usageTokenTotal(day: SettingsUsageDay): number {
-  return (
-    Math.max(0, day.input_tokens) +
-    Math.max(0, day.output_tokens) +
-    Math.max(0, day.cache_creation_tokens) +
-    Math.max(0, day.cache_read_tokens)
-  );
-}
-
-function buildUsageTrend(days: SettingsUsageDay[], length = 30): SettingsUsageDay[] {
-  const byDate = new Map(days.map((day) => [day.date, day]));
-  const end = startOfLocalDay(new Date());
-  return Array.from({ length }, (_, index) => {
-    const date = localDateKey(addDays(end, index - length + 1));
-    return byDate.get(date) ?? {
-      date,
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_creation_tokens: 0,
-      cache_read_tokens: 0,
-      cache_hit_rate: 0,
-      turns: 0,
-      agents: 0,
-    };
-  });
 }
 
 function formatUsageChartDate(date: string | undefined, locale: string): string {
@@ -3211,30 +3103,6 @@ function formatHeatmapTitle(
     output: formatNumber(day.output_tokens),
     rate: formatPercent(day.cache_hit_rate),
   });
-}
-
-
-
-function startOfLocalDay(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-}
-
-function startOfWeek(date: Date): Date {
-  const day = date.getDay();
-  return addDays(startOfLocalDay(date), -day);
-}
-
-function addDays(date: Date, days: number): Date {
-  const out = new Date(date);
-  out.setDate(out.getDate() + days);
-  return out;
-}
-
-function localDateKey(date: Date): string {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
 }
 
 function versionLabel(version: string): string {

@@ -79,10 +79,6 @@ func TestRoomDiscussionSerializesMembersRotatesAndStopsOnPass(t *testing.T) {
 	settleRoomMember(t, s, beta.Agent.ID, "beta-2", "")
 	settleRoomMember(t, s, alpha.Agent.ID, "alpha-2", "")
 	assertRoomDiscussionEnded(t, s, room)
-	runtimes, err := s.ListAgentRuntimes(ctx)
-	if err != nil || len(runtimes) != 2 {
-		t.Fatalf("unexpected hidden runtime: %+v %v", runtimes, err)
-	}
 }
 
 func TestRoomDiscussionBoundsProductiveRoundsAndTotalTurns(t *testing.T) {

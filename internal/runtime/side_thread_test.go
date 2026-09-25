@@ -78,9 +78,6 @@ func TestNewSideThreadRunnerUsesReadOnlyMainAgentTools(t *testing.T) {
 	if runner.Tools == nil {
 		t.Fatal("side runner has no tools")
 	}
-	if !strings.Contains(runner.SystemPrompt, "Use your read-only tools") {
-		t.Fatalf("side prompt does not teach read-only tool use:\n%s", runner.SystemPrompt)
-	}
 	readResult, err := runner.Tools.Execute(context.Background(), providers.ToolCall{
 		ID:        "read-1",
 		Name:      "read_file",

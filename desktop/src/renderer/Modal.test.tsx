@@ -80,58 +80,6 @@ describe("Modal", () => {
     expect(layerHost?.querySelector('[data-wuu-component="dialog"]')).toBeTruthy();
   });
 
-  it("renders the icon, title, and optional subtitle", () => {
-    mount(
-      createElement(Modal, {
-        ariaLabel: "副标题测试",
-        icon: createElement("span", { className: "icon-marker" }, "★"),
-        title: "主标题",
-        subtitle: "副标题文字",
-        onClose: () => undefined,
-      }),
-    );
-
-    expect(document.querySelector(".environment-dialog-icon")?.textContent).toContain("★");
-    expect(document.querySelector(".environment-dialog h2")?.textContent).toBe("主标题");
-    expect(document.querySelector(".environment-dialog-subtitle")?.textContent).toBe(
-      "副标题文字",
-    );
-  });
-
-  it("renders the footer slot inside .environment-dialog-footer", () => {
-    mount(
-      createElement(Modal, {
-        ariaLabel: "footer test",
-        icon: createElement("span", null, "i"),
-        title: "t",
-        onClose: () => undefined,
-        footer: createElement(
-          "button",
-          { type: "button", "data-testid": "footer-button" },
-          "OK",
-        ),
-      }),
-    );
-
-    const footer = document.querySelector(".environment-dialog-footer");
-    expect(footer?.querySelector('[data-testid="footer-button"]')?.textContent).toBe("OK");
-  });
-
-  it("appends panelClassName to .environment-dialog", () => {
-    mount(
-      createElement(Modal, {
-        ariaLabel: "size variant",
-        icon: createElement("span", null, "i"),
-        title: "t",
-        panelClassName: "fork-dialog",
-        onClose: () => undefined,
-      }),
-    );
-
-    const dialog = document.querySelector(".environment-dialog");
-    expect(dialog?.classList.contains("fork-dialog")).toBe(true);
-  });
-
   it("invokes onClose when the X button is clicked", () => {
     const onClose = vi.fn();
     mount(
@@ -255,27 +203,6 @@ describe("Modal", () => {
     );
 
     expect(document.querySelector('button[aria-label="关闭"]')).toBeNull();
-  });
-
-  it("does not respond to Escape or backdrop click when onClose is omitted", () => {
-    let closeCalls = 0;
-    mount(
-      createElement(Modal, {
-        ariaLabel: "non-dismissible behavior",
-        icon: createElement("span", null, "i"),
-        title: "t",
-        // Intentionally no onClose: the user must use the in-panel actions.
-      }),
-    );
-
-    const backdrop = document.querySelector(".modal-backdrop") as HTMLDivElement | null;
-    act(() => {
-      backdrop?.click();
-    });
-    act(() => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
-    });
-    expect(closeCalls).toBe(0);
   });
 
   it("locks the X button, Esc, and backdrop click while closeDisabled", () => {

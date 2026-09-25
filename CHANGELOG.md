@@ -14,6 +14,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   playback, seeking, volume, and fullscreen controls. Unsupported codecs show
   a message while keeping the download action available.
 
+- The empty conversation home shows a usage overview under the greeting:
+  sessions, tokens, and active days recorded in local Wuu history, with a
+  daily activity heatmap for the past year. New installs show zero totals.
+  The new `usage/overview` app-server method reads only token usage records,
+  not conversation content. After 20 seconds without input, the greeting
+  mascot sends a small ball bouncing across the heatmap to today and catches
+  it on the way back; any input stops it, and reduced motion turns it off.
+
 ### Changed
 
 - `bash` starts background processes with a single `run_in_background` flag
@@ -22,19 +30,35 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   including switching a long-lived service to `completion_mode=detached`.
   Older transcripts that used `bash` background actions still render on the
   desktop.
+
 - Command results reach the model as terminal-style text: the output, plus an
   exit code, full-log path, timeout hand-off, or sandbox denial only when they
   apply. Terminal color codes and progress redraws are stripped, and each
   output stream keeps its head and tail instead of only the tail. `process`
   results and background completion notifications use the same plain text.
   Clients and durable records keep the JSON envelope.
+
 - `read_file` and `bash` results are bounded at 8192 estimated tokens instead
   of 2048, so a typical source file or document is read in one call.
 
 ### Fixed
 
+- Ready Agent Core entries show an external agent's detected executable path in
+  its override field without repeating it in the status or help text.
+
+- Model choices in desktop settings keep a stable order and selected styling.
+  The catalog no longer shows ineffective per-model remove controls or selection
+  animations, and provider remove controls keep their icon centered and color
+  stable on hover.
+
+- Deleting an agent archives sessions still under its management in a separate
+  Agent archive, keeping them out of workspace and unread lists. Previously
+  orphaned sessions are reconciled, and user-taken-over sessions stay available.
+  Agent deletion updates navigation immediately and reconciles cleanup errors.
+
 - Preserve sidebar folder and collaboration folds when returning from settings,
   including after switching between light and dark themes.
+
 - `apply_patch` with `then_run` now shows the model the follow-up command's
   outcome; the parent result previously kept the patch-only view.
 

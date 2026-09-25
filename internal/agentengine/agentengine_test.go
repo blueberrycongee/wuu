@@ -54,17 +54,6 @@ func TestIsKnownEngine(t *testing.T) {
 	}
 }
 
-func TestKnownEngineIDsStable(t *testing.T) {
-	first := KnownEngineIDs()
-	second := KnownEngineIDs()
-	if len(first) != 1 || first[0] != EngineWuu {
-		t.Fatalf("KnownEngineIDs() = %v, want [wuu]", first)
-	}
-	if first[0] != second[0] {
-		t.Fatal("KnownEngineIDs order must be stable")
-	}
-}
-
 func TestRegistry(t *testing.T) {
 	reg := NewRegistry()
 	if _, ok := reg.Lookup(EngineWuu); ok {

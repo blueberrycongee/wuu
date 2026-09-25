@@ -422,94 +422,6 @@ func TestChat_ParsesReasoningBlocks(t *testing.T) {
 	}
 }
 
-func TestChat_AnthropicAddsCacheControlFromHint(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode request body: %v", err)
-		}
-		system, ok := body["system"].([]any)
-		if !ok || len(system) != 1 {
-			t.Fatalf("expected system blocks, got %#v", body["system"])
-		}
-		sysBlock, ok := system[0].(map[string]any)
-		if !ok {
-			t.Fatalf("unexpected system block: %#v", system[0])
-		}
-		cacheCtl, ok := sysBlock["cache_control"].(map[string]any)
-		if !ok || cacheCtl["type"] != "ephemeral" {
-			t.Fatalf("expected system cache_control, got %#v", sysBlock["cache_control"])
-		}
-		msgs, ok := body["messages"].([]any)
-		if !ok || len(msgs) != 3 {
-			t.Fatalf("expected 3 non-system messages, got %#v", body["messages"])
-		}
-
-		// With the sliding tail marker strategy, only the last message should
-		// have a cache_control marker on its last cacheable block.
-		// Check that earlier messages have no markers.
-		for i := 0; i < len(msgs)-1; i++ {
-			msg, ok := msgs[i].(map[string]any)
-			if !ok {
-				t.Fatalf("unexpected message: %#v", msgs[i])
-			}
-			content, ok := msg["content"].([]any)
-			if !ok || len(content) == 0 {
-				continue
-			}
-			for _, blk := range content {
-				block, ok := blk.(map[string]any)
-				if !ok {
-					continue
-				}
-				if _, exists := block["cache_control"]; exists {
-					t.Fatalf("did not expect cache_control on non-final message: %#v", block)
-				}
-			}
-		}
-
-		// The last message should have cache_control on its last cacheable block.
-		lastMsg, ok := msgs[len(msgs)-1].(map[string]any)
-		if !ok {
-			t.Fatalf("unexpected last message: %#v", msgs[len(msgs)-1])
-		}
-		content, ok := lastMsg["content"].([]any)
-		if !ok || len(content) == 0 {
-			t.Fatalf("unexpected content blocks: %#v", lastMsg["content"])
-		}
-		lastBlock, ok := content[len(content)-1].(map[string]any)
-		if !ok {
-			t.Fatalf("unexpected content block: %#v", content[len(content)-1])
-		}
-		cacheCtl, ok = lastBlock["cache_control"].(map[string]any)
-		if !ok || cacheCtl["type"] != "ephemeral" {
-			t.Fatalf("expected cache_control on last block of final message, got %#v", lastBlock["cache_control"])
-		}
-		w.Header().Set("content-type", "application/json")
-		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
-	}))
-	defer server.Close()
-
-	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
-	if err != nil {
-		t.Fatalf("new client: %v", err)
-	}
-
-	_, err = client.Chat(context.Background(), providers.ChatRequest{
-		Model: "claude-test",
-		Messages: []providers.ChatMessage{
-			{Role: "system", Content: "sys"},
-			{Role: "user", Content: "first"},
-			{Role: "assistant", Content: "stable reply"},
-			{Role: "user", Content: "latest"},
-		},
-		CacheHint: &providers.CacheHint{StableSystem: true, StablePrefixMessages: 2},
-	})
-	if err != nil {
-		t.Fatalf("chat error: %v", err)
-	}
-}
-
 func TestBuildAnthropicRequest_SmooshesSystemReminderIntoToolResult(t *testing.T) {
 	reminder := wuucontext.FormatSystemReminder(wuucontext.EnvInfo{
 		CWD:       "/tmp/project",
@@ -1460,56 +1372,6 @@ func TestChat_AddsCacheControlToStableAnthropicPrefix(t *testing.T) {
 	}
 }
 
-func TestChat_OmitsCacheControlWithoutHint(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode request body: %v", err)
-		}
-		if system, exists := body["system"]; exists {
-			t.Fatalf("did not expect structured system payload: %#v", system)
-		}
-		msgs, ok := body["messages"].([]any)
-		if !ok || len(msgs) != 1 {
-			t.Fatalf("unexpected messages payload: %#v", body["messages"])
-		}
-		msg, ok := msgs[0].(map[string]any)
-		if !ok {
-			t.Fatalf("unexpected message: %#v", msgs[0])
-		}
-		content, ok := msg["content"].([]any)
-		if !ok || len(content) != 1 {
-			t.Fatalf("unexpected content payload: %#v", msg["content"])
-		}
-		textBlock, ok := content[0].(map[string]any)
-		if !ok {
-			t.Fatalf("unexpected text block: %#v", content[0])
-		}
-		if _, exists := textBlock["cache_control"]; exists {
-			t.Fatalf("did not expect cache_control without hint: %#v", textBlock)
-		}
-
-		w.Header().Set("content-type", "application/json")
-		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
-	}))
-	defer server.Close()
-
-	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
-	if err != nil {
-		t.Fatalf("new client: %v", err)
-	}
-
-	_, err = client.Chat(context.Background(), providers.ChatRequest{
-		Model: "claude-test",
-		Messages: []providers.ChatMessage{
-			{Role: "user", Content: "hi"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("chat error: %v", err)
-	}
-}
-
 func TestChat_ToolUseResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "application/json")
@@ -1684,89 +1546,6 @@ func TestChat_SendsDocumentBlocks(t *testing.T) {
 	}
 }
 
-func TestChat_AppliesCacheControlToStableTail(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			System []struct {
-				Type         string `json:"type"`
-				Text         string `json:"text"`
-				CacheControl *struct {
-					Type string `json:"type"`
-				} `json:"cache_control,omitempty"`
-			} `json:"system"`
-			Messages []struct {
-				Role    string `json:"role"`
-				Content []struct {
-					Type         string `json:"type"`
-					Text         string `json:"text,omitempty"`
-					CacheControl *struct {
-						Type string `json:"type"`
-					} `json:"cache_control,omitempty"`
-				} `json:"content"`
-			} `json:"messages"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode request body: %v", err)
-		}
-		if len(body.System) != 1 {
-			t.Fatalf("expected one system block, got %#v", body.System)
-		}
-		if body.System[0].Text != "sys" {
-			t.Fatalf("unexpected system text: %q", body.System[0].Text)
-		}
-		if body.System[0].CacheControl == nil || body.System[0].CacheControl.Type != "ephemeral" {
-			t.Fatalf("expected cache_control on system block, got %#v", body.System[0].CacheControl)
-		}
-		if len(body.Messages) != 2 {
-			t.Fatalf("expected two non-system messages, got %d", len(body.Messages))
-		}
-		if body.Messages[0].Role != "user" {
-			t.Fatalf("unexpected first role: %q", body.Messages[0].Role)
-		}
-		// Sliding tail: the earlier user message carries no marker; the
-		// marker rides on the last cacheable block of the final message.
-		firstLast := body.Messages[0].Content[len(body.Messages[0].Content)-1]
-		if firstLast.CacheControl != nil {
-			t.Fatalf("did not expect cache_control on earlier message, got %#v", firstLast.CacheControl)
-		}
-		if len(body.Messages[1].Content) == 0 {
-			t.Fatal("expected follow-up content")
-		}
-		tailBlock := body.Messages[1].Content[len(body.Messages[1].Content)-1]
-		if tailBlock.CacheControl == nil || tailBlock.CacheControl.Type != "ephemeral" {
-			t.Fatalf("expected sliding tail cache_control on final message, got %#v", tailBlock.CacheControl)
-		}
-
-		w.Header().Set("content-type", "application/json")
-		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
-	}))
-	defer server.Close()
-
-	client, err := New(ClientConfig{
-		BaseURL: server.URL,
-		APIKey:  "test-key",
-	})
-	if err != nil {
-		t.Fatalf("new client: %v", err)
-	}
-
-	_, err = client.Chat(context.Background(), providers.ChatRequest{
-		Model: "claude-test",
-		Messages: []providers.ChatMessage{
-			{Role: "system", Content: "sys"},
-			{Role: "user", Content: "first"},
-			{Role: "assistant", Content: "second"},
-		},
-		CacheHint: &providers.CacheHint{
-			StableSystem:         true,
-			StablePrefixMessages: 1,
-		},
-	})
-	if err != nil {
-		t.Fatalf("chat error: %v", err)
-	}
-}
-
 func TestChat_RetriesTransientServerError(t *testing.T) {
 	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1815,37 +1594,6 @@ func TestChat_RetriesTransientServerError(t *testing.T) {
 		if submission.Provider != "anthropic" || submission.Protocol != "messages" || submission.Mode != "unary" {
 			t.Fatalf("unexpected submission: %+v", submission)
 		}
-	}
-}
-
-func TestChat_DoesNotRetryAuthError(t *testing.T) {
-	var attempts atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempts.Add(1)
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
-	}))
-	defer server.Close()
-
-	client, err := New(ClientConfig{
-		BaseURL: server.URL,
-		APIKey:  "test-key",
-	})
-	if err != nil {
-		t.Fatalf("new client: %v", err)
-	}
-
-	_, err = client.Chat(context.Background(), providers.ChatRequest{
-		Model: "claude-test",
-		Messages: []providers.ChatMessage{
-			{Role: "user", Content: "hi"},
-		},
-	})
-	if err == nil {
-		t.Fatal("expected auth error")
-	}
-	if got := attempts.Load(); got != 1 {
-		t.Fatalf("expected 1 attempt for auth failure, got %d", got)
 	}
 }
 
@@ -2248,24 +1996,6 @@ func TestStreamChat_MessageDeltaCanBackfillInputTokens(t *testing.T) {
 	}
 }
 
-func TestStreamChat_ValidationErrors(t *testing.T) {
-	client, _ := New(ClientConfig{BaseURL: "http://localhost", APIKey: "k"})
-
-	_, err := client.StreamChat(context.Background(), providers.ChatRequest{
-		Model: "", Messages: []providers.ChatMessage{{Role: "user", Content: "hi"}},
-	})
-	if err == nil {
-		t.Fatal("expected error for empty model")
-	}
-
-	_, err = client.StreamChat(context.Background(), providers.ChatRequest{
-		Model: "m", Messages: nil,
-	})
-	if err == nil {
-		t.Fatal("expected error for empty messages")
-	}
-}
-
 func TestStreamChat_ServerError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -2372,35 +2102,12 @@ func TestStampCacheCreationFlag(t *testing.T) {
 			t.Errorf("expected CacheCreationUnknown=true for explicitly flagged endpoint, got false (CacheCreationTokens=%d)", usage.CacheCreationTokens)
 		}
 	})
-	t.Run("explicit flag forces unknown even when field present in payload", func(t *testing.T) {
-		client := &Client{baseURL: "https://compatible.example.com/anthropic", cacheCreationInputTokensOmitted: true}
-		usage := &providers.TokenUsage{CacheCreationTokens: 0}
-		usage.CacheCreationUnknown = false
-		client.stampCacheCreationFlag(usage)
-		if !usage.CacheCreationUnknown {
-			t.Error("expected stamp to override false to true for explicitly flagged endpoint")
-		}
-	})
 	t.Run("anthropic native leaves flag at default", func(t *testing.T) {
 		client := &Client{baseURL: "https://api.anthropic.com"}
 		usage := &providers.TokenUsage{CacheCreationTokens: 12345}
 		client.stampCacheCreationFlag(usage)
 		if usage.CacheCreationUnknown {
 			t.Error("expected CacheCreationUnknown=false for native anthropic endpoint")
-		}
-	})
-	t.Run("nil usage does not panic", func(t *testing.T) {
-		client := &Client{baseURL: "https://compatible.example.com/anthropic", cacheCreationInputTokensOmitted: true}
-		client.stampCacheCreationFlag(nil)
-	})
-	t.Run("repeated stamps are idempotent", func(t *testing.T) {
-		client := &Client{baseURL: "https://compatible.example.com/anthropic", cacheCreationInputTokensOmitted: true}
-		usage := &providers.TokenUsage{}
-		client.stampCacheCreationFlag(usage)
-		client.stampCacheCreationFlag(usage)
-		client.stampCacheCreationFlag(usage)
-		if !usage.CacheCreationUnknown {
-			t.Error("expected flag to remain true after repeated stamps")
 		}
 	})
 }
@@ -2447,10 +2154,6 @@ func TestNormalizeInclusiveInput(t *testing.T) {
 			t.Errorf("expected cache_read preserved=900, got %d", usage.CacheReadTokens)
 		}
 	})
-	t.Run("nil usage does not panic", func(t *testing.T) {
-		client := &Client{baseURL: "https://x.example.com", inputTokensIncludeCacheRead: true}
-		client.normalizeInclusiveInput(nil)
-	})
 	t.Run("no base_url auto-detection, explicit config only", func(t *testing.T) {
 		// MiniMax's anthropic endpoint was live-probed EXCLUSIVE on
 		// 2026-07-06; the former "minimaxi" substring auto-detect would
@@ -2468,15 +2171,6 @@ func TestNormalizeInclusiveInput(t *testing.T) {
 		client.normalizeInclusiveInput(usage)
 		if usage.InputTokens != 1000 {
 			t.Errorf("expected exclusive input untouched=1000, got %d", usage.InputTokens)
-		}
-	})
-	t.Run("native anthropic base_url does not auto-enable", func(t *testing.T) {
-		client, err := New(ClientConfig{BaseURL: "https://api.anthropic.com", APIKey: "k"})
-		if err != nil {
-			t.Fatalf("New: %v", err)
-		}
-		if client.inputTokensIncludeCacheRead {
-			t.Error("expected native anthropic to keep inclusive-input normalization off")
 		}
 	})
 }

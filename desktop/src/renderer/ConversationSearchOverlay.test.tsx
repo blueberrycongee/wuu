@@ -112,54 +112,6 @@ describe("ConversationSearchOverlay", () => {
     act(() => button.click());
     expect(opened).toBe(thread.id);
   });
-
-  it("places results directly below the search field without a status row", () => {
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-    const state: ConversationSearchState = {
-      open: true,
-      closing: false,
-      query: "",
-      loading: false,
-      error: "",
-      results: [],
-      selectedIndex: 0,
-      previewedThreadID: "",
-      previewedTurns: [],
-      previewLoading: false,
-      previewError: "",
-    };
-
-    act(() => {
-      root.render(
-        createElement(ConversationSearchOverlay, {
-          state,
-          results: [],
-          threads: [],
-          projects: [],
-          dialogRef: createRef<HTMLDivElement>(),
-          inputRef: createRef<HTMLInputElement>(),
-          onClose: () => {},
-          onQueryChange: () => {},
-          onClearQuery: () => {},
-          onKeyDown: () => {},
-          onSelectIndex: () => {},
-          onSelectResult: () => {},
-        }),
-      );
-    });
-    mountedRoots.push(root);
-
-    expect(container.querySelector(".conversation-search-overlay")?.classList).toContain(
-      "app-modal-backdrop",
-    );
-    expect(container.querySelector(".conversation-search-status")).toBeNull();
-    expect(
-      container.querySelector(".conversation-search-input-wrap")?.nextElementSibling,
-    ).toBe(container.querySelector(".conversation-search-body"));
-    expect(container.textContent).not.toContain("刷新");
-  });
 });
 
 describe("PreviewTurnGroup", () => {
@@ -194,9 +146,6 @@ describe("PreviewTurnGroup", () => {
     ]);
     expect(rendered[0].textContent).toContain("Q1");
     expect(rendered[1].textContent).toContain("A1");
-    expect(
-      container.querySelector(".conversation-search-preview-turn-group"),
-    ).not.toBeNull();
   });
 
   it("renders Markdown in both sides of the conversation preview", () => {

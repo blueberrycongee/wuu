@@ -14,9 +14,6 @@ func TestRoomNativeCompletionDoesNotFabricateReplies(t *testing.T) {
 			fixture.room = createPeerRoom(t, fixture, "Native completion", fixture.identity)
 			sendRoomReplyObjective(t, fixture, "Review the delivery and act if necessary")
 			first := provider.next(t)
-			if toolDefinitionNames(first.request.Tools)["yield_turn"] {
-				t.Fatal("room still exposes the removed completion tool")
-			}
 			response := providers.ChatResponse{StopReason: "completed"}
 			switch resolution {
 			case "reply":

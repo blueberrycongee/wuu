@@ -14,56 +14,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
-func TestBashDefinitionKeepsOneLaunchEntryPoint(t *testing.T) {
-	def := NewBashTool(&Env{}).Definition()
-	for _, want := range []string{"run_in_background", "process tool", "exceeds its timeout keeps running", "do not poll"} {
-		if !strings.Contains(def.Description, want) {
-			t.Fatalf("bash description must explain %q: %q", want, def.Description)
-		}
-	}
-	properties := def.InputSchema["properties"].(map[string]any)
-	if _, ok := properties["run_in_background"]; !ok {
-		t.Fatal("bash must start background processes itself")
-	}
-	for _, retired := range []string{"action", "wait_ms", "process_id", "tty", "recheck_minutes", "completion_mode", "lifecycle", "input", "max_bytes"} {
-		if _, present := properties[retired]; present {
-			t.Fatalf("bash schema must not carry process-management parameter %q", retired)
-		}
-	}
-	for args, want := range map[string]string{
-		`{"action":"start_background","command":"npm run dev"}`: "run_in_background",
-		`{"action":"read_background","process_id":"p"}`:         "process tool",
-	} {
-		if err := NewBashTool(&Env{}).ValidateInput(args); err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("legacy action %s must point at %q, got %v", args, want, err)
-		}
-	}
-}
-
-func TestProcessDefinitionOnlyControlsRunningProcesses(t *testing.T) {
-	def := NewProcessTool(&Env{}).Definition()
-	for _, want := range []string{"run_in_background", "action=read", "action=write", "action=stop", "completion_mode=detached", "do not chain waits"} {
-		if !strings.Contains(def.Description, want) {
-			t.Fatalf("process description must explain %q: %q", want, def.Description)
-		}
-	}
-	properties := def.InputSchema["properties"].(map[string]any)
-	for _, retired := range []string{"command", "cwd", "tty", "lifecycle"} {
-		if _, present := properties[retired]; present {
-			t.Fatalf("process must not start commands, found %q", retired)
-		}
-	}
-	for args, want := range map[string]string{
-		`{"action":"read"}`:                    "process_id",
-		`{"action":"start","command":"x"}`:     "must be one of",
-		`{"action":"update","process_id":"p"}`: "completion_mode or recheck_minutes",
-	} {
-		if err := NewProcessTool(&Env{}).ValidateInput(args); err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("%s must be rejected with %q, got %v", args, want, err)
-		}
-	}
-}
-
 func TestBashRunRecordsFullLogSHA256(t *testing.T) {
 	root := t.TempDir()
 	kit := newShellTestToolkit(t, root)

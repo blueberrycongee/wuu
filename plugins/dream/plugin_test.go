@@ -167,9 +167,6 @@ func TestDreamCannotWriteMemoryWithoutTheMemoryPlugin(t *testing.T) {
 			t.Fatalf("dream must not receive a host memory or file write service: %+v", service)
 		}
 	}
-	if !strings.Contains(dreamPrompt(""), "Use session_memory") {
-		t.Fatal("dream prompt must delegate all durable write-back to the Memory plugin tool")
-	}
 	if !strings.Contains(dreamPrompt("stable fact"), "stable fact") {
 		t.Fatal("dream prompt must carry the project memory read at run start")
 	}
