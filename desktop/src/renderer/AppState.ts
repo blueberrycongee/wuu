@@ -1567,6 +1567,7 @@ function summarizeThreadForSidebar(
     pinned: thread.pinned,
     folder_id: thread.folder_id,
     archived: thread.archived,
+    archive_reason: thread.archive_reason,
     forked_from_id: thread.forked_from_id,
     forked_from_turn_id: thread.forked_from_turn_id,
     forked_from_item_id: thread.forked_from_item_id,
@@ -2934,12 +2935,13 @@ function latestCompletedTurnID(thread: {
 
 function isThreadUnread(
   thread: (ThreadRunningCandidate & {
+    archived?: boolean;
     latest_completed_turn_id?: string;
     turns: Array<Pick<Turn, "id" | "status" | "answer_ready_at">>;
   }) | undefined,
   lastViewedTurnID: string | undefined,
 ): boolean {
-  if (!thread) return false;
+  if (!thread || thread.archived) return false;
   const lastTurnID = latestCompletedTurnID(thread);
   if (!lastTurnID) return false;
   if (!lastViewedTurnID) return true;

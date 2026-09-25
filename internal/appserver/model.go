@@ -89,6 +89,7 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		Pinned:                th.PinnedAt != nil,
 		FolderID:              th.FolderID,
 		Archived:              th.ArchivedAt != nil,
+		ArchiveReason:         th.ArchiveReason,
 		ForkedFromID:          th.ForkedFromID,
 		ForkedFromTurnID:      th.ForkedFromTurnID,
 		ForkedFromItemID:      th.ForkedFromItemID,

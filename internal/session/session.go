@@ -81,6 +81,7 @@ type Session struct {
 	PinnedAt         *time.Time `json:"pinned_at,omitempty"`
 	FolderID         string     `json:"folder_id,omitempty"`
 	ArchivedAt       *time.Time `json:"archived_at,omitempty"`
+	ArchiveReason    string     `json:"archive_reason,omitempty"`
 	WorktreePath     string     `json:"worktree_path,omitempty"`
 	WorktreeBaseHEAD string     `json:"worktree_base_head,omitempty"`
 	WorktreeBaseRepo string     `json:"worktree_base_repo,omitempty"`
@@ -355,7 +356,7 @@ func List(sessDir string, limit int) ([]Session, error) {
 	rows, err := db.Query(`
 SELECT id, created_at, updated_at, title, summary, entries, cwd,
        forked_from_id, forked_from_turn_id, forked_from_item_id,
-       pinned_at, folder_id, archived_at,
+       pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
 	       provider, model, variant, effort, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
@@ -537,7 +538,7 @@ func FindManagedByRequest(sessDir, owner, requestID string) (Session, bool, erro
 	row := db.QueryRow(`
 SELECT id, created_at, updated_at, title, summary, entries, cwd,
        forked_from_id, forked_from_turn_id, forked_from_item_id,
-       pinned_at, folder_id, archived_at,
+       pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
        provider, model, variant, effort, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
@@ -725,6 +726,7 @@ func UpdateArchived(sessDir, id string, archived bool) (Session, error) {
 			s.PinnedAt = nil
 		} else {
 			s.ArchivedAt = nil
+			s.ArchiveReason = ""
 		}
 	})
 }
@@ -1745,6 +1747,9 @@ WHERE workflow_id = ''`); err != nil {
 	if err := addColumnIfMissing(db, "sessions", "worktree_path", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(db, "sessions", "archive_reason", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	if err := addColumnIfMissing(db, "sessions", "worktree_base_head", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -1895,10 +1900,10 @@ func insertSessionSQL() string {
 	return `INSERT INTO sessions (
 		id, created_at, updated_at, title, summary, entries, cwd,
 		forked_from_id, forked_from_turn_id, forked_from_item_id,
-		pinned_at, folder_id, archived_at, worktree_path, worktree_base_head, worktree_base_repo,
+		pinned_at, folder_id, archived_at, archive_reason, worktree_path, worktree_base_head, worktree_base_repo,
 		workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
 		provider, model, variant, effort, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 }
 
 func updateSessionTx(tx *sql.Tx, sess Session) error {
@@ -1906,13 +1911,13 @@ func updateSessionTx(tx *sql.Tx, sess Session) error {
 UPDATE sessions
 SET created_at = ?, updated_at = ?, title = ?, summary = ?, entries = ?, cwd = ?,
     forked_from_id = ?, forked_from_turn_id = ?, forked_from_item_id = ?,
-    pinned_at = ?, folder_id = ?, archived_at = ?, worktree_path = ?, worktree_base_head = ?, worktree_base_repo = ?,
+    pinned_at = ?, folder_id = ?, archived_at = ?, archive_reason = ?, worktree_path = ?, worktree_base_head = ?, worktree_base_repo = ?,
     workspace_id = ?, source = ?, owner = ?, visibility = ?, parent_id = ?, context_source = ?, creation_request_id = ?,
 	provider = ?, model = ?, variant = ?, effort = ?, permission_mode = ?, approve_for_me = ?, engine_id = ?, engine_ref = ?, instructions = ?, tool_policy_json = ?
 WHERE id = ?`,
 		timeText(sess.CreatedAt), timeText(sess.UpdatedAt), sess.Title, sess.Summary, sess.Entries, normalizeCWD(sess.CWD),
 		sess.ForkedFromID, sess.ForkedFromTurnID, sess.ForkedFromItemID,
-		nullableTimeText(sess.PinnedAt), strings.TrimSpace(sess.FolderID), nullableTimeText(sess.ArchivedAt),
+		nullableTimeText(sess.PinnedAt), strings.TrimSpace(sess.FolderID), nullableTimeText(sess.ArchivedAt), sess.ArchiveReason,
 		normalizeCWD(sess.WorktreePath), sess.WorktreeBaseHEAD, normalizeCWD(sess.WorktreeBaseRepo),
 		strings.TrimSpace(sess.WorkspaceID), strings.TrimSpace(sess.Source),
 		strings.TrimSpace(sess.Owner), strings.TrimSpace(sess.Visibility), strings.TrimSpace(sess.ParentID), strings.TrimSpace(sess.ContextSource), strings.TrimSpace(sess.CreationRequestID),
@@ -1946,6 +1951,7 @@ func sessionArgs(sess Session) []any {
 		nullableTimeText(sess.PinnedAt),
 		strings.TrimSpace(sess.FolderID),
 		nullableTimeText(sess.ArchivedAt),
+		sess.ArchiveReason,
 		normalizeCWD(sess.WorktreePath),
 		sess.WorktreeBaseHEAD,
 		normalizeCWD(sess.WorktreeBaseRepo),
@@ -1973,7 +1979,7 @@ func findSessionDB(db *sql.DB, id string) (Session, bool, error) {
 	row := db.QueryRow(`
 SELECT id, created_at, updated_at, title, summary, entries, cwd,
        forked_from_id, forked_from_turn_id, forked_from_item_id,
-       pinned_at, folder_id, archived_at,
+       pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
 	       provider, model, variant, effort, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
@@ -1990,7 +1996,7 @@ func findSessionTx(tx *sql.Tx, id string) (Session, bool, error) {
 	row := tx.QueryRow(`
 SELECT id, created_at, updated_at, title, summary, entries, cwd,
        forked_from_id, forked_from_turn_id, forked_from_item_id,
-       pinned_at, folder_id, archived_at,
+       pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
 	       provider, model, variant, effort, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
@@ -2025,7 +2031,7 @@ func scanSession(scanner interface {
 	if err := scanner.Scan(
 		&s.ID, &createdAt, &updatedAt, &s.Title, &s.Summary, &s.Entries, &s.CWD,
 		&s.ForkedFromID, &s.ForkedFromTurnID, &s.ForkedFromItemID,
-		&pinnedAt, &s.FolderID, &archivedAt,
+		&pinnedAt, &s.FolderID, &archivedAt, &s.ArchiveReason,
 		&s.WorktreePath, &s.WorktreeBaseHEAD, &s.WorktreeBaseRepo,
 		&s.WorkspaceID, &s.Source, &s.Owner, &s.Visibility, &s.ParentID, &s.ContextSource, &s.CreationRequestID,
 		&s.Provider, &s.Model, &s.Variant, &s.Effort, &s.PermissionMode, &s.ApproveForMe, &s.EngineID, &s.EngineRef, &s.Instructions, &s.ToolPolicyJSON,

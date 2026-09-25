@@ -1412,6 +1412,13 @@ func (s *Service) DeleteNamedAgent(ctx context.Context, id string) error {
 	return s.deleteAgent(ctx, agent)
 }
 
+// AgentDeleted distinguishes a deleted identity from a stopped room runtime.
+func (s *Service) AgentDeleted(ctx context.Context, id string) (bool, error) {
+	var deleted bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM named_agents WHERE id = ? AND deleted_at IS NOT NULL)`, id).Scan(&deleted)
+	return deleted, err
+}
+
 func (s *Service) deleteAgent(ctx context.Context, agent NamedAgent) error {
 	id := agent.ID
 	s.mu.Lock()

@@ -264,7 +264,10 @@ it("pins a new Agent without navigation, persists hiding, and restores its DM fr
 it.each(["agent", "group"])("confirms context deletion and removes only the requested %s", async (target) => {
   agents = [{ id: "new-agent", name: "Research", avatar_key: "abstract-1", memory_dir: "/preview", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
   rooms = [{ id: "general", name: "General", kind: "channel", members: [], created_by: "human", created_at: agents[0].created_at }];
-  window.wuu.deleteNamedAgent = vi.fn(async () => { agents = []; return { deleted: true }; });
+  let finishDelete!: () => void;
+  window.wuu.deleteNamedAgent = vi.fn(() => new Promise<{ deleted: boolean }>((resolve) => {
+    finishDelete = () => { agents = []; resolve({ deleted: true }); };
+  }));
   window.wuu.deleteChannelRoom = vi.fn(async () => { rooms = []; return { deleted: true }; });
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   await act(async () => { root.render(<App />); });
@@ -278,12 +281,59 @@ it.each(["agent", "group"])("confirms context deletion and removes only the requ
   if (target === "agent") {
     expect(window.wuu.deleteNamedAgent).toHaveBeenCalledExactlyOnceWith({ agent_id: "new-agent" });
     expect(window.wuu.deleteChannelRoom).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-wuu-component="collaboration-sidebar"] nav')?.textContent).not.toContain(name);
+    await act(async () => finishDelete());
   } else {
     expect(window.wuu.deleteChannelRoom).toHaveBeenCalledExactlyOnceWith({ room_id: "general" });
     expect(window.wuu.deleteNamedAgent).not.toHaveBeenCalled();
   }
   expect(container.querySelector('[data-wuu-component="collaboration-sidebar"] nav')?.textContent).not.toContain(name);
   confirm.mockRestore();
+});
+
+it.each(["success", "cleanup-failed", "rejected"])("keeps managed work out of the workspace while reconciling agent deletion: %s", async (outcome) => {
+  agents = [{ id: "manager", name: "Research", avatar_key: "abstract-1", memory_dir: "/preview", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
+  const oldAgents = agents;
+  const managed: Thread = {
+    id: "managed", title: "Managed history", preview: "", cwd: workspace, workspace_kind: "scratch",
+    model_provider: "byok", model: "reasoner", status: "idle", turns: [], pinned: true,
+    created_at: agents[0].created_at, updated_at: agents[0].created_at, latest_completed_turn_id: "unread-turn",
+    session_control: { manager_id: "manager", manager_name: "Research", state: "paused", revision: 1 },
+  };
+  const takenOver: Thread = { ...managed, id: "taken-over", title: "My continued work", pinned: false,
+    session_control: { manager_id: "manager", manager_name: "Research", state: "taken_over", revision: 2 } };
+  vi.mocked(window.wuu.listThreads).mockResolvedValue({ threads: [managed, takenOver] });
+  window.wuu.resumeThread = vi.fn(async (id) => ({ thread: id === takenOver.id ? takenOver : managed }));
+  let finishDelete!: () => void;
+  window.wuu.deleteNamedAgent = vi.fn(() => new Promise<{ deleted: boolean }>((resolve, reject) => {
+    finishDelete = () => {
+      if (outcome !== "rejected") agents = [];
+      if (outcome === "success") resolve({ deleted: true });
+      else reject(new Error(outcome));
+    };
+  }));
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  vi.useFakeTimers();
+  try {
+    await act(async () => root.render(<App />));
+    await manageSidebarRow("Research", t("channels.deleteAgent"));
+    const sidebar = container.querySelector('[data-wuu-component="app-sidebar"]') ?? container.querySelector(".sidebar");
+    expect(sidebar?.textContent).not.toContain("Managed history");
+    expect(sidebar?.textContent).toContain("My continued work");
+    expect(container.querySelector('[data-wuu-component="collaboration-sidebar"] nav')?.textContent).not.toContain("Research");
+    // A directory response admitted during deletion still describes the old identity.
+    let finishPoll!: (result: { agents: NamedAgent[] }) => void;
+    vi.mocked(window.wuu.listNamedAgents).mockImplementationOnce(() => new Promise(resolve => { finishPoll = resolve; }));
+    await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+    expect(finishPoll).toBeTypeOf("function");
+    await act(async () => finishDelete());
+    await act(async () => finishPoll({ agents: oldAgents }));
+    const contacts = container.querySelector('[data-wuu-component="collaboration-sidebar"] nav')?.textContent ?? "";
+    expect(contacts.includes("Research")).toBe(outcome === "rejected");
+    expect(sidebar?.textContent).not.toContain("Managed history");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("opens a newly created identity's conversation before the next directory refresh", async () => {
