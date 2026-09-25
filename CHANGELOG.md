@@ -18,7 +18,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   sessions, tokens, and active days recorded in local Wuu history, with a
   daily activity heatmap for the past year. New installs show zero totals.
   The new `usage/overview` app-server method reads only token usage records,
-  not conversation content.
+  not conversation content. After 20 seconds without input, the greeting
+  mascot sends a small ball bouncing across the heatmap to today and catches
+  it on the way back; any input stops it, and reduced motion turns it off.
 
 ### Fixed
 

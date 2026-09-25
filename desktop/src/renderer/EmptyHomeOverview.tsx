@@ -6,6 +6,7 @@ import {
   formatCompactUsageNumber,
   type UsageHeatmapCell,
 } from "./UsageActivity";
+import { useEmptyHomePlay } from "./useEmptyHomePlay";
 
 type HeatmapWeek = {
   days: UsageHeatmapCell[];
@@ -16,12 +17,15 @@ type HeatmapWeek = {
  * Usage summary under the empty conversation greeting. It renders nothing
  * until the host answers: an older host or a failed read leaves the greeting
  * alone instead of claiming zero usage. A store with no usage yet is a real
- * answer and shows zero totals with an empty heatmap. Memoized because the
- * home re-renders while the user types a draft.
+ * answer and shows zero totals with an empty heatmap. Once shown, the card
+ * hosts the greeting mascot's idle play. Memoized because the home re-renders
+ * while the user types a draft.
  */
 export const EmptyHomeOverview = memo(function EmptyHomeOverview(): JSX.Element | null {
   const { locale, t, formatNumber } = useI18n();
   const [usage, setUsage] = useState<UsageOverviewResponse>();
+  const [card, setCard] = useState<HTMLElement | null>(null);
+  useEmptyHomePlay(card);
 
   useEffect(() => {
     const api = window.wuu as Partial<typeof window.wuu>;
@@ -54,7 +58,7 @@ export const EmptyHomeOverview = memo(function EmptyHomeOverview(): JSX.Element 
   const weeks = heatmapWeeks(buildUsageHeatmap(usage.days), locale).reverse();
 
   return (
-    <section className="empty-home-overview" aria-label={t("emptyHome.usage")}>
+    <section ref={setCard} className="empty-home-overview" aria-label={t("emptyHome.usage")}>
       <dl className="empty-home-stats">
         <div>
           <dt>{t("emptyHome.sessions")}</dt>

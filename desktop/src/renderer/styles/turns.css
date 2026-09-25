@@ -4241,6 +4241,8 @@ pre {
   width: 64px;
   height: 64px;
   flex: 0 0 auto;
+  /* The idle play squashes and hops the body on its resting point. */
+  transform-origin: 50% 90%;
   -webkit-user-drag: none;
   user-select: none;
 }
@@ -4248,6 +4250,7 @@ pre {
 /* Usage overview under the greeting: one quiet card groups the totals with
    their heatmap. It appears only once the host answers, so it fades in. */
 .empty-home-overview {
+  position: relative;
   grid-column: 1 / -1;
   display: grid;
   row-gap: var(--space-5);
@@ -4369,6 +4372,68 @@ pre {
 
 .empty-home-heatmap-week i[data-level="4"] {
   background: var(--settings-heatmap-level-4);
+}
+
+/* The idle play's little ball leaves the greeting mascot and bounces across
+   the heatmap (useEmptyHomePlay). The layer is the card's padding box, so the
+   ball can start above the card and ripple past the heatmap's clip. It wears
+   the mascot's colours; the eyes keep it legible where the body matches the
+   surface, as they do for the mascot itself. */
+.empty-home-play {
+  --empty-home-play-size: max(8px, calc(var(--empty-home-play-cell) * 0.9));
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.empty-home-play > span {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.empty-home-play-ball > span {
+  position: relative;
+  display: block;
+  width: var(--empty-home-play-size);
+  height: var(--empty-home-play-size);
+  margin: calc(var(--empty-home-play-size) / -2);
+  border-radius: 50%;
+  background: var(--empty-home-play-body);
+  /* The rim separates the ball from busy cells and from a surface that
+     matches its body colour. */
+  box-shadow: 0 0 0 1.5px var(--hairline-strong);
+  opacity: 0;
+}
+
+/* Eyes sit toward the direction of travel; the play mirrors the ball to
+   face home. */
+.empty-home-play-ball > span::before,
+.empty-home-play-ball > span::after {
+  position: absolute;
+  top: 28%;
+  width: 15%;
+  height: 34%;
+  border-radius: 999px;
+  background: var(--empty-home-play-eye);
+  content: "";
+}
+
+.empty-home-play-ball > span::before {
+  left: 38%;
+}
+
+.empty-home-play-ball > span::after {
+  left: 62%;
+}
+
+.empty-home-play-ripple {
+  width: var(--empty-home-play-cell);
+  height: var(--empty-home-play-cell);
+  margin: calc(var(--empty-home-play-cell) / -2);
+  border: 1.5px solid var(--ink-muted);
+  border-radius: 50%;
+  opacity: 0;
 }
 
 .empty-home-inner > .hero-composer-wrap {
