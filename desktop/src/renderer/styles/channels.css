@@ -3152,6 +3152,12 @@ html[data-focus-modality="keyboard"] .agent-avatar-color-control input[type="ran
   overflow: visible;
 }
 
+.channel-room-header > .channel-project-picker {
+  flex: 0 1 12em;
+  width: auto;
+  max-width: 32%;
+}
+
 .channel-recipient-picker {
   position: relative;
   display: flex;

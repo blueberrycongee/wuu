@@ -2048,7 +2048,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
             <header className="titlebar channel-room-header" data-wuu-component="conversation-titlebar">
               {navigation}
               {composingNewRoom ? <>
-                {conversationProjects.length ? <SelectMenu value={conversationWorkspace} onChange={setConversationWorkspace} options={conversationProjects.map(project => ({ value: project.path, label: project.name }))} ariaLabel={t("channels.project")} /> : null}
+                {conversationProjects.length ? <SelectMenu className="channel-project-picker" value={conversationWorkspace} onChange={setConversationWorkspace} options={conversationProjects.map(project => ({ value: project.path, label: project.name }))} ariaLabel={t("channels.project")} /> : null}
                 <ChannelRecipientPicker
                   agents={agents}
                   selectedAgentIDs={roomAgentIDs}

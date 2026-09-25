@@ -68,6 +68,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep the project picker within its share of the new Collaboration header so
+  recipient search and the cancel action stay visible.
+
 - Work delivery reads structured reports from the final answer, so commentary
   before tool calls no longer causes completed executions to fail validation.
 
