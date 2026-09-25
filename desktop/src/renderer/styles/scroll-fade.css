@@ -57,10 +57,14 @@
   }
 }
 
-/* A live turn pinned to the latest line changes these scrollports every
- * chunk. The scroll timeline then recomputes the mask on that cadence.
- * Drop it until the reader leaves the live edge or the turn settles. */
-:root[data-stream-following] [data-scroll-fade] {
+/* A live turn pinned to the latest line changes the nested strips inside the
+ * conversation every chunk (reasoning bodies, process folds). The scroll
+ * timeline then recomputes their mask on that cadence. Drop it just for those
+ * until the reader leaves the live edge or the turn settles.
+ * Navigation lists (sidebar, mobile sidebar, channel list) are not part of
+ * the turn: their content does not grow while it streams, so their fade has
+ * to stay stable instead of following the conversation's run state. */
+:root[data-stream-following] [data-scroll-fade][data-wuu-nested-scroll] {
   animation: none;
   mask-image: none;
 }
