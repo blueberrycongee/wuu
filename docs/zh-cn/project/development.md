@@ -60,9 +60,13 @@ bash clients/native/verify.sh all
 
 可用 `ios` 或 `android` 选择单个平台。脚本启动隔离的 PostgreSQL 测试环境，构建测试宿主，并运行平台测试和构建。PostgreSQL、Xcode、Java 和 Android SDK 要求见原生 README。通过这些检查不代表完成真机或发布验收。
 
+原生构建打包已提交的头像与过程摘要资源快照，不要求快照与最新桌面源码一致。采用桌面表现层变化属于主动的原生端更新；生成、校验和视觉验收步骤见[共享渲染器说明（英文）](../../../clients/native/shared-ui/README.md)。
+
 旧的 `clients/mobile`、`clients/mobile-web`、`clients/mobile-app` 手机实现已停止开发。部分代码仍参与共享 Web 构建和仓库检查，通过这些检查不能证明原生 App 已通过验证。账号和 relay 部署与本地桌面设置分开，见[远程访问](../automation/remote.md)。
 
 ## CI 覆盖范围
+
+[Native mobile](../../../.github/workflows/native-mobile.yml) 仅通过 `workflow_dispatch` 手动运行，不在拉取请求或推送时触发。它保留核心集成检查、iOS/Android 未签名 Release 构建和 Android lint。当前手机端不在发布范围内，纳入发布范围前应恢复自动验证；桌面交付不以移动端验证为前提。
 
 [主 CI 工作流](../../../.github/workflows/ci.yml)运行仓库元数据、Go 检查与测试、桌面检查/测试/构建，以及 SDK/客户端检查/测试/构建。只修改 `docs/` 和 `docs-site/` 时跳过该工作流。Go CI 提供 PostgreSQL，以覆盖依赖数据库的测试。
 
