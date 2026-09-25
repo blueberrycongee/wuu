@@ -2248,6 +2248,7 @@ export const enUS = {
   "thread.archive.force": "Archive anyway",
   "thread.archive.failed": "Failed to archive conversation",
   "thread.rename.failed": "Failed to rename conversation",
+  "thread.rename.editNamed": "Edit conversation title: {title}",
   "thread.memberRemove.failed": "Failed to remove Thread member",
   "thread.archive.noWorkspace": "No workspace is available for archiving",
   "project.threadsLoadFailed": "Failed to load project conversations",

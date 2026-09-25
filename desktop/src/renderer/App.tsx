@@ -312,6 +312,10 @@ import { createWorkspaceActions } from "./WorkspaceActions";
 import { createSessionTabActions } from "./SessionTabActions";
 import { createThreadActivationActions } from "./ThreadActivationActions";
 import { createThreadMutationActions } from "./ThreadMutationActions";
+import {
+  conversationHeadingTitle,
+  customDraftConversationTitle,
+} from "./ThreadTitles";
 import { createRuntimeSettingsActions } from "./RuntimeSettingsActions";
 import { createConversationPaneActions } from "./ConversationPaneActions";
 import {
@@ -2230,8 +2234,11 @@ export function App(): JSX.Element {
         ? t("channels.agents")
         : currentSessionTab?.kind === "tasks"
           ? t("channels.tasks")
-    : resolveLocalizedText(activeThread?.preview ?? "") ||
-      t("tabs.newConversation");
+          : conversationHeadingTitle(
+            activeThread,
+            currentSessionTab?.kind === "draft" ? currentSessionTab.title : undefined,
+            t("tabs.newConversation"),
+          );
   const popOutWindowTitle =
     popOutInit?.kind === "thread"
       ? activeThread?.title?.trim() ||
@@ -4001,6 +4008,29 @@ export function App(): JSX.Element {
     clearThreadPendingComposerMessages,
   });
 
+  function commitConversationTitle(nextTitle: string): void {
+    const trimmed = nextTitle.trim();
+    if (!trimmed) return;
+    const current = appStateRef.current;
+    const thread = activeThreadForState(current);
+    if (thread && !thread.read_only && !thread.ephemeral) {
+      void renameThread(thread, trimmed);
+      return;
+    }
+    const tab = activeSessionTab(current);
+    if (tab?.kind !== "draft" || tab.title.trim() === trimmed) return;
+    setState((state) => {
+      const next = {
+        ...state,
+        sessionTabs: state.sessionTabs.map((item) =>
+          item.id === tab.id && item.kind === "draft" ? { ...item, title: trimmed } : item,
+        ),
+      };
+      appStateRef.current = next;
+      return next;
+    });
+  }
+
   function updateChannelRoomPreferences(
     update: (current: ChannelRoomPreferences) => ChannelRoomPreferences,
   ): void {
@@ -4707,7 +4737,7 @@ export function App(): JSX.Element {
       setPendingThreadCreations([...pendingThreadCreationsRef.current.values()]);
     }) : undefined;
     try {
-      const thread =
+      let thread =
         targetThread ??
         requireThread(
           await Promise.race([window.wuu.startThread({
@@ -4744,6 +4774,28 @@ export function App(): JSX.Element {
           }), cancelledCreation!]),
           "thread/start did not return a thread",
         );
+      if (!targetThread && !creationCancelled) {
+        const draftTab = currentState.sessionTabs.find(
+          (tab) => tab.id === currentState.activeSessionTabID,
+        );
+        const customTitle = customDraftConversationTitle(
+          draftTab?.kind === "draft" ? draftTab.title : undefined,
+          t("tabs.newConversation"),
+        );
+        // Set the user's name before the first turn so a generated title
+        // cannot replace a name they already chose.
+        if (customTitle) {
+          try {
+            const renamed = await window.wuu.renameThread(thread.id, customTitle);
+            if (renamed.thread) {
+              thread = renamed.thread;
+              updateCachedSidebarThread(thread);
+            }
+          } catch (error) {
+            showErrorToast(error, t("thread.rename.failed"));
+          }
+        }
+      }
       admission.thread = thread;
       if (!targetThread) {
         turnAdmissionsRef.current.set(thread.id, admission);
@@ -5086,6 +5138,15 @@ export function App(): JSX.Element {
       <SidePanelToggleIcon side="left" open={sidebarDrawerVisible} />
     </button>
   ) : null;
+
+  const conversationTitleEditable =
+    !showingSkillsCatalog &&
+    !showingPrimaryPluginView &&
+    currentSessionTab?.kind !== "channel-room" &&
+    currentSessionTab?.kind !== "agents" &&
+    currentSessionTab?.kind !== "tasks" &&
+    ((activeThread !== undefined && !activeThread.read_only && !activeThread.ephemeral) ||
+      currentSessionTab?.kind === "draft");
 
   return (
     <WuuMascotRuntimeProvider
@@ -5545,6 +5606,8 @@ export function App(): JSX.Element {
               pendingSwitchThreadID={visiblePendingThreadID}
               activeTitle={activeTitle}
               onStartNewThread={startNewThreadWithComposerFocus}
+              onRenameTitle={conversationTitleEditable ? commitConversationTitle : undefined}
+              titleEditKey={activeThread?.id ?? currentSessionTab?.id}
             />
           </div>
           <ConversationTitleActions
