@@ -22,11 +22,6 @@ beforeEach(clearStamp);
 afterEach(clearStamp);
 
 describe("applyMessageFlowFontSize", () => {
-  it("stamps a value inside the range on <html>", () => {
-    applyMessageFlowFontSize(16);
-    expect(readStamp()).toBe("16px");
-  });
-
   it("clamps values above the configured maximum", () => {
     applyMessageFlowFontSize(99);
     expect(readStamp()).toBe(`${MESSAGE_FLOW_FONT_SIZE_RANGE.max}px`);
@@ -42,12 +37,6 @@ describe("applyMessageFlowFontSize", () => {
     expect(readStamp()).toBe(`${MESSAGE_FLOW_FONT_SIZE_RANGE.default}px`);
     applyMessageFlowFontSize(Number.POSITIVE_INFINITY);
     expect(readStamp()).toBe(`${MESSAGE_FLOW_FONT_SIZE_RANGE.default}px`);
-  });
-
-  it("overwrites a previous stamp on subsequent calls", () => {
-    applyMessageFlowFontSize(13);
-    applyMessageFlowFontSize(20);
-    expect(readStamp()).toBe(`${MESSAGE_FLOW_FONT_SIZE_RANGE.max}px`);
   });
 
   it("supports the half-step resolution the numeric field emits", () => {

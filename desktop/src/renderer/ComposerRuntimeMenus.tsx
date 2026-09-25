@@ -299,7 +299,7 @@ function RuntimePanelSummary({
       </div>
       <button type="button" className="runtime-panel-model" onClick={onOpenModels}>
         <span className="runtime-panel-model-name">{model}</span>
-        <span className="runtime-panel-effort-value">{variantLabel(previewEffort)}</span>
+        <span key={previewEffort} className="runtime-panel-effort-value">{variantLabel(previewEffort)}</span>
         <ChevronRight aria-hidden="true" />
       </button>
       {effortOptions.length > 1 ? (

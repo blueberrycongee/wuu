@@ -349,14 +349,92 @@ func TestDeletingManagingAgentStopsTasklessHarnessExecution(t *testing.T) {
 		waitForThreadLeaseRelease(t, f.server.rt.SessionDir, ref)
 	}
 	control, _, err := session.ReadControl(f.server.rt.SessionDir, id)
-	if err != nil || control.State != session.ControlPaused {
+	if err != nil || control.State != session.ControlReleased {
 		t.Fatalf("deleted identity still controls execution: %+v, %v", control, err)
 	}
 	if _, err := f.server.HarnessSession(ctx, actor, channels.HarnessSessionParams{Action: "send", SessionID: id, Prompt: "Late continuation", OperationID: "late-send"}); err == nil {
 		t.Fatal("deleted identity accepted new execution")
 	}
-	if _, found, err := session.Find(f.server.rt.SessionDir, id); err != nil || !found {
-		t.Fatalf("project execution history was removed: %v, %v", found, err)
+	if metadata, found, err := session.Find(f.server.rt.SessionDir, id); err != nil || !found || metadata.ArchivedAt == nil || metadata.ArchiveReason != "agent_deleted" {
+		t.Fatalf("project execution history was not archived: %+v, %v", metadata, err)
+	}
+	for _, method := range []string{MethodThreadList, MethodThreadListAll, MethodThreadListArchived} {
+		var result ThreadListResult
+		f.rpc(t, method, ThreadListParams{}, &result)
+		found := false
+		for _, thread := range result.Threads {
+			if thread.ID == id {
+				found = true
+				if !thread.Archived || thread.ArchiveReason != "agent_deleted" {
+					t.Fatalf("archive classification missing: %+v", thread)
+				}
+			}
+		}
+		if found != (method == MethodThreadListArchived) {
+			t.Fatalf("%s has deleted agent history: %v", method, found)
+		}
+	}
+}
+
+func TestDeletedAgentArchiveReconcilesOldOrphansAcrossWorkspaces(t *testing.T) {
+	f, _ := newCollaborationFlowFixture(t)
+	ctx := context.Background()
+	states := []string{session.ControlActive, session.ControlPaused, session.ControlTakenOver, session.ControlReleased, "deleted"}
+	for _, state := range states {
+		if _, err := session.CreateWithMetadata(f.server.rt.SessionDir, state, "/another-workspace"); err != nil {
+			t.Fatal(err)
+		}
+		controlState := state
+		if state == "deleted" {
+			controlState = session.ControlActive
+		}
+		control, err := session.ChangeControl(f.server.rt.SessionDir, state, f.identity.ID, controlState, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.server.channelService.PutHarnessLink(ctx, channels.HarnessSessionLink{SessionID: state, AgentID: f.identity.ID, RoomID: f.room.ID, Active: true, ControlRevision: control.Revision}); err != nil {
+			t.Fatal(err)
+		}
+		if state == "deleted" {
+			if _, err := session.Delete(f.server.rt.SessionDir, state); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// Simulate an older version that deleted the identity without archiving work.
+	if err := f.server.channelService.DeleteNamedAgent(ctx, f.identity.ID); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := f.server.reconcileLocalHarnessSessions(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, state := range states {
+		metadata, found, err := session.Find(f.server.rt.SessionDir, state)
+		if state == "deleted" {
+			if err != nil || found {
+				t.Fatalf("deleted history was recreated: %+v %v", metadata, err)
+			}
+			continue
+		}
+		wantArchive := state == session.ControlActive || state == session.ControlPaused
+		if err != nil || !found || (metadata.ArchivedAt != nil) != wantArchive {
+			t.Fatalf("%s history: %+v %v", state, metadata, err)
+		}
+		if wantArchive && metadata.ArchiveReason != "agent_deleted" {
+			t.Fatalf("orphan mixed with ordinary archive: %+v", metadata)
+		}
+	}
+	if _, err := session.UpdateArchived(f.server.rt.SessionDir, session.ControlPaused, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.server.reconcileLocalHarnessSessions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	metadata, _, err := session.Find(f.server.rt.SessionDir, session.ControlPaused)
+	if err != nil || metadata.ArchivedAt != nil || metadata.ArchiveReason != "" {
+		t.Fatalf("restored history was reclaimed: %+v %v", metadata, err)
 	}
 }
 

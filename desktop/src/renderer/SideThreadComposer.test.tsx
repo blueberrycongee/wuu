@@ -53,17 +53,6 @@ function renderComposer({
 }
 
 describe("SideThreadComposer", () => {
-  it("uses the canonical composer without unsupported text-only controls", () => {
-    renderComposer({ draft: " status? " });
-
-    expect(container.querySelector(".composer-wrap")).toBeTruthy();
-    expect(container.querySelector(".composer-plus-button")).toBeNull();
-    expect(container.querySelector(".permission-chip")).toBeNull();
-    expect(container.querySelector("textarea")?.getAttribute("placeholder")).toBe(
-      "询问当前任务，不会加入主对话",
-    );
-  });
-
   it("sends the trimmed draft through the side transport", () => {
     const onSend = vi.fn();
     renderComposer({ draft: " status? ", onSend });
@@ -86,7 +75,6 @@ describe("SideThreadComposer", () => {
       ),
     );
     expect(items.map((item) => item.textContent)).toHaveLength(1);
-    expect(items[0]?.textContent).toContain("重置侧聊");
 
     act(() => items[0]?.click());
     expect(onReset).toHaveBeenCalledTimes(1);

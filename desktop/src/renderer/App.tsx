@@ -675,7 +675,10 @@ export function App(): JSX.Element {
   const [editChannelRoomRequestID, setEditChannelRoomRequestID] = useState("");
   const [agentOnboardingActive, setAgentOnboardingActive] = useState(false);
   const [agentOnboardingDraft, setAgentOnboardingDraft] = useState<AgentOnboardingDraft | null>(null);
-  const [namedAgents, setNamedAgents] = useState<NamedAgent[]>([]);
+  const [allNamedAgents, setNamedAgents] = useState<NamedAgent[]>([]);
+  const [deletedAgentIDs, setDeletedAgentIDs] = useState<ReadonlySet<string>>(new Set());
+  const deletedAgentIDsRef = useRef(new Set<string>());
+  const namedAgents = useMemo(() => allNamedAgents.filter((agent) => !deletedAgentIDs.has(agent.id)), [allNamedAgents, deletedAgentIDs]);
   const directoryRefreshInFlightRef = useRef(false);
   const channelDirectoryGenerationRef = useRef(0);
   const [channelDirectoryLoaded, setChannelDirectoryLoaded] = useState(false);
@@ -687,7 +690,8 @@ export function App(): JSX.Element {
   // Rooms (with per-room unread counts) live at the App level so the unified
   // sidebar and the channel canvas share one source of truth; selection is
   // controlled here and passed into ChannelView.
-  const [channelRooms, setChannelRooms] = useState<ChannelRoom[]>([]);
+  const [allChannelRooms, setChannelRooms] = useState<ChannelRoom[]>([]);
+  const channelRooms = useMemo(() => allChannelRooms.filter((room) => room.kind !== "dm" || !room.members.some((member) => member.member_type === "agent" && deletedAgentIDs.has(member.member_id))), [allChannelRooms, deletedAgentIDs]);
   const [channelRoomPreferences, setChannelRoomPreferences] =
     useState<ChannelRoomPreferences>(readChannelRoomPreferences);
   useEffect(() => {
@@ -2700,8 +2704,8 @@ export function App(): JSX.Element {
     () => orderedPinnedCollaborationConversations(sidebarConversations, channelRoomPreferences.pinnedRoomIDs),
     [sidebarConversations, channelRoomPreferences.pinnedRoomIDs],
   );
-  const managedSidebar = useMemo(() => managedSidebarThreads(sidebarThreadSummaries, sidebarConversations),
-    [sidebarThreadSummaries, sidebarConversations]);
+  const managedSidebar = useMemo(() => managedSidebarThreads(sidebarThreadSummaries, sidebarConversations, deletedAgentIDs),
+    [sidebarThreadSummaries, sidebarConversations, deletedAgentIDs]);
   const sidebarScratchThreads = useMemo(
     () => scratchThreadSummaries(sidebarThreadSummaries, state.projects),
     [sidebarThreadSummaries, state.projects],
@@ -3933,13 +3937,52 @@ export function App(): JSX.Element {
     }
   }
 
+  async function deleteCollaborationAgent(agentID: string): Promise<void> {
+    if (deletedAgentIDsRef.current.has(agentID)) return;
+    deletedAgentIDsRef.current.add(agentID);
+    setDeletedAgentIDs(new Set(deletedAgentIDsRef.current));
+    ++channelDirectoryGenerationRef.current;
+    try {
+      await window.wuu.deleteNamedAgent({ agent_id: agentID });
+      setNamedAgents((agents) => agents.filter((agent) => agent.id !== agentID));
+      setChannelRooms((rooms) => rooms
+        .filter((room) => room.kind !== "dm" || !room.members.some((member) => member.member_type === "agent" && member.member_id === agentID))
+        .map((room) => ({ ...room, members: room.members.filter((member) => member.member_type !== "agent" || member.member_id !== agentID) })));
+    } catch (reason) {
+      // Deletion can commit before execution cleanup fails. Reconcile that
+      // outcome before deciding whether to restore the optimistic entry.
+      let deleted = false;
+      try {
+        const [agents, rooms] = await Promise.all([window.wuu.listNamedAgents(), window.wuu.listChannelRooms()]);
+        setNamedAgents(agents.agents);
+        setChannelRooms(rooms.rooms);
+        deleted = !agents.agents.some((agent) => agent.id === agentID);
+      } catch {
+        // Restore the previous directory when the authoritative read fails.
+      }
+      if (!deleted) {
+        deletedAgentIDsRef.current.delete(agentID);
+        setDeletedAgentIDs(new Set(deletedAgentIDsRef.current));
+      }
+      throw reason;
+    } finally {
+      // Invalidate reads started before or during the mutation. Keep successful
+      // tombstones for this renderer so other in-flight directory reads cannot
+      // briefly resurrect the deleted identity.
+      ++channelDirectoryGenerationRef.current;
+    }
+  }
+
   async function deleteCollaborationConversation(conversation: CollaborationConversation): Promise<void> {
     const { agent, room, name } = conversation;
     if (!agent && room?.kind !== "channel") return;
     if (!window.confirm(t(agent ? "channels.deleteAgentConfirm" : "channels.deleteRoomConfirm", { name }))) return;
     try {
-      if (agent) await window.wuu.deleteNamedAgent({ agent_id: agent.id });
-      else await window.wuu.deleteChannelRoom({ room_id: room!.id });
+      if (agent) {
+        await deleteCollaborationAgent(agent.id);
+        return;
+      }
+      await window.wuu.deleteChannelRoom({ room_id: room!.id });
       const [agentResult, roomResult] = await Promise.all([window.wuu.listNamedAgents(), window.wuu.listChannelRooms()]);
       setNamedAgents(agentResult.agents);
       setChannelRooms(roomResult.rooms);
@@ -5316,6 +5359,7 @@ export function App(): JSX.Element {
               directoryRooms={channelRooms}
               onDirectoryAgentsChange={setNamedAgents}
               onDirectoryRoomsChange={setChannelRooms}
+              onDeleteAgent={deleteCollaborationAgent}
               newRoomRequest={newRoomRequest}
               onNewRoomRequestHandled={() => setNewRoomRequest(0)}
               editAgentRequestID={editChannelAgentRequestID}

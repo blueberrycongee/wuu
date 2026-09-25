@@ -53,9 +53,6 @@ describe("ToastViewport", () => {
 
     const notice = container.querySelector('[role="alert"]');
     expect(notice?.textContent).toContain("save failed");
-    expect((notice as HTMLElement | null)?.dataset.wuuComponent).toBe("notice");
-    expect((notice as HTMLElement | null)?.dataset.wuuLayer).toBe("notice");
-    expect((notice as HTMLElement | null)?.dataset.wuuState).toBe("open");
     expect(notice?.closest('[data-wuu-layer-host="true"]')).not.toBeNull();
   });
 

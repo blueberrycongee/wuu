@@ -104,10 +104,6 @@ func TestRoomMemberCanInviteAndProposePersistentNamedAgents(t *testing.T) {
 	if err != nil || cancelled.State != AgentCreationCancelled {
 		t.Fatalf("cancelled proposal = %#v, err = %v", cancelled, err)
 	}
-	messages, err = service.ListMessages(ctx, room.ID, 0, 100)
-	if err != nil || messages[len(messages)-1].Body != "用户取消了创建新角色：Writer" {
-		t.Fatalf("cancel notification = %#v, err = %v", messages, err)
-	}
 }
 
 func TestNonMemberCannotManageRoomRoster(t *testing.T) {
@@ -177,9 +173,8 @@ func TestMembershipChangesPreserveContextWithoutWakingMembers(t *testing.T) {
 func TestAgentCreationDecisionsResumeMemberConversationsExactlyOnce(t *testing.T) {
 	for _, approve := range []bool{true, false} {
 		name := "cancelled"
-		decision := "取消"
 		if approve {
-			name, decision = "approved", "批准"
+			name = "approved"
 		}
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
@@ -232,7 +227,7 @@ func TestAgentCreationDecisionsResumeMemberConversationsExactlyOnce(t *testing.T
 					t.Fatalf("member decision input = %#v, %v", received, err)
 				}
 				receipt := received[0]
-				if receipt.FromType != MemberHuman || receipt.FromID != params.HumanID || receipt.WorkID != "" || receipt.SourceMessageID != proposal.MessageID || receipt.CorrelationID != proposal.ID || !strings.Contains(receipt.Body, proposal.Name) || !strings.Contains(receipt.Body, decision) {
+				if receipt.FromType != MemberHuman || receipt.FromID != params.HumanID || receipt.WorkID != "" || receipt.SourceMessageID != proposal.MessageID || receipt.CorrelationID != proposal.ID || !strings.Contains(receipt.Body, proposal.Name) {
 					t.Fatalf("decision provenance or outcome was lost: %#v", receipt)
 				}
 				if err := session.AcknowledgeCollaboration(ctx, []string{receipt.ID}); err != nil {

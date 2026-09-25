@@ -2047,6 +2047,7 @@ export type Thread = {
   pinned?: boolean;
   folder_id?: string;
   archived?: boolean;
+  archive_reason?: string;
   forked_from_id?: string;
   forked_from_turn_id?: string;
   forked_from_item_id?: string;

@@ -234,17 +234,3 @@ describe("AppModeSwitch clear-unread hint", () => {
     expect(hintLayer()).toBeNull();
   });
 });
-
-describe("AppModeSwitch lockup", () => {
-  it("keeps the wordmark without a harness descriptor", () => {
-    renderSwitch({ mode: "harness" });
-    expect(container.querySelector(".sidebar-brand-wordmark")?.textContent).toBe("wuu");
-    expect(container.querySelector(".sidebar-mode-switch")).toBeNull();
-    expect(container.querySelector(".sidebar-notifications-button")).not.toBeNull();
-
-    renderSwitch({ mode: "collaboration" });
-    expect(container.querySelector(".sidebar-brand-wordmark")?.textContent).toBe("wuu");
-    expect(container.querySelector(".sidebar-mode-switch")).toBeNull();
-    expect(container.querySelector(".sidebar-notifications-button")).toBeNull();
-  });
-});

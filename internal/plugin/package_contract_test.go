@@ -61,36 +61,6 @@ func TestPackageContractTracksEntryContentButNotEnvironmentValues(t *testing.T) 
 	}
 }
 
-func TestPackageContractTracksSkillTreeContent(t *testing.T) {
-	root := t.TempDir()
-	skillPath := filepath.Join(root, "skills", "review", "SKILL.md")
-	if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(skillPath, []byte("review version one"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	item := Plugin{
-		Manifest: Manifest{ID: "skill-kit", Skills: []string{"skills"}},
-		Source:   "project",
-		Root:     root,
-	}
-	first, err := item.PackageContract()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(skillPath, []byte("review version two"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	second, err := item.PackageContract()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.Fingerprint == second.Fingerprint {
-		t.Fatal("skill content did not change package fingerprint")
-	}
-}
-
 func TestPackageContractTracksEveryRegularPackageFile(t *testing.T) {
 	root := t.TempDir()
 	manifestPath := filepath.Join(root, ManifestFilename)

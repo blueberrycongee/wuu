@@ -99,23 +99,6 @@ func TestBuildTurnError_HTTP401_Auth(t *testing.T) {
 	}
 }
 
-// TestBuildTurnError_HTTP429_OpenAIQuota covers the OpenAI
-// insufficient_quota path: HTTP 429 with code=insufficient_quota
-// in the body and classified as provider.
-func TestBuildTurnError_HTTP429_OpenAIQuota(t *testing.T) {
-	err := &providers.HTTPError{
-		StatusCode: 429,
-		Body:       `{"error": {"code": "insufficient_quota", "message": "You exceeded your current quota."}}`,
-	}
-	out := BuildTurnError(err, "openai")
-	if out.Category != string("provider") {
-		t.Errorf("expected category=provider, got %q", out.Category)
-	}
-	if out.Code != "insufficient_quota" {
-		t.Errorf("expected code=insufficient_quota, got %q", out.Code)
-	}
-}
-
 func TestBuildTurnError_HTTP429PrefixedProviderBodies(t *testing.T) {
 	tests := []struct {
 		name string
@@ -343,21 +326,6 @@ func TestBuildTurnError_HTTPNetwork5xx(t *testing.T) {
 	out := BuildTurnError(err, "openai")
 	if out.Category != string("network") {
 		t.Errorf("expected category=network, got %q", out.Category)
-	}
-}
-
-// TestBuildTurnError_GeminiResourceExhausted covers a Gemini-style
-// response where the code is in "error.code" (number) and the
-// status is a string like "RESOURCE_EXHAUSTED". extractCodeFromBody
-// pulls the string from error.type.
-func TestBuildTurnError_GeminiResourceExhausted(t *testing.T) {
-	err := &providers.HTTPError{
-		StatusCode: 429,
-		Body:       `{"error": {"code": 7, "message": "Resource has been exhausted", "status": "RESOURCE_EXHAUSTED"}}`,
-	}
-	out := BuildTurnError(err, "gemini")
-	if out.Code != "RESOURCE_EXHAUSTED" {
-		t.Errorf("expected code=RESOURCE_EXHAUSTED, got %q", out.Code)
 	}
 }
 

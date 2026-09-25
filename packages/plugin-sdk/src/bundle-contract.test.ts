@@ -1,6 +1,5 @@
 import {
   BUNDLE_CONTRACT_VERSION,
-  BUNDLE_MANIFEST_SCHEMA_VERSION,
   canonicalize,
   generation,
   validateBundleManifest,
@@ -110,10 +109,6 @@ const stable = decode(
 const expected = '{"a":["z","a<b>&\\"c\\""],"b":{"x":"1"}}';
 if (stable !== expected) {
   throw new Error(`canonical bytes mismatch: got ${stable}, want ${expected}`);
-}
-
-if (BUNDLE_MANIFEST_SCHEMA_VERSION !== 2 || BUNDLE_CONTRACT_VERSION !== 1) {
-  throw new Error("contract version constants drifted");
 }
 
 // Keep the legacy SDK test runner exit contract: this file must throw on

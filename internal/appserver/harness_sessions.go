@@ -544,6 +544,17 @@ func (s *Server) reconcileLocalHarnessSessions(ctx context.Context) error {
 		return err
 	}
 	for _, link := range links {
+		deleted, err := s.channelService.AgentDeleted(ctx, link.AgentID)
+		if err != nil {
+			return err
+		}
+		if deleted {
+			// Cleanup is global: the workspace may never be opened again.
+			if err := s.archiveDeletedAgentSession(ctx, link); err != nil {
+				return err
+			}
+			continue
+		}
 		metadata, err := s.sharedHarnessSession(link.SessionID)
 		if err != nil {
 			continue
@@ -624,6 +635,48 @@ func (s *Server) reconcileLocalHarnessSessions(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (s *Server) archiveDeletedAgentSession(ctx context.Context, link channels.HarnessSessionLink) error {
+	c, ok, err := session.ReadControl(s.rt.SessionDir, link.SessionID)
+	if err != nil {
+		return err
+	}
+	if !ok || c.ManagerID != link.AgentID || c.State == session.ControlTakenOver {
+		return nil
+	}
+	archivedNow := c.State == session.ControlActive || c.State == session.ControlPaused
+	if archivedNow {
+		if err := session.ArchiveControlled(s.rt.SessionDir, c, "agent_deleted"); err != nil {
+			if errors.Is(err, session.ErrControlChanged) || errors.Is(err, session.ErrSessionNotFound) {
+				return nil
+			}
+			return err
+		}
+	}
+	metadata, found, err := session.Find(s.rt.SessionDir, link.SessionID)
+	if err != nil {
+		return err
+	}
+	if !found || metadata.ArchivedAt == nil || metadata.ArchiveReason != "agent_deleted" {
+		return nil
+	}
+	// Retry interruption after a crash between the archive commit and cleanup.
+	s.revokeSessionInputs(link.SessionID)
+	cleanupErr := s.interruptOwnedThreadExecution(link.SessionID)
+	if active, err := session.ThreadExecutionActive(s.rt.SessionDir, link.SessionID); err != nil {
+		cleanupErr = errors.Join(cleanupErr, err)
+	} else if !active {
+		cleanupErr = errors.Join(cleanupErr, s.channelService.ReleaseHarnessExecution(ctx, link.SessionID))
+	}
+	if archivedNow {
+		thread, err := s.threadAfterMetadataUpdate(metadata)
+		if err != nil {
+			return errors.Join(cleanupErr, err)
+		}
+		cleanupErr = errors.Join(cleanupErr, s.notifyThreadUpdated(thread))
+	}
+	return cleanupErr
 }
 
 func (s *Server) reconcileHarnessLink(ctx context.Context, link channels.HarnessSessionLink) error {

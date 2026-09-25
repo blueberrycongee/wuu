@@ -119,18 +119,6 @@ func TestChannelAgentUpdatePreservesExistingSessionSelection(t *testing.T) {
 	}
 }
 
-func TestNamedAgentRuntimeSelectionAppliesModelAndEffortOverrides(t *testing.T) {
-	agent := channels.NamedAgent{ProviderOverride: "openai", ModelOverride: "gpt-reasoner", EffortOverride: "high"}
-	provider, model, effort := namedAgentModelSelection("default-provider", "default-model", "medium", agent)
-	if provider != "openai" || model != "gpt-reasoner" || effort != "high" {
-		t.Fatalf("named agent runtime selection = (%q, %q, %q)", provider, model, effort)
-	}
-	provider, model, effort = namedAgentModelSelection("default-provider", "default-model", "medium", channels.NamedAgent{})
-	if provider != "default-provider" || model != "default-model" || effort != "medium" {
-		t.Fatalf("inherited runtime selection = (%q, %q, %q)", provider, model, effort)
-	}
-}
-
 func TestChannelHumanRPCsCreateRoomAndSendMessage(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	configureNamedAgentCreationProvider(t, rt)

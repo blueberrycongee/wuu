@@ -12,7 +12,6 @@ import {
   loadRuntimeRestore,
   loadThreadListRefresh,
   applyRuntimeRestore,
-  selectRuntimeContext,
 } from "./RuntimeLoadState";
 
 import { initialState, createThreadSessionTab, reconcileListedThreadState } from "./AppState";
@@ -195,31 +194,6 @@ describe("runtime load helpers", () => {
     expect(initialize).not.toHaveBeenCalled();
     expect(listThreads).not.toHaveBeenCalled();
     expect(listArchivedThreads).not.toHaveBeenCalled();
-  });
-
-  it("selects project and no-project contexts through the desktop API", async () => {
-    const projectContext: RuntimeContext = {
-      kind: "project",
-      project_id: "project-1",
-      cwd: "/tmp/wuu",
-    };
-    const noProjectContext: RuntimeContext = {
-      kind: "no_project",
-      cwd: "/tmp/scratch",
-    };
-    const selectProject = vi
-      .fn()
-      .mockResolvedValue(projectList(projectContext));
-    const selectNoProject = vi
-      .fn()
-      .mockResolvedValue(projectList(noProjectContext));
-    installWuuStub({ selectProject, selectNoProject });
-
-    await selectRuntimeContext(projectContext);
-    await selectRuntimeContext(noProjectContext);
-
-    expect(selectProject).toHaveBeenCalledWith("project-1");
-    expect(selectNoProject).toHaveBeenCalledWith(false, "/tmp/scratch");
   });
 
   it("resumes the latest non-pinned thread when loading an active runtime", async () => {

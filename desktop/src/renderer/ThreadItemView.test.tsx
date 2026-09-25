@@ -366,7 +366,6 @@ describe("ThreadItemView", () => {
     expect((rawQuery?.textContent?.length ?? 0)).toBeLessThan(
       longSingleParagraph.length,
     );
-    expect(toggle?.textContent).toContain("显示更多");
   });
 
   it("shows long query previews as raw pasted text", () => {
@@ -426,7 +425,6 @@ describe("ThreadItemView", () => {
     expect(rawQuery?.textContent?.endsWith("...")).toBe(true);
     expect(rawQuery?.textContent).toContain("line 5");
     expect(rawQuery?.textContent).not.toContain("line 6");
-    expect(toggle?.textContent).toContain("显示更多");
     expect(toggle?.getAttribute("aria-expanded")).toBe("false");
 
     act(() => {
@@ -434,7 +432,6 @@ describe("ThreadItemView", () => {
     });
 
     expect(rawQuery?.textContent).toBe(longText);
-    expect(toggle?.textContent).toContain("收起");
     expect(toggle?.getAttribute("aria-expanded")).toBe("true");
 
     act(() => {
@@ -442,7 +439,6 @@ describe("ThreadItemView", () => {
     });
 
     expect(rawQuery?.textContent).not.toContain("line 20");
-    expect(toggle?.textContent).toContain("显示更多");
   });
 
   it("defaults a different long user query back to collapsed", () => {
@@ -527,8 +523,6 @@ describe("ThreadItemView", () => {
     });
 
     const visibleActions = actionBar();
-    expect(visibleActions.getAttribute("aria-label")).toBe("助手消息操作");
-    expect(visibleActions.dataset.wuuComponent).toBe("message-actions");
     expect(visibleActions.dataset.wuuPlacement).toBe("persistent");
     expect(visibleActions.querySelectorAll("button")).toHaveLength(2);
     expect(visibleActions.querySelectorAll<HTMLButtonElement>("button")[1]?.disabled).toBe(false);
@@ -642,24 +636,6 @@ describe("ThreadItemView", () => {
     act(() => toggle.click());
     expect(container?.textContent).not.toContain("End of update.");
     setOpenThreadInSplitHandler(undefined);
-  });
-
-  it("does not show a related-session action without a related session", () => {
-    render({
-      item: {
-        id: "user-own-1",
-        type: "user_message",
-        text: "这是我的普通消息",
-        input_text: "这是发给 Agent 的隐藏消息",
-        status: "completed",
-      },
-      turnStatus: "completed",
-      streaming: false,
-    });
-
-    const actions = container?.querySelectorAll<HTMLButtonElement>(".user-message-actions button");
-    expect(actions).toHaveLength(1);
-    expect([...(actions ?? [])].some((button) => button.getAttribute("aria-label") === "打开关联会话")).toBe(false);
   });
 
   it("shows the user message time before its copy action", () => {

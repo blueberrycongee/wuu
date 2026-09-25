@@ -4,7 +4,6 @@ import type { Thread } from "@wuu/protocol";
 import {
   isThreadRunning,
   isThreadUnread,
-  isVisibleThread,
   latestCompletedTurnID,
   sortThreads,
   threadDisplayTitle,
@@ -26,13 +25,6 @@ function thread(partial: Partial<Thread>): Thread {
 }
 
 describe("thread list helpers", () => {
-  it("shows ordinary threads and excludes archived or read-only entries", () => {
-    expect(isVisibleThread(thread({ workspace_kind: "project" }))).toBe(true);
-    expect(isVisibleThread(thread({ workspace_kind: "scratch" }))).toBe(true);
-    expect(isVisibleThread(thread({ archived: true }))).toBe(false);
-    expect(isVisibleThread(thread({ read_only: true }))).toBe(false);
-  });
-
   it("detects running threads and derives display titles", () => {
     expect(isThreadRunning(thread({ status: "in_progress" }))).toBe(true);
     expect(

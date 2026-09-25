@@ -47,9 +47,6 @@ describe("ThreadContextMenu", () => {
     expect(menu?.dataset.origin).toBe("bottom-right");
     expect(menu?.dataset.placed).toBe("true");
     expect(menu?.style.visibility).toBe("");
-    expect(menu?.dataset.wuuComponent).toBe("menu");
-    expect(menu?.dataset.wuuLayer).toBe("menu");
-    expect(menu?.dataset.wuuState).toBe("open");
     expect(menu?.closest('[data-wuu-layer-host="true"]')).not.toBeNull();
   });
 

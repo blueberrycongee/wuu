@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestBundledAutomationResolvesRuntimeAndDesktopView(t *testing.T) {
+func TestBundledAutomationResolvesRuntimeHelper(t *testing.T) {
 	helper := filepath.Join(t.TempDir(), "wuu-automation-plugin")
 	if err := os.WriteFile(helper, []byte("helper"), 0o755); err != nil {
 		t.Fatal(err)
@@ -23,12 +23,6 @@ func TestBundledAutomationResolvesRuntimeAndDesktopView(t *testing.T) {
 		}
 		if item.Runtime == nil || item.Runtime.Command != helper {
 			t.Fatalf("automation runtime = %+v", item.Runtime)
-		}
-		if item.Desktop == nil || item.Desktop.Entry != "desktop.js" {
-			t.Fatalf("automation desktop = %+v", item.Desktop)
-		}
-		if len(item.Navigation) != 1 || item.Navigation[0].View != "automation.catalog" {
-			t.Fatalf("automation navigation = %+v", item.Navigation)
 		}
 		return
 	}

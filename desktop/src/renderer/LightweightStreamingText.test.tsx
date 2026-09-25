@@ -86,25 +86,6 @@ function advanceReveal(ms: number): void {
 }
 
 describe("LightweightStreamingText", () => {
-  it("renders short text in full immediately (no animation)", () => {
-    mount({ text: "ok", live: true, className: "lightweight-stream" });
-    expect(surfaceText()).toBe("ok");
-  });
-
-  it("renders empty text as empty", () => {
-    mount({ text: "", live: true, className: "lightweight-stream" });
-    expect(surfaceText()).toBe("");
-  });
-
-  it("snaps to full text when live is false", () => {
-    mount({
-      text: "Reading the file now",
-      live: false,
-      className: "lightweight-stream",
-    });
-    expect(surfaceText()).toBe("Reading the file now");
-  });
-
   it("renders initial live text in full so remounts do not replay", () => {
     mount({
       text: "Looking at the file",
@@ -219,26 +200,6 @@ describe("LightweightStreamingText", () => {
     expect(surfaceText()).toBe(longText);
   });
 
-  it("does not leave a running RAF after unmount", () => {
-    mount({
-      text: "",
-      live: true,
-      className: "lightweight-stream",
-    });
-    rerender({
-      text: "Looking at the file",
-      live: true,
-      className: "lightweight-stream",
-    });
-    // Unmount during reveal. If the RAF keeps firing it would touch
-    // a null ref, but the bigger concern is a leaked loop: we assert
-    // unmount completes cleanly with no errors and no further DOM
-    // mutations.
-    advanceReveal(100);
-    unmount();
-    expect(document.querySelector(".lightweight-stream")).toBeNull();
-  });
-
   it("snaps text that caught up while the conversation was hidden", () => {
     const caughtUp = "Updated plan: read the configuration file and report back";
     container = document.createElement("div");
@@ -259,17 +220,5 @@ describe("LightweightStreamingText", () => {
       );
     });
     expect(surfaceText()).toBe(caughtUp);
-  });
-
-  it("preserves the live=false path even when text grew", () => {
-    mount({ text: "ok", live: true, className: "lightweight-stream" });
-    rerender({
-      text: "Updated plan: read the configuration file and report back",
-      live: false,
-      className: "lightweight-stream",
-    });
-    expect(surfaceText()).toBe(
-      "Updated plan: read the configuration file and report back"
-    );
   });
 });

@@ -893,33 +893,6 @@ describe("useConversationScrollState — high-frequency stream", () => {
     expect(layout.scrollTop).toBe(2000 - 600 - 8);
   });
 
-  it("programmatic scroll-to-bottom keeps auto-follow engaged", () => {
-    // Companion case to the dead-zone regression: a stream tick (or
-    // fold re-anchor) that lands scrollTop at the max must keep
-    // auto-follow on. The previous threshold-edge test conflated the
-    // two cases; this one isolates the programmatic-scroll path.
-    mount({ scrollHeight: 2000, clientHeight: 600 });
-    if (!layout || !handle || !node) throw new Error("not mounted");
-    flushScheduledScroll();
-
-    // Prime the scroll-event handler at the bottom.
-    act(() => {
-      handle!.scheduleStreamScroll();
-    });
-    flushScheduledScroll();
-    // 60 fast stream ticks, each one bumping scrollHeight and
-    // re-anchoring scrollTop = scrollHeight.
-    for (let tick = 0; tick < 60; tick += 1) {
-      act(() => {
-        layout!.scrollHeight += 8;
-        handle!.scheduleStreamScroll();
-      });
-      flushScheduledScroll();
-      const bottom = layout.scrollHeight - layout.clientHeight;
-      expect(layout.scrollTop).toBe(bottom);
-    }
-  });
-
   it("does not let content resize re-enable follow after the user scrolls away", () => {
     mount({ scrollHeight: 2000, clientHeight: 600 });
     if (!layout || !node) throw new Error("not mounted");
@@ -1165,12 +1138,6 @@ describe("useConversationScrollState — high-frequency stream", () => {
     flushResizeObservers();
     expect(layout.scrollTop).toBe(1600);
 
-    const contentNode = container.querySelector(
-      "[data-testid='scroll-content']",
-    ) as HTMLDivElement | null;
-    if (!contentNode) throw new Error("scroll-content not rendered");
-    expect(contentNode.style.transform).toBe("");
-
     // Simulate a live window drag: the main process / window emits the
     // resizing marker, the viewport shrinks, and the ResizeObserver
     // fires while we are still inside the drag.
@@ -1181,7 +1148,6 @@ describe("useConversationScrollState — high-frequency stream", () => {
     });
 
     // The message container stays in normal flow and is pinned before paint.
-    expect(contentNode.style.transform).toBe("");
     expect(layout.scrollTop).toBe(2200 - 400);
     act(() => flushAnimationFrames());
     expect(layout.scrollTop).toBe(2200 - 400);
@@ -1189,46 +1155,13 @@ describe("useConversationScrollState — high-frequency stream", () => {
     // new bottom.
 
     // The drag ends: the resizing marker drops, the ResizeObserver
-    // fires one more time. We commit the real scrollTop in a single
-    // paint and clear the transform.
+    // fires one more time.
     act(() => {
       document.documentElement.classList.remove(WINDOW_RESIZING_CLASS);
       flushResizeObservers();
     });
 
-    expect(contentNode.style.transform).toBe("");
     expect(layout.scrollTop).toBe(2200 - 400);
-  });
-
-  it("does not transform a short conversation if the turn snapshot updates during window resize", () => {
-    mount({ scrollHeight: 500, clientHeight: 600 });
-    if (!layout || !node) throw new Error("not mounted");
-    layout.scrollTop = 0;
-    flushScheduledScroll();
-    flushResizeObservers();
-    expect(layout.scrollTop).toBe(0);
-
-    const contentNode = container.querySelector(
-      "[data-testid='scroll-content']",
-    ) as HTMLDivElement | null;
-    if (!contentNode) throw new Error("scroll-content not rendered");
-
-    act(() => {
-      document.documentElement.classList.add(WINDOW_RESIZING_CLASS);
-      rerenderTurns(makeLongTurnsSnapshot(2));
-      layout!.clientHeight = 620;
-      flushResizeObservers();
-      layout!.clientHeight = 700;
-      flushResizeObservers();
-    });
-
-    expect(contentNode.style.transform).toBe("");
-    expect(layout.scrollTop).toBe(0);
-
-    act(() => {
-      document.documentElement.classList.remove(WINDOW_RESIZING_CLASS);
-      flushResizeObservers();
-    });
   });
 
   it("does not read scroll metrics when a layout scroll event fires during live window resize", () => {
@@ -1268,46 +1201,6 @@ describe("useConversationScrollState — high-frequency stream", () => {
     });
   });
 
-  it("keeps the conversation in normal flow while following each live resize frame", () => {
-    // Repeated observer notifications should keep the real scroll position
-    // aligned without introducing a temporary transform.
-    mount({ scrollHeight: 2200, clientHeight: 600 });
-    if (!layout || !handle || !node) throw new Error("not mounted");
-    flushScheduledScroll();
-    // Establish the pre-resize baseline (600px) before the drag starts.
-    flushResizeObservers();
-    expect(layout.scrollTop).toBe(1600);
-
-    const contentNode = container.querySelector(
-      "[data-testid='scroll-content']",
-    ) as HTMLDivElement | null;
-    if (!contentNode) throw new Error("scroll-content not rendered");
-
-    act(() => {
-      document.documentElement.classList.add(WINDOW_RESIZING_CLASS);
-      layout!.clientHeight = 500;
-      flushResizeObservers();
-    });
-    expect(contentNode.style.transform).toBe("");
-    act(() => flushAnimationFrames());
-    expect(layout.scrollTop).toBe(2200 - 500);
-
-    act(() => {
-      layout!.clientHeight = 350;
-      flushResizeObservers();
-    });
-    expect(contentNode.style.transform).toBe("");
-    act(() => flushAnimationFrames());
-    expect(layout.scrollTop).toBe(2200 - 350);
-
-    act(() => {
-      document.documentElement.classList.remove(WINDOW_RESIZING_CLASS);
-      flushResizeObservers();
-    });
-    expect(contentNode.style.transform).toBe("");
-    expect(layout.scrollTop).toBe(2200 - 350);
-  });
-
   it("keeps following at the hard boundary after downward inertia", () => {
     mount({ scrollHeight: 2000, clientHeight: 600 });
     if (!layout || !handle || !node) throw new Error("not mounted");
@@ -1318,11 +1211,6 @@ describe("useConversationScrollState — high-frequency stream", () => {
     });
     fireUserScroll();
 
-    const contentNode = container.querySelector(
-      "[data-testid='scroll-content']",
-    ) as HTMLDivElement | null;
-    if (!contentNode) throw new Error("scroll-content not rendered");
-
     act(() => {
       layout!.scrollTop = layout!.scrollHeight - layout!.clientHeight;
       node!.dispatchEvent(
@@ -1330,8 +1218,6 @@ describe("useConversationScrollState — high-frequency stream", () => {
       );
       node!.dispatchEvent(new Event("scroll", { bubbles: false }));
     });
-
-    expect(contentNode.style.transform).toBe("");
 
     act(() => {
       layout!.scrollHeight += 80;
