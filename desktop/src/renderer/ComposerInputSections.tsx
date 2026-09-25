@@ -38,7 +38,7 @@ import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { ComposerAttachMenuButton, ComposerCameraPanel } from "./ComposerCamera";
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
 import { Tooltip } from "./Tooltip";
-import { TruncatedText } from "./TruncatedText";
+import { ComposerFeedback } from "./ComposerFeedback";
 import type { MessageContentPart } from "../shared/protocol";
 
 const ComposerDrawer = createComposerDrawer(React);
@@ -309,6 +309,7 @@ export function SplitPaneComposer({
       <div className="composer-stack">
         <div className="composer-shell" ref={shellRef}>
           <div className="composer-frame-shell">
+            <ComposerFeedback text={statusText} liveProgress={statusIsLiveProgress} />
             {cameraOpen && !readOnly ? (
               <ComposerCameraPanel onCapture={captureCamera} onClose={closeCamera} />
             ) : null}
@@ -414,14 +415,6 @@ export function SplitPaneComposer({
                         <Paperclip aria-hidden="true" />
                       </button>
                     )}
-                    {statusText ? (
-                      <span className="split-composer-status">
-                        <TruncatedText
-                          className={`split-composer-status-text${statusIsLiveProgress ? " live-progress-chip" : ""}`}
-                          text={statusText}
-                        />
-                      </span>
-                    ) : null}
                   </div>
                   <div className="composer-bar-right">
                     {showStop ? (

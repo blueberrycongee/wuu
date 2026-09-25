@@ -2176,6 +2176,7 @@ describe("AppState unread tracking", () => {
       { id: "turn-1", status: "completed" },
     ]);
     expect(isThreadUnread(thread, undefined)).toBe(true);
+    expect(isThreadUnread({ ...thread, archived: true }, undefined)).toBe(false);
   });
 
   it("isThreadUnread returns false when lastViewed matches the latest turn", () => {

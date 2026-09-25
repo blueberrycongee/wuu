@@ -25,6 +25,58 @@ func dispatchPayload(t *testing.T, srv *Server, id, method string, params any) {
 	}
 }
 
+func TestServerThreadListArchivedReturnsArchivedSession(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+
+	dispatchPayload(t, srv, "1", "thread/start", nil)
+	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread.ID
+
+	// Another workspace process archives the session while this server caches it.
+	control, err := session.ChangeControl(rt.SessionDir, threadID, "manager", session.ControlActive, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.ArchiveControlled(rt.SessionDir, control, "agent_deleted"); err != nil {
+		t.Fatal(err)
+	}
+
+	dispatchPayload(t, srv, "3", "thread/listArchived", nil)
+	resp := responseByID(t, parseOutput(t, out.String()), "3")
+	if resp["error"] != nil {
+		t.Fatalf("thread/listArchived errored: %+v", resp["error"])
+	}
+	list := remarshal[ThreadListResult](t, resp["result"])
+	if len(list.Threads) != 1 {
+		t.Fatalf("archived list should contain the archived thread, got %+v", list.Threads)
+	}
+	if list.Threads[0].ID != threadID {
+		t.Fatalf("archived list returned the wrong thread: %+v", list.Threads[0])
+	}
+	if !list.Threads[0].Archived || list.Threads[0].ArchiveReason != "agent_deleted" {
+		t.Fatalf("archived thread must carry Archived=true, got %+v", list.Threads[0])
+	}
+
+	// Regression: thread/list must still hide archived threads so the active
+	// sidebar does not surface them.
+	dispatchPayload(t, srv, "4", "thread/list", nil)
+	active := remarshal[ThreadListResult](t, responseByID(t, parseOutput(t, out.String()), "4")["result"])
+	for _, th := range active.Threads {
+		if th.Archived {
+			t.Fatalf("thread/list leaked an archived thread: %+v", th)
+		}
+	}
+	if _, err := session.UpdateArchived(rt.SessionDir, threadID, false); err != nil {
+		t.Fatal(err)
+	}
+	dispatchPayload(t, srv, "5", "thread/listArchived", nil)
+	restored := remarshal[ThreadListResult](t, responseByID(t, parseOutput(t, out.String()), "5")["result"])
+	if len(restored.Threads) != 0 {
+		t.Fatalf("stale cache re-archived a restored session: %+v", restored.Threads)
+	}
+}
+
 func TestServerThreadListArchivedOmitsActiveThreads(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}

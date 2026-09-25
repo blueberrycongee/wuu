@@ -1746,7 +1746,7 @@ export type WorkspaceFileReadResult = {
   truncated: boolean;
   text?: string;
   renderable_url?: string;
-  renderable_kind?: "image" | "pdf";
+  renderable_kind?: "image" | "pdf" | "video";
 };
 
 export type WorkspaceFileSaveParams = {
@@ -2047,6 +2047,7 @@ export type Thread = {
   pinned?: boolean;
   folder_id?: string;
   archived?: boolean;
+  archive_reason?: string;
   forked_from_id?: string;
   forked_from_turn_id?: string;
   forked_from_item_id?: string;

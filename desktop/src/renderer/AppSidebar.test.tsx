@@ -1,4 +1,4 @@
-import { act, createRef, type ReactNode } from "react";
+import { act, createRef, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -98,6 +98,7 @@ interface RenderOptions {
 // replace the whole workbench, such as settings), so the harness owns the flag
 // here and hands AppSidebar the same controlled props it gets in production.
 function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
+  const [collapsedFolderIDs, setCollapsedFolderIDs] = useState<Set<string>>(() => new Set());
   const {
     expandedSidebarSectionIDs = new Set(),
     projectThreadsByProjectID = {},
@@ -138,6 +139,8 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
       pendingThreadID={pendingThreadID}
       pendingProjectID={undefined}
       collapsedSidebarSectionIDs={collapsedSidebarSectionIDs}
+      collapsedFolderIDs={collapsedFolderIDs}
+      setCollapsedFolderIDs={setCollapsedFolderIDs}
       expandedSidebarSectionIDs={expandedSidebarSectionIDs}
       projectThreadsByProjectID={projectThreadsByProjectID}
       projectMenuOpen={false}
@@ -204,10 +207,16 @@ describe("AppSidebar layout", () => {
   ])("restores group order without resetting existing preferences: $saved", ({ saved, expected }) => {
     window.localStorage.setItem("wuu.desktop.sidebarFunctionalGroupOrder", JSON.stringify(saved));
     const onCreateRoom = vi.fn();
-    const options = {
-      collaborationNavigation: <CollaborationSidebar embedded initialized agents={[]} rooms={[]}
+    function CollaborationNavigation() {
+      const [sectionCollapsed, setSectionCollapsed] = useState(false);
+      return <CollaborationSidebar embedded initialized agents={[]} rooms={[]}
+        sectionCollapsed={sectionCollapsed}
+        onToggleSectionCollapsed={() => setSectionCollapsed((value) => !value)}
         onSelectAgent={() => {}} onSelectRoom={() => {}} onManageAgents={() => {}}
-        onCreateRoom={onCreateRoom} onSwitchToHarness={() => {}} onOpenSettings={() => {}} />,
+        onCreateRoom={onCreateRoom} onSwitchToHarness={() => {}} onOpenSettings={() => {}} />;
+    }
+    const options = {
+      collaborationNavigation: <CollaborationNavigation />,
     };
     const order = () => [...container.querySelectorAll<HTMLElement>(".sidebar-main > .sidebar-functional-group")]
       .map((element) => element.dataset.functionalGroupId ?? element.dataset.sectionId);

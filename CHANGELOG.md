@@ -8,7 +8,36 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Video output cards and workspace video files open an inline player with
+  playback, seeking, volume, and fullscreen controls. Unsupported codecs show
+  a message while keeping the download action available.
+
+### Fixed
+
+- Ready Agent Core entries show an external agent's detected executable path in
+  its override field without repeating it in the status or help text.
+
+- Model choices in desktop settings keep a stable order and selected styling.
+  The catalog no longer shows ineffective per-model remove controls or selection
+  animations, and provider remove controls keep their icon centered and color
+  stable on hover.
+
+- Deleting an agent archives sessions still under its management in a separate
+  Agent archive, keeping them out of workspace and unread lists. Previously
+  orphaned sessions are reconciled, and user-taken-over sessions stay available.
+  Agent deletion updates navigation immediately and reconciles cleanup errors.
+
+- Preserve sidebar folder and collaboration folds when returning from settings,
+  including after switching between light and dark themes.
+
+## [2026.9.25] - 2026-09-25
+
 ### Changed
+
+- The composer model picker adapts to larger UI text and supports keyboard
+  navigation, focused search, and clearer engine-managed model guidance.
 
 - Desktop titlebars, tab bars, and the sidebar place their first and last
   icons 20px from the pane edge on both sides. In the message column, tables
@@ -65,6 +94,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   for both the first message and follow-ups.
 
 ### Fixed
+
+- Composer feedback no longer crowds the send toolbar. Redundant queue-edit,
+  commit, and pull-request confirmations are removed; errors and restrictions
+  remain readable above the input in both main and split conversations.
 
 - Desktop conversation refresh and session resume discard obsolete cached
   messages when a full completed turn arrives, preventing duplicate replies

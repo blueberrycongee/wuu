@@ -3,7 +3,7 @@ import type { GitStatusResult, RuntimeContext } from "../shared/protocol";
 import { initialState, type AppState } from "./AppState";
 import { createEnvironmentActions } from "./EnvironmentActions";
 import type { EnvironmentPanelMenu } from "./EnvironmentPanel";
-import { resolveLocalizedText, translateCurrent as t } from "./i18n";
+import { translateCurrent as t } from "./i18n";
 
 const originalWuu = (window as unknown as { wuu?: unknown }).wuu;
 
@@ -162,7 +162,7 @@ describe("createEnvironmentActions", () => {
     expect(harness.closeProjectMenus).not.toHaveBeenCalled();
   });
 
-  it("updates status after committing environment changes", async () => {
+  it("returns to ready after committing environment changes", async () => {
     const api = installWuuApi();
     const harness = buildActions();
 
@@ -178,7 +178,7 @@ describe("createEnvironmentActions", () => {
       },
       "/tmp/project-1",
     );
-    expect(resolveLocalizedText(harness.getAppState().status)).toBe("已提交 abc123");
+    expect(harness.getAppState().status).toBe("ready");
   });
 
   it("discards a Git status response after the session workspace changes", async () => {

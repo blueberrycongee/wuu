@@ -2200,6 +2200,7 @@ type Thread struct {
 	Pinned                bool          `json:"pinned,omitempty"`
 	FolderID              string        `json:"folder_id,omitempty"`
 	Archived              bool          `json:"archived,omitempty"`
+	ArchiveReason         string        `json:"archive_reason,omitempty"`
 	ForkedFromID          string        `json:"forked_from_id,omitempty"`
 	ForkedFromTurnID      string        `json:"forked_from_turn_id,omitempty"`
 	ForkedFromItemID      string        `json:"forked_from_item_id,omitempty"`

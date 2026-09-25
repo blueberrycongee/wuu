@@ -41,6 +41,8 @@ Deleting an agent removes it from the agent list and its channels, deletes its d
 
 Shared channel messages and completed task history retain their original attribution. Ordinary project session history and file changes remain available; deletion does not undo completed commands.
 
+Sessions still managed by the deleted agent, including paused sessions, move to **Settings → Archive → Agent archive**. They do not appear in workspace navigation, unread lists, or the ordinary conversation archive. You can restore them as independent conversations. Sessions you already took over or released from management stay where they are. Wuu also moves orphaned managed sessions left by earlier versions into this archive.
+
 ## Keep work available
 
 Room memory is shared within its room; identity memory belongs to the named agent. Agents can use these stores and saved plans as part of continuing work. Scheduled execution needs the host to be running: a sleeping or powered-off machine cannot carry out the task on time.

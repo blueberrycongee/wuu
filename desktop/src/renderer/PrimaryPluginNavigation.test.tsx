@@ -70,6 +70,8 @@ function renderShell({ inventory: available }: { inventory?: ExtensionInventoryR
       pinnedThreads={[{ ...thread, turn_count: 0 }]}
       activeThreadID={thread.id}
       collapsedSidebarSectionIDs={new Set()}
+      collapsedFolderIDs={new Set()}
+      setCollapsedFolderIDs={() => {}}
       expandedSidebarSectionIDs={new Set()}
       projectThreadsByProjectID={{}}
       projectMenuOpen={false}
