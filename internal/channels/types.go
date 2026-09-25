@@ -217,10 +217,12 @@ type RoomOnboarding struct {
 }
 
 type Room struct {
-	Onboarding *RoomOnboarding `json:"onboarding,omitempty"`
-	ID         string          `json:"id"`
-	Kind       RoomKind        `json:"kind"`
-	Name       string          `json:"name"`
+	WorkspaceRoot string          `json:"workspace_root,omitempty"`
+	WorkspaceID   string          `json:"workspace_id,omitempty"`
+	Onboarding    *RoomOnboarding `json:"onboarding,omitempty"`
+	ID            string          `json:"id"`
+	Kind          RoomKind        `json:"kind"`
+	Name          string          `json:"name"`
 	// RuntimeID is internal routing state, not a participant identity.
 	RuntimeID string `json:"-"`
 	// AgentID is a source-compatible internal alias for migrations and tests.

@@ -346,6 +346,7 @@ export const zhCN = {
   "channels.sessions.more": "显示更多（还有 {count} 个）",
   "channels.sessions.identitySetupRequired": "请先在身份设置中选择 BYOK 模型，再启动协作会话。",
   "channels.sessions.managed": "管理的会话",
+  "channels.project": "项目",
   "channels.sessions.returnControl": "交还托管",
   "channels.sessions.takeoverHint": "向此会话发送消息即接管会话。",
   "channels.sessions.control.active": "自动跟进",

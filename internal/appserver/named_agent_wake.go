@@ -348,6 +348,15 @@ func (s *Server) collaborationOrientation(agent channels.AgentRuntime, collabora
 		} else {
 			orientation += fmt.Sprintf("\n\nYour session_ref is %s, your room_id is %s, and your session purpose is %s. Use the current request and relevant task state to determine your objective.", binding.SessionRef, binding.RoomID, binding.Purpose)
 		}
+		if binding.RoomID != "" {
+			projectContext, err := s.channelService.ProjectContext(context.Background(), binding.RoomID)
+			if err != nil {
+				return "", err
+			}
+			if projectContext != "" {
+				orientation += "\n\n" + projectContext
+			}
+		}
 		if !agent.IsRoomRuntime() {
 			switch binding.Purpose {
 			case channels.CollaborationSessionWork:

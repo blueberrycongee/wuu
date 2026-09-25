@@ -314,7 +314,11 @@ func (s *Server) handleChannelDirectMessageOpen(ctx context.Context, req Request
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	room, err := s.channelService.OpenDirectMessage(ctx, localChannelHumanID, params.AgentID)
+	root, id, err := s.resolveSessionWorkspace(params.WorkspaceID, params.WorkspaceRoot)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	room, err := s.channelService.OpenProjectDirectMessage(ctx, localChannelHumanID, params.AgentID, sessionWorkspacePath(root), id)
 	if err == nil && params.Onboarding != nil {
 		room, err = s.channelService.SaveRoomOnboarding(ctx, room.ID, *params.Onboarding)
 	}

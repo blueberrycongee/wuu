@@ -829,6 +829,8 @@ export type ChannelRoomOnboarding = {
 };
 
 export type ChannelRoom = {
+  workspace_root?: string;
+  workspace_id?: string;
   onboarding?: ChannelRoomOnboarding;
   id: string;
   kind: "channel" | "dm";
@@ -1169,6 +1171,8 @@ export type ChannelRoomCreateParams = {
 };
 export type ChannelRoomCreateResult = { room: ChannelRoom };
 export type ChannelDirectMessageOpenParams = {
+  workspace_root?: string;
+  workspace_id?: string;
   agent_id: string;
   onboarding?: ChannelRoomOnboarding;
 };
@@ -2020,7 +2024,7 @@ export type SessionOrganization = {
 };
 
 export type Thread = {
- session_control?: { manager_id: string; manager_name: string; state: "active" | "paused" | "taken_over"; revision: number };
+ session_control?: { room_id?: string; manager_id: string; manager_name: string; state: "active" | "paused" | "taken_over"; revision: number };
   id: string;
   parent_id?: string;
   agent_path?: string;

@@ -349,6 +349,7 @@ export const enUS = {
   "channels.sessions.more": "Show more ({count} remaining)",
   "channels.sessions.identitySetupRequired": "Select a BYOK model in this identity’s settings before starting a session.",
   "channels.sessions.managed": "Managed sessions",
+  "channels.project": "Project",
   "channels.sessions.returnControl": "Return to manager",
   "channels.sessions.takeoverHint": "Sending a message takes control of this session.",
   "channels.sessions.control.active": "Managed",

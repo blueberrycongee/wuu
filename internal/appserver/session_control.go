@@ -62,10 +62,10 @@ func (s *Server) readThreadSessionControl(id string) (*ThreadSessionControl, err
 	if err != nil || !ok {
 		return nil, err
 	}
-	return s.threadSessionControl(c), nil
+	return s.threadSessionControl(id, c), nil
 }
 
-func (s *Server) threadSessionControl(c session.Control) *ThreadSessionControl {
+func (s *Server) threadSessionControl(id string, c session.Control) *ThreadSessionControl {
 	if c.ManagerID == "" || c.State == session.ControlReleased {
 		return nil
 	}
@@ -75,7 +75,13 @@ func (s *Server) threadSessionControl(c session.Control) *ThreadSessionControl {
 			name = agent.Name
 		}
 	}
-	return &ThreadSessionControl{ManagerID: c.ManagerID, ManagerName: name, State: c.State, Revision: c.Revision}
+	result := &ThreadSessionControl{ManagerID: c.ManagerID, ManagerName: name, State: c.State, Revision: c.Revision}
+	if s.channelService != nil {
+		if link, err := s.channelService.HarnessLink(context.Background(), id); err == nil {
+			result.RoomID = link.RoomID
+		}
+	}
+	return result
 }
 
 func (s *Server) publishSessionControl(id string) {
@@ -137,5 +143,5 @@ func (s *Server) handleThreadControl(ctx context.Context, req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	s.publishSessionControl(p.ThreadID)
-	return s.writeResponse(req.ID, map[string]any{"control": s.threadSessionControl(c)}, nil)
+	return s.writeResponse(req.ID, map[string]any{"control": s.threadSessionControl(p.ThreadID, c)}, nil)
 }

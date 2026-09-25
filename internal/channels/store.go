@@ -663,6 +663,9 @@ func (s *Service) migrate() error {
 	if err := s.ensureLegacyColumns(); err != nil {
 		return err
 	}
+	if err := s.migrateProjectRooms(); err != nil {
+		return err
+	}
 	if err := s.migrateCollaborationPrincipals(); err != nil {
 		return err
 	}
@@ -870,6 +873,8 @@ func (s *Service) ensureLegacyColumns() error {
 		{table: "named_agents", name: "engine_override", definition: "TEXT"},
 		{table: "named_agents", name: "effort_override", definition: "TEXT"},
 		{table: "named_agents", name: "deleted_at", definition: "INTEGER"},
+		{table: "rooms", name: "workspace_root", definition: "TEXT NOT NULL DEFAULT ''"},
+		{table: "rooms", name: "workspace_id", definition: "TEXT NOT NULL DEFAULT ''"},
 		{table: "rooms", name: "avatar_image", definition: "TEXT NOT NULL DEFAULT ''"},
 		{table: "rooms", name: "membership_revision", definition: "INTEGER NOT NULL DEFAULT 1"},
 		{table: "collaboration_messages", name: "kind", definition: "TEXT NOT NULL DEFAULT 'control'"},
@@ -1687,6 +1692,9 @@ func roomAgentName(roomName string) string {
 // named agent, creating it when needed. The pair table makes this operation
 // idempotent across restarts and protects against concurrent creators.
 func (s *Service) OpenDirectMessage(ctx context.Context, humanID, agentID string) (Room, error) {
+	return s.OpenProjectDirectMessage(ctx, humanID, agentID, "", "")
+}
+func (s *Service) OpenProjectDirectMessage(ctx context.Context, humanID, agentID, workspaceRoot, workspaceID string) (Room, error) {
 	humanID = strings.TrimSpace(humanID)
 	agentID = strings.TrimSpace(agentID)
 	if humanID == "" {
@@ -1708,7 +1716,7 @@ func (s *Service) OpenDirectMessage(ctx context.Context, humanID, agentID string
 	}
 	var roomID string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT room_id FROM direct_messages WHERE human_id = ? AND agent_id = ?`, humanID, agentID,
+		SELECT room_id FROM direct_messages WHERE human_id = ? AND agent_id = ? AND workspace_root = ?`, humanID, agentID, workspaceRoot,
 	).Scan(&roomID)
 	if err == nil {
 		return s.GetRoom(ctx, roomID)
@@ -1726,19 +1734,19 @@ func (s *Service) OpenDirectMessage(ctx context.Context, humanID, agentID string
 			ON human_member.room_id = rooms.id AND human_member.member_type = 'human' AND human_member.member_id = ?
 		JOIN room_members AS agent_member
 			ON agent_member.room_id = rooms.id AND agent_member.member_type = 'agent' AND agent_member.member_id = ?
-		WHERE rooms.kind = 'dm'
+		WHERE rooms.kind = 'dm' AND rooms.workspace_root = ?
 			AND (SELECT COUNT(*) FROM room_members WHERE room_id = rooms.id) = 2
 		ORDER BY rooms.created_at, rooms.id
-		LIMIT 1`, humanID, agentID,
+		LIMIT 1`, humanID, agentID, workspaceRoot,
 	).Scan(&roomID)
 	if err == nil {
 		if _, insertErr := s.db.ExecContext(ctx, `
-			INSERT INTO direct_messages (human_id, agent_id, room_id) VALUES (?, ?, ?)
-			ON CONFLICT(human_id, agent_id) DO NOTHING`, humanID, agentID, roomID); insertErr != nil {
+			INSERT INTO direct_messages (human_id, agent_id, room_id, workspace_root) VALUES (?, ?, ?, ?)
+			ON CONFLICT(human_id, agent_id, workspace_root) DO NOTHING`, humanID, agentID, roomID, workspaceRoot); insertErr != nil {
 			return Room{}, fmt.Errorf("index existing direct message: %w", insertErr)
 		}
 		if lookupErr := s.db.QueryRowContext(ctx, `
-			SELECT room_id FROM direct_messages WHERE human_id = ? AND agent_id = ?`, humanID, agentID,
+			SELECT room_id FROM direct_messages WHERE human_id = ? AND agent_id = ? AND workspace_root = ?`, humanID, agentID, workspaceRoot,
 		).Scan(&roomID); lookupErr != nil {
 			return Room{}, fmt.Errorf("reload indexed direct message: %w", lookupErr)
 		}
@@ -1754,7 +1762,7 @@ func (s *Service) OpenDirectMessage(ctx context.Context, humanID, agentID string
 	}
 	now := fromMillis(toMillis(s.now()))
 	room := Room{
-		ID: id, Kind: RoomDM, Name: agentName, CreatedBy: humanID, CreatedAt: now, MembershipRevision: 1,
+		WorkspaceRoot: workspaceRoot, WorkspaceID: workspaceID, ID: id, Kind: RoomDM, Name: agentName, CreatedBy: humanID, CreatedAt: now, MembershipRevision: 1,
 		Members: []RoomMember{
 			{RoomID: id, MemberType: MemberHuman, MemberID: humanID, JoinedAt: now},
 			{RoomID: id, MemberType: MemberAgent, MemberID: agentID, JoinedAt: now},
@@ -1766,8 +1774,8 @@ func (s *Service) OpenDirectMessage(ctx context.Context, humanID, agentID string
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO rooms (id, kind, name, avatar_image, created_by, created_at) VALUES (?, ?, ?, '', ?, ?)`,
-		room.ID, room.Kind, room.Name, room.CreatedBy, toMillis(room.CreatedAt)); err != nil {
+		INSERT INTO rooms (id, kind, name, avatar_image, created_by, created_at, workspace_root, workspace_id) VALUES (?, ?, ?, '', ?, ?, ?, ?)`,
+		room.ID, room.Kind, room.Name, room.CreatedBy, toMillis(room.CreatedAt), workspaceRoot, workspaceID); err != nil {
 		return Room{}, fmt.Errorf("insert direct message room: %w", err)
 	}
 	for _, member := range room.Members {
@@ -1783,13 +1791,13 @@ func (s *Service) OpenDirectMessage(ctx context.Context, humanID, agentID string
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO direct_messages (human_id, agent_id, room_id) VALUES (?, ?, ?)`, humanID, agentID, room.ID); err != nil {
+		INSERT INTO direct_messages (human_id, agent_id, room_id, workspace_root) VALUES (?, ?, ?, ?)`, humanID, agentID, room.ID, workspaceRoot); err != nil {
 		if isUniqueConstraint(err) {
 			if rollbackErr := tx.Rollback(); rollbackErr != nil {
 				return Room{}, fmt.Errorf("resolve direct message create conflict: %w", rollbackErr)
 			}
 			if lookupErr := s.db.QueryRowContext(ctx, `
-				SELECT room_id FROM direct_messages WHERE human_id = ? AND agent_id = ?`, humanID, agentID,
+				SELECT room_id FROM direct_messages WHERE human_id = ? AND agent_id = ? AND workspace_root = ?`, humanID, agentID, workspaceRoot,
 			).Scan(&roomID); lookupErr != nil {
 				return Room{}, fmt.Errorf("reload concurrent direct message: %w", lookupErr)
 			}
@@ -1815,7 +1823,7 @@ func (s *Service) GetRoom(ctx context.Context, id string) (Room, error) {
 	// Match the visible conversation, not task bookkeeping. Select the whole
 	// message so preview text and the sidebar's activity time stay in sync.
 	err := s.db.QueryRowContext(ctx, `
-		SELECT room.id, room.kind, room.name, room.avatar_image, room.created_by, room.membership_revision, room.created_at,
+		SELECT room.id, room.kind, room.name, room.workspace_root, room.workspace_id, room.avatar_image, room.created_by, room.membership_revision, room.created_at,
 			COALESCE(runtime.id, ''), COALESCE(message.id, ''), COALESCE(message.author_type, ''),
 			COALESCE(message.author_id, ''), COALESCE(message.kind, ''),
 			substr(COALESCE(message.body, ''), 1, 240),
@@ -1828,7 +1836,7 @@ func (s *Service) GetRoom(ctx context.Context, id string) (Room, error) {
 			ORDER BY seq DESC LIMIT 1
 		)
 		WHERE room.id = ?`, id,
-	).Scan(&room.ID, &room.Kind, &room.Name, &room.AvatarImage, &room.CreatedBy, &room.MembershipRevision, &createdAt, &room.RuntimeID,
+	).Scan(&room.ID, &room.Kind, &room.Name, &room.WorkspaceRoot, &room.WorkspaceID, &room.AvatarImage, &room.CreatedBy, &room.MembershipRevision, &createdAt, &room.RuntimeID,
 		&preview.ID, &preview.AuthorType, &preview.AuthorID, &preview.Kind, &preview.Body, &preview.HasAttachments, &messageCreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Room{}, fmt.Errorf("%w: room %q", ErrNotFound, id)

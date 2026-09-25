@@ -581,6 +581,15 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
   const [resolvingProposalID, setResolvingProposalID] = useState("");
   const [roomAvatarImage, setRoomAvatarImage] = useState("");
   const [editingRoomID, setEditingRoomID] = useState("");
+  const [conversationProjects, setConversationProjects] = useState<{ id: string; name: string; path: string }[]>([]);
+  const [conversationWorkspace, setConversationWorkspace] = useState(initialized?.workspace_root ?? "");
+  useEffect(() => {
+    let current = true;
+    void window.wuu?.listProjects?.().then(result => {
+      if (current) setConversationProjects(result.projects.filter(project => !project.missing));
+    }).catch(reason => showErrorToast(reason));
+    return () => { current = false; };
+  }, []);
   const [newRoomBody, setNewRoomBody] = useState("");
   const [newRoomImages, setNewRoomImages] = useState<ComposerImage[]>([]);
   const [newRoomFiles, setNewRoomFiles] = useState<ComposerFile[]>([]);
@@ -1601,7 +1610,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
         await onOpenAgentConversation(agentID);
         return;
       }
-      const { room } = await window.wuu.openChannelDirectMessage({ agent_id: agentID });
+      const { room } = await window.wuu.openChannelDirectMessage({ agent_id: agentID, workspace_root: conversationWorkspace || initialized?.workspace_root });
       setRooms((current) => [...current.filter((entry) => entry.id !== room.id), room]);
       closeRoomPanel();
       openSessionRoom(room.id);
@@ -1832,7 +1841,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
           return agent;
         }}
         onOpenConversation={async (agent, onboarding) => {
-          const { room } = await window.wuu!.openChannelDirectMessage({ agent_id: agent.id, onboarding });
+          const { room } = await window.wuu!.openChannelDirectMessage({ agent_id: agent.id, onboarding, workspace_root: conversationWorkspace || initialized?.workspace_root });
           setRooms((current) => [...current.filter((entry) => entry.id !== room.id), room]);
           setSelectedAgentID("");
           openSessionRoom(room.id);
@@ -2031,6 +2040,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
             <header className="titlebar channel-room-header" data-wuu-component="conversation-titlebar">
               {navigation}
               {composingNewRoom ? <>
+                {conversationProjects.length ? <SelectMenu value={conversationWorkspace} onChange={setConversationWorkspace} options={conversationProjects.map(project => ({ value: project.path, label: project.name }))} ariaLabel={t("channels.project")} /> : null}
                 <ChannelRecipientPicker
                   agents={agents}
                   selectedAgentIDs={roomAgentIDs}
@@ -2236,7 +2246,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
               threshold={AUTO_FOLLOW_BOTTOM_THRESHOLD_PX}
               companion={selectedRoom.kind === "dm" && selectedRoomAgents[0] && onOpenSession ? <ManagedAgentWork
                 key={selectedRoom.id}
-                threads={managedThreadsByAgentID[selectedRoomAgents[0].id] ?? []}
+                threads={(managedThreadsByAgentID[selectedRoomAgents[0].id] ?? []).filter(thread => !thread.session_control?.room_id || thread.session_control.room_id === selectedRoomID)}
                 expanded={Boolean(inspectedSession?.managedAgentID) && !inspectorClosing}
                 onShowAll={() => {
                   if (savingAgent) return;
@@ -2357,7 +2367,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
           aria-label={t("app.resizeRightSidebar")} aria-orientation="vertical"
           {...inspectorResize.separatorProps} /> : null}
         {inspectedSession?.managedAgentID ? <ManagedAgentSessionPanel key={`${inspectedSession.roomID}:${inspectedSession.managedAgentID}`}
-          name={inspectedSession.name} threads={managedThreadsByAgentID[inspectedSession.managedAgentID] ?? []}
+          name={inspectedSession.name} threads={(managedThreadsByAgentID[inspectedSession.managedAgentID] ?? []).filter(thread => !thread.session_control?.room_id || thread.session_control.room_id === inspectedSession.roomID)}
           lastViewedTurnByThreadID={lastViewedTurnByThreadID} overlay={inspectorOverlay} closing={inspectorClosing}
           onClose={closeInspector} onSelect={id => onOpenSession?.(id)} />
           : inspectedSession?.agentID ? <ChannelActivityInspector key={`${inspectedSession.roomID}:${inspectedSession.agentID}`}

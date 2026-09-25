@@ -44,7 +44,7 @@ export function collaborationConversations(
     if (agentID) representedAgents.add(agentID);
     const agent = agentID ? agentsByID.get(agentID) : undefined;
     return {
-      id: room.id, room, agent, name: agent?.name ?? room.name,
+      id: room.id, room, agent, name: `${agent?.name ?? room.name}${room.workspace_root ? ` · ${room.workspace_root.split(/[\\/]/).filter(Boolean).at(-1)}` : ""}`,
       updatedAt: room.last_message?.created_at ?? room.created_at,
       pinned: pinnedRoomIDs.includes(room.id),
     };

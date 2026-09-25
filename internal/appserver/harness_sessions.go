@@ -107,7 +107,14 @@ func (s *Server) HarnessSession(ctx context.Context, actor channels.HarnessSessi
 	p.Prompt = strings.TrimSpace(p.Prompt)
 	if p.Action == "create" {
 		if p.WorkspaceRoot == "" && p.WorkspaceID == "" {
-			return nil, errors.New("create requires the task's workspace_root or workspace_id; identity homes are not project defaults")
+			room, err := s.channelService.GetRoom(ctx, actor.RoomID)
+			if err != nil {
+				return nil, err
+			}
+			p.WorkspaceRoot, p.WorkspaceID = room.WorkspaceRoot, room.WorkspaceID
+			if p.WorkspaceRoot == "" && p.WorkspaceID == "" {
+				return nil, errors.New("this conversation has no project; choose a workspace for execution")
+			}
 		}
 		if p.Prompt == "" {
 			return nil, errors.New("create requires prompt")
@@ -511,6 +518,13 @@ func (s *Server) applyHarnessOperationLocked(ctx context.Context, op *channels.H
 	th, err := s.ensureThreadLoaded(p.SessionID)
 	if err != nil {
 		return err
+	}
+	projectContext, err := s.channelService.ProjectContext(ctx, op.Actor.RoomID)
+	if err != nil {
+		return err
+	}
+	if projectContext != "" {
+		msg.Content += "\n\n" + projectContext
 	}
 	if op.Actor.WorkID != "" {
 		work, err := s.channelService.GetWork(ctx, op.Actor.WorkID)

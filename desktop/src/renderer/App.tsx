@@ -3931,11 +3931,11 @@ export function App(): JSX.Element {
 
   async function deleteCollaborationConversation(conversation: CollaborationConversation): Promise<void> {
     const { agent, room, name } = conversation;
-    if (!agent && room?.kind !== "channel") return;
-    if (!window.confirm(t(agent ? "channels.deleteAgentConfirm" : "channels.deleteRoomConfirm", { name }))) return;
+    if (!agent && !room) return;
+    if (!window.confirm(t(room ? "channels.deleteRoomConfirm" : "channels.deleteAgentConfirm", { name }))) return;
     try {
-      if (agent) await window.wuu.deleteNamedAgent({ agent_id: agent.id });
-      else await window.wuu.deleteChannelRoom({ room_id: room!.id });
+      if (room) await window.wuu.deleteChannelRoom({ room_id: room.id });
+      else await window.wuu.deleteNamedAgent({ agent_id: agent!.id });
       const [agentResult, roomResult] = await Promise.all([window.wuu.listNamedAgents(), window.wuu.listChannelRooms()]);
       setNamedAgents(agentResult.agents);
       setChannelRooms(roomResult.rooms);
