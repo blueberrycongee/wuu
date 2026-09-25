@@ -32,6 +32,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Creating an agent asks only for its model and name. The name step no longer
+  shows switch-model and project controls above the input, and the random-name
+  action sits inside the name input. The first conversation opens in the
+  project chosen for the new conversation, shown in its header; the model stays
+  editable in the agent's settings.
+
 - Desktop motion shares one duration ladder and one reduced-motion signal.
   The in-app Motion preference and the OS setting both collapse token-driven
   transitions, entrances, exits, drag movement, and frame-driven motion;
@@ -91,6 +97,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   of 2048, so a typical source file or document is read in one call.
 
 ### Fixed
+
+- The new-agent setup header drags the window across its full width again, and
+  its height follows the window title bar after page zoom and at large UI font
+  sizes.
 
 - Work delivery reads structured reports from the final answer, so commentary
   before tool calls no longer causes completed executions to fail validation.
