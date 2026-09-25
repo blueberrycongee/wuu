@@ -1001,6 +1001,7 @@ export type ChannelCollaborationMessage = {
 };
 
 export type ChannelWork = {
+ state_deadline_at?: string;
  revision?: number;
  constraints?: string;
  decisions?: string[];
@@ -1076,7 +1077,7 @@ export type CollaborationSessionBinding = {
 };
 
 export type CollaborationArrangement = {
-  id: string; owner_id: string; room_id: string; scope: "session" | "agent" | "room";
+  id: string; owner_id: string; room_id: string; scope: "conversation" | "session" | "agent" | "room";
   mode: "wake" | "message"; note: string; state: "active" | "paused" | "done" | "cancelled" | "blocked";
   next_at: string; last_at?: string; schedule?: string; timezone?: string; when_session?: string;
   session_ref?: string; reason?: string; revision: number;

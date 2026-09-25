@@ -195,14 +195,14 @@ const workSelect = `
 		work.max_rounds, work.current_round, work.qualified_candidates,
 		work.max_input_tokens, work.max_output_tokens, work.deadline_at,
 		work.checks_summary, work.changed_files_count, work.unresolved_items, work.failure_reason,
-		work.cancelled_at, work.created_at, work.updated_at, work.revision, work.constraints, work.decisions_json
+		work.cancelled_at, work.created_at, work.updated_at, work.revision, work.constraints, work.decisions_json, work.state_deadline_at
 	FROM works work`
 
 func scanWork(row scanner) (Work, error) {
 	var work Work
 	var decisionsJSON string
 	var verificationRequired int
-	var cancelledAt, deadlineAt sql.NullInt64
+	var cancelledAt, deadlineAt, stateDeadlineAt sql.NullInt64
 	var createdAt, updatedAt int64
 	if err := row.Scan(
 		&work.ID, &work.RoomID, &work.SourceMessageID, &work.OwnerNamedAgentID,
@@ -214,7 +214,7 @@ func scanWork(row scanner) (Work, error) {
 		&work.CandidatesUsed, &work.FanoutReason, &work.MaxRounds, &work.CurrentRound,
 		&work.QualifiedCandidates, &work.MaxInputTokens, &work.MaxOutputTokens, &deadlineAt,
 		&work.ChecksSummary, &work.ChangedFilesCount, &work.UnresolvedItems, &work.FailureReason,
-		&cancelledAt, &createdAt, &updatedAt, &work.Revision, &work.Constraints, &decisionsJSON,
+		&cancelledAt, &createdAt, &updatedAt, &work.Revision, &work.Constraints, &decisionsJSON, &stateDeadlineAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Work{}, ErrNotFound
@@ -223,6 +223,9 @@ func scanWork(row scanner) (Work, error) {
 	}
 	if err := json.Unmarshal([]byte(decisionsJSON), &work.Decisions); err != nil {
 		return Work{}, err
+	}
+	if stateDeadlineAt.Valid {
+		work.StateDeadlineAt = fromMillis(stateDeadlineAt.Int64)
 	}
 	work.VerificationRequired = verificationRequired != 0
 	if cancelledAt.Valid {
@@ -586,7 +589,7 @@ func (s *Service) StartWorkRun(ctx context.Context, params WorkRunStartParams) (
 		return WorkRun{}, err
 	}
 	now := fromMillis(toMillis(s.now()))
-	deadline := now.Add(30 * time.Minute)
+	deadline := now.Add(workProgressTimeout)
 	if params.Deadline > 0 {
 		deadline = now.Add(params.Deadline)
 	}
@@ -628,6 +631,14 @@ func (s *Service) StartWorkRun(ctx context.Context, params WorkRunStartParams) (
 			current_round = MAX(current_round, ?), updated_at = ? WHERE id = ?`,
 		run.ID, verifierIncrement, run.Round, toMillis(now), work.ID); err != nil {
 		return WorkRun{}, fmt.Errorf("activate work run: %w", err)
+	}
+	if params.harness && run.Kind == WorkRunProducer && (work.State == WorkOpen || work.State == WorkRevising || work.State == WorkNeedsHuman) {
+		if _, err := tx.ExecContext(ctx, `UPDATE works SET state='working',updated_at=? WHERE id=?`, toMillis(now), work.ID); err != nil {
+			return WorkRun{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE room_messages SET task_state='doing' WHERE id=?`, work.ID); err != nil {
+			return WorkRun{}, err
+		}
 	}
 	if bindRunSession {
 		purpose := CollaborationSessionWork
@@ -816,7 +827,7 @@ func (s *Service) ExpireWorkRuns(ctx context.Context) (int, error) {
 	}
 	defer tx.Rollback()
 	now := fromMillis(toMillis(s.now()))
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM work_runs WHERE state IN ('queued', 'running') AND deadline_at IS NOT NULL AND deadline_at <= ? ORDER BY deadline_at, id`, toMillis(now))
+	rows, err := tx.QueryContext(ctx, `SELECT run.id FROM work_runs run JOIN works work ON work.id=run.work_id WHERE run.state IN ('queued','running') AND (run.deadline_at<=? OR work.state_deadline_at<=?) ORDER BY run.deadline_at,run.id`, toMillis(now), toMillis(now))
 	if err != nil {
 		return 0, fmt.Errorf("list expired work runs: %w", err)
 	}
@@ -833,6 +844,7 @@ func (s *Service) ExpireWorkRuns(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	var wakeIDs []string
+	var interruptTargets []workSessionInterruptTarget
 	for _, id := range ids {
 		run, err := scanWorkRun(tx.QueryRowContext(ctx, workRunSelect+` WHERE run.id = ?`, id))
 		if err != nil {
@@ -841,6 +853,9 @@ func (s *Service) ExpireWorkRuns(ctx context.Context) (int, error) {
 		work, err := scanWork(tx.QueryRowContext(ctx, workSelect+` WHERE work.id = ?`, run.WorkID))
 		if err != nil {
 			return 0, err
+		}
+		if run.SessionRef != "" {
+			interruptTargets = append(interruptTargets, workSessionInterruptTarget{agentID: run.NamedAgentID, sessionRef: run.SessionRef})
 		}
 		run.State, run.Outcome, run.EndedAt, run.UpdatedAt = WorkRunTimedOut, string(WorkRunTimedOut), now, now
 		if _, err := tx.ExecContext(ctx, `UPDATE work_runs SET state = 'interrupted', outcome = 'timed_out', ended_at = ?, updated_at = ? WHERE id = ? AND state IN ('queued', 'running')`, toMillis(now), toMillis(now), run.ID); err != nil {
@@ -860,6 +875,11 @@ func (s *Service) ExpireWorkRuns(ctx context.Context) (int, error) {
 		}
 		wakeIDs = appendUniqueStrings(wakeIDs, terminalWakeIDs...)
 	}
+	stateWakes, err := s.expireWorkStatesTx(ctx, tx, now)
+	if err != nil {
+		return 0, err
+	}
+	wakeIDs = appendUniqueStrings(wakeIDs, stateWakes...)
 	admittedWakeIDs, err := s.admitQueuedWorkRunsTx(ctx, tx, now)
 	if err != nil {
 		return 0, err
@@ -868,6 +888,7 @@ func (s *Service) ExpireWorkRuns(ctx context.Context) (int, error) {
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
+	s.interruptWorkSessions(interruptTargets)
 	if s.wake != nil {
 		for _, id := range wakeIDs {
 			s.wake.Deliver(id)
@@ -1214,7 +1235,7 @@ func (s *Service) cancelWorkTx(ctx context.Context, tx *sql.Tx, work Work, reaso
 	if _, err := tx.ExecContext(ctx, `UPDATE works SET state = 'cancelled', current_run_ref = NULL, failure_reason = ?, cancelled_at = ?, updated_at = ? WHERE id = ?`, strings.TrimSpace(reason), toMillis(now), toMillis(now), work.ID); err != nil {
 		return nil, nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE room_messages SET task_state = 'open' WHERE id = ?`, work.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE room_messages SET task_state = 'cancelled' WHERE id = ?`, work.ID); err != nil {
 		return nil, nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE collaboration_messages SET invalidated_at = ? WHERE work_id = ? AND pulled_at IS NULL`, toMillis(now), work.ID); err != nil {

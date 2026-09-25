@@ -28,6 +28,7 @@ const (
 )
 
 type Work struct {
+	StateDeadlineAt            time.Time              `json:"state_deadline_at,omitempty"`
 	Revision                   int                    `json:"revision"`
 	Constraints                string                 `json:"constraints"`
 	Decisions                  []string               `json:"decisions"`

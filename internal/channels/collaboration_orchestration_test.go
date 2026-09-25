@@ -315,3 +315,52 @@ func TestMultiCandidatePromotionAndProducerBroadcast(t *testing.T) {
 		t.Fatalf("second promotion error = %v", err)
 	}
 }
+
+func TestWorkStateDeadlineRecoversAnUnstartedTaskOnce(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	s, err := Open(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := createTestAgent(t, s, "Owner")
+	room := createTestRoom(t, s, owner)
+	client, err := s.BindAgent(ctx, owner.Agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := client.CreateTask(ctx, TaskCreateParams{RoomID: room.ID, OwnerID: owner.Agent.ID, Title: "Pending work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Work.StateDeadlineAt.IsZero() {
+		t.Fatal("work has no progress deadline")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	advanceFollowupClock(s, task.Work.StateDeadlineAt.Add(time.Second))
+	for range 2 {
+		if _, err := s.ExpireWorkRuns(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	work, err := s.GetWork(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, event := range work.Events {
+		if event.Kind == "recovery" {
+			count++
+		}
+	}
+	if work.State != WorkNeedsHuman || count != 1 || !work.StateDeadlineAt.IsZero() {
+		t.Fatalf("deadline not settled once: %#v", work)
+	}
+}
