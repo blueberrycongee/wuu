@@ -195,7 +195,7 @@ func TestNamedAgentChatToolsAreIsolatedAndRoundTrip(t *testing.T) {
 	if err := json.Unmarshal([]byte(taskJSON), &taskResult); err != nil || taskResult.Task.TaskState != string(channels.TaskStateOpen) {
 		t.Fatalf("chat_task create = %s, err %v", taskJSON, err)
 	}
-	updatedTaskJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_task", Arguments: `{"action":"update","task_id":"` + taskResult.Task.ID + `","state":"done"}`})
+	updatedTaskJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_task", Arguments: `{"action":"update","task_id":"` + taskResult.Task.ID + `","state":"done","expected_revision":` + fmt.Sprint(taskResult.Task.Work.Revision) + `}`})
 	if err != nil || !strings.Contains(updatedTaskJSON, `"task_state":"done"`) {
 		t.Fatalf("chat_task update = %s, err %v", updatedTaskJSON, err)
 	}
@@ -274,7 +274,7 @@ func TestNamedAgentToolsVerifyAssignedIndependentRun(t *testing.T) {
 	if err := json.Unmarshal([]byte(taskJSON), &taskResult); err != nil {
 		t.Fatalf("decode task result: %v", err)
 	}
-	revisedJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_task", Arguments: `{"action":"revise","room_id":"` + room.ID + `","task_id":"` + taskResult.Task.ID + `","body":"Reject replayed and expired state"}`})
+	revisedJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_task", Arguments: `{"action":"revise","room_id":"` + room.ID + `","task_id":"` + taskResult.Task.ID + `","body":"Reject replayed and expired state","expected_revision":` + fmt.Sprint(taskResult.Task.Work.Revision) + `}`})
 	if err != nil || !strings.Contains(revisedJSON, `"task_goal_revision":2`) {
 		t.Fatalf("chat_task revise = %s, err = %v", revisedJSON, err)
 	}

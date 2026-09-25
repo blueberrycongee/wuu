@@ -173,7 +173,7 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 	}
 	if params.State != "" && params.State != TaskStateOpen && params.State != TaskStateDoing &&
 		params.State != TaskStateChecking && params.State != TaskStateRevising &&
-		params.State != TaskStateNeedsHuman && params.State != TaskStateDone {
+		params.State != TaskStateNeedsHuman && params.State != TaskStateDone && params.State != "cancelled" {
 		return Message{}, fmt.Errorf("invalid task state %q", params.State)
 	}
 	if utf8.RuneCountInString(params.GoalCorrection) > MaxMessageRunes {
@@ -224,6 +224,12 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 	if err != nil {
 		return Message{}, err
 	}
+	if params.ExpectedRevision > 0 && terminalWork.Revision != params.ExpectedRevision {
+		return Message{}, fmt.Errorf("%w: task revision changed; read the current task before retrying", ErrConflict)
+	}
+	if params.Constraints != nil && *params.Constraints != terminalWork.Constraints && params.GoalCorrection == "" {
+		params.GoalCorrection = message.Body
+	}
 	workState := terminalWork.State
 	if terminalWorkState(workState) && params.GoalCorrection == "" {
 		return Message{}, fmt.Errorf("%w: work is %s", ErrConflict, workState)
@@ -241,6 +247,29 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 		); err != nil {
 			return Message{}, err
 		}
+	}
+	if params.State == "cancelled" {
+		targets, wakes, err := s.cancelWorkTx(ctx, tx, terminalWork, "Cancelled by user")
+		if err != nil {
+			return Message{}, err
+		}
+		admitted, err := s.admitQueuedWorkRunsTx(ctx, tx, s.now())
+		if err != nil {
+			return Message{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return Message{}, err
+		}
+		s.interruptWorkSessions(targets)
+		if s.wake != nil {
+			for _, id := range appendUniqueStrings(wakes, admitted...) {
+				s.wake.Deliver(id)
+			}
+		}
+		message.TaskState = "cancelled"
+		work, err := s.GetWork(ctx, message.ID)
+		message.Work = &work
+		return message, err
 	}
 	if params.GoalCorrection != "" || (params.OwnerID != "" && params.OwnerID != message.TaskOwner) {
 		// Fence the current task turn even though it has no separate Work run.
@@ -398,6 +427,9 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 		}
 		setState = string(TaskStateOpen)
 	}
+	if params.GoalCorrection == "" && !ownerChanged && !validTaskTransition(TaskState(message.TaskState), TaskState(setState)) {
+		return Message{}, fmt.Errorf("%w: task cannot move from %s to %s", ErrConflict, message.TaskState, setState)
+	}
 	if message.TaskVerificationRequired && setState == string(TaskStateDone) {
 		if message.TaskState != string(TaskStateChecking) {
 			return Message{}, fmt.Errorf("%w: verified task completion must follow checking", ErrConflict)
@@ -444,6 +476,16 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 	message.TaskOwner = newOwner
 	if err := syncWorkFromTaskTx(ctx, tx, message, updatedAt); err != nil {
 		return Message{}, err
+	}
+	if params.Constraints != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE works SET constraints=? WHERE id=?`, *params.Constraints, message.ID); err != nil {
+			return Message{}, err
+		}
+	}
+	if params.Decision != "" {
+		if err := appendWorkDecisionsTx(ctx, tx, message.ID, []string{params.Decision}); err != nil {
+			return Message{}, err
+		}
 	}
 	if message.TaskState == string(TaskStateDone) {
 		if _, err := tx.ExecContext(ctx, `UPDATE inbox_items SET pulled_at = COALESCE(pulled_at, ?) WHERE member_type = 'agent' AND message_id = ? AND kind = 'task'`, toMillis(updatedAt), message.ID); err != nil {
@@ -723,4 +765,24 @@ func (s *Service) requireHumanMember(ctx context.Context, roomID, humanID string
 		return fmt.Errorf("validate human room membership: %w", err)
 	}
 	return nil
+}
+
+// Candidate promotion and goal correction own their transitions separately.
+func validTaskTransition(from, to TaskState) bool {
+	if from == to {
+		return true
+	}
+	allowed := map[TaskState][]TaskState{
+		TaskStateOpen:       {TaskStateDoing, TaskStateNeedsHuman, TaskStateDone},
+		TaskStateDoing:      {TaskStateRevising, TaskStateNeedsHuman, TaskStateDone},
+		TaskStateChecking:   {TaskStateDoing, TaskStateRevising, TaskStateNeedsHuman, TaskStateDone},
+		TaskStateRevising:   {TaskStateDoing, TaskStateNeedsHuman},
+		TaskStateNeedsHuman: {TaskStateOpen, TaskStateDoing, TaskStateRevising, TaskStateDone},
+	}
+	for _, next := range allowed[from] {
+		if next == to {
+			return true
+		}
+	}
+	return false
 }

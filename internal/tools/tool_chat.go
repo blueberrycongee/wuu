@@ -416,12 +416,14 @@ func (t *ChatTaskTool) IsReadOnly() bool        { return false }
 func (t *ChatTaskTool) IsConcurrencySafe() bool { return false }
 func (t *ChatTaskTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
-		Name: "chat_task",
-		Description: "Create, update, revise, or list lightweight tasks in a group-chat room. " +
-			"Owners update progress; the hidden task author uses revise for user goal corrections, which invalidates stale verification.",
+		Name:        "chat_task",
+		Description: "Manage Work in the current conversation. Use revise for changed goals or constraints. Updates require expected_revision from the latest task.work or work_get. Record decisions in the shared Work document.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
+				"expected_revision":   map[string]any{"type": "integer", "minimum": 1},
+				"constraints":         map[string]any{"type": "string"},
+				"decision":            map[string]any{"type": "string", "description": "Append an implementation choice to the shared decision document."},
 				"action":              map[string]any{"type": "string", "enum": []string{"create", "update", "revise", "list"}},
 				"room_id":             map[string]any{"type": "string"},
 				"thread_id":           map[string]any{"type": "string"},
@@ -448,21 +450,31 @@ func (t *ChatTaskTool) Execute(ctx context.Context, argsJSON string) (string, er
 		return "", errors.New("chat_task is available only in a named-agent session")
 	}
 	var args struct {
-		Action               string `json:"action"`
-		RoomID               string `json:"room_id"`
-		ThreadID             string `json:"thread_id"`
-		SourceMessageID      string `json:"source_message_id"`
-		TaskID               string `json:"task_id"`
-		Title                string `json:"title"`
-		Body                 string `json:"body"`
-		OwnerID              string `json:"owner_id"`
-		LeadNamedAgentID     string `json:"lead_named_agent_id"`
-		TargetSessionRef     string `json:"target_session_ref"`
-		VerificationRequired bool   `json:"verification_required"`
-		State                string `json:"state"`
+		ExpectedRevision     int     `json:"expected_revision"`
+		Constraints          *string `json:"constraints"`
+		Decision             string  `json:"decision"`
+		Action               string  `json:"action"`
+		RoomID               string  `json:"room_id"`
+		ThreadID             string  `json:"thread_id"`
+		SourceMessageID      string  `json:"source_message_id"`
+		TaskID               string  `json:"task_id"`
+		Title                string  `json:"title"`
+		Body                 string  `json:"body"`
+		OwnerID              string  `json:"owner_id"`
+		LeadNamedAgentID     string  `json:"lead_named_agent_id"`
+		TargetSessionRef     string  `json:"target_session_ref"`
+		VerificationRequired bool    `json:"verification_required"`
+		State                string  `json:"state"`
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", err
+	}
+	if (args.Action == "update" || args.Action == "revise") && args.ExpectedRevision < 1 {
+		return "", errors.New("expected_revision from the latest Work is required")
+	}
+	constraints := ""
+	if args.Constraints != nil {
+		constraints = *args.Constraints
 	}
 	switch strings.TrimSpace(args.Action) {
 	case "create":
@@ -470,14 +482,14 @@ func (t *ChatTaskTool) Execute(ctx context.Context, argsJSON string) (string, er
 			RoomID: args.RoomID, ThreadID: args.ThreadID, SourceMessageID: args.SourceMessageID,
 			Title: args.Title, Body: args.Body, OwnerID: args.OwnerID,
 			LeadNamedAgentID: args.LeadNamedAgentID, TargetSessionRef: args.TargetSessionRef,
-			VerificationRequired: args.VerificationRequired,
+			VerificationRequired: args.VerificationRequired, Constraints: constraints, Decisions: []string{args.Decision},
 		})
 		if err != nil {
 			return "", err
 		}
 		return mustJSON(map[string]any{"task": message})
 	case "update":
-		message, err := t.env.ChatAgent.UpdateTask(ctx, channels.TaskUpdateParams{TaskID: args.TaskID, RoomID: args.RoomID, State: channels.TaskState(args.State), OwnerID: args.OwnerID})
+		message, err := t.env.ChatAgent.UpdateTask(ctx, channels.TaskUpdateParams{ExpectedRevision: args.ExpectedRevision, Constraints: args.Constraints, Decision: args.Decision, TaskID: args.TaskID, RoomID: args.RoomID, State: channels.TaskState(args.State), OwnerID: args.OwnerID})
 		if err != nil {
 			return "", err
 		}
@@ -485,6 +497,7 @@ func (t *ChatTaskTool) Execute(ctx context.Context, argsJSON string) (string, er
 	case "revise":
 		message, err := t.env.ChatAgent.UpdateTask(ctx, channels.TaskUpdateParams{
 			TaskID: args.TaskID, RoomID: args.RoomID, OwnerID: args.OwnerID, GoalCorrection: args.Body,
+			ExpectedRevision: args.ExpectedRevision, Constraints: args.Constraints, Decision: args.Decision,
 		})
 		if err != nil {
 			return "", err

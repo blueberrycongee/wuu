@@ -477,6 +477,7 @@ func (s *Server) handleChannelTaskUpdate(ctx context.Context, req Request) error
 	}
 	task, err := s.channelService.UpdateTaskHuman(ctx, channels.TaskUpdateParams{
 		TaskID: params.TaskID, State: channels.TaskState(params.State), OwnerID: params.OwnerID, HumanID: localChannelHumanID,
+		ExpectedRevision: params.ExpectedRevision, GoalCorrection: params.GoalCorrection, Constraints: params.Constraints, Decision: params.Decision,
 	})
 	return s.writeResponse(req.ID, ChannelTaskUpdateResult{Task: task}, err)
 }

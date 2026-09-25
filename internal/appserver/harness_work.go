@@ -120,6 +120,9 @@ func (s *Server) completeHarnessWork(ctx context.Context, link channels.HarnessS
 		_, err = client.SubmitTaskVerification(ctx, channels.TaskVerificationSubmitParams{RoomID: work.RoomID, TaskID: work.ID, GoalRevision: run.GoalRevision, CandidateRevision: run.CandidateRevision, Decision: report.Decision, Report: report.Result + "\n" + strings.Join(report.UnresolvedItems, "\n"), EvidenceRefs: report.EvidenceRefs, RunRef: run.ID})
 		return err
 	}
+	if err := s.channelService.RecordHarnessDecisions(ctx, link.SessionID, run.ID, report.ImplicitChoices); err != nil {
+		return err
+	}
 	work, err = client.PromoteWorkCandidate(ctx, channels.WorkCandidatePromoteParams{WorkID: work.ID, RunID: run.ID, ArtifactRef: artifact.ID, RequestID: "harness-candidate:" + run.ID, SelectionReason: "Completed execution candidate ready for independent review"})
 	if err != nil {
 		return err

@@ -2220,7 +2220,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
                   outgoing={own}
                   ownerName={agentNames.get(message.task_owner ?? "")}
                   onOpenSession={onOpenSession}
-                  onCancelTask={() => void window.wuu!.updateChannelTask({ task_id: message.id, state: "cancelled" }).then(() => refreshMessages(selectedRoomID, true)).catch(reason => showErrorToast(reason))}
+                  onCancelTask={() => void window.wuu!.updateChannelTask({ task_id: message.id, state: "cancelled", expected_revision: message.work?.revision }).then(() => refreshMessages(selectedRoomID, true)).catch(reason => showErrorToast(reason))}
                   allowCollapse={own}
                   onExpand={messageScroll.pauseAutoFollow}
                   attachmentIDPrefix={sentPresentationRef.current.get(message.id)?.key ?? message.id}

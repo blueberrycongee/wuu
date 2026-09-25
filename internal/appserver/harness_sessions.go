@@ -532,6 +532,7 @@ func (s *Server) applyHarnessOperationLocked(ctx context.Context, op *channels.H
 			return err
 		}
 		msg.Content += fmt.Sprintf("\n\nHost delegation context: room_id=%s work_id=%s goal_revision=%d parent_session_ref=%s. Use chat_read for the original room messages and work_get for current decisions. Your parent's private transcript is unavailable.\nGoal: %s\n\nReturn ONLY a JSON report with four required fields: result (string), implicit_choices (array of strings), evidence_refs (array of strings), unresolved_items (array of strings). Include empty arrays when appropriate.", op.Actor.RoomID, work.ID, work.GoalRevision, op.Actor.SessionRef, work.Brief)
+		msg.Content += fmt.Sprintf("\nWork decision document (revision %d):\nConstraints: %s\nDecisions:\n%s", work.Revision, work.Constraints, strings.Join(work.Decisions, "\n"))
 		if link.Purpose == channels.CollaborationSessionVerification {
 			msg.Content += " Include decision: pass, block or unknown. Do not change any files or run commands."
 		}

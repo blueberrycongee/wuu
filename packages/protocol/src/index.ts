@@ -1001,6 +1001,10 @@ export type ChannelCollaborationMessage = {
 };
 
 export type ChannelWork = {
+ revision?: number;
+ constraints?: string;
+ decisions?: string[];
+ decision_history?: { version: number; goal_revision: number; goal: string; constraints: string; decisions: string[] }[];
   id: string;
   room_id: string;
   source_message_id: string;
@@ -1261,6 +1265,10 @@ export type ChannelTaskCreateParams = {
 };
 export type ChannelTaskCreateResult = { task: ChannelMessage };
 export type ChannelTaskUpdateParams = {
+ expected_revision?: number;
+ goal_correction?: string;
+ constraints?: string;
+ decision?: string;
   task_id: string;
   state?: "open" | "doing" | "checking" | "revising" | "needs_human" | "done" | "cancelled";
   owner_id?: string;

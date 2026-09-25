@@ -690,6 +690,9 @@ func (s *Service) migrate() error {
 	if err := s.migrateWorks(); err != nil {
 		return err
 	}
+	if err := s.migrateWorkDecisions(); err != nil {
+		return err
+	}
 	if err := s.ensureNamedAgentAvatars(); err != nil {
 		return err
 	}
@@ -858,6 +861,9 @@ func (s *Service) ensureLegacyColumns() error {
 		name       string
 		definition string
 	}{
+		{table: "works", name: "revision", definition: "INTEGER NOT NULL DEFAULT 1"},
+		{table: "works", name: "constraints", definition: "TEXT NOT NULL DEFAULT ''"},
+		{table: "works", name: "decisions_json", definition: "TEXT NOT NULL DEFAULT '[]'"},
 		{table: "room_messages", name: "task_title", definition: "TEXT"},
 		{table: "room_messages", name: "source_session_ref", definition: "TEXT"},
 		{table: "room_messages", name: "source_turn_id", definition: "TEXT"},

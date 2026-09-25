@@ -28,6 +28,10 @@ const (
 )
 
 type Work struct {
+	Revision                   int                    `json:"revision"`
+	Constraints                string                 `json:"constraints"`
+	Decisions                  []string               `json:"decisions"`
+	DecisionHistory            []WorkDecisionDocument `json:"decision_history,omitempty"`
 	ID                         string                 `json:"id"`
 	RoomID                     string                 `json:"room_id"`
 	SourceMessageID            string                 `json:"source_message_id"`

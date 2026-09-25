@@ -32,15 +32,19 @@ func insertWorkTx(ctx context.Context, tx *sql.Tx, task Message, params TaskCrea
 	if task.TaskVerificationRequired {
 		verification = WorkVerificationPending
 	}
-	_, err := tx.ExecContext(ctx, `
+	decisions, err := json.Marshal(appendUniqueStrings([]string{}, params.Decisions...))
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO works(
 			id, room_id, source_message_id, owner_named_agent_id, lead_named_agent_id,
 			title, brief, goal_revision, candidate_revision, state,
-			verification_state, verification_required, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)`,
+			verification_state, verification_required, created_at, updated_at, constraints, decisions_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`,
 		task.ID, task.RoomID, sourceMessageID, task.TaskOwner, nullableString(params.LeadNamedAgentID),
 		task.TaskTitle, task.Body, task.TaskGoalRevision, task.TaskCandidateRevision,
-		verification, boolInt(task.TaskVerificationRequired), toMillis(task.CreatedAt), toMillis(task.CreatedAt))
+		verification, boolInt(task.TaskVerificationRequired), toMillis(task.CreatedAt), toMillis(task.CreatedAt), params.Constraints, string(decisions))
 	if err != nil {
 		return fmt.Errorf("insert durable work: %w", err)
 	}
@@ -191,11 +195,12 @@ const workSelect = `
 		work.max_rounds, work.current_round, work.qualified_candidates,
 		work.max_input_tokens, work.max_output_tokens, work.deadline_at,
 		work.checks_summary, work.changed_files_count, work.unresolved_items, work.failure_reason,
-		work.cancelled_at, work.created_at, work.updated_at
+		work.cancelled_at, work.created_at, work.updated_at, work.revision, work.constraints, work.decisions_json
 	FROM works work`
 
 func scanWork(row scanner) (Work, error) {
 	var work Work
+	var decisionsJSON string
 	var verificationRequired int
 	var cancelledAt, deadlineAt sql.NullInt64
 	var createdAt, updatedAt int64
@@ -209,12 +214,15 @@ func scanWork(row scanner) (Work, error) {
 		&work.CandidatesUsed, &work.FanoutReason, &work.MaxRounds, &work.CurrentRound,
 		&work.QualifiedCandidates, &work.MaxInputTokens, &work.MaxOutputTokens, &deadlineAt,
 		&work.ChecksSummary, &work.ChangedFilesCount, &work.UnresolvedItems, &work.FailureReason,
-		&cancelledAt, &createdAt, &updatedAt,
+		&cancelledAt, &createdAt, &updatedAt, &work.Revision, &work.Constraints, &decisionsJSON,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Work{}, ErrNotFound
 		}
 		return Work{}, fmt.Errorf("scan work: %w", err)
+	}
+	if err := json.Unmarshal([]byte(decisionsJSON), &work.Decisions); err != nil {
+		return Work{}, err
 	}
 	work.VerificationRequired = verificationRequired != 0
 	if cancelledAt.Valid {
@@ -228,6 +236,11 @@ func scanWork(row scanner) (Work, error) {
 }
 
 func (s *Service) loadWorkDetails(ctx context.Context, work *Work) error {
+	history, err := s.WorkDecisionHistory(ctx, work.ID)
+	if err != nil {
+		return err
+	}
+	work.DecisionHistory = history
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id FROM collaboration_messages
 		WHERE work_id = ? AND pulled_at IS NULL AND invalidated_at IS NULL

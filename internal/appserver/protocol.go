@@ -2733,9 +2733,13 @@ type ChannelTaskCreateResult struct {
 }
 
 type ChannelTaskUpdateParams struct {
-	TaskID  string `json:"task_id"`
-	State   string `json:"state,omitempty"`
-	OwnerID string `json:"owner_id,omitempty"`
+	ExpectedRevision int     `json:"expected_revision,omitempty"`
+	GoalCorrection   string  `json:"goal_correction,omitempty"`
+	Constraints      *string `json:"constraints,omitempty"`
+	Decision         string  `json:"decision,omitempty"`
+	TaskID           string  `json:"task_id"`
+	State            string  `json:"state,omitempty"`
+	OwnerID          string  `json:"owner_id,omitempty"`
 }
 
 type ChannelTaskUpdateResult struct {

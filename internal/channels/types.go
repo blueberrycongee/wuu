@@ -659,6 +659,8 @@ type Reminder struct {
 }
 
 type TaskCreateParams struct {
+	Constraints          string
+	Decisions            []string
 	SourceSessionRef     string
 	RoomID               string
 	ThreadID             string
@@ -675,15 +677,18 @@ type TaskCreateParams struct {
 }
 
 type TaskUpdateParams struct {
-	TaskID         string
-	RoomID         string
-	State          TaskState
-	OwnerID        string
-	GoalCorrection string
-	SessionRef     string
-	AgentID        string
-	Token          string
-	HumanID        string
+	ExpectedRevision int
+	Constraints      *string
+	Decision         string
+	TaskID           string
+	RoomID           string
+	State            TaskState
+	OwnerID          string
+	GoalCorrection   string
+	SessionRef       string
+	AgentID          string
+	Token            string
+	HumanID          string
 }
 
 type TaskListParams struct {
