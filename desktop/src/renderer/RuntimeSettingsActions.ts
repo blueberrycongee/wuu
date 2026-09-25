@@ -36,7 +36,7 @@ export type RuntimeSettingsActionsDeps = {
   setBranchMenuOpen: (open: boolean) => void;
   setCodexRuntimeMenu: (update: SetStateAction<CodexRuntimeMenu>) => void;
   clearThreadPendingComposerMessages: (threadID: string) => void;
-  markOptimisticTurnInterrupted?: (threadID: string) => void;
+  requestThreadStop?: (thread: Thread) => Promise<void>;
   variantByModel: Map<string, string>;
 };
 
@@ -585,8 +585,8 @@ export function createRuntimeSettingsActions(
     if (!thread) {
       return;
     }
-    deps.markOptimisticTurnInterrupted?.(thread.id);
-    await window.wuu.interruptTurn(thread.id);
+    if (deps.requestThreadStop) await deps.requestThreadStop(thread);
+    else await window.wuu.interruptTurn(thread.id);
   }
 
   async function interruptPane(pane: ConversationPaneID): Promise<void> {
@@ -594,8 +594,8 @@ export function createRuntimeSettingsActions(
     if (!thread) {
       return;
     }
-    deps.markOptimisticTurnInterrupted?.(thread.id);
-    await window.wuu.interruptTurn(thread.id);
+    if (deps.requestThreadStop) await deps.requestThreadStop(thread);
+    else await window.wuu.interruptTurn(thread.id);
   }
 
   function rememberDraftRuntime(provider: string, model: string, effort: string): void {

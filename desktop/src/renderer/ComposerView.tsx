@@ -7,7 +7,6 @@ import {
   FolderX,
   ArrowUp,
   ShieldCheck,
-  Square
 } from "./WuuIcons";
 import {
   type ClipboardEvent as ReactClipboardEvent,
@@ -62,10 +61,8 @@ import {
 import { translateCurrent as translate, useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
 import { ComposerFeedback } from "./ComposerFeedback";
-import {
-  CollapsedComposerPromptCard,
-  useCollapsedComposerPrompt
-} from "./ComposerCollapsedPrompt";
+import { useCollapsedComposerPrompt } from "./ComposerCollapsedPrompt";
+import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
 import {
   WORKSPACE_FILE_DRAG_MIME,
   appendWorkspacePathToPrompt,
@@ -76,7 +73,7 @@ import {
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { ComposerBranchPicker } from "./ComposerBranchPicker";
 import { ComposerContextMenu } from "./ComposerContextMenu";
-import { ComposerAttachmentStrip, ComposerQueueStrip } from "./ComposerInputSections";
+import { ComposerQueueStrip, ComposerStopIcon } from "./ComposerInputSections";
 import { ComposerCameraPanel } from "./ComposerCamera";
 import { WorkspaceDocumentDrawerContext } from "./WorkspaceDocumentTurnDock";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
@@ -125,7 +122,7 @@ export type {
   PermissionMode
 } from "./ComposerTypes";
 export { FloatingMenuPortal, isInsideFloatingMenu } from "./ComposerFloatingMenu";
-export { ComposerAttachmentStrip, SplitPaneComposer } from "./ComposerInputSections";
+export { SplitPaneComposer } from "./ComposerInputSections";
 export { permissionModeFromSummary, permissionModeHasAdvancedOverrides } from "./ComposerRuntimeMenus";
 
 export function Composer({
@@ -145,6 +142,7 @@ export function Composer({
   running,
   sendDisabled = false,
   forceStopWhileRunning = false,
+  stopState,
   runtimeControlsDisabled = running,
   status,
   statusLiveProgress,
@@ -249,6 +247,7 @@ export function Composer({
   running: boolean;
   sendDisabled?: boolean;
   forceStopWhileRunning?: boolean;
+  stopState?: "pending" | "retry";
   runtimeControlsDisabled?: boolean;
   status: string;
   statusLiveProgress?: boolean;
@@ -359,7 +358,7 @@ export function Composer({
   // A disconnected remote workbench keeps every composer draft editable (the
   // textarea stays enabled and focused), but sending and runtime controls must
   // not dispatch into a dead bridge. Gate only the action paths, never readOnly.
-  const effectiveSendDisabled = sendDisabled || !workbenchConnected;
+  const effectiveSendDisabled = sendDisabled || Boolean(stopState) || !workbenchConnected;
   const effectiveRuntimeControlsDisabled = runtimeControlsDisabled || !workbenchConnected;
   // Keep the controlled textarea on a small, synchronous state path. The
   // canonical draft still lives above Composer, but updating it makes App
@@ -438,7 +437,7 @@ export function Composer({
   // is empty. The moment there is something to send, it flips back to a send
   // button. Its submit action below deliberately follows the same steer/queue
   // decision as Enter, while preserving the stop affordance for an empty input.
-  const showComposerStop = running && (forceStopWhileRunning || !hasDraft);
+  const showComposerStop = Boolean(stopState) || (running && (forceStopWhileRunning || !hasDraft));
   const composerSendLabel = running && hasDraft && onSteer
     ? t("composer.steerSend")
     : running
@@ -516,7 +515,6 @@ export function Composer({
     hasBlocks: hasCollapsedPromptBlocks,
     prefix: collapsedPromptPrefix,
     visiblePrompt: visiblePromptValue,
-    listRef: collapsedPromptListRef,
     handlePaste: handleCollapsedComposerPaste,
     revealBlock: revealCollapsedPromptBlock,
     removeBlock: removeCollapsedPromptBlock,
@@ -1122,6 +1120,7 @@ export function Composer({
           </FloatingMenuPortal>
         ) : null}
         <ComposerQueueStrip
+          dispatchDisabled={Boolean(stopState)}
           guideMessages={guideMessages}
           queuedMessages={queuedMessages}
           expanded={expandedDrawer === "pending"}
@@ -1194,6 +1193,18 @@ export function Composer({
           {cameraOpen && !textOnly && !readOnly ? (
             <ComposerCameraPanel onCapture={captureCamera} onClose={closeCamera} />
           ) : null}
+          {topAccessory ? null : (
+            <ComposerAttachmentTray
+              images={textOnly ? [] : images}
+              files={textOnly ? [] : files}
+              pastedTexts={activeCollapsedPromptBlocks}
+              resetKey={queryHistorySessionID}
+              onRemoveImage={onRemoveImage}
+              onRemoveFile={onRemoveFile}
+              onRevealText={revealCollapsedPromptBlock}
+              onRemoveText={removeCollapsedPromptBlock}
+            />
+          )}
           <div
             className={`composer-frame${dropActive ? " composer-frame-drop-active" : ""}${topAccessory ? " composer-frame-covered" : ""}`}
             data-wuu-component="composer-frame"
@@ -1203,13 +1214,9 @@ export function Composer({
             onDrop={handleComposerDrop}
           >
             {topAccessory ? <div className="composer-cover-accessory">{topAccessory}</div> : null}
-          <div
-            className={`composer${hasCollapsedPromptBlocks ? " has-collapsed-prompt" : ""}`}
-            hidden={Boolean(topAccessory)}
-          >
+          <div className="composer" hidden={Boolean(topAccessory)}>
             {textOnly ? null : (
               <>
-                <ComposerAttachmentStrip files={files} images={images} onRemoveFile={onRemoveFile} onRemoveImage={onRemoveImage} />
                 <input
                   ref={attachmentInputRef}
                   className="composer-file-input"
@@ -1242,18 +1249,6 @@ export function Composer({
                 />
               </>
             )}
-            {hasCollapsedPromptBlocks ? (
-              <div className="composer-collapsed-prompt-list" ref={collapsedPromptListRef} aria-label={t("composer.collapsedLongText")}>
-                {activeCollapsedPromptBlocks.map((block, index) => (
-                  <CollapsedComposerPromptCard
-                    text={block.text}
-                    key={block.id}
-                    onReveal={() => revealCollapsedPromptBlock(index)}
-                    onRemove={() => removeCollapsedPromptBlock(index)}
-                  />
-                ))}
-              </div>
-            ) : null}
             <ComposerTextarea
               ref={textareaRef}
               expanded={isComposerExpanded}
@@ -1409,7 +1404,8 @@ export function Composer({
                 <button
                   className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
                   data-wuu-component="composer-send"
-                  data-wuu-state={showComposerStopAction ? "stop" : "send"}
+                  data-wuu-state={stopState ?? (showComposerStopAction ? "stop" : "send")}
+                  aria-busy={stopState === "pending" || undefined}
                   type="button"
                   onPointerDown={(event) => {
                     if (!showComposerStopAction && event.button === 0 && document.activeElement === textareaRef.current) {
@@ -1419,14 +1415,14 @@ export function Composer({
                     }
                   }}
                   onClick={showComposerStopAction ? (disconnected ? undefined : onInterrupt) : submitComposer}
-                  aria-label={showComposerStopAction ? t("composer.pause") : voiceActionLabel}
-                  title={showComposerStopAction ? t("composer.pauseShortcut") : voiceActionLabel}
+                  aria-label={stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pause") : voiceActionLabel}
+                  title={stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pauseShortcut") : voiceActionLabel}
                   disabled={
-                    !showComposerStopAction &&
-                    (effectiveSendDisabled || readOnly || (!hasDraft) || (handoffMode && !canConfirmHandoff))
+                    stopState === "pending" || (!showComposerStopAction &&
+                    (effectiveSendDisabled || readOnly || (!hasDraft) || (handoffMode && !canConfirmHandoff)))
                   }
                 >
-                  {showComposerStopAction ? <Square aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
+                  {showComposerStopAction ? <ComposerStopIcon state={stopState} /> : <ArrowUp aria-hidden="true" />}
                 </button>
               </div>
             </div>

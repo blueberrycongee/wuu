@@ -19,14 +19,26 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   daily activity heatmap for the past year. New installs show zero totals.
   The new `usage/overview` app-server method reads only token usage records,
   not conversation content. After 20 seconds without input, the greeting
-  mascot sends a small ball bouncing across the heatmap to today and catches
-  it on the way back; any input stops it, and reduced motion turns it off.
+  mascot plays short bouncing-ball, snake, and breakout scenes on the heatmap,
+  rotating without consecutive repeats. Each scene ends on the heatmap: the
+  ball settles into today, the snake bites its tail and the days it ate grow
+  back, and the last breakout shot drills through the wall before it rebuilds.
+  Any input stops the scene, and reduced motion turns it off; the underlying
+  activity data is never changed.
 
 ### Changed
 
 - The macOS DMG installer window has a Retina-ready background with English
   and Chinese drag-to-install instructions: a slingshot beside the app fires
   Wuu along a dotted arc into the Applications folder.
+
+- Pasted or attached images, videos, PDFs, and folded long text now wait in a
+  single-row tray that slides out from behind the top of the composer instead
+  of growing the input box. Cards show a thumbnail, or a title with size or
+  line count; removing one lets the rest slide into place, and the input keeps
+  its size throughout. Overflowing trays scroll horizontally with faded edges.
+  Unsupported attachment types and import failures use the shared capsule
+  notification instead of a persistent composer status line.
 
 - `bash` starts background processes with a single `run_in_background` flag
   instead of its seven background actions. A new `process` tool reads output
@@ -46,6 +58,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   of 2048, so a typical source file or document is read in one call.
 
 ### Fixed
+
+- Sending a message keeps one local waiting timer across admission, events,
+  snapshots, and conversation switches without changing server timestamps.
+  Follow-up messages can queue during new-conversation creation. Stop uses an
+  immediate progress icon until execution ends and retains pending input without
+  automatically dispatching it after cancellation.
 
 - Terminal run details preserve output, exit status, and log links when a
   command's model-facing output is JSON, rather than treating that output as
@@ -69,6 +87,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - `apply_patch` with `then_run` now shows the model the follow-up command's
   outcome; the parent result previously kept the patch-only view.
+
+- Link context menus in messages list only their actions instead of repeating
+  the full URL, so the menu no longer spreads across the message. Context menus
+  stay inside the window, truncate long labels, and scroll long lists. Opening
+  one closes any other open context menu, including the composer edit menu, and
+  hides hover tooltips until it closes.
 
 ## [2026.9.25] - 2026-09-25
 

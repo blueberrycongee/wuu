@@ -15,6 +15,9 @@
  * - Pointer-down, Escape, scroll, and blur all dismiss; after a dismiss-
  *   on-press the tooltip stays suppressed until the pointer leaves, so a
  *   clicked control doesn't immediately re-arm its hint.
+ * - No hint opens while a context menu is open, and opening one dismisses
+ *   the current hint. Native context menus are modal for hover; a hint
+ *   beside the menu would repeat or cover it.
  *
  * Accessibility does NOT route through this component: the tooltip is
  * visual-only (pointer-events: none, no aria-describedby wiring). Controls
@@ -35,6 +38,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { hasActiveContextMenu, onContextMenuOpen } from "./ActiveContextMenu";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 
 export const TOOLTIP_MAX_CONTENT_LENGTH = 120;
@@ -117,7 +121,9 @@ export function Tooltip({
       Date.now() - lastTooltipClosedAt < SKIP_DELAY_MS ? 0 : OPEN_DELAY_MS;
     openTimerRef.current = window.setTimeout(() => {
       openTimerRef.current = null;
-      setTooltipOpen(true);
+      if (!hasActiveContextMenu()) {
+        setTooltipOpen(true);
+      }
     }, delay);
   }
 
@@ -195,8 +201,8 @@ export function Tooltip({
   }, [open, content, side]);
 
   // While open: Escape dismisses (capture, so the tooltip doesn't race a
-  // surface-level handler), and any scroll closes — the anchor geometry
-  // the position was computed against is gone.
+  // surface-level handler), any scroll closes — the anchor geometry the
+  // position was computed against is gone — and so does a context menu.
   useEffect(() => {
     if (!open) {
       return;
@@ -211,9 +217,11 @@ export function Tooltip({
     const handleScroll = (): void => closeTooltip();
     window.addEventListener("keydown", handleKeyDown, true);
     window.addEventListener("scroll", handleScroll, true);
+    const stopContextMenuWatch = onContextMenuOpen(closeTooltip);
     return () => {
       window.removeEventListener("keydown", handleKeyDown, true);
       window.removeEventListener("scroll", handleScroll, true);
+      stopContextMenuWatch();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);

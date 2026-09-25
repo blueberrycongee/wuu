@@ -4023,7 +4023,7 @@ func TestServerTurnStartRunsAgentLoop(t *testing.T) {
 	payload := map[string]any{
 		"id":     "2",
 		"method": MethodTurnStart,
-		"params": TurnStartParams{ThreadID: threadID, Prompt: "hello"},
+		"params": TurnStartParams{ThreadID: threadID, Prompt: "hello", ClientID: "renderer-send-1"},
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -4038,6 +4038,15 @@ func TestServerTurnStartRunsAgentLoop(t *testing.T) {
 	params := remarshal[TurnCompletedNotification](t, completed["params"])
 	if params.ThreadID != threadID || params.Turn.ID == "" || params.Turn.Status != TurnStatusCompleted || params.Content != "done" {
 		t.Fatalf("unexpected completion: %+v", params)
+	}
+	for _, turn := range []Turn{
+		remarshal[TurnStartResult](t, responseByID(t, msgs, "2")["result"]).Turn,
+		remarshal[TurnStartedNotification](t, notificationByMethod(t, msgs, NotificationTurnStarted)["params"]).Turn,
+		params.Turn,
+	} {
+		if len(turn.Items) == 0 || turn.Items[0].SourceID != "renderer-send-1" {
+			t.Fatalf("send identity missing from turn: %+v", turn)
+		}
 	}
 	if params.Turn.StartedAt == nil || params.Turn.CompletedAt == nil || params.Turn.DurationMS == nil {
 		t.Fatalf("completed turn should include timing: %+v", params.Turn)

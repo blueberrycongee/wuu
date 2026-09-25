@@ -4374,11 +4374,12 @@ pre {
   background: var(--settings-heatmap-level-4);
 }
 
-/* The idle play's little ball leaves the greeting mascot and bounces across
-   the heatmap (useEmptyHomePlay). The layer is the card's padding box, so the
-   ball can start above the card and ripple past the heatmap's clip. It wears
-   the mascot's colours; the eyes keep it legible where the body matches the
-   surface, as they do for the mascot itself. */
+/* The idle play's little ball leaves the greeting mascot and plays on the
+   heatmap (useEmptyHomePlay). The layer is the card's padding box, so the
+   ball can start above the card and ripple past the heatmap's clip. Each
+   sprite is a track that carries x around a body that carries y. The ball
+   wears the mascot's colours; the eyes keep it legible where the body matches
+   the surface, as they do for the mascot itself. */
 .empty-home-play {
   --empty-home-play-size: max(8px, calc(var(--empty-home-play-cell) * 0.9));
   position: absolute;
@@ -4407,7 +4408,7 @@ pre {
 }
 
 /* Eyes sit toward the direction of travel; the play mirrors the ball to
-   face home. */
+   face the other way. */
 .empty-home-play-ball > span::before,
 .empty-home-play-ball > span::after {
   position: absolute;
@@ -4433,6 +4434,38 @@ pre {
   margin: calc(var(--empty-home-play-cell) / -2);
   border: 1.5px solid var(--ink-muted);
   border-radius: 50%;
+  opacity: 0;
+}
+
+.empty-home-play-segment > span {
+  display: block;
+  width: var(--empty-home-play-size);
+  height: var(--empty-home-play-size);
+  margin: calc(var(--empty-home-play-size) / -2);
+  border-radius: 50%;
+  background: var(--empty-home-play-body);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--empty-home-play-eye) 55%, transparent);
+  opacity: 0;
+}
+
+.empty-home-play-paddle > span {
+  display: block;
+  width: calc(var(--empty-home-play-cell) * 3.4);
+  height: max(3px, calc(var(--empty-home-play-cell) * 0.3));
+  margin-left: calc(var(--empty-home-play-cell) * -1.7);
+  border-radius: 999px;
+  background: var(--empty-home-play-body);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--empty-home-play-eye) 55%, transparent);
+  opacity: 0;
+}
+
+/* Breakout debris takes its brick's colour from the play. */
+.empty-home-play-shard > span {
+  display: block;
+  width: calc(var(--empty-home-play-cell) * 0.45);
+  height: calc(var(--empty-home-play-cell) * 0.45);
+  margin: calc(var(--empty-home-play-cell) * -0.225);
+  border-radius: 1px;
   opacity: 0;
 }
 

@@ -64,9 +64,13 @@ bash clients/native/verify.sh all
 
 Use `ios` or `android` to select one platform. The script starts an isolated PostgreSQL-backed test environment, builds test hosts, and runs platform tests and builds. Follow the native README for PostgreSQL, Xcode, Java, and Android SDK prerequisites. Passing these checks is not real-device or release acceptance.
 
+Native builds package the committed avatar and process-summary resource snapshots. They do not require those snapshots to match the latest desktop sources. Adopting desktop presentation changes is an explicit native update; the [shared renderer README](../../../clients/native/shared-ui/README.md) describes regeneration, checking, and visual acceptance.
+
 The older `clients/mobile`, `clients/mobile-web`, and `clients/mobile-app` phone implementations are retired. Some remain in shared Web builds and repository checks; passing those gates does not validate the native apps. Account and relay deployment is separate from local desktop setup; see [remote access](../automation/remote.md).
 
 ## CI coverage
+
+[Native mobile](../../../.github/workflows/native-mobile.yml) runs only through manual `workflow_dispatch`, not on pull requests or pushes. It retains core integration checks, unsigned iOS/Android Release builds, and Android lint. Native phones are outside the current release scope; restore automatic coverage before bringing them into that scope. Desktop delivery does not require mobile validation.
 
 [The main CI workflow](../../../.github/workflows/ci.yml) runs repository metadata checks, Go checks/tests, desktop checks/tests/builds, and SDK/client checks/tests/builds. It skips changes confined to `docs/` and `docs-site/`. Go CI supplies PostgreSQL for database-backed coverage.
 

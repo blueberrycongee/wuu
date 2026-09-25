@@ -350,6 +350,7 @@ describe("workspace file tabs", () => {
       { path: "README.md" },
       undefined,
       { kind: "no_project", cwd: "/tmp/wuu-artifact-tab-test" },
+      expect.any(String),
     );
     expect(container.querySelector('[data-testid="workspace-document-turn-drawer"]')).not.toBeNull();
 

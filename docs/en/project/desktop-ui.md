@@ -50,6 +50,25 @@ used to seek within a video.
 Run `npm --prefix desktop run test:e2e:artifact-preview` to exercise delivered
 previews in Electron with synthetic content, separate from your app data.
 
+## Composer attachments
+
+Images, videos, PDFs, and folded long pastes wait in one tray that slides out
+from behind the input's top edge; adding or removing one never resizes the
+input. The tray changes layout once, and everything above it rises or settles
+through counter-translated compositor animations while the input holds still.
+A card removed from the tray fades where it stood as its neighbours close the
+gap. Sending or switching drafts clears the tray at once. The tray keeps a
+single row and scrolls horizontally, with the inline edge fade described under
+scroll-edge fading.
+
+Unsupported attachment types and attachment failures use the shared capsule
+notification, rather than a persistent status line above the input, in both
+normal and split conversations.
+
+Preview `/dev/composer-attachments/` with optional `theme=dark`, `size=20`,
+`width=420`, `hero`, `queued`, and `seed` parameters. Its buttons paste
+synthetic files through the real textarea paste handler.
+
 ## Shared typography and geometry
 
 Composer feedback belongs in the shared reading area above the input, not beside
@@ -65,6 +84,8 @@ Pointer clicks do not paint an extra outline. Text fields keep the caret; other 
 Respect the user's separate UI and code font preferences. Let rows grow with their content, reserve space for trailing actions and status indicators, and align peer labels independently of whether a row is running or unread. Density changes whitespace rather than removing minimum target sizes; coarse pointers have larger control floors.
 
 Compact menus use `--menu-inset`, `--menu-item-gap`, and `--menu-shell-radius`. The shell radius combines the inner radius with the inset to keep nested corners related. Panel and dialog overlays use their own radius role. Reusing one numeric radius on every padded layer does not produce the same geometry. Click-open overlay cards — context menus, permission pickers, and select panels — use `--font-menu` (one step below `--font-ui`) for item labels, with `--weight-medium`. Group labels and secondary hints use `--font-xs`. Compact composer chips and triggers share `--font-sm` with that overlay step. Question cards above the composer stay on `--font-ui`; they are reading surfaces.
+
+Context menu items name actions, not the data they act on: "Open in system browser", not the full URL. Show a destination in the trigger's tooltip or a separate secondary line. Context menus size to their actions, stay inside the viewport, and ellipsize or scroll instead of spreading across the reading column. Only one context menu is open at a time, and tooltips stay closed while it is open, matching native menus.
 
 Public plugin theme tokens are a smaller contract than all internal CSS variables. Consult the [theme reference](../customize/theme-surface-matrix.md) before exposing a new token or telling plugin authors to depend on an internal variable.
 
@@ -132,7 +153,7 @@ A controller that manages its own scroll node registers it with `markScrollbarRe
 
 ## Scroll-edge fading
 
-[`scroll-fade.css`](../../../desktop/src/renderer/styles/scroll-fade.css) provides opt-in fading for bounded tool/reasoning inspection strips and navigation lists. Add the attribute to the existing vertical scroll owner:
+[`scroll-fade.css`](../../../desktop/src/renderer/styles/scroll-fade.css) provides opt-in fading for bounded tool/reasoning inspection strips, navigation lists, and horizontal card strips. Add the attribute to the existing scroll owner:
 
 ```tsx
 <div className="existing-scroll-region" data-scroll-fade="compact" ref={scrollRef}>
@@ -140,7 +161,7 @@ A controller that manages its own scroll node registers it with `markScrollbarRe
 </div>
 ```
 
-Use `compact` for dense inspection strips and an empty value for navigation lists. Keep ordinary clipping on primary reading surfaces such as messages, settings, and documents. Inputs, terminals, editors, image/PDF canvases, and horizontal scrollers are not intended targets. Fixed headers, composers, and menus should remain outside the masked owner.
+Use `compact` for dense inspection strips, an empty value for navigation lists, and `inline` for a horizontal strip such as the composer attachment tray, which fades its start and end edges instead. Keep ordinary clipping on primary reading surfaces such as messages, settings, and documents. Inputs, terminals, editors, image/PDF canvases, and wide content such as tables and code are not intended targets. Fixed headers, composers, and menus should remain outside the masked owner.
 
 The utility uses self-scroll timelines and an alpha mask, with no overlay or React scroll updates. An edge fades only when more content lies beyond it; no overflow means no fade. Nested scroll owners remain independent, and each edge is capped at half the viewport. Unsupported engines, reduced motion, forced colors, and print fall back to ordinary clipping. Check for existing `animation` or `mask-image` declarations before opting in, because the utility owns both.
 

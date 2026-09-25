@@ -739,9 +739,10 @@ export class RemoteDesktopBridge {
       resumeChannelSession: (params) => this.call("channel/session/resume", params),
       listNamedAgents: () => this.call("channel/agent/list"),
 
-      startTurn: (threadId, prompt, images, files, permissionMode, activeDocument, contentParts) =>
+      startTurn: (threadId, prompt, images, files, permissionMode, activeDocument, contentParts, _targetContext, clientId) =>
         this.call("turn/start", {
           thread_id: threadId,
+          ...(clientId === undefined ? {} : { client_id: clientId }),
           prompt,
           images: images ?? [],
           files: files ?? [],
@@ -749,9 +750,10 @@ export class RemoteDesktopBridge {
           ...(activeDocument === undefined ? {} : { active_document: activeDocument }),
           ...(contentParts === undefined ? {} : { content_parts: contentParts }),
         }),
-      queueTurn: (threadId, prompt, images, clientId, files, permissionMode, activeDocument, contentParts) =>
+      queueTurn: (threadId, prompt, images, clientId, files, permissionMode, activeDocument, contentParts, _targetContext, hold) =>
         this.call("turn/queue", {
           thread_id: threadId,
+          ...(hold ? { hold: true } : {}),
           prompt,
           images: images ?? [],
           files: files ?? [],

@@ -2975,10 +2975,18 @@ html[data-focus-modality="keyboard"] :is(
   transform: none;
 }
 
+/* The menu sizes to its actions, not to the data an action names: a long
+ * label ellipsizes (see the item span) rather than stretching the menu
+ * across the reading column, and a long item list scrolls inside the
+ * viewport margin placeContextMenu keeps. The width cap follows the
+ * menu type size. */
 .thread-row-context-menu {
   position: fixed;
   z-index: 2147482000;
   min-width: 180px;
+  max-width: min(24em, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
   border: 1px solid var(--menu-border);
   border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);

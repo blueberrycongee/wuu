@@ -1,5 +1,4 @@
 import java.util.zip.ZipFile
-import java.security.MessageDigest
 
 plugins {
     id("com.android.application")
@@ -80,17 +79,3 @@ val generatePushNotices = tasks.register("generatePushNotices") {
 }
 android.sourceSets.getByName("main").assets.srcDir(pushNoticesDirectory)
 tasks.named("preBuild").configure { dependsOn(generatePushNotices) }
-
-// Native builds verify the checked-in desktop renderer without requiring Node.js.
-val verifySharedAvatar = tasks.register("verifySharedAvatar") {
-    doLast {
-        val repository = rootProject.projectDir.resolve("../../..").canonicalFile
-        repository.resolve("clients/native/shared-ui/NativeUI/sources.sha256").readLines().filter { it.isNotBlank() }.forEach { line ->
-            val (expected, path) = line.split("  ", limit = 2)
-            val file = repository.resolve(path)
-            val actual = if (file.isFile) MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) } else ""
-            check(actual == expected) { "Shared avatar is stale: $path. Run node clients/native/shared-ui/build.mjs from the repository root." }
-        }
-    }
-}
-tasks.named("preBuild").configure { dependsOn(verifySharedAvatar) }
