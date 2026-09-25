@@ -357,7 +357,7 @@
   box-shadow: var(--wuu-message-user-shadow, none);
   color: var(--wuu-message-user-color, var(--user-message-fg-color));
   border-radius: var(--user-message-radius);
-  padding: 6px 14px;
+  padding: 6px var(--card-padding);
 }
 
 .user-message-block {
@@ -482,7 +482,7 @@
   align-items: flex-start;
   border-radius: var(--user-message-radius);
   overflow: hidden;
-  padding: 12px 16px;
+  padding: 12px var(--card-padding);
 }
 
 .user-message-raw-query {
@@ -3496,6 +3496,10 @@
 .rich-code-block {
   --rich-code-padding-block: 10px;
   --rich-code-line-height: 1.5;
+  /* Label, code and copy glyph share the card inset measured from the outer
+   * edge, the same axis as composer text; the 1px is the frame. */
+  --rich-code-inset: calc(var(--card-padding) - 1px);
+  --rich-code-copy-glyph-offset: 5px;
   margin: 8px 0;
   background: var(--message-flow-card-bg);
   border: 1px solid var(--message-flow-card-border);
@@ -3531,7 +3535,7 @@
   position: absolute;
   /* Center the action on the first code line, including custom code sizes. */
   top: calc(var(--rich-code-padding-block) + (var(--appearance-code-size, 11px) * var(--rich-code-line-height) - 24px) / 2);
-  right: 8px;
+  right: calc(var(--rich-code-inset) - var(--rich-code-copy-glyph-offset));
   margin-left: 0;
   z-index: 1;
 }
@@ -3539,6 +3543,7 @@
 .rich-code-block > .rich-code {
   margin: 0;
   padding-block: var(--rich-code-padding-block);
+  padding-inline-start: var(--rich-code-inset);
   line-height: var(--rich-code-line-height);
   border: 0;
   border-radius: 0;
@@ -3548,7 +3553,7 @@
 .rich-code-header {
   display: flex;
   align-items: center;
-  padding: 4px 8px 4px 12px;
+  padding: 4px calc(var(--rich-code-inset) - var(--rich-code-copy-glyph-offset)) 4px var(--rich-code-inset);
   background: var(--message-flow-card-header-bg);
 }
 
@@ -3606,9 +3611,10 @@
     opacity var(--motion-fast) var(--ease-out);
 }
 
+/* Even glyph in the 24px box keeps --rich-code-copy-glyph-offset whole. */
 .message-copy-button.rich-code-copy > svg {
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
 }
 
 .rich-code-block:hover .rich-code-copy,
@@ -3827,7 +3833,7 @@
 
 .rich-table-wrap th,
 .rich-table-wrap td {
-  padding: 10px 14px;
+  padding: 10px var(--space-3);
   text-align: left;
   vertical-align: top;
   border: 0;
@@ -3836,6 +3842,7 @@
 
 .rich-table-wrap thead th {
   color: var(--ink-soft);
+  font-weight: inherit;
   border-bottom-color: var(--hairline-strong);
 }
 

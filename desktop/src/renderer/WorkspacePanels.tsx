@@ -330,6 +330,10 @@ export function WorkspaceRightPanel({
     );
   }, []);
 
+  // The split only exists once the body mounts; a panel that starts closed must
+  // attach the fit observer when it opens, not keep the stored width forever.
+  const bodyMounted = present || bodyPrewarmed || fileTabs.length > 0;
+
   useEffect(() => {
     const split = fileSplitRef.current;
     if (!split || typeof ResizeObserver === "undefined") {
@@ -365,7 +369,7 @@ export function WorkspaceRightPanel({
       settle.cancel();
       observer.disconnect();
     };
-  }, []);
+  }, [bodyMounted]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -805,7 +809,7 @@ export function WorkspaceRightPanel({
           <span className="workspace-panel-compact-action-slot" aria-hidden="true" />
         ) : null}
       </div>
-      {present || bodyPrewarmed || fileTabs.length > 0 ? (
+      {bodyMounted ? (
         <>
           <div className={`workspace-panel-body${activeTab ? "" : " picker"}`}>
             <div

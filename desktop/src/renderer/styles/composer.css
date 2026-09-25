@@ -720,8 +720,10 @@
 }
 
 .composer {
-  --composer-text-start: 16px;
-  --composer-control-icon-inset: 8px;
+  /* Text and toolbar glyphs share the card inset used by code blocks and
+   * bubbles; the toolbar subtracts its 32px buttons' glyph offset. */
+  --composer-text-start: var(--card-padding);
+  --composer-control-icon-inset: calc((32px - var(--icon-size)) / 2);
   position: relative;
   width: 100%;
   min-height: var(--composer-collapsed-min-height);
@@ -740,7 +742,7 @@
 }
 
 .hero-composer-wrap .composer {
-  --composer-text-start: 16px;
+  --composer-text-start: var(--card-padding);
   min-height: var(--composer-collapsed-min-height);
 }
 
@@ -1361,7 +1363,7 @@
   align-items: center;
   gap: 8px;
   overflow: hidden;
-  padding: 0 8px 4px calc(var(--composer-text-start) - var(--composer-control-icon-inset));
+  padding: 0 calc(var(--composer-text-start) - var(--composer-control-icon-inset)) 4px;
   container: composer-toolbar / inline-size;
 }
 

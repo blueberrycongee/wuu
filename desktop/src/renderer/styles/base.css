@@ -356,7 +356,7 @@
    * center while the controls fit; at larger zoom/font sizes, grow the row
    * instead of clipping controls that still scale with the page. */
   --window-titlebar-height: max(calc(48px / var(--desktop-page-zoom, 1)), calc(var(--control-size-toolbar) + var(--space-2)));
-  --window-titlebar-padding-inline: 24px;
+  --window-titlebar-padding-inline: var(--pane-inset);
   --window-titlebar-leading-inset: max(var(--window-titlebar-padding-inline), calc(var(--window-controls-inset-left) + 10px));
 
   --turn-warning-border: var(--warning-border);
