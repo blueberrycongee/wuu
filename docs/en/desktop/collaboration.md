@@ -4,7 +4,7 @@ Collaboration is a project conversation with a named agent. The agent reads and 
 
 ## Start a project conversation
 
-Open **Collaboration**, create an agent, and configure its name, avatar, role, and model. Start a direct message and select a registered workspace. The same agent can have conversations for different projects; the navigation label includes the project name.
+Open **Collaboration** and start a new conversation. Choose an existing agent or create one and set its model and name. The project control above the message box selects the registered workspace for the conversation; a new agent's first conversation opens there too. The same agent can have conversations for different projects; the navigation label and conversation header include the project name.
 
 State the result and constraints, for example:
 
@@ -41,9 +41,9 @@ A recorded check is evidence supplied by the execution, not proof of production 
 
 ## Memory and scheduled follow-up
 
-Open **Memory and scheduled tasks** to inspect and edit project or identity memory. Project memory is shared by conversations bound to that workspace and is injected into their coordination and delegated execution. Identity memory belongs to the named agent across projects. Work decisions provide task-specific context; workers can read the original room messages and their own history, but cannot read the coordinator's private transcript or pending private deliveries.
+Use **Memory** in the conversation header to read, edit, add, or delete project or identity memory in the side panel. Project memory is shared by conversations bound to that workspace and is injected into their coordination and delegated execution. Identity memory belongs to the named agent across projects. Work decisions provide task-specific context; workers can read the original room messages and their own history, but cannot read the coordinator's private transcript or pending private deliveries.
 
-Ask the agent in the conversation to schedule a one-time or recurring follow-up. Conversation timers survive the originating execution session; the panel shows their next occurrence and offers pause, resume and cancel. Work states also have host-managed progress deadlines. A stalled task moves to a visible state requiring attention rather than waiting indefinitely for a model to remember it.
+Ask the agent in the conversation to schedule a one-time or recurring follow-up. Conversation timers survive the originating execution session. **Timers** in the conversation header shows how many are pending; its panel lists each timer's next occurrence and offers pause, resume and cancel. Work states also have host-managed progress deadlines. A stalled task moves to a visible state requiring attention rather than waiting indefinitely for a model to remember it.
 
 The host must be running to execute work or timers. Persistent scheduling does not make a sleeping or powered-off computer available.
 

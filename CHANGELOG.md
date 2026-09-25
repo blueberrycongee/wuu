@@ -30,7 +30,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Collaboration now centers on project-bound DMs, with visible task controls,
   managed-session takeover and return, project and identity memory editing, and
-  persistent conversation timers. Group navigation is hidden while data remains.
+  persistent conversation timers. The composer's project control chooses where a
+  new conversation or a new agent's first conversation opens, and the
+  conversation header shows the project. Memory and timers open from the header
+  in a side panel. Group navigation is hidden while data remains.
 - Work execution uses isolated Git worktrees, versioned shared decisions and
   structured reports. Host-managed candidates and independent verification expose
   reviewable diffs with apply, optional Git-extension PR, and discard actions.
@@ -67,9 +70,6 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   of 2048, so a typical source file or document is read in one call.
 
 ### Fixed
-
-- Keep the project picker within its share of the new Collaboration header so
-  recipient search and the cancel action stay visible.
 
 - Work delivery reads structured reports from the final answer, so commentary
   before tool calls no longer causes completed executions to fail validation.

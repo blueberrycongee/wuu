@@ -497,6 +497,26 @@ it("opens an existing agent from the recipient picker before its new DM is in th
   expect(window.wuu.createNamedAgent).not.toHaveBeenCalled();
 });
 
+it("opens new direct conversations and new agents in the chosen project", async () => {
+  const project = (id: string) => ({ id, name: id, path: `/projects/${id}`, created_at: "2026-09-12T00:00:00Z", updated_at: "2026-09-12T00:00:00Z" });
+  vi.mocked(window.wuu.listProjects).mockResolvedValue({ projects: [project("catalog"), project("wuu")], active_context: { kind: "project", project_id: "catalog", cwd: "/projects/catalog" } });
+  agents = [{ id: "existing-agent", name: "Ada", memory_dir: "", avatar_key: "abstract-1", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
+  await act(async () => { root.render(<App />); });
+  await click(t("channels.newConversation"));
+  await act(async () => container.querySelector<HTMLButtonElement>(".composer-workspace-bar .hero-project-pill")!.click());
+  const item = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(button => button.textContent === "wuu");
+  expect(item).toBeTruthy();
+  await act(async () => item!.click());
+  await act(async () => { container.querySelector<HTMLButtonElement>("#channel-recipient-existing-agent")!.click(); });
+  expect(window.wuu.openChannelDirectMessage).toHaveBeenLastCalledWith({ agent_id: "existing-agent", workspace_root: "/projects/wuu" });
+  await click(t("channels.newConversation"));
+  await startNewAgent();
+  await confirmModel();
+  await enterName("Research");
+  await sendName();
+  expect(window.wuu.openChannelDirectMessage).toHaveBeenLastCalledWith(expect.objectContaining({ agent_id: "new-agent", workspace_root: "/projects/wuu" }));
+});
+
 it("keeps the unfinished identity and avatar when navigating away and back", async () => {
   await act(async () => { root.render(<App />); });
   await click(t("channels.newConversation"));

@@ -9,6 +9,7 @@ import { assignmentState, ChannelView, type ChannelConversationSnapshot, formatC
 import { WINDOW_RESIZING_CLASS } from "./WindowResizeState";
 import { clearToasts, ToastViewport } from "./Toast";
 import { userFacingErrorForMessage } from "./UserFacingErrors";
+import { translateCurrent as t } from "./i18n";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import type { ThreadSummary } from "./AppState";
 
@@ -288,7 +289,7 @@ describe("ChannelView", () => {
     expect(container.querySelector('.managed-agent-work')).toBeNull();
   });
 
-  it.each(["channel", "dm"] as const)("keeps %s header settings without a plans or memory management entry", async (kind) => {
+  it.each(["channel", "dm"] as const)("keeps %s header settings beside direct-conversation memory and timers", async (kind) => {
     const room = { ...rooms[0], kind, members: kind === "dm" ? rooms[0].members.slice(0, 1) : rooms[0].members };
     const api = createApi();
     api.bootstrapChannels = vi.fn(async () => ({ agents, rooms: [room] }));
@@ -298,12 +299,15 @@ describe("ChannelView", () => {
     await act(async () => root!.render(<ChannelView section="rooms" selectedRoomID={room.id} directoryAgents={agents} directoryRooms={[room]} />));
     const heading = container.querySelector<HTMLElement>('header [role="heading"]')!;
     const settings = heading.closest("button")!;
-    // The header exposes conversation settings only, even when the host supports continuity.
-    expect(Array.from(settings.closest("header")!.querySelectorAll("button"))).toEqual([settings]);
+    // Memory and timers belong to a project conversation; group channels expose settings only.
+    const context = [t("channels.context.memory"), t("channels.context.timers")];
+    expect(Array.from(settings.closest("header")!.querySelectorAll("button"), button => button === settings ? "settings" : button.getAttribute("aria-label")))
+      .toEqual(kind === "dm" ? ["settings", ...context] : ["settings"]);
     await act(async () => settings.click());
     expect(settings.getAttribute("aria-expanded")).toBe("true");
     expect(container.querySelector(`#${settings.getAttribute("aria-controls")}`)).not.toBeNull();
-    expect(api.channelContinuity).not.toHaveBeenCalled();
+    // Memory is read only when the user opens it.
+    expect(api.channelContinuity).not.toHaveBeenCalledWith(expect.objectContaining({ action: "memory" }));
     expect(container.querySelector('[role="log"]')?.textContent).toContain("Human direction");
   });
 
@@ -602,9 +606,9 @@ describe("ChannelView", () => {
     await settle();
 
     expect(container.querySelector('[role="log"]')?.textContent).toContain("Fix callback");
-    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>(".channel-task-actions button")).find(button => button.textContent?.includes("验证"))!.click());
+    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>(".channel-task-meta button")).find(button => button.textContent?.includes("验证"))!.click());
     expect(onOpenSession).toHaveBeenCalledWith("session-check-1");
-    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>(".channel-task-actions button")).find(button => button.textContent === "取消")!.click());
+    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>(".channel-card-actions button")).find(button => button.textContent === "取消任务")!.click());
     expect(api.updateChannelTask).toHaveBeenCalledWith({ task_id: "work-1", state: "cancelled" });
     expect(container.querySelector('[role="log"]')?.textContent).toContain("Reject callback replay");
     act(() => root?.render(<ChannelView section="tasks" onOpenSession={onOpenSession} />));

@@ -33,6 +33,11 @@ export function managedSidebarThreads(
   return { byAgentID, threadIDs };
 }
 
+/** Direct conversations are bound to a project; its folder name identifies them. */
+export function conversationProjectName(room: Pick<ChannelRoom, "workspace_root">): string {
+  return room.workspace_root?.split(/[\\/]/).filter(Boolean).at(-1) ?? "";
+}
+
 function searchable(value: string): string {
   return value.normalize("NFKD").replace(/\p{M}/gu, "").toLocaleLowerCase();
 }
@@ -48,8 +53,9 @@ export function collaborationConversations(
       ? room.members.find((member) => member.member_type === "agent")?.member_id : undefined;
     if (agentID) representedAgents.add(agentID);
     const agent = agentID ? agentsByID.get(agentID) : undefined;
+    const project = conversationProjectName(room);
     return {
-      id: room.id, room, agent, name: `${agent?.name ?? room.name}${room.workspace_root ? ` · ${room.workspace_root.split(/[\\/]/).filter(Boolean).at(-1)}` : ""}`,
+      id: room.id, room, agent, name: `${agent?.name ?? room.name}${project ? ` · ${project}` : ""}`,
       updatedAt: room.last_message?.created_at ?? room.created_at,
       pinned: pinnedRoomIDs.includes(room.id),
     };

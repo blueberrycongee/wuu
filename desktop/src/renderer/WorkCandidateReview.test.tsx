@@ -16,7 +16,7 @@ it("pins human application to the reviewed revision and removes disabled extensi
   const publish = vi.fn(async () => ({ url: "https://example.com/review" }));
   try {
     await act(async () => root.render(<WorkCandidateReview work={work} artifact={artifact} />));
-    await act(async () => { const details = container.querySelector("details")!; details.open = true; details.dispatchEvent(new Event("toggle")); });
+    await act(async () => container.querySelector<HTMLButtonElement>(".work-candidate-toggle")!.click());
     const buttons = () => Array.from(container.querySelectorAll("button"));
     expect(buttons().find(button => button.textContent === "开 PR")?.disabled).toBe(true);
     await act(async () => { await desktopPluginHost.activateGeneration({ pluginId: "test-git", generation: "one", register(api) { api.registerCommand({ id: "publish", title: "Git review", contexts: ["work-candidate.publish"], execute: publish }); } }); });

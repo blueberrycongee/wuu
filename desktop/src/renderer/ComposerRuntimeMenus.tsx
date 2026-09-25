@@ -1722,7 +1722,8 @@ export function ProjectPickerMenu({
   onSelectProject,
   onSelectNoProject,
   onCreateProject,
-  onOpenProject
+  onOpenProject,
+  folderActions = true,
 }: {
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
@@ -1732,6 +1733,7 @@ export function ProjectPickerMenu({
   onSelectNoProject: () => void;
   onCreateProject: () => void;
   onOpenProject: () => void;
+  folderActions?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -1759,6 +1761,7 @@ export function ProjectPickerMenu({
           );
         })}
       </div>
+      {folderActions ? <>
       <div className="project-picker-divider" />
       <button type="button" role="menuitem" disabled={!hostSupports("chooseProjectFolder")} onClick={onOpenProject}>
         <FolderOpen className="icon-lg" />
@@ -1773,6 +1776,7 @@ export function ProjectPickerMenu({
         <span>{t("runtime.noProject")}</span>
         {activeContext?.kind === "no_project" ? <Check className="icon-lg" /> : null}
       </button>
+      </> : null}
     </div>
   );
 }

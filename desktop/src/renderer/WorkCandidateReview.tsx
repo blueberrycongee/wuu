@@ -2,6 +2,8 @@ import { useCallback, useState, useSyncExternalStore } from "react";
 import type { ChannelWork, ChannelWorkArtifact, ChannelWorkCandidateResult } from "../shared/protocol";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { RichContent } from "./RichContent";
+import { SelectMenu } from "./SelectMenu";
+import { ArrowUpRight, ChevronDown, ChevronRight, FileDiff } from "./WuuIcons";
 import { useI18n } from "./i18n";
 import { showErrorToast } from "./Toast";
 
@@ -9,6 +11,7 @@ export function WorkCandidateReview({ work, artifact, onOpenSession }: {
   work: ChannelWork; artifact: ChannelWorkArtifact; onOpenSession?: (id: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const [open, setOpen] = useState(false);
   const [review, setReview] = useState<ChannelWorkCandidateResult>();
   const [busy, setBusy] = useState(false);
   const [publishedURL, setPublishedURL] = useState("");
@@ -41,28 +44,53 @@ export function WorkCandidateReview({ work, artifact, onOpenSession }: {
   }
   const disposition = review?.artifact.disposition ?? artifact.disposition;
   const disabled = busy || Boolean(disposition) || review?.stale;
-  return <details className="work-candidate-review" onToggle={event => { if (event.currentTarget.open && !review) void load(); }}>
-    <summary>{t("channels.candidate.title")}{disposition ? ` · ${t(`channels.candidate.${disposition}`)}` : ""}</summary>
-    {review ? <>
-      {review.stale ? <p role="status">{t("channels.candidate.stale")}</p> : null}
-      <RichContent text={review.candidate.report.result} />
-      {review.candidate.report.implicit_choices.length ? <details><summary>{t("channels.candidate.choices")}</summary><ul>{review.candidate.report.implicit_choices.map((choice, index) => <li key={index}>{choice}</li>)}</ul></details> : null}
-      <div className="work-candidate-evidence">
-        <strong>{t("channels.candidate.checks")}</strong>
-        {review.candidate.report.evidence_refs.length ? <ul>{review.candidate.report.evidence_refs.map((ref, index) => <li key={index}>{ref}</li>)}</ul> : <p>{t("channels.candidate.noChecks")}</p>}
-        {work.candidate_artifact_ref === artifact.id && work.verification ? <p>{t("channels.candidate.verification")}: {t(`channels.verification.${work.verification.decision}`)} — {work.verification.report}</p> : <p>{t("channels.candidate.unverified")}</p>}
-        {review.candidate.report.unresolved_items.length ? <ul>{review.candidate.report.unresolved_items.map((item, index) => <li key={index}>{item}</li>)}</ul> : null}
-      </div>
-      <button type="button" onClick={() => onOpenSession?.(review.candidate.session_id)}>{t("channels.candidate.session")}</button>
+  const report = review?.candidate.report;
+  return <section className="work-candidate-review" aria-busy={busy || undefined}>
+    <button type="button" className="work-candidate-toggle" aria-expanded={open} onClick={() => {
+      setOpen(!open);
+      if (!open && !review) void load();
+    }}>
+      <FileDiff aria-hidden="true" />
+      <span>{t("channels.candidate.title")}</span>
+      {disposition ? <span className="work-candidate-disposition">{t(`channels.candidate.${disposition}`)}</span> : null}
+      {open ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+    </button>
+    {open && review && report ? <div className="work-candidate-body">
+      {review.stale ? <p className="work-candidate-notice" role="status">{t("channels.candidate.stale")}</p> : null}
+      <RichContent text={report.result} />
+      <dl className="work-candidate-facts">
+        <div>
+          <dt>{t("channels.candidate.verification")}</dt>
+          <dd>{work.candidate_artifact_ref === artifact.id && work.verification
+            ? `${t(`channels.verification.${work.verification.decision}`)}${work.verification.report ? ` — ${work.verification.report}` : ""}`
+            : t("channels.candidate.unverified")}</dd>
+        </div>
+        <div>
+          <dt>{t("channels.candidate.checks")}</dt>
+          <dd>{report.evidence_refs.length || report.unresolved_items.length ? <ul>
+            {report.evidence_refs.map((ref, index) => <li key={`evidence-${index}`}>{ref}</li>)}
+            {report.unresolved_items.map((item, index) => <li key={`unresolved-${index}`}>{item}</li>)}
+          </ul> : t("channels.candidate.noChecks")}</dd>
+        </div>
+        {report.implicit_choices.length ? <div>
+          <dt>{t("channels.candidate.choices")}</dt>
+          <dd><ul>{report.implicit_choices.map((choice, index) => <li key={index}>{choice}</li>)}</ul></dd>
+        </div> : null}
+      </dl>
       <pre className="work-candidate-diff" tabIndex={0} aria-label={t("channels.candidate.diff")}><code>{review.candidate.diff || t("channels.candidate.noDiff")}</code></pre>
-      <div className="channel-task-actions">
-        <button type="button" disabled={disabled || !review.candidate.revision} onClick={() => void decide("apply")}>{t("channels.candidate.apply")}</button>
-        {commands.length > 1 ? <select aria-label={t("channels.candidate.publisher")} value={selected ? `${selected.pluginId}:${selected.id}` : ""} onChange={event => setPublisher(event.target.value)}>{commands.map(command => <option key={`${command.pluginId}:${command.id}`} value={`${command.pluginId}:${command.id}`}>{command.title}</option>)}</select> : null}
+      <div className="channel-card-actions">
+        {commands.length > 1 ? <SelectMenu className="work-candidate-publisher" ariaLabel={t("channels.candidate.publisher")} value={selected ? `${selected.pluginId}:${selected.id}` : ""}
+          onChange={setPublisher} options={commands.map(command => ({ value: `${command.pluginId}:${command.id}`, label: command.title }))} flip /> : null}
+        <button type="button" className="secondary" disabled={disabled} onClick={() => void decide("discard")}>{t("channels.candidate.discard")}</button>
         <button type="button" disabled={disabled || !selected || !review.candidate.revision} title={!selected ? t("channels.candidate.installPublisher") : selected.title} onClick={() => void decide("publish")}>{t("channels.candidate.publish")}</button>
-        <button type="button" disabled={disabled} onClick={() => void decide("discard")}>{t("channels.candidate.discard")}</button>
-        <button type="button" disabled={busy} onClick={() => void load()}>{t("channels.candidate.refresh")}</button>
+        <button type="button" className="primary" disabled={disabled || !review.candidate.revision} onClick={() => void decide("apply")}>{t("channels.candidate.apply")}</button>
       </div>
-      {publishedURL ? <a href={publishedURL} target="_blank" rel="noreferrer">{t("channels.candidate.openPR")}</a> : null}
-    </> : busy ? <p>{t("channels.candidate.loading")}</p> : <button type="button" onClick={() => void load()}>{t("channels.candidate.refresh")}</button>}
-  </details>;
+      <div className="work-candidate-links">
+        {onOpenSession ? <button type="button" className="channel-card-link" onClick={() => onOpenSession(review.candidate.session_id)}>{t("channels.candidate.session")}<ArrowUpRight aria-hidden="true" /></button> : null}
+        {publishedURL ? <a className="channel-card-link" href={publishedURL} target="_blank" rel="noreferrer">{t("channels.candidate.openPR")}<ArrowUpRight aria-hidden="true" /></a> : null}
+        <button type="button" className="channel-card-link" disabled={busy} onClick={() => void load()}>{t("channels.candidate.refresh")}</button>
+      </div>
+    </div> : open ? busy ? <p className="work-candidate-notice">{t("channels.candidate.loading")}</p>
+      : <button type="button" className="channel-card-link" onClick={() => void load()}>{t("channels.candidate.refresh")}</button> : null}
+  </section>;
 }

@@ -105,6 +105,7 @@ import {
   SIDEBAR_SECTION_COLLAB,
 } from "./AppSidebar";
 import { ChannelView, type ChannelConversationSnapshot, type ChannelSection } from "./ChannelView";
+import type { ChannelComposerProject } from "./ChannelComposer";
 import { collaborationConversations, managedSidebarThreads, orderedPinnedCollaborationConversations, type CollaborationConversation } from "./CollaborationConversations";
 import { CollaborationSidebar } from "./CollaborationSidebar";
 import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft } from "./AgentOnboarding";
@@ -671,6 +672,16 @@ export function App(): JSX.Element {
   const [editChannelRoomRequestID, setEditChannelRoomRequestID] = useState("");
   const [agentOnboardingActive, setAgentOnboardingActive] = useState(false);
   const [agentOnboardingDraft, setAgentOnboardingDraft] = useState<AgentOnboardingDraft | null>(null);
+  // New direct conversations and new agents open in one registered project.
+  // Default to the runtime's project, as the host does without a workspace.
+  const [collaborationProjectID, setCollaborationProjectID] = useState("");
+  const collaborationProjects = useMemo(() => state.projects.filter((project) => !project.missing), [state.projects]);
+  const collaborationProject = collaborationProjects.find((project) => project.id === collaborationProjectID)
+    ?? collaborationProjects.find((project) => project.path === state.initialized?.workspace_root)
+    ?? collaborationProjects.find((project) => project.id === state.activeProjectId);
+  const collaborationProjectPicker: ChannelComposerProject | undefined = collaborationProjects.length
+    ? { projects: collaborationProjects, selectedID: collaborationProject?.id ?? "", onSelect: setCollaborationProjectID }
+    : undefined;
   const [allNamedAgents, setNamedAgents] = useState<NamedAgent[]>([]);
   const [deletedAgentIDs, setDeletedAgentIDs] = useState<ReadonlySet<string>>(new Set());
   const deletedAgentIDsRef = useRef(new Set<string>());
@@ -3729,17 +3740,17 @@ export function App(): JSX.Element {
     openCollaborationView();
   }
 
-  async function selectCollaborationAgent(agentID: string): Promise<void> {
+  async function selectCollaborationAgent(agentID: string, workspaceRoot?: string): Promise<void> {
     setAgentOnboardingActive(false);
     if (!namedAgents.some((agent) => agent.id === agentID)) return;
     try {
-      await openCollaborationAgentConversation(agentID);
+      await openCollaborationAgentConversation(agentID, undefined, workspaceRoot);
     } catch (error) {
       if (selectedCollaborationAgentRequestRef.current === agentID) showErrorToast(error);
     }
   }
 
-  async function openCollaborationAgentConversation(agentID: string, onboarding?: ChannelRoomOnboarding): Promise<void> {
+  async function openCollaborationAgentConversation(agentID: string, onboarding?: ChannelRoomOnboarding, workspaceRoot?: string): Promise<void> {
     const requestGeneration = ++directMessageRequestGenerationRef.current;
     selectedCollaborationAgentRequestRef.current = agentID;
     setSelectedCollaborationAgentID(agentID);
@@ -3747,7 +3758,7 @@ export function App(): JSX.Element {
     setAppMode("collaboration");
     prepareChannelTab();
     const existingDirectMessage = activeChannelRooms.find(
-      (room) => room.kind === "dm" && room.members.some(
+      (room) => room.kind === "dm" && (!workspaceRoot || room.workspace_root === workspaceRoot) && room.members.some(
         (member) => member.member_type === "agent" && member.member_id === agentID,
       ),
     );
@@ -3757,7 +3768,9 @@ export function App(): JSX.Element {
     }
     const isCurrentRequest = () => selectedCollaborationAgentRequestRef.current === agentID
       && requestGeneration === directMessageRequestGenerationRef.current;
-    const result = await window.wuu.openChannelDirectMessage({ agent_id: agentID, ...(onboarding ? { onboarding } : {}) }).catch((reason: unknown) => {
+    const result = await window.wuu.openChannelDirectMessage({
+      agent_id: agentID, ...(onboarding ? { onboarding } : {}), ...(workspaceRoot ? { workspace_root: workspaceRoot } : {}),
+    }).catch((reason: unknown) => {
       if (!isCurrentRequest()) return null;
       setSelectedCollaborationAgentID("");
       throw reason;
@@ -5463,8 +5476,9 @@ export function App(): JSX.Element {
                     : [...current, agent]);
                   return agent;
                 }}
-                onOpenConversation={(agent, onboarding) => openCollaborationAgentConversation(agent.id, onboarding)}
+                onOpenConversation={(agent, onboarding) => openCollaborationAgentConversation(agent.id, onboarding, collaborationProject?.path)}
                 onManageProviders={openAgentProviderSettings}
+                project={collaborationProjectPicker}
                 onClose={() => { setAgentOnboardingDraft(null); setAgentOnboardingActive(false); }}
               />
             ) : <ChannelView
@@ -5482,6 +5496,7 @@ export function App(): JSX.Element {
               managedThreadsByAgentID={managedSidebar.byAgentID}
               lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
               onOpenAgentConversation={selectCollaborationAgent}
+              conversationProject={collaborationProjectPicker}
               composerDraft={activeChannelComposerDraft}
               onComposerDraftChange={updateSelectedChannelRoomDraft}
               directoryAgents={namedAgents}
