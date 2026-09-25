@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import type { Thread, ThreadItem, Turn } from "../shared/protocol";
 import {
-  deriveActiveSessionHint,
   deriveActiveSessionHints,
   latestAgentMessageText,
 } from "./activeSessionHint";
@@ -127,13 +126,7 @@ describe("latestAgentMessageText", () => {
   });
 });
 
-describe("deriveActiveSessionHint", () => {
-  it("returns null when no candidate threads exist", () => {
-    expect(
-      deriveActiveSessionHint({ threads: [] }),
-    ).toBeNull();
-  });
-
+describe("deriveActiveSessionHints", () => {
   it("filters out archived threads", () => {
     const visible = thread({
       id: "live",
@@ -146,39 +139,30 @@ describe("deriveActiveSessionHint", () => {
       updated_at: "2026-05-01T00:00:00Z",
       turns: [turn([agentMessage({ text: "不应被选中" })])],
     });
-    const hint = deriveActiveSessionHint({ threads: [archived, visible] });
-    expect(hint?.thread_id).toBe("live");
-    expect(hint?.preview).toBe("可见");
+    const hints = deriveActiveSessionHints({ threads: [archived, visible] });
+    expect(hints.map((hint) => hint.thread_id)).toEqual(["live"]);
+    expect(hints[0]?.preview).toBe("可见");
   });
 
   it("uses the latest agent message as preview and never falls back to thread.preview", () => {
     // The bubble must surface the latest stable agent_message text only.
-    // The legacy fallback to Thread.preview (which typically carries the
-    // first turn's user query) is intentionally removed: surfacing that
-    // as "latest commentary" reads as stale/early text and is exactly the
-    // failure mode the pet bubble should avoid. When a thread has no
-    // agent_message anywhere, the preview is empty so the pet window
-    // hides its bubble card entirely rather than render a stale summary.
+    // Thread.preview typically carries the first turn's user query. Surfacing
+    // that as latest commentary is the failure mode this ranking avoids.
+    // A thread with no agent_message is omitted rather than filled from that field.
     const withItems = thread({
       id: "items",
       turns: [turn([agentMessage({ text: "实时文本" })])],
-      // thread.preview is the denormalized field — must be ignored now.
       preview: "聚合后的简介",
     });
     const withStaticOnly = thread({
       id: "static",
       turns: [turn([] as ThreadItem[])],
-      // No agent_message anywhere; thread.preview is the only string on
-      // the thread and used to surface here as a fallback. Under the
-      // new contract it must NOT appear in the hint preview.
       preview: "降级到 thread.preview",
     });
-    expect(deriveActiveSessionHint({ threads: [withItems] })?.preview).toBe(
+    expect(deriveActiveSessionHints({ threads: [withItems] })[0]?.preview).toBe(
       "实时文本",
     );
-    expect(deriveActiveSessionHint({ threads: [withStaticOnly] })?.preview).toBe(
-      "",
-    );
+    expect(deriveActiveSessionHints({ threads: [withStaticOnly] })).toEqual([]);
   });
 
   it("ranks failed > needs_review > running > unread > idle", () => {
@@ -214,36 +198,36 @@ describe("deriveActiveSessionHint", () => {
       turns: [turn([agentMessage({ text: "空闲" })])],
     });
     const all = [idle, unread, running, review, failed];
-    expect(deriveActiveSessionHint({ threads: all })?.thread_id).toBe("failed");
+    expect(deriveActiveSessionHints({ threads: all })[0]?.thread_id).toBe("failed");
 
     const withoutFailures = all.filter((t) => t.id !== "failed");
-    expect(deriveActiveSessionHint({ threads: withoutFailures })?.thread_id).toBe(
+    expect(deriveActiveSessionHints({ threads: withoutFailures })[0]?.thread_id).toBe(
       "review",
     );
     const withoutReview = withoutFailures.filter((t) => t.id !== "review");
-    expect(deriveActiveSessionHint({ threads: withoutReview })?.thread_id).toBe(
+    expect(deriveActiveSessionHints({ threads: withoutReview })[0]?.thread_id).toBe(
       "running",
     );
     const withoutRunning = withoutReview.filter((t) => t.id !== "running");
     // Plain idle threads outrank each other only by updated_at, so without an
     // unread set the first non-running leftover wins on recency.
     expect(
-      deriveActiveSessionHint({ threads: withoutRunning })?.thread_id,
+      deriveActiveSessionHints({ threads: withoutRunning })[0]?.thread_id,
     ).toBe("unread");
 
     // Same candidates but flagged as unread → the unread idle outranks the
     // plain idle.
     expect(
-      deriveActiveSessionHint({
+      deriveActiveSessionHints({
         threads: withoutRunning,
         unreadThreadIDs: new Set(["unread"]),
-      })?.thread_id,
+      })[0]?.thread_id,
     ).toBe("unread");
     expect(
-      deriveActiveSessionHint({
+      deriveActiveSessionHints({
         threads: [unread, idle],
         unreadThreadIDs: new Set(["idle"]),
-      })?.thread_id,
+      })[0]?.thread_id,
     ).toBe("idle");
   });
 
@@ -259,7 +243,7 @@ describe("deriveActiveSessionHint", () => {
       turns: [turn([agentMessage({ text: "旧的" })])],
     });
     expect(
-      deriveActiveSessionHint({ threads: [older, newer] })?.thread_id,
+      deriveActiveSessionHints({ threads: [older, newer] })[0]?.thread_id,
     ).toBe("newer");
   });
 
@@ -275,14 +259,14 @@ describe("deriveActiveSessionHint", () => {
       turns: [turn([agentMessage({ text: "b" })])],
     });
     expect(
-      deriveActiveSessionHint({
+      deriveActiveSessionHints({
         threads: [focused, background],
         thread: focused,
-      })?.thread_id,
+      })[0]?.thread_id,
     ).toBe("focused");
     // Without the focus bump, recency would pick background.
     expect(
-      deriveActiveSessionHint({ threads: [focused, background] })?.thread_id,
+      deriveActiveSessionHints({ threads: [focused, background] })[0]?.thread_id,
     ).toBe("background");
   });
 
@@ -292,13 +276,11 @@ describe("deriveActiveSessionHint", () => {
       status: "in_progress",
       turns: [turn([agentMessage({ text: "正在请求权限批准" })])],
     });
-    const hint = deriveActiveSessionHint({ threads: [running] });
-    expect(hint?.status).toBe("running");
-    expect(hint?.attention).toBe(false);
+    const hints = deriveActiveSessionHints({ threads: [running] });
+    expect(hints[0]?.status).toBe("running");
+    expect(hints[0]?.attention).toBe(false);
   });
-});
 
-describe("deriveActiveSessionHints", () => {
   it("returns the ranked top threads capped at three", () => {
     const make = (id: string, updatedAt: string, text: string, status: Thread["status"] = "idle") =>
       thread({
@@ -331,12 +313,6 @@ describe("deriveActiveSessionHints", () => {
       updated_at: "2026-05-01T00:00:00Z",
       turns: [turn([agentMessage({ text: "有话说" })])],
     });
-    // The silent running thread would win the single-hint ranking (and
-    // does, as the hide-the-bubble signal there), but the multi-row feed
-    // simply skips it: rows exist to show commentary.
-    expect(deriveActiveSessionHint({ threads: [silent, talking] })?.thread_id).toBe(
-      "silent",
-    );
     const hints = deriveActiveSessionHints({ threads: [silent, talking] });
     expect(hints.map((h) => h.thread_id)).toEqual(["talking"]);
   });
