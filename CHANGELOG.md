@@ -10,6 +10,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Collaboration now centers on project-bound DMs, with visible task controls,
+  managed-session takeover and return, project and identity memory editing, and
+  persistent conversation timers. Group navigation is hidden while data remains.
+- Work execution uses isolated Git worktrees, versioned shared decisions and
+  structured reports. Host-managed candidates and independent verification expose
+  reviewable diffs with apply, optional Git-extension PR, and discard actions.
+  Progress deadlines, revision checks and private-history boundaries protect
+  continuing work from stale updates and silent stalls.
+
 - Collaboration tools follow each admitted session role: conversations read and
   coordinate, execution sessions can write, and verification sessions only read.
   Continuing identities refresh their role instructions on every turn.
