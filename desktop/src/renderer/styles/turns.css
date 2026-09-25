@@ -4248,7 +4248,11 @@ pre {
 }
 
 /* Usage overview under the greeting: one quiet card groups the totals with
-   their heatmap. It appears only once the host answers, so it fades in. */
+   their heatmap. It appears only once the host answers, so it enters in
+   stages: the card rises in, the totals settle, and the weeks follow in time
+   order. Every delay and duration comes from the motion ladder, so reduced
+   motion shows the final state at once. The idle play waits for this
+   entrance to finish (EmptyHomeOverview). */
 .empty-home-overview {
   position: relative;
   grid-column: 1 / -1;
@@ -4259,12 +4263,13 @@ pre {
   border-radius: var(--message-flow-card-radius);
   background: var(--surface-1);
   padding: var(--panel-padding);
-  animation: empty-home-overview-in var(--motion-base) var(--ease-out);
+  animation: empty-home-overview-in var(--motion-slow) var(--ease-out) backwards;
 }
 
 @keyframes empty-home-overview-in {
   from {
     opacity: 0;
+    transform: translateY(6px);
   }
 }
 
@@ -4276,6 +4281,8 @@ pre {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 6em), 1fr));
   gap: var(--space-4);
   margin: 0;
+  animation: empty-home-overview-in var(--motion-slow) var(--ease-out)
+    calc(var(--motion-fast) / 2) backwards;
 }
 
 .empty-home-stats > div {
@@ -4336,12 +4343,21 @@ pre {
   overflow: hidden;
 }
 
+/* After the totals start, the weeks reveal from the oldest one on screen to
+   today across one slow step. EmptyHomeOverview counts the weeks on the
+   first line, so clipped older weeks start at once and add no wait. */
 .empty-home-heatmap-week {
   display: grid;
   flex: none;
   grid-template-columns: var(--empty-home-heatmap-cell);
   grid-template-rows: var(--empty-home-heatmap-label) repeat(7, var(--empty-home-heatmap-cell));
   row-gap: var(--empty-home-heatmap-gap);
+  animation: empty-home-overview-in var(--motion-slow) var(--ease-out) backwards;
+  animation-delay: calc(
+    var(--motion-fast) + var(--motion-slow) *
+      max(0, var(--empty-home-heatmap-visible) - 1 - var(--empty-home-heatmap-week)) /
+      var(--empty-home-heatmap-visible)
+  );
 }
 
 /* A month label starts at its week and runs across the following weeks. */
