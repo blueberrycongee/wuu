@@ -5181,11 +5181,6 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   box-shadow: inset 0 0 0 1px var(--ink-overlay-18);
 }
 
-.split-composer .composer-collapsed-prompt-list {
-  margin: 0;
-  max-height: min(120px, 18vh);
-}
-
 /* Global scrollbar styling lives in styles/scrollbars.css. The conversation
  * panes opt into a stable gutter so the layout never shifts when the
  * thumb fades in or out, and reserve it on both edges so the flow stays on

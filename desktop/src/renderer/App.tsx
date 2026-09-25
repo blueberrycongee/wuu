@@ -464,13 +464,7 @@ export function App(): JSX.Element {
     moveSplitDraftToGlobalComposer,
     currentPrimaryComposerDraft,
     restorePrimaryComposerDraft,
-  } = useComposerDraftState({
-    setStatus: (status) =>
-      setState((current) => ({
-        ...current,
-        status,
-      })),
-  });
+  } = useComposerDraftState();
   const [historyMessageEdit, setHistoryMessageEdit] =
     useState<HistoryMessageEditState | undefined>(undefined);
   const composerDraftsRef = useRef({ primary: currentPrimaryComposerDraft, split: splitComposerDrafts });

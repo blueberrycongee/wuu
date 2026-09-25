@@ -17,10 +17,8 @@ import {
 import { type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useOptionalImagePreview } from "./ImagePreview";
 import { isComposerTextComposing } from "./ComposerSlashCommands";
-import {
-  CollapsedComposerPromptCard,
-  useCollapsedComposerPrompt
-} from "./ComposerCollapsedPrompt";
+import { useCollapsedComposerPrompt } from "./ComposerCollapsedPrompt";
+import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
 import {
   WORKSPACE_FILE_DRAG_MIME,
   appendWorkspacePathToPrompt,
@@ -43,18 +41,13 @@ import type { MessageContentPart } from "../shared/protocol";
 
 const ComposerDrawer = createComposerDrawer(React);
 
+/** Read-only attachments of a sent message; drafts use ComposerAttachmentTray. */
 export function ComposerAttachmentStrip({
   files,
-  images,
-  onRemoveFile,
-  onRemoveImage,
-  removable = true
+  images
 }: {
   files: ComposerFile[];
   images: ComposerImage[];
-  onRemoveFile?: (id: string) => void;
-  onRemoveImage?: (id: string) => void;
-  removable?: boolean;
 }): JSX.Element | null {
   const { t } = useI18n();
   const imagePreview = useOptionalImagePreview();
@@ -69,19 +62,6 @@ export function ComposerAttachmentStrip({
           <div className="composer-image-attachment" key={image.id}>
             <AttachmentImage image={image} label={label}
               onOpen={src => imagePreview?.openPreview({ src, alt: label, title: label })} />
-            {removable ? (
-              <button
-                type="button"
-                className="composer-attachment-remove"
-                aria-label={t("composer.removeImage", { number: index + 1 })}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onRemoveImage?.(image.id);
-                }}
-              >
-                <X className="icon-xs" />
-              </button>
-            ) : null}
           </div>
         );
       })}
@@ -91,11 +71,6 @@ export function ComposerAttachmentStrip({
             <FileText className="icon" aria-hidden="true" />
             <span>{file.filename?.trim() || t("composer.pdfNumber", { number: index + 1 })}</span>
           </>}
-          {removable ? (
-            <button type="button" className="composer-attachment-remove" aria-label={t("composer.removeFile", { number: index + 1 })} onClick={() => onRemoveFile?.(file.id)}>
-              <X className="icon-xs" />
-            </button>
-          ) : null}
         </div>
       ))}
     </div>
@@ -194,7 +169,6 @@ export function SplitPaneComposer({
     hasBlocks: hasCollapsedPromptBlocks,
     prefix: collapsedPromptPrefix,
     visiblePrompt: visiblePromptValue,
-    listRef: collapsedPromptListRef,
     handlePaste: handleCollapsedComposerPaste,
     revealBlock: revealCollapsedPromptBlock,
     removeBlock: removeCollapsedPromptBlock,
@@ -313,6 +287,16 @@ export function SplitPaneComposer({
             {cameraOpen && !readOnly ? (
               <ComposerCameraPanel onCapture={captureCamera} onClose={closeCamera} />
             ) : null}
+            <ComposerAttachmentTray
+              images={images}
+              files={files}
+              pastedTexts={collapsedPromptBlocks}
+              resetKey={queryHistorySessionID}
+              onRemoveImage={onRemoveImage}
+              onRemoveFile={onRemoveFile}
+              onRevealText={revealCollapsedPromptBlock}
+              onRemoveText={removeCollapsedPromptBlock}
+            />
             <div
               className={`composer-frame split-composer-shell${dropActive ? " composer-frame-drop-active split-composer-shell-drop-active" : ""}`}
               data-wuu-component="composer-frame"
@@ -320,8 +304,7 @@ export function SplitPaneComposer({
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
             >
-              <div className={`composer${hasCollapsedPromptBlocks ? " has-collapsed-prompt" : ""}`}>
-                <ComposerAttachmentStrip files={files} images={images} onRemoveFile={onRemoveFile} onRemoveImage={onRemoveImage} />
+              <div className="composer">
                 <input
                   ref={attachmentInputRef}
                   className="composer-file-input"
@@ -352,22 +335,6 @@ export function SplitPaneComposer({
                     }
                   }}
                 />
-                {hasCollapsedPromptBlocks ? (
-                  <div
-                    className="composer-collapsed-prompt-list"
-                    ref={collapsedPromptListRef}
-                    aria-label={t("composer.collapsedLongText")}
-                  >
-                    {collapsedPromptBlocks.map((block, index) => (
-                      <CollapsedComposerPromptCard
-                        text={block.text}
-                        key={block.id}
-                        onReveal={() => revealCollapsedPromptBlock(index)}
-                        onRemove={() => removeCollapsedPromptBlock(index)}
-                      />
-                    ))}
-                  </div>
-                ) : null}
                 <textarea
                   ref={textareaRef}
                   value={visiblePromptValue}

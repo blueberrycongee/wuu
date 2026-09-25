@@ -184,7 +184,6 @@ function ChannelMessageBubble({
         <ComposerAttachmentStrip
           images={(message.images ?? []).map((image, index) => ({ id: `${attachmentIDPrefix}-image-${index}`, ...image }))}
           files={(message.files ?? []).map((file, index) => ({ id: `${attachmentIDPrefix}-file-${index}`, ...file }))}
-          removable={false}
         />
       ) : null}
       {hasBubble ? (

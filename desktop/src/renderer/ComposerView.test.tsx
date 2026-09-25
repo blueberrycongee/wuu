@@ -2261,7 +2261,7 @@ describe("Composer long text folding", () => {
     });
 
     expect(container.querySelector(".composer-collapsed-prompt-card")).not.toBeNull();
-    expect(container.querySelector(".composer-collapsed-prompt-title")?.textContent).toBe("# 交接提示词(直接粘贴)");
+    expect(container.querySelector(".composer-collapsed-prompt-card .composer-document-card-title")?.textContent).toBe("# 交接提示词(直接粘贴)");
     expect((textarea as HTMLTextAreaElement).value).toBe("");
     expect((textarea as HTMLTextAreaElement).placeholder).toBe("要求后续变更");
 
@@ -2291,7 +2291,7 @@ describe("Composer long text folding", () => {
       pastePlainText(textarea as HTMLTextAreaElement, longText);
     });
 
-    const revealButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-main");
+    const revealButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main");
     expect(revealButton).not.toBeNull();
 
     act(() => {
@@ -2408,7 +2408,7 @@ describe("Composer long text folding", () => {
       setTextareaValue(textarea as HTMLTextAreaElement, "要求后续变更");
     });
 
-    const removeButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-remove");
+    const removeButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-attachment-card-remove");
     expect(removeButton).not.toBeNull();
 
     act(() => {
@@ -2458,7 +2458,7 @@ describe("Composer long text folding", () => {
     });
     act(() => {
       container
-        .querySelector<HTMLButtonElement>(".composer-collapsed-prompt-main")
+        .querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main")
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
     expect(container.querySelector(".composer-collapsed-prompt-card")).toBeNull();
@@ -2472,7 +2472,7 @@ describe("Composer long text folding", () => {
 });
 
 function foldedPromptButton(title: string): HTMLButtonElement | undefined {
-  return Array.from(container.querySelectorAll<HTMLButtonElement>(".composer-collapsed-prompt-main")).find((button) =>
+  return Array.from(container.querySelectorAll<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main")).find((button) =>
     button.textContent?.includes(title),
   );
 }
@@ -3390,7 +3390,7 @@ describe("composer drag and drop", () => {
     });
 
     expect(container.querySelector(".composer-collapsed-prompt-card")).not.toBeNull();
-    expect(container.querySelector(".composer-collapsed-prompt-title")?.textContent).toBe("# 交接提示词(直接粘贴)");
+    expect(container.querySelector(".composer-collapsed-prompt-card .composer-document-card-title")?.textContent).toBe("# 交接提示词(直接粘贴)");
     expect((textarea as HTMLTextAreaElement).value).toBe("");
     expect((textarea as HTMLTextAreaElement).placeholder).toBe("要求后续变更");
 
@@ -3417,7 +3417,7 @@ describe("composer drag and drop", () => {
       pastePlainText(textarea as HTMLTextAreaElement, longText);
     });
 
-    const revealButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-main");
+    const revealButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main");
     expect(revealButton).not.toBeNull();
 
     act(() => {

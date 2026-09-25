@@ -62,10 +62,8 @@ import {
 import { translateCurrent as translate, useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
 import { ComposerFeedback } from "./ComposerFeedback";
-import {
-  CollapsedComposerPromptCard,
-  useCollapsedComposerPrompt
-} from "./ComposerCollapsedPrompt";
+import { useCollapsedComposerPrompt } from "./ComposerCollapsedPrompt";
+import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
 import {
   WORKSPACE_FILE_DRAG_MIME,
   appendWorkspacePathToPrompt,
@@ -76,7 +74,7 @@ import {
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { ComposerBranchPicker } from "./ComposerBranchPicker";
 import { ComposerContextMenu } from "./ComposerContextMenu";
-import { ComposerAttachmentStrip, ComposerQueueStrip } from "./ComposerInputSections";
+import { ComposerQueueStrip } from "./ComposerInputSections";
 import { ComposerCameraPanel } from "./ComposerCamera";
 import { WorkspaceDocumentDrawerContext } from "./WorkspaceDocumentTurnDock";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
@@ -125,7 +123,7 @@ export type {
   PermissionMode
 } from "./ComposerTypes";
 export { FloatingMenuPortal, isInsideFloatingMenu } from "./ComposerFloatingMenu";
-export { ComposerAttachmentStrip, SplitPaneComposer } from "./ComposerInputSections";
+export { SplitPaneComposer } from "./ComposerInputSections";
 export { permissionModeFromSummary, permissionModeHasAdvancedOverrides } from "./ComposerRuntimeMenus";
 
 export function Composer({
@@ -516,7 +514,6 @@ export function Composer({
     hasBlocks: hasCollapsedPromptBlocks,
     prefix: collapsedPromptPrefix,
     visiblePrompt: visiblePromptValue,
-    listRef: collapsedPromptListRef,
     handlePaste: handleCollapsedComposerPaste,
     revealBlock: revealCollapsedPromptBlock,
     removeBlock: removeCollapsedPromptBlock,
@@ -1194,6 +1191,18 @@ export function Composer({
           {cameraOpen && !textOnly && !readOnly ? (
             <ComposerCameraPanel onCapture={captureCamera} onClose={closeCamera} />
           ) : null}
+          {topAccessory ? null : (
+            <ComposerAttachmentTray
+              images={textOnly ? [] : images}
+              files={textOnly ? [] : files}
+              pastedTexts={activeCollapsedPromptBlocks}
+              resetKey={queryHistorySessionID}
+              onRemoveImage={onRemoveImage}
+              onRemoveFile={onRemoveFile}
+              onRevealText={revealCollapsedPromptBlock}
+              onRemoveText={removeCollapsedPromptBlock}
+            />
+          )}
           <div
             className={`composer-frame${dropActive ? " composer-frame-drop-active" : ""}${topAccessory ? " composer-frame-covered" : ""}`}
             data-wuu-component="composer-frame"
@@ -1203,13 +1212,9 @@ export function Composer({
             onDrop={handleComposerDrop}
           >
             {topAccessory ? <div className="composer-cover-accessory">{topAccessory}</div> : null}
-          <div
-            className={`composer${hasCollapsedPromptBlocks ? " has-collapsed-prompt" : ""}`}
-            hidden={Boolean(topAccessory)}
-          >
+          <div className="composer" hidden={Boolean(topAccessory)}>
             {textOnly ? null : (
               <>
-                <ComposerAttachmentStrip files={files} images={images} onRemoveFile={onRemoveFile} onRemoveImage={onRemoveImage} />
                 <input
                   ref={attachmentInputRef}
                   className="composer-file-input"
@@ -1242,18 +1247,6 @@ export function Composer({
                 />
               </>
             )}
-            {hasCollapsedPromptBlocks ? (
-              <div className="composer-collapsed-prompt-list" ref={collapsedPromptListRef} aria-label={t("composer.collapsedLongText")}>
-                {activeCollapsedPromptBlocks.map((block, index) => (
-                  <CollapsedComposerPromptCard
-                    text={block.text}
-                    key={block.id}
-                    onReveal={() => revealCollapsedPromptBlock(index)}
-                    onRemove={() => removeCollapsedPromptBlock(index)}
-                  />
-                ))}
-              </div>
-            ) : null}
             <ComposerTextarea
               ref={textareaRef}
               expanded={isComposerExpanded}
