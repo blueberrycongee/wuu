@@ -795,12 +795,8 @@ function reduceNotification(
       }
       const threadID = threadIDFromParams(params);
       const threadIsActive = threadID === activeThreadIDForState(state);
-      return updateThreadByID(
-        state,
-        threadID,
-        (thread) => upsertTurn(thread, turn),
-        threadIsActive ? { running: true } : {},
-      );
+      const next = updateThreadByID(state, threadID, (thread) => upsertTurn(thread, turn));
+      return threadIsActive ? { ...next, running: isThreadRunning(activeThreadForState(next)) } : next;
     }
     case "item/started":
     case "item/completed": {
@@ -1359,6 +1355,13 @@ export function reconcileResumedThreadTurns(
   local: Thread | undefined,
 ): Thread {
   const localTurns = local ? reconcileOptimisticTurns(local.turns, resumed.turns) : undefined;
+  if (localTurns) {
+    const turns = resumed.turns.map((turn) => {
+      const previous = localTurns.find((candidate) => candidate.id === turn.id);
+      return previous && previous.status !== "in_progress" && turn.status === "in_progress" ? previous : turn;
+    });
+    if (turns.some((turn, index) => turn !== resumed.turns[index])) resumed = { ...resumed, turns };
+  }
   if (!localTurns || localTurns.length < resumed.turns.length) {
     return resumed;
   }
@@ -3061,19 +3064,10 @@ function upsertTurn(thread: Thread, turn: Turn): Thread {
   if (reconciled !== thread.turns) thread = { ...thread, turns: reconciled };
   const index = thread.turns.findIndex((item) => item.id === turn.id);
   if (index >= 0 && thread.turns[index].status !== "in_progress" && turn.status === "in_progress") return thread;
-  const status = turn.status === "in_progress" ? "in_progress" : "idle";
-  if (index < 0) {
-    return threadWithTurnSummary(
-      {
-        ...thread,
-        turns: [...thread.turns, { ...turn, items: orderedTurnItems(turn.items) }],
-        status,
-      },
-      turn,
-    );
-  }
   const turns = thread.turns.slice();
-  turns[index] = { ...turn, items: mergeTurnItemsInOrder(turns[index], turn) };
+  if (index < 0) turns.push({ ...turn, items: orderedTurnItems(turn.items) });
+  else turns[index] = { ...turn, items: mergeTurnItemsInOrder(turns[index], turn) };
+  const status = turns.some((item) => item.status === "in_progress") ? "in_progress" : "idle";
   return threadWithTurnSummary({ ...thread, turns, status }, turn);
 }
 

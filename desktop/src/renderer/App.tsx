@@ -1,3 +1,4 @@
+import { forgetLocalTurnTiming } from "./LocalTurnTiming";
 import type { ChannelRoomOnboarding } from "../shared/protocol";
 import { subscribeServerEvents } from "./ServerEvents";
 import { PhoneNavigationContext } from "./PhoneNavigationContext";
@@ -49,6 +50,7 @@ import type {
   UserQuestionRequest,
 } from "../shared/protocol";
 import {
+  OPTIMISTIC_TURN_ID_PREFIX,
   awaitComposerImages,
   createComposerMessage,
   createOptimisticCompactTurn,
@@ -57,7 +59,6 @@ import {
   failOptimisticCompactTurn,
   inputFilesFromComposer,
   inputImagesFromComposer,
-  interruptLatestOptimisticTurn,
   interruptOptimisticTurn,
   isOptimisticTurnInterrupted,
   replaceOptimisticTurn,
@@ -1115,7 +1116,7 @@ export function App(): JSX.Element {
     getAppState: () => appStateRef.current,
     getPrimaryComposerDraft: currentPrimaryComposerDraft,
     restoreComposerDraftForThread: (threadID, draft) => {
-      if (activeThreadIDForState(appStateRef.current) === threadID) {
+      if ((activeThreadIDForState(appStateRef.current) === threadID || appStateRef.current.activeSessionTabID === threadID)) {
         restorePrimaryComposerDraft(draft);
         return;
       }
@@ -2240,6 +2241,85 @@ export function App(): JSX.Element {
         }
       : { kind: "wuu" };
   const emptyThreadTitle = greetingFor(currentHour, greetingContext);
+  type TurnAdmission = {
+    thread?: Thread;
+    ready: Promise<Thread | undefined>;
+    resolve: (thread: Thread | undefined) => void;
+    stopRequested: boolean;
+    sent: boolean;
+    cancelled: Promise<undefined>;
+    cancelPreparation: () => void;
+  };
+  const turnAdmissionsRef = useRef(new Map<string, TurnAdmission>());
+  const queueLanesRef = useRef(new Map<string, { tail: Promise<void>; stopped: boolean }>());
+  const stopDeliveredRef = useRef(new Map<string, symbol>());
+  const stopTargetsRef = useRef(new Map<string, string>());
+  const stopRequestsRef = useRef<Record<string, "pending" | "retry">>({});
+  const [stopRequests, setStopRequests] = useState(stopRequestsRef.current);
+  function setStopRequest(threadID: string, phase?: "pending" | "retry"): void {
+    const next = { ...stopRequestsRef.current };
+    if (phase) next[threadID] = phase;
+    else {
+      delete next[threadID];
+      stopDeliveredRef.current.delete(threadID);
+      stopTargetsRef.current.delete(threadID);
+    }
+    stopRequestsRef.current = next;
+    setStopRequests(next);
+  }
+  useEffect(() => {
+    for (const threadID of Object.keys(stopRequestsRef.current)) {
+      const thread = threadForTab(state, threadID);
+      const target = stopTargetsRef.current.get(threadID);
+      const targetEnded = thread?.turns.some((turn) => turn.status !== "in_progress" && (
+        turn.id === target || turn.items.some((item) => item.type === "user_message"
+          && item.source_id && `${OPTIMISTIC_TURN_ID_PREFIX}${item.source_id}` === target)
+      ));
+      if (thread && !isThreadRunning(thread) && !turnAdmissionsRef.current.has(threadID)
+        && (stopRequestsRef.current[threadID] !== "retry" || targetEnded)) {
+        setStopRequest(threadID);
+      } else if (thread && stopRequestsRef.current[threadID] === "pending" && thread.turns.some(
+        (turn) => turn.status === "in_progress" && !turn.answer_ready_at && !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX),
+      )) {
+        void interruptAcceptedThread(threadID);
+      }
+    }
+  }, [state, stopRequests]);
+
+  async function requestThreadStop(thread: Thread): Promise<void> {
+    const admission = turnAdmissionsRef.current.get(thread.id);
+    if (admission) {
+      admission.stopRequested = true;
+      if (!admission.sent) admission.cancelPreparation();
+    }
+    const lane = queueLanesRef.current.get(thread.id);
+    if (lane) lane.stopped = true;
+    if (stopRequestsRef.current[thread.id] === "pending") return;
+    const target = thread.turns.at(-1);
+    if (target) stopTargetsRef.current.set(thread.id, target.id);
+    setStopRequest(thread.id, "pending");
+    // Preparation can be cancelled locally. In-flight admission is stopped as
+    // soon as its real turn is known; never mark it terminal on user intent.
+    if (admission && !thread.turns.some((turn) =>
+      turn.status === "in_progress" && !turn.answer_ready_at && !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX))) return;
+    await interruptAcceptedThread(thread.id);
+  }
+
+  async function interruptAcceptedThread(threadID: string): Promise<void> {
+    if (stopDeliveredRef.current.has(threadID)) return;
+    const delivery = Symbol();
+    stopDeliveredRef.current.set(threadID, delivery);
+    try {
+      const result = await window.wuu.interruptTurn(threadID);
+      if (!result.ok) throw new Error(t("composer.stopUnconfirmed"));
+    } catch (error) {
+      if (stopDeliveredRef.current.get(threadID) !== delivery) return;
+      stopDeliveredRef.current.delete(threadID);
+      setStopRequest(threadID, "retry");
+      showErrorToast(error);
+    }
+  }
+
   type PendingThreadCreation = {
     sessionTabID: string;
     context: RuntimeContext;
@@ -3109,10 +3189,12 @@ export function App(): JSX.Element {
         setPrompt={setPromptFromInput}
         files={composerFiles}
         images={composerImages}
-        queuedMessages={queuedMessages}
+        queuedMessages={activePendingThreadCreation
+          ? pendingComposerMessagesForActiveThread(activePendingThreadCreation.sessionTabID).queued
+          : queuedMessages}
         guideMessages={guideMessages}
-        sendDisabled={submissionTargetPending || Boolean(activePendingThreadCreation)}
-        forceStopWhileRunning={Boolean(activePendingThreadCreation)}
+        sendDisabled={submissionTargetPending || Boolean(activeThread && stopRequests[activeThread.id])}
+        stopState={activeThread ? stopRequests[activeThread.id] : undefined}
         running={
           Boolean(activePendingThreadCreation) ||
           (!activeThreadReadOnly && composerTurnRunning) ||
@@ -3272,7 +3354,9 @@ export function App(): JSX.Element {
         onRemoveImage={removeComposerImage}
         onRemoveQueuedMessage={removeQueuedMessage}
         onRemoveGuideMessage={removeGuideMessage}
-        onGuideQueuedMessage={(id) => void guideQueuedMessage(id)}
+        onGuideQueuedMessage={(id) => {
+          if (!activeThread || !stopRequestsRef.current[activeThread.id]) void guideQueuedMessage(id);
+        }}
         onEditQueuedMessage={(id) => void editQueuedMessage(id)}
         onEditGuideMessage={(id) => void editGuideMessage(id)}
         onSend={(promptOverride, contentParts) => sendPrompt("queue", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)}
@@ -3282,7 +3366,7 @@ export function App(): JSX.Element {
             : undefined
         }
         onQueue={
-          activeThreadIsRunning && activeThread
+          (activePendingThreadCreation || (activeThreadIsRunning && activeThread))
             ? (promptOverride, contentParts) => sendPrompt("queue", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)
             : undefined
         }
@@ -4009,24 +4093,7 @@ export function App(): JSX.Element {
     setBranchMenuOpen,
     setCodexRuntimeMenu,
     clearThreadPendingComposerMessages,
-    markOptimisticTurnInterrupted: (threadID) => {
-      const interruptedAt = Date.now();
-      const interruptPendingTurn = (current: AppState): AppState => {
-        let changed = false;
-        const next = updateThreadByID(current, threadID, (thread) => {
-          const interrupted = interruptLatestOptimisticTurn(thread, interruptedAt);
-          changed = interrupted !== thread;
-          return interrupted;
-        });
-        // No server terminal event exists yet for a pending submission. Clear
-        // its local running flag as well as freezing the optimistic turn.
-        return changed && activeThreadForState(current)?.id === threadID
-          ? { ...next, running: isThreadRunning(activeThreadForState(next)) }
-          : next;
-      };
-      appStateRef.current = interruptPendingTurn(appStateRef.current);
-      setState(interruptPendingTurn);
-    },
+    requestThreadStop,
     variantByModel: runtimeVariantByModelRef.current,
   });
 
@@ -4128,7 +4195,7 @@ export function App(): JSX.Element {
     }
     if (
       !message || !currentState.activeContext || !currentState.initialized ||
-      (pane && !targetThread) || (!targetThread && pendingThreadCreationsRef.current.has(currentState.activeSessionTabID))
+      (pane && !targetThread) || (targetThread && stopRequestsRef.current[targetThread.id])
     ) {
       return false;
     }
@@ -4152,8 +4219,11 @@ export function App(): JSX.Element {
     }
     // Capture the destination and install pending state before preparation yields.
     let submittedThread = targetThread;
+    const admission = turnAdmissionsRef.current.get(targetThread?.id ?? currentState.activeSessionTabID);
     const busy = targetThread && isThreadRunning(targetThread) && !activeTurnIsAnswerReady(targetThread);
-    const operation = busy
+    const operation = admission
+      ? queueComposerMessage(message, targetThread, admission)
+      : busy
       ? resolveComposerRunningAction(runningAction, targetThread) === "steer"
         ? steerComposerMessage(message, targetThread)
         : queueComposerMessage(message, targetThread)
@@ -4166,6 +4236,7 @@ export function App(): JSX.Element {
     const sessionTabID = currentState.activeSessionTabID;
     void operation.then((sent) => {
       if (sent) return;
+      submittedThread ??= admission?.thread;
       const latest = appStateRef.current;
       const recoveryDraft = { prompt: message.text, images: message.images, files: message.files };
       const stillTarget = submittedThread
@@ -4341,27 +4412,42 @@ export function App(): JSX.Element {
   async function queueComposerMessage(
     message: QueuedComposerMessage,
     targetThread = activeThreadForState(appStateRef.current),
+    admission = targetThread ? turnAdmissionsRef.current.get(targetThread.id) : undefined,
   ): Promise<boolean> {
     const currentState = appStateRef.current;
-    const targetContext = targetThread ? resolveThreadRuntimeContext(targetThread, currentState.projects) : undefined;
+    const queueKey = targetThread?.id ?? currentState.activeSessionTabID;
+    const pendingKey = () => admission?.thread?.id ?? queueKey;
     const text = message.text.trim();
     const imageCount = message.images.length;
     const files = inputFilesFromComposer(message.files);
     if (
       (!text && imageCount === 0 && files.length === 0) ||
-      !targetThread ||
-      targetThread.read_only ||
+      (!targetThread && !admission) ||
+      targetThread?.read_only ||
       !currentState.activeContext ||
       !currentState.initialized ||
       submissionTargetPending
     ) {
       return false;
     }
-    enqueueComposerMessage(targetThread.id, {
+    enqueueComposerMessage(queueKey, {
       ...message,
       operationState: "preparing",
     });
+    const lane = queueLanesRef.current.get(queueKey) ?? { tail: Promise.resolve(), stopped: false };
+    const previous = lane.tail;
+    let release!: () => void;
+    const tail = new Promise<void>((resolve) => { release = resolve; });
+    lane.tail = tail;
+    queueLanesRef.current.set(queueKey, lane);
     try {
+      await previous;
+      if (admission) targetThread = await admission.ready;
+      if (!targetThread) {
+        removePendingComposerMessageByID(pendingKey(), message.id, "queue");
+        return false;
+      }
+      const targetContext = resolveThreadRuntimeContext(targetThread, currentState.projects);
       const encodedImages = await awaitComposerImages(message.images);
       if (
         !pendingComposerMessagesByThreadRef.current[targetThread.id]?.queued.some(
@@ -4389,6 +4475,7 @@ export function App(): JSX.Element {
         message.activeDocument,
         message.contentParts,
         targetContext,
+        lane.stopped || Boolean(admission?.stopRequested),
       );
       updateThreadPendingComposerMessages(targetThread.id, (previous) => ({
         ...previous,
@@ -4406,22 +4493,28 @@ export function App(): JSX.Element {
       return true;
     } catch (error) {
       const stillPending = Boolean(
-        pendingComposerMessagesByThreadRef.current[targetThread.id]?.queued.some(
+        pendingComposerMessagesByThreadRef.current[pendingKey()]?.queued.some(
           (candidate) => candidate.id === message.id,
         ),
       );
-      removePendingComposerMessageByID(targetThread.id, message.id, "queue");
+      removePendingComposerMessageByID(pendingKey(), message.id, "queue");
       if (stillPending) discardSubmittedMessage(message.id);
       if (stillPending) {
         setState((current) => ({
           ...current,
           status:
-            activeThreadIDForState(current) === targetThread.id
+            activeThreadIDForState(current) === pendingKey()
               ? error instanceof Error ? error.message : t("app.queueFailed")
               : current.status,
         }));
       }
       return !stillPending;
+    } finally {
+      release();
+      if (lane.tail === tail) {
+        queueLanesRef.current.delete(queueKey);
+        if (admission?.thread) queueLanesRef.current.delete(admission.thread.id);
+      }
     }
   }
 
@@ -4555,6 +4648,19 @@ export function App(): JSX.Element {
       model: draftEngineRuntime.model || defaultExternalRuntime.model,
       effort: draftEngineRuntime.effort || defaultExternalRuntime.effort,
     };
+    let resolveAdmission!: TurnAdmission["resolve"];
+    let cancelPreparation!: () => void;
+    const admission: TurnAdmission = {
+      thread: targetThread,
+      ready: new Promise((resolve) => { resolveAdmission = resolve; }),
+      resolve: (thread) => resolveAdmission(thread),
+      stopRequested: false,
+      sent: false,
+      cancelled: new Promise((resolve) => { cancelPreparation = () => resolve(undefined); }),
+      cancelPreparation: () => cancelPreparation(),
+    };
+    const admissionKey = targetThread?.id ?? currentState.activeSessionTabID;
+    turnAdmissionsRef.current.set(admissionKey, admission);
     const optimisticTurn = createOptimisticTurn(message, sendClickedAtMs);
     const previousTurnIDs = new Set(targetThread?.turns.map((turn) => turn.id));
     if (!targetThread || activeThreadIDForState(currentState) === targetThread.id) {
@@ -4573,6 +4679,7 @@ export function App(): JSX.Element {
         turn: optimisticTurn,
         cancel: () => {
           creationCancelled = true;
+          admission.stopRequested = true;
           reject(new Error("Thread creation cancelled"));
         },
       });
@@ -4616,7 +4723,19 @@ export function App(): JSX.Element {
           }), cancelledCreation!]),
           "thread/start did not return a thread",
         );
+      admission.thread = thread;
       if (!targetThread) {
+        turnAdmissionsRef.current.set(thread.id, admission);
+        turnAdmissionsRef.current.delete(admissionKey);
+        const lane = queueLanesRef.current.get(admissionKey);
+        if (lane) queueLanesRef.current.set(thread.id, lane);
+        const pending = pendingComposerMessagesByThreadRef.current[admissionKey];
+        if (pending) {
+          updateThreadPendingComposerMessages(thread.id, (previous) => ({
+            ...previous, queued: [...previous.queued, ...pending.queued],
+          }));
+          clearThreadPendingComposerMessages(admissionKey);
+        }
         onThreadCreated?.(thread);
         const adoptThread = (current: AppState): AppState => {
           const stillTarget = current.activeSessionTabID === currentState.activeSessionTabID
@@ -4646,7 +4765,16 @@ export function App(): JSX.Element {
         ),
       );
       clearPendingThreadCreation(optimisticTurn.id);
-      const encodedImages = await awaitComposerImages(message.images);
+      const encodedImages = await Promise.race([awaitComposerImages(message.images), admission.cancelled]);
+      if (!encodedImages || admission.stopRequested) {
+        const settle = (current: AppState) => updateThreadByID(current, thread.id,
+          (value) => interruptOptimisticTurn(value, optimisticTurn.id, Date.now()),
+          activeThreadIDForState(current) === thread.id ? { running: false } : {});
+        appStateRef.current = settle(appStateRef.current);
+        setState(settle);
+        return true;
+      }
+      admission.sent = true;
       const images = inputImagesFromComposer(encodedImages);
       const result = await window.wuu.startTurn(
         thread.id,
@@ -4660,37 +4788,20 @@ export function App(): JSX.Element {
         activeContext,
         message.id,
       );
-      const interruptedBeforeAcceptance = isOptimisticTurnInterrupted(
-        appStateRef.current.threads.find((candidate) => candidate.id === thread.id),
-        optimisticTurnID,
-      );
-      if (interruptedBeforeAcceptance && result.turn.status === "in_progress") {
-        try {
-          await window.wuu.interruptTurn(thread.id);
-        } catch {
-          // Keep the explicit local stop visible. A later server snapshot can
-          // still reconcile the accepted turn to its terminal state.
-        }
-      }
-      const acceptedTurn: Turn = interruptedBeforeAcceptance
-        ? { ...result.turn, status: "interrupted" }
-        : result.turn;
+      const acceptedTurn = result.turn;
       const acceptedMessage = acceptedTurn.items.find(item => item.type === "user_message");
       if (acceptedMessage) acknowledgeSubmittedMessage(optimisticTurn.items[0].id, acceptedMessage.id);
-      setState((current) =>
-        updateThreadByID(
-          current,
-          thread.id,
-          (currentThread) =>
-            replaceOptimisticTurn(
-              currentThread,
-              optimisticTurnID ?? result.turn.id,
-              acceptedTurn,
-              upsertTurn,
-            ),
-        ),
+      const accept = (current: AppState) => updateThreadByID(
+        current, thread.id,
+        (currentThread) => replaceOptimisticTurn(currentThread, optimisticTurn.id, acceptedTurn, upsertTurn),
       );
+      appStateRef.current = accept(appStateRef.current);
+      setState(accept);
+      if (admission.stopRequested && isThreadRunning(threadForTab(appStateRef.current, thread.id))) {
+        await interruptAcceptedThread(thread.id);
+      }
     } catch (error) {
+      admission.stopRequested = true;
       const rawMessage = rawErrorMessage(error, t("composer.sendFailed"));
       const errorMessage = statusMessageForError(rawMessage, t("composer.sendFailed"));
       const noModelConfigured = isNoModelConfiguredError(rawMessage);
@@ -4733,10 +4844,22 @@ export function App(): JSX.Element {
       appStateRef.current = settle(appStateRef.current);
       setState(settle);
       clearPendingThreadCreation(optimisticTurn.id);
+      if (!optimisticThreadID) forgetLocalTurnTiming(optimisticTurn.id);
       if (noModelConfigured) {
         showNoModelConfiguredToast();
       }
+      if (admission.sent && optimisticThreadID && stopRequestsRef.current[optimisticThreadID]) {
+        await interruptAcceptedThread(optimisticThreadID!);
+      }
       return !creationCancelled && (interrupted || keepAcceptedTurn);
+    } finally {
+      admission.resolve(admission.thread);
+      turnAdmissionsRef.current.delete(admissionKey);
+      if (admission.thread) {
+        turnAdmissionsRef.current.delete(admission.thread.id);
+        // Re-evaluate a locally cancelled preparation with no server event.
+        setStopRequests({ ...stopRequestsRef.current });
+      }
     }
     return true;
   }
@@ -5531,6 +5654,7 @@ export function App(): JSX.Element {
                     splitLeftPercent={splitLeftPercent}
                     splitComposerDrafts={splitComposerDrafts}
                     splitPaneRefs={splitPaneRefs}
+                    stopRequests={stopRequests}
                     viewSwitchPending={submissionTargetPending}
                     historyMessageEdit={historyMessageEdit}
                     onSplitResizeStart={startSplitResize}

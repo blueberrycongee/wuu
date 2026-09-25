@@ -1,3 +1,4 @@
+import * as composerMessages from "./ComposerMessages";
 import { act, useEffect, useState, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -32,10 +33,13 @@ vi.mock("./ComposerView", async (importOriginal) => {
       return (
         <div
           data-can-select-project={props.canSelectProject}
+          data-queued={props.queuedMessages.map((message) => message.text).join("|")}
+          data-send-disabled={props.sendDisabled}
           data-main-conversation-composer={
             props.mainConversation ? variant : undefined
           }
         >
+          <button aria-label="stop-probe" onClick={props.onInterrupt}>stop</button>
           <textarea
             aria-label={label}
             value={prompt}
@@ -452,7 +456,9 @@ describe("main composer focus continuity", () => {
       items: [{ id: "accepted-user", type: "user_message", text: "replacement query" }],
     } }));
     await flushAsync();
-    expect(container.querySelector('[data-user-message-id="accepted-user"]')).not.toBeNull();
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector('[data-user-message-id="accepted-user"]')).not.toBeNull());
+    });
     natural += 100;
     act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
     expect(viewport.scrollTop).toBe(placedTop);
@@ -694,6 +700,74 @@ describe("main composer focus continuity", () => {
     }
     releaseThreadStart();
     await flushAsync();
+  });
+
+  it("accepts follow-ups during creation and sends them in order after the first admission", async () => {
+    await renderApp(false, { deferThreadStart: true });
+    let accept!: (value: { turn: Turn }) => void;
+    window.wuu.startTurn = vi.fn(() => new Promise<{ turn: Turn }>((resolve) => { accept = resolve; }));
+    let acceptQueue!: (value: { queued: { id: string; thread_id: string } }) => void;
+    window.wuu.queueTurn = vi.fn().mockImplementationOnce(() => new Promise((resolve) => { acceptQueue = resolve; }))
+      .mockImplementation(async (threadID, _text, _images, id) => ({ queued: { id, thread_id: threadID } }));
+    await enterCommand(mainComposer("dock"), "first");
+    await enterCommand(mainComposer("dock"), "second");
+    await enterCommand(mainComposer("dock"), "third");
+    expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-queued")).toBe("second|third");
+    expect(window.wuu.queueTurn).not.toHaveBeenCalled();
+    await act(async () => { releaseThreadStart!(); });
+    await flushAsync();
+    expect(window.wuu.queueTurn).not.toHaveBeenCalled();
+    await act(async () => { accept({ turn: { id: "accepted-first", status: "in_progress", items_view: "full", items: [] } }); });
+    expect(window.wuu.queueTurn).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(window.wuu.queueTurn).mock.calls[0][1]).toBe("second");
+    await act(async () => { acceptQueue({ queued: { id: "second", thread_id: newThread().id } }); });
+    expect(window.wuu.queueTurn).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(window.wuu.queueTurn).mock.calls[1][1]).toBe("third");
+    expect(vi.mocked(window.wuu.queueTurn).mock.calls.every((call) => call[0] === newThread().id)).toBe(true);
+  });
+
+  it("holds buffered follow-ups when Stop wins before first admission", async () => {
+    await renderApp(false, { deferThreadStart: true });
+    let accept!: (value: { turn: Turn }) => void;
+    window.wuu.startTurn = vi.fn(() => new Promise<{ turn: Turn }>((resolve) => { accept = resolve; }));
+    window.wuu.interruptTurn = vi.fn().mockResolvedValue({ ok: true });
+    window.wuu.queueTurn = vi.fn().mockImplementation(async (threadID, _text, _images, id) => ({ queued: { id, thread_id: threadID } }));
+    await enterCommand(mainComposer("dock"), "first");
+    await enterCommand(mainComposer("dock"), "second");
+    await act(async () => { releaseThreadStart!(); });
+    await flushAsync();
+    await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="stop-probe"]')!.click(); });
+    await act(async () => { accept({ turn: { id: "late-first", status: "in_progress", items_view: "full", items: [] } }); });
+    expect(window.wuu.interruptTurn).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(window.wuu.queueTurn).mock.calls[0][9]).toBe(true);
+  });
+
+  it("cancels attachment preparation without waiting for encoding or starting execution", async () => {
+    await renderApp(true);
+    let finishEncoding!: (images: []) => void;
+    vi.spyOn(composerMessages, "awaitComposerImages").mockImplementationOnce(() => new Promise((resolve) => { finishEncoding = resolve; }));
+    window.wuu.interruptTurn = vi.fn().mockResolvedValue({ ok: true });
+    await enterCommand(mainComposer("dock"), "cancel before admission");
+    await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="stop-probe"]')!.click(); });
+    expect(window.wuu.startTurn).not.toHaveBeenCalled();
+    expect(window.wuu.interruptTurn).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-send-disabled")).toBe("false");
+    await act(async () => { finishEncoding([]); });
+    expect(window.wuu.startTurn).not.toHaveBeenCalled();
+  });
+
+  it("preserves every accepted draft when creation fails", async () => {
+    await renderApp(false, { deferThreadStart: true, rejectThreadStart: true });
+    await enterCommand(mainComposer("dock"), "first retained");
+    await enterCommand(mainComposer("dock"), "second retained");
+    await act(async () => { releaseThreadStart!(); });
+    await flushAsync();
+    expect(mainComposer("dock").value).toBe("first retained");
+    const recovery = document.querySelector<HTMLButtonElement>('[role="alert"] .archive-tip-action');
+    expect(recovery).not.toBeNull();
+    await act(async () => { recovery!.click(); });
+    expect(mainComposer("dock").value).toBe("second retained");
+    expect(window.wuu.startTurn).not.toHaveBeenCalled();
   });
 
   it.each(["", "newer draft"])("recovers failed thread creation without replacing newer input (%s)", async (newerDraft) => {

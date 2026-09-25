@@ -2468,6 +2468,7 @@ app.whenReady().then(async () => {
       activeDocument?: ActiveDocumentContext,
       contentParts?: import("../shared/protocol").MessageContentPart[],
       targetContext?: RuntimeContext,
+      hold?: boolean,
     ) =>
       appServerRequest(event, "turn/queue", {
         thread_id: threadId,
@@ -2475,6 +2476,7 @@ app.whenReady().then(async () => {
         images: images ?? [],
         files: files ?? [],
         client_id: clientId,
+        ...(hold ? { hold: true } : {}),
         ...(permissionMode === undefined ? {} : { permission_mode: permissionMode }),
         ...(activeDocument === undefined ? {} : { active_document: activeDocument }),
         ...(contentParts === undefined ? {} : { content_parts: contentParts }),

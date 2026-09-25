@@ -3896,6 +3896,9 @@ describe("local send timing across server reconciliation", () => {
     vi.setSystemTime(112_000);
     event("turn/completed", { thread_id: base.id, turn: { ...real, status: "completed", duration_ms: 1000 } });
     rpc(); // Late acceptance cannot resurrect a completed turn.
+    event("turn/started", { thread_id: base.id, turn: real });
+    expect(state.running).toBe(false);
+    expect(reconcileResumedThreadTurns({ ...base, turns: [real] }, state.thread).turns[0].status).toBe("completed");
     vi.setSystemTime(130_000);
     expect(state.thread!.turns[0].status).toBe("completed");
     expect(localTurnTiming(state.thread!.turns[0])?.elapsed).toBe(12000);

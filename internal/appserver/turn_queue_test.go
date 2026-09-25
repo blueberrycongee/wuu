@@ -362,3 +362,35 @@ func TestSteerCancellationTombstoneRejectsMatchingLateSubmission(t *testing.T) {
 		t.Fatal("steer cancellation tombstone blocked the queue delivery mode")
 	}
 }
+
+func TestExplicitlyHeldQueueDoesNotStartAfterStopSettles(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	out := &lockedBuffer{}
+	s := New(rt, out)
+	if err := s.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
+		t.Fatal(err)
+	}
+	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread.ID
+	// Stop has already settled: there is no active turn and interrupting=false.
+	for i := 0; i < 2; i++ {
+		req := fmt.Sprintf(`{"id":"queue-%d","method":"turn/queue","params":{"thread_id":%q,"prompt":"retain me","client_id":"input-%d","hold":true}}`, i, threadID, i)
+		if err := s.handleLine(context.Background(), []byte(req)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	held, err := s.loadHeldUserTurns(threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(held) != 2 || held[0].id != "input-0" || held[1].id != "input-1" {
+		t.Fatalf("held input lost or reordered: %+v", held)
+	}
+	if s.hasQueuedUserTurns(threadID) || threadIsRunning(s.thread(threadID)) {
+		t.Fatal("held input must not dispatch")
+	}
+	// The durable held input survives a new server instance.
+	restored, err := New(rt, &lockedBuffer{}).loadHeldUserTurns(threadID)
+	if err != nil || len(restored) != 2 {
+		t.Fatalf("held input not recoverable: %+v, %v", restored, err)
+	}
+}

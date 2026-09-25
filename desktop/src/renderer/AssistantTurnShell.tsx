@@ -171,6 +171,7 @@ export function AssistantTurnShell({
     Boolean(display.latestProcessPreview) ||
     turn.status === "in_progress" ||
     turn.status === "interrupted" ||
+    turn.status === "failed" ||
     hasAnswer;
   const answerHandoffRequested = answerEntries.some(
     (entry) =>
@@ -370,7 +371,7 @@ function TurnProcessFold({
   const metaParts = turnProcessMetaParts(
     turn,
     elapsedMs,
-    pausedElapsedMs !== undefined,
+    pausedElapsedMs !== undefined || completedDuration !== undefined,
     answerReady,
   );
 
@@ -787,12 +788,9 @@ function turnProcessTitle(
       ? taskFinishedLabel(elapsedMs)
       : translate("task.status.completed");
   }
-  if (turn.status === "completed" || turn.status === "interrupted") {
-    if (!hasKnownDuration) {
-      return turn.status === "interrupted"
-        ? turnProgressContent(turn, elapsedMs, hasFinalText).label
-        : translate("task.status.completed");
-    }
+  if (turn.status === "interrupted") return translate("turn.orchestrationPaused");
+  if (turn.status === "completed") {
+    if (!hasKnownDuration) return translate("task.status.completed");
     return taskFinishedLabel(elapsedMs);
   }
   return turnProgressContent(turn, elapsedMs, hasFinalText).label;

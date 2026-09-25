@@ -22,6 +22,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
       return <div
         data-testid="composer-probe"
         data-running={props.running}
+        data-stop-state={props.stopState}
         data-queued-ids={props.queuedMessages
           .map((message) => message.id)
           .join(",")}
@@ -442,7 +443,7 @@ describe("queued turn reconciliation", () => {
     expect(top).toBe(1400);
   });
 
-  it("leaves the running state when stopping a submission before start returns", async () => {
+  it("keeps execution visible until stopping a late admission is confirmed", async () => {
     let resolveStart!: (value: Awaited<ReturnType<WuuDesktopApi["startTurn"]>>) => void;
     const startTurn = vi.fn(() => new Promise<Awaited<ReturnType<WuuDesktopApi["startTurn"]>>>((resolve) => {
       resolveStart = resolve;
@@ -466,15 +467,49 @@ describe("queued turn reconciliation", () => {
     await act(async () => {
       composerProbe().querySelector<HTMLButtonElement>('[aria-label="stop"]')!.click();
     });
-    expect(window.wuu.interruptTurn).toHaveBeenCalledWith(threadID);
-    expect(composerProbe().dataset.running).toBe("false");
+    expect(window.wuu.interruptTurn).not.toHaveBeenCalled();
+    expect(composerProbe().dataset.running).toBe("true");
+    expect(composerProbe().dataset.stopState).toBe("pending");
 
     await act(async () => {
       resolveStart({ turn: { id: "late-turn", status: "in_progress", items_view: "full", items: [] } });
     });
     await flushAsync();
-    expect(window.wuu.interruptTurn).toHaveBeenCalledTimes(2);
+    expect(window.wuu.interruptTurn).toHaveBeenCalledTimes(1);
+    expect(composerProbe().dataset.running).toBe("true");
+    expect(composerProbe().dataset.stopState).toBe("pending");
+    await act(async () => {
+      for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: workspace,
+        message: { method: "turn/completed", params: { thread_id: threadID,
+          turn: { id: "late-turn", status: "interrupted", items_view: "full", items: [] } } } });
+    });
     expect(composerProbe().dataset.running).toBe("false");
+    expect(composerProbe().dataset.stopState).toBeUndefined();
+  });
+
+  it("retains stop intent through a stale snapshot and allows retry after RPC failure", async () => {
+    installWuuApi();
+    window.wuu.interruptTurn = vi.fn().mockRejectedValueOnce(new Error("IPC unavailable")).mockResolvedValue({ ok: true });
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await act(async () => { composerProbe().querySelector<HTMLButtonElement>('[aria-label="stop"]')!.click(); });
+    expect(composerProbe().dataset.stopState).toBe("retry");
+    expect(composerProbe().dataset.running).toBe("true");
+    await act(async () => {
+      for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: workspace,
+        message: { method: "thread/updated", params: { thread: runningThread() } } });
+    });
+    expect(composerProbe().dataset.stopState).toBe("retry");
+    await act(async () => { composerProbe().querySelector<HTMLButtonElement>('[aria-label="stop"]')!.click(); });
+    expect(window.wuu.interruptTurn).toHaveBeenCalledTimes(2);
+    expect(composerProbe().dataset.stopState).toBe("pending");
+    expect(composerProbe().dataset.running).toBe("true");
+    await act(async () => {
+      for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: workspace,
+        message: { method: "turn/completed", params: { thread_id: threadID,
+          turn: { ...runningThread().turns[0], status: "interrupted" } } } });
+    });
+    expect(composerProbe().dataset.stopState).toBeUndefined();
   });
 
   it("dequeues a message before restoring it for editing", async () => {
@@ -558,6 +593,7 @@ describe("queued turn reconciliation", () => {
       undefined,
       undefined,
       { kind: "no_project", cwd: workspace },
+      expect.any(String),
     );
     expect(queueTurn).not.toHaveBeenCalled();
     expect(composerProbe().dataset.queuedIds).toBe("");

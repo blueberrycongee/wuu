@@ -79,6 +79,7 @@ contextBridge.exposeInMainWorld("wuu", {
     providers: [{ name: provider, type: "mock", model, connection_locked: true }]
   }),
   startThread: async (params = {}) => {
+    if (process.env.WUU_REQUEST_LIFECYCLE_E2E) await ipcRenderer.invoke("test:request-lifecycle", "thread/start");
     startedThreadCount += 1;
     const id = startedThreadCount === 1
       ? "thread-immediate-title-e2e"
@@ -93,15 +94,16 @@ contextBridge.exposeInMainWorld("wuu", {
   forkThread: async () => ({ thread: null }),
   listThreads: async () => ({ threads: [] }),
   listArchivedThreads: async () => ({ threads: [] }),
-  queueTurn: async (threadId, text, _images, id) => {
-    ipcRenderer.send("test:queued-input", { threadId, text, id });
+  queueTurn: async (threadId, text, _images, id, _files, _permission, _document, _parts, _context, hold) => {
+    ipcRenderer.send("test:queued-input", { threadId, text, id, hold });
     return { queued: { id, thread_id: threadId } };
   },
   steerTurn: async (threadId, turnId, text, _images, id) => {
     ipcRenderer.send("test:queued-input", { threadId, turnId, text, id });
     return { turn_id: turnId };
   },
-  startTurn: async (threadId, text, images = []) => {
+  startTurn: async (threadId, text, images = [], _files, _permission, _document, _parts, _context, clientId) => {
+    if (process.env.WUU_REQUEST_LIFECYCLE_E2E) await ipcRenderer.invoke("test:request-lifecycle", "turn/start", { threadId, text, clientId });
     const now = new Date().toISOString();
     return {
       turn: {
@@ -112,6 +114,7 @@ contextBridge.exposeInMainWorld("wuu", {
             type: "user_message",
             status: "completed",
             text,
+            source_id: clientId,
             images
           }
         ],
@@ -121,7 +124,10 @@ contextBridge.exposeInMainWorld("wuu", {
       }
     };
   },
-  interruptTurn: async () => ({ ok: true }),
+  interruptTurn: async () => {
+    if (process.env.WUU_REQUEST_LIFECYCLE_E2E) await ipcRenderer.invoke("test:request-lifecycle", "turn/interrupt");
+    return { ok: true };
+  },
   respondToServerRequest: async () => undefined,
   rejectServerRequest: async () => undefined,
   onServerEvent: (handler) => {

@@ -77,7 +77,11 @@ The response contains `turn`; consume `turn/started`, item updates,
 snapshot. The legacy `permission_mode` request field must match the thread's
 selection rather than override it. `turn/queue`, `turn/update-queued`,
 `turn/dequeue`, `turn/steer`, and `turn/unsteer` manage pending user input;
-they are distinct from starting another concurrent turn.
+they are distinct from starting another concurrent turn. `turn/queue` accepts
+optional `hold: true` to persist input as held work without dispatching it, even
+when the interrupted turn has already settled. This lets clients retain messages
+whose preparation or admission finishes after a Stop request. Held input remains
+available through the existing pending-input controls and resume snapshots.
 
 Failed Wuu-engine streams can include `turn.error.recovery`. Its `attempt_count`
 and `retry_count` count recovery-executor calls that actually started; a prepared

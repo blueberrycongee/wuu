@@ -614,24 +614,26 @@ function userMessageText(turn: Turn | undefined): string {
  */
 export function threadHasAcceptedComposerMessage(
   thread: { turns: Turn[] } | undefined,
-  message: Pick<QueuedComposerMessage, "text">,
+  message: Pick<QueuedComposerMessage, "text"> & { id?: string },
   optimisticTurnID?: string,
   previousTurnIDs: ReadonlySet<string> = new Set(),
 ): boolean {
   const expected = message.text.trim();
-  if (!thread || !expected) {
+  if (!thread || (!expected && !message.id)) {
     return false;
   }
   return thread.turns.some((turn) => {
     if (previousTurnIDs.has(turn.id) || turn.id === optimisticTurnID || turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX)) {
       return false;
     }
-    return userMessageText(turn) === expected;
+    const user = turn.items.find((item) => item.type === "user_message");
+    return (message.id && user?.source_id === message.id) || Boolean(expected && userMessageText(turn) === expected);
   });
 }
 
 export function createOptimisticCompactTurn(nowMs: number): Turn {
   const id = nextOptimisticTurnID();
+  beginLocalTurnTiming(id, nowMs);
   return {
     id,
     kind: "compact",
