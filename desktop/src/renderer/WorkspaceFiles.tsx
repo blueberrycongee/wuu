@@ -1,3 +1,4 @@
+import { useActiveContextMenu } from "./ActiveContextMenu";
 import { isTouchWebShell } from "./ComposerFocus";
 import { hostSupports } from "./HostCapabilities";
 import { preparePresortedFileTreeInput } from "@pierre/trees";
@@ -358,6 +359,7 @@ function WorkspaceTreeContextMenu({
 }): JSX.Element {
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement | null>(null);
+  useActiveContextMenu(onClose);
   // The menu mounts at the cursor, but until React commits the first
   // paint its own size isn't known — measure on the layout effect that
   // runs just before paint, clamp to viewport so the user never sees
