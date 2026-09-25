@@ -11,7 +11,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
-func TestBashUpdateBackgroundScheduleLifecycle(t *testing.T) {
+func TestProcessUpdateScheduleLifecycle(t *testing.T) {
 	root := t.TempDir()
 	kit := newShellTestToolkit(t, root)
 	manager, err := proc.NewManager(root, filepath.Join(t.TempDir(), "runtime"))
@@ -22,23 +22,11 @@ func TestBashUpdateBackgroundScheduleLifecycle(t *testing.T) {
 	kit.SetProcessManager(manager)
 	kit.SetSessionID("thread-update-background")
 
-	startResp, err := kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "bash",
-		Arguments: `{"action":"start_background","command":"sleep 60"}`,
-	})
-	if err != nil {
-		t.Fatalf("start background: %v", err)
-	}
-	var started struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal([]byte(startResp), &started); err != nil || started.ID == "" {
-		t.Fatalf("parse start response: %v\n%s", err, startResp)
-	}
+	started := startBackgroundForTest(t, kit, map[string]any{"command": "sleep 60"})
 
-	updateResp, err := kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "bash",
-		Arguments: `{"action":"update_background","process_id":"` + started.ID + `","recheck_minutes":10}`,
+	updateResp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "process",
+		Arguments: `{"action":"update","process_id":"` + started.ID + `","recheck_minutes":10}`,
 	})
 	if err != nil {
 		t.Fatalf("update background: %v", err)
@@ -63,9 +51,9 @@ func TestBashUpdateBackgroundScheduleLifecycle(t *testing.T) {
 		t.Fatalf("background commands should default to an interactive PTY: %+v", record)
 	}
 
-	cancelResp, err := kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "bash",
-		Arguments: `{"action":"update_background","process_id":"` + started.ID + `","recheck_minutes":0}`,
+	cancelResp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "process",
+		Arguments: `{"action":"update","process_id":"` + started.ID + `","recheck_minutes":0}`,
 	})
 	if err != nil {
 		t.Fatalf("cancel recheck: %v", err)
@@ -73,58 +61,23 @@ func TestBashUpdateBackgroundScheduleLifecycle(t *testing.T) {
 	if !strings.Contains(cancelResp, `"recheck_minutes":0`) {
 		t.Fatalf("cancellation should report recheck_minutes 0: %s", cancelResp)
 	}
-}
 
-func TestBashStartBackgroundAllowsExplicitLogOnlyMode(t *testing.T) {
-	root := t.TempDir()
-	kit := newShellTestToolkit(t, root)
-	manager, err := proc.NewManager(root, filepath.Join(t.TempDir(), "runtime"))
-	if err != nil {
-		t.Fatalf("NewManager: %v", err)
+	// A resume-mode process holds the owning turn open; detaching releases it.
+	if record.CompletionMode != proc.CompletionModeResume {
+		t.Fatalf("background commands should default to resume mode: %+v", record)
 	}
-	defer func() { _ = manager.CleanupSession() }()
-	kit.SetProcessManager(manager)
-	kit.SetSessionID("thread-log-only-background")
-
-	response, err := kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "bash",
-		Arguments: `{"action":"start_background","command":"sleep 60","tty":false}`,
-	})
-	if err != nil {
-		t.Fatalf("start background: %v", err)
+	if _, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "process",
+		Arguments: `{"action":"update","process_id":"` + started.ID + `","completion_mode":"detached"}`,
+	}); err != nil {
+		t.Fatalf("detach process: %v", err)
 	}
-	var started struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal([]byte(response), &started); err != nil || started.ID == "" {
-		t.Fatalf("parse start response: %v\n%s", err, response)
-	}
-	record, err := manager.Get(started.ID)
+	record, err = manager.Get(started.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.TTY {
-		t.Fatalf("tty=false should preserve log-only background execution: %+v", record)
-	}
-}
-
-func TestBashStartBackgroundRejectsInvalidRecheck(t *testing.T) {
-	root := t.TempDir()
-	kit := newShellTestToolkit(t, root)
-	manager, err := proc.NewManager(root, filepath.Join(t.TempDir(), "runtime"))
-	if err != nil {
-		t.Fatalf("NewManager: %v", err)
-	}
-	defer func() { _ = manager.CleanupSession() }()
-	kit.SetProcessManager(manager)
-	kit.SetSessionID("thread-invalid-recheck")
-
-	_, err = kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "bash",
-		Arguments: `{"action":"start_background","command":"sleep 5","recheck_minutes":-3}`,
-	})
-	if err == nil || !strings.Contains(err.Error(), "recheck_minutes") {
-		t.Fatalf("negative recheck_minutes should fail: %v", err)
+	if record.CompletionMode != proc.CompletionModeDetached || record.RecheckMinutes != 0 {
+		t.Fatalf("completion mode update not persisted or clobbered the schedule: %+v", record)
 	}
 }
 
@@ -138,9 +91,9 @@ func TestBashRunTimeoutPromotesToBackground(t *testing.T) {
 	defer func() { _ = manager.CleanupSession() }()
 	kit.SetProcessManager(manager)
 
-	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
 		Name:      "bash",
-		Arguments: `{"action":"run","command":"printf 'partial\\n'; sleep 30","timeout_seconds":1}`,
+		Arguments: `{"command":"printf 'partial\\n'; sleep 30","timeout_seconds":1}`,
 	})
 	if err != nil {
 		t.Fatalf("run: %v", err)

@@ -306,11 +306,15 @@ func isRepeatablePollingTool(call providers.ToolCall) bool {
 	if name == "bash" {
 		var args bashArgs
 		if err := decodeArgs(call.Arguments, &args); err == nil {
-			switch normalizeBashAction(args) {
-			case bashActionListBackground, bashActionReadBackground:
+			return bashCommandLooksLikeVerification(args.Command)
+		}
+	}
+	if name == "process" {
+		var args processArgs
+		if err := decodeArgs(call.Arguments, &args); err == nil {
+			switch strings.TrimSpace(args.Action) {
+			case processActionList, processActionRead:
 				return true
-			case bashActionRun:
-				return bashCommandLooksLikeVerification(args.Command)
 			}
 		}
 	}

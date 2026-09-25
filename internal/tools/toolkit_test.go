@@ -1364,7 +1364,7 @@ func TestToolkit_DisableTools_HidesDefinitionsAndBlocksExecute(t *testing.T) {
 		}
 	}
 
-	_, err = kit.Execute(context.Background(), providers.ToolCall{
+	_, err = executeEnvelope(kit, context.Background(), providers.ToolCall{
 		Name:      "write_file",
 		Arguments: `{"path":"a.txt","content":"x"}`,
 	})
@@ -1375,7 +1375,7 @@ func TestToolkit_DisableTools_HidesDefinitionsAndBlocksExecute(t *testing.T) {
 		t.Fatalf("expected disabled error, got: %v", err)
 	}
 
-	_, err = kit.Execute(context.Background(), providers.ToolCall{
+	_, err = executeEnvelope(kit, context.Background(), providers.ToolCall{
 		Name:      "bash",
 		Arguments: `{"command":"echo hi"}`,
 	})
@@ -1391,7 +1391,7 @@ func TestToolkit_RunShell(t *testing.T) {
 	root := t.TempDir()
 	kit := newShellTestToolkit(t, root)
 
-	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
 		Name:      "bash",
 		Arguments: `{"command":"echo hi","purpose":"confirm shell purpose metadata"}`,
 	})
@@ -1439,7 +1439,7 @@ func TestToolkit_RunShellRedactsSensitiveOutput(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "session")
 	kit.SetSessionDir(sessionDir)
 
-	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
 		Name:      "bash",
 		Arguments: `{"command":"printf 'API_KEY=secret-value-1234567890\nAuthorization: Bearer abcdefghijklmnop\nsk-testsecret123456\n'","purpose":"diagnose TOKEN=purpose-secret-value-1234567890"}`,
 	})
@@ -1501,7 +1501,7 @@ func TestToolkit_RunShellStructuredFailureOutput(t *testing.T) {
 	root := t.TempDir()
 	kit := newShellTestToolkit(t, root)
 
-	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
 		Name:      "bash",
 		Arguments: `{"command":"printf out; printf err >&2; exit 7"}`,
 	})
@@ -1537,7 +1537,7 @@ func TestToolkit_RunShellSetsNonInteractiveEnv(t *testing.T) {
 	root := t.TempDir()
 	kit := newShellTestToolkit(t, root)
 
-	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
 		Name:      "bash",
 		Arguments: `{"command":"printf '%s|%s|%s|%s|%s|%s|%s|%s' \"$GIT_EDITOR\" \"$GIT_SEQUENCE_EDITOR\" \"$EDITOR\" \"$VISUAL\" \"$PAGER\" \"$GIT_PAGER\" \"$GH_PAGER\" \"$GIT_TERMINAL_PROMPT\""}`,
 	})
@@ -1567,7 +1567,7 @@ func TestToolkit_RunShellAllowsSafeGitCommands(t *testing.T) {
 		"nice git status --short",
 		"cd . && git status --short",
 	} {
-		resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
 			Name:      "bash",
 			Arguments: fmt.Sprintf(`{"command":%q,"timeout_seconds":10}`, command),
 		})
@@ -1587,7 +1587,7 @@ func TestToolkit_RunShellAllowsSafeGitCommands(t *testing.T) {
 	}
 
 	mustWriteFile(t, filepath.Join(root, "hello.txt"), "updated\n")
-	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
 		Name:      "bash",
 		Arguments: `{"command":"git add hello.txt && git commit -m \"update hello\"","timeout_seconds":10}`,
 	})
@@ -1606,7 +1606,7 @@ func TestToolkit_RunShellAllowsSafeGitCommands(t *testing.T) {
 	}
 
 	mustWriteFile(t, filepath.Join(root, "hello.txt"), "updated again\n")
-	resp, err = kit.Execute(context.Background(), providers.ToolCall{
+	resp, err = executeEnvelope(kit, context.Background(), providers.ToolCall{
 		Name:      "bash",
 		Arguments: `{"command":"git add hello.txt && git commit -m \"Sweep the whole process cluster row when it's running\" -m \"Body includes \\\"still working\\\" and punctuation; still a message.\"","timeout_seconds":10}`,
 	})
@@ -1622,7 +1622,7 @@ func TestToolkit_RunShellAllowsSafeGitCommands(t *testing.T) {
 
 	mustWriteFile(t, filepath.Join(root, "hello.txt"), "updated from file\n")
 	mustWriteFile(t, filepath.Join(root, "commit-message.txt"), "Message from file\n\nBody\n")
-	resp, err = kit.Execute(context.Background(), providers.ToolCall{
+	resp, err = executeEnvelope(kit, context.Background(), providers.ToolCall{
 		Name:      "bash",
 		Arguments: `{"command":"git add hello.txt && git commit -F commit-message.txt","timeout_seconds":10}`,
 	})
@@ -1636,7 +1636,7 @@ func TestToolkit_RunShellAllowsSafeGitCommands(t *testing.T) {
 		t.Fatalf("-F shell response = %+v, want successful medium-risk write", parsed)
 	}
 
-	resp, err = kit.Execute(context.Background(), providers.ToolCall{
+	resp, err = executeEnvelope(kit, context.Background(), providers.ToolCall{
 		Name:      "bash",
 		Arguments: `{"command":"git commit --amend -m \"Amended shell subject\"","timeout_seconds":10}`,
 	})

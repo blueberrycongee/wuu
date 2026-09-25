@@ -19,10 +19,10 @@
  */
 import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConversationScrollState } from "./ConversationScrollState";
 import type { Turn } from "../shared/protocol";
-import { AUTO_FOLLOW_NESTED_SCROLL_ATTR } from "./AutoFollowScroll";
+import { AUTO_FOLLOW_NESTED_SCROLL_ATTR, USER_SCROLL_AWAY_INTENT_WINDOW_MS } from "./AutoFollowScroll";
 import { WINDOW_RESIZING_CLASS } from "./WindowResizeState";
 
 function makeLongTurns(): Turn[] {
@@ -210,6 +210,7 @@ describe("useConversationScrollState — high-frequency stream", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     document.getSelection()?.removeAllRanges();
     act(() => {
       root?.unmount();
@@ -820,6 +821,50 @@ describe("useConversationScrollState — high-frequency stream", () => {
       });
       flushScheduledScroll();
       expect(layout.scrollTop).toBe(layout.scrollHeight - layout.clientHeight);
+    },
+  );
+
+  it.each(["latest", "away", "cancel", "selection"])(
+    "keeps a held scrollbar in control until release at %s",
+    (release) => {
+      vi.useFakeTimers();
+      mount({ scrollHeight: 2000, clientHeight: 600 });
+      act(() => handle!.scheduleStreamScroll());
+      flushScheduledScroll();
+      act(() => {
+        node!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+        layout!.scrollTop = 1300;
+        node!.dispatchEvent(new Event("scroll"));
+        vi.advanceTimersByTime(USER_SCROLL_AWAY_INTENT_WINDOW_MS + 1);
+        layout!.scrollTop = 1390;
+        node!.dispatchEvent(new Event("scroll"));
+        layout!.scrollHeight += 4;
+        handle!.scheduleStreamScroll();
+        flushResizeObservers();
+      });
+      flushScheduledScroll();
+      expect(layout!.scrollTop).toBe(1390);
+      rerenderTurns(makeLongTurnsSnapshot(1));
+      flushScheduledScroll();
+      expect(layout!.scrollTop).toBe(1390);
+
+      act(() => {
+        if (release === "away") {
+          layout!.scrollTop = 1300;
+          node!.dispatchEvent(new Event("scroll"));
+        } else if (release === "selection") {
+          const range = document.createRange();
+          range.selectNodeContents(node!.querySelector('[data-testid="message-text"]')!);
+          document.getSelection()!.addRange(range);
+          document.dispatchEvent(new Event("selectionchange"));
+        }
+        window.dispatchEvent(new Event(release === "cancel" ? "pointercancel" : "pointerup"));
+        layout!.scrollHeight += 40;
+        handle!.scheduleStreamScroll();
+        flushResizeObservers();
+      });
+      flushScheduledScroll();
+      expect(layout!.scrollTop).toBe(release === "latest" ? 1444 : release === "away" ? 1300 : 1390);
     },
   );
 

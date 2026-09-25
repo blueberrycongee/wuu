@@ -32,7 +32,7 @@ func TestToolkitToolDisplayAddsCapabilityForActiveSurface(t *testing.T) {
 		t.Fatalf("Capability = %q, want command.bash; display=%+v", got.Capability, got)
 	}
 
-	got, ok = kit.ToolDisplay(providers.ToolCall{Name: "bash", Arguments: `{"action":"start_background","command":"npm run dev"}`})
+	got, ok = kit.ToolDisplay(providers.ToolCall{Name: "bash", Arguments: `{"command":"npm run dev","run_in_background":true}`})
 	if !ok {
 		t.Fatal("expected display metadata")
 	}
