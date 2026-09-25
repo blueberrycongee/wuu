@@ -22,6 +22,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   mascot sends a small ball bouncing across the heatmap to today and catches
   it on the way back; any input stops it, and reduced motion turns it off.
 
+### Changed
+
+- Pasted or attached images, videos, PDFs, and folded long text now wait in a
+  single-row tray that slides out from behind the top of the composer instead
+  of growing the input box. Cards show a thumbnail, or a title with size or
+  line count; removing one lets the rest slide into place, and the input keeps
+  its size throughout. Overflowing trays scroll horizontally with faded edges.
+
 ### Fixed
 
 - Ready Agent Core entries show an external agent's detected executable path in

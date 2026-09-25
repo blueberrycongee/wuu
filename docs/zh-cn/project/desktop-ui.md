@@ -44,6 +44,18 @@ npm --prefix desktop run dev:onboarding
 运行 `npm --prefix desktop run test:e2e:artifact-preview`，可在 Electron 中
 用合成内容验证交付预览，不读取应用中的个人数据。
 
+## 输入框附件
+
+图片、视频、PDF 和折叠后的长文本放在同一个从输入框上沿滑出的托盘里，
+添加或移除都不会改变输入框尺寸。托盘只改变一次布局，上方内容通过反向补偿的
+合成层动画平滑升降，输入框保持不动。从托盘移除的卡片在原位淡出，
+相邻卡片滑动补位；发送或切换草稿时托盘直接清空。托盘始终只有一行，
+横向滚动，边缘渐隐见“滚动边缘渐隐”。
+
+使用 `/dev/composer-attachments/` 预览，可选参数有 `theme=dark`、`size=20`、
+`width=420`、`hero`、`queued` 和 `seed`。页面按钮通过真实的输入框粘贴处理
+粘贴合成文件。
+
 ## 共享字体与尺寸关系
 
 输入框反馈放在输入区域上方的共享阅读区，不放在发送按钮旁。主输入框和分屏都在这里保留错误、操作限制与操作进度，长文本换行并可滚动。恢复的草稿和更新的 Git 结果已表达成功，不再通过全局状态字段重复确认。
@@ -117,7 +129,7 @@ npm --prefix desktop run dev:onboarding
 
 ## 滚动边缘渐隐
 
-[`scroll-fade.css`](../../../desktop/src/renderer/styles/scroll-fade.css)为有限高度的工具/推理检查区和导航列表提供按需启用的渐隐。将属性加在已有的垂直滚动节点上：
+[`scroll-fade.css`](../../../desktop/src/renderer/styles/scroll-fade.css)为有限高度的工具/推理检查区、导航列表和横向卡片条提供按需启用的渐隐。将属性加在已有的滚动节点上：
 
 ```tsx
 <div className="existing-scroll-region" data-scroll-fade="compact" ref={scrollRef}>
@@ -125,7 +137,7 @@ npm --prefix desktop run dev:onboarding
 </div>
 ```
 
-密集检查区使用 `compact`，导航列表使用空值。消息、设置、文档等主要阅读区保留普通裁切。输入框、终端、编辑器、图片/PDF 画布和横向滚动区不适用。固定标题、输入区和菜单应留在遮罩节点外。
+密集检查区使用 `compact`，导航列表使用空值；输入框附件托盘这类横向卡片条使用 `inline`，改为渐隐左右两端。消息、设置、文档等主要阅读区保留普通裁切。输入框、终端、编辑器、图片/PDF 画布以及表格、代码等宽内容不适用。固定标题、输入区和菜单应留在遮罩节点外。
 
 该工具使用自身滚动时间线和透明度遮罩，不增加覆盖层或 React 滚动更新。只有边缘外还有内容时才渐隐，没有溢出就没有渐隐。嵌套滚动节点相互独立，每侧渐隐最多占视口一半。不支持相关特性的浏览器、减少动态效果、强制颜色和打印模式都回退为普通裁切。接入前检查已有的 `animation` 和 `mask-image` 声明，因为该工具会控制两者。
 

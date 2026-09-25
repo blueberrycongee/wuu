@@ -4,12 +4,14 @@ import { imageSource } from "./ComposerMessages";
 import { useI18n } from "./i18n";
 import { useImagePreviewRegistration } from "./ImagePreviewGallery";
 
-export function AttachmentImage({ image, label, previewTitle = label, className, previewDisabled, onOpen }: {
+export function AttachmentImage({ image, label, previewTitle = label, className, previewDisabled, decoding, onOpen }: {
   image: InputImage;
   label: string;
   previewTitle?: string;
   className?: string;
   previewDisabled?: boolean;
+  /** Surfaces that animate an image in pass "async" so decoding never holds a frame. */
+  decoding?: "async" | "auto";
   onOpen: (src: string, origin: HTMLElement) => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -69,7 +71,7 @@ export function AttachmentImage({ image, label, previewTitle = label, className,
     </button>
     {error ? <span role="alert">{error}</span> : null}
   </>;
-  return <><img ref={imageRef} className={className} src={src} alt={label} role={previewDisabled ? undefined : "button"}
+  return <><img ref={imageRef} className={className} src={src} alt={label} decoding={decoding} role={previewDisabled ? undefined : "button"}
     aria-busy={loading || undefined}
     tabIndex={previewDisabled ? -1 : 0} aria-label={previewDisabled ? undefined : labelOpen}
     onClick={() => void open()} onKeyDown={event => {

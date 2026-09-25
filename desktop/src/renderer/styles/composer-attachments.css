@@ -1,0 +1,302 @@
+/* Draft attachments (ComposerAttachmentTray). The tray's surface and its
+   tuck behind the input's top edge are shared with the accessory drawers in
+   composer.css; this file owns the card row and the cards. */
+
+/* The tray and a standalone card (a message being edited) size alike. */
+.composer-attachment-tray,
+.composer-attachment-card {
+  --composer-attachment-card-height: max(56px, calc(var(--font-ui) * 4.25));
+}
+
+.composer-attachment-tray-list {
+  position: relative;
+  display: flex;
+  /* One row stays reserved while the last card leaves out of flow; the tray
+     then closes from its full height instead of collapsing first. */
+  min-height: calc(var(--composer-attachment-card-height) + var(--space-2) * 2);
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2);
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  list-style: none;
+}
+
+.composer-attachment-tray-item {
+  display: flex;
+  flex: 0 0 auto;
+}
+
+/* A dismissed card leaves from where it stood while its neighbours close the
+   gap; ComposerAttachmentTray pins its left/top. */
+.composer-attachment-tray-item[data-exiting] {
+  position: absolute;
+  pointer-events: none;
+}
+
+/* A stacked queue drawer steps in once more, so the layers read as a deck
+   instead of two trays sharing an edge. */
+.composer-shell:has(.composer-attachment-tray) .composer-pending-drawer {
+  width: calc(100% - 48px);
+}
+
+.composer-attachment-card {
+  --composer-attachment-remove-size: 20px;
+  position: relative;
+  height: var(--composer-attachment-card-height);
+  border-radius: var(--radius-sm);
+  contain: layout style;
+}
+
+.composer-attachment-card-remove {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  z-index: 2;
+  display: grid;
+  width: var(--composer-attachment-remove-size);
+  height: var(--composer-attachment-remove-size);
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-pill);
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--shadow-card);
+  opacity: 0;
+  transition:
+    opacity var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out);
+}
+
+/* Keeps the small visible control at a comfortable hit target. */
+.composer-attachment-card-remove::before {
+  position: absolute;
+  inset: -4px;
+  content: "";
+}
+
+.composer-attachment-card-remove svg {
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
+}
+
+.composer-attachment-card:hover .composer-attachment-card-remove,
+.composer-attachment-card:focus-within .composer-attachment-card-remove {
+  opacity: 1;
+}
+
+.composer-attachment-card-remove:hover {
+  background: var(--surface-2);
+}
+
+@media (hover: none), (pointer: coarse) {
+  .composer-attachment-card {
+    --composer-attachment-remove-size: 24px;
+  }
+
+  .composer-attachment-card-remove {
+    opacity: 1;
+  }
+}
+
+/* Media cards: the thumbnail is the card. */
+.composer-media-card {
+  width: var(--composer-attachment-card-height);
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+/* Draws the edge over the pixels, so a white screenshot still has one. */
+.composer-media-card::after {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--hairline-soft);
+  content: "";
+  pointer-events: none;
+}
+
+.composer-media-card-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  cursor: zoom-in;
+}
+
+/* The card clips its media, so rings sit inside the edge. */
+html[data-focus-modality="keyboard"] .composer-media-card :is(.composer-media-card-image, .composer-video-card-main):focus-visible {
+  outline-offset: -2px;
+  border-radius: inherit;
+}
+
+/* Images keep their optimistic preview while they encode. Slow encodes get a
+   sheen; fast ones finish inside the delay and never show it. */
+.composer-media-card[data-pending]::before {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    color-mix(in srgb, var(--paper) 42%, transparent) 50%,
+    transparent 70%
+  );
+  content: "";
+  pointer-events: none;
+  translate: -100% 0;
+  animation: composer-attachment-sheen 1200ms var(--ease-out) 320ms infinite;
+}
+
+@keyframes composer-attachment-sheen {
+  to { translate: 100% 0; }
+}
+
+.composer-video-card {
+  width: calc(var(--composer-attachment-card-height) * 16 / 9);
+}
+
+.composer-video-card-main {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.composer-video-card-main video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+.composer-video-card-badge {
+  position: absolute;
+  bottom: var(--space-1);
+  left: var(--space-1);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 1px var(--space-2) 1px 6px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  color: var(--ink);
+  font-size: var(--font-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--line-ui);
+}
+
+.composer-video-card-badge svg {
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
+}
+
+/* Document cards: folded pastes and PDFs. */
+.composer-document-card {
+  display: inline-flex;
+  width: clamp(180px, calc(var(--font-ui) * 16), 280px);
+  max-width: 100%;
+  border: 1px solid var(--hairline-soft);
+  background: var(--surface-1);
+}
+
+.composer-document-card-main {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  /* The trailing inset is the remove control's footprint plus a reading gap. */
+  padding: 0 calc(var(--composer-attachment-remove-size) + var(--space-2)) 0 var(--space-2);
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+}
+
+button.composer-document-card-main {
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+button.composer-document-card-main:hover {
+  background: var(--surface-2);
+}
+
+button.composer-document-card-main:hover .composer-document-card-icon {
+  background: var(--surface-3);
+}
+
+.composer-document-card-icon {
+  display: grid;
+  height: calc(100% - var(--space-2) * 2);
+  aspect-ratio: 1;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  color: var(--ink-muted);
+}
+
+.composer-document-card-text {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.composer-document-card-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-document-card-meta {
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: var(--font-xs);
+  line-height: var(--line-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Truncate the stem so the extension always stays readable. */
+.composer-file-card-name {
+  display: flex;
+}
+
+.composer-file-card-stem {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-file-card-extension {
+  flex: 0 0 auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-media-card[data-pending]::before {
+    animation: none;
+  }
+
+  .composer-attachment-card-remove,
+  button.composer-document-card-main {
+    transition: none;
+  }
+}

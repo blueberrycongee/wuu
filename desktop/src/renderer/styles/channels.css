@@ -1325,19 +1325,12 @@
 .channel-composer-inline .composer {
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr) auto;
-  grid-template-areas: "attachments attachments attachments" "collapsed collapsed collapsed" "leading input trailing";
+  grid-template-areas: "leading input trailing";
   align-items: end;
   column-gap: 6px;
   padding: 7px;
   min-height: 46px;
 }
-.channel-composer-inline .composer > .composer-attachments {
-  grid-area: attachments;
-  /* The attachment row and the circular add button share the composer's
-     leading edge; text starts in the next grid column. */
-  padding: 5px 2px 5px 0;
-}
-.channel-composer-inline .composer-collapsed-prompt-list { grid-area: collapsed; }
 .channel-composer-inline .composer-stack textarea {
   grid-area: input;
   height: 32px;
