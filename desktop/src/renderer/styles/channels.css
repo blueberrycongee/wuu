@@ -1256,7 +1256,7 @@
 .channel-composer-inline .composer-frame { border-radius: var(--channel-composer-radius, 24px); }
 .channel-composer-inline .composer {
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas: "leading input trailing";
   align-items: end;
   column-gap: 6px;
@@ -1274,7 +1274,8 @@
 .channel-composer-inline .composer-bar { display: contents; }
 .channel-composer-inline .composer-bar-left { grid-area: leading; overflow: visible; }
 .channel-composer-inline .composer-bar-right { grid-area: trailing; gap: 4px; }
-.channel-composer-inline .channel-attachment-button { width: 32px; height: 32px; border-radius: 50%; background: var(--ink-overlay-4); }
+/* The leading slot holds attachments or a caller's own action, such as a random name. */
+.channel-composer-inline .composer-bar-left > .icon-button { width: 32px; height: 32px; border-radius: 50%; background: var(--ink-overlay-4); }
 
 .channel-mention-menu {
   /* Positioned by the floating-menu layer (fixed, viewport coordinates);
@@ -3569,7 +3570,7 @@ html[data-focus-modality="keyboard"] .agent-avatar-color-control input[type="ran
   .channel-message.own.chat-row > .channel-message-content { width: 88%; }
   .channel-message-bubble { padding: 8px 10px; }
   .channel-message-expand-toggle { min-height: 36px; }
-  .channel-response-progress button, .channel-send-error button, .channel-attachment-button { min-width: 40px; min-height: 40px; }
+  .channel-response-progress button, .channel-send-error button, .channel-composer .composer-bar-left > .icon-button { min-width: 40px; min-height: 40px; }
   .channel-conversation-footer { --channel-composer-bottom-space: 8px; }
   .channel-conversation-footer .channel-composer { --session-outer-padding-inline: 12px; }
   .channel-mention-menu button { min-height: 44px; }

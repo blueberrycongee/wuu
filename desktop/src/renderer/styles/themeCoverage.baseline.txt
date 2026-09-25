@@ -19,7 +19,7 @@ channels.css .channel-agent-graph-node.room circle fill --ink-overlay-18
 channels.css .channel-agent-preview-loading i background --ink-overlay-6
 channels.css .channel-agent-reset-status background --success-soft
 channels.css .channel-avatar-picker button:hover background --ink-overlay-4
-channels.css .channel-composer-inline .channel-attachment-button background --ink-overlay-4
+channels.css .channel-composer-inline .composer-bar-left > .icon-button background --ink-overlay-4
 channels.css .channel-form-danger-row button.danger:hover:not(:disabled), .channel-form-danger-row button.danger:focus-visible:not(:disabled) background --danger-soft
 channels.css .channel-management-primary:hover:not(:disabled) background --ink-overlay-4
 channels.css .channel-management-row:hover background --ink-overlay-4

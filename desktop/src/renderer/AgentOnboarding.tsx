@@ -6,7 +6,7 @@ import { AgentOnboardingHistory } from "./AgentOnboardingHistory";
 import { AgentOnboardingAvatar, AGENT_BUBBLE_DELAY_MS } from "./AgentOnboardingAvatar";
 import { useChannelMessageMotion } from "./useChannelMessageMotion";
 import { motionDurationMs, prefersReducedMotion } from "./motion";
-import { ChannelComposer, type ChannelComposerHandle, type ChannelComposerProject } from "./ChannelComposer";
+import { ChannelComposer, type ChannelComposerHandle } from "./ChannelComposer";
 import { providerModelVariantOptions } from "./RuntimeHelpers";
 import { MessageBubble, MessageBubbleRow } from "./MessageBubbleFlow";
 import { RuntimeModelMenu } from "./ComposerRuntimeMenus";
@@ -34,8 +34,6 @@ type AgentOnboardingProps = {
   onCreate: (params: ChannelAgentCreateParams) => Promise<NamedAgent>;
   onOpenConversation: (agent: NamedAgent, onboarding: ChannelRoomOnboarding) => Promise<void>;
   onManageProviders?: () => void;
-  /** Where the new agent's first conversation opens. */
-  project?: ChannelComposerProject;
   onClose: () => void;
 };
 
@@ -93,7 +91,7 @@ export function createAgentOnboardingDraft(initialized?: InitializeResult): Agen
   };
 }
 
-export function AgentOnboarding({ draft, onDraftChange, initialized, navigation, onCreate, onOpenConversation, onManageProviders, project, onClose }: AgentOnboardingProps): JSX.Element {
+export function AgentOnboarding({ draft, onDraftChange, initialized, navigation, onCreate, onOpenConversation, onManageProviders, onClose }: AgentOnboardingProps): JSX.Element {
   const { t } = useI18n();
   const [busy, setBusy] = useState<"creating" | "opening" | null>(null);
   const [error, setError] = useState("");
@@ -246,16 +244,12 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, navigation,
       {error ? <div className="agent-onboarding-error" role="alert">{draft.createdAgent ? <strong>{t("agentOnboarding.openFailed")}</strong> : null}<span>{error}</span><button type="button" className="agent-onboarding-manage" data-action="submit" onClick={() => void submit()} disabled={Boolean(busy)}>{t("agentOnboarding.openConversation")}</button></div> : null}
     </div>
     {step === "name" ? <div className="channel-conversation-footer">
-      <div className="agent-onboarding-name-actions">
-        <button type="button" className="agent-onboarding-manage" data-action="edit-model" disabled={locked} onClick={() => update({ step: "model" })}>{t("slash.model.title")}</button>
-        <button type="button" className="agent-onboarding-manage" data-action="random-name" disabled={locked} onClick={() => {
-          const names = t("agentOnboarding.randomNames").split("|").filter(name => name !== draft.name);
-          const value = crypto.getRandomValues(new Uint32Array(1))[0];
-          update({ name: names[value % names.length] });
-          composerRef.current?.focus();
-        }}><Shuffle size={14} />{t("agentOnboarding.randomName")}</button>
-      </div>
-      <ChannelComposer allowAttachments={false} ref={composerRef} draft={draft.name} placeholder={t("agentOnboarding.namePlaceholder")} compact disabled={locked} sending={Boolean(busy)} files={[]} images={[]} project={project} onPasteAttachmentFiles={() => {}} onRemoveFile={() => {}} onRemoveImage={() => {}} onChangeDraft={(name) => update({ name })} onSend={() => void submit()} />
+      <ChannelComposer allowAttachments={false} leadingAction={<button type="button" className="icon-button" data-action="random-name" disabled={locked} aria-label={t("agentOnboarding.randomName")} title={t("agentOnboarding.randomName")} onClick={() => {
+        const names = t("agentOnboarding.randomNames").split("|").filter(name => name !== draft.name);
+        const value = crypto.getRandomValues(new Uint32Array(1))[0];
+        update({ name: names[value % names.length] });
+        composerRef.current?.focus();
+      }}><Shuffle aria-hidden="true" /></button>} ref={composerRef} draft={draft.name} placeholder={t("agentOnboarding.namePlaceholder")} compact disabled={locked} sending={Boolean(busy)} files={[]} images={[]} onPasteAttachmentFiles={() => {}} onRemoveFile={() => {}} onRemoveImage={() => {}} onChangeDraft={(name) => update({ name })} onSend={() => void submit()} />
     </div> : null}
   </section>;
 }

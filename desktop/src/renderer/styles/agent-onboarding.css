@@ -20,19 +20,6 @@
   white-space: nowrap;
 }
 .agent-onboarding-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; display: flex; flex-direction: column; gap: 6px; padding: 12px var(--channel-horizontal-gutter) 20px; }
-.agent-onboarding-name-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-  align-items: center;
-  gap: 4px 12px;
-  width: 100%;
-  max-width: calc(var(--channel-content-max-width) + 2 * var(--channel-horizontal-gutter));
-  margin-inline: auto;
-  padding-inline: var(--channel-horizontal-gutter);
-  pointer-events: auto;
-}
-.agent-onboarding-name-actions > :last-child { margin-inline-start: auto; }
 .agent-onboarding-bubble { max-width: 100%; padding: 12px; }
 .agent-onboarding-form { min-width: 0; width: 208px; max-width: 100%; transition: width var(--motion-base) var(--ease-out); }
 .agent-onboarding-form:has(.runtime-panel.is-providers) { width: 180px; }

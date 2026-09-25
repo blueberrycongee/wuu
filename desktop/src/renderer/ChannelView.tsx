@@ -1887,7 +1887,6 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
           openSessionRoom(room.id);
         }}
         onManageProviders={onManageProviders}
-        project={conversationProject}
         onClose={() => setOnboardingDraft(null)}
       />;
 

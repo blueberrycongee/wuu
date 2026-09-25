@@ -1,6 +1,6 @@
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
 import { Plus } from "./WuuIcons";
-import { forwardRef, type KeyboardEvent, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { forwardRef, type KeyboardEvent, type ReactNode, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { DesktopProject, NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark } from "./AgentAvatarMark";
 import type { ComposerFile, ComposerImage } from "./ComposerMessages";
@@ -65,6 +65,8 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
   files: ComposerFile[];
   images: ComposerImage[];
   allowAttachments?: boolean;
+  /** Occupies the attachment button's slot when attachments are not allowed. */
+  leadingAction?: ReactNode;
   hideExpandButton?: boolean;
   compact?: boolean;
   mentionAgents?: NamedAgent[];
@@ -86,6 +88,7 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
   files,
   images,
   allowAttachments = true,
+  leadingAction,
   hideExpandButton = false,
   compact = false,
   mentionAgents = [],
@@ -255,7 +258,7 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
             if (selected.length > 0) onPasteAttachmentFiles(selected);
           }} />
           <button type="button" className="icon-button channel-attachment-button" disabled={disabled} aria-label={t("composer.addAttachment")} title={t("composer.addAttachment")} onClick={() => attachmentInputRef.current?.click()}><Plus aria-hidden="true" /></button>
-        </> : undefined}
+        </> : leadingAction}
         hidePlusButton
         hidePermissionControl
         hideExpandButton={compact || hideExpandButton}
