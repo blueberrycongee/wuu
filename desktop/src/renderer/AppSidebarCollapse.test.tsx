@@ -251,7 +251,7 @@ describe("sidebar collapse-state independence", () => {
       expect(container.querySelector(".settings-back-button")).not.toBeNull();
       if (theme) {
         await click([...container.querySelectorAll<HTMLButtonElement>(".settings-nav button")]
-          .find((button) => button.textContent === translateCurrent("settings.general")));
+          .find((button) => button.textContent === translateCurrent("settings.appearance")));
         await click(container.querySelector(`[data-testid="settings-theme-${theme}"]`));
         expect(document.documentElement.dataset.theme).toBe(theme);
         expect(window.wuu.setThemePreference).toHaveBeenLastCalledWith(theme);
