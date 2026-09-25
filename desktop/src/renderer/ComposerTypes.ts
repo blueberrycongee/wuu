@@ -46,6 +46,8 @@ export type PermissionMode =
 
 const HIDDEN_COMPOSER_STATUSES = new Set([
   "ready",
+  "connecting",
+  "no-runtime",
   "正在发送请求",
   "Sending request",
 ]);

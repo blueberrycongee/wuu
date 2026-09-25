@@ -31,7 +31,7 @@ func TestActionFusionTimeoutKeepsManagedProcessReachable(t *testing.T) {
 	}))
 	status, command := fusionCommand(t, message.ToolResult)
 	var outcome shellExecutionResult
-	if err := json.Unmarshal([]byte(command.TextProjection()), &outcome); err != nil {
+	if err := json.Unmarshal([]byte(producerText(command)), &outcome); err != nil {
 		t.Fatal(err)
 	}
 	if status != "running" || message.ToolResult.IsError || !outcome.TimedOut || outcome.PromotedProcessID == "" {

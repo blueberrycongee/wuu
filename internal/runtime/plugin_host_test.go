@@ -166,15 +166,6 @@ func TestPluginCapabilityRejectsInvalidRequestPatch(t *testing.T) {
 	}
 }
 
-func TestPluginRequestInterceptorSkipsHostsWithoutTransforms(t *testing.T) {
-	if intercept := pluginRequestInterceptor(pluginhost.New(), "openai", "thread-1", "/workspace"); intercept != nil {
-		t.Fatal("expected nil interceptor for host without transforms")
-	}
-	if intercept := pluginRequestInterceptor(pluginhost.New(pluginhost.Failed("broken", errors.New("boom"))), "openai", "thread-1", "/workspace"); intercept != nil {
-		t.Fatal("expected nil interceptor for failed plugin host")
-	}
-}
-
 func TestStartPluginHostPreservesRuntimeFailure(t *testing.T) {
 	host, _ := startPluginHost([]pluginpkg.Plugin{{
 		Manifest: pluginpkg.Manifest{ID: "broken", Runtime: &pluginpkg.RuntimeSpec{

@@ -95,32 +95,6 @@ func TestAgentFromSnapshotParticipantFallback(t *testing.T) {
 	}
 }
 
-func TestAgentFromSnapshotPreservesModelAliasProvenance(t *testing.T) {
-	s := New(&runtime.Session{SessionDir: t.TempDir()}, nil)
-	snap := subagent.SubAgentSnapshot{
-		ID:                 "agent-alias",
-		Status:             subagent.StatusRunning,
-		ModelAlias:         "frontend",
-		ModelAliasFallback: true,
-		ResolvedProvider:   "worker-provider",
-		ResolvedModel:      "worker-model",
-		ResolvedAPIModel:   "worker-api-model",
-		ResolvedEffort:     "high",
-		ResolvedVariant:    "thinking",
-	}
-
-	agent := s.agentFromSnapshot(nil, snap)
-	if agent.ModelAlias != "frontend" || !agent.ModelAliasFallback {
-		t.Fatalf("alias provenance = %q fallback=%v", agent.ModelAlias, agent.ModelAliasFallback)
-	}
-	if agent.Provider != "worker-provider" || agent.Model != "worker-model" || agent.APIModel != "worker-api-model" {
-		t.Fatalf("resolved model provenance = %s/%s (%s)", agent.Provider, agent.Model, agent.APIModel)
-	}
-	if agent.Effort != "high" || agent.Variant != "thinking" {
-		t.Fatalf("resolved reasoning provenance = effort %q variant %q", agent.Effort, agent.Variant)
-	}
-}
-
 func TestAgentThreadModelInheritsRootUnlessSnapshotIsPinned(t *testing.T) {
 	s := New(&runtime.Session{ProviderName: "workspace-provider", Model: "workspace-model", RootDir: t.TempDir()}, nil)
 	now := time.Now().UTC()

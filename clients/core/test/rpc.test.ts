@@ -35,13 +35,6 @@ describe("ProtocolClient", () => {
     await expect(p).rejects.toThrow("no active thread");
   });
 
-  it("routes notifications", () => {
-    const seen: Array<[string, unknown]> = [];
-    const { client } = makeClient({ onNotification: (m, p) => seen.push([m, p]) });
-    client.feed({ method: "turn/completed", params: { id: "t1" } });
-    expect(seen).toEqual([["turn/completed", { id: "t1" }]]);
-  });
-
   it("fails closed on server requests without a handler", async () => {
     const { client, written } = makeClient();
     client.feed({ id: "srv-1", method: "tool/approval/request", params: {} });

@@ -1,12 +1,14 @@
 /* Shared icon-button optics. Load after appearance.css so utility sizes do not
  * override these role-based sizes. Business colors and activation stay local. */
 :root {
-  --control-size-inline: max(28px, calc(var(--font-ui) * 1.4 + 8px));
+  --control-size-inline: max(28px, round(nearest, calc(var(--font-ui) * 1.4 + 8px), 2px));
   --control-size-toolbar: max(32px, var(--control-field-height, calc(var(--font-ui) * 1.4 + 12px)));
   --control-size-roomy: max(36px, var(--control-field-height, calc(var(--font-ui) * 1.4 + 12px)));
   --control-size-touch: 44px;
   --control-toolbar-gap: 8px;
-  --control-toolbar-inset: 16px;
+  /* Toolbars align glyph ink, not button boxes, to the pane inset. */
+  --control-toolbar-glyph-offset: calc((var(--control-size-toolbar) - var(--icon-size)) / 2);
+  --control-toolbar-inset: calc(var(--pane-inset) - var(--control-toolbar-glyph-offset));
 }
 
 :is(.icon-button, .settings-icon-button, .composer-tool-button,

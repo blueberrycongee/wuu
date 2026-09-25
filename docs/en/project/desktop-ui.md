@@ -37,7 +37,26 @@ shift the current position. Each image starts fitted and unrotated; Shift with
 the left/right arrow keys pans a zoomed image. Escape closes the preview and
 returns focus to the opener.
 
+## Video previews
+
+Video output cards open a player in the right panel. Workspace video files use
+the same player. Playback starts only on request, with native controls for
+pause, seeking, volume, and fullscreen. Local MP4/M4V, WebM, MOV, and OGV
+containers are recognized; playable codecs depend on the desktop runtime.
+If playback fails, the preview shows a message and keeps the download action.
+File delivery snapshots retain their integrity checks, including range requests
+used to seek within a video.
+
+Run `npm --prefix desktop run test:e2e:artifact-preview` to exercise delivered
+previews in Electron with synthetic content, separate from your app data.
+
 ## Shared typography and geometry
+
+Composer feedback belongs in the shared reading area above the input, not beside
+the send button. Main and split composers preserve errors, action restrictions,
+and operation progress there, wrapping long text and allowing it to scroll.
+Restored drafts and updated Git results already show success; do not add a second
+confirmation through the global status field.
 
 [`base.css`](../../../desktop/src/renderer/styles/base.css) defines the renderer's base roles, including typography, colors, corners, focus, and elevation. [`spacing.css`](../../../desktop/src/renderer/styles/spacing.css) defines spacing roles, density boundaries, and minimum control sizes. Prefer these existing roles to new per-component constants.
 

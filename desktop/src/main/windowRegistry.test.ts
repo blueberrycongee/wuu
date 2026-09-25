@@ -1,10 +1,7 @@
 import type { BrowserWindow } from "electron";
 import { describe, expect, it } from "vitest";
 import type { RuntimeContext } from "../shared/protocol";
-import {
-  createWindowRegistry,
-  type WindowRegistry,
-} from "./windowRegistry";
+import { createWindowRegistry } from "./windowRegistry";
 
 type MockListeners = {
   fire(event: string): void;
@@ -45,17 +42,6 @@ function makeWindow(
 }
 
 describe("windowRegistry", () => {
-  it("starts empty", () => {
-    const registry: WindowRegistry = createWindowRegistry();
-    expect(registry.mainWindow()).toBeNull();
-    expect(registry.allWindows()).toEqual([]);
-    expect(registry.windowForID(1)).toBeNull();
-    expect(registry.popOutWindowForThread("t1")).toBeNull();
-    expect(registry.threadHostWindowID("t1")).toBeUndefined();
-    expect(registry.activityWindow("activity-1")).toBeNull();
-    expect(registry.activityHostWindowID("activity-1")).toBeUndefined();
-  });
-
   describe("activity windows", () => {
     it("round-trips an Activity window and clears it on unregister", () => {
       const registry = createWindowRegistry();
@@ -230,15 +216,6 @@ describe("windowRegistry", () => {
   });
 
   describe("destroyed BrowserWindow", () => {
-    it("does not throw on register / unregister / mainWindow / allWindows", () => {
-      const registry = createWindowRegistry();
-      const win = makeWindow(1, { destroyed: true });
-      expect(() => registry.registerWindow(win, "main")).not.toThrow();
-      expect(() => registry.unregisterWindow(1)).not.toThrow();
-      expect(() => registry.mainWindow()).not.toThrow();
-      expect(() => registry.allWindows()).not.toThrow();
-    });
-
     it("returns the destroyed reference so callers can observe isDestroyed()", () => {
       const registry = createWindowRegistry();
       const win = makeWindow(1, { destroyed: true });

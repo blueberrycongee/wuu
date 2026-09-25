@@ -71,9 +71,8 @@ export function EmptyConversationHome({
   children
 }: {
   title: string;
-  // Optional element rendered directly under the title in the same
-  // grid cell so it can sit a few pixels below the greeting without
-  // inheriting the very large row-gap reserved for the hero composer.
+  // Optional element rendered in the title's own header row, so it sits
+  // beside the greeting instead of one row-gap below it with the children.
   belowTitle?: JSX.Element;
   activity?: WuuMascotActivity;
   children?: JSX.Element | null;

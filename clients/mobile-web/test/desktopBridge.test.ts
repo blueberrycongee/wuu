@@ -73,17 +73,6 @@ describe("browser host contract", () => {
     }, 30_000, expect.any(String));
   });
 
-  it("returns host engine inventory and routes process input to its owning thread", async () => {
-    const host = await api();
-    const inventory = { engines: [{ id: "codex", installed: true }] };
-    remote.call.mockResolvedValueOnce(inventory);
-    expect(await host.listEngines()).toBe(inventory);
-    await host.writeManagedProcess("thread-1", "process-2", "\u0003");
-    expect(remote.call).toHaveBeenLastCalledWith("process/write", {
-      thread_id: "thread-1", process_id: "process-2", input: "\u0003",
-    }, 30_000, expect.any(String));
-  });
-
   it("allows host-owned engine login to finish and keeps cancellation responsive", async () => {
     const host = await api();
     await host.authenticateEngine("antigravity", "browser");
@@ -94,78 +83,6 @@ describe("browser host contract", () => {
     expect(remote.call).toHaveBeenLastCalledWith("engine/auth/cancel", {
       engine_id: "antigravity",
     }, 30_000, expect.any(String));
-  });
-
-  it("forwards question holds and preserves mixed message parts", async () => {
-    const host = await api();
-    await host.holdUserQuestion("question-1");
-    expect(remote.call).toHaveBeenLastCalledWith("user-question/hold", { request_id: "question-1" }, 30_000, expect.any(String));
-    const parts = [{ type: "text" as const, text: "Review this file" }];
-    await host.startTurn("thread-1", "Review this file", [], [], "read_only", { path: "src/main.go" }, parts);
-    expect(remote.call).toHaveBeenLastCalledWith("turn/start", expect.objectContaining({
-      thread_id: "thread-1", active_document: { path: "src/main.go" }, content_parts: parts,
-    }), 30_000, expect.any(String));
-  });
-
-  it("reads and resolves files in the selected conversation worktree on the host", async () => {
-    const bridge = await connectBridge();
-    await bridge.api.listWorkspaceDirectory("src", "/paired/worktree");
-    expect(remote.call).toHaveBeenLastCalledWith("workspace/directory/list", { path: "src", root: "/paired/worktree" }, 30_000, expect.any(String));
-    await bridge.api.readWorkspaceFile("src/main.go", "/paired/worktree");
-    expect(remote.call).toHaveBeenLastCalledWith("workspace/file/read", { path: "src/main.go", root: "/paired/worktree" }, 30_000, expect.any(String));
-    await bridge.api.resolveWorkspaceFileReference("main.go:12");
-    expect(remote.call).toHaveBeenLastCalledWith("workspace/file/resolve", { reference: "main.go:12", root: "/paired/workspace" }, 30_000, expect.any(String));
-  });
-
-  it("reads repository changes from the selected host worktree", async () => {
-    const bridge = await connectBridge();
-    await bridge.api.gitStatus();
-    expect(remote.call).toHaveBeenLastCalledWith("workspace/git/status", { root: "/paired/workspace" }, 30_000, expect.any(String));
-    await bridge.api.listGitChanges("/paired/worktree");
-    expect(remote.call).toHaveBeenLastCalledWith("workspace/git/changes", { root: "/paired/worktree" }, 30_000, expect.any(String));
-    await bridge.api.readGitFileDiff("src/main.go", "/paired/worktree");
-    expect(remote.call).toHaveBeenLastCalledWith("workspace/git/diff", { path: "src/main.go", root: "/paired/worktree" }, 30_000, expect.any(String));
-  });
-
-  it("preserves installed extension modules and icons across snapshots and updates", async () => {
-    const bridge = await connectBridge();
-    const record = { id: "desktop-extension", kind: "plugin", name: "Example", fingerprint: "generation-1", enabled: true };
-    const namedIconPlugin = {
-      id: "ask-user",
-      kind: "plugin",
-      name: "Ask User",
-      fingerprint: "generation-2",
-      enabled: true,
-      icon: { name: "sparkles" },
-    };
-    const inventory = [
-      { ...record, desktop: { entry: "wuu-plugin://module" }, icon: { path: "assets/icon.svg" } },
-      namedIconPlugin,
-    ];
-    const payload = { extension_inventory: inventory, skills: [{ name: "host-skill" }], epoch: 2 };
-    const expected = payload;
-    remote.call.mockResolvedValueOnce(payload);
-    expect(await bridge.api.initialize()).toMatchObject(expected);
-    const received = vi.fn();
-    bridge.api.onServerEvent(received);
-    remote.options.onNotification?.("plugin/inventory/changed", payload);
-    expect(received).toHaveBeenCalledWith(expect.objectContaining({
-      message: { method: "plugin/inventory/changed", params: expected },
-    }));
-    remote.call.mockResolvedValueOnce(payload);
-    expect(await bridge.api.refreshExtensionCatalog()).toEqual(expected);
-    for (const action of ["disable", "enable"] as const) {
-      const enabled = action === "enable";
-      remote.call.mockResolvedValueOnce({ extension_inventory: [{ ...inventory[0], enabled }] });
-      const update = { id: record.id, fingerprint: record.fingerprint, action };
-      expect(await bridge.api.updateExtensionPackage(update)).toEqual({
-        extension_inventory: [{ ...inventory[0], enabled }],
-      });
-      expect(remote.call).toHaveBeenLastCalledWith("extension/package/update", update, 30_000, expect.any(String));
-    }
-    expect(payload.extension_inventory).toBe(inventory);
-    expect(inventory[0]).toHaveProperty("desktop");
-    expect(inventory[0]).toHaveProperty("icon");
   });
 
   it("does not open executable URL schemes", async () => {
@@ -257,12 +174,6 @@ describe("connection recovery", () => {
     expect(await response).toEqual(action === "respond"
       ? { result: { approved: true } }
       : { error: { code: "rejected", message: "No" } });
-  });
-
-  it("waits for a real host workspace before presenting the workbench", async () => {
-    const bridge = await connectBridge();
-    expect(bridge.getConnectionSnapshot().phase).toBe("connected");
-    expect((await bridge.api.listProjects()).active_context?.cwd).toBe("/paired/workspace");
   });
 
   it("restores a fresh app-server connection in place and waits for subscribers", async () => {

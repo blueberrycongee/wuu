@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // Control is an execution fence, independent of session ownership and ancestry.
@@ -116,4 +117,43 @@ func ValidateControl(dir string, expected Control) error {
 		return fmt.Errorf("%w: automatic execution is no longer authorized", ErrControlChanged)
 	}
 	return nil
+}
+
+// ArchiveControlled archives history and releases its execution fence atomically.
+// A concurrent takeover or release must win over automatic cleanup.
+func ArchiveControlled(dir string, expected Control, reason string) error {
+	if expected.State != ControlActive && expected.State != ControlPaused {
+		return ErrControlChanged
+	}
+	db, err := openStore(dir)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	storeWriteMu.Lock()
+	defer storeWriteMu.Unlock()
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`UPDATE session_controls SET state=?,revision=revision+1 WHERE session_id=? AND manager_id=? AND revision=? AND state=?`, ControlReleased, expected.SessionID, expected.ManagerID, expected.Revision, expected.State)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return ErrControlChanged
+	}
+	result, err = tx.Exec(`UPDATE sessions SET archived_at=?,archive_reason=?,pinned_at=NULL WHERE id=?`, timeText(time.Now().UTC()), reason, expected.SessionID)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return ErrSessionNotFound
+	}
+	return tx.Commit()
 }

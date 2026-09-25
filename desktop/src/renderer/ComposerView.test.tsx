@@ -12,6 +12,7 @@ import {
   type PermissionMode,
 } from "./ComposerView";
 import { ImagePreviewProvider } from "./ImagePreview";
+import { ConversationSplitPane } from "./ConversationSplitPane";
 import { translateCurrent } from "./i18n";
 import { WorkbenchConnectionContext } from "./WorkbenchConnectionContext";
 import { ComposerTokenGauge } from "./ComposerTokenGauge";
@@ -26,6 +27,7 @@ import type {
   PermissionSummary,
   RuntimeContext,
   SkillSummary,
+  Thread,
   WuuDesktopApi,
 } from "../shared/protocol";
 
@@ -1412,71 +1414,58 @@ describe("Composer send control", () => {
     expect(stopButton.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }))).toBe(true);
   });
 
-  it("hides the transient sending status from the composer bar", () => {
-    renderComposer({
-      prompt: "queued follow-up",
-      running: true,
-      status: "正在发送请求",
+  describe.each([
+    ["main", renderComposer],
+    ["split", renderSplitPaneComposer],
+  ] as const)("%s composer feedback", (_name, render) => {
+    it.each(["ready", "正在发送请求", "Sending request"])("does not announce transient status %s", (status) => {
+      render({ prompt: "queued follow-up", running: true, status });
+
+      expect(container.querySelector("[role='status']")).toBeNull();
     });
 
-    expect(container.querySelector(".status-label")).toBeNull();
-    expect(container.textContent).not.toContain("正在发送请求");
+    it.each(["Attachment rejected: unsupported media", "附件无法读取，请重新选择文件"])("keeps actionable feedback outside the send toolbar: %s", (status) => {
+      render({ prompt: "retry later", running: true, status });
+
+      const feedback = container.querySelector("[role='status']");
+      expect(feedback?.textContent).toBe(status);
+      expect(container.querySelector(".composer-bar")?.contains(feedback)).toBe(false);
+      expect(container.querySelector("textarea")?.value).toBe("retry later");
+    });
   });
 
-  it("keeps non-transient composer status visible", () => {
-    renderComposer({
-      prompt: "retry later",
-      status: "发送失败",
+  it.each([true, false])("only shows app feedback in the active split pane while running (active=%s)", (active) => {
+    const status = "Attachment upload rejected";
+    act(() => {
+      root = createRoot(container);
+      root.render(
+        <ImagePreviewProvider>
+          <ConversationSplitPane
+            pane="primary"
+            thread={{ id: "running-thread", status: "in_progress", turns: [] } as unknown as Thread}
+            active={active}
+            appStatus={status}
+            draft={{ prompt: "follow-up", files: [], images: [] }}
+            viewSwitchPending={false}
+            queryHistory={[]}
+            onActivate={() => {}}
+            onClose={() => {}}
+            onBodyRef={() => {}}
+            onScroll={() => {}}
+            onSetPrompt={() => {}}
+            onPasteAttachmentFiles={() => {}}
+            onRemoveFile={() => {}}
+            onRemoveImage={() => {}}
+            onSend={() => {}}
+            onInterrupt={() => {}}
+            onForkMessage={() => {}}
+            onStreamFrame={() => {}}
+          />
+        </ImagePreviewProvider>,
+      );
     });
 
-    expect(container.querySelector(".status-label")?.textContent).toBe("发送失败");
-  });
-
-  it("renders reconnect status with the shared live progress chip", () => {
-    renderComposer({
-      prompt: "retry later",
-      running: true,
-      status: "消息流重连中 1/3",
-      statusLiveProgress: true,
-    });
-
-    expect(container.querySelector(".status-label")?.textContent).toBe("消息流重连中 1/3");
-    expect(container.querySelector(".status-label-text")?.classList.contains("live-progress-chip")).toBe(true);
-  });
-
-  it("renders static fallback status without the live progress chip", () => {
-    renderComposer({
-      prompt: "retry later",
-      running: true,
-      status: "WebSocket 不可用，已切到 HTTP",
-      statusLiveProgress: false,
-    });
-
-    expect(container.querySelector(".status-label")?.textContent).toBe("WebSocket 不可用，已切到 HTTP");
-    expect(container.querySelector(".status-label-text")?.classList.contains("live-progress-chip")).toBe(false);
-  });
-
-  it("hides the transient sending status from the split-pane composer bar", () => {
-    renderSplitPaneComposer({
-      prompt: "continue this branch",
-      running: true,
-      status: "正在发送请求",
-    });
-
-    expect(container.querySelector(".split-composer-status")).toBeNull();
-    expect(container.textContent).not.toContain("正在发送请求");
-  });
-
-  it("renders split-pane reconnect status with the shared live progress chip", () => {
-    renderSplitPaneComposer({
-      prompt: "continue this branch",
-      running: true,
-      status: "HTTP 消息流重连中 2/3",
-      statusLiveProgress: true,
-    });
-
-    expect(container.querySelector(".split-composer-status")?.textContent).toBe("HTTP 消息流重连中 2/3");
-    expect(container.querySelector(".split-composer-status-text")?.classList.contains("live-progress-chip")).toBe(true);
+    expect(container.querySelector("[role='status']")?.textContent ?? "").toBe(active ? status : "");
   });
 
   it("hides session context chips in the dock composer", () => {

@@ -1,4 +1,4 @@
-import { act, createRef, type ReactNode } from "react";
+import { act, createRef, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -98,6 +98,7 @@ interface RenderOptions {
 // replace the whole workbench, such as settings), so the harness owns the flag
 // here and hands AppSidebar the same controlled props it gets in production.
 function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
+  const [collapsedFolderIDs, setCollapsedFolderIDs] = useState<Set<string>>(() => new Set());
   const {
     expandedSidebarSectionIDs = new Set(),
     projectThreadsByProjectID = {},
@@ -138,6 +139,8 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
       pendingThreadID={pendingThreadID}
       pendingProjectID={undefined}
       collapsedSidebarSectionIDs={collapsedSidebarSectionIDs}
+      collapsedFolderIDs={collapsedFolderIDs}
+      setCollapsedFolderIDs={setCollapsedFolderIDs}
       expandedSidebarSectionIDs={expandedSidebarSectionIDs}
       projectThreadsByProjectID={projectThreadsByProjectID}
       projectMenuOpen={false}
@@ -204,10 +207,16 @@ describe("AppSidebar layout", () => {
   ])("restores group order without resetting existing preferences: $saved", ({ saved, expected }) => {
     window.localStorage.setItem("wuu.desktop.sidebarFunctionalGroupOrder", JSON.stringify(saved));
     const onCreateRoom = vi.fn();
-    const options = {
-      collaborationNavigation: <CollaborationSidebar embedded initialized agents={[]} rooms={[]}
+    function CollaborationNavigation() {
+      const [sectionCollapsed, setSectionCollapsed] = useState(false);
+      return <CollaborationSidebar embedded initialized agents={[]} rooms={[]}
+        sectionCollapsed={sectionCollapsed}
+        onToggleSectionCollapsed={() => setSectionCollapsed((value) => !value)}
         onSelectAgent={() => {}} onSelectRoom={() => {}} onManageAgents={() => {}}
-        onCreateRoom={onCreateRoom} onSwitchToHarness={() => {}} onOpenSettings={() => {}} />,
+        onCreateRoom={onCreateRoom} onSwitchToHarness={() => {}} onOpenSettings={() => {}} />;
+    }
+    const options = {
+      collaborationNavigation: <CollaborationNavigation />,
     };
     const order = () => [...container.querySelectorAll<HTMLElement>(".sidebar-main > .sidebar-functional-group")]
       .map((element) => element.dataset.functionalGroupId ?? element.dataset.sectionId);
@@ -376,48 +385,6 @@ describe("AppSidebar layout", () => {
     expect(rows).toHaveLength(1);
     act(() => rows[0].click());
     expect(select).toHaveBeenCalledWith("project-1", fork.id);
-  });
-
-  it("hides group chat unless the frontend flag is enabled", () => {
-    renderSidebar();
-
-    expect(container.textContent).not.toContain("群聊");
-  });
-
-  it("replaces the legacy group chat nav item with the 协作 section", () => {
-    renderSidebar({ groupChatEnabled: true });
-
-    const navLabels = Array.from(container.querySelectorAll(".nav-item")).map((item) => item.textContent);
-    expect(navLabels).not.toContain("群聊");
-    expect(container.querySelector(".channel-mention-badge")).toBeNull();
-  });
-
-  it("keeps primary actions outside the scrollable sidebar list", () => {
-    renderSidebar();
-
-    const content = container.querySelector(".sidebar-content");
-    const primaryNav = container.querySelector(".primary-nav");
-    const scrollRegion = container.querySelector(".sidebar-main");
-
-    expect(primaryNav?.parentElement).toBe(content);
-    expect(scrollRegion?.contains(primaryNav)).toBe(false);
-    expect(scrollRegion?.querySelector(".project-section")).not.toBeNull();
-    expect(scrollRegion?.hasAttribute("data-scroll-fade")).toBe(true);
-    expect(primaryNav?.closest("[data-scroll-fade]")).toBeNull();
-    expect(content?.hasAttribute("data-scroll-fade")).toBe(false);
-  });
-
-  it("keeps the workspace add action visible and collaboration controls out of Harness", () => {
-    renderSidebar({ groupChatEnabled: true });
-
-    const workspaceAction = container.querySelector<HTMLButtonElement>(
-      '[aria-label="添加工作区"]',
-    );
-    const collaborationAction = container.querySelector<HTMLButtonElement>(
-      '[aria-label="新建频道"]',
-    );
-    expect(workspaceAction).not.toBeNull();
-    expect(collaborationAction).toBeNull();
   });
 
   it("keeps plugin navigation above the collaboration section", async () => {

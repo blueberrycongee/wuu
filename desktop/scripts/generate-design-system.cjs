@@ -186,7 +186,8 @@ async function renderBoard(kind, theme, marker) {
       return `<div class="space-column"><div class="space-block" style="width:${pixels * 2}px;height:${pixels * 2}px"></div><div class="name">${pixels}px</div><div class="token">${token}</div></div>`;
     }).join("")}</div><div class="role-grid">${[
       ["Page / 页面", "--page-padding"], ["Section / 分组", "--section-gap"], ["Heading / 标题到内容", "--section-heading-gap"],
-      ["Card / 卡片内缩", "--card-padding"], ["Panel / 面板内缩", "--panel-padding"], ["Menu / 菜单内缩", "--menu-inset"],
+      ["Pane edge / 面板边缘", "--pane-inset"], ["Card / 卡片内缩", "--card-padding"], ["Panel / 面板内缩", "--panel-padding"],
+      ["Menu / 菜单内缩", "--menu-inset"],
     ].map(([name, token]) => `<div class="role"><div class="name">${name} · ${value(token, "width")}</div><div class="token">${token}</div></div>`).join("")}</div></section>`;
     const radii = [["Inner / 内层", "--radius-xs"], ["Control / 控件", "--radius-sm"], ["Panel / 面板", "--radius-md"], ["Menu / 紧凑菜单", "--menu-shell-radius"], ["Pill / 胶囊", "--radius-pill"], ["Circle / 圆形", "--radius-circle"]];
     content += `<section><h2>Radius / 圆角 · actual CSS radii / 圆角按实际 CSS 值绘制</h2><div class="radii">${radii.map(([name, token]) => `<div><div class="radius-shape${token === "--radius-pill" ? " pill" : ""}" style="border-radius:var(${token})"></div><div class="name">${name}</div><div class="token">${token}</div><div class="value">${value(token, "border-top-left-radius")}</div></div>`).join("")}</div><p class="note">Menu shell = inner radius + inset. / 菜单外层圆角 = 内层圆角 + 内缩。<br>Panel/dialog overlays use --menu-radius; --radius-lg aliases --radius-md. / 面板式浮层另用对应角色。</p></section>`;

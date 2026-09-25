@@ -8,10 +8,92 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Video output cards and workspace video files open an inline player with
+  playback, seeking, volume, and fullscreen controls. Unsupported codecs show
+  a message while keeping the download action available.
+
+- The empty conversation home shows a usage overview under the greeting:
+  sessions, tokens, and active days recorded in local Wuu history, with a
+  daily activity heatmap for the past year. New installs show zero totals.
+  The new `usage/overview` app-server method reads only token usage records,
+  not conversation content. After 20 seconds without input, the greeting
+  mascot sends a small ball bouncing across the heatmap to today and catches
+  it on the way back; any input stops it, and reduced motion turns it off.
+
 ### Changed
 
 - The macOS DMG installer has a Retina-ready branded background, aligned app
   and Applications icons, and English and Chinese drag-to-install instructions.
+
+- `bash` starts background processes with a single `run_in_background` flag
+  instead of its seven background actions. A new `process` tool reads output
+  from, writes input to, stops, lists, and updates running processes,
+  including switching a long-lived service to `completion_mode=detached`.
+  Older transcripts that used `bash` background actions still render on the
+  desktop.
+
+- Command results reach the model as terminal-style text: the output, plus an
+  exit code, full-log path, timeout hand-off, or sandbox denial only when they
+  apply. Terminal color codes and progress redraws are stripped, and each
+  output stream keeps its head and tail instead of only the tail. `process`
+  results and background completion notifications use the same plain text.
+  Clients and durable records keep the JSON envelope.
+
+- `read_file` and `bash` results are bounded at 8192 estimated tokens instead
+  of 2048, so a typical source file or document is read in one call.
+
+### Fixed
+
+- Terminal run details preserve output, exit status, and log links when a
+  command's model-facing output is JSON, rather than treating that output as
+  execution metadata.
+
+- Ready Agent Core entries show an external agent's detected executable path in
+  its override field without repeating it in the status or help text.
+
+- Model choices in desktop settings keep a stable order and selected styling.
+  The catalog no longer shows ineffective per-model remove controls or selection
+  animations, and provider remove controls keep their icon centered and color
+  stable on hover.
+
+- Deleting an agent archives sessions still under its management in a separate
+  Agent archive, keeping them out of workspace and unread lists. Previously
+  orphaned sessions are reconciled, and user-taken-over sessions stay available.
+  Agent deletion updates navigation immediately and reconciles cleanup errors.
+
+- Preserve sidebar folder and collaboration folds when returning from settings,
+  including after switching between light and dark themes.
+
+- `apply_patch` with `then_run` now shows the model the follow-up command's
+  outcome; the parent result previously kept the patch-only view.
+
+## [2026.9.25] - 2026-09-25
+
+### Changed
+
+- The composer model picker adapts to larger UI text and supports keyboard
+  navigation, focused search, and clearer engine-managed model guidance.
+
+- Desktop titlebars, tab bars, and the sidebar place their first and last
+  icons 20px from the pane edge on both sides. In the message column, tables
+  start on the same edge as paragraphs, while code blocks, the composer, and
+  message bubbles share one 16px inner inset. Derived text, icon, and line
+  sizes land on whole pixels, sidebar group headings keep one height, and
+  message headings step more clearly above body text.
+
+### Fixed
+
+- Reduce long conversation switching stalls by assembling core responses once
+  per message and reusing resume responses instead of transmitting history twice.
+
+- Message table headers no longer render bold, and narrow tables keep words
+  whole instead of breaking them mid-word.
+
+- The workspace file tree now fits a narrow panel when the panel opens after
+  launch, so the file preview keeps a usable width instead of wrapping one
+  character per line.
 
 ## [2026.9.24] - 2026-09-24
 
@@ -49,6 +131,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   for both the first message and follow-ups.
 
 ### Fixed
+
+- Composer feedback no longer crowds the send toolbar. Redundant queue-edit,
+  commit, and pull-request confirmations are removed; errors and restrictions
+  remain readable above the input in both main and split conversations.
 
 - Desktop conversation refresh and session resume discard obsolete cached
   messages when a full completed turn arrives, preventing duplicate replies

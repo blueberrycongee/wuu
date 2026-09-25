@@ -122,12 +122,15 @@ function agentRunFromToolCall(
 ): AgentRunRecord | undefined {
   const args = parseRecord(item.arguments);
   const result = toolResultRecord(item);
+  // bash with run_in_background reports result action "start"; sessions
+  // recorded before the process tool used the bash action "start_background".
   const action = nonEmptyString(args, "action") ?? "run";
   if (action !== "run" && action !== "start_background") {
     return undefined;
   }
+  const resultAction = nonEmptyString(result, "action");
   const processID =
-    nonEmptyString(result, "action") === "start_background"
+    resultAction === "start" || resultAction === "start_background"
       ? nonEmptyString(result, "id")
       : undefined;
   const exitCode = numberValue(result, "exit_code");
@@ -185,17 +188,15 @@ function toolResultRecord(item: ThreadItem): Record<string, unknown> | undefined
   if (isRecord(structured)) {
     return structured;
   }
-  const direct = parseRecord(item.result);
-  if (direct) {
-    return direct;
-  }
+  // The model view may itself be JSON stdout, not execution metadata.
+  // Prefer the retained producer envelope before legacy text-only results.
   for (const part of item.result_detail?.content ?? []) {
     const parsed = parseRecord(part.text);
     if (parsed) {
       return parsed;
     }
   }
-  return undefined;
+  return parseRecord(item.result);
 }
 
 function parseRecord(value: string | undefined): Record<string, unknown> | undefined {

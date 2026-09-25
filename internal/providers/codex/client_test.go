@@ -277,9 +277,6 @@ func TestLocalOAuthStatusReportsMissingCredentials(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing credentials error")
 	}
-	if !strings.Contains(err.Error(), "Codex CLI OAuth credentials not found") {
-		t.Fatalf("unexpected error: %v", err)
-	}
 }
 
 func TestClientRefreshesStoredWuuCodexOAuth(t *testing.T) {

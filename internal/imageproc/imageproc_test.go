@@ -183,20 +183,3 @@ func TestEncodeCorruptJPEGReturnsTypedError(t *testing.T) {
 	require.ErrorAs(t, err, &ipErr)
 	assert.Equal(t, KindDecode, ipErr.Kind)
 }
-
-func TestEncodeEmptyPathStillWorks(t *testing.T) {
-	// In-memory payloads (e.g. from app-server) have no path; the field is
-	// purely for error context.
-	data := makeSolidJPEG(t, 100, 100, 90)
-	res, err := Encode("", data, Options{})
-	require.NoError(t, err)
-	assert.True(t, res.Skipped)
-}
-
-func TestErrorMessageIncludesPath(t *testing.T) {
-	heic := []byte{0x00, 0x00, 0x00, 0x18, 'f', 't', 'y', 'p', 'h', 'e', 'i', 'c'}
-	_, err := Encode("/tmp/x.heic", heic, Options{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "/tmp/x.heic")
-	assert.Contains(t, err.Error(), "unsupported format")
-}

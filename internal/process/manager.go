@@ -1425,6 +1425,30 @@ func (m *Manager) SetRecheck(id string, minutes int) (*Process, error) {
 	return p, nil
 }
 
+// SetCompletionMode changes whether a live process's natural exit resumes its
+// conversation. A process started in resume mode keeps the owning turn (and
+// wuu exec) waiting; switching a long-lived service to detached releases it.
+func (m *Manager) SetCompletionMode(id string, mode CompletionMode) (*Process, error) {
+	if mode != CompletionModeResume && mode != CompletionModeDetached {
+		return nil, fmt.Errorf("completion_mode must be %q or %q", CompletionModeResume, CompletionModeDetached)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, err := m.load(id)
+	if err != nil {
+		return nil, err
+	}
+	if !isLiveStatus(p.Status) {
+		return p, fmt.Errorf("process %q is not running", id)
+	}
+	p.CompletionMode = mode
+	p.UpdatedAt = time.Now()
+	if err := m.save(p); err != nil {
+		return p, err
+	}
+	return p, nil
+}
+
 // PendingRechecks returns live processes with a fired-but-undelivered
 // recheck. Terminal processes never appear here: their completion obligation
 // supersedes any stale recheck.

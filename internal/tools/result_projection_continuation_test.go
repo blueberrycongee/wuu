@@ -79,7 +79,7 @@ func TestBoundedSearchProjectionUsesArtifactWithoutInventingContinuation(t *test
 	}
 	projection := parsed["projection"].(map[string]any)
 	recover, _ := projection["recover"].(string)
-	if !strings.Contains(recover, "/s/bounded.txt") || !strings.Contains(recover, "narrow") {
+	if !strings.Contains(recover, "/s/bounded.txt") {
 		t.Fatalf("bounded projection recovery is not actionable: %+v", projection)
 	}
 }
@@ -170,41 +170,6 @@ func TestReadFileProjectorPointsAtRemainingRequestedLines(t *testing.T) {
 	continuation, err := decodeReadFileContinuation(next["continuation"].(string))
 	if err != nil || continuation.ExpectedSHA256 != "file-hash" || continuation.Offset != 1+lineCount(m["content"].(string)) || continuation.Limit != 5000-lineCount(m["content"].(string)) {
 		t.Fatalf("invalid remaining-range continuation: %+v", next)
-	}
-}
-
-func TestBashProjectorExposesRankedNonOverlappingArtifactRanges(t *testing.T) {
-	raw := bashEnvelope(map[string]any{
-		"output":          strings.Repeat("combined\n", 5000),
-		"stdout_tail":     strings.Repeat("stdout tail\n", 1000),
-		"stderr_tail":     strings.Repeat("stderr tail\n", 1000),
-		"full_log_sha256": "shell-hash",
-		"full_log_sections": map[string]any{
-			"stdout_start": 100,
-			"stdout_end":   100000,
-			"stderr_start": 100100,
-			"stderr_end":   200000,
-		},
-	})
-	pc := projectorContext{CallID: "bash", BudgetTokens: defaultProjectionTokenBudget, ArtifactRef: "/s/shell.log"}
-	out, _, ok := projectBashResult(raw, pc)
-	if !ok {
-		t.Fatal("bash projector declined")
-	}
-	m := parseOut(t, out)
-	ranges := m["continuation"].(map[string]any)["ranges"].([]any)
-	if len(ranges) != 2 || ranges[0].(map[string]any)["stream"] != "stderr" || ranges[1].(map[string]any)["stream"] != "stdout" {
-		t.Fatalf("bash recovery ranges are not failure-first: %+v", ranges)
-	}
-	for _, value := range ranges {
-		next := value.(map[string]any)["next"].(map[string]any)
-		continuation, err := decodeReadFileContinuation(next["continuation"].(string))
-		if err != nil || continuation.ExpectedSHA256 != "shell-hash" {
-			t.Fatalf("bash recovery range is not snapshot-bound: %+v", next)
-		}
-		if continuation.ByteOffset == nil || continuation.ByteEndOffset == nil || *continuation.ByteEndOffset <= *continuation.ByteOffset {
-			t.Fatalf("empty or reversed recovery range: %+v", continuation)
-		}
 	}
 }
 

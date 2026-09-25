@@ -575,17 +575,22 @@ describe("AppServerClient child lifecycle", () => {
   });
 });
 
-it("forwards a snapshot response before the next notification in the same stdout chunk", async () => {
+it.each([false, true])("preserves snapshot content and event order across pipe chunks (fragmented=%s)", async fragmented => {
   const child = new FakeAppServerChild();
   const order: string[] = [];
+  const snapshot = { thread: { id: "t", turns: [{ text: "History 中文 🦆\n".repeat(20000) }] } };
   const client = new AppServerClient(tmpdir(), "", (_source, event) => {
     if (event.kind === "notification") order.push("notification");
   }, () => {}, () => child.asChildProcess(), (_env, cwd) => ({ command: "test-core", args: [], cwd }));
   try {
     const pending = client.request("thread/resume", { session_id: "t" }, () => order.push("snapshot"));
-    child.stdout.write(JSON.stringify({ id: "client-1", result: { thread: { id: "t", turns: [] } } }) + "\n" +
+    const wire = Buffer.from(JSON.stringify({ id: "client-1", result: snapshot }) + "\r\n\n" +
       JSON.stringify({ method: "item/agentMessage/delta", params: { thread_id: "t", delta: "new" } }) + "\n");
-    await pending;
+    const chunkSize = fragmented ? 1021 : wire.length;
+    for (let offset = 0; offset < wire.length; offset += chunkSize) {
+      child.stdout.write(wire.subarray(offset, offset + chunkSize));
+    }
+    await expect(pending).resolves.toEqual(snapshot);
     expect(order).toEqual(["snapshot", "notification"]);
   } finally { client.dispose(); }
 });

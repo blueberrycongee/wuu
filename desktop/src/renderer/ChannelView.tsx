@@ -330,7 +330,7 @@ export type ChannelConversationSnapshot = {
   readingAnchor?: ConversationReadingAnchor;
 };
 
-export function ChannelView({ conversationCache, initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, managedThreadsByAgentID = {}, lastViewedTurnByThreadID = {}, onOpenAgentConversation, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, editRoomRequestID, onEditRoomRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
+export function ChannelView({ conversationCache, initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, managedThreadsByAgentID = {}, lastViewedTurnByThreadID = {}, onOpenAgentConversation, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, editRoomRequestID, onEditRoomRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange, onDeleteAgent }: {
   conversationCache?: Map<string, ChannelConversationSnapshot>;
   initialized?: InitializeResult;
   engines?: EngineInfo[];
@@ -375,6 +375,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
   directoryRooms?: ChannelRoom[];
   onDirectoryAgentsChange?: ChannelDirectoryStateUpdater<NamedAgent>;
   onDirectoryRoomsChange?: ChannelDirectoryStateUpdater<ChannelRoom>;
+  onDeleteAgent?: (agentID: string) => Promise<void>;
 }): JSX.Element {
   const { formatDate, locale, t } = useI18n();
   const [localAgents, setLocalAgents] = useState<NamedAgent[]>([]);
@@ -1427,9 +1428,13 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
   async function deleteAgent(agentID: string): Promise<void> {
     if (!window.wuu) return;
     if (!window.confirm(t("channels.deleteAgentConfirm", { name: agentName.trim() }))) return;
+    closeAgentPanel();
     try {
+      if (onDeleteAgent) {
+        await onDeleteAgent(agentID);
+        return;
+      }
       await window.wuu.deleteNamedAgent({ agent_id: agentID });
-      closeAgentPanel();
       await refreshRoomsAndAgents();
     } catch (reason) {
       showErrorToast(reason);

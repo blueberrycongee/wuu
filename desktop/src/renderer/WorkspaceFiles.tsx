@@ -19,6 +19,7 @@ import { translateCurrent, useI18n } from "./i18n";
 import { desktopPlatform } from "./platform";
 import { FilePreviewPresentation } from "./plugins/FilePreviewPresentation";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
+import { VideoPreview } from "./VideoPreview";
 
 // monaco-editor is several MB of JS; a static import here would drag it into
 // the eager startup chunk. Load it only when a code editor actually mounts.
@@ -53,7 +54,9 @@ const WORKSPACE_TREE_CSS = `
     --trees-font-size-override: var(--font-ui);
     --trees-search-font-weight-override: 400;
     --trees-focus-ring-color-override: var(--focus-ring);
-    --trees-item-margin-x-override: 5px;
+    /* Rows and the search field share one outer edge and one content axis:
+       highlight edges meet the field border, icons meet the placeholder. */
+    --trees-item-margin-x-override: 8px;
     --trees-padding-inline-override: 0px;
   }
 
@@ -61,12 +64,13 @@ const WORKSPACE_TREE_CSS = `
     box-sizing: border-box;
     width: 100%;
     margin-inline: 0;
-    padding-inline: 8px;
+    padding-inline: var(--trees-item-margin-x);
   }
 
   [data-file-tree-search-input] {
     min-width: 0;
     margin-inline-end: 40px;
+    padding-inline: calc(var(--trees-item-padding-x) - 1px);
     border: var(--wuu-workspace-file-tree-search-border, 1px solid var(--hairline-strong));
     border-radius: var(--wuu-workspace-file-tree-search-radius, var(--radius-sm));
     background: var(--wuu-workspace-file-tree-search-background, transparent);
@@ -752,7 +756,11 @@ export function WorkspaceFilePreview({
         <span>{selectedWorkspaceFilePath}</span>
       </div>
     ) : file.renderable_url ? (
-      file.renderable_kind === "pdf" ? (
+      file.renderable_kind === "video" ? (
+        <article className="workspace-file-preview readonly">
+          <VideoPreview src={file.renderable_url} title={file.path} active={active} />
+        </article>
+      ) : file.renderable_kind === "pdf" ? (
         <article className="workspace-file-preview readonly">
           <Suspense fallback={<div className="workspace-file-pdf-preview" />}>
             <WorkspacePdfPreview url={file.renderable_url} title={file.path} />

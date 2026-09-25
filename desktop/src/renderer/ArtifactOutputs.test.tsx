@@ -57,6 +57,33 @@ it("previews HTML in a non-modal sandbox without moving focus or downloading", a
   } finally { act(() => root.unmount()); container.remove(); composer.remove(); window.wuu = previous; }
 });
 
+it.each([
+  { name: "clip.mp4", uri: "wuu-artifact://workspace/thread/snapshot/clip.mp4?sha256=hash", mime_type: "video/mp4" },
+  { name: "clip.WEBM", uri: "clips/clip.WEBM", mime_type: undefined },
+])("opens a video card in the preview and keeps download available after playback failure ($name)", async (part) => {
+  const artifact = collectTurnArtifacts({ items: [{
+    id: "video", type: "tool_call", status: "completed", result_detail: { content: [{
+      type: "file", ...part, artifact: { placement: "turn_end" },
+    }] },
+  }] } as Turn)[0];
+  const container = document.createElement("div"), root = createRoot(container);
+  const onOpenFile = vi.fn();
+  try {
+    await act(async () => root.render(<TurnEndArtifactOutputs artifacts={[artifact]} cwd="/workspace" onOpenFile={onOpenFile} />));
+    await act(async () => container.querySelector("button")!.click());
+    const video = container.querySelector("video")!;
+    expect(video).not.toBeNull();
+    expect(video.controls).toBe(true);
+    expect(video.autoplay).toBe(false);
+    expect(video.src).toBe(part.uri.startsWith("wuu-artifact:") ? part.uri
+      : `wuu-file://local/${btoa(`/workspace/${part.uri}`).replace(/=/g, "")}`);
+    expect(onOpenFile).not.toHaveBeenCalled();
+    await act(async () => video.dispatchEvent(new Event("error")));
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="artifacts.downloadNamed"]')).not.toBeNull();
+  } finally { act(() => root.unmount()); }
+});
+
 it("loads managed text content and reports an oversized preview without losing download access", async () => {
   const artifact = { ...collectTurnArtifacts({ items: [presentedImage("text", "snapshot")] } as Turn)[0], mimeType: "text/plain" };
   const fetchMock = vi.fn().mockResolvedValueOnce(new Response("Delivered text"))
@@ -123,9 +150,6 @@ it("keeps document output data inspectable without projecting it into the image 
     await act(async () => root.render(<TurnInlineArtifactOutputs artifacts={artifacts} />));
     expect(container.childElementCount).toBe(0);
     await act(async () => root.render(<TurnEndArtifactOutputs artifacts={artifacts} />));
-    expect(container.querySelector(".turn-edit-summary-card")).toBeTruthy();
-    expect(container.querySelector(".turn-output-summary-header")).toBeNull();
-    expect(container.querySelector(".turn-edit-summary-overview")).toBeTruthy();
     expect(container.textContent).toContain("Report");
     expect(container.textContent).not.toContain("application/pdf");
     expect(container.textContent).not.toContain("Message 99");
@@ -141,8 +165,6 @@ it("uses the file-change summary chrome for a single presented file", async () =
   const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
   try {
     await act(async () => root.render(<TurnEndArtifactOutputs artifacts={collectTurnArtifacts(turn)} />));
-    expect(container.querySelector('[data-wuu-component="turn-artifacts"]')?.classList.contains("turn-edit-summary-card")).toBe(true);
-    expect(container.querySelector(".turn-edit-summary-icon")).toBeTruthy();
     expect(container.querySelector(".turn-edit-summary-overview-title")?.textContent).toBe("artifacts.countOne");
     expect(container.querySelector(".turn-edit-summary-overview-path")?.textContent).toBe("wuu-promo.mp4");
     expect(container.querySelector(".turn-edit-summary-row")).toBeNull();

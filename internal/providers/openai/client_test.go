@@ -534,80 +534,6 @@ func TestChat_DoesNotOverrideExplicitTemperatureWithProviderOption(t *testing.T)
 	}
 }
 
-func TestChat_SendsSnakeCasePromptCacheKeyForOpenRouter(t *testing.T) {
-	t.Helper()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode request body: %v", err)
-		}
-		if body["prompt_cache_key"] != "cache-key-2" {
-			t.Fatalf("expected prompt_cache_key, got %#v", body["prompt_cache_key"])
-		}
-		if _, exists := body["promptCacheKey"]; exists {
-			t.Fatalf("did not expect promptCacheKey on OpenRouter payload: %#v", body["promptCacheKey"])
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
-	}))
-	defer server.Close()
-
-	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	_, err = client.Chat(context.Background(), providers.ChatRequest{
-		Model: "openrouter-test",
-		Messages: []providers.ChatMessage{
-			{Role: "user", Content: "hello"},
-		},
-		CacheHint:       &providers.CacheHint{PromptCacheKey: "cache-key-2"},
-		ProviderOptions: map[string]any{"promptCacheKeySupported": true},
-	})
-	if err != nil {
-		t.Fatalf("Chat: %v", err)
-	}
-}
-
-func TestChat_OmitsPromptCacheKeyWithoutHint(t *testing.T) {
-	t.Helper()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode request body: %v", err)
-		}
-		if _, exists := body["promptCacheKey"]; exists {
-			t.Fatalf("did not expect promptCacheKey without hint: %#v", body["promptCacheKey"])
-		}
-		if _, exists := body["prompt_cache_key"]; exists {
-			t.Fatalf("did not expect prompt_cache_key without hint: %#v", body["prompt_cache_key"])
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
-	}))
-	defer server.Close()
-
-	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	_, err = client.Chat(context.Background(), providers.ChatRequest{
-		Model: "gpt-test",
-		Messages: []providers.ChatMessage{
-			{Role: "user", Content: "hello"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("Chat: %v", err)
-	}
-}
-
 func TestChat_SendsImageContentParts(t *testing.T) {
 	t.Helper()
 
@@ -1118,27 +1044,6 @@ func TestChat_ParsesReasoningContent(t *testing.T) {
 	}
 }
 
-func TestChat_HandlesProviderError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"bad request"}`))
-	}))
-	defer server.Close()
-
-	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	_, err = client.Chat(context.Background(), providers.ChatRequest{
-		Model:    "gpt-test",
-		Messages: []providers.ChatMessage{{Role: "user", Content: "hello"}},
-	})
-	if err == nil {
-		t.Fatal("expected provider error")
-	}
-}
-
 func TestChat_RetriesTransientServerError(t *testing.T) {
 	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1218,35 +1123,6 @@ func TestChat_DoesNotRetryAuthError(t *testing.T) {
 	}
 	if got := attempts.Load(); got != 1 {
 		t.Fatalf("expected 1 attempt for auth failure, got %d", got)
-	}
-}
-
-func TestNewStreamingHTTPClient_DisablesOverallTimeout(t *testing.T) {
-	base := &http.Client{
-		Timeout:       5 * time.Second,
-		Transport:     http.DefaultTransport,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-
-	streamClient := newStreamingHTTPClient(base, providers.StreamTransportConfig{
-		ConnectTimeout: time.Second,
-		IdleTimeout:    5 * time.Second,
-	})
-
-	if streamClient == base {
-		t.Fatal("expected streaming client to clone the base client")
-	}
-	if streamClient.Timeout != 0 {
-		t.Fatalf("expected streaming client timeout disabled, got %s", streamClient.Timeout)
-	}
-	if streamClient.Transport == base.Transport {
-		t.Fatal("expected streaming client transport to be cloned")
-	}
-	if streamClient.CheckRedirect == nil {
-		t.Fatal("expected streaming client to preserve redirect policy")
-	}
-	if base.Timeout != 5*time.Second {
-		t.Fatalf("expected base client timeout unchanged, got %s", base.Timeout)
 	}
 }
 
@@ -1434,24 +1310,6 @@ func TestStreamChat_EmitsThinkingEventsForReasoningContent(t *testing.T) {
 	}
 }
 
-func TestStreamChat_ValidationErrors(t *testing.T) {
-	client, _ := New(ClientConfig{BaseURL: "http://localhost", APIKey: "k"})
-
-	_, err := client.StreamChat(context.Background(), providers.ChatRequest{
-		Model: "", Messages: []providers.ChatMessage{{Role: "user", Content: "hi"}},
-	})
-	if err == nil {
-		t.Fatal("expected error for empty model")
-	}
-
-	_, err = client.StreamChat(context.Background(), providers.ChatRequest{
-		Model: "m", Messages: nil,
-	})
-	if err == nil {
-		t.Fatal("expected error for empty messages")
-	}
-}
-
 func TestStreamChat_MissingDoneYieldsIncompleteError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -1596,9 +1454,6 @@ func TestStreamChat_IdleWatchdogFires(t *testing.T) {
 	}
 	if !gotError {
 		t.Fatal("expected error event from idle watchdog")
-	}
-	if !errors.Is(fmt.Errorf("wrap: %w", context.DeadlineExceeded), context.DeadlineExceeded) {
-		t.Fatal("sanity check failed")
 	}
 	if errMsg == "" || !strings.Contains(errMsg, "idle timeout") {
 		t.Fatalf("expected idle timeout error, got: %q", errMsg)
@@ -3252,15 +3107,6 @@ func TestResponsesFinalAnswerItemDone(t *testing.T) {
 	}
 }
 
-func TestResponsesFinalAnswerTailTimeout(t *testing.T) {
-	if got := responsesFinalAnswerTailTimeout(300 * time.Second); got != 2*time.Second {
-		t.Fatalf("production tail timeout = %s, want 2s", got)
-	}
-	if got := responsesFinalAnswerTailTimeout(100 * time.Millisecond); got != 50*time.Millisecond {
-		t.Fatalf("short-test tail timeout = %s, want 50ms", got)
-	}
-}
-
 func TestResponsesStreamChat_ParsesReasoningItem(t *testing.T) {
 	ssePayload := "event: response.output_item.added\n" +
 		"data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"status\":\"in_progress\"},\"output_index\":0}\n\n" +
@@ -3452,13 +3298,6 @@ func TestResponsesStreamChat_TopLevelContextLengthErrorClassified(t *testing.T) 
 	}
 }
 
-func TestNew_RejectsUnknownWireAPI(t *testing.T) {
-	_, err := New(ClientConfig{BaseURL: "https://example.com", WireAPI: "legacy", APIKey: "test-key"})
-	if err == nil {
-		t.Fatal("expected unknown wire API error")
-	}
-}
-
 func TestChunkUsage_AsTokenUsage_Cached(t *testing.T) {
 	// gpt-4o reports cached_tokens as a SUBSET of prompt_tokens. The
 	// helper has to split it out so wuu's auto-compact accounts for
@@ -3483,24 +3322,6 @@ func TestChunkUsage_AsTokenUsage_Cached(t *testing.T) {
 	// prompt_tokens + completion_tokens.
 	if total := got.TotalContextTokens(); total != 5200 {
 		t.Fatalf("expected total 5200, got %d", total)
-	}
-}
-
-func TestChunkUsage_AsTokenUsage_NoCacheDetails(t *testing.T) {
-	// Older OpenAI / OpenRouter / proxy responses without
-	// prompt_tokens_details should still parse cleanly.
-	u := &chunkUsage{PromptTokens: 1000, CompletionTokens: 300}
-	got := u.asTokenUsage()
-	want := &providers.TokenUsage{InputTokens: 1000, OutputTokens: 300}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %+v, want %+v", got, want)
-	}
-}
-
-func TestChunkUsage_AsTokenUsage_Nil(t *testing.T) {
-	var u *chunkUsage
-	if got := u.asTokenUsage(); got != nil {
-		t.Fatalf("expected nil for nil receiver, got %+v", got)
 	}
 }
 

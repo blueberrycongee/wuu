@@ -128,9 +128,7 @@ func (s *Server) handleChannelAgentDelete(ctx context.Context, req Request) erro
 		interruptErr = errors.Join(interruptErr, s.interruptOwnedThreadExecution(ref))
 	}
 	for _, link := range links {
-		if link.Active {
-			interruptErr = errors.Join(interruptErr, s.reconcileHarnessLink(ctx, link))
-		}
+		interruptErr = errors.Join(interruptErr, s.archiveDeletedAgentSession(ctx, link))
 	}
 	s.kickHarnessSessions()
 	return s.writeResponse(req.ID, ChannelAgentDeleteResult{Deleted: true}, interruptErr)

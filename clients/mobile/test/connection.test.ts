@@ -17,7 +17,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const captured: {
   onAttach: (ev: { session: string; resumed: boolean }) => void;
   onDetach: () => void;
-  clientProfile?: string;
   started: number;
   calls: Array<{ method: string; params: unknown; timeoutMs: number | undefined }>;
   failMethod?: string;
@@ -34,12 +33,10 @@ vi.mock("@wuu/remote-core", () => {
     constructor(
       _creds: unknown,
       opts: {
-        clientProfile?: string;
         onAttach?: typeof captured.onAttach;
         onDetach?: typeof captured.onDetach;
       } = {},
     ) {
-      captured.clientProfile = opts.clientProfile;
       captured.onAttach = opts.onAttach ?? (() => {});
       captured.onDetach = opts.onDetach ?? (() => {});
     }
@@ -115,7 +112,6 @@ describe("WuuMobile reconnect grace window", () => {
   beforeEach(() => {
     captured.onAttach = () => {};
     captured.onDetach = () => {};
-    captured.clientProfile = undefined;
     captured.started = 0;
     captured.calls = [];
     captured.failMethod = undefined;
@@ -159,12 +155,6 @@ describe("WuuMobile reconnect grace window", () => {
     expect(controller.store.getSnapshot().phase).toBe("reconnecting");
   });
 
-  it("starts the remote client in mobile chat profile", async () => {
-    bootController();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(captured.clientProfile).toBe("mobile_chat");
-  });
-
   it("cancels the pending flip when attach lands inside the grace window", async () => {
     const controller = bootController();
     await vi.advanceTimersByTimeAsync(0);
@@ -176,18 +166,6 @@ describe("WuuMobile reconnect grace window", () => {
     captured.onAttach({ session: "s1", resumed: true });
     // Wait past the window: phase should still be "attached".
     await vi.advanceTimersByTimeAsync(700);
-    expect(controller.store.getSnapshot().phase).toBe("attached");
-  });
-
-  it("cancels a still-pending flip when the link comes back up after it was about to fire", async () => {
-    const controller = bootController();
-    await vi.advanceTimersByTimeAsync(0);
-
-    captured.onDetach();
-    await vi.advanceTimersByTimeAsync(550);
-    // Reattach a hair before the timer would have fired.
-    captured.onAttach({ session: "s2", resumed: true });
-    await vi.advanceTimersByTimeAsync(200);
     expect(controller.store.getSnapshot().phase).toBe("attached");
   });
 

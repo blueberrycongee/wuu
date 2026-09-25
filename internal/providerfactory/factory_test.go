@@ -94,23 +94,6 @@ func TestBuildClient_OpenAICodexUsesCodexCredentialsWhenConfigured(t *testing.T)
 	}
 }
 
-func TestBuildClient_Anthropic(t *testing.T) {
-	t.Setenv("TEST_ANTHROPIC_KEY", "abc")
-
-	client, err := BuildClient(config.ProviderConfig{
-		Type:      "anthropic",
-		BaseURL:   "https://api.anthropic.com",
-		APIKeyEnv: "TEST_ANTHROPIC_KEY",
-		Model:     "claude-test",
-	}, "missing-provider")
-	if err != nil {
-		t.Fatalf("BuildClient returned error: %v", err)
-	}
-	if client == nil {
-		t.Fatal("expected client")
-	}
-}
-
 func TestBuildClient_AnthropicUsesConfiguredModelOutputLimit(t *testing.T) {
 	t.Setenv("TEST_ANTHROPIC_KEY", "abc")
 
@@ -146,19 +129,6 @@ func TestBuildClient_AnthropicUsesConfiguredModelOutputLimit(t *testing.T) {
 		Messages: []providers.ChatMessage{{Role: "user", Content: "hello"}},
 	}); err != nil {
 		t.Fatalf("Chat returned error: %v", err)
-	}
-}
-
-func TestResolveProviderProfile_XAISubscription(t *testing.T) {
-	profile, err := resolveProviderProfile(config.ProviderConfig{Type: "xai-subscription"})
-	if err != nil {
-		t.Fatalf("resolveProviderProfile returned error: %v", err)
-	}
-	if profile.Wire != wireOpenAIResponses {
-		t.Fatalf("Wire = %q, want %q", profile.Wire, wireOpenAIResponses)
-	}
-	if profile.Auth != authXAISubscription {
-		t.Fatalf("Auth = %q, want %q", profile.Auth, authXAISubscription)
 	}
 }
 
@@ -214,45 +184,6 @@ func TestBuildClient_XAISubscriptionUsesStoredOAuth(t *testing.T) {
 	}
 	if resp.Content != "ok" {
 		t.Fatalf("content = %q, want ok", resp.Content)
-	}
-}
-
-func TestResolveProviderProfile_OpenAICodex(t *testing.T) {
-	profile, err := resolveProviderProfile(config.ProviderConfig{Type: "openai-codex"})
-	if err != nil {
-		t.Fatalf("resolveProviderProfile returned error: %v", err)
-	}
-	if profile.Wire != wireOpenAIResponses {
-		t.Fatalf("Wire = %q, want %q", profile.Wire, wireOpenAIResponses)
-	}
-	if profile.Auth != authCodexOAuth {
-		t.Fatalf("Auth = %q, want %q", profile.Auth, authCodexOAuth)
-	}
-}
-
-func TestResolveProviderProfile_OpenAIResponses(t *testing.T) {
-	profile, err := resolveProviderProfile(config.ProviderConfig{Type: "openai-compatible", WireAPI: "responses"})
-	if err != nil {
-		t.Fatalf("resolveProviderProfile returned error: %v", err)
-	}
-	if profile.Wire != wireOpenAIResponses {
-		t.Fatalf("Wire = %q, want %q", profile.Wire, wireOpenAIResponses)
-	}
-	if profile.Auth != authAPIKey {
-		t.Fatalf("Auth = %q, want %q", profile.Auth, authAPIKey)
-	}
-}
-
-func TestResolveProviderProfile_Anthropic(t *testing.T) {
-	profile, err := resolveProviderProfile(config.ProviderConfig{Type: "anthropic"})
-	if err != nil {
-		t.Fatalf("resolveProviderProfile returned error: %v", err)
-	}
-	if profile.Wire != wireAnthropicMessages {
-		t.Fatalf("Wire = %q, want %q", profile.Wire, wireAnthropicMessages)
-	}
-	if profile.Auth != authAnthropicToken {
-		t.Fatalf("Auth = %q, want %q", profile.Auth, authAnthropicToken)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -56,23 +57,20 @@ func TestProcessCompletionChatMessageIncludesOutputTail(t *testing.T) {
 	if msg.Role != "user" || msg.Name != wuucontext.ProcessNotificationMessageName {
 		t.Fatalf("unexpected process completion message metadata: %+v", msg)
 	}
-	raw := strings.TrimSuffix(strings.TrimPrefix(msg.Content, "<process_notification>"), "</process_notification>")
-	var payload processCompletionPayload
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		t.Fatalf("decode process payload: %v\n%s", err, msg.Content)
+	if !strings.HasPrefix(msg.Content, "<process_notification>\n") || !strings.HasSuffix(msg.Content, "\n</process_notification>") {
+		t.Fatalf("completion lost its envelope tags: %q", msg.Content)
 	}
-	if payload.ProcessID != started.ID || payload.Status != process.StatusStopped || payload.ExitCode != 0 {
-		t.Fatalf("unexpected terminal payload: %+v", payload)
+	for _, want := range []string{
+		"Background process " + started.ID + " exited with code 0: printf 'hello-tail\\n'",
+		"hello-tail\n[last 2048 of " + strconv.Itoa(len(logOutput)) + " output bytes; read earlier output with process action=read process_id=" + started.ID + " offset_bytes=0]",
+		"without polling",
+	} {
+		if !strings.Contains(strings.ToLower(msg.Content), strings.ToLower(want)) {
+			t.Fatalf("completion notification missing %q:\n%s", want, msg.Content)
+		}
 	}
-	if payload.OutputLogPath != started.LogPath || !strings.Contains(payload.Instruction, "output_log_path") {
-		t.Fatalf("completion payload omitted full log address: %+v", payload)
-	}
-	if len(payload.OutputTail) != processCompletionOutputBytes || !strings.HasSuffix(payload.OutputTail, "hello-tail\n") || !payload.OutputTruncated {
-		t.Fatalf("completion payload omitted output or guidance: %+v", payload)
-	}
-	if payload.OutputStartOffset != int64(len(logOutput)-processCompletionOutputBytes) ||
-		payload.OutputEndOffset != int64(len(logOutput)) || payload.OutputTotalBytes != int64(len(logOutput)) {
-		t.Fatalf("unexpected completion output offsets: %+v", payload)
+	if strings.Contains(msg.Content, `"process_id"`) {
+		t.Fatalf("completion notification should be plain text: %s", msg.Content)
 	}
 }
 

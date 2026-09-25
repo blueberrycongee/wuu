@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clampWorkspaceFileTreeWidth,
+  WORKSPACE_FILE_CONTENT_MIN_WIDTH,
   WORKSPACE_FILE_TREE_DEFAULT_WIDTH,
   WORKSPACE_FILE_TREE_MAX_WIDTH,
   WORKSPACE_FILE_TREE_MIN_WIDTH,
@@ -12,6 +13,7 @@ import {
 import type { RuntimeContext } from "../shared/protocol";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import {
+  workspaceArtifactViewTab,
   workspaceDiffViewTab,
   workspaceFileViewTab,
   workspaceToolViewTab,
@@ -391,6 +393,45 @@ describe("WorkspaceRightPanel", () => {
     expect(panel?.querySelector(".workspace-monaco-editor")).toBeNull();
   });
 
+  it("pauses a retained artifact video when the panel closes without resuming on reopen", async () => {
+    const fileTab = workspaceFileViewTab({
+      context: { kind: "project", project_id: "project-1", cwd: "/repo/project" },
+      path: "src/App.tsx",
+    });
+    const artifactTab = workspaceArtifactViewTab({
+      threadID: "thread-1",
+      artifact: {
+        id: "video", itemId: "delivery", index: 0, type: "file",
+        name: "clip.webm", mimeType: "video/webm", placement: "turn_end",
+        uri: "wuu-artifact://workspace/thread/snapshot/clip.webm?sha256=hash",
+      },
+    });
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const props = { ...baseProps(), tabs: [fileTab, artifactTab], activeTabID: artifactTab.id };
+    try {
+      mount(<WorkspaceRightPanel {...props} />);
+      await act(async () => Promise.resolve());
+      const video = container!.querySelector("video")!;
+      expect(video).not.toBeNull();
+      expect(pause).not.toHaveBeenCalled();
+      await act(async () => video.play());
+      play.mockClear();
+
+      await act(async () => root!.render(<WorkspaceRightPanel {...props} open={false} present={false} />));
+      expect(container!.querySelector("video")).toBe(video);
+      expect(pause).toHaveBeenCalledTimes(1);
+      expect(pause.mock.contexts[0]).toBe(video);
+
+      await act(async () => root!.render(<WorkspaceRightPanel {...props} />));
+      expect(container!.querySelector("video")).toBe(video);
+      expect(play).not.toHaveBeenCalled();
+    } finally {
+      pause.mockRestore();
+      play.mockRestore();
+    }
+  });
+
   it("renders file content on the left and the persistent file tree on the right", async () => {
     const context: RuntimeContext = {
       kind: "project",
@@ -673,6 +714,56 @@ describe("WorkspaceRightPanel", () => {
       panelWidth = 600;
       act(() => resizeCallback?.([], {} as ResizeObserver));
       expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe("320px");
+    } finally {
+      if (originalResizeObserver) {
+        globalThis.ResizeObserver = originalResizeObserver;
+      } else {
+        Reflect.deleteProperty(globalThis, "ResizeObserver");
+      }
+    }
+  });
+
+  it("fits the stored tree width when a panel that started closed opens", async () => {
+    const originalResizeObserver = globalThis.ResizeObserver;
+    let resizeCallback: ResizeObserverCallback | undefined;
+    class MockResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback;
+      }
+      observe(): void {}
+      disconnect(): void {}
+    }
+    globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
+
+    try {
+      window.localStorage.setItem("wuu.desktop.fileTreeWidth", "320");
+      const context: RuntimeContext = {
+        kind: "project",
+        project_id: "project-1",
+        cwd: "/repo/project",
+      };
+      const filesTab = workspaceToolViewTab("files");
+      const props = { ...baseProps(), workspaceContext: context };
+      mount(<WorkspaceRightPanel {...props} open={false} present={false} />);
+      await act(async () => Promise.resolve());
+      expect(container!.querySelector(".workspace-files-split")).toBeNull();
+
+      act(() => {
+        root!.render(
+          <WorkspaceRightPanel {...props} tabs={[filesTab]} activeTabID={filesTab.id} />,
+        );
+      });
+      await act(async () => Promise.resolve());
+
+      const split = container!.querySelector<HTMLElement>(".workspace-files-split")!;
+      Object.defineProperty(split, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ width: 479 }),
+      });
+      act(() => resizeCallback?.([], {} as ResizeObserver));
+      expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe(
+        `${479 - WORKSPACE_FILE_CONTENT_MIN_WIDTH}px`,
+      );
     } finally {
       if (originalResizeObserver) {
         globalThis.ResizeObserver = originalResizeObserver;

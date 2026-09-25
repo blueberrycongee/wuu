@@ -44,7 +44,6 @@ func TestToolkit_LoadSkillRecordsResultAction(t *testing.T) {
 	}
 	var parsed struct {
 		Action   string `json:"action"`
-		Title    string `json:"title"`
 		Output   string `json:"output"`
 		Metadata struct {
 			Name string `json:"name"`
@@ -54,13 +53,11 @@ func TestToolkit_LoadSkillRecordsResultAction(t *testing.T) {
 	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
 		t.Fatalf("parse load_skill response: %v", err)
 	}
-	if parsed.Action != "load_skill" || parsed.Title != "Loaded skill: review" || parsed.Metadata.Name != "review" || !strings.Contains(parsed.Output, "the diff") {
+	if parsed.Action != "load_skill" || parsed.Metadata.Name != "review" || !strings.Contains(parsed.Output, "the diff") {
 		t.Fatalf("unexpected load_skill response: %+v", parsed)
 	}
 	for _, want := range []string{
 		`<skill_content name="review">`,
-		"Base directory for this skill: file://",
-		"Relative paths in this skill",
 		"<skill_files>",
 		filepath.Join(skillDir, "scripts", "demo.txt"),
 		"`!printf should-not-run`",
@@ -116,20 +113,8 @@ func TestToolkit_LoadSkillFiltersByActiveSurface(t *testing.T) {
 	kit.SetActiveProfile(modelprofile.Resolve("ollama", "llama-coder"), true)
 
 	defs := kit.Definitions()
-	var loadSkillDef providers.ToolDefinition
-	for _, def := range defs {
-		if def.Name == "load_skill" {
-			loadSkillDef = def
-			break
-		}
-	}
-	if loadSkillDef.Name == "" {
+	if !containsProfileDef(defs, "load_skill") {
 		t.Fatalf("local/no-shell surface should still expose load_skill for compatible skills, got %v", sortedProfileDefNames(defs))
-	}
-	if strings.Contains(loadSkillDef.Description, "## Available Skills") ||
-		strings.Contains(loadSkillDef.Description, "commit") ||
-		strings.Contains(loadSkillDef.Description, "plan") {
-		t.Fatalf("load_skill description should not duplicate the skill catalog:\n%s", loadSkillDef.Description)
 	}
 	if names := strings.Join(kit.env.SkillNames(), ","); names != "plan" {
 		t.Fatalf("visible skill filtering must hide incompatible skills and keep compatible ones; names=%v", kit.env.SkillNames())

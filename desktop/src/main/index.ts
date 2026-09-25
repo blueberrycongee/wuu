@@ -128,6 +128,8 @@ import type {
   RuntimeGeneralSettingsUpdate,
   GitCommitMessageResult,
   SettingsUsageResponse,
+  UsageOverviewParams,
+  UsageOverviewResponse,
   TerminalSessionStartParams,
   TextPolishResult,
   Thread,
@@ -1999,6 +2001,9 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:settings-usage", (event) =>
     appServerRequest<SettingsUsageResponse>(event, "settings/usage"),
   );
+  ipcMain.handle("wuu:usage-overview", (event, params: UsageOverviewParams) =>
+    appServerRequest<UsageOverviewResponse>(event, "usage/overview", params),
+  );
   ipcMain.handle("wuu:mcp-list", (event) =>
     appServerRequest<MCPListResult>(event, "mcp/list"),
   );
@@ -2072,9 +2077,21 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("wuu:thread-resume", (event, sessionId?: string) =>
     rendererServerEventBatcher.resolveSnapshot(
-      appServerRequest<ThreadResumeResult>(event, "thread/resume", {
-        session_id: sessionId ?? "",
-      }),
+      appServerClientPool.requestForSession<ThreadResumeResult>(
+        runtimeContextForEvent(event), sessionId ?? "", "thread/resume",
+        { session_id: sessionId ?? "", response_only: true },
+        (response, workdir) => {
+          // Reuse the response instead of transferring the entire history twice
+          // from the core. Publish synchronously before the next stdout event,
+          // preserving snapshot/delta order for every connected window.
+          if (!response.error) {
+            emitServerEvent({
+              kind: "notification", workdir,
+              message: { method: "thread/resumed", params: response.result },
+            });
+          }
+        },
+      ),
     ),
   );
   ipcMain.handle(

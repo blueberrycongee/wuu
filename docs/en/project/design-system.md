@@ -71,18 +71,20 @@ Use the system UI font with CJK fallback and respect user font choices. Code, ed
 
 The current runtime defaults are **14.5px UI** and **11px code**. Ratios in `appearance.css` use 14 as their denominator: 14px is the proportional reference, not the current startup default. Valid saved preferences remain authoritative and must not be reset to the documented defaults.
 
-| Role | Variables | Relationship to UI size U | Approximate value at U = 14.5px |
+| Role | Variables | Relationship to UI size U | Value at U = 14.5px |
 | --- | --- | --- | --- |
-| Hero | `--font-hero` | U × 32 / 14 | 33.14px |
-| Display | `--font-display` | U × 24 / 14 | 24.86px |
-| Heading | `--font-heading` | U × 20 / 14 | 20.71px |
-| Title | `--font-title` | U × 16 / 14 | 16.57px |
+| Hero | `--font-hero` | round(U × 32 / 14) | 33px |
+| Display | `--font-display` | round(U × 24 / 14) | 25px |
+| Heading | `--font-heading` | round(U × 20 / 14) | 21px |
+| Title | `--font-title` | round(U × 16 / 14) | 17px |
 | UI and body | `--font-ui`, `--font-body`, `--font-content` | U | 14.5px |
-| Menus and compact controls | `--font-menu`, `--font-sm` | U × 13 / 14 | 13.46px |
-| Metadata | `--font-xs` | max(12px, U × 12 / 14) | 12.43px |
+| Menus and compact controls | `--font-menu`, `--font-sm` | round(U × 13 / 14) | 13px |
+| Metadata | `--font-xs` | max(12px, round(U × 12 / 14)) | 12px |
 | Code | `--appearance-code-size` | Independent preference | 11px |
 
-Use 400 for ordinary text, 500 for compact menu items, and 500 or 600 selectively for headings and emphasis. Reserve 700 for occasional strong emphasis. Base line-height roles are 1.35 for UI, 1.55 for body, and 1.6 for metadata; individual reading surfaces may have semantic overrides, not one forced line height for every component. Preserve natural letter spacing instead of shrinking type or tightening tracking to repair layout.
+Derived roles round to whole pixels. The saved UI size may be a half step, but fractional derived sizes would put line boxes and 1px edges between device pixels.
+
+Use 400 for ordinary text, 500 for compact menu items, and 500 or 600 selectively for headings and emphasis. Reserve 700 for occasional strong emphasis. Base line-height roles are 1.35 for UI, 1.55 for body, and 1.6 for metadata; individual reading surfaces may have semantic overrides, not one forced line height for every component. Conversation reading and process leading are whole-pixel lengths derived from the message size (1.8 and 1.6, rounded to 2px), so stacked rows and cards share edges. Message headings step to 1.5, 1.25, and 1.1 times the body size, rounded to whole pixels, so hierarchy does not rest on weight alone. Preserve natural letter spacing instead of shrinking type or tightening tracking to repair layout.
 
 ## Spacing and layout
 
@@ -90,6 +92,7 @@ The standard unit is 4px, multiplied by density to form `--space-1`. The existin
 
 | Relationship | Variables | Standard density |
 | --- | --- | --- |
+| Pane edge to first and last glyph | `--pane-inset` | 20px |
 | Page inset | `--page-padding` | 32px |
 | Between groups | `--section-gap` | 32px |
 | Heading to content | `--section-heading-gap` | 16px |
@@ -98,7 +101,16 @@ The standard unit is 4px, multiplied by density to form `--space-1`. The existin
 | Control block/inline padding | `--control-padding-block`, `--control-padding-inline` | 4px, 12px |
 | Menu inset and item gap | `--menu-inset`, `--menu-item-gap` | 6px, 8px |
 
-At widths up to 560px, page and panel insets become 16px and card insets 12px, still affected by density. Shared fields and menu rows have a 32px floor, or 44px for coarse pointers. They grow further with text and content; fixed heights must not clip text. These field and menu-row roles do not assign one size to every icon button.
+At widths up to 560px, page, pane, and panel insets become 16px and card insets 12px, still affected by density. Shared fields and menu rows have a 32px floor, or 44px for coarse pointers, and round up to the 4px grid. They grow further with text and content; fixed heights must not clip text. These field and menu-row roles do not assign one size to every icon button.
+
+### Alignment axes
+
+Every edge that reads as aligned must come from one shared role, not from separately tuned values that happen to be close.
+
+- **Pane inset.** In chrome rows such as sidebar rows, titlebars, and tab bars, the first and last visible glyph sits `--pane-inset` from the pane edge. Align ink, not button boxes: a control whose box is larger than its glyph subtracts its optical offset, such as `--control-toolbar-glyph-offset` for toolbar buttons.
+- **Reading column.** Unframed content (paragraphs, headings, lists, process rows, answer actions) shares the column's leading edge. Message tables have no side frame, so their outer cell text also starts on that edge.
+- **Framed content.** Code blocks, the composer, message bubbles, and cards place text and icon glyphs `--card-padding` from the outer edge; a frame's border is part of that measurement. A code block's language label, its code, and the composer's text therefore share one axis.
+- **Accessory columns.** Sidebar trailing accessories of different sizes share one center axis. Headings reserve their accessory's footprint whether or not the section has one, so group spacing does not depend on which headings offer an action.
 
 Align peer labels, icon columns, and trailing actions. Indentation expresses hierarchy, independent of running or unread status. Reserve the real footprint of indicators and actions plus a reading gap. Give each spacing relationship one owner rather than accumulating wrapper gaps, child margins, and invisible drag targets. Use appropriate reading-width roles such as `--content-column-width`, not one mandatory width for every page.
 
@@ -119,7 +131,7 @@ Choose elevation by purpose: `--shadow-soft` for light controls, `--shadow-card`
 
 ## Icons, motion, and controls
 
-Controls reuse [WuuIcons](../../../desktop/src/renderer/WuuIcons.tsx), not a competing stroke style. Standard drawings use a 24-unit canvas and 1.75 stroke. Use `--icon-size-*` roles with bounded growth as UI text increases. At a 14px UI reference, the sizes are 12, 14, 16, 18, and 20px. Still inspect apparent size, centering, and stroke density.
+Controls reuse [WuuIcons](../../../desktop/src/renderer/WuuIcons.tsx), not a competing stroke style. Standard drawings use a 24-unit canvas and 1.75 stroke. Use `--icon-size-*` roles with bounded growth as UI text increases. Sizes round to even pixels so glyphs center in even control boxes; at the 14px reference and the 14.5px default they are 12, 14, 16, 18, and 20px. Still inspect apparent size, centering, and stroke density.
 
 Motion provides feedback and explains position changes: `--motion-fast` 120ms for immediate feedback, `--motion-base` 180ms for menus and content swaps, `--motion-slow` 280ms for structural moves, and `--motion-slower` 440ms for larger folds. Prefer existing semantic aliases and honor system or user reduced-motion settings. Frequent actions must not wait for decorative animation; preserve established component-specific motion contracts.
 

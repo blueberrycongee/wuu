@@ -98,18 +98,6 @@ describe("EngineSettingsSection", () => {
     expect(container.querySelector('[data-testid="settings-engine-refresh"]')).not.toBeNull();
   });
 
-  it("saves a new default when another detected agent is picked", async () => {
-    const onUpdate = vi.fn(() => Promise.resolve(inventory));
-    render(inventory, onUpdate);
-
-    const codexRadio = container.querySelector<HTMLInputElement>('[data-testid="settings-engine-codex-radio"]')!;
-    await act(async () => {
-      codexRadio.click();
-    });
-
-    expect(onUpdate).toHaveBeenCalledWith({ default_engine: "codex" });
-  });
-
   it("keeps an undetected agent listed but unselectable, with the reason on the row", () => {
     const missingClaude: EngineListResult = {
       engines: [
@@ -128,21 +116,20 @@ describe("EngineSettingsSection", () => {
     ).toContain("未安装");
   });
 
-  it("reveals per-agent overrides from the row itself", async () => {
-    const onUpdate = vi.fn(() => Promise.resolve(inventory));
-    render(inventory, onUpdate);
-
-    expect(container.querySelector('[data-testid="settings-engine-codex-path"]')).toBeNull();
-    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-codex-advanced-toggle"]')!;
-    await act(async () => {
-      toggle.click();
+  it("shows a detected binary path only in the override field", async () => {
+    const path = "/opt/claude/bin/claude";
+    render({
+      engines: [{ id: "claude", enabled: true, binary_ok: true, binary_path: path }],
+      settings: { default_engine: "wuu" },
     });
-    expect(container.querySelector('[data-testid="settings-engine-codex-path"]')).not.toBeNull();
 
-    const disable = container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-codex-enabled"]')!;
+    const row = container.querySelector('[data-testid="settings-engine-claude-status"]')!;
+    expect(row.getAttribute("aria-label")).toContain("已就绪");
+    expect(row.textContent).not.toContain(path);
     await act(async () => {
-      disable.click();
+      container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-claude-advanced-toggle"]')!.click();
     });
-    expect(onUpdate).toHaveBeenCalledWith({ codex: { enabled: false } });
+    expect(container.querySelector<HTMLInputElement>('[data-testid="settings-engine-claude-path"]')?.placeholder).toBe(path);
+    expect(row.querySelector(".settings-engine-detail")).toBeNull();
   });
 });

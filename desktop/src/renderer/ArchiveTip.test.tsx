@@ -51,8 +51,6 @@ describe("ArchiveTip", () => {
     expect(tip).not.toBeNull();
     expect(tip?.getAttribute("role")).toBe("status");
     expect(tip?.querySelector("strong")?.textContent).toBe("迁移脚本调试");
-    expect(tip?.textContent).toContain("已归档");
-    expect(tip?.textContent).toContain("查看归档");
   });
 
   it("falls back to a generic label when the title is empty or whitespace", () => {

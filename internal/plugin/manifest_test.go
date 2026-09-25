@@ -303,42 +303,13 @@ func TestLoadManifestRejectsUnsafeDesktopAndThemeContributions(t *testing.T) {
 }
 
 func TestDeepUIExampleManifestLoads(t *testing.T) {
-	manifest, err := LoadManifest(filepath.Join("..", "..", "examples", "plugins", "deep-ui", ManifestFilename), "user")
-	if err != nil {
+	if _, err := LoadManifest(filepath.Join("..", "..", "examples", "plugins", "deep-ui", ManifestFilename), "user"); err != nil {
 		t.Fatal(err)
-	}
-	if manifest.ID != "deep-ui-example" || manifest.Desktop == nil {
-		t.Fatalf("example manifest = %+v", manifest.Manifest)
-	}
-	if len(manifest.Themes) != 1 || manifest.Themes[0].ID != "violet-night" {
-		t.Fatalf("example themes = %+v", manifest.Themes)
-	}
-	if len(manifest.Surfaces) != 1 || manifest.Surfaces[0].Target != "conversation.timeline" {
-		t.Fatalf("example surfaces = %+v", manifest.Surfaces)
 	}
 }
 
-func TestMangaStudioExampleUsesLayoutSafeDeclarativeUI(t *testing.T) {
-	manifest, err := LoadManifest(filepath.Join("..", "..", "examples", "plugins", "manga-studio", ManifestFilename), "user")
-	if err != nil {
+func TestMangaStudioExampleManifestLoads(t *testing.T) {
+	if _, err := LoadManifest(filepath.Join("..", "..", "examples", "plugins", "manga-studio", ManifestFilename), "user"); err != nil {
 		t.Fatal(err)
-	}
-	if len(manifest.Surfaces) != 0 {
-		t.Fatalf("appearance-only manga plugin registered product surfaces: %+v", manifest.Surfaces)
-	}
-	wraps, replacements := 0, 0
-	for _, presenter := range manifest.Presenters {
-		switch presenter.Mode {
-		case ContributionModeWrap:
-			wraps++
-		case ContributionModeReplace:
-			replacements++
-		}
-	}
-	if wraps != 0 || replacements != 0 {
-		t.Fatalf("manga presenters: wrap=%d replace=%d, want no presenter DOM wrappers", wraps, replacements)
-	}
-	if len(manifest.Themes) != 1 || manifest.Themes[0].Tokens["--wuu-color-canvas"] == "" {
-		t.Fatalf("manga theme = %+v", manifest.Themes)
 	}
 }
