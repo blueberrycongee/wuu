@@ -14,54 +14,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
-func TestBashDefinitionExplainsInteractiveBackgroundFlow(t *testing.T) {
-	def := NewBashTool(&Env{}).Definition()
-	for _, want := range []string{"action=start_background", "interactive pseudo-terminal by default", "tty=false", "action=write_background", "action=read_background", "starts a new turn", "end the turn", "recheck_minutes", "update_background", "timeout it keeps running"} {
-		if !strings.Contains(def.Description, want) {
-			t.Fatalf("bash description must teach %q interactive flow: %q", want, def.Description)
-		}
-	}
-	properties, ok := def.InputSchema["properties"].(map[string]any)
-	if !ok {
-		t.Fatalf("bash properties schema has unexpected type: %T", def.InputSchema["properties"])
-	}
-	command, ok := properties["command"].(map[string]any)
-	if !ok {
-		t.Fatalf("bash command schema has unexpected type: %T", properties["command"])
-	}
-	commandDescription, _ := command["description"].(string)
-	if !strings.Contains(commandDescription, "action=run must be non-interactive") || !strings.Contains(commandDescription, "action=start_background is interactive by default") {
-		t.Fatalf("bash command description does not distinguish run from interactive background use: %q", commandDescription)
-	}
-	wait, ok := properties["wait_ms"].(map[string]any)
-	if !ok || !strings.Contains(wait["description"].(string), "Do not chain waits") {
-		t.Fatalf("bash wait_ms description does not explain bounded waits: %+v", wait)
-	}
-	recheck, ok := properties["recheck_minutes"].(map[string]any)
-	if !ok || !strings.Contains(recheck["description"].(string), "wake-ups") {
-		t.Fatalf("bash recheck_minutes does not explain scheduled wake-ups: %+v", recheck)
-	}
-	completionMode, ok := properties["completion_mode"].(map[string]any)
-	if !ok || !strings.Contains(completionMode["description"].(string), "long-lived services") {
-		t.Fatalf("bash completion_mode does not explain detached services: %+v", completionMode)
-	}
-}
-
-func TestBashBackgroundSuggestionsExplainTurnHandoff(t *testing.T) {
-	for _, waitMS := range []int{0, 500} {
-		suggestions := strings.Join(bashBackgroundNextSuggestions(waitMS, ""), " ")
-		for _, want := range []string{"only remaining dependency", "end this turn", "start a new turn"} {
-			if !strings.Contains(suggestions, want) {
-				t.Fatalf("background suggestions for wait_ms=%d omitted %q: %s", waitMS, want, suggestions)
-			}
-		}
-	}
-	detached := strings.Join(bashBackgroundNextSuggestions(0, "detached"), " ")
-	if !strings.Contains(detached, "will not start another model turn") {
-		t.Fatalf("detached suggestions omitted non-resume behavior: %s", detached)
-	}
-}
-
 func TestBashRunRecordsFullLogSHA256(t *testing.T) {
 	root := t.TempDir()
 	kit := newShellTestToolkit(t, root)

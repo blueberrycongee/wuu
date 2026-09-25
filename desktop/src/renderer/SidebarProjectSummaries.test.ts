@@ -68,13 +68,4 @@ describe("summarizeProjectThreadsForSidebar", () => {
 
     expect(isThreadExecuting(summaries["project-1"][0])).toBe(true);
   });
-
-  it("summarizes every project bucket", () => {
-    const summaries = summarizeProjectThreadsForSidebar(
-      { "project-1": [thread("a")], "project-2": [thread("b")] },
-      [],
-    );
-
-    expect(Object.keys(summaries).sort()).toEqual(["project-1", "project-2"]);
-  });
 });

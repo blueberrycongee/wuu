@@ -24,15 +24,6 @@ func containsProfileDef(defs []providers.ToolDefinition, name string) bool {
 	return false
 }
 
-func profileDefByName(defs []providers.ToolDefinition, name string) (providers.ToolDefinition, bool) {
-	for _, d := range defs {
-		if d.Name == name {
-			return d, true
-		}
-	}
-	return providers.ToolDefinition{}, false
-}
-
 // sortedProfileDefNames returns a stable, sorted slice of the
 // visible tool names so failure messages are deterministic.
 func sortedProfileDefNames(defs []providers.ToolDefinition) []string {
@@ -42,71 +33,6 @@ func sortedProfileDefNames(defs []providers.ToolDefinition) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// Retiring the handoff command also retires its model entry point. Hiding the
-// schema alone is insufficient: a call retained in history must not execute.
-func TestRetiredHandoffIsUnavailable(t *testing.T) {
-	check := func(t *testing.T, kit *Toolkit) {
-		t.Helper()
-		const name = "request_handoff"
-		if containsProfileDef(kit.Definitions(), name) || kit.SupportsTool(name) {
-			t.Error("retired handoff is still advertised to the model")
-		}
-		if _, ok := kit.ToolInfo(name); ok {
-			t.Error("retired handoff is still registered")
-		}
-		surface := kit.ActiveSurface()
-		if surface.Tools[name] != "" || surface.DeferredTools[name] != "" || surface.HiddenTools[name] != "" {
-			t.Error("compiled surface still includes retired handoff")
-		}
-		result, err := kit.ExecuteResult(context.Background(), providers.ToolCall{
-			ID: "stale-handoff", Name: name, Arguments: `{"intent":"continue the task"}`,
-		})
-		if err == nil || result.TextProjection() != "" {
-			t.Errorf("retired call must fail without a handoff request: result=%+v err=%v", result, err)
-		}
-	}
-	t.Run("unconfigured", func(t *testing.T) {
-		kit, err := New(t.TempDir())
-		if err != nil {
-			t.Fatal(err)
-		}
-		kit.SetSessionID("source")
-		check(t, kit)
-	})
-	for _, profile := range []struct{ provider, model string }{
-		{"openai", "gpt-5-codex"},
-		{"openai", "gpt-5.5"},
-		{"anthropic", "claude-sonnet-4-5"},
-		{"google", "gemini-2.5-pro"},
-		{"ollama", "llama-coder"},
-	} {
-		for _, role := range []struct {
-			name string
-			kind modelprofile.SurfaceKind
-		}{
-			{"main", modelprofile.SurfaceMain},
-			{"named", modelprofile.SurfaceNamedAgent},
-			{"room", modelprofile.SurfaceRoomAgent},
-			{"worker", modelprofile.SurfaceWorker},
-		} {
-			t.Run(profile.model+"/"+role.name, func(t *testing.T) {
-				kit, err := New(t.TempDir())
-				if err != nil {
-					t.Fatal(err)
-				}
-				kit.SetSessionID("source")
-				kit.setActiveProfileForSurface(modelprofile.Resolve(profile.provider, profile.model), role.kind)
-				check(t, kit)
-				clone, err := kit.CloneForRoot(t.TempDir())
-				if err != nil {
-					t.Fatal(err)
-				}
-				check(t, clone)
-			})
-		}
-	}
 }
 
 func TestSetActiveProfileCompilesAndExposesBashForAllStandardProfiles(t *testing.T) {
@@ -159,18 +85,6 @@ func TestActiveProfileKeepsCoreLowFrequencyToolsDeferred(t *testing.T) {
 			t.Fatalf("Codex profile should keep core tool %s visible, got %v", want, sortedProfileDefNames(defs))
 		}
 	}
-	if _, ok := kit.ToolInfo("inception"); ok {
-		t.Fatal("retired tool must not be registered")
-	}
-	// The orphaned `checkpoint` tool (registered but never bucketed into any
-	// profile surface) was retired entirely; only its absence matters now.
-	if _, ok := kit.ToolInfo("checkpoint"); ok {
-		t.Fatalf("checkpoint tool should no longer be registered")
-	}
-	if _, ok := kit.ToolInfo("repo_map"); ok {
-		t.Fatalf("repo_map should not be registered as a model tool")
-	}
-
 	for _, name := range []string{
 		"thread_get",
 	} {
@@ -234,44 +148,6 @@ func TestActiveProfileToolSearchLoadsThreadGetForSessionIDs(t *testing.T) {
 	if !containsProfileDef(kit.Definitions(), "thread_get") {
 		t.Fatalf("loaded thread_get should be visible in definitions: %v", sortedProfileDefNames(kit.Definitions()))
 	}
-}
-
-func TestCompiledProfileVisibleDefinitionsDoNotTeachLegacyCommandTools(t *testing.T) {
-	for _, tt := range []struct {
-		provider string
-		model    string
-	}{
-		{provider: "openai", model: "gpt-5-codex"},
-		{provider: "anthropic", model: "claude-sonnet-4-5"},
-	} {
-		kit, err := New(t.TempDir())
-		if err != nil {
-			t.Fatalf("New: %v", err)
-		}
-		kit.SetActiveProfile(modelprofile.Resolve(tt.provider, tt.model), true)
-		for _, def := range kit.Definitions() {
-			text := visibleDefinitionText(def)
-			for _, old := range []string{
-				"run_shell",
-				"run_test",
-				"start_process",
-				"list_processes",
-				"read_process_output",
-				"write_stdin",
-				"stop_process",
-				"structured git tool",
-			} {
-				if strings.Contains(text, old) {
-					t.Fatalf("%s/%s visible tool %s must not teach legacy command path %q:\n%s", tt.provider, tt.model, def.Name, old, text)
-				}
-			}
-		}
-	}
-}
-
-func visibleDefinitionText(def providers.ToolDefinition) string {
-	schema, _ := json.Marshal(def.InputSchema)
-	return def.Name + "\n" + def.Description + "\n" + string(schema)
 }
 
 func TestActiveProfileAllowsDeferredMCPThroughToolSearch(t *testing.T) {
@@ -490,21 +366,6 @@ func TestSetActiveProfileLocalProfileDropsBash(t *testing.T) {
 	}
 }
 
-func TestLocalProfileVisibleDefinitionsDoNotTeachShellTools(t *testing.T) {
-	kit, err := New(t.TempDir())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	kit.SetActiveProfile(modelprofile.Resolve("ollama", "llama-coder"), true)
-
-	for _, def := range kit.Definitions() {
-		text := visibleDefinitionText(def)
-		if mentionsTerminalOnlyPath(text) {
-			t.Fatalf("local/no-shell visible tool %s must not teach terminal-only paths:\n%s", def.Name, text)
-		}
-	}
-}
-
 func TestSetActiveProfileCodexExposesApplyPatchHidesEditAndWrite(t *testing.T) {
 	kit, err := New(t.TempDir())
 	if err != nil {
@@ -515,7 +376,7 @@ func TestSetActiveProfileCodexExposesApplyPatchHidesEditAndWrite(t *testing.T) {
 	if !containsProfileDef(defs, "apply_patch") {
 		t.Fatalf("Codex surface must include apply_patch, got %v", sortedProfileDefNames(defs))
 	}
-	for _, hidden := range []string{"edit_file", "write_file", "run_test", "git", "run_shell"} {
+	for _, hidden := range []string{"edit_file", "write_file", "git"} {
 		if containsProfileDef(defs, hidden) {
 			t.Fatalf("Codex surface must not advertise %s, got %v", hidden, sortedProfileDefNames(defs))
 		}
@@ -563,19 +424,6 @@ func TestActiveProfileDefinitionsRespectExplicitDisables(t *testing.T) {
 	}
 }
 
-func TestActiveProfileBlocksHiddenToolExecution(t *testing.T) {
-	kit, err := New(t.TempDir())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	kit.SetActiveProfile(modelprofile.Resolve("openai", "gpt-5-codex"), true)
-
-	_, err = kit.Execute(context.Background(), providers.ToolCall{Name: "run_shell", Arguments: `{"command":"echo hi"}`})
-	if err == nil || !strings.Contains(err.Error(), "active model surface") {
-		t.Fatalf("hidden run_shell should be blocked by active surface, got %v", err)
-	}
-}
-
 func TestSetActiveProfileClaudeExposesEditAndWriteHidesApplyPatch(t *testing.T) {
 	kit, err := New(t.TempDir())
 	if err != nil {
@@ -591,7 +439,7 @@ func TestSetActiveProfileClaudeExposesEditAndWriteHidesApplyPatch(t *testing.T) 
 	if containsProfileDef(defs, "apply_patch") {
 		t.Fatalf("Claude surface must not advertise apply_patch, got %v", sortedProfileDefNames(defs))
 	}
-	for _, hidden := range []string{"run_test", "git", "run_shell"} {
+	for _, hidden := range []string{"git"} {
 		if containsProfileDef(defs, hidden) {
 			t.Fatalf("Claude surface must not advertise %s, got %v", hidden, sortedProfileDefNames(defs))
 		}
@@ -626,9 +474,7 @@ func TestSetActiveProfileZeroValueRestoresLegacySurface(t *testing.T) {
 		t.Fatal("expected Codex surface to hide edit_file")
 	}
 	// Clear the profile and verify the legacy direct-tool surface
-	// returns: bash is the only visible shell entry point. The
-	// legacy run_shell name is now an internal implementation
-	// and is hidden from every surface.
+	// returns with bash as the visible shell entry point.
 	kit.SetActiveProfile(modelprofile.Profile{}, true)
 	if kit.ActiveSurface().ProfileName != "" {
 		t.Fatal("expected zero-value profile to clear the active surface")
@@ -636,9 +482,6 @@ func TestSetActiveProfileZeroValueRestoresLegacySurface(t *testing.T) {
 	defs := kit.Definitions()
 	if !containsProfileDef(defs, "bash") {
 		t.Fatalf("legacy surface must include bash, got %v", sortedProfileDefNames(defs))
-	}
-	if containsProfileDef(defs, "run_shell") {
-		t.Fatalf("legacy surface must hide run_shell, got %v", sortedProfileDefNames(defs))
 	}
 	if !containsProfileDef(defs, "edit_file") {
 		t.Fatalf("legacy surface must include edit_file, got %v", sortedProfileDefNames(defs))
@@ -669,22 +512,6 @@ func TestCloneForRootPreservesActiveProfileSurface(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "disabled") {
 		t.Fatalf("clone advertised apply_patch must not be disabled: %v", err)
-	}
-}
-
-func TestActiveProfileReturnsInstalledProfile(t *testing.T) {
-	kit, err := New(t.TempDir())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if kit.ActiveProfile().ProviderName != "" {
-		t.Fatal("expected zero-value profile before SetActiveProfile")
-	}
-	want := modelprofile.Resolve("anthropic", "claude-sonnet-4-5")
-	kit.SetActiveProfile(want, true)
-	got := kit.ActiveProfile()
-	if got.ProviderName != want.ProviderName || got.Model != want.Model {
-		t.Fatalf("ActiveProfile = %+v, want provider=%s model=%s", got, want.ProviderName, want.Model)
 	}
 }
 

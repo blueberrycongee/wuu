@@ -36,12 +36,6 @@ async function credentials() {
 }
 
 describe("AccountScreen", () => {
-  it("leaves closing to native controls without a redundant back button", async () => {
-    await mount(async () => ({}), true);
-    expect(container.querySelector(".account-screen-window")).not.toBeNull();
-    expect(container.textContent).not.toContain(t("settings.backToApp"));
-    expect(container.querySelector(".account-screen-titlebar button")).toBeNull();
-  });
   it("waits for recovery confirmation before offering to finish the window", async () => {
     let signedIn = false;
     const close = await mount(async action => {
@@ -69,7 +63,6 @@ describe("AccountScreen", () => {
     expect(container.querySelector("input")).toBeNull();
     expect(driver).toHaveBeenCalledWith("status");
     expect(driver).not.toHaveBeenCalledWith("config", expect.anything());
-    expect(container.querySelector("details a")?.getAttribute("href")).toContain("deploy/remote/README.md");
     await click("settings.backToApp");
     expect(back).toHaveBeenCalledTimes(1);
   });

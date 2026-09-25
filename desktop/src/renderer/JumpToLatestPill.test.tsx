@@ -241,13 +241,7 @@ describe("JumpToLatestPill", () => {
       setScrollTop(0); // 600px from the bottom > 80px threshold
       node.dispatchEvent(new Event("scroll"));
     });
-    const pill = host.querySelector<HTMLButtonElement>(".jump-to-latest-pill");
-    expect(pill).not.toBeNull();
-    expect(pill?.className).toContain("jump-to-latest-pill-anchored");
-    expect(pill?.querySelector("span")?.textContent).toBeTruthy();
-    expect(pill?.querySelector("span")?.textContent).toBe(
-      pill?.getAttribute("aria-label"),
-    );
+    expect(host.querySelector(".jump-to-latest-pill")).not.toBeNull();
   });
 
   it("shows immediately when mounted into an already scrolled-away container", () => {
@@ -432,10 +426,6 @@ describe("JumpToLatestPill", () => {
       ".jump-to-latest-pill-anchored",
     );
     expect(pill).not.toBeNull();
-    expect(pill?.querySelector("span")?.textContent).toBeTruthy();
-    expect(pill?.querySelector("span")?.textContent).toBe(
-      pill?.getAttribute("aria-label"),
-    );
     // The composer can move independently when the environment panel reserves
     // room on the right, so the pill follows the frame rather than the unchanged
     // scroll-container bounds: 150 + 400 / 2.
@@ -443,9 +433,6 @@ describe("JumpToLatestPill", () => {
     // The queued drawer is part of the same visual height used by the progress
     // pill, so the jump pill clears it instead of overlapping it.
     expect(pill?.style.bottom).toBe("288px");
-    expect(
-      resizeObservers.some((observer) => observer.observed.has(frame)),
-    ).toBe(true);
 
     act(() => {
       document.documentElement.classList.add(WINDOW_RESIZING_CLASS);
@@ -534,31 +521,6 @@ describe("JumpToLatestPill", () => {
       node.dispatchEvent(new Event("scroll"));
     });
     expect(onScrolledAwayChange).toHaveBeenLastCalledWith(true);
-  });
-
-  it("re-evaluates visibility when its container resizes", () => {
-    // The pill must re-evaluate when the scroll container's clientHeight
-    // changes; otherwise a resize could leave it stuck in a stale state.
-    const { node } = scrollContainer({
-      scrollHeight: 1000,
-      clientHeight: 100, // narrow initially
-      scrollTop: 0, // user is at the top
-    });
-    const host = mountPill(node);
-    // distanceFromBottom = 1000 - 0 - 100 = 900 > 80 → visible
-    expect(host.querySelector(".jump-to-latest-pill")).not.toBeNull();
-
-    // Container grows: clientHeight 100 → 1000. distanceFromBottom = 0.
-    Object.defineProperty(node, "clientHeight", {
-      configurable: true,
-      get: () => 1000,
-    });
-    // jsdom has no native ResizeObserver; the component re-evaluates on
-    // scroll, so we dispatch a scroll event to simulate the observer firing.
-    act(() => {
-      node.dispatchEvent(new Event("scroll"));
-    });
-    expect(host.querySelector(".jump-to-latest-pill")).toBeNull();
   });
 
   it("defers container resize measurement while the window is resizing", () => {

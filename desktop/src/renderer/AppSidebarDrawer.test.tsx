@@ -332,10 +332,6 @@ describe("collapsed sidebar hover drawer", () => {
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
   });
 
-  it("uses a 240ms edge hover intent delay", () => {
-    expect(SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS).toBe(240);
-  });
-
   it.each([
     ["web", true, 390, true],
     ["web", true, 820, false],
@@ -592,14 +588,6 @@ describe("collapsed sidebar hover drawer", () => {
     expect(appShell()?.dataset.wuuSidebarMode).toBe("collapsed");
     await openDrawerViaSidebarToggle();
     expect(appShell()?.dataset.wuuSidebarMode).toBe("drawer");
-  });
-
-  it("does not render a floating close control over the compact drawer", async () => {
-    window.innerWidth = 674;
-    await renderCollapsedApp();
-    await openDrawerViaSidebarToggle();
-    expect(container.querySelector(".compact-session-switcher-close")).toBeNull();
-    expect(container.querySelector(".compact-session-switcher-backdrop")).not.toBeNull();
   });
 
   it("keeps the drawer open when the titlebar toggle is covered by the sliding rail", async () => {

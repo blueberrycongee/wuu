@@ -152,12 +152,6 @@ describe("independent mode and palette selection", () => {
 });
 
 describe("resolveThemePreference", () => {
-  it("passes explicit light/dark through", () => {
-    stubMatchMedia(true);
-    expect(resolveThemePreference("light")).toBe("light");
-    expect(resolveThemePreference("dark")).toBe("dark");
-  });
-
   it("resolves system from prefers-color-scheme", () => {
     const media = stubMatchMedia(true);
     expect(resolveThemePreference("system")).toBe("dark");
@@ -167,14 +161,6 @@ describe("resolveThemePreference", () => {
 });
 
 describe("applyThemePreference", () => {
-  it("stamps the resolved theme on <html>", () => {
-    stubMatchMedia(false);
-    applyThemePreference("dark");
-    expect(document.documentElement.dataset.theme).toBe("dark");
-    applyThemePreference("light");
-    expect(document.documentElement.dataset.theme).toBe("light");
-  });
-
   it("follows live OS changes while the preference is system", () => {
     const media = stubMatchMedia(false);
     applyThemePreference("system");

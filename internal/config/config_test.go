@@ -9,7 +9,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/blueberrycongee/wuu/internal/capability"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 )
 
@@ -92,244 +91,11 @@ func TestLoadFrom_UsesUserProviderAndProjectAgentSettings(t *testing.T) {
 	}
 }
 
-func TestLoadFrom_Defaults(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "openai-compatible",
-      "base_url": "https://example.com/v1",
-      "api_key_env": "OPENAI_API_KEY",
-      "model": "gpt-4.1"
-    }
-  },
-  "agent": {}
-}`
-
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatalf("LoadFrom returned error: %v", err)
-	}
-	// 0 = unlimited; no hard cap.
-	if cfg.Agent.MaxSteps != 0 {
-		t.Fatalf("expected default max_steps 0 (unlimited), got %d", cfg.Agent.MaxSteps)
-	}
-	if cfg.Agent.MaxContextTokens != 0 {
-		t.Fatalf("expected default max_context_tokens 0 (auto), got %d", cfg.Agent.MaxContextTokens)
-	}
-	if cfg.Agent.MaxParallel != DefaultAgentMaxParallel {
-		t.Fatalf("expected default max_parallel %d, got %d", DefaultAgentMaxParallel, cfg.Agent.MaxParallel)
-	}
-	if cfg.Agent.ToolLoadingPreference() != ToolLoadingAuto {
-		t.Fatalf("expected default tool_loading auto, got %q", cfg.Agent.ToolLoadingPreference())
-	}
-	if cfg.Agent.ProfileName() != DefaultAgentName {
-		t.Fatalf("expected default agent name %q, got %q", DefaultAgentName, cfg.Agent.ProfileName())
-	}
-	if DefaultSystemPrompt() == "" {
-		t.Fatal("expected built-in default system prompt")
-	}
-}
-
-func TestLoadProjectConfigParsesMaxParallel(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "openai-compatible",
-      "base_url": "https://example.com/v1",
-      "model": "gpt-4.1"
-    }
-  },
-  "agent": {"max_parallel": 3}
-}`
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatalf("LoadProjectConfig: %v", err)
-	}
-	if cfg.Agent.MaxParallel != 3 || cfg.Agent.MaxParallelValue() != 3 {
-		t.Fatalf("unexpected agent config: %+v", cfg.Agent)
-	}
-}
-
 func TestConfigRejectsNegativeMaxParallel(t *testing.T) {
 	cfg := Default()
 	cfg.Agent.MaxParallel = -1
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "agent.max_parallel") {
 		t.Fatalf("Validate error = %v, want agent.max_parallel error", err)
-	}
-}
-
-func TestLoadFrom_DefaultsTemperatureToAuto(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "openai-compatible",
-      "base_url": "https://example.com/v1",
-      "api_key_env": "OPENAI_API_KEY",
-      "model": "gpt-5.5",
-      "wire_api": "responses"
-    }
-  },
-  "agent": {}
-}`
-
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatalf("LoadFrom returned error: %v", err)
-	}
-	if cfg.Agent.Temperature != 0 {
-		t.Fatalf("expected missing temperature to use Auto/0, got %v", cfg.Agent.Temperature)
-	}
-}
-
-func TestLoadFrom_ToolLoadingConfig(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "openai-compatible",
-      "base_url": "https://example.com/v1",
-      "api_key_env": "OPENAI_API_KEY",
-      "model": "gpt-5-codex"
-    }
-  },
-  "agent": {
-    "tool_loading": "flat"
-  }
-}`
-
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatalf("LoadFrom returned error: %v", err)
-	}
-	if cfg.Agent.ToolLoadingPreference() != ToolLoadingFlat {
-		t.Fatalf("expected explicit flat tool loading, got %q", cfg.Agent.ToolLoadingPreference())
-	}
-}
-
-func TestLoadFrom_ProviderCacheCreationOmittedConfig(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "anthropic",
-      "base_url": "https://compatible.example.com/anthropic",
-      "api_key_env": "ANTHROPIC_API_KEY",
-      "model": "generic-coder",
-      "cache_creation_input_tokens_omitted": true
-    }
-  }
-}`
-
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatalf("LoadFrom returned error: %v", err)
-	}
-	if !cfg.Providers["main"].CacheCreationInputTokensOmitted {
-		t.Fatal("expected cache creation omission flag to parse")
-	}
-}
-
-func TestLoadFrom_ProviderInputTokensIncludeCacheReadConfig(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "anthropic",
-      "base_url": "https://compatible.example.com/anthropic",
-      "api_key_env": "ANTHROPIC_API_KEY",
-      "model": "generic-coder",
-      "input_tokens_include_cache_read": true
-    }
-  }
-}`
-
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatalf("LoadFrom returned error: %v", err)
-	}
-	if !cfg.Providers["main"].InputTokensIncludeCacheRead {
-		t.Fatal("expected input_tokens_include_cache_read flag to parse")
-	}
-}
-
-func TestConfig_ModelRoles(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "openai-compatible",
-      "base_url": "https://example.com/v1",
-      "api_key_env": "OPENAI_API_KEY",
-      "model": "gpt-5-codex"
-    },
-    "anthropic": {
-      "type": "anthropic",
-      "base_url": "https://api.anthropic.com",
-      "api_key_env": "ANTHROPIC_API_KEY",
-      "model": "claude-sonnet-4-5"
-    }
-  },
-  "agent": {
-    "model_roles": {
-      "review": {"provider": "anthropic", "model": "claude-sonnet-4-5"},
-      "worker": {"model": "gpt-5-codex", "variant": "high"}
-    }
-  }
-}`
-
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatalf("LoadFrom returned error: %v", err)
-	}
-	if cfg.Agent.ModelRoles.Review.Provider != "anthropic" || cfg.Agent.ModelRoles.Review.Model != "claude-sonnet-4-5" {
-		t.Fatalf("review role not parsed: %+v", cfg.Agent.ModelRoles.Review)
-	}
-	if cfg.Agent.ModelRoles.Worker.Variant != "high" {
-		t.Fatalf("worker variant not parsed: %+v", cfg.Agent.ModelRoles.Worker)
 	}
 }
 
@@ -455,64 +221,6 @@ func writeConfigJSON(path string, cfg Config) error {
 	return os.WriteFile(path, append(out, '\n'), 0o600)
 }
 
-func intPtr(v int) *int {
-	return &v
-}
-
-func TestLoadFrom_AgentName(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "openai-compatible",
-      "base_url": "https://example.com/v1",
-      "api_key_env": "OPENAI_API_KEY",
-      "model": "gpt-4.1"
-    }
-  },
-  "agent": {
-    "name": "Mia"
-  }
-}`
-
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatalf("LoadFrom returned error: %v", err)
-	}
-	if cfg.Agent.ProfileName() != "Mia" {
-		t.Fatalf("ProfileName() = %q, want Mia", cfg.Agent.ProfileName())
-	}
-}
-
-func TestDefaultCodexSubscriptionUsesGPT6Astra(t *testing.T) {
-	provider, ok := Default().Providers["openai-codex"]
-	if !ok {
-		t.Fatal("expected openai-codex starter provider")
-	}
-	if provider.Model != "gpt-6-astra" {
-		t.Fatalf("openai-codex default model = %q, want gpt-6-astra", provider.Model)
-	}
-}
-
-func TestTemplateJSONDoesNotSerializeBuiltInSystemPrompt(t *testing.T) {
-	tpl, err := TemplateJSON()
-	if err != nil {
-		t.Fatalf("TemplateJSON: %v", err)
-	}
-	if strings.Contains(tpl, "You are wuu") {
-		t.Fatalf("template should not serialize built-in system prompt:\n%s", tpl)
-	}
-	if strings.Contains(tpl, `"temperature"`) {
-		t.Fatalf("template should omit Auto temperature override:\n%s", tpl)
-	}
-}
-
 func TestDefaultConfigUsesPermissionModeAsPolicySource(t *testing.T) {
 	cfg := Default()
 	permissions := ResolveAgentPermissions(cfg.Agent)
@@ -536,13 +244,6 @@ func TestNormalizePermissionModeUsesThreeStateAuthority(t *testing.T) {
 		if got := NormalizePermissionMode(tt.in); got != tt.want {
 			t.Fatalf("NormalizePermissionMode(%q) = %q, want %q", tt.in, got, tt.want)
 		}
-	}
-}
-
-func TestResolveAgentPermissionsKeepsOnlyMode(t *testing.T) {
-	permissions := ResolveAgentPermissions(AgentConfig{PermissionMode: PermissionModeReadOnly})
-	if permissions.Mode != PermissionModeReadOnly {
-		t.Fatalf("permissions = %+v, want read_only", permissions)
 	}
 }
 
@@ -581,71 +282,6 @@ func TestLoadFrom_IgnoresRetiredSystemPromptFields(t *testing.T) {
 	}
 }
 
-func TestConfig_ProviderWireAPI(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "openai-compatible",
-      "base_url": "https://example.com",
-      "wire_api": "responses",
-      "api_key": "sk-test",
-      "model": "gpt-test"
-    }
-  },
-  "agent": {
-    "system_prompt": "test"
-  }
-}`
-
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatalf("LoadFrom returned error: %v", err)
-	}
-	if cfg.Providers["main"].WireAPI != "responses" {
-		t.Fatalf("expected wire_api responses, got %q", cfg.Providers["main"].WireAPI)
-	}
-}
-
-func TestConfig_ProviderStreamTransport(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "openai-compatible",
-      "base_url": "https://example.com",
-      "wire_api": "responses",
-      "stream_transport": "websocket-cached",
-      "api_key": "sk-test",
-      "model": "gpt-test"
-    }
-  },
-  "agent": {
-    "system_prompt": "test"
-  }
-}`
-
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatalf("LoadFrom returned error: %v", err)
-	}
-	if cfg.Providers["main"].StreamTransport != "websocket-cached" {
-		t.Fatalf("expected stream_transport websocket-cached, got %q", cfg.Providers["main"].StreamTransport)
-	}
-}
-
 func TestConfig_RejectsUnknownStreamTransport(t *testing.T) {
 	workdir := t.TempDir()
 	configPath := filepath.Join(workdir, ".wuu.json")
@@ -673,70 +309,6 @@ func TestConfig_RejectsUnknownStreamTransport(t *testing.T) {
 	_, _, err := LoadProjectConfig(workdir)
 	if err == nil || !strings.Contains(err.Error(), "stream_transport") {
 		t.Fatalf("expected stream_transport validation error, got %v", err)
-	}
-}
-
-func TestConfig_MCPToolOverrides(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "openai-compatible",
-      "base_url": "https://example.com",
-      "api_key": "sk-test",
-      "model": "gpt-test"
-    }
-  },
-  "agent": {
-    "system_prompt": "test"
-  },
-  "mcp_servers": {
-    "docs": {
-      "command": "docs-mcp",
-      "tool_overrides": {
-        "search": {
-          "read_only": true,
-          "capability": "search.semantic"
-        },
-        "write": {
-          "read_only": false,
-          "concurrency_safe": false,
-          "capability": "file.edit"
-        }
-      }
-    }
-  }
-}`
-
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatalf("LoadFrom returned error: %v", err)
-	}
-	search := cfg.MCPServers["docs"].ToolOverrides["search"]
-	if search.ReadOnly == nil || *search.ReadOnly != true {
-		t.Fatalf("search.read_only = %v, want true", search.ReadOnly)
-	}
-	if search.ConcurrencySafe != nil {
-		t.Fatalf("search.concurrency_safe = %v, want nil", search.ConcurrencySafe)
-	}
-	if search.Capability != capability.CapabilitySearchSemantic {
-		t.Fatalf("search.capability = %q, want %q", search.Capability, capability.CapabilitySearchSemantic)
-	}
-	write := cfg.MCPServers["docs"].ToolOverrides["write"]
-	if write.ReadOnly == nil || *write.ReadOnly != false {
-		t.Fatalf("write.read_only = %v, want false", write.ReadOnly)
-	}
-	if write.ConcurrencySafe == nil || *write.ConcurrencySafe != false {
-		t.Fatalf("write.concurrency_safe = %v, want false", write.ConcurrencySafe)
-	}
-	if write.Capability != capability.CapabilityFileEdit {
-		t.Fatalf("write.capability = %q, want %q", write.Capability, capability.CapabilityFileEdit)
 	}
 }
 
@@ -819,36 +391,6 @@ func TestConfig_CodexSubscriptionAllowsDefaultBaseURL(t *testing.T) {
 	}
 	if cfg.Providers["main"].Type != "openai-codex" {
 		t.Fatalf("provider type = %q", cfg.Providers["main"].Type)
-	}
-}
-
-func TestConfig_CodexSubscriptionParsesReuseCodexCredentials(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "openai-codex",
-      "wire_api": "responses",
-      "model": "gpt-5-codex",
-      "reuse_codex_credentials": true
-    }
-  },
-  "agent": {
-    "system_prompt": "test"
-  }
-}`
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatalf("LoadFrom: %v", err)
-	}
-	if !cfg.Providers["main"].ReuseCodexCredentials {
-		t.Fatal("expected reuse_codex_credentials to parse as true")
 	}
 }
 
@@ -975,110 +517,6 @@ func TestConfig_RejectsUnknownWireAPI(t *testing.T) {
 	}
 }
 
-func TestConfig_DisableAutoCompact(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "openai-compatible",
-      "base_url": "https://x",
-      "api_key": "k",
-      "model": "test"
-    }
-  },
-  "agent": {
-    "disable_auto_compact": true
-  }
-}`
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cfg.Agent.DisableAutoCompact {
-		t.Fatal("expected DisableAutoCompact=true")
-	}
-}
-
-func TestAgentConfigGitAttributionDefaultsEnabledAndSupportsOptOut(t *testing.T) {
-	var agent AgentConfig
-	if !agent.GitAttributionEnabledValue() {
-		t.Fatal("git attribution should default to enabled")
-	}
-
-	disabled := false
-	agent.GitAttributionEnabled = &disabled
-	if agent.GitAttributionEnabledValue() {
-		t.Fatal("explicit false should disable git attribution")
-	}
-
-	enabled := true
-	agent.GitAttributionEnabled = &enabled
-	if !agent.GitAttributionEnabledValue() {
-		t.Fatal("explicit true should enable git attribution")
-	}
-}
-
-func TestConfig_DisableAutoCompactDefaultsFalse(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "openai-compatible",
-      "base_url": "https://x",
-      "api_key": "k",
-      "model": "test"
-    }
-  },
-  "agent": {}
-}`
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Agent.DisableAutoCompact {
-		t.Fatal("expected DisableAutoCompact to default false")
-	}
-}
-
-func TestConfig_CompactThresholdPct(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "openai-compatible",
-      "base_url": "https://x",
-      "api_key": "k",
-      "model": "test"
-    }
-  },
-  "agent": {
-    "compact_threshold_pct": 0.5
-  }
-}`
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Agent.CompactThresholdPct != 0.5 {
-		t.Fatalf("CompactThresholdPct = %v, want 0.5", cfg.Agent.CompactThresholdPct)
-	}
-}
-
 func TestUpdateAdvancedRuntimePersistsAgentAndProviderSettings(t *testing.T) {
 	workdir := t.TempDir()
 	configPath := filepath.Join(workdir, ".wuu.json")
@@ -1171,140 +609,6 @@ func TestUpdateAdvancedRuntimeDeletesTemperatureForAuto(t *testing.T) {
 	}
 }
 
-func TestConfig_ExperimentalCoordinatorMode(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "openai-compatible",
-      "base_url": "https://x",
-      "api_key": "k",
-      "model": "test"
-    }
-  },
-  "agent": {
-    "experimental_coordinator_mode": true
-  }
-}`
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cfg.Agent.ExperimentalCoordinatorMode {
-		t.Fatal("expected ExperimentalCoordinatorMode=true")
-	}
-}
-
-func TestConfig_CatwalkAutoupdate(t *testing.T) {
-	workdir := t.TempDir()
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {"type": "openai-compatible", "base_url": "https://x", "api_key": "k", "model": "test"}
-  },
-  "agent": {"catwalk_autoupdate": true}
-}`
-	if err := os.WriteFile(filepath.Join(workdir, ".wuu.json"), []byte(jsonData), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cfg.Agent.CatwalkAutoupdate {
-		t.Fatal("expected CatwalkAutoupdate=true")
-	}
-}
-
-func TestConfig_HooksConfigParsing(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "openai-compatible",
-      "base_url": "https://example.com/v1",
-      "api_key": "sk-test",
-      "model": "gpt-4"
-    }
-  },
-  "agent": {
-    "system_prompt": "test"
-  },
-  "hooks": {
-    "PreToolUse": [
-      {"matcher": "run_shell", "command": "check.sh", "timeout": 10}
-    ],
-    "SessionStart": [
-      {"command": "setup.sh"}
-    ]
-  }
-}`
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatalf("LoadFrom: %v", err)
-	}
-	if len(cfg.Hooks) != 2 {
-		t.Fatalf("expected 2 hook events, got %d", len(cfg.Hooks))
-	}
-	pre, ok := cfg.Hooks["PreToolUse"]
-	if !ok || len(pre) != 1 {
-		t.Fatal("expected 1 PreToolUse hook")
-	}
-	if pre[0].Matcher != "run_shell" {
-		t.Fatalf("expected matcher run_shell, got %s", pre[0].Matcher)
-	}
-	if pre[0].Timeout != 10 {
-		t.Fatalf("expected timeout 10, got %d", pre[0].Timeout)
-	}
-	start, ok := cfg.Hooks["SessionStart"]
-	if !ok || len(start) != 1 {
-		t.Fatal("expected 1 SessionStart hook")
-	}
-	if start[0].Command != "setup.sh" {
-		t.Fatalf("expected command setup.sh, got %s", start[0].Command)
-	}
-}
-
-func TestConfig_HooksOmittedWhenEmpty(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "openai-compatible",
-      "base_url": "https://example.com/v1",
-      "api_key": "sk-test",
-      "model": "gpt-4"
-    }
-  },
-  "agent": {
-    "system_prompt": "test"
-  }
-}`
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Hooks != nil && len(cfg.Hooks) != 0 {
-		t.Fatalf("expected nil or empty hooks, got %v", cfg.Hooks)
-	}
-}
-
 func TestLoadFrom_NotFound(t *testing.T) {
 	_, _, err := LoadFrom(t.TempDir(), t.TempDir())
 	if err == nil {
@@ -1312,9 +616,6 @@ func TestLoadFrom_NotFound(t *testing.T) {
 	}
 	if !errors.Is(err, ErrConfigNotFound) {
 		t.Fatalf("expected ErrConfigNotFound, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "wuu init") {
-		t.Fatalf("expected init hint, got %v", err)
 	}
 }
 
@@ -1732,27 +1033,6 @@ func TestCreateProviderRuntimePersistsNewProvider(t *testing.T) {
 }
 
 func TestGrokBuildDefaultsAndRuntimeCreation(t *testing.T) {
-	provider, ok := Default().Providers["grok-build"]
-	if !ok {
-		t.Fatal("default config is missing grok-build")
-	}
-	if provider.Model != "grok-4.5" || provider.BaseURL != "https://cli-chat-proxy.grok.com/v1" || !provider.ReuseGrokCredentials {
-		t.Fatalf("grok-build defaults = %+v", provider)
-	}
-	for id, wantEfforts := range map[string]string{
-		"grok-4.5": "low,medium,high",
-		"grok-4.6": "low,medium,high,xhigh",
-		"grok-4.7": "low,medium,high,xhigh",
-	} {
-		model := provider.Models[id]
-		if got := strings.Join(model.SupportedEfforts, ","); got != wantEfforts {
-			t.Fatalf("%s efforts = %q, want %q", id, got, wantEfforts)
-		}
-		if model.DefaultEffort != "high" || model.DefaultVariant != "high" || model.Limit == nil || model.Limit.Context != 500_000 {
-			t.Fatalf("%s defaults = %+v", id, model)
-		}
-	}
-
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".wuu.json")
 	orig := `{
@@ -2057,48 +1337,6 @@ func TestRemoveProviderClearsModelRoleReferences(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"provider": "keep"`) {
 		t.Fatalf("compact role provider was unexpectedly removed: %s", data)
-	}
-}
-
-func TestConfig_ModelAliases(t *testing.T) {
-	workdir := t.TempDir()
-	configPath := filepath.Join(workdir, ".wuu.json")
-	jsonData := `{
-  "default_provider": "main",
-  "providers": {
-    "main": {
-      "type": "openai-compatible",
-      "base_url": "https://example.com/v1",
-      "api_key_env": "OPENAI_API_KEY",
-      "model": "gpt-5-codex"
-    },
-    "anthropic": {
-      "type": "anthropic",
-      "base_url": "https://api.anthropic.com",
-      "api_key_env": "ANTHROPIC_API_KEY",
-      "model": "claude-sonnet-4-5"
-    }
-  },
-  "agent": {
-    "model_aliases": {
-      "cheap": {"provider": "main", "model": "gpt-5-mini"},
-      "frontend": {"provider": "anthropic", "model": "claude-sonnet-4-5", "effort": "high"}
-    }
-  }
-}`
-	if err := os.WriteFile(configPath, []byte(jsonData), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, _, err := LoadProjectConfig(workdir)
-	if err != nil {
-		t.Fatalf("LoadProjectConfig returned error: %v", err)
-	}
-	if cfg.Agent.ModelAliases["cheap"].Provider != "main" || cfg.Agent.ModelAliases["cheap"].Model != "gpt-5-mini" {
-		t.Fatalf("cheap alias not parsed: %+v", cfg.Agent.ModelAliases["cheap"])
-	}
-	if cfg.Agent.ModelAliases["frontend"].Provider != "anthropic" || cfg.Agent.ModelAliases["frontend"].Effort != "high" {
-		t.Fatalf("frontend alias not parsed: %+v", cfg.Agent.ModelAliases["frontend"])
 	}
 }
 

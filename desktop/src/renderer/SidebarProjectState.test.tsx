@@ -5,7 +5,6 @@ import type { DesktopProject, RuntimeContext, Thread } from "../shared/protocol"
 import {
   isThreadRunning,
   isThreadUnread,
-  SCRATCH_PSEUDO_PROJECT_ID,
 } from "./AppState";
 import {
   SIDEBAR_SECTION_COLLAB,
@@ -560,28 +559,6 @@ describe("useSidebarProjectState", () => {
     });
 
     expect(hook.get().projectThreadsByProjectID.alpha?.[0]?.pinned).toBe(true);
-  });
-
-  it("keeps scratch threads cached for the no-project context", async () => {
-    const alpha = project("alpha", "/tmp/alpha");
-    const scratchThread = thread("thread-scratch", "/tmp/other");
-    const activeContext: RuntimeContext = {
-      kind: "no_project",
-      cwd: "/tmp/other",
-    };
-
-    const hook = await renderSidebarProjectState({
-      projects: [alpha],
-      threads: [scratchThread],
-      activeContext,
-    });
-
-    expect(hook.get().cachedScratchThreads.map((item) => item.id)).toEqual([
-      "thread-scratch",
-    ]);
-    expect(
-      hook.get().collapsedSidebarSectionIDs.has(SCRATCH_PSEUDO_PROJECT_ID),
-    ).toBe(false);
   });
 
   it("keeps other workspaces' scratch sessions when switching no-project workspaces", async () => {

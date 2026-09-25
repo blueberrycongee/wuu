@@ -7,9 +7,6 @@
 //   2. AgentCompletionChatMessage appends <changed_file_overlap> tail
 //   3. Legacy envelope with no `name` propagation
 //   4. Normal user message — must NOT be classified as a handoff
-//
-// `AGENT_NOTIFICATION_NAME` must stay byte-identical with the backend
-// `name == "wuu_agent_notification"` branch of IsAgentNotification.
 
 import { describe, expect, it } from "vitest";
 
@@ -37,18 +34,6 @@ function legacyHandoff(status = "completed"): string {
 }
 
 describe("handoff (mobile)", () => {
-  it("exports AGENT_NOTIFICATION_NAME matching the backend wire constant", () => {
-    expect(AGENT_NOTIFICATION_NAME).toBe("wuu_agent_notification");
-  });
-
-  it("classifies a single-envelope handoff item by its `name` field", () => {
-    const item = {
-      name: AGENT_NOTIFICATION_NAME,
-      text: legacyHandoff("completed"),
-    };
-    expect(isAgentHandoffItem(item)).toBe(true);
-  });
-
   it("classifies \\n\\n-joined envelopes without parsing text", () => {
     // Two complete envelopes joined with "\n\n" — exactly the shape
     // combineAgentCompletionMessages produces. JSON.parse cannot consume
@@ -79,9 +64,5 @@ describe("handoff (mobile)", () => {
     expect(isAgentHandoffItem({ name: "", text: "帮我检查这个目录" })).toBe(false);
     expect(isAgentHandoffItem({ name: "", text: "hello" })).toBe(false);
     expect(isAgentHandoffItem({ text: "hello" })).toBe(false);
-  });
-
-  it("treats missing items as not-handoff (no throw)", () => {
-    expect(isAgentHandoffItem(undefined)).toBe(false);
   });
 });

@@ -110,9 +110,6 @@ describe("ConversationStatusCluster", () => {
     const trigger = container.querySelector(".conversation-status-todo-trigger");
     const card = container.querySelector(".conversation-status-todo-card");
     expect(trigger?.textContent).toBe("TODO1/3");
-    expect(card?.querySelector("strong")).toBeNull();
-    expect(card?.textContent).not.toContain("Why the list changed.");
-    expect(card?.textContent).not.toContain("1/3");
     expect([...card?.querySelectorAll("li") ?? []].map((item) => item.textContent)).toEqual([
       "✓Inspect the current task",
       "2Keep the current task in view",

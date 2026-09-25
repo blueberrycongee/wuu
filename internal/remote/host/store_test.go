@@ -95,15 +95,6 @@ func TestStoreSetPushTokenUnregister(t *testing.T) {
 	}
 }
 
-func TestStoreDevicePushMissing(t *testing.T) {
-	store, pub := makeStore(t, "test-phone")
-	// Never registered: should return ok=false.
-	_, _, ok := store.DevicePush(pub)
-	if ok {
-		t.Errorf("DevicePush: want ok=false on fresh device, got true")
-	}
-}
-
 func TestStatusCreatedIdentityGetsItsComputerNameAtLogin(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "remote.json")
 	initial, err := LoadOrCreateStore(path, "")

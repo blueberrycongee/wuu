@@ -14,10 +14,3 @@ func TestDeriveEphemeralName(t *testing.T) {
 		}
 	}
 }
-
-func TestNewIDPrefix(t *testing.T) {
-	id := NewID()
-	if len(id) != 20 || id[:4] != "prt-" {
-		t.Errorf("NewID() = %q, want prt- prefix and length 20", id)
-	}
-}

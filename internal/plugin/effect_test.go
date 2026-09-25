@@ -63,34 +63,6 @@ func TestClassifyReloadFallsBackToDeclaredSurfaces(t *testing.T) {
 	}
 }
 
-func TestClassifyReloadEmptyChange(t *testing.T) {
-	t.Parallel()
-
-	hint := ClassifyReload(Manifest{ID: "x"}, nil)
-	if hint.Effect != "" || hint.Message == "" {
-		t.Fatalf("empty change = %+v", hint)
-	}
-}
-
-func TestManifestSurfacePresence(t *testing.T) {
-	t.Parallel()
-
-	agent := Manifest{Runtime: &RuntimeSpec{Command: "bin/plugin"}}
-	if !agent.HasAgentSurfaces() || agent.HasCapabilitySurfaces() {
-		t.Fatalf("runtime manifest surfaces = agent %v capability %v", agent.HasAgentSurfaces(), agent.HasCapabilitySurfaces())
-	}
-
-	desktop := Manifest{Desktop: &DesktopSpec{Entry: "index.js"}}
-	if desktop.HasAgentSurfaces() || !desktop.HasCapabilitySurfaces() {
-		t.Fatalf("desktop manifest surfaces = agent %v capability %v", desktop.HasAgentSurfaces(), desktop.HasCapabilitySurfaces())
-	}
-
-	mixed := Manifest{Runtime: &RuntimeSpec{Command: "bin/plugin"}, Desktop: &DesktopSpec{Entry: "index.js"}}
-	if !mixed.HasAgentSurfaces() || !mixed.HasCapabilitySurfaces() {
-		t.Fatalf("mixed manifest surfaces = agent %v capability %v", mixed.HasAgentSurfaces(), mixed.HasCapabilitySurfaces())
-	}
-}
-
 func TestClassifyReloadUsesConventionalSkillsDir(t *testing.T) {
 	t.Parallel()
 

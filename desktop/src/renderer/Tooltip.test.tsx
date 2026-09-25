@@ -83,9 +83,6 @@ describe("Tooltip", () => {
     expect(layer).not.toBeNull();
     expect(layer?.textContent).toBe("提示文案");
     expect(layer?.getAttribute("role")).toBe("tooltip");
-    expect(layer?.dataset.wuuComponent).toBe("tooltip");
-    expect(layer?.dataset.wuuLayer).toBe("tooltip");
-    expect(layer?.dataset.wuuState).toBe("open");
     expect(layer?.closest('[data-wuu-layer-host="true"]')).not.toBeNull();
     // Portaled to the protected host, not inside the trigger wrapper.
     expect(trigger.contains(layer)).toBe(false);

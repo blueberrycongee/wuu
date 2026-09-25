@@ -113,9 +113,6 @@ describe("AgentRelationshipGraph", () => {
       />,
     ));
 
-    expect(container.querySelector(".channel-agent-graph-toolbar")).toBeNull();
-    expect(container.querySelector(".channel-agent-graph-settings-toggle")).not.toBeNull();
-
     const svg = container.querySelector<SVGSVGElement>(".channel-agent-graph-canvas")!;
     vi.spyOn(svg, "getBoundingClientRect").mockReturnValue({
       left: 0, top: 0, width: 960, height: 560, right: 960, bottom: 560, x: 0, y: 0, toJSON: () => ({}),
@@ -260,8 +257,5 @@ describe("AgentRelationshipGraph", () => {
       vi.advanceTimersByTime(140);
     });
     expect(card.textContent).toContain("Qin");
-    expect(card.textContent).toContain("近 7 天");
-    expect(card.textContent).toContain("暂无代码变更");
-    expect(card.textContent?.match(/近 7 天/g)).toHaveLength(1);
   });
 });

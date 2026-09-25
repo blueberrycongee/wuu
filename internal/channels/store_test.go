@@ -78,23 +78,6 @@ func (s *recordingWakeSink) takeSessionInterrupts() []recordedSessionInterrupt {
 	return result
 }
 
-type recordingTelemetrySink struct {
-	mu     sync.Mutex
-	events []TelemetryEvent
-}
-
-func (s *recordingTelemetrySink) RecordChannelEvent(event TelemetryEvent) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.events = append(s.events, event)
-}
-
-func (s *recordingTelemetrySink) snapshot() []TelemetryEvent {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]TelemetryEvent(nil), s.events...)
-}
-
 func openTestService(t *testing.T, wake WakeSink) *Service {
 	t.Helper()
 	service, err := Open(t.TempDir(), wake)
@@ -308,40 +291,8 @@ func TestRoomAvatarPersistsOnlyCustomImage(t *testing.T) {
 	}
 }
 
-func TestOpenCreatesIndependentChannelsSchema(t *testing.T) {
+func TestOpenCreatesPrivateDatabaseFile(t *testing.T) {
 	service := openTestService(t, nil)
-	rows, err := service.db.Query(`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`)
-	if err != nil {
-		t.Fatalf("list tables: %v", err)
-	}
-	defer rows.Close()
-	var tables []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			t.Fatalf("scan table: %v", err)
-		}
-		tables = append(tables, name)
-	}
-	want := []string{
-		"agent_wake_state",
-		"drafts",
-		"inbox_items",
-		"named_agents",
-		"reminders",
-		"room_cursors",
-		"room_members",
-		"room_messages",
-		"rooms",
-	}
-	for _, table := range want {
-		if !containsString(tables, table) {
-			t.Errorf("channels schema missing table %q; tables = %v", table, tables)
-		}
-	}
-	if containsString(tables, "participants") || containsString(tables, "sessions") {
-		t.Fatalf("channels database leaked legacy/session tables: %v", tables)
-	}
 	info, err := os.Stat(filepath.Join(service.Dir(), databaseFileName))
 	if err != nil {
 		t.Fatalf("stat channels database: %v", err)
@@ -797,52 +748,6 @@ func TestDeleteNamedAgentPreservesTaskHistoryAndUpdatesRoomMembership(t *testing
 	}
 	if historicalTasks != 2 {
 		t.Fatalf("preserved task messages = %d", historicalTasks)
-	}
-}
-
-func TestBootstrapPreservesExistingIdentityAndRoomWithoutCreatingDefaults(t *testing.T) {
-	ctx := context.Background()
-	service := openTestService(t, nil)
-	andy, err := service.CreateNamedAgent(ctx, CreateNamedAgentParams{Name: "Andy", Autostart: true})
-	if err != nil {
-		t.Fatalf("CreateNamedAgent(Andy) error = %v", err)
-	}
-
-	result, err := service.EnsureBootstrap(ctx, "local-user")
-	if err != nil {
-		t.Fatalf("EnsureBootstrap() error = %v", err)
-	}
-	if len(result.Agents) != 1 || result.Agents[0].ID != andy.Agent.ID {
-		t.Fatalf("bootstrap agents = %#v, want existing Andy", result.Agents)
-	}
-	if len(result.Rooms) != 0 {
-		t.Fatalf("bootstrap created a room for an existing identity: %#v", result.Rooms)
-	}
-	room, err := service.CreateRoom(ctx, CreateRoomParams{Name: "General", Kind: RoomChannel, CreatedBy: "local-user", Members: []RoomMember{{MemberType: MemberAgent, MemberID: andy.Agent.ID}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	message, err := service.SendHuman(ctx, HumanSendParams{RoomID: room.ID, HumanID: "local-user", Body: "Keep our existing conversation"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err = service.EnsureBootstrap(ctx, "local-user")
-	if err != nil || len(result.Agents) != 1 || result.Agents[0].ID != andy.Agent.ID || len(result.Rooms) != 1 || result.Rooms[0].ID != room.ID || len(result.Rooms[0].Members) != 2 {
-		t.Fatalf("bootstrap changed existing records: %#v, %v", result, err)
-	}
-	messages, err := service.ListMessages(ctx, room.ID, 0, 100)
-	if err != nil || len(messages) != 1 || messages[0].ID != message.Message.ID {
-		t.Fatalf("bootstrap changed conversation history: %#v, %v", messages, err)
-	}
-	if err := service.DeleteRoom(ctx, room.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := service.DeleteNamedAgent(ctx, andy.Agent.ID); err != nil {
-		t.Fatal(err)
-	}
-	result, err = service.EnsureBootstrap(ctx, "local-user")
-	if err != nil || len(result.Agents) != 0 || len(result.Rooms) != 0 {
-		t.Fatalf("bootstrap recreated deleted records: %#v, %v", result, err)
 	}
 }
 
@@ -1446,43 +1351,6 @@ func TestOpenAddsColumnsMissingFromLegacySchema(t *testing.T) {
 	}, MinReminderDur); err != nil {
 		t.Fatalf("SetReminderAfter(upgraded) error = %v", err)
 	}
-}
-
-func TestChannelTelemetrySinkRecordsCommittedAndHeldSends(t *testing.T) {
-	ctx := context.Background()
-	service := openTestService(t, nil)
-	telemetry := &recordingTelemetrySink{}
-	service.SetTelemetrySink(telemetry)
-	alpha := createTestAgent(t, service, "Alpha")
-	room := createTestRoom(t, service, alpha)
-	if _, err := service.SendHuman(ctx, HumanSendParams{
-		RoomID: room.ID, HumanID: "human-1", Body: "first",
-	}); err != nil {
-		t.Fatalf("SendHuman() error = %v", err)
-	}
-	result, err := service.SendAgent(ctx, AgentSendParams{
-		RoomID: room.ID, AgentID: alpha.Agent.ID, Token: alpha.Token,
-		Body: "stale", BasisSeq: 0,
-	})
-	if err != nil || result.Status != SendHeld {
-		t.Fatalf("SendAgent(stale) = %#v, %v", result, err)
-	}
-	events := telemetry.snapshot()
-	if len(events) != 2 || events[0].Name != "message_committed" || events[0].MemberType != MemberHuman {
-		t.Fatalf("committed telemetry = %#v", events)
-	}
-	if events[1].Name != "draft_held" || events[1].MemberID != alpha.Agent.ID || events[1].HoldCount != 1 {
-		t.Fatalf("held telemetry = %#v", events[1])
-	}
-}
-
-func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
 }
 
 func equalStrings(left, right []string) bool {

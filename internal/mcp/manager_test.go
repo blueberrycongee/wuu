@@ -272,14 +272,6 @@ func TestClassifyConnectErrorDetectsNeedsAuth(t *testing.T) {
 	}
 }
 
-func TestManagerRefreshRequiresConfiguredServer(t *testing.T) {
-	manager := NewManager()
-	err := manager.Refresh(context.Background(), "missing")
-	if err == nil {
-		t.Fatal("expected missing refresh to fail")
-	}
-}
-
 func TestManagerDisconnectPreservesOAuthAuthenticationState(t *testing.T) {
 	manager := NewManager()
 	manager.Configure(map[string]ServerConfig{

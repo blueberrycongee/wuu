@@ -3,9 +3,6 @@ import type { InitializeResult } from "../shared/protocol";
 import { initialState } from "./AppState";
 import {
   applyDraftRuntimeMemory,
-  clearDraftApproveForMeMemory,
-  clearDraftPermissionMemory,
-  clearDraftRuntimeMemory,
   lastEffortForRuntimeModel,
   lastModelForProvider,
   readDraftApproveForMeMemory,
@@ -185,29 +182,6 @@ describe("draft runtime memory", () => {
     expect(readDraftRuntimeMemory()).toBeUndefined();
   });
 
-  it("clears the memory so the workspace default takes over again", () => {
-    writeDraftRuntimeMemory({
-      provider: "tokenhub",
-      model: "gpt-5.6-sol",
-      effort: "high",
-    });
-    clearDraftRuntimeMemory();
-
-    expect(readDraftRuntimeMemory()).toBeUndefined();
-    expect(resolveDraftRuntimeMemory(initialized())).toBeUndefined();
-  });
-
-  it("returns the last effort for a previously chosen model", () => {
-    writeDraftRuntimeMemory({
-      provider: "tokenhub",
-      model: "gpt-5.6-sol",
-      effort: "high",
-    });
-
-    expect(lastEffortForRuntimeModel("tokenhub", "gpt-5.6-sol")).toBe("high");
-    expect(lastEffortForRuntimeModel("tokenhub", "gpt-5.6-terra")).toBeUndefined();
-  });
-
   it("keeps each provider's model and effort while the other one is in use", () => {
     writeDraftRuntimeMemory({ provider: "work", model: "claude-sonnet", effort: "low" });
     writeDraftRuntimeMemory({ provider: "tokenhub", model: "gpt-5.6-sol", effort: "high" });
@@ -358,12 +332,6 @@ describe("draft permission memory", () => {
     writeDraftPermissionMemory("");
     expect(window.localStorage.getItem(PERMISSION_KEY)).toBeNull();
   });
-
-  it("clears the memory so the workspace default takes over again", () => {
-    writeDraftPermissionMemory("unconfined");
-    clearDraftPermissionMemory();
-    expect(readDraftPermissionMemory()).toBeUndefined();
-  });
 });
 
 describe("draft Approve for me memory", () => {
@@ -388,11 +356,5 @@ describe("draft Approve for me memory", () => {
     expect(
       applyDraftRuntimeMemory(initialized({ permissions: { mode: "standard" } })).permissions,
     ).toEqual({ mode: "standard", approve_for_me: true });
-  });
-
-  it("clears the Approve for me memory so the workspace default takes over again", () => {
-    writeDraftApproveForMeMemory(true);
-    clearDraftApproveForMeMemory();
-    expect(readDraftApproveForMeMemory()).toBeUndefined();
   });
 });

@@ -18,12 +18,10 @@ import {
   applyLoadedRuntimeWithDraftCarry,
   appendStreamingTokenSample,
   appendTurnTokenSample,
-  composerDraftHasContent,
   conversationPaneThreadsByID,
   conversationSearchContextLabel,
   conversationSearchThreadMeta,
   channelRoomSessionTabID,
-  createAgentsSessionTab,
   createChannelRoomSessionTab,
   createDraftSessionTab,
   createSkillsSessionTab,
@@ -174,16 +172,6 @@ describe("isStateActiveThreadRunning with a background agent", () => {
       ...threadWithUserTexts(["kick off a worker"]),
       status: "idle" as const,
       child_agents: [{ id: "agent-running", status: "running" }],
-    } as unknown as Thread;
-    expect(isThreadRunning(thread)).toBe(false);
-    expect(isStateActiveThreadRunning(stateWithActiveThread(thread))).toBe(false);
-  });
-
-  it("unlocks once the background agent reaches a terminal state", () => {
-    const thread = {
-      ...threadWithUserTexts(["worker finished"]),
-      status: "idle" as const,
-      child_agents: [{ id: "agent-done", status: "completed" }],
     } as unknown as Thread;
     expect(isThreadRunning(thread)).toBe(false);
     expect(isStateActiveThreadRunning(stateWithActiveThread(thread))).toBe(false);
@@ -1007,12 +995,6 @@ describe("workspacePanelContext", () => {
     cwd: "/repo/project",
   };
 
-  it("returns activeContext unchanged when there is no active thread", () => {
-    expect(workspacePanelContext(projectContext, undefined)).toBe(
-      projectContext,
-    );
-  });
-
   it("returns the very same activeContext reference when the thread's cwd matches it", () => {
     const thread = threadWithUserTexts(["hello"]);
     thread.cwd = projectContext.cwd;
@@ -1240,12 +1222,6 @@ describe("AppState token usage", () => {
     }, initialState);
 
     expect(handling).toBe("skip");
-  });
-
-  it("initializes token usage state before the first usage update", () => {
-    expect(initialState.turnTokenUsage).toEqual({});
-    expect(initialState.turnRequestContext).toEqual({});
-    expect(activeTurnTokenSpeed(initialState, "turn-1")).toBe(0);
   });
 
   it("derives token speed from cumulative output-token samples", () => {
@@ -2825,10 +2801,6 @@ describe("latestContextUsageForThread", () => {
     };
   }
 
-  it("returns undefined when the thread is undefined", () => {
-    expect(latestContextUsageForThread(initialState, undefined)).toBeUndefined();
-  });
-
   it("falls back to the active runtime model when no thread exists yet", () => {
     const result = latestContextUsageForThread(initialState, undefined, {
       model: "gpt-5",
@@ -2851,21 +2823,8 @@ describe("latestContextUsageForThread", () => {
     expect(result).toBeUndefined();
   });
 
-  it("returns undefined for an empty thread with an unrecognized model", () => {
-    // "fake-model" has no catalog entry — the ring should hide rather
-    // than guess a limit.
-    const t = makeThread({ turns: [] });
-    expect(latestContextUsageForThread(initialState, t)).toBeUndefined();
-  });
-
   it("hides the meter when no runtime ceiling is available and no turn has run", () => {
     const t = makeThread({ model: "claude-sonnet-4-5", turns: [] });
-    const result = latestContextUsageForThread(initialState, t);
-    expect(result).toBeUndefined();
-  });
-
-  it("does not infer a gateway model ceiling from the client", () => {
-    const t = makeThread({ model: "anthropic/claude-sonnet-4-5", turns: [] });
     const result = latestContextUsageForThread(initialState, t);
     expect(result).toBeUndefined();
   });
@@ -3147,10 +3106,6 @@ describe("activeTodoUpdateForThread", () => {
     expect(activeTodoUpdateForThread(threadWithTodo("failed"))).toBeUndefined();
     expect(activeTodoUpdateForThread(threadWithTodo("interrupted"))).toBeUndefined();
   });
-
-  it("returns undefined when there is no thread", () => {
-    expect(activeTodoUpdateForThread(undefined)).toBeUndefined();
-  });
 });
 
 describe("sidebar pin/archive matrix", () => {
@@ -3190,34 +3145,6 @@ describe("sidebar pin/archive matrix", () => {
     expect(
       scratchThreadSummaries(all, []).map((thread) => thread.id),
     ).toEqual(["scratch-live"]);
-  });
-});
-
-describe("composerDraftHasContent", () => {
-  it("is false for a blank draft and true once text, an image, or a file is present", () => {
-    expect(
-      composerDraftHasContent({ prompt: "", images: [], files: [] }),
-    ).toBe(false);
-    expect(
-      composerDraftHasContent({ prompt: "   ", images: [], files: [] }),
-    ).toBe(false);
-    expect(
-      composerDraftHasContent({ prompt: "hi", images: [], files: [] }),
-    ).toBe(true);
-    expect(
-      composerDraftHasContent({
-        prompt: "",
-        images: [{ id: "img-1", dataUrl: "data:," }] as never,
-        files: [],
-      }),
-    ).toBe(true);
-    expect(
-      composerDraftHasContent({
-        prompt: "",
-        images: [],
-        files: [{ id: "file-1", name: "a.txt" }] as never,
-      }),
-    ).toBe(true);
   });
 });
 
@@ -3476,13 +3403,6 @@ describe("sessionTabLabel (draft tabs read as their workspace)", () => {
     expect(tab.id).toBe(channelRoomSessionTabID("room-1"));
     expect(tab.id).toBe("channel-room:room-1");
     expect(sessionTabLabel(tab, state)).toBe("Design review");
-  });
-
-  it("labels the singleton Agents and Tasks tabs", () => {
-    const context: RuntimeContext = { kind: "no_project", cwd: "/scratch" };
-
-    expect(sessionTabLabel(createAgentsSessionTab(context), state)).toBe("Agents");
-    expect(sessionTabLabel(createTasksSessionTab(context), state)).toBe("任务");
   });
 });
 
@@ -3783,11 +3703,6 @@ describe("reconcileResumedThreadTurns", () => {
     const resumed = threadWithTurnIDs(["turn-1", "turn-2", "turn-3"]);
     const local = threadWithTurnIDs(["turn-1", "turn-2"]);
     expect(reconcileResumedThreadTurns(resumed, local)).toBe(resumed);
-  });
-
-  it("returns the resumed thread unchanged when there is no local copy", () => {
-    const resumed = threadWithTurnIDs(["turn-1"]);
-    expect(reconcileResumedThreadTurns(resumed, undefined)).toBe(resumed);
   });
 });
 

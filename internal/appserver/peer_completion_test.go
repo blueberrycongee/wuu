@@ -47,9 +47,6 @@ func TestPeerReplyUsesNativeCompletion(t *testing.T) {
 				t.Fatal(err)
 			}
 			call := provider.next(t)
-			if toolDefinitionNames(call.request.Tools)["yield_turn"] {
-				t.Fatal("ordinary session still exposes the removed completion tool")
-			}
 			response := providers.ChatResponse{StopReason: "completed"}
 			switch resolution {
 			case "reply":

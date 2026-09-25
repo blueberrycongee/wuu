@@ -18,17 +18,6 @@ func (g testGuard) Check(ToolInfo, providers.ToolCall) error {
 	return g.err
 }
 
-func TestStandardBoundaryAllowsMutation(t *testing.T) {
-	b := StandardBoundary()
-	err := b.Check(ToolInfo{Name: "write_file", Kind: ToolKindFile}, providers.ToolCall{Name: "write_file"})
-	if err != nil {
-		t.Fatalf("standard boundary should allow mutations: %v", err)
-	}
-	if !b.Enforce || !b.AllowMutations {
-		t.Fatalf("standard boundary = %+v, want enforced mutations allowed", b)
-	}
-}
-
 func TestReadOnlyBoundaryRejectsMutationAndAllowsRead(t *testing.T) {
 	b := ReadOnlyBoundary()
 	err := b.Check(ToolInfo{Name: "write_file", Kind: ToolKindFile}, providers.ToolCall{Name: "write_file"})

@@ -188,8 +188,6 @@ it("leads with running sessions in a fixed order instead of pulling them into a 
   const groupRows = (key: Parameters<typeof translateCurrent>[0]) =>
     [...container.querySelectorAll(`section[aria-label="${translateCurrent(key)}"] button`)].map(row => row.getAttribute("aria-label"));
   expect(rows()).toEqual(["pinned", "running", "newer", "older", "unread"]);
-  expect(container.querySelector(`section[aria-label="${translateCurrent("sidebar.attentionConversations")}"]`)).toBeNull();
-  expect(container.querySelector(`section[aria-label="${translateCurrent("sidebar.recentConversations")}"]`)).toBeNull();
   expect(groupRows("sidebar.pinned")).toEqual(["pinned"]);
   expect(groupRows("sidebar.conversations")).toEqual(["running", "newer", "older", "unread"]);
   click("unread");

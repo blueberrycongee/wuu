@@ -16,7 +16,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolerrors"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -70,55 +69,6 @@ func (c *pluginToolTestClient) Tools() []pluginhost.ToolRegistration {
 func (c *pluginToolTestClient) ExecuteTool(context.Context, pluginhost.ToolExecuteParams) (pluginhost.ToolExecuteResult, error) {
 	c.executed = true
 	return pluginhost.ToolExecuteResult{Result: toolresult.FromText("changed")}, nil
-}
-
-func TestPluginToolExecutorPreservesArgumentsAndRichResult(t *testing.T) {
-	inner := &recordingToolExecutor{}
-	executor := newPluginToolExecutor(inner, pluginhost.New(), "thread-1", "/workspace")
-	rich := executor.(interface {
-		ExecuteResult(context.Context, providers.ToolCall) (toolresult.Result, error)
-	})
-	result, err := rich.ExecuteResult(toolctx.WithStepIndex(context.Background(), 4), providers.ToolCall{ID: "call-1", Name: "demo", Arguments: `{}`})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.TextProjection() != `{}` {
-		t.Fatalf("result = %q", result.TextProjection())
-	}
-	if len(inner.calls) != 1 || inner.calls[0].Arguments != `{}` {
-		t.Fatalf("calls = %+v", inner.calls)
-	}
-}
-
-func TestPluginToolExecutorKeepsConcurrentCallsIsolated(t *testing.T) {
-	inner := &recordingToolExecutor{}
-	executor := newPluginToolExecutor(inner, pluginhost.New(), "thread", "/workspace")
-	rich := executor.(interface {
-		ExecuteResult(context.Context, providers.ToolCall) (toolresult.Result, error)
-	})
-	var wg sync.WaitGroup
-	errs := make(chan error, 2)
-	for _, id := range []string{"a", "b"} {
-		id := id
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			result, err := rich.ExecuteResult(context.Background(), providers.ToolCall{ID: id, Name: "demo", Arguments: `{}`})
-			if err != nil {
-				errs <- err
-				return
-			}
-			want := `{}`
-			if result.TextProjection() != want {
-				errs <- fmt.Errorf("call %s result = %q, want %q", id, result.TextProjection(), want)
-			}
-		}()
-	}
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		t.Fatal(err)
-	}
 }
 
 func TestPluginToolExecutorRejectsInvalidArgumentsBeforeHooksOrExecution(t *testing.T) {

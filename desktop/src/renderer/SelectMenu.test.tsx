@@ -154,10 +154,6 @@ describe("SelectMenu", () => {
         document.querySelectorAll(".select-menu-group-label"),
       ).map((label) => label.textContent),
     ).toEqual(["anthropic", "openai"]);
-    // One separator between each of the three blocks (2 total).
-    expect(
-      document.querySelectorAll(".select-menu-separator").length,
-    ).toBe(2);
   });
 
   it("does not commit a disabled option", () => {

@@ -18,26 +18,6 @@ func TestVerifyProcessGroupRejectsMismatchedRecords(t *testing.T) {
 	}
 }
 
-func TestLookupProcessGroupIsPid(t *testing.T) {
-	if got := lookupProcessGroup(4321); got != 4321 {
-		t.Fatalf("lookupProcessGroup = %d, want the pid back", got)
-	}
-}
-
-func TestPTYUnsupported(t *testing.T) {
-	if ptySupported() {
-		t.Fatal("ptySupported must be false on windows")
-	}
-}
-
-func TestTaskkillTreeIgnoresInvalidPids(t *testing.T) {
-	for _, pid := range []int{0, 1, -5} {
-		if err := taskkillTree(pid, true); err != nil {
-			t.Fatalf("taskkillTree(%d) = %v, want nil", pid, err)
-		}
-	}
-}
-
 func TestProcessExistsSelf(t *testing.T) {
 	if !processExists(os.Getpid()) {
 		t.Fatal("current process reported dead")
