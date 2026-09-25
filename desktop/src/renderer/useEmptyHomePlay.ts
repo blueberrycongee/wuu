@@ -46,6 +46,9 @@ export function useEmptyHomePlay(card: HTMLElement | null): void {
       arm();
     };
     const fire = () => {
+      // This timer has fired. Input that interrupts play must arm a new
+      // idle wait instead of relying on the expired deadline.
+      timerAt = Infinity;
       if (performance.now() < dueAt()) {
         arm();
         return;

@@ -6,12 +6,20 @@ import { EmptyHomeOverview } from "./EmptyHomeOverview";
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
+const animateDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "animate");
+const hitTestDescriptor = Object.getOwnPropertyDescriptor(document, "elementFromPoint");
 
 afterEach(() => {
   act(() => root?.unmount());
   root = undefined;
   container?.remove();
   container = undefined;
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+  if (animateDescriptor) Object.defineProperty(Element.prototype, "animate", animateDescriptor);
+  else Reflect.deleteProperty(Element.prototype, "animate");
+  if (hitTestDescriptor) Object.defineProperty(document, "elementFromPoint", hitTestDescriptor);
+  else Reflect.deleteProperty(document, "elementFromPoint");
   delete (window as unknown as { wuu?: unknown }).wuu;
 });
 
@@ -54,6 +62,40 @@ function storeWithoutUsage(): UsageOverviewResponse {
 }
 
 describe("EmptyHomeOverview", () => {
+  it("resumes idle play after input interrupts an animation", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    installWuuStub({ getUsageOverview: vi.fn().mockResolvedValue(storeWithoutUsage()) });
+    const view = await renderOverview();
+    view.className = "empty-home";
+    const mascot = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    mascot.classList.add("empty-home-mascot");
+    mascot.innerHTML = '<g class="mo-eyes"></g>';
+    view.prepend(mascot);
+
+    // JSDOM has no layout or Web Animations. Keep animations pending so
+    // input, rather than their natural completion, ends the first play.
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 10, 10));
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => view.querySelector(".empty-home-heatmap-week")?.lastElementChild,
+    });
+    const animate = vi.fn(() => ({
+      finished: new Promise(() => undefined),
+      cancel: vi.fn(),
+      pause: vi.fn(),
+    }));
+    Object.defineProperty(Element.prototype, "animate", { configurable: true, value: animate });
+
+    act(() => vi.advanceTimersByTime(20_000));
+    expect(animate).toHaveBeenCalled();
+    act(() => window.dispatchEvent(new Event("pointermove")));
+    const callsAfterInput = animate.mock.calls.length;
+    act(() => vi.advanceTimersByTime(19_000));
+    expect(animate).toHaveBeenCalledTimes(callsAfterInput);
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(animate.mock.calls.length).toBeGreaterThan(callsAfterInput);
+  });
+
   it("shows nothing instead of zero usage when the host cannot answer", async () => {
     installWuuStub({
       getUsageOverview: vi.fn().mockRejectedValue(new Error("unknown method usage/overview")),
