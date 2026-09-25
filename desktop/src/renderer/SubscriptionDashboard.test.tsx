@@ -26,6 +26,7 @@ const inventory: EngineListResult = {
     {
       id: "codex",
       display_name: "Codex",
+      capabilities: ["account-quota"],
       enabled: false,
       binary_ok: true,
       models: [{ id: "gpt-5.4", display_name: "GPT-5.4" }],
@@ -70,11 +71,11 @@ afterEach(() => {
   clearDraftEngineMemory();
 });
 
-async function render(onSelectBuiltinModel = vi.fn()) {
+async function render(onSelectBuiltinModel = vi.fn(), parentInventory = inventory) {
   await act(async () => {
     root.render(
       <SubscriptionDashboard
-        inventory={inventory}
+        inventory={parentInventory}
         providers={providers}
         onSelectBuiltinModel={onSelectBuiltinModel}
       />,
@@ -121,6 +122,11 @@ describe("SubscriptionDashboard", () => {
     expect([...meters].map((meter) => meter.value)).toEqual([70, 0]);
     expect(container.querySelector('[data-testid="subscription-engine-codex"] meter')).toBeNull();
     expect(window.wuu.listEngines).toHaveBeenCalledWith({ include_quota: true });
+
+    // A manual refresh keeps the loaded allowance on screen.
+    vi.mocked(window.wuu.listEngines).mockReturnValueOnce(new Promise(() => {}));
+    await act(async () => { container.querySelector<HTMLButtonElement>("header button")!.click(); });
+    expect(container.querySelectorAll("meter")).toHaveLength(2);
   });
 
   it("does not present a reset or old snapshot as current remaining allowance", async () => {
@@ -132,14 +138,46 @@ describe("SubscriptionDashboard", () => {
     expect(container.querySelector("meter")).toBeNull();
   });
 
-  it("recovers from refresh failure without losing model controls", async () => {
-    vi.mocked(window.wuu.listEngines).mockRejectedValueOnce(new Error("offline"));
-    await render();
+  it("reserves quota only for engines that report it and recovers from refresh failure", async () => {
+    const engines = inventory.engines.map((engine) => engine.id === "codex" ? { ...engine, enabled: true } : engine);
+    let fail!: (error: Error) => void;
+    vi.mocked(window.wuu.listEngines).mockReturnValueOnce(new Promise((_, reject) => { fail = reject; }));
+    await render(vi.fn(), { engines });
+    const codex = container.querySelector('[data-testid="subscription-engine-codex"]')!;
+    const placeholder = ':scope > [aria-hidden="true"]';
+    expect(codex.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]')?.disabled).toBe(false);
+    expect(codex.querySelector(placeholder)).not.toBeNull();
+    // Runnable engines without an allowance and built-in subscriptions never
+    // receive quota, so they reserve nothing that would later collapse.
+    expect(container.querySelector('[data-testid="subscription-engine-grok"]')!.querySelector(placeholder)).toBeNull();
+    expect(container.querySelector('[data-testid="subscription-builtin-xai-subscription"]')!.querySelector(placeholder)).toBeNull();
+
+    await act(async () => fail(new Error("offline")));
     expect(container.querySelector('[role="alert"]')?.textContent).toBeTruthy();
     expect(container.textContent).not.toContain("offline");
-    expect(container.querySelector('button[aria-haspopup="menu"]')).not.toBeNull();
+    expect(codex.querySelector(placeholder)).toBeNull();
+    expect(codex.querySelector('button[aria-haspopup="menu"]')).not.toBeNull();
+
+    vi.mocked(window.wuu.listEngines).mockResolvedValueOnce({ engines: engines.map((engine) => engine.id === "codex" ? {
+      ...engine, quota: { status: "available", checked_at: new Date().toISOString(), windows: [{ id: "short", used_percent: 40 }] },
+    } : engine) });
     await act(async () => { container.querySelector<HTMLButtonElement>("header button")!.click(); });
     expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(codex.querySelector("meter")?.value).toBe(60);
+    expect(codex.querySelector(placeholder)).toBeNull();
+  });
+
+  it("reports detection until the first inventory arrives and stops when it fails", async () => {
+    let fail!: (error: Error) => void;
+    vi.mocked(window.wuu.listEngines).mockReturnValueOnce(new Promise((_, reject) => { fail = reject; }));
+    await act(async () => {
+      root.render(<SubscriptionDashboard onSelectBuiltinModel={vi.fn()} />);
+    });
+    expect(container.querySelector('[role="status"][aria-busy="true"]')).not.toBeNull();
+
+    await act(async () => fail(new Error("offline")));
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(container.querySelector('[role="alert"]')?.textContent).toBeTruthy();
   });
 
   it("refreshes the accepted catalog after a failed discovery", async () => {

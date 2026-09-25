@@ -17,6 +17,7 @@
     "lab:mascot": "vite dev/mascot --host 127.0.0.1 --port 5177",
     "build:cua-mac": "node scripts/build-cua-mac.cjs",
     "icon:generate": "bun scripts/generate-icon.ts",
+    "dmg-background:generate": "electron scripts/generate-dmg-background.cjs",
     "build:core": "node scripts/build-core.cjs",
     "build:core:win": "node scripts/build-core.cjs --platform=win32",
     "build": "node scripts/build-web.cjs && electron-vite build",
@@ -120,7 +121,23 @@
       }
     },
     "dmg": {
-      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
+      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+      "background": "build/dmg-background.png",
+      "iconSize": 128,
+      "iconTextSize": 14,
+      "contents": [
+        {
+          "x": 170,
+          "y": 262,
+          "type": "file"
+        },
+        {
+          "x": 530,
+          "y": 262,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     },
     "win": {
       "icon": "build/icon.ico",

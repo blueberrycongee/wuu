@@ -28,6 +28,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- The macOS DMG installer window has a Retina-ready background with English
+  and Chinese drag-to-install instructions: a slingshot beside the app fires
+  Wuu along a dotted arc into the Applications folder.
+
 - Collaboration now centers on project-bound DMs, with visible task controls,
   managed-session takeover and return, project and identity memory editing, and
   persistent conversation timers. The composer's project control chooses where a
