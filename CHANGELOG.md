@@ -124,6 +124,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   tasks, without the new app-server client being evicted before its request
   starts. Idle clients remain eligible for normal reclamation.
 
+- Safe mode stops approved desktop plugin modules from loading or activating,
+  while keeping the extension inventory available for recovery and management.
+
 - Remote Web clients reconnect when the relay stops responding during authentication,
   and cancel pending authentication immediately when stopped or suspended.
 
