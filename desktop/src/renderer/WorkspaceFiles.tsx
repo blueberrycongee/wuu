@@ -134,7 +134,7 @@ export function WorkspaceFileTree({
   }, [open, workspaceRoot, locale]);
 
   if (!workspaceRoot) {
-    return <WorkspacePanelEmpty title={t("workspace.files.noProject")} hint={t("workspace.files.noProjectDescription")} />;
+    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} hint={t("workspace.files.noWorkspaceDescription")} />;
   }
 
   if (loading && !directories[""]) {
@@ -720,8 +720,8 @@ export function WorkspaceFilePreview({
     return (
       <div className="workspace-main-empty">
         <FolderX size={36} />
-        <strong>{t("workspace.files.noProject")}</strong>
-        {!isTouchWebShell() && <span>{t("workspace.files.previewNoProjectDescription")}</span>}
+        <strong>{t("workspace.files.noWorkspace")}</strong>
+        {!isTouchWebShell() && <span>{t("workspace.files.previewNoWorkspaceDescription")}</span>}
       </div>
     );
   }

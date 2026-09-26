@@ -1628,7 +1628,7 @@ describe("SettingsView archive page", () => {
     });
   });
 
-  // ArchivedSessionView 的结构子集：渲染层读取标题、时间和归档时所属项目。
+  // ArchivedSessionView 的结构子集：渲染层读取标题、时间和归档时所属工作区。
   // 这里直接返回对象字面量，结构上兼容 SettingsView 里的 ArchivedSessionView，
   // 避免引入 ThreadSummary（它要求 turns/turn_count 等计算字段，测试场景下冗余）。
   function archivedThread(
@@ -1706,7 +1706,7 @@ describe("SettingsView archive page", () => {
     expect(groups[1]?.textContent).toContain("1 个会话");
   });
 
-  it("filters archived threads by project", () => {
+  it("filters archived threads by workspace", () => {
     renderSettings({
       initialized: baseInitialized(),
       initialPage: "archive",
@@ -1725,7 +1725,7 @@ describe("SettingsView archive page", () => {
     });
 
     const trigger = container.querySelector<HTMLButtonElement>(
-      '[aria-label="按项目筛选"]',
+      '[aria-label="按工作区筛选"]',
     );
     act(() => {
       trigger?.click();

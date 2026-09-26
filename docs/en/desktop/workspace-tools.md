@@ -4,7 +4,7 @@ Use the workspace panels to inspect what actually happened during a task. A conv
 
 ## Files
 
-Open **Files** or enter `/files` to browse the project. Select a file to view supported text, code, images, or documents. This view follows the current file, not its content at the time of an earlier message.
+Open **Files** or enter `/files` to browse the workspace. Select a file to view supported text, code, images, or documents. This view follows the current file, not its content at the time of an earlier message.
 
 ### Agent file search
 

@@ -11,34 +11,34 @@ import { useI18n } from "./i18n";
 import "./styles/mobile-sidebar.css";
 
 type Props = Pick<ComponentProps<typeof AppSidebar>,
-  "state" | "sidebarProjects" | "activeThreadID" | "pendingThreadID" |
-  "projectThreadsByProjectID" | "loadingProjectThreadIDs" | "expandedSidebarSectionIDs" |
-  "onToggleSidebarSectionCollapsed" | "onStartNewThreadForProject" | "onSelectProjectThread" |
+  "state" | "sidebarWorkspaces" | "activeThreadID" | "pendingThreadID" |
+  "workspaceThreadsByWorkspaceID" | "loadingWorkspaceThreadIDs" | "expandedSidebarSectionIDs" |
+  "onToggleSidebarSectionCollapsed" | "onStartNewThreadInWorkspace" | "onSelectWorkspaceThread" |
   "onTogglePinned" | "onArchiveThread" | "onRenameThread" | "onDeleteThread" |
-  "onRemoveProject" | "onRelocateProject" | "onSelectProjectWorkspace" |
-  "onCreateProject" | "onOpenProjectFolder" | "onNavigateAway"
+  "onRemoveWorkspace" | "onRelocateWorkspace" | "onFocusWorkspace" |
+  "onCreateWorkspace" | "onOpenWorkspaceFolder" | "onNavigateAway"
 > & { visible: boolean; commands: readonly NavigationSourceNode[] };
 
 export function MobileSidebar(props: Props): JSX.Element {
   const { t } = useI18n();
   const phoneNavigation = useContext(PhoneNavigationContext);
-  const activeProject = props.sidebarProjects.find(project =>
-    props.projectThreadsByProjectID[project.id]?.some(thread => thread.id === props.activeThreadID),
+  const activeWorkspace = props.sidebarWorkspaces.find(project =>
+    props.workspaceThreadsByWorkspaceID[project.id]?.some(thread => thread.id === props.activeThreadID),
   )?.id ?? props.state.activeProjectId ?? SCRATCH_PSEUDO_PROJECT_ID;
-  const [projectID, setProjectID] = useState(activeProject);
-  const [page, setPage] = useState<"threads" | "projects" | "more">("threads");
+  const [workspaceID, setWorkspaceID] = useState(activeWorkspace);
+  const [page, setPage] = useState<"threads" | "workspaces" | "more">("threads");
   const [actionsID, setActionsID] = useState<string>();
   const [actionPage, setActionPage] = useState<"menu" | "rename" | "delete">("menu");
   const [renameTitle, setRenameTitle] = useState("");
   const heading = useRef<HTMLButtonElement>(null);
   const actionTrigger = useRef<HTMLButtonElement | undefined>(undefined);
   const wasVisible = useRef(false);
-  const project = props.sidebarProjects.find(item => item.id === projectID)
-    ?? props.sidebarProjects.find(item => item.id === SCRATCH_PSEUDO_PROJECT_ID);
+  const project = props.sidebarWorkspaces.find(item => item.id === workspaceID)
+    ?? props.sidebarWorkspaces.find(item => item.id === SCRATCH_PSEUDO_PROJECT_ID);
   const selectedID = project?.id ?? SCRATCH_PSEUDO_PROJECT_ID;
-  const threads = props.projectThreadsByProjectID[selectedID] ?? [];
+  const threads = props.workspaceThreadsByWorkspaceID[selectedID] ?? [];
   const actionThread = threads.find(thread => thread.id === actionsID);
-  const loading = props.loadingProjectThreadIDs?.has(selectedID);
+  const loading = props.loadingWorkspaceThreadIDs?.has(selectedID);
   // Sessions that are still running lead their group in a fixed order, then
   // settled sessions follow by recency — the rule the desktop workspace
   // sections use. Item-level updates while a session streams must not move its
@@ -73,12 +73,12 @@ export function MobileSidebar(props: Props): JSX.Element {
 
   useEffect(() => {
     if (props.visible && !wasVisible.current) {
-      setProjectID(activeProject);
+      setWorkspaceID(activeWorkspace);
       setPage("threads");
     }
     if (!props.visible) setActionsID(undefined);
     wasVisible.current = props.visible;
-  }, [props.visible, activeProject]);
+  }, [props.visible, activeWorkspace]);
 
   useEffect(() => {
     if (props.visible && !props.expandedSidebarSectionIDs.has(selectedID)) {
@@ -105,12 +105,12 @@ export function MobileSidebar(props: Props): JSX.Element {
     <div className="sidebar-content">
       <header className="mobile-sidebar-header">
         <button ref={heading} type="button" className="mobile-sidebar-project"
-          aria-label={page === "threads" ? t("sidebar.switchProject") : t("common.back")}
-          aria-expanded={page === "projects"}
-          onClick={() => openPage(page === "threads" ? "projects" : "threads")}>
+          aria-label={page === "threads" ? t("sidebar.switchWorkspace") : t("common.back")}
+          aria-expanded={page === "workspaces"}
+          onClick={() => openPage(page === "threads" ? "workspaces" : "threads")}>
           {page !== "threads" ? <ArrowLeft /> : null}
           <span>{page === "threads" ? project?.name ?? t("sidebar.conversations")
-            : t(page === "projects" ? "sidebar.switchProject" : "sidebar.more")}</span>
+            : t(page === "workspaces" ? "sidebar.switchWorkspace" : "sidebar.more")}</span>
           {page === "threads" ? <ChevronDown /> : null}
         </button>
       </header>
@@ -118,7 +118,7 @@ export function MobileSidebar(props: Props): JSX.Element {
       {page === "threads" ? <>
         <div className="mobile-sidebar-toolbar">
           <button type="button" className="mobile-sidebar-new" disabled={!props.state.activeContext || project?.missing}
-            onClick={() => props.onStartNewThreadForProject(selectedID)}>
+            onClick={() => props.onStartNewThreadInWorkspace(selectedID)}>
             <SquarePen />{t("sidebar.newConversation")}
           </button>
         </div>
@@ -137,7 +137,7 @@ export function MobileSidebar(props: Props): JSX.Element {
                 running={running}
                 unread={isThreadUnread(thread, props.state.lastViewedTurnByThreadID[thread.id])}
                 statusLabel={t(running ? "sidebar.runningConversations" : "sidebar.unreadConversations")}
-                onSelect={() => props.onSelectProjectThread(selectedID, thread.id)}
+                onSelect={() => props.onSelectWorkspaceThread(selectedID, thread.id)}
                 onActions={button => {
                   actionTrigger.current = button;
                   setActionsID(thread.id);
@@ -151,17 +151,17 @@ export function MobileSidebar(props: Props): JSX.Element {
             {t(loading ? "common.loadingEllipsis" : "sidebar.noConversations")}
           </p> : null}
         </div>
-      </> : page === "projects" ? <div className="mobile-sidebar-scroll" data-scroll-fade="" aria-label={t("sidebar.switchProject")}>
-        {props.sidebarProjects.map(item => <button key={item.id} type="button" className="mobile-sidebar-choice mobile-sidebar-project-choice"
+      </> : page === "workspaces" ? <div className="mobile-sidebar-scroll" data-scroll-fade="" aria-label={t("sidebar.switchWorkspace")}>
+        {props.sidebarWorkspaces.map(item => <button key={item.id} type="button" className="mobile-sidebar-choice mobile-sidebar-project-choice"
           aria-current={item.id === selectedID ? "true" : undefined}
-          onClick={() => { setProjectID(item.id); openPage("threads"); }}>
+          onClick={() => { setWorkspaceID(item.id); openPage("threads"); }}>
           {item.id === SCRATCH_PSEUDO_PROJECT_ID ? <MessageCircle /> : <Folder />}
           <span><strong>{item.name}</strong>{item.path ? <small title={item.path}>{item.path}</small> : null}</span>
           {item.id === selectedID ? <Check /> : null}
         </button>)}
         <div className="mobile-sidebar-secondary">
-          <button type="button" className="mobile-sidebar-choice" onClick={props.onCreateProject}><FolderPlus />{t("sidebar.newBlankProject")}</button>
-          <button type="button" className="mobile-sidebar-choice" onClick={props.onOpenProjectFolder}><FolderOpen />{t("sidebar.useExistingFolder")}</button>
+          <button type="button" className="mobile-sidebar-choice" onClick={props.onCreateWorkspace}><FolderPlus />{t("sidebar.newBlankWorkspace")}</button>
+          <button type="button" className="mobile-sidebar-choice" onClick={props.onOpenWorkspaceFolder}><FolderOpen />{t("sidebar.useExistingFolder")}</button>
         </div>
       </div> : <nav className="mobile-sidebar-scroll" data-scroll-fade="" aria-label={t("sidebar.mainNavigation")}>
         {props.commands.filter(node => node.kind === "command" && node.id !== "command:new-conversation"
@@ -170,10 +170,10 @@ export function MobileSidebar(props: Props): JSX.Element {
             aria-current={node.active ? "page" : undefined} onClick={() => activateCommand(node)}>{node.label}</button>)}
         {project && selectedID !== SCRATCH_PSEUDO_PROJECT_ID ? <section className="mobile-sidebar-secondary" aria-label={project.name}>
           <h3>{project.name}</h3>
-          {props.onSelectProjectWorkspace ? <button type="button" className="mobile-sidebar-choice" disabled={project.missing}
-            onClick={() => props.onSelectProjectWorkspace?.(selectedID)}>{t("threadSidebar.openWorkspace", { name: project.name })}</button> : null}
-          <button type="button" className="mobile-sidebar-choice" onClick={() => props.onRelocateProject(selectedID)}>{t("threadSidebar.relocate")}</button>
-          <button type="button" className="mobile-sidebar-choice" onClick={() => props.onRemoveProject(selectedID)}>{t("threadSidebar.removeWorkspace")}</button>
+          {props.onFocusWorkspace ? <button type="button" className="mobile-sidebar-choice" disabled={project.missing}
+            onClick={() => props.onFocusWorkspace?.(selectedID)}>{t("threadSidebar.openWorkspace", { name: project.name })}</button> : null}
+          <button type="button" className="mobile-sidebar-choice" onClick={() => props.onRelocateWorkspace(selectedID)}>{t("threadSidebar.relocate")}</button>
+          <button type="button" className="mobile-sidebar-choice" onClick={() => props.onRemoveWorkspace(selectedID)}>{t("threadSidebar.removeWorkspace")}</button>
         </section> : null}
       </nav>}
 

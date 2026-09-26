@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ThreadContextMenu } from "./ThreadContextMenu";
-import { PinnedThreadList, ProjectGroup, ProjectList } from "./ThreadSidebar";
+import { PinnedThreadList, WorkspaceGroup, WorkspaceList } from "./ThreadSidebar";
 import type { DesktopProject, Thread } from "../shared/protocol";
 import { SCRATCH_PSEUDO_PROJECT_ID, summarizeThreadsForSidebar } from "./AppState";
 import { setActiveLocale } from "./i18n";
@@ -77,8 +77,8 @@ describe("ThreadContextMenu", () => {
   });
 });
 
-describe("ProjectList", () => {
-  function makeProject(id: string, name: string, path: string): DesktopProject {
+describe("WorkspaceList", () => {
+  function makeWorkspace(id: string, name: string, path: string): DesktopProject {
     return {
       id,
       name,
@@ -88,7 +88,7 @@ describe("ProjectList", () => {
     };
   }
 
-  function makeProjectThread(
+  function makeWorkspaceThread(
     id: string,
     cwd: string,
     title: string,
@@ -121,28 +121,28 @@ describe("ProjectList", () => {
 
   it("can show session lists for multiple expanded projects", () => {
     const projects = [
-      makeProject("project-1", "wuu", "/repo/wuu"),
-      makeProject("project-2", "interview", "/repo/interview"),
+      makeWorkspace("project-1", "wuu", "/repo/wuu"),
+      makeWorkspace("project-2", "interview", "/repo/interview"),
     ];
     act(() => {
       root = createRoot(container);
       root.render(
-        <ProjectList
+        <WorkspaceList
           projects={projects}
           activeID="project-1"
-          pendingProjectID={undefined}
+          pendingWorkspaceID={undefined}
           expandedSidebarSectionIDs={new Set(["project-1", "project-2"])}
-          threadsByProjectID={{
+          threadsByWorkspaceID={{
             "project-1": summarizeThreadsForSidebar([
-              makeProjectThread("thread-wuu", "/repo/wuu", "Wuu session"),
+              makeWorkspaceThread("thread-wuu", "/repo/wuu", "Wuu session"),
             ]),
             "project-2": summarizeThreadsForSidebar([
-              makeProjectThread(
+              makeWorkspaceThread(
                 "thread-wrong-project",
                 "/repo/wuu",
                 "Wrong duplicate",
               ),
-              makeProjectThread(
+              makeWorkspaceThread(
                 "thread-interview",
                 "/repo/interview",
                 "Interview session",
@@ -153,7 +153,7 @@ describe("ProjectList", () => {
           pendingThreadID={undefined}
           
           lastViewedTurnByThreadID={{}}
-          scratchPseudoProjectID={SCRATCH_PSEUDO_PROJECT_ID}
+          scratchPseudoWorkspaceID={SCRATCH_PSEUDO_PROJECT_ID}
           scratchPseudoActive={false}
           onToggleSidebarSectionCollapsed={() => {}}
           onStartNewThread={() => {}}
@@ -166,9 +166,9 @@ describe("ProjectList", () => {
       );
     });
 
-    const projectRows = container.querySelectorAll(".project-row");
-    expect(projectRows[0]?.getAttribute("aria-expanded")).toBe("true");
-    expect(projectRows[1]?.getAttribute("aria-expanded")).toBe("true");
+    const workspaceRows = container.querySelectorAll(".project-row");
+    expect(workspaceRows[0]?.getAttribute("aria-expanded")).toBe("true");
+    expect(workspaceRows[1]?.getAttribute("aria-expanded")).toBe("true");
     expect(container.textContent).toContain("Wuu session");
     expect(container.textContent).toContain("Interview session");
     expect(container.textContent).not.toContain("Wrong duplicate");
@@ -176,7 +176,7 @@ describe("ProjectList", () => {
 
   it("keeps the parent thread spinning while a direct child agent runs", () => {
     const [thread] = summarizeThreadsForSidebar([
-      makeProjectThread("group-1", "/repo/wuu", "Group work", [], {
+      makeWorkspaceThread("group-1", "/repo/wuu", "Group work", [], {
         child_agents: [
           {
             id: "agent-running",
@@ -216,7 +216,7 @@ describe("ProjectList", () => {
 
   it("opens the rename dialog from a double-click and saves through the sidebar owner", () => {
     const [thread] = summarizeThreadsForSidebar([
-      makeProjectThread("thread-rename", "/repo/wuu", "Old title"),
+      makeWorkspaceThread("thread-rename", "/repo/wuu", "Old title"),
     ]);
     const onRename = vi.fn();
 
@@ -284,7 +284,7 @@ describe("ProjectList", () => {
 
   it("opens the same rename dialog from the context menu instead of window.prompt", () => {
     const [thread] = summarizeThreadsForSidebar([
-      makeProjectThread("thread-rename", "/repo/wuu", "Old title"),
+      makeWorkspaceThread("thread-rename", "/repo/wuu", "Old title"),
     ]);
     const onRename = vi.fn();
     const originalPrompt = window.prompt;
@@ -367,30 +367,30 @@ describe("ProjectList", () => {
     // sections here are active yet absent from the expanded set, so both
     // render collapsed.
     const projects = [
-      makeProject(SCRATCH_PSEUDO_PROJECT_ID, "对话", ""),
-      makeProject("project-1", "wuu", "/repo/wuu"),
+      makeWorkspace(SCRATCH_PSEUDO_PROJECT_ID, "对话", ""),
+      makeWorkspace("project-1", "wuu", "/repo/wuu"),
     ];
     act(() => {
       root = createRoot(container);
       root.render(
-        <ProjectList
+        <WorkspaceList
           projects={projects}
           activeID="project-1"
-          pendingProjectID={undefined}
+          pendingWorkspaceID={undefined}
           expandedSidebarSectionIDs={new Set()}
-          threadsByProjectID={{
+          threadsByWorkspaceID={{
             [SCRATCH_PSEUDO_PROJECT_ID]: summarizeThreadsForSidebar([
-              makeProjectThread("thread-scratch", "/tmp/scratch", "Scratch talk"),
+              makeWorkspaceThread("thread-scratch", "/tmp/scratch", "Scratch talk"),
             ]),
             "project-1": summarizeThreadsForSidebar([
-              makeProjectThread("thread-wuu", "/repo/wuu", "Wuu session"),
+              makeWorkspaceThread("thread-wuu", "/repo/wuu", "Wuu session"),
             ]),
           }}
           activeThreadID="thread-wuu"
           pendingThreadID={undefined}
           
           lastViewedTurnByThreadID={{}}
-          scratchPseudoProjectID={SCRATCH_PSEUDO_PROJECT_ID}
+          scratchPseudoWorkspaceID={SCRATCH_PSEUDO_PROJECT_ID}
           scratchPseudoActive={true}
           onToggleSidebarSectionCollapsed={() => {}}
           onStartNewThread={() => {}}
@@ -411,28 +411,28 @@ describe("ProjectList", () => {
   });
 
   it("keeps pinned sessions out of project lists", () => {
-    const projects = [makeProject("project-1", "wuu", "/repo/wuu")];
+    const projects = [makeWorkspace("project-1", "wuu", "/repo/wuu")];
     act(() => {
       root = createRoot(container);
       root.render(
-        <ProjectList
+        <WorkspaceList
           projects={projects}
           activeID="project-1"
-          pendingProjectID={undefined}
+          pendingWorkspaceID={undefined}
           expandedSidebarSectionIDs={new Set(["project-1"])}
-          threadsByProjectID={{
+          threadsByWorkspaceID={{
             "project-1": summarizeThreadsForSidebar([
-              makeProjectThread("thread-pinned", "/repo/wuu", "Pinned session", [], {
+              makeWorkspaceThread("thread-pinned", "/repo/wuu", "Pinned session", [], {
                 pinned: true,
               }),
-              makeProjectThread("thread-normal", "/repo/wuu", "Normal session"),
+              makeWorkspaceThread("thread-normal", "/repo/wuu", "Normal session"),
             ]),
           }}
           activeThreadID={undefined}
           pendingThreadID={undefined}
           
           lastViewedTurnByThreadID={{}}
-          scratchPseudoProjectID={SCRATCH_PSEUDO_PROJECT_ID}
+          scratchPseudoWorkspaceID={SCRATCH_PSEUDO_PROJECT_ID}
           scratchPseudoActive={false}
           onToggleSidebarSectionCollapsed={() => {}}
           onStartNewThread={() => {}}
@@ -450,19 +450,19 @@ describe("ProjectList", () => {
   });
 
   it("shows project-level unread state for collapsed unread threads", () => {
-    const projects = [makeProject("project-1", "wuu", "/repo/wuu")];
+    const projects = [makeWorkspace("project-1", "wuu", "/repo/wuu")];
 
     act(() => {
       root = createRoot(container);
       root.render(
-        <ProjectList
+        <WorkspaceList
           projects={projects}
           activeID={undefined}
-          pendingProjectID={undefined}
+          pendingWorkspaceID={undefined}
           expandedSidebarSectionIDs={new Set()}
-          threadsByProjectID={{
+          threadsByWorkspaceID={{
             "project-1": summarizeThreadsForSidebar([
-              makeProjectThread("thread-unread", "/repo/wuu", "Unread session", [
+              makeWorkspaceThread("thread-unread", "/repo/wuu", "Unread session", [
                 { id: "turn-unread", status: "completed" },
               ]),
             ]),
@@ -471,7 +471,7 @@ describe("ProjectList", () => {
           pendingThreadID={undefined}
           
           lastViewedTurnByThreadID={{}}
-          scratchPseudoProjectID={SCRATCH_PSEUDO_PROJECT_ID}
+          scratchPseudoWorkspaceID={SCRATCH_PSEUDO_PROJECT_ID}
           scratchPseudoActive={false}
           onToggleSidebarSectionCollapsed={() => {}}
           onStartNewThread={() => {}}
@@ -484,23 +484,23 @@ describe("ProjectList", () => {
       );
     });
 
-    const projectRow = container.querySelector(".project-row");
-    expect(projectRow?.classList.contains("has-unread")).toBe(true);
-    expect(projectRow?.getAttribute("aria-label")).toContain("有未读会话");
-    expect(projectRow?.querySelector(".project-row-unread")).not.toBeNull();
+    const workspaceRow = container.querySelector(".project-row");
+    expect(workspaceRow?.classList.contains("has-unread")).toBe(true);
+    expect(workspaceRow?.getAttribute("aria-label")).toContain("有未读会话");
+    expect(workspaceRow?.querySelector(".project-row-unread")).not.toBeNull();
   });
 
   it("marks only the visible fork endpoint in a chained fork list", () => {
-    const projects = [makeProject("project-1", "wuu", "/repo/wuu")];
-    const rootThread = makeProjectThread("root-thread", "/repo/wuu", "Root session");
-    const middleThread = makeProjectThread(
+    const projects = [makeWorkspace("project-1", "wuu", "/repo/wuu")];
+    const rootThread = makeWorkspaceThread("root-thread", "/repo/wuu", "Root session");
+    const middleThread = makeWorkspaceThread(
       "middle-thread",
       "/repo/wuu",
       "Middle session",
       [],
       { forked_from_id: rootThread.id },
     );
-    const leafThread = makeProjectThread(
+    const leafThread = makeWorkspaceThread(
       "leaf-thread",
       "/repo/wuu",
       "Leaf session",
@@ -511,12 +511,12 @@ describe("ProjectList", () => {
     act(() => {
       root = createRoot(container);
       root.render(
-        <ProjectList
+        <WorkspaceList
           projects={projects}
           activeID="project-1"
-          pendingProjectID={undefined}
+          pendingWorkspaceID={undefined}
           expandedSidebarSectionIDs={new Set(["project-1"])}
-          threadsByProjectID={{
+          threadsByWorkspaceID={{
             "project-1": summarizeThreadsForSidebar([
               rootThread,
               middleThread,
@@ -527,7 +527,7 @@ describe("ProjectList", () => {
           pendingThreadID={undefined}
           
           lastViewedTurnByThreadID={{}}
-          scratchPseudoProjectID={SCRATCH_PSEUDO_PROJECT_ID}
+          scratchPseudoWorkspaceID={SCRATCH_PSEUDO_PROJECT_ID}
           scratchPseudoActive={false}
           onToggleSidebarSectionCollapsed={() => {}}
           onStartNewThread={() => {}}
@@ -552,8 +552,8 @@ describe("ProjectList", () => {
   });
 });
 
-describe("ProjectGroup remove workspace", () => {
-  function makeProject(id: string, name: string, path: string): DesktopProject {
+describe("WorkspaceGroup remove workspace", () => {
+  function makeWorkspace(id: string, name: string, path: string): DesktopProject {
     return {
       id,
       name,
@@ -565,14 +565,14 @@ describe("ProjectGroup remove workspace", () => {
 
   const baseProps = {
     activeID: undefined,
-    pendingProjectID: undefined,
+    pendingWorkspaceID: undefined,
     expandedSidebarSectionIDs: new Set<string>(),
-    threadsByProjectID: {},
+    threadsByWorkspaceID: {},
     activeThreadID: undefined,
     pendingThreadID: undefined,
     
     lastViewedTurnByThreadID: {},
-    scratchPseudoProjectID: SCRATCH_PSEUDO_PROJECT_ID,
+    scratchPseudoWorkspaceID: SCRATCH_PSEUDO_PROJECT_ID,
     scratchPseudoActive: false,
     onToggleSidebarSectionCollapsed: () => {},
     onStartNewThread: () => {},
@@ -599,15 +599,15 @@ describe("ProjectGroup remove workspace", () => {
   }
 
   it("shows loading instead of an empty state before project sessions hydrate", () => {
-    const project = makeProject("project-1", "wuu", "/repo/wuu");
+    const project = makeWorkspace("project-1", "wuu", "/repo/wuu");
     act(() => {
       root = createRoot(container);
       root.render(
-        <ProjectGroup
+        <WorkspaceGroup
           {...baseProps}
           project={project}
           expandedSidebarSectionIDs={new Set([project.id])}
-          loadingProjectThreadIDs={new Set([project.id])}
+          loadingWorkspaceThreadIDs={new Set([project.id])}
         />,
       );
     });
@@ -622,10 +622,10 @@ describe("ProjectGroup remove workspace", () => {
     act(() => {
       root = createRoot(container);
       root.render(
-        <ProjectGroup
+        <WorkspaceGroup
           {...baseProps}
-          project={makeProject("project-1", "wuu", "/repo/wuu")}
-          onRemoveProject={(id) => removed.push(id)}
+          project={makeWorkspace("project-1", "wuu", "/repo/wuu")}
+          onRemoveWorkspace={(id) => removed.push(id)}
         />,
       );
     });
@@ -650,10 +650,10 @@ describe("ProjectGroup remove workspace", () => {
     act(() => {
       root = createRoot(container);
       root.render(
-        <ProjectGroup
+        <WorkspaceGroup
           {...baseProps}
-          project={makeProject("project-1", "wuu", "/repo/wuu")}
-          onRelocateProject={(id) => relocated.push(id)}
+          project={makeWorkspace("project-1", "wuu", "/repo/wuu")}
+          onRelocateWorkspace={(id) => relocated.push(id)}
         />,
       );
     });
@@ -676,10 +676,10 @@ describe("ProjectGroup remove workspace", () => {
     act(() => {
       root = createRoot(container);
       root.render(
-        <ProjectGroup
+        <WorkspaceGroup
           {...baseProps}
-          project={makeProject(SCRATCH_PSEUDO_PROJECT_ID, "对话", "")}
-          onRemoveProject={() => {}}
+          project={makeWorkspace(SCRATCH_PSEUDO_PROJECT_ID, "对话", "")}
+          onRemoveWorkspace={() => {}}
         />,
       );
     });
@@ -689,17 +689,17 @@ describe("ProjectGroup remove workspace", () => {
   });
 });
 
-describe("ProjectGroup missing workspace", () => {
+describe("WorkspaceGroup missing workspace", () => {
   const baseProps = {
     activeID: undefined,
-    pendingProjectID: undefined,
+    pendingWorkspaceID: undefined,
     expandedSidebarSectionIDs: new Set<string>(),
-    threadsByProjectID: {},
+    threadsByWorkspaceID: {},
     activeThreadID: undefined,
     pendingThreadID: undefined,
     
     lastViewedTurnByThreadID: {},
-    scratchPseudoProjectID: SCRATCH_PSEUDO_PROJECT_ID,
+    scratchPseudoWorkspaceID: SCRATCH_PSEUDO_PROJECT_ID,
     scratchPseudoActive: false,
     onToggleSidebarSectionCollapsed: () => {},
     onStartNewThread: () => {},
@@ -708,17 +708,17 @@ describe("ProjectGroup missing workspace", () => {
     onArchiveThread: () => {},
     onDeleteThread: () => {},
     
-    onRemoveProject: () => {},
+    onRemoveWorkspace: () => {},
   };
 
-  function renderProject(project: DesktopProject): void {
+  function renderWorkspace(project: DesktopProject): void {
     act(() => {
       root = createRoot(container);
-      root.render(<ProjectGroup {...baseProps} project={project} />);
+      root.render(<WorkspaceGroup {...baseProps} project={project} />);
     });
   }
 
-  const makeProject = (missing?: boolean): DesktopProject => ({
+  const makeWorkspace = (missing?: boolean): DesktopProject => ({
     id: "project-1",
     name: "wuu",
     path: "/repo/wuu",
@@ -728,7 +728,7 @@ describe("ProjectGroup missing workspace", () => {
   });
 
   it("dims a missing workspace and disables its 新建会话 button", () => {
-    renderProject(makeProject(true));
+    renderWorkspace(makeWorkspace(true));
     expect(container.querySelector(".project-group-missing")).not.toBeNull();
     const newThread = container.querySelector<HTMLButtonElement>(
       ".project-row-new-thread",

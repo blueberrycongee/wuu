@@ -11,7 +11,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { Thread } from "../shared/protocol";
-import { isThreadExecuting, summarizeProjectThreadsForSidebar } from "./AppState";
+import { isThreadExecuting, summarizeWorkspaceThreadsForSidebar } from "./AppState";
 
 function thread(id: string, overrides: Partial<Thread> = {}): Thread {
   return {
@@ -36,9 +36,9 @@ function running(id: string): Thread {
   } as Partial<Thread>);
 }
 
-describe("summarizeProjectThreadsForSidebar", () => {
+describe("summarizeWorkspaceThreadsForSidebar", () => {
   it("overlays a live optimistic turn onto the cached project bucket", () => {
-    const summaries = summarizeProjectThreadsForSidebar(
+    const summaries = summarizeWorkspaceThreadsForSidebar(
       { "project-1": [thread("a"), thread("b")] },
       [running("b")],
     );
@@ -51,7 +51,7 @@ describe("summarizeProjectThreadsForSidebar", () => {
   });
 
   it("keeps bucket membership owned by the cache", () => {
-    const summaries = summarizeProjectThreadsForSidebar(
+    const summaries = summarizeWorkspaceThreadsForSidebar(
       { "project-1": [thread("a")] },
       [running("not-in-any-bucket")],
     );
@@ -60,7 +60,7 @@ describe("summarizeProjectThreadsForSidebar", () => {
   });
 
   it("still applies the cross-workdir running override", () => {
-    const summaries = summarizeProjectThreadsForSidebar(
+    const summaries = summarizeWorkspaceThreadsForSidebar(
       { "project-1": [thread("a")] },
       [],
       new Set(["a"]),

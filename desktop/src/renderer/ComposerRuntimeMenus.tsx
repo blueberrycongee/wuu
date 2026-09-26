@@ -1573,9 +1573,9 @@ export function SlashCommandIcon({ command }: { command: ComposerSlashCommand })
       return <FileText className="icon" />;
     case "open-browser":
       return <Globe className="icon" />;
-    case "open-project":
+    case "open-workspace":
       return <FolderOpen className="icon" />;
-    case "no-project":
+    case "no-workspace":
       return <FolderX className="icon" />;
     case "reset-side-thread":
       return <RotateCcw className="icon" />;
@@ -1714,28 +1714,28 @@ export function BranchMenu({
   );
 }
 
-export function ProjectPickerMenu({
+export function WorkspacePickerMenu({
   projects,
   activeContext,
   query,
   setQuery,
-  onSelectProject,
+  onSelectWorkspace,
   onSelectNoProject,
-  onCreateProject,
-  onOpenProject,
+  onCreateWorkspace,
+  onOpenWorkspace,
 }: {
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
   query: string;
   setQuery: (value: string) => void;
-  onSelectProject: (id: string) => void;
+  onSelectWorkspace: (id: string) => void;
   onSelectNoProject: () => void;
-  onCreateProject: () => void;
-  onOpenProject: () => void;
+  onCreateWorkspace: () => void;
+  onOpenWorkspace: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const filteredProjects = normalizedQuery
+  const filteredWorkspaces = normalizedQuery
     ? projects.filter((project) => project.name.toLocaleLowerCase().includes(normalizedQuery) || project.path.toLocaleLowerCase().includes(normalizedQuery))
     : projects;
 
@@ -1744,14 +1744,14 @@ export function ProjectPickerMenu({
       style={{ "--composer-project-menu-width": `${COMPOSER_PROJECT_MENU_WIDTH}px` } as CSSProperties}>
       <label className="menu-search project-search">
         <Search className="icon-lg" />
-        <input value={query} placeholder={t("runtime.searchProjects")} onChange={(event) => setQuery(event.target.value)} />
+        <input value={query} placeholder={t("runtime.searchWorkspaces")} onChange={(event) => setQuery(event.target.value)} />
       </label>
       <div className="project-picker-list">
-        {filteredProjects.length === 0 ? <div className="project-picker-empty">{t("runtime.noMatchingProjects")}</div> : null}
-        {filteredProjects.map((project) => {
+        {filteredWorkspaces.length === 0 ? <div className="project-picker-empty">{t("runtime.noMatchingWorkspaces")}</div> : null}
+        {filteredWorkspaces.map((project) => {
           const selected = activeContext?.kind === "project" && activeContext.project_id === project.id;
           return (
-            <button key={project.id} type="button" role="menuitem" title={project.name} onClick={() => onSelectProject(project.id)}>
+            <button key={project.id} type="button" role="menuitem" title={project.name} onClick={() => onSelectWorkspace(project.id)}>
               <Folder className="icon-lg" />
               <span>{project.name}</span>
               {selected ? <Check className="icon-lg" /> : null}
@@ -1760,17 +1760,17 @@ export function ProjectPickerMenu({
         })}
       </div>
       <div className="project-picker-divider" />
-      <button type="button" role="menuitem" disabled={!hostSupports("chooseProjectFolder")} onClick={onOpenProject}>
+      <button type="button" role="menuitem" disabled={!hostSupports("chooseProjectFolder")} onClick={onOpenWorkspace}>
         <FolderOpen className="icon-lg" />
         <span>{t("runtime.useExistingFolder")}</span>
       </button>
-      <button type="button" role="menuitem" disabled={!hostSupports("createBlankProject")} onClick={onCreateProject}>
+      <button type="button" role="menuitem" disabled={!hostSupports("createBlankProject")} onClick={onCreateWorkspace}>
         <FolderPlus className="icon-lg" />
-        <span>{t("runtime.createBlankProject")}</span>
+        <span>{t("runtime.createBlankWorkspace")}</span>
       </button>
       <button type="button" role="menuitem" disabled={!hostSupports("createBlankProject")} onClick={onSelectNoProject}>
         <FolderX className="icon-lg" />
-        <span>{t("runtime.noProject")}</span>
+        <span>{t("runtime.noWorkspace")}</span>
         {activeContext?.kind === "no_project" ? <Check className="icon-lg" /> : null}
       </button>
     </div>

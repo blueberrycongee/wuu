@@ -16,7 +16,7 @@ import {
   type ComposerDraftState,
   type SessionTab,
 } from "./AppState";
-import { createProjectRuntimeActions } from "./ProjectRuntimeActions";
+import { createWorkspaceRuntimeActions } from "./WorkspaceRuntimeActions";
 
 function projectContext(id = "project-1"): RuntimeContext {
   return { kind: "project", project_id: id, cwd: `/tmp/${id}` };
@@ -71,7 +71,7 @@ function buildActions({
 }) {
   let appState = initial;
   let currentDraft = draft;
-  const closeProjectMenus = vi.fn();
+  const closeWorkspaceMenus = vi.fn();
   const clearPrimaryComposerDraft = vi.fn(() => {
     currentDraft = emptyComposerDraft();
   });
@@ -86,7 +86,7 @@ function buildActions({
     createDraftSessionTab("draft:test", context),
   );
 
-  const actions = createProjectRuntimeActions({
+  const actions = createWorkspaceRuntimeActions({
     getAppState: () => appState,
     setAppState: (update) => {
       appState = typeof update === "function" ? update(appState) : update;
@@ -96,7 +96,7 @@ function buildActions({
     clearPrimaryComposerDraft,
     restoreLoadedRuntimeComposerDraft: vi.fn(),
     nextDraftSessionTab,
-    closeProjectMenus,
+    closeWorkspaceMenus,
     beginViewSwitch: vi.fn(() => 1),
     finishViewSwitch: vi.fn(() => true),
     cancelViewSwitch: vi.fn(),
@@ -106,7 +106,7 @@ function buildActions({
   return {
     actions,
     getAppState: () => appState,
-    closeProjectMenus,
+    closeWorkspaceMenus,
     clearPrimaryComposerDraft,
     restorePrimaryComposerDraft,
     getCurrentDraft: () => currentDraft,
@@ -119,7 +119,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("createProjectRuntimeActions", () => {
+describe("createWorkspaceRuntimeActions", () => {
   it("preserves an unsent draft when the project workspace plus opens a session", async () => {
     const context = projectContext();
     const source = thread();
@@ -137,7 +137,7 @@ describe("createProjectRuntimeActions", () => {
       draft: { prompt: "keep this draft", images: [], files: [] },
     });
 
-    await harness.actions.startNewThreadForProject("project-1");
+    await harness.actions.startNewThreadInWorkspace("project-1");
 
     expect(harness.getAppState().activeSessionTabID).toBe("draft:test");
     expect(sessionTabPrompt(harness.getAppState().sessionTabs, sourceTab.id)).toBe(
@@ -167,7 +167,7 @@ describe("createProjectRuntimeActions", () => {
       draft: { prompt: "keep this thread draft", images: [], files: [] },
     });
 
-    await harness.actions.startNewThreadForProject("project-1");
+    await harness.actions.startNewThreadInWorkspace("project-1");
 
     expect(harness.nextDraftSessionTab).not.toHaveBeenCalled();
     expect(harness.getAppState().activeSessionTabID).toBe(existingDraft.id);
@@ -181,7 +181,7 @@ describe("createProjectRuntimeActions", () => {
     const sourceContext = projectContext("project-1");
     const targetContext = projectContext("project-2");
     const sourceDraft = createDraftSessionTab("draft:project-1", sourceContext);
-    const projectState = {
+    const workspaceState = {
       projects: [project("project-1"), project("project-2")],
       active_context: targetContext,
     } as ProjectListResult;
@@ -192,7 +192,7 @@ describe("createProjectRuntimeActions", () => {
       threads: [],
       status: "ready",
     });
-    const selectProject = vi.fn().mockResolvedValue(projectState);
+    const selectProject = vi.fn().mockResolvedValue(workspaceState);
     Object.defineProperty(window, "wuu", {
       configurable: true,
       value: { selectProject } as Partial<WuuDesktopApi>,
@@ -210,10 +210,10 @@ describe("createProjectRuntimeActions", () => {
       loadRuntime,
     });
 
-    await harness.actions.selectProjectForNewThread("project-2");
+    await harness.actions.selectWorkspaceForNewThread("project-2");
 
     expect(selectProject).toHaveBeenCalledWith("project-2");
-    expect(harness.closeProjectMenus).toHaveBeenCalled();
+    expect(harness.closeWorkspaceMenus).toHaveBeenCalled();
     expect(harness.getAppState().activeContext).toEqual(targetContext);
     expect(harness.getAppState().status).toBe("ready");
   });
@@ -221,7 +221,7 @@ describe("createProjectRuntimeActions", () => {
   it("opens a blank draft when creating a no-project conversation", async () => {
     const context = noProjectContext();
     const source = { ...thread(), cwd: context.cwd };
-    const projectState = {
+    const workspaceState = {
       projects: [],
       active_context: context,
     } as ProjectListResult;
@@ -231,7 +231,7 @@ describe("createProjectRuntimeActions", () => {
       threads: [source],
       status: "ready",
     });
-    const selectNoProject = vi.fn().mockResolvedValue(projectState);
+    const selectNoProject = vi.fn().mockResolvedValue(workspaceState);
     Object.defineProperty(window, "wuu", {
       configurable: true,
       value: { selectNoProject } as Partial<WuuDesktopApi>,
@@ -252,7 +252,7 @@ describe("createProjectRuntimeActions", () => {
     await harness.actions.useNoProject(true);
 
     expect(selectNoProject).toHaveBeenCalledWith(true);
-    expect(loadRuntime).toHaveBeenCalledWith(projectState, {
+    expect(loadRuntime).toHaveBeenCalledWith(workspaceState, {
       resumeLatestThread: false,
     });
     expect(harness.nextDraftSessionTab).toHaveBeenCalledWith(context);
@@ -261,12 +261,12 @@ describe("createProjectRuntimeActions", () => {
     expect(harness.getCurrentDraft()).toEqual(emptyComposerDraft());
   });
 
-  it("lands on the 对话 draft page instead of resuming an old conversation when the picker selects 不使用项目", async () => {
+  it("lands on the 对话 draft page instead of resuming an old conversation when the picker selects 不使用工作区", async () => {
     const sourceContext = projectContext();
     const context = noProjectContext();
     const oldScratchThread = { ...thread("old-scratch"), cwd: context.cwd };
     const sourceDraftTab = createDraftSessionTab("draft:new-project", sourceContext);
-    const projectState = {
+    const workspaceState = {
       projects: [project()],
       active_context: context,
     } as ProjectListResult;
@@ -279,7 +279,7 @@ describe("createProjectRuntimeActions", () => {
       threads: [oldScratchThread],
       status: "ready",
     });
-    const selectNoProject = vi.fn().mockResolvedValue(projectState);
+    const selectNoProject = vi.fn().mockResolvedValue(workspaceState);
     Object.defineProperty(window, "wuu", {
       configurable: true,
       value: { selectNoProject } as Partial<WuuDesktopApi>,
@@ -300,7 +300,7 @@ describe("createProjectRuntimeActions", () => {
     await harness.actions.useNoProject(false);
 
     expect(selectNoProject).toHaveBeenCalledWith(false);
-    expect(loadRuntime).toHaveBeenCalledWith(projectState, {
+    expect(loadRuntime).toHaveBeenCalledWith(workspaceState, {
       resumeLatestThread: false,
     });
     const state = harness.getAppState();
@@ -318,7 +318,7 @@ describe("createProjectRuntimeActions", () => {
     );
   });
 
-  it("returns to the 对话 draft page when 不使用项目 is re-selected over an open conversation", async () => {
+  it("returns to the 对话 draft page when 不使用工作区 is re-selected over an open conversation", async () => {
     const context = noProjectContext();
     const source = { ...thread(), cwd: context.cwd };
     const sourceTab = createThreadSessionTab(source, context);
@@ -335,7 +335,7 @@ describe("createProjectRuntimeActions", () => {
 
     await harness.actions.useNoProject(false);
 
-    expect(harness.closeProjectMenus).toHaveBeenCalled();
+    expect(harness.closeWorkspaceMenus).toHaveBeenCalled();
     expect(harness.nextDraftSessionTab).toHaveBeenCalledWith(context);
     expect(harness.getAppState().thread).toBeUndefined();
     expect(harness.getAppState().activeSessionTabID).toBe("draft:test");
@@ -344,11 +344,11 @@ describe("createProjectRuntimeActions", () => {
     );
   });
 
-  it("switches to 不使用项目 while a background thread is running", async () => {
+  it("switches to 不使用工作区 while a background thread is running", async () => {
     const sourceContext = projectContext("project-1");
     const targetContext = noProjectContext();
     const sourceDraft = createDraftSessionTab("draft:project-1", sourceContext);
-    const projectState = {
+    const workspaceState = {
       projects: [project("project-1")],
       active_context: targetContext,
     } as ProjectListResult;
@@ -359,7 +359,7 @@ describe("createProjectRuntimeActions", () => {
       threads: [],
       status: "ready",
     });
-    const selectNoProject = vi.fn().mockResolvedValue(projectState);
+    const selectNoProject = vi.fn().mockResolvedValue(workspaceState);
     Object.defineProperty(window, "wuu", {
       configurable: true,
       value: { selectNoProject } as Partial<WuuDesktopApi>,
@@ -380,7 +380,7 @@ describe("createProjectRuntimeActions", () => {
     await harness.actions.useNoProject(false);
 
     expect(selectNoProject).toHaveBeenCalledWith(false);
-    expect(harness.closeProjectMenus).toHaveBeenCalled();
+    expect(harness.closeWorkspaceMenus).toHaveBeenCalled();
     expect(harness.getAppState().activeContext).toEqual(targetContext);
     expect(harness.getAppState().status).toBe("ready");
   });
@@ -391,7 +391,7 @@ describe("createProjectRuntimeActions", () => {
     const source = thread();
     const sourceTab = createThreadSessionTab(source, sourceContext);
     const existingDraft = createDraftSessionTab("draft:existing", context);
-    const projectState = {
+    const workspaceState = {
       projects: [],
       active_context: context,
     } as ProjectListResult;
@@ -404,7 +404,7 @@ describe("createProjectRuntimeActions", () => {
     Object.defineProperty(window, "wuu", {
       configurable: true,
       value: {
-        selectNoProject: vi.fn().mockResolvedValue(projectState),
+        selectNoProject: vi.fn().mockResolvedValue(workspaceState),
       } as Partial<WuuDesktopApi>,
     });
     const harness = buildActions({
@@ -439,7 +439,7 @@ describe("createProjectRuntimeActions", () => {
       images: [],
       files: [],
     });
-    const projectState = {
+    const workspaceState = {
       projects: [project("project-1"), project("project-2")],
       active_context: sourceContext,
     } as ProjectListResult;
@@ -447,7 +447,7 @@ describe("createProjectRuntimeActions", () => {
     Object.defineProperty(window, "wuu", {
       configurable: true,
       value: {
-        chooseProjectFolder: vi.fn().mockResolvedValue(projectState),
+        chooseProjectFolder: vi.fn().mockResolvedValue(workspaceState),
       } as Partial<WuuDesktopApi>,
     });
     const harness = buildActions({
@@ -469,7 +469,7 @@ describe("createProjectRuntimeActions", () => {
     expect(state.activeContext).toEqual(sourceContext);
     expect(state.activeSessionTabID).toBe(sourceTab.id);
     expect(state.sessionTabs).toEqual([sourceTab, staleThreadTab, staleDraftTab]);
-    expect(state.projects).toEqual(projectState.projects);
+    expect(state.projects).toEqual(workspaceState.projects);
   });
 
   it("does not remove a workspace when confirmation is cancelled", async () => {
@@ -499,11 +499,11 @@ describe("createProjectRuntimeActions", () => {
     const removedContext = projectContext("project-2");
     const activeTab = createDraftSessionTab("draft:active", activeContext);
     const removedTab = createThreadSessionTab(thread("removed-session"), removedContext);
-    const projectState = {
+    const workspaceState = {
       projects: [project("project-1")],
       active_context: activeContext,
     } as ProjectListResult;
-    const removeProject = vi.fn().mockResolvedValue(projectState);
+    const removeProject = vi.fn().mockResolvedValue(workspaceState);
     Object.defineProperty(window, "wuu", {
       configurable: true,
       value: { removeProject } as Partial<WuuDesktopApi>,
@@ -534,7 +534,7 @@ describe("createProjectRuntimeActions", () => {
     const scratchContext = noProjectContext();
     const source = thread();
     const sourceTab = createThreadSessionTab(source, sourceContext);
-    const projectState = {
+    const workspaceState = {
       projects: [],
       active_context: scratchContext,
     } as ProjectListResult;
@@ -551,7 +551,7 @@ describe("createProjectRuntimeActions", () => {
       ],
       status: "ready",
     });
-    const removeProject = vi.fn().mockResolvedValue(projectState);
+    const removeProject = vi.fn().mockResolvedValue(workspaceState);
     Object.defineProperty(window, "wuu", {
       configurable: true,
       value: { removeProject } as Partial<WuuDesktopApi>,
@@ -576,7 +576,7 @@ describe("createProjectRuntimeActions", () => {
     await harness.actions.removeProject("project-1");
 
     expect(removeProject).toHaveBeenCalledWith("project-1");
-    expect(loadRuntime).toHaveBeenCalledWith(projectState, {
+    expect(loadRuntime).toHaveBeenCalledWith(workspaceState, {
       resumeLatestThread: false,
     });
     expect(harness.getAppState().thread).toBeUndefined();

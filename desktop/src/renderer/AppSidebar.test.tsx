@@ -44,7 +44,7 @@ function initialized(): InitializeResult {
   };
 }
 
-const sidebarProjects: DesktopProject[] = [
+const sidebarWorkspaces: DesktopProject[] = [
   {
     id: SCRATCH_PSEUDO_PROJECT_ID,
     name: "对话",
@@ -70,11 +70,11 @@ const sidebarProjects: DesktopProject[] = [
 
 interface RenderOptions {
   expandedSidebarSectionIDs?: Set<string>;
-  projectThreadsByProjectID?: Record<string, ThreadSummary[]>;
+  workspaceThreadsByWorkspaceID?: Record<string, ThreadSummary[]>;
   activeThreadID?: string;
   pendingThreadID?: string;
   onSelectThread?: (threadID: string) => void;
-  onSelectProjectThread?: (projectID: string, threadID: string) => void;
+  onSelectWorkspaceThread?: (workspaceID: string, threadID: string) => void;
   sectionOrder?: string[];
   state?: AppState;
   collapsedSidebarSectionIDs?: Set<string>;
@@ -87,11 +87,11 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
   const [collapsedFolderIDs, setCollapsedFolderIDs] = useState<Set<string>>(() => new Set());
   const {
     expandedSidebarSectionIDs = new Set(),
-    projectThreadsByProjectID = {},
+    workspaceThreadsByWorkspaceID = {},
     activeThreadID,
     pendingThreadID,
     onSelectThread = () => {},
-    onSelectProjectThread = () => {},
+    onSelectWorkspaceThread = () => {},
     sectionOrder = [SCRATCH_PSEUDO_PROJECT_ID, "project-1", "project-2"],
     state = {
       ...initialState,
@@ -107,18 +107,18 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
   return (
     <AppSidebar
       state={state}
-      sidebarProjects={sidebarProjects}
+      sidebarWorkspaces={sidebarWorkspaces}
       pinnedThreads={[]}
       activeThreadID={activeThreadID}
       pendingThreadID={pendingThreadID}
-      pendingProjectID={undefined}
+      pendingWorkspaceID={undefined}
       collapsedSidebarSectionIDs={collapsedSidebarSectionIDs}
       collapsedFolderIDs={collapsedFolderIDs}
       setCollapsedFolderIDs={setCollapsedFolderIDs}
       expandedSidebarSectionIDs={expandedSidebarSectionIDs}
-      projectThreadsByProjectID={projectThreadsByProjectID}
-      projectMenuOpen={false}
-      projectMenuRef={createRef<HTMLDivElement>()}
+      workspaceThreadsByWorkspaceID={workspaceThreadsByWorkspaceID}
+      workspaceMenuOpen={false}
+      workspaceMenuRef={createRef<HTMLDivElement>()}
       searchOpen={false}
       sectionOrder={sectionOrder}
       onStartNewThread={() => {}}
@@ -141,14 +141,14 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
       onArchiveThread={() => {}}
       onDeleteThread={() => {}}
       onRenameThread={() => {}}
-      onToggleProjectMenu={() => {}}
-      onCreateProject={() => {}}
-      onOpenProjectFolder={() => {}}
+      onToggleWorkspaceMenu={() => {}}
+      onCreateWorkspace={() => {}}
+      onOpenWorkspaceFolder={() => {}}
       onToggleSidebarSectionCollapsed={() => {}}
-      onStartNewThreadForProject={() => {}}
-      onSelectProjectThread={onSelectProjectThread}
-      onRemoveProject={() => {}}
-      onRelocateProject={() => {}}
+      onStartNewThreadInWorkspace={() => {}}
+      onSelectWorkspaceThread={onSelectWorkspaceThread}
+      onRemoveWorkspace={() => {}}
+      onRelocateWorkspace={() => {}}
       onOpenSettings={() => {}}
     />
   );
@@ -184,7 +184,7 @@ describe("AppSidebar layout", () => {
     const options: RenderOptions = {
       activeThreadID: threads[0].id,
       expandedSidebarSectionIDs: new Set(["project-1"]),
-      projectThreadsByProjectID: { "project-1": threads },
+      workspaceThreadsByWorkspaceID: { "project-1": threads },
       onSelectThread,
     };
     const currentTitles = () => [...container.querySelectorAll('[aria-current="page"] .thread-row-title')]
@@ -237,7 +237,7 @@ describe("AppSidebar layout", () => {
     };
     const options: RenderOptions = {
       expandedSidebarSectionIDs: new Set(["project-1"]),
-      projectThreadsByProjectID: { "project-1": [unread, idle] },
+      workspaceThreadsByWorkspaceID: { "project-1": [unread, idle] },
     };
     renderSidebar(options);
     act(() => container.querySelector<HTMLButtonElement>(".sidebar-notifications-button")!.click());
@@ -309,11 +309,11 @@ describe("AppSidebar layout", () => {
     renderSidebar({
       activeThreadID: fork.id,
       expandedSidebarSectionIDs: new Set([SCRATCH_PSEUDO_PROJECT_ID, "project-1"]),
-      projectThreadsByProjectID: {
+      workspaceThreadsByWorkspaceID: {
         [SCRATCH_PSEUDO_PROJECT_ID]: [{ ...fork, workspace_id: undefined }],
         "project-1": [fork],
       },
-      onSelectProjectThread: select,
+      onSelectWorkspaceThread: select,
     });
     const rows = [...container.querySelectorAll<HTMLButtonElement>(".thread-row-main")]
       .filter((row) => row.textContent?.includes(fork.title!));

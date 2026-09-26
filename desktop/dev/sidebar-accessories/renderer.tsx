@@ -47,19 +47,19 @@ function Fixture() {
         activeContext: { kind: "project", project_id: project.id, cwd: project.path },
         lastViewedTurnByThreadID: { idle: "done", running: "done", fork: "done", "fork-running": "done" },
       }}
-      sidebarProjects={[project]} pinnedThreads={empty ? [] : [threads[0]]}
-      activeThreadID={active} activeProjectID={project.id}
+      sidebarWorkspaces={[project]} pinnedThreads={empty ? [] : [threads[0]]}
+      activeThreadID={active} activeWorkspaceID={project.id}
       collapsedSidebarSectionIDs={new Set()} expandedSidebarSectionIDs={expanded}
       collapsedFolderIDs={collapsedFolderIDs} setCollapsedFolderIDs={setCollapsedFolderIDs}
-      projectThreadsByProjectID={{ [project.id]: visible }}
-      projectMenuOpen={false} projectMenuRef={createRef()} searchOpen={false}
+      workspaceThreadsByWorkspaceID={{ [project.id]: visible }}
+      workspaceMenuOpen={false} workspaceMenuRef={createRef()} searchOpen={false}
       sectionOrder={[project.id]} onStartNewThread={noop} onOpenSkillsTab={noop}
       onToggleConversationSearch={noop} onSelectThread={setActive}
       onTogglePinned={noop} onArchiveThread={noop} onDeleteThread={noop} onRenameThread={noop}
-      onToggleProjectMenu={noop} onCreateProject={noop} onOpenProjectFolder={noop}
+      onToggleWorkspaceMenu={noop} onCreateWorkspace={noop} onOpenWorkspaceFolder={noop}
       onToggleSidebarSectionCollapsed={id => setExpanded(current => current.has(id) ? new Set() : new Set([id]))}
-      onStartNewThreadForProject={noop} onSelectProjectThread={(_project, id) => setActive(id)}
-      onRemoveProject={noop} onRelocateProject={noop} onOpenSettings={noop} onMarkThreadsViewed={noop}
+      onStartNewThreadInWorkspace={noop} onSelectWorkspaceThread={(_project, id) => setActive(id)}
+      onRemoveWorkspace={noop} onRelocateWorkspace={noop} onOpenSettings={noop} onMarkThreadsViewed={noop}
       unreadViewOpen={unreadViewOpen} onToggleUnreadView={() => setUnreadViewOpen(open => !open)}
       sidebarCollapsed={false} onToggleSidebar={noop}
     />

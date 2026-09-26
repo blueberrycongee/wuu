@@ -92,7 +92,7 @@ function installWindowStubs(): void {
 function installWuuApi(): void {
   // Fresh arrays on every call — mirrors production, where each
   // project-state reload replaces state.projects with a new identity.
-  const projectState = (): {
+  const workspaceState = (): {
     projects: never[];
     active_context: { kind: "no_project"; cwd: string };
   } => ({
@@ -115,10 +115,10 @@ function installWuuApi(): void {
     turns: [],
   };
   const api = {
-    listProjects: vi.fn().mockImplementation(() => Promise.resolve(projectState())),
+    listProjects: vi.fn().mockImplementation(() => Promise.resolve(workspaceState())),
     selectNoProject: vi
       .fn()
-      .mockImplementation(() => Promise.resolve(projectState())),
+      .mockImplementation(() => Promise.resolve(workspaceState())),
     initialize: vi.fn().mockResolvedValue(initialized()),
     listThreads: vi.fn().mockResolvedValue({ threads: [pinnedThread] }),
     listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),

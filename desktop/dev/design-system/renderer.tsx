@@ -45,7 +45,7 @@ function Fixture() {
   const [density, setDensity] = useState(Number(params.get("density")) || 1);
   const [sync, setSync] = useState(true);
   const [dialog, setDialog] = useState(false);
-  const [name, setName] = useState("项目笔记");
+  const [name, setName] = useState("工作区笔记");
   const [value, setValue] = useState("local");
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
   useEffect(() => { applyMessageFlowFontSize(size); }, [size]);
@@ -66,8 +66,8 @@ function Fixture() {
         <SettingsRow title="名称" description="输入、菜单和按钮应在同一行保持一致的高度。"><input className="settings-input" aria-label="名称" placeholder="输入名称" /></SettingsRow>
         <SettingsRow title="自动同步"><button className="settings-switch" role="switch" aria-checked={sync} aria-label="自动同步" onClick={() => setSync(!sync)}><span className="settings-switch-thumb" /></button></SettingsRow>
       </div></section>
-      <section className="settings-section"><h2 className="settings-section-title">共享表单控件</h2><div className="review-controls"><input className="settings-input" aria-label="项目名称" placeholder="项目名称" /><SelectMenu ariaLabel="普通选择器" value={value} onChange={setValue} options={options} /><button className="settings-button">取消</button><button className="settings-button settings-button-primary">保存</button><button className="settings-button" disabled>不可用</button></div></section>
-      <section className="settings-section"><h2 className="settings-section-title">搜索与键盘操作</h2><label className="menu-search"><Search className="icon"/><input aria-label="搜索示例" placeholder="搜索项目、会话或模型" /></label></section>
+      <section className="settings-section"><h2 className="settings-section-title">共享表单控件</h2><div className="review-controls"><input className="settings-input" aria-label="工作区名称" placeholder="工作区名称" /><SelectMenu ariaLabel="普通选择器" value={value} onChange={setValue} options={options} /><button className="settings-button">取消</button><button className="settings-button settings-button-primary">保存</button><button className="settings-button" disabled>不可用</button></div></section>
+      <section className="settings-section"><h2 className="settings-section-title">搜索与键盘操作</h2><label className="menu-search"><Search className="icon"/><input aria-label="搜索示例" placeholder="搜索工作区、会话或模型" /></label></section>
       <section className="settings-section"><h2 className="settings-section-title">说明与反馈</h2><p className="settings-section-description">次要说明需要清楚可读；焦点、悬停和选中应能区分。这里的内容只在验收页展示，不会写入设置或发送消息。</p><div className="review-controls"><button className="settings-button settings-button-danger">移除</button><button className="settings-button" onClick={() => setDialog(true)}>重命名示例</button><button className="icon-button" aria-label="新建"><Plus className="icon" /></button></div></section>
     </main> : surface === "extension" ? <main className="settings-page review-settings">
       <header className="settings-page-header"><h1 className="settings-page-title">插件设置</h1></header>
@@ -77,7 +77,7 @@ function Fixture() {
         <SettingsRow title="附加说明" block><textarea className="plugin-ui-textarea" aria-label="附加说明" placeholder="输入说明" /></SettingsRow>
       </div></section><section className="settings-section"><div className="review-controls"><button className="plugin-ui-button">取消</button><button className="plugin-ui-button" data-wuu-variant="primary">保存</button><button className="plugin-ui-button" disabled>不可用</button></div></section>
     </main> : <ConversationExample/>}
-    <SidebarNameDialog open={dialog} title={name} onTitleChange={setName} onSubmit={() => setDialog(false)} onClose={() => setDialog(false)} dialogTitle="重命名项目" dialogTitleId="review-dialog-title" fieldLabel="项目名称" fieldAriaLabel="弹层项目名称" placeholder="项目名称" icon={Folder} submitLabel="保存" cancelLabel="取消"/>
+    <SidebarNameDialog open={dialog} title={name} onTitleChange={setName} onSubmit={() => setDialog(false)} onClose={() => setDialog(false)} dialogTitle="重命名工作区" dialogTitleId="review-dialog-title" fieldLabel="工作区名称" fieldAriaLabel="弹层工作区名称" placeholder="工作区名称" icon={Folder} submitLabel="保存" cancelLabel="取消"/>
 
   </ImagePreviewProvider></WuuUIRoot>;
 }

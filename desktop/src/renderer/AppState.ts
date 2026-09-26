@@ -1459,7 +1459,7 @@ function upsertThread(threads: Thread[], thread: Thread | undefined): Thread[] {
   // action stays reversible from there. Read-only threads are still real
   // conversations that need to render — they only differ in mutation rights.
   // Filtering archived out of sidebar surfaces is the job of pinnedThreads /
-  // projectThreads / scratchThreads, not of this generic upsert.
+  // workspaceThreads / scratchThreads, not of this generic upsert.
   const index = validThreads.findIndex((item) => item.id === thread.id);
   if (index < 0) {
     return sortThreads([thread, ...validThreads]);
@@ -1584,8 +1584,8 @@ function summarizeThreadsForSidebar(
   );
 }
 
-function summarizeProjectThreadsForSidebar(
-  projectThreadsByProjectID: Record<string, Thread[]>,
+function summarizeWorkspaceThreadsForSidebar(
+  workspaceThreadsByWorkspaceID: Record<string, Thread[]>,
   liveThreads: readonly Thread[],
   runningThreadIDs?: ReadonlySet<string>,
 ): Record<string, ThreadSummary[]> {
@@ -1605,8 +1605,8 @@ function summarizeProjectThreadsForSidebar(
     liveByID.set(thread.id, thread);
   }
   const next: Record<string, ThreadSummary[]> = {};
-  for (const [projectID, threads] of Object.entries(projectThreadsByProjectID)) {
-    next[projectID] = summarizeThreadsForSidebar(
+  for (const [workspaceID, threads] of Object.entries(workspaceThreadsByWorkspaceID)) {
+    next[workspaceID] = summarizeThreadsForSidebar(
       threads.map((thread) => liveByID.get(thread.id) ?? thread),
       runningThreadIDs,
     );
@@ -1903,20 +1903,20 @@ function formatHourMinute(date: Date): string {
   });
 }
 
-// R4: threads that don't belong to any registered project are almost
+// R4: threads that don't belong to any registered workspace are almost
 // always no-project scratch conversations, whose cwd is an internal
 // ~/.wuu/scratch/<date> directory (see allocateNoProjectCwd in
 // src/main/projects.ts). Falling back to that directory's basename used to
 // surface the raw date-stamped folder name in the search result's context
-// label — a wuu implementation detail nobody asked to see. "无项目" reads
+// label — a wuu implementation detail nobody asked to see. "无工作区" reads
 // the same way the sidebar's scratch group already does.
 function conversationSearchContextLabel(
   thread: Thread,
   projects: DesktopProject[],
 ): string {
-  const projectPath = threadProjectPath(thread);
+  const projectPath = threadWorkspacePath(thread);
   const project = projects.find((candidate) => candidate.path === projectPath);
-  return project?.name ?? t("appState.noProject");
+  return project?.name ?? t("appState.noWorkspace");
 }
 
 function pinnedThreads(threads: Thread[]): Thread[] {
@@ -1927,35 +1927,35 @@ function pinnedThreadSummaries(threads: ThreadSummary[]): ThreadSummary[] {
   return sortThreadSummaries(threads).filter((thread) => thread.pinned);
 }
 
-function projectThreads(threads: Thread[]): Thread[] {
+function workspaceThreads(threads: Thread[]): Thread[] {
   return sortThreads(threads).filter((thread) => !thread.pinned && !thread.archived);
 }
 
-function projectThreadSummaries(threads: ThreadSummary[]): ThreadSummary[] {
+function workspaceThreadSummaries(threads: ThreadSummary[]): ThreadSummary[] {
   return sortThreadSummaries(threads).filter((thread) => !thread.pinned);
 }
 
-export function threadProjectPath(
+export function threadWorkspacePath(
   thread: Pick<Thread, "cwd" | "worktree">,
 ): string {
   return thread.worktree?.base_repo?.trim() || thread.cwd;
 }
 
-export function threadBelongsToProject(
+export function threadBelongsToWorkspace(
   thread: Pick<Thread, "cwd" | "workspace_id" | "worktree">,
   project: Pick<DesktopProject, "id" | "path">,
 ): boolean {
   if (thread.workspace_id?.trim()) {
     return thread.workspace_id === project.id;
   }
-  return sameDesktopPath(threadProjectPath(thread), project.path);
+  return sameDesktopPath(threadWorkspacePath(thread), project.path);
 }
 
-function threadBelongsToAnyProject(
+function threadBelongsToAnyWorkspace(
   thread: Pick<Thread, "cwd" | "workspace_id" | "worktree">,
   projects: Pick<DesktopProject, "id" | "path">[],
 ): boolean {
-  return projects.some((project) => threadBelongsToProject(thread, project));
+  return projects.some((project) => threadBelongsToWorkspace(thread, project));
 }
 
 function sameDesktopPath(left: string, right: string): boolean {
@@ -1972,7 +1972,7 @@ function cleanDesktopPath(path: string): string {
 // scratch (no-project) conversation group inside the unified sidebar tree.
 // Threads whose cwd does not belong to a registered DesktopProject (i.e.
 // isScratchThread returns true) are bucketed under this id so the sidebar
-// can render them through the same ProjectList code path as real projects.
+// can render them through the same WorkspaceList code path as real projects.
 // The DesktopProject entry carrying this id is built in App.tsx and never
 // sent from the app-server — it lives only on the renderer side.
 export const SCRATCH_PSEUDO_PROJECT_ID = "__wuu_scratch__";
@@ -1981,7 +1981,7 @@ export function isScratchThread(
   thread: Pick<Thread, "workspace_kind" | "cwd" | "worktree">,
   projects: DesktopProject[],
 ): boolean {
-  if (threadBelongsToAnyProject(thread, projects)) {
+  if (threadBelongsToAnyWorkspace(thread, projects)) {
     return false;
   }
   if (thread.workspace_kind === "scratch") {
@@ -1990,7 +1990,7 @@ export function isScratchThread(
   if (thread.workspace_kind === "project") {
     return false;
   }
-  const projectPath = threadProjectPath(thread);
+  const projectPath = threadWorkspacePath(thread);
   return !projects.some((project) => project.path === projectPath);
 }
 
@@ -2011,7 +2011,7 @@ export function resolveThreadRuntimeContext(
   projects: DesktopProject[],
 ): RuntimeContext {
   const project = projects.find((candidate) =>
-    threadBelongsToProject(thread, candidate),
+    threadBelongsToWorkspace(thread, candidate),
   );
   if (project) {
     return { kind: "project", project_id: project.id, cwd: project.path };
@@ -2024,7 +2024,7 @@ export function resolveThreadRuntimeContext(
  * and terminal should root at. This is ordinarily just the active
  * RuntimeContext, but a worktree-fork thread's own cwd (Thread.cwd) points
  * at a git worktree directory distinct from the project root that
- * resolveThreadRuntimeContext resolves the thread to (threadProjectPath
+ * resolveThreadRuntimeContext resolves the thread to (threadWorkspacePath
  * prefers worktree.base_repo, so the *context* stays pinned to the base
  * project while the *thread* itself runs out of the worktree). When the
  * active thread's cwd differs from the active context's cwd, the panel
@@ -2327,7 +2327,7 @@ function composerDraftHasContent(draft: ComposerDraftState): boolean {
  * draft along with the user instead of stranding it in the tab they're
  * leaving.
  *
- * The hero-project-pill / ProjectPickerMenu let the user retarget a *draft*
+ * The hero-project-pill / WorkspacePickerMenu let the user retarget a *draft*
  * conversation at a different project (or at no project) before ever
  * sending anything. If they had already typed a prompt (or attached images
  * / files), silently persisting that text back into the old context's
@@ -2445,7 +2445,7 @@ function workspaceNameForContext(context: RuntimeContext, state: AppState): stri
   const project = state.projects.find(
     (candidate) => candidate.id === context.project_id,
   );
-  return project?.name || fileNameFromPath(context.cwd) || t("sidebar.project");
+  return project?.name || fileNameFromPath(context.cwd) || t("sidebar.workspace");
 }
 
 function sessionTabLabel(tab: SessionTab, state: AppState): string {
@@ -2657,7 +2657,7 @@ function setThreadForPane(
   return { ...state, thread };
 }
 
-function activeProjectID(
+function activeWorkspaceID(
   context: RuntimeContext | undefined,
 ): string | undefined {
   return context?.kind === "project" ? context.project_id : undefined;
@@ -2697,7 +2697,7 @@ function threadMatchesActiveContext(
   thread: Thread,
   context: RuntimeContext | undefined,
 ): boolean {
-  return Boolean(context && threadProjectPath(thread) === context.cwd);
+  return Boolean(context && threadWorkspacePath(thread) === context.cwd);
 }
 
 function isThread(value: unknown): value is Thread {
@@ -3565,7 +3565,7 @@ function normalizeModelID(model: string | undefined): string {
 
 export {
   activeTodoUpdateForThread,
-  activeProjectID,
+  activeWorkspaceID,
   activeSessionTab,
   activeThreadForState,
   activeThreadIDForState,
@@ -3620,8 +3620,8 @@ export {
   pinnedThreads,
   pinnedThreadSummaries,
   presentationRunningThreadIDs,
-  projectThreads,
-  projectThreadSummaries,
+  workspaceThreads,
+  workspaceThreadSummaries,
   queryTextForUserItem,
   queryTextsForThread,
   requestedHandoffIntentForThread,
@@ -3645,7 +3645,7 @@ export {
   setThreadForPane,
   skillsSessionTabID,
   sortThreads,
-  summarizeProjectThreadsForSidebar,
+  summarizeWorkspaceThreadsForSidebar,
   summarizeThreadsForSidebar,
   threadItemFromRecord,
   threadForPane,

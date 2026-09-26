@@ -21,7 +21,7 @@ import { showErrorToast } from "./Toast";
 
 type SetAppState = (update: SetStateAction<AppState>) => void;
 
-export type ProjectRuntimeActionsDeps = {
+export type WorkspaceRuntimeActionsDeps = {
   getAppState: () => AppState;
   setAppState: SetAppState;
   getPrimaryComposerDraft: () => ComposerDraftState;
@@ -33,17 +33,17 @@ export type ProjectRuntimeActionsDeps = {
   ) => void;
   nextDraftSessionTab: (context: NonNullable<AppState["activeContext"]>) => SessionTab;
   isDraftPending?: (tabID: string) => boolean;
-  closeProjectMenus: () => void;
+  closeWorkspaceMenus: () => void;
   
-  beginViewSwitch: (kind: "thread" | "project" | "runtime", targetID: string) => number;
+  beginViewSwitch: (kind: "thread" | "workspace" | "runtime", targetID: string) => number;
   finishViewSwitch: (requestID: number) => boolean;
   cancelViewSwitch: () => void;
   loadRuntime?: typeof defaultLoadRuntime;
 };
 
-export type ProjectRuntimeActions = {
-  selectProjectForNewThread: (projectId: string) => Promise<void>;
-  startNewThreadForProject: (projectId: string) => Promise<boolean>;
+export type WorkspaceRuntimeActions = {
+  selectWorkspaceForNewThread: (projectId: string) => Promise<void>;
+  startNewThreadInWorkspace: (projectId: string) => Promise<boolean>;
   createBlankProject: () => Promise<void>;
   chooseProjectFolder: () => Promise<void>;
   removeProject: (projectId: string) => Promise<void>;
@@ -51,16 +51,16 @@ export type ProjectRuntimeActions = {
   useNoProject: (fresh: boolean) => Promise<boolean>;
 };
 
-export function createProjectRuntimeActions(
-  deps: ProjectRuntimeActionsDeps,
-): ProjectRuntimeActions {
+export function createWorkspaceRuntimeActions(
+  deps: WorkspaceRuntimeActionsDeps,
+): WorkspaceRuntimeActions {
   const loadRuntime = deps.loadRuntime ?? defaultLoadRuntime;
 
   function setStatus(status: string): void {
     showErrorToast(status);
   }
 
-  function withoutProjectSessionTabs(state: AppState, projectId: string): AppState {
+  function withoutWorkspaceSessionTabs(state: AppState, projectId: string): AppState {
     return {
       ...state,
       sessionTabs: state.sessionTabs.filter(
@@ -116,9 +116,9 @@ export function createProjectRuntimeActions(
   }
 
   /**
-   * The composer's project picker has one mental model regardless of the
+   * The composer's workspace picker has one mental model regardless of the
    * destination: "retarget the conversation I'm drafting at that
-   * context". Selecting a project and selecting 不使用项目 are the same
+   * context". Selecting a workspace and selecting 不使用工作区 are the same
    * gesture, so they share this implementation:
    *
    *   - re-selecting the current context returns to its draft page when
@@ -136,7 +136,7 @@ export function createProjectRuntimeActions(
     selectContext,
     failureStatus,
   }: {
-    switchKind: "project" | "runtime";
+    switchKind: "workspace" | "runtime";
     switchTarget: string;
     isCurrentContext: (state: AppState) => boolean;
     selectContext: () => Promise<ProjectListResult>;
@@ -144,7 +144,7 @@ export function createProjectRuntimeActions(
   }): Promise<boolean> {
     const currentState = deps.getAppState();
     if (isCurrentContext(currentState)) {
-      deps.closeProjectMenus();
+      deps.closeWorkspaceMenus();
       const context = currentState.activeContext;
       if (context && (currentState.thread || currentState.secondaryThread)) {
         activateWorkspaceDraft(context);
@@ -155,7 +155,7 @@ export function createProjectRuntimeActions(
     // pools app-server clients by workdir and keeps busy clients alive, so a
     // running thread in the source context must not lock this draft in place.
     const requestID = deps.beginViewSwitch(switchKind, switchTarget);
-    deps.closeProjectMenus();
+    deps.closeWorkspaceMenus();
 
     const outgoingDraft = deps.getPrimaryComposerDraft();
     const carryDraft =
@@ -164,8 +164,8 @@ export function createProjectRuntimeActions(
         ? outgoingDraft
         : undefined;
     try {
-      const projectState = await selectContext();
-      const loadedState = await loadRuntime(projectState, {
+      const workspaceState = await selectContext();
+      const loadedState = await loadRuntime(workspaceState, {
         resumeLatestThread: false,
       });
       if (!deps.finishViewSwitch(requestID)) {
@@ -198,21 +198,21 @@ export function createProjectRuntimeActions(
     }
   }
 
-  async function selectProjectForNewThread(projectId: string): Promise<void> {
+  async function selectWorkspaceForNewThread(projectId: string): Promise<void> {
     await retargetDraftToContext({
-      switchKind: "project",
+      switchKind: "workspace",
       switchTarget: projectId,
       isCurrentContext: (state) =>
         projectId === state.activeProjectId &&
         state.activeContext?.kind === "project",
       selectContext: () => window.wuu.selectProject(projectId),
-      failureStatus: translateCurrent("project.openFailed"),
+      failureStatus: translateCurrent("workspace.openFailed"),
     });
   }
 
-  async function startNewThreadForProject(projectId: string): Promise<boolean> {
+  async function startNewThreadInWorkspace(projectId: string): Promise<boolean> {
     deps.cancelViewSwitch();
-    deps.closeProjectMenus();
+    deps.closeWorkspaceMenus();
     
     const currentState = deps.getAppState();
     if (
@@ -222,11 +222,11 @@ export function createProjectRuntimeActions(
       activateWorkspaceDraft(currentState.activeContext);
       return true;
     }
-    const requestID = deps.beginViewSwitch("project", projectId);
+    const requestID = deps.beginViewSwitch("workspace", projectId);
     const outgoingDraft = deps.getPrimaryComposerDraft();
     try {
-      const projectState = await window.wuu.selectProject(projectId);
-      const loadedState = await loadRuntime(projectState, {
+      const workspaceState = await window.wuu.selectProject(projectId);
+      const loadedState = await loadRuntime(workspaceState, {
         resumeLatestThread: false,
       });
       if (!deps.finishViewSwitch(requestID)) {
@@ -280,7 +280,7 @@ export function createProjectRuntimeActions(
       if (!deps.finishViewSwitch(requestID)) {
         return false;
       }
-      setStatus(error instanceof Error ? error.message : translateCurrent("project.openFailed"));
+      setStatus(error instanceof Error ? error.message : translateCurrent("workspace.openFailed"));
       return false;
     }
   }
@@ -288,21 +288,21 @@ export function createProjectRuntimeActions(
   async function createBlankProject(): Promise<void> {
     const currentState = deps.getAppState();
     const requestID = deps.beginViewSwitch("runtime", "create-project");
-    deps.closeProjectMenus();
+    deps.closeWorkspaceMenus();
     const outgoingDraft = deps.getPrimaryComposerDraft();
     try {
-      const projectState = await window.wuu.createBlankProject();
-      if (sameRuntimeContext(projectState.active_context, currentState.activeContext)) {
+      const workspaceState = await window.wuu.createBlankProject();
+      if (sameRuntimeContext(workspaceState.active_context, currentState.activeContext)) {
         if (!deps.finishViewSwitch(requestID)) {
           return;
         }
         deps.setAppState((current) => ({
           ...current,
-          projects: projectState.projects,
+          projects: workspaceState.projects,
         }));
         return;
       }
-      const loadedState = await loadRuntime(projectState);
+      const loadedState = await loadRuntime(workspaceState);
       if (!deps.finishViewSwitch(requestID)) {
         return;
       }
@@ -317,28 +317,28 @@ export function createProjectRuntimeActions(
       if (!deps.finishViewSwitch(requestID)) {
         return;
       }
-      setStatus(error instanceof Error ? error.message : translateCurrent("project.createFailed"));
+      setStatus(error instanceof Error ? error.message : translateCurrent("workspace.createFailed"));
     }
   }
 
   async function chooseProjectFolder(): Promise<void> {
     const currentState = deps.getAppState();
     const requestID = deps.beginViewSwitch("runtime", "choose-project");
-    deps.closeProjectMenus();
+    deps.closeWorkspaceMenus();
     const outgoingDraft = deps.getPrimaryComposerDraft();
     try {
-      const projectState = await window.wuu.chooseProjectFolder();
-      if (sameRuntimeContext(projectState.active_context, currentState.activeContext)) {
+      const workspaceState = await window.wuu.chooseProjectFolder();
+      if (sameRuntimeContext(workspaceState.active_context, currentState.activeContext)) {
         if (!deps.finishViewSwitch(requestID)) {
           return;
         }
         deps.setAppState((current) => ({
           ...current,
-          projects: projectState.projects,
+          projects: workspaceState.projects,
         }));
         return;
       }
-      const loadedState = await loadRuntime(projectState, {
+      const loadedState = await loadRuntime(workspaceState, {
         resumeLatestThread: false,
       });
       if (!deps.finishViewSwitch(requestID)) {
@@ -347,13 +347,13 @@ export function createProjectRuntimeActions(
       deps.clearPrimaryComposerDraft();
       deps.setAppState((current) => {
         const persisted = persistActiveSessionTabDraft(current, outgoingDraft);
-        const destinationProjectID =
+        const destinationWorkspaceID =
           loadedState.activeContext?.kind === "project"
             ? loadedState.activeContext.project_id
             : undefined;
         return withLoadedRuntimeSessionTab(
-          destinationProjectID
-            ? withoutProjectSessionTabs(persisted, destinationProjectID)
+          destinationWorkspaceID
+            ? withoutWorkspaceSessionTabs(persisted, destinationWorkspaceID)
             : persisted,
           loadedState,
         );
@@ -362,19 +362,19 @@ export function createProjectRuntimeActions(
       if (!deps.finishViewSwitch(requestID)) {
         return;
       }
-      setStatus(error instanceof Error ? error.message : translateCurrent("project.folderOpenFailed"));
+      setStatus(error instanceof Error ? error.message : translateCurrent("workspace.folderOpenFailed"));
     }
   }
 
   async function removeProject(projectId: string): Promise<void> {
     const currentState = deps.getAppState();
-    const removedProject = currentState.projects.find(
+    const removedWorkspace = currentState.projects.find(
       (project) => project.id === projectId,
     );
     if (
-      !removedProject ||
+      !removedWorkspace ||
       !window.confirm(
-        translateCurrent("project.removeConfirm", { name: removedProject.name }),
+        translateCurrent("workspace.removeConfirm", { name: removedWorkspace.name }),
       )
     ) {
       return;
@@ -382,18 +382,18 @@ export function createProjectRuntimeActions(
     const requestID = deps.beginViewSwitch("runtime", "remove-project");
     const outgoingDraft = deps.getPrimaryComposerDraft();
     try {
-      const projectState = await window.wuu.removeProject(projectId);
-      if (sameRuntimeContext(projectState.active_context, currentState.activeContext)) {
+      const workspaceState = await window.wuu.removeProject(projectId);
+      if (sameRuntimeContext(workspaceState.active_context, currentState.activeContext)) {
         if (!deps.finishViewSwitch(requestID)) {
           return;
         }
         deps.setAppState((current) => ({
-          ...withoutProjectSessionTabs(current, projectId),
-          projects: projectState.projects,
+          ...withoutWorkspaceSessionTabs(current, projectId),
+          projects: workspaceState.projects,
         }));
         return;
       }
-      const loadedState = await loadRuntime(projectState, {
+      const loadedState = await loadRuntime(workspaceState, {
         resumeLatestThread: false,
       });
       if (!deps.finishViewSwitch(requestID)) {
@@ -402,7 +402,7 @@ export function createProjectRuntimeActions(
       deps.restoreLoadedRuntimeComposerDraft(loadedState);
       deps.setAppState((current) =>
         withLoadedRuntimeSessionTab(
-          withoutProjectSessionTabs(
+          withoutWorkspaceSessionTabs(
             persistActiveSessionTabDraft(current, outgoingDraft),
             projectId,
           ),
@@ -413,7 +413,7 @@ export function createProjectRuntimeActions(
       if (!deps.finishViewSwitch(requestID)) {
         return;
       }
-      setStatus(error instanceof Error ? error.message : translateCurrent("project.removeFailed"));
+      setStatus(error instanceof Error ? error.message : translateCurrent("workspace.removeFailed"));
     }
   }
 
@@ -424,19 +424,19 @@ export function createProjectRuntimeActions(
     const previousCwd = currentState.activeContext?.cwd;
     const wasActive = currentState.activeProjectId === projectId;
     try {
-      const projectState = await window.wuu.relocateProject(projectId);
-      const newCwd = projectState.active_context?.cwd;
+      const workspaceState = await window.wuu.relocateProject(projectId);
+      const newCwd = workspaceState.active_context?.cwd;
       if (!wasActive || newCwd === previousCwd) {
         if (!deps.finishViewSwitch(requestID)) {
           return;
         }
         deps.setAppState((current) => ({
           ...current,
-          projects: projectState.projects,
+          projects: workspaceState.projects,
         }));
         return;
       }
-      const loadedState = await loadRuntime(projectState);
+      const loadedState = await loadRuntime(workspaceState);
       if (!deps.finishViewSwitch(requestID)) {
         return;
       }
@@ -454,14 +454,14 @@ export function createProjectRuntimeActions(
       setStatus(
         error instanceof Error
           ? error.message
-          : translateCurrent("project.relocateFailed"),
+          : translateCurrent("workspace.relocateFailed"),
       );
     }
   }
 
   async function useNoProject(fresh: boolean): Promise<boolean> {
-    // The non-fresh flavor is the composer picker's 不使用项目 entry —
-    // the same "retarget my draft" gesture as picking a project, so it
+    // The non-fresh flavor is the composer picker's 不使用工作区 entry —
+    // the same "retarget my draft" gesture as picking a workspace, so it
     // shares that path (land on the 对话 draft page, never resume an
     // old conversation). The fresh flavor below is the sidebar's 新对话
     // button: an explicit "start clean" that discards nothing but also
@@ -472,16 +472,16 @@ export function createProjectRuntimeActions(
         switchTarget: "no-project",
         isCurrentContext: (state) => state.activeContext?.kind === "no_project",
         selectContext: () => window.wuu.selectNoProject(false),
-        failureStatus: translateCurrent("project.scratchOpenFailed"),
+        failureStatus: translateCurrent("workspace.scratchOpenFailed"),
       });
     }
     const currentState = deps.getAppState();
     const requestID = deps.beginViewSwitch("runtime", "no-project:fresh");
-    deps.closeProjectMenus();
+    deps.closeWorkspaceMenus();
     const outgoingDraft = deps.getPrimaryComposerDraft();
     try {
-      const projectState = await window.wuu.selectNoProject(true);
-      const loadedState = await loadRuntime(projectState, {
+      const workspaceState = await window.wuu.selectNoProject(true);
+      const loadedState = await loadRuntime(workspaceState, {
         resumeLatestThread: false,
       });
       if (!deps.finishViewSwitch(requestID)) {
@@ -525,14 +525,14 @@ export function createProjectRuntimeActions(
       if (!deps.finishViewSwitch(requestID)) {
         return false;
       }
-      setStatus(error instanceof Error ? error.message : translateCurrent("project.scratchOpenFailed"));
+      setStatus(error instanceof Error ? error.message : translateCurrent("workspace.scratchOpenFailed"));
       return false;
     }
   }
 
   return {
-    selectProjectForNewThread,
-    startNewThreadForProject,
+    selectWorkspaceForNewThread,
+    startNewThreadInWorkspace,
     createBlankProject,
     chooseProjectFolder,
     removeProject,

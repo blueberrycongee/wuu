@@ -27,7 +27,7 @@ export function InstructionFilesCard({
   const { result, loading, error } = entry;
   const files = result?.files ?? [];
   const globalFiles = files.filter((file) => file.scope === "global");
-  const projectFiles = files.filter((file) => file.scope !== "global");
+  const workspaceFiles = files.filter((file) => file.scope !== "global");
   const hasFiles = files.length > 0;
 
   return (
@@ -53,7 +53,7 @@ export function InstructionFilesCard({
         {!loading && !error && hasFiles ? (
           <div className="instruction-files-groups">
             <InstructionFilesGroup label={t("instructions.global")} files={globalFiles} />
-            <InstructionFilesGroup label={t("instructions.project")} files={projectFiles} />
+            <InstructionFilesGroup label={t("instructions.workspace")} files={workspaceFiles} />
           </div>
         ) : null}
       </div>

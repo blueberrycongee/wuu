@@ -9,9 +9,9 @@ import {
 import { SIDEBAR_SECTION_PINNED } from "./AppSidebar";
 import {
   mergeSidebarThreadSnapshots,
-  useSidebarProjectState,
-  type SidebarProjectStateController,
-} from "./SidebarProjectState";
+  useSidebarWorkspaceState,
+  type SidebarWorkspaceStateController,
+} from "./SidebarWorkspaceState";
 
 let mountedRoots: Root[] = [];
 
@@ -125,38 +125,38 @@ describe("mergeSidebarThreadSnapshots", () => {
   });
 });
 
-async function renderSidebarProjectState({
+async function renderSidebarWorkspaceState({
   projects = [],
   threads = [],
   activeContext,
-  activeProjectID,
+  activeWorkspaceID,
   backgroundLoadingEnabled = true,
 }: {
   backgroundLoadingEnabled?: boolean;
   projects?: DesktopProject[];
   threads?: Thread[];
   activeContext?: RuntimeContext;
-  activeProjectID?: string;
+  activeWorkspaceID?: string;
 } = {}): Promise<{
-  get: () => SidebarProjectStateController;
+  get: () => SidebarWorkspaceStateController;
   rerender: (next: {
     backgroundLoadingEnabled?: boolean;
     projects?: DesktopProject[];
     threads?: Thread[];
     activeContext?: RuntimeContext;
-    activeProjectID?: string;
+    activeWorkspaceID?: string;
   }) => Promise<void>;
 }> {
-  let latest: SidebarProjectStateController | undefined;
-  let props = { projects, threads, activeContext, activeProjectID, backgroundLoadingEnabled };
+  let latest: SidebarWorkspaceStateController | undefined;
+  let props = { projects, threads, activeContext, activeWorkspaceID, backgroundLoadingEnabled };
 
   function Probe(nextProps: typeof props) {
-    latest = useSidebarProjectState({
+    latest = useSidebarWorkspaceState({
       backgroundLoadingEnabled: nextProps.backgroundLoadingEnabled,
       projects: nextProps.projects,
       threads: nextProps.threads,
       activeContext: nextProps.activeContext,
-      activeProjectID: nextProps.activeProjectID,
+      activeWorkspaceID: nextProps.activeWorkspaceID,
       setStatus: vi.fn(),
     });
     return null;
@@ -188,7 +188,7 @@ async function renderSidebarProjectState({
   };
 }
 
-describe("useSidebarProjectState", () => {
+describe("useSidebarWorkspaceState", () => {
   it.each(["project", "all"])("keeps titles learned during a workspace switch when an older %s list resolves", async (catalog) => {
     const alpha = project("alpha");
     const beta = project("beta");
@@ -207,18 +207,18 @@ describe("useSidebarProjectState", () => {
     if (catalog === "project") {
       window.localStorage.setItem("wuu.desktop.expandedSidebarSectionIDs", JSON.stringify([beta.id]));
     }
-    const hook = await renderSidebarProjectState({
-      projects: [alpha, beta], threads: [alphaThread], activeContext: alphaContext, activeProjectID: alpha.id,
+    const hook = await renderSidebarWorkspaceState({
+      projects: [alpha, beta], threads: [alphaThread], activeContext: alphaContext, activeWorkspaceID: alpha.id,
     });
     expect(listThreads).toHaveBeenCalledOnce();
 
-    await hook.rerender({ threads: [renamedBetaThread], activeContext: betaContext, activeProjectID: beta.id });
-    await hook.rerender({ threads: [alphaThread], activeContext: alphaContext, activeProjectID: alpha.id });
+    await hook.rerender({ threads: [renamedBetaThread], activeContext: betaContext, activeWorkspaceID: beta.id });
+    await hook.rerender({ threads: [alphaThread], activeContext: alphaContext, activeWorkspaceID: alpha.id });
     await act(async () => { resolveList({ threads: [oldBetaThread, unseen] }); });
 
-    expect(hook.get().projectThreadsByProjectID.beta.find((item) => item.id === oldBetaThread.id)?.title).toBe(renamedBetaThread.title);
-    expect(hook.get().projectThreadsByProjectID.beta.map((item) => item.id)).toContain(unseen.id);
-    expect(hook.get().projectThreadsByProjectID.alpha[0]?.title).toBe(alphaThread.title);
+    expect(hook.get().workspaceThreadsByWorkspaceID.beta.find((item) => item.id === oldBetaThread.id)?.title).toBe(renamedBetaThread.title);
+    expect(hook.get().workspaceThreadsByWorkspaceID.beta.map((item) => item.id)).toContain(unseen.id);
+    expect(hook.get().workspaceThreadsByWorkspaceID.alpha[0]?.title).toBe(alphaThread.title);
   });
 
   it("keeps a session that started while the global catalog was still empty", async () => {
@@ -234,7 +234,7 @@ describe("useSidebarProjectState", () => {
       configurable: true,
       value: { listAllThreads },
     });
-    const hook = await renderSidebarProjectState({
+    const hook = await renderSidebarWorkspaceState({
       projects: [beta], backgroundLoadingEnabled: false,
     });
     await hook.rerender({ backgroundLoadingEnabled: true });
@@ -247,17 +247,17 @@ describe("useSidebarProjectState", () => {
         message: { method: "thread/started", params: { thread: created } },
       });
     });
-    expect(hook.get().projectThreadsByProjectID.beta.map((item) => item.id)).toEqual([created.id]);
+    expect(hook.get().workspaceThreadsByWorkspaceID.beta.map((item) => item.id)).toEqual([created.id]);
 
     await act(async () => { resolveList({ threads: [] }); });
-    expect(hook.get().projectThreadsByProjectID.beta.map((item) => item.id)).toEqual([created.id]);
+    expect(hook.get().workspaceThreadsByWorkspaceID.beta.map((item) => item.id)).toEqual([created.id]);
   });
 
   it("refreshes unchanged rows without resurrecting a session removed during the request", async () => {
     const beta = project("beta");
     const removed = thread("removed", beta.path);
     const existing = thread("existing", beta.path);
-    const hook = await renderSidebarProjectState({ projects: [beta] });
+    const hook = await renderSidebarWorkspaceState({ projects: [beta] });
     act(() => { hook.get().cacheSidebarThreads([removed, existing]); });
     let resolveList!: (result: { threads: Thread[] }) => void;
     Object.defineProperty(window, "wuu", {
@@ -265,20 +265,20 @@ describe("useSidebarProjectState", () => {
       value: { listThreads: () => new Promise<{ threads: Thread[] }>((resolve) => { resolveList = resolve; }) },
     });
     let loading!: Promise<void>;
-    act(() => { loading = hook.get().loadProjectThreads(beta); });
+    act(() => { loading = hook.get().loadWorkspaceThreads(beta); });
     act(() => { hook.get().removeCachedSidebarThread(removed.id); });
     const renamed = { ...existing, title: "Changed while disconnected" };
     await act(async () => {
       resolveList({ threads: [removed, renamed] });
       await loading;
     });
-    expect(hook.get().projectThreadsByProjectID.beta).toEqual([renamed]);
+    expect(hook.get().workspaceThreadsByWorkspaceID.beta).toEqual([renamed]);
   });
 
   it("retains a title-only resume update after leaving a scratch workspace", async () => {
     const alphaThread = thread("thread-alpha", "/tmp/scratch-alpha");
     const betaThread = thread("thread-beta", "/tmp/scratch-beta");
-    const hook = await renderSidebarProjectState({
+    const hook = await renderSidebarWorkspaceState({
       threads: [alphaThread], activeContext: { kind: "no_project", cwd: alphaThread.cwd },
     });
     const renamed = { ...alphaThread, title: "Investigate alpha deployment", preview: "Alpha deployment" };
@@ -294,14 +294,14 @@ describe("useSidebarProjectState", () => {
     const listThreads = vi.fn().mockResolvedValue({ threads: [listed] });
     Object.defineProperty(window, "wuu", { configurable: true, value: { listAllThreads, listThreads } });
     window.localStorage.setItem("wuu.desktop.expandedSidebarSectionIDs", JSON.stringify(["other"]));
-    const hook = await renderSidebarProjectState({
+    const hook = await renderSidebarWorkspaceState({
       projects: [project("other")], backgroundLoadingEnabled: false,
     });
     expect(listAllThreads).not.toHaveBeenCalled();
     expect(listThreads).not.toHaveBeenCalled();
     await hook.rerender({ backgroundLoadingEnabled: true });
     expect(listAllThreads).toHaveBeenCalledOnce();
-    expect(hook.get().projectThreadsByProjectID.other.map(item => item.id)).toEqual([listed.id]);
+    expect(hook.get().workspaceThreadsByWorkspaceID.other.map(item => item.id)).toEqual([listed.id]);
   });
 
   it("prunes missing project IDs while preserving pseudo section collapse IDs", async () => {
@@ -310,7 +310,7 @@ describe("useSidebarProjectState", () => {
       JSON.stringify(["missing-project", SIDEBAR_SECTION_PINNED]),
     );
 
-    const hook = await renderSidebarProjectState({ projects: [] });
+    const hook = await renderSidebarWorkspaceState({ projects: [] });
 
     expect([...hook.get().collapsedSidebarSectionIDs]).toEqual([
       SIDEBAR_SECTION_PINNED,
@@ -318,7 +318,7 @@ describe("useSidebarProjectState", () => {
   });
 
   it("toggles the pinned pseudo section with one click", async () => {
-    const hook = await renderSidebarProjectState();
+    const hook = await renderSidebarWorkspaceState();
 
     act(() => {
       hook.get().toggleSidebarSectionCollapsed(SIDEBAR_SECTION_PINNED);
@@ -341,15 +341,15 @@ describe("useSidebarProjectState", () => {
       cwd: alpha.path,
     };
 
-    const hook = await renderSidebarProjectState({
+    const hook = await renderSidebarWorkspaceState({
       projects: [alpha],
       threads: [alphaThread, scratchThread],
       activeContext,
-      activeProjectID: alpha.id,
+      activeWorkspaceID: alpha.id,
     });
 
     expect(
-      hook.get().projectThreadsByProjectID.alpha?.map((item) => item.id),
+      hook.get().workspaceThreadsByWorkspaceID.alpha?.map((item) => item.id),
     ).toEqual(["thread-alpha"]);
   });
 
@@ -370,7 +370,7 @@ describe("useSidebarProjectState", () => {
       cwd: alpha.path,
     };
 
-    const hook = await renderSidebarProjectState({ projects: [alpha] });
+    const hook = await renderSidebarWorkspaceState({ projects: [alpha] });
     act(() => {
       hook.get().cacheSidebarThreads([{
         ...alphaThread,
@@ -380,12 +380,12 @@ describe("useSidebarProjectState", () => {
     await hook.rerender({
       threads: [alphaThread],
       activeContext,
-      activeProjectID: alpha.id,
+      activeWorkspaceID: alpha.id,
     });
-    const cached = hook.get().projectThreadsByProjectID.alpha;
+    const cached = hook.get().workspaceThreadsByWorkspaceID.alpha;
     await hook.rerender({ threads: [alphaThread] });
 
-    expect(hook.get().projectThreadsByProjectID.alpha).toBe(cached);
+    expect(hook.get().workspaceThreadsByWorkspaceID.alpha).toBe(cached);
   });
 
   it("marks expanded project sessions as loading until their snapshot arrives", async () => {
@@ -407,16 +407,16 @@ describe("useSidebarProjectState", () => {
       },
     });
 
-    const hook = await renderSidebarProjectState({ projects: [alpha] });
-    expect(hook.get().loadingProjectThreadIDs.has(alpha.id)).toBe(true);
+    const hook = await renderSidebarWorkspaceState({ projects: [alpha] });
+    expect(hook.get().loadingWorkspaceThreadIDs.has(alpha.id)).toBe(true);
 
     await act(async () => {
       resolveThreads?.({ threads: [thread("thread-alpha", alpha.path)] });
       await flushEffects();
     });
 
-    expect(hook.get().loadingProjectThreadIDs.has(alpha.id)).toBe(false);
-    expect(hook.get().projectThreadsByProjectID.alpha?.map((item) => item.id)).toEqual([
+    expect(hook.get().loadingWorkspaceThreadIDs.has(alpha.id)).toBe(false);
+    expect(hook.get().workspaceThreadsByWorkspaceID.alpha?.map((item) => item.id)).toEqual([
       "thread-alpha",
     ]);
   });
@@ -430,17 +430,17 @@ describe("useSidebarProjectState", () => {
       project_id: alpha.id,
       cwd: alpha.path,
     };
-    const hook = await renderSidebarProjectState({
+    const hook = await renderSidebarWorkspaceState({
       projects: [alpha],
       threads: [first, second],
       activeContext,
-      activeProjectID: alpha.id,
+      activeWorkspaceID: alpha.id,
     });
 
     await hook.rerender({ threads: [second] });
 
     expect(
-      hook.get().projectThreadsByProjectID.alpha?.map((item) => item.id).sort(),
+      hook.get().workspaceThreadsByWorkspaceID.alpha?.map((item) => item.id).sort(),
     ).toEqual(["thread-first", "thread-second"]);
   });
 
@@ -448,7 +448,7 @@ describe("useSidebarProjectState", () => {
     const alpha = project("alpha", "/tmp/alpha");
     const beta = project("beta", "/tmp/beta");
     const betaThread = thread("thread-beta", beta.path);
-    const hook = await renderSidebarProjectState({ projects: [alpha, beta] });
+    const hook = await renderSidebarWorkspaceState({ projects: [alpha, beta] });
 
     act(() => {
       hook.get().cacheSidebarThreads([betaThread]);
@@ -471,7 +471,7 @@ describe("useSidebarProjectState", () => {
     });
 
     expect(hook.get().expandedSidebarSectionIDs.has(beta.id)).toBe(false);
-    const runningThread = hook.get().projectThreadsByProjectID.beta?.[0];
+    const runningThread = hook.get().workspaceThreadsByWorkspaceID.beta?.[0];
     expect(runningThread?.turns.at(-1)).toMatchObject({
       id: "turn-beta",
       status: "in_progress",
@@ -497,7 +497,7 @@ describe("useSidebarProjectState", () => {
       });
     });
 
-    const completedThread = hook.get().projectThreadsByProjectID.beta?.[0];
+    const completedThread = hook.get().workspaceThreadsByWorkspaceID.beta?.[0];
     expect(completedThread?.turns.at(-1)).toMatchObject({
       id: "turn-beta",
       status: "completed",
@@ -510,7 +510,7 @@ describe("useSidebarProjectState", () => {
     const alpha = project("alpha", "/tmp/alpha");
     const beta = project("beta", "/tmp/beta");
     const scratch = thread("thread-scratch", "/tmp/scratch");
-    const hook = await renderSidebarProjectState({ projects: [alpha, beta] });
+    const hook = await renderSidebarWorkspaceState({ projects: [alpha, beta] });
 
     act(() => {
       hook.get().cacheSidebarThreads([
@@ -520,10 +520,10 @@ describe("useSidebarProjectState", () => {
       ]);
     });
 
-    expect(hook.get().projectThreadsByProjectID.alpha?.map((item) => item.id)).toEqual([
+    expect(hook.get().workspaceThreadsByWorkspaceID.alpha?.map((item) => item.id)).toEqual([
       "thread-alpha",
     ]);
-    expect(hook.get().projectThreadsByProjectID.beta?.map((item) => item.id)).toEqual([
+    expect(hook.get().workspaceThreadsByWorkspaceID.beta?.map((item) => item.id)).toEqual([
       "thread-beta",
     ]);
     expect(hook.get().cachedScratchThreads.map((item) => item.id)).toEqual([
@@ -534,7 +534,7 @@ describe("useSidebarProjectState", () => {
   it("patches a cached project session pin immediately", async () => {
     const alpha = project("alpha", "/tmp/alpha");
     const cached = thread("thread-alpha", alpha.path);
-    const hook = await renderSidebarProjectState({ projects: [alpha] });
+    const hook = await renderSidebarWorkspaceState({ projects: [alpha] });
     act(() => {
       hook.get().cacheSidebarThreads([cached]);
     });
@@ -543,11 +543,11 @@ describe("useSidebarProjectState", () => {
       hook.get().updateCachedSidebarThreadPinned(cached.id, true);
     });
 
-    expect(hook.get().projectThreadsByProjectID.alpha?.[0]?.pinned).toBe(true);
+    expect(hook.get().workspaceThreadsByWorkspaceID.alpha?.[0]?.pinned).toBe(true);
   });
 
   it("keeps other workspaces' scratch sessions when switching no-project workspaces", async () => {
-    const hook = await renderSidebarProjectState({
+    const hook = await renderSidebarWorkspaceState({
       projects: [],
       threads: [thread("thread-a", "/tmp/a")],
       activeContext: { kind: "no_project", cwd: "/tmp/a" },

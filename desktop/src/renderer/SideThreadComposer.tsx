@@ -84,8 +84,8 @@ export function SideThreadComposer({
       branchMenuOpen={false}
       menuRef={menuRef}
       accessMenuRef={accessMenuRef}
-      projectFilter=""
-      setProjectFilter={noop}
+      workspaceFilter=""
+      setWorkspaceFilter={noop}
       onToggleMenu={noop}
       onToggleAccessMenu={noop}
       onToggleBranchMenu={noop}
@@ -95,11 +95,11 @@ export function SideThreadComposer({
       onSelectPermissionMode={noop}
       onOpenSettings={noop}
       onOpenSkillsCatalog={noop}
-      onSelectProject={noop}
+      onSelectWorkspace={noop}
       onSelectNoProject={noop}
       onSelectGitBranch={noop}
-      onCreateProject={noop}
-      onOpenProject={noop}
+      onCreateWorkspace={noop}
+      onOpenWorkspace={noop}
       onStartNewThread={noop}
       onOpenWorkspaceTool={noop}
       onOpenInstructions={noop}

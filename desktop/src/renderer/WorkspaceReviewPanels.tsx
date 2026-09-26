@@ -551,8 +551,8 @@ export function WorkspaceDiffReview({
     return (
       <div className="workspace-main-empty">
         <FolderX size={36} />
-        <strong>{t("workspaceReview.noProject")}</strong>
-        <span>{t("workspaceReview.openProjectFirst")}</span>
+        <strong>{t("workspaceReview.noWorkspace")}</strong>
+        <span>{t("workspaceReview.openWorkspaceFirst")}</span>
       </div>
     );
   }

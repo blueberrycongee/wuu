@@ -152,9 +152,9 @@ import {
   sessionTabForLoadedRuntime,
   setThreadForPane,
   sortThreads,
-  summarizeProjectThreadsForSidebar,
+  summarizeWorkspaceThreadsForSidebar,
   summarizeThreadsForSidebar,
-  threadBelongsToProject,
+  threadBelongsToWorkspace,
   threadForTab,
   threadForPane,
   threadSessionTabID,
@@ -263,7 +263,7 @@ import { releaseWindowResizeClass, WINDOW_RESIZING_CLASS } from "./WindowResizeS
 import { useComposerDraftState } from "./ComposerDraftState";
 import { useComposerPendingState } from "./ComposerPendingState";
 import { useSidebarDrawerState } from "./SidebarDrawerState";
-import { useSidebarProjectState } from "./SidebarProjectState";
+import { useSidebarWorkspaceState } from "./SidebarWorkspaceState";
 import { useViewSwitchState } from "./ViewSwitchState";
 import { turnTelemetryStore } from "./TurnTelemetryStore";
 import {
@@ -282,7 +282,7 @@ import {
   applyRuntimeRestore,
   selectRuntimeContext,
 } from "./RuntimeLoadState";
-import { createProjectRuntimeActions } from "./ProjectRuntimeActions";
+import { createWorkspaceRuntimeActions } from "./WorkspaceRuntimeActions";
 import { createWorkspaceActions } from "./WorkspaceActions";
 import { createSessionTabActions } from "./SessionTabActions";
 import { createThreadActivationActions } from "./ThreadActivationActions";
@@ -447,8 +447,8 @@ export function App(): JSX.Element {
   const composerDraftsRef = useRef({ primary: currentPrimaryComposerDraft, split: splitComposerDrafts });
   composerDraftsRef.current = { primary: currentPrimaryComposerDraft, split: splitComposerDrafts };
   const [activitySessions, setActivitySessions] = useState(emptyActivitySessions);
-  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
-  const closeProjectMenu = useCallback(() => setProjectMenuOpen(false), []);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const closeWorkspaceMenu = useCallback(() => setWorkspaceMenuOpen(false), []);
   const appShellRef = useRef<HTMLDivElement>(null);
   const settingsShellRef = useRef<HTMLDivElement>(null);
   const [mainComposerFocusRequest, setMainComposerFocusRequest] =
@@ -484,7 +484,7 @@ export function App(): JSX.Element {
   } = useAppLayoutState({
     layoutRootRef: appShellRef,
     settingsLayoutRootRef: settingsShellRef,
-    onCloseProjectMenu: closeProjectMenu,
+    onCloseWorkspaceMenu: closeWorkspaceMenu,
   });
   const [rightPanelManualGlobalized, setRightPanelManualGlobalized] =
     useState(false);
@@ -588,8 +588,8 @@ export function App(): JSX.Element {
   const {
     collapsedSidebarSectionIDs,
     expandedSidebarSectionIDs,
-    loadingProjectThreadIDs,
-    projectThreadsByProjectID,
+    loadingWorkspaceThreadIDs,
+    workspaceThreadsByWorkspaceID,
     cachedScratchThreads,
     sidebarSectionOrder,
     setSidebarSectionOrder,
@@ -599,14 +599,14 @@ export function App(): JSX.Element {
     removeCachedSidebarThread,
     syncSidebarServerEvent,
     toggleSidebarSectionCollapsed,
-  } = useSidebarProjectState({
+  } = useSidebarWorkspaceState({
     // Let the visible workspace finish booting before background catalogs
     // compete for the same remote connection.
     backgroundLoadingEnabled: Boolean(state.initialized) || state.status !== "connecting",
     projects: state.projects,
     threads: state.threads,
     activeContext: state.activeContext,
-    activeProjectID: state.activeProjectId,
+    activeWorkspaceID: state.activeProjectId,
     setStatus: (status) =>
       setState((current) => ({
         ...current,
@@ -652,7 +652,7 @@ export function App(): JSX.Element {
     updateCodexPets,
   } = useSettingsRuntimeState({ settingsOpen });
 
-  const [projectFilter, setProjectFilter] = useState("");
+  const [workspaceFilter, setWorkspaceFilter] = useState("");
   const {
     workspaceViewTabs,
     workspaceActiveViewTabID,
@@ -918,7 +918,7 @@ export function App(): JSX.Element {
   const {
     pendingViewSwitch,
     visiblePendingThreadID,
-    visiblePendingProjectID,
+    visiblePendingWorkspaceID,
     viewSwitchPending,
     submissionTargetPending,
     viewContextSwitchPending,
@@ -939,7 +939,7 @@ export function App(): JSX.Element {
   const gitRefreshTimerRef = useRef<number | undefined>(undefined);
   const gitRefreshInFlightRef = useRef(false);
   const gitRefreshQueuedRef = useRef(false);
-  const projectMenuRef = useRef<HTMLDivElement>(null);
+  const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const runtimeMenuRef = useRef<HTMLDivElement>(null);
   const accessMenuRef = useRef<HTMLDivElement>(null);
   const codexRuntimeRef = useRef<HTMLDivElement>(null);
@@ -1081,7 +1081,7 @@ export function App(): JSX.Element {
   const activeWorkspaceViewTab = workspaceActiveViewTabID
     ? workspaceViewTabs.find((tab) => tab.id === workspaceActiveViewTabID)
     : undefined;
-  const workspaceProjectSelectionEnabled =
+  const workspaceSelectionEnabled =
     rightPanelGlobalized &&
     (activeWorkspaceViewTab?.kind === "files" ||
       activeWorkspaceViewTab?.kind === "file");
@@ -1440,7 +1440,7 @@ export function App(): JSX.Element {
     getAppState: () => appStateRef.current,
     cacheThreads: cacheSidebarThreads,
     onOpen: () => {
-      setProjectMenuOpen(false);
+      setWorkspaceMenuOpen(false);
       setRuntimeMenuOpen(false);
       setAccessMenuOpen(false);
       setBranchMenuOpen(false);
@@ -1822,9 +1822,9 @@ export function App(): JSX.Element {
           }
           return;
         }
-        const listedProjects = await window.wuu.listProjects();
-        const runtimeState = listedProjects.active_context
-          ? listedProjects
+        const listedWorkspaces = await window.wuu.listProjects();
+        const runtimeState = listedWorkspaces.active_context
+          ? listedWorkspaces
           : await window.wuu.selectNoProject(false);
         const loadedState = await loadRuntime(runtimeState);
         if (!mounted) {
@@ -1953,8 +1953,8 @@ export function App(): JSX.Element {
       if (!(target instanceof Node)) {
         return;
       }
-      if (projectMenuOpen && !projectMenuRef.current?.contains(target)) {
-        setProjectMenuOpen(false);
+      if (workspaceMenuOpen && !workspaceMenuRef.current?.contains(target)) {
+        setWorkspaceMenuOpen(false);
       }
       if (
         (runtimeMenuOpen || branchMenuOpen) &&
@@ -2001,7 +2001,7 @@ export function App(): JSX.Element {
     environmentPanelHasRoom,
     environmentPanelMenu,
     environmentPanelOpen,
-    projectMenuOpen,
+    workspaceMenuOpen,
     runtimeMenuOpen,
   ]);
 
@@ -2023,7 +2023,7 @@ export function App(): JSX.Element {
     return () => window.removeEventListener("focus", handleFocus);
   }, []);
 
-  const activeProject = useMemo(
+  const activeWorkspace = useMemo(
     () =>
       state.projects.find((project) => project.id === state.activeProjectId),
     [state.activeProjectId, state.projects],
@@ -2056,8 +2056,8 @@ export function App(): JSX.Element {
   const greetingContext: GreetingContext =
     state.activeContext?.kind === "project"
       ? {
-          kind: "project",
-          projectName: activeProject?.name ?? t("greeting.projectFallback"),
+          kind: "workspace",
+          workspaceName: activeWorkspace?.name ?? t("greeting.workspaceFallback"),
         }
       : { kind: "wuu" };
   const emptyThreadTitle = greetingFor(currentHour, greetingContext);
@@ -2539,13 +2539,13 @@ export function App(): JSX.Element {
   const rememberWorkspaceDirtyFiles = useStableCallback((dirty: boolean): void => {
     workspaceHasDirtyFilesRef.current = dirty;
   });
-  const sidebarProjectThreadsByProjectID = projectThreadsByProjectID;
+  const sidebarWorkspaceThreadsByWorkspaceID = workspaceThreadsByWorkspaceID;
   const sidebarThreads = useMemo(() => {
     const byID = new Map<string, Thread>();
     for (const thread of cachedScratchThreads) {
       byID.set(thread.id, thread);
     }
-    for (const threads of Object.values(sidebarProjectThreadsByProjectID)) {
+    for (const threads of Object.values(sidebarWorkspaceThreadsByWorkspaceID)) {
       for (const thread of threads) {
         byID.set(thread.id, thread);
       }
@@ -2556,7 +2556,7 @@ export function App(): JSX.Element {
     return sortThreads([...byID.values()]);
   }, [
     cachedScratchThreads,
-    sidebarProjectThreadsByProjectID,
+    sidebarWorkspaceThreadsByWorkspaceID,
     state.threads,
   ]);
   const visibleRunningThreadIDs = useMemo(
@@ -2566,14 +2566,14 @@ export function App(): JSX.Element {
     ),
     [crossWorkdirRunningThreadIDs, sidebarThreads, state.secondaryThread, state.thread],
   );
-  const sidebarProjectThreadSummariesByProjectID = useMemo(
-    () => summarizeProjectThreadsForSidebar(
-      sidebarProjectThreadsByProjectID,
+  const sidebarWorkspaceThreadSummariesByWorkspaceID = useMemo(
+    () => summarizeWorkspaceThreadsForSidebar(
+      sidebarWorkspaceThreadsByWorkspaceID,
       state.threads,
       visibleRunningThreadIDs,
     ),
     [
-      sidebarProjectThreadsByProjectID,
+      sidebarWorkspaceThreadsByWorkspaceID,
       state.threads,
       visibleRunningThreadIDs,
     ],
@@ -2595,7 +2595,7 @@ export function App(): JSX.Element {
   // threads are the scratch conversations pulled out of
   // sidebarThreadSummaries above. path is intentionally "" — ThreadSidebar
   // special-cases the scratch pseudo id and skips its cwd-path filter.
-  const scratchPseudoProject = useMemo<DesktopProject>(
+  const scratchPseudoWorkspace = useMemo<DesktopProject>(
     () => ({
       id: SCRATCH_PSEUDO_PROJECT_ID,
       name: t("sidebar.conversations"),
@@ -2605,16 +2605,16 @@ export function App(): JSX.Element {
     }),
     [t],
   );
-  const sidebarProjects = useMemo<DesktopProject[]>(
-    () => [scratchPseudoProject, ...state.projects],
-    [scratchPseudoProject, state.projects],
+  const sidebarWorkspaces = useMemo<DesktopProject[]>(
+    () => [scratchPseudoWorkspace, ...state.projects],
+    [scratchPseudoWorkspace, state.projects],
   );
-  const sidebarThreadsByProjectID = useMemo(
+  const sidebarThreadsByWorkspaceID = useMemo(
     () => ({
       [SCRATCH_PSEUDO_PROJECT_ID]: sidebarScratchThreads,
-      ...sidebarProjectThreadSummariesByProjectID,
+      ...sidebarWorkspaceThreadSummariesByWorkspaceID,
     }),
-    [sidebarScratchThreads, sidebarProjectThreadSummariesByProjectID],
+    [sidebarScratchThreads, sidebarWorkspaceThreadSummariesByWorkspaceID],
   );
   const activeThreadReadOnly = Boolean(activeThread?.read_only);
   const activeThreadIsRunning = isStateActiveThreadRunning(state);
@@ -2965,7 +2965,7 @@ export function App(): JSX.Element {
     return (
       <>
       <Composer
-        canSelectProject={!composerNavigation && !activeThread && !activePendingNewThreadTurn}
+        canSelectWorkspace={!composerNavigation && !activeThread && !activePendingNewThreadTurn}
         hideExpandButton={composerNavigation}
         topAccessory={pendingUserQuestionOffer ? (
           <UserQuestionCard
@@ -3058,7 +3058,7 @@ export function App(): JSX.Element {
         branchPickerDisabled={viewContextSwitchPending}
         projects={state.projects}
         activeContext={state.activeContext}
-        activeProject={activeProject}
+        activeWorkspace={activeWorkspace}
         compactDisabledReason={
           !activeThread
             ? t("app.openConversationFirst")
@@ -3084,8 +3084,8 @@ export function App(): JSX.Element {
         branchMenuOpen={branchMenuOpen}
         menuRef={runtimeMenuRef}
         accessMenuRef={accessMenuRef}
-        projectFilter={projectFilter}
-        setProjectFilter={setProjectFilter}
+        workspaceFilter={workspaceFilter}
+        setWorkspaceFilter={setWorkspaceFilter}
         onToggleMenu={() => {
           setAccessMenuOpen(false);
           setBranchMenuOpen(false);
@@ -3133,20 +3133,20 @@ export function App(): JSX.Element {
           void selectPermissionMode(mode, approveForMe);
         }}
         onOpenSettings={() => {
-          closeProjectMenus();
+          closeWorkspaceMenus();
           setSettingsInitialPage("providers");
           setSettingsOpen(true);
         }}
         onOpenSkillsCatalog={openSkillsTab}
-        onSelectProject={(id) => void selectProjectForNewThread(id)}
+        onSelectWorkspace={(id) => void selectWorkspaceForNewThread(id)}
         onSelectNoProject={() => void useNoProject(false)}
         onSelectGitBranch={checkoutBranch}
         onCreateGitBranch={async (branch) => {
           await createAndCheckoutBranch(branch);
           setBranchMenuOpen(false);
         }}
-        onCreateProject={() => void createBlankProject()}
-        onOpenProject={() => void chooseProjectFolder()}
+        onCreateWorkspace={() => void createBlankProject()}
+        onOpenWorkspace={() => void chooseProjectFolder()}
         onStartNewThread={startNewThreadWithComposerFocus}
         onHandoffSession={handoffActiveThread}
         onOpenSideThread={openSideThreadPanel}
@@ -3188,7 +3188,7 @@ export function App(): JSX.Element {
   }
 
   function openProviderSettings(): void {
-    closeProjectMenus();
+    closeWorkspaceMenus();
     setSettingsInitialPage("providers");
     setSettingsOpen(true);
   }
@@ -3209,7 +3209,7 @@ export function App(): JSX.Element {
     // Used by both the sidebar entry (when one is added later) and the
     // archive-tip toast: always jump the Settings shell to the Archive page,
     // even if Settings was already open on a different tab.
-    setProjectMenuOpen(false);
+    setWorkspaceMenuOpen(false);
     setRuntimeMenuOpen(false);
     setCodexRuntimeMenu(null);
     setSettingsInitialPage("archive");
@@ -3245,15 +3245,15 @@ export function App(): JSX.Element {
     }
   }
 
-  function closeProjectMenus(): void {
-    setProjectMenuOpen(false);
+  function closeWorkspaceMenus(): void {
+    setWorkspaceMenuOpen(false);
     setRuntimeMenuOpen(false);
     setAccessMenuOpen(false);
     setCodexRuntimeMenu(null);
     setBranchMenuOpen(false);
     setEnvironmentPanelMenu(null);
     setSettingsOpen(false);
-    setProjectFilter("");
+    setWorkspaceFilter("");
   }
 
   const {
@@ -3274,7 +3274,7 @@ export function App(): JSX.Element {
         activeThreadForState(appStateRef.current),
       )?.cwd,
     setAppState: setState,
-    closeProjectMenus,
+    closeWorkspaceMenus,
     setEnvironmentPanelOpen,
     setEnvironmentPanelDismissed,
     setEnvironmentPanelMenu,
@@ -3347,14 +3347,14 @@ export function App(): JSX.Element {
   }
 
   const {
-    selectProjectForNewThread,
-    startNewThreadForProject,
+    selectWorkspaceForNewThread,
+    startNewThreadInWorkspace,
     createBlankProject,
     chooseProjectFolder,
     removeProject,
     relocateProject,
     useNoProject,
-  } = createProjectRuntimeActions({
+  } = createWorkspaceRuntimeActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
     getPrimaryComposerDraft: currentPrimaryComposerDraft,
@@ -3364,7 +3364,7 @@ export function App(): JSX.Element {
     restoreLoadedRuntimeComposerDraft,
     nextDraftSessionTab,
     isDraftPending: (tabID) => pendingThreadCreationsRef.current.has(tabID),
-    closeProjectMenus,
+    closeWorkspaceMenus,
     
     beginViewSwitch,
     finishViewSwitch,
@@ -3374,7 +3374,7 @@ export function App(): JSX.Element {
 
   const {
     selectThread,
-    selectProjectThread,
+    selectWorkspaceThread,
     activateThread,
     selectChildAgent,
   } = createThreadActivationActions({
@@ -3387,8 +3387,8 @@ export function App(): JSX.Element {
     resetSplitComposerDrafts: () =>
       setSplitComposerDrafts(initialSplitComposerDrafts()),
     getSidebarThreads: () => sidebarThreads,
-    getSidebarProjectThreadsByProjectID: () =>
-      sidebarProjectThreadsByProjectID,
+    getSidebarWorkspaceThreadsByWorkspaceID: () =>
+      sidebarWorkspaceThreadsByWorkspaceID,
     getRunningThreadIDs: () => crossWorkdirRunningThreadIDs,
     
     beginViewSwitch,
@@ -3612,12 +3612,12 @@ export function App(): JSX.Element {
     return result;
   }
 
-  function startNewThreadForProjectWithComposerFocus(id: string): void {
+  function startNewThreadInWorkspaceWithComposerFocus(id: string): void {
     const origin = document.activeElement;
     focusHeroAfter(
       id === SCRATCH_PSEUDO_PROJECT_ID
         ? useNoProject(true)
-        : startNewThreadForProject(id),
+        : startNewThreadInWorkspace(id),
       origin,
       (current) =>
         id === SCRATCH_PSEUDO_PROJECT_ID
@@ -3719,7 +3719,7 @@ export function App(): JSX.Element {
     setContextCompositionEntries,
     setInstructionFilesEntries,
     scheduleStreamScroll,
-    closeProjectMenus,
+    closeWorkspaceMenus,
     setSettingsInitialPage,
     setSettingsOpen,
   });
@@ -4635,12 +4635,12 @@ export function App(): JSX.Element {
             .filter((thread) => thread.archived)
             .map((thread) => {
               const project = state.projects.find((candidate) =>
-                threadBelongsToProject(thread, candidate),
+                threadBelongsToWorkspace(thread, candidate),
               );
               return {
                 ...thread,
                 archive_project_id: project?.id ?? "",
-                archive_project_name: project?.name ?? t("appState.noProject"),
+                archive_project_name: project?.name ?? t("appState.noWorkspace"),
               };
             })}
           onUnarchiveThread={(thread) => void unarchiveThread(thread)}
@@ -4738,7 +4738,7 @@ export function App(): JSX.Element {
             drawerVisible={sidebarDrawerVisible}
             onNavigateAway={closeCompactSessionSwitcher}
             state={state}
-            sidebarProjects={sidebarProjects}
+            sidebarWorkspaces={sidebarWorkspaces}
             pendingConversations={pendingThreadCreations.map((pending) => ({
               id: pending.sessionTabID,
               context: pending.context,
@@ -4749,23 +4749,23 @@ export function App(): JSX.Element {
               closeCompactSessionSwitcher();
               void selectSessionTab(tabID);
             }}
-            activeProjectID={
-              workspaceProjectSelectionEnabled && workspaceContext?.kind === "project"
+            activeWorkspaceID={
+              workspaceSelectionEnabled && workspaceContext?.kind === "project"
                 ? workspaceContext.project_id
                 : undefined
             }
             pinnedThreads={sidebarPinnedThreads}
             activeThreadID={activeThreadID}
             pendingThreadID={visiblePendingThreadID}
-            pendingProjectID={visiblePendingProjectID}
+            pendingWorkspaceID={visiblePendingWorkspaceID}
             collapsedSidebarSectionIDs={collapsedSidebarSectionIDs}
             collapsedFolderIDs={collapsedFolderIDs}
             setCollapsedFolderIDs={setCollapsedFolderIDs}
             expandedSidebarSectionIDs={expandedSidebarSectionIDs}
-            loadingProjectThreadIDs={loadingProjectThreadIDs}
-            projectThreadsByProjectID={sidebarThreadsByProjectID}
-            projectMenuOpen={projectMenuOpen}
-            projectMenuRef={projectMenuRef}
+            loadingWorkspaceThreadIDs={loadingWorkspaceThreadIDs}
+            workspaceThreadsByWorkspaceID={sidebarThreadsByWorkspaceID}
+            workspaceMenuOpen={workspaceMenuOpen}
+            workspaceMenuRef={workspaceMenuRef}
             searchOpen={conversationSearch.open}
             sectionOrder={sidebarSectionOrder}
             onStartNewThread={() => {
@@ -4809,12 +4809,12 @@ export function App(): JSX.Element {
             }}
             onDeleteThread={(thread) => void deleteThread(thread)}
             onRenameThread={(thread, title) => void renameThread(thread, title)}
-            onToggleProjectMenu={() => setProjectMenuOpen((open) => !open)}
-            onCreateProject={() => void createBlankProject()}
-            onOpenProjectFolder={() => void chooseProjectFolder()}
+            onToggleWorkspaceMenu={() => setWorkspaceMenuOpen((open) => !open)}
+            onCreateWorkspace={() => void createBlankProject()}
+            onOpenWorkspaceFolder={() => void chooseProjectFolder()}
             onToggleSidebarSectionCollapsed={toggleSidebarSectionCollapsed}
-            onSelectProjectWorkspace={
-              workspaceProjectSelectionEnabled
+            onFocusWorkspace={
+              workspaceSelectionEnabled
                 ? (id) => {
                     const project = state.projects.find((item) => item.id === id);
                     if (!project || project.missing) {
@@ -4831,20 +4831,20 @@ export function App(): JSX.Element {
                   }
                 : undefined
             }
-            onStartNewThreadForProject={(id) => {
+            onStartNewThreadInWorkspace={(id) => {
               closePrimaryPluginView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
-              startNewThreadForProjectWithComposerFocus(id);
+              startNewThreadInWorkspaceWithComposerFocus(id);
             }}
-            onSelectProjectThread={(projectID, threadID) => {
+            onSelectWorkspaceThread={(workspaceID, threadID) => {
               closePrimaryPluginView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
-              void selectProjectThread(projectID, threadID);
+              void selectWorkspaceThread(workspaceID, threadID);
             }}
-            onRemoveProject={(id) => void removeProject(id)}
-            onRelocateProject={(id) => void relocateProject(id)}
+            onRemoveWorkspace={(id) => void removeProject(id)}
+            onRelocateWorkspace={(id) => void relocateProject(id)}
             onReorderSections={setSidebarSectionOrder}
             onPointerEnter={openSidebarDrawer}
             onPointerLeave={(event) =>
@@ -4855,7 +4855,7 @@ export function App(): JSX.Element {
                 else setAccountOpen(true);
               } : undefined}
             onOpenSettings={(page = "providers") => {
-              setProjectMenuOpen(false);
+              setWorkspaceMenuOpen(false);
               setRuntimeMenuOpen(false);
               setCodexRuntimeMenu(null);
               setSettingsInitialPage(page);

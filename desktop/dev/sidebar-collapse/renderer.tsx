@@ -15,7 +15,7 @@ applyMessageFlowFontSize(Number(params.get("size")) || 14);
 
 function Fixture(): JSX.Element {
   const [expanded, setExpanded] = useState(true);
-  const [projectExpanded, setProjectExpanded] = useState(true);
+  const [workspaceExpanded, setWorkspaceExpanded] = useState(true);
   const [rows, setRows] = useState(params.has("empty") ? 0 : Number(params.get("rows")) || 12);
   return <div className="app-shell" style={{ display: "flex", height: "100dvh" }}>
     <aside className="sidebar" style={{ width: Number(params.get("width")) || 296, overflow: "auto" }}>
@@ -29,9 +29,9 @@ function Fixture(): JSX.Element {
         <SidebarCollapseBody expanded={expanded} className="sidebar-functional-group-collapse">
           <div className="sidebar-functional-group-body">
             <section className="project-section" data-testid="project">
-              <SidebarSection expanded={projectExpanded} iconKind="project"
-                CollapsedIcon={Folder} ExpandedIcon={FolderOpen} label="Project with nested conversations"
-                ariaLabel="Toggle project" title="Toggle project" onToggle={() => setProjectExpanded(value => !value)}>
+              <SidebarSection expanded={workspaceExpanded} iconKind="project"
+                CollapsedIcon={Folder} ExpandedIcon={FolderOpen} label="Workspace with nested conversations"
+                ariaLabel="Toggle workspace" title="Toggle workspace" onToggle={() => setWorkspaceExpanded(value => !value)}>
                 <div className="thread-list">
                   {Array.from({ length: rows }, (_, i) => <button key={i} className="thread-row sidebar-session-row"
                     data-testid="row" style={{ textAlign: "left", flexShrink: 0 }}>

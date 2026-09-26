@@ -31,7 +31,7 @@ import { showErrorToast } from "./Toast";
 import { beginSessionSwitch, markSessionSwitch } from "./SessionSwitchPerformance";
 
 type SetAppState = (update: SetStateAction<AppState>) => void;
-type ViewSwitchKind = "thread" | "project" | "runtime";
+type ViewSwitchKind = "thread" | "workspace" | "runtime";
 
 export type SessionTabActionsDeps = {
   getAppState: () => AppState;
@@ -253,9 +253,9 @@ export function createSessionTabActions(
       markSessionSwitch(performanceThreadID, "state-update-issued");
     }
     try {
-      const projectState = await selectRuntimeContext(tab.context);
+      const workspaceState = await selectRuntimeContext(tab.context);
       const [loadedState, resumed] = await Promise.all([
-        loadRuntime(projectState, { resumeLatestThread: false }),
+        loadRuntime(workspaceState, { resumeLatestThread: false }),
         window.wuu.resumeThread(tab.threadID),
       ]);
       markSessionSwitch(performanceThreadID, "runtime-loaded");

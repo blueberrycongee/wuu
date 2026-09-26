@@ -471,7 +471,7 @@ describe("GitService worktree roots", () => {
     const unrelated = makeRepository();
 
     expect(() => serviceFor(root).status({}, unrelated)).toThrow(
-      "Git working directory is not associated with the current project",
+      "Git working directory is not associated with the current workspace",
     );
   });
 

@@ -64,7 +64,7 @@ export type TurnViewProps = {
 };
 
 export function TurnView(props: TurnViewProps): JSX.Element | null {
-  const projectedTurn = projectTurnForPresentation(props.turn);
+  const projectedTurn = workspaceTurnForPresentation(props.turn);
   if (props.turn.items.length > 0 && projectedTurn.items.length === 0) {
     return null;
   }
@@ -94,7 +94,7 @@ export function TurnView(props: TurnViewProps): JSX.Element | null {
   );
 }
 
-function projectTurnForPresentation(turn: Turn): Turn {
+function workspaceTurnForPresentation(turn: Turn): Turn {
   const items = turn.items.filter(
     (item) =>
       item.type !== "user_message" || !isInternalUserNotificationItem(item),

@@ -2302,20 +2302,20 @@ function SettingsArchivePage({
 }): JSX.Element {
   const { t, formatDate } = useI18n();
   const [query, setQuery] = useState("");
-  const [projectFilter, setProjectFilter] = useState("all");
+  const [workspaceFilter, setWorkspaceFilter] = useState("all");
   const sortedThreads = useMemo(
     () => [...archivedThreads].sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
     [archivedThreads],
   );
-  const projectOptions = useMemo(() => {
+  const workspaceOptions = useMemo(() => {
     const seen = new Set<string>();
     return sortedThreads.flatMap((thread) => {
-      const projectID = archiveProjectID(thread);
-      if (seen.has(projectID)) {
+      const workspaceID = archiveWorkspaceID(thread);
+      if (seen.has(workspaceID)) {
         return [];
       }
-      seen.add(projectID);
-      return [{ value: projectID, label: archiveProjectName(thread, t("settings.noProject")) }];
+      seen.add(workspaceID);
+      return [{ value: workspaceID, label: archiveWorkspaceName(thread, t("settings.noWorkspace")) }];
     });
   }, [sortedThreads, t]);
   const groups = useMemo(() => {
@@ -2325,23 +2325,23 @@ function SettingsArchivePage({
       { projectName: string; threads: ArchivedSessionView[] }
     >();
     for (const thread of sortedThreads) {
-      const projectID = archiveProjectID(thread);
+      const workspaceID = archiveWorkspaceID(thread);
       const title = archiveThreadTitle(thread, t("settings.untitledConversation"));
-      if (projectFilter !== "all" && projectID !== projectFilter) {
+      if (workspaceFilter !== "all" && workspaceID !== workspaceFilter) {
         continue;
       }
       if (normalizedQuery && !title.toLocaleLowerCase().includes(normalizedQuery)) {
         continue;
       }
-      const group = grouped.get(projectID) ?? {
-        projectName: archiveProjectName(thread, t("settings.noProject")),
+      const group = grouped.get(workspaceID) ?? {
+        projectName: archiveWorkspaceName(thread, t("settings.noWorkspace")),
         threads: [],
       };
       group.threads.push(thread);
-      grouped.set(projectID, group);
+      grouped.set(workspaceID, group);
     }
-    return Array.from(grouped, ([projectID, group]) => ({ projectID, ...group }));
-  }, [projectFilter, query, sortedThreads, t]);
+    return Array.from(grouped, ([workspaceID, group]) => ({ workspaceID, ...group }));
+  }, [workspaceFilter, query, sortedThreads, t]);
   const noMatches = sortedThreads.length > 0 && groups.length === 0;
 
   return (
@@ -2362,10 +2362,10 @@ function SettingsArchivePage({
           <SelectMenu
             className="settings-archive-project-filter"
             triggerClassName="settings-select-trigger"
-            value={projectFilter}
-            onChange={setProjectFilter}
-            ariaLabel={t("settings.archiveProjectFilter")}
-            options={[{ value: "all", label: t("settings.allProjects") }, ...projectOptions]}
+            value={workspaceFilter}
+            onChange={setWorkspaceFilter}
+            ariaLabel={t("settings.archiveWorkspaceFilter")}
+            options={[{ value: "all", label: t("settings.allWorkspaces") }, ...workspaceOptions]}
             flip
           />
         </div>
@@ -2384,7 +2384,7 @@ function SettingsArchivePage({
         ) : (
           <div className="settings-archive-groups" aria-label={t("settings.archivedList")}>
             {groups.map((group) => (
-              <section className="settings-archive-group" key={group.projectID}>
+              <section className="settings-archive-group" key={group.workspaceID}>
                 <header className="settings-archive-group-header">
                   <div className="settings-archive-group-name">
                     <Folder className="icon" aria-hidden="true" />
@@ -2430,11 +2430,11 @@ function archiveThreadTitle(thread: ArchivedSessionView, fallback: string): stri
   return (thread.title ?? "").trim() || fallback;
 }
 
-function archiveProjectID(thread: ArchivedSessionView): string {
+function archiveWorkspaceID(thread: ArchivedSessionView): string {
   return thread.archive_project_id?.trim() || "no-project";
 }
 
-function archiveProjectName(thread: ArchivedSessionView, fallback: string): string {
+function archiveWorkspaceName(thread: ArchivedSessionView, fallback: string): string {
   return thread.archive_project_name?.trim() || fallback;
 }
 

@@ -46,7 +46,7 @@ import {
   pinnedThreads,
   pinnedThreadSummaries,
   presentationRunningThreadIDs,
-  projectThreads,
+  workspaceThreads,
   queryTextsForThread,
   requestedHandoffIntentForThread,
   reconcileResumedThreadTurns,
@@ -56,9 +56,9 @@ import {
   scratchThreadSummaries,
   sortThreads,
   summarizeThreadsForSidebar,
-  threadBelongsToProject,
+  threadBelongsToWorkspace,
   threadNeedsResumeOnReselect,
-  threadProjectPath,
+  threadWorkspacePath,
   threadSessionTabID,
   turnStreamStatusForThread,
   turnPreview,
@@ -876,8 +876,8 @@ describe("summarizeThreadsForSidebar", () => {
     ]);
 
     expect(summary.worktree?.base_repo).toBe("/repo/project");
-    expect(threadProjectPath(summary)).toBe("/repo/project");
-    expect(threadBelongsToProject(summary, project)).toBe(true);
+    expect(threadWorkspacePath(summary)).toBe("/repo/project");
+    expect(threadBelongsToWorkspace(summary, project)).toBe(true);
     expect(isScratchThread(summary, [project])).toBe(false);
   });
 
@@ -899,7 +899,7 @@ describe("summarizeThreadsForSidebar", () => {
     ]);
 
     expect(summary.workspace_id).toBe(project.id);
-    expect(threadBelongsToProject(summary, project)).toBe(true);
+    expect(threadBelongsToWorkspace(summary, project)).toBe(true);
     expect(isScratchThread(summary, [project])).toBe(false);
   });
 });
@@ -1009,7 +1009,7 @@ describe("workspacePanelContext", () => {
 
   it("overrides cwd to the thread's own cwd when it differs, preserving kind/project_id (worktree fork)", () => {
     // Mirrors a thread/fork "worktree" thread: resolveThreadRuntimeContext
-    // resolves it to the base project's context (threadProjectPath prefers
+    // resolves it to the base project's context (threadWorkspacePath prefers
     // worktree.base_repo), but the thread itself runs out of the worktree
     // directory. The workspace panel should follow the thread.
     const thread = threadWithUserTexts(["continue in a worktree"]);
@@ -2577,7 +2577,7 @@ describe("AppState sortThreads (sidebar order)", () => {
     expect(renderableThreads.get("child-running")?.turns).toHaveLength(1);
   });
 
-  it("pinnedThreads and projectThreads hide archived entries but keep read-only ones", () => {
+  it("pinnedThreads and workspaceThreads hide archived entries but keep read-only ones", () => {
     const pinnedArchived = makeSortableThread({
       id: "pinned-archived",
       createdAt: "2026-06-18T00:00:00Z",
@@ -2591,13 +2591,13 @@ describe("AppState sortThreads (sidebar order)", () => {
       updatedAt: "2026-06-21T00:00:00Z",
       pinned: true,
     });
-    const projectArchived = makeSortableThread({
+    const workspaceArchived = makeSortableThread({
       id: "project-archived",
       createdAt: "2026-06-18T00:00:00Z",
       updatedAt: "2026-06-22T00:00:00Z",
       archived: true,
     });
-    const projectReadOnly = makeSortableThread({
+    const workspaceReadOnly = makeSortableThread({
       id: "project-readonly",
       createdAt: "2026-06-18T00:00:00Z",
       updatedAt: "2026-06-23T00:00:00Z",
@@ -2607,14 +2607,14 @@ describe("AppState sortThreads (sidebar order)", () => {
     const threads = [
       pinnedArchived,
       pinnedLive,
-      projectArchived,
-      projectReadOnly,
+      workspaceArchived,
+      workspaceReadOnly,
     ];
 
     expect(pinnedThreads(threads).map((thread) => thread.id)).toEqual([
       "pinned-live",
     ]);
-    expect(projectThreads(threads).map((thread) => thread.id)).toEqual([
+    expect(workspaceThreads(threads).map((thread) => thread.id)).toEqual([
       "project-readonly",
     ]);
   });
@@ -3328,15 +3328,15 @@ describe("conversationSearchContextLabel (R4: no raw scratch paths in the UI)", 
     expect(conversationSearchContextLabel(thread, [project])).toBe("MyApp");
   });
 
-  it("labels a no-project (scratch) thread 无项目 instead of its raw scratch directory name", () => {
+  it("labels a no-project (scratch) thread 无工作区 instead of its raw scratch directory name", () => {
     const label = conversationSearchContextLabel(scratchThread, []);
-    expect(label).toBe("无项目");
+    expect(label).toBe("无工作区");
     expect(label).not.toContain("2026-07-03");
     expect(label).not.toContain("scratch");
   });
 
-  it("still says 无项目 when other registered projects exist but none match this thread's cwd", () => {
-    const otherProject: DesktopProject = {
+  it("still says 无工作区 when other registered workspaces exist but none match this thread's cwd", () => {
+    const otherWorkspace: DesktopProject = {
       id: "proj-2",
       name: "OtherApp",
       path: "/repo/other",
@@ -3344,8 +3344,8 @@ describe("conversationSearchContextLabel (R4: no raw scratch paths in the UI)", 
       updated_at: "2026-01-01T00:00:00Z",
     };
     expect(
-      conversationSearchContextLabel(scratchThread, [otherProject]),
-    ).toBe("无项目");
+      conversationSearchContextLabel(scratchThread, [otherWorkspace]),
+    ).toBe("无工作区");
   });
 });
 
@@ -3511,7 +3511,7 @@ describe("AppState English localization", () => {
       cwd: "/scratch",
     });
 
-    expect(conversationSearchContextLabel(scratchThread, [])).toBe("No project");
+    expect(conversationSearchContextLabel(scratchThread, [])).toBe("No workspace");
     expect(conversationSearchThreadMeta(scratchThread)).toBe("Pinned · Unknown time");
     expect(sessionTabLabel(draft, { ...initialState, projects: [] })).toBe(
       "Conversations",
@@ -3671,8 +3671,8 @@ describe("threadNeedsResumeOnReselect", () => {
 });
 
 describe("extension inventory context", () => {
-  const projectA: RuntimeContext = { kind: "project", project_id: "a", cwd: "/a" };
-  const projectB: RuntimeContext = { kind: "project", project_id: "b", cwd: "/b" };
+  const workspaceA: RuntimeContext = { kind: "project", project_id: "a", cwd: "/a" };
+  const workspaceB: RuntimeContext = { kind: "project", project_id: "b", cwd: "/b" };
   const oldInventory: ExtensionInventoryRecord[] = [{
     id: "old",
     name: "Old",
@@ -3691,24 +3691,24 @@ describe("extension inventory context", () => {
   it("applies inventory only to the runtime that requested it", () => {
     const state = {
       ...initialState,
-      activeContext: projectB,
+      activeContext: workspaceB,
       initialized: { extension_inventory: oldInventory },
     } as AppState;
 
-    expect(withExtensionInventoryForContext(state, projectA, nextInventory)).toBe(state);
-    expect(withExtensionInventoryForContext(state, projectB, nextInventory).initialized?.extension_inventory).toEqual(nextInventory);
+    expect(withExtensionInventoryForContext(state, workspaceA, nextInventory)).toBe(state);
+    expect(withExtensionInventoryForContext(state, workspaceB, nextInventory).initialized?.extension_inventory).toEqual(nextInventory);
   });
 
   it("applies a live plugin generation inventory notification", () => {
     const state = {
       ...initialState,
-      activeContext: projectB,
+      activeContext: workspaceB,
       initialized: { extension_inventory: oldInventory },
     } as AppState;
 
     const next = reduceServerEvent(state, {
       kind: "notification",
-      workdir: projectB.cwd,
+      workdir: workspaceB.cwd,
       message: {
         method: "plugin/inventory/changed",
         params: {
@@ -3725,13 +3725,13 @@ describe("extension inventory context", () => {
   it("ignores malformed live plugin inventory notifications", () => {
     const state = {
       ...initialState,
-      activeContext: projectB,
+      activeContext: workspaceB,
       initialized: { extension_inventory: oldInventory },
     } as AppState;
 
     const next = reduceServerEvent(state, {
       kind: "notification",
-      workdir: projectB.cwd,
+      workdir: workspaceB.cwd,
       message: {
         method: "plugin/inventory/changed",
         params: { epoch: 2, extension_inventory: [{ id: "incomplete" }] },
