@@ -32,6 +32,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Project conversation lists show five recent entries plus active, running,
+  unread, and up to three recently read conversations. Recently read entries
+  expire after two minutes. Expanding includes all history inside an eight-row,
+  font-responsive scroll area, keeping other projects in place.
+
 - Creating an agent asks only for its model and name. The name step no longer
   shows switch-model and project controls above the input, and the random-name
   action sits inside the name input. The first conversation opens in the
