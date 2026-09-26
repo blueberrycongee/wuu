@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -295,6 +296,57 @@ func TestActivatePluginGenerationKeepsPinnedConversationGeneration(t *testing.T)
 	session.ReleasePluginGeneration(pinned)
 	if !oldClient.closed {
 		t.Fatal("pinned generation survived after the last conversation released it")
+	}
+}
+
+func TestBuiltPluginGenerationsRetireAfterLastOwnerReleases(t *testing.T) {
+	for _, pinnedOwners := range []int{0, 1, 2} {
+		t.Run(fmt.Sprintf("pinned_owners_%d", pinnedOwners), func(t *testing.T) {
+			session := testGenerationSession(testPluginGeneration("initial", &generationClient{id: "initial"}))
+			session.RootDir = t.TempDir()
+			session.WuuHome = t.TempDir()
+			defer session.Cleanup()
+			var previous *generationClient
+			for cycle := 0; cycle < 3; cycle++ {
+				client := &generationClient{id: "plugin"}
+				candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("plugin")}, nil, nil,
+					func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) { return client, nil })
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer candidate.close()
+				var pins []*PluginGeneration
+				if previous != nil {
+					for owner := 0; owner < pinnedOwners; owner++ {
+						pins = append(pins, session.RetainPluginGeneration())
+					}
+				}
+				if err := session.ActivatePluginGeneration(candidate, nil); err != nil {
+					t.Fatal(err)
+				}
+				if client.closed {
+					t.Fatal("new live generation was closed")
+				}
+				if previous != nil {
+					if previous.closed != (pinnedOwners == 0) {
+						t.Fatalf("cycle %d: previous closed=%v with %d pinned owners", cycle, previous.closed, pinnedOwners)
+					}
+					for owner, pin := range pins {
+						session.ReleasePluginGeneration(pin)
+						if previous.closed != (owner == len(pins)-1) {
+							t.Fatalf("cycle %d: previous closed=%v after releasing owner %d", cycle, previous.closed, owner)
+						}
+					}
+				}
+				previous = client
+			}
+			if _, err := session.Cleanup(); err != nil {
+				t.Fatal(err)
+			}
+			if !previous.closed {
+				t.Fatal("current generation survived Session cleanup")
+			}
+		})
 	}
 }
 

@@ -120,6 +120,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Retire runtime plugin processes after refresh or disable once their last
+  owning session releases them. Rebuilt generations no longer retain an extra
+  reference; conversations already using an older generation keep it until
+  they rebuild.
+
 - Remote Web clients reconnect when the relay stops responding during authentication,
   and cancel pending authentication immediately when stopped or suspended.
 
