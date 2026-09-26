@@ -178,7 +178,7 @@ func TestAutomationPluginProcessRecoversOverdueTasksAfterServiceReadiness(t *tes
 						}
 						consumed := len(state.Tasks) == 0
 						if recurring {
-							consumed = len(state.Tasks) == 1 && state.Tasks[0].NextRunAt.After(time.Now())
+							consumed = len(state.Tasks) == 1 && len(state.Runs) == 1 && state.Tasks[0].NextRunAt.After(state.Runs[0].TriggeredAt)
 						}
 						if !consumed {
 							continue
