@@ -128,10 +128,8 @@ export { permissionModeFromSummary, permissionModeHasAdvancedOverrides } from ".
 export function Composer({
   variant = "dock",
   canSelectProject = variant === "hero",
-  projectFolderActions = true,
   mainConversation = false,
   topAccessory,
-  leadingActions,
   containerRef,
   prompt: committedPrompt,
   promptRevision = 0,
@@ -218,24 +216,17 @@ export function Composer({
   queryHistory = [],
   requestedHandoffIntent,
   hideRuntimeControls = false,
-  hidePlusButton = false,
-  hidePermissionControl = false,
   hideExpandButton = false,
   placeholder,
-  maxLength,
   textOnly = false,
-  slashCommandsEnabled = true,
   slashCommandsOverride,
   onResetSideThread,
   pluginHost = desktopPluginHost,
 }: {
   variant?: ComposerVariant;
   canSelectProject?: boolean;
-  /** Surfaces bound to registered projects hide the folder and no-project actions. */
-  projectFolderActions?: boolean;
   mainConversation?: boolean;
   topAccessory?: ReactNode;
-  leadingActions?: ReactNode;
   containerRef?: Ref<HTMLElement>;
   prompt: string;
   // Changes only for programmatic clear/restore operations. This lets the
@@ -332,8 +323,6 @@ export function Composer({
   // Suppress the model/context/token runtime chrome on the bar's right edge.
   // Side-thread composers reuse this input without a separate runtime picker.
   hideRuntimeControls?: boolean;
-  hidePlusButton?: boolean;
-  hidePermissionControl?: boolean;
   hideExpandButton?: boolean;
   // A shared composer can be embedded in a conversation surface whose
   // transport accepts text only. The editor, keyboard handling, expansion,
@@ -341,11 +330,7 @@ export function Composer({
   // unsupported attachment, slash-command, and permission affordances
   // are removed.
   textOnly?: boolean;
-  // Some shared composer surfaces accept attachments and rich input but do
-  // not own the main-conversation runtime commands (for example Channels).
-  slashCommandsEnabled?: boolean;
   placeholder?: string;
-  maxLength?: number;
   // Replaces the built-in main-conversation command list with a
   // surface-specific one (e.g. the side chat's /reset). The menu, keyboard
   // handling, and action dispatch stay the canonical Composer machinery, so
@@ -535,7 +520,7 @@ export function Composer({
       : hasAttachments
         ? t("composer.addDescription")
         : t("composer.placeholder"));
-  const slashDraft = slashCommandsEnabled && !(textOnly && !slashCommandsOverride)
+  const slashDraft = !(textOnly && !slashCommandsOverride)
     ? parseComposerSlashDraft(prompt)
     : undefined;
   const handoffCatalog = useMemo<HandoffCatalog>(() => ({
@@ -647,7 +632,7 @@ export function Composer({
   }, [visibleSlashCommands]);
 
   useEffect(() => {
-    if (!slashCommandsEnabled || !slashRuntimeReady || readOnly || textOnly) {
+    if (!slashRuntimeReady || readOnly || textOnly) {
       setSlashSkills([]);
       return;
     }
@@ -669,7 +654,7 @@ export function Composer({
         }
       }
     }
-  }, [readOnly, slashCommandsEnabled, slashRuntimeReady, slashSkillContextKey, slashSkillCountKey, textOnly]);
+  }, [readOnly, slashRuntimeReady, slashSkillContextKey, slashSkillCountKey, textOnly]);
 
   useEffect(() => {
     if (readOnly) {
@@ -721,7 +706,7 @@ export function Composer({
       return;
     }
     resetQueryHistoryNavigation();
-    const submitSlashDraft = slashCommandsEnabled && !(textOnly && !slashCommandsOverride)
+    const submitSlashDraft = !(textOnly && !slashCommandsOverride)
       ? parseComposerSlashDraft(promptOverride)
       : undefined;
     const actionCommand = submitSlashDraft
@@ -1176,7 +1161,6 @@ export function Composer({
                       onSelectNoProject={onSelectNoProject}
                       onCreateProject={onCreateProject}
                       onOpenProject={onOpenProject}
-                      folderActions={projectFolderActions}
                     />
                   </FloatingMenuPortal>
                 ) : null}
@@ -1260,7 +1244,6 @@ export function Composer({
               valueRevision={promptRevision}
               submissionClearRevision={submissionClearRevision}
               placeholder={composerPlaceholder}
-              maxLength={maxLength}
               disabled={readOnly}
               ariaControls={slashMenuOpen ? slashMenuID : undefined}
               ariaActiveDescendant={
@@ -1297,8 +1280,7 @@ export function Composer({
               data-wuu-component="composer-toolbar"
             >
               <div className="composer-bar-left">
-                {leadingActions}
-                {!textOnly && !hidePlusButton ? (
+                {!textOnly ? (
                   <ComposerPlusButton
                     variant={variant}
                     disabled={readOnly}
@@ -1317,7 +1299,7 @@ export function Composer({
                     onSelectCommand={(command) => applySlashCommand(command, undefined)}
                   />
                 ) : null}
-                {!textOnly && !hidePermissionControl ? (
+                {!textOnly ? (
                   <div className="permission-menu-anchor" ref={accessMenuRef}>
                     <button
                       className={`permission-chip tone-${permissionOption.tone}`}
@@ -1540,7 +1522,6 @@ type ComposerTextareaProps = {
   valueRevision: number;
   submissionClearRevision: number;
   placeholder: string;
-  maxLength?: number;
   disabled: boolean;
   ariaControls?: string;
   ariaActiveDescendant?: string;
@@ -1562,7 +1543,6 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
     valueRevision,
     submissionClearRevision,
     placeholder,
-    maxLength,
     disabled,
     ariaControls,
     ariaActiveDescendant,
@@ -1621,7 +1601,6 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
         data-wuu-component="composer-input"
         value={value}
         placeholder={placeholder}
-        maxLength={maxLength}
         disabled={disabled}
         aria-readonly={disabled}
         aria-controls={ariaControls}

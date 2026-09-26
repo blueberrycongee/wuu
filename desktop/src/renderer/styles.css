@@ -5,16 +5,10 @@
 @import "./styles/scrollbars.css";
 @import "./styles/scroll-fade.css";
 @import "./styles/sidebar.css";
-@import "./styles/managed-sessions.css";
 @import "./styles/sidebar-touch.css";
 @import "./styles/settings.css";
 @import "./styles/conversation-shell.css";
-@import "./styles/default-avatar.css";
 @import "./styles/chat.css";
-@import "./styles/channels.css";
-@import "./styles/channel-agent-editor.css";
-@import "./styles/task-cards.css";
-@import "./styles/task-board.css";
 @import "./styles/side-thread.css";
 @import "./styles/environment.css";
 @import "./styles/workspace.css";

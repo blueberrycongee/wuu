@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_MESSAGE_FLOW_FONT_SIZE,
   getCodexPetScale,
-  getChannelRoomPreferences,
   getCodexPetSettings,
   getCodexPetSize,
   getMainWindowBounds,
@@ -16,7 +15,6 @@ import {
   getLanguagePreference,
   readDesktopSettings,
   setCodexPetSettings,
-  setChannelRoomPreferences,
   setMainWindowBounds,
   setMessageFlowFontSize,
   setPluginConflictPreference,
@@ -81,25 +79,6 @@ describe("desktopSettings", () => {
     expect(isOnboardingComplete(file)).toBe(false);
     await writeFile(file, JSON.stringify({ onboarding_version: 1.5 }));
     expect(isOnboardingComplete(file)).toBe(false);
-  });
-
-  it("round-trips normalized channel room preferences", () => {
-    setThemePreference("dark", file);
-    setChannelRoomPreferences(
-      {
-        pinnedRoomIDs: ["room-1", "room-2", "room-2"],
-        archivedRoomIDs: ["room-1", "room-1", ""],
-        selectedRoomID: " ada-dm ",
-      },
-      file,
-    );
-
-    expect(getChannelRoomPreferences(file)).toEqual({
-      pinnedRoomIDs: ["room-2"],
-      archivedRoomIDs: ["room-1"],
-      selectedRoomID: "ada-dm",
-    });
-    expect(getThemePreference(file)).toBe("dark");
   });
 
   it("defaults and round-trips the language preference", () => {

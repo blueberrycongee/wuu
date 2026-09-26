@@ -137,7 +137,7 @@ With Vite running on port 5189, run `npm --prefix desktop run test:e2e:backgroun
 
 ## Sidebar folds
 
-The Collaboration, Pinned, Folders, and Workspace headings support mouse drag reordering. The desktop profile remembers their order; adding Collaboration to an older profile preserves its existing group order. Run `cd desktop && npx electron scripts/sidebar-collaboration-sort-e2e.cjs` for isolated rendered drag, cancellation, and reload checks. It also captures theme/font variants in `artifacts/sidebar-collaboration-sort/` for separate visual review.
+The Pinned, Folders, and Workspace headings support mouse drag reordering. The desktop profile remembers their order.
 
 Use `SidebarCollapseBody` for sidebar sections and nested groups. It animates intrinsic height and the heading gap together, retains rows until closing finishes, and prevents hidden rows from receiving focus. Avoid inherited measured-height variables or descendant animation rules that change a nested fold when its parent toggles.
 

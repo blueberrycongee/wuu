@@ -15,43 +15,6 @@ struct MobileCircleButton: View {
     }
 }
 
-struct AgentMark: View {
-    var agent: CollaborationAgent?
-    var size: CGFloat = 36
-    var status: String? = nil
-    var subtle = false
-    var body: some View {
-        SharedAvatar(value: ["agent": avatarRecord(agent), "status": status.map(JSONValue.string) ?? .null, "subtle": .bool(subtle)], size: size)
-    }
-}
-
-struct RoomMark: View {
-    let room: CollaborationRoom
-    let agents: [CollaborationAgent]
-    var size: CGFloat = 40
-    var body: some View {
-        let record: JSONValue = ["id": .string(room.id), "kind": room.value["kind"], "avatar_image": room.value["avatar_image"],
-            "created_at": room.value["created_at"], "members": .array(room.members)]
-        let members = Set(room.members.compactMap { $0["member_type"].string == "agent" ? $0["member_id"].string : nil })
-        SharedAvatar(value: ["room": record, "agents": .array(agents.filter { members.contains($0.id) }.map { avatarRecord($0) })], size: size)
-    }
-}
-
-func mobileMessageDate(_ value: String) -> Date? {
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    return formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
-}
-
-func mobileMessageTime(_ value: String, separator: Bool = false) -> String {
-    guard let date = mobileMessageDate(value) else { return "" }
-    let calendar = Calendar.current
-    let time = date.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
-    if calendar.isDateInToday(date) { return separator ? "今天 " + time : time }
-    let day = calendar.isDateInYesterday(date) ? "昨天" : date.formatted(.dateTime.month(.defaultDigits).day())
-    return separator ? day + " " + time : day
-}
-
 struct MobileComposer: View {
     @Environment(\.mobileTextSize) private var textSize
     @Binding var text: String

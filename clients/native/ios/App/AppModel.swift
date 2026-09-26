@@ -2,16 +2,14 @@ import SwiftUI
 import WuuCore
 import CryptoKit
 
-@MainActor @Observable final class AppModel: CollaborationConnection {
+@MainActor @Observable final class AppModel {
     var account: AccountSession?
-    let collaboration = CollaborationModel()
     let push = PushNotifications()
     var devices: [AccountDevice] = []
     var host: AccountDevice?
     var entries: [HistoryEntry] = []
     var threads: [ChatThread] = []
     var activeID: String? { didSet { rememberLocation() } }
-    var mode = "collaboration" { didSet { rememberLocation() } }
     var live: ChatThread?
     var saved: HistoryThread?
     var connected = false
@@ -64,7 +62,6 @@ import CryptoKit
         #if DEBUG
         if NativeUIFixture.enabled {
             live = NativeUIFixture.thread(); activeID = live?.id; connected = true
-            if let live { NativeUIFixture.configure(collaboration, thread: live) }
             return
         }
         #endif
@@ -76,8 +73,7 @@ import CryptoKit
                 devices = directory.devices; authMethod = directory.auth_method; directoryCached = true
                 if let location = try vault.load("location", as: NavigationLocation.self)?.restore(account: account, devices: devices) {
                     host = devices.first { $0.pub == location.host }
-                    activeID = location.thread; workspace = location.workspace; mode = location.mode
-                    collaboration.select(location.room)
+                    activeID = location.thread; workspace = location.workspace
                     history = try ConversationHistory(account: account, host: location.host, directory: cacheDirectory)
                 }
             }
@@ -88,8 +84,7 @@ import CryptoKit
     func rememberLocation() {
         guard let account, let host else { return }
         do {
-            try vault.save(NavigationLocation(account: account, host: host.pub, workspace: workspace,
-                thread: activeID, room: collaboration.roomID, mode: mode), key: "location")
+            try vault.save(NavigationLocation(account: account, host: host.pub, workspace: workspace, thread: activeID), key: "location")
         } catch { self.error = error.localizedDescription }
     }
     func perform(_ operation: @escaping @MainActor () async throws -> Void) {
@@ -317,10 +312,9 @@ import CryptoKit
     @discardableResult func leaveHost(removeCache: Bool = false) async -> UUID {
         try? vault.delete("location")
         host = nil
-        collaboration.reset()
         let oldHistory = history
         history = nil; host = nil; entries = []; threads = []; activeID = nil; live = nil; saved = nil
-        workspace = ""; mode = "collaboration"; workspaces = []; historyEnabled = false; opening = UUID(); search = ""; archivedList = false
+        workspace = ""; workspaces = []; historyEnabled = false; opening = UUID(); search = ""; archivedList = false
         let selection = opening
         await background()
         try? await oldHistory?.invalidate(removeCache: removeCache)
@@ -365,14 +359,6 @@ import CryptoKit
             let body = try await history.thread(id)
             if epoch == stamp, activeID == id { saved = body }
         }
-    }
-    func channelCall(_ method: String, _ params: JSONValue = [:]) async throws -> JSONValue {
-        try Task.checkCancellation()
-        guard connected, let remote else { throw NativeError.invalid("请先连接电脑") }
-        let stamp = epoch
-        let result = try await remote.call(method, params: params)
-        guard stamp == epoch, self.remote === remote else { throw CancellationError() }
-        return result
     }
     func setHistory(_ enabled: Bool) async throws {
         let stamp = epoch
@@ -555,14 +541,6 @@ import CryptoKit
         }
     }
     #endif
-    func previewCollaborationAttachment(_ message: CollaborationMessage, field: String, index: Int) async throws {
-        guard connected, !loadingAttachment else { return }
-        let stamp = epoch; loadingAttachment = true
-        defer { if epoch == stamp { loadingAttachment = false } }
-        let result = try await collaboration.readAttachment(message, field: field, index: index, app: self)
-        guard stamp == epoch else { return }
-        attachmentPreview = result
-    }
     func stop() async throws {
         guard let remote, let activeID else { return }
         _ = try await remote.call("turn/interrupt", params: ["thread_id": .string(activeID)])

@@ -47,7 +47,7 @@ If desktop code fails to render, Wuu isolates the failing contribution where pos
 
 Agent runtimes can register tools, contribute context, observe supported lifecycle events, and provide or consume versioned services. Desktop modules can add views, fixed insertion points, semantic rendering replacements, conversation cards, and styles. Declarative themes and settings do not require a desktop module; see [themes and settings](themes-settings.md).
 
-Bundled features use these mechanisms too. Guides cover [subagents](../desktop/subagents.md), [automations](../automation/scheduled-tasks.md), and [memory](memory.md). The Peers plugin lets an agent contact existing conversations in the same workspace; it is separate from creating a child subagent or working with a named Collaboration identity.
+Bundled features use these mechanisms too. Guides cover [subagents](../desktop/subagents.md), [automations](../automation/scheduled-tasks.md), and [memory](memory.md). The Peers plugin lets an agent contact existing conversations in the same workspace; it is separate from creating a child subagent.
 
 ## Develop a plugin
 

@@ -338,8 +338,8 @@
   --sidebar-label-size: var(--font-ui);
   --sidebar-heading-size: max(12px, round(nearest, calc(var(--sidebar-label-size) - 2px), 1px));
   --sidebar-row-height: max(32px, round(nearest, calc(var(--sidebar-label-size) * 2.25), 4px));
-  /* One icon and text axis for navigation, plugins, collaboration, projects,
-   * and account controls. Avatars occupy this same glyph slot. */
+  /* One icon and text axis for navigation, plugins, projects, and account
+   * controls. Avatars occupy this same glyph slot. */
   --sidebar-primary-icon-size: 16px;
   --sidebar-nav-icon-col: 18px;
   --sidebar-nav-column-gap: 10px;
@@ -438,10 +438,10 @@
   z-index: 150;
 }
 
-/* Channel headers host the toggle directly; conversation headers wrap it.
- * Reserve its space only while that slot still contains the lifted control. */
+/* Reserve the lifted toggle's space only while that slot still contains
+ * the control. */
 :is(.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing), .sidebar-drawer-docking)
-  :is(.title-block, .settings-titlebar, .channel-room-header):has(> .sidebar-toggle-button)::before {
+  :is(.title-block, .settings-titlebar):has(> .sidebar-toggle-button)::before {
   content: "";
   flex: 0 0 var(--control-size-toolbar);
   width: var(--control-size-toolbar);
@@ -646,8 +646,7 @@
   background: var(--modal-backdrop-bg);
 }
 
-.sidebar-resizer,
-.channel-inspector-resizer {
+.sidebar-resizer {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -662,8 +661,7 @@
   z-index: 10;
 }
 
-.sidebar-resizer::before,
-.channel-inspector-resizer::before {
+.sidebar-resizer::before {
   /* Spans the full sidebar height so the hover/drag feedback lights the
    * entire right edge of the left sidebar, not just a short indicator
    * segment that leaves the top and bottom 12px dark. */
@@ -684,10 +682,7 @@
 
 .sidebar-resizer:hover::before,
 .sidebar-resizer:focus-visible::before,
-.resizing-sidebar .sidebar-resizer::before,
-.channel-inspector-resizer:hover::before,
-.channel-inspector-resizer:focus-visible::before,
-.channel-inspector-resizer[data-resizing]::before {
+.resizing-sidebar .sidebar-resizer::before {
   background: var(--sidebar-resizer-hover-bg);
   box-shadow: 0 0 0 1px var(--sidebar-resizer-hover-ring);
 }
@@ -863,7 +858,7 @@
   line-height: 0;
   -webkit-app-region: no-drag;
   transform: none;
-  /* keep in sync with CLEAR_UNREAD_HOLD_MS in AppModeSwitch.tsx */
+  /* keep in sync with CLEAR_UNREAD_HOLD_MS in SidebarBrand.tsx */
   --hold-duration: 600ms;
   transition:
     background-color var(--motion-fast) var(--ease-out),
@@ -1161,306 +1156,6 @@
   stroke-width: 2;
 }
 
-.collaboration-sidebar .sidebar-content {
-  padding: 0 8px 8px;
-}
-
-.collaboration-sidebar-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex: 0 0 auto;
-  min-height: 48px;
-  padding: 0 4px 0 max(4px, var(--window-controls-inset-left));
-  -webkit-app-region: drag;
-}
-
-.collaboration-sidebar-topbar button { -webkit-app-region: no-drag; }
-
-.select-menu-panel.collaboration-new-menu {
-  padding: 4px;
-  border-radius: var(--radius-sm);
-}
-
-.collaboration-new-menu .select-menu-item {
-  justify-content: flex-start;
-  gap: 8px;
-  font-weight: var(--weight-regular);
-}
-
-.collaboration-new-menu .select-menu-item svg {
-  flex: 0 0 auto;
-  color: var(--ink-muted);
-}
-
-.collaboration-sidebar-tools {
-  padding: 2px 0 12px;
-}
-
-.collaboration-sidebar-search {
-  display: grid;
-  height: 36px;
-  grid-template-columns: 18px minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  padding: 0 10px;
-  background: var(--surface-1);
-  color: var(--ink-muted);
-}
-
-html[data-focus-modality="keyboard"] .collaboration-sidebar-search:has(input:focus-visible) {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
-.collaboration-sidebar-search svg {
-  width: 16px;
-  height: 16px;
-}
-
-.collaboration-sidebar-search input {
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-}
-
-.collaboration-sidebar-main {
-  display: flex;
-  min-height: 0;
-  flex: 1 1 0;
-  flex-direction: column;
-  gap: var(--sidebar-row-gap);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-bottom: 12px;
-}
-
-/* The shared sidebar owns scrolling and the account footer. */
-.collaboration-sidebar-section .collaboration-sidebar-main {
-  overflow: visible;
-  padding-bottom: 0;
-}
-
-.collaboration-sidebar-section .collaboration-sidebar-main[hidden] {
-  display: none;
-}
-
-.collaboration-sidebar-section,
-.sidebar-functional-group[data-functional-group-id="pinned"] {
-  --collaboration-contact-avatar-size: var(--sidebar-primary-icon-size);
-}
-
-.collaboration-sidebar-section .collaboration-contact-row,
-.sidebar-functional-group[data-functional-group-id="pinned"] .collaboration-contact-row {
-  width: 100%;
-  min-height: var(--sidebar-row-height);
-  height: auto;
-  grid-template-columns: var(--sidebar-nav-icon-col) minmax(0, 1fr);
-  column-gap: var(--sidebar-nav-column-gap);
-  padding: 0.35em var(--sidebar-row-pad-x);
-}
-
-/* Identity marks share the nav glyph column so names sit on the same
- * axis as folders, plugins, and primary navigation. */
-.collaboration-sidebar-section .collaboration-contact-avatar,
-.sidebar-functional-group[data-functional-group-id="pinned"] .collaboration-contact-avatar {
-  justify-self: center;
-  margin-inline-start: 0;
-}
-
-.collaboration-contact-row {
-  display: grid;
-  flex: 0 0 auto;
-  min-width: 0;
-  min-height: max(40px, var(--sidebar-row-height));
-  grid-template-columns: var(--collaboration-contact-avatar-size, 28px) minmax(0, 1fr);
-  align-items: center;
-  column-gap: 12px;
-  border-radius: var(--radius-xs);
-  padding: 6px 8px;
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
-}
-
-.collaboration-contact-row:hover,
-.collaboration-contact-row:focus-visible {
-  outline: 0;
-  background: var(--ink-overlay-4);
-}
-
-.collaboration-contact-row.active {
-  background: var(--selection-surface);
-}
-
-.collaboration-contact-row:focus-visible { box-shadow: inset 0 0 0 2px var(--ink-muted); }
-
-.collaboration-contact-avatar {
-  display: block;
-  width: var(--collaboration-contact-avatar-size, 28px);
-  height: var(--collaboration-contact-avatar-size, 28px);
-  overflow: visible;
-  border-radius: var(--radius-xs);
-}
-
-.collaboration-contact-avatar > * {
-  width: 100%;
-  height: 100%;
-}
-
-.collaboration-contact-copy {
-  display: block;
-  min-width: 0;
-}
-
-.collaboration-contact-heading {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  gap: 8px;
-}
-
-.collaboration-contact-heading strong {
-  display: block;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.collaboration-contact-heading strong {
-  font-size: var(--sidebar-label-size);
-  line-height: 1.45;
-  font-weight: var(--weight-regular);
-}
-
-.collaboration-contact-row.has-unread strong { font-weight: var(--weight-semibold); }
-.collaboration-contact-pin { width: 12px; height: 12px; color: var(--ink-muted); flex-shrink: 0; }
-
-.collaboration-contact-unread {
-  flex-shrink: 0;
-  /* Same compact box as the collapsed-rail counter: a 16px pill keeps the
-   * digit visually centered next to a 14px label, while a 18px pill plus
-   * inherited leading read as a blob twice the label's weight. Line-height
-   * is pinned so a row label's multiplier cannot resize the badge and so
-   * the digit sits on the pill's optical center. */
-  min-width: 16px;
-  height: 16px;
-  line-height: 16px;
-  border-radius: var(--radius-pill);
-  padding: 0 4px;
-  background: var(--info);
-  color: var(--sidebar-session-status-unread-fg);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  font-weight: var(--weight-semibold);
-  text-align: center;
-}
-
-.collaboration-contact-empty {
-  padding: 20px 12px;
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  text-align: center;
-}
-
-.collaboration-sidebar-footer { flex: 0 0 auto; padding-top: 4px; }
-.collaboration-sidebar-footer-action {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 34px;
-  padding: 6px 10px;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--ink-soft);
-  text-align: left;
-  cursor: pointer;
-}
-.collaboration-sidebar-footer-action svg { width: 18px; height: 18px; flex-shrink: 0; }
-.collaboration-sidebar-footer-action:hover,
-.collaboration-sidebar-footer-action:focus-visible { background: var(--ink-overlay-4); color: var(--ink); }
-
-.collaboration-sidebar-rail .sidebar-content {
-  width: 88px;
-  min-width: 88px;
-  padding: 0 12px 12px;
-}
-
-.collaboration-sidebar-rail .collaboration-sidebar-topbar { padding: 0; min-height: 52px; }
-.collaboration-sidebar-rail .collaboration-sidebar-main { gap: 4px; overflow-x: hidden; }
-.collaboration-sidebar-rail .collaboration-contact-row {
-  --collaboration-contact-avatar-size: 36px;
-  position: relative;
-  display: flex;
-  justify-content: center;
-  min-height: 60px;
-  border-radius: 14px;
-  padding: 10px;
-}
-.collaboration-sidebar-rail .collaboration-contact-copy { display: none; }
-.collaboration-sidebar-rail .collaboration-contact-row.pinned + .collaboration-contact-row:not(.pinned) {
-  margin-top: 18px;
-}
-.collaboration-sidebar-rail .collaboration-contact-row.pinned + .collaboration-contact-row:not(.pinned)::before {
-  content: "";
-  position: absolute;
-  top: -11px;
-  left: 4px;
-  right: 4px;
-  border-top: 1px solid var(--hairline);
-}
-.collaboration-rail-unread {
-  position: absolute;
-  top: 3px;
-  right: 2px;
-  min-width: 16px;
-  padding: 1px 4px;
-  border-radius: 9px;
-  background: var(--info);
-  color: var(--ink-on-info);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  line-height: 14px;
-}
-.collaboration-sidebar-rail .collaboration-sidebar-footer {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-}
-.collaboration-sidebar-rail .collaboration-sidebar-footer > button {
-  display: flex;
-  justify-content: center;
-  width: 40px;
-  min-height: 36px;
-  padding: 8px;
-}
-.collaboration-sidebar-rail .collaboration-sidebar-footer-action > span,
-.collaboration-sidebar-rail .sidebar-account-name,
-.collaboration-sidebar-rail .sidebar-account-trigger > svg { display: none; }
-.collaboration-sidebar-rail .sidebar-account-trigger {
-  display: flex;
-  justify-content: center;
-  padding: 8px;
-}
-.collaboration-sidebar-rail .sidebar-account-trigger .sidebar-account-avatar { width: 32px; height: 32px; font-size: 12px; }
-.collaboration-sidebar-rail .sidebar-account-menu { width: min(260px, calc(100vw - 24px)); right: auto; }
-
-@media (max-width: 760px) {
-  .collaboration-sidebar-topbar { padding-top: env(safe-area-inset-top, 0px); }
-  .collaboration-sidebar-footer-action { min-height: 40px; }
-}
-
 .primary-nav,
 .project-list {
   display: flex;
@@ -1557,40 +1252,6 @@ html[data-focus-modality="keyboard"] .collaboration-sidebar-search:has(input:foc
   .thread-list-collapse-btn
 ) {
   color: var(--ink-muted);
-}
-
-/* 协作 section rows reuse the full session-row anatomy
- * (.sidebar-session-row + .thread-row-main + .thread-row-title: 30px height,
- * vertical centering, hover/active states all inherited). Second-level items
- * carry no icon: the status column keeps their text on the session title axis. */
-.sidebar-collab-list {
-  display: grid;
-  gap: 1px;
-}
-
-.sidebar-room-row.has-unread::before {
-  content: none;
-}
-
-.sidebar-room-row .channel-room-unread {
-  box-sizing: border-box;
-  grid-column: 1;
-  grid-row: 1;
-  min-width: 13px;
-  height: 13px;
-  display: inline-grid;
-  place-items: center;
-  justify-self: center;
-  padding: 0 2px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: var(--sidebar-session-status-unread-bg);
-  color: var(--sidebar-session-status-unread-fg);
-  font-size: 9px;
-  font-variant-numeric: tabular-nums;
-  font-weight: var(--weight-semibold);
-  line-height: 1;
-  pointer-events: none;
 }
 
 .nav-item:hover,
@@ -1748,15 +1409,11 @@ html[data-focus-modality="keyboard"] :is(
 }
 
 .sidebar-functional-group-sortable > .sidebar-functional-heading,
-.sidebar-functional-group-sortable .collaboration-sidebar-section .sidebar-functional-heading,
-.sidebar-functional-group-sortable .collaboration-sidebar-section .sidebar-functional-heading-toggle,
 .sidebar-functional-group-sortable > .sidebar-functional-heading .sidebar-functional-heading-toggle {
   cursor: grab;
 }
 
 .sidebar-functional-group-sortable[data-dragging="true"] > .sidebar-functional-heading,
-.sidebar-functional-group-sortable[data-dragging="true"] .collaboration-sidebar-section .sidebar-functional-heading,
-.sidebar-functional-group-sortable[data-dragging="true"] .collaboration-sidebar-section .sidebar-functional-heading-toggle,
 .sidebar-functional-group-sortable[data-dragging="true"] > .sidebar-functional-heading .sidebar-functional-heading-toggle {
   cursor: grabbing;
 }
@@ -1858,19 +1515,12 @@ html[data-focus-modality="keyboard"] :is(
   padding-left: calc((var(--sidebar-nav-icon-col) - var(--sidebar-primary-icon-size)) / 2);
 }
 
-.pinned-sortable-thread:has(.collaboration-contact-row) {
-  display: flex;
-  min-width: 0;
-}
-
 .pinned-sortable-thread .thread-row-main,
-.pinned-sortable-thread .collaboration-contact-row,
 .sidebar-functional-group[data-functional-group-id="pinned"] .sidebar-section-row.can-reorder {
   cursor: grab;
 }
 
 .pinned-sortable-thread[data-dragging="true"] .thread-row-main,
-.pinned-sortable-thread[data-dragging="true"] .collaboration-contact-row,
 .sidebar-functional-group[data-functional-group-id="pinned"] .sidebar-section-row.dragging {
   cursor: grabbing;
 }

@@ -1,5 +1,4 @@
 import { forgetLocalTurnTiming } from "./LocalTurnTiming";
-import type { ChannelRoomOnboarding } from "../shared/protocol";
 import { subscribeServerEvents } from "./ServerEvents";
 import { PhoneNavigationContext } from "./PhoneNavigationContext";
 import { AccountScreen } from "./AccountScreen";
@@ -24,7 +23,6 @@ import type {
   ActivitySession,
   BrowserDockTarget,
   Agent,
-  ChannelRoom,
   DesktopProject,
   EngineInfo,
   EngineListResult,
@@ -34,7 +32,6 @@ import type {
   InputFile,
   InputImage,
   MessageContentPart,
-  NamedAgent,
   PopOutInitResult,
   PluginPackageInstallResult,
   PluginPackageRemoveResult,
@@ -100,16 +97,7 @@ import { SideThreadComposer } from "./SideThreadComposer";
 import { ConversationForkDialog } from "./ConversationForkDialog";
 import { firstUserMessageText } from "./TurnViewHelpers";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
-import {
-  AppSidebar,
-  SIDEBAR_SECTION_COLLAB,
-} from "./AppSidebar";
-import { ChannelView, type ChannelConversationSnapshot, type ChannelSection } from "./ChannelView";
-import type { ChannelComposerProject } from "./ChannelComposer";
-import { collaborationConversations, managedSidebarThreads, orderedPinnedCollaborationConversations, type CollaborationConversation } from "./CollaborationConversations";
-import { CollaborationSidebar } from "./CollaborationSidebar";
-import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft } from "./AgentOnboarding";
-import type { AppMode } from "./AppModeSwitch";
+import { AppSidebar } from "./AppSidebar";
 import {
   type EnvironmentPanelMenu,
   type EnvironmentPanelMotionState,
@@ -184,17 +172,6 @@ import {
   type ThreadSummary,
 } from "./AppState";
 import {
-  archiveChannelRoomPreference,
-  readChannelRoomPreferences,
-  togglePinnedChannelRoom,
-  unarchiveChannelRoomPreference,
-  visibleChannelRooms,
-  writeChannelRoomPreferences,
-  type ChannelRoomPreferences,
-} from "./ChannelRoomPreferences";
-import { DIRECTORY_POLL_BASE_MS, nextDirectoryPollDelay } from "./ChannelDirectoryPoll";
-import { sameChannelRooms, sameNamedAgents } from "./ChannelRoomState";
-import {
   rightPanelMotionMs,
   sidebarDrawerExitMs,
   SIDEBAR_MAX_WIDTH,
@@ -232,8 +209,6 @@ import type { SettingsPage } from "./SettingsView";
 import {
   ENABLE_CONVERSATION_TURN_RAIL,
   ENABLE_EMBEDDED_BROWSER,
-  ENABLE_GROUP_CHAT,
-  ENABLE_COLLABORATION_CHANNELS,
   ENABLE_ACCOUNT,
 } from "./FeatureFlags";
 import { ArchiveTip } from "./ArchiveTip";
@@ -562,15 +537,14 @@ export function App(): JSX.Element {
     });
     return () => cancelAnimationFrame(raf);
   }, [workspaceSheetPhase]);
-  // A manually expanded workspace owns the main stage, not the navigation
-  // rail. Keep a docked sidebar docked; only an already-collapsed or compact
-  // sidebar remains a drawer while the workspace is expanded.
-  const [appMode, setAppMode] = useState<AppMode>("harness");
   // The bell view is a sidebar-level navigation mode rather than sidebar-local
   // state: settings and account replace the whole workbench tree, so the flag
   // has to live above it for the user to come back to the view they left.
   const [unreadViewOpen, setUnreadViewOpen] = useState(false);
   const [attentionStickyIDs, setAttentionStickyIDs] = useState<Set<string>>(() => new Set());
+  // A manually expanded workspace owns the main stage, not the navigation
+  // rail. Keep a docked sidebar docked; only an already-collapsed or compact
+  // sidebar remains a drawer while the workspace is expanded.
   const sidebarDrawerMode = compactNavigation || sidebarCollapsed;
   const {
     sidebarDrawerPhase,
@@ -665,49 +639,6 @@ export function App(): JSX.Element {
     () => window.wuu?.initialOnboardingComplete ?? true,
   );
 
-  const [collaborationSection, setCollaborationSection] = useState<ChannelSection>("rooms");
-  const [newRoomRequest, setNewRoomRequest] = useState(0);
-  const [editChannelAgentRequestID, setEditChannelAgentRequestID] = useState("");
-  const [editChannelRoomRequestID, setEditChannelRoomRequestID] = useState("");
-  const [agentOnboardingActive, setAgentOnboardingActive] = useState(false);
-  const [agentOnboardingDraft, setAgentOnboardingDraft] = useState<AgentOnboardingDraft | null>(null);
-  // New direct conversations and new agents open in one registered project.
-  // Default to the runtime's project, as the host does without a workspace.
-  const [collaborationProjectID, setCollaborationProjectID] = useState("");
-  const collaborationProjects = useMemo(() => state.projects.filter((project) => !project.missing), [state.projects]);
-  const collaborationProject = collaborationProjects.find((project) => project.id === collaborationProjectID)
-    ?? collaborationProjects.find((project) => project.path === state.initialized?.workspace_root)
-    ?? collaborationProjects.find((project) => project.id === state.activeProjectId);
-  const collaborationProjectPicker: ChannelComposerProject | undefined = collaborationProjects.length
-    ? { projects: collaborationProjects, selectedID: collaborationProject?.id ?? "", onSelect: setCollaborationProjectID }
-    : undefined;
-  const [allNamedAgents, setNamedAgents] = useState<NamedAgent[]>([]);
-  const [deletedAgentIDs, setDeletedAgentIDs] = useState<ReadonlySet<string>>(new Set());
-  const deletedAgentIDsRef = useRef(new Set<string>());
-  const namedAgents = useMemo(() => allNamedAgents.filter((agent) => !deletedAgentIDs.has(agent.id)), [allNamedAgents, deletedAgentIDs]);
-  const directoryRefreshInFlightRef = useRef(false);
-  const channelDirectoryGenerationRef = useRef(0);
-  const [channelDirectoryLoaded, setChannelDirectoryLoaded] = useState(false);
-  const [selectedCollaborationAgentID, setSelectedCollaborationAgentID] = useState("");
-  const selectedCollaborationAgentRequestRef = useRef("");
-  const directMessageRequestGenerationRef = useRef(0);
-  const [selectedChannelRoomIDState, setSelectedChannelRoomIDState] = useState(() => readChannelRoomPreferences().selectedRoomID ?? "");
-  const [channelComposerDrafts, setChannelComposerDrafts] = useState<Record<string, ComposerDraftState>>({});
-  // Rooms (with per-room unread counts) live at the App level so the unified
-  // sidebar and the channel canvas share one source of truth; selection is
-  // controlled here and passed into ChannelView.
-  const [allChannelRooms, setChannelRooms] = useState<ChannelRoom[]>([]);
-  const channelRooms = useMemo(() => allChannelRooms.filter((room) => room.kind !== "dm" || !room.members.some((member) => member.member_type === "agent" && deletedAgentIDs.has(member.member_id))), [allChannelRooms, deletedAgentIDs]);
-  const [channelRoomPreferences, setChannelRoomPreferences] =
-    useState<ChannelRoomPreferences>(readChannelRoomPreferences);
-  useEffect(() => {
-    // Migrate preferences saved by older builds from origin-bound
-    // localStorage into desktop-settings.json on the first launch.
-    writeChannelRoomPreferences(channelRoomPreferences);
-    // Only the initial snapshot is migrated here; user changes persist in
-    // updateChannelRoomPreferences below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   const [settingsInitialPage, setSettingsInitialPage] =
     useState<SettingsPage>("providers");
   const {
@@ -721,85 +652,6 @@ export function App(): JSX.Element {
     updateCodexPets,
   } = useSettingsRuntimeState({ settingsOpen });
 
-  // Poll the room list so the sidebar 协作 section always shows current
-  // unread counts, independent of whether the channel canvas is open.
-  useEffect(() => {
-    if (
-      !ENABLE_GROUP_CHAT ||
-      !window.wuu ||
-      typeof window.wuu.listChannelRooms !== "function" ||
-      !state.initialized
-    ) {
-      setChannelRooms([]);
-      setNamedAgents([]);
-      setChannelDirectoryLoaded(false);
-      return;
-    }
-    let active = true;
-    let delay = DIRECTORY_POLL_BASE_MS;
-    let timer = 0;
-    const refresh = async (): Promise<boolean | undefined> => {
-      if (directoryRefreshInFlightRef.current) return undefined;
-      directoryRefreshInFlightRef.current = true;
-      const generation = ++channelDirectoryGenerationRef.current;
-      let changed = false;
-      try {
-        const result = await window.wuu!.listChannelRooms();
-        if (active && generation === channelDirectoryGenerationRef.current) {
-          const rooms = result.rooms ?? [];
-          setChannelRooms((current) => {
-            if (sameChannelRooms(current, rooms)) return current;
-            changed = true;
-            return rooms;
-          });
-          setChannelDirectoryLoaded(true);
-        }
-        if (typeof window.wuu!.listNamedAgents === "function") {
-          const agentResult = await window.wuu!.listNamedAgents();
-          if (active && generation === channelDirectoryGenerationRef.current) {
-            const agents = agentResult.agents ?? [];
-            setNamedAgents((current) => {
-              if (sameNamedAgents(current, agents)) return current;
-              changed = true;
-              return agents;
-            });
-          }
-        }
-      } catch (reason) {
-        console.warn("collaboration directory refresh failed", reason);
-      } finally {
-        directoryRefreshInFlightRef.current = false;
-      }
-      return changed;
-    };
-    const schedule = (ms: number): void => {
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => { void tick(); }, ms);
-    };
-    const tick = async (): Promise<void> => {
-      if (!active || document.visibilityState !== "visible") return;
-      const changed = await refresh();
-      if (!active || document.visibilityState !== "visible") return;
-      if (changed !== undefined) delay = nextDirectoryPollDelay(delay, changed);
-      schedule(delay);
-    };
-    const onVisibility = (): void => {
-      if (!active) return;
-      if (document.visibilityState !== "visible") {
-        window.clearTimeout(timer);
-        return;
-      }
-      delay = DIRECTORY_POLL_BASE_MS;
-      void tick();
-    };
-    void tick();
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [state.initialized]);
   const [projectFilter, setProjectFilter] = useState("");
   const {
     workspaceViewTabs,
@@ -904,11 +756,6 @@ export function App(): JSX.Element {
     toggleSidebar,
     workspaceRightPanelDockableWithoutSidebar,
   ]);
-  const clearChannelRoomUnread = useCallback((roomID: string): void => {
-    setChannelRooms((current) =>
-      current.map((room) => (room.id === roomID ? { ...room, unread_count: 0 } : room)),
-    );
-  }, []);
   const [environmentDialog, setEnvironmentDialog] =
     useState<EnvironmentDialog | null>(null);
   const [contextCompositionEntries, setContextCompositionEntries] = useState<
@@ -1155,43 +1002,8 @@ export function App(): JSX.Element {
   const runtimeVariantByModelRef = useRef(new Map<string, string>());
   const cachedThreadPaneHistoryRef = useRef<string[]>([]);
   const cachedConversationPaneThreadsRef = useRef(new Map<string, Thread>());
-  const channelConversationCacheRef = useRef(new Map<string, ChannelConversationSnapshot>());
   const draftSessionTabCounterRef = useRef(0);
   const currentSessionTab = activeSessionTab(state);
-  const activeChannelRooms = useMemo(
-    () => visibleChannelRooms(channelRooms, channelRoomPreferences),
-    [channelRoomPreferences, channelRooms],
-  );
-  const archivedChannelRooms = useMemo(
-    () => channelRooms.filter((room) => (ENABLE_COLLABORATION_CHANNELS || room.kind === "dm") && channelRoomPreferences.archivedRoomIDs.includes(room.id)),
-    [channelRoomPreferences.archivedRoomIDs, channelRooms],
-  );
-  const selectedChannelRoomID = selectedCollaborationAgentID
-    ? activeChannelRooms.find((room) => room.kind === "dm" && room.members.some(
-      (member) => member.member_type === "agent" && member.member_id === selectedCollaborationAgentID,
-    ))?.id ?? ""
-    : (activeChannelRooms.some((room) => room.id === selectedChannelRoomIDState)
-      ? selectedChannelRoomIDState
-      : channelDirectoryLoaded ? activeChannelRooms[0]?.id ?? "" : "");
-  useEffect(() => {
-    if (appMode !== "collaboration" || !selectedChannelRoomID) return;
-    setSelectedChannelRoomIDState(selectedChannelRoomID);
-    if (channelRoomPreferences.selectedRoomID === selectedChannelRoomID) return;
-    updateChannelRoomPreferences((current) => ({ ...current, selectedRoomID: selectedChannelRoomID }));
-  }, [appMode, selectedChannelRoomID, channelRoomPreferences.selectedRoomID]);
-  const selectedCollaborationAgent =
-    namedAgents.find((agent) => agent.id === selectedCollaborationAgentID);
-  const activeChannelComposerDraft = useMemo(
-    () => channelComposerDrafts[selectedChannelRoomID] ?? emptyComposerDraft(),
-    [channelComposerDrafts, selectedChannelRoomID],
-  );
-  const channelUnreadByRoomID = useMemo(
-    () =>
-      Object.fromEntries(
-        activeChannelRooms.map((room) => [room.id, room.unread_count ?? 0]),
-      ),
-    [activeChannelRooms],
-  );
 
   const currentSkillsTabID =
     currentSessionTab?.kind === "skills" ? currentSessionTab.id : undefined;
@@ -2223,17 +2035,11 @@ export function App(): JSX.Element {
   const showingManagementCatalog = showingSkillsCatalog;
   const activeTitle = showingSkillsCatalog
     ? t("skills.title")
-    : currentSessionTab?.kind === "channel-room"
-      ? currentSessionTab.title
-      : currentSessionTab?.kind === "agents"
-        ? t("channels.agents")
-        : currentSessionTab?.kind === "tasks"
-          ? t("channels.tasks")
-          : conversationHeadingTitle(
-            activeThread,
-            currentSessionTab?.kind === "draft" ? currentSessionTab.title : undefined,
-            t("tabs.newConversation"),
-          );
+    : conversationHeadingTitle(
+      activeThread,
+      currentSessionTab?.kind === "draft" ? currentSessionTab.title : undefined,
+      t("tabs.newConversation"),
+    );
   const popOutWindowTitle =
     popOutInit?.kind === "thread"
       ? activeThread?.title?.trim() ||
@@ -2372,7 +2178,7 @@ export function App(): JSX.Element {
 
   useArtifactAutoPreview({
     thread: activeThread,
-    enabled: Boolean(state.initialized) && appMode === "harness"
+    enabled: Boolean(state.initialized)
       && !poppedOutMode && !isTouchWebShell() && !activeThread?.read_only
       && !showingManagementCatalog && !emptyConversation && !browserOverlaySuppressed
       && !workspaceRightPanelAutoGlobalized
@@ -2410,7 +2216,7 @@ export function App(): JSX.Element {
 
   // The account-based phone app keeps visible session navigation alongside swipes.
   const composerNavigation = !phoneNavigation && compactNavigation && isTouchWebShell() &&
-    mainConversationDockVisible && appMode === "harness" && !poppedOutMode;
+    mainConversationDockVisible && !poppedOutMode;
 
   useEffect(() => {
     // Delivered snapshots may belong to either visible conversation pane.
@@ -2723,11 +2529,6 @@ export function App(): JSX.Element {
     }
     openWorkspaceFileTab({ context, path });
   });
-  const openAgentMemoryDirectory = useStableCallback((path: string): void => {
-    setFocusedWorkspaceContext({ kind: "no_project", cwd: path });
-    setRightPanelManualGlobalized(false);
-    openWorkspaceTool("files");
-  });
   const openWorkspaceFileForThread = useStableCallback((thread: Thread, path: string): void => {
     const context = workspacePanelContext(appStateRef.current.activeContext, thread);
     if (!context) {
@@ -2785,15 +2586,6 @@ export function App(): JSX.Element {
     () => pinnedThreadSummaries(sidebarThreadSummaries),
     [sidebarThreadSummaries],
   );
-  const sidebarConversations = useMemo(() => ENABLE_GROUP_CHAT
-    ? collaborationConversations(namedAgents, channelRooms, channelRoomPreferences.pinnedRoomIDs, "", channelRoomPreferences.archivedRoomIDs)
-    : [], [namedAgents, channelRooms, channelRoomPreferences]);
-  const pinnedSidebarConversations = useMemo(
-    () => orderedPinnedCollaborationConversations(sidebarConversations, channelRoomPreferences.pinnedRoomIDs),
-    [sidebarConversations, channelRoomPreferences.pinnedRoomIDs],
-  );
-  const managedSidebar = useMemo(() => managedSidebarThreads(sidebarThreadSummaries, sidebarConversations, deletedAgentIDs),
-    [sidebarThreadSummaries, sidebarConversations, deletedAgentIDs]);
   const sidebarScratchThreads = useMemo(
     () => scratchThreadSummaries(sidebarThreadSummaries, state.projects),
     [sidebarThreadSummaries, state.projects],
@@ -2818,11 +2610,11 @@ export function App(): JSX.Element {
     [scratchPseudoProject, state.projects],
   );
   const sidebarThreadsByProjectID = useMemo(
-    () => Object.fromEntries(Object.entries({
+    () => ({
       [SCRATCH_PSEUDO_PROJECT_ID]: sidebarScratchThreads,
       ...sidebarProjectThreadSummariesByProjectID,
-    }).map(([id, threads]) => [id, threads.filter(thread => !managedSidebar.threadIDs.has(thread.id))])),
-    [sidebarScratchThreads, sidebarProjectThreadSummariesByProjectID, managedSidebar],
+    }),
+    [sidebarScratchThreads, sidebarProjectThreadSummariesByProjectID],
   );
   const activeThreadReadOnly = Boolean(activeThread?.read_only);
   const activeThreadIsRunning = isStateActiveThreadRunning(state);
@@ -2929,7 +2721,7 @@ export function App(): JSX.Element {
     }
     return Array.from(names);
   }, [state.thread, state.secondaryThread, state.threads]);
-  const sideThreadPanelVisible = Boolean(appMode === "harness" && activeThreadID && sideThread.entry?.open);
+  const sideThreadPanelVisible = Boolean(activeThreadID && sideThread.entry?.open);
   useEffect(() => {
     if (!sideThreadPanelVisible || isTouchWebShell()) {
       return undefined;
@@ -2944,7 +2736,6 @@ export function App(): JSX.Element {
   // (full-window sheet) right panel blocks it, because that mode makes the
   // entire conversation pane inert.
   const environmentPanelCanShow = Boolean(
-    appMode === "harness" &&
     state.initialized &&
     !poppedOutMode &&
     !rightPanelGlobalized &&
@@ -3615,7 +3406,6 @@ export function App(): JSX.Element {
       if (!payload || [payload.thread_id, payload.workdir, payload.tabID]
         .some((value) => typeof value !== "string" || !value.trim())) return;
       setPendingBrowserDock({ target: payload, ready: false });
-      setAppMode("harness");
       revealConversationFromFocusedWorkspace();
       void activateThread(payload.thread_id).then(() => {
         setPendingBrowserDock((current) => current?.target === payload
@@ -3642,17 +3432,10 @@ export function App(): JSX.Element {
     const api = window.wuu as Partial<typeof window.wuu>;
     if (typeof api.onCodexPetJumpRequest !== "function") return;
     return api.onCodexPetJumpRequest((event) => {
-      setAppMode("harness");
       revealConversationFromFocusedWorkspace();
       void activateThread(event.thread_id);
     });
   }, [activateThread, revealConversationFromFocusedWorkspace]);
-
-  const openCollaborationHarnessSession = useStableCallback((id: string) => {
-    openHarnessView();
-    revealConversationFromFocusedWorkspace();
-    void activateThread(id);
-  });
 
   const {
     startNewThread,
@@ -3679,146 +3462,8 @@ export function App(): JSX.Element {
     selectRuntimeContext,
   });
 
-  function prepareChannelTab(): void {
+  function closePrimaryPluginView(): void {
     desktopWorkbenchController.deactivateRegion("primary");
-    setProjectMenuOpen(false);
-    setRuntimeMenuOpen(false);
-    setCodexRuntimeMenu(null);
-    setEnvironmentPanelMenu(null);
-    setRightPanelOpenWithMotion(false);
-  }
-
-  function selectChannelRoom(roomID: string): void {
-    if (channelRoomPreferences.archivedRoomIDs.includes(roomID)) unarchiveChannelRoom({ id: roomID });
-    setAgentOnboardingActive(false);
-    // A newly opened room can arrive before the directory update renders.
-    setSelectedChannelRoomIDState(roomID);
-    selectedCollaborationAgentRequestRef.current = "";
-    setSelectedCollaborationAgentID("");
-    setCollaborationSection("rooms");
-    setAppMode("collaboration");
-    clearChannelRoomUnread(roomID);
-    prepareChannelTab();
-  }
-
-  const updateChannelRoomDraft = useCallback((
-    roomID: string,
-    draft: ComposerDraftState,
-  ): void => {
-    if (!roomID) return;
-    setChannelComposerDrafts((current) => {
-      const existing = current[roomID];
-      if (
-        existing?.prompt === draft.prompt
-        && existing.images === draft.images
-        && existing.files === draft.files
-      ) {
-        return current;
-      }
-      return { ...current, [roomID]: draft };
-    });
-  }, []);
-
-  const updateSelectedChannelRoomDraft = useCallback((draft: ComposerDraftState): void => {
-    updateChannelRoomDraft(selectedChannelRoomID, draft);
-  }, [selectedChannelRoomID, updateChannelRoomDraft]);
-
-  function openCollaborationView(): void {
-    setAppMode("collaboration");
-    prepareChannelTab();
-  }
-
-  function openHarnessView(): void {
-    desktopWorkbenchController.deactivateRegion("primary");
-    setAppMode("harness");
-    selectedCollaborationAgentRequestRef.current = "";
-    setSelectedCollaborationAgentID("");
-  }
-
-  function openChannelsView(): void {
-    selectedCollaborationAgentRequestRef.current = "";
-    setSelectedCollaborationAgentID("");
-    setCollaborationSection("rooms");
-    openCollaborationView();
-  }
-
-  async function selectCollaborationAgent(agentID: string, workspaceRoot?: string): Promise<void> {
-    setAgentOnboardingActive(false);
-    if (!namedAgents.some((agent) => agent.id === agentID)) return;
-    try {
-      await openCollaborationAgentConversation(agentID, undefined, workspaceRoot);
-    } catch (error) {
-      if (selectedCollaborationAgentRequestRef.current === agentID) showErrorToast(error);
-    }
-  }
-
-  async function openCollaborationAgentConversation(agentID: string, onboarding?: ChannelRoomOnboarding, workspaceRoot?: string): Promise<void> {
-    const requestGeneration = ++directMessageRequestGenerationRef.current;
-    selectedCollaborationAgentRequestRef.current = agentID;
-    setSelectedCollaborationAgentID(agentID);
-    setCollaborationSection("rooms");
-    setAppMode("collaboration");
-    prepareChannelTab();
-    const existingDirectMessage = activeChannelRooms.find(
-      (room) => room.kind === "dm" && (!workspaceRoot || room.workspace_root === workspaceRoot) && room.members.some(
-        (member) => member.member_type === "agent" && member.member_id === agentID,
-      ),
-    );
-    if (existingDirectMessage) {
-      setSelectedChannelRoomIDState(existingDirectMessage.id);
-      clearChannelRoomUnread(existingDirectMessage.id);
-    }
-    const isCurrentRequest = () => selectedCollaborationAgentRequestRef.current === agentID
-      && requestGeneration === directMessageRequestGenerationRef.current;
-    const result = await window.wuu.openChannelDirectMessage({
-      agent_id: agentID, ...(onboarding ? { onboarding } : {}), ...(workspaceRoot ? { workspace_root: workspaceRoot } : {}),
-    }).catch((reason: unknown) => {
-      if (!isCurrentRequest()) return null;
-      setSelectedCollaborationAgentID("");
-      throw reason;
-    });
-    if (!result || !isCurrentRequest()) return;
-    // An older directory poll must not erase the DM that was just opened.
-    channelDirectoryGenerationRef.current += 1;
-    setChannelRooms((current) => {
-      const existing = current.findIndex((room) => room.id === result.room.id);
-      if (existing < 0) return [...current, result.room];
-      const next = [...current];
-      next[existing] = result.room;
-      return next;
-    });
-    if (channelRoomPreferences.archivedRoomIDs.includes(result.room.id)) unarchiveChannelRoom(result.room);
-    setSelectedChannelRoomIDState(result.room.id);
-    setSelectedCollaborationAgentID("");
-    clearChannelRoomUnread(result.room.id);
-  }
-
-  function openNewNamedAgent(): void {
-    closeCompactSessionSwitcher();
-    openCollaborationView();
-    setCollaborationSection("rooms");
-    setAgentOnboardingActive(true);
-    setAgentOnboardingDraft((current) => current ?? createAgentOnboardingDraft(state.initialized));
-  }
-
-  function openAgentProviderSettings(): void {
-    setSettingsInitialPage("providers");
-    setSettingsOpen(true);
-  }
-
-  function openNewChannelRoom(): void {
-    setAgentOnboardingActive(false);
-    openChannelsView();
-    setNewRoomRequest((count) => count + 1);
-  }
-
-  function openAgentManagement(): void {
-    setAgentOnboardingActive(false);
-    selectedCollaborationAgentRequestRef.current = "";
-    setSelectedCollaborationAgentID("");
-    setCollaborationSection("agents");
-    setAppMode("collaboration");
-    prepareChannelTab();
   }
 
   function focusHeroAfter(
@@ -4024,88 +3669,6 @@ export function App(): JSX.Element {
       appStateRef.current = next;
       return next;
     });
-  }
-
-  function updateChannelRoomPreferences(
-    update: (current: ChannelRoomPreferences) => ChannelRoomPreferences,
-  ): void {
-    setChannelRoomPreferences((current) => {
-      const next = update(current);
-      writeChannelRoomPreferences(next);
-      return next;
-    });
-  }
-
-  function unarchiveChannelRoom(room: Pick<ChannelRoom, "id">): void {
-    updateChannelRoomPreferences((current) => unarchiveChannelRoomPreference(current, room.id));
-  }
-
-  async function updateCollaborationConversationPreference(conversation: CollaborationConversation, action: "pin" | "hide"): Promise<void> {
-    try {
-      // Agents without a DM need a persisted conversation ID, but managing it
-      // must not navigate away from the user's current chat.
-      const room = conversation.room ?? (await window.wuu.openChannelDirectMessage({ agent_id: conversation.agent!.id })).room;
-      if (!conversation.room) setChannelRooms((current) => [...current.filter((entry) => entry.id !== room.id), room]);
-      updateChannelRoomPreferences((current) => action === "pin"
-        ? togglePinnedChannelRoom(current, room.id)
-        : archiveChannelRoomPreference(current, room.id));
-    } catch (reason) {
-      showErrorToast(reason);
-    }
-  }
-
-  async function deleteCollaborationAgent(agentID: string): Promise<void> {
-    if (deletedAgentIDsRef.current.has(agentID)) return;
-    deletedAgentIDsRef.current.add(agentID);
-    setDeletedAgentIDs(new Set(deletedAgentIDsRef.current));
-    ++channelDirectoryGenerationRef.current;
-    try {
-      await window.wuu.deleteNamedAgent({ agent_id: agentID });
-      setNamedAgents((agents) => agents.filter((agent) => agent.id !== agentID));
-      setChannelRooms((rooms) => rooms
-        .filter((room) => room.kind !== "dm" || !room.members.some((member) => member.member_type === "agent" && member.member_id === agentID))
-        .map((room) => ({ ...room, members: room.members.filter((member) => member.member_type !== "agent" || member.member_id !== agentID) })));
-    } catch (reason) {
-      // Deletion can commit before execution cleanup fails. Reconcile that
-      // outcome before deciding whether to restore the optimistic entry.
-      let deleted = false;
-      try {
-        const [agents, rooms] = await Promise.all([window.wuu.listNamedAgents(), window.wuu.listChannelRooms()]);
-        setNamedAgents(agents.agents);
-        setChannelRooms(rooms.rooms);
-        deleted = !agents.agents.some((agent) => agent.id === agentID);
-      } catch {
-        // Restore the previous directory when the authoritative read fails.
-      }
-      if (!deleted) {
-        deletedAgentIDsRef.current.delete(agentID);
-        setDeletedAgentIDs(new Set(deletedAgentIDsRef.current));
-      }
-      throw reason;
-    } finally {
-      // Invalidate reads started before or during the mutation. Keep successful
-      // tombstones for this renderer so other in-flight directory reads cannot
-      // briefly resurrect the deleted identity.
-      ++channelDirectoryGenerationRef.current;
-    }
-  }
-
-  async function deleteCollaborationConversation(conversation: CollaborationConversation): Promise<void> {
-    const { agent, room, name } = conversation;
-    if (!agent && !room) return;
-    if (!window.confirm(t(room?.kind === "dm" ? "channels.deleteConversationConfirm" : room ? "channels.deleteRoomConfirm" : "channels.deleteAgentConfirm", { name }))) return;
-    try {
-      if (!room) {
-        await deleteCollaborationAgent(agent!.id);
-        return;
-      }
-      await window.wuu.deleteChannelRoom({ room_id: room.id });
-      const [agentResult, roomResult] = await Promise.all([window.wuu.listNamedAgents(), window.wuu.listChannelRooms()]);
-      setNamedAgents(agentResult.agents);
-      setChannelRooms(roomResult.rooms);
-    } catch (reason) {
-      showErrorToast(reason);
-    }
   }
 
   const {
@@ -5080,9 +4643,7 @@ export function App(): JSX.Element {
                 archive_project_name: project?.name ?? t("appState.noProject"),
               };
             })}
-          archivedRooms={archivedChannelRooms}
           onUnarchiveThread={(thread) => void unarchiveThread(thread)}
-          onUnarchiveRoom={unarchiveChannelRoom}
         />
       </>
     );
@@ -5112,33 +4673,9 @@ export function App(): JSX.Element {
     );
   }
 
-  const collaborationNavigation = sidebarToggleVisible && sidebarDrawerMode && !rightPanelGlobalized ? (
-    <button
-      className="icon-button side-panel-toggle-button sidebar-toggle-button sidebar-collapse-toggle"
-      data-wuu-component="sidebar-toggle"
-      type="button"
-      aria-label={t(
-        sidebarDrawerVisible
-          ? "app.collapseLeftSidebar"
-          : "app.expandLeftSidebar",
-      )}
-      aria-pressed={sidebarDrawerVisible}
-      onClick={toggleSessionSwitcher}
-      onPointerEnter={scheduleSidebarDrawerOpen}
-      onPointerLeave={(event) =>
-        scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
-      }
-    >
-      <SidePanelToggleIcon side="left" open={sidebarDrawerVisible} />
-    </button>
-  ) : null;
-
   const conversationTitleEditable =
     !showingSkillsCatalog &&
     !showingPrimaryPluginView &&
-    currentSessionTab?.kind !== "channel-room" &&
-    currentSessionTab?.kind !== "agents" &&
-    currentSessionTab?.kind !== "tasks" &&
     ((activeThread !== undefined && !activeThread.read_only && !activeThread.ephemeral) ||
       currentSessionTab?.kind === "draft");
 
@@ -5196,120 +4733,6 @@ export function App(): JSX.Element {
           <AppSidebar
             onToggleSidebar={sidebarDrawerMode ? undefined : toggleSessionSwitcher}
             sidebarCollapsed={sidebarCollapsed}
-            collaborationNavigationNodes={ENABLE_GROUP_CHAT ? [
-              { id: "section:collaboration", kind: "section", label: t("sidebar.collaboration") },
-              { id: "command:new-channel", kind: "command", parentId: "section:collaboration", depth: 1,
-                label: t("channels.newConversation"), disabled: !state.initialized,
-                onActivate: () => { closeCompactSessionSwitcher(); openNewChannelRoom(); } },
-              ...sidebarConversations.filter((conversation) => !conversation.pinned).flatMap((conversation) => [{
-                  id: `collaboration:${conversation.id}`, kind: "room" as const,
-                  parentId: "section:collaboration", depth: 1, label: conversation.name,
-                  active: appMode === "collaboration" && collaborationSection === "rooms" && !agentOnboardingActive && (conversation.room
-                    ? conversation.room.id === selectedChannelRoomID : conversation.agent?.id === selectedCollaborationAgent?.id),
-                  pinned: false, unread: Boolean(conversation.room?.unread_count),
-                  running: conversation.room?.activity_status === "thinking" || conversation.agent?.activity_status === "thinking",
-                  disabled: !state.initialized,
-                  onActivate: () => {
-                    closeCompactSessionSwitcher();
-                    if (conversation.room) selectChannelRoom(conversation.room.id);
-                    else if (conversation.agent) void selectCollaborationAgent(conversation.agent.id);
-                  },
-                  onTogglePinned: () => { void updateCollaborationConversationPreference(conversation, "pin"); },
-                }]),
-            ] : undefined}
-            pinnedCollaborationConversations={ENABLE_GROUP_CHAT ? pinnedSidebarConversations : []}
-            collaborationAgents={namedAgents}
-            selectedCollaborationAgentID={appMode === "collaboration" && collaborationSection === "rooms" ? selectedCollaborationAgent?.id : undefined}
-            selectedCollaborationRoomID={appMode === "collaboration" && collaborationSection === "rooms" ? selectedChannelRoomID : undefined}
-            collaborationDraftSelected={appMode === "collaboration" && agentOnboardingActive}
-            onSelectCollaborationConversation={(conversation) => {
-              closeCompactSessionSwitcher();
-              if (conversation.room) selectChannelRoom(conversation.room.id);
-              else if (conversation.agent) void selectCollaborationAgent(conversation.agent.id);
-            }}
-            onToggleCollaborationPinned={(conversation) => void updateCollaborationConversationPreference(conversation, "pin")}
-            onHideCollaborationConversation={(conversation) => void updateCollaborationConversationPreference(conversation, "hide")}
-            onDeleteCollaborationConversation={(conversation) => void deleteCollaborationConversation(conversation)}
-            onEditCollaborationAgent={(agentID) => {
-              closeCompactSessionSwitcher();
-              openChannelsView();
-              setAgentOnboardingActive(false);
-              setNewRoomRequest(0);
-              setEditChannelRoomRequestID("");
-              setEditChannelAgentRequestID(agentID);
-            }}
-            onEditCollaborationRoom={(roomID) => {
-              closeCompactSessionSwitcher();
-              openChannelsView();
-              setAgentOnboardingActive(false);
-              setNewRoomRequest(0);
-              setEditChannelAgentRequestID("");
-              setEditChannelRoomRequestID(roomID);
-            }}
-            collaborationNavigation={ENABLE_GROUP_CHAT ? (
-            <CollaborationSidebar
-              embedded
-              sectionCollapsed={collapsedSidebarSectionIDs.has(SIDEBAR_SECTION_COLLAB)}
-              onToggleSectionCollapsed={() => toggleSidebarSectionCollapsed(SIDEBAR_SECTION_COLLAB)}
-              initialized={Boolean(state.initialized)}
-              agents={namedAgents}
-              rooms={channelRooms}
-              pinnedRoomIDs={channelRoomPreferences.pinnedRoomIDs}
-              archivedRoomIDs={channelRoomPreferences.archivedRoomIDs}
-              onTogglePinned={(conversation) => void updateCollaborationConversationPreference(conversation, "pin")}
-              onHideConversation={(conversation) => void updateCollaborationConversationPreference(conversation, "hide")}
-              onDeleteConversation={(conversation) => void deleteCollaborationConversation(conversation)}
-              selectedAgentID={appMode === "collaboration" && collaborationSection === "rooms" ? selectedCollaborationAgent?.id : undefined}
-              selectedRoomID={appMode === "collaboration" && collaborationSection === "rooms" ? selectedChannelRoomID : undefined}
-              onSelectAgent={(agent) => {
-                closeCompactSessionSwitcher();
-                selectCollaborationAgent(agent);
-              }}
-              onSelectRoom={(roomID) => {
-                closeCompactSessionSwitcher();
-                selectChannelRoom(roomID);
-              }}
-              onManageAgents={() => {
-                closeCompactSessionSwitcher();
-                openAgentManagement();
-              }}
-              onEditAgent={(agentID) => {
-                closeCompactSessionSwitcher();
-                openChannelsView();
-                setAgentOnboardingActive(false);
-                setNewRoomRequest(0);
-                setEditChannelRoomRequestID("");
-                setEditChannelAgentRequestID(agentID);
-              }}
-              onEditRoom={(roomID) => {
-                closeCompactSessionSwitcher();
-                openChannelsView();
-                setAgentOnboardingActive(false);
-                setNewRoomRequest(0);
-                setEditChannelAgentRequestID("");
-                setEditChannelRoomRequestID(roomID);
-              }}
-              draftAgent={agentOnboardingDraft?.createdAgent ? undefined : agentOnboardingDraft ?? undefined}
-              draftSelected={appMode === "collaboration" && agentOnboardingActive}
-              onSelectDraft={openNewNamedAgent}
-              onCreateRoom={() => {
-                closeCompactSessionSwitcher();
-                openNewChannelRoom();
-              }}
-              onSwitchToHarness={() => {
-                closeCompactSessionSwitcher();
-                openHarnessView();
-              }}
-              onOpenAccount={ENABLE_ACCOUNT ? () => {
-                if (window.wuu.openAccountWindow) void window.wuu.openAccountWindow().catch(error => showErrorToast(error));
-                else setAccountOpen(true);
-              } : undefined}
-              onOpenSettings={(page = "providers") => {
-                setSettingsInitialPage(page);
-                setSettingsOpen(true);
-              }}
-            />
-          ) : undefined}
             sidebarVisible={!sidebarDrawerMode || sidebarDrawerVisible}
             mobileNavigation={compactNavigation && isTouchWebShell()}
             drawerVisible={sidebarDrawerVisible}
@@ -5322,7 +4745,7 @@ export function App(): JSX.Element {
               title: pending.turn.items[0].text || t("tabs.newConversation"),
             }))}
             onSelectPendingConversation={(tabID) => {
-              openHarnessView();
+              closePrimaryPluginView();
               closeCompactSessionSwitcher();
               void selectSessionTab(tabID);
             }}
@@ -5331,8 +4754,8 @@ export function App(): JSX.Element {
                 ? workspaceContext.project_id
                 : undefined
             }
-            pinnedThreads={sidebarPinnedThreads.filter(thread => !managedSidebar.threadIDs.has(thread.id))}
-            activeThreadID={appMode === "harness" ? activeThreadID : undefined}
+            pinnedThreads={sidebarPinnedThreads}
+            activeThreadID={activeThreadID}
             pendingThreadID={visiblePendingThreadID}
             pendingProjectID={visiblePendingProjectID}
             collapsedSidebarSectionIDs={collapsedSidebarSectionIDs}
@@ -5346,20 +4769,15 @@ export function App(): JSX.Element {
             searchOpen={conversationSearch.open}
             sectionOrder={sidebarSectionOrder}
             onStartNewThread={() => {
-              openHarnessView();
+              closePrimaryPluginView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
               startNewThreadWithComposerFocus();
             }}
             onOpenSkillsTab={() => {
-              openHarnessView();
+              closePrimaryPluginView();
               closeCompactSessionSwitcher();
               openSkillsTab();
-            }}
-            groupChatEnabled={ENABLE_GROUP_CHAT}
-            onSwitchToCollaboration={() => {
-              closeCompactSessionSwitcher();
-              openCollaborationView();
             }}
             onMarkThreadsViewed={(threads) => {
               setState((current) => markThreadSummariesViewed(current, threads));
@@ -5370,7 +4788,7 @@ export function App(): JSX.Element {
             onAttentionStickyIDsChange={setAttentionStickyIDs}
             onToggleConversationSearch={toggleConversationSearch}
             onSelectThread={(id) => {
-              openHarnessView();
+              closePrimaryPluginView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
               void activateThread(id);
@@ -5402,7 +4820,7 @@ export function App(): JSX.Element {
                     if (!project || project.missing) {
                       return;
                     }
-                    openHarnessView();
+                    closePrimaryPluginView();
                     setFocusedWorkspaceContext({
                       kind: "project",
                       project_id: project.id,
@@ -5414,13 +4832,13 @@ export function App(): JSX.Element {
                 : undefined
             }
             onStartNewThreadForProject={(id) => {
-              openHarnessView();
+              closePrimaryPluginView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
               startNewThreadForProjectWithComposerFocus(id);
             }}
             onSelectProjectThread={(projectID, threadID) => {
-              openHarnessView();
+              closePrimaryPluginView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
               void selectProjectThread(projectID, threadID);
@@ -5485,7 +4903,7 @@ export function App(): JSX.Element {
         onKeyDown={handleConversationSearchKeyDown}
         onSelectIndex={setConversationSearchSelectedIndex}
         onSelectResult={(result) => {
-          openHarnessView();
+          closePrimaryPluginView();
           return selectConversationSearchResult(result);
         }}
       />
@@ -5497,79 +4915,13 @@ export function App(): JSX.Element {
         data-wuu-component="conversation-pane"
         data-primary-plugin-view={showingPrimaryPluginView ? "" : undefined}
         data-composer-navigation={composerNavigation || undefined}
-        className={`conversation-pane${ENABLE_GROUP_CHAT && appMode === "collaboration" && collaborationSection === "rooms" ? " collaboration-room-pane" : ""}${environmentPanelVisible ? " environment-panel-visible" : ""}${
-          appMode === "harness" && environmentPanelReserved ? " environment-panel-reserved" : ""
+        className={`conversation-pane${environmentPanelVisible ? " environment-panel-visible" : ""}${
+          environmentPanelReserved ? " environment-panel-reserved" : ""
         }${
           sideThreadPanelVisible ? " side-thread-panel-visible" : ""
         }`}
         ref={conversationPaneRef}
       >
-        {ENABLE_GROUP_CHAT && appMode === "collaboration" ? (
-          <>
-            {collaborationSection !== "rooms" ? <header className="titlebar" data-wuu-component="conversation-titlebar">
-              <div className="title-block channel-title-block">
-                {collaborationNavigation}
-                <span className="collaboration-titlebar-label">
-                  {t(collaborationSection === "agents" ? "channels.manageAgents" : "sidebar.collaboration")}
-                </span>
-              </div>
-              <div
-                className="title-actions channel-title-actions-placeholder"
-                aria-hidden="true"
-              />
-            </header> : null}
-            {agentOnboardingActive && agentOnboardingDraft ? (
-              <AgentOnboarding
-                navigation={collaborationNavigation}
-                draft={agentOnboardingDraft}
-                onDraftChange={setAgentOnboardingDraft}
-                initialized={state.initialized}
-                onCreate={async (params) => {
-                  const { agent } = await window.wuu.createNamedAgent(params);
-                  setNamedAgents((current) => current.some((item) => item.id === agent.id)
-                    ? current.map((item) => item.id === agent.id ? agent : item)
-                    : [...current, agent]);
-                  return agent;
-                }}
-                onOpenConversation={(agent, onboarding) => openCollaborationAgentConversation(agent.id, onboarding, collaborationProject?.path)}
-                onManageProviders={openAgentProviderSettings}
-                onClose={() => { setAgentOnboardingDraft(null); setAgentOnboardingActive(false); }}
-              />
-            ) : <ChannelView
-              conversationCache={channelConversationCacheRef.current}
-              navigation={collaborationNavigation}
-              initialized={sessionRuntime ?? state.initialized}
-              engines={engineInventory?.engines}
-              section={collaborationSection}
-              archivedRoomIDs={channelRoomPreferences.archivedRoomIDs}
-              selectedRoomID={selectedChannelRoomID}
-              onSelectRoom={selectChannelRoom}
-              onRoomRead={clearChannelRoomUnread}
-              onOpenMemoryDirectory={openAgentMemoryDirectory}
-              onOpenSession={openCollaborationHarnessSession}
-              managedThreadsByAgentID={managedSidebar.byAgentID}
-              lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
-              onOpenAgentConversation={selectCollaborationAgent}
-              conversationProject={collaborationProjectPicker}
-              composerDraft={activeChannelComposerDraft}
-              onComposerDraftChange={updateSelectedChannelRoomDraft}
-              directoryAgents={namedAgents}
-              directoryRooms={channelRooms}
-              onDirectoryAgentsChange={setNamedAgents}
-              onDirectoryRoomsChange={setChannelRooms}
-              onDeleteAgent={deleteCollaborationAgent}
-              newRoomRequest={newRoomRequest}
-              onNewRoomRequestHandled={() => setNewRoomRequest(0)}
-              editAgentRequestID={editChannelAgentRequestID}
-              onEditAgentRequestHandled={() => setEditChannelAgentRequestID("")}
-              editRoomRequestID={editChannelRoomRequestID}
-              onEditRoomRequestHandled={() => setEditChannelRoomRequestID("")}
-              onCreateAgent={openNewNamedAgent}
-              onManageProviders={openAgentProviderSettings}
-            />}
-          </>
-        ) : (
-          <>
         {composerNavigation ? <div aria-hidden="true" /> : (
         <header className="titlebar" data-wuu-component="conversation-titlebar">
           <div className="title-block">
@@ -5884,8 +5236,6 @@ export function App(): JSX.Element {
           todoUpdate={activeTodoUpdateForThread(activeThread)}
           onOpenSession={handleOpenThreadInSplit}
         />
-          </>
-        )}
       </main>
 
       <>
@@ -6048,10 +5398,7 @@ export function App(): JSX.Element {
             console.error(`Plugin view ${pluginId}@${generation} failed to render`, error);
           },
           requestRegionVisible: (region) => {
-            if (region === "primary") {
-              setAppMode("harness");
-              if (rightPanelGlobalized) setRightPanelOpenWithMotion(false);
-            }
+            if (region === "primary" && rightPanelGlobalized) setRightPanelOpenWithMotion(false);
             if (region === "auxiliary") setRightPanelOpenWithMotion(true);
           },
         }}

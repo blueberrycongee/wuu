@@ -1820,6 +1820,16 @@ WHERE workflow_id = ''`); err != nil {
 	if err := addColumnIfMissing(db, "sessions", "seed_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// Collaboration was removed without migration: its named-agent identity
+	// conversations have no remaining owner, and fences held by its agents
+	// would otherwise label ordinary sessions as managed forever. Remove this
+	// cleanup once no development store predates the removal.
+	if _, err := db.Exec(`DELETE FROM sessions WHERE source LIKE 'named-agent:%'`); err != nil {
+		return fmt.Errorf("remove retired collaboration sessions: %w", err)
+	}
+	if _, err := db.Exec(`DELETE FROM session_controls WHERE manager_id GLOB 'agent-[0-9a-f]*'`); err != nil {
+		return fmt.Errorf("remove retired collaboration session controls: %w", err)
+	}
 	return nil
 }
 

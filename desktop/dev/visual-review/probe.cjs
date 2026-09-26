@@ -13,7 +13,6 @@ const origin = process.env.WUU_FIXTURE_ORIGIN || "http://127.0.0.1:5173";
 
 const surfaces = [
   { name: "design-controls", url: "/dev/design-system/?surface=controls", width: 1280, height: 900 },
-  { name: "design-messages", url: "/dev/design-system/?surface=messages", width: 1280, height: 900 },
   { name: "three-pane", url: "/dev/three-pane/?theme=light&size=14.5", width: 1440, height: 900 },
   { name: "message-flow-conversation", url: "/dev/message-flow-reading/?surface=conversation&theme=light&size=14.5", width: 1280, height: 900 },
   { name: "message-flow-prose", url: "/dev/message-flow-reading/?theme=light&size=14.5", width: 1280, height: 900 },

@@ -238,7 +238,7 @@ func codeModeResponseResult(response codemode.Response) toolresult.Result {
 // Code-mode entry tools belong to the runtime, independently of the model's
 // leaf-tool profile. Project both discovery and execution from the same surface.
 func (t *Toolkit) withCodeModeSurface(surface capability.Surface) capability.Surface {
-	if t.IsRoomAgent() || surface.ProfileName == "" || t.CodeModeService() == nil {
+	if surface.ProfileName == "" || t.CodeModeService() == nil {
 		return surface
 	}
 	out := cloneSurface(surface)

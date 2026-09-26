@@ -1,11 +1,9 @@
-import { act, createRef, useState, type ReactNode } from "react";
+import { act, createRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ChannelRoom, DesktopProject, InitializeResult } from "../shared/protocol";
+import type { DesktopProject, InitializeResult } from "../shared/protocol";
 import { AppSidebar } from "./AppSidebar";
-import { CollaborationSidebar } from "./CollaborationSidebar";
-import type { CollaborationConversation } from "./CollaborationConversations";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import type { NavigationSnapshotV1 } from "../shared/workbench";
 import {
@@ -79,19 +77,7 @@ interface RenderOptions {
   onSelectProjectThread?: (projectID: string, threadID: string) => void;
   sectionOrder?: string[];
   state?: AppState;
-  groupChatEnabled?: boolean;
-  channelRooms?: ChannelRoom[];
-  pinnedChannelRooms?: ChannelRoom[];
-  pinnedCollaborationConversations?: CollaborationConversation[];
-  collaborationNavigation?: ReactNode;
-  activeChannelRoomID?: string;
-  activeChannelSection?: "rooms" | "agents" | "tasks" | null;
   collapsedSidebarSectionIDs?: Set<string>;
-  onSelectChannelRoom?: (roomID: string) => void;
-  onToggleChannelRoomPinned?: (room: ChannelRoom) => void;
-  onArchiveChannelRoom?: (room: ChannelRoom) => void;
-  onOpenChannelAgents?: () => void;
-  onOpenChannelTasks?: () => void;
 }
 
 // The bell view is driven by App-owned state (it has to survive faces that
@@ -116,19 +102,7 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
         cwd: "/repo/wuu",
       },
     },
-    groupChatEnabled = false,
-    channelRooms = [],
-    pinnedChannelRooms = [],
-    pinnedCollaborationConversations = [],
-    collaborationNavigation,
-    activeChannelRoomID,
-    activeChannelSection = null,
     collapsedSidebarSectionIDs = new Set(),
-    onSelectChannelRoom,
-    onToggleChannelRoomPinned,
-    onArchiveChannelRoom,
-    onOpenChannelAgents,
-    onOpenChannelTasks,
   } = options;
   return (
     <AppSidebar
@@ -149,19 +123,6 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
       sectionOrder={sectionOrder}
       onStartNewThread={() => {}}
       onOpenSkillsTab={() => {}}
-      groupChatEnabled={groupChatEnabled}
-      channelRooms={channelRooms}
-      pinnedChannelRooms={pinnedChannelRooms}
-      pinnedCollaborationConversations={pinnedCollaborationConversations}
-      collaborationNavigation={collaborationNavigation}
-      activeChannelRoomID={activeChannelRoomID}
-      activeChannelSection={activeChannelSection}
-      onSelectChannelRoom={onSelectChannelRoom}
-      onToggleChannelRoomPinned={onToggleChannelRoomPinned}
-      onArchiveChannelRoom={onArchiveChannelRoom}
-      onOpenChannelAgents={onOpenChannelAgents}
-      onOpenChannelTasks={onOpenChannelTasks}
-      onOpenChannels={() => {}}
       onMarkThreadsViewed={() => {}}
       unreadViewOpen={unreadViewOpen}
       onToggleUnreadView={() => {
@@ -202,39 +163,13 @@ function renderSidebar(options: RenderOptions = {}): void {
 
 describe("AppSidebar layout", () => {
   it.each([
-    { saved: ["workspace", "pinned", "folders"], expected: ["collaboration", "workspace", "pinned", "folders"] },
-    { saved: ["folders", "collaboration", "workspace", "pinned"], expected: ["folders", "collaboration", "workspace", "pinned"] },
+    { saved: ["workspace", "pinned"], expected: ["folders", "workspace", "pinned"] },
+    { saved: ["folders", "collaboration", "workspace", "pinned"], expected: ["folders", "workspace", "pinned"] },
   ])("restores group order without resetting existing preferences: $saved", ({ saved, expected }) => {
     window.localStorage.setItem("wuu.desktop.sidebarFunctionalGroupOrder", JSON.stringify(saved));
-    const onCreateRoom = vi.fn();
-    function CollaborationNavigation() {
-      const [sectionCollapsed, setSectionCollapsed] = useState(false);
-      return <CollaborationSidebar embedded initialized agents={[]} rooms={[]}
-        sectionCollapsed={sectionCollapsed}
-        onToggleSectionCollapsed={() => setSectionCollapsed((value) => !value)}
-        onSelectAgent={() => {}} onSelectRoom={() => {}} onManageAgents={() => {}}
-        onCreateRoom={onCreateRoom} onSwitchToHarness={() => {}} onOpenSettings={() => {}} />;
-    }
-    const options = {
-      collaborationNavigation: <CollaborationNavigation />,
-    };
     const order = () => [...container.querySelectorAll<HTMLElement>(".sidebar-main > .sidebar-functional-group")]
       .map((element) => element.dataset.functionalGroupId ?? element.dataset.sectionId);
-    renderSidebar(options);
-    expect(order()).toEqual(expected);
-
-    const collaboration = container.querySelector('[data-wuu-component="collaboration-sidebar"]')!;
-    const toggle = collaboration.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
-    act(() => toggle.click());
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    act(() => collaboration.querySelector<HTMLButtonElement>(".sidebar-functional-heading-action button")!.click());
-    expect(onCreateRoom).toHaveBeenCalledOnce();
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(order()).toEqual(expected);
-
     renderSidebar();
-    expect(order()).toEqual(expected.filter((id) => id !== "collaboration"));
-    renderSidebar(options);
     expect(order()).toEqual(expected);
   });
 
@@ -385,67 +320,6 @@ describe("AppSidebar layout", () => {
     expect(rows).toHaveLength(1);
     act(() => rows[0].click());
     expect(select).toHaveBeenCalledWith("project-1", fork.id);
-  });
-
-  it("keeps plugin navigation above the collaboration section", async () => {
-    await desktopPluginHost.activateGeneration({
-      pluginId: "test:app-sidebar-navigation",
-      generation: "plugins-above-collaboration",
-      contributions: {
-        navigation: [{ id: "automations", view: "automations", title: "Automations" }],
-      },
-      register(api) {
-        api.registerViewType({ id: "automations", title: "Automations", render: () => null });
-      },
-    });
-
-    renderSidebar({
-      groupChatEnabled: true,
-      collaborationNavigation: (
-        <section data-wuu-component="collaboration-sidebar">
-          <nav aria-label="协作对话" />
-        </section>
-      ),
-    });
-
-    const plugins = container.querySelector<HTMLElement>("[data-wuu-component='plugin-navigation']");
-    const collaboration = container.querySelector<HTMLElement>("[data-wuu-component='collaboration-sidebar']");
-    expect(plugins?.textContent).toContain("Automations");
-    expect(plugins).not.toBeNull();
-    expect(collaboration).not.toBeNull();
-    expect(
-      plugins!.compareDocumentPosition(collaboration!) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-  });
-
-  it("moves a pinned collaboration conversation into the shared Pinned group", () => {
-    const conversation: CollaborationConversation = {
-      id: "dm",
-      name: "Alpha",
-      pinned: true,
-      updatedAt: "2026-09-12T10:00:00Z",
-      room: {
-        id: "dm",
-        kind: "dm",
-        name: "Alpha",
-        created_by: "human",
-        created_at: "2026-09-01T00:00:00Z",
-        members: [],
-      },
-    };
-    renderSidebar({
-      groupChatEnabled: true,
-      pinnedCollaborationConversations: [conversation],
-      collaborationNavigation: (
-        <section data-wuu-component="collaboration-sidebar">
-          <nav aria-label="协作对话" />
-        </section>
-      ),
-    });
-
-    const pinned = container.querySelector('[data-functional-group-id="pinned"]');
-    expect(pinned?.textContent).toContain("Alpha");
-    expect(container.querySelector('[data-wuu-component="collaboration-sidebar"] nav')?.textContent).not.toContain("Alpha");
   });
 
   it("renders only scratch and projects in the workspace order", () => {

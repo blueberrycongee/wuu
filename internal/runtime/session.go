@@ -32,7 +32,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/instructions"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/mcp"
-	"github.com/blueberrycongee/wuu/internal/memdir"
 	"github.com/blueberrycongee/wuu/internal/modelbudget"
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
@@ -293,9 +292,6 @@ type ThreadRuntime struct {
 	// EngineID is the agent engine this runtime executes for. It is stamped
 	// from the thread's persisted binding; the built-in engine is "wuu".
 	EngineID agentengine.EngineID
-	// ExecutionProfile identifies the execution contract used to construct the
-	// runtime. A profile change requires a new runtime rather than hook mutation.
-	ExecutionProfile string
 	// PluginGeneration is the plugin host, hooks, MCP, and capabilities this
 	// conversation started against. Enable/disable publishes a new generation for
 	// later conversations; this pointer keeps the previous one alive until the
@@ -1213,86 +1209,6 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	return threadRuntime, nil
 }
 
-// ConfigureNamedAgentThreadRuntime adds one collaboration named agent's
-// durable identity prompt and notebook scope to a thread runtime.
-func (s *Session) ConfigureNamedAgentThreadRuntime(threadRuntime *ThreadRuntime, rootDir, memoryDir, orientation string) error {
-	if s == nil || threadRuntime == nil || threadRuntime.StreamRunner == nil {
-		return errors.New("named agent thread runtime is required")
-	}
-	if threadRuntime.ExecutionProfile != CollaborationRuntimeVersion {
-		return errors.New("named agent requires the collaboration execution profile")
-	}
-	rootDir = strings.TrimSpace(rootDir)
-	memoryDir = strings.TrimSpace(memoryDir)
-	if rootDir == "" || memoryDir == "" {
-		return errors.New("named agent root and memory directory are required")
-	}
-	if err := memdir.EnsureDir(memoryDir); err != nil {
-		return fmt.Errorf("ensure named agent memory: %w", err)
-	}
-	teaching := fmt.Sprintf("Your private identity memory is stored at %s. Use chat_memory with scope=identity to read and update durable preferences. Use scope=room for shared knowledge; never publish private memory without the user asking.", memoryDir)
-	index := ""
-	toolkit := threadRuntime.Toolkit
-	if toolkit != nil && toolkit.IsRoomAgent() {
-		teaching = "Use chat_memory with scope=room for durable shared knowledge. Keep MEMORY.md as a compact index; read relevant topics as needed."
-	}
-	if toolkit != nil {
-		toolkit.SetFileScopeRoots(workspaces.BoundaryRoots(rootDir, s.WuuHome, memoryDir))
-	}
-	catalog := ""
-	if toolkit != nil {
-		var err error
-		catalog, err = deferredToolCatalogPromptForToolkit(toolkit)
-		if err != nil {
-			return err
-		}
-	}
-	runner := threadRuntime.StreamRunner
-	runner.Tools = toolkit
-	if toolkit != nil {
-		id, _ := toolkit.ExecutionActor()
-		s.ConfigureCollaborationTools(threadRuntime, id)
-	}
-	runner.BeforeRequestContext = RuntimeContextInjector(
-		threadRuntime.AgentControl,
-		rootDir,
-		toolkitContextBlockProvider(toolkit),
-		namedAgentWorkspaceContextProvider(s.WuuHome, rootDir, memoryDir, toolkit),
-		namedAgentNotebookContextProvider(memoryDir),
-	)
-	userPrompt := strings.TrimSpace(orientation)
-	promptResult := buildBaseSystemPromptResult(
-		rootDir, s.SessionDate, config.DefaultSystemPrompt(), userPrompt,
-		runner.ProviderName, runner.APIModel, activeSurfaceWithDeferredToolCatalog(toolkit, catalog),
-		nil, teaching, index, nil,
-	)
-	runner.UpdateSystemPromptWithSections(promptResult.Content, agentPromptSections(promptResult.Sections))
-	return nil
-}
-
-func (s *Session) NewNamedAgentThreadRuntime(sessionID, rootDir, memoryDir, orientation string, selected ThreadModelSelection) (*ThreadRuntime, error) {
-	if s == nil {
-		return nil, errors.New("runtime session is required")
-	}
-	rootDir = strings.TrimSpace(rootDir)
-	if rootDir == "" {
-		return nil, errors.New("named agent root is required")
-	}
-	base, err := s.newCollaborationSession(rootDir, orientation, selected)
-	if err != nil {
-		return nil, err
-	}
-	threadRuntime, err := base.NewThreadRuntimeForRoot(sessionID, rootDir)
-	if err != nil {
-		return nil, err
-	}
-	threadRuntime.ExecutionProfile = CollaborationRuntimeVersion
-	if err := base.ConfigureNamedAgentThreadRuntime(threadRuntime, rootDir, memoryDir, orientation); err != nil {
-		return nil, err
-	}
-	return threadRuntime, nil
-}
-
 // NewThreadRuntimeForRoot creates a per-conversation execution runtime whose
 // tools are rooted at rootDir while durable artifacts stay in the parent
 // workspace state directory.
@@ -2136,53 +2052,6 @@ func toolkitContextBlockProvider(toolkit *tools.Toolkit) func() []wuucontext.Blo
 		return nil
 	}
 	return toolkit.ContextBlocks
-}
-
-func namedAgentNotebookContextProvider(memoryDir string) func() []wuucontext.Block {
-	return func() []wuucontext.Block {
-		snapshot, err := memdir.ReadIndex(memoryDir)
-		if err != nil {
-			providers.DebugLogf("refresh collaboration memory: %v", err)
-			return nil
-		}
-		return []wuucontext.Block{{Kind: wuucontext.BlockMemory, Title: "Current collaboration memory index", Source: "runtime.collaboration_memory", Content: snapshot.Content}}
-	}
-}
-
-func namedAgentWorkspaceContextProvider(wuuHome, agentHome, memoryDir string, toolkit *tools.Toolkit) func() []wuucontext.Block {
-	return func() []wuucontext.Block {
-		if toolkit != nil {
-			toolkit.SetFileScopeRoots(workspaces.BoundaryRoots(agentHome, wuuHome, memoryDir))
-		}
-		registered, err := workspaces.List(wuuHome)
-		if err != nil {
-			providers.DebugLogf("read named agent registered workspaces: %v", err)
-			return nil
-		}
-		var content strings.Builder
-		fmt.Fprintf(&content, "Current execution-host time: %s (%s). Schedules can use Local for this device or an explicit IANA timezone from the user.\n", time.Now().Format(time.RFC3339), time.Now().Weekday())
-		fmt.Fprintf(&content, "Agent home (identity/state anchor, not project scope): %s\n", agentHome)
-		if len(registered) == 0 {
-			content.WriteString("Registered project workspaces: none. Projectless conversation sessions are excluded.")
-		} else {
-			content.WriteString("Registered project workspace directory (discovery, not authorization for unrelated work):\n")
-			for _, workspace := range registered {
-				name := strings.TrimSpace(workspace.Name)
-				root := strings.TrimSpace(workspace.Root)
-				if name == "" {
-					name = root
-				}
-				fmt.Fprintf(&content, "- %s — id: %s — path: %s\n", name, workspace.ID, root)
-			}
-			content.WriteString("Bind each execution session to the project the user requested, using its registered ID or absolute path. Confirm the returned binding before follow-ups; existing sessions retain their project. If the task does not identify a project clearly, ask the user. Your identity home, the foreground workspace, and the process hosting you are not project defaults. Keep direct inspection and commands within the task's authorized project scope.")
-		}
-		return []wuucontext.Block{{
-			Kind:    wuucontext.BlockEnvironment,
-			Title:   "Named agent project activity scope",
-			Source:  "runtime.named_agent_workspaces",
-			Content: strings.TrimSpace(content.String()),
-		}}
-	}
 }
 
 func setupCatwalk(cfg config.Config) {

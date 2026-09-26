@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { routeHarnessWorkspaceRequest, WORKSPACE_HARNESS_DISPATCH } from "./harnessWorkspaceRouting";
 
 vi.mock("electron", () => ({
   app: {
@@ -210,12 +209,12 @@ describe("AppServerClientPool Activity routing", () => {
 
 describe("AppServerClientPool session routing", () => {
   afterEach(() => vi.unstubAllEnvs());
-  it("negotiates host routing for prewarmed and restarted project processes", async () => {
+  it("negotiates initialize capabilities for prewarmed and restarted project processes", async () => {
     vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
     const children: FakeAppServerChild[] = [];
     const methods: string[][] = [];
     const context = { kind: "project" as const, project_id: "project", cwd: "/project" };
-    const initialize = { capabilities: { reverse_rpc: { methods: [WORKSPACE_HARNESS_DISPATCH] } } };
+    const initialize = { capabilities: { reverse_rpc: { methods: ["browser/cdp"] } } };
     const pool = new AppServerClientPool(() => context, () => context.cwd, () => {}, () => {
       const child = new FakeAppServerChild();
       const received: string[] = [];
@@ -238,51 +237,7 @@ describe("AppServerClientPool session routing", () => {
     void pool.shutdown();
   });
 
-  it.each(["valid", "mismatch", "missing"])("dispatches a %s project binding without using the foreground workspace", async (binding) => {
-    vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
-    const children = new Map<string, FakeAppServerChild>();
-    const requests = new Map<string, Array<Record<string, any>>>();
-    const source = { kind: "project" as const, project_id: "source", cwd: "/source" };
-    const target = { kind: "project" as const, project_id: "target", cwd: "/target" };
-    let routed: Promise<void> | undefined;
-    const initialize = { capabilities: { reverse_rpc: { methods: [WORKSPACE_HARNESS_DISPATCH] } } };
-    const pool = new AppServerClientPool(() => source, () => source.cwd, event => {
-      if (event.kind === "server-request") {
-        routed = routeHarnessWorkspaceRequest(event, pool, () => {
-          if (binding === "missing") throw new Error("workspace is unavailable");
-          return target;
-        }, initialize);
-      }
-    }, (_cmd, _args, options) => {
-      const child = new FakeAppServerChild();
-      children.set(options.cwd, child);
-      requests.set(options.cwd, []);
-      child.stdin.on("data", data => {
-        const message = JSON.parse(String(data));
-        requests.get(options.cwd)!.push(message);
-        if (message.method) child.stdout.write(`${JSON.stringify({ id: message.id, result: {} })}\n`);
-      });
-      return child.asChildProcess();
-    });
-    pool.prewarmContexts([source]);
-    children.get(source.cwd)!.stdout.write(`${JSON.stringify({ id: "dispatch", method: WORKSPACE_HARNESS_DISPATCH, params: {
-      workspace_id: target.project_id, workspace_root: binding === "mismatch" ? source.cwd : target.cwd, operation_id: "durable-op",
-    } })}\n`);
-    await routed;
-    if (binding === "valid") {
-      expect(requests.get(target.cwd)).toMatchObject([
-        { method: "initialize", params: initialize },
-        { method: "session/harness/dispatch", params: { workspace_id: "target", workspace_root: target.cwd, operation_id: "durable-op" } },
-      ]);
-      expect(requests.get(source.cwd)).toEqual([{ id: "dispatch", result: {} }]);
-    } else {
-      expect(children.has(target.cwd)).toBe(false);
-      expect(requests.get(source.cwd)).toMatchObject([{ id: "dispatch", error: { message: expect.any(String) } }]);
-    }
-    void pool.shutdown();
-  });
-
-  it("routes ordinary Harness reads and controls to the session executor", async () => {
+  it("routes ordinary session reads and controls to the session executor", async () => {
     vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
     const children = new Map<string, FakeAppServerChild>();
     const requests = new Map<string, Array<{ id: string; method: string }>>();
@@ -329,17 +284,17 @@ describe("AppServerClientPool session routing", () => {
     pool.prewarmContexts([active, owner]);
     const send = (cwd: string, message: unknown) => children.get(cwd)!.stdout.write(`${JSON.stringify(message)}\n`);
     send(owner.cwd, { method: "turn/started", params: { thread_id: "session" } });
-    const read = pool.requestForSession(active, "session", "channel/session/read", { sessionRef: "session" }, (_response, cwd) => order.push(`snapshot:${cwd}`));
+    const read = pool.requestForSession(active, "session", "thread/resume", { session_id: "session" }, (_response, cwd) => order.push(`snapshot:${cwd}`));
     send(owner.cwd, { id: "client-1", result: { text: "Live" } });
     send(owner.cwd, { method: "item/agentMessage/delta", params: { thread_id: "session", delta: " later" } });
     expect(await read).toEqual({ text: "Live" });
     expect(order.slice(-2)).toEqual(["snapshot:/owner", "item/agentMessage/delta"]);
     send(owner.cwd, { method: "turn/completed", params: { thread_id: "session" } });
-    const completed = pool.requestForSession(active, "session", "channel/session/read");
+    const completed = pool.requestForSession(active, "session", "thread/resume");
     send(owner.cwd, { id: "client-2", result: { text: "Completed" } });
     expect(await completed).toEqual({ text: "Completed" });
     children.get(owner.cwd)!.emit("exit", 0, null);
-    const restored = pool.requestForSession(active, "session", "channel/session/read");
+    const restored = pool.requestForSession(active, "session", "thread/resume");
     send(active.cwd, { id: "client-1", result: { text: "Durable history" } });
     expect(await restored).toEqual({ text: "Durable history" });
     pool.shutdown();

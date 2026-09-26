@@ -1,7 +1,6 @@
 import { saveArtifactFile } from "./artifactSave";
 import { readCatalogSkill } from "./remoteSkills";
 import { inheritSystemProxy } from "./systemProxy";
-import { routeHarnessWorkspaceRequest, WORKSPACE_HARNESS_DISPATCH } from "./harnessWorkspaceRouting";
 import { RemoteAppServerBridge } from "./remoteAppServerBridge";
 import { PhoneAccess, phonePairLink } from "./phoneAccess";
 import {
@@ -49,51 +48,6 @@ import type {
   GitCommitParams,
   GitPullRequestParams,
   BuildInfoResult,
-  ChannelAgentCreateParams,
-  ChannelAgentCreateResult,
-  ChannelAgentUpdateParams,
-  ChannelAgentUpdateResult,
-  ChannelAgentDeleteParams,
-  ChannelAgentDeleteResult,
-  ChannelSessionListParams,
-  ChannelSessionListResult,
-  ChannelSessionCreateParams,
-  ChannelSessionRefParams,
-  ChannelSessionSendParams,
-  ChannelSessionResult,
-  ChannelSessionReadResult,
-  ChannelBootstrapResult,
-  ChannelAgentListResult,
-  ChannelAgentInsightsResult,
-  ChannelAgentStartParams,
-  ChannelAgentStartResult,
-  ChannelAgentResetParams,
-  ChannelAgentResetResult,
-  ChannelAgentCreationResolveParams,
-  ChannelAgentCreationResolveResult,
-  ChannelMessageListParams,
-  ChannelMessageListResult,
-  ChannelMessageSendParams,
-  ChannelMessageSendResult,
-  ChannelRoomCreateParams,
-  ChannelRoomCreateResult,
-  ChannelDirectMessageOpenParams,
-  ChannelDirectMessageOpenResult,
-  ChannelRoomUpdateParams,
-  ChannelRoomUpdateResult,
-  ChannelRoomDeleteParams,
-  ChannelRoomDeleteResult,
-  ChannelRoomReadParams,
-  ChannelRoomReadResult,
-  ChannelRoomListResult,
-  ChannelTaskCreateParams,
-  ChannelTaskCreateResult,
-  ChannelTaskUpdateParams,
- ChannelWorkCandidateParams,
- ChannelWorkCandidateResult,
-  ChannelTaskUpdateResult,
-  ChannelHumanMentionStatusResult,
-  ChannelHumanMentionAckResult,
   ActivityActionResult,
   ActivityListResult,
   ActivityReleaseResult,
@@ -173,7 +127,6 @@ import type {
   SideThreadHistoryResult,
   SideThreadSendParams,
   SideThreadSendResult,
-  ChannelRoomPreferences,
 } from "../shared/protocol";
 import { AppServerClientPool, configurePackagedCUA } from "./appServerClients";
 import { RendererServerEventBatcher } from "./rendererServerEventBatcher";
@@ -197,7 +150,6 @@ import {
   getThemePreference,
   getLanguagePreference,
   getPluginConflictPreferences,
-  getChannelRoomPreferences,
   isOnboardingComplete,
   completeOnboarding,
   setCodexPetSettings,
@@ -205,7 +157,6 @@ import {
   setThemePreference,
   setLanguagePreference,
   setPluginConflictPreference,
-  setChannelRoomPreferences,
   type MessageFlowFontSize,
   type ThemePreference,
   type LanguagePreference,
@@ -498,7 +449,7 @@ function desktopInitializeParams() {
     protocol_version: APP_SERVER_PROTOCOL_VERSION,
     client: { name: "wuu-desktop", version: DESKTOP_BUILD_INFO.version },
     capabilities: {
-      reverse_rpc: { methods: [...BROWSER_REVERSE_RPC_METHODS, WORKSPACE_HARNESS_DISPATCH] },
+      reverse_rpc: { methods: [...BROWSER_REVERSE_RPC_METHODS] },
     },
   };
 }
@@ -590,10 +541,6 @@ const rendererServerEventBatcher = new RendererServerEventBatcher((event) => {
 
 function emitServerEvent(event: ServerEvent): void {
   remoteAppServerBridge.publish(event);
-  if (event.kind === "server-request" && event.message.method === WORKSPACE_HARNESS_DISPATCH) {
-    void routeHarnessWorkspaceRequest(event, appServerClientPool, runtimeContextForWorkspaceID, desktopInitializeParams());
-    return;
-  }
   // Intercept core→desktop browser/* requests BEFORE broadcastToAll: the
   // renderer auto-rejects every server-request ("unsupported server request"),
   // and server-request routes are single-shot, so letting the renderer race
@@ -1877,104 +1824,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:skill-content", async (event, params: SkillContentParams): Promise<SkillContentResult> => {
     return readCatalogSkill(await appServerRequest<SkillListResult>(event, "skill/list"),params);
   });
-  ipcMain.handle("wuu:channel-continuity", (event, params) => appServerRequest(event, "channel/continuity", params));
-  ipcMain.handle("wuu:channel-session-list", (event, params: ChannelSessionListParams) =>
-    appServerRequest<ChannelSessionListResult>(event, "channel/session/list", params),
-  );
-  ipcMain.handle("wuu:channel-session-create", (event, params: ChannelSessionCreateParams) =>
-    appServerRequest<ChannelSessionResult>(event, "channel/session/create", params),
-  );
-  ipcMain.handle("wuu:channel-session-read", (event, params: ChannelSessionRefParams & { requestId?: string }) =>
-    appServerClientPool.requestForSession<ChannelSessionReadResult>(
-      runtimeContextForEvent(event), params.sessionRef, "channel/session/read", params,
-      (response, workdir) => {
-        // Put the snapshot on the same ordered channel as subsequent deltas.
-        // The invoke promise can resolve after later stdout notifications.
-        if (params.requestId && !response.error && !event.sender.isDestroyed()) {
-          const window = windowRegistry.windowForID(event.sender.id);
-          if (!window) return;
-          sendToWindow(window, "wuu:server-event", {
-            kind: "notification", workdir,
-            message: { method: "channel/session/snapshot", params: { request_id: params.requestId, result: response.result } },
-          } satisfies ServerEvent);
-        }
-      },
-    ),
-  );
-  ipcMain.handle("wuu:channel-session-send", (event, params: ChannelSessionSendParams) =>
-    appServerRequest<ChannelSessionResult>(event, "channel/session/send", params),
-  );
-  ipcMain.handle("wuu:channel-session-stop", (event, params: ChannelSessionRefParams) =>
-    appServerRequest<ChannelSessionResult>(event, "channel/session/stop", params),
-  );
   ipcMain.handle("wuu:session-control-return", (event, params: { thread_id: string; revision: number }) => appServerRequest(event, "thread/control/return", params));
-  ipcMain.handle("wuu:channel-session-resume", (event, params: ChannelSessionRefParams) =>
-    appServerRequest<ChannelSessionResult>(event, "channel/session/resume", params),
-  );
-  ipcMain.handle("wuu:channel-agent-list", (event) =>
-    appServerRequest<ChannelAgentListResult>(event, "channel/agent/list"),
-  );
-  ipcMain.handle("wuu:channel-agent-insights", (event) =>
-    appServerRequest<ChannelAgentInsightsResult>(event, "channel/agent/insights"),
-  );
-  ipcMain.handle("wuu:channel-bootstrap", (event) =>
-    appServerRequest<ChannelBootstrapResult>(event, "channel/bootstrap"),
-  );
-  ipcMain.handle("wuu:channel-agent-create", (event, params: ChannelAgentCreateParams) =>
-    appServerRequest<ChannelAgentCreateResult>(event, "channel/agent/create", params),
-  );
-  ipcMain.handle("wuu:channel-agent-update", (event, params: ChannelAgentUpdateParams) =>
-    appServerRequest<ChannelAgentUpdateResult>(event, "channel/agent/update", params),
-  );
-  ipcMain.handle("wuu:channel-agent-delete", (event, params: ChannelAgentDeleteParams) =>
-    appServerRequest<ChannelAgentDeleteResult>(event, "channel/agent/delete", params),
-  );
-  ipcMain.handle("wuu:channel-agent-start", (event, params: ChannelAgentStartParams) =>
-    appServerRequest<ChannelAgentStartResult>(event, "channel/agent/start", params),
-  );
-  ipcMain.handle("wuu:channel-agent-reset", (event, params: ChannelAgentResetParams) =>
-    appServerRequest<ChannelAgentResetResult>(event, "channel/agent/reset", params),
-  );
-  ipcMain.handle("wuu:channel-agent-creation-resolve", (event, params: ChannelAgentCreationResolveParams) =>
-    appServerRequest<ChannelAgentCreationResolveResult>(event, "channel/agent-creation/resolve", params),
-  );
-  ipcMain.handle("wuu:channel-room-list", (event) =>
-    appServerRequest<ChannelRoomListResult>(event, "channel/room/list"),
-  );
-  ipcMain.handle("wuu:channel-room-create", (event, params: ChannelRoomCreateParams) =>
-    appServerRequest<ChannelRoomCreateResult>(event, "channel/room/create", params),
-  );
-  ipcMain.handle("wuu:channel-direct-message-open", (event, params: ChannelDirectMessageOpenParams) =>
-    appServerRequest<ChannelDirectMessageOpenResult>(event, "channel/direct-message/open", params),
-  );
-  ipcMain.handle("wuu:channel-room-update", (event, params: ChannelRoomUpdateParams) =>
-    appServerRequest<ChannelRoomUpdateResult>(event, "channel/room/update", params),
-  );
-  ipcMain.handle("wuu:channel-room-delete", (event, params: ChannelRoomDeleteParams) =>
-    appServerRequest<ChannelRoomDeleteResult>(event, "channel/room/delete", params),
-  );
-  ipcMain.handle("wuu:channel-room-read", (event, params: ChannelRoomReadParams) =>
-    appServerRequest<ChannelRoomReadResult>(event, "channel/room/read", params),
-  );
-  ipcMain.handle("wuu:channel-message-list", (event, params: ChannelMessageListParams) =>
-    appServerRequest<ChannelMessageListResult>(event, "channel/message/list", params),
-  );
-  ipcMain.handle("wuu:channel-message-send", (event, params: ChannelMessageSendParams) =>
-    appServerRequest<ChannelMessageSendResult>(event, "channel/message/send", params),
-  );
-  ipcMain.handle("wuu:channel-task-create", (event, params: ChannelTaskCreateParams) =>
-    appServerRequest<ChannelTaskCreateResult>(event, "channel/task/create", params),
-  );
-  ipcMain.handle("wuu:channel-work-candidate", (event, params: ChannelWorkCandidateParams) => appServerRequest<ChannelWorkCandidateResult>(event, "channel/work/candidate", params));
-  ipcMain.handle("wuu:channel-task-update", (event, params: ChannelTaskUpdateParams) =>
-    appServerRequest<ChannelTaskUpdateResult>(event, "channel/task/update", params),
-  );
-  ipcMain.handle("wuu:channel-human-mention-status", (event) =>
-    appServerRequest<ChannelHumanMentionStatusResult>(event, "channel/human-mention/status"),
-  );
-  ipcMain.handle("wuu:channel-human-mention-ack", (event) =>
-    appServerRequest<ChannelHumanMentionAckResult>(event, "channel/human-mention/ack"),
-  );
   ipcMain.handle("wuu:codex-pets-list", () => {
     const snapshot = codexPetsSnapshot();
     // Sync the pet window from the renderer-side list call so a failed
@@ -2221,14 +2071,6 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:plugin-conflict-preferences-get", () => getPluginConflictPreferences());
   ipcMain.handle("wuu:plugin-conflict-preference-set", (_event, key: string, pluginId: string) =>
     setPluginConflictPreference(String(key), String(pluginId)));
-  ipcMain.on("wuu:channel-room-preferences-get-sync", (event) => {
-    event.returnValue = getChannelRoomPreferences();
-  });
-  ipcMain.handle(
-    "wuu:channel-room-preferences-set",
-    (_event, preferences: ChannelRoomPreferences): ChannelRoomPreferences =>
-      setChannelRoomPreferences(preferences),
-  );
   ipcMain.on("wuu:language-preference-get-sync", (event) => {
     event.returnValue = getLanguagePreference();
   });

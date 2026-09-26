@@ -4,7 +4,6 @@ import { upsertTurn } from "./AppState";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Agent,
-  ChannelRoom,
   DesktopProject,
   ExtensionInventoryRecord,
   RuntimeContext,
@@ -24,11 +23,8 @@ import {
   conversationPaneThreadsByID,
   conversationSearchContextLabel,
   conversationSearchThreadMeta,
-  channelRoomSessionTabID,
-  createChannelRoomSessionTab,
   createDraftSessionTab,
   createSkillsSessionTab,
-  createTasksSessionTab,
   createThreadSessionTab,
   sessionTabLabel,
   handleStreamingNotification,
@@ -53,7 +49,6 @@ import {
   projectThreads,
   queryTextsForThread,
   requestedHandoffIntentForThread,
-  reconcileChannelRoomSessionTabs,
   reconcileResumedThreadTurns,
   reduceServerEvent,
   resolveComposerRunningAction,
@@ -3398,15 +3393,6 @@ describe("sessionTabLabel (draft tabs read as their workspace)", () => {
     });
     expect(sessionTabLabel(tab, state)).toBe("orphaned-dir");
   });
-
-  it("gives each channel room a stable tab identity and its room title", () => {
-    const context: RuntimeContext = { kind: "no_project", cwd: "/scratch" };
-    const tab = createChannelRoomSessionTab("room-1", "Design review", context);
-
-    expect(tab.id).toBe(channelRoomSessionTabID("room-1"));
-    expect(tab.id).toBe("channel-room:room-1");
-    expect(sessionTabLabel(tab, state)).toBe("Design review");
-  });
 });
 
 describe("thread session tab title sync", () => {
@@ -3507,66 +3493,6 @@ describe("thread session tab title sync", () => {
     expect(next.sessionTabs).toHaveLength(2);
     expect(next.sessionTabs[0]?.title).toBe(tab.title);
     expect(next.sessionTabs[1]).toBe(draft);
-  });
-});
-
-describe("reconcileChannelRoomSessionTabs", () => {
-  const context: RuntimeContext = { kind: "no_project", cwd: "/scratch" };
-
-  it("updates room tab titles and closes tabs for deleted rooms", () => {
-    const draft = createDraftSessionTab("draft:active", context);
-    const renamed = createChannelRoomSessionTab("room-1", "Old name", context);
-    const deleted = createChannelRoomSessionTab("room-2", "Deleted", context);
-    const next = reconcileChannelRoomSessionTabs(
-      {
-        ...initialState,
-        activeContext: context,
-        activeSessionTabID: draft.id,
-        sessionTabs: [draft, renamed, deleted],
-      },
-      [{ id: "room-1", name: "New name" } as ChannelRoom],
-    );
-
-    expect(next.sessionTabs.map((tab) => [tab.id, tab.title])).toEqual([
-      [draft.id, draft.title],
-      [renamed.id, "New name"],
-    ]);
-    expect(next.activeSessionTabID).toBe(draft.id);
-  });
-
-  it("selects the nearest remaining tab when the active room is deleted", () => {
-    const first = createDraftSessionTab("draft:first", context);
-    const room = createChannelRoomSessionTab("room-1", "Room", context);
-    const last = createTasksSessionTab(context);
-    const next = reconcileChannelRoomSessionTabs(
-      {
-        ...initialState,
-        activeContext: context,
-        activeSessionTabID: room.id,
-        sessionTabs: [first, room, last],
-      },
-      [],
-    );
-
-    expect(next.sessionTabs.map((tab) => tab.id)).toEqual([first.id, last.id]);
-    expect(next.activeSessionTabID).toBe(last.id);
-  });
-
-  it("restores a draft tab when the deleted room was the last open tab", () => {
-    const room = createChannelRoomSessionTab("room-1", "Room", context);
-    const next = reconcileChannelRoomSessionTabs(
-      {
-        ...initialState,
-        activeContext: context,
-        activeSessionTabID: room.id,
-        sessionTabs: [room],
-      },
-      [],
-    );
-
-    expect(next.sessionTabs).toHaveLength(1);
-    expect(next.sessionTabs[0]?.kind).toBe("draft");
-    expect(next.activeSessionTabID).toBe(next.sessionTabs[0]?.id);
   });
 });
 

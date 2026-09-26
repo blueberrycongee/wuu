@@ -752,7 +752,7 @@ export interface ToolRegistration {
   id: string;
   description: string;
   input_schema: JSONSchemaObject;
-  execution_scopes?: Array<"root" | "child" | "collaboration">;
+  execution_scopes?: Array<"root" | "child">;
   activity?: ToolActivityMetadata;
   display?: ToolDisplayMetadata;
 }
@@ -1714,7 +1714,7 @@ export interface HeaderSnapshotV1 {
 
 export interface NavigationNodeV1 {
   readonly id: string;
-  readonly kind: "section" | "project" | "thread" | "room" | "command";
+  readonly kind: "section" | "project" | "thread" | "command";
   readonly label: string;
   readonly parentId?: string;
   readonly depth?: number;

@@ -3,7 +3,7 @@
 // the shared renderer owns presentation.
 
 // The 12 muted hues the desktop pins blobatar colors to, preserved from the
-// old mascot tint palette (--avatar-N in desktop default-avatar.css).
+// old mascot tint palette.
 export const AVATAR_HUES = [14, 33, 52, 96, 150, 182, 202, 222, 250, 288, 322, 350] as const;
 
 export const DEFAULT_AVATAR_COUNT = AVATAR_HUES.length;

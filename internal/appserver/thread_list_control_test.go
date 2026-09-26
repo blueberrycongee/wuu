@@ -11,7 +11,7 @@ import (
 func TestThreadListsPreserveSessionControlAcrossWorkspaces(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	ownerOutput := &lockedBuffer{}
-	owner := &collaborationRPCFixture{server: New(rt, ownerOutput), out: ownerOutput}
+	owner := &rpcClient{server: New(rt, ownerOutput), out: ownerOutput}
 	t.Cleanup(owner.server.Close)
 	expected := make(map[string]*ThreadSessionControl)
 	for _, state := range []string{session.ControlActive, session.ControlPaused, session.ControlTakenOver, session.ControlReleased, "ordinary"} {
@@ -41,7 +41,7 @@ func TestThreadListsPreserveSessionControlAcrossWorkspaces(t *testing.T) {
 	otherRuntime := newTestRuntime(t, &fakeClient{})
 	otherRuntime.SessionDir = rt.SessionDir
 	otherOutput := &lockedBuffer{}
-	other := &collaborationRPCFixture{server: New(otherRuntime, otherOutput), out: otherOutput}
+	other := &rpcClient{server: New(otherRuntime, otherOutput), out: otherOutput}
 	t.Cleanup(other.server.Close)
 
 	assertControl := func(t *testing.T, thread Thread) {
@@ -62,7 +62,7 @@ func TestThreadListsPreserveSessionControlAcrossWorkspaces(t *testing.T) {
 	assertLists := func(methods []string) {
 		for _, source := range []struct {
 			name string
-			rpc  *collaborationRPCFixture
+			rpc  *rpcClient
 		}{{"owner", owner}, {"other-workspace", other}} {
 			for _, method := range methods {
 				for _, summaryOnly := range []bool{false, true} {

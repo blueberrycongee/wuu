@@ -7,8 +7,22 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
+
+func (s *Server) registeredWorkspaces() []workspaces.Workspace {
+	if s == nil || s.rt == nil {
+		return nil
+	}
+	list, err := workspaces.List(s.rt.WuuHome)
+	if err != nil {
+		providers.DebugLogf("read registered workspaces: %v", err)
+		return nil
+	}
+	return list
+}
 
 // Resolve a project binding independently of the calling identity's home.
 // Resolving metadata does not authorize execution in this server's runtime.

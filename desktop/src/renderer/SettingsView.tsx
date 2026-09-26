@@ -9,7 +9,6 @@ import {
   ChevronRight,
   Folder,
   Gauge,
-  Hash,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -75,12 +74,6 @@ export type ArchivedSessionView = {
   updated_at: string;
   archive_project_id?: string;
   archive_project_name?: string;
-  archive_reason?: string;
-};
-export type ArchivedRoomView = {
-  id: string;
-  name: string;
-  created_at: string;
 };
 import { normalizedVariantForProviderModel, providerModelReasoningMode, providerModelVariantOptions, variantLabel } from "./RuntimeHelpers";
 import { ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
@@ -214,9 +207,7 @@ export function SettingsView({
   onSidebarResizeStart,
   onSidebarSeparatorKey,
   archivedThreads,
-  archivedRooms,
   onUnarchiveThread,
-  onUnarchiveRoom,
   // The settings rail shares the main sidebar's state and handlers wholesale:
   // same persisted width + collapse flag, same drag-to-collapse resize
   // session, same toggle motion.
@@ -257,9 +248,7 @@ export function SettingsView({
   onSidebarSeparatorKey: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
   // 归档页只读侧边栏归档清单 + 恢复回调。列表为空时渲染空态卡片。
   archivedThreads?: readonly ArchivedSessionView[];
-  archivedRooms?: readonly ArchivedRoomView[];
   onUnarchiveThread: (thread: ArchivedSessionView) => void;
-  onUnarchiveRoom?: (room: ArchivedRoomView) => void;
   sidebarCollapsed: boolean;
   sidebarAnimating: boolean;
   onToggleSidebar: () => void;
@@ -1223,9 +1212,7 @@ export function SettingsView({
             ) : activePage === "archive" ? (
               <SettingsArchivePage
                 archivedThreads={archivedThreads ?? []}
-                archivedRooms={archivedRooms ?? []}
                 onUnarchiveThread={onUnarchiveThread}
-                onUnarchiveRoom={onUnarchiveRoom ?? (() => {})}
               />
             ) : (
               <SettingsUsagePage
@@ -2308,28 +2295,17 @@ function SettingsMCPPage({
 
 function SettingsArchivePage({
   archivedThreads,
-  archivedRooms,
   onUnarchiveThread,
-  onUnarchiveRoom,
 }: {
   archivedThreads: readonly ArchivedSessionView[];
-  archivedRooms: readonly ArchivedRoomView[];
   onUnarchiveThread: (thread: ArchivedSessionView) => void;
-  onUnarchiveRoom: (room: ArchivedRoomView) => void;
 }): JSX.Element {
   const { t, formatDate } = useI18n();
   const [query, setQuery] = useState("");
   const [projectFilter, setProjectFilter] = useState("all");
-  const [archiveSection, setArchiveSection] = useState("ordinary");
   const sortedThreads = useMemo(
-    () => archivedThreads
-      .filter((thread) => (thread.archive_reason === "agent_deleted") === (archiveSection === "agents"))
-      .sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
-    [archivedThreads, archiveSection],
-  );
-  const sortedRooms = useMemo(
-    () => [...archivedRooms].sort((a, b) => b.created_at.localeCompare(a.created_at)),
-    [archivedRooms],
+    () => [...archivedThreads].sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+    [archivedThreads],
   );
   const projectOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -2366,37 +2342,13 @@ function SettingsArchivePage({
     }
     return Array.from(grouped, ([projectID, group]) => ({ projectID, ...group }));
   }, [projectFilter, query, sortedThreads, t]);
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  const filteredRooms = sortedRooms.filter(
-    (room) =>
-      archiveSection === "ordinary" && projectFilter === "all" &&
-      (!normalizedQuery || room.name.toLocaleLowerCase().includes(normalizedQuery)),
-  );
-  const archivedItemCount = sortedThreads.length + (archiveSection === "ordinary" ? sortedRooms.length : 0);
-  const noMatches = archivedItemCount > 0 && groups.length === 0 && filteredRooms.length === 0;
-
-  const archiveSections = [
-    { value: "ordinary", label: t("settings.ordinaryArchive") },
-    { value: "agents", label: t("settings.agentArchive") },
-  ];
+  const noMatches = sortedThreads.length > 0 && groups.length === 0;
 
   return (
     <>
       <SettingsPageHeader title={t("settings.archive")} />
       <div className="settings-archive-page">
         <div className="settings-archive-toolbar" role="search" aria-label={t("settings.archiveFilter")}>
-          <div className="theme-segmented" role="group" aria-label={t("settings.archiveSection")}>
-            {archiveSections.map((section) => (
-              <button
-                key={section.value}
-                type="button"
-                aria-pressed={archiveSection === section.value}
-                onClick={() => { setArchiveSection(section.value); setProjectFilter("all"); }}
-              >
-                {section.label}
-              </button>
-            ))}
-          </div>
           <label className="settings-archive-search">
             <Search className="icon" aria-hidden="true" />
             <span className="sr-only">{t("settings.archiveSearch")}</span>
@@ -2417,13 +2369,13 @@ function SettingsArchivePage({
             flip
           />
         </div>
-        {archivedItemCount === 0 || noMatches ? (
+        {sortedThreads.length === 0 || noMatches ? (
           <div className="settings-archive-empty" role="status">
             <Archive className="settings-archive-empty-icon" aria-hidden="true" />
             <p className="settings-archive-empty-title">
               {noMatches ? t("settings.noArchiveMatches") : t("settings.noArchivedItems")}
             </p>
-            {noMatches || archiveSection === "agents" || isTouchWebShell() ? null : (
+            {noMatches || isTouchWebShell() ? null : (
               <p className="settings-archive-empty-hint">
                 {t("settings.archiveHint")}
               </p>
@@ -2431,39 +2383,6 @@ function SettingsArchivePage({
           </div>
         ) : (
           <div className="settings-archive-groups" aria-label={t("settings.archivedList")}>
-            {filteredRooms.length > 0 ? (
-              <section className="settings-archive-group" data-archive-kind="rooms">
-                <header className="settings-archive-group-header">
-                  <div className="settings-archive-group-name">
-                    <Hash className="icon" aria-hidden="true" />
-                    <span>{t("settings.archivedRooms")}</span>
-                  </div>
-                  <span className="settings-archive-group-count">
-                    {t("settings.roomCount", { count: filteredRooms.length })}
-                  </span>
-                </header>
-                <div className="settings-group settings-archive-list">
-                  {filteredRooms.map((room) => (
-                    <div className="settings-archive-row" key={room.id}>
-                      <div className="settings-archive-row-copy">
-                        <TruncatedText className="settings-archive-title" text={room.name} />
-                        <time className="settings-archive-time" dateTime={room.created_at}>
-                          {formatArchiveTime(room.created_at, formatDate)}
-                        </time>
-                      </div>
-                      <button
-                        type="button"
-                        className="settings-button settings-archive-restore"
-                        aria-label={t("settings.restoreRoom", { title: room.name })}
-                        onClick={() => onUnarchiveRoom(room)}
-                      >
-                        {t("settings.restore")}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            ) : null}
             {groups.map((group) => (
               <section className="settings-archive-group" key={group.projectID}>
                 <header className="settings-archive-group-header">

@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
@@ -97,23 +96,6 @@ func TestConversationSelectsDiscoveredProviderWithoutChangingDefaults(t *testing
 				t.Fatal("resuming the conversation lost its selected model")
 			}
 		})
-	}
-}
-
-func TestNamedAgentCanSelectDiscoveredProvider(t *testing.T) {
-	rt := setupDiscoveredGrokProvider(t)
-	srv := New(rt, &lockedBuffer{})
-	defer srv.Close()
-	params := ChannelAgentCreateParams{ProviderOverride: "grok-build", ModelOverride: "grok-4.6", EffortOverride: "xhigh"}
-	if err := srv.validateNamedAgentCreation(&params); err != nil {
-		t.Fatalf("select discovered provider: %v", err)
-	}
-	cfg, _, err := config.LoadPath(rt.ConfigPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := cfg.ResolveProvider(params.ProviderOverride); err != nil {
-		t.Fatalf("agent's saved pin cannot be resolved: %v", err)
 	}
 }
 

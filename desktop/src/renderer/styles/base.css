@@ -288,7 +288,7 @@
   --search-motion-easing: var(--ease-out);
   --collapse-motion-duration: var(--motion-slower);
   --query-submit-duration: 220ms;
-  /* Receipt collapse and collaboration's bottom-follow share this deadline. */
+  /* Receipt collapse and the split-pane bottom-follow share this deadline. */
   --query-submit-easing: cubic-bezier(0.333333, 1, 0.666667, 1);
   --collapse-motion-easing: var(--ease-out);
   /* Globalized-sheet pair: the workspace right panel "takes the stage" as a
@@ -769,12 +769,7 @@ code,
 .window-resizing .jump-to-latest-cluster,
 .window-resizing .jump-to-latest-pill,
 .window-resizing .jump-to-latest-progress,
-.window-resizing .conversation-status-capsule,
-.window-resizing .channel-view,
-.window-resizing .channel-conversation,
-.window-resizing .channel-room-main,
-.window-resizing .channel-message-stream,
-.window-resizing .channel-conversation-footer {
+.window-resizing .conversation-status-capsule {
   transition: none !important;
   animation-play-state: paused !important;
 }
@@ -934,18 +929,4 @@ button:disabled {
 .rich-content strong,
 .rich-content b {
   font-weight: var(--weight-medium);
-}
-
-.field-error {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  margin: 0;
-  color: var(--danger);
-  font-size: var(--font-sm);
-  line-height: 1.4;
-}
-
-.field-error > svg {
-  margin-top: 1px;
 }

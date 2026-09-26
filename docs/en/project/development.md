@@ -64,7 +64,7 @@ bash clients/native/verify.sh all
 
 Use `ios` or `android` to select one platform. The script starts an isolated PostgreSQL-backed test environment, builds test hosts, and runs platform tests and builds. Follow the native README for PostgreSQL, Xcode, Java, and Android SDK prerequisites. Passing these checks is not real-device or release acceptance.
 
-Native builds package the committed avatar and process-summary resource snapshots. They do not require those snapshots to match the latest desktop sources. Adopting desktop presentation changes is an explicit native update; the [shared renderer README](../../../clients/native/shared-ui/README.md) describes regeneration, checking, and visual acceptance.
+The iOS build packages the committed mascot and process-summary resource snapshots. It does not require those snapshots to match the latest desktop sources. Adopting desktop presentation changes is an explicit iOS update; the [shared renderer README](../../../clients/native/shared-ui/README.md) describes regeneration, checking, and visual acceptance.
 
 The older `clients/mobile`, `clients/mobile-web`, and `clients/mobile-app` phone implementations are retired. Some remain in shared Web builds and repository checks; passing those gates does not validate the native apps. Account and relay deployment is separate from local desktop setup; see [remote access](../automation/remote.md).
 

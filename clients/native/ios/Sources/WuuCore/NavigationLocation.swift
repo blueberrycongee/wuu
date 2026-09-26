@@ -7,13 +7,10 @@ public struct NavigationLocation: Codable, Equatable {
     public let host: String
     public let workspace: String
     public let thread: String?
-    public let room: String?
-    public let mode: String
 
-    public init(account: AccountSession, host: String, workspace: String = "", thread: String? = nil,
-                room: String? = nil, mode: String = "collaboration") throws {
+    public init(account: AccountSession, host: String, workspace: String = "", thread: String? = nil) throws {
         login = try Self.key(account)
-        self.host = host; self.workspace = workspace; self.thread = thread; self.room = room; self.mode = mode
+        self.host = host; self.workspace = workspace; self.thread = thread
     }
     private static func key(_ account: AccountSession) throws -> String {
         Data(SHA256.hash(data: try JSONEncoder().encode([account.server, account.username, account.pub, account.token]))).base64URL

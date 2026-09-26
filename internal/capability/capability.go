@@ -63,9 +63,6 @@ const (
 	CapabilityTodo  Capability = "todo"
 	CapabilitySkill Capability = "skill"
 
-	// Persistent named-agent group chat.
-	CapabilityChat Capability = "chat"
-
 	// Extensions (MCP, plugins).
 	CapabilityMCP Capability = "mcp"
 
@@ -108,7 +105,6 @@ func All() []Capability {
 		CapabilityContextWindow,
 		CapabilityTodo,
 		CapabilitySkill,
-		CapabilityChat,
 		CapabilityMCP,
 		CapabilityDiscovery,
 		CapabilityCodeMode,

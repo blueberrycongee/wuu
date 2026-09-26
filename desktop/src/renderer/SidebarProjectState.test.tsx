@@ -6,10 +6,7 @@ import {
   isThreadRunning,
   isThreadUnread,
 } from "./AppState";
-import {
-  SIDEBAR_SECTION_COLLAB,
-  SIDEBAR_SECTION_PINNED,
-} from "./AppSidebar";
+import { SIDEBAR_SECTION_PINNED } from "./AppSidebar";
 import {
   mergeSidebarThreadSnapshots,
   useSidebarProjectState,
@@ -224,11 +221,10 @@ describe("useSidebarProjectState", () => {
     expect(hook.get().projectThreadsByProjectID.alpha[0]?.title).toBe(alphaThread.title);
   });
 
-  it("keeps a collaboration session that started while the global catalog was still empty", async () => {
+  it("keeps a session that started while the global catalog was still empty", async () => {
     const beta = project("beta");
     const created = {
-      ...thread("new-collaboration-session", beta.path),
-      source: "collaboration",
+      ...thread("new-session", beta.path),
       workspace_id: beta.id,
       workspace_kind: "project" as const,
     };
@@ -321,7 +317,7 @@ describe("useSidebarProjectState", () => {
     ]);
   });
 
-  it("toggles fixed pseudo sections with one click", async () => {
+  it("toggles the pinned pseudo section with one click", async () => {
     const hook = await renderSidebarProjectState();
 
     act(() => {
@@ -333,17 +329,6 @@ describe("useSidebarProjectState", () => {
       hook.get().toggleSidebarSectionCollapsed(SIDEBAR_SECTION_PINNED);
     });
     expect(hook.get().collapsedSidebarSectionIDs.has(SIDEBAR_SECTION_PINNED)).toBe(false);
-
-    act(() => {
-      hook.get().toggleSidebarSectionCollapsed(SIDEBAR_SECTION_COLLAB);
-    });
-    expect(hook.get().collapsedSidebarSectionIDs.has(SIDEBAR_SECTION_COLLAB)).toBe(true);
-    expect(hook.get().expandedSidebarSectionIDs.has(SIDEBAR_SECTION_COLLAB)).toBe(false);
-
-    act(() => {
-      hook.get().toggleSidebarSectionCollapsed(SIDEBAR_SECTION_COLLAB);
-    });
-    expect(hook.get().collapsedSidebarSectionIDs.has(SIDEBAR_SECTION_COLLAB)).toBe(false);
   });
 
   it("mirrors active project threads into the sidebar cache", async () => {

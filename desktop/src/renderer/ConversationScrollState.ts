@@ -968,7 +968,7 @@ export function useConversationScrollState({
   useLayoutEffect(() => { positionSubmittedMessageRef.current = positionSubmittedMessage; });
 
   const requestSubmittedQueryScroll = useCallback((messageID: string): void => {
-    // Collaboration keeps its existing bottom-follow behavior. Ordinary
+    // Split panes keep their existing bottom-follow behavior. Ordinary
     // sessions have a different lifecycle: the submitted message is the
     // reading anchor, even when the user had previously browsed history.
     if (splitConversation && !isFollowing()) return;

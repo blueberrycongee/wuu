@@ -740,7 +740,7 @@
   min-height: var(--composer-collapsed-min-height);
 }
 
-/* Read-only attachments of a sent channel message. */
+/* Pending attachments above the composer input. */
 .composer-attachments {
   display: flex;
   flex-wrap: wrap;
@@ -1399,121 +1399,6 @@
   opacity: 0.55;
 }
 
-/*
- * Members affordance in the group composer bar: a flat button with an
- * avatar stack and the member count — no pill border/background, no
- * hover-expanding name list. Details live in the group info panel it
- * opens.
- */
-.group-members-capsule {
-  appearance: none;
-  display: inline-flex;
-  height: 32px;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--ink-muted);
-  cursor: pointer;
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-  line-height: 1;
-  padding: 0 8px;
-  white-space: nowrap;
-  transition:
-    background-color var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out);
-}
-
-.group-members-capsule:hover,
-.group-members-capsule:focus-visible {
-  background: var(--ink-overlay-6);
-  color: var(--ink);
-}
-
-.group-members-capsule-avatars {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-}
-
-.group-members-capsule-avatar,
-.group-members-capsule-more,
-.group-members-capsule-empty {
-  position: relative;
-  display: inline-flex;
-  width: 20px;
-  height: 20px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  border: 1.5px solid var(--paper);
-  border-radius: var(--radius-pill);
-  background: var(--bg, var(--paper));
-  color: var(--ink);
-  font-size: 10px;
-  font-weight: var(--weight-semibold);
-  overflow: hidden;
-}
-
-.group-members-capsule-avatar + .group-members-capsule-avatar,
-.group-members-capsule-more {
-  margin-left: -7px;
-}
-
-.group-members-capsule-avatar img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.group-members-capsule-more {
-  background: var(--surface-3);
-  color: var(--ink-muted);
-  font-size: 9px;
-}
-
-.group-members-capsule-empty svg {
-  width: 12px;
-  height: 12px;
-}
-
-.group-members-capsule-count {
-  flex: 0 0 auto;
-}
-
-@container style(--motion-reduced: 1) {
-  .group-members-capsule {
-    transition: none;
-  }
-}
-
-/*
- * Chat-style (DM/group) composer "work focus" chip. Mirrors
- * permission-menu-anchor's width cap so a long project name still
- * truncates via .permission-chip span's existing ellipsis rule instead
- * of pushing the rest of composer-bar-left around. The default "全部
- * 工作区" state instead renders through .composer-tool-button (fixed
- * 32x32, icon only) so it reads as inert as the Paperclip/Slash buttons
- * beside it until the user actually narrows the focus.
- */
-.chat-focus-menu-anchor {
-  position: relative;
-  display: inline-flex;
-  min-width: 0;
-  max-width: 160px;
-  flex: 0 1 auto;
-}
-
-.chat-focus-chip:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
 .composer-spacer {
   min-width: 0;
   flex: 1 1 8px;
@@ -1543,18 +1428,6 @@
     color var(--motion-base) var(--ease-out),
     opacity var(--motion-base) var(--ease-out),
     box-shadow var(--motion-base) var(--ease-out);
-}
-
-.composer-convert-task-button {
-  background: transparent;
-  color: var(--ink-muted);
-  border: 1px solid var(--hairline);
-}
-
-.composer-convert-task-button:hover {
-  background: var(--surface-2);
-  color: var(--info);
-  border-color: var(--info);
 }
 
 /* Send and stop share the utility-button footprint so the primary action
@@ -1879,97 +1752,6 @@
   line-height: var(--line-ui);
   padding: 14px 12px 15px;
   text-align: center;
-}
-
-.mention-menu {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  z-index: 35;
-  display: grid;
-  width: min(460px, 100%);
-  max-height: min(320px, calc(100vh - 190px));
-  overflow: hidden;
-  padding: var(--menu-inset);
-  border: 1px solid var(--hairline);
-  border-radius: var(--menu-shell-radius);
-  background: var(--paper);
-  box-shadow: var(--shadow-pop);
-  transform-origin: bottom center;
-  animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
-}
-
-.mention-list {
-  display: grid;
-  gap: 1px;
-  max-height: 300px;
-  overflow-y: auto;
-  padding-right: 2px;
-}
-
-.mention-item {
-  display: grid;
-  min-height: 44px;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.mention-item:hover,
-.mention-item.selected {
-  background: var(--surface-2);
-}
-
-.mention-avatar {
-  display: grid;
-  width: 18px;
-  height: 18px;
-  place-items: center;
-  overflow: hidden;
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  line-height: var(--line-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mention-copy {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.mention-copy strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ink);
-  font-size: var(--font-menu);
-  font-weight: var(--weight-medium);
-  line-height: var(--line-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mention-copy small,
-.mention-name {
-  overflow: hidden;
-  color: var(--ink-muted);
-  font-size: var(--font-xs);
-  line-height: var(--line-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mention-name {
-  max-width: 112px;
 }
 
 .permission-menu-anchor .access-menu,

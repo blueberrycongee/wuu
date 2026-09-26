@@ -118,7 +118,7 @@ npm --prefix desktop run dev:onboarding
 
 ## 侧栏折叠区
 
-协作、置顶、文件夹和工作区标题支持鼠标拖拽排序，顺序保存在桌面 profile 中；旧 profile 加入协作排序时会保留已有分组顺序。运行 `cd desktop && npx electron scripts/sidebar-collaboration-sort-e2e.cjs`，在隔离环境中检查实际渲染的拖拽、取消与重载行为。脚本也会将主题和字号变体截图写入 `artifacts/sidebar-collaboration-sort/`，供单独视觉审阅。
+置顶、文件夹和工作区标题支持鼠标拖拽排序，顺序保存在桌面 profile 中。
 
 侧栏分区和嵌套分组统一使用 `SidebarCollapseBody`。它让内容自身高度与标题间距同步过渡，在收起结束前保留列表，并阻止隐藏行获得焦点。不要通过可继承的临时高度变量或后代动画规则，让父级切换改变嵌套折叠区。
 

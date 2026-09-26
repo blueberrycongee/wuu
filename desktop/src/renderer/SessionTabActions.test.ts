@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeContext } from "../shared/protocol";
 import {
-  createAgentsSessionTab,
-  createChannelRoomSessionTab,
   createDraftSessionTab,
   createThreadSessionTab,
   emptyComposerDraft,
@@ -272,99 +270,6 @@ describe("createSessionTabActions", () => {
       third.id,
       first.id,
     ]);
-  });
-
-  it("selects global channel tabs without changing the workspace runtime", async () => {
-    const context = projectContext();
-    const otherContext = projectContext("project-2");
-    const source = createDraftSessionTab("draft:source", context);
-    const agents = createAgentsSessionTab(otherContext);
-    const harness = buildActions({
-      initial: {
-        ...initialState,
-        activeContext: context,
-        activeSessionTabID: source.id,
-        sessionTabs: [source, agents],
-      },
-      draft: { prompt: "keep this draft", images: [], files: [] },
-    });
-
-    await harness.actions.selectSessionTab(agents.id);
-
-    expect(harness.getAppState().activeSessionTabID).toBe(agents.id);
-    expect(sessionTabPrompt(harness.getAppState().sessionTabs, source.id)).toBe(
-      "keep this draft",
-    );
-    expect(harness.loadRuntime).not.toHaveBeenCalled();
-    expect(harness.selectRuntimeContext).not.toHaveBeenCalled();
-  });
-
-  it("ensures and activates a newly opened global channel tab", () => {
-    const context = projectContext();
-    const source = createDraftSessionTab("draft:source", context);
-    const agents = createAgentsSessionTab(context);
-    const harness = buildActions({
-      initial: {
-        ...initialState,
-        activeContext: context,
-        activeSessionTabID: source.id,
-        sessionTabs: [source],
-      },
-    });
-
-    harness.actions.openGlobalSessionTab(agents);
-    harness.actions.openGlobalSessionTab({ ...agents, title: "updated" });
-
-    expect(harness.getAppState().activeSessionTabID).toBe(agents.id);
-    expect(harness.getAppState().sessionTabs.filter((tab) => tab.id === agents.id)).toEqual([
-      { ...agents, title: "updated" },
-    ]);
-  });
-
-  it("preserves a room draft when the same room is opened again", () => {
-    const context = projectContext();
-    const source = createDraftSessionTab("draft:source", context);
-    const room = {
-      ...createChannelRoomSessionTab("room-1", "Old title", context),
-      prompt: "unfinished message",
-    };
-    const harness = buildActions({
-      initial: {
-        ...initialState,
-        activeContext: context,
-        activeSessionTabID: source.id,
-        sessionTabs: [source, room],
-      },
-    });
-
-    harness.actions.openGlobalSessionTab(
-      createChannelRoomSessionTab("room-1", "New title", context),
-    );
-
-    expect(harness.getAppState().sessionTabs.find((tab) => tab.id === room.id)).toMatchObject({
-      title: "New title",
-      prompt: "unfinished message",
-    });
-  });
-
-  it("falls back to a global channel tab without resuming a thread", async () => {
-    const context = projectContext();
-    const source = createDraftSessionTab("draft:source", context);
-    const room = createChannelRoomSessionTab("room-1", "Design review", context);
-    const harness = buildActions({
-      initial: {
-        ...initialState,
-        activeContext: context,
-        activeSessionTabID: source.id,
-        sessionTabs: [source, room],
-      },
-    });
-
-    await harness.actions.closeSessionTab(source.id);
-
-    expect(harness.getAppState().activeSessionTabID).toBe(room.id);
-    expect(harness.selectThread).not.toHaveBeenCalled();
-    expect(harness.loadRuntime).not.toHaveBeenCalled();
   });
 
   it("removes the active tab before the fallback thread finishes resuming", async () => {

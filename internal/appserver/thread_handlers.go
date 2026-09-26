@@ -15,7 +15,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
-	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -429,17 +428,6 @@ func (s *Server) loadPersistedThreadState(id string, now time.Time) (*threadStat
 	if err != nil {
 		return nil, err
 	}
-	if th.NamedAgentID != "" && s.channelService != nil {
-		binding, err := s.channelService.LookupCollaborationSession(context.Background(), id)
-		if err == nil {
-			if binding.PrincipalID != th.NamedAgentID {
-				return nil, channels.ErrUnauthorized
-			}
-			th.CollaborationSessionRef = binding.SessionRef
-		} else if !errors.Is(err, channels.ErrNotFound) {
-			return nil, err
-		}
-	}
 	return th, nil
 }
 
@@ -501,15 +489,6 @@ func (s *Server) loadPersistedThreadSnapshot(id string) (persistedThreadSnapshot
 	if err != nil {
 		return persistedThreadSnapshot{}, err
 	}
-	if strings.HasPrefix(metadata.Source, namedAgentSessionSource) {
-		// Legacy wakes were hidden even though they establish a durable turn
-		// boundary. Project them for stable IDs without changing model history.
-		for i := range displayHistory {
-			if displayHistory[i].Phase == "channel_wake" {
-				displayHistory[i].Hidden = false
-			}
-		}
-	}
 	loaded := persistedThreadSnapshot{
 		metadata:         metadata,
 		repairedHistory:  repaired,
@@ -523,11 +502,7 @@ func (s *Server) loadPersistedThreadSnapshot(id string) (persistedThreadSnapshot
 	systemPrompt := s.rt.StreamRunner.SystemPrompt
 	// The active runtime prompt is configuration, not conversation data. Use it
 	// in memory without rewriting the thread during a read-only load.
-	if strings.HasPrefix(metadata.Source, namedAgentSessionSource) {
-		loaded.history = repaired
-	} else {
-		loaded.history = replaceBaseSystemPrompt(repaired, sessionSystemPrompt(systemPrompt, metadata.Instructions))
-	}
+	loaded.history = replaceBaseSystemPrompt(repaired, sessionSystemPrompt(systemPrompt, metadata.Instructions))
 	return loaded, nil
 }
 
@@ -909,10 +884,6 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 	}, nil
 }
 
-func isNamedAgentSessionSource(source string) bool {
-	return strings.HasPrefix(strings.TrimSpace(source), namedAgentSessionSource)
-}
-
 func (s *Server) handleThreadList(req Request) error {
 	var params ThreadListParams
 	if err := decodeParams(req.Params, &params); err != nil {
@@ -964,9 +935,6 @@ func (s *Server) handleThreadList(req Request) error {
 		if sess.ArchivedAt != nil {
 			continue
 		}
-		if isNamedAgentSessionSource(sess.Source) {
-			continue
-		}
 		if _, isAgentThread := agentThreadIDs[sess.ID]; isAgentThread {
 			continue
 		}
@@ -988,10 +956,6 @@ func (s *Server) handleThreadList(req Request) error {
 			continue
 		}
 		if thread.ReadOnly {
-			continue
-		}
-		if isNamedAgentSessionSource(thread.Source) {
-			delete(entries, thread.ID)
 			continue
 		}
 		if thread.Archived {
@@ -1050,7 +1014,7 @@ func (s *Server) handleThreadListAll(req Request) error {
 	}
 	entries := make(map[string]threadListEntry, len(sessions))
 	for _, sess := range sessions {
-		if sess.Visibility == pluginhost.SessionVisibilityPlugin || sess.ArchivedAt != nil || isNamedAgentSessionSource(sess.Source) {
+		if sess.Visibility == pluginhost.SessionVisibilityPlugin || sess.ArchivedAt != nil {
 			continue
 		}
 		if _, isAgentThread := agentThreadIDs[sess.ID]; isAgentThread {
@@ -1072,7 +1036,7 @@ func (s *Server) handleThreadListAll(req Request) error {
 			entry.pinnedAt = persisted.pinnedAt
 			thread = entry.thread
 		}
-		if visibility == pluginhost.SessionVisibilityPlugin || thread.Ephemeral || thread.ReadOnly || thread.Archived || isNamedAgentSessionSource(thread.Source) {
+		if visibility == pluginhost.SessionVisibilityPlugin || thread.Ephemeral || thread.ReadOnly || thread.Archived {
 			delete(entries, thread.ID)
 			continue
 		}
@@ -1114,9 +1078,6 @@ func (s *Server) handleThreadListArchived(req Request) error {
 		if sess.ArchivedAt == nil {
 			continue
 		}
-		if isNamedAgentSessionSource(sess.Source) {
-			continue
-		}
 		entries[sess.ID] = threadEntryFromSession(sess, s.rt.ProviderName, s.rt.Model)
 	}
 
@@ -1135,10 +1096,6 @@ func (s *Server) handleThreadListArchived(req Request) error {
 			continue
 		}
 		if thread.ReadOnly {
-			continue
-		}
-		if isNamedAgentSessionSource(thread.Source) {
-			delete(entries, thread.ID)
 			continue
 		}
 		if !thread.Archived {
@@ -1375,9 +1332,6 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	}
 	th.Title = metadata.Title
 	th.Source = metadata.Source
-	if strings.HasPrefix(metadata.Source, namedAgentSessionSource) {
-		th.NamedAgentID = strings.TrimPrefix(metadata.Source, namedAgentSessionSource)
-	}
 	th.Owner = metadata.Owner
 	th.Visibility = metadata.Visibility
 	th.Instructions = metadata.Instructions

@@ -60,7 +60,7 @@ bash clients/native/verify.sh all
 
 可用 `ios` 或 `android` 选择单个平台。脚本启动隔离的 PostgreSQL 测试环境，构建测试宿主，并运行平台测试和构建。PostgreSQL、Xcode、Java 和 Android SDK 要求见原生 README。通过这些检查不代表完成真机或发布验收。
 
-原生构建打包已提交的头像与过程摘要资源快照，不要求快照与最新桌面源码一致。采用桌面表现层变化属于主动的原生端更新；生成、校验和视觉验收步骤见[共享渲染器说明（英文）](../../../clients/native/shared-ui/README.md)。
+iOS 构建打包已提交的小球与过程摘要资源快照，不要求快照与最新桌面源码一致。采用桌面表现层变化属于主动的 iOS 更新；生成、校验和视觉验收步骤见[共享渲染器说明（英文）](../../../clients/native/shared-ui/README.md)。
 
 旧的 `clients/mobile`、`clients/mobile-web`、`clients/mobile-app` 手机实现已停止开发。部分代码仍参与共享 Web 构建和仓库检查，通过这些检查不能证明原生 App 已通过验证。账号和 relay 部署与本地桌面设置分开，见[远程访问](../automation/remote.md)。
 

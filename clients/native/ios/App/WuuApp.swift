@@ -45,7 +45,7 @@ struct RootView: View {
             else if model.recovery != nil { RecoveryView(model: model) }
             else if model.account == nil { LoginView(model: model) }
             else if model.host == nil { DevicesView(model: model) }
-            else { HostView(model: model).id(model.host?.pub) }
+            else { ConversationView(model: model).id(model.host?.pub) }
         }
         // A semantic SwiftUI primary tint can feed back into UIKit trait resolution.
         .tint(scheme == .dark ? Color.white : Color.black)
@@ -189,6 +189,7 @@ struct ConversationView: View {
     @State private var exporting = false
     @State private var exportDocument = ConversationDocument(text: "")
     @State private var settingsThread: ChatThread?
+    @State private var accountSettings = false
     init(model: AppModel) {
         self.model = model
         _conversationPresented = State(initialValue: model.activeID != nil)
@@ -211,7 +212,6 @@ struct ConversationView: View {
                         .toolbar(.visible, for: .navigationBar)
                 }
         }
-        .toolbar(conversationPresented || searching ? .hidden : .visible, for: .tabBar)
         .onChange(of: conversationPresented) { _, presented in
             if !presented { searching = !model.search.isEmpty }
         }
@@ -234,6 +234,7 @@ struct ConversationView: View {
             if case .failure(let error) = result { model.error = error.localizedDescription }
         }
         .sheet(item: $settingsThread) { thread in ThreadSettingsView(model: model, thread: thread) }
+        .sheet(isPresented: $accountSettings) { AccountSettingsView(model: model) }
     }
     private var conversationTitle: String {
         let title = model.live?.title ?? model.saved?.title ?? ""
@@ -323,6 +324,8 @@ struct ConversationView: View {
                     } else {
                         Button("开启服务器历史同步", systemImage: "icloud") { consent = true }
                     }
+                    Divider()
+                    Button("账号设置", systemImage: "gearshape") { accountSettings = true }
                 } label: {
                     Image(systemName: "ellipsis").font(.system(size: 19))
                         .frame(width: 44, height: 44)

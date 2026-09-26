@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
-	"github.com/blueberrycongee/wuu/internal/channels"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -705,39 +704,6 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 			} else if !exists || related.Owner != owner {
 				return pluginhost.SessionSendResult{}, errors.New("related_session_id must name a session owned by the plugin")
 			}
-		}
-	}
-	if s.channelService != nil {
-		binding, err := s.channelService.LookupCollaborationSession(ctx, params.SessionID)
-		if err == nil && binding.Primary {
-			if strings.TrimSpace(params.ReplyToTurnID) == "" || msg.RelatedSessionID == "" {
-				return pluginhost.SessionSendResult{}, errors.New("a collaboration result requires reply_to_turn_id and its related child session")
-			}
-			child, found, err := session.Find(s.rt.SessionDir, msg.RelatedSessionID)
-			if err != nil {
-				return pluginhost.SessionSendResult{}, err
-			}
-			if !found || child.Owner != owner || child.ParentID != params.SessionID {
-				return pluginhost.SessionSendResult{}, errors.New("result source must be the plugin's child of this conversation")
-			}
-			body := params.Input.Prompt
-			for _, block := range params.Input.ContextBlocks {
-				body += "\n\n" + block.Content
-			}
-			delivery, err := s.channelService.EnqueueSessionResult(ctx, channels.SessionResultEnqueueParams{
-				ParentSessionRef: params.SessionID, ParentTurnID: params.ReplyToTurnID, SourceSessionRef: child.ID,
-				RequestID: clientID, Body: body,
-			})
-			if err != nil {
-				return pluginhost.SessionSendResult{}, err
-			}
-			if delivery.Discarded {
-				return pluginhost.SessionSendResult{State: pluginhost.TurnLifecycleDiscarded, SessionID: params.SessionID}, nil
-			}
-			return pluginhost.SessionSendResult{State: pluginhost.TurnLifecycleQueued, SessionID: params.SessionID, QueueID: delivery.Message.ID}, nil
-		}
-		if err != nil && !errors.Is(err, channels.ErrNotFound) {
-			return pluginhost.SessionSendResult{}, err
 		}
 	}
 	permissions, err := s.resolveThreadTurnPermissions(th, nil)

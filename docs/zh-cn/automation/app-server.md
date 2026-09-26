@@ -60,34 +60,6 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 
 `usage/overview` 汇总本地保留历史中已记录的 token 用量：`total_sessions`（至少有一条用量记录的会话数）、`metrics`（与 `settings/usage` 相同的汇总对象，含 `active_days`）和 `days`（每个活跃日一条，按日期升序）。它只读取用量记录，不读取对话内容。可选参数 `{ "timezone": "America/Los_Angeles" }` 按 IANA 时区划分日期；省略时使用 UTC，未知时区返回请求错误。没有记录时返回零值和空的 `days`。与 `local_usage` 一样，这些值不含未上报或 Wuu 外的用量，也不是账单。
 
-## Named Agent 媒体交接
-
-具名 Agent 的 `session` 工具可以在创建工作会话或向其发送消息时附上选中的房间媒体，包括 queue 和 steer 模式。这是工具契约，不是新的 JSON-RPC 方法：
-
-```json
-{
-  "action": "create",
-  "workspace_root": "/path/to/project",
-  "prompt": "对照实现检查截图",
-  "media": [
-    {"message_id": "chat_read 返回的消息 ID", "kind": "image", "index": 1,
-     "description": "检查底部被裁切的行"}
-  ]
-}
-```
-
-使用 `chat_read` 提供的消息 ID 和附件顺序。`kind` 选择 `image` 或 `file`，`index` 从 1 开始，对应该消息相应数组中的位置。最多选择 32 个不重复附件，随附房间、消息、作者、来源文字和可选说明。省略 `media` 只发送文字，在提示词中写路径不会附上文件；已保存的图片复制时不会再次缩放。
-
-来源必须属于发起回合所在的房间，且具名身份仍有访问权。即使加入了其他房间，也不能跨房间引用。身份和回合范围由宿主提供，路径、URL 和远程缓存引用不能替代持久消息引用。接收会话获得选中的证据，不获得房间访问权或额外文件权限，仍使用自身绑定项目的运行时。
-
-交付前，持久操作保留引用，并在分发或恢复时重新检查访问权和数据。消息不存在、位置无效、数据为空或类型不支持时拒绝交接。接纳后，字节和来源成为持久会话输入；之后删除来源不会撤回已交付副本。恢复时会先识别已有接收记录，再决定是否重新解析来源。
-
-PNG、JPEG、GIF、WebP、PDF 和受支持的视频附件沿用已有媒体路径。视频需要兼容的模型与连接；暂不支持音频、任意文档，以及向外部引擎交接媒体。
-
-选中的媒体属于必需证据。已知模型不兼容时，在接纳输入前报错；provider 请求边界也会拒绝不支持的必需媒体，而不是丢弃它，包括切换模型后仍保留的证据。模型目录能力未知时交给 provider 校验，不保证支持。较早历史仍遵循正常的上下文压缩规则。
-
-Provider 失败通过普通会话结果报告；排队期间的失败记入操作，并在来源对话仍有权限时通知它。不要静默改成纯文字重试，应先选择兼容输入或补足缺失证据。
-
 ## 探查协议
 
 ```bash
@@ -101,31 +73,3 @@ wuu debug app-server send --workdir /path/to/project config/read '{}'
 stdio 协议是受信任的本地控制接口，不是带认证的网络服务。远程或托管部署必须在外围提供
 传输安全和隔离。[协议参考](../../en/integrations/app-server-protocol.md)（英文）说明消息
 格式、能力协商、选择规则和云端进程身份。
-
-## Collaboration 任务与候选控制
-
-`channel/direct/open` 接受 `workspace_root` 和 `workspace_id`。私聊按人、具名
-Agent 和工作区唯一确定。省略字段保留旧客户端兼容性，由 host 解析当前工作区。
-执行默认使用该对话绑定的已登记项目。
-
-`channel/task/update` 接受读取所得 Work 版本 `expected_revision`。模型更新任务
-必须携带它，旧的人类客户端可以省略。版本过期时拒绝更新；修改目标或约束会递增
-目标版本，使旧执行权限失效。
-
-`channel/work/candidate` 接受 `work_id`、`artifact_id` 和 `action`
-（`get`、`apply` 或 `discard`）。修改必须携带审查结果中的 `expected_revision`，
-只有 host 生成的不可变快照可供应用。返回 `candidate`、`artifact`、
-`work_revision` 和 `stale`。候选包含 Git 基线与版本、diff、来源会话和回合、
-结构化报告。补丁冲突时保持工作树不变，应用不会暂存文件。
-
-`thread/control/return` 接受 `thread_id` 和当前控制版本 `revision`。这个人类动作
-恢复 Collaboration 托管，向原协调者投递持久通知；已撤销的排队输入不会复活。
-
-执行报告包含 `result`、`implicit_choices`、`evidence_refs` 和
-`unresolved_items`。host 生成候选、记录用量，并按任务要求启动独立验证。
-验证者可用 `chat_verify` 记录结论，但只有对应执行成功结束后，host 才发布验证
-记录。执行者收到房间出处和共享 Work 决策，无权访问具名身份的私有对话。
-
-桌面扩展可注册带 `work-candidate.publish` 上下文的命令。候选审查以
-`{ candidate, title }` 调用它，并展示返回的 `{ url }`。卸载扩展会移除动作。
-发布凭据、远端策略和 PR 生命周期属于该受信任扩展。

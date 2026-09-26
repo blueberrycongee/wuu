@@ -702,7 +702,7 @@ export interface HeaderSnapshotV1 {
 
 export interface NavigationNodeV1 {
   readonly id: string;
-  readonly kind: "section" | "project" | "thread" | "room" | "command";
+  readonly kind: "section" | "project" | "thread" | "command";
   readonly label: string;
   readonly parentId?: string;
   readonly depth?: number;

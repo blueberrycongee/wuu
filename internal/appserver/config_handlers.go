@@ -1875,10 +1875,6 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	}
 	defer release()
 	th.mu.Lock()
-	if th.NamedAgentID != "" {
-		th.mu.Unlock()
-		return s.writeResponse(req.ID, nil, errors.New("collaboration model selection is pinned; create another session with the desired model"))
-	}
 
 	provider, model := th.ModelProvider, th.Model
 	variant, effort, permission := th.ModelVariant, th.ModelEffort, th.PermissionMode
@@ -2006,10 +2002,6 @@ func (s *Server) resetThreadRuntimesForGeneralSettings(systemPrompt string) {
 	s.mu.Lock()
 	for _, th := range s.threads {
 		th.mu.Lock()
-		if th.NamedAgentID != "" {
-			th.mu.Unlock()
-			continue
-		}
 		if strings.TrimSpace(systemPrompt) != "" {
 			th.History = replaceBaseSystemPrompt(th.History, sessionSystemPrompt(systemPrompt, th.Instructions))
 			if th.PersistHistory {
@@ -2061,10 +2053,6 @@ func (s *Server) updateIdleThreadAdvancedRuntime(cfg config.Config) {
 	defer s.mu.Unlock()
 	for _, th := range s.threads {
 		th.mu.Lock()
-		if th.NamedAgentID != "" {
-			th.mu.Unlock()
-			continue
-		}
 		if th.running || th.execRuntime == nil {
 			th.mu.Unlock()
 			continue

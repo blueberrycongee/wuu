@@ -223,7 +223,6 @@ describe("sidebar collapse-state independence", () => {
 
   it.each([
     ['folder', '[data-section-id="__wuu_folder_sort__:folder-collapse"] button[aria-expanded]'],
-    ['collaboration', '.collaboration-sidebar-section button[aria-expanded]'],
     ['pinned', '[data-functional-group-id="pinned"] button[aria-expanded]'],
     ['workspace', '[data-functional-group-id="workspace"] button[aria-expanded]'],
     ['scratch', 'button[aria-label="收起 对话 的会话"], button[aria-label="展开 对话 的会话"]'],

@@ -13,7 +13,6 @@ import {
   type ServerRequestResult,
 } from "@wuu/remote-core";
 import type {
-  ChannelRoomPreferences,
   DesktopPlatform,
   DesktopProject,
   InitializeResult,
@@ -51,7 +50,6 @@ type PreferenceListener<T> = (value: T) => void;
 
 const THEME_KEY = "wuu.web.theme";
 const MESSAGE_SIZE_KEY = "wuu.web.message-size";
-const CHANNEL_ROOM_PREFERENCES_KEY = "wuu.channels.roomPreferences";
 const PLUGIN_CONFLICT_PREFERENCES_KEY = "wuu.web.plugin-conflict-preferences";
 const DEFAULT_MESSAGE_SIZE = 16;
 /** How long a brief link drop may last before the reconnect strip appears.
@@ -89,20 +87,6 @@ function storedLanguage(): LanguagePreference {
 function storedMessageSize(): MessageFlowFontSize {
   const value = Number(localStorage.getItem(MESSAGE_SIZE_KEY));
   return (Number.isFinite(value) ? value : DEFAULT_MESSAGE_SIZE) as MessageFlowFontSize;
-}
-
-function storedChannelRoomPreferences(): ChannelRoomPreferences {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(CHANNEL_ROOM_PREFERENCES_KEY) ?? "null") as
-      | Partial<ChannelRoomPreferences>
-      | null;
-    return {
-      pinnedRoomIDs: Array.isArray(parsed?.pinnedRoomIDs) ? parsed.pinnedRoomIDs : [],
-      archivedRoomIDs: Array.isArray(parsed?.archivedRoomIDs) ? parsed.archivedRoomIDs : [],
-    };
-  } catch {
-    return { pinnedRoomIDs: [], archivedRoomIDs: [] };
-  }
 }
 
 function storedPluginConflictPreferences(): PluginConflictPreferences {
@@ -626,7 +610,6 @@ export class RemoteDesktopBridge {
       initialThemePreference: storedTheme(),
       initialLanguagePreference: storedLanguage(),
       initialSystemLocale: navigator.language,
-      initialChannelRoomPreferences: storedChannelRoomPreferences(),
       initialMessageFlowFontSize: storedMessageSize(),
       popOutInit: () => ({ kind: null, threadID: null, context: null }),
 
@@ -729,16 +712,7 @@ export class RemoteDesktopBridge {
       deleteThread: (threadId: string) => this.call("thread/delete", { thread_id: threadId }),
       compactThread: (threadId: string) => this.call("thread/compact/start", { thread_id: threadId }),
 
-      listChannelRooms: () => this.call("channel/room/list"),
-      channelContinuity: (params) => this.call("channel/continuity", params),
-      listChannelSessions: (params) => this.call("channel/session/list", params),
-      createChannelSession: (params) => this.call("channel/session/create", params),
-      readChannelSession: (params) => this.call("channel/session/read", params),
-      sendChannelSession: (params) => this.call("channel/session/send", params),
-      stopChannelSession: (params) => this.call("channel/session/stop", params),
       returnManagedSession: (params) => this.call("thread/control/return", params),
-      resumeChannelSession: (params) => this.call("channel/session/resume", params),
-      listNamedAgents: () => this.call("channel/agent/list"),
 
       startTurn: (threadId, prompt, images, files, permissionMode, activeDocument, contentParts, _targetContext, clientId) =>
         this.call("turn/start", {
@@ -827,10 +801,6 @@ export class RemoteDesktopBridge {
       readSkillContent: (params) => this.call("desktop/skill/content",params),
       listSkills: () => this.call("skill/list"),
       listInstructionFiles: () => this.call("instructions/list"),
-      getNamedAgentInsights: () => this.call("channel/agent/insights"),
-      bootstrapChannels: () => this.call("channel/bootstrap"),
-      getChannelHumanMentionStatus: () => this.call("channel/human-mention/status"),
-      ackChannelHumanMentions: () => this.call("channel/human-mention/ack"),
       getSessionOrganization: () => this.call("sessionOrganization/list"),
       getSettingsUsage: () => this.call("settings/usage"),
       getUsageOverview: (params) => this.call("usage/overview", params),
@@ -850,22 +820,6 @@ export class RemoteDesktopBridge {
       getPluginStorage: (params) => this.call("plugin/storage/get", params),
       setPluginStorage: (params) => this.call("plugin/storage/set", params),
       requestPluginRuntime: (params) => this.call("plugin/client/request", params),
-      createNamedAgent: (params) => this.call("channel/agent/create", params),
-      updateNamedAgent: (params) => this.call("channel/agent/update", params),
-      deleteNamedAgent: (params) => this.call("channel/agent/delete", params),
-      startNamedAgent: (params) => this.call("channel/agent/start", params),
-      resetNamedAgent: (params) => this.call("channel/agent/reset", params),
-      resolveChannelAgentCreation: (params) => this.call("channel/agent-creation/resolve", params),
-      createChannelRoom: (params) => this.call("channel/room/create", params),
-      openChannelDirectMessage: (params) => this.call("channel/direct-message/open", params),
-      updateChannelRoom: (params) => this.call("channel/room/update", params),
-      deleteChannelRoom: (params) => this.call("channel/room/delete", params),
-      markChannelRoomRead: (params) => this.call("channel/room/read", params),
-      listChannelMessages: (params) => this.call("channel/message/list", params),
-      sendChannelMessage: (params) => this.call("channel/message/send", params),
-      createChannelTask: (params) => this.call("channel/task/create", params),
-      channelWorkCandidate: (params) => this.call("channel/work/candidate", params),
-      updateChannelTask: (params) => this.call("channel/task/update", params),
       readManagedProcess: (params) => this.call("process/read", params),
       holdUserQuestion: (request_id) => this.call("user-question/hold", { request_id }),
       loadCodexModels: (provider) => this.call("config/codex/models", { provider }),
@@ -951,10 +905,6 @@ export class RemoteDesktopBridge {
       setMessageFlowFontSize: async (fontSize: MessageFlowFontSize) => {
         localStorage.setItem(MESSAGE_SIZE_KEY, String(fontSize));
         return { ok: true, fontSize };
-      },
-      updateChannelRoomPreferences: async (preferences: ChannelRoomPreferences) => {
-        localStorage.setItem(CHANNEL_ROOM_PREFERENCES_KEY, JSON.stringify(preferences));
-        return preferences;
       },
       getPluginConflictPreferences: async () => storedPluginConflictPreferences(),
       setPluginConflictPreference: async (key: string, pluginId: string) => {

@@ -52,24 +52,7 @@ const (
 	SurfaceWorker SurfaceKind = iota
 	// SurfaceMain is the ordinary project main-session surface.
 	SurfaceMain
-	// SurfaceNamedAgent is a persistent group-chat agent. It keeps the complete
-	// main-agent surface and adds the group-chat tools.
-	SurfaceNamedAgent
-	// SurfaceRoomAgent coordinates work using read-only evidence and collaboration tools.
-	SurfaceRoomAgent
 )
-
-func (k SurfaceKind) includesSessionWorkspace() bool {
-	return k == SurfaceMain || k == SurfaceNamedAgent
-}
-
-func (k SurfaceKind) includesChat() bool {
-	return k == SurfaceNamedAgent
-}
-
-func (k SurfaceKind) includesContextWindows() bool {
-	return k == SurfaceMain || k == SurfaceNamedAgent
-}
 
 // Compiler compiles a model profile into a built-in tool surface. Plugin-owned
 // product tools are not part of this compiler.
@@ -81,22 +64,11 @@ type Compiler interface {
 // stateless: callers should keep a single instance and reuse it.
 type DefaultCompiler struct{}
 
-// Compile implements Compiler. Named agents add collaboration chat tools;
-// workers receive only the built-in executor surface selected by their role.
+// Compile implements Compiler. Workers receive only the built-in executor
+// surface selected by their role.
 func (DefaultCompiler) Compile(p Profile, kind SurfaceKind) capability.Surface {
 	key := ResolveProfileKey(p)
 	b := newBuilder(p, key)
-	if kind == SurfaceRoomAgent {
-		addFileReadTools(b)
-		addSearchTools(b)
-		addContextWindowTools(b)
-		for _, name := range []string{"chat_check", "chat_read", "session", "chat_task", "chat_work", "chat_verify", "chat_roster", "chat_wake", "chat_memory"} {
-			b.addVisible(name, capability.CapabilityChat)
-		}
-		b.surface.SystemFragment = "You coordinate one room. Delegate execution to named member sessions. Project writes, shell execution and public messages are unavailable."
-		b.sortCaps()
-		return b.surface
-	}
 	switch key {
 	case ProfileOpenAICodex:
 		compileOpenAICodex(b, p)
@@ -107,17 +79,13 @@ func (DefaultCompiler) Compile(p Profile, kind SurfaceKind) capability.Surface {
 	default:
 		compileGeneric(b, p)
 	}
-	if kind.includesSessionWorkspace() {
+	if kind == SurfaceMain {
 		addSessionWorkspaceTool(b)
 	}
 	// Presentation reads into host-owned storage, without editing the workspace.
-	// Room coordinators above deliberately do not publish execution outputs.
 	b.addVisible("present_artifact", capability.CapabilityArtifactPresent)
-	if kind.includesContextWindows() {
+	if kind == SurfaceMain {
 		addContextWindowTools(b)
-	}
-	if kind.includesChat() {
-		addChatTools(b)
 	}
 	b.sortCaps()
 	return b.surface
@@ -313,20 +281,6 @@ func addContextWindowTools(b *surfaceBuilder) {
 	b.addVisible("new_context", capability.CapabilityContextWindow)
 	b.addVisible("history_read", capability.CapabilityContextHistory)
 	b.addVisible("history_search", capability.CapabilityContextHistory)
-}
-
-func addChatTools(b *surfaceBuilder) {
-	b.addVisible("chat_check", capability.CapabilityChat)
-	b.addVisible("chat_read", capability.CapabilityChat)
-	b.addVisible("session", capability.CapabilityChat)
-	b.addVisible("chat_send", capability.CapabilityChat)
-	b.addVisible("chat_task", capability.CapabilityChat)
-	b.addVisible("chat_work", capability.CapabilityChat)
-	b.addVisible("work_get", capability.CapabilityChat)
-	b.addVisible("chat_verify", capability.CapabilityChat)
-	b.addVisible("chat_wake", capability.CapabilityChat)
-	b.addVisible("chat_memory", capability.CapabilityChat)
-	b.addVisible("chat_roster", capability.CapabilityChat)
 }
 
 func addSkillTools(b *surfaceBuilder) {

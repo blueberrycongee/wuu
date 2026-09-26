@@ -3,7 +3,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import {
   SettingsView,
-  type ArchivedRoomView,
   type ArchivedSessionView,
   type SettingsPage,
 } from "./SettingsView";
@@ -141,9 +140,7 @@ function renderSettings(props: {
   // 直接传对象字面量，避免引入 ThreadSummary（它要求 turns/turn_count
   // 等计算字段，测试场景下冗余）。
   archivedThreads?: readonly ArchivedSessionView[];
-  archivedRooms?: readonly ArchivedRoomView[];
   onUnarchiveThread?: (thread: ArchivedSessionView) => void;
-  onUnarchiveRoom?: (room: ArchivedRoomView) => void;
   locale?: "zh-CN" | "en-US";
 }): { about: Element | null; text: () => string; rootText: () => string } {
   if (props.locale) {
@@ -186,9 +183,7 @@ function renderSettings(props: {
         onSidebarResizeStart={noopResizeStart}
         onSidebarSeparatorKey={noopResizeKey}
         archivedThreads={props.archivedThreads ?? []}
-        archivedRooms={props.archivedRooms ?? []}
         onUnarchiveThread={props.onUnarchiveThread ?? (() => {})}
-        onUnarchiveRoom={props.onUnarchiveRoom ?? (() => {})}
     />
   );
   act(() => {
@@ -1805,7 +1800,7 @@ describe("SettingsView archive page", () => {
 
   it("invokes onUnarchiveThread with the clicked thread", () => {
     const onUnarchiveThread = vi.fn();
-    const target = archivedThread("dm-1", { title: "DM 旧会话" });
+    const target = archivedThread("old-1", { title: "旧会话" });
     renderSettings({
       initialized: baseInitialized(),
       initialPage: "archive",
@@ -1823,51 +1818,5 @@ describe("SettingsView archive page", () => {
 
     expect(onUnarchiveThread).toHaveBeenCalledTimes(1);
     expect(onUnarchiveThread).toHaveBeenCalledWith(target);
-  });
-
-  it("keeps deleted-agent history in a separate restorable archive section", async () => {
-    const onUnarchiveThread = vi.fn();
-    const managed = archivedThread("managed", { title: "Managed work", archive_reason: "agent_deleted" });
-    renderSettings({
-      initialized: baseInitialized(), initialPage: "archive", onUnarchiveThread,
-      archivedThreads: [archivedThread("ordinary", { title: "My conversation" }), managed],
-      archivedRooms: [{ id: "room", name: "My group", created_at: managed.updated_at }],
-    });
-    await act(async () => {});
-    expect(container.textContent).toContain("My conversation");
-    expect(container.textContent).not.toContain("Managed work");
-    const sections = container.querySelector('[aria-label="归档分区"]')!;
-    const agentSection = [...sections.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.includes("Agent"))!;
-    act(() => agentSection.click());
-    expect(agentSection.getAttribute("aria-pressed")).toBe("true");
-    expect(container.textContent).toContain("Managed work");
-    expect(container.textContent).not.toContain("My conversation");
-    expect(container.textContent).not.toContain("My group");
-    act(() => container.querySelector<HTMLButtonElement>(".settings-archive-restore")!.click());
-    expect(onUnarchiveThread).toHaveBeenCalledWith(managed);
-  });
-
-  it("lists archived group chats and restores them independently", () => {
-    const onUnarchiveRoom = vi.fn();
-    const room: ArchivedRoomView = {
-      id: "room-1",
-      name: "设计讨论",
-      created_at: "2026-06-18T12:00:00Z",
-    };
-    renderSettings({
-      initialized: baseInitialized(),
-      initialPage: "archive",
-      archivedRooms: [room],
-      onUnarchiveRoom,
-    });
-
-    const roomGroup = container.querySelector('[data-archive-kind="rooms"]');
-    expect(roomGroup?.textContent).toContain("设计讨论");
-    const restoreButton = roomGroup?.querySelector<HTMLButtonElement>(
-      ".settings-archive-restore",
-    );
-    act(() => restoreButton?.click());
-
-    expect(onUnarchiveRoom).toHaveBeenCalledWith(room);
   });
 });

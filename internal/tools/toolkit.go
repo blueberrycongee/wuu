@@ -17,7 +17,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/capability"
-	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/codemode"
 	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
@@ -377,10 +376,6 @@ func (t *Toolkit) rebuildRegistry() {
 	if e.ArtifactPublisher != nil {
 		registered = append(registered, NewPresentArtifactTool(e))
 	}
-	if e.ChatAgent != nil {
-		registered = append(registered, NewChatCheckTool(e), NewChatReadTool(e), NewWorkGetTool(e), NewChatSessionTool(e), NewHarnessSessionTool(e), NewCollaborationSendTool(e), NewChatDraftTool(e), NewChatTaskTool(e), NewChatWorkTool(e), NewChatRemindTool(e), NewChatWakeTool(e), NewChatMemoryTool(e))
-		registered = append(registered, NewChatSendTool(e), NewChatVerifyTool(e), NewChatRosterTool(e))
-	}
 	// Code-mode entry tools appear only when a host service is attached to the
 	// session. They stay out of the registry otherwise, so Direct mode never
 	// advertises a runtime it cannot reach.
@@ -434,22 +429,6 @@ func (t *Toolkit) CodeModeOnly() bool {
 // SetAgentControl attaches the shared agent control runtime.
 func (t *Toolkit) SetAgentControl(c *agentcontrol.AgentControl) {
 	t.env.AgentControl = c
-}
-
-func (t *Toolkit) SetChatAgent(client *channels.AgentClient) {
-	if t == nil || t.env == nil {
-		return
-	}
-	t.env.ChatAgent = client
-	t.rebuildRegistry()
-	kind := modelprofile.SurfaceNamedAgent
-	if client == nil {
-		kind = modelprofile.SurfaceMain
-	}
-	if client != nil && client.IsRoomRuntime() {
-		kind = modelprofile.SurfaceRoomAgent
-	}
-	t.setActiveProfileForSurface(t.ActiveProfile(), kind)
 }
 
 // SetImageInputSupported installs the active model's resolved image-input
@@ -734,9 +713,6 @@ func (t *Toolkit) GitAttributionEnabled() bool {
 }
 
 func (t *Toolkit) isToolDisabled(name string) bool {
-	if !t.collaborationToolAllowed(name) {
-		return true
-	}
 	if len(t.disabledTools) == 0 {
 		return false
 	}
@@ -971,10 +947,6 @@ func (t *Toolkit) SurfaceToolNames() []string {
 // same boundary is enforced at runtime by worker tool filtering and
 // tool-specific path checks.
 func (t *Toolkit) SetActiveProfile(p modelprofile.Profile, forMainAgent bool) {
-	if t.IsRoomAgent() {
-		t.setActiveProfileForSurface(p, modelprofile.SurfaceRoomAgent)
-		return
-	}
 	kind := modelprofile.SurfaceWorker
 	if forMainAgent {
 		kind = modelprofile.SurfaceMain
@@ -995,16 +967,12 @@ func (t *Toolkit) setActiveProfileForSurface(p modelprofile.Profile, kind modelp
 	t.activeProfileMu.Lock()
 	defer t.activeProfileMu.Unlock()
 	t.activeProfile = p
-	if (p == modelprofile.Profile{}) && kind != modelprofile.SurfaceNamedAgent && kind != modelprofile.SurfaceRoomAgent {
+	if (p == modelprofile.Profile{}) {
 		t.activeSurface = capability.Surface{}
 		t.publishActiveSurfaceLocked()
 		return
 	}
-	compiledProfile := p
-	if (compiledProfile == modelprofile.Profile{}) {
-		compiledProfile = modelprofile.Resolve("wuu", "named-agent-chat")
-	}
-	t.activeSurface = modelprofile.DefaultCompiler{}.Compile(compiledProfile, kind)
+	t.activeSurface = modelprofile.DefaultCompiler{}.Compile(p, kind)
 	t.publishActiveSurfaceLocked()
 }
 
@@ -1156,9 +1124,6 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 func (t *Toolkit) ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
 	if t.isToolDisabled(call.Name) {
 		return toolresult.Result{}, fmt.Errorf("tool %q is disabled in this session", call.Name)
-	}
-	if call.Name == "git" && t.env.CollaborationPurpose != "" && t.env.CollaborationPurpose != channels.CollaborationSessionWork && !NewGitTool(t.env).Classify(call.Arguments).ReadOnly {
-		return toolresult.Result{}, errors.New("this collaboration role permits only read-only git operations")
 	}
 	if err := t.ensureToolAvailableForExecution(call.Name); err != nil {
 		return toolresult.Result{}, err
@@ -1715,8 +1680,4 @@ func buildRGGrepCommand(ctx context.Context, pattern, searchRoot, include string
 		args = append(args, ".")
 	}
 	return rgCommand(ctx, name, args...)
-}
-
-func (t *Toolkit) IsRoomAgent() bool {
-	return t != nil && t.env != nil && t.env.ChatAgent != nil && t.env.ChatAgent.IsRoomRuntime()
 }

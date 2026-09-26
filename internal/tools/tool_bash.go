@@ -175,7 +175,7 @@ func (t *BashTool) executeStartBackground(ctx context.Context, args bashArgs) (s
 	if err != nil {
 		return "", fmt.Errorf("prepare filesystem process sandbox: %w", err)
 	}
-	commandEnv := shellCommandEnvForTool(os.Environ(), t.env)
+	commandEnv := shellCommandEnv(os.Environ())
 	if sandboxTempDir != "" {
 		commandEnv = replaceCommandEnv(commandEnv, "TMPDIR", sandboxTempDir)
 	}

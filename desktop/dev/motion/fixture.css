@@ -42,7 +42,6 @@ body { overflow: auto; }
 .motion-surface { position: relative; height: 260px; overflow: hidden; border: 1px solid var(--hairline-soft); border-radius: var(--radius-md); transform: translateZ(0); }
 .motion-surface .conversation-search-overlay { position: absolute; padding: 32px 16px; }
 .motion-surface .conversation-search-dialog { width: min(100%, 280px); min-height: 120px; }
-.motion-surface .sidebar-name-dialog-drawer { width: 200px; }
 .motion-surface .archive-tip { position: absolute; top: 24px; left: 50%; }
 
 @media (max-width: 760px) {

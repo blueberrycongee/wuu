@@ -32,12 +32,6 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
-- Creating an agent asks only for its model and name. The name step no longer
-  shows switch-model and project controls above the input, and the random-name
-  action sits inside the name input. The first conversation opens in the
-  project chosen for the new conversation, shown in its header; the model stays
-  editable in the agent's settings.
-
 - The Extensions page follows the settings layout: a titled page with its
   actions beside the title, then plugins, official skills, and your skills as
   bordered lists in one column. Plugins come first and show their status on a
@@ -55,22 +49,6 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - The macOS DMG installer window has a Retina-ready background with English
   and Chinese drag-to-install instructions: a slingshot beside the app fires
   Wuu along a dotted arc into the Applications folder.
-
-- Collaboration now centers on project-bound DMs, with visible task controls,
-  managed-session takeover and return, project and identity memory editing, and
-  persistent conversation timers. The composer's project control chooses where a
-  new conversation or a new agent's first conversation opens, and the
-  conversation header shows the project. Memory and timers open from the header
-  in a side panel. Group navigation is hidden while data remains.
-- Work execution uses isolated Git worktrees, versioned shared decisions and
-  structured reports. Host-managed candidates and independent verification expose
-  reviewable diffs with apply, optional Git-extension PR, and discard actions.
-  Progress deadlines, revision checks and private-history boundaries protect
-  continuing work from stale updates and silent stalls.
-
-- Collaboration tools follow each admitted session role: conversations read and
-  coordinate, execution sessions can write, and verification sessions only read.
-  Continuing identities refresh their role instructions on every turn.
 
 - Settings pages are grouped by task: Agents & models, App, Extensions, and
   Data. Each page uses one column, with its title and page actions on the
@@ -103,20 +81,18 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - `read_file` and `bash` results are bounded at 8192 estimated tokens instead
   of 2048, so a typical source file or document is read in one call.
 
+### Removed
+
+- Collaboration is gone: named agents, their direct and group conversations,
+  tasks and Work, candidate review, timers and reminders, agent onboarding, and
+  the Agent archive, on the desktop and in the phone apps. The `channel/*`
+  app-server methods, `session/harness/dispatch`, `wuu debug channel`, and
+  `wuu debug sandbox` are removed, and plugin tools can no longer declare the
+  `collaboration` execution scope. Upgrading deletes named-agent conversations;
+  sessions they managed become ordinary conversations. Wuu no longer reads
+  `~/.wuu/channels`, which can be deleted.
+
 ### Fixed
-
-- The new-agent setup header drags the window across its full width again, and
-  its height follows the window title bar after page zoom and at large UI font
-  sizes.
-
-- Work delivery reads structured reports from the final answer, so commentary
-  before tool calls no longer causes completed executions to fail validation.
-
-- Collaboration conversations can receive due room reminders, include them in
-  unread counts, and clear their wake state after consumption.
-
-- Collaboration replies no longer become held drafts just because a thread
-  reply is newer than the conversation's main timeline.
 
 - Sending a message keeps one local waiting timer across admission, events,
   snapshots, and conversation switches without changing server timestamps.
@@ -136,13 +112,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   animations, and provider remove controls keep their icon centered and color
   stable on hover.
 
-- Deleting an agent archives sessions still under its management in a separate
-  Agent archive, keeping them out of workspace and unread lists. Previously
-  orphaned sessions are reconciled, and user-taken-over sessions stay available.
-  Agent deletion updates navigation immediately and reconciles cleanup errors.
-
-- Preserve sidebar folder and collaboration folds when returning from settings,
-  including after switching between light and dark themes.
+- Preserve sidebar folder folds when returning from settings, including after
+  switching between light and dark themes.
 
 - `apply_patch` with `then_run` now shows the model the follow-up command's
   outcome; the parent result previously kept the patch-only view.

@@ -4,7 +4,7 @@
 
 wuu is an open-source desktop app for working with AI agents on local projects. Connect a model provider, choose a folder, and ask an agent to read code, make changes, or run commands. Review the files, diffs, and results in the app.
 
-You can return to a conversation to continue the work, or bring several agents into a group chat. Plugins add tools and desktop features; see [Extend Wuu](docs/en/customize/index.md).
+You can return to a conversation to continue the work. Plugins add tools and desktop features; see [Extend Wuu](docs/en/customize/index.md).
 
 ![wuu desktop app](https://github.com/user-attachments/assets/2d9030aa-ca03-42b1-9333-f79cc5aff95b)
 
