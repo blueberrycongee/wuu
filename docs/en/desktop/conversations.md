@@ -10,6 +10,8 @@ Delete is permanent: it removes saved history and cleans up associated artifacts
 
 After the first send, the workspace sidebar immediately shows the pending conversation. You can switch away and return while it is being created. Stop cancels this wait and retains your input; a late creation response does not send the cancelled message or keep an unused empty conversation. Starting another conversation uses a separate draft.
 
+Use [Vim-style keyboard navigation](keyboard-shortcuts.md) for scrolling, searching, switching conversations, and opening workspace tools.
+
 ## While a task is running
 
 The composer supports these keyboard actions:

@@ -26,6 +26,7 @@
           "pages": [
             "zh-cn/desktop/workspaces.md",
             "zh-cn/desktop/conversations.md",
+            "zh-cn/desktop/keyboard-shortcuts.md",
             "zh-cn/desktop/workspace-tools.md",
             "zh-cn/desktop/subagents.md",
             "zh-cn/desktop/collaboration.md"
@@ -117,6 +118,7 @@
           "pages": [
             "en/desktop/workspaces.md",
             "en/desktop/conversations.md",
+            "en/desktop/keyboard-shortcuts.md",
             "en/desktop/workspace-tools.md",
             "en/desktop/subagents.md",
             "en/desktop/collaboration.md"
