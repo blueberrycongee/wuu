@@ -22,10 +22,6 @@ import { turnEventForTurn } from "./TurnEvents";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
 import { turnIsAnswerReady, type TurnStreamStatus } from "./AppState";
 import {
-  createWindowResizeSettleScheduler,
-  isWindowResizing,
-} from "./WindowResizeState";
-import {
   latestAgentMessageItemID,
   messageFlowAgentMessageItemID,
   scrollToUserMessage,
@@ -123,35 +119,19 @@ function TurnContent({
   const turnElementRef = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
     const node = turnElementRef.current;
-    if (!node || typeof ResizeObserver === "undefined" || !node.checkVisibility) return;
-    // Recent turns render eagerly, so Chromium has no remembered auto size
-    // when they leave the recent band. Retain their real height instead of
-    // falling back to 260px and shifting the reader on the next queued turn.
-    const recordHeight = (height: number): void => {
-      if (!height) return;
-      const value = `auto ${height}px`;
-      if (node.style.containIntrinsicBlockSize !== value) {
-        node.style.containIntrinsicBlockSize = value;
-      }
-    };
-    const settle = createWindowResizeSettleScheduler(() => {
-      if (!node.checkVisibility({ contentVisibilityAuto: true })) return;
-      recordHeight(node.getBoundingClientRect().height);
-    });
-    const observer = new ResizeObserver(entries => {
-      // A window drag changes every visible turn's wrapped height. Writing
-      // the intrinsic size on each of those notifications dirties layout again.
-      if (isWindowResizing()) {
-        settle.schedule();
-        return;
-      }
-      if (!node.checkVisibility({ contentVisibilityAuto: true })) return;
-      recordHeight(entries[0]?.contentRect.height ?? 0);
+    if (!node || typeof ResizeObserver === "undefined") return;
+    // Render once before content-visibility may skip this turn, so a skipped
+    // turn keeps its real height instead of the placeholder. Chromium records
+    // that height during this delivery; skipping may start the frame after.
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      observer.disconnect();
+      frame = window.requestAnimationFrame(() => node.setAttribute("data-sized", ""));
     });
     observer.observe(node);
     return () => {
-      settle.cancel();
       observer.disconnect();
+      window.cancelAnimationFrame(frame);
     };
   }, []);
   // Remember live submissions so completion actions can animate without

@@ -38,6 +38,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   permissions and recording; image/audio results are attached automatically.
   The previous persistent code runtime and execution/wait tools are retired.
 
+- Project conversation lists show five recent entries plus active, running,
+  unread, and up to three recently read conversations. Recently read entries
+  expire after two minutes. Expanding includes all history inside an eight-row,
+  font-responsive scroll area, keeping other projects in place.
+
 - Creating an agent asks only for its model and name. The name step no longer
   shows switch-model and project controls above the input, and the random-name
   action sits inside the name input. The first conversation opens in the
@@ -110,6 +115,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   of 2048, so a typical source file or document is read in one call.
 
 ### Fixed
+
+- Overdue automations keep their scheduled occurrence until the session service
+  is ready. Interrupted dispatches reuse their run record after restart, and
+  completing a dispatch preserves a newly edited schedule.
+
+- Sidebar scroll fades remain tied to the list's own scroll position while
+  conversations stream, pause, finish, or switch. Streaming paint reduction
+  applies only to nested reasoning and process details.
 
 - The new-agent setup header drags the window across its full width again, and
   its height follows the window title bar after page zoom and at large UI font

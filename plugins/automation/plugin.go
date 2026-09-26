@@ -462,32 +462,48 @@ func (c *controller) fireDue(ctx context.Context) {
 	now := c.now().UTC()
 	c.mu.Lock()
 	var due []Task
-	for id, task := range c.tasks {
+	for _, task := range c.tasks {
 		if task.Paused || task.NextRunAt.After(now) {
 			continue
 		}
 		due = append(due, task)
-		if task.Recurring {
-			next, err := nextRun(task, now)
-			if err == nil {
-				task.NextRunAt = next
-				c.tasks[id] = task
-			} else {
-				task.Paused = true
-				c.tasks[id] = task
-			}
-		} else {
-			delete(c.tasks, id)
-		}
 	}
-	_ = c.saveLocked(ctx)
 	c.mu.Unlock()
+	// Keep the occurrence due while the session service is unbound. The
+	// plugin activates before app-server startup, so its first tick may
+	// arrive before a dispatch attempt can reach the execution service.
 	for _, task := range due {
-		c.fire(ctx, task, now)
+		if c.fire(ctx, task, now) {
+			c.consume(ctx, task, now)
+		}
 	}
 }
 
-func (c *controller) fire(ctx context.Context, task Task, now time.Time) {
+// consume finishes the attempted occurrence without consuming a later edit.
+// Dispatch failures other than an unbound service retain the existing policy:
+// one-shot tasks leave the schedule and recurring tasks advance.
+func (c *controller) consume(ctx context.Context, task Task, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	existing, ok := c.tasks[task.ID]
+	if !ok || existing.Paused || !existing.NextRunAt.Equal(task.NextRunAt) {
+		return
+	}
+	if existing.Recurring {
+		next, err := nextRun(existing, now)
+		if err == nil {
+			existing.NextRunAt = next
+		} else {
+			existing.Paused = true
+		}
+		c.tasks[task.ID] = existing
+	} else {
+		delete(c.tasks, task.ID)
+	}
+	_ = c.saveLocked(ctx)
+}
+
+func (c *controller) fire(ctx context.Context, task Task, now time.Time) bool {
 	scheduledAt := task.NextRunAt.UTC()
 	if scheduledAt.IsZero() {
 		scheduledAt = now
@@ -498,9 +514,25 @@ func (c *controller) fire(ctx context.Context, task Task, now time.Time) {
 	c.mu.Lock()
 	workspaceID := c.workspaceID
 	workspaceRoot := c.workspaceRoot
-	c.runs = append(c.runs, run)
-	if len(c.runs) > maxRuns {
-		c.runs = c.runs[len(c.runs)-maxRuns:]
+	// A restart can leave a due occurrence with a durable run but without
+	// its schedule consumed. Reuse that record and the host's request identity.
+	found := false
+	for _, existing := range c.runs {
+		if existing.ID != runID {
+			continue
+		}
+		if runSettled(existing.Status) {
+			c.mu.Unlock()
+			return true
+		}
+		found = true
+		break
+	}
+	if !found {
+		c.runs = append(c.runs, run)
+		if len(c.runs) > maxRuns {
+			c.runs = c.runs[len(c.runs)-maxRuns:]
+		}
 	}
 	_ = c.saveLocked(ctx)
 	c.mu.Unlock()
@@ -532,7 +564,21 @@ func (c *controller) fire(ctx context.Context, task Task, now time.Time) {
 			continue
 		}
 		if runSettled(c.runs[index].Status) {
-			return
+			return true
+		}
+		// The process protocol exposes the router's unavailable error as text.
+		if err != nil && strings.Contains(err.Error(), "session service is unavailable") {
+			if c.runs[index].Status != "starting" {
+				// A previous process already recorded host acceptance.
+				return true
+			}
+			// Nothing was ever dispatched: the host has not bound the
+			// session service yet, so the startup catch-up must not be
+			// burned here. Drop the placeholder run and let a later tick
+			// retry the task while it is still due.
+			c.runs = append(c.runs[:index], c.runs[index+1:]...)
+			_ = c.saveLocked(ctx)
+			return false
 		}
 		c.runs[index].SessionID = sessionID
 		c.runs[index].WorkspaceRoot = executionRoot
@@ -556,6 +602,7 @@ func (c *controller) fire(ctx context.Context, task Task, now time.Time) {
 		break
 	}
 	_ = c.saveLocked(ctx)
+	return true
 }
 
 func (c *controller) settle(ctx context.Context, input pluginapi.TurnLifecycleInput) error {

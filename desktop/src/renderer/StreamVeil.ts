@@ -203,6 +203,17 @@ export function useStreamVeil(
     const update = (): void => {
       if (disabled()) { clear(); needsBaseline = true; finishIfIdle(); return; }
       if (knownStableBlocks > latestStableBlocks.current) needsBaseline = true;
+      // Promoted ranges are retained on the assumption that stable blocks never
+      // change. A final snapshot that rewrites the streamed text changes those
+      // nodes in place, and their old offsets would throw in Range.setStart;
+      // restart from the rewritten text instead.
+      for (const state of painted.values()) {
+        if (state.entries.some(entry => entry.end <= offset &&
+          (!entry.node.isConnected || entry.node.length !== entry.end - entry.start))) {
+          needsBaseline = true;
+          break;
+        }
+      }
       if (needsBaseline) {
         clear();
         knownStableBlocks = latestStableBlocks.current;

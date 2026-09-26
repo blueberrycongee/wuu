@@ -8,7 +8,7 @@ import {
   useRef,
 } from "react";
 import { isWindowResizing } from "./WindowResizeState";
-import { createScrollGlide } from "./ScrollGlide";
+import { createScrollGlide, GLIDE_FOLLOW_HANDOFF_VIEWPORTS } from "./ScrollGlide";
 import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
 import { markScrollbarRevealSelfManaged, revealScrollbar } from "./ScrollbarReveal";
 
@@ -31,18 +31,14 @@ export function distanceFromBottom(node: HTMLElement): number {
   return Math.max(0, node.scrollHeight - node.scrollTop - node.clientHeight);
 }
 
-/** Submission reservation stored on the conversation pane, not chrome padding. */
-export function sessionTailSpacePx(from?: HTMLElement | null): number {
-  let node: HTMLElement | null | undefined = from;
-  while (node) {
-    const declared = node.style.getPropertyValue("--session-tail-space");
-    if (declared) {
-      const parsed = Number.parseFloat(declared);
-      return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-    }
-    node = node.parentElement;
-  }
-  return 0;
+/**
+ * Unconsumed submission reservation: the bottom padding SessionTailSpace
+ * writes on the viewport's content wrapper.
+ */
+export function sessionTailSpacePx(viewport?: HTMLElement | null): number {
+  const content = viewport?.querySelector<HTMLElement>(":scope > .scroll-region-content");
+  const parsed = Number.parseFloat(content?.style.paddingBottom ?? "");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
 /**
@@ -81,48 +77,6 @@ export function scrollTopForDistanceFromLatest(
   tailSpace = sessionTailSpacePx(node),
 ): number {
   return clampScrollTop(node, latestFollowScrollTop(node, tailSpace) - Math.max(0, distance));
-}
-
-/**
- * Hidden cached panes skip layout, so estimated heights can still be live on
- * the first in-flow pass. Force the last few turns to their real size before
- * restoring scroll.
- */
-export function measureLatestConversationTurns(node: HTMLElement, count = 5): void {
-  const turns = node.querySelectorAll<HTMLElement>(".turn");
-  const start = Math.max(0, turns.length - count);
-  for (let index = start; index < turns.length; index += 1) {
-    void turns[index].offsetHeight;
-  }
-}
-
-/**
- * Lay out the incoming conversation before scroll restore. Turns outside the
- * forced tail can still be on the 260px estimate. Record the real heights
- * while they are forced visible; the later skip reuses those sizes instead of
- * shifting the viewport.
- */
-export function measureActiveConversationForRestore(node: HTMLElement): void {
-  const pane = node.querySelector<HTMLElement>(
-    '.cached-conversation-pane[data-active="true"]',
-  );
-  if (!pane) {
-    measureLatestConversationTurns(node);
-    return;
-  }
-  const turns = [...pane.querySelectorAll<HTMLElement>(".turn")];
-  if (turns.length === 0) return;
-  pane.classList.add("is-reveal-measure");
-  const heights = turns.map((turn) => turn.offsetHeight);
-  pane.classList.remove("is-reveal-measure");
-  turns.forEach((turn, index) => {
-    const height = heights[index];
-    if (!height) return;
-    const next = `auto ${height}px`;
-    if (turn.style.containIntrinsicBlockSize !== next) {
-      turn.style.containIntrinsicBlockSize = next;
-    }
-  });
 }
 
 export function eventTargetsNestedAutoFollowScroll(
@@ -316,13 +270,20 @@ export function useAutoFollowScrollContainer({
           if (scrollRef.current !== node || !autoFollowRef.current) return;
           // The target is re-read every frame, so content that arrives during
           // the arrival extends the same trajectory instead of restarting it.
-          const { position, done } = glide.step(now, maxScrollTop(node), node.clientHeight);
+          const target = maxScrollTop(node);
+          const { position, done } = glide.step(now, target, node.clientHeight);
+          if (done || target - position <= node.clientHeight * GLIDE_FOLLOW_HANDOFF_VIEWPORTS) {
+            node.scrollTop = target;
+            programmaticScrollTopRef.current = node.scrollTop;
+            lastScrollTopRef.current = node.scrollTop;
+            return;
+          }
           node.scrollTop = position;
           // The glide never passes its target, so the commanded offset is the
           // achieved one — no read-back to pay for on every frame.
           programmaticScrollTopRef.current = position;
           lastScrollTopRef.current = position;
-          if (!done) motionFrameRef.current = window.requestAnimationFrame(step);
+          motionFrameRef.current = window.requestAnimationFrame(step);
         };
         motionFrameRef.current = window.requestAnimationFrame(step);
         return;
