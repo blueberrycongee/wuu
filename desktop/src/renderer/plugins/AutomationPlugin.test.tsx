@@ -69,6 +69,34 @@ it("opens a suggestion as a draft and creates only on submit", async () => {
   await act(async () => ui.container.querySelector<HTMLFormElement>("form")!.requestSubmit());
   expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "automation.create", input: expect.objectContaining({ durable: true, recurring: true, schedule: "0 9 * * 1-5" }) }));
 });
+it("keeps failed and running one-shot runs reachable with their error", async () => {
+  const snapshot = { ...task, recurring: false };
+  const ui = await mount({ tasks: [], runs: [
+    { id: "run-failed", task_id: "one", status: "failed", error: "Provider unavailable", triggered_at: "2026-09-15T01:00:00Z", task: snapshot },
+    { id: "run-running", task_id: "two", status: "running", triggered_at: "2026-09-15T02:00:00Z", task: { ...snapshot, id: "two", title: "Sweep" } },
+  ] });
+  const list = ui.container.querySelector(".plugin-automation-list")!;
+  expect(list.textContent).toContain("Review");
+  expect(list.textContent).toContain("Sweep");
+  expect(list.textContent).toContain("失败");
+  expect(list.textContent).toContain("运行中");
+  const failedRow = [...list.querySelectorAll("button")].find(item => item.textContent!.includes("失败"))!;
+  await act(async () => failedRow.click());
+  const panel = ui.container.querySelector("aside")!;
+  expect(panel.textContent).toContain("Provider unavailable");
+  expect(panel.querySelector("fieldset")!.disabled).toBe(true);
+});
+it("leaves the completed filter to successful one-shot runs", async () => {
+  const snapshot = { ...task, recurring: false };
+  const ui = await mount({ tasks: [], runs: [
+    { id: "run-failed", task_id: "one", status: "failed", error: "Provider unavailable", triggered_at: "2026-09-15T01:00:00Z", task: snapshot },
+    { id: "run-done", task_id: "two", status: "completed", triggered_at: "2026-09-15T02:00:00Z", task: { ...snapshot, id: "two", title: "Swept" } },
+  ] });
+  await ui.click("已完成");
+  const list = ui.container.querySelector(".plugin-automation-list")!;
+  expect(list.textContent).not.toContain("Review");
+  expect(list.textContent).toContain("Swept");
+});
 it("shows completed one-shot snapshots without treating recurring runs as finished tasks", async () => {
   const ui = await mount({ tasks: [], runs: [{ id: "run", task_id: "one", status: "completed", triggered_at: "2026-09-15T01:00:00Z", task: { ...task, recurring: false } }, { id: "recurring", task_id: "two", status: "completed", triggered_at: "2026-09-15T02:00:00Z", task: { ...task, id: "two", title: "Recurring" } }] });
   await ui.click("已完成"); await ui.open();

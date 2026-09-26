@@ -411,7 +411,7 @@ export async function activate(api) {
       separator ? h("div", { ...separator, className: "plugin-automation-resizer", "aria-label": tr("automation.resize") }) : null,
       h("div", { className: "plugin-automation-detail-body" },
         h("div", { className: "plugin-automation-detail-head" },
-          h("span", { className: "plugin-automation-detail-status" }, !task ? tr("automation.new") : readOnly ? tr("automation.run.completed") : tr(task.paused ? "automation.paused" : "automation.filter.active")),
+          h("span", { className: "plugin-automation-detail-status" }, !task ? tr("automation.new") : readOnly ? tr(`automation.run.${runStatus(runs[0]) || "completed"}`) : tr(task.paused ? "automation.paused" : "automation.filter.active")),
           task && !readOnly ? h(React.Fragment, null,
             h(Button, { variant: "ghost", disabled: busy, onClick: onPause }, tr(task.paused ? "automation.resume" : "automation.pause")),
             h("details", { className: "plugin-automation-more" }, h("summary", { "aria-label": tr("automation.more") }, "⋯"), h("div", { className: "plugin-automation-more-menu" }, h(Button, { variant: "danger", disabled: busy, onClick: onRemove }, tr("automation.remove"))))) : null,
@@ -554,12 +554,17 @@ export async function activate(api) {
     };
     const sortedRuns = [...runs].sort((a, b) => new Date(b.triggered_at) - new Date(a.triggered_at));
     // One-shot tasks leave the schedule on dispatch. Their retained snapshots
-    // keep completed work reachable without changing scheduler persistence.
-    const completed = sortedRuns.filter((run) => !run.task?.recurring && run.status === "completed" && !tasks.some((task) => task.id === run.task_id));
-    const completedTasks = [...new Map(completed.map((run) => [run.task_id, run.task])).values()].filter(Boolean);
-    const candidates = filter === "completed" ? completedTasks : filter === "all" ? [...tasks, ...completedTasks] : tasks.filter((task) => filter === "paused" ? task.paused : !task.paused);
+    // stay reachable in every state, so a still-running or failed run keeps an
+    // entry that shows its error instead of vanishing until it happens to
+    // succeed. Snapshots are never restored as scheduled tasks, and the
+    // retention limit on runs still applies.
+    const dispatched = sortedRuns.filter((run) => !run.task?.recurring && !tasks.some((task) => task.id === run.task_id));
+    const snapshotFor = (entries) => [...new Map(entries.map((run) => [run.task_id, run.task])).values()].filter(Boolean);
+    const dispatchedTasks = snapshotFor(dispatched);
+    const completedTasks = snapshotFor(dispatched.filter((run) => run.status === "completed"));
+    const candidates = filter === "completed" ? completedTasks : filter === "all" ? [...tasks, ...dispatchedTasks] : tasks.filter((task) => filter === "paused" ? task.paused : !task.paused);
     const visible = candidates.filter((task) => `${task.title}\n${task.prompt}`.toLowerCase().includes(query.trim().toLowerCase()));
-    const selectedTask = selection?.id ? tasks.find((task) => task.id === selection.id) || completedTasks.find((task) => task.id === selection.id) : null;
+    const selectedTask = selection?.id ? tasks.find((task) => task.id === selection.id) || dispatchedTasks.find((task) => task.id === selection.id) : null;
     const panelOpen = !!workspace && !!selection && (selection.kind === "new" || !!selectedTask);
     const closePanel = () => {
       setError("");
@@ -596,14 +601,15 @@ export async function activate(api) {
             }))),
           h("div", { className: "plugin-automation-filters" }, ["all", "active", "paused", "completed"].map((value) => h("button", { key: value, className: "plugin-automation-filter", "aria-pressed": filter === value, onClick: () => setFilter(value) }, tr(value === "paused" ? "automation.paused" : value === "completed" ? "automation.run.completed" : `automation.filter.${value}`)))),
           error && !panelOpen ? h("p", { className: "plugin-automation-error", role: "alert" }, error) : null,
-          !tasks.length && !completedTasks.length ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: workspace ? undefined : tr("automation.workspaceNone") }) : !visible.length ? h("p", { className: "plugin-automation-filtered-empty" }, tr("automation.filter.empty")) : h("div", { className: "plugin-automation-list" }, visible.map((task) => {
+          !tasks.length && !dispatchedTasks.length ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: workspace ? undefined : tr("automation.workspaceNone") }) : !visible.length ? h("p", { className: "plugin-automation-filtered-empty" }, tr("automation.filter.empty")) : h("div", { className: "plugin-automation-list" }, visible.map((task) => {
             const done = !tasks.some((item) => item.id === task.id);
             const lastRun = sortedRuns.find((run) => run.task_id === task.id);
+            const lastState = runStatus(lastRun);
             const meta = done
-              ? [tr("automation.run.completed"), formatDateTime(lastRun?.completed_at || lastRun?.triggered_at, task.timezone)].filter(Boolean).join(" · ")
+              ? [tr(`automation.run.${lastState || "completed"}`), formatDateTime(lastRun?.completed_at || lastRun?.triggered_at, task.timezone)].filter(Boolean).join(" · ")
               : [describeSchedule(task.cron, task.timezone, tr) || task.cron, task.paused ? tr("automation.paused") : `${tr("automation.next")} ${formatDateTime(task.next_run_at, task.timezone) || "—"}`].join(" · ");
             return h("button", { key: task.id, className: "plugin-automation-item", "data-selected": selection?.id === task.id, "data-paused": task.paused, "aria-pressed": selection?.id === task.id, disabled: busy, onClick: () => { setError(""); setPanelClosing(false); setSelection({ kind: "task", id: task.id }); } },
-              h("span", { className: "plugin-automation-item-icon", "data-run": runStatus(sortedRuns.find((run) => run.task_id === task.id)) }, done ? h(CheckIcon) : h(ClockIcon)),
+              h("span", { className: "plugin-automation-item-icon", "data-run": lastState }, done && lastState === "completed" ? h(CheckIcon) : h(ClockIcon)),
               h("span", { className: "plugin-automation-item-main" }, h("span", { className: "plugin-automation-item-title" }, task.title || task.prompt), h("span", { className: "plugin-automation-item-meta", title: `${task.cron} · ${task.timezone}` }, meta)));
           })),
           workspace ? h("section", { className: "plugin-automation-suggestions" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.suggestions")), ["brief", "review", "check"].map((key) => h("button", { key, className: "plugin-automation-item", disabled: busy, onClick: () => create(key) }, h("span", { className: "plugin-automation-item-icon" }, h(ClockIcon)), h("span", { className: "plugin-automation-item-main" }, h("span", { className: "plugin-automation-item-title" }, tr(`automation.template.${key}`)), h("span", { className: "plugin-automation-item-meta" }, tr(`automation.template.${key}.prompt`)))))) : null),
