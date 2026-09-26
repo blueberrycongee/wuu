@@ -266,7 +266,13 @@ export type AdvancedSettingsSummary = {
   compact_threshold_tokens?: number;
 };
 
+export type PTCSettings = {
+  enabled: boolean;
+  families?: Record<string, boolean>;
+};
+
 export type GeneralSettingsSummary = {
+  ptc?: PTCSettings;
   git_attribution_enabled?: boolean;
   mcp_server_enabled: Record<string, boolean>;
 };
@@ -1485,6 +1491,7 @@ export type ConfigAdvancedUpdateResult = {
 };
 
 export type RuntimeGeneralSettingsUpdate = {
+  ptc?: PTCSettings;
   git_attribution_enabled?: boolean;
   mcp_enabled_toggles?: Record<string, boolean>;
 };

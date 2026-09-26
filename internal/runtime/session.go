@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -142,11 +141,9 @@ type Session struct {
 	ProcessManager      *process.Manager
 	Toolkit             *tools.Toolkit
 	ActivityRegistry    *activity.Registry
-	// CodeMode is the session-scoped code-mode runtime. One host connection
-	// serves every thread of this session; cells are owned per turn and
-	// terminate when their owning turn ends.
+	// CodeMode owns the session's optional PTC processes. Each program gets a
+	// fresh Node process and ends with its owning invocation.
 	CodeMode                 *codemode.Service
-	codeModeStop             context.CancelFunc
 	WorkerClient             providers.StreamClient
 	ModelRoles               modelroles.Set
 	ModelBudget              modelbudget.Budget
@@ -501,69 +498,12 @@ func NewSession(opts Options) (*Session, error) {
 		connectMCPServers(cfg, activePlugins, toolkit)
 	}
 
-	// Code Mode is on by default. The service owns one host connection for the
-	// whole workspace session; every thread toolkit shares it through clones.
-	// Direct mode or a missing host path leaves the entry tools unregistered,
-	// so the model falls back to the ordinary tool surface.
+	// The optional PTC service is inert until a model with PTC enabled calls it.
+	// Each program owns its process; thread clones share only the lifecycle owner.
 	var codeModeService *codemode.Service
-	codeModeLife, codeModeStop := context.WithCancel(context.Background())
-	// The lifetime context must not leak when the constructor bails out before
-	// the session takes ownership of it.
-	defer func() {
-		if codeModeService == nil {
-			codeModeStop()
-		}
-	}()
-	if !opts.NoTools && toolkit != nil && cfg.CodeMode.InvocationMode() != config.CodeModeDirect {
-		executable := strings.TrimSpace(cfg.CodeMode.Host)
-		if executable == "" {
-			executable = strings.TrimSpace(os.Getenv("WUU_CODE_MODE_HOST"))
-		}
-		if executable == "" {
-			// Packaged desktop layouts keep the runtime next to wuu-core in
-			// the app's bin directory. This is an explicit, absolute,
-			// pinned-binary lookup — never a PATH search.
-			if self, err := os.Executable(); err == nil {
-				candidate := filepath.Join(filepath.Dir(self), "wuu-code-mode-host")
-				if runtime.GOOS == "windows" {
-					candidate += ".exe"
-				}
-				if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
-					executable = candidate
-				}
-			}
-		}
-		if executable != "" {
-			codeModeSessionID := workspaceID
-			if codeModeSessionID == "" {
-				// SDK/CLI sessions can identify their workspace by path only.
-				codeModeSessionID = workspaceStateDir
-			}
-			var heapLimit *uint64
-			if cfg.CodeMode.MaxHeapSizeBytes > 0 {
-				value := cfg.CodeMode.MaxHeapSizeBytes
-				heapLimit = &value
-			}
-			service, serviceErr := codemode.NewService(codemode.ServiceConfig{
-				Executable:     executable,
-				SessionID:      codeModeSessionID,
-				Limits:         codemode.CellLimits{MaxHeapSizeBytes: heapLimit},
-				DefaultYieldMS: cfg.CodeMode.DefaultYieldMS,
-				Stderr:         os.Stderr,
-				Notify: func(ctx context.Context, callID, cellID, text string) error {
-					fmt.Fprintf(os.Stderr, "code-mode notification (cell %s): %s\n", cellID, text)
-					return nil
-				},
-				Life: codeModeLife,
-			})
-			if serviceErr == nil {
-				codeModeService = service
-				toolkit.SetCodeModeService(service)
-				if cfg.CodeMode.InvocationMode() == config.CodeModeOnly {
-					toolkit.SetCodeModeOnly(true)
-				}
-			}
-		}
+	if !opts.NoTools && toolkit != nil {
+		codeModeService = codemode.NewService(codemode.ServiceConfig{NodeExecutable: cfg.PTC.NodeExecutable})
+		toolkit.ConfigurePTC(codeModeService, cfg.PTC)
 	}
 
 	instructionFiles := discoverInstructions(rootDir, opts.HomeDir, cfg.Instructions)
@@ -781,7 +721,6 @@ func NewSession(opts Options) (*Session, error) {
 		ProcessManager:              processMgr,
 		Toolkit:                     toolkit,
 		CodeMode:                    codeModeService,
-		codeModeStop:                codeModeStop,
 		ActivityRegistry:            activityRegistry,
 		WorkerClient:                workerClient,
 		ModelRoles:                  roleSelections,
@@ -2050,11 +1989,6 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 		s.UserQuestions.Close()
 		s.UserQuestions = nil
 	}
-	if s.codeModeStop != nil {
-		// Killing the process is the termination authority for stuck cells.
-		s.codeModeStop()
-		s.codeModeStop = nil
-	}
 	if s.CodeMode != nil {
 		cleanupErr = errors.Join(cleanupErr, s.CodeMode.Close())
 		s.CodeMode = nil
@@ -2782,6 +2716,7 @@ func (s *Session) ApplyGeneralConfig(cfg config.Config, homeDir string) string {
 	s.InstructionFiles = discoverInstructions(s.RootDir, homeDir, cfg.Instructions)
 	if s.Toolkit != nil {
 		s.Toolkit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
+		s.Toolkit.ConfigurePTC(s.CodeMode, cfg.PTC)
 		s.Toolkit.SetFileScopeRoots(workspaces.BoundaryRoots(s.Toolkit.RootDir(), s.WuuHome))
 	}
 	apiModel := s.Model

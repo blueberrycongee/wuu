@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/capability"
@@ -16,250 +16,104 @@ import (
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
-const (
-	codeModeExecToolName = "exec"
-	codeModeWaitToolName = "wait"
-)
+const codeModeExecToolName = "run_code"
 
-// CodeModeExecTool is the model-visible entry into the code-mode runtime. The
-// model emits a code-mode source program; the host executes it in its V8
-// sandbox and the program drives Wuu tools through the nested execution
-// pipeline. The tool call itself is an orchestrator: it performs no leaf
-// operations and does not hold an execution slot while its cell is live.
+// CodeModeExecTool orchestrates tools without occupying a leaf execution slot.
+// Direct Node effects are confined by the same session policy as shell commands.
 type CodeModeExecTool struct{ toolkit *Toolkit }
 
-func NewCodeModeExecTool(toolkit *Toolkit) *CodeModeExecTool {
-	return &CodeModeExecTool{toolkit: toolkit}
-}
-
-func (*CodeModeExecTool) Name() string               { return codeModeExecToolName }
-func (*CodeModeExecTool) IsReadOnly() bool           { return true }
-func (*CodeModeExecTool) IsConcurrencySafe() bool    { return true }
-func (*CodeModeExecTool) IsOrchestrator(string) bool { return true }
-
+func NewCodeModeExecTool(t *Toolkit) *CodeModeExecTool { return &CodeModeExecTool{t} }
+func (*CodeModeExecTool) Name() string                 { return codeModeExecToolName }
+func (*CodeModeExecTool) IsReadOnly() bool             { return true }
+func (*CodeModeExecTool) IsConcurrencySafe() bool      { return false }
+func (*CodeModeExecTool) IsOrchestrator(string) bool   { return true }
 func (*CodeModeExecTool) Execute(context.Context, string) (string, error) {
-	return "", errors.New("code-mode exec requires the rich tool execution path")
+	return "", errors.New("run_code requires the rich tool execution path")
 }
-
 func (*CodeModeExecTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
-		Name: codeModeExecToolName,
-		Description: "Execute a code-mode program in Wuu's isolated runtime. The program receives the " +
-			"enabled tools as tools.<name>(arguments) and runs until it yields or finishes. " +
-			"Discover tools through ALL_TOOLS, whose entries contain name and description including the input schema. " +
-			"Filter by name or description and print matching entries with text(), for example: " +
-			"text(ALL_TOOLS.filter(t => /file|search/.test(t.name))); " +
-			"Use await for tool calls and text(value) to return output, for example: " +
-			"const result = await tools.read_file({path: 'README.md'}); text(result). " +
-			"For images, forward each image content part with image(part), not text(): " +
-			"const result = await tools.read_file({path: 'screenshot.png'}); " +
-			"for (const part of result.content ?? []) { if (part.type === 'image') image(part); else if (part.type === 'text') text(part.text); } " +
-			"Prefer this tool for multi-step reasoning, data transformation, and batched tool orchestration; each program " +
-			"starts with a clean sandbox (no process, network, or file access unless provided by tools). " +
-			"After starting, use wait to collect output or terminate the cell.",
-		InputSchema: map[string]any{
-			"type":                 "object",
-			"additionalProperties": false,
-			"required":             []any{"source"},
-			"properties": map[string]any{
-				"source": map[string]any{
-					"type":        "string",
-					"description": "Code-mode source program executed by the runtime. Tools are available as globals.",
-				},
-				"yield_time_ms": map[string]any{
-					"type":        "number",
-					"description": "Time to run before yielding the first output. Defaults to the session default.",
-				},
-				"max_output_tokens": map[string]any{
-					"type":        "number",
-					"description": "Output token budget for this execution.",
-				},
-			},
-		},
+		Name:        codeModeExecToolName,
+		Description: "Execute the body of an async TypeScript function in a fresh Node process. Use await tools[name](args) for the SDK bindings below. Calls return Wuu ToolResult objects: content contains text/media, and structured_content may carry JSON. Failed calls reject with ToolCallError (toolName and message); catch failures explicitly. Return a JSON value and/or console.log only the information needed for the next step. Intermediate tool values stay out of the conversation; successful image/audio results are attached automatically. Node APIs are available through await import(...); process.env starts empty. Direct filesystem writes obey this session's process sandbox. There is no retained state, yield or wait. Use bounded Promise.all for independent reads; await dependent work and writes sequentially. The elapsed deadline includes tool and approval waits. Inspect completed effects before retrying; programs are never replayed automatically.",
+		InputSchema: map[string]any{"type": "object", "additionalProperties": false, "required": []string{"code", "description"}, "properties": map[string]any{
+			"code":        map[string]any{"type": "string", "description": "Async function body. Type annotations are erased; enum and namespaces are unsupported."},
+			"description": map[string]any{"type": "string", "description": "Short description of this program."},
+			"timeout_ms":  map[string]any{"type": "integer", "minimum": 1, "maximum": codemode.MaxTimeoutMS, "description": fmt.Sprintf("Elapsed deadline; default %d ms, maximum %d ms.", codemode.DefaultTimeoutMS, codemode.MaxTimeoutMS)},
+		}},
 	}
 }
-
 func (e *CodeModeExecTool) ExecuteResultCall(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
-	service := e.toolkit.CodeModeService()
-	if service == nil {
-		return toolresult.Result{}, errors.New("code mode is not enabled in this session")
+	if !e.toolkit.CodeModeOnly() {
+		return toolresult.Result{}, errors.New("PTC is disabled for this model")
 	}
-	executor, ok := toolctx.OutlivingNested(ctx)
+	executor, ok := toolctx.Nested(ctx)
 	if !ok {
-		return toolresult.Result{}, errors.New("code-mode exec requires an orchestrator execution scope")
+		return toolresult.Result{}, errors.New("run_code requires an orchestrator execution scope")
 	}
 	var args struct {
-		Source          string  `json:"source"`
-		YieldTimeMS     *uint64 `json:"yield_time_ms"`
-		MaxOutputTokens *int32  `json:"max_output_tokens"`
+		Code        string `json:"code"`
+		Description string `json:"description"`
+		TimeoutMS   int    `json:"timeout_ms"`
 	}
-	if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
-		return toolresult.Result{}, fmt.Errorf("invalid code-mode exec arguments: %w", err)
+	if err := decodeArgs(call.Arguments, &args); err != nil {
+		return toolresult.Result{}, err
 	}
-	if args.Source == "" {
-		return toolresult.Result{}, errors.New("code-mode exec requires source")
+	if strings.TrimSpace(args.Code) == "" || strings.TrimSpace(args.Description) == "" {
+		return toolresult.Result{}, errors.New("run_code requires non-empty code and description")
 	}
-	enabled, err := e.toolkit.CodeModeNestedSurface()
+	definitions, err := e.toolkit.CodeModeNestedSurface()
 	if err != nil {
 		return toolresult.Result{}, err
 	}
-	response, err := service.ExecuteBound(ctx, codemode.ExecuteRequest{
-		ToolCallID:      call.ID,
-		EnabledTools:    enabled,
-		Source:          args.Source,
-		YieldTimeMS:     args.YieldTimeMS,
-		MaxOutputTokens: args.MaxOutputTokens,
-	}, executor)
+	policy, _, err := e.toolkit.env.processSandboxPolicy(ctx)
 	if err != nil {
 		return toolresult.Result{}, err
 	}
-	return codeModeResponseResult(response), nil
-}
-
-// CodeModeWaitTool collects output from a yielded exec cell or terminates it.
-// The cell keeps executing between wait calls; the tool itself performs no
-// leaf operations, so it never holds a leaf execution slot.
-type CodeModeWaitTool struct{ toolkit *Toolkit }
-
-func NewCodeModeWaitTool(toolkit *Toolkit) *CodeModeWaitTool {
-	return &CodeModeWaitTool{toolkit: toolkit}
-}
-
-func (*CodeModeWaitTool) Name() string               { return codeModeWaitToolName }
-func (*CodeModeWaitTool) IsReadOnly() bool           { return true }
-func (*CodeModeWaitTool) IsConcurrencySafe() bool    { return true }
-func (*CodeModeWaitTool) IsOrchestrator(string) bool { return true }
-
-func (*CodeModeWaitTool) Execute(context.Context, string) (string, error) {
-	return "", errors.New("code-mode wait requires the rich tool execution path")
-}
-
-func (*CodeModeWaitTool) Definition() providers.ToolDefinition {
-	return providers.ToolDefinition{
-		Name: codeModeWaitToolName,
-		Description: "Wait on a yielded exec cell and return its new output or completion. The cell keeps " +
-			"running between calls; use terminate to stop it explicitly.",
-		InputSchema: map[string]any{
-			"type":                 "object",
-			"additionalProperties": false,
-			"required":             []any{"cell_id"},
-			"properties": map[string]any{
-				"cell_id": map[string]any{
-					"type":        "string",
-					"description": "Identifier of the running exec cell.",
-				},
-				"yield_time_ms": map[string]any{
-					"type":        "number",
-					"description": "Wait before yielding more output. Defaults to 10000 ms.",
-				},
-				"terminate": map[string]any{
-					"type":        "boolean",
-					"description": "True stops the running exec cell; false or omitted waits for output.",
-				},
-			},
-		},
-	}
-}
-
-func (w *CodeModeWaitTool) ExecuteResult(ctx context.Context, args string) (toolresult.Result, error) {
-	service := w.toolkit.CodeModeService()
-	if service == nil {
-		return toolresult.Result{}, errors.New("code mode is not enabled in this session")
-	}
-	var request struct {
-		CellID      string `json:"cell_id"`
-		YieldTimeMS uint64 `json:"yield_time_ms"`
-		Terminate   bool   `json:"terminate"`
-	}
-	if err := json.Unmarshal([]byte(args), &request); err != nil {
-		return toolresult.Result{}, fmt.Errorf("invalid code-mode wait arguments: %w", err)
-	}
-	if request.CellID == "" {
-		return toolresult.Result{}, errors.New("code-mode wait requires a cell_id")
-	}
-	var response codemode.Response
-	var err error
-	if request.Terminate {
-		response, err = service.Terminate(ctx, request.CellID)
-	} else {
-		response, err = service.Wait(ctx, request.CellID, request.YieldTimeMS)
-	}
+	cwd, err := e.toolkit.env.ExecRootDir(ctx)
 	if err != nil {
 		return toolresult.Result{}, err
 	}
-	return codeModeResponseResult(response), nil
-}
-
-func codeModeResponseResult(response codemode.Response) toolresult.Result {
-	// Keep cell state and textual output in the existing envelope, but route
-	// media through the canonical result so provider projection can attach it.
-	content := slices.Clone(response.Content)
-	var media []toolresult.ContentPart
-	for i, item := range content {
-		var kind, dataURL string
-		switch item.Type {
-		case "input_image":
-			kind, dataURL = toolresult.ContentTypeImage, item.ImageURL
-		case "input_audio":
-			kind, dataURL = toolresult.ContentTypeAudio, item.AudioURL
-		default:
-			continue
-		}
-		header, data, ok := strings.Cut(dataURL, ";base64,")
-		if !ok || !strings.HasPrefix(header, "data:"+kind+"/") {
-			return toolresult.FromErrorText("invalid code-mode " + kind + " output: expected a base64 data URL")
-		}
-		media = append(media, toolresult.ContentPart{Type: kind, MIMEType: strings.TrimPrefix(header, "data:"), Data: data})
-		content[i] = codemode.ContentItem{Type: "input_text", Text: "[" + kind + " output attached]"}
-	}
-	data, err := json.Marshal(struct {
-		State          string                 `json:"state"`
-		CellID         string                 `json:"cell_id"`
-		Content        []codemode.ContentItem `json:"content_items"`
-		ErrorText      *string                `json:"error_text,omitempty"`
-		HostDurationNS uint64                 `json:"code_mode_host_duration_ns"`
-		Missing        bool                   `json:"missing,omitempty"`
-	}{
-		State:          response.State,
-		CellID:         response.CellID,
-		Content:        content,
-		ErrorText:      response.ErrorText,
-		HostDurationNS: response.HostDurationNS,
-		Missing:        response.Missing,
-	})
+	result, err := e.toolkit.CodeModeService().Run(ctx, codemode.RunRequest{Code: args.Code, TimeoutMS: args.TimeoutMS, Tools: definitions},
+		codemode.RunOptions{CWD: cwd, Executor: executor, Sandbox: policy, SandboxProvider: e.toolkit.env.ProcessSandboxProvider})
 	if err != nil {
-		return toolresult.FromErrorText(fmt.Sprintf("encode code-mode response: %v", err))
+		return toolresult.Result{}, err
 	}
-	result := toolresult.FromText(string(data))
-	result.Content = append(result.Content, media...)
+	return codeModeResponseResult(result), nil
+}
+func codeModeResponseResult(response codemode.RunResult) toolresult.Result {
+	parts := append([]string{}, response.Logs...)
+	if len(response.Value) > 0 {
+		parts = append(parts, string(response.Value))
+	}
+	if response.Error != "" {
+		parts = append(parts, "PTC failed: "+response.Error)
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "Program completed with no output.")
+	}
+	result := toolresult.FromText(strings.Join(parts, "\n"))
+	result.IsError = response.Error != ""
+	result.Content = append(result.Content, response.Media...)
 	return result
 }
 
-// Code-mode entry tools belong to the runtime, independently of the model's
-// leaf-tool profile. Project both discovery and execution from the same surface.
 func (t *Toolkit) withCodeModeSurface(surface capability.Surface) capability.Surface {
-	if t.IsRoomAgent() || surface.ProfileName == "" || t.CodeModeService() == nil {
+	if t.IsRoomAgent() || surface.ProfileName == "" || !t.CodeModeOnly() {
 		return surface
 	}
 	out := cloneSurface(surface)
 	if out.Tools == nil {
-		out.Tools = make(map[string]capability.Capability)
+		out.Tools = map[string]capability.Capability{}
 	}
 	out.Tools[codeModeExecToolName] = capability.CapabilityCodeMode
-	out.Tools[codeModeWaitToolName] = capability.CapabilityCodeMode
 	if !surfaceHasCapability(out.Capabilities, capability.CapabilityCodeMode) {
 		out.Capabilities = append(out.Capabilities, capability.CapabilityCodeMode)
 	}
 	return out
 }
-
-// Context switches remain top-level controls: nested cell output cannot signal
-// the agent loop, and a live cell may yield before finishing its writes.
 func (t *Toolkit) codeModeEntryDefinitions() []providers.ToolDefinition {
-	all := t.registry.Definitions()
-	out := make([]providers.ToolDefinition, 0, 2)
-	for _, d := range all {
-		if (d.Name == codeModeExecToolName || d.Name == codeModeWaitToolName || d.Name == newContextToolName) && t.SupportsTool(d.Name) {
+	var out []providers.ToolDefinition
+	for _, d := range t.registry.Definitions() {
+		if (d.Name == codeModeExecToolName || d.Name == newContextToolName) && t.SupportsTool(d.Name) {
 			if d.Name == codeModeExecToolName {
 				d.Description += t.codeModeToolCatalog()
 			}
@@ -268,71 +122,36 @@ func (t *Toolkit) codeModeEntryDefinitions() []providers.ToolDefinition {
 	}
 	return out
 }
-
-// Use the execution surface so profile changes and extension reloads are
-// reflected in the next request, without modifying cached registry definitions.
 func (t *Toolkit) codeModeToolCatalog() string {
 	nested, err := t.CodeModeNestedSurface()
 	if err != nil {
 		return "\nTool catalog unavailable: " + err.Error()
 	}
-	sort.SliceStable(nested, func(i, j int) bool { return nested[i].Name < nested[j].Name })
+	sort.Slice(nested, func(i, j int) bool { return nested[i].Name < nested[j].Name })
 	var b strings.Builder
-	b.WriteString("\n\nAvailable tools (await tools.<name>(arguments); arguments follow each input JSON Schema):\n")
+	b.WriteString("\n\nProgram-only tool bindings (names are exact; use bracket access for punctuation):\n")
 	for _, tool := range nested {
-		fmt.Fprintf(&b, "\n### %s\n%s\n", codeModeGlobalName(tool.Name), tool.Description)
+		fmt.Fprintf(&b, "\n### tools[%s]\n%s\nArguments JSON Schema: %s\n", strconv.Quote(tool.Name), tool.Description, tool.InputSchema)
 	}
 	return b.String()
 }
-
-// Match the host's normalize_code_mode_identifier: ALL_TOOLS and tools use
-// JavaScript identifiers even when the registered name contains punctuation.
-func codeModeGlobalName(name string) string {
-	var b strings.Builder
-	for i, ch := range name {
-		if ch == '_' || ch == '$' || ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || i > 0 && ch >= '0' && ch <= '9' {
-			b.WriteRune(ch)
-		} else {
-			b.WriteByte('_')
-		}
-	}
-	if b.Len() == 0 {
-		return "_"
-	}
-	return b.String()
-}
-
-// SetCodeModeAdditionalTools supplies live extension definitions for this toolkit.
-// Thread clones bind their own provider so execution scopes and host reloads remain current.
 func (t *Toolkit) SetCodeModeAdditionalTools(provider func() []providers.ToolDefinition) {
 	t.codeModeMu.Lock()
 	t.codeModeAdditionalTools = provider
 	t.codeModeMu.Unlock()
 }
 
-// CodeModeNestedSurface lists every tool a code-mode cell may invoke. It is
-// the underlying executable surface, not the model-visible one: Code Mode
-// Only hides top-level entries from the model without disabling them, and
-// live cells keep invoking the same tools through the nested pipeline. The
-// code-mode entry tools themselves are excluded so a cell cannot recurse
-// into another exec.
+// CodeModeNestedSurface preserves the active model family's edit primitives,
+// restrictions and live extension tools without recursively exposing run_code.
 func (t *Toolkit) CodeModeNestedSurface() ([]codemode.ToolDefinition, error) {
 	t.refreshMCPToolSnapshot(false)
 	all := t.registry.Definitions()
+	for _, tool := range t.mcpToolsSnapshot() {
+		all = append(all, tool.Definition())
+	}
 	out := make([]codemode.ToolDefinition, 0, len(all))
 	for _, d := range all {
-		if d.Name == codeModeExecToolName || d.Name == codeModeWaitToolName || d.Name == newContextToolName || !t.SupportsTool(d.Name) {
-			continue
-		}
-		definition, err := codeModeToolDefinition(d)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, definition)
-	}
-	for _, tool := range t.mcpToolsSnapshot() {
-		d := tool.Definition()
-		if d.Name == codeModeExecToolName || d.Name == codeModeWaitToolName || !t.SupportsTool(d.Name) {
+		if d.Name == codeModeExecToolName || d.Name == newContextToolName || !t.SupportsTool(d.Name) {
 			continue
 		}
 		definition, err := codeModeToolDefinition(d)
@@ -355,18 +174,10 @@ func (t *Toolkit) CodeModeNestedSurface() ([]codemode.ToolDefinition, error) {
 	}
 	return out, nil
 }
-
 func codeModeToolDefinition(d providers.ToolDefinition) (codemode.ToolDefinition, error) {
 	schema, err := json.Marshal(d.InputSchema)
 	if err != nil {
-		return codemode.ToolDefinition{}, fmt.Errorf("encode code-mode tool schema for %q: %w", d.Name, err)
+		return codemode.ToolDefinition{}, err
 	}
-	return codemode.ToolDefinition{
-		Name:     d.Name,
-		ToolName: codemode.ToolName{Name: d.Name},
-		// Both prompt and runtime discovery carry the same argument contract.
-		Description: d.Description + "\nInput schema: " + string(schema),
-		Kind:        "function",
-		InputSchema: schema,
-	}, nil
+	return codemode.ToolDefinition{Name: d.Name, Description: d.Description, InputSchema: schema}, nil
 }

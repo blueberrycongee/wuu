@@ -4,8 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/codemode"
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -181,19 +181,11 @@ func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	kit.SetBoundary(tools.UnconfinedBoundary())
 	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5", true)
-	executable := os.Getenv("WUU_CODE_MODE_HOST")
-	realHost := executable != ""
-	if !realHost {
-		executable = filepath.Join(root, "host")
-	}
-	service, err := codemode.NewService(codemode.ServiceConfig{Executable: executable, SessionID: "plugin-code-mode"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	service := codemode.NewService(codemode.ServiceConfig{})
 	defer service.Close()
-	kit.SetCodeModeService(service)
-	kit.SetCodeModeOnly(true)
+	kit.ConfigurePTC(service, config.PTCConfig{Enabled: true})
 	client := &pluginToolTestClient{}
 	host := pluginhost.New(client)
 	name := host.ToolDefinitions()[0].Name
@@ -219,40 +211,17 @@ func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
 	if !found {
 		t.Fatal("plugin tool missing from nested execution surface")
 	}
-	if realHost {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		runtime := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: executor, RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
-		defer runtime.Cancel()
-		run := func(call providers.ToolCall) string {
-			messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{call}, nil)
-			if err != nil || len(messages) != 1 {
-				t.Fatalf("tool call failed: %+v, %v", messages, err)
-			}
-			return messages[0].Content
-		}
-		args, _ := json.Marshal(map[string]any{"source": `const tool = ALL_TOOLS.find(t => t.description.includes("change state")); if (!tool || !tool.description.includes('"type":"object"')) throw new Error("tool schema missing"); text(await tools[tool.name]({}));`, "yield_time_ms": 1})
-		result := run(providers.ToolCall{ID: "plugin-exec", Name: "exec", Arguments: string(args)})
-		var output strings.Builder
-		for step := 0; ; step++ {
-			output.WriteString(result)
-			var response struct {
-				State  string `json:"state"`
-				CellID string `json:"cell_id"`
-			}
-			if err := json.Unmarshal([]byte(result), &response); err != nil {
-				t.Fatal(err)
-			}
-			if response.State != "Yielded" {
-				break
-			}
-			args, _ = json.Marshal(map[string]any{"cell_id": response.CellID, "yield_time_ms": 1000})
-			result = run(providers.ToolCall{ID: fmt.Sprintf("plugin-wait-%d", step), Name: "wait", Arguments: string(args)})
-		}
-		if !client.executed || !strings.Contains(output.String(), "changed") {
-			t.Fatalf("nested plugin did not execute: %s", output.String())
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	runtime := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: executor, RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
+	defer runtime.Cancel()
+	code := "return await tools[" + strconv.Quote(name) + "]({})"
+	args, _ := json.Marshal(map[string]any{"code": code, "description": "Call plugin"})
+	messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "plugin-run", Name: "run_code", Arguments: string(args)}}, nil)
+	if err != nil || len(messages) != 1 || !client.executed || !strings.Contains(messages[0].Content, "changed") {
+		t.Fatalf("plugin bridge: %+v %v", messages, err)
 	}
+
 	executor = replacePluginToolHost(executor, pluginhost.New(), "thread", root)
 	nested, err = kit.CodeModeNestedSurface()
 	if err != nil {

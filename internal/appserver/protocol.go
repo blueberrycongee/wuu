@@ -1063,8 +1063,9 @@ type ConfigAdvancedUpdateResult struct {
 }
 
 type ConfigGeneralUpdateParams struct {
-	GitAttributionEnabled *bool            `json:"git_attribution_enabled,omitempty"`
-	MCPEnabledToggles     map[string]*bool `json:"mcp_enabled_toggles,omitempty"`
+	PTC                   *config.PTCConfig `json:"ptc,omitempty"`
+	GitAttributionEnabled *bool             `json:"git_attribution_enabled,omitempty"`
+	MCPEnabledToggles     map[string]*bool  `json:"mcp_enabled_toggles,omitempty"`
 }
 
 type ConfigGeneralUpdateResult struct {
@@ -1072,8 +1073,9 @@ type ConfigGeneralUpdateResult struct {
 }
 
 type GeneralSettingsSummary struct {
-	GitAttributionEnabled bool            `json:"git_attribution_enabled"`
-	MCPServerEnabled      map[string]bool `json:"mcp_server_enabled"`
+	PTC                   config.PTCConfig `json:"ptc"`
+	GitAttributionEnabled bool             `json:"git_attribution_enabled"`
+	MCPServerEnabled      map[string]bool  `json:"mcp_server_enabled"`
 }
 
 type AdvancedSettingsSummary struct {

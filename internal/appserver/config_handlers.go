@@ -218,6 +218,7 @@ func (s *Server) currentGeneralSettingsSummary() GeneralSettingsSummary {
 	}
 	if cfg, _, err := s.rt.LoadEffectiveConfig(); err == nil {
 		summary.GitAttributionEnabled = cfg.Agent.GitAttributionEnabledValue()
+		summary.PTC = cfg.PTC
 		activePluginServers := make(map[string]bool)
 		for _, item := range s.rt.Plugins {
 			for name := range item.MCPServers {
@@ -1114,14 +1115,15 @@ func (s *Server) handleConfigGeneralUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	// Attribution changes are persisted now and applied to active threads only
-	// when their deferred runtime reset is safe. MCP changes still require idle turns.
-	if len(params.MCPEnabledToggles) > 0 && s.hasRunningThread() {
-		return s.writeResponse(req.ID, nil, errors.New("cannot change MCP settings while a turn is running"))
+	// when their deferred runtime reset is safe. MCP and PTC changes require idle turns.
+	if (len(params.MCPEnabledToggles) > 0 || params.PTC != nil) && s.hasRunningThread() {
+		return s.writeResponse(req.ID, nil, errors.New("cannot change MCP or PTC settings while a turn is running"))
 	}
 	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
 	if err := config.UpdateGeneralSettings(s.rt.ConfigPath, config.GeneralSettingsUpdate{
+		PTC:                   params.PTC,
 		GitAttributionEnabled: params.GitAttributionEnabled,
 		MCPEnabledToggles:     params.MCPEnabledToggles,
 	}); err != nil {
