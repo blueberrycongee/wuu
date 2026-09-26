@@ -2455,6 +2455,7 @@ export function App(): JSX.Element {
     scheduleStreamScroll,
     handleConversationScroll,
     enableConversationAutoFollow,
+    jumpToLatest: jumpConversationToLatest,
     disableConversationAutoFollow,
     captureConversationScrollPosition,
     restoreConversationScrollPosition,
@@ -5454,22 +5455,24 @@ export function App(): JSX.Element {
             />
           ) : null}
 
-          {sidebarDrawerMode ? null : (
-            <div
-              className="sidebar-resizer"
-              inert={rightPanelOpen && rightPanelGlobalized}
-              role="separator"
-              aria-label={t("app.resizeSidebar")}
-              aria-orientation="vertical"
-              aria-valuemin={SIDEBAR_MIN_WIDTH}
-              aria-valuemax={SIDEBAR_MAX_WIDTH}
-              aria-valuenow={sidebarWidth}
-              tabIndex={0}
-              onPointerDown={startSidebarResize}
-              onDoubleClick={toggleSidebar}
-              onKeyDown={handleSidebarSeparatorKey}
-            />
-          )}
+          {/* Hidden rather than unmounted: inserting or removing a shell child
+              ahead of the conversation makes sibling selectors restyle every
+              rendered turn when the sidebar collapses or expands. */}
+          <div
+            className="sidebar-resizer"
+            hidden={sidebarDrawerMode}
+            inert={rightPanelOpen && rightPanelGlobalized}
+            role="separator"
+            aria-label={t("app.resizeSidebar")}
+            aria-orientation="vertical"
+            aria-valuemin={SIDEBAR_MIN_WIDTH}
+            aria-valuemax={SIDEBAR_MAX_WIDTH}
+            aria-valuenow={sidebarWidth}
+            tabIndex={0}
+            onPointerDown={startSidebarResize}
+            onDoubleClick={toggleSidebar}
+            onKeyDown={handleSidebarSeparatorKey}
+          />
       <ConversationSearchOverlay
         state={conversationSearch}
         results={conversationSearchResults}
@@ -5877,6 +5880,7 @@ export function App(): JSX.Element {
               containerRef={conversationScrollRef}
               bottomAnchor={dockComposerNode}
               scopeKey={activeThreadID}
+              onJump={jumpConversationToLatest}
               inline
             />
           ) : null}

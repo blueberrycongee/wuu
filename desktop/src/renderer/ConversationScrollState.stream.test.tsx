@@ -125,6 +125,7 @@ function Probe({
         ref: (node: HTMLDivElement | null) => {
           if (node) handle.scrollContentRef.current = node;
         },
+        className: "scroll-region-content",
         "data-testid": "scroll-content",
       },
       createElement("span", { "data-testid": "message-text" }, "selectable message text"),
@@ -1145,7 +1146,7 @@ describe("useConversationScrollState — high-frequency stream", () => {
   it("settles reflow before paint without following into reserved tail space", () => {
     mount({ scrollHeight: 2200, clientHeight: 600 });
     if (!layout || !node || !handle) throw new Error("not mounted");
-    node.style.setProperty("--session-tail-space", "180px");
+    node.querySelector<HTMLElement>(".scroll-region-content")!.style.paddingBottom = "180px";
     flushResizeObservers();
     expect(layout.scrollTop).toBe(1420);
 

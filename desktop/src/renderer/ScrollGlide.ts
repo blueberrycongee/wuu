@@ -33,6 +33,12 @@ export const GLIDE_MAX_CATCH_UP_FRAMES = 8;
  * glides: a long jump arrives promptly instead of whipping at the glide rate. */
 export const GLIDE_MAX_VIEWPORTS = 2.5;
 
+/** A glide toward the live bottom hands over to following within this many
+ * viewports. Streamed output keeps moving that target, and a trajectory that
+ * keeps a fraction of the remaining distance only approaches a moving target:
+ * without the hand-over the newest line would stay just out of view. */
+export const GLIDE_FOLLOW_HANDOFF_VIEWPORTS = 0.1;
+
 export type ScrollGlideStep = {
   /** Position the trajectory has reached this frame. */
   position: number;
