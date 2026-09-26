@@ -105,6 +105,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Long conversations reconcile restored turns without quadratic ID matching.
+  Streaming text, reasoning, and tool arguments accumulate without repeatedly
+  copying earlier content or scanning every historical turn. Workspace session
+  lists filter in SQLite while preserving project moves, worktree membership,
+  pinned ordering, and activity ordering.
+
 - The new-agent setup header drags the window across its full width again, and
   its height follows the window title bar after page zoom and at large UI font
   sizes.
