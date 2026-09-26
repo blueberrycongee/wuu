@@ -530,7 +530,7 @@ function ThreadList({
   const { t } = useI18n();
   const [recentlyRead, setRecentlyRead] = useState<Map<string, number>>(() => new Map());
   const previousReadState = useRef(new Map<string, { unread: boolean; viewedTurnID?: string }>());
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const nextReadState = new Map(threads.map((thread) => [thread.id, {
       unread: isThreadUnread(thread, lastViewedTurnByThreadID[thread.id]),
@@ -577,9 +577,10 @@ function ThreadList({
   const hiddenCount = threads.length - limitedThreads.length;
   const showFooter = hiddenCount > 0 || expanded;
   useLayoutEffect(() => {
-    const scroller = scrollRef.current;
-    const selected = scroller?.querySelector<HTMLElement>(".pending-switch") ??
-      scroller?.querySelector<HTMLElement>(".active");
+    const list = listRef.current;
+    const scroller = list?.closest<HTMLElement>(".sidebar-main");
+    const selected = list?.querySelector<HTMLElement>(".pending-switch") ??
+      list?.querySelector<HTMLElement>(".active");
     if (!scroller || !selected) return;
     const viewport = scroller.getBoundingClientRect();
     const row = selected.getBoundingClientRect();
@@ -589,7 +590,7 @@ function ThreadList({
 
   return (
     <div className="thread-list">
-      <div className="thread-list project-thread-scroll" ref={scrollRef}>
+      <div className="thread-list project-thread-list" ref={listRef}>
         {pendingConversations.map((pending) => (
           <div key={pending.id} className={`thread-row sidebar-session-row running${pending.id === activeSessionTabID ? " active" : ""}`}>
             <span className="thread-row-spinner" aria-hidden="true" />

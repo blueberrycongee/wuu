@@ -80,33 +80,35 @@ function ProjectHistoryFixture(): JSX.Element {
   const [expanded, setExpanded] = useState(true);
   const [pending, setPending] = useState(busy ? 2 : 0);
   return <div className="app-shell" style={{ display: "flex", height: "100dvh" }}>
-    <aside className="sidebar" style={{ width: Number(params.get("width")) || 296, flexShrink: 0, overflow: "auto" }}>
+    <aside className="sidebar" style={{ width: Number(params.get("width")) || 296, flexShrink: 0 }}>
       <div className="sidebar-content">
-        <section className="project-section">
-          <ProjectGroup project={project} activeID={project.id}
-            expandedSidebarSectionIDs={new Set(expanded ? [project.id] : [])}
-            threadsByProjectID={{ [project.id]: threads.map(thread => summarizeThreadsForSidebar([thread])[0]) }}
-            activeThreadID={active} lastViewedTurnByThreadID={viewed}
-            pendingConversations={Array.from({ length: pending }, (_, index) => ({
-              id: `pending-${index}`, title: `Creating conversation ${index + 1}`,
-              context: { kind: "project", project_id: project.id, cwd: project.path },
-            }))}
-            scratchPseudoProjectID="scratch" scratchPseudoActive={false}
-            onToggleSidebarSectionCollapsed={() => setExpanded(value => !value)}
-            onStartNewThread={() => setPending(value => value + 1)}
-            onSelectThread={(_, id) => {
-              setActive(id);
-              setViewed(current => ({ ...current, [id]: threads.find(thread => thread.id === id)!.turns[0].id }));
-            }}
-            onToggleThreadPinned={thread => setThreads(current => current.filter(item => item.id !== thread.id))}
-            onArchiveThread={thread => setThreads(current => current.filter(item => item.id !== thread.id))}
-            onDeleteThread={thread => setThreads(current => current.filter(item => item.id !== thread.id))}
-          />
-        </section>
-        <section className="project-section" data-testid="following">
-          <SidebarSection expanded={false} iconKind="project" CollapsedIcon={Folder} ExpandedIcon={FolderOpen}
-            label="Another workspace" ariaLabel="Another workspace" title="Another workspace" onToggle={() => {}} />
-        </section>
+        <div className="sidebar-main">
+          <section className="project-section">
+            <ProjectGroup project={project} activeID={project.id}
+              expandedSidebarSectionIDs={new Set(expanded ? [project.id] : [])}
+              threadsByProjectID={{ [project.id]: threads.map(thread => summarizeThreadsForSidebar([thread])[0]) }}
+              activeThreadID={active} lastViewedTurnByThreadID={viewed}
+              pendingConversations={Array.from({ length: pending }, (_, index) => ({
+                id: `pending-${index}`, title: `Creating conversation ${index + 1}`,
+                context: { kind: "project", project_id: project.id, cwd: project.path },
+              }))}
+              scratchPseudoProjectID="scratch" scratchPseudoActive={false}
+              onToggleSidebarSectionCollapsed={() => setExpanded(value => !value)}
+              onStartNewThread={() => setPending(value => value + 1)}
+              onSelectThread={(_, id) => {
+                setActive(id);
+                setViewed(current => ({ ...current, [id]: threads.find(thread => thread.id === id)!.turns[0].id }));
+              }}
+              onToggleThreadPinned={thread => setThreads(current => current.filter(item => item.id !== thread.id))}
+              onArchiveThread={thread => setThreads(current => current.filter(item => item.id !== thread.id))}
+              onDeleteThread={thread => setThreads(current => current.filter(item => item.id !== thread.id))}
+            />
+          </section>
+          <section className="project-section" data-testid="following">
+            <SidebarSection expanded={false} iconKind="project" CollapsedIcon={Folder} ExpandedIcon={FolderOpen}
+              label="Another workspace" ariaLabel="Another workspace" title="Another workspace" onToggle={() => {}} />
+          </section>
+        </div>
       </div>
     </aside>
     <main style={{ padding: 24, minWidth: 0 }}>

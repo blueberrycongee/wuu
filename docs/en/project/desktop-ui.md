@@ -154,11 +154,11 @@ that limit.
 
 Expand includes all history; Collapse returns to that recent range without
 closing the project. Both ranges, including conversations still being created,
-scroll within eight rows of height measured by the shared font-responsive row
-size. Short lists use only their content height. The history controls remain
-outside the scroll area. Add `mode=history` to the preview URL for the real project
+use their full content height within the shared sidebar scroll area. Scrolling
+over a project conversation moves the outer sidebar; expanding history moves
+following groups down. The history controls follow the rows. Add `mode=history` to the preview URL for the real project
 component. The same Electron check covers history expansion, read transitions,
-inner scrolling, creating rows, and live font changes, and writes geometry JSON
+outer sidebar scrolling, creating rows, and live font changes, and writes geometry JSON
 and light/dark, 14/20px, wide/narrow screenshots under `desktop/out/sidebar-collapse-e2e-*`.
 
 ## Motion
