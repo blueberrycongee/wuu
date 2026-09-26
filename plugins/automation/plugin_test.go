@@ -3,6 +3,7 @@ package automation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -226,6 +227,66 @@ func TestAutomationPartialUpdatePreservesBooleanFields(t *testing.T) {
 	}
 	if updated.Paused || !updated.Recurring || !updated.Durable {
 		t.Fatalf("explicit false update = %+v", updated)
+	}
+}
+
+// unavailableHost models the startup window: the plugin is already activated,
+// but the host has not bound the session service yet.
+type unavailableHost struct{ testHost }
+
+func (h *unavailableHost) CallHost(ctx context.Context, method string, params, result any) error {
+	if method == pluginapi.HostServiceSessionCreate || method == pluginapi.HostServiceSessionSend {
+		return errors.New("session service is unavailable")
+	}
+	return h.testHost.CallHost(ctx, method, params, result)
+}
+
+func TestAutomationFireDueKeepsOverdueTaskWhenSessionServiceUnavailable(t *testing.T) {
+	now := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	host := &unavailableHost{}
+	c := &controller{host: host, workspaceID: "workspace-one", workspaceRoot: "/workspace/one", tasks: map[string]Task{}, now: func() time.Time { return now }}
+	task := Task{ID: "task-once", Title: "Once", Prompt: "Review", Mode: "new_thread", Recurring: false, Durable: true, WorkspaceID: "workspace-one", WorkspaceRoot: "/workspace/one", NextRunAt: now.Add(-time.Minute)}
+	c.tasks[task.ID] = task
+
+	c.fireDue(context.Background())
+
+	c.mu.Lock()
+	_, present := c.tasks[task.ID]
+	c.mu.Unlock()
+	if !present {
+		t.Fatal("one-shot task left the schedule without ever being dispatched")
+	}
+	if runs := c.snapshotRuns(); len(runs) != 0 {
+		t.Fatalf("placeholder run retained for an unavailable session service: %+v", runs)
+	}
+}
+
+func TestAutomationFireDueCatchesUpOnceSessionServiceBinds(t *testing.T) {
+	now := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	host := &unavailableHost{}
+	c := &controller{host: host, workspaceID: "workspace-one", workspaceRoot: "/workspace/one", tasks: map[string]Task{}, now: func() time.Time { return now }}
+	task := Task{ID: "task-daily", Title: "Daily", Prompt: "Review", Cron: "1 9 * * *", Timezone: "UTC", Mode: "new_thread", Recurring: true, Durable: true, WorkspaceID: "workspace-one", WorkspaceRoot: "/workspace/one", NextRunAt: now.Add(-time.Minute)}
+	c.tasks[task.ID] = task
+
+	c.fireDue(context.Background())
+	c.mu.Lock()
+	pending := c.tasks[task.ID]
+	c.mu.Unlock()
+	if !pending.NextRunAt.Equal(task.NextRunAt) {
+		t.Fatalf("recurring task advanced while the session service was unavailable: %s", pending.NextRunAt)
+	}
+
+	c.host = &testHost{}
+	c.fireDue(context.Background())
+	c.mu.Lock()
+	advanced := c.tasks[task.ID]
+	c.mu.Unlock()
+	if !advanced.NextRunAt.After(now) {
+		t.Fatalf("recurring task did not advance after dispatch: %s", advanced.NextRunAt)
+	}
+	runs := c.snapshotRuns()
+	if len(runs) != 1 || runs[0].Status != "running" || runs[0].TurnID != "turn-one" {
+		t.Fatalf("catch-up run = %+v", runs)
 	}
 }
 
