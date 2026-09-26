@@ -217,6 +217,21 @@ def gestures(name: str, x: np.ndarray, gap: float, max_len: float, window: float
     return out
 
 
+def closing_level(x: np.ndarray, g: Gesture) -> float:
+    """How loud a gesture's last 5 ms are against its loudest moment, in dB."""
+    body = np.abs(x[g.start: g.end])
+    return 20 * math.log10(body[-240:].max() / (body.max() + 1e-12) + 1e-12)
+
+
+def tail_fade(x: np.ndarray, g: Gesture) -> float:
+    """A gesture that decayed on its own needs only a short fade; one cut off
+    while still sounding gets a long one, so it tails away instead of stopping."""
+    after = (g.end - g.attack) / SR  # the fade never reaches back into the attack
+    if closing_level(x, g) < -30:
+        return min(0.012, after / 2)
+    return min(after * 0.6, max(0.025, (g.end - g.start) / SR * 0.4))
+
+
 def opening_strength(x: np.ndarray, g: Gesture) -> float:
     """How loud a gesture's first 30 ms are against its loudest moment, in dB."""
     head = np.abs(x[g.start: g.attack + int(TEXTURE_WINDOW * SR)]).max()
@@ -259,6 +274,7 @@ def fade(clip: np.ndarray, fade_in: float, fade_out: float) -> np.ndarray:
 
 HIT_WINDOW = 0.08      # a hit's loudest moment is looked for this long after its first onset
 TEXTURE_WINDOW = 0.03  # a texture is placed by its first moments
+NOTE_WINDOW = 0.012    # an instrument cue is read back from the start of its chord
 
 
 @dataclass(frozen=True)
@@ -288,8 +304,8 @@ VOICES: dict[str, Voice] = {
     "button": V(499771, 0.03, 0.12, -9, -0.2),
     "wall-switch": V(595832, 0.05, 0.3, -10, 0.1),
     # Paper for cuts, scissors, tape and stamps. The page turns that mark the
-    # splits are short enough to be gone before a click a sixteenth later.
-    "page": V(318615, 0.08, 0.09, -12),
+    # splits have to be gone before a click a sixteenth later.
+    "page": V(318615, 0.08, 0.12, -12),
     "page-long": V(318615, 0.3, 1.2, -12, min_len=0.3, hit=False),
     "snip": V(707812, 0.05, 0.3, -11, 0.15),
     "snip-2": V(788313, 0.05, 0.3, -11),
@@ -382,7 +398,9 @@ BASS = [
     (8, "F2", 0.8, 2), (10, "C3", 0.7, 1), (11, "A2", 0.7, 1),
     (12, "D2", 0.8, 2), (14, "A2", 0.7, 1), (15, "C3", 0.7, 1),
     (16, "Bb1", 0.85, 2), (18, "F2", 0.7, 1), (19, "D2", 0.7, 1),
-    (20, "C2", 0.85, 2), (22, "G2", 0.7, 1), (23, "E2", 0.7, 1),
+    # The eighth-note drive of the split bar starts half a bar early, so the cut
+    # lands inside a groove that is already running.
+    (20, "C2", 0.85, 1), (21, "C2", 0.7, 1), (22, "G2", 0.72, 0.5), (22.5, "G2", 0.66, 0.5), (23, "E2", 0.74, 0.5), (23.5, "E2", 0.7, 0.5),
     *[(24 + k * 0.5, n, 0.75, 0.5) for k, n in enumerate(["D2", "D2", "A2", "A2", "Bb1", "Bb1", "F2", "F2"])],
     *[(28 + k * 0.5, n, 0.8 + k * 0.02, 0.5) for k, n in enumerate(["G1", "G1", "A1", "A1", "Bb1", "B1", "C2", "C#2"])],
     (36, "F2", 0.85, 1.5), (37.5, "C3", 0.6, 0.5), (38, "F2", 0.75, 1), (39, "A2", 0.7, 1),
@@ -410,8 +428,9 @@ BASS = [
 MARIMBA = [
     (2, "C5", 0.35, 2), (3, "F5", 0.55, 1), (3.5, "A5", 0.6, 1), (4, "C6", 0.65, 2),
     *[(16 + k * 0.5, n, 0.35, 0.5) for k, n in enumerate("D5 F5 Bb5 F5 D5 F5 Bb5 F5 E5 G5 C6 G5 E5 G5 C6 G5".split())],
-    # While the page splits, the marimba answers each split on the "and".
-    *[(24.5 + k, n, 0.42, 0.5) for k, n in enumerate("A5 D6 Bb5 D6".split())],
+    # The marimba keeps its eighths through the splits, so the pulse carries
+    # across the cut; the notes under each split are soft and the "and" leads.
+    *[(24 + k * 0.5, n, 0.42 if k % 2 else 0.2, 0.5) for k, n in enumerate("F5 A5 D6 A5 F5 Bb5 D6 Bb5".split())],
     *[(28 + k * 0.5, n, 0.4, 0.5) for k, n in enumerate("G5 Bb5 D6 Bb5 E5 G5 Bb5 C6".split())],
     *[(36.5 + k * 0.5, n, 0.3, 0.5) for k, n in enumerate(
         "C5 F5 C5 A4 C5 F5 C5 A4 C5 E5 C5 A4 C5 E5 C5 Bb4 D5 F5 D5 Bb4 D5 F5 D5 G4 C5 E5 C5 G4 C5 E5 C5".split())],
@@ -474,7 +493,6 @@ class Instrument:
         # notes: nominal MIDI note -> files, either velocity layers (soft to loud) or round robins.
         self.lib, self.level, self.pan, self.max_len, self.release, self.layered = lib, level, pan, max_len, release, layered
         self.notes = {n + octave_offset: paths for n, paths in notes.items()}
-        self._turn = 0
 
     def _load(self, path: str) -> tuple[np.ndarray, int]:
         # Both libraries are tuned (measured within about 15 cents), so a note
@@ -485,16 +503,16 @@ class Instrument:
         attack, _ = attack_in(env, first - int(LEAD_IN * SR), first + int(HIT_WINDOW * SR))
         return x, attack
 
-    def note(self, name: str, velocity: float, length: float) -> tuple[np.ndarray, int]:
+    def note(self, name: str, velocity: float, length: float, beat: float) -> tuple[np.ndarray, int]:
         target = midi(name)
         nominal = min(self.notes, key=lambda n: (abs(n - target), n))
         paths = self.notes[nominal]
-        # Soft notes use the softer layer; otherwise successive notes alternate round robins.
+        # Soft notes use the softer layer. Round robins alternate by eighth-note
+        # position, so repeated eighths differ and an edit elsewhere changes nothing.
         if self.layered:
             path = paths[min(len(paths) - 1, int(velocity * len(paths)))]
         else:
-            path = paths[self._turn % len(paths)]
-            self._turn += 1
+            path = paths[round(beat * 2) % len(paths)]
         x, attack = self._load(path)
         shift = target - nominal
         hold = min(int((length * BEAT + self.release) * SR), int(self.max_len * SR))
@@ -589,9 +607,14 @@ def plan() -> list[Placed]:
             fresh = [g for g in pool if g.key not in used]
             if not fresh and not cid.startswith("work."):
                 raise SystemExit(f"{vname}: not enough distinct gestures for {cid} at beat {b}")
+            x = recording(VOICES[vname].source)
             if kind == "cut" and not VOICES[vname].hit:
                 # A texture that marks a cut has to start strongly, not fade in.
-                fresh = sorted(fresh, key=lambda g: -opening_strength(recording(VOICES[vname].source), g))
+                fresh = sorted(fresh, key=lambda g: -opening_strength(x, g))
+            elif kind == "cut" and cid != "hush":
+                # A hit that marks a cut should end on its own, not be chopped. (The
+                # hush keeps its gesture: the film draws that marble's bounces.)
+                fresh = sorted(fresh, key=lambda g: closing_level(x, g))
             if fresh:
                 g = fresh[0]
             else:
@@ -608,7 +631,7 @@ def render_sfx(placed: list[Placed]) -> np.ndarray:
     for p in placed:
         v = VOICES[p.voice]
         x = recording(v.source)
-        clip = fade(x[p.gesture.start: p.gesture.end], 0.0015, 0.012)
+        clip = fade(x[p.gesture.start: p.gesture.end], 0.0015, tail_fade(x, p.gesture))
         clip = resample(clip, p.shift)
         clip = clip / (np.abs(clip).max() + 1e-12) * 10 ** (v.level / 20)
         if p.cue in ECHO:
@@ -635,7 +658,7 @@ def render_music() -> np.ndarray:
     bus = np.zeros((LENGTH, 2))
     for inst, notes in ((BASS_I, BASS), (MARIMBA_I, MARIMBA), (PIANO_I, PIANO)):
         for b, name, vel, length in notes:
-            clip, attack = inst.note(name, vel, length)
+            clip, attack = inst.note(name, vel, length, b)
             add(bus, clip, sec(b), attack, inst.pan)
     return bus
 
@@ -769,7 +792,9 @@ def check(placed: list[Placed], sfx: np.ndarray, music: np.ndarray, final: np.nd
     # The greeting and the last chord are notes, so they are timed in the music.
     for cid in sorted(PLAYED):
         for b in SCORE["cues"][cid]["at"]:
-            t, peak_db, pre_db = measured_attack(env_music, sec(b), window=TEXTURE_WINDOW)
+            # A chord is read from its first 12 ms: a low pizzicato keeps
+            # swelling for tens of milliseconds after the pluck.
+            t, peak_db, pre_db = measured_attack(env_music, sec(b), window=NOTE_WINDOW)
             rows.append({"cue": cid, "kind": SCORE["cues"][cid]["kind"], "beat": b, "time": round(sec(b), 4), "frame": sec(b) * FPS,
                          "voice": "instrument", "error_ms": round((t - sec(b)) * 1000, 2), "peak_db": round(peak_db + gain_db, 1),
                          "pre_db": round(pre_db, 1), "over_music_db": None})
