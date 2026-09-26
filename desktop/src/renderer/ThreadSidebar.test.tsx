@@ -449,6 +449,68 @@ describe("WorkspaceList", () => {
     expect(container.textContent).not.toContain("Pinned session");
   });
 
+  function renderWorkspaceThreads(threads: Thread[]): void {
+    act(() => {
+      root = createRoot(container);
+      root.render(
+        <WorkspaceList
+          projects={[makeWorkspace("project-1", "wuu", "/repo/wuu")]}
+          activeID="project-1"
+          pendingWorkspaceID={undefined}
+          expandedSidebarSectionIDs={new Set(["project-1"])}
+          threadsByWorkspaceID={{ "project-1": summarizeThreadsForSidebar(threads) }}
+          activeThreadID={undefined}
+          pendingThreadID={undefined}
+          lastViewedTurnByThreadID={{}}
+          scratchPseudoWorkspaceID={SCRATCH_PSEUDO_PROJECT_ID}
+          scratchPseudoActive={false}
+          onToggleSidebarSectionCollapsed={() => {}}
+          onStartNewThread={() => {}}
+          onSelectThread={() => {}}
+          onToggleThreadPinned={() => {}}
+          onArchiveThread={() => {}}
+          onDeleteThread={() => {}}
+        />,
+      );
+    });
+  }
+
+  function topLevelTitles(): string[] {
+    return [...container.querySelectorAll(".thread-list > .thread-row .thread-row-title")]
+      .map((title) => title.textContent ?? "");
+  }
+
+  it("nests managed sessions under their project and keeps them out of the flat list", () => {
+    renderWorkspaceThreads([
+      makeWorkspaceThread("project-thread", "/repo/wuu", "Search overhaul", [], { source: "project" }),
+      makeWorkspaceThread("session-a", "/repo/wuu", "Rebuild index", [], {
+        source: "project-session", project_id: "project-thread",
+      }),
+      makeWorkspaceThread("session-b", "/repo/wuu", "Paginate results", [], {
+        source: "project-session", project_id: "project-thread",
+      }),
+      makeWorkspaceThread("thread-normal", "/repo/wuu", "Normal session"),
+    ]);
+
+    expect(topLevelTitles().sort()).toEqual(["Normal session", "Search overhaul"]);
+    const nested = container.querySelector(".project-session-list");
+    expect(nested?.getAttribute("aria-label")).toBe("Search overhaul");
+    expect([...nested!.querySelectorAll(".thread-row-title")].map((title) => title.textContent).sort())
+      .toEqual(["Paginate results", "Rebuild index"]);
+  });
+
+  it("shows a managed session whose project is absent as an ordinary row", () => {
+    renderWorkspaceThreads([
+      makeWorkspaceThread("session-orphan", "/repo/wuu", "Orphaned session", [], {
+        source: "project-session", project_id: "archived-project",
+      }),
+      makeWorkspaceThread("thread-normal", "/repo/wuu", "Normal session"),
+    ]);
+
+    expect(topLevelTitles().sort()).toEqual(["Normal session", "Orphaned session"]);
+    expect(container.querySelector(".project-session-list")).toBeNull();
+  });
+
   it("shows project-level unread state for collapsed unread threads", () => {
     const projects = [makeWorkspace("project-1", "wuu", "/repo/wuu")];
 

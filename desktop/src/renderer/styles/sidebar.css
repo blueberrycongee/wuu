@@ -1511,8 +1511,12 @@ html[data-focus-modality="keyboard"] :is(
 
 /* A standalone pinned session is a peer of a pinned folder: its text starts
  * on the folder glyph's left edge, not on the folder's child-session axis. */
+.pinned-sortable-thread {
+  --sidebar-session-indent: calc((var(--sidebar-nav-icon-col) - var(--sidebar-primary-icon-size)) / 2);
+}
+
 .pinned-sortable-thread .thread-row-main {
-  padding-left: calc((var(--sidebar-nav-icon-col) - var(--sidebar-primary-icon-size)) / 2);
+  padding-left: var(--sidebar-session-indent);
 }
 
 .pinned-sortable-thread .thread-row-main,
@@ -2356,8 +2360,85 @@ html[data-focus-modality="keyboard"] :is(
 /* Sessions inside a folder/workspace remain one level below their container.
  * With status indicators no longer occupying a leading column, this explicit
  * indent preserves the hierarchy instead of coupling depth to status layout. */
+.project-section .thread-list-collapse {
+  --sidebar-session-indent: calc(var(--sidebar-nav-icon-col) + var(--sidebar-nav-column-gap));
+}
+
 .project-section .thread-list-collapse .thread-row-main {
-  padding-left: calc(var(--sidebar-nav-icon-col) + var(--sidebar-nav-column-gap));
+  padding-left: var(--sidebar-session-indent);
+}
+
+/* A project row puts its glyph where the list's session titles start and
+ * indents its own title one step. Its managed sessions sit one step under
+ * that title, so depth reads the same in workspaces, folders, and Pinned. */
+.sidebar-session-row.project-thread-row > .thread-row-main {
+  padding-left: calc(
+    var(--sidebar-session-indent, 0px) + var(--sidebar-nav-icon-col) + var(--sidebar-nav-column-gap)
+  );
+}
+
+.project-thread-toggle {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--sidebar-row-pad-x) + var(--sidebar-session-indent, 0px));
+  z-index: 1;
+  display: grid;
+  width: var(--sidebar-nav-icon-col);
+  height: var(--sidebar-nav-icon-col);
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink-soft);
+  padding: 0;
+  transform: translateY(-50%);
+}
+
+.project-thread-toggle > svg {
+  grid-area: 1 / 1;
+  width: var(--sidebar-primary-icon-size);
+  height: var(--sidebar-primary-icon-size);
+  transition:
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+/* The glyph turns into the fold chevron while the row is hovered or focused. */
+button.project-thread-toggle {
+  cursor: pointer;
+}
+
+button.project-thread-toggle:hover {
+  color: var(--ink);
+}
+
+.project-thread-chevron {
+  opacity: 0;
+}
+
+.project-thread-row[data-project-expanded="true"] .project-thread-chevron {
+  transform: rotate(90deg);
+}
+
+.project-thread-row:is(:hover, :focus-within) button.project-thread-toggle > .project-thread-icon {
+  opacity: 0;
+}
+
+.project-thread-row:is(:hover, :focus-within) button.project-thread-toggle > .project-thread-chevron {
+  opacity: 1;
+}
+
+html[data-focus-modality="keyboard"] .project-thread-toggle:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--sidebar-nav-item-focus-shadow);
+}
+
+.project-session-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--sidebar-row-gap);
+  margin-left: calc(var(--sidebar-nav-icon-col) + var(--sidebar-nav-column-gap));
 }
 
 .thread-row-main > .thread-row-title {

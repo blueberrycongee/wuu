@@ -32,6 +32,7 @@ export type FloatingMenuOwner =
   | "codex-runtime"
   | "composer-query-history"
   | "minute-clock"
+  | "project-sessions"
   | "select-menu";
 export type FloatingMenuPlacement = "above" | "below" | "middle";
 export type FloatingMenuAlign = "left" | "center" | "right";

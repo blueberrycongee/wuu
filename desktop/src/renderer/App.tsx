@@ -3466,6 +3466,27 @@ export function App(): JSX.Element {
     desktopWorkbenchController.deactivateRegion("primary");
   }
 
+  // A project is its coordinator conversation, started on the Wuu engine in a
+  // registered workspace and opened like any other conversation.
+  async function createProject(workspaceID: string, name: string): Promise<void> {
+    const workspace = appStateRef.current.projects.find((candidate) => candidate.id === workspaceID);
+    if (!workspace || workspace.missing) return;
+    const context: RuntimeContext = { kind: "project", project_id: workspace.id, cwd: workspace.path };
+    try {
+      const { thread } = await window.wuu.startThread(
+        { project: { name }, workspace_id: workspace.id, cwd: workspace.path, engine: "wuu" },
+        context,
+      );
+      updateCachedSidebarThread(thread);
+      closePrimaryPluginView();
+      revealConversationFromFocusedWorkspace();
+      closeCompactSessionSwitcher();
+      await selectWorkspaceThread(workspace.id, thread.id);
+    } catch (error) {
+      showErrorToast(error);
+    }
+  }
+
   function focusHeroAfter(
     action: Promise<void | boolean>,
     origin: Element | null,
@@ -4845,6 +4866,7 @@ export function App(): JSX.Element {
             }}
             onRemoveWorkspace={(id) => void removeProject(id)}
             onRelocateWorkspace={(id) => void relocateProject(id)}
+            onCreateProject={(workspaceID, name) => void createProject(workspaceID, name)}
             onReorderSections={setSidebarSectionOrder}
             onPointerEnter={openSidebarDrawer}
             onPointerLeave={(event) =>
@@ -4959,6 +4981,10 @@ export function App(): JSX.Element {
             state={state}
             compactNavigation={compactNavigation}
             onStartNewThread={startNewThreadWithComposerFocus}
+            onOpenSession={(id) => {
+              closePrimaryPluginView();
+              void activateThread(id);
+            }}
             environmentToggleRef={environmentToggleRef}
             environmentPanelVisible={environmentPanelVisible}
             onToggleEnvironmentPanel={toggleEnvironmentPanel}

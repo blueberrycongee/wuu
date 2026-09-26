@@ -33,7 +33,7 @@ export async function publishCandidate(input, run = async (program, args, cwd) =
     await run("git", ["apply", "--check", patchPath], checkout);
     await run("git", ["apply", patchPath], checkout);
     await run("git", ["add", "--all", "--", "."], checkout);
-    const title = String(input.title || "Apply reviewed Work candidate").replace(/[\r\n]/g, " ");
+    const title = String(input.title || "Apply reviewed project candidate").replace(/[\r\n]/g, " ");
     await run("git", ["-c", "core.hooksPath=/dev/null", "commit", "-m", title], checkout);
     const remote = (await run("git", ["ls-remote", "--heads", "origin", branch], root)).trim();
     if (remote) {
@@ -47,7 +47,8 @@ export async function publishCandidate(input, run = async (program, args, cwd) =
       await run("git", ["push", "origin", `HEAD:refs/heads/${branch}`], checkout);
     }
     const body = join(directory, "body.md");
-    await writeFile(body, `${candidate.report.result}\n\nValidation and remaining questions:\n${candidate.report.evidence_refs.map(value => `- ${value}`).join("\n")}\n${candidate.report.unresolved_items.map(value => `- ${value}`).join("\n")}\n`, { mode: 0o600 });
+    const files = candidate.changed_files.map(file => `- \`${String(file).replace(/[\r\n`]/g, " ")}\``).join("\n");
+    await writeFile(body, `${title}\n\nChanged files:\n${files}\n`, { mode: 0o600 });
     const url = await run("gh", ["pr", "create", "--draft", "--base", base, "--head", branch, "--title", title, "--body-file", body], root);
     return { url: url.trim() };
   } finally {

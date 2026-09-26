@@ -362,6 +362,120 @@
   white-space: nowrap;
 }
 
+.project-sessions-button {
+  max-width: min(16em, 30vw);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Project session list: the same shell as the other floating menus. */
+.project-sessions-menu {
+  display: flex;
+  max-height: min(420px, var(--floating-menu-available-height, 60vh));
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-shell-radius);
+  background: var(--menu-bg);
+  box-shadow: var(--menu-shadow);
+  color: var(--ink);
+  font-size: var(--font-menu);
+  padding: var(--menu-inset);
+  --menu-enter-y: -4px;
+  animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
+}
+
+.project-session-view {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.project-session-results {
+  display: grid;
+  min-height: 0;
+  gap: 1px;
+  overflow-y: auto;
+}
+
+.project-session-result {
+  display: grid;
+  grid-template-columns: var(--icon-size) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--menu-item-gap);
+  width: 100%;
+  min-height: var(--control-row-height);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
+  text-align: left;
+}
+
+.project-session-result:hover {
+  background: var(--menu-hover);
+}
+
+html[data-focus-modality="keyboard"] .project-session-result:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.project-session-result-status {
+  display: grid;
+  place-items: center;
+  color: var(--ink-muted);
+}
+
+.project-session-result-status > svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.project-session-spinner {
+  animation: wuu-spin var(--session-loading-spin-duration) linear infinite;
+}
+
+.project-session-unread {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--info);
+}
+
+.project-session-result-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.project-session-result-copy > :is(span, small) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-session-result-copy > small {
+  color: var(--ink-muted);
+  font-size: var(--font-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.project-session-empty {
+  margin: 0;
+  color: var(--ink-muted);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
+}
+
+.project-session-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding-top: var(--menu-inset);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Linux frameless caption: fixed to the window's top-right so min/max/close
  * never leave the corner when the conversation column shrinks (e.g. right
  * panel open). Surfaces clear them with --linux-caption-width padding. */

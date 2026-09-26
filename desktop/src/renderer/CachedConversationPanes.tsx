@@ -35,6 +35,7 @@ import { latestAgentMessageLocation } from "./TurnViewHelpers";
 import type { HistoryMessageEditState } from "./ConversationHistoryActions";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { PluginConversationCards } from "./plugins/PluginConversationCards";
+import { ProjectCandidateReview } from "./ProjectCandidateReview";
 import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 import {
   markSessionSwitch,
@@ -357,6 +358,7 @@ const CachedConversationPane = memo(function CachedConversationPane({
                     threadId={thread.id}
                     onStreamFrame={onStreamFrame}
                   />
+                  {thread.project_id ? <ProjectCandidateReview thread={thread} /> : null}
                   {pendingQuestion && !turnIDs.has(pendingQuestion.request.turn_id)
                     ? renderPendingQuestionCard(false)
                     : null}

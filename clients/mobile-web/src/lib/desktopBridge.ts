@@ -713,6 +713,7 @@ export class RemoteDesktopBridge {
       compactThread: (threadId: string) => this.call("thread/compact/start", { thread_id: threadId }),
 
       returnManagedSession: (params) => this.call("thread/control/return", params),
+      projectCandidate: (params) => this.call("project/candidate", params),
 
       startTurn: (threadId, prompt, images, files, permissionMode, activeDocument, contentParts, _targetContext, clientId) =>
         this.call("turn/start", {

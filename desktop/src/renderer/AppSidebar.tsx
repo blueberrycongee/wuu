@@ -64,6 +64,7 @@ import {
   type ThreadSummary,
 } from "./AppState";
 import { SCRATCH_PSEUDO_PROJECT_ID } from "./AppState";
+import { isProjectCoordinator, nestProjectSessions } from "./ProjectSessions";
 import {
   OrganizationThreadList,
   WorkspaceGroup,
@@ -428,6 +429,7 @@ export function AppSidebar({
   onSelectWorkspaceThread: selectNativeWorkspaceThread,
   onRemoveWorkspace,
   onRelocateWorkspace,
+  onCreateProject,
   onReorderSections,
   onPointerEnter,
   onPointerLeave,
@@ -491,6 +493,7 @@ export function AppSidebar({
   onSelectWorkspaceThread: (workspaceID: string, threadID: string) => void;
   onRemoveWorkspace: (id: string) => void;
   onRelocateWorkspace: (id: string) => void;
+  onCreateProject?: (workspaceID: string, name: string) => void;
   // Fires when the user drops a reorderable sidebar section in a new
   // position. The next array is the FULL sectionOrder with the moved
   // entry swapped into place. App.tsx persists this via the same
@@ -1090,6 +1093,23 @@ export function AppSidebar({
     }
     return next;
   }, [allSidebarThreads, organization.folderByThreadID, organization.folders]);
+  // A project shown in Pinned or a folder keeps its managed sessions under it;
+  // the workspace lists nest the remaining sessions themselves.
+  const { relocatedSessionsByProjectID, workspaceRowsByWorkspaceID } = useMemo(() => {
+    const projectIDs = new Set([...pinnedRows, ...Object.values(folderThreadsByID).flat()]
+      .filter(isProjectCoordinator)
+      .map((thread) => thread.id));
+    const { sessionsByProjectID } = nestProjectSessions(
+      Object.values(visibleWorkspaceThreadsByWorkspaceID).flat(),
+      projectIDs,
+    );
+    const relocatedIDs = new Set([...sessionsByProjectID.values()].flat().map((thread) => thread.id));
+    const rows: Record<string, ThreadSummary[]> = {};
+    for (const [workspaceID, threads] of Object.entries(visibleWorkspaceThreadsByWorkspaceID)) {
+      rows[workspaceID] = relocatedIDs.size ? threads.filter((thread) => !relocatedIDs.has(thread.id)) : threads;
+    }
+    return { relocatedSessionsByProjectID: sessionsByProjectID, workspaceRowsByWorkspaceID: rows };
+  }, [folderThreadsByID, pinnedRows, visibleWorkspaceThreadsByWorkspaceID]);
   function createFolder(thread?: ThreadSummary): void {
     setGroupName("");
     setGroupNameDialog({ action: "create", thread });
@@ -1346,6 +1366,7 @@ export function AppSidebar({
           {folderThreads.length > 0 ? (
             <OrganizationThreadList
               threads={folderThreads}
+              sessionsByProjectID={relocatedSessionsByProjectID}
               activeID={activeThreadID}
               pendingThreadID={pendingThreadID}
               lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
@@ -1395,7 +1416,7 @@ export function AppSidebar({
           pendingWorkspaceID={pendingWorkspaceID}
           expandedSidebarSectionIDs={expandedSidebarSectionIDs}
           loadingWorkspaceThreadIDs={loadingWorkspaceThreadIDs}
-          threadsByWorkspaceID={visibleWorkspaceThreadsByWorkspaceID}
+          threadsByWorkspaceID={workspaceRowsByWorkspaceID}
           activeThreadID={activeThreadID}
           pendingThreadID={pendingThreadID}
           lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
@@ -1411,6 +1432,7 @@ export function AppSidebar({
           onRenameThread={onRenameThread}
           onRemoveWorkspace={onRemoveWorkspace}
           onRelocateWorkspace={onRelocateWorkspace}
+          onCreateProject={onCreateProject}
           workspacePinned={pinned}
           onToggleWorkspacePinned={(id) => pinned
             ? unpinContainer({ kind: "workspace", id })
@@ -1490,6 +1512,28 @@ export function AppSidebar({
       folders: [],
       workspace: [],
     };
+    // Managed sessions follow their project node one level deeper.
+    const pushThreadNodes = (
+      target: NavigationSourceNode[],
+      threads: readonly ThreadSummary[],
+      parentID: string,
+      depth: number,
+      select: (thread: ThreadSummary) => void,
+      sessionsByProjectID: ReadonlyMap<string, ThreadSummary[]> = new Map(),
+    ): void => {
+      for (const thread of threads) {
+        target.push(threadNavigationNode(
+          thread, parentID, activeThreadID, state.lastViewedTurnByThreadID,
+          () => select(thread), () => toggleThreadPinned(thread), depth,
+        ));
+        for (const session of sessionsByProjectID.get(thread.id) ?? []) {
+          target.push(threadNavigationNode(
+            session, `thread:${thread.id}`, activeThreadID, state.lastViewedTurnByThreadID,
+            () => select(session), () => toggleThreadPinned(session), depth + 1,
+          ));
+        }
+      }
+    };
     if (hasPinnedRows) {
       functionalGroupNodes.pinned.push({
         id: "section:pinned",
@@ -1504,15 +1548,8 @@ export function AppSidebar({
         if (entry.kind === "thread") {
           const thread = pinnedRows.find((candidate) => candidate.id === entry.id);
           if (thread) {
-            functionalGroupNodes.pinned.push(threadNavigationNode(
-              thread,
-              "section:pinned",
-              activeThreadID,
-              state.lastViewedTurnByThreadID,
-              () => onSelectThread(thread.id),
-              () => toggleThreadPinned(thread),
-              1,
-            ));
+            pushThreadNodes(functionalGroupNodes.pinned, [thread], "section:pinned", 1,
+              (target) => onSelectThread(target.id), relocatedSessionsByProjectID);
           }
           continue;
         }
@@ -1527,7 +1564,7 @@ export function AppSidebar({
         const parentID = `pinned-${entry.kind}:${entry.id}`;
         const threads = folder
           ? (folderThreadsByID[folder.id] ?? [])
-          : (visibleWorkspaceThreadsByWorkspaceID[entry.id] ?? []);
+          : (workspaceRowsByWorkspaceID[entry.id] ?? []);
         functionalGroupNodes.pinned.push({
           id: parentID,
           kind: "project",
@@ -1545,18 +1582,12 @@ export function AppSidebar({
             ? () => onFocusWorkspace(project.id)
             : undefined,
         });
-        for (const thread of threads) {
-          functionalGroupNodes.pinned.push(threadNavigationNode(
-            thread,
-            parentID,
-            activeThreadID,
-            state.lastViewedTurnByThreadID,
-            () => project
-              ? onSelectWorkspaceThread(project.id, thread.id)
-              : onSelectThread(thread.id),
-            () => toggleThreadPinned(thread),
-          ));
-        }
+        const nesting = folder
+          ? { rows: threads, sessionsByProjectID: relocatedSessionsByProjectID }
+          : nestProjectSessions(threads);
+        pushThreadNodes(functionalGroupNodes.pinned, nesting.rows, parentID, 2, (thread) => project
+          ? onSelectWorkspaceThread(project.id, thread.id)
+          : onSelectThread(thread.id), nesting.sessionsByProjectID);
       }
     }
     if (organization.folders.some((folder) => !pinnedFolderIDs.has(folder.id))) {
@@ -1578,16 +1609,8 @@ export function AppSidebar({
             state.lastViewedTurnByThreadID,
           )),
         });
-        for (const thread of folderThreads) {
-          functionalGroupNodes.folders.push(threadNavigationNode(
-            thread,
-            parentID,
-            activeThreadID,
-            state.lastViewedTurnByThreadID,
-            () => onSelectThread(thread.id),
-            () => toggleThreadPinned(thread),
-          ));
-        }
+        pushThreadNodes(functionalGroupNodes.folders, folderThreads, parentID, 2,
+          (thread) => onSelectThread(thread.id), relocatedSessionsByProjectID);
       }
     }
 
@@ -1601,7 +1624,7 @@ export function AppSidebar({
       for (const workspaceID of visibleWorkspaceSectionOrder) {
         const project = sidebarWorkspaces.find((candidate) => candidate.id === workspaceID);
         if (!project) continue;
-        const threads = (visibleWorkspaceThreadsByWorkspaceID[workspaceID] ?? []).filter(
+        const threads = (workspaceRowsByWorkspaceID[workspaceID] ?? []).filter(
           (thread) => !thread.pinned,
         );
         const isScratch = workspaceID === SCRATCH_PSEUDO_PROJECT_ID;
@@ -1635,16 +1658,9 @@ export function AppSidebar({
             onActivate: () => onSelectPendingConversation?.(pending.id),
           });
         }
-        for (const thread of threads) {
-          functionalGroupNodes.workspace.push(threadNavigationNode(
-            thread,
-            `project:${workspaceID}`,
-            activeThreadID,
-            state.lastViewedTurnByThreadID,
-            () => onSelectWorkspaceThread(workspaceID, thread.id),
-            () => toggleThreadPinned(thread),
-          ));
-        }
+        const nesting = nestProjectSessions(threads);
+        pushThreadNodes(functionalGroupNodes.workspace, nesting.rows, `project:${workspaceID}`, 2,
+          (thread) => onSelectWorkspaceThread(workspaceID, thread.id), nesting.sessionsByProjectID);
       }
     }
     for (const groupID of functionalGroupOrder) {
@@ -1667,7 +1683,7 @@ export function AppSidebar({
     onSelectWorkspaceThread, onFocusWorkspace, onSelectThread,
     onTogglePinned, pendingThreadID, pinnedHasRunning,
     pinnedHasUnread, pinnedRows, validPinnedItems,
-    visibleWorkspaceThreadsByWorkspaceID,
+    relocatedSessionsByProjectID, workspaceRowsByWorkspaceID,
     folderThreadsByID, functionalGroupOrder, organization.folders, pinnedFolderIDs,
     sidebarWorkspaces, sidebarScratchPseudoActive, visibleWorkspaceSectionOrder,
     state.activeProjectId, state.initialized, state.lastViewedTurnByThreadID, t,
@@ -1901,6 +1917,7 @@ export function AppSidebar({
                             >
                               <OrganizationThreadList
                                 threads={[thread]}
+                                sessionsByProjectID={relocatedSessionsByProjectID}
                                 activeID={activeThreadID}
                                 pendingThreadID={pendingThreadID}
                                 lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}

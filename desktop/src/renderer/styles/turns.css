@@ -1155,7 +1155,8 @@
  */
 .context-composition-card,
 .instruction-files-card,
-.plugin-conversation-card {
+.plugin-conversation-card,
+.project-candidate-card {
   width: 100%;
   max-width: none;
   margin: 2px 0 22px;
@@ -1214,13 +1215,131 @@
 }
 
 .context-composition-card-inner,
-.instruction-files-card-inner {
+.instruction-files-card-inner,
+.project-candidate-card-inner {
   position: relative;
   display: grid;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
   background: var(--surface-1);
   padding: 16px 18px;
+}
+
+/* Candidate review: what changed, the diff on request, then the decision. */
+.project-candidate-card-inner {
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.project-candidate-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.project-candidate-header > .icon {
+  flex: none;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  color: var(--ink-muted);
+}
+
+.project-candidate-header > strong {
+  color: var(--ink);
+  font-weight: var(--weight-medium);
+}
+
+.project-candidate-header > span {
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.project-candidate-header > .project-candidate-disposition {
+  margin-left: auto;
+  color: var(--ink-soft);
+}
+
+.project-candidate-files {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+}
+
+.project-candidate-files > li {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-candidate-link {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 2px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-sm);
+  padding: 0;
+  text-decoration: none;
+}
+
+.project-candidate-link:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.project-candidate-link > svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+}
+
+html[data-focus-modality="keyboard"] .project-candidate-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.project-candidate-diff {
+  max-height: 24rem;
+  overflow: auto;
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-xs);
+}
+
+.project-candidate-note {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+.project-candidate-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-2);
+}
+
+.project-candidate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-left: auto;
 }
 
 .context-composition-card-inner {

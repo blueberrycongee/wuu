@@ -693,10 +693,6 @@ function WorkspaceDiffBody({
   error?: string;
 }): JSX.Element {
   const { t } = useI18n();
-  const diffLines = useMemo(
-    () => (fileDiff?.patch ? gitDiffDisplayLines(fileDiff.patch) : []),
-    [fileDiff?.patch],
-  );
   if (error) return <div className="workspace-diff-error">{error}</div>;
   if (loading) return <div className="workspace-diff-empty">{t("workspaceReview.readingDiff")}</div>;
   if (fileDiff?.binary) {
@@ -718,16 +714,24 @@ function WorkspaceDiffBody({
   }
   return (
     <div className="workspace-diff-code-scroll">
-      <pre className="workspace-diff-code" aria-label={t("workspaceReview.codeDiffFor", { path: fileDiff.path })}>
-        {diffLines.map((line, index) => (
-          <span className={`workspace-diff-line ${line.kind}`} key={`${index}:${line.content.slice(0, 24)}`}>
-            <span className="workspace-diff-line-number">{line.oldLine ?? ""}</span>
-            <span className="workspace-diff-line-number">{line.newLine ?? ""}</span>
-            <span className="workspace-diff-line-code">{line.content || " "}</span>
-          </span>
-        ))}
-      </pre>
+      <GitPatchLines patch={fileDiff.patch} label={t("workspaceReview.codeDiffFor", { path: fileDiff.path })} />
     </div>
+  );
+}
+
+/** A unified Git patch with old and new line numbers. */
+export function GitPatchLines({ patch, label }: { patch: string; label: string }): JSX.Element {
+  const diffLines = useMemo(() => gitDiffDisplayLines(patch), [patch]);
+  return (
+    <pre className="workspace-diff-code" aria-label={label}>
+      {diffLines.map((line, index) => (
+        <span className={`workspace-diff-line ${line.kind}`} key={`${index}:${line.content.slice(0, 24)}`}>
+          <span className="workspace-diff-line-number">{line.oldLine ?? ""}</span>
+          <span className="workspace-diff-line-number">{line.newLine ?? ""}</span>
+          <span className="workspace-diff-line-code">{line.content || " "}</span>
+        </span>
+      ))}
+    </pre>
   );
 }
 

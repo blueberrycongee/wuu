@@ -1542,6 +1542,8 @@ function summarizeThreadForSidebar(
     agent_path: thread.agent_path,
     preview: thread.preview,
     title: thread.title,
+    source: thread.source,
+    project_id: thread.project_id,
     model_provider: thread.model_provider,
     model: thread.model,
     cwd: thread.cwd,
