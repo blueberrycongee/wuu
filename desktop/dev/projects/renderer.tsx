@@ -4,18 +4,21 @@
 // From desktop: ./node_modules/.bin/vite --config dev/projects/vite.config.ts,
 // then open http://127.0.0.1:5243/dev/projects/. Query parameters:
 // view=coordinator|session|draft, panel=project|proposal|none, theme=dark,
-// size=20, empty (no projects yet), publisher=0 (hides Open PR), stopped.
+// size=20, empty (no projects yet), publisher=0 (hides Open PR), stopped, todo
+// (adds a TODO capsule beside the project status).
 // capture.cjs writes screenshots to artifacts/projects.
-import { createRef, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { createRef, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Ref } from "react";
 import { createRoot } from "react-dom/client";
 import type { ProjectCandidate, ProjectCandidateParams, Thread, Turn } from "../../src/shared/protocol";
 import { AppSidebar } from "../../src/renderer/AppSidebar";
 import { initialState, summarizeThreadsForSidebar, type AppState } from "../../src/renderer/AppState";
 import { ConversationTitleActions } from "../../src/renderer/ConversationShellRenderers";
 import { Composer } from "../../src/renderer/ComposerView";
+import { ConversationStatusCluster } from "../../src/renderer/ConversationStatusCluster";
 import { EmptyConversationHome } from "../../src/renderer/LoadingViews";
 import { ProjectActionsProvider, type ProjectActions } from "../../src/renderer/ProjectActions";
-import { ProjectStatusStrip, useTurnProposals } from "../../src/renderer/ProjectViews";
+import { ProjectStatusCapsule, useTurnProposals } from "../../src/renderer/ProjectViews";
+import { projectSessionsOf } from "../../src/renderer/ProjectSessions";
 import { TurnView } from "../../src/renderer/TurnView";
 import { WorkspaceRightPanel } from "../../src/renderer/WorkspacePanels";
 import { workspaceProjectViewTab, workspaceProposalViewTab, type WorkspaceViewTab } from "../../src/renderer/WorkspaceViewTabs";
@@ -175,11 +178,10 @@ if (params.has("composer-accessories")) {
   });
 }
 
-function PreviewComposer({ current }: { current?: Thread }) {
+function PreviewComposer({ current, containerRef }: { current?: Thread; containerRef: Ref<HTMLElement> }) {
   const [prompt, setPrompt] = useState("");
-  return <Composer mainConversation prompt={prompt} setPrompt={setPrompt} files={[]} images={[]}
+  return <Composer mainConversation containerRef={containerRef} prompt={prompt} setPrompt={setPrompt} files={[]} images={[]}
     queryHistorySessionID={current?.id}
-    statusAccessory={current?.source === "project" ? <ProjectStatusStrip project={current} /> : undefined}
     queuedMessages={params.has("queued") ? [{ id: "queue", text: "完成后整理差异清单。", files: [], images: [] }] : []}
     guideMessages={[]} running={params.has("composer-accessories")} status="" readOnly={false}
     projects={[workspace]} codexModels={{ loading: false, error: "", models: [] }} codexRuntimeMenu={null}
@@ -216,6 +218,15 @@ function Fixture() {
   const [tabs, setTabs] = useState(initialTabs);
   const [activeTab, setActiveTab] = useState(initialTabs.at(-1)?.id);
   const environmentToggleRef = useRef<HTMLButtonElement>(null);
+  const dock = useRef<HTMLElement>(null);
+  const [dockHeight, setDockHeight] = useState(0);
+  useLayoutEffect(() => {
+    if (!dock.current) return;
+    const element = dock.current;
+    const update = () => setDockHeight(element.getBoundingClientRect().height);
+    const observer = new ResizeObserver(update); observer.observe(element); update();
+    return () => observer.disconnect();
+  }, []);
   useLayoutEffect(() => {
     applyMessageFlowFontSize(Number(params.get("size")) || 14);
     document.documentElement.dataset.theme = params.get("theme") || "light";
@@ -238,6 +249,7 @@ function Fixture() {
   }), []);
   const current = threads.find(item => item.id === active);
   const draft = view === "draft" || empty;
+  const projectSessions = current?.source === "project" ? projectSessionsOf(current.id, threads) : [];
   return <WuuUIRoot><ProjectActionsProvider value={actions}>
     <div className={`app-shell sample-shell${tabs.length ? " right-panel-open" : ""}`} style={{ height: "100dvh", "--workspace-right-panel-width": params.has("panel-width") ? `${Number(params.get("panel-width"))}px` : undefined } as CSSProperties}>
       <AppSidebar
@@ -259,7 +271,7 @@ function Fixture() {
         unreadViewOpen={false} onToggleUnreadView={noop}
         sidebarCollapsed={false} onToggleSidebar={noop}
       />
-      <main className="conversation-pane" style={{ "--dock-composer-height": "96px" } as CSSProperties}>
+      <main className="conversation-pane" style={{ "--dock-composer-height": `${dockHeight}px` } as CSSProperties}>
         <header className="titlebar"><div className="title-block"><span>{draft ? "新项目" : current?.title}</span></div>
           <ConversationTitleActions state={{ ...state, thread: draft ? undefined : current }} onStartNewThread={noop}
             environmentToggleRef={environmentToggleRef} environmentPanelVisible={false} onToggleEnvironmentPanel={noop}
@@ -268,7 +280,14 @@ function Fixture() {
         <div className={`scroll-region${draft ? " empty-scroll-region" : ""}`}>
           {draft ? <EmptyConversationHome title="新项目" /> : current ? <Conversation current={current} /> : null}
         </div>
-        <PreviewComposer current={draft ? undefined : current} />
+        <PreviewComposer current={draft ? undefined : current} containerRef={dock} />
+        <ConversationStatusCluster host={desktopPluginHost} visible={!draft} threadId={current?.id} onOpenSession={setActive}
+          hostStatus={!draft && current && projectSessions.length > 0 ? <ProjectStatusCapsule project={current} sessions={projectSessions} /> : undefined}
+          todoUpdate={params.has("todo") ? { todos: [
+            { content: "重建搜索索引", status: "completed" },
+            { content: "给结果分页", status: "in_progress" },
+            { content: "测量搜索延迟", status: "pending" },
+          ] } : undefined} />
       </main>
       <WorkspaceRightPanel open={tabs.length > 0} present={tabs.length > 0} tabs={tabs} activeTabID={activeTab}
         activeContext={state.activeContext} workspaceContext={state.activeContext} onSelectTab={setActiveTab} onOpenTool={noop}

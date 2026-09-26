@@ -2,7 +2,7 @@ import { useId, useState } from "react";
 import type { ProjectCandidate, Thread, ThreadItem } from "../shared/protocol";
 import { isThreadExecuting } from "./AppState";
 import { useProjectActions, useProjectCandidates, type ProjectThread } from "./ProjectActions";
-import { PROJECT_SESSION_SOURCE, projectSessionsOf } from "./ProjectSessions";
+import { PROJECT_SESSION_SOURCE } from "./ProjectSessions";
 import { baseThreadTitle } from "./ThreadTitles";
 import {
   ChevronDown,
@@ -14,13 +14,14 @@ import {
 import { useI18n } from "./i18n";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 
-/** The coordinator's running and pending work, above its composer. */
-export function ProjectStatusStrip({ project }: { project: Thread }): JSX.Element | null {
+/**
+ * The coordinator's running and pending work, in the conversation's status
+ * capsule row. The caller renders it only when the project has sessions.
+ */
+export function ProjectStatusCapsule({ project, sessions }: { project: Thread; sessions: readonly ProjectThread[] }): JSX.Element | null {
   const { t, formatNumber } = useI18n();
   const actions = useProjectActions();
   if (!actions) return null;
-  const sessions = projectSessionsOf(project.id, actions.threads);
-  if (sessions.length === 0) return null;
   const running = sessions.filter(isThreadExecuting).length;
   const pending = project.pending_candidates ?? 0;
   const parts = [
@@ -31,7 +32,7 @@ export function ProjectStatusStrip({ project }: { project: Thread }): JSX.Elemen
   return (
     <button
       type="button"
-      className={`project-status-strip${pending ? " has-pending" : ""}`}
+      className="conversation-status-capsule project-status-capsule"
       title={parts.join(" · ")}
       aria-label={parts.join(" · ")}
       onClick={() => actions.openProjectPanel(project)}

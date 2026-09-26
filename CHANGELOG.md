@@ -128,6 +128,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Project status now shares the conversation capsule row with TODO and plugin
+  status, using consistent sizing and alignment above the composer.
+
 - macOS confined commands can read Keychain credentials again, preventing false
   GitHub CLI authentication failures caused by blocked system cache writes.
 

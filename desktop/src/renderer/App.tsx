@@ -294,8 +294,8 @@ import {
   customDraftConversationTitle,
 } from "./ThreadTitles";
 import { ProjectActionsProvider, type ProjectActions, type ProjectThread } from "./ProjectActions";
-import { isProjectCoordinator } from "./ProjectSessions";
-import { ProjectStatusStrip } from "./ProjectViews";
+import { isProjectCoordinator, projectSessionsOf } from "./ProjectSessions";
+import { ProjectStatusCapsule } from "./ProjectViews";
 import { createRuntimeSettingsActions } from "./RuntimeSettingsActions";
 import { createConversationPaneActions } from "./ConversationPaneActions";
 import {
@@ -3022,7 +3022,6 @@ export function App(): JSX.Element {
         ) : undefined}
         variant={variant}
         mainConversation
-        statusAccessory={activeThread && isProjectCoordinator(activeThread) ? <ProjectStatusStrip project={activeThread} /> : undefined}
         permissionLocked={projectComposer}
         placeholder={activeProjectDraft ? t("projects.draftPlaceholder") : undefined}
         containerRef={variant === "dock" ? dockComposerRef : undefined}
@@ -3600,6 +3599,10 @@ export function App(): JSX.Element {
     openProposal: openProjectProposal,
     release: releaseProjectSession,
   }), [openProjectPanel, openProjectProposal, openProjectThread, releaseProjectSession, sidebarThreads]);
+  const activeProjectSessions = useMemo(
+    () => activeThread && isProjectCoordinator(activeThread) ? projectSessionsOf(activeThread.id, sidebarThreads) : [],
+    [activeThread, sidebarThreads],
+  );
 
   function focusHeroAfter(
     action: Promise<void | boolean>,
@@ -5402,6 +5405,9 @@ export function App(): JSX.Element {
               inline
             />
           ) : null}
+          hostStatus={activeProjectSessions.length > 0 && activeThread ? (
+            <ProjectStatusCapsule project={activeThread} sessions={activeProjectSessions} />
+          ) : undefined}
           threadId={activeThreadID}
           todoUpdate={activeTodoUpdateForThread(activeThread)}
           onOpenSession={handleOpenThreadInSplit}

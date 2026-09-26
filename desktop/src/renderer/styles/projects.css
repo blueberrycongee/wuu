@@ -45,28 +45,12 @@ html[data-focus-modality="keyboard"] .project-inline-link:focus-visible {
   }
 }
 
-/* The coordinator's running and pending work, just above its composer. */
-.composer-status-accessory {
-  display: flex;
-  min-width: 0;
-  padding-bottom: var(--space-2);
-}
-
-.project-status-strip {
-  display: inline-flex;
-  max-width: 100%;
-  min-height: 26px;
-  align-items: center;
+/* The coordinator's running and pending work. Size, surface and states come
+ * from .conversation-status-capsule; only the count groups are laid out here. */
+.project-status-capsule {
+  flex: 0 0 auto;
   gap: var(--space-3);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-pill);
-  background: var(--surface-1);
-  color: var(--ink-soft);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--font-sm);
   font-variant-numeric: tabular-nums;
-  padding: 2px 10px;
 }
 
 .project-status-count {
@@ -78,22 +62,9 @@ html[data-focus-modality="keyboard"] .project-inline-link:focus-visible {
 
 .project-status-count > svg {
   flex: none;
-  width: 14px;
-  height: 14px;
-}
-
-.project-status-strip:hover {
-  border-color: var(--hairline-strong);
-  color: var(--ink);
-}
-
-.project-status-strip.has-pending {
-  color: var(--ink);
-}
-
-html[data-focus-modality="keyboard"] .project-status-strip:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  color: var(--ink-muted);
 }
 
 /* A host event in the coordinator's conversation reads as a centered marker

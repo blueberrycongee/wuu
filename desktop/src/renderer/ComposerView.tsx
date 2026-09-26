@@ -132,7 +132,6 @@ export function Composer({
   canSelectWorkspace = variant === "hero",
   mainConversation = false,
   topAccessory,
-  statusAccessory,
   permissionLocked = false,
   containerRef,
   prompt: committedPrompt,
@@ -234,8 +233,6 @@ export function Composer({
   canSelectWorkspace?: boolean;
   mainConversation?: boolean;
   topAccessory?: ReactNode;
-  // A status row above the composer, such as a project's running work.
-  statusAccessory?: ReactNode;
   // The conversation's permission mode cannot change, as for a project coordinator.
   permissionLocked?: boolean;
   containerRef?: Ref<HTMLElement>;
@@ -1062,7 +1059,6 @@ export function Composer({
   const content = (
     <div className={`composer-stack${isComposerExpanded ? " is-expanded" : ""}`} data-wuu-component="composer">
       <div className="composer-above-input">
-        {statusAccessory ? <div className="composer-status-accessory">{statusAccessory}</div> : null}
         <MemoizedComposerPluginSlot host={pluginHost} id="composer.above" context={pluginSlotContext} />
       </div>
       <div className="composer-shell">

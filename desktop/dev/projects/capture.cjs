@@ -33,6 +33,10 @@ const scenes = [
   ["flow-accessories-queued-expanded", "view=coordinator&panel=project&composer-accessories&queued&theme=dark", 1440, undefined, undefined, ".composer-expand-button"],
   ["flow-accessories-task-narrow-20", "view=coordinator&panel=project&composer-accessories&panel-width=320&size=20", 1085, undefined, undefined, ".composer-drawer-summary-select"],
   ["flow-accessories-task-expanded", "view=coordinator&panel=project&composer-accessories", 1440, undefined, undefined, ".composer-drawer-summary-select"],
+  ["status-row-todo", "view=coordinator&panel=project&todo", 1440],
+  ["status-row-todo-dark-20", "view=coordinator&panel=project&todo&theme=dark&size=20", 1440],
+  ["status-row-todo-accessories-narrow", "view=coordinator&panel=project&todo&composer-accessories&panel-width=320", 1085],
+  ["status-row-keyboard-focus", "view=coordinator&panel=project&todo", 1440, undefined, ".project-status-capsule"],
   ["flow-event-details-narrow", "view=coordinator&panel=project&long-titles&panel-width=320&theme=dark&size=20", 1085, undefined, undefined, ".project-event-toggle"],
   ["flow-event-keyboard", "view=coordinator&panel=project", 1440, undefined, ".project-event-toggle"],
   ["coordinator-hover-session", "view=coordinator&panel=project", 1440, ".project-panel-list .project-panel-row-main"],
@@ -85,12 +89,24 @@ app.whenReady().then(async () => {
     if (query.includes("composer-accessories")) {
       const layout = await win.webContents.executeJavaScript(`(() => {
         const rect = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
-        return { status: rect('.project-status-strip'), task: rect('[data-wuu-plugin="preview:task"] .composer-drawer-summary'),
+        return { status: rect('.project-status-capsule'), task: rect('[data-wuu-plugin="preview:task"] .composer-drawer-summary'),
           input: rect('.composer-frame'), drawer: rect('[data-wuu-plugin="preview:task"] .composer-accessory-drawer') };
       })()`);
       fs.writeFileSync(path.join(output, `${name}.json`), JSON.stringify(layout, null, 2));
       if (!(layout.status.bottom <= layout.drawer.top || layout.drawer.bottom <= layout.status.top) || layout.task.bottom > layout.input.top) {
         throw new Error(`${name}: project status, task and input overlap`);
+      }
+    }
+    // The project capsule is one of the conversation's status capsules: same
+    // row, same height, and no overlap with the composer below it.
+    if (query.includes("todo")) {
+      const row = await win.webContents.executeJavaScript(`(() => {
+        const rect = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
+        return { project: rect('.project-status-capsule'), todo: rect('.conversation-status-todo-trigger'), composer: rect('.dock-composer-wrap') };
+      })()`);
+      fs.writeFileSync(path.join(output, `${name}.status-row.json`), JSON.stringify(row, null, 2));
+      if (Math.abs(row.project.top - row.todo.top) > 0.5 || Math.abs(row.project.height - row.todo.height) > 0.5 || row.project.bottom > row.composer.top) {
+        throw new Error(`${name}: project status is not in the status capsule row`);
       }
     }
   }
