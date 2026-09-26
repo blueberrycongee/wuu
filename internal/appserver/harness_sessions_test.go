@@ -224,7 +224,7 @@ func TestHarnessTakeoverFencesQueuedWorkAndLeavesHistory(t *testing.T) {
 	th.pendingSteers = append(th.pendingSteers, providers.ChatMessage{ClientID: "auto-steer", Origin: "plugin", Content: "obsolete correction"}, providers.ChatMessage{ClientID: "human-steer", Content: "human correction"})
 	th.pendingSteerControls = map[string]session.Control{"auto-steer": c}
 	th.mu.Unlock()
-	if err := f.server.takeHarnessControl(id, session.ControlTakenOver); err != nil {
+	if err := f.server.takeSessionControl(id, session.ControlTakenOver); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.server.HarnessSession(context.Background(), actor, channels.HarnessSessionParams{Action: "send", SessionID: id, Prompt: "Should not run", OperationID: "stale"}); err == nil {
@@ -564,9 +564,9 @@ func TestHarnessUnconsumedCorrectionSurvivesTerminalReconciliation(t *testing.T)
 	worker := provider.next(t)
 	// Hold reconciliation while reproducing a steer accepted immediately before
 	// a terminal response, with no durable user input from consuming the steer.
-	f.server.harnessMu.Lock()
+	f.server.controlMu.Lock()
 	func() {
-		defer f.server.harnessMu.Unlock()
+		defer f.server.controlMu.Unlock()
 		worker.response <- providers.ChatResponse{Content: "Original draft"}
 		waitForTurnCompletedForThread(t, f.out, id)
 		c, _, err := session.ReadControl(f.server.rt.SessionDir, id)

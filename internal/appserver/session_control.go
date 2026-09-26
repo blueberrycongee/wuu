@@ -12,8 +12,8 @@ import (
 )
 
 func (s *Server) controlPluginSession(_ context.Context, pluginID string, p pluginhost.SessionControlParams) (pluginhost.SessionControlResult, error) {
-	s.harnessMu.Lock()
-	defer s.harnessMu.Unlock()
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
 	manager := "plugin:" + strings.TrimSpace(pluginID)
 	m, ok, err := session.Find(s.rt.SessionDir, p.SessionID)
 	if err != nil {
@@ -84,6 +84,30 @@ func (s *Server) threadSessionControl(id string, c session.Control) *ThreadSessi
 	return result
 }
 
+// takeSessionControl records a human takeover or pause of a managed session.
+// Admitted automatic instructions are revoked before the manager is told.
+func (s *Server) takeSessionControl(id, state string) error {
+	if s == nil || s.rt == nil {
+		return nil
+	}
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
+	c, ok, err := session.ReadControl(s.rt.SessionDir, id)
+	if err != nil {
+		return err
+	}
+	if !ok || c.State == session.ControlReleased || c.State == state {
+		return nil
+	}
+	c, err = session.ChangeControl(s.rt.SessionDir, id, c.ManagerID, state, c.Revision)
+	if err != nil {
+		return err
+	}
+	s.revokeSessionInputs(id)
+	s.publishSessionControl(id)
+	return s.noticeHarnessControl(id, c)
+}
+
 func (s *Server) publishSessionControl(id string) {
 	th := s.thread(id)
 	if th == nil {
@@ -110,8 +134,8 @@ func (s *Server) handleThreadControl(ctx context.Context, req Request) error {
 	if err := decodeParams(req.Params, &p); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	s.harnessMu.Lock()
-	defer s.harnessMu.Unlock()
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
 	c, exists, err := session.ReadControl(s.rt.SessionDir, p.ThreadID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)

@@ -89,8 +89,8 @@ func (s *Server) applyHarnessDispatch(ctx context.Context, p harnessWorkspaceReq
 	if p.OperationID == "" {
 		return s.reconcileLocalHarnessSessions(ctx)
 	}
-	s.harnessMu.Lock()
-	defer s.harnessMu.Unlock()
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
 	op, err := s.channelService.HarnessOperation(ctx, p.OperationID)
 	if err != nil {
 		return err
@@ -132,7 +132,7 @@ func (s *Server) reconcileHarnessSessions(ctx context.Context) error {
 		return nil
 	}
 	// Route only outstanding work. Idle managed sessions must not keep every
-	// registered workspace resident. Do not hold harnessMu across host RPCs:
+	// registered workspace resident. Do not hold controlMu across host RPCs:
 	// two projects may simultaneously have work for each other.
 	targets := map[string]harnessWorkspaceRequest{}
 	add := func(root, id string) {

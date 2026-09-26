@@ -200,7 +200,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 		return s.writeResponse(req.ID, nil, err)
 	}
 	userMsg.ClientID = strings.TrimSpace(params.ClientID)
-	if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
+	if err := s.takeSessionControl(params.ThreadID, session.ControlTakenOver); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	snapshot := turnRuntimeSnapshot{}.withPermissions(permissions)
@@ -559,7 +559,7 @@ func (s *Server) handleTurnQueue(req Request) error {
 	}
 	msg.ClientID = queueID
 	if !params.Hold {
-		if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
+		if err := s.takeSessionControl(params.ThreadID, session.ControlTakenOver); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 	}
@@ -768,7 +768,7 @@ func (s *Server) handleTurnSteer(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
+	if err := s.takeSessionControl(params.ThreadID, session.ControlTakenOver); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 
@@ -1793,7 +1793,7 @@ func (s *Server) handleTurnInterrupt(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	threadID := strings.TrimSpace(params.ThreadID)
-	if err := s.takeHarnessControl(threadID, session.ControlPaused); err != nil {
+	if err := s.takeSessionControl(threadID, session.ControlPaused); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	_, err := s.interruptThreadExecution(threadID, "", "")

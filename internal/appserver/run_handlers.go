@@ -75,7 +75,7 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 	if err != nil {
 		return s.writeRunError(req.ID, "invalid_params", err)
 	}
-	if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
+	if err := s.takeSessionControl(params.ThreadID, session.ControlTakenOver); err != nil {
 		return s.writeRunError(req.ID, "internal_error", err)
 	}
 
@@ -192,7 +192,7 @@ func (s *Server) handleRunInterrupt(ctx context.Context, req Request) error {
 	if !view.Attached {
 		return s.writeRunError(req.ID, "run_not_attached", fmt.Errorf("run %q is not attached to this app-server", runID))
 	}
-	if err := s.takeHarnessControl(view.Run.ThreadID, session.ControlPaused); err != nil {
+	if err := s.takeSessionControl(view.Run.ThreadID, session.ControlPaused); err != nil {
 		return s.writeRunError(req.ID, "internal_error", err)
 	}
 	interruptStatus := execution.StatusInterrupted

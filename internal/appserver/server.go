@@ -310,7 +310,7 @@ type Server struct {
 	channelMaintenanceDone      chan struct{}
 	channelMaintenanceStopOnce  sync.Once
 	namedAgentMu                sync.Mutex
-	harnessMu                   sync.Mutex
+	controlMu                   sync.Mutex
 	namedAgentMCPMu             sync.Mutex
 	namedAgentMCPServer         *http.Server
 	namedAgentMCPBaseURL        string

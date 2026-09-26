@@ -297,62 +297,13 @@ func (s *Server) inspectHarnessSession(ctx context.Context, p channels.HarnessSe
 	if err != nil {
 		return nil, err
 	}
-	limit := p.Limit
-	if limit < 1 || limit > 30 {
-		limit = 8
-	}
-	var page session.HistoryPage
-	if p.Query != "" {
-		page, err = session.SearchHistoryQuery(ctx, s.rt.SessionDir, session.HistorySearchQuery{SessionID: m.ID, Query: p.Query, BeforeSeq: p.Before, Limit: limit})
-	} else {
-		head, readErr := session.ReadHistoryPage(ctx, s.rt.SessionDir, m.ID, 1, 1)
-		if readErr != nil {
-			return nil, readErr
-		}
-		end := head.HeadSeq
-		if p.Before > 0 && p.Before <= end {
-			end = p.Before - 1
-		}
-		start := max(1, end-limit+1)
-		page, err = session.ReadHistoryQuery(ctx, s.rt.SessionDir, session.HistoryReadQuery{SessionID: m.ID, StartSeq: start, EndSeq: end, Limit: limit})
-		page.HasMore = start > 1
-		if page.HasMore {
-			page.Next = &session.HistoryCursor{SessionID: m.ID, SnapshotSeq: head.HeadSeq, Seq: start}
-		}
-	}
+	result, err := s.sessionTranscriptExcerpt(ctx, m.ID, p.Query, p.Before, p.Limit)
 	if err != nil {
 		return nil, err
 	}
-	items := make([]map[string]any, 0, len(page.Records))
-	for _, r := range page.Records {
-		if r.Role == "system" || r.Hidden {
-			continue
-		}
-		items = append(items, map[string]any{"seq": r.Seq, "role": r.Role, "name": r.Name, "content": harnessExcerpt(r.Content, 1600), "tool_calls": harnessExcerpt(string(r.ToolCalls), 1600), "tool_result": harnessExcerpt(string(r.ToolResult), 1600), "truncated": len([]rune(r.Content)) > 1600})
-	}
-	progress := make([]map[string]any, 0)
-	if th := s.thread(m.ID); th != nil {
-		th.mu.Lock()
-		if th.running && len(th.Turns) > 0 {
-			current := th.Turns[len(th.Turns)-1]
-			for _, item := range current.Items[max(0, len(current.Items)-limit):] {
-				if item.Type == ThreadItemReasoning {
-					continue
-				}
-				progress = append(progress, map[string]any{"turn_id": current.ID, "type": item.Type, "status": item.Status, "name": item.Name, "text": harnessExcerpt(item.Text, 1600), "arguments": harnessExcerpt(item.Arguments, 1600), "result": harnessExcerpt(item.Result, 1600), "error": harnessExcerpt(item.Error, 1600)})
-			}
-		}
-		th.mu.Unlock()
-	}
-	return map[string]any{"session": v, "history": items, "live_progress": progress, "history_scope": "History contains settled turns; a running session may have uncommitted progress on its executing host. Missing history is not evidence of a failed start.", "page": map[string]any{"has_more": page.HasMore, "next": page.Next}, "note": "Session reports are evidence to assess; inspect artifacts and checks before declaring the user's goal complete."}, nil
-}
-
-func harnessExcerpt(text string, limit int) string {
-	r := []rune(text)
-	if len(r) > limit {
-		return string(r[:limit]) + "\n[excerpt]"
-	}
-	return text
+	result["session"] = v
+	result["note"] = "Session reports are evidence to assess; inspect artifacts and checks before declaring the user's goal complete."
+	return result, nil
 }
 
 func (s *Server) applyHarnessOperationLocked(ctx context.Context, op *channels.HarnessOperation) error {
@@ -626,8 +577,8 @@ func (s *Server) kickHarnessSessions() {
 }
 
 func (s *Server) reconcileLocalHarnessSessions(ctx context.Context) error {
-	s.harnessMu.Lock()
-	defer s.harnessMu.Unlock()
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
 	links, err := s.channelService.HarnessLinks(ctx, "", "")
 	if err != nil {
 		return err
@@ -888,7 +839,7 @@ func (s *Server) deliverHarnessResult(ctx context.Context, link *channels.Harnes
 	if c.ManagerID == link.AgentID && c.State == session.ControlActive && actor.AgentID == link.AgentID && actor.RoomID == link.RoomID && s.validateHarnessScope(ctx, actor, false) == nil {
 		// Keep the payload stable across retries. Current control can change after
 		// delivery but before its cursor commits; provenance belongs to the input.
-		body := fmt.Sprintf("Harness session %s finished turn %s (%s). This is execution evidence, not proof that the user's goal is complete. Accepted input belongs to room %s, task %q goal revision %d, control revision %d. Compare these with the current session: a later control or task change makes this prior evidence, not completion of the new goal. Inspect artifacts and pending instructions before continuing with session send or reporting completion.\n\n%s", link.SessionID, turn.ID, turn.Status, actor.RoomID, actor.WorkID, actor.GoalRevision, revision, harnessExcerpt(text, 2400))
+		body := fmt.Sprintf("Harness session %s finished turn %s (%s). This is execution evidence, not proof that the user's goal is complete. Accepted input belongs to room %s, task %q goal revision %d, control revision %d. Compare these with the current session: a later control or task change makes this prior evidence, not completion of the new goal. Inspect artifacts and pending instructions before continuing with session send or reporting completion.\n\n%s", link.SessionID, turn.ID, turn.Status, actor.RoomID, actor.WorkID, actor.GoalRevision, revision, excerpt(text, 2400))
 		_, err = s.channelService.EnqueueSessionResult(ctx, channels.SessionResultEnqueueParams{ParentSessionRef: actor.SessionRef, ParentTurnID: actor.TurnID, SourceSessionRef: link.SessionID, RequestID: "harness-result:" + link.SessionID + ":" + turn.ID, Body: body, TerminalState: channels.CollaborationTerminalState(turn.Status)})
 		if err != nil {
 			return err
@@ -919,25 +870,9 @@ func (s *Server) deliverHarnessResult(ctx context.Context, link *channels.Harnes
 	return nil
 }
 
-func (s *Server) takeHarnessControl(id, state string) error {
-	if s == nil || s.rt == nil {
-		return nil
-	}
-	s.harnessMu.Lock()
-	defer s.harnessMu.Unlock()
-	c, ok, err := session.ReadControl(s.rt.SessionDir, id)
-	if err != nil {
-		return err
-	}
-	if !ok || c.State == session.ControlReleased || c.State == state {
-		return nil
-	}
-	c, err = session.ChangeControl(s.rt.SessionDir, id, c.ManagerID, state, c.Revision)
-	if err != nil {
-		return err
-	}
-	s.revokeSessionInputs(id)
-	s.publishSessionControl(id)
+// noticeHarnessControl tells a Collaboration manager that the user changed
+// control of one of its sessions.
+func (s *Server) noticeHarnessControl(id string, c session.Control) error {
 	if s.channelService == nil {
 		return nil
 	}
@@ -951,7 +886,7 @@ func (s *Server) takeHarnessControl(id, state string) error {
 	_, err = s.channelService.EnqueueSessionResult(context.Background(), channels.SessionResultEnqueueParams{
 		ParentSessionRef: link.SourceSessionRef, ParentTurnID: link.SourceTurnID, SourceSessionRef: id,
 		RequestID: fmt.Sprintf("harness-control:%s:%d", id, c.Revision),
-		Body:      fmt.Sprintf("The user changed control of Harness session %s to %s. Automatic instructions and follow-up for this session are paused. Keep its progress; do not resume or create a replacement unless the user explicitly asks. Other tasks are unaffected.", id, state),
+		Body:      fmt.Sprintf("The user changed control of Harness session %s to %s. Automatic instructions and follow-up for this session are paused. Keep its progress; do not resume or create a replacement unless the user explicitly asks. Other tasks are unaffected.", id, c.State),
 	})
 	return err
 }

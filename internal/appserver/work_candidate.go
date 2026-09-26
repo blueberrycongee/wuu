@@ -28,8 +28,8 @@ func (s *Server) handleChannelWorkCandidate(ctx context.Context, req Request) er
 	if err := decodeParams(req.Params, &p); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	s.harnessMu.Lock()
-	defer s.harnessMu.Unlock()
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
 	work, err := s.channelService.GetWork(ctx, p.WorkID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)

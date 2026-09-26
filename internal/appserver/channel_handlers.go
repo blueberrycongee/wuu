@@ -104,8 +104,8 @@ func (s *Server) handleChannelAgentDelete(ctx context.Context, req Request) erro
 	}
 	s.namedAgentMu.Lock()
 	defer s.namedAgentMu.Unlock()
-	s.harnessMu.Lock()
-	defer s.harnessMu.Unlock()
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
 	agent, err := s.channelService.GetAgentRuntime(ctx, params.AgentID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
