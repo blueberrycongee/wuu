@@ -191,6 +191,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - History search finds literal quotes, paths, line breaks, and HTML characters
   in deduplicated tool results, including model text and multi-part output.
 
+- Pasted-text cards retain their segments and titles when conversations are
+  restored or forked. Canonical message text and model input remain unchanged.
+
 - Ready Agent Core entries show an external agent's detected executable path in
   its override field without repeating it in the status or help text.
 
