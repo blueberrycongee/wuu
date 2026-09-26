@@ -110,6 +110,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Git status and staging snapshots preserve literal filenames, including spaces,
+  Unicode, quotes, backslashes, and newlines. Returned rename paths identify the
+  destination, and staging or unstaging a backslash path no longer selects other
+  files through Git pathspec escaping. Sensitive-path protections remain in place.
+
 - Overdue automations keep their scheduled occurrence until the session service
   is ready. Interrupted dispatches reuse their run record after restart, and
   completing a dispatch preserves a newly edited schedule.
