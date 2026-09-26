@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Thread } from "../shared/protocol";
-import { ForkWorktreeNotice } from "./ForkWorktreeNotice";
+import { WorktreeNotice } from "./WorktreeNotice";
 
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
@@ -25,9 +25,9 @@ afterEach(() => {
   container = null;
 });
 
-describe("ForkWorktreeNotice", () => {
+describe("WorktreeNotice", () => {
   it("renders a foldable worktree creation record", () => {
-    mount(createElement(ForkWorktreeNotice, { thread: worktreeForkThread() }));
+    mount(createElement(WorktreeNotice, { thread: worktreeForkThread() }));
 
     const details = document.querySelector(".fork-worktree-card");
     const code = document.querySelector(".fork-worktree-code");
@@ -44,7 +44,7 @@ describe("ForkWorktreeNotice", () => {
     const thread = worktreeForkThread();
     delete thread.worktree;
 
-    mount(createElement(ForkWorktreeNotice, { thread }));
+    mount(createElement(WorktreeNotice, { thread }));
 
     expect(document.querySelector(".fork-worktree-notice")).toBeNull();
   });

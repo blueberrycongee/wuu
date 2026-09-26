@@ -560,13 +560,27 @@
   width: 100%;
 }
 
-/* Context controls sit on the canvas; only the active pill gains a surface. */
+/* Two outlined groups sit on the canvas: the project the conversation belongs
+ * to, and where in its repository the work starts. Segments share their
+ * group's border, so hover surfaces fill the group edge to edge. */
 .composer-workspace-bar {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   min-width: 0;
   margin: 0 var(--space-3) var(--space-2);
+}
+
+.composer-workspace-group {
+  display: inline-flex;
+  align-items: stretch;
+  min-width: 0;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+}
+
+.composer-workspace-group :focus-visible {
+  z-index: 1;
 }
 
 .composer-workspace-bar .hero-project-pill-anchor {
@@ -575,11 +589,62 @@
 
 .composer-workspace-bar .hero-project-pill {
   height: auto;
-  min-height: var(--control-row-height);
+  /* The group border completes the shared control row height. */
+  min-height: calc(var(--control-row-height) - 2px);
   gap: var(--space-2);
   padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-pill);
   font-size: var(--font-sm);
+}
+
+.composer-git-controls {
+  max-width: 50%;
+}
+
+.composer-git-controls .hero-project-pill {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.composer-worktree-toggle {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: calc(var(--control-row-height) - 2px);
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-inline-start: 1px solid var(--hairline);
+  border-start-end-radius: var(--radius-pill);
+  border-end-end-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--font-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.composer-worktree-toggle:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.composer-worktree-toggle[aria-pressed="false"]:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+/* On reads like the other composer toggles (Fast mode): accent label and icon. */
+.composer-worktree-toggle[aria-pressed="true"],
+.composer-worktree-toggle[aria-pressed="true"] .hero-project-pill-icon {
+  color: var(--interaction-accent);
+}
+
+.composer-worktree-toggle:disabled {
+  cursor: default;
 }
 
 .composer-workspace-bar .hero-project-pill::before {
@@ -2545,7 +2610,7 @@
 
 .composer-branch-control {
   min-width: 0;
-  max-width: 50%;
+  flex: 0 1 auto;
 }
 
 .composer-branch-control .hero-project-pill {

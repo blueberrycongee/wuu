@@ -69,6 +69,20 @@ Preview `/dev/composer-attachments/` with optional `theme=dark`, `size=20`,
 `width=420`, `hero`, `queued`, and `seed` parameters. Its buttons paste
 synthetic files through the real textarea paste handler.
 
+## Composer project and worktree controls
+
+A new conversation's project sits in one outlined group; in a Git project, the
+branch and the worktree toggle share a second group of the same height. Hover
+fills a segment edge to edge, and the toggle's on state uses the interaction
+accent like Fast mode. A folder outside Git shows only the project group.
+
+Run `npm --prefix desktop run test:e2e:composer-worktree` to start a real
+conversation in a worktree through Electron and the Go core with a disposable
+profile, Git fixture, and local provider. It checks that choosing a start branch
+leaves the project's checkout alone and captures light/dark, default/large-font,
+wide/narrow, and non-Git states in `artifacts/composer-worktree/`. The window is
+visible, so the pointer's position can add a hover surface to a capture.
+
 ## Settings pages
 
 Settings groups pages by task: **Agents & models** (model providers, agents, runtime), **App** (general, appearance), **Extensions** (MCP servers and plugin pages), and **Data** (usage, archive). Page IDs are part of the plugin settings snapshot, so they stay stable when a label or group changes; the runtime page keeps the `advanced` ID.

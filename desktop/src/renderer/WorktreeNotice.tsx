@@ -3,22 +3,25 @@ import type { Thread } from "../shared/protocol";
 import { MessageCopyButton } from "./MessageActions";
 import { translateCurrent as translate, useI18n } from "./i18n";
 
-export function ForkWorktreeNotice({
+/** Record of the worktree a conversation runs in, whether it was forked into
+ * one or started there. */
+export function WorktreeNotice({
   thread,
 }: {
   thread: Thread;
 }): JSX.Element | null {
   const { t } = useI18n();
   const worktree = thread.worktree;
-  if (!worktree || !thread.forked_from_id) {
+  if (!worktree) {
     return null;
   }
+  const forked = Boolean(thread.forked_from_id);
 
   const log = worktreeCreationLog(thread);
   const head = worktree.base_head?.trim();
 
   return (
-    <section className="fork-worktree-notice" aria-label={t("worktree.forkedAria")}>
+    <section className="fork-worktree-notice" aria-label={t(forked ? "worktree.forkedAria" : "worktree.created")}>
       <details className="fork-worktree-card">
         <summary className="fork-worktree-summary">
           <span className="fork-worktree-glyph">
@@ -26,7 +29,7 @@ export function ForkWorktreeNotice({
           </span>
           <span className="fork-worktree-summary-text">
             <strong>{t("worktree.created")}</strong>
-            <span>{t("worktree.forkedFromConversation")}</span>
+            <span>{t(forked ? "worktree.forkedFromConversation" : "worktree.startedSeparately")}</span>
           </span>
           <ChevronDown className="fork-worktree-chevron icon" aria-hidden="true" />
         </summary>
@@ -77,7 +80,7 @@ function worktreeCreationLog(thread: Thread): string {
     head ? translate("worktree.logPreparing", { head: shortSHA(head) }) : "",
     translate("worktree.logBaseRepository", { path: worktree.base_repo || thread.cwd }),
     translate("worktree.logCreatedAt", { path: worktree.path }),
-    translate("worktree.logForkSession", { id: thread.id }),
+    translate(thread.forked_from_id ? "worktree.logForkSession" : "worktree.logSession", { id: thread.id }),
   ].filter(Boolean);
   return lines.join("\n");
 }

@@ -18,7 +18,7 @@ For work you want to keep in a repository, add and select that repository first.
 
 Select a workspace to see its conversations or start a new one. Reopening a saved conversation continues its own work; changing the foreground selection does not redirect other running sessions.
 
-Conversations in the same folder share its files. Separate conversation history does not prevent two agents from editing the same file. Use a [Git worktree fork](conversations.md#fork-from-an-earlier-message) when parallel changes need separate directories.
+Conversations in the same folder share its files. Separate conversation history does not prevent two agents from editing the same file. When parallel changes need separate directories, start a new conversation [in a Git worktree](conversations.md#choose-where-a-new-conversation-works) or [fork one into a worktree](conversations.md#fork-from-an-earlier-message).
 
 ## Move or remove a workspace
 

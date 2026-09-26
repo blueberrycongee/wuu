@@ -8,6 +8,7 @@ import {
   FolderX,
   ArrowUp,
   ShieldCheck,
+  Split,
 } from "./WuuIcons";
 import {
   type ClipboardEvent as ReactClipboardEvent,
@@ -96,6 +97,7 @@ import type {
   CodexModelLoadState,
   CodexRuntimeMenu,
   ComposerVariant,
+  ComposerWorktreeControl,
   PermissionMode
 } from "./ComposerTypes";
 import { COMPOSER_PROJECT_MENU_WIDTH, composerStatusIsLiveProgress, composerStatusText } from "./ComposerTypes";
@@ -156,6 +158,7 @@ export function Composer({
   onToggleBranchMenu,
   onSelectGitBranch,
   onCreateGitBranch,
+  worktree,
   activeContext,
   activeProject,
   compactDisabledReason,
@@ -261,6 +264,7 @@ export function Composer({
   gitStatus?: GitStatusResult;
   branchPickerDisabled?: boolean;
   onCreateGitBranch?: (branch: string) => Promise<void>;
+  worktree?: ComposerWorktreeControl;
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
   activeProject?: DesktopProject;
@@ -1154,7 +1158,7 @@ export function Composer({
           <ComposerFeedback text={statusText} liveProgress={statusIsLiveProgress} />
           {canSelectProject ? (
             <div className="composer-workspace-bar" ref={menuRef}>
-              <div className="hero-project-pill-anchor composer-project-control">
+              <div className="hero-project-pill-anchor composer-project-control composer-workspace-group">
                 <Tooltip
                   content={projectPillTitle}
                   disabled={projectPillTitle === projectPillLabel}
@@ -1198,15 +1202,32 @@ export function Composer({
                 ) : null}
               </div>
               {gitStatus?.is_repo ? (
-                <ComposerBranchPicker
-                  key={activeContext?.cwd}
-                  gitStatus={gitStatus}
-                  disabled={branchPickerDisabled || readOnly}
-                  open={branchMenuOpen}
-                  onToggle={onToggleBranchMenu}
-                  onSelect={onSelectGitBranch}
-                  onCreate={onCreateGitBranch}
-                />
+                <div className="composer-workspace-group composer-git-controls">
+                  <ComposerBranchPicker
+                    key={activeContext?.cwd}
+                    gitStatus={gitStatus}
+                    disabled={branchPickerDisabled || readOnly}
+                    open={branchMenuOpen}
+                    onToggle={onToggleBranchMenu}
+                    onSelect={worktree?.enabled ? worktree.onSelectStartBranch : onSelectGitBranch}
+                    onCreate={worktree?.enabled ? undefined : onCreateGitBranch}
+                    worktreeStart={worktree?.enabled ? { branch: worktree.startBranch } : undefined}
+                  />
+                  {worktree ? (
+                    <Tooltip content={t("composer.worktreeHint")}>
+                      <button
+                        className="composer-worktree-toggle"
+                        type="button"
+                        aria-pressed={worktree.enabled}
+                        disabled={branchPickerDisabled || readOnly}
+                        onClick={worktree.onToggle}
+                      >
+                        <Split className="hero-project-pill-icon" aria-hidden="true" />
+                        <span>{t("composer.worktree")}</span>
+                      </button>
+                    </Tooltip>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           ) : null}

@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- New conversations can start in an isolated Git worktree from the composer's
+  branch selector. The project keeps its current branch and uncommitted changes;
+  the worktree toggle resets for the next conversation.
+
 - The model popover has an independent Fast mode toggle and reset for supported
   provider models and native or ACP engines. Conversation and draft selections
   preserve speed separately from reasoning effort; `/fast` uses the same setting.
