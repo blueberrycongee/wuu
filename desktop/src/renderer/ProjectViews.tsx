@@ -14,7 +14,7 @@ import {
   LoaderCircle,
   LogOut,
   MessagesSquare,
-  Workflow,
+  Project,
   X,
 } from "./WuuIcons";
 import { useI18n } from "./i18n";
@@ -40,13 +40,13 @@ export function ProjectStatusStrip({ project }: { project: Thread }): JSX.Elemen
       className={`project-status-strip${pending ? " has-pending" : ""}`}
       onClick={() => actions.openProjectPanel(project)}
     >
-      {running ? <LoaderCircle className="project-status-spinner" aria-hidden="true" /> : <Workflow aria-hidden="true" />}
+      {running ? <LoaderCircle className="project-status-spinner" aria-hidden="true" /> : <Project aria-hidden="true" />}
       <span>{parts.join(" · ")}</span>
     </button>
   );
 }
 
-const PROJECT_EVENTS: Record<string, { label: TranslationKey; Icon: typeof Workflow }> = {
+const PROJECT_EVENTS: Record<string, { label: TranslationKey; Icon: typeof Project }> = {
   project_message: { label: "projects.event.message", Icon: MessagesSquare },
   project_result: { label: "projects.event.result", Icon: MessagesSquare },
   project_takeover: { label: "projects.event.takeover", Icon: Hand },

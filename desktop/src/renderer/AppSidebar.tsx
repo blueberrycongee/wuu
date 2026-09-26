@@ -14,7 +14,7 @@ import {
   MessagesSquare,
   Plus,
   Search,
-  Workflow,
+  Project,
 } from "./WuuIcons";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -1942,7 +1942,7 @@ export function AppSidebar({
                         disabled={!hasRuntimeContext}
                         onClick={() => activateNative(() => onCreateProject())}
                       >
-                        <Workflow className="icon-lg" />
+                        <Project className="icon-lg" />
                         <span>{t("projects.newProject")}</span>
                       </button>
                     ) : null}

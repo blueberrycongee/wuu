@@ -15,7 +15,7 @@ import {
   ArrowLeft,
   SquarePen,
   Info,
-  Workflow,
+  Project,
   X,
 } from "./WuuIcons";
 import type {
@@ -516,7 +516,7 @@ export function ConversationTitleActions({
   const management = projectSession ? <>
     <button type="button" className="session-control-project" title={t("projects.openCoordinator")}
       onClick={() => projectActions.openThread(control.manager_id)}>
-      <Workflow aria-hidden="true" />
+      <Project aria-hidden="true" />
       <span>{control.manager_name}</span>
     </button>
     <span className="session-control-label">{controlLabel}</span>

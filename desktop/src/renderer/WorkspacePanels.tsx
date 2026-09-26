@@ -44,7 +44,7 @@ import {
   Plus,
   ShieldCheck,
   Terminal,
-  Workflow,
+  Project,
   X,
 } from "./WuuIcons";
 import type { ActivitySession, BrowserDockTarget, GitStatusResult, RuntimeContext, Thread } from "../shared/protocol";
@@ -1364,7 +1364,7 @@ function WorkspaceViewTabIcon({ tab, className }: { tab: WorkspaceViewTab; class
     return <FileDiff className={className} />;
   }
   if (tab.kind === "project") {
-    return <Workflow className={className} />;
+    return <Project className={className} />;
   }
   if (tab.kind === "file" || tab.kind === "artifact") {
     return <FileText className={className} />;

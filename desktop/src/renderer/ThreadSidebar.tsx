@@ -1,5 +1,5 @@
 import { hostSupports } from "./HostCapabilities";
-import { Archive, Folder, FolderOpen, MessageSquare, MessageSquarePlus, MessagesSquare, Pin, Split, Workflow } from "./WuuIcons";
+import { Archive, Folder, FolderOpen, MessageSquare, MessageSquarePlus, MessagesSquare, Pin, Split, Project } from "./WuuIcons";
 import {
   type DragEvent as ReactDragEvent,
   useEffect,
@@ -957,7 +957,7 @@ function ThreadRows({
               ) : null}
               {project ? (
                 <span className="project-thread-glyph" aria-hidden="true">
-                  <Workflow />
+                  <Project />
                 </span>
               ) : null}
               <button
