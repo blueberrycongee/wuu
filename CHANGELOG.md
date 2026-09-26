@@ -153,6 +153,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   command's model-facing output is JSON, rather than treating that output as
   execution metadata.
 
+- History search finds literal quotes, paths, line breaks, and HTML characters
+  in deduplicated tool results, including model text and multi-part output.
+
 - Ready Agent Core entries show an external agent's detected executable path in
   its override field without repeating it in the status or help text.
 
