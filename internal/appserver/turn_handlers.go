@@ -29,6 +29,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/imageproc"
 	"github.com/blueberrycongee/wuu/internal/insight"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/modelcatalog"
+	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -1218,7 +1220,10 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		// selected it. Self-heal the dead provider/model pair to the
 		// workspace defaults so the turn proceeds instead of every send
 		// failing on the dead pin.
-		healed := s.healThreadSelectionForRemovedProvider(th)
+		healed, healErr := s.healThreadSelectionForRemovedProvider(th)
+		if healErr != nil {
+			return nil, healErr
+		}
 		healedSelection := runtime.ThreadModelSelection{
 			Provider:       healed.Provider,
 			Model:          healed.Model,
@@ -1318,10 +1323,20 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 // would silently widen a read_only pin to the workspace mode and, under an
 // exec --permission-mode override, persist the never-persisted process
 // override into the session row. Persist and notify are best-effort: the heal
-// exists to unblock the turn, so it must not introduce new failure modes of
-// its own.
-func (s *Server) healThreadSelectionForRemovedProvider(th *threadState) session.RuntimeSelection {
+// exists to unblock the turn. Speed survives only when the replacement model
+// supports it, just as it does when explicitly switching models.
+func (s *Server) healThreadSelectionForRemovedProvider(th *threadState) (session.RuntimeSelection, error) {
 	defaults := s.currentSessionRuntimeSelection()
+	cfg, _, err := s.rt.LoadEffectiveConfig()
+	if err != nil {
+		return session.RuntimeSelection{}, err
+	}
+	provider, name, err := cfg.ResolveProvider(defaults.Provider)
+	if err != nil {
+		return session.RuntimeSelection{}, err
+	}
+	_, provider = modelcatalog.EnrichProvider(name, provider, defaults.Model)
+	supportsFast, _ := modelvariant.SpeedSupport(provider, defaults.Model)
 	th.mu.Lock()
 	healed := session.RuntimeSelection{
 		Provider:       defaults.Provider,
@@ -1331,6 +1346,9 @@ func (s *Server) healThreadSelectionForRemovedProvider(th *threadState) session.
 		Speed:          th.Speed,
 		PermissionMode: strings.TrimSpace(th.PermissionMode),
 		ApproveForMe:   th.ApproveForMe,
+	}
+	if !supportsFast {
+		healed.Speed = ""
 	}
 	applyThreadRuntimeSelection(th, healed)
 	persist := th.PersistHistory
@@ -1344,7 +1362,7 @@ func (s *Server) healThreadSelectionForRemovedProvider(th *threadState) session.
 	if err := s.notifyThreadUpdated(thread); err != nil {
 		providers.DebugLogf("notify healed runtime selection for thread %q: %v", th.ID, err)
 	}
-	return healed
+	return healed, nil
 }
 
 // threadRuntimeMatchesSelectionLocked reports whether an idle cached runtime

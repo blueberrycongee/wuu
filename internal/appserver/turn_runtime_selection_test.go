@@ -122,69 +122,107 @@ func TestEnsureThreadRuntimeRebuildsWhenThreadSelectionChanged(t *testing.T) {
 // the thread's own variant and permission pins must survive, or the heal
 // would silently widen a read_only thread to the workspace mode.
 func TestEnsureThreadRuntimeHealsRemovedProviderPin(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
-	writeSelectionTestConfig(t, rt.ConfigPath)
-	out := &lockedBuffer{}
-	srv := New(rt, out)
+	for _, tc := range []struct {
+		name, speed, wantSpeed string
+		supportsFast           bool
+	}{
+		{name: "inherited"},
+		{name: "unsupported-fast", speed: "fast"},
+		{name: "supported-fast", speed: "fast", wantSpeed: "fast", supportsFast: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			writeSelectionTestConfig(t, rt.ConfigPath)
+			if tc.supportsFast {
+				cfg, _, err := rt.LoadEffectiveConfig()
+				if err != nil {
+					t.Fatal(err)
+				}
+				provider := cfg.Providers["fake-provider"]
+				provider.Models = map[string]config.ProviderModelConfig{"fake-model": {FastMode: &tc.supportsFast}}
+				cfg.Providers["fake-provider"] = provider
+				data, err := json.Marshal(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(rt.ConfigPath, data, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
 
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "healed-thread", rt.RootDir); err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	if _, err := session.SetRuntimeSelection(rt.SessionDir, "healed-thread", session.RuntimeSelection{
-		Provider:       "removed-provider",
-		Model:          "removed-model",
-		Variant:        "high",
-		PermissionMode: config.PermissionModeReadOnly,
-	}); err != nil {
-		t.Fatalf("pin removed provider: %v", err)
-	}
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/resume","params":{"session_id":"healed-thread"}}`)); err != nil {
-		t.Fatalf("thread/resume: %v", err)
-	}
-	th := srv.thread("healed-thread")
-	if th == nil {
-		t.Fatal("resumed thread is not cached")
-	}
+			if _, err := session.CreateWithMetadata(rt.SessionDir, "healed-thread", rt.RootDir); err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+			if _, err := session.SetRuntimeSelection(rt.SessionDir, "healed-thread", session.RuntimeSelection{
+				Provider:       "removed-provider",
+				Model:          "removed-model",
+				Speed:          tc.speed,
+				Variant:        "high",
+				PermissionMode: config.PermissionModeReadOnly,
+			}); err != nil {
+				t.Fatalf("pin removed provider: %v", err)
+			}
+			if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/resume","params":{"session_id":"healed-thread"}}`)); err != nil {
+				t.Fatalf("thread/resume: %v", err)
+			}
+			th := srv.thread("healed-thread")
+			if th == nil {
+				t.Fatal("resumed thread is not cached")
+			}
 
-	built, err := srv.ensureThreadRuntime(th)
-	if err != nil {
-		t.Fatalf("ensureThreadRuntime should heal the dead pin: %v", err)
-	}
-	if built.StreamRunner.Model != "fake-model" {
-		t.Fatalf("healed runtime model = %q, want workspace default fake-model", built.StreamRunner.Model)
-	}
-	th.mu.Lock()
-	provider, model := th.ModelProvider, th.Model
-	variant, permission := th.ModelVariant, th.PermissionMode
-	th.mu.Unlock()
-	if provider != "fake-provider" || model != "fake-model" {
-		t.Fatalf("thread selection not healed: provider=%q model=%q", provider, model)
-	}
-	if variant != "high" || permission != config.PermissionModeReadOnly {
-		t.Fatalf("heal must keep the thread's own pins: variant=%q permission=%q", variant, permission)
-	}
-	sess, ok, err := session.Find(rt.SessionDir, "healed-thread")
-	if err != nil || !ok {
-		t.Fatalf("find session: ok=%v err=%v", ok, err)
-	}
-	if sess.Provider != "fake-provider" || sess.Model != "fake-model" {
-		t.Fatalf("session row not healed: provider=%q model=%q", sess.Provider, sess.Model)
-	}
-	if sess.Variant != "high" || sess.PermissionMode != config.PermissionModeReadOnly {
-		t.Fatalf("session row lost its own pins: variant=%q permission=%q", sess.Variant, sess.PermissionMode)
-	}
-	var healed *Thread
-	for _, msg := range parseOutput(t, out.String()) {
-		if msg["method"] != "thread/updated" {
-			continue
-		}
-		notif := remarshal[ThreadUpdatedNotification](t, msg["params"])
-		if notif.Thread.ID == "healed-thread" {
-			healed = &notif.Thread
-		}
-	}
-	if healed == nil || healed.ModelProvider != "fake-provider" || healed.Model != "fake-model" {
-		t.Fatalf("no thread/updated broadcasting the healed selection, got %+v", healed)
+			built, err := srv.ensureThreadRuntime(th)
+			if err != nil {
+				t.Fatalf("ensureThreadRuntime should heal the dead pin: %v", err)
+			}
+			if built.Selection.Speed != tc.wantSpeed {
+				t.Fatalf("runtime speed = %q, want %q", built.Selection.Speed, tc.wantSpeed)
+			}
+			if tc.wantSpeed == "fast" && built.StreamRunner.ProviderOptions["serviceTier"] != "priority" {
+				t.Fatalf("supported speed was dropped: %v", built.StreamRunner.ProviderOptions)
+			}
+			if built.StreamRunner.Model != "fake-model" {
+				t.Fatalf("healed runtime model = %q, want workspace default fake-model", built.StreamRunner.Model)
+			}
+			th.mu.Lock()
+			provider, model := th.ModelProvider, th.Model
+			variant, permission := th.ModelVariant, th.PermissionMode
+			th.mu.Unlock()
+			if provider != "fake-provider" || model != "fake-model" {
+				t.Fatalf("thread selection not healed: provider=%q model=%q", provider, model)
+			}
+			if variant != "high" || permission != config.PermissionModeReadOnly {
+				t.Fatalf("heal must keep the thread's own pins: variant=%q permission=%q", variant, permission)
+			}
+			sess, ok, err := session.Find(rt.SessionDir, "healed-thread")
+			if err != nil || !ok {
+				t.Fatalf("find session: ok=%v err=%v", ok, err)
+			}
+			if sess.Speed != tc.wantSpeed {
+				t.Fatalf("persisted speed = %q, want %q", sess.Speed, tc.wantSpeed)
+			}
+			if sess.Provider != "fake-provider" || sess.Model != "fake-model" {
+				t.Fatalf("session row not healed: provider=%q model=%q", sess.Provider, sess.Model)
+			}
+			if sess.Variant != "high" || sess.PermissionMode != config.PermissionModeReadOnly {
+				t.Fatalf("session row lost its own pins: variant=%q permission=%q", sess.Variant, sess.PermissionMode)
+			}
+			var healed *Thread
+			for _, msg := range parseOutput(t, out.String()) {
+				if msg["method"] != "thread/updated" {
+					continue
+				}
+				notif := remarshal[ThreadUpdatedNotification](t, msg["params"])
+				if notif.Thread.ID == "healed-thread" {
+					healed = &notif.Thread
+				}
+			}
+			if healed == nil || healed.ModelProvider != "fake-provider" || healed.Model != "fake-model" || healed.Speed != tc.wantSpeed {
+				t.Fatalf("no thread/updated broadcasting the healed selection, got %+v", healed)
+			}
+		})
 	}
 }
 
