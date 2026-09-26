@@ -124,6 +124,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   including subsequent model input, while preserving valid pre-compaction history
   and the append-only audit transcript.
 
+- Safe mode stops approved desktop plugin modules from loading or activating,
+  while keeping the extension inventory available for recovery and management.
+
 - Remote Web clients reconnect when the relay stops responding during authentication,
   and cancel pending authentication immediately when stopped or suspended.
 

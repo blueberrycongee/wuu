@@ -444,7 +444,10 @@ export function App(): JSX.Element {
     typeof window.wuu.listUserQuestions === "function" &&
     typeof window.wuu.answerUserQuestion === "function" &&
     typeof window.wuu.cancelUserQuestion === "function";
-  useDesktopPluginRuntime(state.initialized?.extension_inventory);
+  useDesktopPluginRuntime(
+    state.initialized?.extension_inventory,
+    state.initialized?.features?.safe_mode,
+  );
   const {
     prompt,
     promptRevision,
