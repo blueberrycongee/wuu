@@ -120,8 +120,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Pasted-text cards retain their segments and titles when conversations are
-  restored or forked. Canonical message text and model input remain unchanged.
+- Safe mode stops approved desktop plugin modules from loading or activating,
+  while keeping the extension inventory available for recovery and management.
 
 - Remote Web clients reconnect when the relay stops responding during authentication,
   and cancel pending authentication immediately when stopped or suspended.
@@ -183,6 +183,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - History search finds literal quotes, paths, line breaks, and HTML characters
   in deduplicated tool results, including model text and multi-part output.
+
+- Pasted-text cards retain their segments and titles when conversations are
+  restored or forked. Canonical message text and model input remain unchanged.
 
 - Ready Agent Core entries show an external agent's detected executable path in
   its override field without repeating it in the status or help text.
