@@ -1218,11 +1218,23 @@ func (th *threadState) hasAgentTextLocked(turnID, text string) bool {
 	return false
 }
 
-func (th *threadState) ensureTurnLocked(turnID string, now time.Time) Turn {
-	for _, turn := range th.Turns {
-		if turn.ID == turnID {
-			return turn
+func (th *threadState) turnIndexLocked(turnID string) int {
+	// Streaming usually updates the tail. Check its ID on each lookup so history
+	// edits and reloads cannot leave a cached position pointing at another turn.
+	if index := len(th.Turns) - 1; index >= 0 && th.Turns[index].ID == turnID {
+		return index
+	}
+	for index := range th.Turns {
+		if th.Turns[index].ID == turnID {
+			return index
 		}
+	}
+	return -1
+}
+
+func (th *threadState) ensureTurnLocked(turnID string, now time.Time) Turn {
+	if index := th.turnIndexLocked(turnID); index >= 0 {
+		return th.Turns[index]
 	}
 	turn := Turn{
 		ID:            turnID,
@@ -1238,11 +1250,9 @@ func (th *threadState) ensureTurnLocked(turnID string, now time.Time) Turn {
 }
 
 func (th *threadState) replaceTurnLocked(turn Turn) {
-	for i := range th.Turns {
-		if th.Turns[i].ID == turn.ID {
-			th.Turns[i] = turn
-			return
-		}
+	if index := th.turnIndexLocked(turn.ID); index >= 0 {
+		th.Turns[index] = turn
+		return
 	}
 	th.Turns = append(th.Turns, turn)
 }
