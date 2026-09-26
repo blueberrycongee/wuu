@@ -57,7 +57,7 @@ html[data-focus-modality="keyboard"] .project-inline-link:focus-visible {
   max-width: 100%;
   min-height: 26px;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-pill);
   background: var(--surface-1);
@@ -69,13 +69,14 @@ html[data-focus-modality="keyboard"] .project-inline-link:focus-visible {
   padding: 2px 10px;
 }
 
-.project-status-strip > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
+.project-status-count {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   white-space: nowrap;
 }
 
-.project-status-strip > svg {
+.project-status-count > svg {
   flex: none;
   width: 14px;
   height: 14px;
@@ -105,16 +106,22 @@ html[data-focus-modality="keyboard"] .project-status-strip:focus-visible {
 }
 
 .project-event-line {
-  display: flex;
+  display: grid;
   min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1) var(--space-3);
+  grid-template-columns: 15px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-2);
   color: var(--ink-soft);
   font-size: var(--font-sm);
 }
 
+.project-event-actions {
+  display: flex;
+  gap: 2px;
+}
+
 .project-event-icon {
+  margin-top: calc((var(--control-size-inline) - 15px) / 2);
   flex: none;
   width: 15px;
   height: 15px;
@@ -122,6 +129,8 @@ html[data-focus-modality="keyboard"] .project-status-strip:focus-visible {
 }
 
 .project-event-text {
+  align-self: center;
+  overflow-wrap: anywhere;
   min-width: 0;
   color: var(--ink);
 }
@@ -280,7 +289,7 @@ html[data-focus-modality="keyboard"] .session-control-project:focus-visible {
   background: var(--surface-2);
 }
 
-.project-panel-icon-button {
+.project-icon-button {
   flex: none;
   width: var(--control-size-inline);
   height: var(--control-size-inline);

@@ -1057,7 +1057,10 @@ export function Composer({
 
   const content = (
     <div className={`composer-stack${isComposerExpanded ? " is-expanded" : ""}`} data-wuu-component="composer">
-      <MemoizedComposerPluginSlot host={pluginHost} id="composer.above" context={pluginSlotContext} />
+      <div className="composer-above-input">
+        {statusAccessory ? <div className="composer-status-accessory">{statusAccessory}</div> : null}
+        <MemoizedComposerPluginSlot host={pluginHost} id="composer.above" context={pluginSlotContext} />
+      </div>
       <div className="composer-shell">
         {slashMenuOpen ? (
           <FloatingMenuPortal
@@ -1141,7 +1144,6 @@ export function Composer({
           onEditGuideMessage={onEditGuideMessage}
           onEditQueuedMessage={onEditQueuedMessage}
         />
-        {statusAccessory ? <div className="composer-status-accessory">{statusAccessory}</div> : null}
         <div className="composer-frame-shell">
           <ComposerFeedback text={statusText} liveProgress={statusIsLiveProgress} />
           {canSelectWorkspace ? (

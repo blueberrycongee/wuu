@@ -731,6 +731,14 @@
   transform: translateY(calc(var(--composer-expanded-offset) * -1));
 }
 
+.composer-above-input {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+/* Above-input accessories follow the frame as typing grows it upward. */
+.composer-stack .composer-above-input,
 .composer-stack .composer-pending-drawer {
   transform: translateY(calc(var(--composer-expanded-offset) * -1));
 }

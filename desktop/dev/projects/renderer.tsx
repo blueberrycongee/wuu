@@ -12,6 +12,7 @@ import type { ProjectCandidate, ProjectCandidateParams, Thread, Turn } from "../
 import { AppSidebar } from "../../src/renderer/AppSidebar";
 import { initialState, summarizeThreadsForSidebar, type AppState } from "../../src/renderer/AppState";
 import { ConversationTitleActions } from "../../src/renderer/ConversationShellRenderers";
+import { Composer } from "../../src/renderer/ComposerView";
 import { EmptyConversationHome } from "../../src/renderer/LoadingViews";
 import { ProjectActionsProvider, type ProjectActions } from "../../src/renderer/ProjectActions";
 import { ProjectStatusStrip, useTurnProposals } from "../../src/renderer/ProjectViews";
@@ -23,7 +24,7 @@ import { desktopPluginHost } from "../../src/renderer/plugins/DesktopPluginRunti
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import { I18nProvider } from "../../src/renderer/i18n";
 import { CLEAR_UNREAD_HINT_SEEN_KEY } from "../../src/renderer/SidebarBrand";
-import { ArrowUp, Plus } from "../../src/renderer/WuuIcons";
+import { ListTodo } from "../../src/renderer/WuuIcons";
 import "../../src/renderer/styles.css";
 import "./fixture.css";
 
@@ -145,6 +146,42 @@ if (params.get("publisher") !== "0") {
   });
 }
 
+if (params.has("composer-accessories")) {
+  void desktopPluginHost.activateGeneration({
+    pluginId: "preview:task", generation: "one",
+    register(api) {
+      function TaskDrawer() {
+        const [expanded, setExpanded] = useState(false);
+        const Drawer = api.ui.ComposerDrawer;
+        return <Drawer expanded={expanded} onExpandedChange={setExpanded} toggleLabel="任务进度"
+          icon={<ListTodo />} summary={<span className="sample-task-title">Automation/protocol audit: verify the permission-mode merge path.</span>}>
+          <p className="sample-task-details">核对自动化、协议与权限的实际行为，记录可复现的差异。</p>
+        </Drawer>;
+      }
+      api.registerSlot("composer.above", { id: "tasks", render: () => <TaskDrawer /> });
+    },
+  });
+}
+
+function PreviewComposer({ current }: { current?: Thread }) {
+  const [prompt, setPrompt] = useState("");
+  return <Composer mainConversation prompt={prompt} setPrompt={setPrompt} files={[]} images={[]}
+    queryHistorySessionID={current?.id}
+    statusAccessory={current?.source === "project" ? <ProjectStatusStrip project={current} /> : undefined}
+    queuedMessages={params.has("queued") ? [{ id: "queue", text: "完成后整理差异清单。", files: [], images: [] }] : []}
+    guideMessages={[]} running={params.has("composer-accessories")} status="" readOnly={false}
+    projects={[workspace]} codexModels={{ loading: false, error: "", models: [] }} codexRuntimeMenu={null}
+    codexRuntimeRef={{ current: null }} menuOpen={false} accessMenuOpen={false} branchMenuOpen={false}
+    menuRef={{ current: null }} accessMenuRef={{ current: null }} workspaceFilter="" setWorkspaceFilter={noop}
+    onToggleMenu={noop} onToggleAccessMenu={noop} onToggleBranchMenu={noop} onToggleCodexRuntimeMenu={noop}
+    onSelectRuntimeModel={noop} onSelectRuntimeEffort={noop} onSelectPermissionMode={noop}
+    onOpenSettings={noop} onOpenSkillsCatalog={noop} onSelectWorkspace={noop} onSelectNoProject={noop}
+    onSelectGitBranch={noop} onCreateWorkspace={noop} onOpenWorkspace={noop} onStartNewThread={noop}
+    onOpenWorkspaceTool={noop} onPasteAttachmentFiles={noop} onRemoveFile={noop} onRemoveImage={noop}
+    onRemoveQueuedMessage={noop} onRemoveGuideMessage={noop} onGuideQueuedMessage={noop}
+    onEditQueuedMessage={noop} onEditGuideMessage={noop} onSend={noop} onInterrupt={noop} />;
+}
+
 function Conversation({ current }: { current: Thread }) {
   const renderTurnProposal = useTurnProposals(current);
   return <div className="conversation-width session-flow">
@@ -219,14 +256,7 @@ function Fixture() {
         <div className={`scroll-region${draft ? " empty-scroll-region" : ""}`}>
           {draft ? <EmptyConversationHome title="新项目" /> : current ? <Conversation current={current} /> : null}
         </div>
-        <footer className="composer-wrap dock-composer-wrap"><div className="composer-stack"><div className="composer-shell">
-          {!draft && current?.source === "project" ? <div className="composer-status-accessory"><ProjectStatusStrip project={current} /></div> : null}
-          <div className="composer-frame-shell"><div className="composer-frame"><div className="composer">
-            <textarea aria-label="示例输入" placeholder={draft ? "描述目标和约束…" : "即刻开始"} />
-            <div className="composer-bar"><div className="composer-bar-left"><button className="composer-tool-button" aria-label="附件"><Plus className="icon" /></button></div>
-              <div className="composer-bar-right"><button className="codex-runtime-trigger">Wuu · 示例模型</button><button className="composer-action-button composer-send-button" disabled aria-label="发送"><ArrowUp className="icon" /></button></div></div>
-          </div></div></div>
-        </div></div></footer>
+        <PreviewComposer current={draft ? undefined : current} />
       </main>
       <WorkspaceRightPanel open={tabs.length > 0} present={tabs.length > 0} tabs={tabs} activeTabID={activeTab}
         activeContext={state.activeContext} workspaceContext={state.activeContext} onSelectTab={setActiveTab} onOpenTool={noop}

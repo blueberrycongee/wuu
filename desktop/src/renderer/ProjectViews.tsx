@@ -5,6 +5,8 @@ import { useProjectActions, useProjectCandidates, type ProjectThread } from "./P
 import { PROJECT_SESSION_SOURCE, projectSessionsOf } from "./ProjectSessions";
 import { baseThreadTitle } from "./ThreadTitles";
 import {
+  ChevronDown,
+  ChevronUp,
   CircleCheck,
   CornerUpLeft,
   FileDiff,
@@ -38,10 +40,13 @@ export function ProjectStatusStrip({ project }: { project: Thread }): JSX.Elemen
     <button
       type="button"
       className={`project-status-strip${pending ? " has-pending" : ""}`}
+      title={parts.join(" · ")}
+      aria-label={parts.join(" · ")}
       onClick={() => actions.openProjectPanel(project)}
     >
-      {running ? <LoaderCircle className="project-status-spinner" aria-hidden="true" /> : <Project aria-hidden="true" />}
-      <span>{parts.join(" · ")}</span>
+      {running ? <span className="project-status-count" aria-hidden="true"><LoaderCircle className="project-status-spinner" />{formatNumber(running)}</span> : null}
+      {pending ? <span className="project-status-count" aria-hidden="true"><FileDiff />{formatNumber(pending)}</span> : null}
+      <span className="project-status-count" aria-hidden="true"><MessagesSquare />{formatNumber(sessions.length)}</span>
     </button>
   );
 }
@@ -84,25 +89,31 @@ export function ProjectEventRow({ item }: { item: ThreadItem }): JSX.Element {
       <div className="project-event-line">
         <event.Icon className="project-event-icon" aria-hidden="true" />
         <span className="project-event-text">{t(event.label, { name })}</span>
-        {reviewable && session ? (
-          <button type="button" className="project-inline-link" onClick={() => actions?.openProposal(session)}>
-            {t("projects.review")}
+        <div className="project-event-actions">
+          {reviewable && session ? (
+            <button type="button" className="icon-button project-icon-button"
+              title={t("projects.review")} aria-label={t("projects.review")} onClick={() => actions?.openProposal(session)}>
+              <FileDiff aria-hidden="true" />
+            </button>
+          ) : null}
+          {session && actions ? (
+            <button type="button" className="icon-button project-icon-button"
+              title={t("projects.openSession")} aria-label={t("projects.openSession")} onClick={() => actions.openThread(session.id)}>
+              <MessagesSquare aria-hidden="true" />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="icon-button project-icon-button project-event-toggle"
+            title={t(expanded ? "projects.event.hideDetails" : "projects.event.details")}
+            aria-label={t(expanded ? "projects.event.hideDetails" : "projects.event.details")}
+            aria-expanded={expanded}
+            aria-controls={detailsID}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
           </button>
-        ) : null}
-        {session && actions ? (
-          <button type="button" className="project-inline-link" onClick={() => actions.openThread(session.id)}>
-            {t("projects.openSession")}
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="project-inline-link project-event-toggle"
-          aria-expanded={expanded}
-          aria-controls={detailsID}
-          onClick={() => setExpanded((value) => !value)}
-        >
-          {t(expanded ? "projects.event.hideDetails" : "projects.event.details")}
-        </button>
+        </div>
       </div>
       {expanded ? <p id={detailsID} className="project-event-details">{item.text}</p> : null}
     </div>
@@ -131,8 +142,11 @@ export function ProposalSummary({ session, candidate }: {
         ].join(" · ")}
       </span>
       {actions && candidate.disposition !== "superseded" ? (
-        <button type="button" className="project-inline-link" onClick={() => actions.openProposal(session)}>
-          {t(candidate.disposition ? "projects.viewProposal" : "projects.review")}
+        <button type="button" className="icon-button project-icon-button"
+          title={t(candidate.disposition ? "projects.viewProposal" : "projects.review")}
+          aria-label={t(candidate.disposition ? "projects.viewProposal" : "projects.review")}
+          onClick={() => actions.openProposal(session)}>
+          <FileDiff aria-hidden="true" />
         </button>
       ) : null}
     </div>

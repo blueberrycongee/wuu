@@ -38,7 +38,7 @@ export function ProjectPanel({ projectID }: { projectID: string }): JSX.Element 
     <section className="project-panel" aria-label={baseThreadTitle(project)}>
       <header className="project-panel-header">
         <h2 title={baseThreadTitle(project)}>{baseThreadTitle(project)}</h2>
-        <button type="button" className="icon-button project-panel-icon-button"
+        <button type="button" className="icon-button project-icon-button"
           title={t("projects.openCoordinator")} aria-label={t("projects.openCoordinator")}
           onClick={() => actions.openThread(project.id)}>
           <MessagesSquare aria-hidden="true" />
@@ -56,7 +56,7 @@ export function ProjectPanel({ projectID }: { projectID: string }): JSX.Element 
                   count: formatNumber(candidate.changed_files.length),
                 })}
               </span>
-              <button type="button" className="icon-button project-panel-icon-button"
+              <button type="button" className="icon-button project-icon-button"
                 title={t("projects.review")} aria-label={t("projects.review")}
                 onClick={() => actions.openProposal(session)}>
                 <FileDiff aria-hidden="true" />
@@ -105,7 +105,7 @@ function ProjectSessionRow({ session }: { session: ProjectThread }): JSX.Element
           {control ? (
             <button
               type="button"
-              className="icon-button project-panel-icon-button project-panel-row-action"
+              className="icon-button project-icon-button project-panel-row-action"
               title={managed ? `${t("projects.takeOver")} · ${t("projects.takeOverHint")}` : t("projects.returnToProject")}
               aria-label={t(managed ? "projects.takeOver" : "projects.returnToProject")}
               onClick={() => managed ? actions.takeOver(session) : actions.returnToProject(session)}
@@ -113,7 +113,7 @@ function ProjectSessionRow({ session }: { session: ProjectThread }): JSX.Element
               {managed ? <Hand aria-hidden="true" /> : <CornerUpLeft aria-hidden="true" />}
             </button>
           ) : null}
-          <button type="button" className="icon-button project-panel-icon-button project-panel-row-action"
+          <button type="button" className="icon-button project-icon-button project-panel-row-action"
             title={t("projects.release")} aria-label={t("projects.release")} onClick={() => actions.release(session)}>
             <LogOut aria-hidden="true" />
           </button>
@@ -191,7 +191,7 @@ export function ProposalPanel({ sessionID }: { sessionID: string }): JSX.Element
     <section className="project-proposal" aria-busy={busy || undefined} aria-label={t("projects.candidate.title")}>
       <header className="project-panel-header">
         <h2 title={title}>{title}</h2>
-        <button type="button" className="icon-button project-panel-icon-button"
+        <button type="button" className="icon-button project-icon-button"
           title={t("projects.openSession")} aria-label={t("projects.openSession")}
           onClick={() => actions.openThread(session.id)}>
           <MessagesSquare aria-hidden="true" />
