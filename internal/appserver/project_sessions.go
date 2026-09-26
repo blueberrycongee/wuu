@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -239,4 +240,129 @@ func (s *Server) sendProjectSession(ctx context.Context, project session.Session
 	view, err := s.projectSessionView(metadata)
 	view.TurnID = result.TurnID
 	return view, err
+}
+
+func (s *Server) handleProjectSession(req Request) error {
+	var p ProjectSessionParams
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	var metadata session.Session
+	var err error
+	switch p.Action {
+	case "adopt":
+		metadata, err = s.adoptProjectSession(strings.TrimSpace(p.ProjectID), strings.TrimSpace(p.SessionID))
+	case "release":
+		metadata, err = s.releaseProjectSession(strings.TrimSpace(p.ProjectID), strings.TrimSpace(p.SessionID))
+	default:
+		err = errors.New("action must be adopt or release")
+	}
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	thread, err := s.threadAfterMetadataUpdate(metadata)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.notifyThreadUpdated(thread); err != nil {
+		providers.DebugLogf("announce project membership of %q: %v", thread.ID, err)
+	}
+	return s.writeResponse(req.ID, ProjectSessionResult{Thread: thread}, nil)
+}
+
+// adoptProjectSession brings an ordinary conversation of the project's
+// workspace under the project's management and tells the coordinator.
+func (s *Server) adoptProjectSession(projectID, sessionID string) (session.Session, error) {
+	project, live := s.projectCoordinator(projectID)
+	if !live {
+		return session.Session{}, errors.New("this project is no longer active")
+	}
+	metadata, found, err := session.Find(s.rt.SessionDir, sessionID)
+	if err != nil {
+		return session.Session{}, err
+	}
+	if !found || metadata.ArchivedAt != nil {
+		return session.Session{}, fmt.Errorf("%w: %q", session.ErrSessionNotFound, sessionID)
+	}
+	if metadata.ID == project.ID || metadata.Source != "" || metadata.ParentID != "" ||
+		metadata.Visibility == pluginhost.SessionVisibilityPlugin || metadata.Owner != "" && metadata.Owner != projectSessionOwner {
+		return session.Session{}, errors.New("only an ordinary conversation can join a project")
+	}
+	if metadata.WorkspaceID != project.WorkspaceID {
+		return session.Session{}, errors.New("a conversation can join only a project of its own workspace")
+	}
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
+	control, _, err := session.ReadControl(s.rt.SessionDir, sessionID)
+	if err != nil {
+		return session.Session{}, err
+	}
+	if control.ManagerID != "" && control.State != session.ControlReleased {
+		return session.Session{}, errors.New("another manager already controls this conversation")
+	}
+	adopted, err := session.SetProjectMembership(s.rt.SessionDir, sessionID, projectSessionSource, project.ID, metadata.Instructions)
+	if err != nil {
+		return session.Session{}, err
+	}
+	if _, err := session.ChangeControl(s.rt.SessionDir, sessionID, project.ID, session.ControlActive, control.Revision); err != nil {
+		if _, restoreErr := session.SetProjectMembership(s.rt.SessionDir, sessionID, metadata.Source, metadata.ParentID, metadata.Instructions); restoreErr != nil {
+			return session.Session{}, errors.Join(err, restoreErr)
+		}
+		return session.Session{}, err
+	}
+	var notice strings.Builder
+	fmt.Fprintf(&notice, "The user added the conversation %q to this project. You manage it now like the sessions you started; inspect it before you instruct it.", adopted.Title)
+	if th := s.thread(sessionID); th != nil {
+		th.mu.Lock()
+		turns := cloneTurns(th.Turns)
+		th.mu.Unlock()
+		for index := len(turns) - 1; index >= 0; index-- {
+			if answer := finalAnswerText(turns[index]); answer != "" {
+				fmt.Fprintf(&notice, "\n\nIts latest answer:\n%s", excerpt(answer, 1200))
+				break
+			}
+		}
+	}
+	s.enqueueProjectInput(project.ID, sessionID, fmt.Sprintf("project-adopt:%s:%d", sessionID, control.Revision+1), projectCauseAdopted, notice.String(), true)
+	return adopted, nil
+}
+
+// releaseProjectSession ends the project's management of a session, which
+// becomes an ordinary conversation. An undecided proposal must be decided
+// first so its changes are not orphaned.
+func (s *Server) releaseProjectSession(projectID, sessionID string) (session.Session, error) {
+	metadata, err := s.projectManagedSession(projectID, sessionID)
+	if err != nil {
+		return session.Session{}, err
+	}
+	bySession, _, err := session.PendingCandidateCounts(s.rt.SessionDir, projectSessionSource)
+	if err != nil {
+		return session.Session{}, err
+	}
+	if bySession[sessionID] > 0 {
+		return session.Session{}, errors.New("decide the session's pending proposal before removing it from the project")
+	}
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
+	control, ok, err := session.ReadControl(s.rt.SessionDir, sessionID)
+	if err != nil {
+		return session.Session{}, err
+	}
+	if ok && control.State != session.ControlReleased {
+		if control, err = session.ChangeControl(s.rt.SessionDir, sessionID, control.ManagerID, session.ControlReleased, control.Revision); err != nil {
+			return session.Session{}, err
+		}
+	}
+	instructions := metadata.Instructions
+	if instructions == projectSessionInstructions {
+		instructions = ""
+	}
+	released, err := session.SetProjectMembership(s.rt.SessionDir, sessionID, "", "", instructions)
+	if err != nil {
+		return session.Session{}, err
+	}
+	s.revokeSessionInputs(sessionID)
+	notice := fmt.Sprintf("The user removed session %q from this project. It is an ordinary conversation now, and you can no longer instruct it.", metadata.Title)
+	s.enqueueProjectInput(projectID, sessionID, fmt.Sprintf("project-release:%s:%d", sessionID, control.Revision), projectCauseReleased, notice, false)
+	return released, nil
 }

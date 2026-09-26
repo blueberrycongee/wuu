@@ -1665,6 +1665,19 @@ export type ProjectCandidateParams =
   | { action: "get" | "apply" | "discard"; session_id: string; turn_id: string }
   | { action: "publish"; session_id: string; turn_id: string; url: string };
 
+// The user's changes to a project's membership: adopt brings an ordinary
+// conversation of the project's workspace under the project; release makes a
+// managed session an ordinary conversation again.
+export type ProjectSessionParams = {
+  action: "adopt" | "release";
+  project_id: string;
+  session_id: string;
+};
+
+export type ProjectSessionResult = {
+  thread: Thread;
+};
+
 export type ProjectCandidateResult = {
   candidates?: ProjectCandidate[];
   candidate?: ProjectCandidate;
@@ -2149,8 +2162,8 @@ export type ThreadItem = {
   origin_id?: string;
   // Host messages to a project coordinator name their event: "project_result",
   // "project_takeover", "project_pause", "project_return", "project_applied",
-  // "project_discarded" or "project_published"; related_session_id names the
-  // managed session.
+  // "project_discarded", "project_published", "project_adopted" or
+  // "project_released"; related_session_id names the managed session.
   cause?: string;
   presentation_kind?: string;
   arguments?: string;

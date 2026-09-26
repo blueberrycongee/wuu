@@ -61,6 +61,7 @@ const (
 	MethodSkillList                       = "skill/list"
 	MethodThreadStart                     = "thread/start"
 	MethodProjectCandidate                = "project/candidate"
+	MethodProjectSession                  = "project/session"
 	MethodThreadResume                    = "thread/resume"
 	MethodThreadFork                      = "thread/fork"
 	MethodThreadEditMessage               = "thread/edit-message"
@@ -1416,6 +1417,19 @@ type ProjectCandidate struct {
 	URL          string    `json:"url,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	Diff         string    `json:"diff,omitempty"`
+}
+
+// ProjectSessionParams adds an ordinary conversation of the project's
+// workspace to the project (adopt), or makes a managed session an ordinary
+// conversation again (release). Both are the user's actions.
+type ProjectSessionParams struct {
+	Action    string `json:"action"`
+	ProjectID string `json:"project_id"`
+	SessionID string `json:"session_id"`
+}
+
+type ProjectSessionResult struct {
+	Thread Thread `json:"thread"`
 }
 
 type ProjectCandidateResult struct {

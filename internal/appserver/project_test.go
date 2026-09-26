@@ -35,7 +35,12 @@ import (
 //   - the coordinator keeps instructing a session the user took over, or is
 //     not told when the user takes it over or returns it;
 //   - a takeover notice starts a coordinator turn on its own instead of
-//     joining the coordinator's next turn.
+//     joining the coordinator's next turn;
+//   - an ordinary conversation cannot be added to a project, or a project
+//     takes a conversation of another workspace, another manager's session,
+//     or a coordinator;
+//   - removing a session from a project orphans its undecided proposal, or
+//     leaves the coordinator able to instruct it.
 
 func newProjectFixture(t *testing.T) (*Server, *rpcClient, *projectCalls, *runtime.Session) {
 	t.Helper()
@@ -540,6 +545,89 @@ func TestProjectTakeoverPausesDelegationUntilReturned(t *testing.T) {
 	}
 	calls.next(t, "Add the known issues").response <- providersResponse("Added known issues.")
 	calls.next(t, "Plan the release note").response <- providersResponse("Done.")
+}
+
+func TestProjectAdoptsAndReleasesConversations(t *testing.T) {
+	srv, client, calls, rt := newProjectFixture(t)
+	coordinator := startProject(t, client, "Docs")
+	var started ThreadStartResult
+	client.rpc(t, MethodThreadStart, ThreadStartParams{}, &started)
+	conversation := started.Thread
+	var turn TurnStartResult
+	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: conversation.ID, Prompt: "Summarize the README"}, &turn)
+	calls.next(t, "Summarize the README").response <- providersResponse("The README explains setup.")
+	waitForThread(t, srv, conversation.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID == turn.Turn.ID })
+
+	adopt := func(sessionID string) *ResponseError {
+		return client.call(t, MethodProjectSession, ProjectSessionParams{Action: "adopt", ProjectID: coordinator.ID, SessionID: sessionID}, nil)
+	}
+	if failure := adopt(coordinator.ID); failure == nil {
+		t.Fatal("a project adopted its own coordinator")
+	}
+	var other ThreadStartResult
+	client.rpc(t, MethodThreadStart, ThreadStartParams{}, &other)
+	if _, err := session.SetWorkspaceID(rt.SessionDir, other.Thread.ID, "workspace-two"); err != nil {
+		t.Fatal(err)
+	}
+	if failure := adopt(other.Thread.ID); failure == nil {
+		t.Fatal("a project adopted a conversation of another workspace")
+	}
+	var managed ThreadStartResult
+	client.rpc(t, MethodThreadStart, ThreadStartParams{}, &managed)
+	if _, err := session.ChangeControl(rt.SessionDir, managed.Thread.ID, "plugin:reviewer", session.ControlActive, 0); err != nil {
+		t.Fatal(err)
+	}
+	if failure := adopt(managed.Thread.ID); failure == nil {
+		t.Fatal("a project took a session another manager controls")
+	}
+
+	var adopted ProjectSessionResult
+	client.rpc(t, MethodProjectSession, ProjectSessionParams{Action: "adopt", ProjectID: coordinator.ID, SessionID: conversation.ID}, &adopted)
+	if adopted.Thread.ProjectID != coordinator.ID || adopted.Thread.Source != projectSessionSource ||
+		adopted.Thread.SessionControl == nil || adopted.Thread.SessionControl.ManagerID != coordinator.ID || adopted.Thread.SessionControl.State != session.ControlActive {
+		t.Fatalf("adopted conversation = %+v", adopted.Thread)
+	}
+	notice := calls.next(t, "added the conversation")
+	if last := lastUserRequestMessage(notice.request); last.Cause != projectCauseAdopted || last.RelatedSessionID != conversation.ID ||
+		!strings.Contains(last.Content, "The README explains setup.") {
+		t.Fatalf("adoption notice = %+v", last)
+	}
+	notice.response <- providersResponse("I will build on the summary.")
+	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
+	handler := srv.projectSessionHandler(coordinator.ID)
+	if _, err := handler(context.Background(), "send-adopted", tools.ProjectSessionRequest{Action: "send", SessionID: conversation.ID, Prompt: "List the setup steps"}); err != nil {
+		t.Fatalf("send to an adopted conversation: %v", err)
+	}
+	calls.next(t, "List the setup steps").response <- providersResponse("Install, then run make dev.")
+	result := calls.next(t, "added the conversation")
+	if last := lastUserRequestMessage(result.request); last.Cause != projectCauseResult || !strings.Contains(last.Content, "run make dev") {
+		t.Fatalf("adopted conversation result = %+v", last)
+	}
+	result.response <- providersResponse("Steps listed.")
+	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
+
+	// An undecided proposal must be decided before the session leaves.
+	if err := session.PutCandidate(rt.SessionDir, session.Candidate{SessionID: conversation.ID, TurnID: "pending-turn", BaseRepo: rt.RootDir,
+		BaseRevision: strings.Repeat("a", 40), Revision: strings.Repeat("b", 40), ChangedFiles: []string{"README.md"}}); err != nil {
+		t.Fatal(err)
+	}
+	release := ProjectSessionParams{Action: "release", ProjectID: coordinator.ID, SessionID: conversation.ID}
+	if failure := client.call(t, MethodProjectSession, release, nil); failure == nil {
+		t.Fatal("a session with an undecided proposal left the project")
+	}
+	client.rpc(t, MethodProjectCandidate, ProjectCandidateParams{SessionID: conversation.ID, TurnID: "pending-turn", Action: "discard"}, nil)
+	settleCoordinator(t, srv, calls, coordinator.ID, "added the conversation", "Noted.", "project-candidate:"+conversation.ID+":pending-turn:discarded")
+
+	var released ProjectSessionResult
+	client.rpc(t, MethodProjectSession, release, &released)
+	if released.Thread.ProjectID != "" || released.Thread.Source != "" || released.Thread.SessionControl != nil {
+		t.Fatalf("released conversation = %+v", released.Thread)
+	}
+	if _, err := handler(context.Background(), "send-released", tools.ProjectSessionRequest{Action: "send", SessionID: conversation.ID, Prompt: "Keep going"}); err == nil {
+		t.Fatal("the coordinator instructed a released conversation")
+	}
+	srv.drainSessionInbox(coordinator.ID)
+	calls.assertIdle(t)
 }
 
 func TestProjectCoordinatorStaysReadOnly(t *testing.T) {

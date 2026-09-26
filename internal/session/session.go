@@ -631,6 +631,17 @@ func SetWorkspaceID(sessDir, id, workspaceID string) (Session, error) {
 	})
 }
 
+// SetProjectMembership moves an ordinary session into a project, or a
+// managed session back out: source and parentID carry the relation, and
+// instructions replace the session's create-time instructions.
+func SetProjectMembership(sessDir, id, source, parentID, instructions string) (Session, error) {
+	return updateMetadata(sessDir, id, false, func(s *Session) {
+		s.Source = strings.TrimSpace(source)
+		s.ParentID = strings.TrimSpace(parentID)
+		s.Instructions = instructions
+	})
+}
+
 func SetSource(sessDir, id, source string) (Session, error) {
 	return updateMetadata(sessDir, id, false, func(s *Session) {
 		s.Source = strings.TrimSpace(source)

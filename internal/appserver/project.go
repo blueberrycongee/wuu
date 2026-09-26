@@ -36,6 +36,8 @@ const (
 	projectCauseApplied   = "project_applied"
 	projectCauseDiscarded = "project_discarded"
 	projectCausePublished = "project_published"
+	projectCauseAdopted   = "project_adopted"
+	projectCauseReleased  = "project_released"
 )
 
 // The instructions are static so renaming a project never makes them stale.

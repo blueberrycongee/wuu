@@ -1374,9 +1374,7 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	th.Owner = metadata.Owner
 	th.Visibility = metadata.Visibility
 	th.Instructions = metadata.Instructions
-	if metadata.Source == projectSessionSource {
-		th.ProjectID = metadata.ParentID
-	}
+	th.ProjectID = projectIDForSession(metadata)
 	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" && selection.Model != "" {
 		applyThreadRuntimeSelection(th, selection)
 	}

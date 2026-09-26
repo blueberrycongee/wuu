@@ -1107,6 +1107,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleThreadTakeControl(req)
 	case MethodProjectCandidate:
 		return s.handleProjectCandidate(ctx, req)
+	case MethodProjectSession:
+		return s.handleProjectSession(req)
 	case MethodThreadPin:
 		return s.handleThreadPin(req)
 	case MethodThreadOrganizationUpdate:
