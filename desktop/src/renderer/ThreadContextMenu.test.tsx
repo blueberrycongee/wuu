@@ -1,6 +1,7 @@
-import { act, useState } from "react";
+import { act, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ComposerContextMenu } from "./ComposerContextMenu";
 import { ThreadContextMenu } from "./ThreadContextMenu";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 
@@ -96,25 +97,40 @@ describe("ThreadContextMenu", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("dismisses an already-open menu before another instance can paint", () => {
-    function DualMenus(): JSX.Element {
-      const [firstOpen, setFirstOpen] = useState(true);
+  it("dismisses any other open context menu before it can paint", () => {
+    function Menus({ rowMenusOpen }: { rowMenusOpen: boolean }): JSX.Element {
+      const textareaRef = useRef<HTMLTextAreaElement>(null);
+      const [composerMenuOpen, setComposerMenuOpen] = useState(true);
+      const [firstRowMenuOpen, setFirstRowMenuOpen] = useState(true);
       return (
         <WuuUIRoot>
-          {firstOpen ? (
-            <ThreadContextMenu
+          <textarea ref={textareaRef} />
+          {composerMenuOpen ? (
+            <ComposerContextMenu
+              textareaRef={textareaRef}
               x={10}
               y={20}
-              items={[{ label: "第一个", onSelect: () => {} }]}
-              onClose={() => setFirstOpen(false)}
+              hasSelection={false}
+              onClose={() => setComposerMenuOpen(false)}
+              onValueChange={() => {}}
             />
           ) : null}
-          <ThreadContextMenu
-            x={30}
-            y={40}
-            items={[{ label: "第二个", onSelect: () => {} }]}
-            onClose={() => {}}
-          />
+          {rowMenusOpen && firstRowMenuOpen ? (
+            <ThreadContextMenu
+              x={30}
+              y={40}
+              items={[{ label: "第一个", onSelect: () => {} }]}
+              onClose={() => setFirstRowMenuOpen(false)}
+            />
+          ) : null}
+          {rowMenusOpen ? (
+            <ThreadContextMenu
+              x={50}
+              y={60}
+              items={[{ label: "第二个", onSelect: () => {} }]}
+              onClose={() => {}}
+            />
+          ) : null}
         </WuuUIRoot>
       );
     }
@@ -123,10 +139,15 @@ describe("ThreadContextMenu", () => {
     document.body.appendChild(container);
     act(() => {
       root = createRoot(container!);
-      root.render(<DualMenus />);
+      root.render(<Menus rowMenusOpen={false} />);
+    });
+    expect(document.body.querySelectorAll('[role="menu"]')).toHaveLength(1);
+
+    act(() => {
+      root?.render(<Menus rowMenusOpen />);
     });
 
-    const menus = document.body.querySelectorAll(".thread-row-context-menu");
+    const menus = document.body.querySelectorAll('[role="menu"]');
     expect(menus).toHaveLength(1);
     expect(menus[0]?.textContent).toBe("第二个");
   });

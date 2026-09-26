@@ -50,6 +50,43 @@ used to seek within a video.
 Run `npm --prefix desktop run test:e2e:artifact-preview` to exercise delivered
 previews in Electron with synthetic content, separate from your app data.
 
+## Composer attachments
+
+Images, videos, PDFs, and folded long pastes wait in one tray that slides out
+from behind the input's top edge; adding or removing one never resizes the
+input. The tray changes layout once, and everything above it rises or settles
+through counter-translated compositor animations while the input holds still.
+A card removed from the tray fades where it stood as its neighbours close the
+gap. Sending or switching drafts clears the tray at once. The tray keeps a
+single row and scrolls horizontally, with the inline edge fade described under
+scroll-edge fading.
+
+Unsupported attachment types and attachment failures use the shared capsule
+notification, rather than a persistent status line above the input, in both
+normal and split conversations.
+
+Preview `/dev/composer-attachments/` with optional `theme=dark`, `size=20`,
+`width=420`, `hero`, `queued`, and `seed` parameters. Its buttons paste
+synthetic files through the real textarea paste handler.
+
+## Settings pages
+
+Settings groups pages by task: **Agents & models** (model providers, agents, runtime), **App** (general, appearance), **Extensions** (MCP servers and plugin pages), and **Data** (usage, archive). Page IDs are part of the plugin settings snapshot, so they stay stable when a label or group changes; the runtime page keeps the `advanced` ID.
+
+Every page shares one column measured in UI text, so the title stays in place while navigating and a label stays within a glance of its control at large sizes. A page opens with its title, an optional line that states a non-obvious scope, and page actions beside the title. Section titles are the only other semibold text; rows stay regular inside one bordered group. Keep a row description only for units, constraints, or consequences the title does not already state.
+
+Status labels carry their meaning in text; the dot beside them repeats the tone for scanning. Model providers and agents expand in place under their own row. Rows without a disclosure reserve its footprint so status labels end on one axis. The titlebar gains its hairline only after content scrolls beneath it.
+
+Preview `/dev/settings/` with `page` set to a page ID, and optional `theme=dark`, `size=20`, `lang=en`, `rail=` (sidebar width), `collapsed`, `long`, and `empty` parameters. Providers, agents, MCP servers, usage, and archive rows are synthetic; nothing is saved.
+
+## Extensions catalog
+
+The Extensions page uses the settings page column, header, and groups. Plugins come first because their runtime and approval state may need a decision; official skills and your skills follow. Every row shows a mark, the name over a one-line description, and a trailing status or owning plugin, then a chevron that opens the plugin detail or skill preview. A search hides every group it leaves empty. In a narrow column the trailing label moves under the description.
+
+The plugin detail repeats the row's status label, followed by source and grant scope. Permissions are grouped by capability, and all groups share one label column.
+
+Preview `/dev/extensions/` with optional `theme=dark`, `size=20`, `lang=en`, `long`, and `empty` parameters. Skills and plugin packages are synthetic and cover every status tone; actions in the detail dialog change only the preview's state.
+
 ## Shared typography and geometry
 
 Composer feedback belongs in the shared reading area above the input, not beside
@@ -65,6 +102,8 @@ Pointer clicks do not paint an extra outline. Text fields keep the caret; other 
 Respect the user's separate UI and code font preferences. Let rows grow with their content, reserve space for trailing actions and status indicators, and align peer labels independently of whether a row is running or unread. Density changes whitespace rather than removing minimum target sizes; coarse pointers have larger control floors.
 
 Compact menus use `--menu-inset`, `--menu-item-gap`, and `--menu-shell-radius`. The shell radius combines the inner radius with the inset to keep nested corners related. Panel and dialog overlays use their own radius role. Reusing one numeric radius on every padded layer does not produce the same geometry. Click-open overlay cards — context menus, permission pickers, and select panels — use `--font-menu` (one step below `--font-ui`) for item labels, with `--weight-medium`. Group labels and secondary hints use `--font-xs`. Compact composer chips and triggers share `--font-sm` with that overlay step. Question cards above the composer stay on `--font-ui`; they are reading surfaces.
+
+Context menu items name actions, not the data they act on: "Open in system browser", not the full URL. Show a destination in the trigger's tooltip or a separate secondary line. Context menus size to their actions, stay inside the viewport, and ellipsize or scroll instead of spreading across the reading column. Only one context menu is open at a time, and tooltips stay closed while it is open, matching native menus.
 
 Public plugin theme tokens are a smaller contract than all internal CSS variables. Consult the [theme reference](../customize/theme-surface-matrix.md) before exposing a new token or telling plugin authors to depend on an internal variable.
 
@@ -104,9 +143,49 @@ Use `SidebarCollapseBody` for sidebar sections and nested groups. It animates in
 
 Preview `/dev/sidebar-collapse/` with optional `theme=dark`, `size=20`, and `width=240` query parameters. Run `npm --prefix desktop run test:e2e:sidebar-collapse` for Electron geometry checks covering nested folds, reversals, changing content, and reduced motion. These checks do not replace visual acceptance.
 
+Project conversation lists start with five entries in the existing sidebar order
+(including saved manual ordering), plus selected, switching, running, and unread
+conversations. An unread-to-read receipt retains the conversation for two minutes;
+only the three most recently read conversations per project receive this grace
+period. They keep their existing positions. Becoming unread again, leaving the
+list, or closing the project group clears the corresponding retention. Selected,
+switching, running, and unread conversations remain candidates independently of
+that limit.
+
+Expand includes all history; Collapse returns to that recent range without
+closing the project. Both ranges, including conversations still being created,
+scroll within eight rows of height measured by the shared font-responsive row
+size. Short lists use only their content height. The history controls remain
+outside the scroll area. Add `mode=history` to the preview URL for the real project
+component. The same Electron check covers history expansion, read transitions,
+inner scrolling, creating rows, and live font changes, and writes geometry JSON
+and light/dark, 14/20px, wide/narrow screenshots under `desktop/out/sidebar-collapse-e2e-*`.
+
 ## Motion
 
-Motion tokens live in one place: the ladder in [`base.css`](../../../desktop/src/renderer/styles/base.css). Frame-driven code never copies a duration or a curve out of that ladder. [`motion.ts`](../../../desktop/src/renderer/motion.ts) is the only JS bridge — `motionDurationMs` reads a duration token, `motionEasing` evaluates the cubic-bezier a token names, and `messageMotionTime` is the shared document clock that frame loops and WAAPI entrances both read. Keep it that way: a hand-rolled `1 - (1 - p) ** 3` next to a `cubic-bezier()` token can drift away from the transition it was meant to match.
+Motion tokens live in one place: the ladder in [`base.css`](../../../desktop/src/renderer/styles/base.css). `--motion-fast` (120ms) is pointer feedback, `--motion-base` (180ms) covers menus, popovers, and content swaps, `--motion-slow` (280ms) structural moves, and `--motion-slower` (440ms) large folds. `--ease-out` carries entrances and `--ease-in` exits. Transitions, entrances, and exits read a rung or one of the semantic aliases beside it. A literal duration is reserved for a rhythm, such as a spinner on `--motion-spin`, an ambient loop, or choreography paced by a JS clock, and its rule states its reduced-motion behavior next to it.
+
+Entrances and exits use the shared keyframes rather than a new copy per surface. `wuu-enter` and `wuu-exit` read their offsets from `--enter-x`, `--enter-y`, `--enter-scale`, and `--enter-opacity` (or the matching `--exit-*` properties) on the animated element:
+
+```css
+.toast {
+  --enter-y: 8px;
+  --exit-y: -4px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
+}
+
+.toast.closing {
+  animation: wuu-exit var(--motion-base) var(--ease-in) both;
+}
+```
+
+They move the individual `translate` and `scale` properties, so a surface's own `transform`, such as centering or a hover lift, still applies. The offsets are registered as non-inheriting, so a nested surface never picks up its parent's distance. `wuu-fade-in` and `wuu-fade-out` are pure fades, `wuu-pulse` is the ambient opacity pulse (`--pulse-opacity`), and `wuu-spin` is the only spinner. `menu-enter`, `content-swap-enter`, and the environment panel pair keep their named roles. The `/dev/motion/` fixture shows the ladder, the shared keyframes, and production surfaces that use them.
+
+Reduced motion has two sources, the OS setting and the in-app Motion preference, and one result. `base.css` resolves either into `--motion-reduced: 1` and zeroes the ladder and its pinned aliases, so token-driven motion becomes instant without a component rule. Leave an entrance's resting style visible and let the zeroed duration carry reduced motion; `animation: none` also removes the fill that reveals a surface whose resting style starts hidden. Motion the ladder cannot reach opts out next to its definition with `@container style(--motion-reduced: 1) { ... }`. Do not use `@media (prefers-reduced-motion)`, which only sees the OS setting. Spinners keep turning, because they report ongoing work.
+
+[`motion.ts`](../../../desktop/src/renderer/motion.ts) is the only JS bridge. `motionDurationMs` and `motionCurve` read a token when the motion starts; a value captured at module load misses a later preference change or theme override. `motionEasing` evaluates the cubic-bezier a token names for frame loops, and `messageMotionTime` is the shared document clock that frame loops and WAAPI entrances both read. Keep it that way: a hand-rolled `1 - (1 - p) ** 3` next to a `cubic-bezier()` token can drift away from the transition it was meant to match. `prefersReducedMotion`, `subscribeReducedMotion`, and `useReducedMotion` report the same two sources as the stylesheet, so never query the media feature directly. Motion the stylesheet cannot reach checks them explicitly: WAAPI, frame loops, `scrollTo({ behavior: "smooth" })`, and dnd-kit's inline sortable transitions and drop animations, which [`SortableMotion.ts`](../../../desktop/src/renderer/SortableMotion.ts) puts on the ladder. Content that stays mounted through its exit uses [`useExitPresence`](../../../desktop/src/renderer/useExitPresence.ts), which reads the exit duration when the exit starts and can release early from the motion's end event.
+
+Check new motion at `/dev/motion/` with its Motion switch set to reduce, and again with the OS setting emulated in DevTools (Rendering > prefers-reduced-motion). Both must look the same.
 
 Programmatic conversation scrolling uses one trajectory, [`ScrollGlide`](../../../desktop/src/renderer/ScrollGlide.ts). Each 60fps frame it keeps `0.85` of the distance still to travel, so the rate does not depend on how far the viewport has to move, the approach never reverses or overshoots, a dropped frame catches up over at most eight reference frames, and the last pixel lands exactly. The target is re-read every frame, which is what lets streaming output, a collapsing composer, or a late reflow extend the same motion instead of restarting it, and what makes the send bubble hold its screen position while the document shifts under it.
 
@@ -122,6 +201,16 @@ Sending a query reserves reading space below the bubble. Expanded details may te
 
 Earlier-history paging inserts rows above the viewport. A paused reader's offset belongs to native scroll anchoring, so the manual prepend correction applies only while the offset still sits where the page was requested; adding the inserted height on top of anchoring moves the whole stream down by that height the moment the page arrives, which reads as a jump.
 
+## Following and rendering long conversations
+
+A conversation follows its latest content until the reader takes over. Wheel, touch, keyboard, scrollbar and selection input pause following before the browser delivers the scroll, so a streamed chunk cannot pull the view back. Moving back down to the latest content resumes following within a small band that absorbs output streamed while that scroll settles; moving up never resumes it. Jump to latest resumes following when clicked rather than when its motion lands, and the glide hands over to ordinary following once it is close to the moving bottom. The collaboration view's jump goes through its own follow controller in the same way.
+
+Off-screen turns skip layout and paint through `content-visibility: auto` and keep the height they last rendered at. Every turn renders once before it may skip, so a skipped turn never falls back to the placeholder height; a placeholder that differs from the real height moves the reader and the scrollbar when the turn finally renders. Chromium decides which skipped turns became visible only after a frame has painted, so [`ConversationRenderWindow`](../../../desktop/src/renderer/ConversationRenderWindow.ts) renders the turns around the viewport from a large scroll's own scroll event. Code that writes `scrollTop` inside a frame, such as a glide or the turn rail, calls it after writing. Do not read geometry inside a skipped turn: the read forces the layout the skip saves. Inactive cached conversations use `content-visibility: hidden`.
+
+Values that change while a response streams, such as a submission's reading reservation, are written on the element that uses them rather than as an inherited custom property on an ancestor, which would restyle every rendered turn. For the same reason, shell children ahead of the conversation, such as the sidebar resizer, stay mounted and are hidden instead of inserted or removed.
+
+`npm --prefix desktop run test:e2e:conversation-scroll` drives these behaviors with native input in a real Electron window: streaming against wheel input, returning to latest, jump to latest, completion and sidebar toggles for a paused reader, large scrolls after a sidebar toggle, history jumps, send placement and handoff, and session restore. It checks painted pixels for blank bands, so it shows its window by default; `WUU_E2E_HIDDEN=true` hides it. A very fast scrollbar drag across a long conversation can still outpace Chromium's rasterization for a frame, as it does when every turn is rendered.
+
 ## Scrollbar visibility
 
 A scrollbar appears only while its container is actually scrolling and fades out after the last scroll event. Hovering a region reveals nothing: the pointer rests inside bounded tool/reasoning strips while they are being read, so a thumb painted across that text is noise — and the strip's edge fade already says that more content lies below. Scrolling an inner strip never lights up its ancestors' scrollbars either.
@@ -132,7 +221,7 @@ A controller that manages its own scroll node registers it with `markScrollbarRe
 
 ## Scroll-edge fading
 
-[`scroll-fade.css`](../../../desktop/src/renderer/styles/scroll-fade.css) provides opt-in fading for bounded tool/reasoning inspection strips and navigation lists. Add the attribute to the existing vertical scroll owner:
+[`scroll-fade.css`](../../../desktop/src/renderer/styles/scroll-fade.css) provides opt-in fading for bounded tool/reasoning inspection strips, navigation lists, and horizontal card strips. Add the attribute to the existing scroll owner:
 
 ```tsx
 <div className="existing-scroll-region" data-scroll-fade="compact" ref={scrollRef}>
@@ -140,7 +229,7 @@ A controller that manages its own scroll node registers it with `markScrollbarRe
 </div>
 ```
 
-Use `compact` for dense inspection strips and an empty value for navigation lists. Keep ordinary clipping on primary reading surfaces such as messages, settings, and documents. Inputs, terminals, editors, image/PDF canvases, and horizontal scrollers are not intended targets. Fixed headers, composers, and menus should remain outside the masked owner.
+Use `compact` for dense inspection strips, an empty value for navigation lists, and `inline` for a horizontal strip such as the composer attachment tray, which fades its start and end edges instead. Keep ordinary clipping on primary reading surfaces such as messages, settings, and documents. Inputs, terminals, editors, image/PDF canvases, and wide content such as tables and code are not intended targets. Fixed headers, composers, and menus should remain outside the masked owner.
 
 The utility uses self-scroll timelines and an alpha mask, with no overlay or React scroll updates. An edge fades only when more content lies beyond it; no overflow means no fade. Nested scroll owners remain independent, and each edge is capped at half the viewport. Unsupported engines, reduced motion, forced colors, and print fall back to ordinary clipping. Check for existing `animation` or `mask-image` declarations before opting in, because the utility owns both.
 

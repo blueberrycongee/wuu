@@ -16,18 +16,14 @@ import {
 import { motionDurationMs } from "./motion";
 import { isTouchWebShell } from "./ComposerFocus";
 
-export const SIDEBAR_MOTION_MS = motionDurationMs(
-  "--sidebar-motion-duration",
-  280,
-);
-export const SIDEBAR_DRAWER_EXIT_MS = motionDurationMs(
-  "--sidebar-drawer-exit-duration",
-  220,
-);
-export const RIGHT_PANEL_MOTION_MS = motionDurationMs(
-  "--workspace-panel-motion-duration",
-  280,
-);
+// Shell motion windows, read when each motion starts so the timers follow
+// the stylesheet, theme overrides, and reduced motion as they change.
+export const sidebarMotionMs = (): number =>
+  motionDurationMs("--sidebar-motion-duration", 280);
+export const sidebarDrawerExitMs = (): number =>
+  motionDurationMs("--sidebar-drawer-exit-duration", 220);
+export const rightPanelMotionMs = (): number =>
+  motionDurationMs("--workspace-panel-motion-duration", 280);
 export const SIDEBAR_DEFAULT_WIDTH = 296;
 // Keep enough horizontal room for one-line navigation labels and useful
 // conversation titles. The rail becomes an overlay drawer below the compact
@@ -448,7 +444,7 @@ export function useAppLayoutState({
     sidebarMotionTimerRef.current = window.setTimeout(() => {
       sidebarMotionTimerRef.current = undefined;
       setSidebarAnimating(false);
-    }, SIDEBAR_MOTION_MS);
+    }, sidebarMotionMs());
   }, []);
 
   const startRightPanelMotion = useCallback((): void => {
@@ -459,7 +455,7 @@ export function useAppLayoutState({
     rightPanelMotionTimerRef.current = window.setTimeout(() => {
       rightPanelMotionTimerRef.current = undefined;
       setRightPanelAnimating(false);
-    }, RIGHT_PANEL_MOTION_MS);
+    }, rightPanelMotionMs());
   }, []);
 
   // Only one shell root (main app or settings) is mounted at a time; write to

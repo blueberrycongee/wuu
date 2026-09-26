@@ -100,14 +100,6 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
 }
 .appearance-font-picker { width: clamp(160px, 22vw, 240px); min-width: 0; }
 .appearance-font-picker .select-menu, .appearance-font-picker .settings-select-trigger { width: 100%; }
-.settings-theme-options {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  width: 100%;
-  gap: 16px;
-}
-.settings-theme-card { gap: 8px; }
-.settings-theme-preview { border-radius: var(--radius-lg); }
 .composer textarea, .workspace-markdown-reading {
   font-family: var(--appearance-ui-font, system-ui, sans-serif);
   font-size: var(--font-ui);
@@ -135,11 +127,3 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
 .workspace-markdown-reading .rich-heading--h2 { font-size: 1.25em; }
 .workspace-markdown-reading .rich-heading--h3 { font-size: 1.125em; }
 .workspace-markdown-reading :is(.rich-heading--h4, .rich-heading--h5, .rich-heading--h6) { font-size: 1em; }
-:root[data-appearance-motion="reduce"] *,
-:root[data-appearance-motion="reduce"] *::before,
-:root[data-appearance-motion="reduce"] *::after {
-  animation-duration: 0.01ms !important;
-  animation-iteration-count: 1 !important;
-  transition-duration: 0.01ms !important;
-  scroll-behavior: auto !important;
-}

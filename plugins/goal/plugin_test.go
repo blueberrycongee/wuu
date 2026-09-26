@@ -335,12 +335,11 @@ func TestGoalToolIsolationAndValidation(t *testing.T) {
 	c, _ := setup(t)
 	tool(t, c, "create_goal", `{"objective":"work"}`)
 	for _, call := range []pluginapi.ToolCall{
-		{ToolID: "create_goal", Arguments: json.RawMessage(`{"objective":"replacement"}`)},
-		{ToolID: "update_goal", Arguments: json.RawMessage(`{"status":"paused"}`)},
-		{ToolID: "get_goal", Arguments: json.RawMessage(`{"thread_id":"another"}`)},
-		{ToolID: "create_goal", Arguments: json.RawMessage(`{"objective":""}`)},
+		{SessionID: "thread", ToolID: "create_goal", Arguments: json.RawMessage(`{"objective":"replacement"}`)},
+		{SessionID: "thread", ToolID: "update_goal", Arguments: json.RawMessage(`{"status":"paused"}`)},
+		{SessionID: "thread", ToolID: "get_goal", Arguments: json.RawMessage(`{"thread_id":"another"}`)},
+		{SessionID: "fresh-thread", ToolID: "create_goal", Arguments: json.RawMessage(`{"objective":""}`)},
 	} {
-		call.SessionID = "thread"
 		if _, err := c.executeTool(context.Background(), c.host, call); err == nil {
 			t.Fatalf("accepted invalid operation: %+v", call)
 		}

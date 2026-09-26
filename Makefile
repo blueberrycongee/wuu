@@ -94,6 +94,7 @@ test-desktop:
 
 test-clients:
 	npm --prefix packages/plugin-sdk test
+	node --test examples/plugins/git-delivery/publish.test.mjs
 	npm --prefix clients/core test
 	npm --prefix clients/mobile test
 	npm --prefix clients/mobile-web test

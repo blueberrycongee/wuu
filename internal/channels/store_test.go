@@ -1364,3 +1364,37 @@ func equalStrings(left, right []string) bool {
 	}
 	return true
 }
+
+func TestProjectDMSeparatesConversationsAndSharesOnlyProjectMemory(t *testing.T) {
+	ctx := context.Background()
+	s := openTestService(t, nil)
+	a := createTestAgent(t, s, "A")
+	b := createTestAgent(t, s, "B")
+	first, err := s.OpenProjectDirectMessage(ctx, "human-1", a.Agent.ID, "/projects/one", "one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.OpenProjectDirectMessage(ctx, "human-1", a.Agent.ID, "/projects/two", "two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, err := s.OpenProjectDirectMessage(ctx, "human-1", b.Agent.ID, "/projects/one", "one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := s.OpenProjectDirectMessage(ctx, "human-1", a.Agent.ID, "/projects/one", "one")
+	if err != nil || again.ID != first.ID || second.ID == first.ID {
+		t.Fatalf("project DM identity: %+v %+v %v", again, second, err)
+	}
+	if _, err = s.RoomNotebook(ctx, first.ID, "", NotebookParams{Action: "write", Name: "tests.md", Revision: "missing", Content: "Start local search before testing."}); err != nil {
+		t.Fatal(err)
+	}
+	shared, err := s.ProjectContext(ctx, peer.ID)
+	if err != nil || !strings.Contains(shared, "Start local search") {
+		t.Fatalf("shared context: %s %v", shared, err)
+	}
+	other, err := s.ProjectContext(ctx, second.ID)
+	if err != nil || strings.Contains(other, "Start local search") {
+		t.Fatalf("project context crossed projects: %s %v", other, err)
+	}
+}

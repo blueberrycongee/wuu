@@ -2,6 +2,7 @@ import type { MascotMorph } from "./useMascotMorph";
 import { useEffect, useId, useRef, useState, type CSSProperties, type JSX } from "react";
 import { SHAPES } from "blobatar/blob";
 import { AVATAR_HUES } from "./DefaultAvatar";
+import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
 import { WuuMascot, WUU_MASCOT_ACCESSORIES, type WuuMascotAccessory } from "./WuuMascot";
 import { WUU_MASCOT_TRAITS, type WuuMascotActivity } from "./wuu-mascot-spec";
 import "./styles/agent-avatar-feedback.css";
@@ -34,17 +35,16 @@ function useAgentAvatarTurn(status: AgentAvatarStatus, enabled: boolean, signal:
     const requested = signal !== previous.current.signal;
     previous.current = { active, signal };
     if (!enabled || (!active && !requested)) { setTurn(0); return; }
-    if (requested && !document.hidden && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) setTurn(current => current || ++sequence.current);
+    if (requested && !document.hidden && !prefersReducedMotion()) setTurn(current => current || ++sequence.current);
   }, [active, enabled, signal, status]);
   useEffect(() => {
     if (!turn) return;
     const cancel = () => setTurn(0);
-    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const timer = window.setTimeout(cancel, AGENT_TURN_MS);
     const hide = () => { if (document.hidden) cancel(); };
-    reduced?.addEventListener("change", cancel);
+    const stopReducedMotion = subscribeReducedMotion(cancel);
     document.addEventListener("visibilitychange", hide);
-    return () => { window.clearTimeout(timer); reduced?.removeEventListener("change", cancel); document.removeEventListener("visibilitychange", hide); };
+    return () => { window.clearTimeout(timer); stopReducedMotion(); document.removeEventListener("visibilitychange", hide); };
   }, [turn]);
   return turn;
 }

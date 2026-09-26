@@ -418,8 +418,6 @@
      legible against the message canvas instead of reading as a wider haze. */
   --composer-frame-shadow: var(--shadow-composer);
   --composer-surface-bg: var(--wuu-color-surface, #fdfdfe);
-  --composer-image-attachment-button-shadow: var(--shadow-card);
-  --composer-file-attachment-button-hover-bg: #eceee9;
   --composer-textarea-placeholder: var(--ink-muted);
   --composer-textarea-disabled: var(--wuu-color-text-muted, #6d7471);
   --composer-send-button-disabled-text: rgba(255, 255, 255, 0.86);
@@ -708,11 +706,7 @@
   pointer-events: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .composer-stack,
-  .composer,
-  .composer-pending-drawer,
-  .composer textarea,
+@container style(--motion-reduced: 1) {
   .composer-expand-button {
     transition: none;
   }
@@ -746,13 +740,11 @@
   min-height: var(--composer-collapsed-min-height);
 }
 
-/* Match .composer textarea padding-left so the attachment thumbnail's left
-   edge sits flush with the placeholder/text x-origin. */
+/* Read-only attachments of a sent channel message. */
 .composer-attachments {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 12px var(--composer-text-start) 0;
 }
 
 .composer-file-input {
@@ -778,35 +770,6 @@
   object-fit: cover;
 }
 
-.composer-attachment-remove {
-  padding: 0;
-  line-height: 0;
-}
-
-.composer-attachment-remove svg {
-  display: block;
-}
-
-.composer-image-attachment .composer-attachment-remove {
-  position: absolute;
-  top: -7px;
-  right: -7px;
-  display: grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-pill);
-  background: var(--paper);
-  color: var(--ink);
-  box-shadow: var(--composer-image-attachment-button-shadow);
-}
-
-.composer-image-attachment .composer-attachment-remove:hover {
-  background: var(--surface-2);
-  color: var(--ink);
-}
-
 .composer-file-attachment {
   position: relative;
   display: inline-flex;
@@ -814,7 +777,7 @@
   max-width: min(260px, 100%);
   min-height: 38px;
   gap: 8px;
-  padding: 8px 34px 8px 10px;
+  padding: 8px 10px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   background: var(--surface-1);
@@ -829,25 +792,6 @@
   white-space: nowrap;
   font-size: 0.82rem;
   font-weight: 600;
-}
-
-.composer-file-attachment .composer-attachment-remove {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  display: grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--ink-tertiary);
-}
-
-.composer-file-attachment .composer-attachment-remove:hover {
-  background: var(--composer-file-attachment-button-hover-bg);
-  color: var(--ink);
 }
 
 .composer-input-header {
@@ -935,12 +879,8 @@
 /* A queue acknowledges receipt locally; it never launches the conversation. */
 .composer-pending-arrival,
 .composer-queue-row {
-  animation: composer-pending-received var(--motion-fast) var(--ease-out);
-}
-
-@keyframes composer-pending-received {
-  from { opacity: 0.75; }
-  to { opacity: 1; }
+  --enter-opacity: 0.75;
+  animation: wuu-enter var(--motion-fast) var(--ease-out);
 }
 
 .composer-queue-row:hover .composer-queue-preview,
@@ -999,7 +939,7 @@
   color: var(--danger);
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .composer-pending-arrival,
   .composer-queue-row {
     animation: none;
@@ -1007,10 +947,10 @@
   }
 }
 
-.composer-accessory-drawer {
-  --composer-drawer-row-height: 32px;
+/* Accessories above the input tuck their lower edge behind its frame. */
+.composer-accessory-drawer,
+.composer-attachment-tray {
   --composer-drawer-overlap: 8px;
-  --composer-drawer-max-height: min(34dvh, 280px);
   position: relative;
   z-index: 0;
   width: calc(100% - 24px);
@@ -1023,6 +963,11 @@
   background: var(--conversation-floating-surface-bg);
   box-shadow: var(--shadow-tray);
   color: var(--ink);
+}
+
+.composer-accessory-drawer {
+  --composer-drawer-row-height: 32px;
+  --composer-drawer-max-height: min(34dvh, 280px);
   font-size: 13.5px;
   line-height: 1.5;
 }
@@ -1106,17 +1051,12 @@
   max-height: max(0px, calc(var(--composer-drawer-max-height) - var(--composer-drawer-row-height) - var(--composer-drawer-overlap)));
   overflow-y: auto;
   overscroll-behavior: contain;
-  animation: composer-drawer-reveal 120ms var(--ease-out);
+  --enter-y: 2px;
+  animation: wuu-enter var(--motion-fast) var(--ease-out);
 }
 
-@keyframes composer-drawer-reveal {
-  from { opacity: 0; transform: translateY(2px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .composer-accessory-drawer { transition: none !important; }
-  .composer-drawer-details { animation: none; }
 }
 
 @media (pointer: coarse) {
@@ -1174,18 +1114,6 @@
   top: 14px;
 }
 
-.composer.has-collapsed-prompt textarea {
-  height: 52px;
-  min-height: 52px;
-  padding-top: 8px;
-}
-
-.hero-composer-wrap .composer.has-collapsed-prompt textarea {
-  height: 56px;
-  min-height: 56px;
-  padding-top: 8px;
-}
-
 .document-composer-wrap .composer-stack {
   --composer-collapsed-min-height: 80px;
 }
@@ -1196,10 +1124,10 @@
 
 .document-composer-wrap .composer-accessory-drawer {
   transition:
-    max-height 180ms var(--ease-out),
+    max-height var(--motion-base) var(--ease-out),
     transform var(--motion-fast) var(--ease-out),
     translate var(--motion-fast) var(--ease-out),
-    border-radius 180ms var(--ease-out),
+    border-radius var(--motion-base) var(--ease-out),
     border-color var(--motion-fast) var(--ease-out),
     box-shadow var(--motion-fast) var(--ease-out);
 }
@@ -1230,119 +1158,6 @@
 .document-composer-wrap .composer-bar {
   height: 36px;
   padding-bottom: 2px;
-}
-
-/* Folded long pastes render as compact attachment-like chips above the
-   textarea. The strip shares the file-attachment visual language: wrap,
-   chip-width cards, and a circular remove button overlaying the top-right
-   corner instead of a full-height column. */
-.composer-collapsed-prompt-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  max-height: min(168px, 26vh);
-  box-sizing: border-box;
-  align-items: flex-start;
-  margin: 10px 44px 0 14px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-right: 4px;
-  scrollbar-gutter: stable;
-}
-
-.composer-collapsed-prompt-card {
-  position: relative;
-  display: inline-flex;
-  min-width: 0;
-  max-width: min(260px, 100%);
-  min-height: 38px;
-  flex: 0 1 auto;
-  align-items: center;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  background: var(--surface-1);
-  box-shadow: var(--shadow-soft);
-}
-
-.hero-composer-wrap .composer-collapsed-prompt-list {
-  margin: 14px 52px 0 22px;
-}
-
-.composer-collapsed-prompt-main {
-  display: inline-flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 32px 7px 8px;
-  border: 0;
-  border-radius: inherit;
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-}
-
-.composer-collapsed-prompt-main:hover {
-  background: var(--surface-2);
-}
-
-.composer-collapsed-prompt-main:focus-visible,
-.composer-collapsed-prompt-remove:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
-.composer-collapsed-prompt-icon {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  flex: 0 0 24px;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--ink-muted);
-}
-
-.composer-collapsed-prompt-icon svg {
-  width: var(--icon-size-sm);
-  height: var(--icon-size-sm);
-}
-
-.composer-collapsed-prompt-title {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ink);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-  line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.composer-collapsed-prompt-remove {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  display: grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--ink-tertiary);
-}
-
-.composer-collapsed-prompt-remove:hover {
-  background: var(--composer-file-attachment-button-hover-bg);
-  color: var(--ink);
-}
-
-.composer-collapsed-prompt-remove svg {
-  width: var(--icon-size-sm);
-  height: var(--icon-size-sm);
 }
 
 .composer textarea::placeholder {
@@ -1671,7 +1486,7 @@
   flex: 0 0 auto;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .group-members-capsule {
     transition: none;
   }
@@ -1827,8 +1642,8 @@
   padding: 0 8px;
   cursor: pointer;
   transition:
-    background-color var(--motion-fast) var(--menu-enter-easing),
-    color var(--motion-fast) var(--menu-enter-easing);
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
 }
 
 .hero-project-pill:hover,
@@ -2568,22 +2383,11 @@
   background: var(--surface-2);
   box-shadow: var(--composer-frame-shadow);
   transform-origin: bottom center;
-  animation: composer-camera-enter 420ms cubic-bezier(.16, 1, .3, 1) both;
+  --enter-y: 100%;
+  animation: wuu-enter var(--motion-slower) var(--ease-out) both;
 }
 
 :root[data-host-kind="web"] .composer-camera[data-exiting] { pointer-events: none; }
-
-@keyframes composer-camera-enter {
-  from {
-    opacity: 0;
-    transform: translateY(100%);
-  }
-
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
 
 :root[data-host-kind="web"] .composer-camera-viewport {
   position: relative;
@@ -2670,7 +2474,7 @@
   color: var(--paper);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  transition: transform 140ms ease-out;
+  transition: transform var(--motion-fast) var(--ease-out);
   cursor: pointer;
 }
 
@@ -2691,7 +2495,7 @@
   border-radius: 50%;
   background: var(--paper);
   background-clip: padding-box;
-  transition: transform 140ms ease-out, opacity 140ms ease-out;
+  transition: transform var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out);
   cursor: pointer;
 }
 
@@ -2717,7 +2521,7 @@
   inset: 0;
   background: var(--paper);
   pointer-events: none;
-  animation: composer-camera-flash 200ms ease-out both;
+  animation: composer-camera-flash var(--motion-base) var(--ease-out) both;
 }
 
 @keyframes composer-camera-flash {
@@ -2730,13 +2534,8 @@
   :root[data-host-kind="web"] .composer-camera-dialog { border-radius: 24px; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  :root[data-host-kind="web"] .composer-camera,
-  :root[data-host-kind="web"] .composer-camera-flash {
-    animation: none;
-  }
+@container style(--motion-reduced: 1) {
   :root[data-host-kind="web"] .composer-camera-flash { display: none; }
-  :root[data-host-kind="web"] .composer-camera-controls button { transition: none; }
 }
 
 .composer-workspace-bar > .composer-project-control {
@@ -2792,4 +2591,19 @@
     height: 14px;
     flex-basis: 14px;
   }
+}
+
+
+.composer-stop-button svg.composer-stop-progress {
+  width: 14px;
+  height: 14px;
+  fill: none;
+}
+.composer-stop-progress.is-spinning {
+  animation: wuu-spin var(--motion-spin) linear infinite;
+}
+
+.composer-stop-button[aria-busy="true"] {
+  opacity: 1;
+  cursor: progress;
 }

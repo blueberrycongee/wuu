@@ -1,4 +1,4 @@
-import { act, createElement } from "react";
+import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ComposerDraftState } from "./AppState";
@@ -8,7 +8,8 @@ import {
   useComposerDraftState,
   type ComposerDraftStateController,
 } from "./ComposerDraftState";
-import { resolveLocalizedText } from "./i18n";
+import { clearToasts, ToastViewport } from "./Toast";
+import { WuuUIRoot } from "./ui/layers/UILayerHost";
 
 let mountedRoots: Root[] = [];
 let cleanupCallbacks: Array<() => void> = [];
@@ -20,6 +21,7 @@ afterEach(() => {
   mountedRoots = [];
   for (const cleanup of cleanupCallbacks.splice(0)) cleanup();
   document.body.innerHTML = "";
+  clearToasts();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -31,13 +33,11 @@ async function flushEffects(): Promise<void> {
 
 async function renderComposerDraftState(): Promise<{
   get: () => ComposerDraftStateController;
-  setStatus: ReturnType<typeof vi.fn>;
 }> {
   let latest: ComposerDraftStateController | undefined;
-  const setStatus = vi.fn();
 
   function Probe() {
-    latest = useComposerDraftState({ setStatus });
+    latest = useComposerDraftState();
     return null;
   }
 
@@ -47,7 +47,7 @@ async function renderComposerDraftState(): Promise<{
   mountedRoots.push(root);
 
   await act(async () => {
-    root.render(createElement(Probe));
+    root.render(<WuuUIRoot><Probe /><ToastViewport /></WuuUIRoot>);
     await flushEffects();
   });
 
@@ -58,7 +58,6 @@ async function renderComposerDraftState(): Promise<{
       }
       return latest;
     },
-    setStatus,
   };
 }
 
@@ -121,19 +120,22 @@ function stubFileReader(result: string): void {
 }
 
 describe("useComposerDraftState", () => {
-  it("rejects unsupported primary composer attachments without changing the draft", async () => {
+  it.each(["global", "primary", "secondary"] as const)("rejects unsupported %s attachments with a toast without changing the draft", async (pane) => {
     const hook = await renderComposerDraftState();
     const unsupported = new File(["hello"], "notes.txt", { type: "text/plain" });
 
     await act(async () => {
-      await hook.get().attachComposerAttachmentFiles([unsupported]);
+      if (pane === "global") await hook.get().attachComposerAttachmentFiles([unsupported]);
+      else await hook.get().attachSplitComposerAttachmentFiles(pane, [unsupported]);
     });
 
-    expect(resolveLocalizedText(hook.setStatus.mock.calls[0][0] as string)).toBe(
-      "仅支持图片、PDF 和视频附件",
-    );
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
     expect(hook.get().composerImages).toEqual([]);
     expect(hook.get().composerFiles).toEqual([]);
+    expect(hook.get().splitComposerDrafts.primary.images).toEqual([]);
+    expect(hook.get().splitComposerDrafts.primary.files).toEqual([]);
+    expect(hook.get().splitComposerDrafts.secondary.images).toEqual([]);
+    expect(hook.get().splitComposerDrafts.secondary.files).toEqual([]);
   });
 
   it("attaches PDF files to the primary composer draft", async () => {
@@ -152,7 +154,7 @@ describe("useComposerDraftState", () => {
       await flushEffects();
     });
 
-    expect(hook.setStatus).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="alert"]')).toBeNull();
     expect(hook.get().composerFiles).toHaveLength(1);
     expect(hook.get().composerFiles[0]).toMatchObject({
       media_type: "application/pdf",
@@ -174,9 +176,7 @@ describe("useComposerDraftState", () => {
     });
 
     expect(arrayBuffer).not.toHaveBeenCalled();
-    expect(resolveLocalizedText(hook.setStatus.mock.calls[0][0] as string)).toBe(
-      "「huge.pdf」超过 PDF 20MB 大小上限",
-    );
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("huge.pdf");
     expect(hook.get().composerFiles).toEqual([]);
     expect(hook.get().composerImages).toEqual([]);
   });

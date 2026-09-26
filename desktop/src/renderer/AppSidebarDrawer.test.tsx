@@ -46,7 +46,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 }));
 
 import { App, SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./App";
-import { SIDEBAR_MOTION_MS } from "./AppLayoutState";
+import { sidebarMotionMs } from "./AppLayoutState";
 import {
   createWindowResizeSettleScheduler,
   WINDOW_RESIZE_SETTLE_DELAY_MS,
@@ -661,7 +661,7 @@ describe("collapsed sidebar hover drawer", () => {
     expect(appShell()?.dataset.wuuSidebarMode).toBe("docked");
 
     await act(async () => {
-      vi.advanceTimersByTime(SIDEBAR_MOTION_MS);
+      vi.advanceTimersByTime(sidebarMotionMs());
     });
     expect(appShell()?.classList.contains("sidebar-drawer-docking")).toBe(false);
   });
@@ -890,7 +890,7 @@ describe("collapsed sidebar hover drawer", () => {
           relatedTarget: document.body,
         }),
       );
-      vi.advanceTimersByTime(SIDEBAR_MOTION_MS);
+      vi.advanceTimersByTime(sidebarMotionMs());
     });
 
     expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(false);
@@ -1063,7 +1063,7 @@ describe("collapsed sidebar hover drawer", () => {
 
     await movePointerOver(document.body);
     await act(async () => {
-      vi.advanceTimersByTime(SIDEBAR_MOTION_MS);
+      vi.advanceTimersByTime(sidebarMotionMs());
     });
 
     expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(false);

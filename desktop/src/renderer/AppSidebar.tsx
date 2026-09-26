@@ -52,6 +52,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useDropAnimation, useSortableTransition } from "./SortableMotion";
 import type { ChannelRoom, DesktopProject, NamedAgent } from "../shared/protocol";
 import {
   isScratchThread,
@@ -688,6 +689,7 @@ export function AppSidebar({
     useSensor(SidebarPointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
+  const dropAnimation = useDropAnimation();
   const [draggingSectionID, setDraggingSectionID] = useState<string | undefined>();
   const [sidebarSortIndicator, setSidebarSortIndicator] = useState<{
     id: string;
@@ -2217,12 +2219,7 @@ export function AppSidebar({
                 </SortableFunctionalGroup>
               ))}
             </SortableContext>
-            <DragOverlay
-              dropAnimation={{
-                duration: 150,
-                easing: "cubic-bezier(0.16, 1, 0.3, 1)",
-              }}
-            >
+            <DragOverlay dropAnimation={dropAnimation}>
               {draggingFunctionalGroupID ? (
                 <div className="sidebar-functional-group-drag-overlay">
                   <span>
@@ -2402,7 +2399,7 @@ function SortablePinnedThreadItem({
     transition,
     isDragging,
     isOver,
-  } = useSortable({ id, disabled: { draggable: true } });
+  } = useSortable({ id, disabled: { draggable: true }, transition: useSortableTransition() });
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -2464,7 +2461,7 @@ function SortableFunctionalGroup({
     transition,
     isDragging,
     isOver,
-  } = useSortable({ id, disabled: dragDisabled });
+  } = useSortable({ id, disabled: dragDisabled, transition: useSortableTransition() });
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,

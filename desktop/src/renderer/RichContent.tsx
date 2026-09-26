@@ -688,7 +688,7 @@ function RichWebLink({
           y={contextMenu.y}
           onClose={closeContextMenu}
           items={[
-            { label: t("rich.openLink", { url: href }), onSelect: () => openWorkspaceURL(href) },
+            { label: t("rich.openLinkInWorkspace"), onSelect: () => openWorkspaceURL(href) },
             { label: t("rich.openLinkExternal"), onSelect: () => openExternalURL(href) },
           ]}
         />

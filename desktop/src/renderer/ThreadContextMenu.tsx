@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useActiveContextMenu } from "./ActiveContextMenu";
 import { placeContextMenu, type ContextMenuLayout } from "./ContextMenuPlacement";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 
@@ -9,14 +10,8 @@ import { UILayerPortal } from "./ui/layers/UILayerHost";
  *
  * The menu is positioned via fixed coordinates so callers can pass raw
  * clientX/clientY from a contextmenu event without computing offsets against
- * any parent container.
- *
- * Callers such as collaboration rows each own their own open state, so a
- * second right-click would otherwise mount another copy on top of the first.
- * Enter animations on those stacked copies read as ghosted cards. Opening a
- * menu therefore dismisses any other instance before the browser paints.
+ * any parent container. Opening it dismisses any other context menu.
  */
-const openThreadContextMenus = new Set<() => void>();
 
 export type ThreadContextMenuItem =
   | {
@@ -50,24 +45,8 @@ export function ThreadContextMenu({
   onClose: () => void;
 }): JSX.Element {
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
   const [layout, setLayout] = useState<ContextMenuLayout | null>(null);
-
-  useLayoutEffect(() => {
-    const close = (): void => {
-      onCloseRef.current();
-    };
-    const others = [...openThreadContextMenus];
-    openThreadContextMenus.clear();
-    openThreadContextMenus.add(close);
-    for (const other of others) {
-      other();
-    }
-    return () => {
-      openThreadContextMenus.delete(close);
-    };
-  }, []);
+  useActiveContextMenu(onClose);
 
   useLayoutEffect(() => {
     const menuElement = menuRef.current;
@@ -96,7 +75,7 @@ export function ThreadContextMenu({
     function handlePointerDown(event: PointerEvent): void {
       // Right-click is the opening gesture (and the leftover pointer burst
       // after contextmenu). Dismissing on it races the opener. A new
-      // instance dismisses this one via openThreadContextMenus instead.
+      // context menu dismisses this one via useActiveContextMenu instead.
       if (event.button !== 0) {
         return;
       }

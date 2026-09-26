@@ -115,6 +115,7 @@ function renderComposer(props: {
   mainConversation?: boolean;
   prompt?: string;
   running?: boolean;
+  stopState?: "pending" | "retry";
   queuedMessages?: QueuedComposerMessage[];
   guideMessages?: QueuedComposerMessage[];
   status?: string;
@@ -172,6 +173,7 @@ function renderComposer(props: {
           images={[]}
           queuedMessages={props.queuedMessages ?? []}
           guideMessages={props.guideMessages ?? []}
+          stopState={props.stopState}
           running={props.running ?? false}
           runtimeControlsDisabled={props.runtimeControlsDisabled}
           status={props.status ?? "ready"}
@@ -345,6 +347,7 @@ function renderSplitPaneComposer(props: {
   connectionAvailable?: boolean;
   prompt?: string;
   running?: boolean;
+  stopState?: "pending" | "retry";
   status?: string;
   statusLiveProgress?: boolean;
   onSend?: () => void;
@@ -360,6 +363,7 @@ function renderSplitPaneComposer(props: {
           setPrompt={() => {}}
           files={[]}
           images={[]}
+          stopState={props.stopState}
           running={props.running ?? false}
           readOnly={false}
           status={props.status ?? "ready"}
@@ -1293,6 +1297,19 @@ describe("Composer send control", () => {
     expect(onSteer).toHaveBeenCalledTimes(1);
     expect(onSend).not.toHaveBeenCalled();
     expect(onInterrupt).not.toHaveBeenCalled();
+  });
+
+  it.each([["main", "pending"], ["main", "retry"], ["split", "pending"], ["split", "retry"]] as const)("keeps the %s stop action visible with a draft while %s", (surface, stopState) => {
+    const onInterrupt = vi.fn();
+    const onSend = vi.fn();
+    (surface === "main" ? renderComposer : renderSplitPaneComposer)({ running: true, prompt: "keep this draft", stopState, onInterrupt, onSend });
+    const button = container.querySelector<HTMLButtonElement>(".composer-stop-button")!;
+    expect(button).not.toBeNull();
+    expect(button.disabled).toBe(stopState === "pending");
+    act(() => button.click());
+    expect(onSend).not.toHaveBeenCalled();
+    expect(onInterrupt).toHaveBeenCalledTimes(stopState === "retry" ? 1 : 0);
+    expect(container.querySelector("textarea")?.value).toBe("keep this draft");
   });
 
   it("shows a stop button while running only when the input is empty", () => {
@@ -2261,7 +2278,7 @@ describe("Composer long text folding", () => {
     });
 
     expect(container.querySelector(".composer-collapsed-prompt-card")).not.toBeNull();
-    expect(container.querySelector(".composer-collapsed-prompt-title")?.textContent).toBe("# 交接提示词(直接粘贴)");
+    expect(container.querySelector(".composer-collapsed-prompt-card .composer-document-card-title")?.textContent).toBe("# 交接提示词(直接粘贴)");
     expect((textarea as HTMLTextAreaElement).value).toBe("");
     expect((textarea as HTMLTextAreaElement).placeholder).toBe("要求后续变更");
 
@@ -2291,7 +2308,7 @@ describe("Composer long text folding", () => {
       pastePlainText(textarea as HTMLTextAreaElement, longText);
     });
 
-    const revealButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-main");
+    const revealButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main");
     expect(revealButton).not.toBeNull();
 
     act(() => {
@@ -2408,7 +2425,7 @@ describe("Composer long text folding", () => {
       setTextareaValue(textarea as HTMLTextAreaElement, "要求后续变更");
     });
 
-    const removeButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-remove");
+    const removeButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-attachment-card-remove");
     expect(removeButton).not.toBeNull();
 
     act(() => {
@@ -2458,7 +2475,7 @@ describe("Composer long text folding", () => {
     });
     act(() => {
       container
-        .querySelector<HTMLButtonElement>(".composer-collapsed-prompt-main")
+        .querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main")
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
     expect(container.querySelector(".composer-collapsed-prompt-card")).toBeNull();
@@ -2472,7 +2489,7 @@ describe("Composer long text folding", () => {
 });
 
 function foldedPromptButton(title: string): HTMLButtonElement | undefined {
-  return Array.from(container.querySelectorAll<HTMLButtonElement>(".composer-collapsed-prompt-main")).find((button) =>
+  return Array.from(container.querySelectorAll<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main")).find((button) =>
     button.textContent?.includes(title),
   );
 }
@@ -3390,7 +3407,7 @@ describe("composer drag and drop", () => {
     });
 
     expect(container.querySelector(".composer-collapsed-prompt-card")).not.toBeNull();
-    expect(container.querySelector(".composer-collapsed-prompt-title")?.textContent).toBe("# 交接提示词(直接粘贴)");
+    expect(container.querySelector(".composer-collapsed-prompt-card .composer-document-card-title")?.textContent).toBe("# 交接提示词(直接粘贴)");
     expect((textarea as HTMLTextAreaElement).value).toBe("");
     expect((textarea as HTMLTextAreaElement).placeholder).toBe("要求后续变更");
 
@@ -3417,7 +3434,7 @@ describe("composer drag and drop", () => {
       pastePlainText(textarea as HTMLTextAreaElement, longText);
     });
 
-    const revealButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-main");
+    const revealButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main");
     expect(revealButton).not.toBeNull();
 
     act(() => {

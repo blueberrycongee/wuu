@@ -1,4 +1,4 @@
-import { type CSSProperties, memo, useEffect, useState } from "react";
+import { type CSSProperties, memo, useEffect, useLayoutEffect, useState } from "react";
 import type { UsageOverviewResponse } from "../shared/protocol";
 import { useI18n } from "./i18n";
 import {
@@ -17,15 +17,39 @@ type HeatmapWeek = {
  * Usage summary under the empty conversation greeting. It renders nothing
  * until the host answers: an older host or a failed read leaves the greeting
  * alone instead of claiming zero usage. A store with no usage yet is a real
- * answer and shows zero totals with an empty heatmap. Once shown, the card
- * hosts the greeting mascot's idle play. Memoized because the home re-renders
- * while the user types a draft.
+ * answer and shows zero totals with an empty heatmap. Once its entrance has
+ * finished, the card hosts the greeting mascot's idle play. Memoized because
+ * the home re-renders while the user types a draft.
  */
 export const EmptyHomeOverview = memo(function EmptyHomeOverview(): JSX.Element | null {
   const { locale, t, formatNumber } = useI18n();
   const [usage, setUsage] = useState<UsageOverviewResponse>();
   const [card, setCard] = useState<HTMLElement | null>(null);
-  useEmptyHomePlay(card);
+  const [entered, setEntered] = useState(false);
+  // The play measures cell positions, so it must not start on cells that
+  // are still moving in.
+  useEmptyHomePlay(entered ? card : null);
+
+  useLayoutEffect(() => {
+    if (!card) return;
+    // Before the first paint: the weeks reveal in time order from the oldest
+    // one on screen. Weeks are newest first, and older weeks that wrapped onto
+    // the clipped second line must not delay the reveal.
+    const heatmap = card.querySelector<HTMLElement>(".empty-home-heatmap-weeks")!;
+    const weeks = [...heatmap.children] as HTMLElement[];
+    const visible = weeks.filter((week) => week.offsetTop === weeks[0].offsetTop).length;
+    heatmap.style.setProperty("--empty-home-heatmap-visible", String(visible));
+    // Reduced motion zeroes the entrance, so nothing holds the play back. A
+    // cancelled entrance ends the wait too.
+    let current = true;
+    const entrance = card.getAnimations({ subtree: true });
+    void Promise.allSettled(entrance.map((animation) => animation.finished)).then(() => {
+      if (current) setEntered(true);
+    });
+    return () => {
+      current = false;
+    };
+  }, [card]);
 
   useEffect(() => {
     const api = window.wuu as Partial<typeof window.wuu>;
@@ -78,8 +102,12 @@ export const EmptyHomeOverview = memo(function EmptyHomeOverview(): JSX.Element 
           className="empty-home-heatmap-weeks"
           style={{ "--empty-home-heatmap-weeks": weeks.length } as CSSProperties}
         >
-          {weeks.map((week) => (
-            <div className="empty-home-heatmap-week" key={week.days[0].date}>
+          {weeks.map((week, index) => (
+            <div
+              className="empty-home-heatmap-week"
+              key={week.days[0].date}
+              style={{ "--empty-home-heatmap-week": index } as CSSProperties}
+            >
               <span className="empty-home-heatmap-month">{week.month}</span>
               {week.days.map((day) => (
                 <i key={day.date} data-level={day.level} />

@@ -19,7 +19,7 @@ channels.css .channel-agent-graph-node.room circle fill --ink-overlay-18
 channels.css .channel-agent-preview-loading i background --ink-overlay-6
 channels.css .channel-agent-reset-status background --success-soft
 channels.css .channel-avatar-picker button:hover background --ink-overlay-4
-channels.css .channel-composer-inline .channel-attachment-button background --ink-overlay-4
+channels.css .channel-composer-inline .composer-bar-left > .icon-button background --ink-overlay-4
 channels.css .channel-form-danger-row button.danger:hover:not(:disabled), .channel-form-danger-row button.danger:focus-visible:not(:disabled) background --danger-soft
 channels.css .channel-management-primary:hover:not(:disabled) background --ink-overlay-4
 channels.css .channel-management-row:hover background --ink-overlay-4
@@ -43,9 +43,7 @@ channels.css .channel-task-card:hover background --ink-overlay-4
 chat.css .chat-bubble background --ink-overlay-4
 composer-context-meter.css .composer-context-meter-track stroke --context-meter-track
 composer-token-gauge.css .composer-token-gauge-track stroke --token-gauge-track
-composer.css .composer-collapsed-prompt-remove:hover background --composer-file-attachment-button-hover-bg
 composer.css .composer-expand-button:hover:not(:disabled), .composer-expand-button[aria-pressed="true"] background-color --ink-overlay-8
-composer.css .composer-file-attachment .composer-attachment-remove:hover background --composer-file-attachment-button-hover-bg
 composer.css .composer-frame.composer-frame-drop-active::after box-shadow --ink-overlay-18
 composer.css .composer-input-header-action:hover:not(:disabled) background --ink-overlay-8
 composer.css .composer-plus-button[aria-expanded="true"]::before background --ink-overlay-4
@@ -94,6 +92,7 @@ image-preview.css .image-preview-toolbar color --image-preview-toolbar-text
 image-preview.css .image-preview-toolbar-actions background --image-preview-toolbar-actions-bg
 image-preview.css .image-preview-toolbar-actions border --image-preview-toolbar-border
 image-preview.css .image-preview-toolbar-button:active:not(:disabled) background --image-preview-toolbar-button-active
+image-preview.css .image-preview-toolbar-button:focus-visible outline --image-preview-toolbar-text
 image-preview.css .image-preview-toolbar-button:hover:not(:disabled) background --image-preview-toolbar-button-hover
 image-preview.css .image-preview-zoom-readout color --image-preview-zoom-text
 managed-sessions.css .managed-session-result:hover background --ink-overlay-4
@@ -121,13 +120,11 @@ select-menu.css .minute-clock-hand-tip box-shadow --ink-overlay-18
 settings.css .settings-button-danger background --danger-soft
 settings.css .settings-button-danger:hover:not(:disabled) background --danger-border
 settings.css .settings-button-ghost:hover:not(:disabled) background --ink-overlay-6
+settings.css .settings-button-ghost.settings-provider-remove:hover:not(:disabled) background --danger-soft
 settings.css .settings-button-primary background --gray-900
 settings.css .settings-button-primary:hover:not(:disabled) background --gray-900
-settings.css .settings-heatmap-legend-cell background --gray-100
-settings.css .settings-inline-flag.danger background --danger-soft
-settings.css .settings-inline-flag.success background --success-soft
-settings.css .settings-model-chart-bar span background --settings-heatmap-level-4
-settings.css .settings-provider-remove:hover:not(:disabled) background --ink-overlay-8
+settings.css .settings-model-chart-bar span, .settings-skill-usage-bar span background --settings-heatmap-level-3
+settings.css .settings-provider-model-list .settings-button:hover:not(:disabled) background --ink-overlay-4
 settings.css .settings-remote-qr background --settings-remote-qr-quiet-zone
 settings.css .settings-theme-preview-window-dark background --settings-preview-dark-canvas
 settings.css .settings-theme-preview-window-dark .settings-theme-preview-line background --settings-preview-dark-line
@@ -140,13 +137,13 @@ settings.css .settings-theme-preview-window-system background --settings-preview
 settings.css .settings-theme-preview-window-system .settings-theme-preview-line background --settings-preview-dark-line
 settings.css .settings-theme-preview-window-system .settings-theme-preview-line background --settings-preview-light-line
 settings.css .settings-theme-preview-window-system .settings-theme-preview-sidebar background --settings-preview-light-sidebar
-settings.css .settings-usage-heatmap-cell background --gray-100
-settings.css .settings-usage-heatmap-cell[data-level="0"], .settings-heatmap-legend-cell[data-level="0"] background --gray-100
 settings.css .settings-usage-heatmap-cell[data-level="1"], .settings-heatmap-legend-cell[data-level="1"] background --settings-heatmap-level-1
 settings.css .settings-usage-heatmap-cell[data-level="2"], .settings-heatmap-legend-cell[data-level="2"] background --settings-heatmap-level-2
 settings.css .settings-usage-heatmap-cell[data-level="3"], .settings-heatmap-legend-cell[data-level="3"] background --settings-heatmap-level-3
 settings.css .settings-usage-heatmap-cell[data-level="4"], .settings-heatmap-legend-cell[data-level="4"] background --settings-heatmap-level-4
-settings.css .settings-usage-trend-day i background --settings-heatmap-level-4
+settings.css .settings-usage-trend-day i background --settings-heatmap-level-3
+settings.css .settings-usage-trend-day:hover i background --settings-heatmap-level-4
+settings.css button.settings-engine-expand:hover background --ink-overlay-6
 side-thread.css .side-thread-panel__resizer:hover::before, .side-thread-panel__resizer:focus-visible::before, .resizing-side-thread .side-thread-panel__resizer::before background --sidebar-resizer-hover-bg
 side-thread.css .side-thread-panel__resizer:hover::before, .side-thread-panel__resizer:focus-visible::before, .resizing-side-thread .side-thread-panel__resizer::before box-shadow --sidebar-resizer-hover-ring
 sidebar-touch.css @media (pointer: coarse) background --ink-overlay-8
@@ -207,6 +204,10 @@ turns.css .context-composition-segment.tone-system, .context-category-row.tone-s
 turns.css .context-composition-segment.tone-tail, .context-category-row.tone-tail .context-category-swatch background --env-tone-tail
 turns.css .context-composition-segment.tone-tools, .context-category-row.tone-tools .context-category-swatch background --env-tone-tools
 turns.css .context-composition-segment.tone-turn, .context-category-row.tone-turn .context-category-swatch background --env-tone-turn
+turns.css .empty-home-heatmap-week i[data-level="1"] background --settings-heatmap-level-1
+turns.css .empty-home-heatmap-week i[data-level="2"] background --settings-heatmap-level-2
+turns.css .empty-home-heatmap-week i[data-level="3"] background --settings-heatmap-level-3
+turns.css .empty-home-heatmap-week i[data-level="4"] background --settings-heatmap-level-4
 turns.css .fork-worktree-copy background --fork-worktree-copy-bg
 turns.css .fork-worktree-summary:hover, .fork-worktree-summary:focus-visible background --ink-overlay-4
 turns.css .instruction-file-preview background --ink-overlay-4
@@ -235,6 +236,7 @@ turns.css .turn-reasoning-summary:hover, .turn-reasoning-summary:focus-visible t
 turns.css .turn-source-avatar background --ink-overlay-6
 turns.css .turn-sources-pill background --ink-overlay-6
 turns.css button.turn-sources-pill:hover, button.turn-sources-pill:focus-visible background --ink-overlay-8
+video-preview.css .video-preview video background --video-preview-canvas-bg
 workbench.css .plugin-ui-button[data-wuu-variant="primary"] background --gray-900
 workbench.css .plugin-ui-button[data-wuu-variant="primary"]:not(:disabled):hover background --gray-900
 workspace-pdf-preview.css .pdfViewer .page background-color --pdf-page-bg
@@ -258,8 +260,7 @@ workspace.css .workspace-browser-error border --danger-border
 workspace.css .workspace-browser-error background --warning-soft
 workspace.css .workspace-browser-retry:hover background --browser-retry-hover-bg
 workspace.css .workspace-browser-status background --browser-status-overlay-bg
-workspace.css .workspace-browser-url-form:has(.workspace-browser-url-input.has-error) box-shadow --browser-url-error-ring
-workspace.css .workspace-browser-url-form:has(.workspace-browser-url-input.has-error) border-color --danger-border
+workspace.css .workspace-browser-url-form:has(.workspace-browser-url-input.has-error) box-shadow --danger-border
 workspace.css .workspace-diff-error, .workspace-diff-truncated background --danger-soft
 workspace.css .workspace-diff-error, .workspace-diff-truncated border-bottom --diff-error-border
 workspace.css .workspace-diff-file-status background --diff-status-bg

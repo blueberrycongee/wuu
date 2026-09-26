@@ -14,7 +14,7 @@ html[data-app-background] body {
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
-  animation: background-reveal 180ms ease-out;
+  animation: wuu-fade-in var(--motion-base) var(--ease-out);
 }
 
 html[data-app-background] :is(
@@ -71,8 +71,4 @@ html[data-focus-modality="keyboard"] .background-file-picker:has(input:focus-vis
 
 .background-file-picker.disabled { opacity: 0.5; }
 
-@keyframes background-reveal { from { opacity: 0; } }
-
-:root[data-appearance-motion="reduce"] .app-background { animation: none; }
-@media (prefers-reduced-motion: reduce) { .app-background { animation: none; } }
 @media (forced-colors: active), print { .app-background { display: none; } }

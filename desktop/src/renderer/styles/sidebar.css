@@ -1107,7 +1107,8 @@
   box-shadow: var(--shadow-card);
   color: var(--ink-soft);
   pointer-events: auto;
-  animation: sidebar-clear-unread-hint-in 140ms ease-out;
+  --enter-y: 2px;
+  animation: wuu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
 }
 
 .sidebar-clear-unread-hint::before {
@@ -1158,24 +1159,6 @@
   width: 12px;
   height: 12px;
   stroke-width: 2;
-}
-
-@keyframes sidebar-clear-unread-hint-in {
-  from {
-    opacity: 0;
-    transform: translateY(2px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sidebar-clear-unread-hint {
-    animation: none;
-  }
 }
 
 .collaboration-sidebar .sidebar-content {
@@ -2204,12 +2187,6 @@ html[data-focus-modality="keyboard"] :is(
   transform-origin: center;
 }
 
-.project-row.expanded .project-row-icon-state {
-  transition:
-    opacity var(--section-fold-fade-ms) var(--ease-out),
-    transform var(--section-fold-ms) var(--section-fold-ease);
-}
-
 .project-row-icon-state.collapsed {
   opacity: 1;
   transform: translate3d(0, 0, 0) scale(1);
@@ -2417,6 +2394,17 @@ html[data-focus-modality="keyboard"] :is(
       var(--sidebar-nav-column-gap) - var(--sidebar-row-control-pad-x)
   );
   padding-right: var(--sidebar-row-pad-x);
+}
+
+/* Share the font-responsive row metric; the footer stays outside the viewport. */
+.project-thread-scroll {
+  max-height: calc(var(--sidebar-row-height) * 8 + var(--sidebar-row-gap) * 7);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+
+.project-thread-scroll > .sidebar-session-row {
+  flex-shrink: 0;
 }
 
 .thread-list-more,
@@ -2766,18 +2754,8 @@ html[data-focus-modality="keyboard"] :is(
 }
 
 .thread-row-main > .thread-row-title[data-title-swap] {
-  animation: thread-row-title-settle 220ms ease both;
-}
-
-@keyframes thread-row-title-settle {
-  from {
-    opacity: 0;
-    transform: translateY(-1px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  --enter-y: -1px;
+  animation: wuu-enter var(--content-swap-duration) var(--content-swap-easing) both;
 }
 
 /* The fork marker stays between the title and right-edge accessories. */
@@ -2808,7 +2786,7 @@ html[data-focus-modality="keyboard"] :is(
   right: calc(var(--sidebar-row-pad-x) + var(--sidebar-thread-actions-width) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .sidebar-notifications-button[data-holding="true"]::after,
   .sidebar-notifications-button[data-holding="true"] svg {
     animation: none;
@@ -2822,8 +2800,7 @@ html[data-focus-modality="keyboard"] :is(
 
   .project-row-chevron,
   .project-row-icon-state,
-  .thread-list-collapse,
-  .thread-list-collapse-inner {
+  .thread-list-collapse {
     transition: none;
   }
 
@@ -2887,7 +2864,7 @@ html[data-focus-modality="keyboard"] :is(
   transition-delay: 0s;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .thread-row-main > .thread-row-title {
     transition: none;
   }
@@ -2975,10 +2952,18 @@ html[data-focus-modality="keyboard"] :is(
   transform: none;
 }
 
+/* The menu sizes to its actions, not to the data an action names: a long
+ * label ellipsizes (see the item span) rather than stretching the menu
+ * across the reading column, and a long item list scrolls inside the
+ * viewport margin placeContextMenu keeps. The width cap follows the
+ * menu type size. */
 .thread-row-context-menu {
   position: fixed;
   z-index: 2147482000;
   min-width: 180px;
+  max-width: min(24em, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
   border: 1px solid var(--menu-border);
   border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);

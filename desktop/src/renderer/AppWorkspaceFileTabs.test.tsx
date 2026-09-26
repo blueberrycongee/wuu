@@ -36,7 +36,7 @@ vi.mock("./JumpToLatestPill", () => ({
 }));
 
 import { App, SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./App";
-import { RIGHT_PANEL_MOTION_MS } from "./AppLayoutState";
+import { rightPanelMotionMs } from "./AppLayoutState";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -274,7 +274,7 @@ describe("workspace file tabs", () => {
     expect(rightFilePreview?.textContent).toContain("Artifact");
 
     act(() => {
-      vi.advanceTimersByTime(RIGHT_PANEL_MOTION_MS);
+      vi.advanceTimersByTime(rightPanelMotionMs());
     });
     const shell = container.querySelector<HTMLElement>(".app-shell");
     expect(shell?.classList.contains("right-panel-animating")).toBe(false);
@@ -350,11 +350,12 @@ describe("workspace file tabs", () => {
       { path: "README.md" },
       undefined,
       { kind: "no_project", cwd: "/tmp/wuu-artifact-tab-test" },
+      expect.any(String),
     );
     expect(container.querySelector('[data-testid="workspace-document-turn-drawer"]')).not.toBeNull();
 
     act(() => {
-      vi.advanceTimersByTime(RIGHT_PANEL_MOTION_MS);
+      vi.advanceTimersByTime(rightPanelMotionMs());
     });
     expect(shell?.classList.contains("right-panel-animating")).toBe(false);
 
@@ -382,7 +383,7 @@ describe("workspace file tabs", () => {
     });
     await flushAsync();
     act(() => {
-      vi.advanceTimersByTime(RIGHT_PANEL_MOTION_MS);
+      vi.advanceTimersByTime(rightPanelMotionMs());
     });
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[aria-label="展开为全面板"]')?.click();

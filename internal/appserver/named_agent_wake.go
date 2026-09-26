@@ -299,33 +299,9 @@ func (s *Server) newAgentExecutionRuntimeForSession(threadID, collaborationSessi
 	if agentengine.NormalizeEngineID(agent.EngineOverride) != agentengine.EngineWuu {
 		return nil, errors.New("collaboration requires a BYOK model on the Wuu execution runtime")
 	}
-	orientation := agentRuntimeOrientation(agent)
-	if collaborationSessionRef != "" {
-		binding, err := s.channelService.LookupCollaborationSession(context.Background(), collaborationSessionRef)
-		if err != nil {
-			return nil, err
-		}
-		if binding.RuntimeVersion != "" && binding.RuntimeVersion != runtime.CollaborationRuntimeVersion {
-			return nil, fmt.Errorf("session execution runtime %q is unavailable", binding.RuntimeVersion)
-		}
-		if binding.Primary && binding.Purpose == channels.CollaborationSessionConversation {
-			orientation += fmt.Sprintf("\n\nYour continuing session_ref is %s. Each wake identifies the active room for this turn. Publish with chat_send; assistant text stays private. You can send several public bubbles in this same turn and continue working between them. If the room already has the complete answer, end without another reply. Keep internal coordination private.", binding.SessionRef)
-		} else {
-			orientation += fmt.Sprintf("\n\nYour session_ref is %s, your room_id is %s, and your session purpose is %s. Use the current request and relevant task state to determine your objective.", binding.SessionRef, binding.RoomID, binding.Purpose)
-		}
-		if !agent.IsRoomRuntime() {
-			switch binding.Purpose {
-			case channels.CollaborationSessionWork:
-				orientation += " This is an execution session. Advance the assigned objective and return usable results, evidence and remaining blockers to the requester. Your normal final answer is a private execution result; the responsible room conversation handles public delivery. Publish directly only when your assignment calls for it."
-			case channels.CollaborationSessionVerification:
-				orientation += " This is an independent verification session. Assess the assigned candidate against the current goal and acceptance criteria, and return a verdict supported by evidence. Keep checking separate from repairing the candidate; the responsible executor handles revisions and public delivery."
-			case channels.CollaborationSessionCoordination:
-				orientation += " This is a coordination session under your named identity. Organize the assigned scope, connect relevant sessions and return results to the requester. Your coordination assignment does not make you the owner of all work in the room."
-			}
-		}
-		if !binding.Primary && isRoomConversation(binding, agent) {
-			orientation += fmt.Sprintf("\n\nThis session is your public conversation in room %s. Only chat_send publishes there; assistant text stays private. For several complete thoughts, send short bubbles sequentially in this same turn. If the complete answer was already sent, end without another reply. Each successful send is already visible; continue with new content. Reasoning, tool details and independent worker-session results remain private. When waiting for delegated work, briefly tell the room what is underway, then finish the turn to release capacity.", binding.RoomID)
-		}
+	orientation, err := s.collaborationOrientation(agent, collaborationSessionRef)
+	if err != nil {
+		return nil, err
 	}
 
 	agentHome := filepath.Dir(agent.MemoryDir)
@@ -355,6 +331,49 @@ func (s *Server) newAgentExecutionRuntimeForSession(threadID, collaborationSessi
 	s.attachNamedAgentRoomContext(threadRuntime, agent.ID)
 	attachNamedAgentInboxContext(threadRuntime, chatAgent)
 	return threadRuntime, nil
+}
+
+func (s *Server) collaborationOrientation(agent channels.AgentRuntime, collaborationSessionRef string) (string, error) {
+	orientation := agentRuntimeOrientation(agent)
+	if collaborationSessionRef != "" {
+		binding, err := s.channelService.LookupCollaborationSession(context.Background(), collaborationSessionRef)
+		if err != nil {
+			return "", err
+		}
+		if binding.RuntimeVersion != "" && binding.RuntimeVersion != runtime.CollaborationRuntimeVersion {
+			return "", fmt.Errorf("session execution runtime %q is unavailable", binding.RuntimeVersion)
+		}
+		if binding.Primary && binding.Purpose == channels.CollaborationSessionConversation {
+			orientation += fmt.Sprintf("\n\nYour continuing session_ref is %s. Each wake identifies the active room for this turn. Publish with chat_send; assistant text stays private. You can send several public bubbles in this same turn and continue working between them. If the room already has the complete answer, end without another reply. Keep internal coordination private.", binding.SessionRef)
+		} else {
+			orientation += fmt.Sprintf("\n\nYour session_ref is %s, your room_id is %s, and your session purpose is %s. Use the current request and relevant task state to determine your objective.", binding.SessionRef, binding.RoomID, binding.Purpose)
+		}
+		if binding.RoomID != "" {
+			projectContext, err := s.channelService.ProjectContext(context.Background(), binding.RoomID)
+			if err != nil {
+				return "", err
+			}
+			if projectContext != "" {
+				orientation += "\n\n" + projectContext
+			}
+		}
+		if !agent.IsRoomRuntime() {
+			switch binding.Purpose {
+			case channels.CollaborationSessionWork:
+				orientation += " This is an execution session. Advance the assigned objective and return usable results, evidence and remaining blockers to the requester. Your normal final answer is a private execution result; the responsible room conversation handles public delivery. Publish directly only when your assignment calls for it."
+			case channels.CollaborationSessionVerification:
+				orientation += " This is an independent verification session. Assess the assigned candidate against the current goal and acceptance criteria, and return a verdict supported by evidence. Keep checking separate from repairing the candidate; the responsible executor handles revisions and public delivery."
+			case channels.CollaborationSessionCoordination:
+				orientation += " This is a coordination session under your named identity. Organize the assigned scope, connect relevant sessions and return results to the requester. Your coordination assignment does not make you the owner of all work in the room."
+			}
+		}
+		if !binding.Primary && isRoomConversation(binding, agent) {
+			orientation += fmt.Sprintf("\n\nThis session is your public conversation in room %s. Only chat_send publishes there; assistant text stays private. For several complete thoughts, send short bubbles sequentially in this same turn. If the complete answer was already sent, end without another reply. Each successful send is already visible; continue with new content. Reasoning, tool details and independent worker-session results remain private. When waiting for delegated work, briefly tell the room what is underway, then finish the turn to release capacity.", binding.RoomID)
+		}
+	}
+
+	orientation += "\n\nConversation and coordination roles may read and make judgments but cannot write files, run commands, or operate browsers. Delegate changes to ordinary execution sessions. Complete read-only judgments yourself when delegation adds no value. Verification sessions inspect and report; they never repair the candidate."
+	return orientation, nil
 }
 
 func (s *Server) startNamedAgentWakeLocked(agent channels.NamedAgent, th *threadState) error {
@@ -722,7 +741,7 @@ Before posting to the room, consider what the user has already heard. If another
 
 Use the current room membership and registered project workspaces supplied in request context. Work in those projects with absolute paths or explicit command cwd. Your identity home is not a restriction on project work. Never read another identity's private memory or conversation. Share the evidence, assumptions, artifacts and conclusions needed for cooperation through room-scoped messages and references.
 
-Keep responsibility and continuity here while ordinary Harness sessions do substantial execution. Use session create to start work in the task's explicit project workspace, list to discover relevant prior work, and manage to follow an existing session. These are normal sessions the user can open and operate; they retain their context, files and model selection. Creating an execution session is an ordinary way to carry out authorized work, not creating another named identity; choose it yourself when appropriate. A question or quick lookup can be answered here. For another named team member's expertise use collaboration_send. chat_session addresses named identities' conversations; session is the entry point for Harness work.
+Keep responsibility and continuity here while ordinary Harness sessions do substantial execution. Use session create to start work in the task's explicit project workspace, list to discover relevant prior work, and manage to follow an existing session. These are normal sessions the user can open and operate; they retain their context, files and model selection. Creating an execution session is an ordinary way to carry out authorized work, not creating another named identity; choose it yourself when appropriate. A question or quick lookup can be answered here. For another named team member's expertise use chat_send with target_agent_id. session is the entry point for Harness work.
 
 Choose execution sessions by objective and useful context. Reuse a session for a correction, unfinished work toward the same result, or its next validation step. Create a session for a distinct deliverable, another project, an independent investigation or review, or a fresh context when the old history is mostly irrelevant. For example, documentation cleanup and an unrelated UI bug fix usually deserve separate sessions; a correction to that documentation belongs in its existing session. Sharing a repository, a final push, or a familiar executor is not sufficient reason to combine unrelated work. Do not split every message or minor step into a new session either. A new session starts with fresh context: give it the relevant goal, constraints and artifact references, not the entire old transcript. Separate sessions need not write concurrently: use distinct write scopes, appropriate worktrees, or sequence conflicting work and designate who integrates the results. Do not impose a fixed team or pipeline.
 
@@ -738,5 +757,5 @@ Durable deliveries may be included in the wake input. They identify the actual s
 
 For substantial or continuing work, use chat_task and chat_work to retain the goal, authorization, evidence, decisions and unfinished items. When a recorded task has execution sessions, pass its ID as session work_id so its cancellation, goal revision and budget apply to that work. Session management retains links and return addresses; your memory keeps useful context across compaction. A casual exchange does not need bookkeeping. When the goal changes, update the responsibility and recheck earlier results. If an operation fails, inspect what actually happened before retrying, especially commits, publishing and other external effects. Repeated failure or exhausted limits requires a concrete blocker and saved progress, not an unbounded retry loop.
 
-Use chat_send to publish each conversational bubble immediately; it does not end your turn. Assistant text is private and is not posted. Send bubbles sequentially and use each committed message.seq as the next basis_seq. Obtain the initial current room sequence through chat_check or chat_read when needed. When everything useful has been sent, end without another reply. Public replies through chat_send (or collaboration_send target_kind=room) require a fresh basis_seq. If a send is held because someone spoke meanwhile, read the delta and revise or discard that draft before composing the next bubble; a held draft was not delivered. Avoid repeated agreement and preserve useful disagreement with evidence. Never post through human-only APIs or impersonate another identity.`, identity, filepath.Dir(agent.MemoryDir), agent.MemoryDir)
+Use chat_send to publish each conversational bubble immediately; it does not end your turn. Assistant text is private and is not posted. Read chat_check and chat_read before composing a reply. The host tracks freshness and advances it after each committed bubble. When everything useful has been sent, end without another reply. Public replies use chat_send. If a send is held because someone spoke meanwhile, read the delta and revise or discard that draft before composing the next bubble; a held draft was not delivered. Avoid repeated agreement and preserve useful disagreement with evidence. Never post through human-only APIs or impersonate another identity.`, identity, filepath.Dir(agent.MemoryDir), agent.MemoryDir)
 }

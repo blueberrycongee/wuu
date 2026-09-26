@@ -2,6 +2,7 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type JSX,
@@ -48,16 +49,16 @@ import {
   useConversationBecameRenderActive,
   useConversationRenderActive,
 } from "./ConversationRenderActivity";
+import { motionDurationMs, useReducedMotion } from "./motion";
 
 /**
- * How long to wait after the fold opens before snapping the reasoning
- * scroll container to the bottom. The fold content animates its height;
- * waiting a touch longer than the default transition duration
- * gives the body height time to settle before we read `scrollHeight`,
- * so the first snap lands on the actual final extent instead of a
- * mid-transition value.
+ * How much longer than the fold's --motion-base height transition to wait
+ * after it opens before snapping the reasoning scroll container to the
+ * bottom. The margin gives the body height time to settle before we read
+ * `scrollHeight`, so the first snap lands on the actual final extent
+ * instead of a mid-transition value. An instant fold snaps at once.
  */
-const REASONING_FOLD_OPEN_SNAP_DELAY_MS = 280;
+const REASONING_FOLD_OPEN_SNAP_MARGIN_MS = 100;
 
 function useDebouncedProcessSummary(
   segments: ToolActivityProcessSegment[],
@@ -327,10 +328,15 @@ export function ProcessSurface({
   // expanded area (tool trail + reasoning). Auto-follow lives here so the
   // combined content stays pinned to the latest item while streaming,
   // and snaps to the bottom on every open.
+  const reducedMotion = useReducedMotion();
+  const openScrollDelayMs = useMemo(
+    () => reducedMotion ? 0 : motionDurationMs("--motion-base", 180) + REASONING_FOLD_OPEN_SNAP_MARGIN_MS,
+    [reducedMotion],
+  );
   const processScroll = useAutoFollowScrollContainer({
     observeKey: processItems.map((item) => item.id).join("|"),
     open: expanded,
-    openScrollDelayMs: REASONING_FOLD_OPEN_SNAP_DELAY_MS,
+    openScrollDelayMs,
   });
 
   const handleToggle = (
@@ -511,9 +517,10 @@ function ProcessSurfaceAnimatedCount({
     }
     previousValue.current = value;
     setChanging(true);
+    // The .is-changing entrance runs on --motion-base.
     const timeoutId = window.setTimeout(() => {
       setChanging(false);
-    }, 180);
+    }, motionDurationMs("--motion-base", 180));
     return () => window.clearTimeout(timeoutId);
   }, [value]);
 

@@ -47,7 +47,7 @@ export function CollaborationConversationRow({
   });
   if (onHideConversation || onDeleteConversation) contextItems.push({ separator: true });
   if (onHideConversation) contextItems.push({ label: t("channels.hideConversation"), icon: <EyeOff size={16} />, onSelect: () => onHideConversation(conversation) });
-  if (onDeleteConversation && (agent || room?.kind === "channel")) contextItems.push({ label: t(agent ? "channels.deleteAgent" : "channels.deleteRoom"), icon: <Trash2 size={16} />, danger: true, onSelect: () => onDeleteConversation(conversation) });
+  if (onDeleteConversation && (agent || room)) contextItems.push({ label: t(room?.kind === "dm" ? "channels.deleteConversation" : room ? "channels.deleteRoom" : "channels.deleteAgent"), icon: <Trash2 size={16} />, danger: true, onSelect: () => onDeleteConversation(conversation) });
 
   function openContextMenu(event: ReactMouseEvent<HTMLButtonElement>): void {
     if (!initialized) return;

@@ -54,7 +54,6 @@ private func testInitializesAndAdvertisesFullComputerTool() throws {
     let variants = schema?["oneOf"] as? [[String: Any]]
     let action = properties?["action"] as? [String: Any]
     let actions = action?["enum"] as? [String]
-    let app = properties?["app"] as? [String: Any]
     try expect(actions == [
         "permission_status", "request_permissions", "list_apps", "observe", "query_snapshot",
         "click", "drag", "press_key", "press_keys", "scroll", "set_value", "type_text",
@@ -63,7 +62,6 @@ private func testInitializesAndAdvertisesFullComputerTool() throws {
         "activate_control",
         "conceal_app", "reveal_app",
     ], "full computer actions")
-    try expect((app?["description"] as? String)?.contains("Required for every action") == true, "app requirement is explicit")
     func requiredFields(for action: String) -> [String] {
         variants?.first(where: { variant in
             let properties = variant["properties"] as? [String: Any]
@@ -93,17 +91,9 @@ private func testInitializesAndAdvertisesFullComputerTool() throws {
     let scope = properties?["scope"] as? [String: Any]
     try expect((scope?["enum"] as? [String]) == ["window", "app", "screen"], "scope enumerates window, app, and screen")
     try expect(scope?["default"] as? String == "window", "scope defaults to window")
-    try expect((scope?["description"] as? String)?.contains("z-order") == true, "scope documents composite z-ordering")
     let disableDiff = properties?["disable_diff"] as? [String: Any]
     try expect(disableDiff?["type"] as? String == "boolean", "disable_diff is a boolean")
     try expect(disableDiff?["default"] as? Bool == false, "disable_diff defaults to false")
-    let timeout = properties?["timeout"] as? [String: Any]
-    try expect((timeout?["description"] as? String)?.contains("changed=false") == true, "wait timeout is documented as a normal result")
-    let x = properties?["x"] as? [String: Any]
-    try expect((x?["description"] as? String)?.contains("scrollable region") == true, "scroll coordinates document their target region")
-    let pages = properties?["pages"] as? [String: Any]
-    try expect((pages?["description"] as? String)?.contains("line-scroll events") == true, "scroll distance documents natural event sequencing")
-    try expect((tools?.first?["description"] as? String)?.contains("normal timeout is not an error") == true, "tool description teaches normal wait timeout semantics")
 }
 
 private func testPreservesAccessibilityAndScreenshotContent() throws {

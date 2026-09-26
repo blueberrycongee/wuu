@@ -132,14 +132,17 @@ func (c *AgentClient) SetFollowup(ctx context.Context, p FollowupSetParams) (Fol
 	}
 	if p.Scope == "" {
 		p.Scope = "session"
+		if room, err := s.GetRoom(ctx, p.RoomID); err == nil && room.Kind == RoomDM {
+			p.Scope = "conversation"
+		}
 	}
 	if p.Mode == "" {
 		p.Mode = "wake"
 	}
-	if p.Scope != "session" && p.Scope != "agent" && p.Scope != "room" {
-		return Followup{}, errors.New("scope must be session, agent or room")
+	if p.Scope != "session" && p.Scope != "agent" && p.Scope != "room" && p.Scope != "conversation" {
+		return Followup{}, errors.New("scope must be conversation, session, agent or room")
 	}
-	if p.Scope == "room" && !actor.IsRoomRuntime() || p.Scope == "agent" && actor.IsRoomRuntime() {
+	if p.Scope == "room" && !actor.IsRoomRuntime() || (p.Scope == "agent" || p.Scope == "conversation") && actor.IsRoomRuntime() {
 		return Followup{}, ErrUnauthorized
 	}
 	if p.Mode != "wake" && p.Mode != "message" {

@@ -166,12 +166,7 @@
   --browser-retry-hover-bg: #c0392b;
   --browser-loading-dot-bg: var(--wuu-color-info, #58a6ff);
   --skills-section-border: var(--wuu-color-border-subtle, var(--hairline-soft));
-  --skill-row-chevron: var(--wuu-color-text-muted, #686f75);
-  --skill-artwork-border: var(--wuu-color-border-subtle, var(--hairline-soft));
   --skill-artwork-neutral-bg: var(--wuu-color-surface-muted, #24282c);
-  --skill-artwork-neutral-fg: var(--wuu-color-text-muted, #a5abb0);
-  --skill-artwork-official-bg: var(--wuu-color-surface-elevated, #292d31);
-  --skill-artwork-official-fg: var(--wuu-color-on-accent, #ffffff);
   /* Skill artwork marks: the token light values live in workspace.css.
      Dark keeps the same hue families but steps saturation and luminance
      down a notch so the marks read as calm identity colors instead of
@@ -226,8 +221,6 @@
   --review-overlay-bg: rgba(18, 20, 22, 0.92);
   --provider-pill-bg: var(--wuu-color-surface-muted, #24282c);
   --provider-pill-text: var(--wuu-color-text-muted, #aab0b5);
-  --skill-tag-bundled-bg: rgba(255, 90, 38, 0.16);
-  --skill-tag-bundled-fg: #ff9166;
   --codex-runtime-effort-text: var(--wuu-color-text-muted, #8f959a);
   --codex-effort-sheen: rgba(16, 19, 22, 0.2);
   --codex-effort-sheen-soft: rgba(16, 19, 22, 0.09);
@@ -241,8 +234,6 @@
   /* composer.css / composer-context-meter.css / chat.css */
   --composer-frame-shadow: var(--shadow-composer);
   --composer-surface-bg: var(--surface-1);
-  --composer-image-attachment-button-shadow: var(--shadow-card);
-  --composer-file-attachment-button-hover-bg: #2b2f34;
   --composer-textarea-placeholder: var(--ink-tertiary);
   --composer-textarea-disabled: var(--wuu-color-text-muted, #757b78);
   --composer-send-button-disabled-text: var(--ink-muted);

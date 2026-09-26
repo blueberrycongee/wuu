@@ -17,6 +17,7 @@
     "lab:mascot": "vite dev/mascot --host 127.0.0.1 --port 5177",
     "build:cua-mac": "node scripts/build-cua-mac.cjs",
     "icon:generate": "bun scripts/generate-icon.ts",
+    "dmg-background:generate": "electron scripts/generate-dmg-background.cjs",
     "build:core": "node scripts/build-core.cjs",
     "build:core:win": "node scripts/build-core.cjs --platform=win32",
     "build": "node scripts/build-web.cjs && electron-vite build",
@@ -33,6 +34,7 @@
     "test:renderer-recovery": "node scripts/renderer-recovery-smoke.cjs",
     "test:e2e:permission-mode": "npm run build && electron scripts/permission-mode-e2e.cjs",
     "test:e2e:streaming": "npm run build && electron scripts/streaming-e2e.cjs",
+    "test:e2e:conversation-scroll": "npm run build && electron scripts/conversation-scroll-e2e.cjs",
     "test:e2e:artifact-preview": "npm run build && electron scripts/artifact-preview-e2e.cjs",
     "test:e2e:process-handoff": "npm run build && electron scripts/process-handoff-e2e.cjs",
     "test:e2e:process-mascot-clip": "npm run build && electron scripts/process-mascot-clip-e2e.cjs",
@@ -42,6 +44,7 @@
     "test:e2e:composer-height": "npm run build && electron scripts/composer-height-e2e.cjs",
     "test:e2e:sidebar-touch": "npm run build && electron scripts/sidebar-touch-e2e.cjs",
     "test:e2e:sidebar-collapse": "electron scripts/sidebar-collapse-e2e.cjs",
+    "test:e2e:sidebar-scroll-fade": "npm run build && electron scripts/sidebar-scroll-fade-e2e.cjs",
     "test:e2e:background-image": "electron-vite build && electron scripts/background-image-e2e.cjs",
     "test:e2e:settings-sidebar-hit": "npm run build && electron scripts/settings-sidebar-hit-e2e.cjs",
     "test:e2e:browser-pip": "node scripts/browser-pip-e2e.cjs",
@@ -120,7 +123,23 @@
       }
     },
     "dmg": {
-      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
+      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+      "background": "build/dmg-background.png",
+      "iconSize": 128,
+      "iconTextSize": 14,
+      "contents": [
+        {
+          "x": 170,
+          "y": 262,
+          "type": "file"
+        },
+        {
+          "x": 530,
+          "y": 262,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     },
     "win": {
       "icon": "build/icon.ico",

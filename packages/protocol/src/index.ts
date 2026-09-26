@@ -829,6 +829,8 @@ export type ChannelRoomOnboarding = {
 };
 
 export type ChannelRoom = {
+  workspace_root?: string;
+  workspace_id?: string;
   onboarding?: ChannelRoomOnboarding;
   id: string;
   kind: "channel" | "dm";
@@ -939,6 +941,7 @@ export type ChannelWorkRun = {
 };
 
 export type ChannelWorkArtifact = {
+  disposition?: "applied" | "discarded";
   id: string;
   work_id: string;
   run_id?: string;
@@ -999,6 +1002,11 @@ export type ChannelCollaborationMessage = {
 };
 
 export type ChannelWork = {
+ state_deadline_at?: string;
+ revision?: number;
+ constraints?: string;
+ decisions?: string[];
+ decision_history?: { version: number; goal_revision: number; goal: string; constraints: string; decisions: string[] }[];
   id: string;
   room_id: string;
   source_message_id: string;
@@ -1070,7 +1078,7 @@ export type CollaborationSessionBinding = {
 };
 
 export type CollaborationArrangement = {
-  id: string; owner_id: string; room_id: string; scope: "session" | "agent" | "room";
+  id: string; owner_id: string; room_id: string; scope: "conversation" | "session" | "agent" | "room";
   mode: "wake" | "message"; note: string; state: "active" | "paused" | "done" | "cancelled" | "blocked";
   next_at: string; last_at?: string; schedule?: string; timezone?: string; when_session?: string;
   session_ref?: string; reason?: string; revision: number;
@@ -1169,6 +1177,8 @@ export type ChannelRoomCreateParams = {
 };
 export type ChannelRoomCreateResult = { room: ChannelRoom };
 export type ChannelDirectMessageOpenParams = {
+  workspace_root?: string;
+  workspace_id?: string;
   agent_id: string;
   onboarding?: ChannelRoomOnboarding;
 };
@@ -1230,8 +1240,9 @@ export type ChannelResponse = {
   agent_id: string;
   session_ref: string;
   turn_id: string;
-  state: "queued" | "thinking" | "responding" | "waiting" | "failed" | "interrupted";
+  state: "queued" | "thinking" | "responding" | "waiting" | "failed" | "interrupted" | "held" | "unpublished";
   body: string;
+  drafts?: { id: string; body: string; state: string }[];
   error?: string;
   created_at: string;
 };
@@ -1256,9 +1267,41 @@ export type ChannelTaskCreateParams = {
 };
 export type ChannelTaskCreateResult = { task: ChannelMessage };
 export type ChannelTaskUpdateParams = {
+ expected_revision?: number;
+ goal_correction?: string;
+ constraints?: string;
+ decision?: string;
   task_id: string;
-  state?: "open" | "doing" | "done";
+  state?: "open" | "doing" | "checking" | "revising" | "needs_human" | "done" | "cancelled";
   owner_id?: string;
+};
+export type ChannelWorkCandidateParams = {
+  work_id: string;
+  artifact_id: string;
+  action: "get" | "apply" | "discard";
+  expected_revision?: number;
+};
+export type ChannelWorkCandidateResult = {
+  candidate: {
+    session_id: string;
+    turn_id: string;
+    work_id: string;
+    goal_revision: number;
+    root: string;
+    base_repo: string;
+    base_revision: string;
+    revision: string;
+    diff: string;
+    report: {
+      result: string;
+      implicit_choices: string[];
+      evidence_refs: string[];
+      unresolved_items: string[];
+    };
+  };
+  artifact: ChannelWorkArtifact;
+  work_revision: number;
+  stale: boolean;
 };
 export type ChannelTaskUpdateResult = { task: ChannelMessage };
 export type ChannelHumanMentionStatusResult = { count: number };
@@ -2019,7 +2062,7 @@ export type SessionOrganization = {
 };
 
 export type Thread = {
- session_control?: { manager_id: string; manager_name: string; state: "active" | "paused" | "taken_over"; revision: number };
+ session_control?: { room_id?: string; manager_id: string; manager_name: string; state: "active" | "paused" | "taken_over"; revision: number };
   id: string;
   parent_id?: string;
   agent_path?: string;
@@ -3081,6 +3124,7 @@ export type WuuDesktopApi = {
   readChannelSession: (params: ChannelSessionRefParams & { requestId?: string }) => Promise<ChannelSessionReadResult>;
   sendChannelSession: (params: ChannelSessionSendParams) => Promise<ChannelSessionResult>;
   stopChannelSession: (params: ChannelSessionRefParams) => Promise<ChannelSessionResult>;
+  returnManagedSession: (params: { thread_id: string; revision: number }) => Promise<{ control: NonNullable<Thread["session_control"]> }>;
   resumeChannelSession: (params: ChannelSessionRefParams) => Promise<ChannelSessionResult>;
   listNamedAgents: () => Promise<ChannelAgentListResult>;
   getNamedAgentInsights: () => Promise<ChannelAgentInsightsResult>;
@@ -3100,6 +3144,7 @@ export type WuuDesktopApi = {
   listChannelMessages: (params: ChannelMessageListParams) => Promise<ChannelMessageListResult>;
   sendChannelMessage: (params: ChannelMessageSendParams) => Promise<ChannelMessageSendResult>;
   createChannelTask: (params: ChannelTaskCreateParams) => Promise<ChannelTaskCreateResult>;
+  channelWorkCandidate: (params: ChannelWorkCandidateParams) => Promise<ChannelWorkCandidateResult>;
   updateChannelTask: (params: ChannelTaskUpdateParams) => Promise<ChannelTaskUpdateResult>;
   getChannelHumanMentionStatus: () => Promise<ChannelHumanMentionStatusResult>;
   ackChannelHumanMentions: () => Promise<ChannelHumanMentionAckResult>;
@@ -3248,6 +3293,7 @@ export type WuuDesktopApi = {
     contentParts?: MessageContentPart[],
     // Capture the destination before attachment preparation or a workspace switch.
     targetContext?: RuntimeContext,
+    clientId?: string,
   ) => Promise<{ turn: Turn }>;
   queueTurn: (
     threadId: string,
@@ -3259,6 +3305,7 @@ export type WuuDesktopApi = {
     activeDocument?: ActiveDocumentContext,
     contentParts?: MessageContentPart[],
     targetContext?: RuntimeContext,
+    hold?: boolean,
   ) => Promise<{ queued: QueuedTurn }>;
   updateQueuedTurn: (
     threadId: string,

@@ -193,20 +193,17 @@
   overflow: clip;
 }
 
-/* visibility:hidden still lays the pane out, and the pane is stretched over
- * the open conversation, so a width change wraps every cached session.
- * content-visibility:hidden does not help: measuring the open scroller forces
- * that subtree to render. Drop the cached sessions out of the tree for the
- * drag; they lay out once when the frame is released. */
+/* visibility:hidden alone still lays the pane out, and the pane is stretched
+ * over the open conversation, so every width change would wrap every cached
+ * session. content-visibility:hidden skips its style, layout and paint while
+ * keeping that rendering state for the next reveal. Geometry inside a hidden
+ * pane must not be read: a read forces the skipped subtree to lay out. */
 .cached-conversation-pane[data-active="false"] {
   position: absolute;
   inset: 0;
   visibility: hidden;
   pointer-events: none;
-}
-
-.window-resizing .cached-conversation-pane[data-active="false"] {
-  display: none;
+  content-visibility: hidden;
 }
 
 .cached-conversation-pane[data-active="true"] {
@@ -234,7 +231,7 @@
   transition: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .conversation-pane {
     transition: none;
   }
@@ -294,12 +291,55 @@
 }
 
 .conversation-title-heading h1 {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
-  max-width: none;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.conversation-title-heading h1.is-editing {
+  flex: 1 1 16ch;
+}
+
+.conversation-title-rename,
+.conversation-title-edit {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: start;
+  -webkit-app-region: no-drag;
+}
+
+.conversation-title-rename {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+}
+
+.conversation-title-rename:hover,
+.conversation-title-rename:focus-visible {
+  background: var(--ink-overlay-8);
+  box-shadow: 0 0 0 4px var(--ink-overlay-8);
+}
+
+.conversation-title-edit {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  outline: none;
+  border-radius: 0;
+  box-shadow: inset 0 -1px 0 var(--ink-tertiary);
 }
 
 .conversation-title-heading .icon-button {
@@ -1204,7 +1244,8 @@
   margin-inline: auto;
   transform: translateY(0);
   z-index: 20;
-  animation: jump-to-latest-enter var(--motion-base) var(--ease-out) both;
+  --enter-y: 8px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
   pointer-events: none;
   -webkit-app-region: no-drag;
 }
@@ -1555,6 +1596,7 @@ button.conversation-status-capsule,
   opacity: 0;
   overflow: hidden;
   transition:
+    margin-left var(--motion-base) var(--ease-out),
     max-height var(--motion-base) var(--ease-out),
     max-width var(--motion-base) var(--ease-out),
     opacity var(--motion-fast) var(--ease-out);
@@ -1589,17 +1631,6 @@ button.conversation-status-capsule,
   /* Keep the in_progress step a solid darker badge inside the outer pill. */
 }
 
-@keyframes jump-to-latest-enter {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 /*
  * Conversation turn rail on the left edge of the message stream.
  *
@@ -1610,7 +1641,7 @@ button.conversation-status-capsule,
  * macOS Dock-style motion: smooth spring with slight overshoot
  * (cubic-bezier(0.34, 1.56, 0.64, 1) ≈ easeOutBack) so the magnified bar
  * settles with a natural "spring then rest" feel rather than a linear
- * slide. prefers-reduced-motion collapses the easing to a 1ms step.
+ * slide. Reduced motion zeroes the ladder, so the bar snaps instead.
  */
 .conversation-pane {
   position: relative;
@@ -1759,10 +1790,9 @@ button.conversation-status-capsule,
   pointer-events: auto;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .conversation-turn-rail-bar,
   .conversation-turn-rail-preview {
-    transition: opacity 1ms linear;
     transform: none;
   }
 }

@@ -46,8 +46,8 @@ const geometry = win => evaluate(win, () => {
     capsuleTop: capsule?.getBoundingClientRect().top ?? null,
     capsuleVisible: capsule ? getComputedStyle(capsule).visibility === "visible" : false,
     composerTop: composer.getBoundingClientRect().top,
-    tailSpace: Number.parseFloat(getComputedStyle(viewport).getPropertyValue("--session-tail-space") || "0"),
-    clip: getComputedStyle(viewport).clipPath,
+    tailSpace: Number.parseFloat(viewport.querySelector(":scope > .scroll-region-content")?.style.paddingBottom || "0"),
+    statusSpace: document.querySelector(".conversation-pane").style.getPropertyValue("--conversation-status-space"),
   };
 });
 
@@ -110,7 +110,7 @@ app.whenReady().then(async () => {
       if (width === 1200 && font === 14 && long) {
         // Controlled reproduction of the old clearance formula, with the same
         // real Session DOM and status placement, not a separate mock layout.
-        const control = await win.webContents.insertCSS(".conversation-pane { --session-tail-space: 0px !important; --session-status-clip: 0px !important; }");
+        const control = await win.webContents.insertCSS(".scroll-region > .scroll-region-content { padding-bottom: 0 !important; } .conversation-pane { --conversation-status-space: 0px !important; }");
         await evaluate(win, () => { const node = document.querySelector(".scroll-region"); node.scrollTop = node.scrollHeight; });
         await frames(win);
         const oldClearance = await geometry(win);
@@ -149,18 +149,20 @@ app.whenReady().then(async () => {
       const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
       trigger.focus();
       const viewport = document.querySelector(".scroll-region");
-      const clip = getComputedStyle(viewport).clipPath;
-      const bottomInset = Number.parseFloat(clip.match(/inset\(0px 0px ([\d.]+)px/)?.[1]);
-      const jump = document.querySelector(".jump-to-latest-pill-anchored")?.getBoundingClientRect();
+      const jumpRect = document.querySelector(".jump-to-latest-pill")?.getBoundingClientRect();
+      const jumpOverlap = jumpRect ? Math.max(0, Math.min(jumpRect.right, rect.right) - Math.max(jumpRect.left, rect.left)) *
+        Math.max(0, Math.min(jumpRect.bottom, rect.bottom) - Math.max(jumpRect.top, rect.top)) : 0;
       return {
         hit: trigger.contains(hit), focused: document.activeElement === trigger,
-        readingBottom: viewport.getBoundingClientRect().bottom - bottomInset,
-        capsuleTop: rect.top, jumpBottom: jump?.bottom,
+        readingBottom: viewport.getBoundingClientRect().bottom,
+        inputTop: document.querySelector(".dock-composer-wrap .composer-frame").getBoundingClientRect().top,
+        capsuleTop: rect.top, jumpVisible: Boolean(jumpRect), jumpOverlap,
       };
     });
     assert.ok(access.hit && access.focused, `History TODO inaccessible: ${JSON.stringify(access)}`);
-    assert.ok(access.readingBottom <= access.capsuleTop, `History text overlaps status band: ${JSON.stringify(access)}`);
-    assert.ok(access.jumpBottom <= access.capsuleTop, `Jump covers status: ${JSON.stringify(access)}`);
+    // History is clipped at the input edge; the status row floats over it.
+    assert.ok(access.readingBottom <= access.inputTop + 1, `History runs under the input: ${JSON.stringify(access)}`);
+    assert.ok(access.jumpVisible && access.jumpOverlap === 0, `Jump covers status: ${JSON.stringify(access)}`);
     await until(win, () => getComputedStyle(document.querySelector(".conversation-status-todo-card")).visibility === "visible");
     assert.ok(Math.abs((await geometry(win)).top - away.top) <= 1, "Opening history TODO moved the viewport");
     const card = await evaluate(win, () => {
@@ -181,7 +183,7 @@ app.whenReady().then(async () => {
   turn.status = "interrupted";
   emit(win, "turn/completed", { thread_id: threadID, turn });
   await until(win, () => !document.querySelector(".composer-stop-button"));
-  await until(win, () => Number.parseFloat(getComputedStyle(document.querySelector(".scroll-region")).getPropertyValue("--session-tail-space")) === 0);
+  await until(win, () => Number.parseFloat(document.querySelector(".scroll-region > .scroll-region-content").style.paddingBottom || "0") === 0);
   await frames(win);
   const stopped = await geometry(win);
   assert.equal(stopped.capsuleVisible, false, "Stopped TODO returns to the existing history/side-panel presentation");
@@ -199,7 +201,7 @@ app.whenReady().then(async () => {
   turn.completed_at = now;
   emit(win, "turn/completed", { thread_id: threadID, turn });
   await until(win, () => !document.querySelector(".conversation-status-cluster"));
-  await until(win, () => Number.parseFloat(getComputedStyle(document.querySelector(".scroll-region")).getPropertyValue("--session-tail-space")) === 0);
+  await until(win, () => Number.parseFloat(document.querySelector(".scroll-region > .scroll-region-content").style.paddingBottom || "0") === 0);
   await frames(win);
   const completed = await geometry(win);
   assert.ok(completed.bottomDistance <= 2);
@@ -235,7 +237,7 @@ app.whenReady().then(async () => {
   emit(win, "turn/completed", { thread_id: second.id, turn: { ...second.turns[0], id: `turn-${second.id}` } });
   emit(win, "thread/resumed", { thread: second });
   await until(win, () => !document.querySelector(".composer-stop-button") && !document.querySelector(".conversation-status-cluster") && document.querySelector(".turn")?.textContent.includes("Session B paragraph"));
-  await until(win, () => Number.parseFloat(getComputedStyle(document.querySelector(".scroll-region")).getPropertyValue("--session-tail-space")) === 0);
+  await until(win, () => Number.parseFloat(document.querySelector(".scroll-region > .scroll-region-content").style.paddingBottom || "0") === 0);
   await frames(win);
   const idleBottom = await geometry(win);
   assert.equal(idleBottom.threadID, second.id);
@@ -258,7 +260,7 @@ app.whenReady().then(async () => {
   assert.equal(restoredB.threadID, second.id);
   assert.equal(restoredB.capsuleVisible, false);
   assert.equal(restoredB.tailSpace, 0);
-  assert.equal(restoredB.clip, idleBottom.clip, "A's status band leaked into B");
+  assert.equal(restoredB.statusSpace, idleBottom.statusSpace, "A's status band leaked into B");
   assert.ok(Math.abs(restoredB.top - savedB.top) <= 1, `B scroll leaked: ${JSON.stringify({ savedB, restoredB })}`);
   await fs.promises.writeFile(path.join(evidence, "switch-idle-b.png"), (await win.webContents.capturePage()).toPNG());
   await switchTab(0);

@@ -63,6 +63,6 @@
   .channel-settings-header { min-height: 44px; }
   .channel-settings-header .icon-button, .channel-settings-manage, .channel-settings-member { min-height: 44px; }
 }
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .channel-settings-panel { animation: none; }
 }

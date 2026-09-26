@@ -44,6 +44,39 @@ npm --prefix desktop run dev:onboarding
 运行 `npm --prefix desktop run test:e2e:artifact-preview`，可在 Electron 中
 用合成内容验证交付预览，不读取应用中的个人数据。
 
+## 输入框附件
+
+图片、视频、PDF 和折叠后的长文本放在同一个从输入框上沿滑出的托盘里，
+添加或移除都不会改变输入框尺寸。托盘只改变一次布局，上方内容通过反向补偿的
+合成层动画平滑升降，输入框保持不动。从托盘移除的卡片在原位淡出，
+相邻卡片滑动补位；发送或切换草稿时托盘直接清空。托盘始终只有一行，
+横向滚动，边缘渐隐见“滚动边缘渐隐”。
+
+不支持的附件类型及附件添加失败统一使用胶囊通知，不在输入框上方常驻显示；
+普通对话和分屏对话保持一致。
+
+使用 `/dev/composer-attachments/` 预览，可选参数有 `theme=dark`、`size=20`、
+`width=420`、`hero`、`queued` 和 `seed`。页面按钮通过真实的输入框粘贴处理
+粘贴合成文件。
+
+## 设置页
+
+设置页按任务分组：**Agent 与模型**（模型服务、Agent、运行）、**应用**（常规、外观）、**扩展**（MCP 服务器与插件页面）和**数据**（用量、归档）。页面 ID 属于插件设置快照，标签或分组变化时保持不变；运行页沿用 `advanced` 这个 ID。
+
+所有页面共用一列按 UI 字号计算的宽度，切换页面时标题位置不变，大字号下标签和控件也不会拉开。页面顶部依次是标题、说明不明显作用范围的可选一行文字，以及位于标题旁的页面操作。除页面标题外，只有分区标题使用半粗体；同一分组内的设置行保持常规字重，外面只套一层带边框的分组。只有标题没有说明的单位、限制或后果，才保留行说明。
+
+状态由文字表达含义，旁边的圆点只重复语气，便于扫读。模型服务和 Agent 在各自的行下方展开。没有展开按钮的行保留它的占位，让状态文字结束在同一条轴线上。标题栏只在内容滚动到下方后才显示分隔线。
+
+通过 `/dev/settings/` 预览，用 `page` 指定页面 ID，可选参数包括 `theme=dark`、`size=20`、`lang=en`、`rail=`（侧栏宽度）、`collapsed`、`long` 和 `empty`。模型服务、Agent、MCP 服务器、用量和归档数据均为示例，不会保存任何设置。
+
+## 扩展目录
+
+扩展页沿用设置页的内容列、页面顶部和分组。插件排在最前，因为它们的运行与授权状态可能需要你做决定；官方技能和你的技能随后。每一行依次是图标、名称及其下方的一行说明、末尾的状态或所属插件，最后是打开插件详情或技能预览的箭头。搜索会隐藏所有没有匹配项的分组。内容列较窄时，末尾的标签移到说明下方。
+
+插件详情先重复行内的状态文字，再列出来源和授权范围。权限按能力分组，所有分组共用一列标签。
+
+通过 `/dev/extensions/` 预览，可选参数包括 `theme=dark`、`size=20`、`lang=en`、`long` 和 `empty`。技能与插件包均为示例数据，覆盖每一种状态；详情对话框中的操作只改变预览里的状态。
+
 ## 共享字体与尺寸关系
 
 输入框反馈放在输入区域上方的共享阅读区，不放在发送按钮旁。主输入框和分屏都在这里保留错误、操作限制与操作进度，长文本换行并可滚动。恢复的草稿和更新的 Git 结果已表达成功，不再通过全局状态字段重复确认。
@@ -55,6 +88,8 @@ npm --prefix desktop run dev:onboarding
 尊重用户分别设置的 UI 与代码字号。行高随内容增长，为末尾操作和状态标记预留空间，同级标签的对齐不应随运行或未读状态改变。密度调整留白，不移除最小点击尺寸；粗指针设备使用更大的控件尺寸下限。
 
 紧凑菜单使用 `--menu-inset`、`--menu-item-gap` 和 `--menu-shell-radius`。外层圆角由内层圆角加内缩距离得到，使嵌套圆角保持对应关系；面板和对话框使用各自的圆角角色。给每个有 padding 的层设置同一个圆角数值，并不能得到相同的几何关系。点击打开的浮层卡片（右键菜单、权限选择、下拉面板）的选项文字使用 `--font-menu`（比 `--font-ui` 小一档），字重 `--weight-medium`；分组标题和次要说明使用 `--font-xs`。输入栏芯片与浮层同档。输入框上方的提问卡仍用 `--font-ui`，那是阅读面，不是菜单。
+
+右键菜单的选项写操作，不写操作对象：写“在系统浏览器打开”，不把完整 URL 拼进去。需要展示目的地时，放在触发元素的悬浮提示或单独的次要信息里。右键菜单的尺寸由操作决定，始终留在窗口内，内容过长时省略或滚动，不横跨正文。同一时间只打开一个右键菜单；菜单打开期间不显示悬浮提示，与原生菜单一致。
 
 公开插件主题 token 的契约范围小于所有内部 CSS 变量。暴露新 token 或建议插件作者依赖内部变量前，请查看[主题参考](../customize/theme-surface-matrix.md)。
 
@@ -89,9 +124,35 @@ npm --prefix desktop run dev:onboarding
 
 通过 `/dev/sidebar-collapse/` 预览，可选查询参数包括 `theme=dark`、`size=20` 和 `width=240`。运行 `npm --prefix desktop run test:e2e:sidebar-collapse`，在 Electron 中检查嵌套折叠、反向点击、内容变化和减少动态效果的几何行为；这些检查不能代替视觉验收。
 
+项目会话列表以现有侧栏顺序的前 5 条为基础（保留已保存的手动排序），额外包含选中、切换中、运行中和未读会话。未读变为已读的回执会让该会话继续保留 2 分钟，每个项目只保留最近读过的 3 条，位置沿用原有顺序。再次未读、移出列表或关闭项目分组时清除对应的暂时保留记录。选中、切换中、运行中和未读会话独立于这项限制，仍然进入候选列表。
+
+“展开”纳入全部历史；“收起”回到上述范围，不关闭项目分组。两种范围都最多占用 8 行高度，按共享的随字体变化的行高计算；正在创建的会话也计入上限，较短的列表按实际内容占高。超出部分在列表内部滚动，展开和收起按钮留在滚动区域外。预览地址加上 `mode=history` 可查看真实项目组件；同一个 Electron 检查覆盖历史展开、已读变化、内部滚动、创建中的会话和动态字号变化，并将几何 JSON 与浅深色、14/20px、宽窄截图保存在 `desktop/out/sidebar-collapse-e2e-*` 下。
+
 ## 动画
 
-动画 token 只有一处来源：[`base.css`](../../../desktop/src/renderer/styles/base.css) 中的阶梯。逐帧代码不要从那套阶梯里复制时长或曲线。[`motion.ts`](../../../desktop/src/renderer/motion.ts) 是唯一的 JS 桥接层：`motionDurationMs` 读取时长 token，`motionEasing` 按 token 名求值对应的 cubic-bezier，`messageMotionTime` 提供逐帧循环与 WAAPI 入场共用的文档时钟。请保持这个结构：在 `cubic-bezier()` token 旁边手写一个 `1 - (1 - p) ** 3`，两者很容易和它原本要对齐的过渡逐渐偏离。
+动画 token 只有一处来源：[`base.css`](../../../desktop/src/renderer/styles/base.css) 中的阶梯。`--motion-fast`（120ms）用于指针反馈，`--motion-base`（180ms）用于菜单、弹层和内容切换，`--motion-slow`（280ms）用于结构位移，`--motion-slower`（440ms）用于较大的折叠。入场使用 `--ease-out`，退出使用 `--ease-in`。过渡、入场和退出都读取阶梯中的一级或旁边的语义别名。字面时长只留给节奏类动画，例如使用 `--motion-spin` 的 spinner、环境循环动画，或由 JS 时钟驱动的编排；这类规则要在旁边写明减少动态效果时的行为。
+
+入场和退出使用共享 keyframe，不要为每个界面复制一份。`wuu-enter` 和 `wuu-exit` 从被动画元素上的 `--enter-x`、`--enter-y`、`--enter-scale`、`--enter-opacity`（或对应的 `--exit-*` 属性）读取偏移：
+
+```css
+.toast {
+  --enter-y: 8px;
+  --exit-y: -4px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
+}
+
+.toast.closing {
+  animation: wuu-exit var(--motion-base) var(--ease-in) both;
+}
+```
+
+它们驱动的是独立的 `translate` 和 `scale` 属性，因此界面自身的 `transform`（例如居中或悬停上浮）仍然生效。这些偏移属性注册为不继承，嵌套界面不会拿到父级的距离。`wuu-fade-in` 和 `wuu-fade-out` 是纯淡入淡出，`wuu-pulse` 是环境不透明度脉冲（`--pulse-opacity`），`wuu-spin` 是唯一的 spinner。`menu-enter`、`content-swap-enter` 和环境面板的进出场保留各自的命名角色。`/dev/motion/` 夹具展示阶梯、共享 keyframe，以及使用它们的真实界面。
+
+减少动态效果有两个来源：系统设置和应用内的“动态效果”偏好，结果只有一个。`base.css` 把任一来源解析为 `--motion-reduced: 1`，并把阶梯和固定别名归零，因此 token 驱动的动画无需组件规则即可瞬时完成。让入场元素的静止样式保持可见，由归零的时长承担减少动态效果；`animation: none` 还会去掉 fill，而静止样式本身隐藏的界面正靠 fill 才能显示。阶梯管不到的动画，在定义旁边用 `@container style(--motion-reduced: 1) { ... }` 退出。不要使用 `@media (prefers-reduced-motion)`，它只能看到系统设置。spinner 保持转动，因为它表示正在进行的工作。
+
+[`motion.ts`](../../../desktop/src/renderer/motion.ts) 是唯一的 JS 桥接层。`motionDurationMs` 和 `motionCurve` 在动画开始时读取 token；在模块加载时固化的值会错过之后的偏好变化或主题覆盖。`motionEasing` 为逐帧循环求值 token 对应的 cubic-bezier，`messageMotionTime` 提供逐帧循环与 WAAPI 入场共用的文档时钟。请保持这个结构：在 `cubic-bezier()` token 旁边手写一个 `1 - (1 - p) ** 3`，两者很容易和它原本要对齐的过渡逐渐偏离。`prefersReducedMotion`、`subscribeReducedMotion` 和 `useReducedMotion` 与样式表读取同样的两个来源，不要直接查询媒体特性。样式表管不到的动画要显式检查它们：WAAPI、逐帧循环、`scrollTo({ behavior: "smooth" })`，以及 dnd-kit 的内联排序过渡和放下动画；后者由 [`SortableMotion.ts`](../../../desktop/src/renderer/SortableMotion.ts) 接到阶梯上。退出动画期间需要保持挂载的内容使用 [`useExitPresence`](../../../desktop/src/renderer/useExitPresence.ts)：它在退出开始时读取时长，也可以由动画结束事件提前释放。
+
+新增动画后，在 `/dev/motion/` 把 Motion 开关切到 reduce 检查一次，再在 DevTools 中模拟系统设置（Rendering > prefers-reduced-motion）检查一次，两者的效果必须一致。
 
 会话内的程序化滚动统一走一条轨迹：[`ScrollGlide`](../../../desktop/src/renderer/ScrollGlide.ts)。每个 60fps 帧保留剩余距离的 `0.85`，因此速率与需要移动的距离无关；逼近过程不会反向或过冲，掉帧最多按八个基准帧补齐，最后 1px 精确落位。目标位置每帧重新读取，所以流式输出、输入框收起或迟到的重排都只会延长同一次运动，而不会重新开始；也是因此，发送后的气泡能在文档位移时保持屏幕位置不动。
 
@@ -107,6 +168,16 @@ npm --prefix desktop run dev:onboarding
 
 向前分页历史会在视口上方插入内容。已暂停阅读的偏移归浏览器原生 scroll anchoring 负责，因此手动补偿只在偏移仍停在发起分页时的位置才生效；在锚定之上再加一次补偿，会让消息流整体下移所插入的高度，分页一到就表现为跳变。
 
+## 长会话的跟随与渲染
+
+会话持续跟随最新内容，直到用户接管。滚轮、触摸、键盘、滚动条和文字选择会在浏览器派发滚动之前暂停跟随，因此流式输出的新片段无法把视图拉回去。向下回到最新内容时，会在一个小范围内恢复跟随，用来吸收滚动收尾期间新到的输出；向上滚动永远不会恢复跟随。“跳到最新”在点击时就恢复跟随，而不是等运动落地；轨迹逼近不断移动的底部后，交还给普通跟随。协作视图的跳转同样经由它自己的跟随控制器完成。
+
+视口外的轮次通过 `content-visibility: auto` 跳过布局和绘制，并保留上次渲染时的高度。每个轮次在允许跳过之前都会先完整渲染一次，因此被跳过的轮次不会退回占位高度；占位高度与真实高度不同，会在轮次最终渲染时移动阅读位置和滚动条。Chromium 要在一帧绘制之后才判断哪些被跳过的轮次进入了视口，所以 [`ConversationRenderWindow`](../../../desktop/src/renderer/ConversationRenderWindow.ts) 会在大幅滚动自身的 scroll 事件中渲染视口附近的轮次。在帧内写入 `scrollTop` 的代码（例如滚动轨迹和轮次导轨）写入后也要调用它。不要读取被跳过轮次内部的几何信息：读取会强制执行跳过本来省掉的布局。非活动的缓存会话使用 `content-visibility: hidden`。
+
+回复流式输出期间会变化的值（例如发送后的阅读预留）写在使用它的元素上，而不是作为可继承的自定义属性写在祖先上，否则每个已渲染的轮次都要重新计算样式。出于同样的原因，位于会话之前的外壳子元素（例如侧栏拖拽条）保持挂载并改为隐藏，而不是插入或移除。
+
+`npm --prefix desktop run test:e2e:conversation-scroll` 在真实 Electron 窗口中用原生输入驱动这些行为：流式输出与滚轮输入、回到最新内容、跳到最新、暂停阅读时的输出完成和侧栏切换、侧栏切换后的大幅滚动、跳转历史 query、发送定位与交接，以及会话恢复。它会检查绘制出的像素中是否有空白带，因此默认显示窗口；设置 `WUU_E2E_HIDDEN=true` 可隐藏。在长会话中极快地拖动滚动条，仍可能有一帧超过 Chromium 的光栅化速度；即使所有轮次都完整渲染也是如此。
+
 ## 滚动条可见性
 
 滚动条只在其容器确实发生滚动时出现，停止滚动后淡出。悬停不会显示滚动条：阅读有限高度的工具/推理检查区时，指针本就落在区域内，把 thumb 画在文字上只是噪音——而该区域的边缘渐隐已经在提示下面还有内容。滚动内层区域也不会点亮外层祖先的滚动条。
@@ -117,7 +188,7 @@ npm --prefix desktop run dev:onboarding
 
 ## 滚动边缘渐隐
 
-[`scroll-fade.css`](../../../desktop/src/renderer/styles/scroll-fade.css)为有限高度的工具/推理检查区和导航列表提供按需启用的渐隐。将属性加在已有的垂直滚动节点上：
+[`scroll-fade.css`](../../../desktop/src/renderer/styles/scroll-fade.css)为有限高度的工具/推理检查区、导航列表和横向卡片条提供按需启用的渐隐。将属性加在已有的滚动节点上：
 
 ```tsx
 <div className="existing-scroll-region" data-scroll-fade="compact" ref={scrollRef}>
@@ -125,7 +196,7 @@ npm --prefix desktop run dev:onboarding
 </div>
 ```
 
-密集检查区使用 `compact`，导航列表使用空值。消息、设置、文档等主要阅读区保留普通裁切。输入框、终端、编辑器、图片/PDF 画布和横向滚动区不适用。固定标题、输入区和菜单应留在遮罩节点外。
+密集检查区使用 `compact`，导航列表使用空值；输入框附件托盘这类横向卡片条使用 `inline`，改为渐隐左右两端。消息、设置、文档等主要阅读区保留普通裁切。输入框、终端、编辑器、图片/PDF 画布以及表格、代码等宽内容不适用。固定标题、输入区和菜单应留在遮罩节点外。
 
 该工具使用自身滚动时间线和透明度遮罩，不增加覆盖层或 React 滚动更新。只有边缘外还有内容时才渐隐，没有溢出就没有渐隐。嵌套滚动节点相互独立，每侧渐隐最多占视口一半。不支持相关特性的浏览器、减少动态效果、强制颜色和打印模式都回退为普通裁切。接入前检查已有的 `animation` 和 `mask-image` 声明，因为该工具会控制两者。
 

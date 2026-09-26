@@ -131,7 +131,7 @@ it("opens managed sessions through their agent conversation without duplicating 
     created_at: "2026-09-12T00:00:00Z", updated_at: "2026-09-12T00:00:00Z", session_control: control,
   });
   const managed = ["active", "paused", "taken_over"].map(state => thread(`managed-${state}`, {
-    manager_id: "manager", manager_name: "Research", state: state as "active" | "paused" | "taken_over", revision: 1,
+    manager_id: "manager", manager_name: "Research", room_id: "manager-dm", state: state as "active" | "paused" | "taken_over", revision: 1,
   }));
   managed[0].pinned = true;
   const ordinary = thread("ordinary");
@@ -192,7 +192,7 @@ it("keeps newly created managed work reachable after a delayed workspace list", 
     created_at: agents[0].created_at, updated_at: agents[0].created_at,
   };
   const managed: Thread = { ...created,
-    session_control: { manager_id: "manager", manager_name: "Research", state: "active", revision: 1 },
+    session_control: { manager_id: "manager", manager_name: "Research", room_id: "manager-dm", state: "active", revision: 1 },
   };
   window.wuu.resumeThread = vi.fn().mockResolvedValue({ thread: managed });
   window.wuu.selectProject = vi.fn().mockResolvedValue({
@@ -233,7 +233,8 @@ it("keeps newly created managed work reachable after a delayed workspace list", 
 
 it("pins a new Agent without navigation, persists hiding, and restores its DM from settings", async () => {
   agents = [{ id: "new-agent", name: "Research", avatar_key: "abstract-1", memory_dir: "/preview", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
-  rooms = [{ id: "general", name: "General", kind: "channel", members: [], created_by: "human", created_at: agents[0].created_at }];
+  agents.push({ ...agents[0], id: "general-agent", name: "General" });
+  rooms = [{ id: "general", name: "General", kind: "dm", members: [{ member_type: "agent", member_id: "general-agent", room_id: "general", joined_at: agents[0].created_at }], created_by: "human", created_at: agents[0].created_at }];
   vi.mocked(window.wuu.openChannelDirectMessage).mockImplementation(async () => {
     const room = { id: "new-dm", name: "Research", kind: "dm", members: [{ member_type: "agent", member_id: "new-agent" }], created_at: agents[0].created_at } as ChannelRoom;
     rooms = [...rooms, room];
@@ -261,9 +262,10 @@ it("pins a new Agent without navigation, persists hiding, and restores its DM fr
   expect(container.querySelector('[data-wuu-component="collaboration-sidebar"] nav')?.textContent).toContain("Research");
 });
 
-it.each(["agent", "group"])("confirms context deletion and removes only the requested %s", async (target) => {
+it.each(["agent", "dm"])("confirms context deletion and removes only the requested %s", async (target) => {
   agents = [{ id: "new-agent", name: "Research", avatar_key: "abstract-1", memory_dir: "/preview", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
-  rooms = [{ id: "general", name: "General", kind: "channel", members: [], created_by: "human", created_at: agents[0].created_at }];
+  agents.push({ ...agents[0], id: "general-agent", name: "General" });
+  rooms = [{ id: "general", name: "General", kind: "dm", members: [{ member_type: "agent", member_id: "general-agent", room_id: "general", joined_at: agents[0].created_at }], created_by: "human", created_at: agents[0].created_at }];
   let finishDelete!: () => void;
   window.wuu.deleteNamedAgent = vi.fn(() => new Promise<{ deleted: boolean }>((resolve) => {
     finishDelete = () => { agents = []; resolve({ deleted: true }); };
@@ -272,7 +274,7 @@ it.each(["agent", "group"])("confirms context deletion and removes only the requ
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   await act(async () => { root.render(<App />); });
   const name = target === "agent" ? "Research" : "General";
-  const label = t(target === "agent" ? "channels.deleteAgent" : "channels.deleteRoom");
+  const label = t(target === "agent" ? "channels.deleteAgent" : "channels.deleteConversation");
   await manageSidebarRow(name, label);
   expect(window.wuu.deleteNamedAgent).not.toHaveBeenCalled();
   expect(window.wuu.deleteChannelRoom).not.toHaveBeenCalled();
@@ -287,7 +289,8 @@ it.each(["agent", "group"])("confirms context deletion and removes only the requ
     expect(window.wuu.deleteChannelRoom).toHaveBeenCalledExactlyOnceWith({ room_id: "general" });
     expect(window.wuu.deleteNamedAgent).not.toHaveBeenCalled();
   }
-  expect(container.querySelector('[data-wuu-component="collaboration-sidebar"] nav')?.textContent).not.toContain(name);
+  if (target === "agent") expect(container.querySelector('[data-wuu-component="collaboration-sidebar"] nav')?.textContent).not.toContain(name);
+  else expect(agents.some(agent => agent.id === "general-agent")).toBe(true);
   confirm.mockRestore();
 });
 
@@ -390,19 +393,18 @@ it("preserves the agent draft across provider settings and returns to the model 
   await click(t("channels.newConversation"));
   expect(container.querySelector("#channel-recipient-create-agent")).toBeTruthy();
   await startNewAgent();
-  expect(container.querySelector(".collaboration-contact-row.active .agent-avatar-mark")).toBeTruthy();
+  const avatar = container.querySelector(".collaboration-contact-row.active .agent-avatar-mark")?.outerHTML;
+  expect(avatar).toBeTruthy();
   expect(window.wuu.createNamedAgent).not.toHaveBeenCalled();
-  await confirmModel();
-  await enterName("Research");
-  await click(t("slash.model.title"));
   await click(t("agentOnboarding.manageProviders"));
   await act(async () => { await vi.dynamicImportSettled(); });
   expect(container.querySelector('[data-wuu-component="settings-shell"]')).toBeTruthy();
-  expect(container.querySelector(".settings-provider-card")?.textContent).toContain("reasoner");
+  expect(container.querySelector(".settings-provider-list")?.textContent).toContain("reasoner");
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   await act(async () => { window.dispatchEvent(new Event("wuu:workbench-back")); });
+  expect(container.querySelector(".collaboration-contact-row.active .agent-avatar-mark")?.outerHTML).toBe(avatar);
   await confirmModel();
-  expect(container.querySelector<HTMLTextAreaElement>(".channel-composer textarea")?.value).toBe("Research");
+  await enterName("Research");
   await sendName();
   expect(window.wuu.createNamedAgent).toHaveBeenCalledWith(expect.objectContaining({ name: "Research", provider_override: "byok", model_override: "reasoner" }));
 });
@@ -410,8 +412,9 @@ it("preserves the agent draft across provider settings and returns to the model 
 
 it("switches between direct conversations and Harness without replacing the sidebar", async () => {
   agents = [{ id: "ada", name: "Ada", memory_dir: "", avatar_key: "abstract-1", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
-  const group: ChannelRoom = { id: "general", kind: "channel", name: "General", members: [], created_by: "human", created_at: agents[0].created_at };
+  const group: ChannelRoom = { id: "general", kind: "dm", name: "General", members: [{ member_type: "agent", member_id: "general-agent", room_id: "general", joined_at: agents[0].created_at }], created_by: "human", created_at: agents[0].created_at };
   const dm: ChannelRoom = { ...group, id: "ada-dm", kind: "dm", name: "Ada", members: [{ member_type: "agent", member_id: "ada", room_id: "ada-dm", joined_at: group.created_at }] };
+  agents.push({ ...agents[0], id: "general-agent", name: "General" });
   rooms = [group, dm];
   localStorage.setItem("wuu.channels.roomPreferences", JSON.stringify({ pinnedRoomIDs: [], archivedRoomIDs: [], selectedRoomID: dm.id }));
   await act(async () => root.render(<App />));
@@ -433,7 +436,8 @@ it("switches between direct conversations and Harness without replacing the side
 
 it("hides the previous room while opening a DM and ignores a late DM selection", async () => {
   agents = [{ id: "ada", name: "Ada", memory_dir: "", avatar_key: "abstract-1", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
-  const group: ChannelRoom = { id: "general", kind: "channel", name: "General", members: [], created_by: "human", created_at: agents[0].created_at };
+  const group: ChannelRoom = { id: "general", kind: "dm", name: "General", members: [{ member_type: "agent", member_id: "general-agent", room_id: "general", joined_at: agents[0].created_at }], created_by: "human", created_at: agents[0].created_at };
+  agents.push({ ...agents[0], id: "general-agent", name: "General" });
   rooms = [group];
   vi.mocked(window.wuu.listChannelMessages).mockImplementation(async ({ room_id }) => ({ messages: [{ id: "public", room_id, seq: 1, kind: "text", author_type: "human", author_id: "human", body: "Only in General", created_at: group.created_at }] }));
   let finish!: (result: { room: ChannelRoom }) => void;
@@ -455,8 +459,9 @@ it("does not let an older directory poll erase a newly opened DM", async () => {
   vi.useFakeTimers();
   try {
     agents = [{ id: "ada", name: "Ada", memory_dir: "", avatar_key: "abstract-1", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
-    const group: ChannelRoom = { id: "general", kind: "channel", name: "General", members: [], created_by: "human", created_at: agents[0].created_at };
-    rooms = [group];
+    const group: ChannelRoom = { id: "general", kind: "dm", name: "General", members: [{ member_type: "agent", member_id: "general-agent", room_id: "general", joined_at: agents[0].created_at }], created_by: "human", created_at: agents[0].created_at };
+    agents.push({ ...agents[0], id: "general-agent", name: "General" });
+  rooms = [group];
     await act(async () => root.render(<App />));
     await selectSidebarConversation("General");
     let finishPoll!: (result: { rooms: ChannelRoom[] }) => void;
@@ -489,6 +494,26 @@ it("opens an existing agent from the recipient picker before its new DM is in th
   expect(container.querySelector(".collaboration-contact-row.active")?.textContent).toContain("Ada");
   expect(container.querySelector(".channel-recipient-picker")).toBeNull();
   expect(window.wuu.createNamedAgent).not.toHaveBeenCalled();
+});
+
+it("opens new direct conversations and new agents in the chosen project", async () => {
+  const project = (id: string) => ({ id, name: id, path: `/projects/${id}`, created_at: "2026-09-12T00:00:00Z", updated_at: "2026-09-12T00:00:00Z" });
+  vi.mocked(window.wuu.listProjects).mockResolvedValue({ projects: [project("catalog"), project("wuu")], active_context: { kind: "project", project_id: "catalog", cwd: "/projects/catalog" } });
+  agents = [{ id: "existing-agent", name: "Ada", memory_dir: "", avatar_key: "abstract-1", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
+  await act(async () => { root.render(<App />); });
+  await click(t("channels.newConversation"));
+  await act(async () => container.querySelector<HTMLButtonElement>(".composer-workspace-bar .hero-project-pill")!.click());
+  const item = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(button => button.textContent === "wuu");
+  expect(item).toBeTruthy();
+  await act(async () => item!.click());
+  await act(async () => { container.querySelector<HTMLButtonElement>("#channel-recipient-existing-agent")!.click(); });
+  expect(window.wuu.openChannelDirectMessage).toHaveBeenLastCalledWith({ agent_id: "existing-agent", workspace_root: "/projects/wuu" });
+  await click(t("channels.newConversation"));
+  await startNewAgent();
+  await confirmModel();
+  await enterName("Research");
+  await sendName();
+  expect(window.wuu.openChannelDirectMessage).toHaveBeenLastCalledWith(expect.objectContaining({ agent_id: "new-agent", workspace_root: "/projects/wuu" }));
 });
 
 it("keeps the unfinished identity and avatar when navigating away and back", async () => {

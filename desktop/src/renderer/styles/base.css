@@ -254,15 +254,19 @@
   --menu-hover: var(--wuu-color-surface-muted, #f2f3f0);
   --menu-shadow: var(--shadow-pop);
   /* --- Motion: primitives ------------------------------------------------
-   * The ONLY place raw motion values live. Everything else (semantic aliases
-   * below, component CSS, JS timeouts via motion.ts) derives from these.
+   * Transitions, entrances, and exits read a rung of this ladder or an alias
+   * below, which is what lets reduced motion collapse them in one place.
    * Ladder: fast = pointer feedback (hover/press/color) — never slower, this
    * is where responsiveness lives; base = menus, popovers, content swaps;
    * slow = structural moves (sidebar, panels, overlays); slower = large
    * folds/reveals. The signature --ease-out front-loads its travel, so the
-   * longer tails read as calm rather than sluggish.
-   * prefers-reduced-motion zeroes the ladder globally (see media query after
-   * this :root block); token-driven motion needs no per-component handling. */
+   * longer tails read as calm rather than sluggish; exits accelerate away
+   * with --ease-in.
+   * Durations that stay literal are rhythms rather than transitions:
+   * --motion-spin, ambient loops, and choreography paced by a JS clock. Each
+   * stops or holds a static pose under reduced motion next to where it is
+   * defined (see the --motion-reduced block after this :root block). JS
+   * reads these tokens through motion.ts when motion starts. */
   --motion-fast: var(--wuu-motion-duration-fast, 120ms);
   --motion-base: var(--wuu-motion-duration-normal, 180ms);
   --motion-slow: 280ms;
@@ -286,7 +290,6 @@
   --query-submit-duration: 220ms;
   /* Receipt collapse and collaboration's bottom-follow share this deadline. */
   --query-submit-easing: cubic-bezier(0.333333, 1, 0.666667, 1);
-  --collapse-chevron-duration: var(--motion-base);
   --collapse-motion-easing: var(--ease-out);
   /* Globalized-sheet pair: the workspace right panel "takes the stage" as a
    * full-window sheet (sidebar.css [data-sheet] rules). Enter rides the
@@ -297,7 +300,7 @@
   --sheet-exit-duration: 220ms;
   --sheet-exit-easing: var(--ease-in);
   /* Collapsed-sidebar hover drawer: same enter-heavy/exit-light pairing as
-   * the sheet. Enter rides the ladder (so prefers-reduced-motion zeroes it);
+   * the sheet. Enter rides the ladder (so reduced motion zeroes it);
    * exit is pinned shorter and accelerates off-screen. JS reads the exit
    * token for the closing-phase timer (SIDEBAR_DRAWER_EXIT_MS). */
   --sidebar-drawer-enter-duration: var(--motion-slow);
@@ -403,20 +406,33 @@
   box-sizing: border-box;
 }
 
-/* Reduced motion: collapse the whole ladder at the token layer so every
- * token-driven transition/animation becomes instant. Spin rhythms stay
- * non-zero — spinners communicate ongoing work, and a 0ms infinite
- * animation would busy-loop. Hand-written keyframes with local durations
- * still need their own prefers-reduced-motion block next to where they
- * are defined. */
 /* Browser chrome lives outside the renderer, including on macOS and iOS. */
 :root[data-host-kind="web"] {
   --window-controls-inset-left: 0px;
   --window-controls-inset-right: 0px;
 }
 
+/* Reduced motion has two sources, the OS setting and the in-app Motion
+ * preference (data-appearance-motion, AppearancePreferences.ts). Both
+ * resolve here into one signal, --motion-reduced: 1, and collapse the
+ * ladder and every pinned alias at the token layer, so token-driven
+ * transitions, entrances, and exits become instant with no per-component
+ * rule. The two blocks must stay identical: a pinned alias missing from
+ * them keeps animating. Spin rhythms stay non-zero: spinners communicate
+ * ongoing work, and a 0ms infinite animation would busy-loop.
+ *
+ * Motion the ladder cannot reach — loops, literal rhythms, a static pose
+ * that replaces a transform — opts out next to where it is defined:
+ *
+ *   @container style(--motion-reduced: 1) { .pulse { animation: none; } }
+ *
+ * Every element is a style container, so the query reads the flag its
+ * parent inherits from :root. JS reads the same two sources through
+ * motion.ts (prefersReducedMotion, subscribeReducedMotion,
+ * useReducedMotion). */
 @media (prefers-reduced-motion: reduce) {
   :root {
+    --motion-reduced: 1;
     --motion-fast: 0ms;
     --motion-base: 0ms;
     --motion-slow: 0ms;
@@ -427,7 +443,23 @@
     --environment-flow-motion-duration: 0ms;
     --environment-flow-motion-delay: 0ms;
     --sheet-exit-duration: 0ms;
+    --sidebar-drawer-exit-duration: 0ms;
   }
+}
+
+:root[data-appearance-motion="reduce"] {
+  --motion-reduced: 1;
+  --motion-fast: 0ms;
+  --motion-base: 0ms;
+  --motion-slow: 0ms;
+  --motion-slower: 0ms;
+  --query-submit-duration: 0ms;
+  --environment-panel-motion-duration: 0ms;
+  --environment-panel-exit-duration: 0ms;
+  --environment-flow-motion-duration: 0ms;
+  --environment-flow-motion-delay: 0ms;
+  --sheet-exit-duration: 0ms;
+  --sidebar-drawer-exit-duration: 0ms;
 }
 
 /* Glyph-only running-state feedback. The real text remains normally painted;
@@ -492,7 +524,7 @@
   animation: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .wuu-live-text-wave::after {
     content: none;
     animation: none;
@@ -543,71 +575,67 @@
   }
 }
 
-@keyframes conversation-search-overlay-in {
-  from {
-    opacity: 0;
-  }
+/* Shared entrance and exit keyframes. A surface picks its offsets with the
+ * properties below on the animated element itself instead of copying a
+ * keyframe for another distance:
+ *
+ *   .toast { --enter-y: 8px; animation: wuu-enter var(--motion-base) var(--ease-out) both; }
+ *   .toast.closing { --exit-y: -4px; animation: wuu-exit var(--motion-base) var(--ease-in) both; }
+ *
+ * They move through the individual translate and scale properties, so they
+ * compose with a surface's own transform (centering, hover lifts) instead of
+ * replacing it. The offsets are registered as non-inheriting: a nested
+ * surface never picks up its parent's distance. The resting side of each
+ * keyframe is implicit, so a surface lands on its own opacity and position.
+ * Pair entrances with fill-mode both, and let the duration token carry
+ * reduced motion; `animation: none` would also drop the fill that shows a
+ * surface whose resting style starts hidden. Pure fades use wuu-fade-in and
+ * wuu-fade-out, which leave transforms alone. */
+@property --enter-opacity { syntax: "<number>"; inherits: false; initial-value: 0; }
+@property --enter-x { syntax: "<length-percentage>"; inherits: false; initial-value: 0px; }
+@property --enter-y { syntax: "<length-percentage>"; inherits: false; initial-value: 0px; }
+@property --enter-scale { syntax: "<number>"; inherits: false; initial-value: 1; }
+@property --exit-opacity { syntax: "<number>"; inherits: false; initial-value: 0; }
+@property --exit-x { syntax: "<length-percentage>"; inherits: false; initial-value: 0px; }
+@property --exit-y { syntax: "<length-percentage>"; inherits: false; initial-value: 0px; }
+@property --exit-scale { syntax: "<number>"; inherits: false; initial-value: 1; }
 
-  to {
-    opacity: 1;
+@keyframes wuu-enter {
+  from {
+    opacity: var(--enter-opacity);
+    translate: var(--enter-x) var(--enter-y);
+    scale: var(--enter-scale);
   }
 }
 
-@keyframes conversation-search-overlay-out {
-  from {
-    opacity: 1;
+@keyframes wuu-exit {
+  to {
+    opacity: var(--exit-opacity);
+    translate: var(--exit-x) var(--exit-y);
+    scale: var(--exit-scale);
   }
+}
 
+@keyframes wuu-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes wuu-fade-out {
   to {
     opacity: 0;
   }
 }
 
-@keyframes conversation-search-dialog-in {
-  from {
-    opacity: 0;
-    transform: translate3d(0, -8px, 0) scale(0.982);
-  }
+/* The one ambient opacity pulse: the resting opacity at both ends,
+ * --pulse-opacity at the midpoint. A loop, so stop it under reduced motion
+ * next to where it runs. */
+@property --pulse-opacity { syntax: "<number>"; inherits: false; initial-value: 0.45; }
 
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-}
-
-@keyframes conversation-search-dialog-out {
-  from {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-
-  to {
-    opacity: 0;
-    transform: translate3d(0, -6px, 0) scale(0.986);
-  }
-}
-
-@keyframes sidebar-name-dialog-drawer-in {
-  from {
-    opacity: 0;
-    transform: translate3d(100%, 0, 0);
-  }
-
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0);
-  }
-}
-
-@keyframes sidebar-name-dialog-drawer-out {
-  from {
-    opacity: 1;
-    transform: translate3d(0, 0, 0);
-  }
-
-  to {
-    opacity: 0;
-    transform: translate3d(100%, 0, 0);
+@keyframes wuu-pulse {
+  50% {
+    opacity: var(--pulse-opacity);
   }
 }
 
@@ -641,29 +669,6 @@
   to {
     opacity: 0;
     transform: translate3d(28px, 0, 0) scale(0.986);
-  }
-}
-
-@keyframes session-active-mark-in {
-  from {
-    opacity: 0;
-    transform: translateY(-50%) scaleY(0.55);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(-50%) scaleY(1);
-  }
-}
-
-@keyframes session-loading-pulse {
-  0%,
-  100% {
-    opacity: 0.65;
-  }
-
-  50% {
-    opacity: 1;
   }
 }
 

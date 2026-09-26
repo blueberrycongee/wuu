@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Click the conversation title in the title bar to rename it. An existing
+  conversation saves immediately. A new conversation keeps the name when the
+  first message creates the session.
+
 - Video output cards and workspace video files open an inline player with
   playback, seeking, volume, and fullscreen controls. Unsupported codecs show
   a message while keeping the download action available.
@@ -19,10 +23,73 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   daily activity heatmap for the past year. New installs show zero totals.
   The new `usage/overview` app-server method reads only token usage records,
   not conversation content. After 20 seconds without input, the greeting
-  mascot sends a small ball bouncing across the heatmap to today and catches
-  it on the way back; any input stops it, and reduced motion turns it off.
+  mascot plays short bouncing-ball, snake, and breakout scenes on the heatmap,
+  rotating without consecutive repeats. Each scene ends on the heatmap: the
+  ball settles into today, the snake bites its tail and the days it ate grow
+  back, and the last breakout shot drills through the wall before it rebuilds.
+  Any input stops the scene, and reduced motion turns it off; the underlying
+  activity data is never changed.
 
 ### Changed
+
+- Project conversation lists show five recent entries plus active, running,
+  unread, and up to three recently read conversations. Recently read entries
+  expire after two minutes. Expanding includes all history inside an eight-row,
+  font-responsive scroll area, keeping other projects in place.
+
+- Creating an agent asks only for its model and name. The name step no longer
+  shows switch-model and project controls above the input, and the random-name
+  action sits inside the name input. The first conversation opens in the
+  project chosen for the new conversation, shown in its header; the model stays
+  editable in the agent's settings.
+
+- The Extensions page follows the settings layout: a titled page with its
+  actions beside the title, then plugins, official skills, and your skills as
+  bordered lists in one column. Plugins come first and show their status on a
+  shared axis; each row has a one-line description and opens its details. Text
+  and icons follow the UI font size, a search hides lists without matches, and
+  the plugin detail shows the same status label as its row.
+
+- Desktop motion shares one duration ladder and one reduced-motion signal.
+  The in-app Motion preference and the OS setting both collapse token-driven
+  transitions, entrances, exits, drag movement, and frame-driven motion;
+  spinners keep turning because they report ongoing work. Closing the
+  conversation search overlay and the sidebar rename sheet no longer keeps a
+  full-window click target for the whole exit.
+
+- The macOS DMG installer window has a Retina-ready background with English
+  and Chinese drag-to-install instructions: a slingshot beside the app fires
+  Wuu along a dotted arc into the Applications folder.
+
+- Collaboration now centers on project-bound DMs, with visible task controls,
+  managed-session takeover and return, project and identity memory editing, and
+  persistent conversation timers. The composer's project control chooses where a
+  new conversation or a new agent's first conversation opens, and the
+  conversation header shows the project. Memory and timers open from the header
+  in a side panel. Group navigation is hidden while data remains.
+- Work execution uses isolated Git worktrees, versioned shared decisions and
+  structured reports. Host-managed candidates and independent verification expose
+  reviewable diffs with apply, optional Git-extension PR, and discard actions.
+  Progress deadlines, revision checks and private-history boundaries protect
+  continuing work from stale updates and silent stalls.
+
+- Collaboration tools follow each admitted session role: conversations read and
+  coordinate, execution sessions can write, and verification sessions only read.
+  Continuing identities refresh their role instructions on every turn.
+
+- Settings pages are grouped by task: Agents & models, App, Extensions, and
+  Data. Each page uses one column, with its title and page actions on the
+  first line and settings in bordered groups. Model providers and agents open
+  in place under their own row. Page identifiers are unchanged, including
+  `advanced` for the runtime page.
+
+- Pasted or attached images, videos, PDFs, and folded long text now wait in a
+  single-row tray that slides out from behind the top of the composer instead
+  of growing the input box. Cards show a thumbnail, or a title with size or
+  line count; removing one lets the rest slide into place, and the input keeps
+  its size throughout. Overflowing trays scroll horizontally with faded edges.
+  Unsupported attachment types and import failures use the shared capsule
+  notification instead of a persistent composer status line.
 
 - `bash` starts background processes with a single `run_in_background` flag
   instead of its seven background actions. A new `process` tool reads output
@@ -47,6 +114,29 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   is ready. Interrupted dispatches reuse their run record after restart, and
   completing a dispatch preserves a newly edited schedule.
 
+- Sidebar scroll fades remain tied to the list's own scroll position while
+  conversations stream, pause, finish, or switch. Streaming paint reduction
+  applies only to nested reasoning and process details.
+
+- The new-agent setup header drags the window across its full width again, and
+  its height follows the window title bar after page zoom and at large UI font
+  sizes.
+
+- Work delivery reads structured reports from the final answer, so commentary
+  before tool calls no longer causes completed executions to fail validation.
+
+- Collaboration conversations can receive due room reminders, include them in
+  unread counts, and clear their wake state after consumption.
+
+- Collaboration replies no longer become held drafts just because a thread
+  reply is newer than the conversation's main timeline.
+
+- Sending a message keeps one local waiting timer across admission, events,
+  snapshots, and conversation switches without changing server timestamps.
+  Follow-up messages can queue during new-conversation creation. Stop uses an
+  immediate progress icon until execution ends and retains pending input without
+  automatically dispatching it after cancellation.
+
 - Terminal run details preserve output, exit status, and log links when a
   command's model-facing output is JSON, rather than treating that output as
   execution metadata.
@@ -69,6 +159,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - `apply_patch` with `then_run` now shows the model the follow-up command's
   outcome; the parent result previously kept the patch-only view.
+
+- Link context menus in messages list only their actions instead of repeating
+  the full URL, so the menu no longer spreads across the message. Context menus
+  stay inside the window, truncate long labels, and scroll long lists. Opening
+  one closes any other open context menu, including the composer edit menu, and
+  hides hover tooltips until it closes.
 
 ## [2026.9.25] - 2026-09-25
 

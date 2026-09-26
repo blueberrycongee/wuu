@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -880,5 +881,82 @@ func TestIsGitRepo(t *testing.T) {
 	initRepo(t, gitDir)
 	if !IsGitRepo(gitDir) {
 		t.Error("initialized dir should be a git repo")
+	}
+}
+
+func TestSnapshotPreservesWorkingTreeAndFreezesCandidate(t *testing.T) {
+	root := t.TempDir()
+	initRepo(t, root)
+	base := runGit(t, root, "rev-parse", "HEAD")
+	write := func(name, value string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), []byte(value), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("README.md", "staged\n")
+	runGit(t, root, "add", "README.md")
+	write("README.md", "unstaged\n")
+	write("new.txt", "untracked\n")
+	before := runGit(t, root, "status", "--porcelain=v1")
+	index := runGit(t, root, "write-tree")
+	revision, diff, err := Snapshot(context.Background(), root, base, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diff, "+unstaged") || !strings.Contains(diff, "+untracked") {
+		t.Fatalf("incomplete candidate: %s", diff)
+	}
+	if before != runGit(t, root, "status", "--porcelain=v1") || index != runGit(t, root, "write-tree") || base != runGit(t, root, "rev-parse", "HEAD") {
+		t.Fatal("snapshot changed user's git state")
+	}
+	write("README.md", "later edit\n")
+	replay, replayDiff, err := Snapshot(context.Background(), root, base, "run-1")
+	if err != nil || replay != revision || replayDiff != diff {
+		t.Fatalf("candidate changed on replay: %s %v", replay, err)
+	}
+}
+
+func TestApplySnapshotPreservesUnrelatedChangesAndRejectsConflicts(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	initRepo(t, root)
+	base := runGit(t, root, "rev-parse", "HEAD")
+	candidate := filepath.Join(t.TempDir(), "candidate")
+	runGit(t, root, "worktree", "add", "--detach", candidate, base)
+	if err := os.WriteFile(filepath.Join(candidate, "README.md"), []byte("candidate\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	revision, _, err := Snapshot(ctx, candidate, base, "apply-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "user.txt"), []byte("keep me\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", "user.txt")
+	index := runGit(t, root, "write-tree")
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("conflicting user edit\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplySnapshot(ctx, root, base, revision); err == nil {
+		t.Fatal("conflicting patch applied")
+	}
+	content, err := os.ReadFile(filepath.Join(root, "README.md"))
+	if err != nil || string(content) != "conflicting user edit\n" {
+		t.Fatal("conflict damaged user edits")
+	}
+	runGit(t, root, "restore", "--worktree", "README.md")
+	for range 2 {
+		if err := ApplySnapshot(ctx, root, base, revision); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if index != runGit(t, root, "write-tree") {
+		t.Fatal("apply changed user's index")
+	}
+	content, err = os.ReadFile(filepath.Join(root, "user.txt"))
+	if err != nil || string(content) != "keep me\n" {
+		t.Fatal("apply lost unrelated work")
 	}
 }

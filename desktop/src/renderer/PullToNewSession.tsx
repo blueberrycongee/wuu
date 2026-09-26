@@ -2,11 +2,11 @@ import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { isTouchWebShell } from "./ComposerFocus";
 import { eventTargetsNestedAutoFollowScroll, selectionIntersectsNode, submitGlideActive } from "./AutoFollowScroll";
 import { useI18n } from "./i18n";
+import { motionDurationMs, prefersReducedMotion } from "./motion";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import "./styles/pull-to-new-session.css";
 
 const THRESHOLD = 80;
-const SETTLE_MS = 240;
 type PullVisual = {
   distance: number;
   lift: number;
@@ -84,7 +84,7 @@ export function PullToNewSession({
       timer = setTimeout(() => {
         clear();
         if (commit) callback.current();
-      }, window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : SETTLE_MS);
+      }, prefersReducedMotion() ? 0 : motionDurationMs("--motion-slow", 280));
     };
     const reset = () => { if (!settling) settle(false); };
     const eligible = () => isTouchWebShell() && atBottom(node) &&

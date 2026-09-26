@@ -1,3 +1,4 @@
+import { forgetLocalTurnTiming } from "./LocalTurnTiming";
 import type { ChannelRoomOnboarding } from "../shared/protocol";
 import { subscribeServerEvents } from "./ServerEvents";
 import { PhoneNavigationContext } from "./PhoneNavigationContext";
@@ -49,6 +50,7 @@ import type {
   UserQuestionRequest,
 } from "../shared/protocol";
 import {
+  OPTIMISTIC_TURN_ID_PREFIX,
   awaitComposerImages,
   createComposerMessage,
   createOptimisticCompactTurn,
@@ -57,7 +59,6 @@ import {
   failOptimisticCompactTurn,
   inputFilesFromComposer,
   inputImagesFromComposer,
-  interruptLatestOptimisticTurn,
   interruptOptimisticTurn,
   isOptimisticTurnInterrupted,
   replaceOptimisticTurn,
@@ -104,6 +105,7 @@ import {
   SIDEBAR_SECTION_COLLAB,
 } from "./AppSidebar";
 import { ChannelView, type ChannelConversationSnapshot, type ChannelSection } from "./ChannelView";
+import type { ChannelComposerProject } from "./ChannelComposer";
 import { collaborationConversations, managedSidebarThreads, orderedPinnedCollaborationConversations, type CollaborationConversation } from "./CollaborationConversations";
 import { CollaborationSidebar } from "./CollaborationSidebar";
 import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft } from "./AgentOnboarding";
@@ -193,11 +195,11 @@ import {
 import { DIRECTORY_POLL_BASE_MS, nextDirectoryPollDelay } from "./ChannelDirectoryPoll";
 import { sameChannelRooms, sameNamedAgents } from "./ChannelRoomState";
 import {
-  RIGHT_PANEL_MOTION_MS,
-  SIDEBAR_DRAWER_EXIT_MS,
+  rightPanelMotionMs,
+  sidebarDrawerExitMs,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
-  SIDEBAR_MOTION_MS,
+  sidebarMotionMs,
   WORKSPACE_RIGHT_PANEL_MAX_WIDTH,
   WORKSPACE_RIGHT_PANEL_MIN_WIDTH,
   useAppLayoutState,
@@ -231,6 +233,7 @@ import {
   ENABLE_CONVERSATION_TURN_RAIL,
   ENABLE_EMBEDDED_BROWSER,
   ENABLE_GROUP_CHAT,
+  ENABLE_COLLABORATION_CHANNELS,
   ENABLE_ACCOUNT,
 } from "./FeatureFlags";
 import { ArchiveTip } from "./ArchiveTip";
@@ -309,6 +312,10 @@ import { createWorkspaceActions } from "./WorkspaceActions";
 import { createSessionTabActions } from "./SessionTabActions";
 import { createThreadActivationActions } from "./ThreadActivationActions";
 import { createThreadMutationActions } from "./ThreadMutationActions";
+import {
+  conversationHeadingTitle,
+  customDraftConversationTitle,
+} from "./ThreadTitles";
 import { createRuntimeSettingsActions } from "./RuntimeSettingsActions";
 import { createConversationPaneActions } from "./ConversationPaneActions";
 import {
@@ -335,11 +342,6 @@ import {
 } from "./SessionRuntimeState";
 export { SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./SidebarDrawerState";
 
-const ENVIRONMENT_PANEL_MOTION_MS = motionDurationMs(
-  "--environment-panel-motion-duration",
-  260,
-);
-const WORKSPACE_SHEET_EXIT_MS = motionDurationMs("--sheet-exit-duration", 220);
 const ENGINE_INVENTORY_STALE_MS = 6 * 60 * 60 * 1000;
 // Globalized-sheet phases: docked (grid child) → arming (promoted to a
 // full-window fixed sheet, teleported over its dock slot for one frame) →
@@ -464,13 +466,7 @@ export function App(): JSX.Element {
     moveSplitDraftToGlobalComposer,
     currentPrimaryComposerDraft,
     restorePrimaryComposerDraft,
-  } = useComposerDraftState({
-    setStatus: (status) =>
-      setState((current) => ({
-        ...current,
-        status,
-      })),
-  });
+  } = useComposerDraftState();
   const [historyMessageEdit, setHistoryMessageEdit] =
     useState<HistoryMessageEditState | undefined>(undefined);
   const composerDraftsRef = useRef({ primary: currentPrimaryComposerDraft, split: splitComposerDrafts });
@@ -546,7 +542,7 @@ export function App(): JSX.Element {
     setWorkspaceSheetPhase("exiting");
     const timer = window.setTimeout(
       () => setWorkspaceSheetPhase("docking"),
-      WORKSPACE_SHEET_EXIT_MS,
+      motionDurationMs("--sheet-exit-duration", 220),
     );
     return () => window.clearTimeout(timer);
   }, [rightPanelGlobalized, workspaceSheetPhase]);
@@ -589,8 +585,8 @@ export function App(): JSX.Element {
     appShellRef,
     sidebarCollapsed: sidebarDrawerMode,
     resizingSidebar,
-    motionMs: SIDEBAR_DRAWER_EXIT_MS,
-    dockingMotionMs: SIDEBAR_MOTION_MS,
+    motionMs: sidebarDrawerExitMs,
+    dockingMotionMs: sidebarMotionMs,
   });
   const sidebarDrawerVisible = sidebarDrawerPhase === "open";
   const toggleSessionSwitcher = useCallback((): void => {
@@ -675,6 +671,16 @@ export function App(): JSX.Element {
   const [editChannelRoomRequestID, setEditChannelRoomRequestID] = useState("");
   const [agentOnboardingActive, setAgentOnboardingActive] = useState(false);
   const [agentOnboardingDraft, setAgentOnboardingDraft] = useState<AgentOnboardingDraft | null>(null);
+  // New direct conversations and new agents open in one registered project.
+  // Default to the runtime's project, as the host does without a workspace.
+  const [collaborationProjectID, setCollaborationProjectID] = useState("");
+  const collaborationProjects = useMemo(() => state.projects.filter((project) => !project.missing), [state.projects]);
+  const collaborationProject = collaborationProjects.find((project) => project.id === collaborationProjectID)
+    ?? collaborationProjects.find((project) => project.path === state.initialized?.workspace_root)
+    ?? collaborationProjects.find((project) => project.id === state.activeProjectId);
+  const collaborationProjectPicker: ChannelComposerProject | undefined = collaborationProjects.length
+    ? { projects: collaborationProjects, selectedID: collaborationProject?.id ?? "", onSelect: setCollaborationProjectID }
+    : undefined;
   const [allNamedAgents, setNamedAgents] = useState<NamedAgent[]>([]);
   const [deletedAgentIDs, setDeletedAgentIDs] = useState<ReadonlySet<string>>(new Set());
   const deletedAgentIDsRef = useRef(new Set<string>());
@@ -1121,7 +1127,7 @@ export function App(): JSX.Element {
     getAppState: () => appStateRef.current,
     getPrimaryComposerDraft: currentPrimaryComposerDraft,
     restoreComposerDraftForThread: (threadID, draft) => {
-      if (activeThreadIDForState(appStateRef.current) === threadID) {
+      if ((activeThreadIDForState(appStateRef.current) === threadID || appStateRef.current.activeSessionTabID === threadID)) {
         restorePrimaryComposerDraft(draft);
         return;
       }
@@ -1157,7 +1163,7 @@ export function App(): JSX.Element {
     [channelRoomPreferences, channelRooms],
   );
   const archivedChannelRooms = useMemo(
-    () => channelRooms.filter((room) => channelRoomPreferences.archivedRoomIDs.includes(room.id)),
+    () => channelRooms.filter((room) => (ENABLE_COLLABORATION_CHANNELS || room.kind === "dm") && channelRoomPreferences.archivedRoomIDs.includes(room.id)),
     [channelRoomPreferences.archivedRoomIDs, channelRooms],
   );
   const selectedChannelRoomID = selectedCollaborationAgentID
@@ -2223,8 +2229,11 @@ export function App(): JSX.Element {
         ? t("channels.agents")
         : currentSessionTab?.kind === "tasks"
           ? t("channels.tasks")
-    : resolveLocalizedText(activeThread?.preview ?? "") ||
-      t("tabs.newConversation");
+          : conversationHeadingTitle(
+            activeThread,
+            currentSessionTab?.kind === "draft" ? currentSessionTab.title : undefined,
+            t("tabs.newConversation"),
+          );
   const popOutWindowTitle =
     popOutInit?.kind === "thread"
       ? activeThread?.title?.trim() ||
@@ -2246,6 +2255,85 @@ export function App(): JSX.Element {
         }
       : { kind: "wuu" };
   const emptyThreadTitle = greetingFor(currentHour, greetingContext);
+  type TurnAdmission = {
+    thread?: Thread;
+    ready: Promise<Thread | undefined>;
+    resolve: (thread: Thread | undefined) => void;
+    stopRequested: boolean;
+    sent: boolean;
+    cancelled: Promise<undefined>;
+    cancelPreparation: () => void;
+  };
+  const turnAdmissionsRef = useRef(new Map<string, TurnAdmission>());
+  const queueLanesRef = useRef(new Map<string, { tail: Promise<void>; stopVersion: number }>());
+  const stopDeliveredRef = useRef(new Map<string, symbol>());
+  const stopTargetsRef = useRef(new Map<string, string>());
+  const stopRequestsRef = useRef<Record<string, "pending" | "retry">>({});
+  const [stopRequests, setStopRequests] = useState(stopRequestsRef.current);
+  function setStopRequest(threadID: string, phase?: "pending" | "retry"): void {
+    const next = { ...stopRequestsRef.current };
+    if (phase) next[threadID] = phase;
+    else {
+      delete next[threadID];
+      stopDeliveredRef.current.delete(threadID);
+      stopTargetsRef.current.delete(threadID);
+    }
+    stopRequestsRef.current = next;
+    setStopRequests(next);
+  }
+  useEffect(() => {
+    for (const threadID of Object.keys(stopRequestsRef.current)) {
+      const thread = threadForTab(state, threadID);
+      const target = stopTargetsRef.current.get(threadID);
+      const targetEnded = thread?.turns.some((turn) => turn.status !== "in_progress" && (
+        turn.id === target || turn.items.some((item) => item.type === "user_message"
+          && item.source_id && `${OPTIMISTIC_TURN_ID_PREFIX}${item.source_id}` === target)
+      ));
+      if (thread && !isThreadRunning(thread) && !turnAdmissionsRef.current.has(threadID)
+        && (stopRequestsRef.current[threadID] !== "retry" || targetEnded)) {
+        setStopRequest(threadID);
+      } else if (thread && stopRequestsRef.current[threadID] === "pending" && thread.turns.some(
+        (turn) => turn.status === "in_progress" && !turn.answer_ready_at && !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX),
+      )) {
+        void interruptAcceptedThread(threadID);
+      }
+    }
+  }, [state, stopRequests]);
+
+  async function requestThreadStop(thread: Thread): Promise<void> {
+    const admission = turnAdmissionsRef.current.get(thread.id);
+    if (admission) {
+      admission.stopRequested = true;
+      if (!admission.sent) admission.cancelPreparation();
+    }
+    const lane = queueLanesRef.current.get(thread.id);
+    if (lane) lane.stopVersion += 1;
+    if (stopRequestsRef.current[thread.id] === "pending") return;
+    const target = thread.turns.at(-1);
+    if (target) stopTargetsRef.current.set(thread.id, target.id);
+    setStopRequest(thread.id, "pending");
+    // Preparation can be cancelled locally. In-flight admission is stopped as
+    // soon as its real turn is known; never mark it terminal on user intent.
+    if (admission && !thread.turns.some((turn) =>
+      turn.status === "in_progress" && !turn.answer_ready_at && !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX))) return;
+    await interruptAcceptedThread(thread.id);
+  }
+
+  async function interruptAcceptedThread(threadID: string): Promise<void> {
+    if (stopDeliveredRef.current.has(threadID)) return;
+    const delivery = Symbol();
+    stopDeliveredRef.current.set(threadID, delivery);
+    try {
+      const result = await window.wuu.interruptTurn(threadID);
+      if (!result.ok) throw new Error(t("composer.stopUnconfirmed"));
+    } catch (error) {
+      if (stopDeliveredRef.current.get(threadID) !== delivery) return;
+      stopDeliveredRef.current.delete(threadID);
+      setStopRequest(threadID, "retry");
+      showErrorToast(error);
+    }
+  }
+
   type PendingThreadCreation = {
     sessionTabID: string;
     context: RuntimeContext;
@@ -2367,6 +2455,7 @@ export function App(): JSX.Element {
     scheduleStreamScroll,
     handleConversationScroll,
     enableConversationAutoFollow,
+    jumpToLatest: jumpConversationToLatest,
     disableConversationAutoFollow,
     captureConversationScrollPosition,
     restoreConversationScrollPosition,
@@ -2932,7 +3021,7 @@ export function App(): JSX.Element {
       setEnvironmentPanelMounted(false);
       setEnvironmentPanelClosing(false);
       setEnvironmentPanelReserved(false);
-    }, ENVIRONMENT_PANEL_MOTION_MS);
+    }, motionDurationMs("--environment-panel-exit-duration", 220));
     return () => window.clearTimeout(timer);
   }, [
     environmentPanelHasRoom,
@@ -3115,10 +3204,12 @@ export function App(): JSX.Element {
         setPrompt={setPromptFromInput}
         files={composerFiles}
         images={composerImages}
-        queuedMessages={queuedMessages}
+        queuedMessages={activePendingThreadCreation
+          ? pendingComposerMessagesForActiveThread(activePendingThreadCreation.sessionTabID).queued
+          : queuedMessages}
         guideMessages={guideMessages}
-        sendDisabled={submissionTargetPending || Boolean(activePendingThreadCreation)}
-        forceStopWhileRunning={Boolean(activePendingThreadCreation)}
+        sendDisabled={submissionTargetPending || Boolean(activeThread && stopRequests[activeThread.id])}
+        stopState={activeThread ? stopRequests[activeThread.id] : undefined}
         running={
           Boolean(activePendingThreadCreation) ||
           (!activeThreadReadOnly && composerTurnRunning) ||
@@ -3278,7 +3369,9 @@ export function App(): JSX.Element {
         onRemoveImage={removeComposerImage}
         onRemoveQueuedMessage={removeQueuedMessage}
         onRemoveGuideMessage={removeGuideMessage}
-        onGuideQueuedMessage={(id) => void guideQueuedMessage(id)}
+        onGuideQueuedMessage={(id) => {
+          if (!activeThread || !stopRequestsRef.current[activeThread.id]) void guideQueuedMessage(id);
+        }}
         onEditQueuedMessage={(id) => void editQueuedMessage(id)}
         onEditGuideMessage={(id) => void editGuideMessage(id)}
         onSend={(promptOverride, contentParts) => sendPrompt("queue", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)}
@@ -3288,7 +3381,7 @@ export function App(): JSX.Element {
             : undefined
         }
         onQueue={
-          activeThreadIsRunning && activeThread
+          (activePendingThreadCreation || (activeThreadIsRunning && activeThread))
             ? (promptOverride, contentParts) => sendPrompt("queue", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)
             : undefined
         }
@@ -3650,17 +3743,17 @@ export function App(): JSX.Element {
     openCollaborationView();
   }
 
-  async function selectCollaborationAgent(agentID: string): Promise<void> {
+  async function selectCollaborationAgent(agentID: string, workspaceRoot?: string): Promise<void> {
     setAgentOnboardingActive(false);
     if (!namedAgents.some((agent) => agent.id === agentID)) return;
     try {
-      await openCollaborationAgentConversation(agentID);
+      await openCollaborationAgentConversation(agentID, undefined, workspaceRoot);
     } catch (error) {
       if (selectedCollaborationAgentRequestRef.current === agentID) showErrorToast(error);
     }
   }
 
-  async function openCollaborationAgentConversation(agentID: string, onboarding?: ChannelRoomOnboarding): Promise<void> {
+  async function openCollaborationAgentConversation(agentID: string, onboarding?: ChannelRoomOnboarding, workspaceRoot?: string): Promise<void> {
     const requestGeneration = ++directMessageRequestGenerationRef.current;
     selectedCollaborationAgentRequestRef.current = agentID;
     setSelectedCollaborationAgentID(agentID);
@@ -3668,7 +3761,7 @@ export function App(): JSX.Element {
     setAppMode("collaboration");
     prepareChannelTab();
     const existingDirectMessage = activeChannelRooms.find(
-      (room) => room.kind === "dm" && room.members.some(
+      (room) => room.kind === "dm" && (!workspaceRoot || room.workspace_root === workspaceRoot) && room.members.some(
         (member) => member.member_type === "agent" && member.member_id === agentID,
       ),
     );
@@ -3678,7 +3771,9 @@ export function App(): JSX.Element {
     }
     const isCurrentRequest = () => selectedCollaborationAgentRequestRef.current === agentID
       && requestGeneration === directMessageRequestGenerationRef.current;
-    const result = await window.wuu.openChannelDirectMessage({ agent_id: agentID, ...(onboarding ? { onboarding } : {}) }).catch((reason: unknown) => {
+    const result = await window.wuu.openChannelDirectMessage({
+      agent_id: agentID, ...(onboarding ? { onboarding } : {}), ...(workspaceRoot ? { workspace_root: workspaceRoot } : {}),
+    }).catch((reason: unknown) => {
       if (!isCurrentRequest()) return null;
       setSelectedCollaborationAgentID("");
       throw reason;
@@ -3909,6 +4004,29 @@ export function App(): JSX.Element {
     clearThreadPendingComposerMessages,
   });
 
+  function commitConversationTitle(nextTitle: string): void {
+    const trimmed = nextTitle.trim();
+    if (!trimmed) return;
+    const current = appStateRef.current;
+    const thread = activeThreadForState(current);
+    if (thread && !thread.read_only && !thread.ephemeral) {
+      void renameThread(thread, trimmed);
+      return;
+    }
+    const tab = activeSessionTab(current);
+    if (tab?.kind !== "draft" || tab.title.trim() === trimmed) return;
+    setState((state) => {
+      const next = {
+        ...state,
+        sessionTabs: state.sessionTabs.map((item) =>
+          item.id === tab.id && item.kind === "draft" ? { ...item, title: trimmed } : item,
+        ),
+      };
+      appStateRef.current = next;
+      return next;
+    });
+  }
+
   function updateChannelRoomPreferences(
     update: (current: ChannelRoomPreferences) => ChannelRoomPreferences,
   ): void {
@@ -3975,14 +4093,14 @@ export function App(): JSX.Element {
 
   async function deleteCollaborationConversation(conversation: CollaborationConversation): Promise<void> {
     const { agent, room, name } = conversation;
-    if (!agent && room?.kind !== "channel") return;
-    if (!window.confirm(t(agent ? "channels.deleteAgentConfirm" : "channels.deleteRoomConfirm", { name }))) return;
+    if (!agent && !room) return;
+    if (!window.confirm(t(room?.kind === "dm" ? "channels.deleteConversationConfirm" : room ? "channels.deleteRoomConfirm" : "channels.deleteAgentConfirm", { name }))) return;
     try {
-      if (agent) {
-        await deleteCollaborationAgent(agent.id);
+      if (!room) {
+        await deleteCollaborationAgent(agent!.id);
         return;
       }
-      await window.wuu.deleteChannelRoom({ room_id: room!.id });
+      await window.wuu.deleteChannelRoom({ room_id: room.id });
       const [agentResult, roomResult] = await Promise.all([window.wuu.listNamedAgents(), window.wuu.listChannelRooms()]);
       setNamedAgents(agentResult.agents);
       setChannelRooms(roomResult.rooms);
@@ -4015,24 +4133,7 @@ export function App(): JSX.Element {
     setBranchMenuOpen,
     setCodexRuntimeMenu,
     clearThreadPendingComposerMessages,
-    markOptimisticTurnInterrupted: (threadID) => {
-      const interruptedAt = Date.now();
-      const interruptPendingTurn = (current: AppState): AppState => {
-        let changed = false;
-        const next = updateThreadByID(current, threadID, (thread) => {
-          const interrupted = interruptLatestOptimisticTurn(thread, interruptedAt);
-          changed = interrupted !== thread;
-          return interrupted;
-        });
-        // No server terminal event exists yet for a pending submission. Clear
-        // its local running flag as well as freezing the optimistic turn.
-        return changed && activeThreadForState(current)?.id === threadID
-          ? { ...next, running: isThreadRunning(activeThreadForState(next)) }
-          : next;
-      };
-      appStateRef.current = interruptPendingTurn(appStateRef.current);
-      setState(interruptPendingTurn);
-    },
+    requestThreadStop,
     variantByModel: runtimeVariantByModelRef.current,
   });
 
@@ -4134,7 +4235,7 @@ export function App(): JSX.Element {
     }
     if (
       !message || !currentState.activeContext || !currentState.initialized ||
-      (pane && !targetThread) || (!targetThread && pendingThreadCreationsRef.current.has(currentState.activeSessionTabID))
+      (pane && !targetThread) || (targetThread && stopRequestsRef.current[targetThread.id])
     ) {
       return false;
     }
@@ -4158,8 +4259,12 @@ export function App(): JSX.Element {
     }
     // Capture the destination and install pending state before preparation yields.
     let submittedThread = targetThread;
+    const submissionKey = targetThread?.id ?? currentState.activeSessionTabID;
+    const admission = turnAdmissionsRef.current.get(submissionKey);
     const busy = targetThread && isThreadRunning(targetThread) && !activeTurnIsAnswerReady(targetThread);
-    const operation = busy
+    const operation = admission || (!busy && queueLanesRef.current.has(submissionKey))
+      ? queueComposerMessage(message, targetThread, admission)
+      : busy
       ? resolveComposerRunningAction(runningAction, targetThread) === "steer"
         ? steerComposerMessage(message, targetThread)
         : queueComposerMessage(message, targetThread)
@@ -4172,6 +4277,7 @@ export function App(): JSX.Element {
     const sessionTabID = currentState.activeSessionTabID;
     void operation.then((sent) => {
       if (sent) return;
+      submittedThread ??= admission?.thread;
       const latest = appStateRef.current;
       const recoveryDraft = { prompt: message.text, images: message.images, files: message.files };
       const stillTarget = submittedThread
@@ -4347,27 +4453,48 @@ export function App(): JSX.Element {
   async function queueComposerMessage(
     message: QueuedComposerMessage,
     targetThread = activeThreadForState(appStateRef.current),
+    admission = targetThread ? turnAdmissionsRef.current.get(targetThread.id) : undefined,
   ): Promise<boolean> {
     const currentState = appStateRef.current;
-    const targetContext = targetThread ? resolveThreadRuntimeContext(targetThread, currentState.projects) : undefined;
+    const queueKey = targetThread?.id ?? currentState.activeSessionTabID;
+    const pendingKey = () => admission?.thread?.id ?? queueKey;
     const text = message.text.trim();
     const imageCount = message.images.length;
     const files = inputFilesFromComposer(message.files);
     if (
       (!text && imageCount === 0 && files.length === 0) ||
-      !targetThread ||
-      targetThread.read_only ||
+      (!targetThread && !admission) ||
+      targetThread?.read_only ||
       !currentState.activeContext ||
       !currentState.initialized ||
       submissionTargetPending
     ) {
       return false;
     }
-    enqueueComposerMessage(targetThread.id, {
+    enqueueComposerMessage(queueKey, {
       ...message,
       operationState: "preparing",
     });
+    const lane = queueLanesRef.current.get(queueKey) ?? { tail: Promise.resolve(), stopVersion: 0 };
+    // Stop holds messages already waiting; later user sends keep their order
+    // behind them without inheriting that earlier stop request.
+    const stopVersion = lane.stopVersion;
+    const previous = lane.tail;
+    let release!: () => void;
+    const tail = new Promise<void>((resolve) => { release = resolve; });
+    lane.tail = tail;
+    queueLanesRef.current.set(queueKey, lane);
     try {
+      await previous;
+      if (admission) targetThread = await admission.ready;
+      if (!targetThread) {
+        const stillPending = Boolean(pendingComposerMessagesByThreadRef.current[pendingKey()]?.queued.some(
+          (candidate) => candidate.id === message.id,
+        ));
+        removePendingComposerMessageByID(pendingKey(), message.id, "queue");
+        return !stillPending;
+      }
+      const targetContext = resolveThreadRuntimeContext(targetThread, currentState.projects);
       const encodedImages = await awaitComposerImages(message.images);
       if (
         !pendingComposerMessagesByThreadRef.current[targetThread.id]?.queued.some(
@@ -4395,6 +4522,7 @@ export function App(): JSX.Element {
         message.activeDocument,
         message.contentParts,
         targetContext,
+        lane.stopVersion !== stopVersion || Boolean(admission?.stopRequested),
       );
       updateThreadPendingComposerMessages(targetThread.id, (previous) => ({
         ...previous,
@@ -4412,22 +4540,28 @@ export function App(): JSX.Element {
       return true;
     } catch (error) {
       const stillPending = Boolean(
-        pendingComposerMessagesByThreadRef.current[targetThread.id]?.queued.some(
+        pendingComposerMessagesByThreadRef.current[pendingKey()]?.queued.some(
           (candidate) => candidate.id === message.id,
         ),
       );
-      removePendingComposerMessageByID(targetThread.id, message.id, "queue");
+      removePendingComposerMessageByID(pendingKey(), message.id, "queue");
       if (stillPending) discardSubmittedMessage(message.id);
       if (stillPending) {
         setState((current) => ({
           ...current,
           status:
-            activeThreadIDForState(current) === targetThread.id
+            activeThreadIDForState(current) === pendingKey()
               ? error instanceof Error ? error.message : t("app.queueFailed")
               : current.status,
         }));
       }
       return !stillPending;
+    } finally {
+      release();
+      if (lane.tail === tail) {
+        queueLanesRef.current.delete(queueKey);
+        if (admission?.thread) queueLanesRef.current.delete(admission.thread.id);
+      }
     }
   }
 
@@ -4561,6 +4695,19 @@ export function App(): JSX.Element {
       model: draftEngineRuntime.model || defaultExternalRuntime.model,
       effort: draftEngineRuntime.effort || defaultExternalRuntime.effort,
     };
+    let resolveAdmission!: TurnAdmission["resolve"];
+    let cancelPreparation!: () => void;
+    const admission: TurnAdmission = {
+      thread: targetThread,
+      ready: new Promise((resolve) => { resolveAdmission = resolve; }),
+      resolve: (thread) => resolveAdmission(thread),
+      stopRequested: false,
+      sent: false,
+      cancelled: new Promise((resolve) => { cancelPreparation = () => resolve(undefined); }),
+      cancelPreparation: () => cancelPreparation(),
+    };
+    const admissionKey = targetThread?.id ?? currentState.activeSessionTabID;
+    turnAdmissionsRef.current.set(admissionKey, admission);
     const optimisticTurn = createOptimisticTurn(message, sendClickedAtMs);
     const previousTurnIDs = new Set(targetThread?.turns.map((turn) => turn.id));
     if (!targetThread || activeThreadIDForState(currentState) === targetThread.id) {
@@ -4579,13 +4726,14 @@ export function App(): JSX.Element {
         turn: optimisticTurn,
         cancel: () => {
           creationCancelled = true;
+          admission.stopRequested = true;
           reject(new Error("Thread creation cancelled"));
         },
       });
       setPendingThreadCreations([...pendingThreadCreationsRef.current.values()]);
     }) : undefined;
     try {
-      const thread =
+      let thread =
         targetThread ??
         requireThread(
           await Promise.race([window.wuu.startThread({
@@ -4622,7 +4770,44 @@ export function App(): JSX.Element {
           }), cancelledCreation!]),
           "thread/start did not return a thread",
         );
+      if (!targetThread && !creationCancelled) {
+        const draftTab = currentState.sessionTabs.find(
+          (tab) => tab.id === currentState.activeSessionTabID,
+        );
+        const customTitle = customDraftConversationTitle(
+          draftTab?.kind === "draft" ? draftTab.title : undefined,
+          t("tabs.newConversation"),
+        );
+        // Set the user's name before the first turn so a generated title
+        // cannot replace a name they already chose.
+        if (customTitle) {
+          try {
+            const renamed = await window.wuu.renameThread(thread.id, customTitle);
+            if (renamed.thread) {
+              thread = renamed.thread;
+              updateCachedSidebarThread(thread);
+            }
+          } catch (error) {
+            showErrorToast(error, t("thread.rename.failed"));
+          }
+        }
+      }
+      admission.thread = thread;
       if (!targetThread) {
+        turnAdmissionsRef.current.set(thread.id, admission);
+        turnAdmissionsRef.current.delete(admissionKey);
+        const lane = queueLanesRef.current.get(admissionKey);
+        if (lane) {
+          queueLanesRef.current.set(thread.id, lane);
+          queueLanesRef.current.delete(admissionKey);
+        }
+        const pending = pendingComposerMessagesByThreadRef.current[admissionKey];
+        if (pending) {
+          updateThreadPendingComposerMessages(thread.id, (previous) => ({
+            ...previous, queued: [...previous.queued, ...pending.queued],
+          }));
+          clearThreadPendingComposerMessages(admissionKey);
+        }
         onThreadCreated?.(thread);
         const adoptThread = (current: AppState): AppState => {
           const stillTarget = current.activeSessionTabID === currentState.activeSessionTabID
@@ -4652,7 +4837,16 @@ export function App(): JSX.Element {
         ),
       );
       clearPendingThreadCreation(optimisticTurn.id);
-      const encodedImages = await awaitComposerImages(message.images);
+      const encodedImages = await Promise.race([awaitComposerImages(message.images), admission.cancelled]);
+      if (!encodedImages || admission.stopRequested) {
+        const settle = (current: AppState) => updateThreadByID(current, thread.id,
+          (value) => interruptOptimisticTurn(value, optimisticTurn.id, Date.now()),
+          activeThreadIDForState(current) === thread.id ? { running: false } : {});
+        appStateRef.current = settle(appStateRef.current);
+        setState(settle);
+        return true;
+      }
+      admission.sent = true;
       const images = inputImagesFromComposer(encodedImages);
       const result = await window.wuu.startTurn(
         thread.id,
@@ -4664,38 +4858,22 @@ export function App(): JSX.Element {
         message.activeDocument,
         message.contentParts,
         activeContext,
+        message.id,
       );
-      const interruptedBeforeAcceptance = isOptimisticTurnInterrupted(
-        appStateRef.current.threads.find((candidate) => candidate.id === thread.id),
-        optimisticTurnID,
-      );
-      if (interruptedBeforeAcceptance && result.turn.status === "in_progress") {
-        try {
-          await window.wuu.interruptTurn(thread.id);
-        } catch {
-          // Keep the explicit local stop visible. A later server snapshot can
-          // still reconcile the accepted turn to its terminal state.
-        }
-      }
-      const acceptedTurn: Turn = interruptedBeforeAcceptance
-        ? { ...result.turn, status: "interrupted" }
-        : result.turn;
+      const acceptedTurn = result.turn;
       const acceptedMessage = acceptedTurn.items.find(item => item.type === "user_message");
       if (acceptedMessage) acknowledgeSubmittedMessage(optimisticTurn.items[0].id, acceptedMessage.id);
-      setState((current) =>
-        updateThreadByID(
-          current,
-          thread.id,
-          (currentThread) =>
-            replaceOptimisticTurn(
-              currentThread,
-              optimisticTurnID ?? result.turn.id,
-              acceptedTurn,
-              upsertTurn,
-            ),
-        ),
+      const accept = (current: AppState) => updateThreadByID(
+        current, thread.id,
+        (currentThread) => replaceOptimisticTurn(currentThread, optimisticTurn.id, acceptedTurn, upsertTurn),
       );
+      appStateRef.current = accept(appStateRef.current);
+      setState(accept);
+      if (admission.stopRequested && isThreadRunning(threadForTab(appStateRef.current, thread.id))) {
+        await interruptAcceptedThread(thread.id);
+      }
     } catch (error) {
+      admission.stopRequested = true;
       const rawMessage = rawErrorMessage(error, t("composer.sendFailed"));
       const errorMessage = statusMessageForError(rawMessage, t("composer.sendFailed"));
       const noModelConfigured = isNoModelConfiguredError(rawMessage);
@@ -4738,10 +4916,22 @@ export function App(): JSX.Element {
       appStateRef.current = settle(appStateRef.current);
       setState(settle);
       clearPendingThreadCreation(optimisticTurn.id);
+      if (!optimisticThreadID) forgetLocalTurnTiming(optimisticTurn.id);
       if (noModelConfigured) {
         showNoModelConfiguredToast();
       }
+      if (admission.sent && optimisticThreadID && stopRequestsRef.current[optimisticThreadID]) {
+        await interruptAcceptedThread(optimisticThreadID!);
+      }
       return !creationCancelled && (interrupted || keepAcceptedTurn);
+    } finally {
+      admission.resolve(admission.thread);
+      turnAdmissionsRef.current.delete(admissionKey);
+      if (admission.thread) {
+        turnAdmissionsRef.current.delete(admission.thread.id);
+        // Re-evaluate a locally cancelled preparation with no server event.
+        setStopRequests({ ...stopRequestsRef.current });
+      }
     }
     return true;
   }
@@ -4865,7 +5055,6 @@ export function App(): JSX.Element {
           sidebarCollapsed={sidebarCollapsed}
           sidebarAnimating={sidebarAnimating}
           onToggleSidebar={toggleSidebar}
-          sidebarMotionMs={SIDEBAR_MOTION_MS}
           onBack={() => {
             setSettingsOpen(false);
           }}
@@ -4944,6 +5133,15 @@ export function App(): JSX.Element {
       <SidePanelToggleIcon side="left" open={sidebarDrawerVisible} />
     </button>
   ) : null;
+
+  const conversationTitleEditable =
+    !showingSkillsCatalog &&
+    !showingPrimaryPluginView &&
+    currentSessionTab?.kind !== "channel-room" &&
+    currentSessionTab?.kind !== "agents" &&
+    currentSessionTab?.kind !== "tasks" &&
+    ((activeThread !== undefined && !activeThread.read_only && !activeThread.ephemeral) ||
+      currentSessionTab?.kind === "draft");
 
   return (
     <WuuMascotRuntimeProvider
@@ -5257,22 +5455,24 @@ export function App(): JSX.Element {
             />
           ) : null}
 
-          {sidebarDrawerMode ? null : (
-            <div
-              className="sidebar-resizer"
-              inert={rightPanelOpen && rightPanelGlobalized}
-              role="separator"
-              aria-label={t("app.resizeSidebar")}
-              aria-orientation="vertical"
-              aria-valuemin={SIDEBAR_MIN_WIDTH}
-              aria-valuemax={SIDEBAR_MAX_WIDTH}
-              aria-valuenow={sidebarWidth}
-              tabIndex={0}
-              onPointerDown={startSidebarResize}
-              onDoubleClick={toggleSidebar}
-              onKeyDown={handleSidebarSeparatorKey}
-            />
-          )}
+          {/* Hidden rather than unmounted: inserting or removing a shell child
+              ahead of the conversation makes sibling selectors restyle every
+              rendered turn when the sidebar collapses or expands. */}
+          <div
+            className="sidebar-resizer"
+            hidden={sidebarDrawerMode}
+            inert={rightPanelOpen && rightPanelGlobalized}
+            role="separator"
+            aria-label={t("app.resizeSidebar")}
+            aria-orientation="vertical"
+            aria-valuemin={SIDEBAR_MIN_WIDTH}
+            aria-valuemax={SIDEBAR_MAX_WIDTH}
+            aria-valuenow={sidebarWidth}
+            tabIndex={0}
+            onPointerDown={startSidebarResize}
+            onDoubleClick={toggleSidebar}
+            onKeyDown={handleSidebarSeparatorKey}
+          />
       <ConversationSearchOverlay
         state={conversationSearch}
         results={conversationSearchResults}
@@ -5334,7 +5534,7 @@ export function App(): JSX.Element {
                     : [...current, agent]);
                   return agent;
                 }}
-                onOpenConversation={(agent, onboarding) => openCollaborationAgentConversation(agent.id, onboarding)}
+                onOpenConversation={(agent, onboarding) => openCollaborationAgentConversation(agent.id, onboarding, collaborationProject?.path)}
                 onManageProviders={openAgentProviderSettings}
                 onClose={() => { setAgentOnboardingDraft(null); setAgentOnboardingActive(false); }}
               />
@@ -5353,6 +5553,7 @@ export function App(): JSX.Element {
               managedThreadsByAgentID={managedSidebar.byAgentID}
               lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
               onOpenAgentConversation={selectCollaborationAgent}
+              conversationProject={collaborationProjectPicker}
               composerDraft={activeChannelComposerDraft}
               onComposerDraftChange={updateSelectedChannelRoomDraft}
               directoryAgents={namedAgents}
@@ -5401,6 +5602,8 @@ export function App(): JSX.Element {
               pendingSwitchThreadID={visiblePendingThreadID}
               activeTitle={activeTitle}
               onStartNewThread={startNewThreadWithComposerFocus}
+              onRenameTitle={conversationTitleEditable ? commitConversationTitle : undefined}
+              titleEditKey={activeThread?.id ?? currentSessionTab?.id}
             />
           </div>
           <ConversationTitleActions
@@ -5536,6 +5739,7 @@ export function App(): JSX.Element {
                     splitLeftPercent={splitLeftPercent}
                     splitComposerDrafts={splitComposerDrafts}
                     splitPaneRefs={splitPaneRefs}
+                    stopRequests={stopRequests}
                     viewSwitchPending={submissionTargetPending}
                     historyMessageEdit={historyMessageEdit}
                     onSplitResizeStart={startSplitResize}
@@ -5676,6 +5880,7 @@ export function App(): JSX.Element {
               containerRef={conversationScrollRef}
               bottomAnchor={dockComposerNode}
               scopeKey={activeThreadID}
+              onJump={jumpConversationToLatest}
               inline
             />
           ) : null}

@@ -19,6 +19,12 @@ func (s *Server) reconcileChannelWorkRuns(ctx context.Context) error {
 	}
 	recoveries := make([]channels.WorkRunRecovery, 0, len(runs))
 	for _, run := range runs {
+		if _, err := s.channelService.HarnessLink(ctx, run.SessionRef); err == nil {
+			// The durable Harness outbox owns its structured result and candidate.
+			continue
+		} else if !errors.Is(err, channels.ErrNotFound) {
+			return err
+		}
 		// A reservation has no execution to recover yet. It may still use a
 		// temporary reference that admission will move to the identity conversation.
 		if run.NamedAgentID != "" && run.TurnID == "" {

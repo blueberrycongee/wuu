@@ -221,6 +221,102 @@ describe("ConversationTitleContent presentation boundary", () => {
 
     expect(snapshot?.busy).toBeUndefined();
   });
+
+  function renderTitle(onRenameTitle?: (title: string) => void, title = "新建对话", editKey = "draft") {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const props = {
+      state: {
+        ...initialState,
+        activeContext: { kind: "project" as const, project_id: "project-1", cwd: "/repo/project" },
+      },
+      activeTitle: title,
+      onStartNewThread: () => {},
+      onRenameTitle,
+      titleEditKey: editKey,
+    };
+    act(() => root?.render(<ConversationTitleContent {...props} />));
+    return props;
+  }
+
+  function setInputValue(input: HTMLInputElement, value: string): void {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  it("renames the conversation from the title", () => {
+    const onRenameTitle = vi.fn();
+    renderTitle(onRenameTitle);
+    act(() => container.querySelector<HTMLButtonElement>(".conversation-title-rename")?.click());
+    const input = container.querySelector<HTMLInputElement>(".conversation-title-edit");
+    expect(input?.value).toBe("新建对话");
+    act(() => {
+      setInputValue(input!, "  发布说明  ");
+      input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(onRenameTitle).toHaveBeenCalledWith("发布说明");
+    expect(container.querySelector(".conversation-title-edit")).toBeNull();
+    expect(container.querySelector(".conversation-title-rename")?.textContent).toBe("新建对话");
+  });
+
+  it("leaves the title unchanged on Escape, a blank name, or the same text", () => {
+    const onRenameTitle = vi.fn();
+    renderTitle(onRenameTitle, "发布说明");
+    const open = () => act(() => container.querySelector<HTMLButtonElement>(".conversation-title-rename")?.click());
+    open();
+    let input = container.querySelector<HTMLInputElement>(".conversation-title-edit")!;
+    act(() => {
+      setInputValue(input, "临时标题");
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(onRenameTitle).not.toHaveBeenCalled();
+    expect(container.querySelector(".conversation-title-rename")?.textContent).toBe("发布说明");
+
+    open();
+    input = container.querySelector<HTMLInputElement>(".conversation-title-edit")!;
+    act(() => {
+      setInputValue(input, "   ");
+      input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    expect(onRenameTitle).not.toHaveBeenCalled();
+
+    open();
+    input = container.querySelector<HTMLInputElement>(".conversation-title-edit")!;
+    act(() => {
+      setInputValue(input, "发布说明");
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(onRenameTitle).not.toHaveBeenCalled();
+  });
+
+  it("does not commit an in-progress edit when Enter is composing", () => {
+    const onRenameTitle = vi.fn();
+    renderTitle(onRenameTitle);
+    act(() => container.querySelector<HTMLButtonElement>(".conversation-title-rename")?.click());
+    const input = container.querySelector<HTMLInputElement>(".conversation-title-edit")!;
+    act(() => {
+      setInputValue(input, "发布说明");
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, isComposing: true }));
+    });
+    expect(onRenameTitle).not.toHaveBeenCalled();
+    expect(container.querySelector(".conversation-title-edit")).not.toBeNull();
+  });
+
+  it("drops an open edit when the conversation changes", () => {
+    const onRenameTitle = vi.fn();
+    const props = renderTitle(onRenameTitle, "第一会话题", "one");
+    act(() => container.querySelector<HTMLButtonElement>(".conversation-title-rename")?.click());
+    act(() => {
+      setInputValue(container.querySelector<HTMLInputElement>(".conversation-title-edit")!, "未保存");
+    });
+    act(() => root?.render(
+      <ConversationTitleContent {...props} activeTitle="第二会话题" titleEditKey="two" />,
+    ));
+    expect(onRenameTitle).not.toHaveBeenCalled();
+    expect(container.querySelector(".conversation-title-edit")).toBeNull();
+    expect(container.querySelector(".conversation-title-rename")?.textContent).toBe("第二会话题");
+  });
 });
 
 describe("compact conversation actions", () => {

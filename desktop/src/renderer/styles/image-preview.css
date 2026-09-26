@@ -24,16 +24,7 @@
   display: flex;
   flex-direction: column;
   background: var(--image-preview-overlay-bg);
-  animation: image-preview-fade-in var(--motion-base) var(--ease-out);
-}
-
-@keyframes image-preview-fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  animation: wuu-fade-in var(--motion-base) var(--ease-out);
 }
 
 .image-preview-toolbar {
@@ -219,7 +210,3 @@
   .image-preview-navigation { margin-right: 0; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .image-preview-overlay { animation: none; }
-  .image-preview-image, .image-preview-toolbar-button { transition: none; }
-}

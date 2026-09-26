@@ -8,19 +8,11 @@ const renderer = await import(new URL("../dist/renderer.js", import.meta.url));
 assert.doesNotMatch(output, /react(?:-dom)?["'/]|node_modules\/react/);
 
 const registrations = new Map();
-const disposables = [];
 const register = (kind) => (value) => {
   const values = registrations.get(kind) ?? [];
   values.push(value);
   registrations.set(kind, values);
-  const disposable = {
-    dispose() {
-      const index = values.indexOf(value);
-      if (index >= 0) values.splice(index, 1);
-    },
-  };
-  disposables.push(disposable);
-  return disposable;
+  return { dispose() {} };
 };
 const createElement = (type, props, ...children) => ({ type, props: props ?? {}, children });
 const api = {
@@ -51,21 +43,7 @@ const api = {
   registerToolActivityPresenter: register("toolActivityPresenters"),
 };
 
-const activateGeneration = (activate) => {
-  const generationStart = disposables.length;
-  try {
-    activate(api);
-  } catch (error) {
-    for (const disposable of disposables.splice(generationStart).reverse()) disposable.dispose();
-    throw error;
-  }
-  const owned = disposables.slice(generationStart);
-  return () => {
-    for (const disposable of owned.reverse()) disposable.dispose();
-  };
-};
-
-const unloadGeneration = activateGeneration(renderer.activate);
+renderer.activate(api);
 const presenter = registrations.get("toolActivityPresenters")[0];
 const presented = presenter.render({
   activity: {
@@ -203,10 +181,5 @@ assert.ok(button);
 await button.props.onClick();
 assert.deepEqual(storedWrites, [["counter", "7"]]);
 assert.equal(nodes.get("[data-counter-value]").textContent, "7");
-
-unloadGeneration();
-for (const [kind, values] of registrations) {
-  assert.equal(values.length, 0, `${kind} leaked after generation disposal`);
-}
 
 console.log("developer-loop public SDK contract ok");

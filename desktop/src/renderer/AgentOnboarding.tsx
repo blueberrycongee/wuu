@@ -179,7 +179,7 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, navigation,
       }
       setBusy("opening");
       // Let the shared outgoing entrance finish before replacing the setup stream.
-      if (!prefersReducedMotion()) await new Promise(resolve => window.setTimeout(resolve, motionDurationMs("--motion-slow", 280)));
+      if (!prefersReducedMotion()) await new Promise(resolve => window.setTimeout(resolve, motionDurationMs("--motion-base", 180)));
       await onOpenConversation(agent, {
         model_prompt: t("agentOnboarding.selectBeforeChat"),
         name_prompt: t("agentOnboarding.askName"),
@@ -244,16 +244,12 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, navigation,
       {error ? <div className="agent-onboarding-error" role="alert">{draft.createdAgent ? <strong>{t("agentOnboarding.openFailed")}</strong> : null}<span>{error}</span><button type="button" className="agent-onboarding-manage" data-action="submit" onClick={() => void submit()} disabled={Boolean(busy)}>{t("agentOnboarding.openConversation")}</button></div> : null}
     </div>
     {step === "name" ? <div className="channel-conversation-footer">
-      <div className="agent-onboarding-name-actions">
-        <button type="button" className="agent-onboarding-manage" data-action="edit-model" disabled={locked} onClick={() => update({ step: "model" })}>{t("slash.model.title")}</button>
-        <button type="button" className="agent-onboarding-manage" data-action="random-name" disabled={locked} onClick={() => {
-          const names = t("agentOnboarding.randomNames").split("|").filter(name => name !== draft.name);
-          const value = crypto.getRandomValues(new Uint32Array(1))[0];
-          update({ name: names[value % names.length] });
-          composerRef.current?.focus();
-        }}><Shuffle size={14} />{t("agentOnboarding.randomName")}</button>
-      </div>
-      <ChannelComposer allowAttachments={false} ref={composerRef} draft={draft.name} placeholder={t("agentOnboarding.namePlaceholder")} compact disabled={locked} sending={Boolean(busy)} files={[]} images={[]} onPasteAttachmentFiles={() => {}} onRemoveFile={() => {}} onRemoveImage={() => {}} onChangeDraft={(name) => update({ name })} onSend={() => void submit()} />
+      <ChannelComposer allowAttachments={false} leadingAction={<button type="button" className="icon-button" data-action="random-name" disabled={locked} aria-label={t("agentOnboarding.randomName")} title={t("agentOnboarding.randomName")} onClick={() => {
+        const names = t("agentOnboarding.randomNames").split("|").filter(name => name !== draft.name);
+        const value = crypto.getRandomValues(new Uint32Array(1))[0];
+        update({ name: names[value % names.length] });
+        composerRef.current?.focus();
+      }}><Shuffle aria-hidden="true" /></button>} ref={composerRef} draft={draft.name} placeholder={t("agentOnboarding.namePlaceholder")} compact disabled={locked} sending={Boolean(busy)} files={[]} images={[]} onPasteAttachmentFiles={() => {}} onRemoveFile={() => {}} onRemoveImage={() => {}} onChangeDraft={(name) => update({ name })} onSend={() => void submit()} />
     </div> : null}
   </section>;
 }

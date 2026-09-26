@@ -392,15 +392,14 @@ describe("session tab switch latency", () => {
     await act(async () => { window.dispatchEvent(new Event("focus")); });
     await flushAsync();
     expect(vi.mocked(window.wuu.listThreads).mock.calls.length).toBeGreaterThan(listCount);
-    await act(async () => { setMainComposerPrompt("newer draft"); });
+    await act(async () => { setMainComposerPrompt("queued follow-up"); });
     await act(async () => {
       mainComposerTextarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
     expect(window.wuu.startThread).toHaveBeenCalledTimes(1);
-    expect(mainComposerTextarea().value).toBe("newer draft");
-    const stop = container.querySelector<HTMLButtonElement>('[data-main-conversation-composer] .composer-stop-button');
-    expect(stop).not.toBeNull();
-    await act(async () => { stop!.click(); });
+    expect(mainComposerTextarea().value).toBe("");
+    await act(async () => { setMainComposerPrompt("newer draft"); });
+    await act(async () => { mainComposerTextarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
     expect(threadRowButton("first pending query")).toBeUndefined();
     expect(mainComposerTextarea().value).toBe("newer draft");
     const recovery = document.querySelector<HTMLButtonElement>('[role="alert"] .archive-tip-action');
@@ -605,6 +604,7 @@ describe("session tab switch latency", () => {
       undefined,
       undefined,
       { kind: "no_project", cwd: workspace },
+      expect.any(String),
     );
     await act(async () => { setMainComposerPrompt("a newer draft"); });
     delayedResumeB.resolve({ thread: threadB() });
@@ -734,6 +734,7 @@ describe("session tab switch latency", () => {
     expect(startTurn).toHaveBeenCalledExactlyOnceWith(
       threadAID, "inspect this in alpha", [{ media_type: encoded.media_type, data: encoded.data }], [],
       undefined, undefined, undefined, { kind: "project", project_id: "alpha", cwd: workspace },
+      expect.any(String),
     );
     expect(activeSessionTabLabel()).toContain("session switch B");
     expect(mainComposerTextarea().value).toBe("beta draft");

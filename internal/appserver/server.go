@@ -1214,6 +1214,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleChannelMessageSend(ctx, req)
 	case MethodChannelTaskCreate:
 		return s.handleChannelTaskCreate(ctx, req)
+	case MethodChannelWorkCandidate:
+		return s.handleChannelWorkCandidate(ctx, req)
 	case MethodChannelTaskUpdate:
 		return s.handleChannelTaskUpdate(ctx, req)
 	case MethodChannelMentionStatus:
@@ -1262,6 +1264,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleThreadPreview(req)
 	case "thread/textSnapshot":
 		return s.handleThreadTextSnapshot(req)
+	case "thread/control/return":
+		return s.handleThreadControl(ctx, req)
 	case MethodThreadPin:
 		return s.handleThreadPin(req)
 	case MethodThreadOrganizationUpdate:

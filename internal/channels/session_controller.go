@@ -375,7 +375,7 @@ func (s *Service) ListQueuedCollaborationSessions(ctx context.Context) ([]Collab
 // binding and independent sessions without double-counting attached work.
 func activeCollaborationCountsTx(ctx context.Context, tx *sql.Tx, principalID, roomID, excludeSession string) (identity, room, global int, err error) {
 	err = tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN principal_id = ? THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN room_id = ? THEN 1 ELSE 0 END),0),COUNT(*) FROM (
- SELECT COALESCE(run.named_agent_id,'') AS principal_id,work.room_id FROM work_runs run JOIN works work ON work.id=run.work_id WHERE run.state='running'
+ SELECT COALESCE(run.named_agent_id,'') AS principal_id,work.room_id FROM work_runs run JOIN works work ON work.id=run.work_id WHERE run.state='running' AND NOT EXISTS(SELECT 1 FROM harness_session_admissions admission WHERE admission.session_id=run.session_ref)
  UNION ALL
  SELECT binding.principal_id,binding.room_id FROM collaboration_session_bindings binding WHERE binding.state IN ('starting','running') AND binding.session_ref != ? AND NOT EXISTS(SELECT 1 FROM work_runs run WHERE run.id=binding.run_id AND run.state='running')
  UNION ALL

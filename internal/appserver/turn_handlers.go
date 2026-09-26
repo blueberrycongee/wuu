@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -198,6 +199,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	userMsg.ClientID = strings.TrimSpace(params.ClientID)
 	if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -268,7 +270,53 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 		return threadRuntime, err
 	}
 	if th.NamedAgentID != "" {
-		s.rt.ConfigureCollaborationTools(threadRuntime, th.ID)
+		identity, err := s.channelService.GetAgentRuntime(context.Background(), th.NamedAgentID)
+		if err != nil {
+			return nil, err
+		}
+		binding := channels.CollaborationSessionBinding{Purpose: channels.CollaborationSessionConversation}
+		if th.CollaborationSessionRef != "" {
+			binding, err = s.channelService.LookupCollaborationSession(context.Background(), th.CollaborationSessionRef)
+			if err != nil {
+				return nil, err
+			}
+		}
+		orientation, err := s.collaborationOrientation(identity, binding.SessionRef)
+		if err != nil {
+			return nil, err
+		}
+		threadRuntime.Toolkit.SetCollaborationScope(binding.Purpose, binding.RoomID, binding.WorkID)
+		// Refresh the prompt while retaining the request-time room/inbox providers
+		// installed on this continuing identity. They resolve the active scope live.
+		requestContext := threadRuntime.StreamRunner.BeforeRequestContext
+		if err := s.rt.ConfigureNamedAgentThreadRuntime(threadRuntime, filepath.Dir(identity.MemoryDir), identity.MemoryDir, orientation); err != nil {
+			return nil, err
+		}
+		threadRuntime.StreamRunner.BeforeRequestContext = requestContext
+	}
+	if th.NamedAgentID == "" && s.channelService != nil && threadRuntime.Toolkit != nil {
+		link, err := s.channelService.HarnessLink(context.Background(), th.ID)
+		control, _, controlErr := session.ReadControl(s.rt.SessionDir, th.ID)
+		if controlErr != nil {
+			return nil, controlErr
+		}
+		if err == nil && link.Active && control.State == session.ControlActive {
+			client, err := s.channelService.BindAgent(context.Background(), link.AgentID)
+			if err != nil {
+				return nil, err
+			}
+			purpose := link.Purpose
+			if purpose == "" {
+				purpose = channels.CollaborationSessionWork
+			}
+			threadRuntime.Toolkit.SetChatAgent(client)
+			threadRuntime.Toolkit.SetCollaborationScope(purpose, link.RoomID, link.WorkID)
+		} else if err != nil && !errors.Is(err, channels.ErrNotFound) {
+			return nil, err
+		} else {
+			threadRuntime.Toolkit.SetChatAgent(nil)
+			threadRuntime.Toolkit.SetCollaborationScope("", "", "")
+		}
 	}
 	if err := s.refreshThreadGitAttribution(threadRuntime); err != nil {
 		// Attribution is metadata, not a reason to block the user's turn when a
@@ -510,20 +558,24 @@ func (s *Server) handleTurnQueue(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	msg.ClientID = queueID
-	if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+	if !params.Hold {
+		if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
 	}
 	entry := queuedTurn{id: queueID, msg: msg, snapshot: turnRuntimeSnapshot{}.withPermissions(permissions), origin: session.HeldUserWorkOriginQueue}
-	entry.resumeBrowser, err = s.rt.ActivityRegistry.PrepareResume(params.ThreadID, activity.KindBrowser)
-	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
+	if !params.Hold {
+		entry.resumeBrowser, err = s.rt.ActivityRegistry.PrepareResume(params.ThreadID, activity.KindBrowser)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
 	}
 	entry.snapshot.PermissionExplicit = params.PermissionMode != nil
 	entry.snapshot.ForceCompact = isManualCompactPrompt(params.Prompt)
 	entry.snapshot.ActiveDocument = cloneActiveDocument(params.ActiveDocument)
 	queued := queuedTurnSummary(params.ThreadID, entry)
 	th.mu.Lock()
-	if th.interrupting {
+	if th.interrupting || params.Hold {
 		// Keep the cancellation check and held append in one queue-state critical
 		// section. Otherwise stopping the active turn could let an already-cancelled
 		// late submission bypass normal queue admission.

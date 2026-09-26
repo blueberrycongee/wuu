@@ -14,6 +14,7 @@ import {
 } from "react";
 import { FloatingMenuPortal, isInsideFloatingMenu } from "./ComposerFloatingMenu";
 import { translateCurrent, useI18n } from "./i18n";
+import { motionCurve, motionDurationMs, prefersReducedMotion } from "./motion";
 import type { ComposerVariant } from "./ComposerTypes";
 
 export type ComposerCameraStatus =
@@ -329,14 +330,18 @@ export function ComposerCameraPanel({
     close();
     setExiting(true);
     const panel = panelRef.current;
-    if (!panel?.animate || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+    if (!panel?.animate || prefersReducedMotion()) {
       done();
       return;
     }
     const animation = panel.animate([
       { transform: "translateY(0)", opacity: 1 },
       { transform: "translateY(100%)", opacity: 0 },
-    ], { duration: 240, easing: "cubic-bezier(.4,0,1,1)", fill: "forwards" });
+    ], {
+      duration: motionDurationMs("--sheet-exit-duration", 220),
+      easing: motionCurve("--sheet-exit-easing", "cubic-bezier(0.4, 0, 1, 1)"),
+      fill: "forwards",
+    });
     exitAnimationRef.current = animation;
     void animation.finished.then(done, () => {});
   }

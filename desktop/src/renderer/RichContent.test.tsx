@@ -329,6 +329,32 @@ describe("RichContent code block", () => {
     expect(openExternalMock).not.toHaveBeenCalled();
   });
 
+  it("offers workspace and system browser actions without repeating the URL", () => {
+    const href = "https://github.com/blueberrycongee/wuu/issues/398";
+    const onOpenURL = vi.fn();
+    render(<RichContent text={`See ${href}`} onOpenURL={onOpenURL} />);
+
+    const openMenu = (): HTMLButtonElement[] => {
+      const link = container.querySelector("a.rich-web-link");
+      act(() => {
+        link?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      });
+      return Array.from(document.querySelectorAll<HTMLButtonElement>('.thread-row-context-menu [role="menuitem"]'));
+    };
+
+    const items = openMenu();
+    expect(items).toHaveLength(2);
+    expect(items.every((item) => !item.textContent?.includes(href))).toBe(true);
+    act(() => items[0]?.click());
+    expect(onOpenURL).toHaveBeenCalledWith(href);
+    expect(openExternalMock).not.toHaveBeenCalled();
+
+    const external = openMenu()[1];
+    act(() => external?.click());
+    expect(openExternalMock).toHaveBeenCalledWith(href);
+    expect(document.querySelector(".thread-row-context-menu")).toBeNull();
+  });
+
   it("does not turn inline code file names into file links", () => {
     render(<RichContent text={"Keep `README_zh.md` literal here."} cwd="/repo/wuu" />);
 

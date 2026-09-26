@@ -1,4 +1,3 @@
-import { isTouchWebShell } from "./ComposerFocus";
 import { hostSupports } from "./HostCapabilities";
 import {
   AlertCircle,
@@ -28,6 +27,13 @@ import { Modal } from "./Modal";
 import { PluginIcon } from "./PublicIcon";
 import { PluginSettingsEditor } from "./PluginSettingsEditor";
 import { RichContent } from "./RichContent";
+import {
+  SettingsGroup,
+  SettingsPageHeader,
+  SettingsSection,
+  SettingsStatus,
+  type SettingsStatusTone,
+} from "./SettingsSection";
 import { ThreadContextMenu, type ThreadContextMenuItem } from "./ThreadContextMenu";
 import { showErrorToast, showToast, toastErrorMessage } from "./Toast";
 
@@ -41,19 +47,6 @@ type SkillContentState = {
   loading: boolean;
   error: string;
   content: string;
-};
-
-type ManagedExtensionPackage = ExtensionInventoryRecord & {
-  approval_state?: "official" | "pending" | "granted" | "changed" | "rejected";
-  runtime_state?: "inactive" | "starting" | "active" | "failed" | "stopping" | "stopped";
-  enabled?: boolean;
-  version?: string;
-  last_error?: string;
-  contributions?: {
-    commands?: unknown[];
-    settings?: unknown[];
-    themes?: unknown[];
-  };
 };
 
 const initialLoadState: LoadState = {
@@ -302,12 +295,11 @@ export function SkillsCatalog({
   }
 
   function extensionPackageMenuItems(record: ExtensionInventoryRecord): ThreadContextMenuItem[] {
-    const managed = record as ManagedExtensionPackage;
-    const secondaryAction = extensionPackageSecondaryAction(managed);
+    const secondaryAction = extensionPackageSecondaryAction(record);
     const items: ThreadContextMenuItem[] = [];
     if (onUpdateExtensionPackage && secondaryAction) {
       items.push({
-        label: extensionPackageActionLabel(managed, secondaryAction, t),
+        label: extensionPackageActionLabel(record, secondaryAction, t),
         disabled: Boolean(packageMutation),
         onSelect: () => updateExtensionPackage(record, secondaryAction),
       });
@@ -326,20 +318,28 @@ export function SkillsCatalog({
   }
 
   return (
-    <section className="skills-catalog" aria-label={t("skills.catalogLabel")} data-wuu-component="skills-catalog">
-      <header className="catalog-page-header">
-        <div className="catalog-page-title">
-          <strong>{t("skills.title")}</strong>
-          {!isTouchWebShell() && <span>{t("skills.subtitle")}</span>}
-        </div>
-        <div className="catalog-page-controls">
-          <CatalogSearchField
-            value={filter}
-            placeholder={t("skills.searchPlaceholder")}
-            onValueChange={setFilter}
-          />
+    <section
+      className="settings-page skills-catalog"
+      aria-label={t("skills.catalogLabel")}
+      data-wuu-component="skills-catalog"
+    >
+      <SettingsPageHeader
+        title={t("skills.title")}
+        description={t("skills.subtitle")}
+        actions={<>
           <button
-            className="secondary-button catalog-install"
+            className="settings-button settings-button-ghost settings-icon-button catalog-refresh"
+            type="button"
+            aria-label={t("skills.refresh")}
+            title={t("skills.refresh")}
+            disabled={state.loading || Boolean(packageMutation)}
+            aria-busy={state.loading}
+            onClick={() => void refreshSkills()}
+          >
+            <RefreshCw className={`icon${state.loading ? " settings-spin" : ""}`} aria-hidden="true" />
+          </button>
+          <button
+            className="settings-button"
             type="button"
             disabled={Boolean(packageMutation) || !hostSupports("installPluginPackage")}
             onClick={() => void installPluginPackage()}
@@ -351,32 +351,51 @@ export function SkillsCatalog({
                 : t("skills.pluginInstall")}
             </span>
           </button>
-          <button
-            className="icon-button catalog-refresh"
-            type="button"
-            aria-label={t("skills.refresh")}
-            title={t("skills.refresh")}
-            disabled={state.loading || Boolean(packageMutation)}
-            aria-busy={state.loading}
-            onClick={() => void refreshSkills()}
-          >
-            <RefreshCw className="icon" aria-hidden="true" />
-          </button>
-        </div>
-      </header>
+        </>}
+      />
+
+      <CatalogSearchField
+        value={filter}
+        placeholder={t("skills.searchPlaceholder")}
+        onValueChange={setFilter}
+      />
 
       {state.error ? <div className="skills-catalog-error">{state.error}</div> : null}
 
+      {/* Plugins lead: they carry runtime and approval state that may need a
+        * decision, while skills are only previewed from here. */}
+      {visiblePlugins.length > 0 ? (
+        <SettingsSection title={t("skills.sectionPlugins")}>
+          <SettingsGroup>
+            {visiblePlugins.map((record) => (
+              <CatalogRow
+                key={record.id}
+                label={t("skills.pluginDetailLabel", { name: record.name })}
+                artwork={<PluginArtwork record={record} />}
+                title={record.name}
+                description={record.description}
+                trailing={
+                  <SettingsStatus tone={extensionPackageTone(record)}>
+                    {extensionPackageStatusLabel(record, t)}
+                  </SettingsStatus>
+                }
+                onOpen={() => setSelectedPluginID(record.id)}
+              />
+            ))}
+          </SettingsGroup>
+        </SettingsSection>
+      ) : null}
+
       {officialSkills.length > 0 ? (
-        <CatalogSection title={t("skills.sectionOfficial")} className="skills-section-official">
+        <SettingsSection title={t("skills.sectionOfficial")}>
           <SkillsList skills={officialSkills} onPreview={setPreviewSkill} />
-        </CatalogSection>
+        </SettingsSection>
       ) : null}
 
       {personalSkills.length > 0 ? (
-        <CatalogSection title={t("skills.sectionPersonal")}>
+        <SettingsSection title={t("skills.sectionPersonal")}>
           <SkillsList skills={personalSkills} onPreview={setPreviewSkill} />
-        </CatalogSection>
+        </SettingsSection>
       ) : null}
 
       {previewSkill ? (
@@ -389,40 +408,6 @@ export function SkillsCatalog({
             onTrySkill?.(skill);
           }}
         />
-      ) : null}
-
-      {plugins.length > 0 ? (
-        <CatalogSection title={t("skills.sectionPlugins")}>
-          <div className="skills-list extension-package-list">
-            {visiblePlugins.map((record) => {
-              const managed = record as ManagedExtensionPackage;
-              return (
-                <button
-                  key={record.id}
-                  className="skill-row skill-row-button extension-package-row"
-                  type="button"
-                  aria-label={t("skills.pluginDetailLabel", { name: record.name })}
-                  onClick={() => setSelectedPluginID(record.id)}
-                >
-                  <PluginArtwork record={record} />
-                  <span className="skill-row-copy">
-                    <span className="skill-row-titlebar">
-                      <h2>{record.name}</h2>
-                    </span>
-                    {record.description ? <p>{record.description}</p> : null}
-                  </span>
-                  <span
-                    className={`skill-row-status extension-status extension-status-${extensionPackageTone(managed)}`}
-                  >
-                    <span className="skill-row-status-dot" aria-hidden="true" />
-                    {extensionPackageStatusLabel(managed, t)}
-                  </span>
-                  <ChevronRight className="skill-row-chevron" aria-hidden="true" />
-                </button>
-              );
-            })}
-          </div>
-        </CatalogSection>
       ) : null}
 
       {selectedPlugin ? (
@@ -445,11 +430,15 @@ export function SkillsCatalog({
       ) : null}
 
       {!state.loading && visibleSkills.length === 0 && visiblePlugins.length === 0 ? (
-        <div className="skills-empty">
-          <Wrench className="icon-xl" />
-          <strong>{t("skills.empty")}</strong>
-          <span>{filter.trim() ? t("skills.noMatches") : t("skills.noneInRuntime")}</span>
-        </div>
+        filter.trim() ? (
+          <p className="settings-group-empty">{t("skills.noMatches")}</p>
+        ) : (
+          <div className="skills-empty">
+            <Wrench className="icon-xl" />
+            <strong>{t("skills.empty")}</strong>
+            <span>{t("skills.noneInRuntime")}</span>
+          </div>
+        )
       ) : null}
 
       {packageActionMenu ? (
@@ -473,14 +462,14 @@ function isRemovableUserPlugin(record: ExtensionInventoryRecord): boolean {
   );
 }
 
-function extensionPackageApproval(record: ManagedExtensionPackage): NonNullable<ManagedExtensionPackage["approval_state"]> {
+function extensionPackageApproval(record: ExtensionInventoryRecord): NonNullable<ExtensionInventoryRecord["approval_state"]> {
   if (record.approval_state) {
     return record.approval_state;
   }
   return record.provenance.official ? "official" : "pending";
 }
 
-function extensionPackagePrimaryAction(record: ManagedExtensionPackage): ExtensionPackageAction {
+function extensionPackagePrimaryAction(record: ExtensionInventoryRecord): ExtensionPackageAction {
   if (record.pending_update) {
     return "promote_update";
   }
@@ -491,7 +480,7 @@ function extensionPackagePrimaryAction(record: ManagedExtensionPackage): Extensi
   return record.enabled === false ? "enable" : "disable";
 }
 
-function extensionPackageSecondaryAction(record: ManagedExtensionPackage): ExtensionPackageAction | undefined {
+function extensionPackageSecondaryAction(record: ExtensionInventoryRecord): ExtensionPackageAction | undefined {
   if (record.pending_update) {
     return "reject_update";
   }
@@ -505,7 +494,7 @@ function extensionPackageSecondaryAction(record: ManagedExtensionPackage): Exten
   return undefined;
 }
 
-function extensionPackageTone(record: ManagedExtensionPackage): "good" | "warning" | "danger" | "muted" {
+function extensionPackageTone(record: ExtensionInventoryRecord): SettingsStatusTone {
   if (record.pending_update) {
     return "warning";
   }
@@ -519,18 +508,18 @@ function extensionPackageTone(record: ManagedExtensionPackage): "good" | "warnin
     return "warning";
   }
   if (record.enabled === false) {
-    return "muted";
+    return "neutral";
   }
   if (record.runtime_state === "active") {
-    return "good";
+    return "success";
   }
   if (extensionPackageApproval(record) === "pending") {
     return "warning";
   }
-  return "muted";
+  return "neutral";
 }
 
-function extensionPackageStatusLabel(record: ManagedExtensionPackage, t: ReturnType<typeof useI18n>["t"]): string {
+function extensionPackageStatusLabel(record: ExtensionInventoryRecord, t: ReturnType<typeof useI18n>["t"]): string {
   if (record.pending_update) return t("skills.pluginStatusUpdatePending");
   if (record.runtime_state === "failed") return t("skills.pluginStatusFailed");
   if (record.runtime_state === "starting") return t("skills.pluginStatusStarting");
@@ -548,7 +537,7 @@ function extensionPackageStatusLabel(record: ManagedExtensionPackage, t: ReturnT
 }
 
 function extensionPackageActionLabel(
-  record: ManagedExtensionPackage,
+  record: ExtensionInventoryRecord,
   action: ExtensionPackageAction,
   t: ReturnType<typeof useI18n>["t"],
 ): string {
@@ -667,10 +656,9 @@ function PluginDetailDialog({
   onMoreActions: (button: HTMLButtonElement) => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const managed = record as ManagedExtensionPackage;
-  const primaryAction = extensionPackagePrimaryAction(managed);
-  const secondaryAction = extensionPackageSecondaryAction(managed);
-  const tone = extensionPackageTone(managed);
+  const primaryAction = extensionPackagePrimaryAction(record);
+  const secondaryAction = extensionPackageSecondaryAction(record);
+  const grantScope = pluginGrantScopeLabel(record.grant_scope, t);
   const mutating = packageMutation.startsWith(`${record.id}:`);
   const grantUnavailable =
     (primaryAction === "grant" || primaryAction === "promote_update") &&
@@ -697,14 +685,7 @@ function PluginDetailDialog({
     <Modal
       ariaLabel={t("skills.pluginDetailLabel", { name: record.name })}
       icon={<PluginArtwork record={record} />}
-      title={
-        <>
-          <span className="plugin-detail-name">{record.name}</span>
-          {managed.version ? (
-            <span className="plugin-detail-version">v{managed.version}</span>
-          ) : null}
-        </>
-      }
+      title={record.name}
       subtitle={record.description}
       panelClassName="skill-preview-dialog plugin-detail-dialog"
       closeDisabled={Boolean(packageMutation)}
@@ -732,7 +713,7 @@ function PluginDetailDialog({
             >
               {mutating
                 ? t("skills.pluginUpdating")
-                : extensionPackageActionLabel(managed, primaryAction, t)}
+                : extensionPackageActionLabel(record, primaryAction, t)}
             </button>
           ) : null}
         </>
@@ -740,19 +721,14 @@ function PluginDetailDialog({
     >
       <div className="plugin-detail-body">
         <div className="plugin-detail-meta">
-          <span
-            className={`skill-row-tag extension-status extension-status-${tone} plugin-detail-status${tone === "muted" ? " skill-row-tag-neutral" : ""}`}
-          >
-            <span className="plugin-detail-status-dot" aria-hidden="true" />
-            {extensionPackageStatusLabel(managed, t)}
-          </span>
+          <SettingsStatus tone={extensionPackageTone(record)}>
+            {extensionPackageStatusLabel(record, t)}
+          </SettingsStatus>
           <span className="plugin-detail-meta-item">{pluginSourceLabel(record, t)}</span>
-          {pluginGrantScopeLabel(record.grant_scope, t) ? (
-            <span className="plugin-detail-meta-item">{pluginGrantScopeLabel(record.grant_scope, t)}</span>
-          ) : null}
+          {grantScope ? <span className="plugin-detail-meta-item">{grantScope}</span> : null}
         </div>
 
-        {record.pending_update || (managed.runtime_state === "failed" && managed.last_error) || (record.activation_issues?.length ?? 0) > 0 ? (
+        {record.pending_update || (record.runtime_state === "failed" && record.last_error) || (record.activation_issues?.length ?? 0) > 0 ? (
           <div className="plugin-detail-notices">
             {record.pending_update ? (
               <div className="plugin-detail-notice is-warning" role="status">
@@ -760,10 +736,10 @@ function PluginDetailDialog({
                 <span>{t("skills.pluginUpdateReady", { version: record.pending_update.version ?? "" })}</span>
               </div>
             ) : null}
-            {managed.runtime_state === "failed" && managed.last_error ? (
+            {record.runtime_state === "failed" && record.last_error ? (
               <div className="plugin-detail-notice is-error" role="alert">
                 <AlertCircle className="icon-sm" aria-hidden="true" />
-                <span>{managed.last_error}</span>
+                <span>{record.last_error}</span>
               </div>
             ) : null}
             {record.activation_issues?.map((issue) => (
@@ -863,22 +839,34 @@ function PluginArtwork({ record }: { record: ExtensionInventoryRecord }): JSX.El
   );
 }
 
-function CatalogSection({
+// One row anatomy serves plugins and skills: a mark, the name over a one-line
+// description, an optional trailing status or source, and a disclosure
+// chevron that opens the detail or preview dialog.
+function CatalogRow({
+  label,
+  artwork,
   title,
-  className = "",
-  children,
+  description,
+  trailing,
+  onOpen,
 }: {
+  label: string;
+  artwork: ReactNode;
   title: string;
-  className?: string;
-  children: ReactNode;
+  description?: string;
+  trailing?: ReactNode;
+  onOpen: () => void;
 }): JSX.Element {
   return (
-    <section className={`skills-section ${className}`.trim()}>
-      <div className="skills-section-heading">
-        <strong>{title}</strong>
-      </div>
-      {children}
-    </section>
+    <button className="catalog-row" type="button" aria-label={label} onClick={onOpen}>
+      {artwork}
+      <span className="catalog-row-copy">
+        <span className="catalog-row-title">{title}</span>
+        {description ? <span className="catalog-row-description">{description}</span> : null}
+      </span>
+      {trailing}
+      <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
+    </button>
   );
 }
 
@@ -892,33 +880,30 @@ function SkillsList({
   const { t } = useI18n();
 
   return (
-    <div className="skills-list">
-      {skills.map((skill) => (
-        <button
-          key={`${skill.source}:${skill.name}`}
-          className="skill-row skill-row-button"
-          type="button"
-          aria-label={t("skills.previewSkill", { name: skill.name })}
-          onClick={() => onPreview(skill)}
-        >
-          <span className="skill-artwork" aria-hidden="true">
-            <CapabilityMark motif={skillCapability(skill.name)} />
-          </span>
-          <span className="skill-row-copy">
-            <span className="skill-row-titlebar">
-              <h2>{skill.name}</h2>
-              {pluginSkillID(skill.source) ? (
-                <span className="skill-row-tag skill-row-tag-neutral" title={t("skills.pluginSkillTitle")}>
-                  {t("skills.pluginTag", { id: pluginSkillID(skill.source) })}
-                </span>
-              ) : null}
-            </span>
-            {catalogSkillDescription(skill) ? <p>{catalogSkillDescription(skill)}</p> : null}
-          </span>
-          <ChevronRight className="skill-row-chevron" aria-hidden="true" />
-        </button>
-      ))}
-    </div>
+    <SettingsGroup>
+      {skills.map((skill) => {
+        const pluginID = pluginSkillID(skill.source);
+        return (
+          <CatalogRow
+            key={`${skill.source}:${skill.name}`}
+            label={t("skills.previewSkill", { name: skill.name })}
+            artwork={
+              <span className="skill-artwork" aria-hidden="true">
+                <CapabilityMark motif={skillCapability(skill.name)} />
+              </span>
+            }
+            title={skill.name}
+            description={catalogSkillDescription(skill)}
+            trailing={pluginID ? (
+              <span className="catalog-row-meta" title={t("skills.pluginSkillTitle")}>
+                {t("skills.pluginTag", { id: pluginID })}
+              </span>
+            ) : undefined}
+            onOpen={() => onPreview(skill)}
+          />
+        );
+      })}
+    </SettingsGroup>
   );
 }
 

@@ -46,14 +46,14 @@ iOS 将预览解码为最长边 288 像素，按固定 96×72 点在文字气泡
 
 ## 构建
 
-原生安装包使用仓库中已生成的共享头像资源，普通原生构建不要求安装 Node.js。修改电脑端头像组件后，在安装好 `desktop` 依赖的仓库中运行：
+原生安装包使用仓库中已提交的头像与过程摘要资源快照，普通原生构建不要求安装 Node.js，也不要求快照跟随电脑端源码同步。需要主动采用电脑端表现层更新时，在安装好 `desktop` 依赖的仓库中运行：
 
 ```sh
 node clients/native/shared-ui/build.mjs
 node clients/native/shared-ui/build.mjs --check
 ```
 
-两端构建会检查共享资源与实际组件源文件的摘要，过期时提示重新生成。入口与边界见 [shared-ui](shared-ui/README.md)。
+更新时一起提交 `NativeUI/mascot.html`、`NativeUI/process.js` 和 `NativeUI/sources.sha256`。`--check` 用于确认主动更新后的快照与当前源码一致，不是两端构建的前置条件。入口与边界见 [shared-ui](shared-ui/README.md)。
 
 iOS App 最低 iOS 17，使用 Xcode 打开 [ios/Wuu.xcodeproj](ios/Wuu.xcodeproj)，选择 `Wuu` scheme。模拟器运行使用 Xcode 自动生成的本地临时签名，无需开发团队；真机安装需要在 Xcode 配置自己的开发团队。Swift Package 是可单独测试的通信与缓存模块，不是另一个 App。
 
@@ -112,4 +112,4 @@ iOS Debug 构建可通过 `xcrun simctl launch booted ai.wuu.native --native-ui-
 
 iOS 安装包声明本机偏好设置，以及缓存和用户选择文件的元数据访问理由；商店的数据收集声明仍需按实际服务器部署填写。Android 明确排除云备份和换机数据迁移，避免把设备身份、推送同意和历史缓存复制到另一部手机。
 
-Native mobile 工作流运行核心集成、未签名 Release 构建和 Android Release lint。临时 PostgreSQL 不连接已有数据库，也不需要账号或模型密钥。发布签名、商店分发和分支保护门禁仍需单独配置。旧手机实现停止开发的标记不会删除原有代码，也不表示已有新的商店版本。
+Native mobile 工作流仅手动触发，运行核心集成、未签名 Release 构建和 Android Release lint，不在 PR 或 `main` 推送时自动运行。当前手机端不在发布范围内；恢复发布前应重新启用自动验证，并单独配置发布签名、商店分发和分支保护门禁。临时 PostgreSQL 不连接已有数据库，也不需要账号或模型密钥。旧手机实现停止开发的标记不会删除原有代码，也不表示已有新的商店版本。CI 政策见[开发指南](../../docs/zh-cn/project/development.md#ci-覆盖范围)。

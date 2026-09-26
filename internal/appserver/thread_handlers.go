@@ -1167,7 +1167,7 @@ func (s *Server) threadListResult(entries map[string]threadListEntry, summaryOnl
 	sortThreadListEntries(threads)
 	result := make([]Thread, 0, len(threads))
 	for _, entry := range threads {
-		entry.thread.SessionControl = s.threadSessionControl(controls[entry.thread.ID])
+		entry.thread.SessionControl = s.threadSessionControl(entry.thread.ID, controls[entry.thread.ID])
 		// Sidebar refreshes are summary lists. Dirty worktree state is a git
 		// status per checkout, and a workspace can store one for many
 		// sessions. Running those on every list blocks the app server.

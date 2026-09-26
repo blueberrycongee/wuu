@@ -32,15 +32,19 @@ func insertWorkTx(ctx context.Context, tx *sql.Tx, task Message, params TaskCrea
 	if task.TaskVerificationRequired {
 		verification = WorkVerificationPending
 	}
-	_, err := tx.ExecContext(ctx, `
+	decisions, err := json.Marshal(appendUniqueStrings([]string{}, params.Decisions...))
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO works(
 			id, room_id, source_message_id, owner_named_agent_id, lead_named_agent_id,
 			title, brief, goal_revision, candidate_revision, state,
-			verification_state, verification_required, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)`,
+			verification_state, verification_required, created_at, updated_at, constraints, decisions_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`,
 		task.ID, task.RoomID, sourceMessageID, task.TaskOwner, nullableString(params.LeadNamedAgentID),
 		task.TaskTitle, task.Body, task.TaskGoalRevision, task.TaskCandidateRevision,
-		verification, boolInt(task.TaskVerificationRequired), toMillis(task.CreatedAt), toMillis(task.CreatedAt))
+		verification, boolInt(task.TaskVerificationRequired), toMillis(task.CreatedAt), toMillis(task.CreatedAt), params.Constraints, string(decisions))
 	if err != nil {
 		return fmt.Errorf("insert durable work: %w", err)
 	}
@@ -191,13 +195,14 @@ const workSelect = `
 		work.max_rounds, work.current_round, work.qualified_candidates,
 		work.max_input_tokens, work.max_output_tokens, work.deadline_at,
 		work.checks_summary, work.changed_files_count, work.unresolved_items, work.failure_reason,
-		work.cancelled_at, work.created_at, work.updated_at
+		work.cancelled_at, work.created_at, work.updated_at, work.revision, work.constraints, work.decisions_json, work.state_deadline_at
 	FROM works work`
 
 func scanWork(row scanner) (Work, error) {
 	var work Work
+	var decisionsJSON string
 	var verificationRequired int
-	var cancelledAt, deadlineAt sql.NullInt64
+	var cancelledAt, deadlineAt, stateDeadlineAt sql.NullInt64
 	var createdAt, updatedAt int64
 	if err := row.Scan(
 		&work.ID, &work.RoomID, &work.SourceMessageID, &work.OwnerNamedAgentID,
@@ -209,12 +214,18 @@ func scanWork(row scanner) (Work, error) {
 		&work.CandidatesUsed, &work.FanoutReason, &work.MaxRounds, &work.CurrentRound,
 		&work.QualifiedCandidates, &work.MaxInputTokens, &work.MaxOutputTokens, &deadlineAt,
 		&work.ChecksSummary, &work.ChangedFilesCount, &work.UnresolvedItems, &work.FailureReason,
-		&cancelledAt, &createdAt, &updatedAt,
+		&cancelledAt, &createdAt, &updatedAt, &work.Revision, &work.Constraints, &decisionsJSON, &stateDeadlineAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Work{}, ErrNotFound
 		}
 		return Work{}, fmt.Errorf("scan work: %w", err)
+	}
+	if err := json.Unmarshal([]byte(decisionsJSON), &work.Decisions); err != nil {
+		return Work{}, err
+	}
+	if stateDeadlineAt.Valid {
+		work.StateDeadlineAt = fromMillis(stateDeadlineAt.Int64)
 	}
 	work.VerificationRequired = verificationRequired != 0
 	if cancelledAt.Valid {
@@ -228,6 +239,11 @@ func scanWork(row scanner) (Work, error) {
 }
 
 func (s *Service) loadWorkDetails(ctx context.Context, work *Work) error {
+	history, err := s.WorkDecisionHistory(ctx, work.ID)
+	if err != nil {
+		return err
+	}
+	work.DecisionHistory = history
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id FROM collaboration_messages
 		WHERE work_id = ? AND pulled_at IS NULL AND invalidated_at IS NULL
@@ -414,20 +430,46 @@ func (s *Service) StartWorkRun(ctx context.Context, params WorkRunStartParams) (
 		}
 	}
 	namedAgentID := params.NamedAgentID
-	if params.Kind == WorkRunVerifier && params.Profile != "" && params.Profile != WorkVerifierProfileIndependent {
-		if namedAgentID != "" && namedAgentID != params.Profile {
-			return WorkRun{}, fmt.Errorf("%w: verifier profile and named session owner must match", ErrConflict)
-		}
-		namedAgentID = params.Profile
-	} else if namedAgentID == "" && params.Kind != WorkRunVerifier {
-		namedAgentID = actor.ID
-	}
-	if namedAgentID == "" {
-		return WorkRun{}, fmt.Errorf("%w: a verifier run requires a visible named agent distinct from the task owner", ErrUnauthorized)
-	}
-	if namedAgentID != "" {
-		if err := s.requireRoomAgentMemberTx(ctx, tx, work.RoomID, namedAgentID); err != nil {
+	if params.harness {
+		var payload string
+		if err := tx.QueryRowContext(ctx, `SELECT payload FROM harness_session_links WHERE session_id=? AND active=1`, params.SessionRef).Scan(&payload); err != nil {
 			return WorkRun{}, err
+		}
+		var link HarnessSessionLink
+		if err := json.Unmarshal([]byte(payload), &link); err != nil {
+			return WorkRun{}, err
+		}
+		if link.AgentID != actor.ID || link.WorkID != work.ID || link.GoalRevision != work.GoalRevision {
+			return WorkRun{}, ErrUnauthorized
+		}
+		if (params.Kind == WorkRunVerifier) != (link.Purpose == CollaborationSessionVerification) {
+			return WorkRun{}, ErrUnauthorized
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE works SET max_candidates=MAX(max_candidates,4),max_verifier_attempts=MAX(max_verifier_attempts,4) WHERE id=?`, work.ID); err != nil {
+			return WorkRun{}, err
+		}
+		work.MaxCandidates = max(work.MaxCandidates, 4)
+		work.MaxVerifierAttempts = max(work.MaxVerifierAttempts, 4)
+		namedAgentID = ""
+		if params.Kind == WorkRunVerifier {
+			params.Profile = WorkVerifierProfileIndependent
+		}
+	} else {
+		if params.Kind == WorkRunVerifier && params.Profile != "" && params.Profile != WorkVerifierProfileIndependent {
+			if namedAgentID != "" && namedAgentID != params.Profile {
+				return WorkRun{}, fmt.Errorf("%w: verifier profile and named session owner must match", ErrConflict)
+			}
+			namedAgentID = params.Profile
+		} else if namedAgentID == "" && params.Kind != WorkRunVerifier {
+			namedAgentID = actor.ID
+		}
+		if namedAgentID == "" {
+			return WorkRun{}, fmt.Errorf("%w: a verifier run requires a visible named agent distinct from the task owner", ErrUnauthorized)
+		}
+		if namedAgentID != "" {
+			if err := s.requireRoomAgentMemberTx(ctx, tx, work.RoomID, namedAgentID); err != nil {
+				return WorkRun{}, err
+			}
 		}
 	}
 	freshNamedSession := false
@@ -467,31 +509,33 @@ func (s *Service) StartWorkRun(ctx context.Context, params WorkRunStartParams) (
 		if work.State != WorkChecking || work.CandidateRevision == 0 || work.CandidateArtifactRef == "" {
 			return WorkRun{}, fmt.Errorf("%w: verifier run requires a checking candidate", ErrConflict)
 		}
-		verifierID := strings.TrimSpace(params.Profile)
-		if verifierID == "" {
-			verifierID = namedAgentID
+		if !params.harness {
+			verifierID := strings.TrimSpace(params.Profile)
 			if verifierID == "" {
-				verifierID = WorkVerifierProfileIndependent
+				verifierID = namedAgentID
+				if verifierID == "" {
+					verifierID = WorkVerifierProfileIndependent
+				}
+				params.Profile = verifierID
 			}
-			params.Profile = verifierID
-		}
-		if namedAgentID != "" && verifierID != namedAgentID {
-			return WorkRun{}, fmt.Errorf("%w: verifier profile and named session owner must match", ErrConflict)
-		}
-		if verifierID == work.OwnerNamedAgentID {
-			return WorkRun{}, fmt.Errorf("%w: verifier run requires a different named agent", ErrConflict)
-		}
-		if verifierID != WorkVerifierProfileIndependent {
-			var verifierMember int
-			if err := tx.QueryRowContext(ctx, `
+			if namedAgentID != "" && verifierID != namedAgentID {
+				return WorkRun{}, fmt.Errorf("%w: verifier profile and named session owner must match", ErrConflict)
+			}
+			if verifierID == work.OwnerNamedAgentID {
+				return WorkRun{}, fmt.Errorf("%w: verifier run requires a different named agent", ErrConflict)
+			}
+			if verifierID != WorkVerifierProfileIndependent {
+				var verifierMember int
+				if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(*) FROM room_members member
 			JOIN named_agents agent ON agent.id = member.member_id AND agent.kind = 'named'
 			WHERE member.room_id = ? AND member.member_type = 'agent' AND member.member_id = ?`,
-				work.RoomID, verifierID).Scan(&verifierMember); err != nil {
-				return WorkRun{}, fmt.Errorf("validate named verifier: %w", err)
-			}
-			if verifierMember == 0 {
-				return WorkRun{}, fmt.Errorf("%w: named verifier must be a current room member", ErrUnauthorized)
+					work.RoomID, verifierID).Scan(&verifierMember); err != nil {
+					return WorkRun{}, fmt.Errorf("validate named verifier: %w", err)
+				}
+				if verifierMember == 0 {
+					return WorkRun{}, fmt.Errorf("%w: named verifier must be a current room member", ErrUnauthorized)
+				}
 			}
 		}
 		if work.CurrentRunRef != "" {
@@ -545,16 +589,19 @@ func (s *Service) StartWorkRun(ctx context.Context, params WorkRunStartParams) (
 		return WorkRun{}, err
 	}
 	now := fromMillis(toMillis(s.now()))
-	deadline := now.Add(30 * time.Minute)
+	deadline := now.Add(workProgressTimeout)
 	if params.Deadline > 0 {
 		deadline = now.Add(params.Deadline)
 	}
 	if !work.DeadlineAt.IsZero() && work.DeadlineAt.Before(deadline) {
 		deadline = work.DeadlineAt
 	}
-	state, queueReason, err := s.workRunAdmissionTx(ctx, tx, work.RoomID, namedAgentID, params.SessionRef)
-	if err != nil {
-		return WorkRun{}, err
+	state, queueReason := WorkRunRunning, ""
+	if !params.harness {
+		state, queueReason, err = s.workRunAdmissionTx(ctx, tx, work.RoomID, namedAgentID, params.SessionRef)
+		if err != nil {
+			return WorkRun{}, err
+		}
 	}
 	run := WorkRun{
 		ID: id, WorkID: work.ID, NamedAgentID: namedAgentID, Kind: params.Kind, Profile: params.Profile,
@@ -584,6 +631,14 @@ func (s *Service) StartWorkRun(ctx context.Context, params WorkRunStartParams) (
 			current_round = MAX(current_round, ?), updated_at = ? WHERE id = ?`,
 		run.ID, verifierIncrement, run.Round, toMillis(now), work.ID); err != nil {
 		return WorkRun{}, fmt.Errorf("activate work run: %w", err)
+	}
+	if params.harness && run.Kind == WorkRunProducer && (work.State == WorkOpen || work.State == WorkRevising || work.State == WorkNeedsHuman) {
+		if _, err := tx.ExecContext(ctx, `UPDATE works SET state='working',updated_at=? WHERE id=?`, toMillis(now), work.ID); err != nil {
+			return WorkRun{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE room_messages SET task_state='doing' WHERE id=?`, work.ID); err != nil {
+			return WorkRun{}, err
+		}
 	}
 	if bindRunSession {
 		purpose := CollaborationSessionWork
@@ -672,7 +727,7 @@ func (s *Service) FinishWorkRun(ctx context.Context, params WorkRunFinishParams)
 	if run.GoalRevision != work.GoalRevision {
 		return WorkRun{}, fmt.Errorf("%w: work run revisions are stale", ErrConflict)
 	}
-	supersededCandidateRevision := run.CandidateRevision != work.CandidateRevision && !promotedByRun
+	supersededCandidateRevision := run.CandidateRevision != work.CandidateRevision && !promotedByRun && !(run.Kind == WorkRunProducer && run.NamedAgentID == "")
 	now := fromMillis(toMillis(s.now()))
 	run.State, run.Outcome, run.Provider, run.Model = params.State, strings.TrimSpace(params.Outcome), strings.TrimSpace(params.Provider), strings.TrimSpace(params.Model)
 	run.InputTokens, run.OutputTokens, run.CostUSD, run.ChecksRerun = params.InputTokens, params.OutputTokens, params.CostUSD, params.ChecksRerun
@@ -717,7 +772,7 @@ func (s *Service) FinishWorkRun(ctx context.Context, params WorkRunFinishParams)
 	} else if run.State == WorkRunFailed {
 		nextState = CollaborationSessionFailed
 	}
-	if run.SessionRef != "" {
+	if run.SessionRef != "" && run.NamedAgentID != "" {
 		if run.State == WorkRunCompleted {
 			waiting, err := collaborationSessionWaitingTx(ctx, tx, run.SessionRef)
 			if err != nil {
@@ -772,7 +827,7 @@ func (s *Service) ExpireWorkRuns(ctx context.Context) (int, error) {
 	}
 	defer tx.Rollback()
 	now := fromMillis(toMillis(s.now()))
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM work_runs WHERE state IN ('queued', 'running') AND deadline_at IS NOT NULL AND deadline_at <= ? ORDER BY deadline_at, id`, toMillis(now))
+	rows, err := tx.QueryContext(ctx, `SELECT run.id FROM work_runs run JOIN works work ON work.id=run.work_id WHERE run.state IN ('queued','running') AND (run.deadline_at<=? OR work.state_deadline_at<=?) ORDER BY run.deadline_at,run.id`, toMillis(now), toMillis(now))
 	if err != nil {
 		return 0, fmt.Errorf("list expired work runs: %w", err)
 	}
@@ -789,6 +844,7 @@ func (s *Service) ExpireWorkRuns(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	var wakeIDs []string
+	var interruptTargets []workSessionInterruptTarget
 	for _, id := range ids {
 		run, err := scanWorkRun(tx.QueryRowContext(ctx, workRunSelect+` WHERE run.id = ?`, id))
 		if err != nil {
@@ -797,6 +853,9 @@ func (s *Service) ExpireWorkRuns(ctx context.Context) (int, error) {
 		work, err := scanWork(tx.QueryRowContext(ctx, workSelect+` WHERE work.id = ?`, run.WorkID))
 		if err != nil {
 			return 0, err
+		}
+		if run.SessionRef != "" {
+			interruptTargets = append(interruptTargets, workSessionInterruptTarget{agentID: run.NamedAgentID, sessionRef: run.SessionRef})
 		}
 		run.State, run.Outcome, run.EndedAt, run.UpdatedAt = WorkRunTimedOut, string(WorkRunTimedOut), now, now
 		if _, err := tx.ExecContext(ctx, `UPDATE work_runs SET state = 'interrupted', outcome = 'timed_out', ended_at = ?, updated_at = ? WHERE id = ? AND state IN ('queued', 'running')`, toMillis(now), toMillis(now), run.ID); err != nil {
@@ -816,6 +875,11 @@ func (s *Service) ExpireWorkRuns(ctx context.Context) (int, error) {
 		}
 		wakeIDs = appendUniqueStrings(wakeIDs, terminalWakeIDs...)
 	}
+	stateWakes, err := s.expireWorkStatesTx(ctx, tx, now)
+	if err != nil {
+		return 0, err
+	}
+	wakeIDs = appendUniqueStrings(wakeIDs, stateWakes...)
 	admittedWakeIDs, err := s.admitQueuedWorkRunsTx(ctx, tx, now)
 	if err != nil {
 		return 0, err
@@ -824,6 +888,7 @@ func (s *Service) ExpireWorkRuns(ctx context.Context) (int, error) {
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
+	s.interruptWorkSessions(interruptTargets)
 	if s.wake != nil {
 		for _, id := range wakeIDs {
 			s.wake.Deliver(id)
@@ -917,15 +982,17 @@ func (s *Service) AddWorkArtifact(ctx context.Context, params WorkArtifactAddPar
 	if !canManage && strings.TrimSpace(params.RunID) == "" {
 		return WorkArtifact{}, ErrUnauthorized
 	}
+	harnessProducer := false
 	if runID := strings.TrimSpace(params.RunID); runID != "" {
 		run, err := scanWorkRun(tx.QueryRowContext(ctx, workRunSelect+` WHERE run.id = ? AND run.work_id = ?`, runID, work.ID))
 		if err != nil {
 			return WorkArtifact{}, err
 		}
+		harnessProducer = run.NamedAgentID == "" && run.Kind == WorkRunProducer
 		if !canManage && run.NamedAgentID != actor.ID {
 			return WorkArtifact{}, ErrUnauthorized
 		}
-		if run.GoalRevision != work.GoalRevision || run.CandidateRevision != work.CandidateRevision {
+		if run.GoalRevision != work.GoalRevision || !(run.Kind == WorkRunProducer && run.NamedAgentID == "") && run.CandidateRevision != work.CandidateRevision {
 			return WorkArtifact{}, fmt.Errorf("%w: artifact run revisions are stale", ErrConflict)
 		}
 	}
@@ -938,8 +1005,8 @@ func (s *Service) AddWorkArtifact(ctx context.Context, params WorkArtifactAddPar
 			SELECT COUNT(*) FROM work_artifacts artifact
 			JOIN work_runs run ON run.id = artifact.run_id
 			WHERE artifact.work_id = ? AND artifact.kind = 'candidate'
-				AND run.goal_revision = ? AND run.candidate_revision = ?`,
-			work.ID, work.GoalRevision, work.CandidateRevision).Scan(&currentCandidates); err != nil {
+				AND run.goal_revision = ? AND (run.candidate_revision = ? OR ?)`,
+			work.ID, work.GoalRevision, work.CandidateRevision, harnessProducer).Scan(&currentCandidates); err != nil {
 			return WorkArtifact{}, fmt.Errorf("count current candidate artifacts: %w", err)
 		}
 		if currentCandidates >= work.MaxCandidates {
@@ -1012,7 +1079,7 @@ func (s *Service) PromoteWorkCandidate(ctx context.Context, params WorkCandidate
 	if run.State != WorkRunRunning && run.State != WorkRunCompleted {
 		return Work{}, fmt.Errorf("%w: promotion run is not active or completed", ErrConflict)
 	}
-	legalSingleCandidate := work.MaxCandidates <= 1 && run.Kind == WorkRunProducer
+	legalSingleCandidate := (work.MaxCandidates <= 1 || run.NamedAgentID == "") && run.Kind == WorkRunProducer
 	if !legalSingleCandidate && run.Kind != WorkRunSelector && run.Kind != WorkRunIntegration {
 		return Work{}, fmt.Errorf("%w: multi-candidate promotion requires selector or integration", ErrUnauthorized)
 	}
@@ -1168,7 +1235,7 @@ func (s *Service) cancelWorkTx(ctx context.Context, tx *sql.Tx, work Work, reaso
 	if _, err := tx.ExecContext(ctx, `UPDATE works SET state = 'cancelled', current_run_ref = NULL, failure_reason = ?, cancelled_at = ?, updated_at = ? WHERE id = ?`, strings.TrimSpace(reason), toMillis(now), toMillis(now), work.ID); err != nil {
 		return nil, nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE room_messages SET task_state = 'open' WHERE id = ?`, work.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE room_messages SET task_state = 'cancelled' WHERE id = ?`, work.ID); err != nil {
 		return nil, nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE collaboration_messages SET invalidated_at = ? WHERE work_id = ? AND pulled_at IS NULL`, toMillis(now), work.ID); err != nil {
@@ -1739,7 +1806,7 @@ func (s *Service) listWorkRuns(ctx context.Context, workID string) ([]WorkRun, e
 
 func (s *Service) listWorkArtifacts(ctx context.Context, workID string) ([]WorkArtifact, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, work_id, COALESCE(run_id, ''), kind, uri, label, summary, workspace_revision, created_at
+		SELECT id, work_id, COALESCE(run_id, ''), kind, uri, label, summary, workspace_revision, created_at, disposition
 		FROM work_artifacts WHERE work_id = ? ORDER BY created_at, id`, workID)
 	if err != nil {
 		return nil, err
@@ -1749,7 +1816,7 @@ func (s *Service) listWorkArtifacts(ctx context.Context, workID string) ([]WorkA
 	for rows.Next() {
 		var artifact WorkArtifact
 		var createdAt int64
-		if err := rows.Scan(&artifact.ID, &artifact.WorkID, &artifact.RunID, &artifact.Kind, &artifact.URI, &artifact.Label, &artifact.Summary, &artifact.WorkspaceRevision, &createdAt); err != nil {
+		if err := rows.Scan(&artifact.ID, &artifact.WorkID, &artifact.RunID, &artifact.Kind, &artifact.URI, &artifact.Label, &artifact.Summary, &artifact.WorkspaceRevision, &createdAt, &artifact.Disposition); err != nil {
 			return nil, err
 		}
 		artifact.CreatedAt = fromMillis(createdAt)

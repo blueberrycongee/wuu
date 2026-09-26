@@ -1,6 +1,10 @@
+import { ENABLE_COLLABORATION_CHANNELS } from "./FeatureFlags";
+import { ConversationContextPanel, useConversationTimers, type ConversationContextTab } from "./ConversationContext";
+import { conversationProjectName } from "./CollaborationConversations";
+import { WorkCandidateReview } from "./WorkCandidateReview";
 import { AgentOnboardingHistory } from "./AgentOnboardingHistory";
 import { hostSupports } from "./HostCapabilities";
-import { Bot, ChevronDown, ChevronUp, ClipboardList, ImagePlus, MessageCircle, Network, PanelLeftClose, PanelLeftOpen, Plus, Settings2, X } from "./WuuIcons";
+import { ArrowUpRight, BookOpen, Bot, ChevronDown, ChevronUp, ClipboardList, Clock, ImagePlus, MessageCircle, Network, PanelLeftClose, PanelLeftOpen, Plus, Settings2, X } from "./WuuIcons";
 import { Fragment, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChannelAgentInsight, ChannelMessage, ChannelMessageListResult, ChannelResponse, ChannelRoom, EngineInfo, InitializeResult, NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark, randomAgentAvatarKey } from "./AgentAvatarMark";
@@ -21,7 +25,7 @@ import { ChannelAgentSettings } from "./ChannelAgentSettings";
 import { useChannelPanelResize } from "./ChannelSettingsResize";
 import { ChannelActivityPresence } from "./ChannelActivityPresence";
 import { ChannelCoordinatorActivity } from "./ChannelCoordinatorActivity";
-import { ChannelComposer, type ChannelComposerHandle } from "./ChannelComposer";
+import { ChannelComposer, type ChannelComposerHandle, type ChannelComposerProject } from "./ChannelComposer";
 import { ChannelGroupAvatar } from "./ChannelGroupAvatar";
 import { ChannelMemberPicker } from "./ChannelMemberPicker";
 import { ChannelRecipientPicker } from "./ChannelRecipientPicker";
@@ -69,7 +73,7 @@ type AgentDetailDraft = {
 };
 export type ChannelSection = "rooms" | "agents" | "tasks";
 type AgentActivityStatus = "idle" | "thinking" | "sending";
-type ChannelResponseActivity = Omit<ChannelResponse, "body">;
+type ChannelResponseActivity = ChannelResponse;
 
 const CHANNEL_SPLIT_WIDTH_KEY = "wuu.channels.splitPaneWidth";
 const LEGACY_CHANNEL_LIST_WIDTH_KEY = "wuu.channels.listWidth";
@@ -139,7 +143,8 @@ async function readChannelMessages(roomID: string): Promise<ChannelMessageListRe
   return { ...result, messages };
 }
 
-export function assignmentState(state?: string): "open" | "doing" | "checking" | "revising" | "needs_human" | "done" {
+export function assignmentState(state?: string): "open" | "doing" | "checking" | "revising" | "needs_human" | "done" | "cancelled" | "failed" | "interrupted" {
+  if (state === "cancelled" || state === "failed" || state === "interrupted") return state;
   if (state === "checking") return "checking";
   if (state === "revising") return "revising";
   if (state === "needs_human") return "needs_human";
@@ -148,7 +153,7 @@ export function assignmentState(state?: string): "open" | "doing" | "checking" |
   return "open";
 }
 
-function assignmentStatusKey(state: ReturnType<typeof assignmentState>): "open" | "doing" | "checking" | "revising" | "needsHuman" | "done" {
+function assignmentStatusKey(state: ReturnType<typeof assignmentState>): "open" | "doing" | "checking" | "revising" | "needsHuman" | "done" | "cancelled" | "failed" | "interrupted" {
   return state === "needs_human" ? "needsHuman" : state;
 }
 
@@ -159,6 +164,9 @@ function ChannelMessageBubble({
   onExpand,
   attachmentIDPrefix,
   beforeBody,
+  onCancelTask,
+  onOpenSession,
+  ownerName,
 }: {
   message: ChannelMessage;
   outgoing: boolean;
@@ -166,9 +174,14 @@ function ChannelMessageBubble({
   onExpand?: () => void;
   attachmentIDPrefix: string;
   beforeBody?: JSX.Element;
+  onCancelTask?: () => void;
+  onOpenSession?: (id: string) => void;
+  ownerName?: string;
 }): JSX.Element {
-  const { t } = useI18n();
+  const { t, formatDate } = useI18n();
   const { collapsible, expanded, toggleExpanded } = useLongTextCollapse(message.body);
+  const runs = message.work?.runs?.filter(run => run.session_ref) ?? [];
+  const deadline = message.work?.state_deadline_at && !message.work.state_deadline_at.startsWith("0001-") ? message.work.state_deadline_at : "";
   const canCollapse = allowCollapse && collapsible;
   const handleToggleExpanded = (): void => {
     if (!expanded) {
@@ -176,7 +189,7 @@ function ChannelMessageBubble({
     }
     toggleExpanded();
   };
-  const hasBubble = Boolean(message.body || beforeBody);
+  const hasBubble = Boolean(message.body || beforeBody || message.kind === "task");
 
   return (
     <>
@@ -184,7 +197,6 @@ function ChannelMessageBubble({
         <ComposerAttachmentStrip
           images={(message.images ?? []).map((image, index) => ({ id: `${attachmentIDPrefix}-image-${index}`, ...image }))}
           files={(message.files ?? []).map((file, index) => ({ id: `${attachmentIDPrefix}-file-${index}`, ...file }))}
-          removable={false}
         />
       ) : null}
       {hasBubble ? (
@@ -206,6 +218,17 @@ function ChannelMessageBubble({
             message.kind !== "task"
             || Boolean(message.task_title?.trim() && message.body.trim() !== message.task_title.trim())
           ) ? <RichContent text={message.body} /> : null}
+          {message.kind === "task" && (ownerName || runs.length) ? <div className="channel-task-meta">
+            {ownerName ? <span>{ownerName}</span> : null}
+            {runs.map(run => <button type="button" className="channel-card-link" key={run.id} title={t("channels.sessions.title")} onClick={() => onOpenSession?.(run.session_ref!)}>
+              {t(`channels.run.kind.${run.kind}`)} · {t(`channels.run.state.${run.state === "timed_out" ? "timedOut" : run.state}`)}<ArrowUpRight aria-hidden="true" />
+            </button>)}
+          </div> : null}
+          {deadline ? <p className="channel-task-deadline">{t("channels.candidate.deadline", { time: formatDate(deadline, { hour: "2-digit", minute: "2-digit" }) })}</p> : null}
+          {message.work?.artifacts?.filter(artifact => artifact.kind === "candidate").map(artifact => <WorkCandidateReview key={artifact.id} work={message.work!} artifact={artifact} onOpenSession={onOpenSession} />)}
+          {message.kind === "task" && !["done", "cancelled", "failed"].includes(message.task_state ?? "open") ? <div className="channel-card-actions">
+            <button type="button" className="secondary" onClick={onCancelTask}>{t("channels.cancelTask")}</button>
+          </div> : null}
           {canCollapse ? (
             <button
               className="channel-message-expand-toggle"
@@ -221,6 +244,24 @@ function ChannelMessageBubble({
       ) : null}
     </>
   );
+}
+
+/** A finished turn whose reply the host has not published stays visible as a draft. */
+function ChannelHeldResponse({ response, agentName, direct }: { response: ChannelResponseActivity; agentName: string; direct: boolean }): JSX.Element {
+  const { t } = useI18n();
+  const [expanded, setExpanded] = useState(false);
+  const draft = response.drafts?.map(item => item.body).join("\n\n") || response.body;
+  return <MessageBubbleRow outgoing={false} messageID={`held:${response.id}`} reserveAvatar={!direct}
+    className={`channel-message agent channel-held-response${direct ? " channel-direct-message" : ""}`} contentClassName="channel-message-content">
+    <MessageBubble outgoing={false} className="channel-message-bubble">
+      <p className="channel-held-status">{agentName} · {t(response.state === "held" ? "channels.sessions.state.held" : "channels.sessions.state.unpublished")}</p>
+      {expanded ? <RichContent text={draft} /> : null}
+      {draft ? <button className="channel-message-expand-toggle" type="button" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>
+        <span>{expanded ? t("common.collapse") : t("channels.viewDraft")}</span>
+        {expanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+      </button> : null}
+    </MessageBubble>
+  </MessageBubbleRow>;
 }
 
 function ChannelAgentActivity({ agent, agentID, state, error, selected = false, onResume, onInspect }: {
@@ -264,7 +305,7 @@ function ChannelAgentActivity({ agent, agentID, state, error, selected = false, 
         title={`${agent?.name ?? agentID} · ${status}`}
         aria-label={`${agent?.name ?? agentID} · ${status} · ${t("channels.sessions.history")}`}>
       <span className="channel-response-status-avatar" aria-hidden="true">
-        <AgentAvatarMark seed={agentID} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={state} turnSignal={avatarTurn} motion="expressive" />
+        <AgentAvatarMark seed={agentID} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={state === "held" || state === "unpublished" ? "idle" : state} turnSignal={avatarTurn} motion="expressive" />
       </span>
       <span className="channel-response-status-copy channel-activity-accessible">
         <strong>{agent?.name ?? agentID}</strong>
@@ -330,7 +371,7 @@ export type ChannelConversationSnapshot = {
   readingAnchor?: ConversationReadingAnchor;
 };
 
-export function ChannelView({ conversationCache, initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, managedThreadsByAgentID = {}, lastViewedTurnByThreadID = {}, onOpenAgentConversation, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, editRoomRequestID, onEditRoomRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange, onDeleteAgent }: {
+export function ChannelView({ conversationCache, initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, managedThreadsByAgentID = {}, lastViewedTurnByThreadID = {}, onOpenAgentConversation, conversationProject, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, editRoomRequestID, onEditRoomRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange, onDeleteAgent }: {
   conversationCache?: Map<string, ChannelConversationSnapshot>;
   initialized?: InitializeResult;
   engines?: EngineInfo[];
@@ -348,7 +389,9 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
   onOpenSession?: (sessionID: string) => void;
   managedThreadsByAgentID?: Readonly<Record<string, ThreadSummary[]>>;
   lastViewedTurnByThreadID?: Record<string, string>;
-  onOpenAgentConversation?: (agentID: string) => Promise<void>;
+  onOpenAgentConversation?: (agentID: string, workspaceRoot?: string) => Promise<void>;
+  /** The project a new direct conversation or agent opens in. */
+  conversationProject?: ChannelComposerProject;
   onCreateAgent?: () => void;
   onManageProviders?: () => void;
   composerDraft?: {
@@ -382,7 +425,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
   const [agentInsights, setAgentInsights] = useState<Record<string, ChannelAgentInsight>>({});
   const [localRooms, setLocalRooms] = useState<ChannelRoom[]>([]);
   const agents = directoryAgents ?? localAgents;
-  const rooms = directoryRooms ?? localRooms;
+  const rooms = useMemo(() => (directoryRooms ?? localRooms).filter(room => ENABLE_COLLABORATION_CHANNELS || room.kind === "dm"), [directoryRooms, localRooms]);
   const setAgents = onDirectoryAgentsChange ?? setLocalAgents;
   const setRooms = onDirectoryRoomsChange ?? setLocalRooms;
   const directoryIsControlled =
@@ -391,7 +434,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
   const selectedRoomID = controlledRoomID ?? internalSelectedRoomID;
   const selectedRoomIDRef = useRef(selectedRoomID);
   selectedRoomIDRef.current = selectedRoomID;
-  const [inspectedSession, setInspectedSession] = useState<{ roomID: string; sessionRef?: string; agentID?: string; managedAgentID?: string; turnID?: string; name: string } | null>(null);
+  const [inspectedSession, setInspectedSession] = useState<{ roomID: string; sessionRef?: string; agentID?: string; managedAgentID?: string; context?: ConversationContextTab; turnID?: string; name: string } | null>(null);
   const [inspectorClosing, setInspectorClosing] = useState(false);
   const inspectorResize = useChannelPanelResize<HTMLDivElement>(Boolean(inspectedSession) && !inspectorClosing, {
     storageKey: "wuu.channels.inspectorWidth", defaultWidth: 420,
@@ -569,6 +612,8 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
   const [resolvingProposalID, setResolvingProposalID] = useState("");
   const [roomAvatarImage, setRoomAvatarImage] = useState("");
   const [editingRoomID, setEditingRoomID] = useState("");
+  // Without a registered project the host binds the runtime's workspace.
+  const conversationWorkspace = conversationProject?.projects.find(project => project.id === conversationProject.selectedID)?.path;
   const [newRoomBody, setNewRoomBody] = useState("");
   const [newRoomImages, setNewRoomImages] = useState<ComposerImage[]>([]);
   const [newRoomFiles, setNewRoomFiles] = useState<ComposerFile[]>([]);
@@ -647,6 +692,9 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
   }, [composerFooterNode, messageScroll]);
   const followMessageArrival = useCallback((localSend: boolean) => {
     messageScroll.scrollToBottom({ force: localSend, animate: true });
+  }, [messageScroll]);
+  const jumpToLatestMessage = useCallback(() => {
+    messageScroll.scrollToBottom({ force: true, animate: true, revealScrollbar: true });
   }, [messageScroll]);
   const acknowledgeMessageMotion = useChannelMessageMotion(
     messageScroll.scrollRef, section === "rooms" ? selectedRoomID : "",
@@ -801,14 +849,17 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
         : (taskOwnerAgents[0]?.id ?? "")
     ));
   }, [setupPanel, taskOwnerAgents]);
-  // Keep task records for the board and read cursors, but out of the chat stream.
+  // Task state and delivery belong beside the conversation that requested them.
   const channelTimeline = useMemo(() => [
-    ...messages.filter((message) => message.kind !== "task").map((message) => {
+    ...messages.map((message) => {
       const presentation = sentPresentationRef.current.get(message.id);
       return presentation ? { ...message, created_at: presentation.createdAt } : message;
     }),
     ...(pendingMessage?.room_id === selectedRoomID ? [pendingMessage] : []),
   ], [messages, pendingMessage, selectedRoomID]);
+  const contextAgent = selectedRoom?.kind === "dm" && typeof window.wuu?.channelContinuity === "function" ? selectedRoomAgents[0] : undefined;
+  const selectedRoomProject = selectedRoom ? conversationProjectName(selectedRoom) : "";
+  const conversationTimers = useConversationTimers(contextAgent ? selectedRoomID : "", messages.length);
   const activityFor = useCallback((agent?: NamedAgent): AgentActivityStatus => {
     if (!agent) return "idle";
     if (sendingAgentIDs.has(agent.id)) return "sending";
@@ -934,7 +985,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
       if (result.responses !== undefined) {
         // Only committed messages belong in the transcript. Token updates must
         // not rerender it, scroll it, or expose incomplete answers as messages.
-        const nextResponses = result.responses.map(({ body: _body, ...activity }) => activity);
+        const nextResponses = result.responses;
         setResponsesByRoomID((current) => JSON.stringify(current[roomID]) === JSON.stringify(nextResponses) ? current : { ...current, [roomID]: nextResponses });
       }
       // A poll can see the durable send before its RPC returns its identity.
@@ -1543,6 +1594,15 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
     setSetupPanel("agent");
   }
 
+  function inspectContext(context: ConversationContextTab): void {
+    if (savingAgent || !contextAgent) return;
+    if (settingsOpen) closeAgentPanel();
+    if (!inspectorClosing && inspectedSession?.context === context) { closeInspector(); return; }
+    setInspectorClosing(false);
+    if (!inspectedSession || inspectorClosing) inspectionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setInspectedSession({ roomID: selectedRoomID, context, name: contextAgent.name });
+  }
+
   function openConversationSettings(): void {
     if (!selectedRoom || savingAgent) return;
     if (settingsOpen) { closeAgentPanel(); return; }
@@ -1590,10 +1650,10 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
     try {
       if (onOpenAgentConversation) {
         closeRoomPanel();
-        await onOpenAgentConversation(agentID);
+        await onOpenAgentConversation(agentID, conversationWorkspace);
         return;
       }
-      const { room } = await window.wuu.openChannelDirectMessage({ agent_id: agentID });
+      const { room } = await window.wuu.openChannelDirectMessage({ agent_id: agentID, workspace_root: conversationWorkspace });
       setRooms((current) => [...current.filter((entry) => entry.id !== room.id), room]);
       closeRoomPanel();
       openSessionRoom(room.id);
@@ -1824,7 +1884,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
           return agent;
         }}
         onOpenConversation={async (agent, onboarding) => {
-          const { room } = await window.wuu!.openChannelDirectMessage({ agent_id: agent.id, onboarding });
+          const { room } = await window.wuu!.openChannelDirectMessage({ agent_id: agent.id, onboarding, workspace_root: conversationWorkspace });
           setRooms((current) => [...current.filter((entry) => entry.id !== room.id), room]);
           setSelectedAgentID("");
           openSessionRoom(room.id);
@@ -2027,7 +2087,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
                   agents={agents}
                   selectedAgentIDs={roomAgentIDs}
                   onCreateAgent={!newConversationGroup ? openAgentOnboarding : undefined}
-                  onCreateGroup={!newConversationGroup ? () => setNewConversationGroup(true) : undefined}
+                  onCreateGroup={ENABLE_COLLABORATION_CHANNELS && !newConversationGroup ? () => setNewConversationGroup(true) : undefined}
                   onConfirmGroup={newConversationGroup ? () => void createNewRoom() : undefined}
                   onToggle={(agentID) => {
                     if (newConversationGroup) toggleRoomAgent(agentID);
@@ -2048,8 +2108,22 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
                       model={selectedRoomAgents[0].model_override || initialized?.model} modelLabel={t("channels.model")} />
                       : <ChannelGroupAvatar room={selectedRoom} agents={agents} />}
                   </span> : null}
-                  <span className="channel-room-settings-name" role="heading" aria-level={2}>{selectedRoomTitle || t("channels.rooms")}</span><ChevronDown className="icon" aria-hidden="true" />
+                  <span className="channel-room-settings-name" role="heading" aria-level={2}>{selectedRoomTitle || t("channels.rooms")}</span>
+                  {selectedRoom?.kind === "dm" && selectedRoomProject ? <span className="channel-room-settings-project">{selectedRoomProject}</span> : null}
+                  <ChevronDown className="icon" aria-hidden="true" />
                 </button>
+                {contextAgent ? <div className="title-actions channel-room-context-actions">
+                  <button type="button" className={`icon-button${inspectedSession?.context === "memory" && !inspectorClosing ? " active" : ""}`}
+                    aria-label={t("channels.context.memory")} title={t("channels.context.memory")} aria-pressed={inspectedSession?.context === "memory" && !inspectorClosing}
+                    onClick={() => inspectContext("memory")}><BookOpen className="icon-lg" aria-hidden="true" /></button>
+                  <button type="button" className={`icon-button channel-room-timer-button${inspectedSession?.context === "timers" && !inspectorClosing ? " active" : ""}`}
+                    aria-label={conversationTimers.pendingCount ? t("channels.context.timersCount", { count: conversationTimers.pendingCount }) : t("channels.context.timers")}
+                    title={t("channels.context.timers")} aria-pressed={inspectedSession?.context === "timers" && !inspectorClosing}
+                    onClick={() => inspectContext("timers")}>
+                    <Clock className="icon-lg" aria-hidden="true" />
+                    {conversationTimers.pendingCount ? <span className="channel-room-timer-count" aria-hidden="true">{conversationTimers.pendingCount}</span> : null}
+                  </button>
+                </div> : null}
               </>}
             </header>
           {composingNewRoom ? <div className="channel-new-room-surface">
@@ -2065,6 +2139,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
                 files={newRoomFiles}
                 images={newRoomImages}
                 mentionAgents={newRoomSelectedAgents}
+                project={newConversationGroup ? undefined : conversationProject}
                 onChangeDraft={setNewRoomBody}
                 onPasteAttachmentFiles={(files) => void attachNewRoomFiles(files)}
                 onRemoveFile={(id) => setNewRoomFiles((current) => current.filter((file) => file.id !== id))}
@@ -2200,6 +2275,9 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
                 <ChannelMessageBubble
                   message={message}
                   outgoing={own}
+                  ownerName={agentNames.get(message.task_owner ?? "")}
+                  onOpenSession={onOpenSession}
+                  onCancelTask={() => void window.wuu!.updateChannelTask({ task_id: message.id, state: "cancelled", expected_revision: message.work?.revision }).then(() => refreshMessages(selectedRoomID, true)).catch(reason => showErrorToast(reason))}
                   allowCollapse={own}
                   onExpand={messageScroll.pauseAutoFollow}
                   attachmentIDPrefix={sentPresentationRef.current.get(message.id)?.key ?? message.id}
@@ -2210,7 +2288,8 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
               </Fragment>
             );
           })}
-
+          {responses.filter(response => response.state === "held" || response.state === "unpublished").map(response => <ChannelHeldResponse key={response.id}
+            response={response} agentName={agentNames.get(response.agent_id) ?? response.agent_id} direct={selectedRoom?.kind === "dm"} />)}
         </div>
         {selectedRoom ? (
           <div ref={setComposerFooterNode} className="channel-conversation-footer">
@@ -2220,9 +2299,10 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
               containerRef={messageScroll.scrollRef}
               bottomAnchor={composerAnchor}
               threshold={AUTO_FOLLOW_BOTTOM_THRESHOLD_PX}
+              onJump={jumpToLatestMessage}
               companion={selectedRoom.kind === "dm" && selectedRoomAgents[0] && onOpenSession ? <ManagedAgentWork
                 key={selectedRoom.id}
-                threads={managedThreadsByAgentID[selectedRoomAgents[0].id] ?? []}
+                threads={(managedThreadsByAgentID[selectedRoomAgents[0].id] ?? []).filter(thread => !thread.session_control?.room_id || thread.session_control.room_id === selectedRoomID)}
                 expanded={Boolean(inspectedSession?.managedAgentID) && !inspectorClosing}
                 onShowAll={() => {
                   if (savingAgent) return;
@@ -2261,9 +2341,11 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
               compact
               disabled={false}
               sending={sending}
+              running={responseActivities.some(response => ["thinking", "responding", "queued"].includes(response.state))}
+              onInterrupt={() => void Promise.all(responseActivities.filter(response => ["thinking", "responding", "queued"].includes(response.state)).map(response => window.wuu!.stopChannelSession({ sessionRef: response.session_ref }))).then(() => refreshMessages(selectedRoomID, true)).catch(reason => showErrorToast(reason))}
               files={composerFiles}
               images={composerImages}
-              mentionAgents={selectedRoomAgents}
+              mentionAgents={ENABLE_COLLABORATION_CHANNELS && selectedRoom.kind === "channel" ? selectedRoomAgents : []}
               queryHistorySessionID={selectedRoomID}
               onChangeDraft={setBody}
               onPasteAttachmentFiles={(files) => void attachMessageFiles(files)}
@@ -2340,8 +2422,12 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
         {inspectedSession ? <div className="channel-inspector-resizer" role="separator" tabIndex={0}
           aria-label={t("app.resizeRightSidebar")} aria-orientation="vertical"
           {...inspectorResize.separatorProps} /> : null}
-        {inspectedSession?.managedAgentID ? <ManagedAgentSessionPanel key={`${inspectedSession.roomID}:${inspectedSession.managedAgentID}`}
-          name={inspectedSession.name} threads={managedThreadsByAgentID[inspectedSession.managedAgentID] ?? []}
+        {inspectedSession?.context && contextAgent ? <ConversationContextPanel key={inspectedSession.roomID}
+          roomID={inspectedSession.roomID} agentID={contextAgent.id} agentName={contextAgent.name} projectName={selectedRoomProject}
+          tab={inspectedSession.context} timers={conversationTimers} overlay={inspectorOverlay} closing={inspectorClosing}
+          onTabChange={context => setInspectedSession(current => current && { ...current, context })} onClose={closeInspector} />
+          : inspectedSession?.managedAgentID ? <ManagedAgentSessionPanel key={`${inspectedSession.roomID}:${inspectedSession.managedAgentID}`}
+          name={inspectedSession.name} threads={(managedThreadsByAgentID[inspectedSession.managedAgentID] ?? []).filter(thread => !thread.session_control?.room_id || thread.session_control.room_id === inspectedSession.roomID)}
           lastViewedTurnByThreadID={lastViewedTurnByThreadID} overlay={inspectorOverlay} closing={inspectorClosing}
           onClose={closeInspector} onSelect={id => onOpenSession?.(id)} />
           : inspectedSession?.agentID ? <ChannelActivityInspector key={`${inspectedSession.roomID}:${inspectedSession.agentID}`}

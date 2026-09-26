@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Thread } from "../shared/protocol";
-import { threadDisplayTitle } from "./ThreadTitles";
+import {
+  conversationHeadingTitle,
+  customDraftConversationTitle,
+  threadDisplayTitle,
+} from "./ThreadTitles";
 
 function thread(overrides: Partial<Thread>): Thread {
   return {
@@ -42,5 +46,25 @@ describe("threadDisplayTitle", () => {
 
     expect(threadDisplayTitle(middle, [root, middle, leaf])).toBe("Middle session");
     expect(threadDisplayTitle(leaf, [root, middle, leaf])).toBe("Middle session · 分叉");
+  });
+});
+
+describe("conversation heading titles", () => {
+  it("prefers a saved title over the generated preview", () => {
+    expect(conversationHeadingTitle(
+      thread({ title: "Release notes", preview: "Fix tabs" }),
+      undefined,
+      "新建对话",
+    )).toBe("Release notes");
+  });
+
+  it("shows a renamed draft before a session exists", () => {
+    expect(conversationHeadingTitle(undefined, "发布说明", "新建对话")).toBe("发布说明");
+    expect(conversationHeadingTitle(undefined, "  ", "新建对话")).toBe("新建对话");
+  });
+
+  it("does not treat the new-conversation placeholder as a chosen title", () => {
+    expect(customDraftConversationTitle("新建对话", "新建对话")).toBe("");
+    expect(customDraftConversationTitle("  发布说明  ", "新建对话")).toBe("发布说明");
   });
 });

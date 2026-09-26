@@ -378,7 +378,7 @@ func (t *Toolkit) rebuildRegistry() {
 		registered = append(registered, NewPresentArtifactTool(e))
 	}
 	if e.ChatAgent != nil {
-		registered = append(registered, NewChatCheckTool(e), NewChatReadTool(e), NewChatSessionTool(e), NewHarnessSessionTool(e), NewCollaborationSendTool(e), NewChatDraftTool(e), NewChatTaskTool(e), NewChatWorkTool(e), NewChatRemindTool(e), NewChatWakeTool(e), NewChatMemoryTool(e))
+		registered = append(registered, NewChatCheckTool(e), NewChatReadTool(e), NewWorkGetTool(e), NewChatSessionTool(e), NewHarnessSessionTool(e), NewCollaborationSendTool(e), NewChatDraftTool(e), NewChatTaskTool(e), NewChatWorkTool(e), NewChatRemindTool(e), NewChatWakeTool(e), NewChatMemoryTool(e))
 		registered = append(registered, NewChatSendTool(e), NewChatVerifyTool(e), NewChatRosterTool(e))
 	}
 	// Code-mode entry tools appear only when a host service is attached to the
@@ -443,6 +443,9 @@ func (t *Toolkit) SetChatAgent(client *channels.AgentClient) {
 	t.env.ChatAgent = client
 	t.rebuildRegistry()
 	kind := modelprofile.SurfaceNamedAgent
+	if client == nil {
+		kind = modelprofile.SurfaceMain
+	}
 	if client != nil && client.IsRoomRuntime() {
 		kind = modelprofile.SurfaceRoomAgent
 	}
@@ -731,6 +734,9 @@ func (t *Toolkit) GitAttributionEnabled() bool {
 }
 
 func (t *Toolkit) isToolDisabled(name string) bool {
+	if !t.collaborationToolAllowed(name) {
+		return true
+	}
 	if len(t.disabledTools) == 0 {
 		return false
 	}
@@ -1150,6 +1156,9 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 func (t *Toolkit) ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
 	if t.isToolDisabled(call.Name) {
 		return toolresult.Result{}, fmt.Errorf("tool %q is disabled in this session", call.Name)
+	}
+	if call.Name == "git" && t.env.CollaborationPurpose != "" && t.env.CollaborationPurpose != channels.CollaborationSessionWork && !NewGitTool(t.env).Classify(call.Arguments).ReadOnly {
+		return toolresult.Result{}, errors.New("this collaboration role permits only read-only git operations")
 	}
 	if err := t.ensureToolAvailableForExecution(call.Name); err != nil {
 		return toolresult.Result{}, err
