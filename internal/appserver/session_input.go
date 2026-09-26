@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -13,8 +12,29 @@ import (
 
 var errSessionInputApplied = errors.New("session input is already durable")
 
+const (
+	sessionInputHost           = "host"
+	sessionInputPlugin         = "plugin"
+	sessionPresentationMessage = "session_message"
+	sessionIfRunningSteer      = "steer"
+)
+
+type sessionInputResult struct {
+	State     string `json:"state"`
+	SessionID string `json:"session_id"`
+	TurnID    string `json:"turn_id,omitempty"`
+	QueueID   string `json:"queue_id,omitempty"`
+	Steered   bool   `json:"steered,omitempty"`
+}
+
+// Legacy project history used the plugin origin. Both origins are generated
+// input, never human authorization, and share admission and control fences.
+func isGeneratedSessionInput(origin string) bool {
+	return origin == sessionInputHost || origin == sessionInputPlugin
+}
+
 func (s *Server) validateInboxInput(msg providers.ChatMessage) error {
-	if msg.Origin == pluginhost.SessionInputPlugin && (msg.Cause == "project_message" || msg.Cause == projectCauseResult) {
+	if isGeneratedSessionInput(msg.Origin) && (msg.Cause == "project_message" || msg.Cause == projectCauseResult) {
 		return session.ValidateInboxControls(s.rt.SessionDir, msg.ClientID)
 	}
 	return nil
@@ -23,9 +43,9 @@ func (s *Server) validateInboxInput(msg providers.ChatMessage) error {
 // trySubmitSessionInput is shared by extension sends and project sessions. The
 // caller retains queued work in its own durable policy/outbox; acceptance and
 // steering use the same host runtime, execution lease and control fence.
-func (s *Server) trySubmitSessionInput(ctx context.Context, th *threadState, msg providers.ChatMessage, mode string, snapshot turnRuntimeSnapshot) (pluginhost.SessionSendResult, bool, error) {
+func (s *Server) trySubmitSessionInput(ctx context.Context, th *threadState, msg providers.ChatMessage, mode string, snapshot turnRuntimeSnapshot) (sessionInputResult, bool, error) {
 	if active, err := session.ThreadExecutionActive(s.rt.SessionDir, th.ID); err != nil {
-		return pluginhost.SessionSendResult{}, false, err
+		return sessionInputResult{}, false, err
 	} else if !active {
 		th.mu.Lock()
 		if !th.running {
@@ -33,7 +53,7 @@ func (s *Server) trySubmitSessionInput(ctx context.Context, th *threadState, msg
 		}
 		th.mu.Unlock()
 		if err != nil {
-			return pluginhost.SessionSendResult{}, false, err
+			return sessionInputResult{}, false, err
 		}
 	}
 	if prior, ok := s.findSessionInput(th, msg.ClientID); ok {
@@ -41,12 +61,12 @@ func (s *Server) trySubmitSessionInput(ctx context.Context, th *threadState, msg
 	}
 	if snapshot.Control != nil {
 		if err := session.ValidateControl(s.rt.SessionDir, *snapshot.Control); err != nil {
-			return pluginhost.SessionSendResult{}, false, err
+			return sessionInputResult{}, false, err
 		}
 	}
-	if mode == pluginhost.SessionIfRunningSteer {
+	if mode == sessionIfRunningSteer {
 		if turn, ok := s.steerSessionInput(th, msg, snapshot); ok {
-			return pluginhost.SessionSendResult{State: pluginhost.TurnLifecycleRunning, SessionID: th.ID, TurnID: turn, Steered: true}, true, nil
+			return sessionInputResult{State: "running", SessionID: th.ID, TurnID: turn, Steered: true}, true, nil
 		}
 	}
 	started, ok, err := s.startSubmittedSessionTurn(ctx, th, msg, snapshot)
@@ -55,12 +75,12 @@ func (s *Server) trySubmitSessionInput(ctx context.Context, th *threadState, msg
 		return prior, found, nil
 	}
 	if err != nil {
-		return pluginhost.SessionSendResult{}, false, err
+		return sessionInputResult{}, false, err
 	}
 	if ok {
-		return pluginhost.SessionSendResult{State: pluginhost.TurnLifecycleRunning, SessionID: th.ID, TurnID: started.turnID}, true, nil
+		return sessionInputResult{State: "running", SessionID: th.ID, TurnID: started.turnID}, true, nil
 	}
-	return pluginhost.SessionSendResult{State: pluginhost.TurnLifecycleQueued, SessionID: th.ID}, false, nil
+	return sessionInputResult{State: "queued", SessionID: th.ID}, false, nil
 }
 
 func (s *Server) steerSessionInput(th *threadState, msg providers.ChatMessage, snapshot turnRuntimeSnapshot) (string, bool) {
@@ -103,15 +123,15 @@ func (s *Server) steerSessionInput(th *threadState, msg providers.ChatMessage, s
 	return th.currentTurn, true
 }
 
-func (s *Server) findSessionInput(th *threadState, clientID string) (pluginhost.SessionSendResult, bool) {
+func (s *Server) findSessionInput(th *threadState, clientID string) (sessionInputResult, bool) {
 	if th == nil || strings.TrimSpace(clientID) == "" {
-		return pluginhost.SessionSendResult{}, false
+		return sessionInputResult{}, false
 	}
 	th.mu.Lock()
 	for _, pending := range th.pendingSteers {
 		if pending.ClientID == clientID {
-			result := pluginhost.SessionSendResult{
-				State: pluginhost.TurnLifecycleRunning, SessionID: th.ID, TurnID: th.currentTurn, Steered: true,
+			result := sessionInputResult{
+				State: "running", SessionID: th.ID, TurnID: th.currentTurn, Steered: true,
 			}
 			th.mu.Unlock()
 			return result, true
@@ -129,11 +149,11 @@ func (s *Server) findSessionInput(th *threadState, clientID string) (pluginhost.
 			if item.Type != ThreadItemUserMessage || item.SourceID != clientID {
 				continue
 			}
-			state := pluginhost.TurnLifecycleCompleted
+			state := "completed"
 			if turn.Status == TurnStatusInProgress {
-				state = pluginhost.TurnLifecycleRunning
+				state = "running"
 			}
-			result := pluginhost.SessionSendResult{State: state, SessionID: th.ID, TurnID: turn.ID, Steered: steered}
+			result := sessionInputResult{State: state, SessionID: th.ID, TurnID: turn.ID, Steered: steered}
 			th.mu.Unlock()
 			return result, true
 		}
@@ -144,10 +164,10 @@ func (s *Server) findSessionInput(th *threadState, clientID string) (pluginhost.
 	defer s.queuedTurnMu.Unlock()
 	for _, entry := range s.pendingQueuedTurns[th.ID] {
 		if entry.msg.ClientID == clientID {
-			return pluginhost.SessionSendResult{State: pluginhost.TurnLifecycleQueued, SessionID: th.ID, QueueID: entry.id}, true
+			return sessionInputResult{State: "queued", SessionID: th.ID, QueueID: entry.id}, true
 		}
 	}
-	return pluginhost.SessionSendResult{}, false
+	return sessionInputResult{}, false
 }
 
 func (s *Server) startSubmittedSessionTurn(ctx context.Context, th *threadState, msg providers.ChatMessage, snapshot turnRuntimeSnapshot) (startedThreadTurn, bool, error) {

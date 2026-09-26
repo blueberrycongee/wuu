@@ -2,6 +2,8 @@
 
 The Project Agent is your lead: it keeps your goals and decisions in view, works directly when useful, and delegates independent work to sessions it manages. You review proposals from isolated sessions and decide what reaches the workspace.
 
+Project coordination is built into Wuu. Creating and managing sessions, delivering results, taking control, and recovering after a restart do not require an installed or enabled plugin. Extensions can add optional tools or delivery actions, but do not own the project or its sessions.
+
 ## Start a project
 
 Projects have their own group at the top of the sidebar. Choose **+** in **Projects** to start one in the current workspace, or **New project** in a workspace's menu to start one there. A project draft opens; **New conversation** turns it back into a conversation draft.

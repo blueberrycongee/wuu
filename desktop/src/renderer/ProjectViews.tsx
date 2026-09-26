@@ -60,7 +60,7 @@ const PROJECT_EVENTS: Record<string, TranslationKey> = {
 
 /** Whether a message is a host event that a coordinator received. */
 export function isProjectEvent(item: Pick<ThreadItem, "origin" | "cause">): boolean {
-  return item.origin === "plugin" && item.cause !== undefined && item.cause in PROJECT_EVENTS;
+  return (item.origin === "host" || item.origin === "plugin") && item.cause !== undefined && item.cause in PROJECT_EVENTS;
 }
 
 /**

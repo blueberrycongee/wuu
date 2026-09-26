@@ -1823,7 +1823,7 @@ func (s *Server) interruptThreadExecution(threadID, expectedRunID, expectedTurnI
 	s.pruneRevokedSteersLocked(th)
 	var humanSteers, pluginSteers []providers.ChatMessage
 	for _, msg := range th.pendingSteers {
-		if msg.Origin == "plugin" {
+		if isGeneratedSessionInput(msg.Origin) {
 			pluginSteers = append(pluginSteers, msg)
 		} else {
 			humanSteers = append(humanSteers, msg)
@@ -3591,7 +3591,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 			return startedThreadTurn{}, false, err
 		}
 	}
-	if userMsg.ClientID != "" && userMsg.Origin == "plugin" {
+	if userMsg.ClientID != "" && isGeneratedSessionInput(userMsg.Origin) {
 		if _, found := s.findSessionInput(th, userMsg.ClientID); found {
 			abortAdmission()
 			return startedThreadTurn{}, false, errSessionInputApplied

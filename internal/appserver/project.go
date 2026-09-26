@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
-	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
@@ -90,8 +89,8 @@ func (s *Server) startProjectThread(selection session.RuntimeSelection, engineID
 	if workspaceID == "" {
 		return nil, errors.New("a project needs a registered workspace")
 	}
-	return s.createHostSessionThread(projectSessionOwner, projectSource, "", pluginhost.SessionCreateParams{
-		Name: name, Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh,
+	return s.createHostSessionThread(projectSessionOwner, projectSource, "", hostSessionCreateParams{
+		Name: name, Visibility: sessionVisibilityUser, ContextSource: sessionContextFresh,
 		Workspace: "shared", WorkspaceID: workspaceID, WorkspaceRoot: strings.TrimSpace(params.CWD),
 		Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant, Effort: selection.Effort,
 		PermissionMode: selection.PermissionMode,
@@ -210,7 +209,7 @@ func (s *Server) recordProjectResult(th *threadState, turn Turn) {
 	// The dispatch message already persists who requested the work. Reuse it
 	// for completion routing rather than creating a second task hierarchy.
 	for _, item := range turn.Items {
-		if item.Type != ThreadItemUserMessage || item.Origin != pluginhost.SessionInputPlugin || item.Cause != "project" || item.RelatedSessionID == projectID || item.RelatedSessionID == "" {
+		if item.Type != ThreadItemUserMessage || !isGeneratedSessionInput(item.Origin) || item.Cause != "project" || item.RelatedSessionID == projectID || item.RelatedSessionID == "" {
 			continue
 		}
 		replyID := clientID + ":" + item.RelatedSessionID
@@ -238,7 +237,7 @@ func (s *Server) recordProjectResult(th *threadState, turn Turn) {
 func userWrittenText(turn Turn) []string {
 	var written []string
 	for _, item := range turn.Items {
-		if item.Type == ThreadItemUserMessage && item.Origin != pluginhost.SessionInputPlugin && strings.TrimSpace(item.Text) != "" {
+		if item.Type == ThreadItemUserMessage && !isGeneratedSessionInput(item.Origin) && strings.TrimSpace(item.Text) != "" {
 			written = append(written, strings.TrimSpace(item.Text))
 		}
 	}
@@ -252,7 +251,7 @@ func projectResultClientID(sessionID, turnID string) string {
 // noticeProjectUserMessage persists the intervention independently of turn
 // completion, so a running lead can see it at its next steering boundary.
 func (s *Server) noticeProjectUserMessage(th *threadState, msg providers.ChatMessage) {
-	if msg.Role != "user" || msg.Origin == pluginhost.SessionInputPlugin {
+	if msg.Role != "user" || isGeneratedSessionInput(msg.Origin) {
 		return
 	}
 	th.mu.Lock()
@@ -360,7 +359,7 @@ func (s *Server) restoreProjectMembership(id string, old session.Control) error 
 		// Completion routing also reports side-dispatched turns independently
 		// of the lead receipt. Settle those receipts before activating control.
 		for _, item := range items {
-			if item.Type == ThreadItemUserMessage && item.Origin == pluginhost.SessionInputPlugin && item.Cause == "project" && item.RelatedSessionID != old.ManagerID && item.RelatedSessionID != "" {
+			if item.Type == ThreadItemUserMessage && isGeneratedSessionInput(item.Origin) && item.Cause == "project" && item.RelatedSessionID != old.ManagerID && item.RelatedSessionID != "" {
 				if err := session.SettleInbox(s.rt.SessionDir, clientID+":"+item.RelatedSessionID, item.RelatedSessionID); err != nil {
 					return err
 				}
@@ -480,8 +479,8 @@ func (s *Server) drainSessionInbox(target string) {
 	for _, message := range pending {
 		msg := providers.ChatMessage{
 			Role: "user", Content: message.Content, ClientID: message.ClientID,
-			Origin: pluginhost.SessionInputPlugin, Cause: message.Cause,
-			PresentationKind: pluginhost.SessionPresentationSessionMessage, RelatedSessionID: message.RelatedSessionID, ReadOnly: true,
+			Origin: sessionInputHost, Cause: message.Cause,
+			PresentationKind: sessionPresentationMessage, RelatedSessionID: message.RelatedSessionID, ReadOnly: true,
 		}
 		if related, found, err := session.Find(s.rt.SessionDir, message.RelatedSessionID); err == nil && found {
 			msg.Name = related.Title
@@ -505,7 +504,7 @@ func (s *Server) drainSessionInbox(target string) {
 			}
 			continue
 		}
-		if _, ok, err := s.trySubmitSessionInput(context.Background(), th, msg, pluginhost.SessionIfRunningSteer, snapshot); err != nil || !ok {
+		if _, ok, err := s.trySubmitSessionInput(context.Background(), th, msg, sessionIfRunningSteer, snapshot); err != nil || !ok {
 			if err != nil {
 				providers.DebugLogf("deliver inbox %q: %v", message.ClientID, err)
 			}

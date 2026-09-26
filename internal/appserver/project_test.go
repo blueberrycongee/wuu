@@ -38,7 +38,9 @@ import (
 //     takes a conversation of another workspace, another manager's session,
 //     or a coordinator;
 //   - removing a session from a project orphans its undecided proposal, or
-//     leaves the coordinator able to instruct it.
+//     leaves the coordinator able to instruct it;
+//   - host-generated delegation is mistaken for user authorization or loses
+//     attribution when no plugin runtime is loaded.
 
 func newProjectFixture(t *testing.T) (*Server, *rpcClient, *projectCalls, *runtime.Session) {
 	t.Helper()
@@ -198,6 +200,9 @@ func TestProjectDelegatesAndDeliversCandidateOnce(t *testing.T) {
 	plan.response <- toolCallResponse("create-pagination", "session", `{"action":"create","title":"Pagination","prompt":"Implement page-size 50 in search.go"}`)
 
 	brief := calls.next(t, "Implement page-size 50")
+	if message := lastUserRequestMessage(brief.request); message.Origin != "host" || nativeReviewHumanUser(message) {
+		t.Fatalf("delegation must be attributed to the host, not user authorization: %+v", message)
+	}
 	brief.response <- toolCallResponse("write-search", "write_file", `{"path":"search.go","content":"package search\n\nconst PageSize = 50\n"}`)
 	calls.next(t, "Plan catalog pagination").response <- providersResponse("Started a session for pagination.")
 	calls.next(t, "Implement page-size 50").response <- providersResponse("Set PageSize to 50 in search.go.")
@@ -213,7 +218,7 @@ func TestProjectDelegatesAndDeliversCandidateOnce(t *testing.T) {
 	}
 	result := lastUserRequestMessage(wake.request)
 	if result.ClientID != "project-result:"+worker.ID+":"+worker.LatestCompletedTurnID || result.RelatedSessionID != worker.ID ||
-		result.PresentationKind != "session_message" || !strings.Contains(result.Content, "Set PageSize to 50 in search.go.") || !strings.Contains(result.Content, "search.go") {
+		result.Origin != "host" || result.PresentationKind != "session_message" || !strings.Contains(result.Content, "Set PageSize to 50 in search.go.") || !strings.Contains(result.Content, "search.go") {
 		t.Fatalf("delivered result = %+v", result)
 	}
 	wake.response <- providersResponse("Pagination is ready for your review.")
@@ -658,74 +663,80 @@ func jsonNumber(value int64) string {
 // the same ordinary session runtime, and peer messages cannot cross a project
 // or bypass a human control fence (including queued messages after a return).
 func TestProjectSideAndWorkersReuseOrdinarySessions(t *testing.T) {
-	srv, client, calls, rt := newProjectFixture(t)
-	lead := startProject(t, client, "Team")
-	var turn TurnStartResult
-	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: lead.ID, Prompt: "Build the team feature"}, &turn)
-	calls.next(t, "Build the team feature").response <- toolCallResponse("create-side", "session", `{"action":"create","role":"side","title":"Implementation","prompt":"Implement the team feature"}`)
-	sideCall := calls.next(t, "Implement the team feature")
-	if !requestToolNames(sideCall.request)["session"] {
-		t.Fatal("side has no session communication tool")
-	}
-	sideCall.response <- providersResponse("Implementation ready.")
-	side := projectManagedSessions(t, client, lead.ID)[0]
-	if side.ProjectRole != "side" {
-		t.Fatalf("listed side role = %q", side.ProjectRole)
-	}
-	settleCoordinator(t, srv, calls, lead.ID, "Build the team feature", "Waiting for review.", projectResultClientID(side.ID, waitForThread(t, srv, side.ID, func(th Thread) bool { return th.LatestCompletedTurnID != "" }).LatestCompletedTurnID))
+	// Both workspace modes must preserve team roles, result routing and reload
+	// identity; shared sessions must not acquire a worktree dependency.
+	for _, workspace := range []string{"shared", "worktree"} {
+		t.Run(workspace, func(t *testing.T) {
+			srv, client, calls, rt := newProjectFixture(t)
+			lead := startProject(t, client, "Team")
+			var turn TurnStartResult
+			client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: lead.ID, Prompt: "Build the team feature"}, &turn)
+			calls.next(t, "Build the team feature").response <- toolCallResponse("create-side", "session", `{"action":"create","role":"side","title":"Implementation","prompt":"Implement the team feature","workspace":"`+workspace+`"}`)
+			sideCall := calls.next(t, "Implement the team feature")
+			if !requestToolNames(sideCall.request)["session"] {
+				t.Fatal("side has no session communication tool")
+			}
+			sideCall.response <- providersResponse("Implementation ready.")
+			side := projectManagedSessions(t, client, lead.ID)[0]
+			if side.ProjectRole != "side" {
+				t.Fatalf("listed side role = %q", side.ProjectRole)
+			}
+			settleCoordinator(t, srv, calls, lead.ID, "Build the team feature", "Waiting for review.", projectResultClientID(side.ID, waitForThread(t, srv, side.ID, func(th Thread) bool { return th.LatestCompletedTurnID != "" }).LatestCompletedTurnID))
 
-	handler := srv.projectSessionHandler(lead.ID)
-	reused, err := handler(context.Background(), "reuse-side", tools.ProjectSessionRequest{Action: "create", Role: "side", Prompt: "Continue the implementation"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reused.(projectSessionView).SessionID != side.ID {
-		t.Fatalf("created a second side: %+v", reused)
-	}
-	if len(projectManagedSessions(t, client, lead.ID)) != 1 {
-		t.Fatal("side was duplicated")
-	}
-	calls.assertIdle(t)
+			handler := srv.projectSessionHandler(lead.ID)
+			reused, err := handler(context.Background(), "reuse-side", tools.ProjectSessionRequest{Action: "create", Role: "side", Prompt: "Continue the implementation"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reused.(projectSessionView).SessionID != side.ID {
+				t.Fatalf("created a second side: %+v", reused)
+			}
+			if len(projectManagedSessions(t, client, lead.ID)) != 1 {
+				t.Fatal("side was duplicated")
+			}
+			calls.assertIdle(t)
 
-	workerView, err := srv.projectSessionHandler(side.ID)(context.Background(), "create-verifier", tools.ProjectSessionRequest{Action: "create", Role: "worker", Prompt: "Verify the team feature"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	workerID := workerView.(projectSessionView).SessionID
-	workerCall := calls.next(t, "Verify the team feature")
-	if !requestToolNames(workerCall.request)["session"] {
-		t.Fatal("worker has no session communication tool")
-	}
-	if msg := lastUserRequestMessage(workerCall.request); msg.RelatedSessionID != side.ID {
-		t.Fatalf("worker lost its delegator: %+v", msg)
-	}
-	workerCall.response <- providersResponse("Verified.")
-	sideResult := calls.next(t, "Implement the team feature")
-	if msg := lastUserRequestMessage(sideResult.request); msg.RelatedSessionID != workerID || msg.Cause != projectCauseResult {
-		t.Fatalf("side did not receive worker completion: %+v", msg)
-	}
-	sideResult.response <- providersResponse("Worker verified implementation.")
-	side = waitForThread(t, srv, side.ID, func(th Thread) bool {
-		return th.LatestCompletedTurnID != side.LatestCompletedTurnID && th.Status == ThreadStatusIdle
-	})
-	worker := waitForThread(t, srv, workerID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
-	settleCoordinator(t, srv, calls, lead.ID, "Build the team feature", "Verified.", projectResultClientID(worker.ID, worker.LatestCompletedTurnID), projectResultClientID(side.ID, side.LatestCompletedTurnID))
-	if worker.ParentID != "" || worker.ProjectID != lead.ID || worker.ProjectRole != "worker" {
-		t.Fatalf("worker is not an ordinary project session: %+v", worker)
-	}
+			workerView, err := srv.projectSessionHandler(side.ID)(context.Background(), "create-verifier", tools.ProjectSessionRequest{Action: "create", Role: "worker", Prompt: "Verify the team feature", Workspace: workspace})
+			if err != nil {
+				t.Fatal(err)
+			}
+			workerID := workerView.(projectSessionView).SessionID
+			workerCall := calls.next(t, "Verify the team feature")
+			if !requestToolNames(workerCall.request)["session"] {
+				t.Fatal("worker has no session communication tool")
+			}
+			if msg := lastUserRequestMessage(workerCall.request); msg.RelatedSessionID != side.ID {
+				t.Fatalf("worker lost its delegator: %+v", msg)
+			}
+			workerCall.response <- providersResponse("Verified.")
+			sideResult := calls.next(t, "Implement the team feature")
+			if msg := lastUserRequestMessage(sideResult.request); msg.RelatedSessionID != workerID || msg.Cause != projectCauseResult {
+				t.Fatalf("side did not receive worker completion: %+v", msg)
+			}
+			sideResult.response <- providersResponse("Worker verified implementation.")
+			side = waitForThread(t, srv, side.ID, func(th Thread) bool {
+				return th.LatestCompletedTurnID != side.LatestCompletedTurnID && th.Status == ThreadStatusIdle
+			})
+			worker := waitForThread(t, srv, workerID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
+			settleCoordinator(t, srv, calls, lead.ID, "Build the team feature", "Verified.", projectResultClientID(worker.ID, worker.LatestCompletedTurnID), projectResultClientID(side.ID, side.LatestCompletedTurnID))
+			if worker.ParentID != "" || worker.ProjectID != lead.ID || worker.ProjectRole != "worker" {
+				t.Fatalf("worker is not an ordinary project session: %+v", worker)
+			}
 
-	srv.Close()
-	reopened := New(rt, &lockedBuffer{})
-	t.Cleanup(reopened.Close)
-	reused, err = reopened.projectSessionHandler(lead.ID)(context.Background(), "reuse-after-restart", tools.ProjectSessionRequest{Action: "create", Role: "side", Prompt: "Continue"})
-	if err != nil || reused.(projectSessionView).SessionID != side.ID {
-		t.Fatalf("reloaded side = %+v, %v", reused, err)
+			srv.Close()
+			reopened := New(rt, &lockedBuffer{})
+			t.Cleanup(reopened.Close)
+			reused, err = reopened.projectSessionHandler(lead.ID)(context.Background(), "reuse-after-restart", tools.ProjectSessionRequest{Action: "create", Role: "side", Prompt: "Continue"})
+			if err != nil || reused.(projectSessionView).SessionID != side.ID {
+				t.Fatalf("reloaded side = %+v, %v", reused, err)
+			}
+			metadata, found, err := session.Find(rt.SessionDir, side.ID)
+			if err != nil || !found || metadata.ProjectRole != "side" {
+				t.Fatalf("persisted side = %+v, %v", metadata, err)
+			}
+			calls.assertIdle(t)
+		})
 	}
-	metadata, found, err := session.Find(rt.SessionDir, side.ID)
-	if err != nil || !found || metadata.ProjectRole != "side" {
-		t.Fatalf("persisted side = %+v, %v", metadata, err)
-	}
-	calls.assertIdle(t)
 }
 
 func TestProjectPeerMessagesRespectMembershipAndStopFence(t *testing.T) {
@@ -761,7 +772,7 @@ func TestProjectPeerMessagesRespectMembershipAndStopFence(t *testing.T) {
 	}
 	reply := calls.next(t, "Does total count filtered rows?")
 	msg := lastUserRequestMessage(reply.request)
-	if msg.RelatedSessionID != sender.ID || msg.Cause != "project_message" || msg.Origin != "plugin" {
+	if msg.RelatedSessionID != sender.ID || msg.Cause != "project_message" || msg.Origin != "host" {
 		t.Fatalf("peer provenance lost: %+v", msg)
 	}
 	reply.response <- providersResponse("Yes, filtered rows.")
