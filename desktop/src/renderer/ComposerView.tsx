@@ -1,4 +1,5 @@
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
+import { effectiveModelSpeed } from "./RuntimeHelpers";
 import {
   ChevronDown,
   ChevronUp,
@@ -595,7 +596,10 @@ export function Composer({
     ? engines?.find(engine => engine.id === activeEngine)?.models?.find(model => engineModel ? model.id === engineModel : model.is_default)
     : initialized?.providers?.find(provider => provider.name === initialized.provider)?.models?.find(model => model.id === initialized.model);
   const fastModeSupported = Boolean(onSelectSpeed && fastModeModel?.fast_mode);
-  const fastModeEnabled = (activeEngine && activeEngine !== "wuu" ? engineSpeed : initialized?.speed || fastModeModel?.default_speed) === "fast";
+  const fastModeEnabled = effectiveModelSpeed(
+    activeEngine && activeEngine !== "wuu" ? engineSpeed : initialized?.speed,
+    fastModeModel?.default_speed,
+  ) === "fast";
   const builtinSlashCommands = useMemo(
     () => buildComposerSlashCommands({
       activeContext,

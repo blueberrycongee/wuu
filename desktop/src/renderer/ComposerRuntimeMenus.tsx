@@ -70,6 +70,7 @@ import { lastEffortForRuntimeModel, lastModelForProvider } from "./DraftRuntimeM
 import {
   codexEffortOptions,
   displayCodexModelName,
+  effectiveModelSpeed,
   orderedEffortOptions,
   providerIsCodex,
   providerModelDisplayName,
@@ -286,7 +287,7 @@ function RuntimePanelSummary({
   const [speedSaving, setSpeedSaving] = useState(false);
   useEffect(() => setPendingSpeed(undefined), [speed, model]);
   const requestedSpeed = pendingSpeed ?? speed;
-  const displayedSpeed = requestedSpeed || defaultSpeed;
+  const displayedSpeed = effectiveModelSpeed(requestedSpeed, defaultSpeed);
   const changeSpeed = async (next: string): Promise<void> => {
     if (!onSelectSpeed || speedSaving) return;
     setPendingSpeed(next);
@@ -828,6 +829,7 @@ function EngineRuntimeMenu({
             selectedEffort={effectiveEffort}
             effortDisabled={disabled}
             speed={selectedSpeed}
+            defaultSpeed={effectiveModel?.default_speed}
             speedDisabled={running}
             onSelectSpeed={effectiveModel?.fast_mode ? onSelectSpeed : undefined}
             onOpenEngines={() => openView("engines")}

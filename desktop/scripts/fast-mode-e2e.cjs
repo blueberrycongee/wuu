@@ -56,6 +56,7 @@ async function run() {
   assert.equal(compile.status, 0, compile.stderr);
   engines.codex = { enabled: true, binary_path: codexBinary };
   process.env.WUU_TEST_CODEX_REQUESTS = path.join(fixture, 'codex-requests.jsonl');
+  process.env.WUU_TEST_CODEX_DEFAULT_TIER = 'fast';
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
     default_provider: 'fixture', engines,
     providers: { fixture: { type: 'openai-compatible', base_url: `http://127.0.0.1:${server.address().port}/v1`, api_key: 'fixture-only', model: 'fixture', models: { fixture: { fast_mode: true, variants: { low: { reasoningEffort: 'low' }, high: { reasoningEffort: 'high' } } } } } },
@@ -133,7 +134,7 @@ async function run() {
     document.documentElement.style.removeProperty('--appearance-scale');
   });
   const native = await evaluate(main, async () => {
-    const result = await window.wuu.startThread({ engine: 'codex', model: 'gpt-6-astra', effort: 'high', speed: 'standard' });
+    const result = await window.wuu.startThread({ engine: 'codex', model: 'gpt-6-astra', effort: 'high' });
     await window.wuu.renameThread(result.thread.id, 'Codex speed fixture');
     return result.thread.id;
   });
@@ -141,9 +142,24 @@ async function run() {
   await waitFor(main, () => [...document.querySelectorAll('.thread-row')].some(row => row.textContent.includes('Codex speed fixture')));
   await evaluate(main, () => [...document.querySelectorAll('.thread-row')].find(row => row.textContent.includes('Codex speed fixture')).querySelector('.thread-row-main').click());
   await waitFor(main, () => document.querySelector('.codex-runtime-trigger')?.textContent.includes('GPT-6 Astra'));
-  for (const [speed, tier] of [['fast', 'fast'], ['standard', 'default'], ['', 'default']]) {
+  await openPanel();
+  assert.equal(await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').getAttribute('aria-pressed')), 'true');
+  await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
+  fs.writeFileSync(path.join(fixture, 'codex-inherited-fast.png'), (await main.webContents.capturePage()).toPNG());
+  for (const [speed, tier, slash] of [['standard', 'default'], ['', 'fast'], ['standard', 'default', true], ['fast', 'fast']]) {
     await openPanel();
-    await evaluate(main, speed => document.querySelector(speed ? 'button[aria-label="Fast mode"]' : '.runtime-panel-speed-reset').click(), speed);
+    if (slash) {
+      await evaluate(main, () => {
+        document.querySelector('.codex-runtime-trigger').click();
+        const textarea = document.querySelector('.composer textarea');
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(textarea, '/fast');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await waitFor(main, () => Boolean(document.querySelector('.slash-command-item[data-command-name="fast"]')));
+      await evaluate(main, () => document.querySelector('.composer textarea').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
+    } else {
+      await evaluate(main, speed => document.querySelector(speed ? 'button[aria-label="Fast mode"]' : '.runtime-panel-speed-reset').click(), speed);
+    }
     await waitFor(main, async ({ id, speed }) => ((await window.wuu.resumeThread(id)).thread.speed || '') === speed, { id: native, speed });
     await evaluate(main, async id => {
       window.__fastModeCompleted = false;
