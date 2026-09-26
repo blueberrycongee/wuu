@@ -4,8 +4,11 @@
 // WUU_SWITCH_TURNS=3000 stresses history; WUU_SWITCH_VARIANT=narrow checks dark/20px.
 // WUU_SWITCH_SAFE_MODE=0 includes plugin startup; default 1 isolates transport costs.
 // WUU_SWITCH_MAIN may select a separately built baseline main-process bundle.
-// WUU_SWITCH_ROUNDS controls warm repeats (default 5). Each run has fresh data.
+// WUU_SWITCH_ROUNDS controls warm repeats. Defaults live in the budget fixture.
 // WUU_SWITCH_INIT_DELAY_MS injects a readiness fault; never pool it with baseline.
+// WUU_SWITCH_CHECK_BUDGET=1 checks settled work counters, never wall-clock time.
+// WUU_SWITCH_TRACE=1 records a Chromium trace; exclude traced runs from baselines.
+// WUU_SWITCH_OUTPUT selects an evidence directory separate from fixture data.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -26,21 +29,36 @@ childProcess.spawn = (...args) => {
   return child;
 };
 syncBuiltinESMExports();
-const { pathToFileURL } = require('node:url');
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { pathToFileURL, fileURLToPath } = require('node:url');
+const { app, BrowserWindow, ipcMain, contentTracing } = require('electron');
+const { budget, assertSample } = require('./session-switch-budget.cjs');
 const desktop = path.resolve(__dirname, '..');
-const rounds = Number(process.env.WUU_SWITCH_ROUNDS || 5);
+const mainBundle = path.resolve(process.env.WUU_SWITCH_MAIN || path.join(desktop, 'out/main/index.js'));
+const turns = Number(process.env.WUU_SWITCH_TURNS || budget.fixture.turns);
+const rounds = Number(process.env.WUU_SWITCH_ROUNDS || budget.fixture.rounds);
+const variant = process.env.WUU_SWITCH_VARIANT || budget.fixture.variant;
+const safeMode = process.env.WUU_SWITCH_SAFE_MODE || budget.fixture.safeMode;
 const initDelayMs = Number(process.env.WUU_SWITCH_INIT_DELAY_MS || 0);
 assert.ok(Number.isInteger(rounds) && rounds > 0, 'Rounds must be a positive integer');
+assert.ok(Number.isInteger(turns) && turns > 0, 'Turns must be a positive integer');
 assert.ok(Number.isFinite(initDelayMs) && initDelayMs >= 0, 'Invalid readiness delay');
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-session-switch-'));
+const output = process.env.WUU_SWITCH_OUTPUT || fixture;
+fs.mkdirSync(output, { recursive: true });
+const traceEnabled = process.env.WUU_SWITCH_TRACE === '1';
+const checkBudget = process.env.WUU_SWITCH_CHECK_BUDGET === '1';
+if (checkBudget) {
+  assert.deepEqual({ turns, rounds, variant, safeMode }, budget.fixture);
+  assert.equal(initDelayMs, 0, 'Fault injection is not a comparable budget workload');
+  assert.equal(traceEnabled, false, 'Tracing is not a comparable budget workload');
+}
 const home = path.join(fixture, 'home');
 fs.mkdirSync(home);
 app.setPath('userData', path.join(fixture, 'profile'));
 process.env.WUU_HOME = home;
 process.env.WUU_DESKTOP_CORE ||= path.join(desktop, 'build/bin/wuu-core');
 process.env.WUU_ENABLE_BROWSER = '0';
-process.env.WUU_SAFE_MODE = process.env.WUU_SWITCH_SAFE_MODE || '1';
+process.env.WUU_SAFE_MODE = safeMode;
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 const projects = Array.from({ length: 6 }, (_, i) => {
   const cwd = path.join(fixture, `project-${i}`);
@@ -69,11 +87,12 @@ for i,p in enumerate(projects):
             text=('Session '+str(i)+' question '+str(t)) if r==0 else ('## Result '+str(t)+'\\n\\nA realistic paragraph with **formatting** and code.\\n\\n'+('Example content for history measurement. '*30)+'\\n\\n')*3
             db.execute('INSERT INTO session_messages (session_id,seq,role,content,at) VALUES (?,?,?,?,?)',(sid,t*2+r+1,role,text,'2026-01-01T00:00:00Z'))
 db.commit()
-`, home, process.env.WUU_SWITCH_TURNS || '160'], { encoding: 'utf8' });
+`, home, String(turns)], { encoding: 'utf8' });
 assert.equal(seed.status, 0, seed.stderr);
 const timings = [];
 const originalHandle = ipcMain.handle.bind(ipcMain);
 let archiveGate;
+let archiveBlocked = false;
 let measuring = false;
 ipcMain.handle = (channel, listener) => originalHandle(channel, async (...args) => {
   const start = performance.now();
@@ -84,7 +103,10 @@ ipcMain.handle = (channel, listener) => originalHandle(channel, async (...args) 
   try {
     const result = await listener(...args);
     if (delayInitialization) await delay(initDelayMs);
-    if (channel === 'wuu:thread-list-archived' && archiveGate) await archiveGate;
+    if (channel === 'wuu:thread-list-archived' && archiveGate) {
+      archiveBlocked = true;
+      await archiveGate;
+    }
     return result;
   } finally {
     timing.ms = +(performance.now() - start).toFixed(1);
@@ -125,6 +147,7 @@ async function switchTo(win, index, scenario) {
     button.addEventListener('mousedown', event => {
       if (!event.isTrusted) throw new Error('Expected native mouse input');
       probe.start = event.timeStamp;
+      if (window.__switchTrace) performance.mark(`switch-${index}-start`);
     }, { capture: true, once: true });
     return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
   }, index);
@@ -155,7 +178,10 @@ async function switchTo(win, index, scenario) {
         last?.textContent.includes(`Session ${index} question`) && lastRect && rect &&
         lastRect.bottom > rect.top && lastRect.top < rect.bottom && lastRect.height > 0;
       readyFrames = ready ? readyFrames + 1 : 0;
-      if (readyFrames >= 2) return resolve(performance.now() - window.__switchProbe.start);
+      if (readyFrames >= 2) {
+        if (window.__switchTrace) performance.mark(`switch-${index}-content`);
+        return resolve(performance.now() - window.__switchProbe.start);
+      }
       requestAnimationFrame(check);
     };
     requestAnimationFrame(check);
@@ -188,6 +214,7 @@ async function switchTo(win, index, scenario) {
       if (readyFrames >= 2) {
         const probe = window.__switchProbe;
         const end = performance.now();
+        if (window.__switchTrace) performance.mark(`switch-${probe.index}-interactive`);
         const tasks = [...probe.longTasks, ...probe.observer.takeRecords().map(e => ({ start: e.startTime, duration: e.duration }))]
           .filter(e => e.start + e.duration > probe.start && e.start < end);
         probe.observer.disconnect();
@@ -213,7 +240,6 @@ async function switchTo(win, index, scenario) {
   if (initDelayMs && !seen.has(index)) assert.ok(result.interactiveFrameMs >= initDelayMs, 'Readiness endpoint missed injected initialize delay');
   seen.add(index);
   results.push(result);
-  console.log(JSON.stringify(result));
   // Drain background catalog work outside the measurement window. The archive
   // fault deliberately stays unresolved and is reported as a separate scenario.
   const deadline = Date.now() + 30000;
@@ -221,6 +247,20 @@ async function switchTo(win, index, scenario) {
     assert.ok(Date.now() < deadline, 'Background IPC did not settle');
     await delay(25);
   }
+  if (!archiveGate) {
+    // Work counters cover the background snapshot and its render too. A fast
+    // cached paint must not hide a costly resume arriving after the UI endpoint.
+    await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const settled = await debug.sendCommand('Performance.getMetrics');
+    const metrics = Object.fromEntries(settled.metrics.map(m => [m.name, m.value]));
+    result.work = {
+      resumeCalls: timings.slice(offset).filter(t => t.channel === 'wuu:thread-resume').length,
+      layoutCount: metrics.LayoutCount - prior.LayoutCount,
+      recalcStyleCount: metrics.RecalcStyleCount - prior.RecalcStyleCount,
+    };
+    if (checkBudget && scenario === 'repeat' && result.history === 'large') assertSample(result.work);
+  }
+  console.log(JSON.stringify(result));
   assert.equal(await evaluate(win, () => document.querySelector('.composer textarea')?.value), draft, 'Runtime refresh lost the typed draft');
   // Clear without submitting; the fixture never invokes inference.
   await evaluate(win, () => document.querySelector('.composer textarea').select());
@@ -231,12 +271,13 @@ async function switchTo(win, index, scenario) {
 let main;
 app.on('browser-window-created', (_event, win) => { main ||= win; });
 const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.exit(1); }, 120000 + rounds * 15000);
-import(pathToFileURL(process.env.WUU_SWITCH_MAIN || path.join(desktop, 'out/main/index.js')).href).then(async () => {
+import(pathToFileURL(mainBundle).href).then(async () => {
   while (!main) await delay(25);
   main.webContents.on('console-message', (_e, level, message) => { if (level >= 3) console.error(message); });
   await waitFor(main, () => document.querySelector('.composer textarea'));
   main.show();
   main.focus();
+  await evaluate(main, enabled => { window.__switchTrace = enabled; }, traceEnabled);
   main.webContents.debugger.attach('1.3');
   await main.webContents.debugger.sendCommand('Performance.enable');
   main.setSize(process.env.WUU_SWITCH_VARIANT === 'narrow' ? 820 : 1380, 860);
@@ -252,6 +293,10 @@ import(pathToFileURL(process.env.WUU_SWITCH_MAIN || path.join(desktop, 'out/main
     assert.ok(Date.now() < startupDeadline, 'Startup IPC did not settle');
     await delay(25);
   }
+  if (traceEnabled) await contentTracing.startRecording({
+    included_categories: ['devtools.timeline', 'blink.user_timing', 'v8', 'disabled-by-default-devtools.timeline.stack'],
+    recording_mode: 'record-until-full', trace_buffer_size_in_kb: 256 * 1024,
+  });
   for (const index of [1, 5, 0]) await switchTo(main, index, 'initial-pass');
   for (let round = 0; round < rounds; round++) {
     for (const index of [1, 5, 0]) await switchTo(main, index, 'repeat');
@@ -260,6 +305,11 @@ import(pathToFileURL(process.env.WUU_SWITCH_MAIN || path.join(desktop, 'out/main
   let releaseArchive;
   archiveGate = new Promise(resolve => { releaseArchive = resolve; });
   await switchTo(main, 5, 'archive-blocked');
+  const archiveDeadline = Date.now() + 30000;
+  while (!archiveBlocked) {
+    assert.ok(Date.now() < archiveDeadline, 'Archive blocking scenario never reached its gate');
+    await delay(25);
+  }
   releaseArchive();
   archiveGate = undefined;
   // Cached UI can be interactive before its background resume returns. Drain
@@ -282,7 +332,12 @@ import(pathToFileURL(process.env.WUU_SWITCH_MAIN || path.join(desktop, 'out/main
     await window.wuu.initialize();
     unsubscribe();
     if (!rejected || snapshots.length) throw new Error('Failed resume published a snapshot or did not reject');
-  }, Number(process.env.WUU_SWITCH_TURNS || 160));
+  }, turns);
+  if (traceEnabled) {
+    const usage = await contentTracing.getTraceBufferUsage();
+    await contentTracing.stopRecording(path.join(output, 'trace.json'));
+    assert.ok(usage.percentage < 1, 'Trace buffer filled; recording is incomplete');
+  }
   const groups = {};
   for (const result of results) {
     const key = `${result.scenario}/${result.history}/${result.firstOpen ? 'first' : 'revisit'}/spawn-${result.coreSpawns}`;
@@ -302,21 +357,22 @@ import(pathToFileURL(process.env.WUU_SWITCH_MAIN || path.join(desktop, 'out/main
     assert.equal(result.status, 0, result.stderr);
     return result.stdout.trim();
   };
+  const rendererAssets = path.join(path.dirname(fileURLToPath(main.webContents.getURL())), 'assets');
   const metadata = {
-    schemaVersion: 2, recordedAt: new Date().toISOString(), sourceCommit: git(['rev-parse', 'HEAD']),
+    schemaVersion: 3, recordedAt: new Date().toISOString(), sourceCommit: git(['rev-parse', 'HEAD']),
     sourceChanges: git(['status', '--short']), platform: process.platform, arch: process.arch,
     osRelease: os.release(), cpu: os.cpus()[0].model, cpuCount: os.cpus().length,
-    versions: process.versions, turns: Number(process.env.WUU_SWITCH_TURNS || 160), rounds,
-    safeMode: process.env.WUU_SAFE_MODE, variant: process.env.WUU_SWITCH_VARIANT || 'wide', initDelayMs,
+    versions: process.versions, turns, rounds, safeMode, variant, initDelayMs,
+    traceEnabled, checkBudget, budget: checkBudget ? budget : null,
     zoomFactor: main.webContents.getZoomFactor(), windowSize: main.getSize(),
     coreSha256: hash(process.env.WUU_DESKTOP_CORE), harnessSha256: hash(__filename),
-    mainSha256: hash(process.env.WUU_SWITCH_MAIN || path.join(desktop, 'out/main/index.js')),
-    preloadSha256: hash(path.join(desktop, 'out/preload/index.cjs')),
-    rendererAssets: Object.fromEntries(fs.readdirSync(path.join(desktop, 'out/renderer/assets')).sort().map(name => [name, hash(path.join(desktop, 'out/renderer/assets', name))])),
+    mainSha256: hash(mainBundle),
+    preloadSha256: hash(path.resolve(path.dirname(mainBundle), '../preload/index.cjs')),
+    rendererAssets: Object.fromEntries(fs.readdirSync(rendererAssets).sort().map(name => [name, hash(path.join(rendererAssets, name))])),
     endpoint: 'Native mousedown timestamp to target pane intersecting viewport for two animation frames; then native draft insertion, focus and enabled Send for two frames. Includes probe IPC overhead; frames do not prove physical display presentation.',
     attribution: 'RPC durations are main handler envelopes (overlapping, not additive). Core stdout bytes include all clients/background work. Disk and network are not separately measured. No inference; safe mode excludes normal plugin startup. CDP counters include the observer and draft probe; they are diagnostic, not ratchets.',
   };
-  fs.writeFileSync(path.join(fixture, 'results.json'), JSON.stringify({ metadata, summary, results, timings }, null, 2));
+  fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ metadata, summary, results, timings }, null, 2));
   const report = [
     '# Session switch baseline', '',
     `Source: ${metadata.sourceCommit}. ${metadata.platform}/${metadata.arch}; Electron ${process.versions.electron}; ${metadata.turns} turns; safe mode ${metadata.safeMode}; delay ${initDelayMs}ms.`, '',
@@ -326,9 +382,9 @@ import(pathToFileURL(process.env.WUU_SWITCH_MAIN || path.join(desktop, 'out/main
     ...Object.entries(summary).map(([key, s]) => `| ${key} | ${s.n} | ${s.contentFrameMs.p50.toFixed(1)} / ${s.contentFrameMs.p75.toFixed(1)} | ${s.interactiveFrameMs.p50.toFixed(1)} / ${s.interactiveFrameMs.p75.toFixed(1)} |`),
     '', 'Local diagnostic samples only. Do not pool scenarios or compare against the old paintMs/readyMs definition. Repeat fresh processes on the same machine before setting a ceiling. Full samples and build hashes are in results.json.', '',
   ].join('\n');
-  fs.writeFileSync(path.join(fixture, 'report.md'), report);
-  fs.writeFileSync(path.join(fixture, 'final.png'), (await main.webContents.capturePage()).toPNG());
-  console.log('RESULTS', path.join(fixture, 'results.json'));
+  fs.writeFileSync(path.join(output, 'report.md'), report);
+  fs.writeFileSync(path.join(output, 'final.png'), (await main.webContents.capturePage()).toPNG());
+  console.log('RESULTS', path.join(output, 'results.json'));
   clearTimeout(timeout);
   app.quit();
 }).catch(async error => {
@@ -339,9 +395,9 @@ import(pathToFileURL(process.env.WUU_SWITCH_MAIN || path.join(desktop, 'out/main
       viewport: document.querySelector('.conversation-pane > .scroll-region')?.getBoundingClientRect().toJSON(),
       tail: [...document.querySelectorAll('.cached-conversation-pane[data-active="true"] .turn')].slice(-1).map(n => ({ rect: n.getBoundingClientRect().toJSON(), text: n.textContent.slice(0, 100) })),
     }));
-    fs.writeFileSync(path.join(fixture, 'failure-state.json'), JSON.stringify(state, null, 2));
-    fs.writeFileSync(path.join(fixture, 'failure.png'), (await main.webContents.capturePage()).toPNG());
+    fs.writeFileSync(path.join(output, 'failure-state.json'), JSON.stringify(state, null, 2));
+    fs.writeFileSync(path.join(output, 'failure.png'), (await main.webContents.capturePage()).toPNG());
   }
-  fs.writeFileSync(path.join(fixture, 'failure.json'), JSON.stringify({ error: String(error.stack || error), results, timings }, null, 2));
+  fs.writeFileSync(path.join(output, 'failure.json'), JSON.stringify({ error: String(error.stack || error), results, timings }, null, 2));
   console.error(error, 'FIXTURE', fixture); app.exit(1);
 });
