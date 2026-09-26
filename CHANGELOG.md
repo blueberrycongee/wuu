@@ -110,11 +110,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Long conversations reconcile restored turns without quadratic ID matching.
-  Streaming text, reasoning, and tool arguments accumulate without repeatedly
-  copying earlier content or scanning every historical turn. Workspace session
-  lists filter in SQLite while preserving project moves, worktree membership,
-  pinned ordering, and activity ordering.
+- Git status and staging snapshots preserve literal filenames, including spaces,
+  Unicode, quotes, backslashes, and newlines. Returned rename paths identify the
+  destination, and staging or unstaging a backslash path no longer selects other
+  files through Git pathspec escaping. Sensitive-path protections remain in place.
 
 - Workspace file reads, saves, and directory expansion preserve leading and
   trailing whitespace and literal POSIX backslashes in filenames, preventing
@@ -123,6 +122,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Overdue automations keep their scheduled occurrence until the session service
   is ready. Interrupted dispatches reuse their run record after restart, and
   completing a dispatch preserves a newly edited schedule.
+
+- Git changes, statistics, and file previews work before the first commit,
+  including staged files and edits made after staging.
 
 - Sidebar scroll fades remain tied to the list's own scroll position while
   conversations stream, pause, finish, or switch. Streaming paint reduction
@@ -159,6 +161,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   animations, and provider remove controls keep their icon centered and color
   stable on hover.
 
+- OpenAI-compatible Chat Completions requests preserve tool calls, reasoning,
+  and participant names in adjacent messages, preventing orphaned tool results
+  in both ordinary and streaming conversations.
+
 - Deleting an agent archives sessions still under its management in a separate
   Agent archive, keeping them out of workspace and unread lists. Previously
   orphaned sessions are reconciled, and user-taken-over sessions stay available.
@@ -175,6 +181,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   stay inside the window, truncate long labels, and scroll long lists. Opening
   one closes any other open context menu, including the composer edit menu, and
   hides hover tooltips until it closes.
+
+- Long conversations reconcile restored turns without quadratic ID matching.
+  Streaming text, reasoning, and tool arguments accumulate without repeatedly
+  copying earlier content or scanning every historical turn. Workspace session
+  lists filter in SQLite while preserving project moves, worktree membership,
+  pinned ordering, and activity ordering.
 
 ## [2026.9.25] - 2026-09-25
 
