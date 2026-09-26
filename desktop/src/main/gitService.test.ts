@@ -6,6 +6,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -62,6 +63,58 @@ afterEach(() => {
 });
 
 describe("GitService file previews", () => {
+  it.skipIf(process.platform === "win32").each(["target.txt", "binary.bin", "missing.txt", "directory"])(
+    "previews symlink values through untracked, staged, modified and deleted states (%s)",
+    (target) => {
+      const root = makeRepository();
+      writeFileSync(join(root, "target.txt"), "target contents\nsecond line\n");
+      writeFileSync(join(root, "binary.bin"), Buffer.from([0, 1, 2]));
+      mkdirSync(join(root, "directory"));
+      execFileSync("git", ["-C", root, "add", "-A"]);
+      execFileSync("git", ["-C", root, "commit", "-qm", "add targets"]);
+      const service = serviceFor(root);
+      symlinkSync(target, join(root, "link"));
+      for (const staged of [false, true]) {
+        if (staged) execFileSync("git", ["-C", root, "add", "link"]);
+        expect.soft(service.changes().files).toEqual([
+          { path: "link", status: staged ? "added" : "untracked", additions: 1, deletions: 0, binary: false },
+        ]);
+        expect.soft(service.status().diff).toEqual({ files: 1, additions: 1, deletions: 0 });
+        const preview = service.fileDiff("link");
+        expect.soft(preview).toMatchObject({ original_text: "", modified_text: target, binary: false });
+        expect.soft(preview.patch).toContain("new file mode 120000");
+        expect.soft(preview.patch).toContain(`+${target}`);
+      }
+      execFileSync("git", ["-C", root, "commit", "-qm", "add link"]);
+      unlinkSync(join(root, "link"));
+      symlinkSync("another-missing.txt", join(root, "link"));
+      expect.soft(service.fileDiff("link")).toMatchObject({
+        original_text: target, modified_text: "another-missing.txt", binary: false,
+      });
+      unlinkSync(join(root, "link"));
+      expect(service.fileDiff("link")).toMatchObject({
+        status: "deleted", original_text: target, modified_text: "", binary: false,
+      });
+    },
+  );
+
+  it.skipIf(process.platform === "win32")("previews file and symlink type conversions in both directions", () => {
+    const root = makeRepository();
+    const service = serviceFor(root);
+    unlinkSync(join(root, "README.md"));
+    symlinkSync("missing.txt", join(root, "README.md"));
+    expect(service.fileDiff("README.md")).toMatchObject({
+      original_text: "workspace\n", modified_text: "missing.txt", binary: false,
+    });
+    execFileSync("git", ["-C", root, "add", "README.md"]);
+    execFileSync("git", ["-C", root, "commit", "-qm", "convert to link"]);
+    unlinkSync(join(root, "README.md"));
+    writeFileSync(join(root, "README.md"), "regular text\n");
+    expect(service.fileDiff("README.md")).toMatchObject({
+      original_text: "missing.txt", modified_text: "regular text\n", binary: false,
+    });
+  });
+
   it.each(["sha1", "sha256"].flatMap((format) =>
     ["untracked", "staged", "staged then modified"].map((state) => ({ format, state })),
   ))(
