@@ -81,11 +81,13 @@ Preview `/dev/settings/` with `page` set to a page ID, and optional `theme=dark`
 
 ## Extensions catalog
 
-The Extensions page uses the settings page column, header, and groups. Plugins come first because their runtime and approval state may need a decision; official skills and your skills follow. Every row shows a mark, the name over a one-line description, and a trailing status or owning plugin, then a chevron that opens the plugin detail or skill preview. A search hides every group it leaves empty. In a narrow column the trailing label moves under the description.
+The Extensions page uses the settings page column and typography with open lists instead of framed form groups. Its compact header keeps search close to the title and actions. Plugins come first because their runtime and approval state may need a decision; official skills and your skills follow. Every row shows a mark, the name over a description, and a trailing status or owning plugin, then a chevron that opens the plugin detail or skill preview. Names wrap rather than losing their identifying suffix. Hover highlights the whole row; keyboard focus follows the same rounded boundary. A search hides every group it leaves empty. In a narrow column the trailing label moves under the description, which can use two lines.
 
-The plugin detail repeats the row's status label, followed by source and grant scope. Permissions are grouped by capability, and all groups share one label column.
+The plugin detail places the icon and title on one line, then repeats the row's status label, followed by source and grant scope. Permissions are grouped by capability, and all groups share one label column. Permission labels use plain UI text instead of pills, and wrap within the dialog.
 
 Preview `/dev/extensions/` with optional `theme=dark`, `size=20`, `lang=en`, `long`, and `empty` parameters. Skills and plugin packages are synthetic and cover every status tone; actions in the detail dialog change only the preview's state.
+
+For repeatable macOS Electron captures, start `npx vite --config dev/extensions/vite.config.ts` from `desktop/`, then run `./node_modules/.bin/electron dev/extensions/capture.cjs`. Set `WUU_FIXTURE_ORIGIN` for another port and `WUU_CAPTURE_OUTPUT` for a separate before/after directory. It records screenshots, rendered bounds, image hashes, and runtime versions across light/dark, default/large type, wide/narrow, long/empty content, scroll, search, hover, keyboard focus, and detail/menu states. It also fails if permission labels overflow the dialog; this reproduces a real narrow-window defect. Review the screenshots separately. This isolated component preview does not exercise the production preload, plugin runtime, or installation.
 
 ## Shared typography and geometry
 

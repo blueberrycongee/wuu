@@ -323,42 +323,43 @@ export function SkillsCatalog({
       aria-label={t("skills.catalogLabel")}
       data-wuu-component="skills-catalog"
     >
-      <SettingsPageHeader
-        title={t("skills.title")}
-        description={t("skills.subtitle")}
-        actions={<>
-          <button
-            className="settings-button settings-button-ghost settings-icon-button catalog-refresh"
-            type="button"
-            aria-label={t("skills.refresh")}
-            title={t("skills.refresh")}
-            disabled={state.loading || Boolean(packageMutation)}
-            aria-busy={state.loading}
-            onClick={() => void refreshSkills()}
-          >
-            <RefreshCw className={`icon${state.loading ? " settings-spin" : ""}`} aria-hidden="true" />
-          </button>
-          <button
-            className="settings-button"
-            type="button"
-            disabled={Boolean(packageMutation) || !hostSupports("installPluginPackage")}
-            onClick={() => void installPluginPackage()}
-          >
-            <PackagePlus className="icon" aria-hidden="true" />
-            <span>
-              {packageMutation === "install"
-                ? t("skills.pluginInstalling")
-                : t("skills.pluginInstall")}
-            </span>
-          </button>
-        </>}
-      />
+      <div className="catalog-header">
+        <SettingsPageHeader
+          title={t("skills.title")}
+          actions={<>
+            <button
+              className="settings-button settings-button-ghost settings-icon-button catalog-refresh"
+              type="button"
+              aria-label={t("skills.refresh")}
+              title={t("skills.refresh")}
+              disabled={state.loading || Boolean(packageMutation)}
+              aria-busy={state.loading}
+              onClick={() => void refreshSkills()}
+            >
+              <RefreshCw className={`icon${state.loading ? " settings-spin" : ""}`} aria-hidden="true" />
+            </button>
+            <button
+              className="settings-button"
+              type="button"
+              disabled={Boolean(packageMutation) || !hostSupports("installPluginPackage")}
+              onClick={() => void installPluginPackage()}
+            >
+              <PackagePlus className="icon" aria-hidden="true" />
+              <span>
+                {packageMutation === "install"
+                  ? t("skills.pluginInstalling")
+                  : t("skills.pluginInstall")}
+              </span>
+            </button>
+          </>}
+        />
 
-      <CatalogSearchField
-        value={filter}
-        placeholder={t("skills.searchPlaceholder")}
-        onValueChange={setFilter}
-      />
+        <CatalogSearchField
+          value={filter}
+          placeholder={t("skills.searchPlaceholder")}
+          onValueChange={setFilter}
+        />
+      </div>
 
       {state.error ? <div className="skills-catalog-error">{state.error}</div> : null}
 
@@ -772,13 +773,13 @@ function PluginDetailDialog({
                   <span className="plugin-permission-group-label">{t(group.labelKey)}</span>
                   <span className="plugin-permission-chips">
                     {present.map((permission) => (
-                      <code
+                      <span
                         className="plugin-permission-chip"
                         key={permission.code}
                         title={permission.code}
                       >
                         {t(permission.labelKey)}
-                      </code>
+                      </span>
                     ))}
                   </span>
                 </div>
@@ -839,9 +840,9 @@ function PluginArtwork({ record }: { record: ExtensionInventoryRecord }): JSX.El
   );
 }
 
-// One row anatomy serves plugins and skills: a mark, the name over a one-line
-// description, an optional trailing status or source, and a disclosure
-// chevron that opens the detail or preview dialog.
+// One row anatomy serves plugins and skills: a mark, the name and description,
+// an optional trailing status or source, and a disclosure chevron that opens
+// the detail or preview dialog.
 function CatalogRow({
   label,
   artwork,

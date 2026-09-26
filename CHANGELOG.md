@@ -36,6 +36,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- The extensions catalog uses a compact header and open lists with full-row
+  hover and keyboard focus. Long names wrap, narrow rows show more description,
+  and plain permission labels stay inside compact plugin dialogs at large font sizes.
+
 - Optional programmatic tool calling now runs each program in a fresh JavaScript
   process with the session filesystem sandbox. A default-off global switch and
   model-family overrides control availability. Nested calls retain normal tool
