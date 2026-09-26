@@ -133,15 +133,33 @@ const results = [];
 // Startup automatically restores project 0 before the first measured click.
 const seen = new Set([0]);
 async function switchTo(win, index, scenario) {
-  await waitFor(win, index => [...document.querySelectorAll('.thread-row')].some(n => n.textContent.includes(`Switch session ${index}`)), index);
+  await waitFor(win, index => {
+    const row = [...document.querySelectorAll('.thread-row')].find(n => n.textContent.includes(`Switch session ${index}`));
+    if (!row) return false;
+    const button = row.querySelector('.thread-row-main') || (row.matches('button') ? row : row.querySelector('button') || row);
+    button.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+    // A row can have a rectangle while an expanding fold still clips it or
+    // moves its click target. Settle input preparation outside the measurement.
+    const folding = [...document.querySelectorAll('.thread-list-collapse')]
+      .some(fold => fold.getAnimations().some(animation => animation.pending || animation.playState === 'running'));
+    if (folding) return false;
+    const rect = button.getBoundingClientRect();
+    const hit = document.elementFromPoint(Math.round(rect.x + rect.width / 2), Math.round(rect.y + rect.height / 2));
+    return rect.width > 0 && rect.height > 0 && button.contains(hit);
+  }, index);
   const point = await evaluate(win, async index => {
     const row = [...document.querySelectorAll('.thread-row')].find(n => n.textContent.includes(`Switch session ${index}`));
     const button = row.querySelector('.thread-row-main') || (row.matches('button') ? row : row.querySelector('button') || row);
     button.scrollIntoView({ block: 'nearest', behavior: 'instant' });
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const rect = button.getBoundingClientRect();
-    window.__switchProbe = { index, longTasks: [] };
+    window.__switchProbe = { index, longTasks: [], inputEvents: [] };
     const probe = window.__switchProbe;
+    for (const type of ['mousedown', 'mouseup', 'click']) {
+      button.addEventListener(type, event => {
+        probe.inputEvents.push({ type, trusted: event.isTrusted, x: event.clientX, y: event.clientY });
+      }, { capture: true, once: true });
+    }
     probe.observer = new PerformanceObserver(list => probe.longTasks.push(...list.getEntries().map(e => ({ start: e.startTime, duration: e.duration }))));
     probe.observer.observe({ type: 'longtask' });
     button.addEventListener('mousedown', event => {
@@ -408,6 +426,7 @@ import(pathToFileURL(mainBundle).href).then(async () => {
   if (main && !main.isDestroyed()) {
     const state = await evaluate(main, () => ({
       start: window.__switchProbe?.start,
+      inputEvents: window.__switchProbe?.inputEvents,
       active: document.querySelector('.cached-conversation-pane[data-active="true"]')?.getAttribute('data-thread-id'),
       viewport: document.querySelector('.conversation-pane > .scroll-region')?.getBoundingClientRect().toJSON(),
       tail: [...document.querySelectorAll('.cached-conversation-pane[data-active="true"] .turn')].slice(-1).map(n => ({ rect: n.getBoundingClientRect().toJSON(), text: n.textContent.slice(0, 100) })),
