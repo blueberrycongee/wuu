@@ -2169,19 +2169,6 @@ func (s *Server) resolveTurnPermissions(permissionMode *string) (config.Resolved
 }
 
 func (s *Server) resolveThreadTurnPermissions(th *threadState, requested *string) (config.ResolvedPermissions, error) {
-	if th != nil {
-		th.mu.Lock()
-		coordinator := th.Source == projectSource
-		th.mu.Unlock()
-		// A project coordinator delegates every change; no pin or process
-		// override widens it.
-		if coordinator {
-			if requested != nil && config.NormalizePermissionMode(*requested) != config.PermissionModeReadOnly {
-				return config.ResolvedPermissions{}, errProjectCoordinatorReadOnly
-			}
-			return normalizeTurnPermissions(config.ResolvedPermissions{Mode: config.PermissionModeReadOnly}), nil
-		}
-	}
 	if s != nil && s.rt != nil && s.rt.PermissionModeExplicit {
 		// A process-scoped explicit override (exec --permission-mode) beats
 		// the thread pin and persisted session metadata: a user asking for
@@ -2249,7 +2236,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// silently running the native loop.
 	sessionInstructions := ""
 	if metadata, ok, err := session.Find(s.rt.SessionDir, th.ID); err == nil && ok {
-		sessionInstructions = metadata.Instructions
+		sessionInstructions = effectiveSessionInstructions(metadata)
 	}
 	engine := s.rt.EngineSessionForThread(ctx, threadRuntime, agentengine.ThreadBinding{
 		ThreadID:       th.ID,

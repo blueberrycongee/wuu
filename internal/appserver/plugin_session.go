@@ -946,7 +946,7 @@ func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, par
 	th.Title = params.Name
 	th.Owner = owner
 	th.Visibility = params.Visibility
-	th.Instructions = params.Instructions
+	th.Instructions = effectiveSessionInstructions(initial)
 	if source == projectSessionSource {
 		th.ProjectID = params.ParentSessionID
 	}

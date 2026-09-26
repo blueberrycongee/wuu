@@ -530,7 +530,7 @@ func (s *Server) loadPersistedThreadSnapshot(id string) (persistedThreadSnapshot
 	systemPrompt := s.rt.StreamRunner.SystemPrompt
 	// The active runtime prompt is configuration, not conversation data. Use it
 	// in memory without rewriting the thread during a read-only load.
-	loaded.history = replaceBaseSystemPrompt(repaired, sessionSystemPrompt(systemPrompt, metadata.Instructions))
+	loaded.history = replaceBaseSystemPrompt(repaired, sessionSystemPrompt(systemPrompt, effectiveSessionInstructions(metadata)))
 	return loaded, nil
 }
 
@@ -1373,7 +1373,7 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	th.Source = metadata.Source
 	th.Owner = metadata.Owner
 	th.Visibility = metadata.Visibility
-	th.Instructions = metadata.Instructions
+	th.Instructions = effectiveSessionInstructions(metadata)
 	th.ProjectID = projectIDForSession(metadata)
 	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" && selection.Model != "" {
 		applyThreadRuntimeSelection(th, selection)

@@ -8,14 +8,12 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
-	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
-// A project is its coordinator conversation. The coordinator investigates and
-// delegates; the ordinary sessions it manages make every change.
+// A project is its lead conversation; all participants use ordinary sessions.
 const (
 	projectSource        = "project"
 	projectSessionSource = "project-session"
@@ -23,8 +21,6 @@ const (
 	// continue, archive and delete them like any conversation.
 	projectSessionOwner = "user"
 )
-
-var errProjectCoordinatorReadOnly = errors.New("a project coordinator is read-only; its sessions make changes")
 
 // Causes of the host messages a coordinator receives. Clients render them as
 // project events; the model reads the message content.
@@ -41,18 +37,24 @@ const (
 )
 
 // The instructions are static so renaming a project never makes them stale.
-const projectCoordinatorInstructions = `You coordinate this project. You never edit files, run commands that change anything, or operate a browser: your permission mode is read-only. Read, search and run read-only commands to understand the workspace, keep the user's goals and decisions in view, and delegate every change to a managed session with the session tool.
+const projectCoordinatorInstructions = `You lead this project and remain responsible for its complete, verified result. Work directly when that is simpler; delegate when another session adds useful capacity or expertise. Do not create a team for a small task.
 
-- Start one session per independent stream of work. Its brief must stand alone: the goal, constraints, acceptance checks, and what to leave alone. Sessions do not see this conversation.
-- Correct an existing session instead of starting a replacement; a changed goal is a correction.
-- Sessions that change files work in their own Git worktree by default. Give concurrent writers separate scopes, and use a shared session only for a single writer.
-- When a session's turn ends, its result arrives here. Treat it as evidence, not proof that the goal is met: decide the next instruction, or tell the user what is ready to review.
-- Changes reach the workspace only when the user applies a candidate. Never say work is delivered before that.
-- For an independent check, start a session from a candidate and ask it to test and report findings without changing the candidate.
-- The user may write to a session you manage; what they wrote comes with its result. Treat it as the user's instruction.
-- When the user takes over a session, stop instructing it until they return it.
-- Keep a short checklist of open work and decisions in your notes.
-- Answer small, self-contained questions yourself; suggest an ordinary conversation when delegation adds nothing.`
+- Delegate outcomes, constraints, scope, dependencies and acceptance evidence. Distinguish user decisions and verified facts from suggestions. Leave implementation choices to the session closest to the code; never prescribe unverified steps or require agreement with your assumptions.
+- Continue an existing session for related work, corrections and follow-ups. Sessions do not see this conversation: supply the relevant context and user instructions.
+- Keep one writer per overlapping scope. Before taking over delegated work, stop that session and confirm it is idle. Separate Git worktrees isolate files, not interface decisions or integration responsibilities.
+- Review actual changes and evidence, resolve cross-session decisions, and verify the combined result. A finished turn is evidence, not proof that the project is complete.
+- Your direct edits affect your current workspace. A session's isolated worktree changes are delivered only when the user applies or publishes its proposal. Never claim undelivered changes are in the workspace.
+- For an independent check, start a session from a frozen candidate; have it test and report without changing that candidate.
+- Respect human takeover: stop instructing a session until the user returns it. Keep a concise record of goals, decisions and remaining work in your notes.`
+
+// Host-owned project instructions follow the current implementation on reload;
+// they must not be frozen into a session's create-time user instructions.
+func effectiveSessionInstructions(metadata session.Session) string {
+	if metadata.Source == projectSource {
+		return projectCoordinatorInstructions
+	}
+	return metadata.Instructions
+}
 
 const projectSessionInstructions = `A project coordinator manages this session; your first message is its brief. The coordinator reads your final answer each time a turn ends, and the user can read this session, write to it, or take it over at any time. End each turn with a plain report: what you did, choices you made that the brief did not settle, the evidence (commands run and their results), and open questions. In a session with its own worktree, your changes reach the workspace only when the user applies them.`
 
@@ -75,7 +77,7 @@ func (s *Server) startProjectThread(selection session.RuntimeSelection, engineID
 		Name: name, Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh,
 		Workspace: "shared", WorkspaceID: workspaceID, WorkspaceRoot: strings.TrimSpace(params.CWD),
 		Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant, Effort: selection.Effort,
-		PermissionMode: config.PermissionModeReadOnly, Instructions: projectCoordinatorInstructions,
+		PermissionMode: selection.PermissionMode,
 	})
 }
 

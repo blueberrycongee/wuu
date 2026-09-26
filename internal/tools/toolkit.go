@@ -951,15 +951,14 @@ func (t *Toolkit) SurfaceToolNames() []string {
 func (t *Toolkit) SetActiveProfile(p modelprofile.Profile, forMainAgent bool) {
 	kind := modelprofile.SurfaceWorker
 	if t.env != nil && t.env.ProjectSessions != nil {
-		kind = modelprofile.SurfaceProjectCoordinator
+		kind = modelprofile.SurfaceProjectSession
 	} else if forMainAgent {
 		kind = modelprofile.SurfaceMain
 	}
 	t.setActiveProfileForSurface(p, kind)
 }
 
-// SetProjectSessions turns this toolkit into a project coordinator's: the
-// session tool appears and the surface drops file-editing and browser tools.
+// SetProjectSessions adds project operations to the ordinary session toolkit.
 func (t *Toolkit) SetProjectSessions(handler ProjectSessionHandler) {
 	if t == nil || t.env == nil {
 		return
@@ -985,8 +984,8 @@ func (t *Toolkit) setActiveProfileForSurface(p modelprofile.Profile, kind modelp
 	t.codeModeMu.Lock()
 	t.ptcFamily = string(p.Family)
 	t.codeModeMu.Unlock()
-	// A coordinator never falls back to the unrestricted legacy surface.
-	if (p == modelprofile.Profile{}) && kind != modelprofile.SurfaceProjectCoordinator {
+	// A project surface includes its session tool even without a model profile.
+	if (p == modelprofile.Profile{}) && kind != modelprofile.SurfaceProjectSession {
 		t.activeSurface = capability.Surface{}
 		t.publishActiveSurfaceLocked()
 		return

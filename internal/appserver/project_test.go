@@ -19,7 +19,7 @@ import (
 )
 
 // The failure cases these tests guard:
-//   - the coordinator can edit files or widen its permission mode;
+//   - the project lead cannot execute ordinary work, or bypasses the user-selected permission mode;
 //   - a managed session's result is lost, delivered twice, or re-delivered
 //     after a restart;
 //   - a candidate is applied over conflicting workspace changes, or applied
@@ -186,7 +186,7 @@ func deliveredClientIDs(t *testing.T, rt *runtime.Session, threadID, prefix stri
 func TestProjectDelegatesAndDeliversCandidateOnce(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
 	coordinator := startProject(t, client, "Catalog search")
-	if coordinator.Source != projectSource || coordinator.Title != "Catalog search" || coordinator.PermissionMode != config.PermissionModeReadOnly {
+	if coordinator.Source != projectSource || coordinator.Title != "Catalog search" || coordinator.PermissionMode != config.PermissionModeStandard {
 		t.Fatalf("project coordinator = %+v", coordinator)
 	}
 	var turn TurnStartResult
@@ -194,11 +194,6 @@ func TestProjectDelegatesAndDeliversCandidateOnce(t *testing.T) {
 
 	plan := calls.next(t, "Plan catalog pagination")
 	visible := requestToolNames(plan.request)
-	for _, writer := range []string{"write_file", "edit_file", "apply_patch", "wuu_browser"} {
-		if visible[writer] {
-			t.Fatalf("coordinator can call %s: %v", writer, visible)
-		}
-	}
 	if !visible["session"] {
 		t.Fatalf("coordinator cannot manage sessions: %v", visible)
 	}
@@ -630,25 +625,26 @@ func TestProjectAdoptsAndReleasesConversations(t *testing.T) {
 	calls.assertIdle(t)
 }
 
-func TestProjectCoordinatorStaysReadOnly(t *testing.T) {
+func TestProjectLeadUsesOrdinarySessionPermissions(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
-	coordinator := startProject(t, client, "Guarded")
-	standard := config.PermissionModeStandard
-	if failure := client.call(t, MethodConfigModelUpdate, ConfigModelUpdateParams{ThreadID: coordinator.ID, Model: coordinator.Model, PermissionMode: &standard}, nil); failure == nil {
-		t.Fatal("coordinator permission mode was widened")
-	}
+	lead := startProject(t, client, "Direct work")
 	var turn TurnStartResult
-	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: coordinator.ID, Prompt: "Write the file yourself"}, &turn)
-	calls.next(t, "Write the file yourself").response <- toolCallResponse("write-direct", "write_file", `{"path":"direct.txt","content":"x"}`)
-	denied := calls.next(t, "Write the file yourself")
-	last := denied.request.Messages[len(denied.request.Messages)-1]
-	if last.Role != "tool" || last.ToolCallID != "write-direct" {
-		t.Fatalf("coordinator write was not rejected as a tool result: %+v", last)
+	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: lead.ID, Prompt: "Write a small change"}, &turn)
+	calls.next(t, "Write a small change").response <- toolCallResponse("write-direct", "write_file", `{"path":"direct.txt","content":"done"}`)
+	calls.next(t, "Write a small change").response <- providersResponse("Done.")
+	waitForThread(t, srv, lead.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID == turn.Turn.ID })
+	if data, err := os.ReadFile(filepath.Join(rt.RootDir, "direct.txt")); err != nil || string(data) != "done" {
+		t.Fatalf("lead's ordinary file edit = %q, %v", data, err)
 	}
-	denied.response <- providersResponse("I cannot edit files here.")
-	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID == turn.Turn.ID })
-	if _, err := os.Stat(filepath.Join(rt.RootDir, "direct.txt")); !os.IsNotExist(err) {
-		t.Fatalf("coordinator wrote a file: %v", err)
+	var restricted ThreadStartResult
+	client.rpc(t, MethodThreadStart, ThreadStartParams{Project: &ThreadProjectParams{Name: "Read-only project"}, PermissionMode: config.PermissionModeReadOnly}, &restricted)
+	lead = restricted.Thread
+	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: lead.ID, Prompt: "Try a restricted change"}, &turn)
+	calls.next(t, "Try a restricted change").response <- toolCallResponse("write-restricted", "write_file", `{"path":"restricted.txt","content":"no"}`)
+	calls.next(t, "Try a restricted change").response <- providersResponse("Read-only.")
+	waitForThread(t, srv, lead.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID == turn.Turn.ID })
+	if _, err := os.Stat(filepath.Join(rt.RootDir, "restricted.txt")); !os.IsNotExist(err) {
+		t.Fatalf("lead bypassed read-only permissions: %v", err)
 	}
 }
 
