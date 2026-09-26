@@ -1,8 +1,7 @@
 import { hostSupports } from "./HostCapabilities";
-import { Archive, ChevronRight, Folder, FolderOpen, MessageSquare, MessageSquarePlus, MessagesSquare, Pin, Split, Workflow } from "./WuuIcons";
+import { Archive, Folder, FolderOpen, MessageSquare, MessageSquarePlus, MessagesSquare, Pin, Split, Workflow } from "./WuuIcons";
 import {
   type DragEvent as ReactDragEvent,
-  Fragment,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -27,7 +26,7 @@ import {
   threadBelongsToWorkspace,
   type ThreadSummary,
 } from "./AppState";
-import { isProjectCoordinator, nestProjectSessions } from "./ProjectSessions";
+import { isProjectCoordinator, type ProjectRowSummary } from "./ProjectSessions";
 import { resolveLocalizedText, useI18n } from "./i18n";
 
 function unpinnedThreads(threads: ThreadSummary[]): ThreadSummary[] {
@@ -71,27 +70,6 @@ function persistThreadOrder(workspaceID: string, order: string[]): void {
     );
   } catch {
     // A blocked or full localStorage should not prevent in-memory reordering.
-  }
-}
-
-const COLLAPSED_PROJECT_ROWS_KEY = "wuu.desktop.collapsedProjectRows";
-
-function storedCollapsedProjectIDs(): Set<string> {
-  try {
-    const parsed: unknown = JSON.parse(window.localStorage.getItem(COLLAPSED_PROJECT_ROWS_KEY) ?? "[]");
-    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string" && id.length > 0) : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function persistProjectCollapsed(projectID: string, collapsed: boolean): void {
-  try {
-    const next = storedCollapsedProjectIDs();
-    if (collapsed) next.add(projectID); else next.delete(projectID);
-    window.localStorage.setItem(COLLAPSED_PROJECT_ROWS_KEY, JSON.stringify([...next]));
-  } catch {
-    // A blocked or full localStorage should not prevent in-memory folding.
   }
 }
 
@@ -267,13 +245,12 @@ export function WorkspaceGroup({
   // Point a real workspace at a new folder (keeping its stable id, so its
   // state and history reconnect). The remedy for a moved/deleted directory.
   onRelocateWorkspace?: (id: string) => void;
-  // Start a project coordinator in a registered workspace; absent for the scratch workspace.
-  onCreateProject?: (workspaceID: string, name: string) => void;
+  // Open a project draft in a registered workspace; absent for the scratch workspace.
+  onCreateProject?: (workspaceID: string) => void;
   workspacePinned?: boolean;
   onToggleWorkspacePinned?: (id: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const [projectName, setProjectName] = useState<string | null>(null);
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -325,14 +302,6 @@ export function WorkspaceGroup({
       .map((id) => threadsByID.get(id))
       .filter((thread): thread is ThreadSummary => thread !== undefined);
   }, [reconciledThreadOrder, unorderedWorkspaceThreads]);
-  const nesting = useMemo(() => nestProjectSessions(workspaceThreads), [workspaceThreads]);
-
-  function submitProjectName(): void {
-    const name = projectName?.trim();
-    if (!name) return;
-    setProjectName(null);
-    onCreateProject?.(project.id, name);
-  }
 
   function reorderWorkspaceThreads(
     activeThreadID: string,
@@ -435,8 +404,7 @@ export function WorkspaceGroup({
       >
         {pendingConversations.length > 0 || workspaceThreads.length > 0 ? (
           <ThreadList
-            threads={nesting.rows}
-            sessionsByProjectID={nesting.sessionsByProjectID}
+            threads={workspaceThreads}
             pendingConversations={pendingConversations}
             activeSessionTabID={activeSessionTabID}
             onSelectPendingConversation={onSelectPendingConversation}
@@ -463,7 +431,7 @@ export function WorkspaceGroup({
             ...(onCreateProject && !isScratchPseudo ? [{
               label: t("projects.newProject"),
               disabled: isMissing,
-              onSelect: () => setProjectName(t("projects.defaultName")),
+              onSelect: () => onCreateProject(project.id),
             }, { separator: true } as const] : []),
             ...(onToggleWorkspacePinned ? [{
               label: t(workspacePinned ? "sidebar.unpin" : "sidebar.pin"),
@@ -482,21 +450,6 @@ export function WorkspaceGroup({
           onClose={() => setContextMenu(null)}
         />
       ) : null}
-      <SidebarNameDialog
-        open={projectName !== null}
-        title={projectName ?? ""}
-        onTitleChange={setProjectName}
-        onSubmit={submitProjectName}
-        onClose={() => setProjectName(null)}
-        dialogTitle={t("projects.newProject")}
-        dialogTitleId={`new-project-title-${project.id}`}
-        fieldLabel={t("projects.name")}
-        fieldAriaLabel={t("projects.name")}
-        placeholder={t("projects.name")}
-        icon={Workflow}
-        submitLabel={t("common.create")}
-        cancelLabel={t("common.cancel")}
-      />
     </div>
   );
 }
@@ -546,7 +499,6 @@ export function SectionRowIcon({
 
 function ThreadList({
   threads,
-  sessionsByProjectID,
   pendingConversations,
   activeSessionTabID,
   onSelectPendingConversation,
@@ -564,7 +516,6 @@ function ThreadList({
   onCollapse
 }: {
   threads: ThreadSummary[];
-  sessionsByProjectID?: ReadonlyMap<string, ThreadSummary[]>;
   pendingConversations: readonly PendingConversation[];
   activeSessionTabID?: string;
   onSelectPendingConversation?: (id: string) => void;
@@ -589,17 +540,12 @@ function ThreadList({
   const [recentlyRead, setRecentlyRead] = useState<Map<string, number>>(() => new Map());
   const previousReadState = useRef(new Map<string, { unread: boolean; viewedTurnID?: string }>());
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Nested sessions keep their project row visible, so they share its read grace period.
-  const trackedThreads = useMemo(
-    () => [...threads, ...[...(sessionsByProjectID?.values() ?? [])].flat()],
-    [threads, sessionsByProjectID],
-  );
   useLayoutEffect(() => {
-    const nextReadState = new Map(trackedThreads.map((thread) => [thread.id, {
+    const nextReadState = new Map(threads.map((thread) => [thread.id, {
       unread: isThreadUnread(thread, lastViewedTurnByThreadID[thread.id]),
       viewedTurnID: lastViewedTurnByThreadID[thread.id],
     }]));
-    const newlyReadIDs = trackedThreads.filter((thread) => {
+    const newlyReadIDs = threads.filter((thread) => {
       const previous = previousReadState.current.get(thread.id);
       const next = nextReadState.get(thread.id)!;
       // A running turn can suppress unread status without the user reading it.
@@ -621,7 +567,7 @@ function ThreadList({
       return next.size === current.size && [...next].every(([id, expiry]) => current.get(id) === expiry)
         ? current : next;
     });
-  }, [trackedThreads, lastViewedTurnByThreadID]);
+  }, [threads, lastViewedTurnByThreadID]);
   useEffect(() => {
     if (recentlyRead.size === 0) return;
     const timer = window.setTimeout(() => {
@@ -636,7 +582,6 @@ function ThreadList({
     pendingThreadID,
     lastViewedTurnByThreadID,
     recentlyRead,
-    sessionsByProjectID,
   );
   const hiddenCount = threads.length - limitedThreads.length;
   const showFooter = hiddenCount > 0 || expanded;
@@ -669,7 +614,6 @@ function ThreadList({
         ))}
         <ThreadRows
           threads={limitedThreads}
-          sessionsByProjectID={sessionsByProjectID}
           activeID={activeID}
           pendingThreadID={pendingThreadID}
           lastViewedTurnByThreadID={lastViewedTurnByThreadID}
@@ -712,18 +656,23 @@ function limitedWorkspaceThreads(
   pendingThreadID: string | undefined,
   lastViewedTurnByThreadID: Record<string, string> = {},
   recentlyRead: ReadonlyMap<string, number> = new Map(),
-  sessionsByProjectID?: ReadonlyMap<string, ThreadSummary[]>,
 ): ThreadSummary[] {
   const visibleIDs = new Set(threads.slice(0, Math.max(0, visibleCount)).map((thread) => thread.id));
   return threads.filter((thread) => {
-    if (visibleIDs.has(thread.id)) {
+    if (
+      visibleIDs.has(thread.id) ||
+      recentlyRead.has(thread.id) ||
+      importantThreadVisible(thread, activeID, pendingThreadID) ||
+      workspaceThreadUnread(
+        thread,
+        activeID,
+        pendingThreadID,
+        lastViewedTurnByThreadID,
+      )
+    ) {
       return true;
     }
-    // A project row stays visible while one of its nested sessions needs it.
-    return [thread, ...(sessionsByProjectID?.get(thread.id) ?? [])].some((row) =>
-      recentlyRead.has(row.id) ||
-      importantThreadVisible(row, activeID, pendingThreadID) ||
-      workspaceThreadUnread(row, activeID, pendingThreadID, lastViewedTurnByThreadID));
+    return false;
   });
 }
 
@@ -758,7 +707,7 @@ function workspaceThreadUnread(
 
 function ThreadRows({
   threads,
-  sessionsByProjectID,
+  projectSummaries,
   activeID,
   pendingThreadID,
   lastViewedTurnByThreadID,
@@ -768,10 +717,11 @@ function ThreadRows({
   onDelete,
   onRename,
   onReorder,
+  onDropSession,
 }: {
   threads: ThreadSummary[];
-  // Managed sessions rendered one level under their project row.
-  sessionsByProjectID?: ReadonlyMap<string, ThreadSummary[]>;
+  // What a project row shows for its sessions, which the sidebar does not list.
+  projectSummaries?: ReadonlyMap<string, ProjectRowSummary>;
   activeID?: string;
   pendingThreadID?: string;
   lastViewedTurnByThreadID: Record<string, string>;
@@ -785,8 +735,10 @@ function ThreadRows({
     overThreadID: string,
     position: ThreadDropPosition,
   ) => void;
+  // A conversation dragged from another list onto a project row joins it.
+  onDropSession?: (project: ThreadSummary, threadID: string) => void;
 }): JSX.Element {
-  const { t } = useI18n();
+  const { t, formatNumber } = useI18n();
   const organization = useSessionOrganizationActions();
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -799,7 +751,7 @@ function ThreadRows({
     initialTitle: string;
   } | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
-  const [collapsedProjectIDs, setCollapsedProjectIDs] = useState(storedCollapsedProjectIDs);
+  const [sessionDropTargetID, setSessionDropTargetID] = useState<string>();
   const [draggingThreadID, setDraggingThreadID] = useState<string>();
   const [threadSortIndicator, setThreadSortIndicator] = useState<{
     id: string;
@@ -866,7 +818,21 @@ function ThreadRows({
     organization?.startFolderDrag(thread.id);
   }
 
+  function acceptsSessionDrop(thread: ThreadSummary, event: ReactDragEvent<HTMLDivElement>): boolean {
+    return Boolean(onDropSession) && !draggingThreadID && isProjectCoordinator(thread) && (
+      Boolean(organization?.folderDragThreadID)
+      || Array.from(event.dataTransfer.types ?? []).includes(SESSION_FOLDER_DRAG_MIME)
+    );
+  }
+
   function dragThreadOver(thread: ThreadSummary, event: ReactDragEvent<HTMLDivElement>): void {
+    if (acceptsSessionDrop(thread, event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = "move";
+      setSessionDropTargetID(thread.id);
+      return;
+    }
     if (!onReorder || !draggingThreadID || draggingThreadID === thread.id) return;
     event.preventDefault();
     event.stopPropagation();
@@ -881,9 +847,19 @@ function ThreadRows({
   function leaveThreadDropTarget(threadID: string, event: ReactDragEvent<HTMLDivElement>): void {
     if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
     setThreadSortIndicator((current) => current?.id === threadID ? undefined : current);
+    setSessionDropTargetID((current) => current === threadID ? undefined : current);
   }
 
   function dropThread(thread: ThreadSummary, event: ReactDragEvent<HTMLDivElement>): void {
+    if (acceptsSessionDrop(thread, event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const threadID = event.dataTransfer.getData(SESSION_FOLDER_DRAG_MIME) || organization?.folderDragThreadID;
+      setSessionDropTargetID(undefined);
+      organization?.endFolderDrag();
+      if (threadID && threadID !== thread.id) onDropSession?.(thread, threadID);
+      return;
+    }
     if (!onReorder || !draggingThreadID || draggingThreadID === thread.id) return;
     event.preventDefault();
     event.stopPropagation();
@@ -933,40 +909,34 @@ function ThreadRows({
     closeRenameDialog();
   }
 
-  function toggleProjectCollapsed(projectID: string): void {
-    setCollapsedProjectIDs((current) => {
-      const next = new Set(current);
-      const collapsed = !next.has(projectID);
-      if (collapsed) next.add(projectID); else next.delete(projectID);
-      persistProjectCollapsed(projectID, collapsed);
-      return next;
-    });
-  }
-
-  function rowUnread(thread: ThreadSummary): boolean {
-    return !isThreadExecuting(thread) && pendingThreadID !== thread.id && thread.id !== activeID &&
-      isThreadUnread(thread, lastViewedTurnByThreadID[thread.id]);
-  }
-
   return (
     <>
       {threads.map((thread) => {
         const pendingSwitch = pendingThreadID === thread.id;
         const project = isProjectCoordinator(thread);
-        const sessions = project ? sessionsByProjectID?.get(thread.id) ?? [] : [];
-        const collapsed = sessions.length > 0 && collapsedProjectIDs.has(thread.id);
-        // A folded project carries its hidden sessions' running and unread state.
-        const running = isThreadExecuting(thread) || (collapsed && sessions.some((session) => isThreadExecuting(session)));
+        const summary = project ? projectSummaries?.get(thread.id) : undefined;
+        const running = summary?.running ?? isThreadExecuting(thread);
         const title = baseThreadTitle(thread, threads);
         const forkMarker = threadShowsForkMarker(thread, threads);
-        const unread = !running && (rowUnread(thread) || (collapsed && sessions.some(rowUnread)));
+        const unread =
+          !running &&
+          !pendingSwitch &&
+          (summary
+            ? summary.unread
+            : thread.id !== activeID &&
+              isThreadUnread(
+                thread,
+                lastViewedTurnByThreadID[thread.id],
+              ));
+        const pendingCandidates = summary?.pendingCandidates ?? 0;
         return (
-          <Fragment key={thread.id}>
           <div
+            key={thread.id}
             className={`thread-row sidebar-session-row ${thread.id === activeID ? "active" : ""}${running ? " running" : ""}${
               pendingSwitch ? " pending-switch" : ""
-            }${unread ? " has-unread" : ""}${draggingThreadID === thread.id ? " dragging" : ""}${project ? " project-thread-row" : ""}`}
-            data-project-expanded={sessions.length ? !collapsed : undefined}
+            }${unread ? " has-unread" : ""}${draggingThreadID === thread.id ? " dragging" : ""}${project ? " project-thread-row" : ""}${
+              sessionDropTargetID === thread.id ? " drop-active" : ""
+            }`}
             aria-current={thread.id === activeID ? "page" : undefined}
             draggable={Boolean(organization || onReorder)}
             data-draggable={Boolean(organization || onReorder) || undefined}
@@ -985,21 +955,9 @@ function ThreadRows({
               {running ? (
                 <span className="thread-row-spinner" aria-hidden="true" />
               ) : null}
-              {project ? sessions.length ? (
-                <button
-                  className="project-thread-toggle"
-                  type="button"
-                  aria-expanded={!collapsed}
-                  aria-label={t(collapsed ? "projects.expandSessions" : "projects.collapseSessions", { name: title })}
-                  title={t(collapsed ? "projects.expandSessions" : "projects.collapseSessions", { name: title })}
-                  onClick={() => toggleProjectCollapsed(thread.id)}
-                >
-                  <Workflow className="project-thread-icon" aria-hidden="true" />
-                  <ChevronRight className="project-thread-chevron" aria-hidden="true" />
-                </button>
-              ) : (
-                <span className="project-thread-toggle" aria-hidden="true">
-                  <Workflow className="project-thread-icon" />
+              {project ? (
+                <span className="project-thread-glyph" aria-hidden="true">
+                  <Workflow />
                 </span>
               ) : null}
               <button
@@ -1023,6 +981,14 @@ function ThreadRows({
                   className="icon-sm thread-row-fork-icon"
                   aria-hidden="true"
                 />
+              ) : null}
+              {pendingCandidates > 0 ? (
+                <span
+                  className="project-thread-pending"
+                  title={t("projects.pendingCandidates", { count: formatNumber(pendingCandidates) })}
+                >
+                  {formatNumber(pendingCandidates)}
+                </span>
               ) : null}
               <div
                 className="thread-row-actions"
@@ -1048,22 +1014,6 @@ function ThreadRows({
                 </button>
               </div>
           </div>
-          {sessions.length && !collapsed ? (
-            <div className="project-session-list" role="group" aria-label={title}>
-              <ThreadRows
-                threads={sessions}
-                activeID={activeID}
-                pendingThreadID={pendingThreadID}
-                lastViewedTurnByThreadID={lastViewedTurnByThreadID}
-                onSelect={onSelect}
-                onTogglePinned={onTogglePinned}
-                onArchive={onArchive}
-                onDelete={onDelete}
-                onRename={onRename}
-              />
-            </div>
-          ) : null}
-          </Fragment>
         );
       })}
       {contextMenu ? (
@@ -1140,7 +1090,7 @@ function ThreadRows({
 
 export function PinnedThreadList({
   threads,
-  sessionsByProjectID,
+  projectSummaries,
   activeID,
   pendingThreadID,
   lastViewedTurnByThreadID,
@@ -1151,7 +1101,7 @@ export function PinnedThreadList({
   onRename,
 }: {
   threads: ThreadSummary[];
-  sessionsByProjectID?: ReadonlyMap<string, ThreadSummary[]>;
+  projectSummaries?: ReadonlyMap<string, ProjectRowSummary>;
   activeID?: string;
   pendingThreadID?: string;
   lastViewedTurnByThreadID: Record<string, string>;
@@ -1188,7 +1138,7 @@ export function PinnedThreadList({
     <div className="pinned-thread-list">
       <ThreadRows
         threads={orderedThreads}
-        sessionsByProjectID={sessionsByProjectID}
+        projectSummaries={projectSummaries}
         activeID={activeID}
         pendingThreadID={pendingThreadID}
         lastViewedTurnByThreadID={lastViewedTurnByThreadID}
@@ -1205,7 +1155,7 @@ export function PinnedThreadList({
 
 export function OrganizationThreadList({
   threads,
-  sessionsByProjectID,
+  projectSummaries,
   activeID,
   pendingThreadID,
   lastViewedTurnByThreadID,
@@ -1214,9 +1164,10 @@ export function OrganizationThreadList({
   onArchive,
   onDelete,
   onRename,
+  onDropSession,
 }: {
   threads: ThreadSummary[];
-  sessionsByProjectID?: ReadonlyMap<string, ThreadSummary[]>;
+  projectSummaries?: ReadonlyMap<string, ProjectRowSummary>;
   activeID?: string;
   pendingThreadID?: string;
   lastViewedTurnByThreadID: Record<string, string>;
@@ -1225,12 +1176,13 @@ export function OrganizationThreadList({
   onArchive: (thread: ThreadSummary) => void;
   onDelete: (thread: ThreadSummary) => void;
   onRename?: (thread: ThreadSummary, title: string) => void;
+  onDropSession?: (project: ThreadSummary, threadID: string) => void;
 }): JSX.Element {
   return (
     <div className="pinned-thread-list">
       <ThreadRows
         threads={threads}
-        sessionsByProjectID={sessionsByProjectID}
+        projectSummaries={projectSummaries}
         activeID={activeID}
         pendingThreadID={pendingThreadID}
         lastViewedTurnByThreadID={lastViewedTurnByThreadID}
@@ -1239,6 +1191,7 @@ export function OrganizationThreadList({
         onArchive={onArchive}
         onDelete={onDelete}
         onRename={onRename}
+        onDropSession={onDropSession}
       />
     </div>
   );

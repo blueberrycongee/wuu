@@ -288,9 +288,13 @@ import { createSessionTabActions } from "./SessionTabActions";
 import { createThreadActivationActions } from "./ThreadActivationActions";
 import { createThreadMutationActions } from "./ThreadMutationActions";
 import {
+  baseThreadTitle,
   conversationHeadingTitle,
   customDraftConversationTitle,
 } from "./ThreadTitles";
+import { ProjectActionsProvider, type ProjectActions, type ProjectThread } from "./ProjectActions";
+import { isProjectCoordinator } from "./ProjectSessions";
+import { ProjectDraftIntro, ProjectStatusStrip } from "./ProjectViews";
 import { createRuntimeSettingsActions } from "./RuntimeSettingsActions";
 import { createConversationPaneActions } from "./ConversationPaneActions";
 import {
@@ -399,6 +403,13 @@ function formatUserQuestionSteerPrompt(
     if (item?.custom?.trim()) parts.push(item.custom.trim());
     return `${question.question}\n${parts.join(", ") || "(no answer)"}`;
   }).join("\n\n");
+}
+
+// A project's name until the user renames it: its goal's first line, short
+// enough for the sidebar.
+function projectNameFromGoal(goal: string): string {
+  const line = goal.split("\n").find((part) => part.trim())?.trim().replace(/\s+/g, " ") ?? "";
+  return line.length > 48 ? `${line.slice(0, 47)}…` : line;
 }
 
 export function App(): JSX.Element {
@@ -666,6 +677,8 @@ export function App(): JSX.Element {
     openWorkspaceDiffTab,
     openWorkspaceFileTab,
     openWorkspaceArtifactTab,
+    openWorkspaceProjectTab,
+    openWorkspaceProposalTab,
     showWorkspaceToolPicker,
     focusWorkspaceViewTab,
     closeWorkspaceViewTab,
@@ -1102,6 +1115,7 @@ export function App(): JSX.Element {
       : undefined;
   const activeThread = activeThreadForState(state);
   const activeThreadID = activeThread?.id;
+  const activeProjectDraft = !activeThread && currentSessionTab?.kind === "draft" && currentSessionTab.project === true;
   const activeThreadRunning = isThreadRunning(activeThread);
   const activeThreadHasRunningTurn = activeThread?.turns.some(turn => turn.status === "in_progress") ?? false;
   useEffect(() => {
@@ -2941,8 +2955,10 @@ export function App(): JSX.Element {
         : rawContextUsage;
     const streamStatus = activeThreadStreamStatus;
     const defaultEngine = engineInventory?.settings?.default_engine ?? "";
-    const effectiveEngine =
-      (activeThread?.engine_id ?? "") || draftEngine || defaultEngine || "wuu";
+    // A project coordinator runs on the Wuu engine.
+    const effectiveEngine = activeProjectDraft
+      ? "wuu"
+      : (activeThread?.engine_id ?? "") || draftEngine || defaultEngine || "wuu";
     const effectiveEngineInfo = engineInventory?.engines.find(
       (engine) => engine.id === effectiveEngine,
     );
@@ -2958,8 +2974,10 @@ export function App(): JSX.Element {
           effort: draftEngineRuntime.effort || defaultEngineRuntime.effort,
           speed: draftEngineRuntime.speed ?? "",
         };
-    const composerPermissionMode =
-      activeThread?.permission_mode
+    const projectComposer = activeProjectDraft || (activeThread !== undefined && isProjectCoordinator(activeThread));
+    const composerPermissionMode = activeProjectDraft
+      ? "read_only"
+      : activeThread?.permission_mode
       || (!activeThread && effectiveEngine !== "wuu"
         ? draftPermissionMode || "unconfined"
         : conversationRuntime?.permissions?.mode);
@@ -2995,6 +3013,9 @@ export function App(): JSX.Element {
         ) : undefined}
         variant={variant}
         mainConversation
+        statusAccessory={activeThread && isProjectCoordinator(activeThread) ? <ProjectStatusStrip project={activeThread} /> : undefined}
+        permissionLocked={projectComposer}
+        placeholder={activeProjectDraft ? t("projects.draftPlaceholder") : undefined}
         containerRef={variant === "dock" ? dockComposerRef : undefined}
         prompt={prompt}
         promptRevision={promptRevision}
@@ -3033,7 +3054,7 @@ export function App(): JSX.Element {
         initialized={composerRuntime}
         engines={engineInventory?.engines}
         activeEngine={effectiveEngine !== "wuu" ? effectiveEngine : ""}
-        engineLocked={Boolean(activeThread)}
+        engineLocked={Boolean(activeThread) || activeProjectDraft}
         engineModel={effectiveEngineRuntime.model}
         engineEffort={effectiveEngineRuntime.effort}
         engineSpeed={effectiveEngineRuntime.speed}
@@ -3483,26 +3504,91 @@ export function App(): JSX.Element {
     desktopWorkbenchController.deactivateRegion("primary");
   }
 
-  // A project is its coordinator conversation, started on the Wuu engine in a
-  // registered workspace and opened like any other conversation.
-  async function createProject(workspaceID: string, name: string): Promise<void> {
-    const workspace = appStateRef.current.projects.find((candidate) => candidate.id === workspaceID);
-    if (!workspace || workspace.missing) return;
-    const context: RuntimeContext = { kind: "project", project_id: workspace.id, cwd: workspace.path };
+  // The active draft starts a project or an ordinary conversation; the entry
+  // the user chose decides which.
+  function setDraftProjectMode(project: boolean): void {
+    setState((current) => ({
+      ...current,
+      sessionTabs: current.sessionTabs.map((tab) => {
+        if (tab.id !== current.activeSessionTabID || tab.kind !== "draft" || Boolean(tab.project) === project) return tab;
+        const { project: _wasProject, ...conversation } = tab;
+        return project
+          ? { ...tab, project: true, title: t("projects.newProject") }
+          : { ...conversation, title: tab.title === t("projects.newProject") ? t("tabs.newConversation") : tab.title };
+      }),
+    }));
+  }
+
+  // A project starts as a draft like a conversation: its first message names
+  // the project and becomes the coordinator's first instruction.
+  function startNewProject(workspaceID?: string): void {
+    const current = appStateRef.current;
+    const targetID = workspaceID
+      ?? (current.activeContext?.kind === "project" ? current.activeContext.project_id : undefined)
+      ?? current.projects.find((workspace) => !workspace.missing)?.id;
+    const workspace = current.projects.find((candidate) => candidate.id === targetID);
+    if (!workspace || workspace.missing) {
+      showErrorToast(t("projects.needsWorkspace"));
+      return;
+    }
+    closePrimaryPluginView();
+    revealConversationFromFocusedWorkspace();
+    closeCompactSessionSwitcher();
+    const origin = document.activeElement;
+    focusHeroAfter(
+      startNewThreadInWorkspace(workspace.id).then((started) => {
+        if (started) setDraftProjectMode(true);
+        return started;
+      }),
+      origin,
+      (next) => next.activeContext?.kind === "project" && next.activeProjectId === workspace.id,
+    );
+  }
+
+  async function adoptIntoProject(projectID: string, threadID: string): Promise<void> {
+    if (!window.wuu.projectSession) return;
     try {
-      const { thread } = await window.wuu.startThread(
-        { project: { name }, workspace_id: workspace.id, cwd: workspace.path, engine: "wuu" },
-        context,
-      );
+      const { thread } = await window.wuu.projectSession({ action: "adopt", project_id: projectID, session_id: threadID });
       updateCachedSidebarThread(thread);
-      closePrimaryPluginView();
-      revealConversationFromFocusedWorkspace();
-      closeCompactSessionSwitcher();
-      await selectWorkspaceThread(workspace.id, thread.id);
     } catch (error) {
       showErrorToast(error);
     }
   }
+
+  const openProjectThread = useStableCallback((threadID: string) => {
+    closePrimaryPluginView();
+    void activateThread(threadID);
+  });
+  const openProjectPanel = useStableCallback((project: ProjectThread) => {
+    openWorkspaceProjectTab(project.id, baseThreadTitle(project));
+  });
+  const openProjectProposal = useStableCallback((session: ProjectThread) => {
+    openWorkspaceProposalTab(session.id, baseThreadTitle(session));
+  });
+  const releaseProjectSession = useStableCallback((session: ProjectThread) => {
+    if (!session.project_id || !window.wuu.projectSession) return;
+    void window.wuu.projectSession({ action: "release", project_id: session.project_id, session_id: session.id })
+      .then(({ thread }) => updateCachedSidebarThread(thread))
+      .catch(showErrorToast);
+  });
+  const projectActions = useMemo<ProjectActions>(() => ({
+    threads: sidebarThreads,
+    workspaceName: (workspaceID) => state.projects.find((workspace) => workspace.id === workspaceID)?.name,
+    openThread: openProjectThread,
+    openProjectPanel,
+    openProposal: openProjectProposal,
+    takeOver: (session) => {
+      const control = session.session_control;
+      if (!control || !window.wuu.takeOverManagedSession) return;
+      void window.wuu.takeOverManagedSession({ thread_id: session.id, revision: control.revision }).catch(showErrorToast);
+    },
+    returnToProject: (session) => {
+      const control = session.session_control;
+      if (!control) return;
+      void window.wuu.returnManagedSession({ thread_id: session.id, revision: control.revision }).catch(showErrorToast);
+    },
+    release: releaseProjectSession,
+  }), [openProjectPanel, openProjectProposal, openProjectThread, releaseProjectSession, sidebarThreads, state.projects]);
 
   function focusHeroAfter(
     action: Promise<void | boolean>,
@@ -3531,7 +3617,7 @@ export function App(): JSX.Element {
     const origin = document.activeElement;
     const context = appStateRef.current.activeContext;
     focusHeroAfter(
-      startNewThread(),
+      startNewThread().then(() => setDraftProjectMode(false)),
       origin,
       (current) => sameRuntimeContext(current.activeContext, context),
     );
@@ -3653,9 +3739,12 @@ export function App(): JSX.Element {
   function startNewThreadInWorkspaceWithComposerFocus(id: string): void {
     const origin = document.activeElement;
     focusHeroAfter(
-      id === SCRATCH_PSEUDO_PROJECT_ID
+      (id === SCRATCH_PSEUDO_PROJECT_ID
         ? useNoProject(true)
-        : startNewThreadInWorkspace(id),
+        : startNewThreadInWorkspace(id)).then((started) => {
+        setDraftProjectMode(false);
+        return started;
+      }),
       origin,
       (current) =>
         id === SCRATCH_PSEUDO_PROJECT_ID
@@ -4280,8 +4369,14 @@ export function App(): JSX.Element {
     const activeContext = targetThread
       ? resolveThreadRuntimeContext(targetThread, currentState.projects)
       : currentState.activeContext;
-    const newThreadEngine =
-      (targetThread?.engine_id ?? "")
+    const sendingDraftTab = targetThread
+      ? undefined
+      : currentState.sessionTabs.find((tab) => tab.id === currentState.activeSessionTabID);
+    const projectDraft = sendingDraftTab?.kind === "draft" && sendingDraftTab.project === true &&
+      activeContext.kind === "project" ? sendingDraftTab : undefined;
+    const newThreadEngine = projectDraft
+      ? "wuu"
+      : (targetThread?.engine_id ?? "")
       || draftEngine
       || engineInventory?.settings?.default_engine
       || "wuu";
@@ -4338,7 +4433,17 @@ export function App(): JSX.Element {
       let thread =
         targetThread ??
         requireThread(
-          await Promise.race([window.wuu.startThread({
+          await Promise.race([window.wuu.startThread(projectDraft && activeContext.kind === "project" ? {
+            // A renamed draft names the project; otherwise its goal does.
+            project: { name: customDraftConversationTitle(projectDraft.title, t("projects.newProject")) || projectNameFromGoal(text) },
+            workspace_id: activeContext.project_id,
+            cwd: activeContext.cwd,
+            engine: "wuu",
+            provider: currentState.initialized?.provider,
+            model: currentState.initialized?.model,
+            effort: currentState.initialized?.variant || currentState.initialized?.effort,
+            speed: currentState.initialized?.speed,
+          } satisfies ThreadStartParams : {
             ...(draftEngine ? { engine: draftEngine } : {}),
             ...(newThreadEngine !== "wuu"
               ? {
@@ -4373,7 +4478,7 @@ export function App(): JSX.Element {
           }), cancelledCreation!]),
           "thread/start did not return a thread",
         );
-      if (!targetThread && !creationCancelled) {
+      if (!targetThread && !creationCancelled && !projectDraft) {
         const draftTab = currentState.sessionTabs.find(
           (tab) => tab.id === currentState.activeSessionTabID,
         );
@@ -4730,6 +4835,7 @@ export function App(): JSX.Element {
       {modelCatalogTipNode}
       {!archiveTip && !modelCatalogTip && failedDraftNotice}
       <ImagePreviewProvider>
+      <ProjectActionsProvider value={projectActions}>
       <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
       <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceArtifactTab}>
         <div
@@ -4886,7 +4992,8 @@ export function App(): JSX.Element {
             }}
             onRemoveWorkspace={(id) => void removeProject(id)}
             onRelocateWorkspace={(id) => void relocateProject(id)}
-            onCreateProject={(workspaceID, name) => void createProject(workspaceID, name)}
+            onCreateProject={startNewProject}
+            onAdoptIntoProject={(projectID, threadID) => void adoptIntoProject(projectID, threadID)}
             onReorderSections={setSidebarSectionOrder}
             onPointerEnter={openSidebarDrawer}
             onPointerLeave={(event) =>
@@ -5003,10 +5110,6 @@ export function App(): JSX.Element {
             state={state}
             compactNavigation={compactNavigation}
             onStartNewThread={startNewThreadWithComposerFocus}
-            onOpenSession={(id) => {
-              closePrimaryPluginView();
-              void activateThread(id);
-            }}
             environmentToggleRef={environmentToggleRef}
             environmentPanelVisible={environmentPanelVisible}
             onToggleEnvironmentPanel={toggleEnvironmentPanel}
@@ -5203,7 +5306,7 @@ export function App(): JSX.Element {
                 ) : emptyConversation ? (
               showingPrimaryPluginView ? null : (
               <EmptyConversationHome
-                title={emptyThreadTitle}
+                title={activeProjectDraft ? t("projects.newProject") : emptyThreadTitle}
                 // A draft lowers the greeting mascot’s gaze toward the composer.
                 activity={
                   prompt.trim().length > 0 || composerImages.length > 0 || composerFiles.length > 0
@@ -5211,7 +5314,14 @@ export function App(): JSX.Element {
                     : "idle"
                 }
               >
-                <EmptyHomeOverview />
+                {activeProjectDraft ? (
+                  <ProjectDraftIntro
+                    workspaceName={state.activeContext?.kind === "project"
+                      ? state.projects.find((workspace) => workspace.id === state.activeProjectId)?.name
+                      : undefined}
+                    onSwitchToConversation={() => setDraftProjectMode(false)}
+                  />
+                ) : <EmptyHomeOverview />}
               </EmptyConversationHome>
               )
             ) : (
@@ -5455,6 +5565,7 @@ export function App(): JSX.Element {
       </div>
     </ArtifactPreviewContext.Provider>
     </WorkspaceBrowserOpenContext.Provider>
+    </ProjectActionsProvider>
     </ImagePreviewProvider>
     </WuuMascotRuntimeProvider>
   );

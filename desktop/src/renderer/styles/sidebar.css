@@ -2057,7 +2057,7 @@ html[data-focus-modality="keyboard"] :is(
   overscroll-behavior-y: contain;
 }
 
-.project-thread-scroll > :is(.sidebar-session-row, .project-session-list) {
+.project-thread-scroll > .sidebar-session-row {
   flex-shrink: 0;
 }
 
@@ -2379,16 +2379,15 @@ html[data-focus-modality="keyboard"] :is(
   padding-left: var(--sidebar-session-indent);
 }
 
-/* A project row puts its glyph where the list's session titles start and
- * indents its own title one step. Its managed sessions sit one step under
- * that title, so depth reads the same in workspaces, folders, and Pinned. */
+/* A project row carries its glyph in the icon column and starts its title
+ * after it, like a folder row, wherever the project is listed. */
 .sidebar-session-row.project-thread-row > .thread-row-main {
   padding-left: calc(
     var(--sidebar-session-indent, 0px) + var(--sidebar-nav-icon-col) + var(--sidebar-nav-column-gap)
   );
 }
 
-.project-thread-toggle {
+.project-thread-glyph {
   position: absolute;
   top: 50%;
   left: calc(var(--sidebar-row-pad-x) + var(--sidebar-session-indent, 0px));
@@ -2397,59 +2396,57 @@ html[data-focus-modality="keyboard"] :is(
   width: var(--sidebar-nav-icon-col);
   height: var(--sidebar-nav-icon-col);
   place-items: center;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
   color: var(--ink-soft);
-  padding: 0;
+  pointer-events: none;
   transform: translateY(-50%);
 }
 
-.project-thread-toggle > svg {
-  grid-area: 1 / 1;
+.project-thread-glyph > svg {
   width: var(--sidebar-primary-icon-size);
   height: var(--sidebar-primary-icon-size);
-  transition:
-    opacity var(--motion-fast) var(--ease-out),
-    transform var(--motion-fast) var(--ease-out);
 }
 
-/* The glyph turns into the fold chevron while the row is hovered or focused. */
-button.project-thread-toggle {
-  cursor: pointer;
-}
-
-button.project-thread-toggle:hover {
+/* A project's pending reviews count sits beside the right-edge status slot
+ * and gives way to the hover actions, like the fork marker. */
+.project-thread-pending {
+  position: absolute;
+  top: 50%;
+  right: calc(var(--sidebar-row-pad-x) + var(--sidebar-fork-slot-inset));
+  z-index: 1;
+  min-width: var(--sidebar-row-action-size);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
   color: var(--ink);
+  font-size: var(--font-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  padding-inline: 4px;
+  text-align: center;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: opacity var(--motion-fast) var(--ease-out);
 }
 
-.project-thread-chevron {
+.thread-row:is(.running, .has-unread) .project-thread-pending {
+  right: calc(var(--sidebar-row-pad-x) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
+}
+
+.thread-row:is(:hover, :focus-within) .project-thread-pending {
   opacity: 0;
 }
 
-.project-thread-row[data-project-expanded="true"] .project-thread-chevron {
-  transform: rotate(90deg);
+.thread-row:has(.project-thread-pending) .thread-row-main > .thread-row-title {
+  padding-right: calc(var(--sidebar-row-action-size) + var(--sidebar-accessory-gap));
 }
 
-.project-thread-row:is(:hover, :focus-within) button.project-thread-toggle > .project-thread-icon {
-  opacity: 0;
+.thread-row:is(.running, .has-unread):has(.project-thread-pending) .thread-row-main > .thread-row-title {
+  padding-right: calc(var(--sidebar-row-action-size) * 2 + var(--sidebar-action-gap) + var(--sidebar-accessory-gap));
 }
 
-.project-thread-row:is(:hover, :focus-within) button.project-thread-toggle > .project-thread-chevron {
-  opacity: 1;
-}
-
-html[data-focus-modality="keyboard"] .project-thread-toggle:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 2px var(--sidebar-nav-item-focus-shadow);
-}
-
-.project-session-list {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--sidebar-row-gap);
-  margin-left: calc(var(--sidebar-nav-icon-col) + var(--sidebar-nav-column-gap));
+/* Dropping a conversation on a project row adds it to the project. */
+.thread-row.project-thread-row.drop-active {
+  background: color-mix(in srgb, var(--sidebar-accent) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sidebar-accent) 42%, transparent);
 }
 
 .thread-row-main > .thread-row-title {

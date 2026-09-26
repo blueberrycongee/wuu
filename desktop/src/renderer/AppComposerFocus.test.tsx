@@ -530,6 +530,35 @@ describe("main composer focus continuity", () => {
     await waitForMainComposerFocus("dock");
   });
 
+  // A project starts from the Projects group in one step: the draft takes the
+  // goal, and the first send starts the coordinator named after that goal.
+  it("starts a project coordinator from the Projects group on the first send", async () => {
+    await renderApp(false);
+    const button = container.querySelector<HTMLButtonElement>(
+      '.sidebar-functional-group[data-functional-group-id="projects"] button[aria-label="新建项目"]',
+    );
+    if (!button) throw new Error("new project button not rendered");
+    button.focus();
+
+    await act(async () => button.click());
+    await flushAsync();
+    await waitForMainComposerFocus("dock");
+    await enterCommand(mainComposer("dock"), "Page catalog search results\nKeep the public API unchanged.");
+
+    const workspace: RuntimeContext = { kind: "project", project_id: project.id, cwd: workspaceCwd };
+    expect(window.wuu.startThread).toHaveBeenCalledWith({
+      project: { name: "Page catalog search results" },
+      workspace_id: project.id,
+      cwd: workspaceCwd,
+      engine: "wuu",
+      provider: "fake",
+      model: "fake-model",
+      effort: "high",
+      speed: undefined,
+    }, workspace);
+    expect(window.wuu.startTurn).toHaveBeenCalled();
+  });
+
   it("waits for the destination dock before focusing across projects", async () => {
     await renderApp(false, { deferWorkspaceSelection: true });
     const button = container.querySelector<HTMLButtonElement>(

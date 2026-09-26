@@ -9,42 +9,48 @@ fs.mkdirSync(output, { recursive: true });
 app.setPath("userData", fs.mkdtempSync(path.join(output, "profile-")));
 const errors = [];
 
+// name, query, window width, and an element to hover
+const scenes = [
+  ["coordinator-light-14", "view=coordinator&panel=project", 1440],
+  ["coordinator-dark-14", "view=coordinator&panel=project&theme=dark", 1440],
+  ["coordinator-light-20", "view=coordinator&panel=project&size=20", 1440],
+  ["coordinator-dark-20", "view=coordinator&panel=project&theme=dark&size=20", 1440],
+  ["coordinator-narrow", "view=coordinator&panel=project", 1085],
+  ["session-proposal-light-14", "view=session&panel=proposal", 1440],
+  ["session-proposal-dark-20", "view=session&panel=proposal&theme=dark&size=20", 1440],
+  ["draft-light-14", "view=draft&panel=none", 1280],
+  ["empty-light-14", "empty&panel=none", 1280],
+  ["coordinator-hover-session", "view=coordinator&panel=project", 1440, ".project-panel-list .project-panel-row-main"],
+];
+
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({ show: false, width: 1280, height: 900,
+  const win = new BrowserWindow({ show: false, width: 1440, height: 900,
     webPreferences: { contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
   win.webContents.on("console-message", event => { if (event.level === "error") errors.push(event.message); });
-  async function open(query) {
+  for (const [name, query, width, hover] of scenes) {
+    win.setContentSize(width, 900);
     await win.loadURL(`${base}/dev/projects/?${query}`);
     await win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
       const deadline = Date.now() + 10000;
       function ready() {
-        if (document.querySelector('.project-thread-row') && document.querySelector('.project-candidate-card')) {
-          return requestAnimationFrame(() => requestAnimationFrame(resolve));
+        if (document.querySelector('.project-thread-row, .project-new-item')) {
+          return setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(resolve)), 600);
         }
         if (Date.now() > deadline) return reject(new Error('Projects preview did not mount'));
         requestAnimationFrame(ready);
       } ready();
     })`);
-  }
-  async function capture(name) {
-    await new Promise(resolve => setTimeout(resolve, 400));
+    if (hover) {
+      const point = await win.webContents.executeJavaScript(`(() => {
+        const rects = [...document.querySelectorAll(${JSON.stringify(hover)})].map(node => node.getBoundingClientRect());
+        const rect = rects[0];
+        return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+      })()`);
+      win.webContents.sendInputEvent({ type: "mouseMove", x: point.x, y: point.y });
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
     fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage()).toPNG());
   }
-  for (const theme of ["light", "dark"]) for (const size of [14, 20]) {
-    win.setContentSize(size === 20 ? 1100 : 1280, 900);
-    await open(`theme=${theme}&size=${size}&width=${size === 20 ? 280 : 296}`);
-    // Open the session list and the pending card's diff so both appear in the capture.
-    await win.webContents.executeJavaScript(`(() => {
-      document.querySelector('.project-sessions-button')?.click();
-      document.querySelector('.project-candidate-card .project-candidate-link[aria-expanded]')?.click();
-    })()`);
-    await capture(`${theme}-${size}`);
-  }
-  // Expanded history overflows the bounded list with the project's sessions inside it.
-  win.setContentSize(1280, 900);
-  await open("history=12");
-  await win.webContents.executeJavaScript("document.querySelector('.thread-list-more')?.click()");
-  await capture("history-expanded");
   if (errors.length) console.error(errors.join("\n"));
   console.log(`Wrote ${output}`);
   app.quit();

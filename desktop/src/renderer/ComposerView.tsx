@@ -130,6 +130,8 @@ export function Composer({
   canSelectWorkspace = variant === "hero",
   mainConversation = false,
   topAccessory,
+  statusAccessory,
+  permissionLocked = false,
   containerRef,
   prompt: committedPrompt,
   promptRevision = 0,
@@ -229,6 +231,10 @@ export function Composer({
   canSelectWorkspace?: boolean;
   mainConversation?: boolean;
   topAccessory?: ReactNode;
+  // A status row above the composer, such as a project's running work.
+  statusAccessory?: ReactNode;
+  // The conversation's permission mode cannot change, as for a project coordinator.
+  permissionLocked?: boolean;
   containerRef?: Ref<HTMLElement>;
   prompt: string;
   // Changes only for programmatic clear/restore operations. This lets the
@@ -1135,6 +1141,7 @@ export function Composer({
           onEditGuideMessage={onEditGuideMessage}
           onEditQueuedMessage={onEditQueuedMessage}
         />
+        {statusAccessory ? <div className="composer-status-accessory">{statusAccessory}</div> : null}
         <div className="composer-frame-shell">
           <ComposerFeedback text={statusText} liveProgress={statusIsLiveProgress} />
           {canSelectWorkspace ? (
@@ -1323,7 +1330,7 @@ export function Composer({
                       aria-haspopup="menu"
                       aria-expanded={accessMenuOpen}
                       aria-label={t("composer.permissionMode", { mode: permissionChipLabel })}
-                      disabled={!initialized || readOnly || running}
+                      disabled={!initialized || readOnly || running || permissionLocked}
                       onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
                       onClick={onToggleAccessMenu}
                     >

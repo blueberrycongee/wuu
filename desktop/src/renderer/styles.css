@@ -13,6 +13,7 @@
 @import "./styles/environment.css";
 @import "./styles/workspace.css";
 @import "./styles/turns.css";
+@import "./styles/projects.css";
 @import "./styles/message-reading.css";
 @import "./styles/composer.css";
 @import "./styles/composer-attachments.css";

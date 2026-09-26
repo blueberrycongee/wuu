@@ -97,6 +97,9 @@ type SessionTab =
       images: ComposerImage[];
       files: ComposerFile[];
       createdAt: number;
+      // The draft starts a project: its first message names the project and
+      // becomes the coordinator's first instruction.
+      project?: true;
     }
   | {
       id: string;
@@ -1555,6 +1558,7 @@ function summarizeThreadForSidebar(
     title: thread.title,
     source: thread.source,
     project_id: thread.project_id,
+    pending_candidates: thread.pending_candidates,
     model_provider: thread.model_provider,
     model: thread.model,
     cwd: thread.cwd,

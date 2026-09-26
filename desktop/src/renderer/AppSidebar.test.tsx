@@ -78,6 +78,8 @@ interface RenderOptions {
   sectionOrder?: string[];
   state?: AppState;
   collapsedSidebarSectionIDs?: Set<string>;
+  onCreateProject?: (workspaceID?: string) => void;
+  onAdoptIntoProject?: (projectID: string, threadID: string) => void;
 }
 
 // The bell view is driven by App-owned state (it has to survive faces that
@@ -103,6 +105,8 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
       },
     },
     collapsedSidebarSectionIDs = new Set(),
+    onCreateProject,
+    onAdoptIntoProject,
   } = options;
   return (
     <AppSidebar
@@ -149,6 +153,8 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
       onSelectWorkspaceThread={onSelectWorkspaceThread}
       onRemoveWorkspace={() => {}}
       onRelocateWorkspace={() => {}}
+      onCreateProject={onCreateProject}
+      onAdoptIntoProject={onAdoptIntoProject}
       onOpenSettings={() => {}}
     />
   );
@@ -163,8 +169,9 @@ function renderSidebar(options: RenderOptions = {}): void {
 
 describe("AppSidebar layout", () => {
   it.each([
-    { saved: ["workspace", "pinned"], expected: ["folders", "workspace", "pinned"] },
-    { saved: ["folders", "collaboration", "workspace", "pinned"], expected: ["folders", "workspace", "pinned"] },
+    { saved: ["workspace", "pinned"], expected: ["projects", "folders", "workspace", "pinned"] },
+    // Projects take the place a saved order gave Collaboration.
+    { saved: ["folders", "collaboration", "workspace", "pinned"], expected: ["folders", "projects", "workspace", "pinned"] },
   ])("restores group order without resetting existing preferences: $saved", ({ saved, expected }) => {
     window.localStorage.setItem("wuu.desktop.sidebarFunctionalGroupOrder", JSON.stringify(saved));
     const order = () => [...container.querySelectorAll<HTMLElement>(".sidebar-main > .sidebar-functional-group")]
@@ -320,6 +327,96 @@ describe("AppSidebar layout", () => {
     expect(rows).toHaveLength(1);
     act(() => rows[0].click());
     expect(select).toHaveBeenCalledWith("project-1", fork.id);
+  });
+
+  // The failure cases these guard: a project or its sessions also crowd the
+  // workspace list, a session of an archived project disappears, the project
+  // row hides pending reviews, and the Projects entries do nothing.
+  function sidebarThread(id: string, title: string, overrides: Partial<ThreadSummary> = {}): ThreadSummary {
+    return {
+      id, title, cwd: "/repo/wuu", workspace_id: "project-1", status: "idle", pinned: false, archived: false,
+      created_at: "2026-09-17T00:00:00Z", updated_at: "2026-09-17T00:00:00Z",
+      preview: "", model_provider: "test", model: "test", turns: [], turn_count: 0, ...overrides,
+    };
+  }
+
+  function projectsGroup(): HTMLElement {
+    const group = container.querySelector<HTMLElement>('.sidebar-functional-group[data-functional-group-id="projects"]');
+    if (!group) throw new Error("Projects group not rendered");
+    return group;
+  }
+
+  it("lists projects apart from their workspace with their pending reviews", () => {
+    renderSidebar({
+      expandedSidebarSectionIDs: new Set(["project-1"]),
+      workspaceThreadsByWorkspaceID: {
+        "project-1": [
+          sidebarThread("coordinator", "Search overhaul", { source: "project", pending_candidates: 2 }),
+          sidebarThread("session", "Paginate results", { source: "project-session", project_id: "coordinator", status: "in_progress" }),
+          sidebarThread("orphan", "Orphaned session", { source: "project-session", project_id: "archived-project" }),
+          sidebarThread("chat", "Ordinary conversation"),
+        ],
+      },
+    });
+
+    const projectRow = projectsGroup().querySelector<HTMLElement>(".project-thread-row");
+    expect(projectRow?.textContent).toContain("Search overhaul");
+    expect(projectRow?.querySelector(".project-thread-pending")?.textContent).toBe("2");
+    expect(projectRow?.classList.contains("running")).toBe(true);
+    const workspace = container.querySelector<HTMLElement>('section[data-section-id="project-1"]');
+    const workspaceTitles = [...workspace!.querySelectorAll(".thread-row-title")].map((title) => title.textContent);
+    expect(workspaceTitles.sort()).toEqual(["Ordinary conversation", "Orphaned session"]);
+  });
+
+  it("opens a project draft and adopts a conversation dropped on a project", () => {
+    const create = vi.fn();
+    const adopt = vi.fn();
+    renderSidebar({
+      expandedSidebarSectionIDs: new Set(["project-1"]),
+      workspaceThreadsByWorkspaceID: {
+        "project-1": [
+          sidebarThread("coordinator", "Search overhaul", { source: "project" }),
+          sidebarThread("chat", "Ordinary conversation"),
+        ],
+      },
+      onCreateProject: create,
+      onAdoptIntoProject: adopt,
+    });
+
+    act(() => projectsGroup().querySelector<HTMLButtonElement>('button[aria-label="新建项目"]')!.click());
+    expect(create).toHaveBeenCalledTimes(1);
+
+    const conversation = [...container.querySelectorAll<HTMLElement>(".thread-row")]
+      .find((row) => row.textContent?.includes("Ordinary conversation"))!;
+    const projectRow = projectsGroup().querySelector<HTMLElement>(".project-thread-row")!;
+    const data = new Map<string, string>();
+    const transfer = {
+      get types() { return [...data.keys()]; },
+      setData: (type: string, value: string) => { data.set(type, value); },
+      getData: (type: string) => data.get(type) ?? "",
+      setDragImage: () => {},
+      effectAllowed: "",
+      dropEffect: "",
+    };
+    const drag = (target: HTMLElement, type: string) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "dataTransfer", { value: transfer });
+      act(() => { target.dispatchEvent(event); });
+    };
+    drag(conversation, "dragstart");
+    drag(projectRow, "dragover");
+    expect(projectRow.classList.contains("drop-active")).toBe(true);
+    drag(projectRow, "drop");
+    expect(adopt).toHaveBeenCalledWith("coordinator", "chat");
+  });
+
+  it("offers a first project when there is none", () => {
+    const create = vi.fn();
+    renderSidebar({ onCreateProject: create });
+    const first = projectsGroup().querySelector<HTMLButtonElement>(".project-new-item");
+    expect(first?.textContent).toBe("新建项目");
+    act(() => first!.click());
+    expect(create).toHaveBeenCalledTimes(1);
   });
 
   it("renders only scratch and projects in the workspace order", () => {

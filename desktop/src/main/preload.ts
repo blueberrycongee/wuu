@@ -267,7 +267,9 @@ const api: WuuDesktopApi = {
   listSkills: () => ipcRenderer.invoke("wuu:skill-list"),
   readSkillContent: (params) => ipcRenderer.invoke("wuu:skill-content", params),
   returnManagedSession: (params) => ipcRenderer.invoke("wuu:session-control-return", params),
+  takeOverManagedSession: (params) => ipcRenderer.invoke("wuu:session-control-take", params),
   projectCandidate: (params) => ipcRenderer.invoke("wuu:project-candidate", params),
+  projectSession: (params) => ipcRenderer.invoke("wuu:project-session", params),
   getSettingsUsage: () => ipcRenderer.invoke("wuu:settings-usage"),
   getUsageOverview: (params: UsageOverviewParams) =>
     ipcRenderer.invoke("wuu:usage-overview", params),
