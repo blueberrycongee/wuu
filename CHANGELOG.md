@@ -110,8 +110,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- History search finds literal quotes, paths, line breaks, and HTML characters
-  in deduplicated tool results, including model text and multi-part output.
+- Workspace file reads, saves, and directory expansion preserve leading and
+  trailing whitespace and literal POSIX backslashes in filenames, preventing
+  a selected file from being confused with another file in the workspace.
 
 - Overdue automations keep their scheduled occurrence until the session service
   is ready. Interrupted dispatches reuse their run record after restart, and
@@ -143,6 +144,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Terminal run details preserve output, exit status, and log links when a
   command's model-facing output is JSON, rather than treating that output as
   execution metadata.
+
+- History search finds literal quotes, paths, line breaks, and HTML characters
+  in deduplicated tool results, including model text and multi-part output.
 
 - Ready Agent Core entries show an external agent's detected executable path in
   its override field without repeating it in the status or help text.

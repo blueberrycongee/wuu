@@ -16,6 +16,7 @@ import { WORKSPACE_FILE_DRAG_MIME } from "./ComposerMessages";
 import { RichContent } from "./RichContent";
 import type { WorkspaceMonacoViewState } from "./WorkspaceMonacoEditor";
 import { desktopApiErrorMessage } from "./WorkspaceReviewHelpers";
+import { workspacePathToSlash } from "./WorkspacePaths";
 import { translateCurrent, useI18n } from "./i18n";
 import { desktopPlatform } from "./platform";
 import { FilePreviewPresentation } from "./plugins/FilePreviewPresentation";
@@ -535,8 +536,8 @@ function normalizeSelectedWorkspaceFilePath(path: string | undefined, workspaceR
   if (!path || !workspaceRoot) {
     return undefined;
   }
-  const normalizedPath = normalizePathSeparators(path).replace(/\/+$/, "");
-  const normalizedRoot = normalizePathSeparators(workspaceRoot).replace(/\/+$/, "");
+  const normalizedPath = workspacePathToSlash(path, workspaceRoot).replace(/\/+$/, "");
+  const normalizedRoot = workspacePathToSlash(workspaceRoot, workspaceRoot).replace(/\/+$/, "");
   const relativePath = normalizedPath.startsWith(`${normalizedRoot}/`)
     ? normalizedPath.slice(normalizedRoot.length + 1)
     : normalizedPath.startsWith("/")
@@ -549,8 +550,7 @@ function normalizeSelectedWorkspaceFilePath(path: string | undefined, workspaceR
 }
 
 function normalizeWorkspaceRelativeFilePath(path: string): string | undefined {
-  const value = normalizePathSeparators(path)
-    .trim()
+  const value = path
     .replace(/^\.\/+/, "")
     .replace(/^\/+/, "")
     .replace(/\/+$/, "");
@@ -558,10 +558,6 @@ function normalizeWorkspaceRelativeFilePath(path: string): string | undefined {
     return undefined;
   }
   return value;
-}
-
-function normalizePathSeparators(path: string): string {
-  return path.trim().replace(/\\/g, "/");
 }
 
 function parentDirectoryPathsForFile(path: string): string[] {
