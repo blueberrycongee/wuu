@@ -4,8 +4,9 @@
 //   PROMO_STILLS="1.2,5.5"  write only these moments as PNG stills
 //   PROMO_SHEETS="1,2,3"    write 3×3 contact sheets of these moments for review
 //   PROMO_FPS=60            frame rate for the full render
-//   PROMO_RANGE="31,59"     render only part of the film (seconds)
+//   PROMO_RANGE="31,59"     render only part of the film (seconds), without sound
 const { app, BrowserWindow } = require("electron");
+const { existsSync } = require("node:fs");
 const { mkdir, rm, writeFile } = require("node:fs/promises");
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
@@ -102,7 +103,11 @@ app.whenReady().then(async () => {
       if (i % 240 === 0) console.log(`frame ${i}/${count} (${((Date.now() - began) / 1000).toFixed(0)}s)`);
     }
     const video = path.join(output, `wuu-promo${process.env.PROMO_RANGE ? "-part" : ""}.mp4`);
-    const encoded = spawnSync("swift", [path.join(__dirname, "encode.swift"), dir, video, String(fps)], { stdio: "inherit" });
+    // The full film carries the score from score/score.py when it has been built.
+    const score = path.join(output, "score.wav");
+    const audio = !process.env.PROMO_RANGE && existsSync(score) ? [score] : [];
+    if (!process.env.PROMO_RANGE && !audio.length) console.warn("No score.wav yet; encoding without sound (see README).");
+    const encoded = spawnSync("swift", [path.join(__dirname, "encode.swift"), dir, video, String(fps), ...audio], { stdio: "inherit" });
     if (encoded.status !== 0) throw new Error("Encoding failed");
     console.log(video);
   } finally {

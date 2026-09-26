@@ -1,13 +1,14 @@
 # Wuu promo
 
 A 64-second film starring the app-icon mascot, told as a paper collage and a
-comic page. Every frame is drawn on a 1920 × 1080 canvas as a pure function of
-time, so the preview and the exported video match frame for frame.
+comic page, with a soundtrack made only from real recordings. Every frame is
+drawn on a 1920 × 1080 canvas as a pure function of time, so the preview and
+the exported video match frame for frame.
 
 | Beats (s) | Shot | File |
 | --- | --- | --- |
 | 0–6 (0–3.2) | In the dark a lamp clicks on; Wuu wakes and says hi | `desk.ts` |
-| 6–24 (3.2–12.8) | The lights come up on a desk pasted with harness clippings. Each calls and the cursor answers, faster and faster | `desk.ts` |
+| 6–24 (3.2–12.8) | The lights come up on a desk pasted with harness clippings. Each calls in its own voice and the cursor answers, faster and faster | `desk.ts` |
 | 24–32 (12.8–17.1) | The page splits into 2, 4, 8 and 16 panels until nothing keeps up | `desk.ts` |
 | 32–36 (17.1–19.2) | One silent panel: a marble drops. Wuu thinks of scissors | `desk.ts` |
 | 36–60 (19.2–32) | Wuu rides the scissors around every clipping and pastes them into one app, then switches sessions and adds one on another engine | `desk.ts` |
@@ -24,16 +25,49 @@ and palette, the desktop avatar hue wheel and the engine logos, now as paper
 cut-outs. `cast.ts` holds the shared cast, camera and props, and `motion.ts`
 the easing and expression helpers. No remote assets are loaded.
 
-## One clock
+## One clock for picture and sound
 
-`cues.json` is the sync contract for a score. It sets the tempo (112.5 BPM, so
-a beat is exactly 32 frames at 60 fps) and lists every sounding event on the
-beat grid with its kind: `cut`, `click` or `hit`. The shots read their times
-from it through `timeline.ts`, so every cue falls on a frame boundary.
+`cues.json` is the sync contract. It sets the tempo (112.5 BPM, so a beat is
+exactly 32 frames at 60 fps) and lists every sounding event on the beat grid
+with its kind: `cut`, `click` or `hit`. The shots read their times from it
+through `timeline.ts`, and the score places a recording on each one, so a
+moved cue moves both. Every cue falls on a frame boundary.
+
+## Score
+
+`score/score.py` builds `desktop/out-dev/promo/score.wav` from the recordings
+in `score/sources.json`: CC0 Freesound recordings of small objects (light
+switches, a mouse, pens, keys, marbles, glass, scissors, paper, tape, stamps,
+books), pinned by checksum, and marimba, piano and plucked double bass from
+the CC0 VSCO 2 Community Edition and Versilian Community Sample Library,
+pinned by commit. Nothing is synthesised: notes are recorded notes pitched by
+resampling, and the master is gain and a peak limiter.
+
+Each harness has its own object voice for its calls, its work and its sign-off.
+Every cut and click gets a distinct recorded gesture whose perceived attack
+lands on the cue's frame, and the music makes room for it. The build then
+reads its own output back and fails when a check does not hold:
+
+- each cue's attack in the rendered stem against its time (within 1 ms for a
+  recording, 5 ms for a note read back from the music);
+- every cut and click uses its own slice, starts out of quiet, peaks above
+  −24 dBFS and stands at least 6 dB over the music above 1 kHz;
+- integrated loudness −16 LUFS ± 0.5 and true peak at most −1.5 dBTP;
+- silence in the hush, and the hush marble bouncing where the film draws it.
+
+Run it with [uv](https://docs.astral.sh/uv/) from the repository root; the
+first run downloads about 180 MB of recordings into `desktop/out-dev/promo/sounds`:
+
+```sh
+uv run desktop/dev/promo/score/score.py
+```
+
+It prints a summary and writes a per-cue report to `score-report.json`,
+together with the cue and music stems.
 
 ## Preview and render
 
-Preview from `desktop`:
+Preview from `desktop` (silent):
 
 ```sh
 ./node_modules/.bin/vite dev/promo --host 127.0.0.1 --port 5179
@@ -42,14 +76,22 @@ Preview from `desktop`:
 Space plays or pauses, the arrow keys step one frame (Shift: one second), and
 `?t=42.5` opens at a moment.
 
-Render from the repository root. Encoding uses AVFoundation through `swift`, so
-the export runs on macOS without ffmpeg:
+Render from the repository root after building the score. Encoding uses
+AVFoundation through `swift`, so the export runs on macOS without ffmpeg:
 
 ```sh
 desktop/node_modules/.bin/electron desktop/dev/promo/capture.cjs
 ```
 
 The video is written to `desktop/out-dev/promo/wuu-promo.mp4` (H.264, 60 fps,
-no audio). `PROMO_RANGE="32,58"` renders part of the film, `PROMO_STILLS` writes
-single frames, and `PROMO_SHEETS` writes 3 × 3 contact sheets for review; see
-the header of `capture.cjs`.
+AAC). `PROMO_RANGE="32,58"` renders part of the film without sound,
+`PROMO_STILLS` writes single frames, and `PROMO_SHEETS` writes 3 × 3 contact
+sheets for review; see the header of `capture.cjs`.
+
+With ffmpeg installed, `score.py --verify` checks the exported file itself:
+the audio offset against the score, and a hard cut in the frames at every
+`cut` cue.
+
+```sh
+uv run desktop/dev/promo/score/score.py --verify desktop/out-dev/promo/wuu-promo.mp4
+```
