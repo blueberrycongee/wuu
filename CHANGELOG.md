@@ -110,6 +110,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Git status and staging snapshots preserve literal filenames, including spaces,
+  Unicode, quotes, backslashes, and newlines. Returned rename paths identify the
+  destination, and staging or unstaging a backslash path no longer selects other
+  files through Git pathspec escaping. Sensitive-path protections remain in place.
+
 - Workspace file reads, saves, and directory expansion preserve leading and
   trailing whitespace and literal POSIX backslashes in filenames, preventing
   a selected file from being confused with another file in the workspace.
