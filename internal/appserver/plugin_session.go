@@ -66,6 +66,10 @@ func (s *Server) createPluginSession(ctx context.Context, pluginID string, param
 	params.WorkspaceID = strings.TrimSpace(params.WorkspaceID)
 	params.WorkspaceRoot = strings.TrimSpace(params.WorkspaceRoot)
 	params.ModelAlias = strings.TrimSpace(params.ModelAlias)
+	params.Speed = strings.TrimSpace(params.Speed)
+	if err := validateSpeed(params.Speed); err != nil {
+		return pluginhost.SessionCreateResult{}, err
+	}
 	params.Instructions = strings.TrimSpace(params.Instructions)
 	if pluginID == "" {
 		return pluginhost.SessionCreateResult{}, errors.New("plugin owner is required")
@@ -854,6 +858,10 @@ func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, par
 		selection.Model = resolved.Runtime.Model
 		selection.Variant = resolved.Runtime.Variant
 		selection.Effort = resolved.Runtime.Effort
+		selection.Speed = params.Speed
+	}
+	if params.Speed != "" {
+		selection.Speed = params.Speed
 	}
 	workspaceID := strings.TrimSpace(s.rt.WorkspaceID)
 	if params.WorkspaceID != "" || params.WorkspaceRoot != "" {
@@ -912,7 +920,7 @@ func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, par
 		ForkedFromID: fork.ForkedFromID,
 		WorktreePath: worktree.Path, WorktreeBaseHEAD: worktree.BaseHEAD, WorktreeBaseRepo: worktree.BaseRepo,
 		Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant,
-		Effort: selection.Effort, PermissionMode: selection.PermissionMode, ApproveForMe: selection.ApproveForMe,
+		Effort: selection.Effort, Speed: selection.Speed, PermissionMode: selection.PermissionMode, ApproveForMe: selection.ApproveForMe,
 		Instructions: params.Instructions, ToolPolicyJSON: toolPolicyJSON,
 	}
 	var records []session.HistoryRecord
@@ -937,7 +945,7 @@ func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, par
 			RequestID: params.RequestID, Revision: 1, Kind: session.SessionLaunchKindHandoff,
 			SourceSession: seed.Source.SessionID, SourceCutoff: seed.Source.ThroughSeq,
 			Owner: owner, Producer: seed.Provenance.Producer,
-			Runtime: session.SessionRuntimeSelection{Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant, Effort: selection.Effort, PermissionMode: selection.PermissionMode},
+			Runtime: session.SessionRuntimeSelection{Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant, Effort: selection.Effort, Speed: selection.Speed, PermissionMode: selection.PermissionMode},
 		}
 		if params.Launch != nil {
 			if params.Launch.Revision > 0 {
