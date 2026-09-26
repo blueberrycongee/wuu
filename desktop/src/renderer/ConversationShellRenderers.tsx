@@ -510,20 +510,14 @@ export function ConversationTitleActions({
   const thread = state.activePane === "secondary" ? state.secondaryThread : state.thread;
   const control = thread?.session_control;
   const controlLabel = control ? t(`sessionControl.${control.state === "taken_over" ? "takenOver" : control.state}`) : "";
-  // A project's session links back to it and changes hands explicitly;
-  // an extension's session only names its manager.
+  // Project membership is independent of user intervention; only extensions
+  // expose ownership state here.
   const projectSession = thread && control && projectActions && thread.project_id === control.manager_id;
   const management = projectSession ? <>
     <button type="button" className="session-control-project" title={t("projects.openCoordinator")}
       onClick={() => projectActions.openThread(control.manager_id)}>
       <Project aria-hidden="true" />
       <span>{control.manager_name}</span>
-    </button>
-    <span className="session-control-label">{controlLabel}</span>
-    <button type="button" className="settings-button settings-button-ghost"
-      title={control.state === "active" ? t("projects.takeOverHint") : undefined}
-      onClick={() => control.state === "active" ? projectActions.takeOver(thread) : projectActions.returnToProject(thread)}>
-      {t(control.state === "active" ? "projects.takeOver" : "projects.returnToProject")}
     </button>
   </> : control ? <span className="session-control-label" title={control.state === "active" ? t("sessionControl.takeoverHint") : `${control.manager_name} · ${controlLabel}`}>
     {control.manager_name} · {controlLabel}

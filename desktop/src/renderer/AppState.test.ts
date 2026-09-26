@@ -1,6 +1,7 @@
 import { createOptimisticTurn, replaceOptimisticTurn } from "./ComposerMessages";
 import { localTurnTiming, forgetLocalTurnTiming } from "./LocalTurnTiming";
 import { upsertTurn } from "./AppState";
+import { projectDirectory } from "./ProjectSessions";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Agent,
@@ -1878,6 +1879,31 @@ describe("AppState stream cache lifecycle", () => {
     } finally {
       raf.restore();
     }
+  });
+
+  it("clears project execution when its last member is interrupted without removing membership", () => {
+    const coordinator = { ...threadWithUserTexts([]), id: "project", source: "project" };
+    const member: Thread = {
+      ...threadWithUserTexts([]), source: "project-session", project_id: coordinator.id,
+      status: "in_progress", turns: [{ id: "member-turn", status: "in_progress", items: [], items_view: "full" }],
+      session_control: { manager_id: coordinator.id, manager_name: "Project", state: "active", revision: 1 },
+    };
+    const threads = [coordinator, member];
+    expect(projectDirectory(summarizeThreadsForSidebar(threads), {}).summaries.get(coordinator.id)?.running).toBe(true);
+    const next = reduceServerEvent({
+      ...initialState, activeContext: { kind: "no_project", cwd: "/repo" }, thread: member, threads,
+    }, {
+      kind: "notification", workdir: "/repo", message: {
+        method: "turn/completed", params: {
+          thread_id: member.id, turn: { id: "member-turn", status: "interrupted", items: [], items_view: "full" },
+        },
+      },
+    });
+    const directory = projectDirectory(summarizeThreadsForSidebar(next.threads), {});
+    expect(directory.summaries.get(coordinator.id)?.running).toBe(false);
+    expect(directory.managedSessionIDs.has(member.id)).toBe(true);
+    expect(next.thread?.session_control).toEqual(member.session_control);
+    expect(next.thread?.turns.at(-1)?.status).toBe("interrupted");
   });
 
   it("releases buffered streams when a completed turn carries final item snapshots", () => {

@@ -17,6 +17,7 @@ import {
   LogOut,
   MessagesSquare,
   Project,
+  Square,
   X,
 } from "./WuuIcons";
 import { useI18n } from "./i18n";
@@ -53,6 +54,8 @@ export function ProjectStatusStrip({ project }: { project: Thread }): JSX.Elemen
 
 const PROJECT_EVENTS: Record<string, { label: TranslationKey; Icon: typeof Project }> = {
   project_message: { label: "projects.event.message", Icon: MessagesSquare },
+  project_user_message: { label: "projects.event.userMessage", Icon: MessagesSquare },
+  project_stopped: { label: "projects.event.stopped", Icon: Square },
   project_result: { label: "projects.event.result", Icon: MessagesSquare },
   project_takeover: { label: "projects.event.takeover", Icon: Hand },
   project_pause: { label: "projects.event.pause", Icon: Hand },

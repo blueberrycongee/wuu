@@ -3598,16 +3598,6 @@ export function App(): JSX.Element {
     openThread: openProjectThread,
     openProjectPanel,
     openProposal: openProjectProposal,
-    takeOver: (session) => {
-      const control = session.session_control;
-      if (!control || !window.wuu.takeOverManagedSession) return;
-      void window.wuu.takeOverManagedSession({ thread_id: session.id, revision: control.revision }).catch(showErrorToast);
-    },
-    returnToProject: (session) => {
-      const control = session.session_control;
-      if (!control) return;
-      void window.wuu.returnManagedSession({ thread_id: session.id, revision: control.revision }).catch(showErrorToast);
-    },
     release: releaseProjectSession,
   }), [openProjectPanel, openProjectProposal, openProjectThread, releaseProjectSession, sidebarThreads]);
 
