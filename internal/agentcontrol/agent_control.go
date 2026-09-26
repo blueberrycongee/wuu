@@ -619,6 +619,25 @@ func (c *AgentControl) Threads() *agentthread.Registry {
 	return c.threads
 }
 
+// FindThread resolves a stable child path or ID even before its dormant worker
+// has been rehydrated after restart. Read failures must not look like absence:
+// callers could otherwise create a second worker for an existing task.
+func (c *AgentControl) FindThread(target string) (agentthread.Metadata, bool, error) {
+	if meta, ok := c.threads.Resolve(target); ok {
+		return meta, true, nil
+	}
+	metas, err := c.threadStore.ListThreads()
+	if err != nil {
+		return agentthread.Metadata{}, false, err
+	}
+	for _, meta := range metas {
+		if meta.ID == target || meta.Path == target {
+			return meta, true, nil
+		}
+	}
+	return agentthread.Metadata{}, false, nil
+}
+
 // SetSessionInfo updates the coordinator's session ID and history dir after the
 // session runtime has assigned them, then restores durable work from the bound
 // harness directory. Safe to call once at startup, before queue draining or

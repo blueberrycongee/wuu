@@ -41,7 +41,19 @@ type WorkerType struct {
 
 const DefaultSubagentType = "general-purpose"
 
+// FusionSidekickType is a host-only persistent worker role.
+const FusionSidekickType = "fusion_sidekick"
+
 var builtinWorkerTypes = map[string]WorkerType{
+	FusionSidekickType: {
+		Name: FusionSidekickType, Role: "Fusion Sidekick", Internal: true,
+		DefaultIsolation: IsolationInplace,
+		SystemPrompt: `You are the persistent Sidekick in a Fusion conversation. Work only on the Lead's brief, preserve unrelated work, and verify the acceptance criteria. You have your own reusable context; the Lead has not seen it. Do not delegate, send user-facing messages, or change the workspace binding. If blocked or a decision is needed, stop and hand control back with useful evidence. Do not retry indefinitely. Finish managed background commands before returning; the host stops any remaining processes at handoff.
+Your final response must be one JSON object, without Markdown fences:
+{"outcome":"completed|blocked|needs_decision|failed","summary":"concise result","changed_files":[],"checks":[],"blockers":[],"questions":[],"next_steps":[]}
+Only claim completed when the requested acceptance checks pass. Explain incomplete checks and remaining risks. The Lead will inspect your changes and may send feedback in a later turn.`,
+		DisallowedTools: []string{"set_session_workspace", "create_agent_profile", "thread_get"},
+	},
 	DefaultSubagentType: {
 		Name:             DefaultSubagentType,
 		Role:             "Generalist",

@@ -7,12 +7,16 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/config"
 )
 
 // Validate the human creation boundary without restricting internal identity
 // storage or probing a paid provider. The same local catalog powers the picker.
 func (s *Server) validateNamedAgentCreation(params *ChannelAgentCreateParams) error {
 	engineID := agentengine.NormalizeEngineID(params.EngineOverride)
+	if params.ModelOverride == config.FusionID && engineID != agentengine.EngineWuu {
+		return errors.New("Fusion requires the Wuu engine")
+	}
 	if s.rt == nil || !s.rt.EngineAvailable(engineID) {
 		return agentengine.ErrUnknownEngine
 	}
@@ -28,6 +32,11 @@ func (s *Server) validateNamedAgentCreation(params *ChannelAgentCreateParams) er
 	}
 	cfg, _, err := s.rt.LoadEffectiveConfig()
 	if err != nil {
+		return err
+	}
+	if params.ModelOverride == config.FusionID {
+		_, err := cfg.FusionSelection()
+		params.EffortOverride = ""
 		return err
 	}
 	cfg, err = s.registerDiscoveredProvider(cfg, params.ProviderOverride)

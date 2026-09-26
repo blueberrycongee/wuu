@@ -104,6 +104,13 @@ func (e *pluginToolExecutor) ExecuteResult(ctx context.Context, call providers.T
 		return toolresult.Result{}, toolerrors.New("tool_unavailable", fmt.Sprintf("plugin tool %q is unavailable in this execution scope", call.Name))
 	}
 	if e.host.SupportsTool(call.Name) {
+		if kit, ok := e.inner.(*tools.Toolkit); ok {
+			release, err := kit.BeginFusionToolCall(ctx, call.Name)
+			if err != nil {
+				return toolresult.Result{}, err
+			}
+			defer release()
+		}
 		metadata, _ := e.ToolMetadata(call)
 		if gate, ok := e.inner.(agent.ToolAuthorizationGate); ok {
 			if err := gate.AuthorizeTool(ctx, call, metadata); err != nil {

@@ -2804,3 +2804,74 @@
     animation: none;
   }
 }
+
+/* Fusion uses the shared settings controls. */
+.fusion-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.fusion-heading > .settings-section-header {
+  min-width: 0;
+}
+
+/* Center the complete row with equal outer space. Keep labels on its left
+ * edge so unused label space does not shift the visual weight to the right. */
+.fusion-selections {
+  width: calc(100% - 2 * var(--space-6));
+  margin-inline: auto;
+  scroll-margin-block: var(--space-4);
+}
+
+.fusion-selections .fusion-selection {
+  grid-template-columns: minmax(0, 6em) minmax(0, 5fr) minmax(0, 3fr);
+}
+
+.fusion-selection > .settings-row-label-title {
+  text-align: left;
+}
+
+.fusion-default {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.fusion-selections .settings-select-trigger {
+  min-width: 0;
+}
+
+@container settings-page (max-width: 44em) {
+  .fusion-selections {
+    width: 100%;
+  }
+
+  .fusion-selections .fusion-selection {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 3fr);
+    column-gap: var(--space-3);
+  }
+
+  .fusion-selection > .settings-row-label-title {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+}
+
+@container settings-page (max-width: 25em) {
+  .fusion-selections .fusion-selection {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.fusion-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  color: var(--ink-muted);
+  font-size: var(--font-ui);
+  margin-bottom: var(--space-2);
+  overflow-wrap: anywhere;
+}

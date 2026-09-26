@@ -54,6 +54,9 @@ var historyRecoveryToolNames = []string{historyReadToolName, historySearchToolNa
 // (all registered tools). The old switch-case dispatch is replaced by
 // registry lookup.
 type Toolkit struct {
+	fusionDelegate          func(context.Context, string) (string, error)
+	fusionExecution         sync.RWMutex
+	fusionHandoffErr        error
 	env                     *Env
 	registry                *Registry
 	disabledTools           map[string]struct{}
@@ -372,6 +375,9 @@ func (t *Toolkit) rebuildRegistry() {
 		NewBrowserTool(e),
 		// Deferred tool discovery
 		NewToolSearchTool(t),
+	}
+	if t.fusionDelegate != nil {
+		registered = append(registered, &fusionDelegateTool{delegate: t.fusionDelegate, toolkit: t})
 	}
 	if e.ArtifactPublisher != nil {
 		registered = append(registered, NewPresentArtifactTool(e))
@@ -1028,7 +1034,7 @@ func (t *Toolkit) ActiveSurface() capability.Surface {
 // tool-loading mode with disabled tools removed. Callers must hold
 // activeProfileMu (read or write).
 func (t *Toolkit) exposedSurfaceLocked() capability.Surface {
-	return t.withDisabledToolsRemoved(t.withCodeModeSurface(cloneSurface(t.surfaceForToolLoadingMode(t.activeSurface))))
+	return t.withDisabledToolsRemoved(t.withFusionSurface(t.withCodeModeSurface(cloneSurface(t.surfaceForToolLoadingMode(t.activeSurface)))))
 }
 
 // publishActiveSurfaceLocked is the single write path for env.ActiveSurface.
@@ -1053,7 +1059,7 @@ func (t *Toolkit) activeCompiledSurface() capability.Surface {
 	}
 	t.activeProfileMu.RLock()
 	defer t.activeProfileMu.RUnlock()
-	return t.withDisabledToolsRemoved(t.withCodeModeSurface(t.surfaceForToolLoadingMode(t.activeSurface)))
+	return t.withDisabledToolsRemoved(t.withFusionSurface(t.withCodeModeSurface(t.surfaceForToolLoadingMode(t.activeSurface))))
 }
 
 func (t *Toolkit) withDisabledToolsRemoved(surface capability.Surface) capability.Surface {
@@ -1147,6 +1153,13 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 // content, metadata, or Activity references. Legacy tools are wrapped as one
 // text content part until they migrate to RichTool.
 func (t *Toolkit) ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+	// A yielded code-mode cell can still execute leaf tools. Serialize those
+	// operations with delegation, including calls already in flight.
+	release, err := t.BeginFusionToolCall(ctx, call.Name)
+	if err != nil {
+		return toolresult.Result{}, err
+	}
+	defer release()
 	if t.isToolDisabled(call.Name) {
 		return toolresult.Result{}, fmt.Errorf("tool %q is disabled in this session", call.Name)
 	}

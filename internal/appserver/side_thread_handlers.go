@@ -10,6 +10,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/compact"
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/contextbudget"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -296,6 +297,10 @@ func (s *Server) mainThreadModelSelection(mainID string) runtime.ThreadModelSele
 			Effort:         strings.TrimSpace(th.ModelEffort),
 			PermissionMode: strings.TrimSpace(th.PermissionMode),
 		}
+		if sel.Model == config.FusionID && th.execRuntime != nil && th.execRuntime.StreamRunner != nil {
+			r := th.execRuntime.StreamRunner
+			sel.Provider, sel.Model, sel.Variant, sel.Effort = r.ProviderName, r.Model, r.Variant, r.Effort
+		}
 		th.mu.Unlock()
 		if sel.Provider != "" && sel.Model != "" {
 			return sel
@@ -450,7 +455,21 @@ func (s *Server) sendSideThreadMessageWhenReady(mainID, prompt string, start <-c
 			return nil, err
 		}
 	}
-	runner, err := s.rt.NewSideThreadRunner(sideThreadID, s.mainThreadRoot(mainID), s.mainThreadModelSelection(mainID))
+	selected := s.mainThreadModelSelection(mainID)
+	if selected.Model == config.FusionID {
+		parent := s.thread(mainID)
+		if parent == nil {
+			parent = &threadState{ID: mainID, PersistHistory: true}
+		}
+		pair, err := s.findFusionSelection(parent)
+		if err != nil {
+			return nil, err
+		}
+		if pair != nil {
+			selected.Provider, selected.Model, selected.Variant, selected.Effort = pair.Lead.Provider, pair.Lead.Model, pair.Lead.Variant, pair.Lead.Effort
+		}
+	}
+	runner, err := s.rt.NewSideThreadRunner(sideThreadID, s.mainThreadRoot(mainID), selected)
 	if err != nil {
 		return nil, err
 	}

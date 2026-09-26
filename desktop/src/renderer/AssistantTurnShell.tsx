@@ -1,3 +1,4 @@
+import { FusionStatus } from "./FusionStatus";
 import { ChevronRight } from "./WuuIcons";
 import {
   type SyntheticEvent,
@@ -201,6 +202,7 @@ export function AssistantTurnShell({
 
   return (
     <div className={className}>
+      <FusionStatus turn={turn} />
       {hasProcess ? (
         <TurnProcessFold
           entries={processEntries}
