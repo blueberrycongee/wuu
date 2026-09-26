@@ -64,7 +64,7 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 能创建 Side；重复创建会返回已有的活跃 Side，不会发送新任务。主 Agent 和 Side
 都能创建 Worker。活跃成员均可 `list`、`inspect` 和 `message`，只有主 Agent 能
 `send` 和 `stop`。消息仅限项目内，包含 `prompt`、`session_id` 和可选的 `wake`
-（默认 false）。排队消息保存发送者和接收者的控制版本，人工接管与交还会使旧消息失效。
+（默认 false）。停止成员或直接给它发消息不会改变项目成员关系，也不会使排队中的团队消息失效。
 
 协调者以用户条目接收宿主事件，条目带 `origin: "plugin"`，`related_session_id` 指向相关会话，
 `cause` 给出事件：
@@ -72,16 +72,18 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 | Cause | 事件 | 协调者空闲时是否开始新回合 |
 |---|---|---|
 | `project_message` | 成员发来的消息，主 Agent 或其他成员均可接收 | 仅当 `wake` 为 true |
-| `project_result` | 托管会话的一个回合结束，附带用户在其中写的内容 | 是 |
-| `project_takeover`、`project_pause` | 用户接管或暂停了会话 | 否，随下一个回合送达 |
-| `project_return` | 用户交还了会话 | 是 |
+| `project_result` | 托管会话的一个回合结束，附带用户在其中写的内容 | 是，中断的回合除外 |
+| `project_stopped` | 用户停止了成员的当前回合 | 否，随下一个回合送达 |
+| `project_user_message` | 用户直接给成员发了消息 | 否，随下一个回合送达 |
 | `project_applied`、`project_discarded`、`project_published` | 用户决定了候选 | 是 |
 | `project_adopted` | 用户把对话加入了项目 | 是 |
 | `project_released` | 用户把会话移出了项目 | 否，随下一个回合送达 |
 
-在托管会话中开始、引导或排队回合，会话仍由项目管理。`thread/control/take` 传入 `thread_id`
-和当前 `revision` 即接管，中断会暂停管理，`thread/control/return` 交还。用户掌控期间结束的回合
-会冻结候选供审阅，但不会报告给协调者。
+在项目成员中开始、引导、排队或中断回合，成员关系仍保持活跃。用户直接发消息会通知协调者，
+但不会唤醒空闲的协调者。中断结果也会送达而不唤醒空闲的协调者；正常结果会唤醒它。
+恢复后补发的中断结果，以及发给派遣该成员的 Side Agent 的报告，也遵循相同的不唤醒规则。
+worktree 改动仍可供审阅。`thread/control/take` 和 `thread/control/return` 的控制权生命周期
+用于插件托管会话，不用于项目成员。
 
 `project/session` 修改项目成员：`adopt` 传入 `project_id` 和 `session_id`，把项目所在工作区
 的普通对话交给项目管理；`release` 在托管会话的待决候选已决定后，让它重新成为普通对话。两者都

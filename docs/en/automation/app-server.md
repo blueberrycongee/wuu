@@ -76,8 +76,8 @@ worker. `session create` accepts `role` (worker by default) and optional
 live side without sending a new prompt. Lead and side can create workers. All
 active members can `list`, `inspect`, and `message`; only the lead can `send` and
 `stop`. Messages stay in the project and include `prompt`, `session_id`, and
-optional `wake` (false by default). Both sender and recipient control revisions
-fence queued messages across takeover and return.
+optional `wake` (false by default). Stopping or directly messaging a member keeps
+its project membership and does not invalidate queued team messages.
 
 The coordinator receives host events as user items with `origin: "plugin"`,
 `related_session_id` naming the session, and a `cause`:
@@ -85,17 +85,21 @@ The coordinator receives host events as user items with `origin: "plugin"`,
 | Cause | Event | Starts a turn when idle |
 |---|---|---|
 | `project_message` | Message from a team member, received by any member or the lead | Only when `wake` is true |
-| `project_result` | A managed turn ended, with what the user wrote into it | Yes |
-| `project_takeover`, `project_pause` | The user took over or paused a session | No, joins the next turn |
-| `project_return` | The user returned a session | Yes |
+| `project_result` | A managed turn ended, with what the user wrote into it | Yes, except interrupted turns |
+| `project_stopped` | The user stopped a member's current turn | No, joins the next turn |
+| `project_user_message` | The user wrote directly to a member | No, joins the next turn |
 | `project_applied`, `project_discarded`, `project_published` | The user decided a candidate | Yes |
 | `project_adopted` | The user added a conversation to the project | Yes |
 | `project_released` | The user removed a session from the project | No, joins the next turn |
 
-Starting, steering or queuing a turn in a managed session keeps it under the project.
-`thread/control/take` with `thread_id` and the current `revision` takes it over,
-interrupting pauses it, and `thread/control/return` hands it back. Turns that end
-while the user holds control are frozen for review but not reported.
+Starting, steering, queuing or interrupting a turn in a project member keeps its
+membership active. Direct user messages send a notice to the coordinator without
+waking it from idle. Interrupted results are also delivered without waking an idle
+coordinator; normal results wake it. Worktree changes remain available for review.
+The same interrupted-result policy applies after recovery and to reports sent to
+the Side Agent that dispatched the member.
+The `thread/control/take` and `thread/control/return` ownership lifecycle is for
+plugin-managed sessions, not project members.
 
 `project/session` changes membership: `adopt` with `project_id` and `session_id`
 brings an ordinary conversation of the project's workspace under the project, and

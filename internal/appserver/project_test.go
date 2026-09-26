@@ -3,7 +3,6 @@ package appserver
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -27,15 +26,14 @@ import (
 //   - two turns of one session leave overlapping candidates that can each be
 //     decided, so applying them in turn conflicts or records a change twice;
 //   - an applied or published change is offered again;
-//   - turns the user runs while holding control leave no candidate, or are
-//     reported to the coordinator, including after a return and a restart;
+//   - turns the user runs in a member session leave no candidate or report;
 //   - clients are not told when a candidate is frozen or decided;
 //   - a message the user writes into a managed session silently takes it
 //     from the project, or reaches the coordinator without the user's words;
-//   - the coordinator keeps instructing a session the user took over, or is
-//     not told when the user takes it over or returns it;
-//   - a takeover notice starts a coordinator turn on its own instead of
-//     joining the coordinator's next turn;
+//   - stopping a member removes membership, preserves stale admitted input,
+//     or prevents a later explicit instruction without returning control;
+//   - an intervention or interrupted result wakes an idle coordinator,
+//     including during recovery;
 //   - an ordinary conversation cannot be added to a project, or a project
 //     takes a conversation of another workspace, another manager's session,
 //     or a coordinator;
@@ -332,18 +330,6 @@ func projectControlClientID(sessionID string, revision int64) string {
 	return "project-control:" + sessionID + ":" + jsonNumber(revision)
 }
 
-func takeProjectSession(t *testing.T, client *rpcClient, sessionID string, revision int64) ThreadSessionControl {
-	t.Helper()
-	var taken struct {
-		Control *ThreadSessionControl `json:"control"`
-	}
-	client.rpc(t, "thread/control/take", map[string]any{"thread_id": sessionID, "revision": revision}, &taken)
-	if taken.Control == nil || taken.Control.State != session.ControlTakenOver {
-		t.Fatalf("taken control = %+v", taken.Control)
-	}
-	return *taken.Control
-}
-
 func projectCandidates(t *testing.T, client *rpcClient, projectID string) []ProjectCandidate {
 	t.Helper()
 	var listed ProjectCandidateResult
@@ -418,7 +404,7 @@ func TestProjectProposalsSupersedeAndStartFromDelivery(t *testing.T) {
 	calls.assertIdle(t)
 }
 
-func TestProjectFreezesUserTurnsWithoutReportingThem(t *testing.T) {
+func TestProjectFreezesAndReportsUserTurns(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
 	coordinator := startProject(t, client, "Notes")
 	var turn TurnStartResult
@@ -426,33 +412,32 @@ func TestProjectFreezesUserTurnsWithoutReportingThem(t *testing.T) {
 	calls.next(t, "Plan the notes").response <- toolCallResponse("create-notes", "session", `{"action":"create","title":"Notes","prompt":"Draft notes.md"}`)
 	calls.next(t, "Draft notes.md").response <- toolCallResponse("write-notes", "write_file", `{"path":"notes.md","content":"draft\n"}`)
 	calls.next(t, "Plan the notes").response <- providersResponse("Started.")
+	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
 	calls.next(t, "Draft notes.md").response <- providersResponse("Drafted.")
 	calls.next(t, "Plan the notes").response <- providersResponse("Draft ready.")
 	worker := projectManagedSessions(t, client, coordinator.ID)[0]
 	worker = waitForThread(t, srv, worker.ID, func(thread Thread) bool { return thread.PendingCandidates == 1 })
 
-	taken := takeProjectSession(t, client, worker.ID, worker.SessionControl.Revision)
 	var userTurn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: worker.ID, Prompt: "I will rewrite the notes"}, &userTurn)
 	calls.next(t, "rewrite the notes").response <- toolCallResponse("rewrite-notes", "write_file", `{"path":"notes.md","content":"final\n"}`)
 	calls.next(t, "rewrite the notes").response <- providersResponse("Rewritten.")
 	waitForThread(t, srv, worker.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID == userTurn.Turn.ID })
 
-	// The user's turn is frozen for review but belongs to the user.
+	// User-initiated work remains part of the project and is frozen for review.
 	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool {
 		candidates := projectCandidates(t, client, coordinator.ID)
 		return thread.PendingCandidates == 1 && len(candidates) == 2 && candidates[1].TurnID == userTurn.Turn.ID
 	})
-	client.rpc(t, "thread/control/return", map[string]any{"thread_id": worker.ID, "revision": taken.Revision}, nil)
 	settleCoordinator(t, srv, calls, coordinator.ID, "Plan the notes", "I will inspect the notes.",
-		projectControlClientID(worker.ID, taken.Revision), projectControlClientID(worker.ID, taken.Revision+1))
+		projectResultClientID(worker.ID, userTurn.Turn.ID))
 
 	srv.Close()
 	reopened := New(rt, &lockedBuffer{})
 	t.Cleanup(reopened.Close)
 	reopened.recoverProjectInbox()
-	if ids := deliveredClientIDs(t, rt, coordinator.ID, projectResultClientID(worker.ID, userTurn.Turn.ID)); len(ids) != 0 {
-		t.Fatalf("a user-controlled turn was reported after return and restart: %v", ids)
+	if ids := deliveredClientIDs(t, rt, coordinator.ID, projectResultClientID(worker.ID, userTurn.Turn.ID)); len(ids) != 1 {
+		t.Fatalf("user result was lost or duplicated on restart: %v", ids)
 	}
 	calls.assertIdle(t)
 }
@@ -463,15 +448,23 @@ func TestProjectUserMessagesSteerManagedSessions(t *testing.T) {
 	var turn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: coordinator.ID, Prompt: "Plan the release note"}, &turn)
 	calls.next(t, "Plan the release note").response <- toolCallResponse("create-notes", "session", `{"action":"create","title":"Notes","prompt":"Draft release note text","workspace":"shared"}`)
-	calls.next(t, "Draft release note text").response <- providersResponse("Drafted the notes.")
 	calls.next(t, "Plan the release note").response <- providersResponse("Started.")
+	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
+	calls.next(t, "Draft release note text").response <- providersResponse("Drafted the notes.")
 	calls.next(t, "Plan the release note").response <- providersResponse("The draft is ready.")
 	worker := projectManagedSessions(t, client, coordinator.ID)[0]
 	worker = waitForThread(t, srv, worker.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID != "" })
 
 	var userTurn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: worker.ID, Prompt: "Also mention the migration"}, &userTurn)
-	calls.next(t, "mention the migration").response <- providersResponse("Mentioned the migration.")
+	held := calls.next(t, "mention the migration")
+	srv.drainSessionInbox(coordinator.ID)
+	pending, err := session.PendingInbox(srv.rt.SessionDir, coordinator.ID)
+	if err != nil || len(pending) != 1 || pending[0].Wake || pending[0].Cause != "project_user_message" || !strings.Contains(pending[0].Content, "Also mention the migration") {
+		t.Fatalf("direct user notice must persist without waking: %+v, %v", pending, err)
+	}
+	calls.assertIdle(t)
+	held.response <- providersResponse("Mentioned the migration.")
 	joined := waitForThread(t, srv, worker.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID == userTurn.Turn.ID })
 	if joined.SessionControl == nil || joined.SessionControl.State != session.ControlActive || joined.SessionControl.Revision != worker.SessionControl.Revision {
 		t.Fatalf("a user message changed the session's control: %+v", joined.SessionControl)
@@ -492,51 +485,59 @@ func TestProjectUserMessagesSteerManagedSessions(t *testing.T) {
 	calls.next(t, "Plan the release note").response <- providersResponse("Done.")
 }
 
-func TestProjectTakeoverPausesDelegationUntilReturned(t *testing.T) {
+func TestProjectStopKeepsMembershipWithoutWakingOrRevivingOldInput(t *testing.T) {
 	srv, client, calls, _ := newProjectFixture(t)
 	coordinator := startProject(t, client, "Release")
 	var turn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: coordinator.ID, Prompt: "Plan the release note"}, &turn)
 	calls.next(t, "Plan the release note").response <- toolCallResponse("create-notes", "session", `{"action":"create","title":"Notes","prompt":"Draft release note text","workspace":"shared"}`)
-	calls.next(t, "Draft release note text").response <- providersResponse("Drafted the notes.")
 	calls.next(t, "Plan the release note").response <- providersResponse("Started.")
+	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
+	calls.next(t, "Draft release note text").response <- providersResponse("Drafted the notes.")
 	calls.next(t, "Plan the release note").response <- providersResponse("The draft is ready.")
 	worker := projectManagedSessions(t, client, coordinator.ID)[0]
 	worker = waitForThread(t, srv, worker.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID != "" })
 	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
 
-	taken := takeProjectSession(t, client, worker.ID, worker.SessionControl.Revision)
-	// The takeover notice waits for the coordinator's next turn instead of starting one.
-	srv.drainSessionInbox(coordinator.ID)
-	calls.assertIdle(t)
-	if ids := deliveredClientIDs(t, srv.rt, coordinator.ID, "project-control:"); len(ids) != 0 {
-		t.Fatalf("the takeover notice was delivered to an idle coordinator: %v", ids)
-	}
-
 	var userTurn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: worker.ID, Prompt: "I will finish the notes"}, &userTurn)
-	calls.next(t, "Draft release note text").response <- providersResponse("Finished by the user.")
-	waitForThread(t, srv, worker.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID == userTurn.Turn.ID })
+	calls.next(t, "I will finish the notes")
 	handler := srv.projectSessionHandler(coordinator.ID)
-	if _, err := handler(context.Background(), "send-after-takeover", tools.ProjectSessionRequest{Action: "send", SessionID: worker.ID, Prompt: "Keep going"}); !errors.Is(err, session.ErrControlChanged) {
-		t.Fatalf("send to a taken-over session = %v", err)
+	if _, err := handler(context.Background(), "old-advice", tools.ProjectSessionRequest{Action: "message", SessionID: worker.ID, Prompt: "Stale automatic advice", Wake: true}); err != nil {
+		t.Fatal(err)
 	}
+	srv.drainSessionInbox(worker.ID)
+	client.rpc(t, MethodTurnInterrupt, TurnInterruptParams{ThreadID: worker.ID}, nil)
+	stopped := waitForThread(t, srv, worker.ID, func(thread Thread) bool {
+		return thread.Status == ThreadStatusIdle && thread.LatestCompletedTurnID == userTurn.Turn.ID
+	})
+	if stopped.SessionControl == nil || stopped.SessionControl.State != session.ControlActive || stopped.SessionControl.Revision <= worker.SessionControl.Revision {
+		t.Fatalf("stop must retain membership and advance the input fence: %+v", stopped.SessionControl)
+	}
+	if _, _, _, err := srv.projectActor(worker.ID); err != nil {
+		t.Fatalf("stopped member cannot collaborate: %v", err)
+	}
+	// Recovery must neither wake the lead nor replay an old automatic input.
 	srv.recoverProjectInbox()
+	srv.drainSessionInbox(worker.ID)
+	calls.assertIdle(t)
 	if ids := deliveredClientIDs(t, srv.rt, coordinator.ID, projectResultClientID(worker.ID, userTurn.Turn.ID)); len(ids) != 0 {
-		t.Fatalf("user-controlled turn was reported to the coordinator: %v", ids)
+		t.Fatalf("interrupted result woke idle coordinator: %v", ids)
 	}
-
-	var returned struct {
-		Control *ThreadSessionControl `json:"control"`
+	if ids := deliveredClientIDs(t, srv.rt, worker.ID, "project-message:"+coordinator.ID+":old-advice"); len(ids) != 0 {
+		t.Fatalf("stopped work consumed stale input: %v", ids)
 	}
-	client.rpc(t, "thread/control/return", map[string]any{"thread_id": worker.ID, "revision": taken.Revision}, &returned)
-	if returned.Control == nil || returned.Control.State != session.ControlActive || returned.Control.ManagerName != "Release" {
-		t.Fatalf("returned control = %+v", returned.Control)
+	pending, err := session.PendingInbox(srv.rt.SessionDir, coordinator.ID)
+	if err != nil || len(pending) < 2 {
+		t.Fatalf("intervention/result not retained: %+v, %v", pending, err)
 	}
-	settleCoordinator(t, srv, calls, coordinator.ID, "Plan the release note", "I will continue.",
-		projectControlClientID(worker.ID, taken.Revision), projectControlClientID(worker.ID, returned.Control.Revision))
-	if _, err := handler(context.Background(), "send-after-return", tools.ProjectSessionRequest{Action: "send", SessionID: worker.ID, Prompt: "Add the known issues"}); err != nil {
-		t.Fatalf("send after return: %v", err)
+	for _, message := range pending {
+		if message.Wake {
+			t.Fatalf("intervention woke lead: %+v", message)
+		}
+	}
+	if _, err := handler(context.Background(), "send-after-stop", tools.ProjectSessionRequest{Action: "send", SessionID: worker.ID, Prompt: "Add the known issues"}); err != nil {
+		t.Fatalf("send after stop: %v", err)
 	}
 	calls.next(t, "Add the known issues").response <- providersResponse("Added known issues.")
 	calls.next(t, "Plan the release note").response <- providersResponse("Done.")
@@ -727,7 +728,7 @@ func TestProjectSideAndWorkersReuseOrdinarySessions(t *testing.T) {
 	calls.assertIdle(t)
 }
 
-func TestProjectPeerMessagesRespectMembershipAndTakeover(t *testing.T) {
+func TestProjectPeerMessagesRespectMembershipAndStopFence(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
 	lead := startProject(t, client, "Peers")
 	var turn TurnStartResult
@@ -771,17 +772,12 @@ func TestProjectPeerMessagesRespectMembershipAndTakeover(t *testing.T) {
 	if _, err := handler(context.Background(), "stale-peer", tools.ProjectSessionRequest{Action: "message", SessionID: receiver.ID, Prompt: "Stale queued advice"}); err != nil {
 		t.Fatal(err)
 	}
-	taken := takeProjectSession(t, client, receiver.ID, receiver.SessionControl.Revision)
-	if _, err := handler(context.Background(), "during-takeover", tools.ProjectSessionRequest{Action: "message", SessionID: receiver.ID, Prompt: "Ignore takeover", Wake: true}); err == nil {
-		t.Fatal("message bypassed takeover")
-	}
-	client.rpc(t, "thread/control/return", map[string]any{"thread_id": receiver.ID, "revision": taken.Revision}, nil)
-	// Returning must not revive queued input admitted before the takeover.
+	client.rpc(t, MethodTurnInterrupt, TurnInterruptParams{ThreadID: receiver.ID}, nil)
+	// A later instruction must not revive queued input admitted before stop.
 	srv.drainSessionInbox(receiver.ID)
 	if ids := deliveredClientIDs(t, rt, receiver.ID, "project-message:"+sender.ID+":stale-peer"); len(ids) != 0 {
 		t.Fatalf("stale peer message delivered: %v", ids)
 	}
-	settleCoordinator(t, srv, calls, lead.ID, "Coordinate peer work", "Returned.", projectControlClientID(receiver.ID, taken.Revision+1))
 	calls.assertIdle(t)
 }
 
@@ -825,8 +821,160 @@ func TestProjectPeerInboxRecoversWithoutDuplicateDelivery(t *testing.T) {
 	calls.assertIdle(t)
 }
 
+// Legacy project pauses must not strand members or restart old work. Plugin
+// control remains a separate contract and must not be normalized.
+func TestProjectInterruptedSideWorkDoesNotWakeRecipients(t *testing.T) {
+	srv, client, calls, rt := newProjectFixture(t)
+	lead := startProject(t, client, "Side interruption")
+	view, err := srv.projectSessionHandler(lead.ID)(context.Background(), "side", tools.ProjectSessionRequest{Action: "create", Role: "side", Prompt: "Prepare side", Workspace: "shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sideID := view.(projectSessionView).SessionID
+	calls.next(t, "Prepare side").response <- providersResponse("Side ready.")
+	side := waitForThread(t, srv, sideID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
+	settleCoordinator(t, srv, calls, lead.ID, "Side ready.", "Noted.", projectResultClientID(sideID, side.LatestCompletedTurnID))
+	view, err = srv.projectSessionHandler(sideID)(context.Background(), "worker", tools.ProjectSessionRequest{Action: "create", Prompt: "Hold worker", Workspace: "shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerID := view.(projectSessionView).SessionID
+	calls.next(t, "Hold worker")
+	client.rpc(t, MethodTurnInterrupt, TurnInterruptParams{ThreadID: workerID}, nil)
+	waitForThread(t, srv, workerID, func(th Thread) bool { return th.LatestCompletedTurnID != "" && th.Status == ThreadStatusIdle })
+	srv.recoverProjectInbox()
+	calls.assertIdle(t)
+	for _, target := range []string{lead.ID, sideID} {
+		pending, err := session.PendingInbox(rt.SessionDir, target)
+		if err != nil || len(pending) == 0 {
+			t.Fatalf("missing stopped report for %s: %v", target, err)
+		}
+		for _, message := range pending {
+			if message.Wake {
+				t.Fatalf("stopped report wakes %s: %+v", target, message)
+			}
+		}
+	}
+}
+
+// Retry delivery in the consumption/persistence gap must not repeat a notice.
+func TestProjectNonWakingNoticeConsumptionIsIdempotent(t *testing.T) {
+	srv, client, calls, rt := newProjectFixture(t)
+	lead := startProject(t, client, "Notice retry")
+	var started TurnStartResult
+	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: lead.ID, Prompt: "Hold current work"}, &started)
+	held := calls.next(t, "Hold current work")
+	if err := session.EnqueueInbox(rt.SessionDir, session.InboxMessage{ClientID: "notice-retry", SessionID: lead.ID, Cause: projectCauseUserMessage, Content: "User intervention", Wake: false}); err != nil {
+		t.Fatal(err)
+	}
+	srv.drainSessionInbox(lead.ID)
+	th, err := srv.ensureOwnedThreadLoaded(lead.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	th.mu.Lock()
+	consumed, _ := th.takePendingSteersLocked(th.currentTurn, time.Now())
+	th.mu.Unlock()
+	if len(consumed) != 1 {
+		t.Fatalf("consumed notices = %d", len(consumed))
+	}
+	// The model is held, so consumed input has not yet reached durable history.
+	srv.drainSessionInbox(lead.ID)
+	th.mu.Lock()
+	repeated, _ := th.takePendingSteersLocked(th.currentTurn, time.Now())
+	th.mu.Unlock()
+	if len(repeated) != 0 {
+		t.Fatalf("notice delivered twice: %+v", repeated)
+	}
+	held.response <- providersResponse("Done.")
+	waitForThread(t, srv, lead.ID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
+	srv.drainSessionInbox(lead.ID)
+	calls.assertIdle(t)
+}
+
+func TestProjectRecoversLegacyControlWithoutWaking(t *testing.T) {
+	for _, state := range []string{session.ControlPaused, session.ControlTakenOver} {
+		t.Run(state, func(t *testing.T) {
+			srv, client, calls, rt := newProjectFixture(t)
+			lead := startProject(t, client, "Legacy membership")
+			sideView, err := srv.projectSessionHandler(lead.ID)(context.Background(), "side", tools.ProjectSessionRequest{Action: "create", Role: "side", Prompt: "Prepare side", Workspace: "shared"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			sideID := sideView.(projectSessionView).SessionID
+			calls.next(t, "Prepare side").response <- providersResponse("Side ready.")
+			side := waitForThread(t, srv, sideID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
+			settleCoordinator(t, srv, calls, lead.ID, "Side ready.", "Noted.", projectResultClientID(sideID, side.LatestCompletedTurnID))
+			view, err := srv.projectSessionHandler(sideID)(context.Background(), "member", tools.ProjectSessionRequest{Action: "create", Prompt: "Prepare legacy work", Workspace: "shared"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			memberID := view.(projectSessionView).SessionID
+			held := calls.next(t, "Prepare legacy work")
+			active, _, err := session.ReadControl(rt.SessionDir, memberID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			control, err := session.ChangeControl(rt.SessionDir, memberID, lead.ID, state, active.Revision)
+			if err != nil {
+				t.Fatal(err)
+			}
+			held.response <- providersResponse("Ready.")
+			member := waitForThread(t, srv, memberID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
+			calls.assertIdle(t)
+			plugin, err := session.ChangeControl(rt.SessionDir, "plugin-member", "plugin:example", state, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			srv.Close()
+			// A host sharing the session store must not activate another
+			// workspace's legacy members before their results are settled.
+			otherRuntime := newTestRuntime(t, &fakeClient{})
+			otherRuntime.SessionDir = rt.SessionDir
+			otherRuntime.WorkspaceID = "workspace-other"
+			otherRuntime.WuuHome = t.TempDir()
+			registry, err := json.Marshal(map[string]any{"projects": []map[string]string{{"id": rt.WorkspaceID, "name": "Original", "path": rt.RootDir}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(otherRuntime.WuuHome, "projects.json"), registry, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			otherHost := New(otherRuntime, &lockedBuffer{})
+			otherHost.Close()
+			foreign, _, err := session.ReadControl(rt.SessionDir, memberID)
+			if err != nil || foreign != control {
+				t.Fatalf("foreign host migrated member: %+v, %v", foreign, err)
+			}
+			reopened := New(rt, &lockedBuffer{})
+			t.Cleanup(reopened.Close)
+			reopened.recoverProjectInbox()
+			for _, resultID := range []string{projectResultClientID(memberID, member.LatestCompletedTurnID), projectResultClientID(memberID, member.LatestCompletedTurnID) + ":" + sideID} {
+				settled, err := session.InboxHas(rt.SessionDir, resultID)
+				if err != nil || !settled {
+					t.Fatalf("legacy result not settled: %s, %v", resultID, err)
+				}
+			}
+			restored, ok, err := session.ReadControl(rt.SessionDir, memberID)
+			if err != nil || !ok || restored.State != session.ControlActive || restored.Revision <= control.Revision {
+				t.Fatalf("legacy member stranded: %+v, %v", restored, err)
+			}
+			unchanged, _, err := session.ReadControl(rt.SessionDir, plugin.SessionID)
+			if err != nil || unchanged != plugin {
+				t.Fatalf("plugin control changed: %+v, %v", unchanged, err)
+			}
+			calls.assertIdle(t)
+			if _, err := reopened.projectSessionHandler(lead.ID)(context.Background(), "new-work", tools.ProjectSessionRequest{Action: "send", SessionID: memberID, Prompt: "New work after migration"}); err != nil {
+				t.Fatal(err)
+			}
+			calls.next(t, "New work after migration").response <- providersResponse("New work done.")
+			calls.next(t, "New work done.").response <- providersResponse("Received new result.")
+		})
+	}
+}
+
 // A message admitted while the recipient is waiting on its model is still
-// pending input; taking over its sender must revoke it before consumption.
+// pending input; stopping its sender must revoke it before consumption.
 func TestProjectPeerSteerDoesNotOutliveSenderControl(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
 	lead := startProject(t, client, "Steering fence")
@@ -844,10 +992,10 @@ func TestProjectPeerSteerDoesNotOutliveSenderControl(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv.drainSessionInbox(lead.ID)
-	takeProjectSession(t, client, sender.ID, sender.SessionControl.Revision)
+	client.rpc(t, MethodTurnInterrupt, TurnInterruptParams{ThreadID: sender.ID}, nil)
 	srv.drainSessionInbox(lead.ID)
 	held.response <- providersResponse("Current work done.")
-	settleCoordinator(t, srv, calls, lead.ID, "Sender ready.", "Noted takeover.", projectControlClientID(sender.ID, sender.SessionControl.Revision+1))
+	settleCoordinator(t, srv, calls, lead.ID, "Sender ready.", "Noted stop.", projectControlClientID(sender.ID, sender.SessionControl.Revision+1))
 	if ids := deliveredClientIDs(t, rt, lead.ID, "project-message:"+sender.ID+":revoked-steer"); len(ids) != 0 {
 		t.Fatalf("revoked peer steer reached the model: %v", ids)
 	}

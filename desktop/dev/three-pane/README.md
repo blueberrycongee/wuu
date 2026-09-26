@@ -5,7 +5,7 @@ From `desktop/`, run `npx vite --config dev/three-pane/vite.config.ts` and open
 avatar dependencies with the automatic JSX runtime used by production.
 
 This development-only entry mounts production `ProjectGroup`, `TurnView`,
-`ConversationTitleActions`, and `WorkspaceRightPanel` with the complete renderer stylesheet. Files and
+`ConversationTitleContent`, `ConversationTitleActions`, and `WorkspaceRightPanel` with the complete renderer stylesheet. Files and
 conversations are synthetic; no app-server, saved desktop preferences, or live
 workspace files are used. The composer is a layout specimen and cannot send.
 File-tree selection does not open a real file.

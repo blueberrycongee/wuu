@@ -15,8 +15,6 @@ export type ProjectActions = {
   openThread: (threadID: string) => void;
   openProjectPanel: (project: ProjectThread) => void;
   openProposal: (session: ProjectThread) => void;
-  takeOver: (session: ProjectThread) => void;
-  returnToProject: (session: ProjectThread) => void;
   release: (session: ProjectThread) => void;
 };
 

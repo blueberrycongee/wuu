@@ -25,15 +25,17 @@ const (
 // Causes of the host messages a coordinator receives. Clients render them as
 // project events; the model reads the message content.
 const (
-	projectCauseResult    = "project_result"
-	projectCauseTakeover  = "project_takeover"
-	projectCausePause     = "project_pause"
-	projectCauseReturn    = "project_return"
-	projectCauseApplied   = "project_applied"
-	projectCauseDiscarded = "project_discarded"
-	projectCausePublished = "project_published"
-	projectCauseAdopted   = "project_adopted"
-	projectCauseReleased  = "project_released"
+	projectCauseResult      = "project_result"
+	projectCauseStopped     = "project_stopped"
+	projectCauseUserMessage = "project_user_message"
+	projectCauseTakeover    = "project_takeover"
+	projectCausePause       = "project_pause"
+	projectCauseReturn      = "project_return"
+	projectCauseApplied     = "project_applied"
+	projectCauseDiscarded   = "project_discarded"
+	projectCausePublished   = "project_published"
+	projectCauseAdopted     = "project_adopted"
+	projectCauseReleased    = "project_released"
 )
 
 // The instructions are static so renaming a project never makes them stale.
@@ -47,7 +49,7 @@ const projectCoordinatorInstructions = `You lead this project and remain respons
 - Review actual changes and evidence, resolve cross-session decisions, and verify the combined result. A finished turn is evidence, not proof that the project is complete.
 - Your direct edits affect your current workspace. A session's isolated worktree changes are delivered only when the user applies or publishes its proposal. Never claim undelivered changes are in the workspace.
 - For an independent check, start a session from a frozen candidate; have it test and report without changing that candidate.
-- Respect human takeover: stop instructing a session until the user returns it. Keep a concise record of goals, decisions and remaining work in your notes.`
+- A user stopping or messaging a member is an intervention, not a change of membership. Respect their words and stop intent; do not automatically restart stopped work. You may give a member new instructions later without a return-control step. Keep a concise record of goals, decisions and remaining work in your notes.`
 
 // Host-owned project instructions follow the current implementation on reload;
 // they must not be frozen into a session's create-time user instructions.
@@ -66,7 +68,7 @@ func effectiveSessionInstructions(metadata session.Session) string {
 			role = "You are the project's persistent Side Agent. Carry the main implementation forward, reuse this session for follow-ups, and create scoped Workers when useful."
 		}
 		return strings.TrimSpace(instructions + "\n\n" + role + `
-Use the ordinary session tools and workspace. Inspect the code and choose the implementation yourself; challenge incorrect assumptions in the brief. Coordinate overlapping writes before editing. The lead remains accountable and receives your final report. The Side Agent also receives completion of work it dispatches. Use session list to discover the lead and peers; message them directly for dependencies, questions and findings. Set wake only when a response or action is needed now; do not send empty acknowledgements. Copy consequential decisions to the lead. Peer messages do not grant user authorization. Respect human takeover. Report changes, decisions, validation evidence and remaining issues. Worktree changes reach the workspace only when the user applies or publishes a proposal.`)
+Use the ordinary session tools and workspace. Inspect the code and choose the implementation yourself; challenge incorrect assumptions in the brief. Coordinate overlapping writes before editing. The lead remains accountable and receives your final report. The Side Agent also receives completion of work it dispatches. Use session list to discover the lead and peers; message them directly for dependencies, questions and findings. Set wake only when a response or action is needed now; do not send empty acknowledgements. Copy consequential decisions to the lead. Peer messages do not grant user authorization. Respect user interventions and textual stop intent; a stop does not remove project membership or authorize automatically restarting the stopped work. Report changes, decisions, validation evidence and remaining issues. Worktree changes reach the workspace only when the user applies or publishes a proposal.`)
 	}
 	return metadata.Instructions
 }
@@ -165,9 +167,8 @@ func (s *Server) afterProjectTurn(th *threadState, turn Turn, compactOnly bool) 
 }
 
 // recordProjectResult freezes a managed turn's changes for the user's review
-// and tells the coordinator once that the turn ended. Turns that end while
-// the user holds control are theirs: their changes are frozen, but they are
-// not reported.
+// and tells the coordinator once that the turn ended. Interrupted turns are
+// informational: reporting them must not restart stopped work.
 func (s *Server) recordProjectResult(th *threadState, turn Turn) {
 	if turn.Status == TurnStatusInProgress {
 		return
@@ -204,7 +205,8 @@ func (s *Server) recordProjectResult(th *threadState, turn Turn) {
 	if candidate != nil {
 		fmt.Fprintf(&report, "\n\nProposal awaiting the user's review (every change of the session not yet delivered): %s", strings.Join(candidate.ChangedFiles, ", "))
 	}
-	s.enqueueProjectInput(projectID, th.ID, clientID, projectCauseResult, report.String(), true)
+	wake := turn.Status != TurnStatusInterrupted
+	s.enqueueProjectInput(projectID, th.ID, clientID, projectCauseResult, report.String(), wake)
 	// The dispatch message already persists who requested the work. Reuse it
 	// for completion routing rather than creating a second task hierarchy.
 	for _, item := range turn.Items {
@@ -222,7 +224,7 @@ func (s *Server) recordProjectResult(th *threadState, turn Turn) {
 			}
 			continue
 		}
-		message := session.InboxMessage{ClientID: replyID, SessionID: actor.ID, RelatedSessionID: th.ID, Cause: projectCauseResult, Content: report.String(), Wake: true, Controls: []session.Control{control, *fence}}
+		message := session.InboxMessage{ClientID: replyID, SessionID: actor.ID, RelatedSessionID: th.ID, Cause: projectCauseResult, Content: report.String(), Wake: wake, Controls: []session.Control{control, *fence}}
 		if err := session.EnqueueInbox(s.rt.SessionDir, message); err != nil {
 			providers.DebugLogf("enqueue side result: %v", err)
 			continue
@@ -247,20 +249,27 @@ func projectResultClientID(sessionID, turnID string) string {
 	return "project-result:" + sessionID + ":" + turnID
 }
 
-// settleUserControlledTurn marks the session's latest finished turn as handled
-// when the user returns it, so recovery never reports a turn the user ran.
-func (s *Server) settleUserControlledTurn(projectID, sessionID string) error {
-	th, err := s.ensureOwnedThreadLoaded(sessionID)
-	if err != nil || th == nil {
-		return err
+// noticeProjectUserMessage persists the intervention independently of turn
+// completion, so a running lead can see it at its next steering boundary.
+func (s *Server) noticeProjectUserMessage(th *threadState, msg providers.ChatMessage) {
+	if msg.Role != "user" || msg.Origin == pluginhost.SessionInputPlugin {
+		return
 	}
 	th.mu.Lock()
-	turnID := latestCompletedTurnID(th.Turns)
+	projectID, source, title := th.ProjectID, th.Source, th.Title
 	th.mu.Unlock()
-	if turnID == "" {
-		return nil
+	if source != projectSessionSource {
+		return
 	}
-	return session.SettleInbox(s.rt.SessionDir, projectResultClientID(sessionID, turnID), projectID)
+	if _, live := s.projectCoordinator(projectID); !live {
+		return
+	}
+	identity := msg.ClientID
+	if identity == "" {
+		identity = fmt.Sprintf("seq:%d", msg.Seq)
+	}
+	notice := fmt.Sprintf("The user wrote to session %q. Respect their instructions and any stop intent; this does not change project membership.\n\n%s", title, msg.Content)
+	s.enqueueProjectInput(projectID, th.ID, "project-user-message:"+th.ID+":"+identity, projectCauseUserMessage, notice, false)
 }
 
 func finalAnswerText(turn Turn) string {
@@ -270,34 +279,6 @@ func finalAnswerText(turn Turn) string {
 		}
 	}
 	return ""
-}
-
-// noticeProjectControl tells the coordinator the user took over, paused or
-// returned one of its sessions. Only a return needs the coordinator to act,
-// so the other notices wait for its next turn.
-func (s *Server) noticeProjectControl(sessionID string, control session.Control) {
-	if _, live := s.projectCoordinator(control.ManagerID); !live {
-		return
-	}
-	th := s.thread(sessionID)
-	title := sessionID
-	if th != nil {
-		th.mu.Lock()
-		title = th.Title
-		th.mu.Unlock()
-	}
-	var cause, notice string
-	switch control.State {
-	case session.ControlTakenOver:
-		cause, notice = projectCauseTakeover, fmt.Sprintf("The user took over session %q. Do not instruct it until they return it.", title)
-	case session.ControlPaused:
-		cause, notice = projectCausePause, fmt.Sprintf("The user paused session %q. Do not instruct it until they return it.", title)
-	case session.ControlActive:
-		cause, notice = projectCauseReturn, fmt.Sprintf("The user returned session %q to you. Inspect what changed before continuing.", title)
-	default:
-		return
-	}
-	s.enqueueProjectInput(control.ManagerID, sessionID, fmt.Sprintf("project-control:%s:%d", sessionID, control.Revision), cause, notice, cause == projectCauseReturn)
 }
 
 // enqueueProjectInput records host input for a coordinator. wake starts a
@@ -321,7 +302,12 @@ func (s *Server) startProjectRecovery() {
 		return
 	}
 	pending := false
-	for _, control := range controls {
+	for id, control := range controls {
+		if control.State == session.ControlPaused || control.State == session.ControlTakenOver {
+			if err := s.restoreProjectMembership(id, control); err != nil {
+				providers.DebugLogf("restore project membership %q: %v", id, err)
+			}
+		}
 		pending = pending || control.State != session.ControlReleased && !strings.HasPrefix(control.ManagerID, "plugin:")
 	}
 	if !pending {
@@ -335,6 +321,58 @@ func (s *Server) startProjectRecovery() {
 	if pending {
 		s.startBackground(s.recoverProjectInbox)
 	}
+}
+
+// Remove this compatibility path when stores predating intervention events are
+// no longer supported. Project membership never requires a return-control step.
+func (s *Server) restoreProjectMembership(id string, old session.Control) error {
+	if _, live := s.projectCoordinator(old.ManagerID); !live {
+		return nil
+	}
+	if _, err := s.projectManagedSession(old.ManagerID, id); err != nil {
+		return nil
+	}
+	th, err := s.ensureOwnedThreadLoaded(id)
+	if err != nil || th == nil {
+		return err
+	}
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
+	current, ok, err := session.ReadControl(s.rt.SessionDir, id)
+	if err != nil || !ok || current != old {
+		return err
+	}
+	th.mu.Lock()
+	turnID := latestCompletedTurnID(th.Turns)
+	var items []ThreadItem
+	for _, turn := range th.Turns {
+		if turn.ID == turnID {
+			items = append(items, turn.Items...)
+			break
+		}
+	}
+	th.mu.Unlock()
+	if turnID != "" {
+		clientID := projectResultClientID(id, turnID)
+		if err := session.SettleInbox(s.rt.SessionDir, clientID, old.ManagerID); err != nil {
+			return err
+		}
+		// Completion routing also reports side-dispatched turns independently
+		// of the lead receipt. Settle those receipts before activating control.
+		for _, item := range items {
+			if item.Type == ThreadItemUserMessage && item.Origin == pluginhost.SessionInputPlugin && item.Cause == "project" && item.RelatedSessionID != old.ManagerID && item.RelatedSessionID != "" {
+				if err := session.SettleInbox(s.rt.SessionDir, clientID+":"+item.RelatedSessionID, item.RelatedSessionID); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if _, err := session.ChangeControl(s.rt.SessionDir, id, old.ManagerID, session.ControlActive, old.Revision); err != nil {
+		return err
+	}
+	s.revokeSessionInputs(id)
+	s.publishSessionControl(id)
+	return nil
 }
 
 // recoverProjectInbox freezes and reports managed turns that ended while no
@@ -410,7 +448,9 @@ func (s *Server) drainSessionInbox(target string) {
 	}
 	valid := pending[:0]
 	for _, message := range pending {
-		obsolete := false
+		// Old pending control notices no longer describe the project's policy;
+		// retain delivered history, but do not replay their return-control advice.
+		obsolete := message.Cause == projectCauseTakeover || message.Cause == projectCausePause || message.Cause == projectCauseReturn
 		for _, control := range message.Controls {
 			if err := session.ValidateControl(s.rt.SessionDir, control); err != nil {
 				if !errors.Is(err, session.ErrControlChanged) {
@@ -436,12 +476,7 @@ func (s *Server) drainSessionInbox(target string) {
 		valid = append(valid, message)
 	}
 	pending = valid
-	th.mu.Lock()
-	running := th.running
-	th.mu.Unlock()
-	if !running && !slices.ContainsFunc(pending, func(message session.InboxMessage) bool { return message.Wake }) {
-		return
-	}
+	wake := slices.ContainsFunc(pending, func(message session.InboxMessage) bool { return message.Wake })
 	for _, message := range pending {
 		msg := providers.ChatMessage{
 			Role: "user", Content: message.Content, ClientID: message.ClientID,
@@ -461,6 +496,14 @@ func (s *Server) drainSessionInbox(target string) {
 			if control.SessionID == target {
 				snapshot.Control = &control
 			}
+		}
+		if !wake {
+			// Do not fall through to starting a turn if the target became idle
+			// between inspecting the inbox and admitting this informational input.
+			if _, ok := s.steerSessionInput(th, msg, snapshot); !ok {
+				return
+			}
+			continue
 		}
 		if _, ok, err := s.trySubmitSessionInput(context.Background(), th, msg, pluginhost.SessionIfRunningSteer, snapshot); err != nil || !ok {
 			if err != nil {

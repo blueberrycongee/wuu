@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -112,7 +113,15 @@ func (s *Server) takeSessionControl(id, state string) error {
 	if err != nil {
 		return err
 	}
-	if !ok || c.State == session.ControlReleased || c.State == state {
+	if !ok || c.State == session.ControlReleased {
+		return nil
+	}
+	project, live := s.projectCoordinator(c.ManagerID)
+	if live {
+		// Stop revokes previously admitted inputs, not membership. A later
+		// explicit instruction uses the new revision and remains admissible.
+		state = session.ControlActive
+	} else if c.State == state {
 		return nil
 	}
 	c, err = session.ChangeControl(s.rt.SessionDir, id, c.ManagerID, state, c.Revision)
@@ -121,7 +130,10 @@ func (s *Server) takeSessionControl(id, state string) error {
 	}
 	s.revokeSessionInputs(id)
 	s.publishSessionControl(id)
-	s.noticeProjectControl(id, c)
+	if live {
+		s.enqueueProjectInput(project.ID, id, fmt.Sprintf("project-control:%s:%d", id, c.Revision), projectCauseStopped,
+			"The user stopped this session. Respect their stop intent; do not automatically restart the stopped work. The session remains a project member and may receive new instructions later.", false)
+	}
 	return nil
 }
 
@@ -141,67 +153,11 @@ func (s *Server) publishSessionControl(id string) {
 	_ = s.notifyThreadUpdated(snapshot)
 }
 
-// handleThreadTakeControl is a human action: the user takes a managed
-// session from its project, which stops instructing it until it is returned.
+// Legacy clients must not recreate the removed project takeover workflow.
 func (s *Server) handleThreadTakeControl(req Request) error {
-	var p struct {
-		ThreadID string `json:"thread_id"`
-		Revision int64  `json:"revision"`
-	}
-	if err := decodeParams(req.Params, &p); err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	s.controlMu.Lock()
-	c, exists, err := session.ReadControl(s.rt.SessionDir, p.ThreadID)
-	if err == nil && (!exists || c.Revision != p.Revision || c.State != session.ControlActive) {
-		err = session.ErrControlChanged
-	}
-	if err == nil {
-		_, err = s.projectManagedSession(c.ManagerID, p.ThreadID)
-	}
-	if err == nil {
-		c, err = session.ChangeControl(s.rt.SessionDir, p.ThreadID, c.ManagerID, session.ControlTakenOver, c.Revision)
-	}
-	s.controlMu.Unlock()
-	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	s.revokeSessionInputs(p.ThreadID)
-	s.publishSessionControl(p.ThreadID)
-	s.noticeProjectControl(p.ThreadID, c)
-	return s.writeResponse(req.ID, map[string]any{"control": s.threadSessionControl(p.ThreadID, c)}, nil)
+	return s.writeResponse(req.ID, nil, errors.New("project takeover is no longer supported; send a message or stop the current turn instead"))
 }
 
-// handleThreadControl is a human action: it returns a taken-over or paused
-// session to its project. Model and extension control goes through their
-// owner-fenced APIs and cannot use this path.
 func (s *Server) handleThreadControl(_ context.Context, req Request) error {
-	var p struct {
-		ThreadID string `json:"thread_id"`
-		Revision int64  `json:"revision"`
-	}
-	if err := decodeParams(req.Params, &p); err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	s.controlMu.Lock()
-	c, exists, err := session.ReadControl(s.rt.SessionDir, p.ThreadID)
-	if err == nil && (!exists || c.Revision != p.Revision) {
-		err = session.ErrControlChanged
-	}
-	if err == nil {
-		_, err = s.projectManagedSession(c.ManagerID, p.ThreadID)
-	}
-	if err == nil && c.State != session.ControlActive {
-		err = s.settleUserControlledTurn(c.ManagerID, p.ThreadID)
-	}
-	if err == nil && c.State != session.ControlActive {
-		c, err = session.ChangeControl(s.rt.SessionDir, p.ThreadID, c.ManagerID, session.ControlActive, c.Revision)
-	}
-	s.controlMu.Unlock()
-	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	s.publishSessionControl(p.ThreadID)
-	s.noticeProjectControl(p.ThreadID, c)
-	return s.writeResponse(req.ID, map[string]any{"control": s.threadSessionControl(p.ThreadID, c)}, nil)
+	return s.writeResponse(req.ID, nil, errors.New("returning project control is no longer supported; project membership remains active after user intervention"))
 }

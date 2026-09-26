@@ -23,7 +23,7 @@ For sustained implementation, the lead can keep one persistent **Side Agent** an
 
 The lead delegates goals, constraints, ownership boundaries, dependencies, and acceptance evidence. It should leave implementation decisions to the agent inspecting the code, which can challenge mistaken assumptions. Sessions do not see the lead's conversation: each needs a self-contained brief and relevant user instructions. The lead remains responsible for reviewing and verifying the combined result.
 
-Team members can message each other and the lead directly. Information joins a running turn or waits until the recipient's next turn; a question or request can explicitly wake it. Messages preserve their sender and survive restarts. Important decisions should reach the lead, and a peer message does not grant additional user authorization. Human takeover invalidates queued messages involving that session; returning it does not replay those old requests.
+Team members can message each other and the lead directly. Information joins a running turn or waits until the recipient's next turn; a question or request can explicitly wake it. Messages preserve their sender and survive restarts. Important decisions should reach the lead, and a peer message does not grant additional user authorization. Stopping or writing to a member does not remove it from the team or invalidate queued team messages.
 
 A new member inherits the lead's model unless a configured model alias is selected. Its model can then be changed using the ordinary conversation controls. No extra model or session runtime is introduced.
 
@@ -31,7 +31,7 @@ To bring existing work into a project, drag a conversation from its workspace on
 
 A project occupies one row in the sidebar; its sessions do not crowd the workspace list. The row shows when any of its sessions is running and how many proposals await your review. In the project conversation:
 
-- Above the composer, the project's running work and pending reviews open the project in the right panel: what awaits review, then every session. A session that you took over or paused says so.
+- Above the composer, the project's running work and pending reviews open the project in the right panel: what awaits review, then every session. Running indicators describe execution, not project membership.
 - Each event, such as a session finishing a turn, reads as one centered line between messages. Its session name opens the session; **Review** opens a pending proposal, and **Details** shows the text the coordinator received. Consecutive events in a turn fold into one line that counts them; expand it to see each event.
 
 In a Git workspace, a session that changes files works in its own Git worktree by default, so their files are isolated. Worktrees do not resolve interface conflicts: assign one writer to each overlapping scope and verify changes together. A session that works in the workspace directly edits its files in place.
@@ -48,11 +48,11 @@ When a worktree session finishes a turn with changes, Wuu freezes them as a prop
 
 The coordinator is told what you chose. A session's next proposal starts from what you applied or published, so a delivered change is never offered again.
 
-## Write to a session or take it over
+## Write to or stop a session
 
-You can write to a managed session at any time. Your message steers the running turn or starts one, the project keeps managing the session, and the coordinator reads what you wrote with the turn's result.
+You can write to a member at any time. Your message steers the running turn or starts one. The member stays in the project, and the coordinator receives a notice without being woken if idle. The turn's result also includes what you wrote.
 
-To work in a session without the coordinator, choose **Take over** in its title bar. Stopping a turn pauses management the same way. The coordinator stops instructing the session until you choose **Return to project**, and it then checks what changed before continuing. Turns you run in the meantime still leave a proposal for you, but they are not reported to the coordinator.
+Stopping interrupts the current turn; it does not transfer control or require a return step. The interrupted result reaches the coordinator without waking it from idle. Normal completion still wakes the coordinator, and stopped worktree turns can still leave changes for review. The coordinator can assign later work to the same member.
 
 To make a session an ordinary conversation again, choose **Remove from project** in the project view. Decide its pending proposal first.
 

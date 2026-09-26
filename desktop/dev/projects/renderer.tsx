@@ -4,7 +4,7 @@
 // From desktop: ./node_modules/.bin/vite --config dev/projects/vite.config.ts,
 // then open http://127.0.0.1:5243/dev/projects/. Query parameters:
 // view=coordinator|session|draft, panel=project|proposal|none, theme=dark,
-// size=20, empty (no projects yet), publisher=0 (hides Open PR).
+// size=20, empty (no projects yet), publisher=0 (hides Open PR), stopped.
 // capture.cjs writes screenshots to artifacts/projects.
 import { createRef, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
@@ -56,6 +56,10 @@ const coordinatorTurn: Turn = { id: "project-turn", status: "completed", duratio
     "Session \"Paginate search results\" finished a turn: completed.\n\nAdded cursor pagination with a page size of 50 and tests.\n\nProposal awaiting the user's review (every change of the session not yet delivered): internal/search/paginate.go, internal/search/paginate_test.go, desktop/src/renderer/SearchResults.tsx"),
   { id: "ready", type: "agent_message", terminal: true, status: "completed", text: "分页已完成，测试通过，可以审阅「Paginate search results」的改动。索引重建还在运行。" },
   projectEvent("peer", "project_message", "index", "Rebuild the search index", "分页接口已确认，索引计数使用过滤后的总行数。"),
+  ...(params.has("stopped") ? [
+    projectEvent("stopped", "project_stopped", "index", "Rebuild the search index", "The user stopped the current turn. Project membership remains active."),
+    projectEvent("user-message", "project_user_message", "index", "Rebuild the search index", "User message: Keep the public API unchanged."),
+  ] : []),
   projectEvent("adopted", "project_adopted", "latency", "Measure search latency",
     "The user added the conversation \"Measure search latency\" to this project."),
 ] };
@@ -77,13 +81,16 @@ const threads: Thread[] = [
   ...(empty ? [] : [
     thread("project", "Search overhaul", { source: "project", permission_mode: "standard", pending_candidates: 1, turns: [coordinatorTurn, followUpTurn], latest_completed_turn_id: "project-follow-up" }),
     thread("index", "Rebuild the search index", {
-      source: "project-session", project_id: "project", project_role: "side", status: "in_progress", session_control: { ...control, state: params.get("side-control") === "taken_over" ? "taken_over" : "active" },
+      source: "project-session", project_id: "project", project_role: "side",
+      status: params.has("stopped") ? "idle" : "in_progress",
+      turns: [{ id: "index-turn", status: params.has("stopped") ? "interrupted" : "in_progress", items: [], items_view: "full" }],
+      session_control: { ...control, state: "active" },
     }),
     thread("paginate", "Paginate search results", {
       source: "project-session", project_id: "project", pending_candidates: 1, turns: [sessionTurn], latest_completed_turn_id: "paginate-turn",
       session_control: { ...control, state: "active" },
     }),
-    thread("latency", "Measure search latency", { source: "project-session", project_id: "project", session_control: { ...control, state: "taken_over" } }),
+    thread("latency", "Measure search latency", { source: "project-session", project_id: "project", session_control: { ...control, state: "active" } }),
     thread("release", "Release checklist", { source: "project", permission_mode: "standard", created_at: "2026-09-24T08:00:00Z" }),
   ]),
   thread("chat", "Explain the release checklist"),
@@ -227,7 +234,7 @@ function Fixture() {
     threads, openThread: setActive,
     openProjectPanel: (project) => openTab(workspaceProjectViewTab(project.id, project.title ?? "")),
     openProposal: (session) => openTab(workspaceProposalViewTab(session.id, session.title ?? "")),
-    takeOver: noop, returnToProject: noop, release: noop,
+    release: noop,
   }), []);
   const current = threads.find(item => item.id === active);
   const draft = view === "draft" || empty;

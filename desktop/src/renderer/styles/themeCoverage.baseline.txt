@@ -19,8 +19,6 @@ composer.css .composer-plus-button[aria-expanded="true"]::before background --in
 composer.css .composer-queue-row:hover .composer-queue-preview, .composer-queue-row:focus-within .composer-queue-preview background --ink-overlay-4
 composer.css .user-question-actions .user-question-cancel:hover:not(:disabled) background --ink-overlay-6
 composer.css .user-question-close:hover:not(:disabled) background --ink-overlay-6
-conversation-shell.css .conversation-title-rename:hover, .conversation-title-rename:focus-visible background --ink-overlay-8
-conversation-shell.css .conversation-title-rename:hover, .conversation-title-rename:focus-visible box-shadow --ink-overlay-8
 conversation-shell.css .conversation-turn-rail-bar background --shell-turn-rail-bar-bg
 conversation-shell.css .linux-window-control-close:active background --linux-caption-close-active
 conversation-shell.css .linux-window-control-close:active color --linux-caption-close-ink

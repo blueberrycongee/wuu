@@ -69,6 +69,17 @@ func (s *Server) steerSessionInput(th *threadState, msg providers.ChatMessage, s
 	}
 	th.mu.Lock()
 	defer th.mu.Unlock()
+	// Consumption moves steering into turn items before durable history is
+	// written. Check under the same lock to fence retries across that boundary.
+	if msg.ClientID != "" {
+		for _, turn := range th.Turns {
+			for _, item := range turn.Items {
+				if item.Type == ThreadItemUserMessage && item.SourceID == msg.ClientID {
+					return turn.ID, true
+				}
+			}
+		}
+	}
 	if !th.running || th.currentTurn == "" || th.currentTurnKind == TurnKindCompact || th.interrupting {
 		return "", false
 	}

@@ -827,6 +827,7 @@ func (s *Server) handleTurnSteer(req Request) error {
 	})
 	th.applyLatestSteerDocumentOverrideLocked()
 	th.mu.Unlock()
+	s.noticeProjectUserMessage(th, steerMsg)
 	if removedQueued {
 		s.notifyPluginTurnDiscarded(params.ThreadID, removedQueuedTurn, "queued turn was converted to steering input")
 		_ = s.writeNotification(NotificationTurnDequeued, TurnDequeuedNotification{
@@ -3739,6 +3740,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	th.currentExecutionRunID = turnRuntime.ExecutionRunID
 	turnRuntime.RequestContext = cloneContextSegments(snapshot.RequestContext)
 	th.mu.Unlock()
+	s.noticeProjectUserMessage(th, userMsg)
 
 	return startedThreadTurn{
 		ctx:        turnCtx,

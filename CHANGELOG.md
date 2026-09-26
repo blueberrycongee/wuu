@@ -15,13 +15,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   the worktree toggle resets for the next conversation.
 - Projects: a coordinator conversation for a larger piece of work in one
   workspace. Create one from the workspace menu; a workspace can hold several.
-  The coordinator reads the workspace but cannot change it. It delegates every
-  change to sessions it manages, which appear nested under the project and open
+  The coordinator can work directly or delegate to managed sessions, which open
   like any conversation. Sessions that change files work in their own Git
   worktree. When a turn ends, its result reaches the coordinator once, including
   after a restart, and its changes wait as proposed changes that you apply to
   the workspace, open as a PR through an extension, or discard. Sending a message in
-  a session takes it over until you return it to the project. The
+  a session steers it without changing project membership. Stopping interrupts
+  its current turn; interrupted results and direct-message notices do not wake
+  an idle coordinator. Project members no longer need takeover or return controls. The
   `project/candidate` app-server method and `project` on `thread/start` expose
   the same model to clients.
 
@@ -131,6 +132,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   conversation list when their coordinator is archived, including after reload.
   Their ownership and running state are preserved; sessions whose coordinator
   was deleted or is missing remain accessible in the ordinary list.
+
+- macOS confined commands can read Keychain credentials again, preventing false
+  GitHub CLI authentication failures caused by blocked system cache writes.
 
 - Instructions given when an extension creates a session now reach the model on
   every turn and after a reload. Built-in runs previously dropped them,

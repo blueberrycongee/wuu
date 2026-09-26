@@ -7,7 +7,7 @@ import { candidateStatusKey } from "./ProjectViews";
 import { SelectMenu } from "./SelectMenu";
 import { baseThreadTitle } from "./ThreadTitles";
 import { GitPatchLines } from "./WorkspaceReviewPanels";
-import { ArrowUpRight, CornerUpLeft, FileDiff, Hand, LoaderCircle, LogOut, MessagesSquare } from "./WuuIcons";
+import { ArrowUpRight, FileDiff, LoaderCircle, LogOut, MessagesSquare } from "./WuuIcons";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { useI18n } from "./i18n";
 import { showErrorToast } from "./Toast";
@@ -85,8 +85,6 @@ function ProjectSessionRow({ session }: { session: ProjectThread }): JSX.Element
   const actions = useProjectActions();
   if (!actions) return null;
   const running = isThreadExecuting(session);
-  const control = session.session_control;
-  const managed = control?.state === "active";
   return (
     <li className="project-panel-row">
       <span className="project-panel-row-icon">
@@ -96,23 +94,7 @@ function ProjectSessionRow({ session }: { session: ProjectThread }): JSX.Element
         <span className="project-panel-row-title" title={baseThreadTitle(session)}>{baseThreadTitle(session)}</span>
       </button>
       <div className="project-panel-row-tools">
-        {control && !managed ? (
-          <span className="project-panel-row-meta project-panel-row-state">
-            {t(control.state === "taken_over" ? "sessionControl.takenOver" : "sessionControl.paused")}
-          </span>
-        ) : null}
         <div className="project-panel-row-actions">
-          {control ? (
-            <button
-              type="button"
-              className="icon-button project-icon-button project-panel-row-action"
-              title={managed ? `${t("projects.takeOver")} · ${t("projects.takeOverHint")}` : t("projects.returnToProject")}
-              aria-label={t(managed ? "projects.takeOver" : "projects.returnToProject")}
-              onClick={() => managed ? actions.takeOver(session) : actions.returnToProject(session)}
-            >
-              {managed ? <Hand aria-hidden="true" /> : <CornerUpLeft aria-hidden="true" />}
-            </button>
-          ) : null}
           <button type="button" className="icon-button project-icon-button project-panel-row-action"
             title={t("projects.release")} aria-label={t("projects.release")} onClick={() => actions.release(session)}>
             <LogOut aria-hidden="true" />
