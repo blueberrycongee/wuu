@@ -136,6 +136,7 @@ func (th *threadState) startTurnLocked(turnID string, userMsg providers.ChatMess
 	th.activeAgentItemID = ""
 	th.activeReasoningItemID = ""
 	th.toolItems = make(map[string]string)
+	th.streamText = nil
 
 	userItem := chatMessageItem(th.nextItemIDLocked(turnID), userMsg)
 	turn := Turn{
@@ -194,6 +195,7 @@ func (th *threadState) resumePersistedUserTurnLocked(clientID string, now time.T
 		th.agentStream = nil
 		th.activeReasoningItemID = ""
 		th.toolItems = make(map[string]string)
+		th.streamText = nil
 		return turn, true
 	}
 	return Turn{}, false
@@ -208,6 +210,7 @@ func (th *threadState) appendUserMessageTurnLocked(turnID string, userMsg provid
 	th.activeAgentItemID = ""
 	th.activeReasoningItemID = ""
 	th.toolItems = make(map[string]string)
+	th.streamText = nil
 
 	userItem := chatMessageItem(th.nextItemIDLocked(turnID), userMsg)
 	turn := Turn{
@@ -257,6 +260,7 @@ func (th *threadState) startInternalTurnWithKindLocked(turnID string, kind TurnK
 	th.activeAgentItemID = ""
 	th.activeReasoningItemID = ""
 	th.toolItems = make(map[string]string)
+	th.streamText = nil
 
 	turn := Turn{
 		ID:            turnID,
@@ -368,6 +372,7 @@ func (th *threadState) finishTurnLocked(turnID string, status TurnStatus, err er
 	th.agentStream = nil
 	th.activeReasoningItemID = ""
 	th.toolItems = make(map[string]string)
+	th.streamText = nil
 
 	turn := th.ensureTurnLocked(turnID, now)
 	if turn.Kind == TurnKindCompact && status == TurnStatusFailed {
@@ -665,7 +670,7 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 		if started {
 			out = append(out, itemStarted(th.ID, turnID, item, now))
 		}
-		item.Text += ev.Content
+		item.Text = th.appendStreamTextLocked(item.ID, item.Text, ev.Content)
 		th.upsertItemLocked(turnID, item, now)
 		out = append(out, outboundNotification{
 			method: NotificationAgentMessageDelta,
@@ -686,6 +691,7 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 			out = append(out, itemStarted(th.ID, turnID, item, now))
 		}
 		item.Text = ev.Content
+		delete(th.streamText, item.ID)
 		th.upsertItemLocked(turnID, item, now)
 		out = append(out, outboundNotification{
 			method: NotificationAgentMessageReplace,
@@ -704,7 +710,7 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 		if started {
 			out = append(out, itemStarted(th.ID, turnID, item, now))
 		}
-		item.Text += ev.Content
+		item.Text = th.appendStreamTextLocked(item.ID, item.Text, ev.Content)
 		th.upsertItemLocked(turnID, item, now)
 		out = append(out, outboundNotification{
 			method: NotificationReasoningDelta,
@@ -724,6 +730,7 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 			out = append(out, itemStarted(th.ID, turnID, item, now))
 		}
 		item.Text = ev.Content
+		delete(th.streamText, item.ID)
 		th.upsertItemLocked(turnID, item, now)
 		out = append(out, outboundNotification{
 			method: NotificationReasoningReplace,
@@ -761,7 +768,7 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 		if !ok {
 			return nil
 		}
-		item.Arguments += ev.Content
+		item.Arguments = th.appendStreamTextLocked(item.ID, item.Arguments, ev.Content)
 		th.upsertItemLocked(turnID, item, now)
 		out = append(out, outboundNotification{
 			method: NotificationToolCallDelta,
@@ -1158,6 +1165,7 @@ func (th *threadState) toolItemFromCallLocked(turnID string, call providers.Tool
 			}
 			if call.Arguments != "" {
 				item.Arguments = call.Arguments
+				delete(th.streamText, item.ID)
 			}
 			if call.Display != nil {
 				item.Display = cloneToolCallDisplay(call.Display)
@@ -1253,6 +1261,9 @@ func (th *threadState) itemLocked(turnID, itemID string) (ThreadItem, bool) {
 }
 
 func (th *threadState) upsertItemLocked(turnID string, item ThreadItem, now time.Time) {
+	if item.Status != ThreadItemStatusInProgress {
+		delete(th.streamText, item.ID)
+	}
 	turn := th.ensureTurnLocked(turnID, now)
 	for i := range turn.Items {
 		if turn.Items[i].ID == item.ID {
@@ -1274,11 +1285,32 @@ func (th *threadState) removeItemLocked(turnID, itemID string, now time.Time) bo
 			continue
 		}
 		turn.Items = append(turn.Items[:i], turn.Items[i+1:]...)
+		delete(th.streamText, itemID)
 		th.replaceTurnLocked(turn)
 		th.UpdatedAt = now
 		return true
 	}
 	return false
+}
+
+// Keep builders out of copyable turn/item snapshots. String exposes the complete
+// text without copying it on every delta; append and Reset preserve older strings.
+func (th *threadState) appendStreamTextLocked(itemID, current, delta string) string {
+	if th.streamText == nil {
+		th.streamText = make(map[string]*strings.Builder)
+	}
+	buffer := th.streamText[itemID]
+	if buffer == nil {
+		buffer = &strings.Builder{}
+		th.streamText[itemID] = buffer
+	}
+	// Authoritative messages and tool updates can replace the accumulated text.
+	if buffer.String() != current {
+		buffer.Reset()
+		buffer.WriteString(current)
+	}
+	buffer.WriteString(delta)
+	return buffer.String()
 }
 
 func (th *threadState) nextItemIDLocked(turnID string) string {

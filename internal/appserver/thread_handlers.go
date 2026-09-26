@@ -815,6 +815,7 @@ func (s *Server) handleThreadEditMessage(req Request) error {
 	th.agentStream = nil
 	th.activeReasoningItemID = ""
 	th.toolItems = make(map[string]string)
+	th.streamText = nil
 	thread := th.snapshotLocked()
 	releaseThreadMutationLease(th.ID, mutationLease)
 	th.mu.Unlock()
