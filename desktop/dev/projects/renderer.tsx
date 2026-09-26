@@ -44,6 +44,10 @@ const threads: Thread[] = [
     session_control: { ...control, state: "paused" },
   }),
   thread("chat", "Explain the release checklist"),
+  // ?history=N lists N newer conversations first, so the project sits past the
+  // recent range and the expanded list overflows its scroll area.
+  ...Array.from({ length: Number(params.get("history")) || 0 }, (_, index) =>
+    thread(`history-${index}`, `Newer conversation ${index + 1}`, { updated_at: `2026-09-25T10:${String(index).padStart(2, "0")}:00Z` })),
 ];
 
 const candidates: ProjectCandidate[] = [
