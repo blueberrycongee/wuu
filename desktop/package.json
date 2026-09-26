@@ -32,6 +32,7 @@
     "test:cua-mac": "node scripts/test-cua-mac.cjs",
     "test:watch": "vitest",
     "test:renderer-recovery": "node scripts/renderer-recovery-smoke.cjs",
+    "test:e2e:fast-mode": "npm run build:core && npm run build && electron scripts/fast-mode-e2e.cjs",
     "test:e2e:permission-mode": "npm run build && electron scripts/permission-mode-e2e.cjs",
     "test:e2e:streaming": "npm run build && electron scripts/streaming-e2e.cjs",
     "test:e2e:conversation-scroll": "npm run build && electron scripts/conversation-scroll-e2e.cjs",

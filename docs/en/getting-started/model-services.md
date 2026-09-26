@@ -127,3 +127,9 @@ Built-in views preserve useful structure: search pages keep whole records and sn
 If text replies work but tools fail, check the service's support for tool calling and streaming. A compatible API format alone does not establish that every model supports the same capabilities.
 
 Prompts, selected context, attachments, and tool results can leave your machine through the configured endpoint. The provider's pricing and data policies apply; with a gateway, the gateway receives those requests. Keep real API keys out of project files and Git history.
+
+## Fast mode in the model popover
+
+For supported provider/model pairs, the lightning button changes processing speed without changing the model or reasoning effort. Speed is saved with the conversation and the draft selection. Reset inherits provider options; an explicit off overrides an accelerated default. The same controls are available through `/fast on`, `/fast off`, and `/fast status`.
+
+Wuu recognizes catalog aliases that share an API model and declare acceleration options. Existing `-fast` model selections continue working. Custom services can explicitly declare `providers.<provider>.models.<model>.fast_mode: true` once their endpoint supports the corresponding protocol; `false` hides inferred support. OpenAI-compatible requests use `service_tier: "priority"` / `"default"`. Anthropic requests use `speed: "fast"` / `"standard"`, with the required Fast mode beta header only when enabled. The direct Anthropic API capability follows its [documented supported models](https://platform.claude.com/docs/en/build-with-claude/fast-mode); compatible endpoints must declare support. This setting does not turn a reasoning level into a speed tier.

@@ -374,7 +374,7 @@ function isNoModelConfiguredError(message: string): boolean {
   );
 }
 
-type EngineRuntimeSelection = { model: string; effort: string };
+type EngineRuntimeSelection = { model: string; effort: string; speed?: string };
 
 function defaultEngineRuntimeSelection(engine?: EngineInfo): EngineRuntimeSelection {
   const model = engine?.models?.find((item) => item.is_default) ?? engine?.models?.[0];
@@ -1389,10 +1389,11 @@ export function App(): JSX.Element {
     }
     draftEngineSeed.current.done = true;
     setDraftEngine(remembered.engine);
-    setDraftEngineRuntime({ model: remembered.model, effort: remembered.effort });
+    setDraftEngineRuntime({ model: remembered.model, effort: remembered.effort, speed: remembered.speed });
     draftEngineRuntimeByID.current[remembered.engine] = {
       model: remembered.model,
       effort: remembered.effort,
+      speed: remembered.speed,
     };
     setDraftPermissionMode(remembered.engine === "wuu" ? "" : "unconfined");
   }, [activeThreadID, engineInventory]);
@@ -3156,10 +3157,12 @@ export function App(): JSX.Element {
       ? {
           model: activeThread.model,
           effort: activeThread.model_effort ?? activeThread.model_variant ?? "",
+          speed: activeThread.speed ?? "",
         }
       : {
           model: draftEngineRuntime.model || defaultEngineRuntime.model,
           effort: draftEngineRuntime.effort || defaultEngineRuntime.effort,
+          speed: draftEngineRuntime.speed ?? "",
         };
     const composerPermissionMode =
       activeThread?.permission_mode
@@ -3239,6 +3242,15 @@ export function App(): JSX.Element {
         engineLocked={Boolean(activeThread)}
         engineModel={effectiveEngineRuntime.model}
         engineEffort={effectiveEngineRuntime.effort}
+        engineSpeed={effectiveEngineRuntime.speed}
+        onSelectSpeed={async (speed) => {
+          if (effectiveEngine === "wuu" || activeThread) return selectRuntimeSpeed(speed);
+          const runtime = { ...effectiveEngineRuntime, speed };
+          setDraftEngineRuntime(runtime);
+          draftEngineRuntimeByID.current[effectiveEngine] = runtime;
+          writeDraftEngineMemory({ engine: effectiveEngine, ...runtime });
+          return true;
+        }}
         onSelectEngine={selectDraftEngine}
         onSelectEngineModel={(model, effort) => {
           const runtime = { model, effort };
@@ -3260,6 +3272,7 @@ export function App(): JSX.Element {
             writeDraftEngineMemory({
               engine: effectiveEngine,
               model: effectiveEngineRuntime.model,
+              speed: effectiveEngineRuntime.speed,
               effort,
             });
           }
@@ -4119,6 +4132,7 @@ export function App(): JSX.Element {
     loadCodexModelsForProvider,
     selectRuntimeModel,
     selectRuntimeEffort,
+    selectRuntimeSpeed,
     selectPermissionMode,
     interrupt,
     interruptPane,
@@ -4694,6 +4708,7 @@ export function App(): JSX.Element {
     const newThreadEngineRuntime = {
       model: draftEngineRuntime.model || defaultExternalRuntime.model,
       effort: draftEngineRuntime.effort || defaultExternalRuntime.effort,
+      speed: draftEngineRuntime.speed,
     };
     let resolveAdmission!: TurnAdmission["resolve"];
     let cancelPreparation!: () => void;
@@ -4747,6 +4762,7 @@ export function App(): JSX.Element {
                   provider: currentState.initialized?.provider,
                   model: currentState.initialized?.model,
                   effort: currentState.initialized?.variant || currentState.initialized?.effort,
+                  speed: currentState.initialized?.speed,
                   permission_mode: currentState.initialized?.permissions?.mode,
                   approve_for_me: currentState.initialized?.permissions?.approve_for_me,
                 } satisfies ThreadStartParams),

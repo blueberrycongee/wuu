@@ -18,6 +18,7 @@ export function runtimeViewForSession(
     model: thread.model || initialized.model,
     variant: thread.model_variant ?? initialized.variant,
     effort: thread.model_effort ?? initialized.effort,
+    speed: thread.speed ?? "",
     permissions: {
       ...initialized.permissions,
       mode: thread.permission_mode || initialized.permissions?.mode,

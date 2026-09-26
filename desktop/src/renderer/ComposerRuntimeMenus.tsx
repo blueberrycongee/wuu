@@ -251,6 +251,10 @@ function RuntimePanelSummary({
   effortOptions,
   selectedEffort,
   effortDisabled,
+  speed,
+  defaultSpeed,
+  speedDisabled = false,
+  onSelectSpeed,
   onOpenEngines,
   onOpenProviders,
   onOpenModels,
@@ -267,6 +271,10 @@ function RuntimePanelSummary({
   effortOptions: string[];
   selectedEffort: string;
   effortDisabled: boolean;
+  speed?: string;
+  defaultSpeed?: string;
+  speedDisabled?: boolean;
+  onSelectSpeed?: (speed: string) => void | Promise<boolean>;
   onOpenEngines: () => void;
   onOpenProviders?: () => void;
   onOpenModels: () => void;
@@ -274,6 +282,20 @@ function RuntimePanelSummary({
   onSelectEffort: (effort: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const [pendingSpeed, setPendingSpeed] = useState<string | undefined>(undefined);
+  const [speedSaving, setSpeedSaving] = useState(false);
+  useEffect(() => setPendingSpeed(undefined), [speed, model]);
+  const requestedSpeed = pendingSpeed ?? speed;
+  const displayedSpeed = requestedSpeed || defaultSpeed;
+  const changeSpeed = async (next: string): Promise<void> => {
+    if (!onSelectSpeed || speedSaving) return;
+    setPendingSpeed(next);
+    setSpeedSaving(true);
+    try {
+      if (await onSelectSpeed(next) === false) setPendingSpeed(undefined);
+    } catch { setPendingSpeed(undefined); }
+    finally { setSpeedSaving(false); }
+  };
   const [previewEffort, setPreviewEffort] = useState(selectedEffort);
 
   useEffect(() => {
@@ -283,6 +305,15 @@ function RuntimePanelSummary({
   return (
     <div className="runtime-panel-summary">
       <div className="runtime-panel-context">
+        {onSelectSpeed ? <button
+          type="button"
+          className="runtime-panel-fast"
+          aria-label={t("runtime.fastMode")}
+          aria-pressed={displayedSpeed ? displayedSpeed === "fast" : "mixed"}
+          title={t(displayedSpeed === "fast" ? "runtime.fastModeOn" : displayedSpeed === "standard" ? "runtime.fastModeOff" : "runtime.fastModeDefault")}
+          disabled={speedDisabled || speedSaving}
+          onClick={() => { void changeSpeed(displayedSpeed === "fast" ? "standard" : "fast"); }}
+        ><Zap aria-hidden="true" /></button> : null}
         {!hideEngine ? <button type="button" onClick={onOpenEngines}>
           <EngineIcon engine={engineId} />
           <span>{engineLabel(engine)}</span>
@@ -296,6 +327,14 @@ function RuntimePanelSummary({
             </button>
           </>
         ) : null}
+        {onSelectSpeed ? <button
+          className="runtime-panel-speed-reset"
+          type="button"
+          aria-label={t("runtime.resetSpeed")}
+          title={t("runtime.resetSpeed")}
+          disabled={speedDisabled || speedSaving || !requestedSpeed}
+          onClick={() => { void changeSpeed(""); }}
+        ><RotateCcw aria-hidden="true" /></button> : null}
       </div>
       <button type="button" className="runtime-panel-model" onClick={onOpenModels}>
         <span className="runtime-panel-model-name">{model}</span>
@@ -489,6 +528,8 @@ export function RuntimePicker({
   engineLocked,
   engineModel,
   engineEffort,
+  engineSpeed,
+  onSelectSpeed,
   onSelectEngine,
   onSelectEngineModel,
   onSelectEngineEffort,
@@ -508,6 +549,8 @@ export function RuntimePicker({
   engineLocked?: boolean;
   engineModel?: string;
   engineEffort?: string;
+  engineSpeed?: string;
+  onSelectSpeed?: (speed: string) => void | Promise<boolean>;
   onSelectEngine?: (id: string) => void;
   onSelectEngineModel?: (model: string, effort: string) => void;
   onSelectEngineEffort?: (effort: string) => void;
@@ -542,7 +585,7 @@ export function RuntimePicker({
     : availableEngineOptions(engines, externalEngine);
   const selectedEngine = handoff ? "wuu" : externalEngine || "wuu";
   const externalEngineInfo = engines?.find((engine) => engine.id === externalEngine);
-  const externalModelInfo = externalEngineInfo?.models?.find((model) => model.id === engineModel);
+  const externalModelInfo = externalEngineInfo?.models?.find((model) => engineModel ? model.id === engineModel : model.is_default);
   const triggerEngineName = engineLabel(selectedEngine, externalEngineInfo);
   const triggerLabel = handoff
     ? handoff.model
@@ -629,6 +672,8 @@ export function RuntimePicker({
               engine={externalEngineInfo}
               selectedModel={engineModel ?? ""}
               selectedEffort={engineEffort ?? ""}
+              selectedSpeed={engineSpeed ?? ""}
+              onSelectSpeed={onSelectSpeed}
               disabled={running || Boolean(engineLocked)}
               onSelectModel={(model, effort) => onSelectEngineModel?.(model, effort)}
               onSelectEffort={(effort) => onSelectEngineEffort?.(effort)}
@@ -650,6 +695,7 @@ export function RuntimePicker({
               onSelectModel={handoff?.onSelectModel ?? onSelectModel}
               onHandoffModel={handoff ? undefined : onHandoffModel}
               onSelectEffort={handoff?.onSelectEffort ?? onSelectEffort}
+              onSelectSpeed={handoff ? undefined : onSelectSpeed}
               engineOptions={engineOptions}
               selectedEngine={selectedEngine}
               engineLocked={handoff ? true : Boolean(engineLocked)}
@@ -685,6 +731,8 @@ function EngineRuntimeMenu({
   engine,
   selectedModel,
   selectedEffort,
+  selectedSpeed,
+  onSelectSpeed,
   disabled,
   onSelectModel,
   onSelectEffort,
@@ -699,6 +747,8 @@ function EngineRuntimeMenu({
   engine?: EngineInfo;
   selectedModel: string;
   selectedEffort: string;
+  selectedSpeed: string;
+  onSelectSpeed?: (speed: string) => void | Promise<boolean>;
   disabled: boolean;
   onSelectModel: (model: string, effort: string) => void;
   onSelectEffort: (effort: string) => void;
@@ -743,7 +793,7 @@ function EngineRuntimeMenu({
         || model.id.toLocaleLowerCase().includes(normalizedQuery))
     : models;
   const effectiveModelID = optimistic?.model ?? selectedModel;
-  const effectiveModel = models.find((model) => model.id === effectiveModelID);
+  const effectiveModel = models.find((model) => effectiveModelID ? model.id === effectiveModelID : model.is_default);
   const effortOptions = orderedEffortOptions(effectiveModel?.supported_efforts ?? []);
   const effectiveEffort = optimistic?.effort
     ?? (effortOptions.includes(selectedEffort)
@@ -777,6 +827,9 @@ function EngineRuntimeMenu({
             effortOptions={effortOptions}
             selectedEffort={effectiveEffort}
             effortDisabled={disabled}
+            speed={selectedSpeed}
+            speedDisabled={running}
+            onSelectSpeed={effectiveModel?.fast_mode ? onSelectSpeed : undefined}
             onOpenEngines={() => openView("engines")}
             onOpenModels={() => openView("models")}
             onSelectEffort={(effort) => {
@@ -879,6 +932,7 @@ export function RuntimeModelMenu({
   onSelectModel,
   onHandoffModel,
   onSelectEffort,
+  onSelectSpeed,
   engineOptions,
   selectedEngine,
   engineLocked,
@@ -903,6 +957,7 @@ export function RuntimeModelMenu({
   onSelectModel: (provider: string, model: string, variant?: string) => void | Promise<boolean>;
   onHandoffModel?: (provider: string, model: string) => void;
   onSelectEffort: (variant: string) => void | Promise<boolean>;
+  onSelectSpeed?: (speed: string) => void | Promise<boolean>;
   engineOptions: EngineOption[];
   selectedEngine: string;
   engineLocked: boolean;
@@ -1057,6 +1112,10 @@ export function RuntimeModelMenu({
             effortOptions={effortOptions}
             selectedEffort={effectiveVariant}
             effortDisabled={false}
+            speed={initialized.speed}
+            defaultSpeed={effectiveModel?.default_speed}
+            speedDisabled={running}
+            onSelectSpeed={effectiveModel?.fast_mode ? onSelectSpeed : undefined}
             onOpenEngines={() => openView("engines")}
             onOpenProviders={() => openView("providers")}
             onOpenModels={() => openView("models")}

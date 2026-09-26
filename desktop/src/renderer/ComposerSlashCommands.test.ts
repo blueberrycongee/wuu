@@ -5,7 +5,6 @@ import {
   buildSideThreadSlashCommands,
   composerSlashPrompt,
   filterComposerSlashCommands,
-  runtimeFastModelTarget
 } from "./ComposerSlashCommands";
 import type { InitializeResult, SkillSummary } from "../shared/protocol";
 import { setActiveLocale } from "./i18n";
@@ -81,46 +80,20 @@ describe("composer slash commands", () => {
       title: "打开浏览器",
     });
   });
-  it("shows /fast only when the current provider exposes a fast model", () => {
+  it("keeps /fast available for turning an advertised mode off", () => {
     const commands = buildComposerSlashCommands({
       activeContext: { kind: "project", project_id: "repo", cwd: "/repo" },
-      initialized: initialized("gpt-5.5", ["gpt-5.5", "gpt-5.5-fast"]),
-      running: false
+      initialized: initialized("gpt-6-astra", ["gpt-6-astra"]),
+      fastMode: { supported: true, enabled: true }, running: false,
     });
-
-    expect(filterComposerSlashCommands(commands, "fast").map((command) => command.name)).toEqual(["fast"]);
-    expect(runtimeFastModelTarget(initialized("gpt-5.5", ["gpt-5.5", "gpt-5.5-fast"]))).toEqual({
-      provider: "openai",
-      model: "gpt-5.5-fast",
-      current: false
-    });
+    expect(commands.find(command => command.action === "fast")?.disabledReason).toBeUndefined();
   });
-
-  it("hides /fast when the current provider has no fast model", () => {
+  it("does not infer acceleration from a model name", () => {
     const commands = buildComposerSlashCommands({
-      activeContext: { kind: "project", project_id: "repo", cwd: "/repo" },
-      initialized: initialized("mimo-v2.5-pro", ["mimo-v2.5-pro"]),
-      running: false
+      initialized: initialized("custom-fast", ["custom-fast"]), running: false,
+      fastMode: { supported: false, enabled: false },
     });
-
-    expect(filterComposerSlashCommands(commands, "fast")).toEqual([]);
-    expect(runtimeFastModelTarget(initialized("mimo-v2.5-pro", ["mimo-v2.5-pro"]))).toBeUndefined();
-  });
-
-  it("keeps /fast visible but disabled when already in fast mode", () => {
-    const commands = buildComposerSlashCommands({
-      activeContext: { kind: "project", project_id: "repo", cwd: "/repo" },
-      initialized: initialized("gpt-5.5-fast", ["gpt-5.5", "gpt-5.5-fast"]),
-      running: false
-    });
-    const fast = filterComposerSlashCommands(commands, "fast")[0];
-
-    expect(fast?.disabledReason).toBe("当前已是快速模式");
-    expect(runtimeFastModelTarget(initialized("gpt-5.5-fast", ["gpt-5.5", "gpt-5.5-fast"]))).toEqual({
-      provider: "openai",
-      model: "gpt-5.5-fast",
-      current: true
-    });
+    expect(commands.some(command => command.action === "fast")).toBe(false);
   });
 
   it("does not reserve a built-in /memory command for the plugin-owned view", () => {
