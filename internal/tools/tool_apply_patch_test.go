@@ -204,3 +204,85 @@ func TestToolkit_ApplyPatchMultipleChunksPerFile(t *testing.T) {
 		t.Errorf("separate file with same basename lost edits: %q", got)
 	}
 }
+
+func TestApplyPatchPreservesFileLineEndings(t *testing.T) {
+	for _, fileEOL := range []string{"\n", "\r\n"} {
+		for _, patchEOL := range []string{"\n", "\r\n"} {
+			for _, trailing := range []bool{false, true} {
+				for _, mode := range []string{"update", "move", "dry_run"} {
+					t.Run(fmt.Sprintf("file=%q/patch=%q/trailing=%t/%s", fileEOL, patchEOL, trailing, mode), func(t *testing.T) {
+						root, err := filepath.EvalSymlinks(t.TempDir())
+						if err != nil {
+							t.Fatal(err)
+						}
+						original := strings.Join([]string{"alpha", "", "middle", "beta"}, fileEOL)
+						want := strings.Join([]string{"ALPHA", "extra", "", "middle", "BETA"}, fileEOL)
+						if trailing {
+							original += fileEOL
+							want += fileEOL
+						}
+						path := filepath.Join(root, "a.txt")
+						mustWriteFile(t, path, original)
+						move := ""
+						if mode == "move" {
+							move = "*** Move to: moved.txt\n"
+						}
+						patch := "*** Begin Patch\n*** Update File: a.txt\n" + move + "@@\n-alpha\n+ALPHA\n+extra\n \n middle\n@@\n-beta\n+BETA\n*** End Patch"
+						args, err := json.Marshal(map[string]any{"patchText": strings.ReplaceAll(patch, "\n", patchEOL), "dry_run": mode == "dry_run"})
+						if err != nil {
+							t.Fatal(err)
+						}
+						hooks := 0
+						tool := NewApplyPatchTool(&Env{RootDir: root, OnFileChanged: func(string) { hooks++ }})
+						if _, err := tool.Execute(context.Background(), string(args)); err != nil {
+							t.Fatal(err)
+						}
+						if mode == "dry_run" {
+							want = original
+							if hooks != 0 {
+								t.Fatalf("dry run fired %d hooks", hooks)
+							}
+						}
+						if mode == "move" {
+							if _, err := os.Stat(path); !os.IsNotExist(err) {
+								t.Fatalf("move retained source: %v", err)
+							}
+							path = filepath.Join(root, "moved.txt")
+						}
+						if got := mustReadFile(t, path); got != want {
+							t.Fatalf("file bytes = %q, want %q", got, want)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+func TestApplyPatchCRLFRejectsInvalidAnchorsAtomically(t *testing.T) {
+	for _, tc := range []struct{ name, old, kind string }{
+		{"ambiguous", "same", "ambiguous_anchor"},
+		{"stale", "missing", "anchor_not_found"},
+		{"whitespace", " same", "anchor_not_found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			original := "alpha\r\nsame\r\nmiddle\r\nsame\r\n"
+			path := filepath.Join(root, "a.txt")
+			mustWriteFile(t, path, original)
+			patch := "*** Begin Patch\n*** Update File: a.txt\n@@\n-alpha\n+ALPHA\n@@\n-" + tc.old + "\n+changed\n*** End Patch"
+			args, err := json.Marshal(map[string]string{"patchText": patch})
+			if err != nil {
+				t.Fatal(err)
+			}
+			hooks := 0
+			tool := NewApplyPatchTool(&Env{RootDir: root, OnFileChanged: func(string) { hooks++ }})
+			if _, err := tool.Execute(context.Background(), string(args)); err == nil || !strings.Contains(err.Error(), tc.kind) {
+				t.Fatalf("expected %s, got %v", tc.kind, err)
+			}
+			if got := mustReadFile(t, path); got != original || hooks != 0 {
+				t.Fatalf("failed patch changed file: %q, hooks=%d", got, hooks)
+			}
+		})
+	}
+}
