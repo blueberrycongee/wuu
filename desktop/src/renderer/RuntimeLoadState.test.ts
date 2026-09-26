@@ -50,7 +50,7 @@ function thread(id: string, overrides: Partial<Thread> = {}): Thread {
   } as Thread;
 }
 
-function projectList(activeContext?: RuntimeContext): ProjectListResult {
+function workspaceList(activeContext?: RuntimeContext): ProjectListResult {
   return {
     projects: [],
     active_context: activeContext,
@@ -75,7 +75,7 @@ describe("runtime load helpers", () => {
     const listArchivedThreads = vi.fn().mockResolvedValue({ threads: [] });
     installWuuStub({ initialize, listThreads, listArchivedThreads });
 
-    const loading = loadRuntime(projectList(activeContext));
+    const loading = loadRuntime(workspaceList(activeContext));
 
     expect(initialize).toHaveBeenCalledOnce();
     expect(listThreads).toHaveBeenCalledOnce();
@@ -130,7 +130,7 @@ describe("runtime load helpers", () => {
       listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
     });
 
-    const state = await loadRuntime(projectList(activeContext));
+    const state = await loadRuntime(workspaceList(activeContext));
 
     expect(state.initialized).toMatchObject({
       provider: "tokenhub",
@@ -144,9 +144,9 @@ describe("runtime load helpers", () => {
     const initialize = vi.fn();
     installWuuStub({ initialize });
 
-    const state = await loadRuntime(projectList(undefined));
+    const state = await loadRuntime(workspaceList(undefined));
 
-    expect(state).toEqual(emptyRuntimeState(projectList(undefined)));
+    expect(state).toEqual(emptyRuntimeState(workspaceList(undefined)));
     expect(initialize).not.toHaveBeenCalled();
   });
 
@@ -158,7 +158,7 @@ describe("runtime load helpers", () => {
     };
     const message =
       "工作区目录当前不可用：/tmp/offline-project。请恢复该目录，或从工作区菜单选择“重新定位…”。";
-    const projectState: ProjectListResult = {
+    const workspaceState: ProjectListResult = {
       projects: [
         {
           id: "project-1",
@@ -183,9 +183,9 @@ describe("runtime load helpers", () => {
     const listArchivedThreads = vi.fn();
     installWuuStub({ initialize, listThreads, listArchivedThreads });
 
-    const state = await loadRuntime(projectState);
+    const state = await loadRuntime(workspaceState);
 
-    expect(state.projects).toEqual(projectState.projects);
+    expect(state.projects).toEqual(workspaceState.projects);
     expect(state.activeContext).toEqual(activeContext);
     expect(state.activeProjectId).toBe("project-1");
     expect(state.initialized).toBeUndefined();
@@ -226,7 +226,7 @@ describe("runtime load helpers", () => {
       resumeThread: vi.fn().mockResolvedValue({ thread: resumed }),
     });
 
-    const state = await loadRuntime(projectList(activeContext));
+    const state = await loadRuntime(workspaceList(activeContext));
 
     expect(state.thread?.id).toBe("latest");
     expect(state.initialized?.model).toBe("gpt-test");
@@ -255,7 +255,7 @@ describe("runtime load helpers", () => {
       resumeThread,
     });
 
-    const state = await loadRuntime(projectList(activeContext));
+    const state = await loadRuntime(workspaceList(activeContext));
 
     expect(resumeThread).toHaveBeenCalledWith("live");
     expect(state.thread?.id).toBe("live");
@@ -276,7 +276,7 @@ describe("runtime load helpers", () => {
       resumeThread,
     });
 
-    const state = await loadRuntime(projectList(activeContext));
+    const state = await loadRuntime(workspaceList(activeContext));
 
     expect(resumeThread).not.toHaveBeenCalled();
     expect(state.thread).toBeUndefined();
@@ -299,7 +299,7 @@ describe("runtime load helpers", () => {
       listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
     });
 
-    const state = await loadRuntime(projectList(activeContext));
+    const state = await loadRuntime(workspaceList(activeContext));
 
     expect(state.status).toBe("请配置模型凭据");
     expect(state.activeContext).toEqual(activeContext);
@@ -326,7 +326,7 @@ describe("runtime load helpers", () => {
         .mockResolvedValue({ threads: [archivedFromPriorCwd] }),
     });
 
-    const state = await loadRuntime(projectList(activeContext), {
+    const state = await loadRuntime(workspaceList(activeContext), {
       resumeLatestThread: false,
     });
 

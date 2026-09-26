@@ -7,7 +7,7 @@ import type {
   Thread,
 } from "../shared/protocol";
 import {
-  activeProjectID,
+  activeWorkspaceID,
   reconcileListedThreadState,
   createDraftSessionTab,
   createThreadSessionTab,
@@ -28,14 +28,14 @@ export type LoadedRuntimeState = Partial<AppState> & {
 };
 
 function runtimeConfiguration(
-  projectState: ProjectListResult,
+  workspaceState: ProjectListResult,
   initialized: InitializeResult,
 ): Partial<AppState> {
   return {
     initialized,
-    projects: projectState.projects,
-    activeContext: projectState.active_context,
-    activeProjectId: activeProjectID(projectState.active_context),
+    projects: workspaceState.projects,
+    activeContext: workspaceState.active_context,
+    activeProjectId: activeWorkspaceID(workspaceState.active_context),
     gitStatus: undefined,
     status:
       initialized.status === "needs_setup"
@@ -45,15 +45,15 @@ function runtimeConfiguration(
 }
 
 export async function loadRuntimeConfiguration(
-  projectState: ProjectListResult,
+  workspaceState: ProjectListResult,
 ): Promise<Partial<AppState>> {
-  if (!projectState.active_context) {
-    return emptyRuntimeState(projectState);
+  if (!workspaceState.active_context) {
+    return emptyRuntimeState(workspaceState);
   }
-  if (projectState.runtime_issue?.code === "active_project_unavailable") {
-    return unavailableProjectRuntimeState(projectState);
+  if (workspaceState.runtime_issue?.code === "active_project_unavailable") {
+    return unavailableWorkspaceRuntimeState(workspaceState);
   }
-  return runtimeConfiguration(projectState, await window.wuu.initialize());
+  return runtimeConfiguration(workspaceState, await window.wuu.initialize());
 }
 
 export async function loadRuntimeThreadList(cwd?: string): Promise<Thread[]> {
@@ -89,16 +89,16 @@ export async function loadThreadListRefresh(state: AppState): Promise<Thread[]> 
 }
 
 export async function loadRuntime(
-  projectState: ProjectListResult,
+  workspaceState: ProjectListResult,
   options: {
     resumeLatestThread?: boolean;
   } = {},
 ): Promise<LoadedRuntimeState> {
-  if (!projectState.active_context) {
-    return emptyRuntimeState(projectState);
+  if (!workspaceState.active_context) {
+    return emptyRuntimeState(workspaceState);
   }
-  if (projectState.runtime_issue?.code === "active_project_unavailable") {
-    return unavailableProjectRuntimeState(projectState);
+  if (workspaceState.runtime_issue?.code === "active_project_unavailable") {
+    return unavailableWorkspaceRuntimeState(workspaceState);
   }
   const resumeLatestThread = options.resumeLatestThread ?? true;
   const [initialized, listedThreads] = await Promise.all([
@@ -121,7 +121,7 @@ export async function loadRuntime(
     ? requireThread(resumed, translateCurrent("thread.resumeMissing"))
     : undefined;
   return {
-    ...runtimeConfiguration(projectState, initialized),
+    ...runtimeConfiguration(workspaceState, initialized),
     initialized: thread ? initialized : applyDraftRuntimeMemory(initialized),
     thread,
     secondaryThread: undefined,
@@ -144,7 +144,7 @@ export async function loadPopOutRuntime(
     return { status: "no-runtime" };
   }
   if (init.kind === "draft") {
-    const [listedProjects, initialized, listed, archived] = await Promise.all([
+    const [listedWorkspaces, initialized, listed, archived] = await Promise.all([
       window.wuu.listProjects(),
       window.wuu.initialize(),
       window.wuu.listThreads(),
@@ -154,9 +154,9 @@ export async function loadPopOutRuntime(
     const tab = createDraftSessionTab("draft:pop-out", init.context);
     return {
       initialized: applyDraftRuntimeMemory(initialized),
-      projects: listedProjects.projects,
+      projects: listedWorkspaces.projects,
       activeContext: init.context,
-      activeProjectId: activeProjectID(init.context),
+      activeProjectId: activeWorkspaceID(init.context),
       gitStatus: undefined,
       thread: undefined,
       secondaryThread: undefined,
@@ -172,7 +172,7 @@ export async function loadPopOutRuntime(
   if (!init.threadID) {
     return { status: "no-runtime" };
   }
-  const [listedProjects, initialized, listed, archived, resumed] =
+  const [listedWorkspaces, initialized, listed, archived, resumed] =
     await Promise.all([
       window.wuu.listProjects(),
       window.wuu.initialize(),
@@ -188,9 +188,9 @@ export async function loadPopOutRuntime(
   const tab = createThreadSessionTab(thread, init.context);
   return {
     initialized,
-    projects: listedProjects.projects,
+    projects: listedWorkspaces.projects,
     activeContext: init.context,
-    activeProjectId: activeProjectID(init.context),
+    activeProjectId: activeWorkspaceID(init.context),
     gitStatus: undefined,
     thread,
     secondaryThread: undefined,
@@ -208,11 +208,11 @@ export async function loadPopOutRuntime(
 }
 
 export function emptyRuntimeState(
-  projectState: ProjectListResult,
+  workspaceState: ProjectListResult,
 ): Partial<AppState> {
   return {
     initialized: undefined,
-    projects: projectState.projects,
+    projects: workspaceState.projects,
     activeContext: undefined,
     activeProjectId: undefined,
     gitStatus: undefined,
@@ -226,15 +226,15 @@ export function emptyRuntimeState(
   };
 }
 
-function unavailableProjectRuntimeState(
-  projectState: ProjectListResult,
+function unavailableWorkspaceRuntimeState(
+  workspaceState: ProjectListResult,
 ): Partial<AppState> {
   return {
-    ...emptyRuntimeState(projectState),
-    activeContext: projectState.active_context,
-    activeProjectId: activeProjectID(projectState.active_context),
+    ...emptyRuntimeState(workspaceState),
+    activeContext: workspaceState.active_context,
+    activeProjectId: activeWorkspaceID(workspaceState.active_context),
     status:
-      projectState.runtime_issue?.message ?? translateCurrent("runtime.workspaceUnavailable"),
+      workspaceState.runtime_issue?.message ?? translateCurrent("runtime.workspaceUnavailable"),
   };
 }
 

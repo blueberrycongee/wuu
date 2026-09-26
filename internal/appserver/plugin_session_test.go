@@ -210,6 +210,61 @@ func TestPluginSessionCreateAndSendPersistProvenanceAndTargetLifecycle(t *testin
 	}
 }
 
+// Create-time instructions are session state. Runtime prompt refreshes on turn
+// preparation and reload must keep them in front of the model.
+func TestPluginSessionInstructionsReachProviderAfterReload(t *testing.T) {
+	const instructions = "Answer only with the release checklist."
+	client := &fakeClient{response: providersResponse("done")}
+	rt := newTestRuntime(t, client)
+	rt.WorkspaceID = "workspace-one"
+	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
+	owner := &pluginTurnLifecycleClient{id: "schedule", calls: make(chan pluginhost.AgentTurnLifecycleInput, 4)}
+	rt.PluginHost = pluginhost.New(owner)
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	created, err := rt.PluginSessionRouter.Create(context.Background(), owner.id, pluginhost.SessionCreateParams{
+		RequestID: "create-instructions", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh,
+		WorkspaceID: rt.WorkspaceID, WorkspaceRoot: rt.RootDir, Instructions: instructions,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send := func(requestID string, out *lockedBuffer) {
+		t.Helper()
+		result, err := rt.PluginSessionRouter.Send(context.Background(), owner.id, pluginhost.SessionSendParams{
+			RequestID: requestID, SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: requestID},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitForTurnCompletedForThread(t, out, result.SessionID)
+	}
+	assertInstructed := func(index int) {
+		t.Helper()
+		client.mu.Lock()
+		defer client.mu.Unlock()
+		if len(client.requests) <= index {
+			t.Fatalf("provider saw %d requests, want request %d", len(client.requests), index)
+		}
+		for _, message := range client.requests[index].Messages {
+			if message.Role == "system" && strings.Contains(message.Content, "# Session instructions\n\n"+instructions) {
+				return
+			}
+		}
+		t.Fatalf("request %d system prompt lacks session instructions: %+v", index, client.requests[index].Messages)
+	}
+	send("first", out)
+	assertInstructed(0)
+	srv.Close()
+
+	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
+	reloaded := &lockedBuffer{}
+	srv = New(rt, reloaded)
+	t.Cleanup(srv.Close)
+	send("after reload", reloaded)
+	assertInstructed(1)
+}
+
 func TestPluginSessionSendTurnOutlivesHostCallContext(t *testing.T) {
 	client := &turnContextClient{started: make(chan context.Context, 1), release: make(chan struct{})}
 	rt := newTestRuntime(t, &fakeClient{})

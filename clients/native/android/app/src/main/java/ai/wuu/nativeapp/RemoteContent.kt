@@ -33,28 +33,21 @@ internal suspend fun readMessageAttachment(call: suspend (String, JSONObject) ->
     if (ref.startsWith("markdown:")) {
         require(ref.length < 8192) { "无效的图片引用" }
         val parts = JSONArray(String(ref.substringAfter(':').unb64(), Charsets.UTF_8))
-        require(parts.length() == 5 && parts.getString(0) in listOf("thread", "channel") && parts.getString(1) == scopeID &&
-            (if (parts.getString(0) == "thread") parts.getString(2) + ":" + parts.getString(3) else parts.getString(3)) == messageID) { "图片不属于当前消息" }
+        require(parts.length() == 5 && parts.getString(0) == "thread" && parts.getString(1) == scopeID &&
+            parts.getString(2) + ":" + parts.getString(3) == messageID) { "图片不属于当前消息" }
         val params = json("kind" to parts.getString(0), "scope_id" to scopeID, "turn_id" to parts.getString(2),
             "message_id" to parts.getString(3), "source" to parts.getString(4), "preview" to preview)
-        if (parts.getString(0) == "channel") params.put("seq", parts.getString(2).toLong())
         encoded = readEncoded(call, "message/image/read", params, if (preview) "image/jpeg" else media,
             if (preview) 128 * 1024 else 16 * 1024 * 1024, verifyDigest = !preview)
     } else if (ref.isNotEmpty()) {
-        require(ref.length < 8192 && (ref.startsWith("thread:") || ref.startsWith("channel:"))) { "无效的附件引用" }
-        val channel = ref.startsWith("channel:")
+        require(ref.length < 8192 && ref.startsWith("thread:")) { "无效的附件引用" }
         val parts = JSONArray(String(ref.substringAfter(':').unb64(), Charsets.UTF_8))
         val index = parts.optDouble(3, -1.0)
         require(parts.getString(0) == scopeID && index >= 0 && index == parts.getInt(3).toDouble() && parts.getString(4).length == 64) { "附件不属于当前消息" }
-        val params = if (channel) {
-            require(parts.length() == 6 && parts.getString(1) == messageID && parts.getLong(2) > 0 && parts.getDouble(2) == parts.getLong(2).toDouble() && parts.getString(5) in listOf("images", "files")) { "附件不属于当前消息" }
-            json("room_id" to scopeID, "message_id" to messageID, "seq" to parts.getLong(2), "field" to parts.getString(5))
-        } else {
-            require(parts.length() in 5..6 && parts.getString(1) + ":" + parts.getString(2) == messageID && (parts.length() == 5 || parts.getString(5) == "result")) { "附件不属于当前消息" }
-            json("thread_id" to scopeID, "turn_id" to parts.getString(1), "item_id" to parts.getString(2), "kind" to parts.optString(5))
-        }
-        params.put("index", parts.getInt(3)).put("sha256", parts.getString(4)).put("preview", preview)
-        encoded = readEncoded(call, if (channel) "channel/attachment/read" else "thread/attachment/read", params,
+        require(parts.length() in 5..6 && parts.getString(1) + ":" + parts.getString(2) == messageID && (parts.length() == 5 || parts.getString(5) == "result")) { "附件不属于当前消息" }
+        val params = json("thread_id" to scopeID, "turn_id" to parts.getString(1), "item_id" to parts.getString(2), "kind" to parts.optString(5),
+            "index" to parts.getInt(3), "sha256" to parts.getString(4), "preview" to preview)
+        encoded = readEncoded(call, "thread/attachment/read", params,
             if (preview) "image/jpeg" else media, if (preview) 128 * 1024 else 16 * 1024 * 1024)
         if (!preview) check(sha256((media + "\u0000" + encoded).toByteArray()).joinToString("") { "%02x".format(it) } == parts.getString(4)) { "附件内容校验失败" }
     }

@@ -15,7 +15,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
-	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -128,6 +127,21 @@ func (s *Server) handleThreadStart(req Request) error {
 	}
 	// Review is owned by the built-in engine and never expands permission mode.
 	selection.ApproveForMe = selection.ApproveForMe && engineID == agentengine.EngineWuu && approvefor.EnabledForMode(selection.PermissionMode)
+	if params.Project != nil {
+		th, err := s.startProjectThread(selection, engineID, params)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		th.mu.Lock()
+		thread := th.snapshotLocked()
+		th.mu.Unlock()
+		// Host session creation already announced the thread.
+		if err := s.writeResponse(req.ID, ThreadStartResult{Thread: thread}, nil); err != nil {
+			return err
+		}
+		s.pruneCachedThreads(thread.ID)
+		return nil
+	}
 	if params.Handoff != nil {
 		th, err := s.startHandoffThread(selection, params)
 		if err != nil {
@@ -435,16 +449,12 @@ func (s *Server) loadPersistedThreadState(id string, now time.Time) (*threadStat
 	if err != nil {
 		return nil, err
 	}
-	if th.NamedAgentID != "" && s.channelService != nil {
-		binding, err := s.channelService.LookupCollaborationSession(context.Background(), id)
-		if err == nil {
-			if binding.PrincipalID != th.NamedAgentID {
-				return nil, channels.ErrUnauthorized
-			}
-			th.CollaborationSessionRef = binding.SessionRef
-		} else if !errors.Is(err, channels.ErrNotFound) {
+	if th.Source == projectSource || th.Source == projectSessionSource {
+		bySession, byProject, err := session.PendingCandidateCounts(s.rt.SessionDir, projectSessionSource)
+		if err != nil {
 			return nil, err
 		}
+		th.PendingCandidates = pendingCandidates(th.Source, id, bySession, byProject)
 	}
 	return th, nil
 }
@@ -507,15 +517,6 @@ func (s *Server) loadPersistedThreadSnapshot(id string) (persistedThreadSnapshot
 	if err != nil {
 		return persistedThreadSnapshot{}, err
 	}
-	if strings.HasPrefix(metadata.Source, namedAgentSessionSource) {
-		// Legacy wakes were hidden even though they establish a durable turn
-		// boundary. Project them for stable IDs without changing model history.
-		for i := range displayHistory {
-			if displayHistory[i].Phase == "channel_wake" {
-				displayHistory[i].Hidden = false
-			}
-		}
-	}
 	loaded := persistedThreadSnapshot{
 		metadata:         metadata,
 		repairedHistory:  repaired,
@@ -529,11 +530,7 @@ func (s *Server) loadPersistedThreadSnapshot(id string) (persistedThreadSnapshot
 	systemPrompt := s.rt.StreamRunner.SystemPrompt
 	// The active runtime prompt is configuration, not conversation data. Use it
 	// in memory without rewriting the thread during a read-only load.
-	if strings.HasPrefix(metadata.Source, namedAgentSessionSource) {
-		loaded.history = repaired
-	} else {
-		loaded.history = replaceBaseSystemPrompt(repaired, systemPrompt)
-	}
+	loaded.history = replaceBaseSystemPrompt(repaired, sessionSystemPrompt(systemPrompt, effectiveSessionInstructions(metadata)))
 	return loaded, nil
 }
 
@@ -941,10 +938,6 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 	}, nil
 }
 
-func isNamedAgentSessionSource(source string) bool {
-	return strings.HasPrefix(strings.TrimSpace(source), namedAgentSessionSource)
-}
-
 func (s *Server) handleThreadList(req Request) error {
 	var params ThreadListParams
 	if err := decodeParams(req.Params, &params); err != nil {
@@ -996,9 +989,6 @@ func (s *Server) handleThreadList(req Request) error {
 		if sess.ArchivedAt != nil {
 			continue
 		}
-		if isNamedAgentSessionSource(sess.Source) {
-			continue
-		}
 		if _, isAgentThread := agentThreadIDs[sess.ID]; isAgentThread {
 			continue
 		}
@@ -1020,10 +1010,6 @@ func (s *Server) handleThreadList(req Request) error {
 			continue
 		}
 		if thread.ReadOnly {
-			continue
-		}
-		if isNamedAgentSessionSource(thread.Source) {
-			delete(entries, thread.ID)
 			continue
 		}
 		if thread.Archived {
@@ -1082,7 +1068,7 @@ func (s *Server) handleThreadListAll(req Request) error {
 	}
 	entries := make(map[string]threadListEntry, len(sessions))
 	for _, sess := range sessions {
-		if sess.Visibility == pluginhost.SessionVisibilityPlugin || sess.ArchivedAt != nil || isNamedAgentSessionSource(sess.Source) {
+		if sess.Visibility == pluginhost.SessionVisibilityPlugin || sess.ArchivedAt != nil {
 			continue
 		}
 		if _, isAgentThread := agentThreadIDs[sess.ID]; isAgentThread {
@@ -1104,7 +1090,7 @@ func (s *Server) handleThreadListAll(req Request) error {
 			entry.pinnedAt = persisted.pinnedAt
 			thread = entry.thread
 		}
-		if visibility == pluginhost.SessionVisibilityPlugin || thread.Ephemeral || thread.ReadOnly || thread.Archived || isNamedAgentSessionSource(thread.Source) {
+		if visibility == pluginhost.SessionVisibilityPlugin || thread.Ephemeral || thread.ReadOnly || thread.Archived {
 			delete(entries, thread.ID)
 			continue
 		}
@@ -1146,9 +1132,6 @@ func (s *Server) handleThreadListArchived(req Request) error {
 		if sess.ArchivedAt == nil {
 			continue
 		}
-		if isNamedAgentSessionSource(sess.Source) {
-			continue
-		}
 		entries[sess.ID] = threadEntryFromSession(sess, s.rt.ProviderName, s.rt.Model)
 	}
 
@@ -1167,10 +1150,6 @@ func (s *Server) handleThreadListArchived(req Request) error {
 			continue
 		}
 		if thread.ReadOnly {
-			continue
-		}
-		if isNamedAgentSessionSource(thread.Source) {
-			delete(entries, thread.ID)
 			continue
 		}
 		if !thread.Archived {
@@ -1193,13 +1172,20 @@ func (s *Server) threadListResult(entries map[string]threadListEntry, summaryOnl
 		return ThreadListResult{}, err
 	}
 	threads := make([]threadListEntry, 0, len(entries))
+	var bySession, byProject map[string]int
 	for _, entry := range entries {
 		threads = append(threads, entry)
+		if bySession == nil && (entry.thread.Source == projectSource || entry.thread.Source == projectSessionSource) {
+			if bySession, byProject, err = session.PendingCandidateCounts(s.rt.SessionDir, projectSessionSource); err != nil {
+				return ThreadListResult{}, err
+			}
+		}
 	}
 	sortThreadListEntries(threads)
 	result := make([]Thread, 0, len(threads))
 	for _, entry := range threads {
 		entry.thread.SessionControl = s.threadSessionControl(entry.thread.ID, controls[entry.thread.ID])
+		entry.thread.PendingCandidates = pendingCandidates(entry.thread.Source, entry.thread.ID, bySession, byProject)
 		// Sidebar refreshes are summary lists. Dirty worktree state is a git
 		// status per checkout, and a workspace can store one for many
 		// sessions. Running those on every list blocks the app server.
@@ -1407,11 +1393,11 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	}
 	th.Title = metadata.Title
 	th.Source = metadata.Source
-	if strings.HasPrefix(metadata.Source, namedAgentSessionSource) {
-		th.NamedAgentID = strings.TrimPrefix(metadata.Source, namedAgentSessionSource)
-	}
 	th.Owner = metadata.Owner
 	th.Visibility = metadata.Visibility
+	th.Instructions = effectiveSessionInstructions(metadata)
+	th.ProjectID = projectIDForSession(metadata)
+	th.ProjectRole = projectRoleForSession(metadata)
 	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" && selection.Model != "" {
 		applyThreadRuntimeSelection(th, selection)
 	}
@@ -1495,6 +1481,8 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 		thread: Thread{
 			ID:                    sess.ID,
 			Source:                sess.Source,
+			ProjectID:             projectIDForSession(sess),
+			ProjectRole:           projectRoleForSession(sess),
 			Preview:               firstNonEmpty(sess.Title, sess.Summary),
 			Title:                 sess.Title,
 			ModelProvider:         firstNonEmpty(selection.Provider, provider),

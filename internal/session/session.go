@@ -59,6 +59,7 @@ type Session struct {
 	Speed                 string    `json:"speed,omitempty"`
 	PermissionMode        string    `json:"permission_mode,omitempty"`
 	ApproveForMe          bool      `json:"approve_for_me,omitempty"`
+	ProjectRole           string    `json:"project_role,omitempty"`
 	Instructions          string    `json:"instructions,omitempty"`
 	ToolPolicyJSON        string    `json:"tool_policy_json,omitempty"`
 	// EngineID is the agent engine the thread is bound to. Empty reads as
@@ -359,7 +360,7 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
+	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json,
 	       COALESCE((SELECT m.client_id FROM session_messages m
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -541,7 +542,7 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
+       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json,
        COALESCE((SELECT m.client_id FROM session_messages m
                  WHERE m.session_id = sessions.id AND m.role = 'meta'
                    AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -628,6 +629,20 @@ func UpdatePinned(sessDir, id string, pinned bool) (Session, error) {
 func SetWorkspaceID(sessDir, id, workspaceID string) (Session, error) {
 	return updateMetadata(sessDir, id, false, func(s *Session) {
 		s.WorkspaceID = strings.TrimSpace(workspaceID)
+	})
+}
+
+// SetProjectMembership moves an ordinary session into a project, or a
+// managed session back out: source and parentID carry the relation, and
+// instructions replace the session's create-time instructions.
+func SetProjectMembership(sessDir, id, source, parentID, instructions string) (Session, error) {
+	return updateMetadata(sessDir, id, false, func(s *Session) {
+		s.Source = strings.TrimSpace(source)
+		s.ParentID = strings.TrimSpace(parentID)
+		s.Instructions = instructions
+		if source == "" {
+			s.ProjectRole = ""
+		}
 	})
 }
 
@@ -1248,6 +1263,32 @@ func migrateSchema(db *sql.DB) error {
 			revision INTEGER NOT NULL,
 			state TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS session_inbox (
+			client_id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			related_session_id TEXT NOT NULL DEFAULT '',
+			cause TEXT NOT NULL DEFAULT '',
+			content TEXT NOT NULL,
+			wake INTEGER NOT NULL DEFAULT 1,
+			created_at TEXT NOT NULL,
+			delivered_at TEXT,
+			FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_session_inbox_pending ON session_inbox(session_id, delivered_at, created_at)`,
+		`CREATE TABLE IF NOT EXISTS session_candidates (
+			session_id TEXT NOT NULL,
+			turn_id TEXT NOT NULL,
+			base_repo TEXT NOT NULL,
+			base_revision TEXT NOT NULL,
+			revision TEXT NOT NULL,
+			changed_files_json TEXT NOT NULL DEFAULT '[]',
+			disposition TEXT NOT NULL DEFAULT '',
+			url TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			disposed_at TEXT,
+			PRIMARY KEY(session_id, turn_id),
+			FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+		)`,
 		`CREATE TABLE IF NOT EXISTS plugin_turn_lifecycle_outbox (
 				plugin_id TEXT NOT NULL,
 				request_id TEXT NOT NULL,
@@ -1848,6 +1889,34 @@ WHERE workflow_id = ''`); err != nil {
 	if err := addColumnIfMissing(db, "sessions", "seed_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// Collaboration was removed without migration: its named-agent identity
+	// conversations have no remaining owner, and fences held by its agents
+	// would otherwise label ordinary sessions as managed forever. Remove this
+	// cleanup once no development store predates the removal.
+	if _, err := db.Exec(`DELETE FROM sessions WHERE source LIKE 'named-agent:%'`); err != nil {
+		return fmt.Errorf("remove retired collaboration sessions: %w", err)
+	}
+	if _, err := db.Exec(`DELETE FROM session_controls WHERE manager_id GLOB 'agent-[0-9a-f]*'`); err != nil {
+		return fmt.Errorf("remove retired collaboration session controls: %w", err)
+	}
+	if err := addColumnIfMissing(db, "session_candidates", "url", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(db, "session_inbox", "cause", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(db, "session_inbox", "wake", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(db, "sessions", "project_role", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_project_side ON sessions(parent_id) WHERE source='project-session' AND project_role='side' AND archived_at IS NULL`); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(db, "session_inbox", "controls_json", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1930,8 +1999,8 @@ func insertSessionSQL() string {
 		forked_from_id, forked_from_turn_id, forked_from_item_id,
 		pinned_at, folder_id, archived_at, archive_reason, worktree_path, worktree_base_head, worktree_base_repo,
 		workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-		provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 }
 
 func updateSessionTx(tx *sql.Tx, sess Session) error {
@@ -1941,7 +2010,7 @@ SET created_at = ?, updated_at = ?, title = ?, summary = ?, entries = ?, cwd = ?
     forked_from_id = ?, forked_from_turn_id = ?, forked_from_item_id = ?,
     pinned_at = ?, folder_id = ?, archived_at = ?, archive_reason = ?, worktree_path = ?, worktree_base_head = ?, worktree_base_repo = ?,
     workspace_id = ?, source = ?, owner = ?, visibility = ?, parent_id = ?, context_source = ?, creation_request_id = ?,
-	provider = ?, model = ?, variant = ?, effort = ?, speed = ?, permission_mode = ?, approve_for_me = ?, engine_id = ?, engine_ref = ?, instructions = ?, tool_policy_json = ?
+	provider = ?, model = ?, variant = ?, effort = ?, speed = ?, permission_mode = ?, approve_for_me = ?, engine_id = ?, engine_ref = ?, instructions = ?, project_role = ?, tool_policy_json = ?
 WHERE id = ?`,
 		timeText(sess.CreatedAt), timeText(sess.UpdatedAt), sess.Title, sess.Summary, sess.Entries, normalizeCWD(sess.CWD),
 		sess.ForkedFromID, sess.ForkedFromTurnID, sess.ForkedFromItemID,
@@ -1955,6 +2024,7 @@ WHERE id = ?`,
 		strings.TrimSpace(sess.EngineID),
 		strings.TrimSpace(sess.EngineRef),
 		sess.Instructions,
+		sess.ProjectRole,
 		strings.TrimSpace(sess.ToolPolicyJSON),
 		sess.ID,
 	)
@@ -1999,6 +2069,7 @@ func sessionArgs(sess Session) []any {
 		strings.TrimSpace(sess.EngineID),
 		strings.TrimSpace(sess.EngineRef),
 		sess.Instructions,
+		sess.ProjectRole,
 		strings.TrimSpace(sess.ToolPolicyJSON),
 	}
 }
@@ -2010,7 +2081,7 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
+	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json,
 	       COALESCE((SELECT m.client_id FROM session_messages m
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -2027,7 +2098,7 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
+	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json,
 	       COALESCE((SELECT m.client_id FROM session_messages m
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -2062,7 +2133,7 @@ func scanSession(scanner interface {
 		&pinnedAt, &s.FolderID, &archivedAt, &s.ArchiveReason,
 		&s.WorktreePath, &s.WorktreeBaseHEAD, &s.WorktreeBaseRepo,
 		&s.WorkspaceID, &s.Source, &s.Owner, &s.Visibility, &s.ParentID, &s.ContextSource, &s.CreationRequestID,
-		&s.Provider, &s.Model, &s.Variant, &s.Effort, &s.Speed, &s.PermissionMode, &s.ApproveForMe, &s.EngineID, &s.EngineRef, &s.Instructions, &s.ToolPolicyJSON,
+		&s.Provider, &s.Model, &s.Variant, &s.Effort, &s.Speed, &s.PermissionMode, &s.ApproveForMe, &s.EngineID, &s.EngineRef, &s.Instructions, &s.ProjectRole, &s.ToolPolicyJSON,
 		&s.LatestCompletedTurnID,
 	); err != nil {
 		return Session{}, err

@@ -4,7 +4,7 @@
 
 wuu 是一个开源桌面应用，让你和 AI Agent 一起处理本地项目。接上 OpenAI、Anthropic 这类服务，选好文件夹，就可以让 Agent 阅读代码、修改文件或运行命令，再在应用里查看文件、改动和执行结果。
 
-你可以回到已有对话继续工作，也可以让多个 Agent 在群聊中协作。插件可以添加工具和桌面功能，见[扩展 Wuu](docs/zh-cn/customize/index.md)。
+你可以回到已有对话继续工作。插件可以添加工具和桌面功能，见[扩展 Wuu](docs/zh-cn/customize/index.md)。
 
 ![wuu 桌面应用](https://github.com/user-attachments/assets/2d9030aa-ca03-42b1-9333-f79cc5aff95b)
 

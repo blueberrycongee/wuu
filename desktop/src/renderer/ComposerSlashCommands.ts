@@ -16,8 +16,8 @@ export type ComposerSlashCommandAction =
   | "open-files"
   | "open-terminal"
   | "open-browser"
-  | "open-project"
-  | "no-project"
+  | "open-workspace"
+  | "no-workspace"
   | "context"
   | "instructions"
   | "plugin"
@@ -306,26 +306,26 @@ export function buildComposerSlashCommands({
       disabledReason: needsWorkspace
     },
     {
-      id: "project",
-      name: "project",
-      title: t("slash.project.title"),
-      description: t("slash.project.description"),
-      tag: t("slash.tag.project"),
+      id: "workspace",
+      name: "workspace",
+      title: t("slash.workspace.title"),
+      description: t("slash.workspace.description"),
+      tag: t("slash.tag.workspace"),
       kind: "action",
-      action: "open-project",
+      action: "open-workspace",
       aliases: ["open"],
-      keywords: ["folder", "workspace", "项目"]
+      keywords: ["folder", "工作区"]
     },
     {
-      id: "no-project",
-      name: "no-project",
-      title: t("slash.noProject.title"),
-      description: t("slash.noProject.description"),
-      tag: t("slash.tag.project"),
+      id: "no-workspace",
+      name: "no-workspace",
+      title: t("slash.noWorkspace.title"),
+      description: t("slash.noWorkspace.description"),
+      tag: t("slash.tag.workspace"),
       kind: "action",
-      action: "no-project",
+      action: "no-workspace",
       aliases: ["scratch", "none"],
-      keywords: ["temporary", "临时", "无项目"],
+      keywords: ["temporary", "临时", "无工作区"],
       disabledReason: needsIdleThread
     },
     {

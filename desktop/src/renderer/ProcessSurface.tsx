@@ -1,5 +1,4 @@
 import {
-  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -41,10 +40,6 @@ import {
   type ProcessSummaryPresentation,
 } from "./ProcessSummary";
 import { WuuMascot, type WuuMascotActivity } from "./WuuMascot";
-import { AgentAvatarMark } from "./AgentAvatarMark";
-import { RoomCoordinatorAvatar } from "./RoomCoordinatorAvatar";
-import { AgentIdentityContext } from "./AgentIdentityContext";
-import { ACTIVITY_MORPHS } from "./useMascotMorph";
 import {
   useConversationBecameRenderActive,
   useConversationRenderActive,
@@ -186,22 +181,7 @@ export function ProcessSurfaceMascot({
   activity?: WuuMascotActivity;
   provider?: string;
   model?: string;
-}): JSX.Element | null {
-  const agent = useContext(AgentIdentityContext);
-  // Collaboration and room rows wrap the SVG. Publish the morph on that
-  // layout slot so process-row optical alignment can target one node.
-  const slotMorph = ACTIVITY_MORPHS[activity];
-  if (agent === "room") return active ? (
-    <span className="process-surface-blobatar" data-wuu-mascot-morph={slotMorph}>
-      <RoomCoordinatorAvatar size={28} activity={activity} />
-    </span>
-  ) : null;
-  if (agent) return active ? (
-    <span className="process-surface-blobatar" data-wuu-mascot-morph={slotMorph}>
-      <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image}
-        activity={activity} status={activity === "responding" ? "responding" : "thinking"} motion="expressive" />
-    </span>
-  ) : null;
+}): JSX.Element {
   return (
     <WuuMascot
       className="process-surface-blobatar"

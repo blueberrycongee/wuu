@@ -30,7 +30,7 @@ import { translateCurrent } from "./i18n";
 import { showErrorToast } from "./Toast";
 
 type SetAppState = (update: SetStateAction<AppState>) => void;
-type SidebarProjectThreads = Record<string, Thread[] | undefined>;
+type SidebarWorkspaceThreads = Record<string, Thread[] | undefined>;
 
 export type ThreadActivationActionsDeps = {
   getAppState: () => AppState;
@@ -41,11 +41,11 @@ export type ThreadActivationActionsDeps = {
   restorePrimaryComposerDraft: (draft: ComposerDraftState) => void;
   resetSplitComposerDrafts: () => void;
   getSidebarThreads: () => Thread[];
-  getSidebarProjectThreadsByProjectID: () => SidebarProjectThreads;
+  getSidebarWorkspaceThreadsByWorkspaceID: () => SidebarWorkspaceThreads;
   getRunningThreadIDs?: () => ReadonlySet<string>;
   
   beginViewSwitch: (
-    kind: "thread" | "project" | "runtime",
+    kind: "thread" | "workspace" | "runtime",
     targetID: string,
   ) => number;
   beginInstantThreadSwitch: (targetID?: string) => number;
@@ -59,7 +59,7 @@ export type ThreadActivationActionsDeps = {
 
 export type ThreadActivationActions = {
   selectThread: (threadID: string) => Promise<void>;
-  selectProjectThread: (projectID: string, threadID: string) => Promise<void>;
+  selectWorkspaceThread: (workspaceID: string, threadID: string) => Promise<void>;
   activateThread: (threadID: string) => Promise<void>;
   selectChildAgent: (agent: Agent) => Promise<void>;
 };
@@ -315,12 +315,12 @@ export function createThreadActivationActions(
       });
     }
     try {
-      const projectState = await selectRuntimeContext(targetContext);
+      const workspaceState = await selectRuntimeContext(targetContext);
       if (!deps.isCurrentViewSwitchRequest(requestID)) {
         return;
       }
       const [loadedState, resumed] = await Promise.all([
-        loadRuntimeConfiguration(projectState),
+        loadRuntimeConfiguration(workspaceState),
         window.wuu.resumeThread(threadID),
       ]);
       const thread = requireThread(
@@ -423,7 +423,7 @@ export function createThreadActivationActions(
     const candidates = [
       threadForTab(state, threadID),
       deps.getSidebarThreads().find((thread) => thread.id === threadID),
-      ...Object.values(deps.getSidebarProjectThreadsByProjectID()).map(
+      ...Object.values(deps.getSidebarWorkspaceThreadsByWorkspaceID()).map(
         (threads) => threads?.find((thread) => thread.id === threadID),
       ),
     ];
@@ -435,13 +435,13 @@ export function createThreadActivationActions(
     );
   }
 
-  async function selectProjectThread(
-    projectID: string,
+  async function selectWorkspaceThread(
+    workspaceID: string,
     threadID: string,
   ): Promise<void> {
     const currentState = deps.getAppState();
     if (
-      projectID === currentState.activeProjectId &&
+      workspaceID === currentState.activeProjectId &&
       currentState.activeContext?.kind === "project"
     ) {
       await selectThread(threadID);
@@ -454,7 +454,7 @@ export function createThreadActivationActions(
     ) {
       return;
     }
-    if (projectID === SCRATCH_PSEUDO_PROJECT_ID) {
+    if (workspaceID === SCRATCH_PSEUDO_PROJECT_ID) {
       const thread = findKnownThread(threadID);
       if (!thread) {
         return;
@@ -471,7 +471,7 @@ export function createThreadActivationActions(
       return;
     }
     const project = currentState.projects.find(
-      (candidate) => candidate.id === projectID,
+      (candidate) => candidate.id === workspaceID,
     );
     if (!project) {
       return;
@@ -487,7 +487,7 @@ export function createThreadActivationActions(
   async function activateThread(threadID: string): Promise<void> {
     const currentState = deps.getAppState();
     const project = currentState.projects.find((candidate) =>
-      deps.getSidebarProjectThreadsByProjectID()[candidate.id]?.some(
+      deps.getSidebarWorkspaceThreadsByWorkspaceID()[candidate.id]?.some(
         (thread) => thread.id === threadID,
       ),
     );
@@ -496,7 +496,7 @@ export function createThreadActivationActions(
       (project.id !== currentState.activeProjectId ||
         currentState.activeContext?.kind !== "project")
     ) {
-      await selectProjectThread(project.id, threadID);
+      await selectWorkspaceThread(project.id, threadID);
       return;
     }
     if (!project) {
@@ -590,7 +590,7 @@ export function createThreadActivationActions(
 
   return {
     selectThread,
-    selectProjectThread,
+    selectWorkspaceThread,
     activateThread,
     selectChildAgent,
   };

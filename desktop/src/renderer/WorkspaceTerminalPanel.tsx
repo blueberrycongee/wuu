@@ -378,7 +378,7 @@ export function WorkspaceTerminalPanel({
   }, [activeContext?.cwd, managedInventoryReady, requestedRun, runs.length, userTerminal]);
 
   if (!activeContext?.cwd) {
-    return <WorkspacePanelEmpty title={t("workspace.files.noProject")} hint={t("workspace.terminal.noProjectDescription")} icon={<Terminal size={24} />} />;
+    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} hint={t("workspace.terminal.noWorkspaceDescription")} icon={<Terminal size={24} />} />;
   }
 
   return (
@@ -1012,7 +1012,7 @@ function UserTerminalPane({
   }, [onShellChange, resourceID, restartKey, workspaceRoot]);
 
   if (!workspaceRoot) {
-    return <WorkspacePanelEmpty title={t("workspace.files.noProject")} hint={t("workspace.terminal.noProjectDescription")} icon={<Terminal size={24} />} />;
+    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} hint={t("workspace.terminal.noWorkspaceDescription")} icon={<Terminal size={24} />} />;
   }
 
   return (

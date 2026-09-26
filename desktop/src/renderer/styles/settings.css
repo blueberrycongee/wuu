@@ -2315,13 +2315,9 @@ button.settings-engine-expand:hover {
 
 .settings-archive-toolbar {
   display: grid;
-  grid-template-columns: auto minmax(160px, 1fr) minmax(140px, 220px);
+  grid-template-columns: minmax(160px, 1fr) minmax(140px, 220px);
   align-items: center;
   gap: var(--space-2);
-}
-
-.settings-archive-toolbar .theme-segmented button {
-  white-space: nowrap;
 }
 
 .settings-archive-project-filter,
@@ -2565,12 +2561,6 @@ button.settings-engine-expand:hover {
 @container settings-page (max-width: 36em) {
   .settings-archive-toolbar {
     grid-template-columns: minmax(0, 1fr);
-    justify-items: start;
-  }
-
-  .settings-archive-search,
-  .settings-archive-project-filter {
-    justify-self: stretch;
   }
 }
 

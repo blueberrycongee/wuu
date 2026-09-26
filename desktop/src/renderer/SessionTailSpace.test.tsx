@@ -986,7 +986,7 @@ it("places the bubble without animation with reduced motion", () => {
   expect(animations).toHaveLength(0);
 });
 
-it("does not add ordinary-session space to collaboration panes", () => {
+it("does not add ordinary-session space to split panes", () => {
   render({ split: true, messageID: "old" });
   submit({ split: true });
   expect(tailSpace()).toBe(0);

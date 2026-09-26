@@ -1,11 +1,9 @@
-import { act, createRef, useState, type ReactNode } from "react";
+import { act, createRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ChannelRoom, DesktopProject, InitializeResult } from "../shared/protocol";
+import type { DesktopProject, InitializeResult } from "../shared/protocol";
 import { AppSidebar } from "./AppSidebar";
-import { CollaborationSidebar } from "./CollaborationSidebar";
-import type { CollaborationConversation } from "./CollaborationConversations";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import type { NavigationSnapshotV1 } from "../shared/workbench";
 import {
@@ -46,7 +44,7 @@ function initialized(): InitializeResult {
   };
 }
 
-const sidebarProjects: DesktopProject[] = [
+const sidebarWorkspaces: DesktopProject[] = [
   {
     id: SCRATCH_PSEUDO_PROJECT_ID,
     name: "对话",
@@ -72,26 +70,16 @@ const sidebarProjects: DesktopProject[] = [
 
 interface RenderOptions {
   expandedSidebarSectionIDs?: Set<string>;
-  projectThreadsByProjectID?: Record<string, ThreadSummary[]>;
+  workspaceThreadsByWorkspaceID?: Record<string, ThreadSummary[]>;
   activeThreadID?: string;
   pendingThreadID?: string;
   onSelectThread?: (threadID: string) => void;
-  onSelectProjectThread?: (projectID: string, threadID: string) => void;
+  onSelectWorkspaceThread?: (workspaceID: string, threadID: string) => void;
   sectionOrder?: string[];
   state?: AppState;
-  groupChatEnabled?: boolean;
-  channelRooms?: ChannelRoom[];
-  pinnedChannelRooms?: ChannelRoom[];
-  pinnedCollaborationConversations?: CollaborationConversation[];
-  collaborationNavigation?: ReactNode;
-  activeChannelRoomID?: string;
-  activeChannelSection?: "rooms" | "agents" | "tasks" | null;
   collapsedSidebarSectionIDs?: Set<string>;
-  onSelectChannelRoom?: (roomID: string) => void;
-  onToggleChannelRoomPinned?: (room: ChannelRoom) => void;
-  onArchiveChannelRoom?: (room: ChannelRoom) => void;
-  onOpenChannelAgents?: () => void;
-  onOpenChannelTasks?: () => void;
+  onCreateProject?: (workspaceID?: string) => void;
+  onAdoptIntoProject?: (projectID: string, threadID: string) => void;
 }
 
 // The bell view is driven by App-owned state (it has to survive faces that
@@ -101,11 +89,11 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
   const [collapsedFolderIDs, setCollapsedFolderIDs] = useState<Set<string>>(() => new Set());
   const {
     expandedSidebarSectionIDs = new Set(),
-    projectThreadsByProjectID = {},
+    workspaceThreadsByWorkspaceID = {},
     activeThreadID,
     pendingThreadID,
     onSelectThread = () => {},
-    onSelectProjectThread = () => {},
+    onSelectWorkspaceThread = () => {},
     sectionOrder = [SCRATCH_PSEUDO_PROJECT_ID, "project-1", "project-2"],
     state = {
       ...initialState,
@@ -116,52 +104,29 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
         cwd: "/repo/wuu",
       },
     },
-    groupChatEnabled = false,
-    channelRooms = [],
-    pinnedChannelRooms = [],
-    pinnedCollaborationConversations = [],
-    collaborationNavigation,
-    activeChannelRoomID,
-    activeChannelSection = null,
     collapsedSidebarSectionIDs = new Set(),
-    onSelectChannelRoom,
-    onToggleChannelRoomPinned,
-    onArchiveChannelRoom,
-    onOpenChannelAgents,
-    onOpenChannelTasks,
+    onCreateProject,
+    onAdoptIntoProject,
   } = options;
   return (
     <AppSidebar
       state={state}
-      sidebarProjects={sidebarProjects}
+      sidebarWorkspaces={sidebarWorkspaces}
       pinnedThreads={[]}
       activeThreadID={activeThreadID}
       pendingThreadID={pendingThreadID}
-      pendingProjectID={undefined}
+      pendingWorkspaceID={undefined}
       collapsedSidebarSectionIDs={collapsedSidebarSectionIDs}
       collapsedFolderIDs={collapsedFolderIDs}
       setCollapsedFolderIDs={setCollapsedFolderIDs}
       expandedSidebarSectionIDs={expandedSidebarSectionIDs}
-      projectThreadsByProjectID={projectThreadsByProjectID}
-      projectMenuOpen={false}
-      projectMenuRef={createRef<HTMLDivElement>()}
+      workspaceThreadsByWorkspaceID={workspaceThreadsByWorkspaceID}
+      workspaceMenuOpen={false}
+      workspaceMenuRef={createRef<HTMLDivElement>()}
       searchOpen={false}
       sectionOrder={sectionOrder}
       onStartNewThread={() => {}}
       onOpenSkillsTab={() => {}}
-      groupChatEnabled={groupChatEnabled}
-      channelRooms={channelRooms}
-      pinnedChannelRooms={pinnedChannelRooms}
-      pinnedCollaborationConversations={pinnedCollaborationConversations}
-      collaborationNavigation={collaborationNavigation}
-      activeChannelRoomID={activeChannelRoomID}
-      activeChannelSection={activeChannelSection}
-      onSelectChannelRoom={onSelectChannelRoom}
-      onToggleChannelRoomPinned={onToggleChannelRoomPinned}
-      onArchiveChannelRoom={onArchiveChannelRoom}
-      onOpenChannelAgents={onOpenChannelAgents}
-      onOpenChannelTasks={onOpenChannelTasks}
-      onOpenChannels={() => {}}
       onMarkThreadsViewed={() => {}}
       unreadViewOpen={unreadViewOpen}
       onToggleUnreadView={() => {
@@ -180,14 +145,16 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
       onArchiveThread={() => {}}
       onDeleteThread={() => {}}
       onRenameThread={() => {}}
-      onToggleProjectMenu={() => {}}
-      onCreateProject={() => {}}
-      onOpenProjectFolder={() => {}}
+      onToggleWorkspaceMenu={() => {}}
+      onCreateWorkspace={() => {}}
+      onOpenWorkspaceFolder={() => {}}
       onToggleSidebarSectionCollapsed={() => {}}
-      onStartNewThreadForProject={() => {}}
-      onSelectProjectThread={onSelectProjectThread}
-      onRemoveProject={() => {}}
-      onRelocateProject={() => {}}
+      onStartNewThreadInWorkspace={() => {}}
+      onSelectWorkspaceThread={onSelectWorkspaceThread}
+      onRemoveWorkspace={() => {}}
+      onRelocateWorkspace={() => {}}
+      onCreateProject={onCreateProject}
+      onAdoptIntoProject={onAdoptIntoProject}
       onOpenSettings={() => {}}
     />
   );
@@ -202,39 +169,14 @@ function renderSidebar(options: RenderOptions = {}): void {
 
 describe("AppSidebar layout", () => {
   it.each([
-    { saved: ["workspace", "pinned", "folders"], expected: ["collaboration", "workspace", "pinned", "folders"] },
-    { saved: ["folders", "collaboration", "workspace", "pinned"], expected: ["folders", "collaboration", "workspace", "pinned"] },
+    { saved: ["workspace", "pinned"], expected: ["projects", "folders", "workspace", "pinned"] },
+    // Projects take the place a saved order gave Collaboration.
+    { saved: ["folders", "collaboration", "workspace", "pinned"], expected: ["folders", "projects", "workspace", "pinned"] },
   ])("restores group order without resetting existing preferences: $saved", ({ saved, expected }) => {
     window.localStorage.setItem("wuu.desktop.sidebarFunctionalGroupOrder", JSON.stringify(saved));
-    const onCreateRoom = vi.fn();
-    function CollaborationNavigation() {
-      const [sectionCollapsed, setSectionCollapsed] = useState(false);
-      return <CollaborationSidebar embedded initialized agents={[]} rooms={[]}
-        sectionCollapsed={sectionCollapsed}
-        onToggleSectionCollapsed={() => setSectionCollapsed((value) => !value)}
-        onSelectAgent={() => {}} onSelectRoom={() => {}} onManageAgents={() => {}}
-        onCreateRoom={onCreateRoom} onSwitchToHarness={() => {}} onOpenSettings={() => {}} />;
-    }
-    const options = {
-      collaborationNavigation: <CollaborationNavigation />,
-    };
     const order = () => [...container.querySelectorAll<HTMLElement>(".sidebar-main > .sidebar-functional-group")]
       .map((element) => element.dataset.functionalGroupId ?? element.dataset.sectionId);
-    renderSidebar(options);
-    expect(order()).toEqual(expected);
-
-    const collaboration = container.querySelector('[data-wuu-component="collaboration-sidebar"]')!;
-    const toggle = collaboration.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
-    act(() => toggle.click());
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    act(() => collaboration.querySelector<HTMLButtonElement>(".sidebar-functional-heading-action button")!.click());
-    expect(onCreateRoom).toHaveBeenCalledOnce();
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(order()).toEqual(expected);
-
     renderSidebar();
-    expect(order()).toEqual(expected.filter((id) => id !== "collaboration"));
-    renderSidebar(options);
     expect(order()).toEqual(expected);
   });
 
@@ -249,7 +191,7 @@ describe("AppSidebar layout", () => {
     const options: RenderOptions = {
       activeThreadID: threads[0].id,
       expandedSidebarSectionIDs: new Set(["project-1"]),
-      projectThreadsByProjectID: { "project-1": threads },
+      workspaceThreadsByWorkspaceID: { "project-1": threads },
       onSelectThread,
     };
     const currentTitles = () => [...container.querySelectorAll('[aria-current="page"] .thread-row-title')]
@@ -302,7 +244,7 @@ describe("AppSidebar layout", () => {
     };
     const options: RenderOptions = {
       expandedSidebarSectionIDs: new Set(["project-1"]),
-      projectThreadsByProjectID: { "project-1": [unread, idle] },
+      workspaceThreadsByWorkspaceID: { "project-1": [unread, idle] },
     };
     renderSidebar(options);
     act(() => container.querySelector<HTMLButtonElement>(".sidebar-notifications-button")!.click());
@@ -374,11 +316,11 @@ describe("AppSidebar layout", () => {
     renderSidebar({
       activeThreadID: fork.id,
       expandedSidebarSectionIDs: new Set([SCRATCH_PSEUDO_PROJECT_ID, "project-1"]),
-      projectThreadsByProjectID: {
+      workspaceThreadsByWorkspaceID: {
         [SCRATCH_PSEUDO_PROJECT_ID]: [{ ...fork, workspace_id: undefined }],
         "project-1": [fork],
       },
-      onSelectProjectThread: select,
+      onSelectWorkspaceThread: select,
     });
     const rows = [...container.querySelectorAll<HTMLButtonElement>(".thread-row-main")]
       .filter((row) => row.textContent?.includes(fork.title!));
@@ -387,65 +329,94 @@ describe("AppSidebar layout", () => {
     expect(select).toHaveBeenCalledWith("project-1", fork.id);
   });
 
-  it("keeps plugin navigation above the collaboration section", async () => {
-    await desktopPluginHost.activateGeneration({
-      pluginId: "test:app-sidebar-navigation",
-      generation: "plugins-above-collaboration",
-      contributions: {
-        navigation: [{ id: "automations", view: "automations", title: "Automations" }],
-      },
-      register(api) {
-        api.registerViewType({ id: "automations", title: "Automations", render: () => null });
-      },
-    });
+  // The failure cases these guard: a project or its sessions also crowd the
+  // workspace list, a session of an archived project disappears, the project
+  // row hides pending reviews, and the Projects entries do nothing.
+  function sidebarThread(id: string, title: string, overrides: Partial<ThreadSummary> = {}): ThreadSummary {
+    return {
+      id, title, cwd: "/repo/wuu", workspace_id: "project-1", status: "idle", pinned: false, archived: false,
+      created_at: "2026-09-17T00:00:00Z", updated_at: "2026-09-17T00:00:00Z",
+      preview: "", model_provider: "test", model: "test", turns: [], turn_count: 0, ...overrides,
+    };
+  }
 
+  function projectsGroup(): HTMLElement {
+    const group = container.querySelector<HTMLElement>('.sidebar-functional-group[data-functional-group-id="projects"]');
+    if (!group) throw new Error("Projects group not rendered");
+    return group;
+  }
+
+  it("lists projects apart from their workspace with their pending reviews", () => {
     renderSidebar({
-      groupChatEnabled: true,
-      collaborationNavigation: (
-        <section data-wuu-component="collaboration-sidebar">
-          <nav aria-label="协作对话" />
-        </section>
-      ),
+      expandedSidebarSectionIDs: new Set(["project-1"]),
+      workspaceThreadsByWorkspaceID: {
+        "project-1": [
+          sidebarThread("coordinator", "Search overhaul", { source: "project", pending_candidates: 2 }),
+          sidebarThread("session", "Paginate results", { source: "project-session", project_id: "coordinator", status: "in_progress" }),
+          sidebarThread("orphan", "Orphaned session", { source: "project-session", project_id: "archived-project" }),
+          sidebarThread("chat", "Ordinary conversation"),
+        ],
+      },
     });
 
-    const plugins = container.querySelector<HTMLElement>("[data-wuu-component='plugin-navigation']");
-    const collaboration = container.querySelector<HTMLElement>("[data-wuu-component='collaboration-sidebar']");
-    expect(plugins?.textContent).toContain("Automations");
-    expect(plugins).not.toBeNull();
-    expect(collaboration).not.toBeNull();
-    expect(
-      plugins!.compareDocumentPosition(collaboration!) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    const projectRow = projectsGroup().querySelector<HTMLElement>(".project-thread-row");
+    expect(projectRow?.textContent).toContain("Search overhaul");
+    expect(projectRow?.querySelector(".project-thread-pending")?.textContent).toBe("2");
+    expect(projectRow?.classList.contains("running")).toBe(true);
+    const workspace = container.querySelector<HTMLElement>('section[data-section-id="project-1"]');
+    const workspaceTitles = [...workspace!.querySelectorAll(".thread-row-title")].map((title) => title.textContent);
+    expect(workspaceTitles.sort()).toEqual(["Ordinary conversation", "Orphaned session"]);
   });
 
-  it("moves a pinned collaboration conversation into the shared Pinned group", () => {
-    const conversation: CollaborationConversation = {
-      id: "dm",
-      name: "Alpha",
-      pinned: true,
-      updatedAt: "2026-09-12T10:00:00Z",
-      room: {
-        id: "dm",
-        kind: "dm",
-        name: "Alpha",
-        created_by: "human",
-        created_at: "2026-09-01T00:00:00Z",
-        members: [],
-      },
-    };
+  it("opens a project draft and adopts a conversation dropped on a project", () => {
+    const create = vi.fn();
+    const adopt = vi.fn();
     renderSidebar({
-      groupChatEnabled: true,
-      pinnedCollaborationConversations: [conversation],
-      collaborationNavigation: (
-        <section data-wuu-component="collaboration-sidebar">
-          <nav aria-label="协作对话" />
-        </section>
-      ),
+      expandedSidebarSectionIDs: new Set(["project-1"]),
+      workspaceThreadsByWorkspaceID: {
+        "project-1": [
+          sidebarThread("coordinator", "Search overhaul", { source: "project" }),
+          sidebarThread("chat", "Ordinary conversation"),
+        ],
+      },
+      onCreateProject: create,
+      onAdoptIntoProject: adopt,
     });
 
-    const pinned = container.querySelector('[data-functional-group-id="pinned"]');
-    expect(pinned?.textContent).toContain("Alpha");
-    expect(container.querySelector('[data-wuu-component="collaboration-sidebar"] nav')?.textContent).not.toContain("Alpha");
+    act(() => projectsGroup().querySelector<HTMLButtonElement>('button[aria-label="新建项目"]')!.click());
+    expect(create).toHaveBeenCalledTimes(1);
+
+    const conversation = [...container.querySelectorAll<HTMLElement>(".thread-row")]
+      .find((row) => row.textContent?.includes("Ordinary conversation"))!;
+    const projectRow = projectsGroup().querySelector<HTMLElement>(".project-thread-row")!;
+    const data = new Map<string, string>();
+    const transfer = {
+      get types() { return [...data.keys()]; },
+      setData: (type: string, value: string) => { data.set(type, value); },
+      getData: (type: string) => data.get(type) ?? "",
+      setDragImage: () => {},
+      effectAllowed: "",
+      dropEffect: "",
+    };
+    const drag = (target: HTMLElement, type: string) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "dataTransfer", { value: transfer });
+      act(() => { target.dispatchEvent(event); });
+    };
+    drag(conversation, "dragstart");
+    drag(projectRow, "dragover");
+    expect(projectRow.classList.contains("drop-active")).toBe(true);
+    drag(projectRow, "drop");
+    expect(adopt).toHaveBeenCalledWith("coordinator", "chat");
+  });
+
+  it("offers a first project when there is none", () => {
+    const create = vi.fn();
+    renderSidebar({ onCreateProject: create });
+    const first = projectsGroup().querySelector<HTMLButtonElement>(".project-new-item");
+    expect(first?.textContent).toBe("新建项目");
+    act(() => first!.click());
+    expect(create).toHaveBeenCalledTimes(1);
   });
 
   it("renders only scratch and projects in the workspace order", () => {

@@ -1,6 +1,6 @@
 # Subagents
 
-The Subagent plugin lets an agent delegate a bounded task to another model context and bring the result back to the parent conversation. Enable the plugin before requesting this workflow. For long-lived named identities and group discussions, use [Collaboration](collaboration.md) instead.
+The Subagent plugin lets an agent delegate a bounded task to another model context and bring the result back to the parent conversation. Enable the plugin before requesting this workflow.
 
 ## Give the delegated task a boundary
 

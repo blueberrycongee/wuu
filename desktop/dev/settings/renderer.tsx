@@ -169,7 +169,6 @@ function Fixture(): JSX.Element {
         onSidebarResizeStart={() => undefined}
         onSidebarSeparatorKey={() => undefined}
         archivedThreads={archivedThreads}
-        archivedRooms={[]}
         onUnarchiveThread={() => undefined}
         sidebarCollapsed={collapsed}
         sidebarAnimating={false}

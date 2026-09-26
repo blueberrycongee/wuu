@@ -1,4 +1,3 @@
-import { showErrorToast } from "./Toast";
 import {
   lazy,
   Suspense,
@@ -16,6 +15,7 @@ import {
   ArrowLeft,
   SquarePen,
   Info,
+  Project,
   X,
 } from "./WuuIcons";
 import type {
@@ -55,6 +55,7 @@ import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { ViewSwitchLoading } from "./LoadingViews";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import { useI18n } from "./i18n";
+import { useProjectActions } from "./ProjectActions";
 import { HeaderPresentation, immutableHeaderSnapshot } from "./plugins/HeaderPresentation";
 import { desktopPluginHost, desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 import type { PluginHost } from "./plugins/PluginHost";
@@ -505,12 +506,27 @@ export function ConversationTitleActions({
   onToggleRightPanel,
 }: ConversationTitleActionsProps): JSX.Element {
   const { t } = useI18n();
-  const controlledThread = state.activePane === "secondary" ? state.secondaryThread : state.thread;
-  const control = controlledThread?.session_control;
-  const controlLabel = control ? t(`channels.sessions.control.${control.state === "taken_over" ? "takenOver" : control.state}`) : "";
-  const management = control ? <span className="session-control-label" title={control.state === "active" ? t("channels.sessions.takeoverHint") : `${control.manager_name} · ${controlLabel}`}>
+  const projectActions = useProjectActions();
+  const thread = state.activePane === "secondary" ? state.secondaryThread : state.thread;
+  const control = thread?.session_control;
+  const controlLabel = control ? t(`sessionControl.${control.state === "taken_over" ? "takenOver" : control.state}`) : "";
+  // A project's session links back to it and changes hands explicitly;
+  // an extension's session only names its manager.
+  const projectSession = thread && control && projectActions && thread.project_id === control.manager_id;
+  const management = projectSession ? <>
+    <button type="button" className="session-control-project" title={t("projects.openCoordinator")}
+      onClick={() => projectActions.openThread(control.manager_id)}>
+      <Project aria-hidden="true" />
+      <span>{control.manager_name}</span>
+    </button>
+    <span className="session-control-label">{controlLabel}</span>
+    <button type="button" className="settings-button settings-button-ghost"
+      title={control.state === "active" ? t("projects.takeOverHint") : undefined}
+      onClick={() => control.state === "active" ? projectActions.takeOver(thread) : projectActions.returnToProject(thread)}>
+      {t(control.state === "active" ? "projects.takeOver" : "projects.returnToProject")}
+    </button>
+  </> : control ? <span className="session-control-label" title={control.state === "active" ? t("sessionControl.takeoverHint") : `${control.manager_name} · ${controlLabel}`}>
     {control.manager_name} · {controlLabel}
-    {control.room_id && control.state !== "active" ? <button type="button" onClick={() => void window.wuu!.returnManagedSession({ thread_id: controlledThread!.id, revision: control.revision }).catch(reason => showErrorToast(reason))}>{t("channels.sessions.returnControl")}</button> : null}
   </span> : null;
   if (compactNavigation) {
     return <div className="title-actions">{management}<CompactConversationActions

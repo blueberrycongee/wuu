@@ -67,27 +67,6 @@ func isSensitivePath(path string) bool {
 	return ok
 }
 
-// isNamedAgentIdentityNotebookPath reports whether an absolute path belongs
-// to a collaboration named agent's identity notebook. This is the only core
-// file-tool exception under WUU_HOME: user and session memory belongs to the
-// Memory plugin and must be reached through that plugin's tools.
-func isNamedAgentIdentityNotebookPath(absPath string) bool {
-	if strings.TrimSpace(absPath) == "" {
-		return false
-	}
-	home, err := statepath.Home("")
-	if err != nil {
-		return false
-	}
-	agentsDir := filepath.Join(home, "channels", "agents")
-	rel, err := filepath.Rel(agentsDir, absPath)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return false
-	}
-	parts := strings.Split(filepath.ToSlash(rel), "/")
-	return len(parts) >= 2 && strings.TrimSpace(parts[0]) != "" && parts[1] == "memory"
-}
-
 // wuuCredentialFileNames are the app's own credential files at the root of
 // the wuu home directory. They are floor-protected in every permission
 // mode, including unconfined: no agent tool may read or write them. The
@@ -141,9 +120,6 @@ func rejectSensitiveReadPath(env *Env, toolName, absPath string) error {
 	if env.BypassToolHardProtections() {
 		return nil
 	}
-	if env.AllowMutations && isNamedAgentIdentityNotebookPath(absPath) {
-		return nil
-	}
 	displayPath := env.NormalizeDisplayPath(absPath)
 	if reason, ok := sensitivePathReason(displayPath); ok {
 		return fmt.Errorf("%s refuses to read sensitive path %q (%s). Chat approval does not lift this guard. Use a metadata-only command, or edit the file outside the session", toolName, displayPath, reason)
@@ -157,12 +133,6 @@ func rejectSensitiveToolPath(env *Env, toolName, action, absPath string) error {
 	}
 	// Sensitive-path writes stay blocked in every mode, including
 	// unconfined: lifting the path boundary does not lift secret guards.
-	// A named agent's identity notebook is explicit collaboration state and is
-	// included in that agent's file scope. Other WUU_HOME state stays behind
-	// dedicated core or plugin APIs.
-	if env.AllowMutations && isNamedAgentIdentityNotebookPath(absPath) {
-		return nil
-	}
 	displayPath := env.NormalizeDisplayPath(absPath)
 	if reason, ok := sensitivePathReason(displayPath); ok {
 		return fmt.Errorf("%s refuses to %s sensitive path %q (%s). This guard applies in every permission mode, including unconfined, and chat approval does not lift it. Edit the file outside the session", toolName, action, displayPath, reason)

@@ -3,8 +3,6 @@ package appserver
 import (
 	"context"
 	"errors"
-	"fmt"
-	"github.com/blueberrycongee/wuu/internal/channels"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -12,8 +10,8 @@ import (
 )
 
 func (s *Server) controlPluginSession(_ context.Context, pluginID string, p pluginhost.SessionControlParams) (pluginhost.SessionControlResult, error) {
-	s.harnessMu.Lock()
-	defer s.harnessMu.Unlock()
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
 	manager := "plugin:" + strings.TrimSpace(pluginID)
 	m, ok, err := session.Find(s.rt.SessionDir, p.SessionID)
 	if err != nil {
@@ -22,7 +20,7 @@ func (s *Server) controlPluginSession(_ context.Context, pluginID string, p plug
 	if !ok {
 		return pluginhost.SessionControlResult{}, session.ErrSessionNotFound
 	}
-	if m.Visibility == "plugin" && m.Owner != manager || isNamedAgentSessionSource(m.Source) {
+	if m.Visibility == "plugin" && m.Owner != manager {
 		return pluginhost.SessionControlResult{}, errors.New("session control requires a shared or owned ordinary session")
 	}
 	c, _, err := session.ReadControl(s.rt.SessionDir, p.SessionID)
@@ -65,23 +63,66 @@ func (s *Server) readThreadSessionControl(id string) (*ThreadSessionControl, err
 	return s.threadSessionControl(id, c), nil
 }
 
-func (s *Server) threadSessionControl(id string, c session.Control) *ThreadSessionControl {
+// threadSessionControl names the manager. A fence left by a project that was
+// archived or deleted no longer manages the session, so it is not shown.
+func (s *Server) threadSessionControl(_ string, c session.Control) *ThreadSessionControl {
 	if c.ManagerID == "" || c.State == session.ControlReleased {
 		return nil
 	}
 	name := c.ManagerID
-	if s.channelService != nil {
-		if agent, err := s.channelService.GetAgentRuntime(context.Background(), c.ManagerID); err == nil {
-			name = agent.Name
+	if !strings.HasPrefix(c.ManagerID, "plugin:") {
+		project, live := s.projectCoordinator(c.ManagerID)
+		if !live {
+			return nil
+		}
+		name = project.Title
+	}
+	return &ThreadSessionControl{ManagerID: c.ManagerID, ManagerName: name, State: c.State, Revision: c.Revision}
+}
+
+// takeSessionControlForInput applies the user's message to a managed session.
+// A project keeps its control state: a managed session goes on under the
+// project, which learns what the user wrote from the turn's result, and a
+// session the user holds stays theirs. Other managers yield to the user.
+func (s *Server) takeSessionControlForInput(id string) error {
+	if s == nil || s.rt == nil {
+		return nil
+	}
+	c, ok, err := session.ReadControl(s.rt.SessionDir, id)
+	if err != nil {
+		return err
+	}
+	if ok && c.State != session.ControlReleased && !strings.HasPrefix(c.ManagerID, "plugin:") {
+		if _, live := s.projectCoordinator(c.ManagerID); live {
+			return nil
 		}
 	}
-	result := &ThreadSessionControl{ManagerID: c.ManagerID, ManagerName: name, State: c.State, Revision: c.Revision}
-	if s.channelService != nil {
-		if link, err := s.channelService.HarnessLink(context.Background(), id); err == nil {
-			result.RoomID = link.RoomID
-		}
+	return s.takeSessionControl(id, session.ControlTakenOver)
+}
+
+// takeSessionControl records a human takeover or pause of a managed session.
+// Admitted automatic instructions are revoked before the manager is told.
+func (s *Server) takeSessionControl(id, state string) error {
+	if s == nil || s.rt == nil {
+		return nil
 	}
-	return result
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
+	c, ok, err := session.ReadControl(s.rt.SessionDir, id)
+	if err != nil {
+		return err
+	}
+	if !ok || c.State == session.ControlReleased || c.State == state {
+		return nil
+	}
+	c, err = session.ChangeControl(s.rt.SessionDir, id, c.ManagerID, state, c.Revision)
+	if err != nil {
+		return err
+	}
+	s.revokeSessionInputs(id)
+	s.publishSessionControl(id)
+	s.noticeProjectControl(id, c)
+	return nil
 }
 
 func (s *Server) publishSessionControl(id string) {
@@ -100,9 +141,9 @@ func (s *Server) publishSessionControl(id string) {
 	_ = s.notifyThreadUpdated(snapshot)
 }
 
-// handleThreadControl is a human action. Model and extension control continues
-// through its owner-fenced API; it cannot invoke this return-to-manager path.
-func (s *Server) handleThreadControl(ctx context.Context, req Request) error {
+// handleThreadTakeControl is a human action: the user takes a managed
+// session from its project, which stops instructing it until it is returned.
+func (s *Server) handleThreadTakeControl(req Request) error {
 	var p struct {
 		ThreadID string `json:"thread_id"`
 		Revision int64  `json:"revision"`
@@ -110,38 +151,57 @@ func (s *Server) handleThreadControl(ctx context.Context, req Request) error {
 	if err := decodeParams(req.Params, &p); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	s.harnessMu.Lock()
-	defer s.harnessMu.Unlock()
+	s.controlMu.Lock()
 	c, exists, err := session.ReadControl(s.rt.SessionDir, p.ThreadID)
+	if err == nil && (!exists || c.Revision != p.Revision || c.State != session.ControlActive) {
+		err = session.ErrControlChanged
+	}
+	if err == nil {
+		_, err = s.projectManagedSession(c.ManagerID, p.ThreadID)
+	}
+	if err == nil {
+		c, err = session.ChangeControl(s.rt.SessionDir, p.ThreadID, c.ManagerID, session.ControlTakenOver, c.Revision)
+	}
+	s.controlMu.Unlock()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if !exists || c.Revision != p.Revision {
-		return s.writeResponse(req.ID, nil, session.ErrControlChanged)
+	s.revokeSessionInputs(p.ThreadID)
+	s.publishSessionControl(p.ThreadID)
+	s.noticeProjectControl(p.ThreadID, c)
+	return s.writeResponse(req.ID, map[string]any{"control": s.threadSessionControl(p.ThreadID, c)}, nil)
+}
+
+// handleThreadControl is a human action: it returns a taken-over or paused
+// session to its project. Model and extension control goes through their
+// owner-fenced APIs and cannot use this path.
+func (s *Server) handleThreadControl(_ context.Context, req Request) error {
+	var p struct {
+		ThreadID string `json:"thread_id"`
+		Revision int64  `json:"revision"`
 	}
-	link, err := s.channelService.HarnessLink(ctx, p.ThreadID)
-	if err != nil {
+	if err := decodeParams(req.Params, &p); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	metadata, err := s.sharedHarnessSession(p.ThreadID)
-	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
+	s.controlMu.Lock()
+	c, exists, err := session.ReadControl(s.rt.SessionDir, p.ThreadID)
+	if err == nil && (!exists || c.Revision != p.Revision) {
+		err = session.ErrControlChanged
 	}
-	if c.State != session.ControlActive {
-		c, err = session.ChangeControl(s.rt.SessionDir, p.ThreadID, link.AgentID, session.ControlActive, p.Revision)
-		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
+	if err == nil {
+		_, err = s.projectManagedSession(c.ManagerID, p.ThreadID)
 	}
-	link.Active, link.ControlRevision, link.LastTurnID = true, c.Revision, metadata.LatestCompletedTurnID
-	link.Turns, link.Failures = 0, 0
-	if err := s.channelService.PutHarnessLink(ctx, link); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+	if err == nil && c.State != session.ControlActive {
+		err = s.settleUserControlledTurn(c.ManagerID, p.ThreadID)
 	}
-	_, err = s.channelService.EnqueueSessionResult(ctx, channels.SessionResultEnqueueParams{ParentSessionRef: link.SourceSessionRef, ParentTurnID: link.SourceTurnID, SourceSessionRef: link.SessionID, RequestID: fmt.Sprintf("human-return:%s:%d", link.SessionID, c.Revision), Body: "The user explicitly returned this session to your management. Inspect the user's changes and current Work before continuing. Revoked automatic instructions remain revoked."})
+	if err == nil && c.State != session.ControlActive {
+		c, err = session.ChangeControl(s.rt.SessionDir, p.ThreadID, c.ManagerID, session.ControlActive, c.Revision)
+	}
+	s.controlMu.Unlock()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	s.publishSessionControl(p.ThreadID)
+	s.noticeProjectControl(p.ThreadID, c)
 	return s.writeResponse(req.ID, map[string]any{"control": s.threadSessionControl(p.ThreadID, c)}, nil)
 }

@@ -59,23 +59,52 @@ func Snapshot(ctx context.Context, root, base, key string) (string, string, erro
 	return revision, diff, err
 }
 
-// ApplySnapshot applies only the frozen candidate, preserving unrelated changes
-// and the target's index. A conflicting patch leaves the target untouched.
-func ApplySnapshot(ctx context.Context, target, base, revision string) error {
+// DropSnapshots deletes the candidate refs whose key starts with prefix, so a
+// deleted session's snapshots become unreachable.
+func DropSnapshots(ctx context.Context, repo, prefix string) error {
+	if prefix == "" || strings.ContainsAny(prefix, "/\\. \t\n*") {
+		return fmt.Errorf("invalid snapshot key prefix")
+	}
+	list := exec.CommandContext(ctx, "git", "--no-pager", "-C", repo, "for-each-ref", "--format=%(refname)", "refs/wuu/candidates/"+prefix+"*")
+	refs, err := list.Output()
+	if err != nil {
+		return fmt.Errorf("list candidate refs: %w", err)
+	}
+	for _, ref := range strings.Fields(string(refs)) {
+		if output, err := exec.CommandContext(ctx, "git", "-C", repo, "update-ref", "-d", ref).CombinedOutput(); err != nil {
+			return fmt.Errorf("delete %s: %s: %w", ref, strings.TrimSpace(string(output)), err)
+		}
+	}
+	return nil
+}
+
+// SnapshotDiff reads a frozen candidate's patch from any checkout that shares
+// the snapshot's object database, such as the repository behind a worktree.
+func SnapshotDiff(ctx context.Context, repo, base, revision string) ([]byte, error) {
 	if len(base) != 40 && len(base) != 64 || len(revision) != 40 && len(revision) != 64 {
-		return fmt.Errorf("candidate requires immutable Git revisions")
+		return nil, fmt.Errorf("candidate requires immutable Git revisions")
 	}
 	for _, value := range []string{base, revision} {
 		for _, c := range value {
 			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
-				return fmt.Errorf("invalid candidate revision")
+				return nil, fmt.Errorf("invalid candidate revision")
 			}
 		}
 	}
-	command := exec.CommandContext(ctx, "git", "--no-pager", "-C", target, "diff", "--no-ext-diff", "--no-textconv", "--binary", base, revision, "--")
+	command := exec.CommandContext(ctx, "git", "--no-pager", "-C", repo, "diff", "--no-ext-diff", "--no-textconv", "--binary", base, revision, "--")
 	patch, err := command.Output()
 	if err != nil {
-		return fmt.Errorf("read candidate patch: %w", err)
+		return nil, fmt.Errorf("read candidate patch: %w", err)
+	}
+	return patch, nil
+}
+
+// ApplySnapshot applies only the frozen candidate, preserving unrelated changes
+// and the target's index. A conflicting patch leaves the target untouched.
+func ApplySnapshot(ctx context.Context, target, base, revision string) error {
+	patch, err := SnapshotDiff(ctx, target, base, revision)
+	if err != nil {
+		return err
 	}
 	if len(patch) == 0 {
 		return nil

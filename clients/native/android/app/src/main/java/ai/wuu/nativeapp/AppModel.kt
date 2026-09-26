@@ -64,14 +64,6 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     var threadEngine by mutableStateOf(""); private set
     internal val imagePreviews = ImagePreviewLoader()
     private var remote: Remote? = null
-    val collaboration = Collaboration { method, params ->
-        val transport = checkNotNull(remote) { "电脑未连接" }; val stamp = generation
-        check(connected) { "电脑未连接" }
-        val result = transport.call(method, params)
-        check(stamp)
-        if (remote !== transport) throw CancellationException()
-        result
-    }
     val conversationDrafts = androidx.compose.runtime.mutableStateMapOf<String, String>()
     val conversationAttachments = androidx.compose.runtime.mutableStateMapOf<String, List<InputAttachment>>()
     private var history: History? = null
@@ -95,8 +87,6 @@ class AppModel(application: Application) : AndroidViewModel(application) {
                 host = devices.first { it.optString("pub") == location.getString("host") }
                 workspace = location.optString("workspace")
                 activeID = location.optString("thread").takeIf { it.isNotEmpty() }
-                collaboration.mode(location.optBoolean("collaboration", true))
-                collaboration.select(location.optString("room").takeIf { it.isNotEmpty() })
                 history = History(session, location.getString("host"), directory)
                 restoreHistory = true
             }
@@ -107,8 +97,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     fun rememberLocation() {
         val session = account ?: return; val selected = host ?: return
         try {
-            vault.write("location", NavigationLocation.encode(session, selected.getString("pub"), workspace,
-                activeID, collaboration.selectedID, collaboration.visible))
+            vault.write("location", NavigationLocation.encode(session, selected.getString("pub"), workspace, activeID))
         } catch (e: Exception) { error = e.message }
     }
     fun perform(block: suspend () -> Unit) {
@@ -247,7 +236,6 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         if (selection != openGeneration || session != previous) return@perform
         require(device.optString("role") == "host" && devices.any { it.optString("pub") == device.optString("pub") })
         host = device
-        collaboration.mode(true)
         rememberLocation()
         val store = History(session, device.getString("pub"), directory); history = store
         val stamp = generation; store.restore(); check(stamp); showHistory(); foreground()
@@ -314,7 +302,6 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun background() {
-        collaboration.invalidate()
         generation++; refresh?.cancel(); refresh = null; reconnectJob?.cancel(); reconnectJob = null; eventJob?.cancel(); eventJob = null
         remote?.close(); remote = null; connected = false; connecting = false; approval = null; sending = false
         imagePreviews.clear(); loadingHistory = false; loadingContent = emptySet(); attachmentPreview = null; loadingAttachment = false
@@ -466,12 +453,6 @@ class AppModel(application: Application) : AndroidViewModel(application) {
             if (selection == openGeneration && remote === transport && live?.messages?.contains(message) == true) attachmentPreview = result
         } finally { if (stamp == generation && selection == openGeneration) loadingAttachment = false }
     }
-    suspend fun previewCollaborationAttachment(message: JSONObject, field: String, index: Int) {
-        if (!connected || loadingAttachment) return
-        val stamp = generation; loadingAttachment = true
-        try { val result = collaboration.readAttachment(message, field, index); check(stamp); attachmentPreview = result }
-        finally { if (stamp == generation) loadingAttachment = false }
-    }
     suspend fun exportAttachment(context: android.content.Context, attachment: LoadedAttachment, view: Boolean) {
         val stamp = generation; val selection = openGeneration
         shareAttachment(context, attachment, view) { stamp == generation && selection == openGeneration && attachmentPreview === attachment }
@@ -535,7 +516,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         vault.delete("location")
         restoreHistory = false
         val oldHistory = history
-        collaboration.clear(); conversationDrafts.clear(); conversationAttachments.clear()
+        conversationDrafts.clear(); conversationAttachments.clear()
         background(); history = null; host = null; activeID = null; live = null; openGeneration++
         liveRows = emptyList(); rows = emptyList(); messages = emptyList(); workspace = ""; workspaces = emptyList(); historyEnabled = false; threadSettings = null; threadEngine = ""
         running = false; sending = false; readOnly = true; pending = emptyList(); search = ""; archivedList = false

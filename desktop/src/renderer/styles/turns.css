@@ -2593,8 +2593,7 @@
 
 /* Align the painted silhouette, not the SVG's transparent padding. Keep the
  * layout slot fixed so morphing never moves the summary text. Insets follow
- * each shape's motion envelope rather than chasing its edge on every frame.
- * Collaboration wrappers publish the same morph attribute on the slot. */
+ * each shape's motion envelope rather than chasing its edge on every frame. */
 :is(.process-surface-summary-line, .turn-reasoning-summary) > .process-surface-blobatar[data-wuu-mascot-morph] {
   translate: calc(-1 * var(--process-mascot-inset, 4px)) 0;
   transition: translate var(--motion-slow) var(--ease-out);
@@ -3441,9 +3440,8 @@
 }
 
 /* Speech-bubble insets: step the card radius down so code corners stay
-   concentric with the bubble padding (user 8/16, channel 9/14). */
-.user-message .rich-code-block,
-.channel-message-bubble .rich-code-block {
+   concentric with the user bubble padding (8/16). */
+.user-message .rich-code-block {
   border-radius: var(--radius-sm);
 }
 

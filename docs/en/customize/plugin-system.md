@@ -12,7 +12,7 @@ Bundled and external packages use the same runtime and desktop registration cont
 
 ## Discovery and activation
 
-Discovery reads user packages, project packages, authorized development directories, and bundled packages. User packages normally live in `$WUU_HOME/plugins`; project packages live in `.wuu/plugins` under the workspace. Legacy singular `plugin` directories are also recognized. When IDs collide, later discovery replaces the earlier candidate; bundled packages are considered last.
+Discovery reads user packages, workspace packages, authorized development directories, and bundled packages. User packages normally live in `$WUU_HOME/plugins`; workspace packages live in `.wuu/plugins` under the workspace. Legacy singular `plugin` directories are also recognized. When IDs collide, later discovery replaces the earlier candidate; bundled packages are considered last.
 
 Finding a manifest does not mean running it. The host evaluates enabled state, trust, platform and minimum-version compatibility, package relationships, and runtime negotiation. Missing `requires` dependencies leave consumers inactive; `breaks` and dependency cycles can reject the activation plan. `conflicts` produces a diagnostic rather than choosing a winner automatically.
 

@@ -13,8 +13,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/blueberrycongee/wuu/internal/channels"
 )
 
 func testReplyImage(t *testing.T, path string) string {
@@ -40,6 +38,7 @@ func TestReplyImagesResolveOnlyVisibleMarkdownAndVerifyChangingOriginals(t *test
 	out := &lockedBuffer{}
 	server := New(rt, out)
 	t.Cleanup(server.Close)
+	client := &rpcClient{server: server, out: out}
 	filename := "answer (1).png"
 	path := filepath.Join(rt.RootDir, filename)
 	original := testReplyImage(t, path)
@@ -53,7 +52,7 @@ func TestReplyImagesResolveOnlyVisibleMarkdownAndVerifyChangingOriginals(t *test
 	}
 	params := map[string]any{"kind": "thread", "scope_id": th.ID, "turn_id": "turn", "message_id": "answer", "source": filename, "preview": true}
 	var preview attachmentChunk
-	callChannelRPC(t, server, out, "message/image/read", params, &preview)
+	client.rpc(t, "message/image/read", params, &preview)
 	raw, err := base64.StdEncoding.DecodeString(preview.Data)
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +63,7 @@ func TestReplyImagesResolveOnlyVisibleMarkdownAndVerifyChangingOriginals(t *test
 	}
 	params["preview"] = false
 	var first attachmentChunk
-	callChannelRPC(t, server, out, "message/image/read", params, &first)
+	client.rpc(t, "message/image/read", params, &first)
 	if first.Data != original[:min(len(original), 128*1024)] || len(first.SHA256) != 64 {
 		t.Fatal("original bytes or digest missing")
 	}
@@ -93,40 +92,6 @@ func TestReplyImagesResolveOnlyVisibleMarkdownAndVerifyChangingOriginals(t *test
 	_ = png.Encode(&replacement, image.NewRGBA(image.Rect(0, 0, 2, 2)))
 	_ = os.WriteFile(path, replacement.Bytes(), 0600)
 	assertError(params)
-}
-
-func TestChannelReplyImagesUseThePublicMessageAndKeepDesktopBody(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.WuuHome = filepath.Join(t.TempDir(), ".wuu")
-	out := &lockedBuffer{}
-	server := NewWithCredentialStore(rt, out, nil, nil)
-	t.Cleanup(server.Close)
-	ctx := context.Background()
-	agent, err := server.channelService.CreateNamedAgent(ctx, channels.CreateNamedAgentParams{Name: "Photo"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	room, err := server.channelService.OpenDirectMessage(ctx, localChannelHumanID, agent.Agent.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(rt.RootDir, "reply.png")
-	_ = testReplyImage(t, path)
-	body := "![Here](" + path + ")"
-	sent, err := server.channelService.SendAgent(ctx, channels.AgentSendParams{RoomID: room.ID, AgentID: agent.Agent.ID, Token: agent.Token, Body: body})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var mobile ChannelMessageListResult
-	callChannelRPC(t, server, out, MethodChannelMessageList, ChannelMessageListParams{RoomID: room.ID, Latest: true, Limit: 1, AttachmentMetadataOnly: true}, &mobile)
-	if len(mobile.Messages) != 1 || len(mobile.Messages[0].MarkdownImages) != 1 || mobile.Messages[0].Body != body {
-		t.Fatalf("image reply lost: %+v", mobile.Messages)
-	}
-	var preview attachmentChunk
-	callChannelRPC(t, server, out, "message/image/read", map[string]any{"kind": "channel", "scope_id": room.ID, "message_id": sent.Message.ID, "seq": sent.Message.Seq, "source": path, "preview": true}, &preview)
-	if preview.Data == "" || preview.MediaType != "image/jpeg" {
-		t.Fatal("channel image did not load")
-	}
 }
 
 func TestMarkdownImageReferencesExcludeCodeAndExternalRequests(t *testing.T) {

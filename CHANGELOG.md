@@ -10,6 +10,18 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Projects: a coordinator conversation for a larger piece of work in one
+  workspace. Create one from the workspace menu; a workspace can hold several.
+  The coordinator reads the workspace but cannot change it. It delegates every
+  change to sessions it manages, which appear nested under the project and open
+  like any conversation. Sessions that change files work in their own Git
+  worktree. When a turn ends, its result reaches the coordinator once, including
+  after a restart, and its changes wait as proposed changes that you apply to
+  the workspace, open as a PR through an extension, or discard. Sending a message in
+  a session takes it over until you return it to the project. The
+  `project/candidate` app-server method and `project` on `thread/start` expose
+  the same model to clients.
+
 - The model popover has an independent Fast mode toggle and reset for supported
   provider models and native or ACP engines. Conversation and draft selections
   preserve speed separately from reasoning effort; `/fast` uses the same setting.
@@ -36,22 +48,19 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- The desktop and its documentation call a registered folder a workspace
+  (工作区) instead of a project; "project" now means a project coordinator.
+
 - Optional programmatic tool calling now runs each program in a fresh JavaScript
   process with the session filesystem sandbox. A default-off global switch and
   model-family overrides control availability. Nested calls retain normal tool
   permissions and recording; image/audio results are attached automatically.
   The previous persistent code runtime and execution/wait tools are retired.
 
-- Project conversation lists show five recent entries plus active, running,
+- Workspace conversation lists show five recent entries plus active, running,
   unread, and up to three recently read conversations. Recently read entries
   expire after two minutes. Expanding includes all history inside an eight-row,
-  font-responsive scroll area, keeping other projects in place.
-
-- Creating an agent asks only for its model and name. The name step no longer
-  shows switch-model and project controls above the input, and the random-name
-  action sits inside the name input. The first conversation opens in the
-  project chosen for the new conversation, shown in its header; the model stays
-  editable in the agent's settings.
+  font-responsive scroll area, keeping other workspaces in place.
 
 - The Extensions page follows the settings layout: a titled page with its
   actions beside the title, then plugins, official skills, and your skills as
@@ -70,22 +79,6 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - The macOS DMG installer window has a Retina-ready background with English
   and Chinese drag-to-install instructions: a slingshot beside the app fires
   Wuu along a dotted arc into the Applications folder.
-
-- Collaboration now centers on project-bound DMs, with visible task controls,
-  managed-session takeover and return, project and identity memory editing, and
-  persistent conversation timers. The composer's project control chooses where a
-  new conversation or a new agent's first conversation opens, and the
-  conversation header shows the project. Memory and timers open from the header
-  in a side panel. Group navigation is hidden while data remains.
-- Work execution uses isolated Git worktrees, versioned shared decisions and
-  structured reports. Host-managed candidates and independent verification expose
-  reviewable diffs with apply, optional Git-extension PR, and discard actions.
-  Progress deadlines, revision checks and private-history boundaries protect
-  continuing work from stale updates and silent stalls.
-
-- Collaboration tools follow each admitted session role: conversations read and
-  coordinate, execution sessions can write, and verification sessions only read.
-  Continuing identities refresh their role instructions on every turn.
 
 - Settings pages are grouped by task: Agents & models, App, Extensions, and
   Data. Each page uses one column, with its title and page actions on the
@@ -118,7 +111,22 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - `read_file` and `bash` results are bounded at 8192 estimated tokens instead
   of 2048, so a typical source file or document is read in one call.
 
+### Removed
+
+- Collaboration is gone: named agents, their direct and group conversations,
+  tasks and Work, candidate review, timers and reminders, agent onboarding, and
+  the Agent archive, on the desktop and in the phone apps. The `channel/*`
+  app-server methods, `session/harness/dispatch`, `wuu debug channel`, and
+  `wuu debug sandbox` are removed, and plugin tools can no longer declare the
+  `collaboration` execution scope. Upgrading deletes named-agent conversations;
+  sessions they managed become ordinary conversations. Wuu no longer reads
+  `~/.wuu/channels`, which can be deleted.
+
 ### Fixed
+
+- Instructions given when an extension creates a session now reach the model on
+  every turn and after a reload. Built-in runs previously dropped them,
+  including the Subagent plugin's worker instructions.
 
 - Remote requests can open another workspace while four other workspaces run
   tasks, without the new app-server client being evicted before its request
@@ -160,10 +168,6 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   conversations stream, pause, finish, or switch. Streaming paint reduction
   applies only to nested reasoning and process details.
 
-- The new-agent setup header drags the window across its full width again, and
-  its height follows the window title bar after page zoom and at large UI font
-  sizes.
-
 - Plugin workspace delivery includes committed, staged, and unstaged tracked
   changes since workspace creation. Status and previews use the same baseline;
   conflicts and unsupported untracked files preserve the workspace. Automatic
@@ -173,15 +177,6 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   owning session releases them. Rebuilt generations no longer retain an extra
   reference; conversations already using an older generation keep it until
   they rebuild.
-
-- Work delivery reads structured reports from the final answer, so commentary
-  before tool calls no longer causes completed executions to fail validation.
-
-- Collaboration conversations can receive due room reminders, include them in
-  unread counts, and clear their wake state after consumption.
-
-- Collaboration replies no longer become held drafts just because a thread
-  reply is newer than the conversation's main timeline.
 
 - Sending a message keeps one local waiting timer across admission, events,
   snapshots, and conversation switches without changing server timestamps.
@@ -211,17 +206,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   animations, and provider remove controls keep their icon centered and color
   stable on hover.
 
+- Preserve sidebar folder folds when returning from settings, including after
+  switching between light and dark themes.
+
 - OpenAI-compatible Chat Completions requests preserve tool calls, reasoning,
   and participant names in adjacent messages, preventing orphaned tool results
   in both ordinary and streaming conversations.
-
-- Deleting an agent archives sessions still under its management in a separate
-  Agent archive, keeping them out of workspace and unread lists. Previously
-  orphaned sessions are reconciled, and user-taken-over sessions stay available.
-  Agent deletion updates navigation immediately and reconciles cleanup errors.
-
-- Preserve sidebar folder and collaboration folds when returning from settings,
-  including after switching between light and dark themes.
 
 - `apply_patch` accepts LF and CRLF patches for CRLF files while preserving
   their line endings and whether the file ends with a newline.

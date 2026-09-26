@@ -17,7 +17,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/capability"
-	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/codemode"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/mcp"
@@ -380,9 +379,8 @@ func (t *Toolkit) rebuildRegistry() {
 	if e.ArtifactPublisher != nil {
 		registered = append(registered, NewPresentArtifactTool(e))
 	}
-	if e.ChatAgent != nil {
-		registered = append(registered, NewChatCheckTool(e), NewChatReadTool(e), NewWorkGetTool(e), NewChatSessionTool(e), NewHarnessSessionTool(e), NewCollaborationSendTool(e), NewChatDraftTool(e), NewChatTaskTool(e), NewChatWorkTool(e), NewChatRemindTool(e), NewChatWakeTool(e), NewChatMemoryTool(e))
-		registered = append(registered, NewChatSendTool(e), NewChatVerifyTool(e), NewChatRosterTool(e))
+	if e.ProjectSessions != nil {
+		registered = append(registered, NewProjectSessionTool(e))
 	}
 	// Register the PTC entry only with a session runtime; model exposure is
 	// separately controlled by the optional global and family settings.
@@ -425,7 +423,7 @@ func (t *Toolkit) ConfigurePTC(service *codemode.Service, cfg config.PTCConfig) 
 func (t *Toolkit) CodeModeOnly() bool {
 	t.codeModeMu.RLock()
 	defer t.codeModeMu.RUnlock()
-	return t.codeMode != nil && !t.IsRoomAgent() && t.ptcConfig.EnabledFor(t.ptcFamily)
+	return t.codeMode != nil && t.ptcConfig.EnabledFor(t.ptcFamily)
 }
 
 // ── Dependency setters ─────────────────────────────────────────────
@@ -433,22 +431,6 @@ func (t *Toolkit) CodeModeOnly() bool {
 // SetAgentControl attaches the shared agent control runtime.
 func (t *Toolkit) SetAgentControl(c *agentcontrol.AgentControl) {
 	t.env.AgentControl = c
-}
-
-func (t *Toolkit) SetChatAgent(client *channels.AgentClient) {
-	if t == nil || t.env == nil {
-		return
-	}
-	t.env.ChatAgent = client
-	t.rebuildRegistry()
-	kind := modelprofile.SurfaceNamedAgent
-	if client == nil {
-		kind = modelprofile.SurfaceMain
-	}
-	if client != nil && client.IsRoomRuntime() {
-		kind = modelprofile.SurfaceRoomAgent
-	}
-	t.setActiveProfileForSurface(t.ActiveProfile(), kind)
 }
 
 // SetImageInputSupported installs the active model's resolved image-input
@@ -733,9 +715,6 @@ func (t *Toolkit) GitAttributionEnabled() bool {
 }
 
 func (t *Toolkit) isToolDisabled(name string) bool {
-	if !t.collaborationToolAllowed(name) {
-		return true
-	}
 	if len(t.disabledTools) == 0 {
 		return false
 	}
@@ -970,15 +949,26 @@ func (t *Toolkit) SurfaceToolNames() []string {
 // same boundary is enforced at runtime by worker tool filtering and
 // tool-specific path checks.
 func (t *Toolkit) SetActiveProfile(p modelprofile.Profile, forMainAgent bool) {
-	if t.IsRoomAgent() {
-		t.setActiveProfileForSurface(p, modelprofile.SurfaceRoomAgent)
-		return
-	}
 	kind := modelprofile.SurfaceWorker
-	if forMainAgent {
+	if t.env != nil && t.env.ProjectSessions != nil {
+		kind = modelprofile.SurfaceProjectSession
+	} else if forMainAgent {
 		kind = modelprofile.SurfaceMain
 	}
 	t.setActiveProfileForSurface(p, kind)
+}
+
+// SetProjectSessions adds project operations to the ordinary session toolkit.
+func (t *Toolkit) SetProjectSessions(handler ProjectSessionHandler) {
+	if t == nil || t.env == nil {
+		return
+	}
+	if t.env.ProjectSessions == nil && handler == nil {
+		return
+	}
+	t.env.ProjectSessions = handler
+	t.rebuildRegistry()
+	t.SetActiveProfile(t.ActiveProfile(), true)
 }
 
 func (t *Toolkit) setActiveProfileForSurface(p modelprofile.Profile, kind modelprofile.SurfaceKind) {
@@ -997,16 +987,13 @@ func (t *Toolkit) setActiveProfileForSurface(p modelprofile.Profile, kind modelp
 	t.codeModeMu.Lock()
 	t.ptcFamily = string(p.Family)
 	t.codeModeMu.Unlock()
-	if (p == modelprofile.Profile{}) && kind != modelprofile.SurfaceNamedAgent && kind != modelprofile.SurfaceRoomAgent {
+	// A project surface includes its session tool even without a model profile.
+	if (p == modelprofile.Profile{}) && kind != modelprofile.SurfaceProjectSession {
 		t.activeSurface = capability.Surface{}
 		t.publishActiveSurfaceLocked()
 		return
 	}
-	compiledProfile := p
-	if (compiledProfile == modelprofile.Profile{}) {
-		compiledProfile = modelprofile.Resolve("wuu", "named-agent-chat")
-	}
-	t.activeSurface = modelprofile.DefaultCompiler{}.Compile(compiledProfile, kind)
+	t.activeSurface = modelprofile.DefaultCompiler{}.Compile(p, kind)
 	t.publishActiveSurfaceLocked()
 }
 
@@ -1038,7 +1025,7 @@ func (t *Toolkit) ActiveSurface() capability.Surface {
 // activeProfileMu (read or write).
 func (t *Toolkit) exposedSurfaceLocked() capability.Surface {
 	surface := t.withDisabledToolsRemoved(t.withCodeModeSurface(cloneSurface(t.surfaceForToolLoadingMode(t.activeSurface))))
-	if t.CodeModeOnly() && !t.IsRoomAgent() {
+	if t.CodeModeOnly() {
 		_, hasContextControl := surface.Tools[newContextToolName]
 		// Retain reachable bindings for skill filtering while projecting the
 		// separate top-level entry points used by the model and frontend.
@@ -1187,9 +1174,6 @@ func (t *Toolkit) ExecuteResult(ctx context.Context, call providers.ToolCall) (t
 
 	if t.isToolDisabled(call.Name) {
 		return toolresult.Result{}, fmt.Errorf("tool %q is disabled in this session", call.Name)
-	}
-	if call.Name == "git" && t.env.CollaborationPurpose != "" && t.env.CollaborationPurpose != channels.CollaborationSessionWork && !NewGitTool(t.env).Classify(call.Arguments).ReadOnly {
-		return toolresult.Result{}, errors.New("this collaboration role permits only read-only git operations")
 	}
 	if err := t.ensureToolAvailableForExecution(ctx, call.Name); err != nil {
 		return toolresult.Result{}, err
@@ -1746,8 +1730,4 @@ func buildRGGrepCommand(ctx context.Context, pattern, searchRoot, include string
 		args = append(args, ".")
 	}
 	return rgCommand(ctx, name, args...)
-}
-
-func (t *Toolkit) IsRoomAgent() bool {
-	return t != nil && t.env != nil && t.env.ChatAgent != nil && t.env.ChatAgent.IsRoomRuntime()
 }

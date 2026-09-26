@@ -106,7 +106,7 @@ function buildInspectorSnapshot(state: AppState, todoUpdate?: TodoUpdate): Inspe
     turnId: latestTurn?.id,
     turnStatus: latestTurn?.status,
   });
-  const activeProject = activeContext?.kind === "project"
+  const activeWorkspace = activeContext?.kind === "project"
     ? state.projects.find((project) => project.id === activeContext.project_id)
     : undefined;
   const workspace = activeContext === undefined
@@ -115,7 +115,7 @@ function buildInspectorSnapshot(state: AppState, todoUpdate?: TodoUpdate): Inspe
         kind: activeContext.kind,
         cwd: activeContext.cwd,
         projectId: activeContext.kind === "project" ? activeContext.project_id : undefined,
-        projectName: activeProject?.name,
+        projectName: activeWorkspace?.name,
         branch: state.gitStatus?.branch,
         dirtyFileCount: state.gitStatus?.dirty_count,
       });

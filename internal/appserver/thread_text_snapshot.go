@@ -52,7 +52,7 @@ func (s *Server) handleThreadTextSnapshot(req Request) error {
 	th.mu.Lock()
 	thread := th.snapshotLocked()
 	th.mu.Unlock()
-	if thread.ReadOnly || thread.Ephemeral || isNamedAgentSessionSource(thread.Source) || thread.ParentID != "" {
+	if thread.ReadOnly || thread.Ephemeral || thread.ParentID != "" {
 		return s.writeResponse(req.ID, nil, errors.New("conversation is not eligible for text sync"))
 	}
 	out := textSnapshot(thread)

@@ -229,7 +229,6 @@ function installWuuApi(options: {
     initialize: vi.fn().mockResolvedValue(initialized()),
     listThreads: vi.fn().mockResolvedValue({ threads: [initialThread] }),
     listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
-    listChannelRooms: vi.fn().mockResolvedValue({ rooms: [] }),
     resumeThread:
       options.resumeThread ??
       vi.fn().mockResolvedValue({ thread: initialThread }),

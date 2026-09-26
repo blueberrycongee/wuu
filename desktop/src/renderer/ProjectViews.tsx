@@ -1,0 +1,180 @@
+import { useId, useState } from "react";
+import type { ProjectCandidate, Thread, ThreadItem } from "../shared/protocol";
+import { isThreadExecuting } from "./AppState";
+import { useProjectActions, useProjectCandidates, type ProjectThread } from "./ProjectActions";
+import { PROJECT_SESSION_SOURCE, projectSessionsOf } from "./ProjectSessions";
+import { baseThreadTitle } from "./ThreadTitles";
+import {
+  ChevronDown,
+  ChevronUp,
+  CircleCheck,
+  CornerUpLeft,
+  FileDiff,
+  GitPullRequest,
+  Hand,
+  Inbox,
+  LoaderCircle,
+  LogOut,
+  MessagesSquare,
+  Project,
+  X,
+} from "./WuuIcons";
+import { useI18n } from "./i18n";
+import type { TranslationKey } from "./i18n/resources/zh-CN";
+
+/** The coordinator's running and pending work, above its composer. */
+export function ProjectStatusStrip({ project }: { project: Thread }): JSX.Element | null {
+  const { t, formatNumber } = useI18n();
+  const actions = useProjectActions();
+  if (!actions) return null;
+  const sessions = projectSessionsOf(project.id, actions.threads);
+  if (sessions.length === 0) return null;
+  const running = sessions.filter(isThreadExecuting).length;
+  const pending = project.pending_candidates ?? 0;
+  const parts = [
+    running ? t("projects.status.running", { count: formatNumber(running) }) : "",
+    pending ? t("projects.status.pending", { count: formatNumber(pending) }) : "",
+    t(sessions.length === 1 ? "projects.status.sessionsOne" : "projects.status.sessions", { count: formatNumber(sessions.length) }),
+  ].filter(Boolean);
+  return (
+    <button
+      type="button"
+      className={`project-status-strip${pending ? " has-pending" : ""}`}
+      title={parts.join(" · ")}
+      aria-label={parts.join(" · ")}
+      onClick={() => actions.openProjectPanel(project)}
+    >
+      {running ? <span className="project-status-count" aria-hidden="true"><LoaderCircle className="project-status-spinner" />{formatNumber(running)}</span> : null}
+      {pending ? <span className="project-status-count" aria-hidden="true"><FileDiff />{formatNumber(pending)}</span> : null}
+      <span className="project-status-count" aria-hidden="true"><MessagesSquare />{formatNumber(sessions.length)}</span>
+    </button>
+  );
+}
+
+const PROJECT_EVENTS: Record<string, { label: TranslationKey; Icon: typeof Project }> = {
+  project_message: { label: "projects.event.message", Icon: MessagesSquare },
+  project_result: { label: "projects.event.result", Icon: MessagesSquare },
+  project_takeover: { label: "projects.event.takeover", Icon: Hand },
+  project_pause: { label: "projects.event.pause", Icon: Hand },
+  project_return: { label: "projects.event.return", Icon: CornerUpLeft },
+  project_applied: { label: "projects.event.applied", Icon: CircleCheck },
+  project_discarded: { label: "projects.event.discarded", Icon: X },
+  project_published: { label: "projects.event.published", Icon: GitPullRequest },
+  project_adopted: { label: "projects.event.adopted", Icon: Inbox },
+  project_released: { label: "projects.event.released", Icon: LogOut },
+};
+
+/** Whether a message is a host event that a coordinator received. */
+export function isProjectEvent(item: Pick<ThreadItem, "origin" | "cause">): boolean {
+  return item.origin === "plugin" && item.cause !== undefined && item.cause in PROJECT_EVENTS;
+}
+
+/**
+ * A host event in a coordinator's conversation, such as a session's result
+ * or the user's decision. The coordinator read the full text; the row shows
+ * what happened and where to go next, and discloses the text on request.
+ */
+export function ProjectEventRow({ item }: { item: ThreadItem }): JSX.Element {
+  const { t } = useI18n();
+  const actions = useProjectActions();
+  const [expanded, setExpanded] = useState(false);
+  const detailsID = useId();
+  const event = PROJECT_EVENTS[item.cause ?? ""] ?? PROJECT_EVENTS.project_result;
+  const session = actions?.threads.find((thread) => thread.id === item.related_session_id);
+  const name = session ? baseThreadTitle(session) : item.name?.trim() || t("projects.event.aSession");
+  const pending = session?.pending_candidates ?? 0;
+  const reviewable = pending > 0 && (item.cause === "project_result" || item.cause === "project_adopted");
+  return (
+    <div className="project-event" data-cause={item.cause}>
+      <div className="project-event-line">
+        <event.Icon className="project-event-icon" aria-hidden="true" />
+        <span className="project-event-text">{t(event.label, { name })}</span>
+        <div className="project-event-actions">
+          {reviewable && session ? (
+            <button type="button" className="icon-button project-icon-button"
+              title={t("projects.review")} aria-label={t("projects.review")} onClick={() => actions?.openProposal(session)}>
+              <FileDiff aria-hidden="true" />
+            </button>
+          ) : null}
+          {session && actions ? (
+            <button type="button" className="icon-button project-icon-button"
+              title={t("projects.openSession")} aria-label={t("projects.openSession")} onClick={() => actions.openThread(session.id)}>
+              <MessagesSquare aria-hidden="true" />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="icon-button project-icon-button project-event-toggle"
+            title={t(expanded ? "projects.event.hideDetails" : "projects.event.details")}
+            aria-label={t(expanded ? "projects.event.hideDetails" : "projects.event.details")}
+            aria-expanded={expanded}
+            aria-controls={detailsID}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+          </button>
+        </div>
+      </div>
+      {expanded ? <p id={detailsID} className="project-event-details">{item.text}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * A managed session's proposal under the turn that froze it. Deciding
+ * happens in the right panel, next to the diff.
+ */
+export function ProposalSummary({ session, candidate }: {
+  session: ProjectThread;
+  candidate: ProjectCandidate;
+}): JSX.Element {
+  const { t, formatNumber } = useI18n();
+  const actions = useProjectActions();
+  const files = candidate.changed_files.length;
+  return (
+    <div className="project-proposal-summary" data-disposition={candidate.disposition || "pending"}>
+      <FileDiff className="project-proposal-icon" aria-hidden="true" />
+      <span className="project-proposal-title">{t("projects.candidate.title")}</span>
+      <span className="project-proposal-meta">
+        {[
+          t(files === 1 ? "environment.fileCountOne" : "environment.fileCount", { count: formatNumber(files) }),
+          t(candidateStatusKey(candidate)),
+        ].join(" · ")}
+      </span>
+      {actions && candidate.disposition !== "superseded" ? (
+        <button type="button" className="icon-button project-icon-button"
+          title={t(candidate.disposition ? "projects.viewProposal" : "projects.review")}
+          aria-label={t(candidate.disposition ? "projects.viewProposal" : "projects.review")}
+          onClick={() => actions.openProposal(session)}>
+          <FileDiff aria-hidden="true" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+export function candidateStatusKey(candidate: ProjectCandidate): TranslationKey {
+  switch (candidate.disposition) {
+    case "applied": return "projects.candidate.applied";
+    case "discarded": return "projects.candidate.discarded";
+    case "published": return "projects.candidate.published";
+    case "superseded": return "projects.candidate.superseded";
+    default: return "projects.candidate.pending";
+  }
+}
+
+/**
+ * Renders a managed session's proposals under the turns that froze them, for
+ * a conversation pane's per-turn slot.
+ */
+export function useTurnProposals(thread: Thread): (turnID: string) => JSX.Element | null {
+  const managed = thread.source === PROJECT_SESSION_SOURCE && Boolean(thread.project_id);
+  const { candidates } = useProjectCandidates(
+    managed ? { session_id: thread.id } : undefined,
+    `${thread.pending_candidates ?? 0}:${thread.latest_completed_turn_id ?? ""}`,
+  );
+  return (turnID) => {
+    const candidate = candidates.find((item) => item.turn_id === turnID);
+    return candidate ? <ProposalSummary session={thread} candidate={candidate} /> : null;
+  };
+}

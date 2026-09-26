@@ -24,7 +24,6 @@ type pluginToolExecutor struct {
 	host     *pluginhost.Host
 	threadID string
 	cwd      string
-	scope    string
 }
 
 func newPluginToolExecutor(inner agent.ToolExecutor, host *pluginhost.Host, threadID, cwd string) agent.ToolExecutor {
@@ -172,21 +171,6 @@ func (e *pluginToolExecutor) pluginToolAllowed(name string) bool {
 	if !ok {
 		return false
 	}
-	if kit, ok := e.inner.(*tools.Toolkit); ok && kit.CollaborationReadOnly() && (tool.Registration.Activity == nil || !tool.Registration.Activity.ReadOnly) {
-		// Trusted extensions must explicitly opt in to collaboration management.
-		// Verification never inherits that ability to delegate effects.
-		if !kit.CollaborationCoordinates() || e.scope != "collaboration" {
-			return false
-		}
-	}
-	if e.scope != "" {
-		for _, allowed := range tool.Registration.ExecutionScopes {
-			if allowed == e.scope {
-				return true
-			}
-		}
-		return false
-	}
 	if len(tool.Registration.ExecutionScopes) == 0 {
 		return true
 	}
@@ -248,39 +232,4 @@ func (e *pluginToolExecutor) DiscoveredTools(call providers.ToolCall) []provider
 		return nil
 	}
 	return provider.DiscoveredTools(call)
-}
-
-// ConfigureCollaborationTools exposes only tools explicitly registered for
-// collaboration. Prompts, hooks and loop drivers retain the isolated runtime.
-func (s *Session) ConfigureCollaborationTools(thread *ThreadRuntime, id string) {
-	if thread == nil || thread.Toolkit == nil || thread.StreamRunner == nil {
-		return
-	}
-	thread.StreamRunner.Tools = thread.Toolkit
-	host := s.PluginHost
-	if thread.PluginGeneration != nil && thread.PluginGeneration.host != nil {
-		host = thread.PluginGeneration.host
-	}
-	if host != nil && !thread.Toolkit.IsRoomAgent() {
-		thread.StreamRunner.Tools = &pluginToolExecutor{inner: thread.Toolkit, host: host, threadID: id, cwd: thread.Toolkit.RootDir(), scope: "collaboration"}
-	}
-}
-
-// HasCollaborationTools reports whether a turn will hold plugin references.
-func (s *Session) HasCollaborationTools() bool {
-	if s == nil || s.PluginHost == nil {
-		return false
-	}
-	for _, definition := range s.PluginHost.ToolDefinitions() {
-		tool, ok := s.PluginHost.Tool(definition.Name)
-		if !ok {
-			continue
-		}
-		for _, scope := range tool.Registration.ExecutionScopes {
-			if scope == "collaboration" {
-				return true
-			}
-		}
-	}
-	return false
 }

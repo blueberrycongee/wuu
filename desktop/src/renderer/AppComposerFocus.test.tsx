@@ -32,7 +32,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
         : "side composer";
       return (
         <div
-          data-can-select-project={props.canSelectProject}
+          data-can-select-workspace={props.canSelectWorkspace}
           data-queued={props.queuedMessages.map((message) => message.text).join("|")}
           data-send-disabled={props.sendDisabled}
           data-main-conversation-composer={
@@ -91,11 +91,11 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 import { App } from "./App";
 
 const scratchCwd = "/tmp/wuu-composer-focus/scratch";
-const projectCwd = "/tmp/wuu-composer-focus/project";
+const workspaceCwd = "/tmp/wuu-composer-focus/project";
 const project: DesktopProject = {
   id: "project-focus",
   name: "Focus Project",
-  path: projectCwd,
+  path: workspaceCwd,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 };
@@ -103,7 +103,7 @@ const project: DesktopProject = {
 let container: HTMLDivElement;
 let root: Root | null = null;
 let serverEventHandlers: Array<(event: ServerEvent) => void> = [];
-let releaseProjectSelection: (() => void) | null = null;
+let releaseWorkspaceSelection: (() => void) | null = null;
 let releaseThreadStart: (() => void) | null = null;
 let resizeCallbacks = new Set<ResizeObserverCallback>();
 
@@ -211,8 +211,8 @@ function installWindowStubs(): void {
 function installWuuApi(
   options: {
     withThread?: boolean;
-    deferProjectSelection?: boolean;
-    rejectProjectSelection?: boolean;
+    deferWorkspaceSelection?: boolean;
+    rejectWorkspaceSelection?: boolean;
     rejectNoProjectSelection?: boolean;
     deferThreadStart?: boolean;
     rejectThreadStart?: boolean;
@@ -226,18 +226,18 @@ function installWuuApi(
       Promise.resolve({ projects: [project], active_context: activeContext }),
     ),
     selectProject: vi.fn().mockImplementation(async () => {
-      if (options.deferProjectSelection) {
+      if (options.deferWorkspaceSelection) {
         await new Promise<void>((resolve) => {
-          releaseProjectSelection = resolve;
+          releaseWorkspaceSelection = resolve;
         });
       }
-      if (options.rejectProjectSelection) {
+      if (options.rejectWorkspaceSelection) {
         throw new Error("project selection failed");
       }
       activeContext = {
         kind: "project",
         project_id: project.id,
-        cwd: projectCwd,
+        cwd: workspaceCwd,
       };
       return { projects: [project], active_context: activeContext };
     }),
@@ -258,7 +258,6 @@ function installWuuApi(
       }),
     ),
     listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
-    listChannelRooms: vi.fn().mockResolvedValue({ rooms: [] }),
     resumeThread: vi.fn().mockResolvedValue({ thread }),
     startThread: vi.fn().mockImplementation(async () => {
       if (options.deferThreadStart) {
@@ -323,8 +322,8 @@ async function flushAsync(): Promise<void> {
 async function renderApp(
   withThread: boolean,
   options: {
-    deferProjectSelection?: boolean;
-    rejectProjectSelection?: boolean;
+    deferWorkspaceSelection?: boolean;
+    rejectWorkspaceSelection?: boolean;
     rejectNoProjectSelection?: boolean;
     deferThreadStart?: boolean;
     rejectThreadStart?: boolean;
@@ -396,7 +395,7 @@ describe("main composer focus continuity", () => {
     installWindowStubs();
     serverEventHandlers = [];
     resizeCallbacks = new Set();
-    releaseProjectSelection = null;
+    releaseWorkspaceSelection = null;
     releaseThreadStart = null;
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -531,8 +530,37 @@ describe("main composer focus continuity", () => {
     await waitForMainComposerFocus("dock");
   });
 
+  // A project starts from the Projects group in one step: the draft takes the
+  // goal, and the first send starts the coordinator named after that goal.
+  it("starts a project coordinator from the Projects group on the first send", async () => {
+    await renderApp(false);
+    const button = container.querySelector<HTMLButtonElement>(
+      '.sidebar-functional-group[data-functional-group-id="projects"] button[aria-label="新建项目"]',
+    );
+    if (!button) throw new Error("new project button not rendered");
+    button.focus();
+
+    await act(async () => button.click());
+    await flushAsync();
+    await waitForMainComposerFocus("dock");
+    await enterCommand(mainComposer("dock"), "Page catalog search results\nKeep the public API unchanged.");
+
+    const workspace: RuntimeContext = { kind: "project", project_id: project.id, cwd: workspaceCwd };
+    expect(window.wuu.startThread).toHaveBeenCalledWith({
+      project: { name: "Page catalog search results" },
+      workspace_id: project.id,
+      cwd: workspaceCwd,
+      engine: "wuu",
+      provider: "fake",
+      model: "fake-model",
+      effort: "high",
+      speed: undefined,
+    }, workspace);
+    expect(window.wuu.startTurn).toHaveBeenCalled();
+  });
+
   it("waits for the destination dock before focusing across projects", async () => {
-    await renderApp(false, { deferProjectSelection: true });
+    await renderApp(false, { deferWorkspaceSelection: true });
     const button = container.querySelector<HTMLButtonElement>(
       'button[aria-label="在 Focus Project 中新建会话"]',
     );
@@ -542,17 +570,17 @@ describe("main composer focus continuity", () => {
     await act(async () => button.click());
     expect(document.activeElement).toBe(button);
 
-    if (!releaseProjectSelection) {
+    if (!releaseWorkspaceSelection) {
       throw new Error("project selection was not deferred");
     }
-    releaseProjectSelection();
+    releaseWorkspaceSelection();
     await flushAsync();
 
     await waitForMainComposerFocus("dock");
   });
 
   it("does not focus the old dock when project selection fails", async () => {
-    await renderApp(false, { rejectProjectSelection: true });
+    await renderApp(false, { rejectWorkspaceSelection: true });
     const button = container.querySelector<HTMLButtonElement>(
       'button[aria-label="在 Focus Project 中新建会话"]',
     );
@@ -580,7 +608,7 @@ describe("main composer focus continuity", () => {
   });
 
   it("does not steal focus changed during an asynchronous project switch", async () => {
-    await renderApp(false, { deferProjectSelection: true });
+    await renderApp(false, { deferWorkspaceSelection: true });
     const button = container.querySelector<HTMLButtonElement>(
       'button[aria-label="在 Focus Project 中新建会话"]',
     );
@@ -591,10 +619,10 @@ describe("main composer focus continuity", () => {
     const other = document.createElement("button");
     document.body.appendChild(other);
     other.focus();
-    if (!releaseProjectSelection) {
+    if (!releaseWorkspaceSelection) {
       throw new Error("project selection was not deferred");
     }
-    releaseProjectSelection();
+    releaseWorkspaceSelection();
     await flushAsync();
 
     expect(document.activeElement).toBe(other);
@@ -602,7 +630,7 @@ describe("main composer focus continuity", () => {
   });
 
   it("does not steal focus after a non-focusable user interaction", async () => {
-    await renderApp(false, { deferProjectSelection: true });
+    await renderApp(false, { deferWorkspaceSelection: true });
     const button = container.querySelector<HTMLButtonElement>(
       'button[aria-label="在 Focus Project 中新建会话"]',
     );
@@ -614,10 +642,10 @@ describe("main composer focus continuity", () => {
     document.body.appendChild(surface);
     surface.dispatchEvent(new Event("pointerdown", { bubbles: true }));
     button.blur();
-    if (!releaseProjectSelection) {
+    if (!releaseWorkspaceSelection) {
       throw new Error("project selection was not deferred");
     }
-    releaseProjectSelection();
+    releaseWorkspaceSelection();
     await flushAsync();
 
     expect(document.activeElement).not.toBe(mainComposer("dock"));
@@ -640,7 +668,7 @@ describe("main composer focus continuity", () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
     await renderApp(false, { rejectThreadStart });
     const dock = mainComposer("dock");
-    expect(dock.parentElement?.dataset.canSelectProject).toBe("true");
+    expect(dock.parentElement?.dataset.canSelectWorkspace).toBe("true");
     expect(container.querySelectorAll("[data-main-conversation-composer]")).toHaveLength(1);
     dock.focus();
 
@@ -649,7 +677,7 @@ describe("main composer focus continuity", () => {
     expect(mainComposer("dock")).toBe(dock);
     expect(document.activeElement).toBe(dock);
     expect(dock.value).toBe(rejectThreadStart ? "first compact query" : "");
-    expect(dock.parentElement?.dataset.canSelectProject).toBe(String(rejectThreadStart));
+    expect(dock.parentElement?.dataset.canSelectWorkspace).toBe(String(rejectThreadStart));
     if (!rejectThreadStart) {
       expect(window.wuu.startTurn).toHaveBeenCalled();
     }

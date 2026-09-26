@@ -47,7 +47,7 @@ func (s *Server) handleActivityTakeover(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	if current.Kind == activity.KindBrowser {
-		if err := s.takeHarnessControl(params.ThreadID, session.ControlPaused); err != nil {
+		if err := s.takeSessionControl(params.ThreadID, session.ControlPaused); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 		if _, err := s.interruptThreadExecution(params.ThreadID, "", ""); err != nil {

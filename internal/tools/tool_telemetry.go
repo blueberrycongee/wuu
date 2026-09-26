@@ -275,12 +275,6 @@ func (t *Toolkit) repeatedToolInputCount(call providers.ToolCall, revision strin
 
 func isRepeatablePollingTool(call providers.ToolCall) bool {
 	name := strings.TrimSpace(call.Name)
-	// Channel inbox and room contents can change independently of the file
-	// workspace revision used by the repeated-input guard. Identical reads are
-	// therefore normal polling, while chat mutation tools remain protected.
-	if name == "chat_check" || name == "chat_read" {
-		return true
-	}
 	if strings.HasPrefix(name, "mcp_plugin_cua_mac_computer_computer_") {
 		var args struct {
 			Action string `json:"action"`

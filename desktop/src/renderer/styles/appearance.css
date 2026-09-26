@@ -43,7 +43,6 @@
 .workspace-tree-context-menu,
 .select-menu-panel,
 .codex-runtime-menu,
-.channel-mention-menu,
 .turn-source-overflow-list {
   font-size: var(--font-menu);
   font-weight: var(--weight-medium);

@@ -23,7 +23,6 @@ android {
     }
     buildFeatures { compose = true; buildConfig = true }
     sourceSets.getByName("main").assets.srcDir("../../licenses")
-    sourceSets.getByName("main").assets.srcDir("../../shared-ui/NativeUI")
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

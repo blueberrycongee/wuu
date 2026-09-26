@@ -77,7 +77,7 @@ function buildActions({
   let activeMenu: EnvironmentPanelMenu = null;
   let panelOpen = false;
   let panelDismissed = false;
-  const closeProjectMenus = vi.fn();
+  const closeWorkspaceMenus = vi.fn();
   const closeRuntimeMenus = vi.fn();
   const focusEnvironmentToggle = vi.fn();
   const actions = createEnvironmentActions({
@@ -86,7 +86,7 @@ function buildActions({
     setAppState: (update) => {
       appState = typeof update === "function" ? update(appState) : update;
     },
-    closeProjectMenus,
+    closeWorkspaceMenus,
     setEnvironmentPanelOpen: (open) => {
       panelOpen = open;
     },
@@ -112,7 +112,7 @@ function buildActions({
       currentEnvironmentRoot = root;
     },
     getPanelState: () => ({ activeMenu, panelOpen, panelDismissed }),
-    closeProjectMenus,
+    closeWorkspaceMenus,
     closeRuntimeMenus,
     focusEnvironmentToggle,
   };
@@ -126,7 +126,7 @@ describe("createEnvironmentActions", () => {
     await harness.actions.checkoutBranch("feature");
 
     expect(api.checkoutGitBranch).toHaveBeenCalledWith("feature", "/tmp/project-1");
-    expect(harness.closeProjectMenus).toHaveBeenCalled();
+    expect(harness.closeWorkspaceMenus).toHaveBeenCalled();
     expect(harness.getAppState().gitStatus?.branch).toBe("feature");
     expect(harness.getAppState().status).toBe("ready");
   });
@@ -148,7 +148,7 @@ describe("createEnvironmentActions", () => {
     await expect(harness.actions[action]("feature")).rejects.toThrow(t("git.checkoutBlockedByRunningThread"));
     expect(mutation).toHaveBeenCalledWith("feature", "/tmp/project-1");
     expect(harness.getAppState().gitStatus).toBeUndefined();
-    expect(harness.closeProjectMenus).not.toHaveBeenCalled();
+    expect(harness.closeWorkspaceMenus).not.toHaveBeenCalled();
 
     await harness.actions[action]("feature");
     expect(harness.getAppState().gitStatus?.branch).toBe("feature");
@@ -159,7 +159,7 @@ describe("createEnvironmentActions", () => {
     api.checkoutGitBranch.mockRejectedValueOnce(new Error("Error invoking remote method 'wuu:git-checkout': Error: Your local changes would be overwritten by checkout"));
     const harness = buildActions();
     await expect(harness.actions.checkoutBranch("feature")).rejects.toThrow(/^Your local changes would be overwritten by checkout$/);
-    expect(harness.closeProjectMenus).not.toHaveBeenCalled();
+    expect(harness.closeWorkspaceMenus).not.toHaveBeenCalled();
   });
 
   it("returns to ready after committing environment changes", async () => {

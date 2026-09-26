@@ -351,6 +351,14 @@
   min-width: max-content;
 }
 
+.session-control-label {
+  max-width: min(12em, 24vw);
+  overflow: hidden;
+  color: var(--ink-soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Linux frameless caption: fixed to the window's top-right so min/max/close
  * never leave the corner when the conversation column shrinks (e.g. right
  * panel open). Surfaces clear them with --linux-caption-width padding. */
@@ -385,8 +393,7 @@
 :root[data-platform="linux"] .titlebar,
 :root[data-platform="linux"] .settings-titlebar,
 :root[data-platform="linux"] .account-screen-titlebar,
-:root[data-platform="linux"] .onboarding-chrome,
-:root[data-platform="linux"] .channel-room-header {
+:root[data-platform="linux"] .onboarding-chrome {
   padding-right: var(--linux-caption-width);
 }
 
@@ -398,17 +405,6 @@
 
 :root[data-platform="linux"] .app-shell.right-panel-open .workspace-panel-tabbar {
   padding-right: var(--linux-caption-width);
-}
-
-.channel-room-header-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: stretch;
-  align-self: stretch;
-  gap: 4px;
-  height: 100%;
-  margin-left: auto;
-  -webkit-app-region: no-drag;
 }
 
 .linux-window-control {
@@ -465,7 +461,7 @@
 }
 
 /* Keep the tab rail's available width stable when the active surface does
- * not support creating a conversation (for example, a channel room). */
+ * not support creating a conversation. */
 .session-tab-new-slot {
   display: grid;
   place-items: center;
@@ -872,13 +868,6 @@
   flex-shrink: 0;
 }
 
-.titlebar .task-board-button:disabled {
-  background: transparent;
-  color: var(--ink-tertiary);
-  cursor: default;
-  opacity: 0.38;
-}
-
 .side-panel-toggle-button[aria-pressed="true"] {
   background: transparent;
   color: var(--ink);
@@ -1257,8 +1246,7 @@
   padding-block: 4px 8px;
   animation: none;
 }
-.jump-to-latest-cluster-inline > .jump-to-latest-pill,
-.jump-to-latest-cluster-inline .managed-agent-work-pill {
+.jump-to-latest-cluster-inline > .jump-to-latest-pill {
   flex: 0 1 auto;
   min-width: 0;
 }
@@ -1399,13 +1387,16 @@ button.conversation-status-capsule,
   max-width: 100%;
 }
 
-.conversation-status-todo-card,
-.conversation-status-preview-card {
+.conversation-status-todo-card {
   display: flex;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
   width: min(280px, calc(100vw - 48px));
   max-height: min(320px, 50vh);
   flex-direction: column;
-  gap: 1px;
+  gap: var(--space-1);
+  margin: 0;
   padding: var(--menu-inset);
   overflow: auto;
   border: 1px solid var(--shell-todo-card-border);
@@ -1413,14 +1404,6 @@ button.conversation-status-capsule,
   border-radius: var(--menu-shell-radius);
   background: var(--shell-todo-card-bg);
   box-shadow: var(--shadow-pop);
-}
-
-.conversation-status-todo-card {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  gap: var(--space-1);
-  margin: 0;
   list-style: none;
   opacity: 0;
   visibility: hidden;
@@ -1441,61 +1424,6 @@ button.conversation-status-capsule,
   transition-delay: 0s;
   pointer-events: auto;
 }
-
-.conversation-status-preview-card {
-  max-height: min(360px, var(--floating-menu-available-height, 50vh));
-  color: var(--shell-todo-card-ink);
-  font-size: var(--font-ui);
-  pointer-events: auto;
-}
-
-/* Preview rows keep one text column: the running spinner trails the title
- * where the old "running" label sat, so rows never repeat that status as text. */
-.managed-session-preview-list { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
-.managed-session-preview-list li { min-width: 0; }
-.managed-session-preview-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--icon-size);
-  align-items: center;
-  gap: var(--menu-item-gap);
-  width: 100%;
-  min-width: 0;
-  min-height: var(--control-row-height);
-  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: start;
-}
-.managed-session-preview-item:hover { background: var(--ink-overlay-6); }
-.managed-session-preview-item:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
-.managed-session-preview-status { display: grid; place-items: center; color: var(--shell-todo-card-muted); }
-.managed-session-preview-status > svg { width: var(--icon-size); height: var(--icon-size); }
-.managed-session-preview-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.managed-session-preview-empty { margin: 0; padding: var(--menu-inset) var(--menu-item-padding-inline); color: var(--shell-todo-card-muted); }
-
-/* Quiet footer action: separated from the rows, secondary until hovered, and
- * trailing a chevron so it reads as navigation rather than another session. */
-.managed-session-preview-separator { height: 1px; background: var(--shell-todo-card-border); }
-.managed-session-preview-all {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--menu-item-gap);
-  width: 100%;
-  min-height: var(--control-row-height);
-  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--shell-todo-card-muted);
-  font: inherit;
-  text-align: start;
-}
-.managed-session-preview-all:hover { background: var(--ink-overlay-6); color: var(--shell-todo-card-ink); }
-.managed-session-preview-all:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 
 .conversation-status-todo-card li {
   display: grid;

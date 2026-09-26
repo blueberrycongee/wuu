@@ -31,11 +31,11 @@ For a Wuu provider, verify the accepted model ID, connection protocol, API prefi
 
 `wuu models` is specifically a live lookup for `openai-codex`, not a general connection test for every provider.
 
-## Wrong project or missing history
+## Wrong workspace or missing history
 
-Check the selected desktop workspace or CLI `--workdir`. A forked worktree has its own execution root, while a conversation without a project uses Wuu's scratch location. Default session lists are workspace-scoped.
+Check the selected desktop workspace or CLI `--workdir`. A forked worktree has its own execution root, while a conversation without a workspace uses Wuu's scratch location. Default session lists are workspace-scoped.
 
-If the project folder moved, use **Relocate…** on its existing sidebar entry. Adding another project with a similar name does not repair the old workspace identity. Do not redirect a missing worktree to the main checkout without first understanding which files the task changed.
+If the workspace folder moved, use **Relocate…** on its existing sidebar entry. Adding another workspace with a similar name does not repair the old workspace identity. Do not redirect a missing worktree to the main checkout without first understanding which files the task changed.
 
 ## File or command refused
 

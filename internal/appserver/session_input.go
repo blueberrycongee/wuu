@@ -3,10 +3,8 @@ package appserver
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
-	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -15,7 +13,14 @@ import (
 
 var errSessionInputApplied = errors.New("session input is already durable")
 
-// trySubmitSessionInput is shared by extension sends and Collaboration. The
+func (s *Server) validateInboxInput(msg providers.ChatMessage) error {
+	if msg.Origin == pluginhost.SessionInputPlugin && (msg.Cause == "project_message" || msg.Cause == projectCauseResult) {
+		return session.ValidateInboxControls(s.rt.SessionDir, msg.ClientID)
+	}
+	return nil
+}
+
+// trySubmitSessionInput is shared by extension sends and project sessions. The
 // caller retains queued work in its own durable policy/outbox; acceptance and
 // steering use the same host runtime, execution lease and control fence.
 func (s *Server) trySubmitSessionInput(ctx context.Context, th *threadState, msg providers.ChatMessage, mode string, snapshot turnRuntimeSnapshot) (pluginhost.SessionSendResult, bool, error) {
@@ -143,24 +148,8 @@ func (s *Server) startSubmittedSessionTurn(ctx context.Context, th *threadState,
 	started, ok, err := s.startThreadUserTurnWithAdmission(
 		ctx, th, msg, snapshot, false, turnReadOnlyFail,
 		turnAdmissionHooks{afterLease: func(admitted *threadState, input *providers.ChatMessage) error {
-			if snapshot.Control != nil && s.channelService != nil {
-				link, err := s.channelService.HarnessLink(ctx, admitted.ID)
-				if err == nil && link.Active && link.AgentID == snapshot.Control.ManagerID {
-					if err := s.channelService.ReserveHarnessExecution(ctx, link); err != nil {
-						return err
-					}
-				} else if err != nil && !errors.Is(err, channels.ErrNotFound) {
-					return err
-				}
-			}
 			var runtimeErr error
 			threadRuntime, runtimeErr = s.ensureThreadRuntimeAfterAdmission(admitted)
-			if runtimeErr == nil {
-				runtimeErr = validateSessionInputMedia(*input, threadRuntime)
-				if runtimeErr != nil {
-					runtimeErr = fmt.Errorf("%w: %w", errHarnessMedia, runtimeErr)
-				}
-			}
 			if runtimeErr == nil {
 				s.foldFrozenWorkerTree(admitted, threadRuntime)
 			}
@@ -175,17 +164,6 @@ func (s *Server) startSubmittedSessionTurn(ctx context.Context, th *threadState,
 	}
 	if !ok {
 		return startedThreadTurn{}, false, nil
-	}
-	// Record the execution before the model can use verification tools or finish.
-	// The caller attaches the same idempotent run to its durable operation.
-	if snapshot.Control != nil && s.channelService != nil {
-		link, linkErr := s.channelService.HarnessLink(ctx, th.ID)
-		if linkErr == nil && link.Active && link.WorkID != "" {
-			_, runErr := s.channelService.StartHarnessWorkRun(ctx, th.ID, "harness-turn:"+th.ID+":"+started.turnID)
-			if runErr != nil {
-				return startedThreadTurn{}, false, errors.Join(runErr, s.abortStartedThreadTurnDurably(th, started, runErr))
-			}
-		}
 	}
 	launch, accepted := s.reserveBackground(func() {
 		s.runTurn(started.ctx, th, threadRuntime, started.turnID, started.runtime, started.history)
@@ -206,6 +184,10 @@ func (s *Server) startSubmittedSessionTurn(ctx context.Context, th *threadState,
 func (s *Server) pruneRevokedSteersLocked(th *threadState) {
 	next := th.pendingSteers[:0]
 	for _, msg := range th.pendingSteers {
+		if err := s.validateInboxInput(msg); err != nil {
+			delete(th.pendingSteerControls, msg.ClientID)
+			continue
+		}
 		if c, ok := th.pendingSteerControls[msg.ClientID]; ok {
 			if err := session.ValidateControl(s.rt.SessionDir, c); err != nil {
 				delete(th.pendingSteerControls, msg.ClientID)

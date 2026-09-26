@@ -1,0 +1,8 @@
+/* Only fixture geometry lives here, matching the three-pane comparison
+ * dimensions. Production components own every row, message, panel, and
+ * control style under inspection. */
+.sample-shell { --sidebar-width: 252px; --sidebar-open-width: 252px; --workspace-right-panel-width: 480px; }
+@media (max-width: 1000px) { .sample-shell { --sidebar-width: 240px; --sidebar-open-width: 240px; --workspace-right-panel-width: 320px; } }
+
+.sample-task-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sample-task-details { margin: 0; padding: 8px 12px 12px; }

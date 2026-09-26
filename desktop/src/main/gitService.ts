@@ -114,7 +114,7 @@ export class GitService {
     const normalizedRoot = resolve(requestedRoot);
     const allowedRoots = [context.cwd, ...this.getKnownThreadCwds()].map((cwd) => resolve(cwd));
     if (!allowedRoots.includes(normalizedRoot)) {
-      throw new Error("Git working directory is not associated with the current project");
+      throw new Error("Git working directory is not associated with the current workspace");
     }
     return { ...context, cwd: normalizedRoot };
   }

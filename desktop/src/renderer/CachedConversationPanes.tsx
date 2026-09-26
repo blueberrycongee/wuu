@@ -35,6 +35,7 @@ import { latestAgentMessageLocation } from "./TurnViewHelpers";
 import type { HistoryMessageEditState } from "./ConversationHistoryActions";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { PluginConversationCards } from "./plugins/PluginConversationCards";
+import { useTurnProposals } from "./ProjectViews";
 import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 import {
   markSessionSwitch,
@@ -181,6 +182,7 @@ const CachedConversationPane = memo(function CachedConversationPane({
 }: CachedConversationPaneProps): JSX.Element {
   const threadRef = useRef(thread);
   threadRef.current = thread;
+  const renderTurnProposal = useTurnProposals(thread);
   const wasActiveRef = useRef(isActive);
   useLayoutEffect(() => {
     if (!SESSION_SWITCH_PERF_ENABLED) {
@@ -365,6 +367,7 @@ const CachedConversationPane = memo(function CachedConversationPane({
               renderAfterTurn={(turn) => (
                 <>
                   {(entriesByAfterTurnID.get(turn.id) ?? []).map(renderContextEntry)}
+                  {renderTurnProposal(turn.id)}
                   {turn.id === pendingQuestion?.request.turn_id
                     ? renderPendingQuestionCard(true)
                     : null}
