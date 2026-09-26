@@ -375,6 +375,17 @@ function handleStreamingNotification(
   const notification = event.message;
   const params = notification.params as Record<string, unknown> | undefined;
   switch (notification.method) {
+    case "thread/resumed": {
+      const thread = threadFromRecord(recordValue(params, "thread"));
+      if (thread) {
+        // React may apply the snapshot later; live deltas already use this cache.
+        ingestStreamOnce(event, () => {
+          syncRunningThreadStreamItems(thread);
+          return false;
+        });
+      }
+      return "state";
+    }
     case "item/agentMessage/delta": {
       const active = notificationTargetsActiveThread(params, state);
       if (!active && !notificationTargetsKnownThread(params, state)) {

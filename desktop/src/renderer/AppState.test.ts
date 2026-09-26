@@ -33,6 +33,8 @@ import {
   sessionTabLabel,
   handleStreamingNotification,
   initialState,
+  requireThread,
+  syncRunningThreadStreamItems,
   isScratchThread,
   isStateActiveThreadRunning,
   isCoalescedBackgroundThreadEvent,
@@ -3909,4 +3911,23 @@ describe("local send timing across server reconciliation", () => {
     forgetLocalTurnTiming(optimistic.id);
     vi.useRealTimers();
   });
+});
+
+
+it("installs resumed stream text before deltas even before React applies the snapshot", () => {
+  const snapshot = {
+    id: "resume-order-thread", cwd: "/fixture", status: "in_progress",
+    turns: [{ id: "resume-order-turn", status: "in_progress", items: [{ id: "answer", type: "agent_message", status: "in_progress", text: "snapshot text" }] }],
+  } as Thread;
+  const cached = structuredClone(snapshot);
+  cached.turns[0].items[0].text = "old";
+  syncRunningThreadStreamItems(cached);
+  const state = { ...initialState, thread: cached, threads: [cached] };
+  handleStreamingNotification({ workdir: "/fixture", kind: "notification", message: { method: "thread/resumed", params: { thread: snapshot } } }, state);
+  handleStreamingNotification({ workdir: "/fixture", kind: "notification", message: { method: "item/agentMessage/delta", params: {
+    thread_id: snapshot.id, turn_id: "resume-order-turn", item_id: "answer", delta: " delta",
+  } } }, state);
+  requireThread({ thread: snapshot }, "missing");
+  expect(streamTextStore.get(streamTextKey("resume-order-turn", "answer", "text"))).toBe("snapshot text delta");
+  streamTextStore.clearTurn("resume-order-turn");
 });
