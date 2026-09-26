@@ -28,6 +28,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Fusion accepts detailed Sidekick check results without rejecting a completed
+  handoff; concise string checks remain supported.
+
 - Approve for me uses streaming review requests so Codex-backed conversations
   can complete automatic checks; incomplete or interrupted reviews remain blocked.
 

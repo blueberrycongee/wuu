@@ -19,13 +19,27 @@ const fusionLeadPrompt = `You are the Lead in Fusion mode. Own the user conversa
 Delegation waits for the Sidekick to stop before returning. Do not combine delegation with other tool calls or leave background writers active. Treat its report as a claim: inspect actual files/diffs and run appropriate checks before acceptance. For blocked, needs_decision, failed, or an invalid report, use the evidence to provide specific feedback or take over with your own tools. Do not repeat an unchanged brief indefinitely. Never expose internal JSON reports as the final user answer; summarize the verified outcome and any remaining limitations.`
 
 type fusionReport struct {
-	Outcome      string   `json:"outcome"`
-	Summary      string   `json:"summary"`
-	ChangedFiles []string `json:"changed_files,omitempty"`
-	Checks       []string `json:"checks,omitempty"`
-	Blockers     []string `json:"blockers,omitempty"`
-	Questions    []string `json:"questions,omitempty"`
-	NextSteps    []string `json:"next_steps,omitempty"`
+	Outcome      string        `json:"outcome"`
+	Summary      string        `json:"summary"`
+	ChangedFiles []string      `json:"changed_files,omitempty"`
+	Checks       []fusionCheck `json:"checks,omitempty"`
+	Blockers     []string      `json:"blockers,omitempty"`
+	Questions    []string      `json:"questions,omitempty"`
+	NextSteps    []string      `json:"next_steps,omitempty"`
+}
+
+type fusionCheck struct {
+	Name    string `json:"name"`
+	Status  string `json:"status,omitempty"`
+	Details string `json:"details,omitempty"`
+}
+
+func (c *fusionCheck) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		return json.Unmarshal(data, &c.Name)
+	}
+	type check fusionCheck
+	return json.Unmarshal(data, (*check)(c))
 }
 
 type fusionResult struct {

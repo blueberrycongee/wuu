@@ -96,15 +96,16 @@ func TestFusionReusesSidekickContextAndRecoversReports(t *testing.T) {
 	root := t.TempDir()
 	client := &fusionTestClient{reports: []string{
 		`{"outcome":"blocked","summary":"Need a format choice","questions":["JSON or CSV?"]}`,
-		`{"outcome":"completed","summary":"Implemented JSON","changed_files":["result.json"],"checks":["schema passed"]}`,
+		`{"outcome":"completed","summary":"Implemented JSON","changed_files":["result.json"],"checks":[{"name":"schema","status":"passed","details":"validated export"}]}`,
 		`{"outcome":"needs_decision","summary":"Choose the follow-up scope"}`,
+		`{"outcome":"completed","summary":"Verified compatibility","checks":["legacy check passed"]}`,
 		`not a valid report`,
 	}}
 	rt := newFusionTestRuntime(t, root, client)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var id string
-	for i, outcome := range []string{"blocked", "completed", "needs_decision", "failed"} {
+	for i, outcome := range []string{"blocked", "completed", "needs_decision", "completed", "failed"} {
 		if i == 2 {
 			rt.AgentControl.Close()
 			rt = newFusionTestRuntime(t, root, client)
@@ -124,6 +125,12 @@ func TestFusionReusesSidekickContextAndRecoversReports(t *testing.T) {
 		}
 		if result.Outcome != outcome {
 			t.Fatalf("handoff %d: %s", i, text)
+		}
+		if i == 1 && (len(result.Checks) != 1 || result.Checks[0].Name != "schema" || result.Checks[0].Status != "passed" || result.Checks[0].Details != "validated export") {
+			t.Fatalf("structured check lost at handoff: %+v", result.Checks)
+		}
+		if i == 3 && (len(result.Checks) != 1 || result.Checks[0].Name != "legacy check passed") {
+			t.Fatalf("string check lost at handoff: %+v", result.Checks)
 		}
 		if id == "" {
 			id = result.AgentID
