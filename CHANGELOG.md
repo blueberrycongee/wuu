@@ -105,6 +105,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Sidebar scroll fades remain tied to the list's own scroll position while
+  conversations stream, pause, finish, or switch. Streaming paint reduction
+  applies only to nested reasoning and process details.
+
 - The new-agent setup header drags the window across its full width again, and
   its height follows the window title bar after page zoom and at large UI font
   sizes.
