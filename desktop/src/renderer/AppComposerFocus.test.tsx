@@ -423,7 +423,7 @@ describe("main composer focus continuity", () => {
     const content = viewport.querySelector<HTMLElement>(".scroll-region-content")!;
     let natural = 2000;
     let top = 500;
-    const tail = () => Number.parseFloat(viewport.parentElement!.style.getPropertyValue("--session-tail-space") || "0");
+    const tail = () => Number.parseFloat(content.style.paddingBottom || "0");
     Object.defineProperties(viewport, {
       clientHeight: { configurable: true, get: () => 600 },
       scrollHeight: { configurable: true, get: () => natural + tail() },

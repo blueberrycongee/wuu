@@ -18,6 +18,7 @@ import {
   isWindowResizing,
 } from "./WindowResizeState";
 import { atLatestScrollView, submitGlideActive, subscribeSubmitGlide } from "./AutoFollowScroll";
+import { syncConversationRenderWindow } from "./ConversationRenderWindow";
 import { useI18n } from "./i18n";
 
 // Keep vertical capacity calculations aligned with the CSS bar height and gap.
@@ -408,6 +409,7 @@ export function ConversationTurnRail({
         onWheelScrollAway?.();
       }
       scrollNode.scrollTop = previousScrollTop + deltaY;
+      syncConversationRenderWindow(scrollNode);
       if (scrollNode.scrollTop !== previousScrollTop) {
         event.preventDefault();
       }
@@ -490,6 +492,7 @@ export function ConversationTurnRail({
           Math.max(0, (event.clientY - railRect.top) / railHeight),
         );
         scrollNode.scrollTop = ratio * maxScrollTop;
+        syncConversationRenderWindow(scrollNode);
         // The scroll container just jumped; refresh the highlight so it
         // lines up with the bar now under the cursor (rail content may
         // have shifted under a stationary mouse).
@@ -517,6 +520,7 @@ export function ConversationTurnRail({
       );
       if (scrollNode.scrollTop !== nextScrollTop) {
         scrollNode.scrollTop = nextScrollTop;
+        syncConversationRenderWindow(scrollNode);
         drag.moved = true;
         event.preventDefault();
       }

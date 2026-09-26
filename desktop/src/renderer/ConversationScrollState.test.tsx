@@ -105,6 +105,7 @@ function Probe({
       ref: (node: HTMLDivElement | null) => {
         h.scrollContentRef.current = node;
       },
+      className: "scroll-region-content",
       "data-testid": "scroll-content",
     }),
   );
@@ -218,7 +219,7 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
       initialScrollTop: 2400 - 600,
     });
     fireScroll();
-    node.style.setProperty("--session-tail-space", "500px");
+    node.querySelector<HTMLElement>(".scroll-region-content")!.style.paddingBottom = "500px";
 
     switchThread("thread-short");
     expect(layout?.scrollTop).toBe(1300);

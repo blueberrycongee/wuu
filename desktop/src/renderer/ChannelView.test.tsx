@@ -1765,10 +1765,14 @@ describe("ChannelView", () => {
       const jump = document.body.querySelector<HTMLButtonElement>(".jump-to-latest-pill");
       expect(jump).not.toBeNull();
       act(() => jump?.click());
-      // jump-to-latest pins to the latest content bottom (maxScrollTop), not
-      // to scrollHeight: with scrollHeight 1000 and clientHeight 400 the real
-      // bottom is 600, and browsers clamp an oversized top anyway.
-      expect(scrollTo).toHaveBeenCalledWith({ top: 600, behavior: "smooth" });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      // The stream's follow controller glides to the latest content bottom
+      // (maxScrollTop: scrollHeight 1000 - clientHeight 400) and keeps
+      // following from there, rather than a one-off native smooth scroll.
+      expect(scrollTop).toBe(600);
+      expect(scrollTo).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
