@@ -78,13 +78,16 @@ export class DesktopPluginRuntime {
     private readonly loadModule: ModuleLoader = importDesktopPluginModule,
   ) {}
 
-  async sync(inventory: readonly ExtensionInventoryRecord[]): Promise<readonly DesktopPluginFailure[]> {
+  async sync(
+    inventory: readonly ExtensionInventoryRecord[],
+    safeMode = false,
+  ): Promise<readonly DesktopPluginFailure[]> {
     const epoch = ++this.syncEpoch;
     const preferences = await window.wuu?.getPluginConflictPreferences?.();
     if (epoch !== this.syncEpoch) return [];
     if (preferences) this.host.setConflictPreferences(preferences);
     const desired = new Map(
-      inventory
+      (safeMode ? [] : inventory)
         .filter(isLoadableDesktopPlugin)
         .map((plugin) => [plugin.id, plugin] as const),
     );
@@ -171,6 +174,7 @@ export const desktopPluginRuntime = new DesktopPluginRuntime(desktopPluginHost);
 
 export function useDesktopPluginRuntime(
   inventory: readonly ExtensionInventoryRecord[] | undefined,
+  safeMode = false,
 ): void {
   useEffect(() => window.wuu?.onServerEvent?.((event) => {
     desktopPluginHost.publishHostEvent(event);
@@ -179,13 +183,13 @@ export function useDesktopPluginRuntime(
     syncExtensionTheme(inventory);
     const syncThemeFromOtherWindow = (): void => syncExtensionTheme(inventory);
     window.addEventListener("storage", syncThemeFromOtherWindow);
-    void desktopPluginRuntime.sync(inventory ?? []).then((failures) => {
+    void desktopPluginRuntime.sync(inventory ?? [], safeMode).then((failures) => {
       for (const failure of failures) {
         console.error(`Desktop plugin ${failure.pluginId} failed to activate`, failure.error);
       }
     });
     return () => window.removeEventListener("storage", syncThemeFromOtherWindow);
-  }, [inventory]);
+  }, [inventory, safeMode]);
 }
 
 function isLoadableDesktopPlugin(plugin: ExtensionInventoryRecord): boolean {
