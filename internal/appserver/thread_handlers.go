@@ -1520,7 +1520,7 @@ func (s *Server) threadWithWorktreeStatus(thread Thread) Thread {
 	}
 	manager, err := s.worktreeManager(firstNonEmpty(info.BaseRepo, thread.CWD, s.rt.RootDir))
 	if err == nil {
-		if status, statusErr := manager.Status(info.Path); statusErr == nil {
+		if status, statusErr := manager.Status(&worktree.Worktree{Path: info.Path, HEAD: info.BaseHEAD}); statusErr == nil {
 			info.Dirty = status.Dirty
 			info.ChangedFiles = append([]string(nil), status.ChangedFiles...)
 		}

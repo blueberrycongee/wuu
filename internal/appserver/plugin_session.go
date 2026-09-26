@@ -320,7 +320,7 @@ func (s *Server) inspectPluginSessionOnce(pluginID string, params pluginhost.Ses
 	if metadata.WorktreePath != "" {
 		summary := &pluginhost.SessionWorkspaceSummary{Kind: "worktree"}
 		if manager, managerErr := s.worktreeManager(metadata.WorktreeBaseRepo); managerErr == nil {
-			if status, statusErr := manager.Status(metadata.WorktreePath); statusErr == nil {
+			if status, statusErr := manager.Status(&worktreepkg.Worktree{Path: metadata.WorktreePath, HEAD: metadata.WorktreeBaseHEAD}); statusErr == nil {
 				summary.Dirty = status.Dirty
 				summary.ChangedFiles = status.ChangedFiles
 			}

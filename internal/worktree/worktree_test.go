@@ -740,8 +740,8 @@ func TestCreateLeaseWritesManifestAndReview(t *testing.T) {
 	if !review.Status.Dirty || len(review.Status.ChangedFiles) != 2 {
 		t.Fatalf("review should see changed tracked and untracked files: %+v", review.Status)
 	}
-	if review.Diff == "" || !review.MergePreview.CanApply {
-		t.Fatalf("expected tracked diff with clean merge preview: %+v", review)
+	if review.Diff == "" || review.MergePreview.CanApply || review.MergePreview.Error == "" {
+		t.Fatalf("expected tracked diff and rejection of untracked delivery: %+v", review)
 	}
 
 	if err := m.WriteManifest(lease); err != nil {
@@ -958,5 +958,44 @@ func TestApplySnapshotPreservesUnrelatedChangesAndRejectsConflicts(t *testing.T)
 	content, err = os.ReadFile(filepath.Join(root, "user.txt"))
 	if err != nil || string(content) != "keep me\n" {
 		t.Fatal("apply lost unrelated work")
+	}
+}
+
+func TestCleanupSessionPreservesCommittedWork(t *testing.T) {
+	for _, mode := range []string{"committed", "unknown-base", "clean"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			initRepo(t, dir)
+			m, err := NewManager(dir, filepath.Join(t.TempDir(), "worktrees"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			wt, err := m.OpenOrCreate(OpenOrCreateOptions{SessionID: "session", WorkerID: "worker"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer m.Cleanup(wt)
+			if mode != "clean" {
+				commitFile(t, wt.Path, "README.md", "committed output")
+			}
+			if mode == "unknown-base" {
+				if err := os.Remove(wt.ManifestPath); err != nil {
+					t.Fatal(err)
+				}
+			}
+			kept, err := m.CleanupSessionIfClean("session")
+			if mode == "clean" {
+				if err != nil || kept {
+					t.Fatalf("clean workspace retained: kept=%t err=%v", kept, err)
+				}
+				return
+			}
+			if !kept {
+				t.Errorf("committed work not preserved: err=%v", err)
+			}
+			if content, err := os.ReadFile(filepath.Join(wt.Path, "README.md")); err != nil || string(content) != "committed output" {
+				t.Fatalf("output lost: %q %v", content, err)
+			}
+		})
 	}
 }

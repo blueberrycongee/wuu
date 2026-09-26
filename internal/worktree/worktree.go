@@ -269,26 +269,21 @@ func (m *Manager) cleanupWorktree(wt *Worktree) error {
 	return nil
 }
 
-// HasChanges reports whether the worktree contains any uncommitted
-// modifications relative to its base HEAD. Used by the coordinator to
-// decide whether a finished worker's worktree can be auto-pruned.
-//
-// Detects: tracked-file edits, staged changes, and untracked files.
-// Returns false on a pristine worktree (read-only worker did nothing).
+// HasChanges reports pending changes or commits since the frozen base. An
+// unknown base cannot prove that automatic cleanup is safe.
 func (m *Manager) HasChanges(wt *Worktree) (bool, error) {
-	if wt == nil || wt.Path == "" {
-		return false, errors.New("worktree is nil")
-	}
-	if _, err := os.Stat(wt.Path); err != nil {
-		return false, fmt.Errorf("stat worktree: %w", err)
-	}
-	cmd := exec.Command("git", "status", "--porcelain")
-	cmd.Dir = wt.Path
-	out, err := cmd.Output()
+	status, err := m.Status(wt)
 	if err != nil {
-		return false, fmt.Errorf("git status: %w", err)
+		return false, err
 	}
-	return strings.TrimSpace(string(out)) != "", nil
+	if status.Dirty {
+		return true, nil
+	}
+	head, err := resolveHead(wt.Path)
+	if err != nil {
+		return false, err
+	}
+	return head != wt.HEAD, nil
 }
 
 // Status snapshots dirty state and changed files for a lease or worktree.
@@ -313,9 +308,29 @@ func (m *Manager) Status(target any) (Status, error) {
 			changed = append(changed, file)
 		}
 	}
+	base, err := worktreeBase(target)
+	if err != nil {
+		return Status{}, err
+	}
+	cmd = exec.Command("git", "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", base, "--")
+	cmd.Dir = path
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		return Status{}, fmt.Errorf("git diff status: %w\n%s", err, out)
+	}
+	seen := make(map[string]bool, len(changed))
+	for _, name := range changed {
+		seen[name] = true
+	}
+	for _, name := range strings.Split(string(out), "\x00") {
+		if name != "" && !seen[name] {
+			changed = append(changed, name)
+			seen[name] = true
+		}
+	}
 	sort.Strings(changed)
 	return Status{
-		Dirty:        len(lines) > 0,
+		Dirty:        len(changed) > 0,
 		ChangedFiles: changed,
 		Porcelain:    lines,
 	}, nil
@@ -326,7 +341,11 @@ func (m *Manager) Diff(target any) (string, error) {
 	if path == "" {
 		return "", errors.New("worktree path is required")
 	}
-	cmd := exec.Command("git", "diff", "--binary", "HEAD", "--")
+	base, err := worktreeBase(target)
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.Command("git", "diff", "--no-ext-diff", "--no-textconv", "--binary", base, "--")
 	cmd.Dir = path
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -354,6 +373,14 @@ func (m *Manager) Review(target any, targetRepo string) (Review, error) {
 // MergePreview checks whether the worktree's tracked diff can be applied to
 // targetRepo without mutating targetRepo.
 func (m *Manager) MergePreview(target any, targetRepo string) MergePreview {
+	status, err := m.Status(target)
+	if err != nil {
+		return MergePreview{Error: err.Error()}
+	}
+	if untracked := untrackedFiles(status.Porcelain); len(untracked) > 0 {
+		return MergePreview{Error: fmt.Sprintf("worktree has untracked files that are not represented in the merge diff: %s", strings.Join(untracked, ", "))}
+	}
+
 	diff, err := m.Diff(target)
 	if err != nil {
 		return MergePreview{CanApply: false, Error: err.Error()}
@@ -376,7 +403,7 @@ func (m *Manager) MergePreview(target any, targetRepo string) MergePreview {
 }
 
 // ApplyToTarget applies the worktree's tracked diff to targetRepo. It does not
-// commit. Untracked worktree files are rejected because git diff HEAD does not
+// commit. Untracked worktree files are rejected because the tracked diff does not
 // represent them.
 func (m *Manager) ApplyToTarget(target any, targetRepo string) (ApplyResult, error) {
 	status, err := m.Status(target)
@@ -461,8 +488,8 @@ func (m *Manager) WriteManifest(lease *Lease) error {
 	return os.WriteFile(lease.ManifestPath, append(data, '\n'), 0o644)
 }
 
-// CleanupIfClean removes the worktree only when it has no uncommitted
-// changes. Returns kept=true (with no error) if the worktree was dirty
+// CleanupIfClean removes the worktree only when it has no changes or commits
+// since its frozen base. Returns kept=true (with no error) if the worktree was dirty
 // and was therefore preserved for the user to inspect.
 //
 // Ephemeral read-only sub-agents should not leave detritus on disk, but
@@ -578,11 +605,23 @@ func (m *Manager) List(sessionID string) ([]*Worktree, error) {
 		if !e.IsDir() {
 			continue
 		}
-		out = append(out, &Worktree{
+		wt := &Worktree{
 			Path:      filepath.Join(dir, e.Name()),
 			SessionID: sessionID,
 			WorkerID:  e.Name(),
-		})
+		}
+		manifest, exists, err := readPrelaunchManifest(m.prelaunchManifestPath(sessionID, e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			if err := m.validatePrelaunchManifest(manifest, sessionID, e.Name(), wt.Path, OpenOrCreateOptions{BaseRepo: manifest.BaseRepo}); err != nil {
+				return nil, err
+			}
+			wt.HEAD = manifest.BaseRevision
+			wt.BaseRepo = manifest.BaseRepo
+		}
+		out = append(out, wt)
 	}
 	return out, nil
 }
@@ -712,6 +751,32 @@ func checkoutBranch(dir, branch string) error {
 		return fmt.Errorf("git switch -c %s: %w\n%s", branch, err, out)
 	}
 	return nil
+}
+
+// Path-only callers request ordinary working-tree status. Structured targets
+// must retain their creation baseline rather than silently adopting current HEAD.
+func worktreeBase(target any) (string, error) {
+	var base string
+	switch v := target.(type) {
+	case *Lease:
+		if v != nil {
+			base = v.BaseHEAD
+		}
+	case Lease:
+		base = v.BaseHEAD
+	case *Worktree:
+		if v != nil {
+			base = v.HEAD
+		}
+	case Worktree:
+		base = v.HEAD
+	case string:
+		return "HEAD", nil
+	}
+	if strings.TrimSpace(base) == "" {
+		return "", errors.New("worktree base revision is required")
+	}
+	return base, nil
 }
 
 func worktreePath(target any) string {
