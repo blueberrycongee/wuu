@@ -127,6 +127,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- macOS confined commands can read Keychain credentials again, preventing false
+  GitHub CLI authentication failures caused by blocked system cache writes.
+
 - Instructions given when an extension creates a session now reach the model on
   every turn and after a reload. Built-in runs previously dropped them,
   including the Subagent plugin's worker instructions.
