@@ -223,6 +223,7 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 			}
 		}
 	}
+	resumed := ref != "" && notice == ""
 	if ref == "" || notice != "" {
 		// A replacement session — the first one, or a load fallback — must
 		// become the thread's reference, or every later turn repeats the
@@ -235,7 +236,7 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 	if notice != "" {
 		t.content(notice, false)
 	}
-	if err := s.applyACPSelection(setupCtx, r, session, ref); err != nil {
+	if err := s.applyACPSelection(setupCtx, r, session, ref, resumed); err != nil {
 		return err
 	}
 	cancelSetup()
@@ -533,21 +534,78 @@ type acpPermission struct {
 	} `json:"options"`
 }
 
-func (s *Session) applyACPSelection(ctx context.Context, r *rpc, session acpSession, ref string) error {
+func (s *Session) applyACPSelection(ctx context.Context, r *rpc, session acpSession, ref string, resumed bool) error {
 	restore := trackACPConfiguration(r, &session, ref)
 	defer restore()
-	// Responses contain the full configuration after dependent changes.
-	setOption := func(id, value string) error {
-		var updated acpSession
-		if err := r.call(ctx, "session/set_config_option", map[string]any{"sessionId": ref, "configId": id, "value": value}, &updated); err != nil {
+	if err := session.selectModelAndEffort(ctx, r, ref, s.engine.entry.Name, s.binding.Model, s.binding.Effort); err != nil {
+		return err
+	}
+	speed := s.binding.Speed
+	option, on, off := session.speedOption()
+	if speed == "" && resumed && option != nil {
+		// A loaded session carries its last override. Probe a fresh session without
+		// sending a prompt to recover this model's configured default instead.
+		var err error
+		speed, err = s.defaultACPSpeed(ctx, r, session)
+		if err != nil {
 			return err
 		}
-		if updated.ConfigOptions != nil {
-			session.ConfigOptions = updated.ConfigOptions
-		}
-		return nil
 	}
-	if model := strings.TrimSpace(s.binding.Model); model != "" {
+	if speed != "" {
+		if option == nil {
+			return fmt.Errorf("%s does not advertise speed selection for this model", s.engine.entry.Name)
+		}
+		value := off
+		if speed == "fast" {
+			value = on
+		}
+		if option.Current != value {
+			if err := session.setConfigOption(ctx, r, ref, option.ID, value); err != nil {
+				return err
+			}
+			confirmed, _, _ := session.speedOption()
+			if confirmed == nil || confirmed.Current != value {
+				return fmt.Errorf("%s did not apply the requested speed", s.engine.entry.Name)
+			}
+		}
+	}
+	return session.selectHostPermissionMode(ctx, r, ref, s.engine.entry.Name, s.binding.PermissionMode)
+}
+
+func (s *Session) defaultACPSpeed(ctx context.Context, r *rpc, current acpSession) (string, error) {
+	var defaults acpSession
+	if err := r.call(ctx, "session/new", map[string]any{"cwd": s.binding.RootDir, "mcpServers": []any{}}, &defaults); err != nil {
+		return "", fmt.Errorf("read configured speed: %w", err)
+	}
+	restore := trackACPConfiguration(r, &defaults, defaults.ID)
+	defer restore()
+	model := current.firstClassCurrent()
+	if model == "" {
+		if option := current.modelConfigOption(); option != nil {
+			model = option.Current
+		}
+	}
+	effort := ""
+	if option := current.thoughtLevelOption(); option != nil {
+		effort = option.Current
+	}
+	if err := defaults.selectModelAndEffort(ctx, r, defaults.ID, s.engine.entry.Name, model, effort); err != nil {
+		return "", err
+	}
+	option, on, off := defaults.speedOption()
+	if option != nil {
+		switch option.Current {
+		case on:
+			return "fast", nil
+		case off:
+			return "standard", nil
+		}
+	}
+	return "", fmt.Errorf("%s does not advertise a configured speed for this model", s.engine.entry.Name)
+}
+
+func (session *acpSession) selectModelAndEffort(ctx context.Context, r *rpc, ref, engineName, model, effort string) error {
+	if model = strings.TrimSpace(model); model != "" {
 		if !session.hasAdvertisedModel(model) {
 			if session.Models == nil && session.modelConfigOption() == nil {
 				return errors.New("this engine does not advertise model selection; clear the model to use its configured default")
@@ -558,42 +616,32 @@ func (s *Session) applyACPSelection(ctx context.Context, r *rpc, session acpSess
 			return err
 		}
 	}
-	effort := strings.TrimSpace(s.binding.Effort)
-	if effort != "" {
+	if effort = strings.TrimSpace(effort); effort != "" {
 		option := session.thoughtLevelOption()
 		if option == nil || !option.hasChoice(effort) {
-			return fmt.Errorf("%s does not expose reasoning effort through this integration; clear the effort selection", s.engine.entry.Name)
+			return fmt.Errorf("%s does not expose reasoning effort through this integration; clear the effort selection", engineName)
 		}
 		if strings.TrimSpace(option.Current) != effort {
 			configID := strings.TrimSpace(option.ID)
 			if configID == "" {
 				configID = "reasoning_effort"
 			}
-			if err := setOption(configID, effort); err != nil {
-				return err
-			}
+			return session.setConfigOption(ctx, r, ref, configID, effort)
 		}
 	}
-	if s.binding.Speed != "" {
-		option, on, off := session.speedOption()
-		if option == nil {
-			return fmt.Errorf("%s does not advertise speed selection for this model", s.engine.entry.Name)
-		}
-		value := off
-		if s.binding.Speed == "fast" {
-			value = on
-		}
-		if option.Current != value {
-			if err := setOption(option.ID, value); err != nil {
-				return err
-			}
-			confirmed, _, _ := session.speedOption()
-			if confirmed == nil || confirmed.Current != value {
-				return fmt.Errorf("%s did not apply the requested speed", s.engine.entry.Name)
-			}
-		}
+	return nil
+}
+
+// Responses contain the complete configuration after dependent changes.
+func (session *acpSession) setConfigOption(ctx context.Context, r *rpc, ref, id, value string) error {
+	var updated acpSession
+	if err := r.call(ctx, "session/set_config_option", map[string]any{"sessionId": ref, "configId": id, "value": value}, &updated); err != nil {
+		return err
 	}
-	return session.selectHostPermissionMode(ctx, r, ref, s.engine.entry.Name, s.binding.PermissionMode)
+	if updated.ConfigOptions != nil {
+		session.ConfigOptions = updated.ConfigOptions
+	}
+	return nil
 }
 
 // selectHostPermissionMode applies the host's access selection to the agent's
@@ -788,9 +836,7 @@ func (session *acpSession) selectModel(ctx context.Context, r *rpc, ref, model s
 		if strings.TrimSpace(option.Current) == model {
 			return nil
 		}
-		if err := r.call(ctx, "session/set_config_option", map[string]any{"sessionId": ref, "configId": option.ID, "value": model}, &updated); err != nil {
-			return err
-		}
+		return session.setConfigOption(ctx, r, ref, option.ID, model)
 	}
 	if updated.ConfigOptions != nil {
 		session.ConfigOptions = updated.ConfigOptions

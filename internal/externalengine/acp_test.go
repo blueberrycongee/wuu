@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -536,10 +537,67 @@ func TestACPHelper(t *testing.T) {
 	var promptID json.RawMessage
 	selectedModel, selectedEffort, selectedMode := "", "", ""
 	selectedSpeed := "off"
+	speedSessions := map[string]map[string]string{}
+	defaultSpeed := strings.TrimPrefix(scenario, "speed-reset-")
+	nextSession := 0
 	for scanner.Scan() {
 		var msg rpcMessage
 		if json.Unmarshal(scanner.Bytes(), &msg) != nil {
 			os.Exit(2)
+		}
+		if strings.HasPrefix(scenario, "speed-reset-") && msg.Method != "initialize" {
+			var params struct {
+				SessionID string `json:"sessionId"`
+				ConfigID  string `json:"configId"`
+				Value     string `json:"value"`
+			}
+			if json.Unmarshal(msg.Params, &params) != nil {
+				os.Exit(2)
+			}
+			id := params.SessionID
+			switch msg.Method {
+			case "session/new":
+				for {
+					nextSession++
+					id = fmt.Sprintf("session-%d", nextSession)
+					if speedSessions[id] == nil {
+						break
+					}
+				}
+				otherSpeed := "on"
+				if defaultSpeed == "on" {
+					otherSpeed = "off"
+				}
+				speedSessions[id] = map[string]string{"model": "model-a", "fast-mode": otherSpeed, "reasoning_effort": "low"}
+			case "session/load":
+				data, err := os.ReadFile(filepath.Join(".", id+".json"))
+				if err != nil {
+					os.Exit(2)
+				}
+				if json.Unmarshal(data, &speedSessions) != nil {
+					os.Exit(2)
+				}
+			case "session/set_config_option":
+				speedSessions[id][params.ConfigID] = params.Value
+				if params.ConfigID == "model" {
+					speedSessions[id]["fast-mode"] = defaultSpeed
+				}
+			case "session/prompt":
+				data, _ := json.Marshal(speedSessions)
+				if os.WriteFile(filepath.Join(".", id+".json"), data, 0600) != nil {
+					os.Exit(2)
+				}
+				content, _ := json.Marshal(speedSessions[id])
+				write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": id, "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": string(content)}}}})
+				write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]string{"stopReason": "end_turn"}})
+				continue
+			}
+			state := speedSessions[id]
+			result := speedACPSessionResult(state["model"], "fast-mode", state["fast-mode"])
+			result["sessionId"] = id
+			result["configOptions"] = append(result["configOptions"].([]any), map[string]any{"id": "reasoning_effort", "category": "thought_level", "type": "select", "currentValue": state["reasoning_effort"], "options": []any{map[string]string{"value": "low"}, map[string]string{"value": "high"}}})
+			write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": result})
+			continue
 		}
 		result := any(map[string]any{})
 		switch msg.Method {
@@ -997,5 +1055,50 @@ func TestACPCatalogReportsSpeedPerModel(t *testing.T) {
 	}
 	if len(catalog.Models) != 2 || !catalog.Models[0].FastMode || catalog.Models[1].FastMode {
 		t.Fatalf("wrong per-model speed capabilities: %+v", catalog.Models)
+	}
+}
+
+func TestACPSpeedResetRestoresModelDefaultAfterResume(t *testing.T) {
+	for _, defaultSpeed := range []string{"on", "off"} {
+		t.Run(defaultSpeed, func(t *testing.T) {
+			engine := testEngine(t, "speed-reset-"+defaultSpeed)
+			binding := testBinding()
+			binding.Model, binding.Effort = "model-b", "high"
+			binding.PersistRef = func(ref string) error { binding.ExternalRef = ref; return nil }
+			override, wantOverride := "fast", "on"
+			if defaultSpeed == "on" {
+				override, wantOverride = "standard", "off"
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			for _, requested := range []string{override, ""} {
+				binding.Speed = requested
+				sess, err := engine.SessionForThread(ctx, binding)
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := sess.RunTurn(ctx, testInput(), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := sess.Close(ctx); err != nil {
+					t.Fatal(err)
+				}
+				var native map[string]string
+				if err := json.Unmarshal([]byte(result.Result.Content), &native); err != nil {
+					t.Fatal(err)
+				}
+				want := wantOverride
+				if requested == "" {
+					want = defaultSpeed
+				}
+				if native["fast-mode"] != want || native["model"] != "model-b" || native["reasoning_effort"] != "high" {
+					t.Fatalf("speed %q native selection = %v, want speed %q with original model and effort", requested, native, want)
+				}
+				if binding.ExternalRef != "session-1" {
+					t.Fatalf("default probe replaced the saved session: %q", binding.ExternalRef)
+				}
+			}
+		})
 	}
 }
