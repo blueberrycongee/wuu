@@ -21,6 +21,7 @@ import { TurnView, latestAgentMessageItemID } from "./TurnView";
 import { UserQuestionCard } from "./UserQuestionCard";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import { useI18n } from "./i18n";
+import { useTurnProposals } from "./ProjectViews";
 
 export function ConversationSplitPane({
   pane,
@@ -101,6 +102,7 @@ export function ConversationSplitPane({
   onCancelUserQuestion?: (requestID: string) => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
+  const renderTurnProposal = useTurnProposals(thread);
   const paneTurns = thread.turns ?? [];
   const paneLatestAgentMessageID = latestAgentMessageItemID(paneTurns);
   const pendingQuestion =
@@ -169,11 +171,14 @@ export function ConversationSplitPane({
                 ? renderPendingQuestionCard(false)
                 : null
             }
-            renderAfterTurn={(turn) =>
-              turn.id === pendingQuestion?.request.turn_id
-                ? renderPendingQuestionCard(true)
-                : null
-            }
+            renderAfterTurn={(turn) => (
+              <>
+                {renderTurnProposal(turn.id)}
+                {turn.id === pendingQuestion?.request.turn_id
+                  ? renderPendingQuestionCard(true)
+                  : null}
+              </>
+            )}
             forcedFullTurnIDs={
               [
                 ...(editingMessage ? [editingMessage.turnID] : []),

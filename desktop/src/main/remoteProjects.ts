@@ -59,15 +59,15 @@ export async function requestRemoteProjects(
       if (!p.path) throw new Error("Folder is required");
       return projects.add(p.path);
     case "desktop/projects/remove":
-      if (typeof p.id !== "string") throw new Error("Project id is required");
+      if (typeof p.id !== "string") throw new Error("Workspace id is required");
       return projects.remove(p.id);
     case "desktop/projects/relocate":
       if (!p.path || typeof p.id !== "string")
-        throw new Error("Project and folder are required");
+        throw new Error("Workspace and folder are required");
       return projects.relocate(p.id, p.path);
     case "desktop/projects/no-project":
       return projects.selectNoProject(Boolean(p.fresh), p.cwd);
     default:
-      throw new Error("Unknown project operation");
+      throw new Error("Unknown workspace operation");
   }
 }

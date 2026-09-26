@@ -66,16 +66,16 @@ function renderShell({ inventory: available }: { inventory?: ExtensionInventoryR
   act(() => root.render(<>
     <AppSidebar
       state={state}
-      sidebarProjects={[]}
+      sidebarWorkspaces={[]}
       pinnedThreads={[{ ...thread, turn_count: 0 }]}
       activeThreadID={thread.id}
       collapsedSidebarSectionIDs={new Set()}
       collapsedFolderIDs={new Set()}
       setCollapsedFolderIDs={() => {}}
       expandedSidebarSectionIDs={new Set()}
-      projectThreadsByProjectID={{}}
-      projectMenuOpen={false}
-      projectMenuRef={createRef()}
+      workspaceThreadsByWorkspaceID={{}}
+      workspaceMenuOpen={false}
+      workspaceMenuRef={createRef()}
       searchOpen={false}
       sectionOrder={[]}
       onStartNewThread={() => {}}
@@ -86,14 +86,14 @@ function renderShell({ inventory: available }: { inventory?: ExtensionInventoryR
       onArchiveThread={() => {}}
       onDeleteThread={() => {}}
       onRenameThread={() => {}}
-      onToggleProjectMenu={() => {}}
-      onCreateProject={() => {}}
-      onOpenProjectFolder={() => {}}
+      onToggleWorkspaceMenu={() => {}}
+      onCreateWorkspace={() => {}}
+      onOpenWorkspaceFolder={() => {}}
       onToggleSidebarSectionCollapsed={() => {}}
-      onStartNewThreadForProject={() => {}}
-      onSelectProjectThread={() => {}}
-      onRemoveProject={() => {}}
-      onRelocateProject={() => {}}
+      onStartNewThreadInWorkspace={() => {}}
+      onSelectWorkspaceThread={() => {}}
+      onRemoveWorkspace={() => {}}
+      onRelocateWorkspace={() => {}}
       onOpenSettings={() => {}}
       onMarkThreadsViewed={() => {}}
       unreadViewOpen={false}

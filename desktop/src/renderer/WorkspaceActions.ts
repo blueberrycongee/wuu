@@ -37,7 +37,7 @@ export type WorkspaceActionsDeps = {
     SetStateAction<InstructionFilesEntry[]>
   >;
   scheduleStreamScroll: () => void;
-  closeProjectMenus: () => void;
+  closeWorkspaceMenus: () => void;
   setSettingsInitialPage: (page: SettingsPage) => void;
   setSettingsOpen: (open: boolean) => void;
 };

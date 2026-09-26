@@ -1,7 +1,7 @@
 import { type CSSProperties, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ArrowUp, MessageSquarePlus, PanelLeft, Plus, Search, Settings } from "../../src/renderer/WuuIcons";
-import { ProjectGroup } from "../../src/renderer/ThreadSidebar";
+import { WorkspaceGroup } from "../../src/renderer/ThreadSidebar";
 import { TurnView } from "../../src/renderer/TurnView";
 import { WorkspaceRightPanel, type WorkspacePanelView } from "../../src/renderer/WorkspacePanels";
 import type { WorkspaceViewTab } from "../../src/renderer/WorkspaceViewTabs";
@@ -26,7 +26,7 @@ const answer = `这次调整以三栏布局为基准，让导航、阅读与工�
 
 消息正文与输入文字保持同一条对齐轴。段落之间留出呼吸空间，过程记录以次要层级呈现，操作靠近对应内容。
 
-- 左栏保留紧凑的项目与会话层级。
+- 左栏保留紧凑的工作区与会话层级。
 - 中间集中呈现任务进展与最终结果。
 - 右栏使用居中的工具列表，减少无意义的卡片。
 
@@ -43,7 +43,7 @@ const turn: Turn = { id: "sample-turn", status: "completed", duration_ms: 9000, 
   { id: "sample-user", type: "user_message", status: "completed", text: "参考三栏布局，统一消息流与两侧栏的排版。" },
   { id: "sample-answer", type: "agent_message", terminal: true, status: "completed", text: answer },
 ] };
-const titles = ["优化软件排版问题", "检查长标题、运行中与未读状态的组合", "消息流阅读节奏与输入框对齐", "修复导航节点重复", "检查分叉会话与项目层级"];
+const titles = ["优化软件排版问题", "检查长标题、运行中与未读状态的组合", "消息流阅读节奏与输入框对齐", "修复导航节点重复", "检查分叉会话与工作区层级"];
 // Deterministic synthetic activity for the empty-home overview; `new-user`
 // previews a store without usage, which the overview reports as zeros.
 function sampleUsageOverview(newUser: boolean): UsageOverviewResponse {
@@ -94,7 +94,7 @@ function Fixture() {
         <div className="sample-brand">Wuu</div>
         <nav className="primary-nav"><button className="nav-item"><MessageSquarePlus/><span>新对话</span></button><button className="nav-item"><Search/><span>搜索会话</span></button></nav>
         <div className="sidebar-main"><section className="sidebar-functional-group"><div className="sidebar-functional-heading"><span className="sidebar-functional-heading-label">工作区</span></div>
-          <div className="project-section"><ProjectGroup project={{ id: "sample-project", name: "wuu", path: "/preview", created_at: date, updated_at: date }} expandedSidebarSectionIDs={expanded} threadsByProjectID={{ "sample-project": threads }} activeThreadID={active} lastViewedTurnByThreadID={{ "sample-0": "sample-turn", "sample-2": "sample-turn", "sample-3": "sample-turn", "sample-4": "sample-turn" }} scratchPseudoProjectID="scratch" scratchPseudoActive={false} onToggleSidebarSectionCollapsed={id => setExpanded(current => current.has(id) ? new Set() : new Set([id]))} onStartNewThread={noop} onSelectThread={(_project, id) => setActive(id)} onToggleThreadPinned={noop} onArchiveThread={noop} onDeleteThread={noop}/></div>
+          <div className="project-section"><WorkspaceGroup project={{ id: "sample-project", name: "wuu", path: "/preview", created_at: date, updated_at: date }} expandedSidebarSectionIDs={expanded} threadsByWorkspaceID={{ "sample-project": threads }} activeThreadID={active} lastViewedTurnByThreadID={{ "sample-0": "sample-turn", "sample-2": "sample-turn", "sample-3": "sample-turn", "sample-4": "sample-turn" }} scratchPseudoWorkspaceID="scratch" scratchPseudoActive={false} onToggleSidebarSectionCollapsed={id => setExpanded(current => current.has(id) ? new Set() : new Set([id]))} onStartNewThread={noop} onSelectThread={(_project, id) => setActive(id)} onToggleThreadPinned={noop} onArchiveThread={noop} onDeleteThread={noop}/></div>
         </section></div><button className="nav-item"><Settings/><span>设置</span></button>
       </div></aside>
       <main className="conversation-pane" style={{ "--dock-composer-height": `${dockHeight}px` } as CSSProperties}>

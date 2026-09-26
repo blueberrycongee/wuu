@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { publishCandidate } from "./publish.mjs";
-const candidate = { base_repo: "/project", base_revision: "a".repeat(40), revision: "b".repeat(40), report: { result: "Search uses pagination", evidence_refs: ["unit tests passed"], unresolved_items: [] } };
+const candidate = { base_repo: "/project", base_revision: "a".repeat(40), revision: "b".repeat(40), changed_files: ["search/paginate.go", "search/paginate_test.go"] };
 test("publishes only candidate patch in an isolated checkout and cleans up", async () => {
  const calls=[];
  const run=async (command,args,cwd)=>{
@@ -10,7 +10,11 @@ test("publishes only candidate patch in an isolated checkout and cleans up", asy
   if(args[0]==="pr"&&args[1]==="list")return "[]";
   if(args[0]==="repo")return JSON.stringify({defaultBranchRef:{name:"main"}});
   if(args[0]==="diff")return "diff --git a/file b/file\n";
-  if(args[0]==="pr"&&args[1]==="create") { assert.match(await readFile(args.at(-1),"utf8"),/unit tests passed/);return "https://github.com/example/project/pull/1"; }
+  if(args[0]==="pr"&&args[1]==="create") {
+   const body=await readFile(args.at(-1),"utf8");
+   assert.match(body,/^Paginate search\n/);assert.match(body,/- `search\/paginate\.go`\n- `search\/paginate_test\.go`/);
+   return "https://github.com/example/project/pull/1";
+  }
   return "";
  };
  const result=await publishCandidate({candidate,title:"Paginate search"},run);

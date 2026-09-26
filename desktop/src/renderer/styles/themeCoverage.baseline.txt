@@ -6,40 +6,9 @@ agent-avatar-feedback.css .agent-avatar-ribbon-fourth stroke --agent-ribbon-four
 agent-avatar-feedback.css .agent-avatar-ribbon-lead stroke --agent-ribbon-lead
 agent-avatar-feedback.css .agent-avatar-ribbon-tail stroke --agent-ribbon-tail
 agent-avatar-feedback.css .agent-avatar-ribbon-third stroke --agent-ribbon-third
-agent-onboarding.css .agent-onboarding-submit[data-action="confirm-model"]:hover:not(:disabled) background --ink-overlay-4
 archive-tip.css .archive-tip-action:hover background --ink-overlay-8
 archive-tip.css .archive-tip-dismiss:hover background --ink-overlay-8
 base.css ::selection background --selection-bg
-channels.css .agent-avatar-color-control input[type="range"]::-webkit-slider-runnable-track background --agent-avatar-hue-track
-channels.css .agent-avatar-color-control input[type="range"]::-webkit-slider-thumb background --agent-avatar-hue-fill-strong
-channels.css .agent-avatar-color-preview background --agent-avatar-hue-fill
-channels.css .channel-activity-session-resume:hover, .channel-activity-session-more:hover, .session-inspector-extension .channel-error button:hover background --ink-overlay-8
-channels.css .channel-agent-graph-controls button:hover background --ink-overlay-4
-channels.css .channel-agent-graph-node.room circle fill --ink-overlay-18
-channels.css .channel-agent-preview-loading i background --ink-overlay-6
-channels.css .channel-agent-reset-status background --success-soft
-channels.css .channel-avatar-picker button:hover background --ink-overlay-4
-channels.css .channel-composer-inline .composer-bar-left > .icon-button background --ink-overlay-4
-channels.css .channel-form-danger-row button.danger:hover:not(:disabled), .channel-form-danger-row button.danger:focus-visible:not(:disabled) background --danger-soft
-channels.css .channel-management-primary:hover:not(:disabled) background --ink-overlay-4
-channels.css .channel-management-row:hover background --ink-overlay-4
-channels.css .channel-member-picker-option:hover, .channel-member-picker-option:focus-visible background --ink-overlay-4
-channels.css .channel-message-bubble background --ink-overlay-6
-channels.css .channel-orchestration-message[data-complete="true"] .channel-coordinator-badge background --success-soft
-channels.css .channel-recipient-chip background --ink-overlay-6
-channels.css .channel-recipient-chip > button:hover background --ink-overlay-6
-channels.css .channel-recipient-options > button:hover, .channel-recipient-options > button.active background --ink-overlay-6
-channels.css .channel-response-status button:hover, .channel-send-error button:hover background --ink-overlay-8
-channels.css .channel-room-danger-zone button:hover, .channel-room-danger-zone button:focus-visible background --danger-soft
-channels.css .channel-room-member-remove:hover:not(:disabled), .channel-room-member-remove:focus-visible:not(:disabled) background --danger-soft
-channels.css .channel-room-members-button:hover background --ink-overlay-4
-channels.css .channel-session-primary background --ink-overlay-4
-channels.css .channel-sessions-body button:not(:disabled):hover background --ink-overlay-4
-channels.css .channel-split-resizer:hover::before, .channel-split-resizer:focus-visible::before, .resizing-channel-split .channel-split-resizer::before background --ink-overlay-18
-channels.css .channel-split-resizer:hover::before, .channel-split-resizer:focus-visible::before, .resizing-channel-split .channel-split-resizer::before box-shadow --ink-overlay-8
-channels.css .channel-split-resizer:hover::before, .channel-split-resizer:focus-visible::before, .resizing-channel-split .channel-split-resizer::before background --sidebar-resizer-hover-bg
-channels.css .channel-split-resizer:hover::before, .channel-split-resizer:focus-visible::before, .resizing-channel-split .channel-split-resizer::before box-shadow --sidebar-resizer-hover-ring
-channels.css .channel-task-card:hover background --ink-overlay-4
 chat.css .chat-bubble background --ink-overlay-4
 composer-context-meter.css .composer-context-meter-track stroke --context-meter-track
 composer-token-gauge.css .composer-token-gauge-track stroke --token-gauge-track
@@ -48,16 +17,15 @@ composer.css .composer-frame.composer-frame-drop-active::after box-shadow --ink-
 composer.css .composer-input-header-action:hover:not(:disabled) background --ink-overlay-8
 composer.css .composer-plus-button[aria-expanded="true"]::before background --ink-overlay-4
 composer.css .composer-queue-row:hover .composer-queue-preview, .composer-queue-row:focus-within .composer-queue-preview background --ink-overlay-4
-composer.css .group-members-capsule:hover, .group-members-capsule:focus-visible background --ink-overlay-6
 composer.css .user-question-actions .user-question-cancel:hover:not(:disabled) background --ink-overlay-6
 composer.css .user-question-close:hover:not(:disabled) background --ink-overlay-6
+conversation-shell.css .conversation-title-rename:hover, .conversation-title-rename:focus-visible background --ink-overlay-8
+conversation-shell.css .conversation-title-rename:hover, .conversation-title-rename:focus-visible box-shadow --ink-overlay-8
 conversation-shell.css .conversation-turn-rail-bar background --shell-turn-rail-bar-bg
 conversation-shell.css .linux-window-control-close:active background --linux-caption-close-active
 conversation-shell.css .linux-window-control-close:active color --linux-caption-close-ink
 conversation-shell.css .linux-window-control-close:hover background --linux-caption-close-hover
 conversation-shell.css .linux-window-control-close:hover color --linux-caption-close-ink
-conversation-shell.css .managed-session-preview-all:hover background --ink-overlay-6
-conversation-shell.css .managed-session-preview-item:hover background --ink-overlay-6
 conversation-shell.css .run-debug-copied background --success-soft
 conversation-shell.css .run-debug-event.error border-color --danger-border
 conversation-shell.css .run-debug-event.running border-color --success-soft
@@ -83,7 +51,6 @@ environment.css .conversation-search-preview-error background --env-search-error
 environment.css .conversation-search-preview-sep color --ink-overlay-8
 environment.css .environment-dialog-error background --danger-soft
 environment.css .environment-pr-result background --env-pr-result-bg
-environment.css .sidebar-name-dialog-actions .sidebar-name-dialog-destructive:hover, .sidebar-name-dialog-actions .sidebar-name-dialog-destructive:focus-visible background --danger-soft
 fields.css .settings-switch-thumb, .plugin-ui-checkbox input::after background --gray-0
 image-preview.css .image-preview-overlay background --image-preview-overlay-bg
 image-preview.css .image-preview-status color --image-preview-status-text
@@ -95,8 +62,6 @@ image-preview.css .image-preview-toolbar-button:active:not(:disabled) background
 image-preview.css .image-preview-toolbar-button:focus-visible outline --image-preview-toolbar-text
 image-preview.css .image-preview-toolbar-button:hover:not(:disabled) background --image-preview-toolbar-button-hover
 image-preview.css .image-preview-zoom-readout color --image-preview-zoom-text
-managed-sessions.css .managed-session-result:hover background --ink-overlay-4
-managed-sessions.css .managed-session-view .managed-session-search:has(input:focus-visible) background --ink-overlay-4
 onboarding.css .equipment-binding fill --equipment-binding
 onboarding.css .equipment-bookmark fill --equipment-accent
 onboarding.css .equipment-edge fill --equipment-edge
@@ -148,8 +113,6 @@ side-thread.css .side-thread-panel__resizer:hover::before, .side-thread-panel__r
 side-thread.css .side-thread-panel__resizer:hover::before, .side-thread-panel__resizer:focus-visible::before, .resizing-side-thread .side-thread-panel__resizer::before box-shadow --sidebar-resizer-hover-ring
 sidebar-touch.css @media (pointer: coarse) background --ink-overlay-8
 sidebar.css .app-shell.compact-navigation.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing) .sidebar border-right --sidebar-drawer-edge
-sidebar.css .collaboration-contact-row:hover, .collaboration-contact-row:focus-visible background --ink-overlay-4
-sidebar.css .collaboration-sidebar-footer-action:hover, .collaboration-sidebar-footer-action:focus-visible background --ink-overlay-4
 sidebar.css .project-row .project-row-loading border-top-color --sidebar-project-loading-notch
 sidebar.css .project-row.pending-switch background --sidebar-project-row-pending-bg
 sidebar.css .sidebar-collapsed.sidebar-drawer-open :is(.sidebar, .settings-sidebar), .sidebar-collapsed.sidebar-drawer-closing :is(.sidebar, .settings-sidebar), .sidebar-drawer-docking :is(.sidebar, .settings-sidebar), .sidebar-collapsed:not(.resizing-sidebar) :is(.sidebar, .settings-sidebar):focus-within border-right-color --sidebar-drawer-edge
@@ -160,8 +123,8 @@ sidebar.css .sidebar-drawer-docking :is(.sidebar, .settings-sidebar) box-shadow 
 sidebar.css .sidebar-drawer-docking :is(.sidebar, .settings-sidebar) border-right-color --sidebar-material-edge
 sidebar.css .sidebar-drawer-docking :is(.sidebar, .settings-sidebar) box-shadow --sidebar-material-inner-edge
 sidebar.css .sidebar-functional-action:hover, .sidebar-functional-action:focus-visible, .sidebar-functional-action[aria-expanded="true"] background --sidebar-row-icon-hover-bg-default
-sidebar.css .sidebar-resizer:hover::before, .sidebar-resizer:focus-visible::before, .resizing-sidebar .sidebar-resizer::before, .channel-inspector-resizer:hover::before, .channel-inspector-resizer:focus-visible::before, .channel-inspector-resizer[data-resizing]::before background --sidebar-resizer-hover-bg
-sidebar.css .sidebar-resizer:hover::before, .sidebar-resizer:focus-visible::before, .resizing-sidebar .sidebar-resizer::before, .channel-inspector-resizer:hover::before, .channel-inspector-resizer:focus-visible::before, .channel-inspector-resizer[data-resizing]::before box-shadow --sidebar-resizer-hover-ring
+sidebar.css .sidebar-resizer:hover::before, .sidebar-resizer:focus-visible::before, .resizing-sidebar .sidebar-resizer::before background --sidebar-resizer-hover-bg
+sidebar.css .sidebar-resizer:hover::before, .sidebar-resizer:focus-visible::before, .resizing-sidebar .sidebar-resizer::before box-shadow --sidebar-resizer-hover-ring
 sidebar.css .sidebar-row-icon-button:hover, .sidebar-row-icon-button:focus-visible background --sidebar-row-icon-hover-bg
 sidebar.css .sidebar-section-drag-overlay box-shadow --sidebar-glass-overlay-bright
 sidebar.css .sidebar-settings-button:hover, .sidebar-settings-button[aria-expanded="true"] box-shadow --sidebar-settings-button-hover-ring
@@ -188,8 +151,6 @@ sidebar.css .thread-row:hover::before background --sidebar-session-status-bg
 sidebar.css .thread-row.active::before background --sidebar-session-status-bg
 sidebar.css .workspace-right-panel-resizer:hover::before, .workspace-right-panel-resizer:focus-visible::before, .resizing-right-panel .workspace-right-panel-resizer::before background --sidebar-resizer-hover-bg
 sidebar.css .workspace-right-panel-resizer:hover::before, .workspace-right-panel-resizer:focus-visible::before, .resizing-right-panel .workspace-right-panel-resizer::before box-shadow --sidebar-resizer-hover-ring
-task-board.css .task-board-row-state background --ink-overlay-4
-task-board.css .task-board-row:hover background --ink-overlay-4
 turns.css .artifact-preview-frame, .artifact-preview-body > .workspace-file-pdf-preview background --artifact-preview-frame-bg
 turns.css .artifact-preview-overlay background --artifact-preview-overlay-bg
 turns.css .artifact-preview-shell border --artifact-preview-shell-border
@@ -242,18 +203,9 @@ workbench.css .plugin-ui-button[data-wuu-variant="primary"]:not(:disabled):hover
 workspace-pdf-preview.css .pdfViewer .page background-color --pdf-page-bg
 workspace.css .conversation-split-resizer:hover::before, .conversation-split-resizer:focus-visible::before, .resizing-split .conversation-split-resizer::before background --sidebar-resizer-hover-bg
 workspace.css .conversation-split-resizer:hover::before, .conversation-split-resizer:focus-visible::before, .resizing-split .conversation-split-resizer::before box-shadow --sidebar-resizer-hover-ring
-workspace.css .extension-status-danger background --danger-soft
-workspace.css .extension-status-good background --success-soft
-workspace.css .extension-status-warning background --warning-soft
 workspace.css .plugin-contribution-conflict, .plugin-contribution-warning background --warning-soft
 workspace.css .plugin-detail-notice background --warning-soft
 workspace.css .plugin-detail-notice.is-error background --danger-soft
-workspace.css .plugin-detail-status.extension-status-danger background --danger-soft
-workspace.css .plugin-detail-status.extension-status-good background --success-soft
-workspace.css .plugin-detail-status.extension-status-warning background --warning-soft
-workspace.css .skill-row-button:hover background --ink-overlay-6
-workspace.css .skill-row-tag background --skill-tag-bundled-bg
-workspace.css .skill-row-tag color --skill-tag-bundled-fg
 workspace.css .skills-catalog-error background --danger-soft
 workspace.css .split-composer-shell.split-composer-shell-drop-active::after box-shadow --ink-overlay-18
 workspace.css .workspace-browser-error border --danger-border

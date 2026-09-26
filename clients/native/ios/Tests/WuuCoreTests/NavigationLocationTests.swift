@@ -2,12 +2,15 @@ import XCTest
 @testable import WuuCore
 
 final class NavigationLocationTests: XCTestCase {
-    func testColdBookmarkRestoresBothModesOnlyForAuthorizedHostAndLogin() throws {
+    func testColdBookmarkRestoresOnlyForAuthorizedHostAndLogin() throws {
         let account = AccountSession(server: "https://example.test", token: "token", username: "alice", pub: "phone", deviceSeed: "seed")
         let devices = [AccountDevice(pub: "host", name: "Computer", role: "host", online: false)]
-        for mode in ["collaboration", "harness"] {
-            let location = try NavigationLocation(account: account, host: "host", workspace: "/work", thread: "thread", room: "room", mode: mode)
-            let disk = try JSONDecoder().decode(NavigationLocation.self, from: JSONEncoder().encode(location))
+        let location = try NavigationLocation(account: account, host: "host", workspace: "/work", thread: "thread")
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(location)) as? [String: Any])
+        // Bookmarks saved before Collaboration was removed also carry its room and tab.
+        legacy["room"] = "room"; legacy["mode"] = "collaboration"
+        for data in [try JSONEncoder().encode(location), try JSONSerialization.data(withJSONObject: legacy)] {
+            let disk = try JSONDecoder().decode(NavigationLocation.self, from: data)
             XCTAssertEqual(try disk.restore(account: account, devices: devices), location)
             XCTAssertNil(try disk.restore(account: account, devices: []))
             XCTAssertNil(try disk.restore(account: account, devices: [AccountDevice(pub: "host", name: "Phone", role: "phone", online: true)]))

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
-	"github.com/blueberrycongee/wuu/internal/channels"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -711,39 +710,6 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 			}
 		}
 	}
-	if s.channelService != nil {
-		binding, err := s.channelService.LookupCollaborationSession(ctx, params.SessionID)
-		if err == nil && binding.Primary {
-			if strings.TrimSpace(params.ReplyToTurnID) == "" || msg.RelatedSessionID == "" {
-				return pluginhost.SessionSendResult{}, errors.New("a collaboration result requires reply_to_turn_id and its related child session")
-			}
-			child, found, err := session.Find(s.rt.SessionDir, msg.RelatedSessionID)
-			if err != nil {
-				return pluginhost.SessionSendResult{}, err
-			}
-			if !found || child.Owner != owner || child.ParentID != params.SessionID {
-				return pluginhost.SessionSendResult{}, errors.New("result source must be the plugin's child of this conversation")
-			}
-			body := params.Input.Prompt
-			for _, block := range params.Input.ContextBlocks {
-				body += "\n\n" + block.Content
-			}
-			delivery, err := s.channelService.EnqueueSessionResult(ctx, channels.SessionResultEnqueueParams{
-				ParentSessionRef: params.SessionID, ParentTurnID: params.ReplyToTurnID, SourceSessionRef: child.ID,
-				RequestID: clientID, Body: body,
-			})
-			if err != nil {
-				return pluginhost.SessionSendResult{}, err
-			}
-			if delivery.Discarded {
-				return pluginhost.SessionSendResult{State: pluginhost.TurnLifecycleDiscarded, SessionID: params.SessionID}, nil
-			}
-			return pluginhost.SessionSendResult{State: pluginhost.TurnLifecycleQueued, SessionID: params.SessionID, QueueID: delivery.Message.ID}, nil
-		}
-		if err != nil && !errors.Is(err, channels.ErrNotFound) {
-			return pluginhost.SessionSendResult{}, err
-		}
-	}
 	permissions, err := s.resolveThreadTurnPermissions(th, nil)
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
@@ -792,10 +758,10 @@ func (s *Server) createPluginSessionThread(owner string, params pluginhost.Sessi
 }
 
 func (s *Server) createHostSessionThread(owner, source, id string, params pluginhost.SessionCreateParams) (*threadState, error) {
-	return s.createHostSessionThreadAtRevision(owner, source, id, params, "")
+	return s.createHostSessionThreadAtRevision(owner, source, id, params, "", "")
 }
 
-func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, params pluginhost.SessionCreateParams, baseRevision string) (*threadState, error) {
+func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, params pluginhost.SessionCreateParams, baseRevision, projectRole string) (*threadState, error) {
 	if s.rt == nil || s.rt.StreamRunner == nil {
 		return nil, errors.New("runtime session is required")
 	}
@@ -876,10 +842,7 @@ func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, par
 	}
 	if params.ContextSource != pluginhost.SessionContextSourceSeed {
 		if prompt := strings.TrimSpace(s.rt.StreamRunner.SystemPrompt); prompt != "" && len(history) == 0 {
-			history = append(history, providers.ChatMessage{Role: "system", Content: prompt})
-		}
-		if params.Instructions != "" {
-			history = applyPluginSessionInstructions(history, params.Instructions)
+			history = append(history, providers.ChatMessage{Role: "system", Content: sessionSystemPrompt(prompt, params.Instructions)})
 		}
 	}
 	toolPolicyJSON := ""
@@ -921,7 +884,7 @@ func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, par
 		WorktreePath: worktree.Path, WorktreeBaseHEAD: worktree.BaseHEAD, WorktreeBaseRepo: worktree.BaseRepo,
 		Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant,
 		Effort: selection.Effort, Speed: selection.Speed, PermissionMode: selection.PermissionMode, ApproveForMe: selection.ApproveForMe,
-		Instructions: params.Instructions, ToolPolicyJSON: toolPolicyJSON,
+		ProjectRole: projectRole, Instructions: params.Instructions, ToolPolicyJSON: toolPolicyJSON,
 	}
 	var records []session.HistoryRecord
 	artifactStateDir := ""
@@ -983,6 +946,11 @@ func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, par
 	th.Title = params.Name
 	th.Owner = owner
 	th.Visibility = params.Visibility
+	th.Instructions = effectiveSessionInstructions(initial)
+	if source == projectSessionSource {
+		th.ProjectID = params.ParentSessionID
+		th.ProjectRole = projectRoleForSession(initial)
+	}
 	// Session lineage stays in persisted metadata for management and cancellation.
 	// Thread.ParentID identifies internal agent workers, not ordinary sessions
 	// created from another session; keep this consistent with applySessionMetadata.
@@ -1122,18 +1090,15 @@ func normalizeSessionToolPolicy(policy pluginhost.SessionToolPolicy) (pluginhost
 	return pluginhost.SessionToolPolicy{Allow: allow, Deny: deny}, nil
 }
 
-func applyPluginSessionInstructions(history []providers.ChatMessage, instructions string) []providers.ChatMessage {
+// sessionSystemPrompt appends create-time session instructions to the runtime
+// prompt. The runtime prompt is configuration refreshed on every turn and
+// reload; the instructions are session state that must survive each refresh.
+func sessionSystemPrompt(prompt, instructions string) string {
 	instructions = strings.TrimSpace(instructions)
 	if instructions == "" {
-		return history
+		return prompt
 	}
-	for index := range history {
-		if strings.EqualFold(strings.TrimSpace(history[index].Role), "system") {
-			history[index].Content = strings.TrimSpace(history[index].Content) + "\n\n# Session instructions\n\n" + instructions
-			return history
-		}
-	}
-	return append([]providers.ChatMessage{{Role: "system", Content: "# Session instructions\n\n" + instructions}}, history...)
+	return strings.TrimSpace(prompt) + "\n\n# Session instructions\n\n" + instructions
 }
 
 func pluginTurnRequestContext(input []pluginhost.SessionContextBlock) ([]agent.ContextSegment, error) {

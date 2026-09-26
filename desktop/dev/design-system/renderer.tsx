@@ -11,7 +11,6 @@ import { SettingsRow } from "../../src/renderer/SettingsRow";
 import { TurnEditSummaryCard } from "../../src/renderer/TurnEditSummaryCard";
 import { Modal } from "../../src/renderer/Modal";
 import { createPluginUIKit } from "../../src/shared/workbench";
-import { RichContent } from "../../src/renderer/RichContent";
 import { ImagePreviewProvider } from "../../src/renderer/ImagePreview";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
@@ -46,7 +45,7 @@ function Fixture() {
   const [density, setDensity] = useState(Number(params.get("density")) || 1);
   const [sync, setSync] = useState(true);
   const [dialog, setDialog] = useState(false);
-  const [name, setName] = useState("项目笔记");
+  const [name, setName] = useState("工作区笔记");
   const [value, setValue] = useState("local");
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
   useEffect(() => { applyMessageFlowFontSize(size); }, [size]);
@@ -58,7 +57,7 @@ function Fixture() {
       <label>主题<select value={theme} onChange={e => setTheme(e.target.value)}><option value="light">亮色</option><option value="dark">暗色</option></select></label>
       <label>字号<select value={size} onChange={e => setSize(Number(e.target.value))}>{[13, 14, 20].map(n => <option key={n} value={n}>{n}px</option>)}</select></label>
       <label>密度<select value={density} onChange={e => setDensity(Number(e.target.value))}><option value={1}>标准</option><option value={0.75}>紧凑</option><option value={1.25}>宽松</option></select></label>
-      <label>页面<select value={surface} onChange={e => setSurface(e.target.value)}><option value="controls">设置与菜单</option><option value="conversation">对话与输入</option><option value="messages">各模式消息</option><option value="extension">插件控件</option><option value="spacing">间距与文件变更</option></select></label>
+      <label>页面<select value={surface} onChange={e => setSurface(e.target.value)}><option value="controls">设置与菜单</option><option value="conversation">对话与输入</option><option value="extension">插件控件</option><option value="spacing">间距与文件变更</option></select></label>
     </header>
     {surface === "spacing" ? <SpacingExample theme={theme} size={size} density={density} /> : surface === "controls" ? <main className="settings-page review-settings">
       <header className="settings-page-header"><h1 className="settings-page-title">常规</h1></header>
@@ -67,14 +66,9 @@ function Fixture() {
         <SettingsRow title="名称" description="输入、菜单和按钮应在同一行保持一致的高度。"><input className="settings-input" aria-label="名称" placeholder="输入名称" /></SettingsRow>
         <SettingsRow title="自动同步"><button className="settings-switch" role="switch" aria-checked={sync} aria-label="自动同步" onClick={() => setSync(!sync)}><span className="settings-switch-thumb" /></button></SettingsRow>
       </div></section>
-      <section className="settings-section"><h2 className="settings-section-title">共享表单控件</h2><div className="review-controls"><input className="settings-input" aria-label="项目名称" placeholder="项目名称" /><SelectMenu ariaLabel="普通选择器" value={value} onChange={setValue} options={options} /><button className="settings-button">取消</button><button className="settings-button settings-button-primary">保存</button><button className="settings-button" disabled>不可用</button></div></section>
-      <section className="settings-section"><h2 className="settings-section-title">搜索与键盘操作</h2><label className="menu-search"><Search className="icon"/><input aria-label="搜索示例" placeholder="搜索项目、会话或模型" /></label></section>
+      <section className="settings-section"><h2 className="settings-section-title">共享表单控件</h2><div className="review-controls"><input className="settings-input" aria-label="工作区名称" placeholder="工作区名称" /><SelectMenu ariaLabel="普通选择器" value={value} onChange={setValue} options={options} /><button className="settings-button">取消</button><button className="settings-button settings-button-primary">保存</button><button className="settings-button" disabled>不可用</button></div></section>
+      <section className="settings-section"><h2 className="settings-section-title">搜索与键盘操作</h2><label className="menu-search"><Search className="icon"/><input aria-label="搜索示例" placeholder="搜索工作区、会话或模型" /></label></section>
       <section className="settings-section"><h2 className="settings-section-title">说明与反馈</h2><p className="settings-section-description">次要说明需要清楚可读；焦点、悬停和选中应能区分。这里的内容只在验收页展示，不会写入设置或发送消息。</p><div className="review-controls"><button className="settings-button settings-button-danger">移除</button><button className="settings-button" onClick={() => setDialog(true)}>重命名示例</button><button className="icon-button" aria-label="新建"><Plus className="icon" /></button></div></section>
-    </main> : surface === "messages" ? <main className="review-page review-messages">
-      <h2>同一消息在三种视图中的配色</h2>
-      <section><h3>主对话</h3><article className="message user-message"><RichContent text={answer}/></article></section>
-      <section><h3>聊天</h3><article className="chat-bubble chat-bubble--user"><RichContent text={answer}/></article></section>
-      <section><h3>协作</h3><article className="channel-message own"><div className="channel-message-bubble"><RichContent text={answer}/></div></article></section>
     </main> : surface === "extension" ? <main className="settings-page review-settings">
       <header className="settings-page-header"><h1 className="settings-page-title">插件设置</h1></header>
       <section className="settings-section"><h2 className="settings-section-title">工作笔记</h2><div className="settings-group">
@@ -83,7 +77,7 @@ function Fixture() {
         <SettingsRow title="附加说明" block><textarea className="plugin-ui-textarea" aria-label="附加说明" placeholder="输入说明" /></SettingsRow>
       </div></section><section className="settings-section"><div className="review-controls"><button className="plugin-ui-button">取消</button><button className="plugin-ui-button" data-wuu-variant="primary">保存</button><button className="plugin-ui-button" disabled>不可用</button></div></section>
     </main> : <ConversationExample/>}
-    <SidebarNameDialog open={dialog} title={name} onTitleChange={setName} onSubmit={() => setDialog(false)} onClose={() => setDialog(false)} dialogTitle="重命名项目" dialogTitleId="review-dialog-title" fieldLabel="项目名称" fieldAriaLabel="弹层项目名称" placeholder="项目名称" icon={Folder} submitLabel="保存" cancelLabel="取消"/>
+    <SidebarNameDialog open={dialog} title={name} onTitleChange={setName} onSubmit={() => setDialog(false)} onClose={() => setDialog(false)} dialogTitle="重命名工作区" dialogTitleId="review-dialog-title" fieldLabel="工作区名称" fieldAriaLabel="弹层工作区名称" placeholder="工作区名称" icon={Folder} submitLabel="保存" cancelLabel="取消"/>
 
   </ImagePreviewProvider></WuuUIRoot>;
 }

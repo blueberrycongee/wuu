@@ -48,35 +48,24 @@ public func readMessageAttachment(_ attachment: JSONValue, scopeID: String, mess
     if ref.hasPrefix("markdown:") {
         guard ref.utf8.count < 8192 else { throw NativeError.invalid("无效的图片引用") }
         let parts = try JSONDecoder().decode([String].self, from: Data(base64URL: String(ref.dropFirst(9))))
-        guard parts.count == 5, ["thread", "channel"].contains(parts[0]), parts[1] == scopeID,
-              (parts[0] == "thread" ? parts[2] + ":" + parts[3] : parts[3]) == messageID else { throw NativeError.invalid("图片不属于当前消息") }
-        var params: JSONValue = ["kind": .string(parts[0]), "scope_id": .string(scopeID), "turn_id": .string(parts[2]),
-            "message_id": .string(parts[3]), "source": .string(parts[4]), "preview": .bool(preview)]
-        if parts[0] == "channel" {
-            guard let seq = Double(parts[2]), case .object(var fields) = params else { throw NativeError.invalid("无效的图片引用") }
-            fields["seq"] = .number(seq); params = .object(fields)
+        guard parts.count == 5, parts[0] == "thread", parts[1] == scopeID, parts[2] + ":" + parts[3] == messageID else {
+            throw NativeError.invalid("图片不属于当前消息")
         }
+        let params: JSONValue = ["kind": .string(parts[0]), "scope_id": .string(scopeID), "turn_id": .string(parts[2]),
+            "message_id": .string(parts[3]), "source": .string(parts[4]), "preview": .bool(preview)]
         encoded = try await readAttachmentChunks("message/image/read", params: params, mediaType: preview ? "image/jpeg" : media,
             limit: preview ? 128 * 1024 : 16 * 1024 * 1024, verifyDigest: !preview, call: call)
     } else if !ref.isEmpty {
-        guard ref.utf8.count < 8192, ref.hasPrefix("thread:") || ref.hasPrefix("channel:") else { throw NativeError.invalid("无效的附件引用") }
-        let channel = ref.hasPrefix("channel:")
-        let parts = try JSONDecoder().decode(JSONValue.self, from: Data(base64URL: String(ref.dropFirst(channel ? 8 : 7)))).array
-        guard (channel ? parts.count == 6 : (5...6).contains(parts.count)), parts[0].string == scopeID,
+        guard ref.utf8.count < 8192, ref.hasPrefix("thread:") else { throw NativeError.invalid("无效的附件引用") }
+        let parts = try JSONDecoder().decode(JSONValue.self, from: Data(base64URL: String(ref.dropFirst(7)))).array
+        guard (5...6).contains(parts.count), parts[0].string == scopeID,
               let index = parts[3].number, index >= 0, index.rounded() == index,
-              let digest = parts[4].string, digest.count == 64 else { throw NativeError.invalid("附件不属于当前消息") }
-        var params: [String: JSONValue]
-        if channel {
-            guard parts[1].string == messageID, let seq = parts[2].number, seq > 0, seq.rounded() == seq,
-                  let field = parts[5].string, ["images", "files"].contains(field) else { throw NativeError.invalid("附件不属于当前消息") }
-            params = ["room_id": .string(scopeID), "message_id": .string(messageID), "seq": .number(seq), "field": .string(field)]
-        } else {
-            guard let turn = parts[1].string, let item = parts[2].string, turn + ":" + item == messageID,
-                  parts.count == 5 || parts[5].string == "result" else { throw NativeError.invalid("附件不属于当前消息") }
-            params = ["thread_id": .string(scopeID), "turn_id": .string(turn), "item_id": .string(item), "kind": .string(parts.count == 6 ? "result" : "")]
-        }
-        params["index"] = .number(index); params["sha256"] = .string(digest); params["preview"] = .bool(preview)
-        encoded = try await readAttachmentChunks(channel ? "channel/attachment/read" : "thread/attachment/read", params: .object(params),
+              let digest = parts[4].string, digest.count == 64,
+              let turn = parts[1].string, let item = parts[2].string, turn + ":" + item == messageID,
+              parts.count == 5 || parts[5].string == "result" else { throw NativeError.invalid("附件不属于当前消息") }
+        let params: JSONValue = ["thread_id": .string(scopeID), "turn_id": .string(turn), "item_id": .string(item),
+            "kind": .string(parts.count == 6 ? "result" : ""), "index": .number(index), "sha256": .string(digest), "preview": .bool(preview)]
+        encoded = try await readAttachmentChunks("thread/attachment/read", params: params,
             mediaType: preview ? "image/jpeg" : media, limit: preview ? 128 * 1024 : 16 * 1024 * 1024, call: call)
         if !preview {
             guard SHA256.hash(data: Data((media + "\0" + encoded).utf8)).map({ String(format: "%02x", $0) }).joined() == digest else { throw NativeError.invalid("附件内容校验失败") }

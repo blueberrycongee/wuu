@@ -621,7 +621,7 @@ function pluginSourceLabel(record: ExtensionInventoryRecord, t: ReturnType<typeo
   if (record.provenance.official) return t("skills.pluginSourceOfficial");
   switch (record.package_source) {
     case "user": return t("skills.pluginSourceUser");
-    case "project": return t("skills.pluginSourceProject");
+    case "project": return t("skills.pluginSourceWorkspace");
     case "dev": return t("skills.pluginSourceDev");
     case "bundled": return t("skills.pluginSourceBundled");
     default: return t("skills.pluginSourceOther");
@@ -632,7 +632,7 @@ function pluginGrantScopeLabel(scope: string | undefined, t: ReturnType<typeof u
   switch (scope) {
     case "action": return t("skills.pluginGrantScopeAction");
     case "session": return t("skills.pluginGrantScopeSession");
-    case "project": return t("skills.pluginGrantScopeProject");
+    case "project": return t("skills.pluginGrantScopeWorkspace");
     case "user": return t("skills.pluginGrantScopeUser");
     default: return undefined;
   }

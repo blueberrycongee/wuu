@@ -44,10 +44,6 @@ A fork copies history through the selected message. It does **not** restore file
 
 Use `/side` for questions about progress, output, or alternatives without adding those messages to the main conversation. Availability depends on the engine. For a separate task you want to develop over time, start another conversation or fork instead.
 
-## Continue delegated work yourself
-
-[Collaboration](collaboration.md) can open ordinary work conversations. Viewing one does not change its control state. Sending your own message takes control and pauses Collaboration's automatic instructions and follow-up for that session.
-
 ## Use saved sessions from the CLI
 
 ```bash

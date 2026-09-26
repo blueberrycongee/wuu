@@ -83,7 +83,7 @@ import { ComposerPluginToolbar } from "./plugins/ComposerPluginToolbar";
 import {
   AccessMenu,
   ComposerPlusButton,
-  ProjectPickerMenu,
+  WorkspacePickerMenu,
   RuntimePicker,
   RuntimeModelMenu,
   runtimePanelWidth,
@@ -127,11 +127,11 @@ export { permissionModeFromSummary, permissionModeHasAdvancedOverrides } from ".
 
 export function Composer({
   variant = "dock",
-  canSelectProject = variant === "hero",
-  projectFolderActions = true,
+  canSelectWorkspace = variant === "hero",
   mainConversation = false,
   topAccessory,
-  leadingActions,
+  statusAccessory,
+  permissionLocked = false,
   containerRef,
   prompt: committedPrompt,
   promptRevision = 0,
@@ -157,7 +157,7 @@ export function Composer({
   onSelectGitBranch,
   onCreateGitBranch,
   activeContext,
-  activeProject,
+  activeWorkspace,
   compactDisabledReason,
   sideThreadDisabledReason,
   handoffDisabledReason,
@@ -168,8 +168,8 @@ export function Composer({
   accessMenuOpen,
   menuRef,
   accessMenuRef,
-  projectFilter,
-  setProjectFilter,
+  workspaceFilter,
+  setWorkspaceFilter,
   onToggleMenu,
   onToggleAccessMenu,
   onToggleCodexRuntimeMenu,
@@ -188,10 +188,10 @@ export function Composer({
   onSelectPermissionMode,
   onOpenSettings,
   onOpenSkillsCatalog,
-  onSelectProject,
+  onSelectWorkspace,
   onSelectNoProject,
-  onCreateProject,
-  onOpenProject,
+  onCreateWorkspace,
+  onOpenWorkspace,
   onStartNewThread,
   onHandoffSession,
   onOpenSideThread,
@@ -220,24 +220,21 @@ export function Composer({
   queryHistory = [],
   requestedHandoffIntent,
   hideRuntimeControls = false,
-  hidePlusButton = false,
-  hidePermissionControl = false,
   hideExpandButton = false,
   placeholder,
-  maxLength,
   textOnly = false,
-  slashCommandsEnabled = true,
   slashCommandsOverride,
   onResetSideThread,
   pluginHost = desktopPluginHost,
 }: {
   variant?: ComposerVariant;
-  canSelectProject?: boolean;
-  /** Surfaces bound to registered projects hide the folder and no-project actions. */
-  projectFolderActions?: boolean;
+  canSelectWorkspace?: boolean;
   mainConversation?: boolean;
   topAccessory?: ReactNode;
-  leadingActions?: ReactNode;
+  // A status row above the composer, such as a project's running work.
+  statusAccessory?: ReactNode;
+  // The conversation's permission mode cannot change, as for a project coordinator.
+  permissionLocked?: boolean;
   containerRef?: Ref<HTMLElement>;
   prompt: string;
   // Changes only for programmatic clear/restore operations. This lets the
@@ -263,7 +260,7 @@ export function Composer({
   onCreateGitBranch?: (branch: string) => Promise<void>;
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
-  activeProject?: DesktopProject;
+  activeWorkspace?: DesktopProject;
   compactDisabledReason?: string;
   sideThreadDisabledReason?: string;
   handoffDisabledReason?: string;
@@ -275,8 +272,8 @@ export function Composer({
   branchMenuOpen: boolean;
   menuRef: RefObject<HTMLDivElement | null>;
   accessMenuRef: RefObject<HTMLDivElement | null>;
-  projectFilter: string;
-  setProjectFilter: (value: string) => void;
+  workspaceFilter: string;
+  setWorkspaceFilter: (value: string) => void;
   onToggleMenu: () => void;
   onToggleAccessMenu: () => void;
   onToggleCodexRuntimeMenu: (menu: Exclude<CodexRuntimeMenu, null>) => void;
@@ -296,11 +293,11 @@ export function Composer({
   onToggleBranchMenu: () => void;
   onOpenSettings: () => void;
   onOpenSkillsCatalog: () => void;
-  onSelectProject: (id: string) => void;
+  onSelectWorkspace: (id: string) => void;
   onSelectNoProject: () => void;
   onSelectGitBranch: (branch: string) => void | Promise<void>;
-  onCreateProject: () => void;
-  onOpenProject: () => void;
+  onCreateWorkspace: () => void;
+  onOpenWorkspace: () => void;
   onStartNewThread: () => void;
   onHandoffSession?: (input: { provider: string; model: string; effort?: string; intent: string }) => void;
   // Open or focus the side thread attached to the active main conversation.
@@ -336,8 +333,6 @@ export function Composer({
   // Suppress the model/context/token runtime chrome on the bar's right edge.
   // Side-thread composers reuse this input without a separate runtime picker.
   hideRuntimeControls?: boolean;
-  hidePlusButton?: boolean;
-  hidePermissionControl?: boolean;
   hideExpandButton?: boolean;
   // A shared composer can be embedded in a conversation surface whose
   // transport accepts text only. The editor, keyboard handling, expansion,
@@ -345,11 +340,7 @@ export function Composer({
   // unsupported attachment, slash-command, and permission affordances
   // are removed.
   textOnly?: boolean;
-  // Some shared composer surfaces accept attachments and rich input but do
-  // not own the main-conversation runtime commands (for example Channels).
-  slashCommandsEnabled?: boolean;
   placeholder?: string;
-  maxLength?: number;
   // Replaces the built-in main-conversation command list with a
   // surface-specific one (e.g. the side chat's /reset). The menu, keyboard
   // handling, and action dispatch stay the canonical Composer machinery, so
@@ -539,7 +530,7 @@ export function Composer({
       : hasAttachments
         ? t("composer.addDescription")
         : t("composer.placeholder"));
-  const slashDraft = slashCommandsEnabled && !(textOnly && !slashCommandsOverride)
+  const slashDraft = !(textOnly && !slashCommandsOverride)
     ? parseComposerSlashDraft(prompt)
     : undefined;
   const handoffCatalog = useMemo<HandoffCatalog>(() => ({
@@ -623,12 +614,12 @@ export function Composer({
     ? t("runtime.permission.approveForMe")
     : permissionOption.chipLabel;
   const PermissionChipIcon = approveForMeOn ? ShieldCheck : permissionOption.icon;
-  const projectPillLabel = heroProjectPillLabel(activeContext, activeProject);
-  const projectPillTitle =
-    activeContext?.kind === "project" && activeProject?.path
-      ? activeProject.path
-      : projectPillLabel;
-  const ProjectPillIcon =
+  const workspacePillLabel = heroWorkspacePillLabel(activeContext, activeWorkspace);
+  const workspacePillTitle =
+    activeContext?.kind === "project" && activeWorkspace?.path
+      ? activeWorkspace.path
+      : workspacePillLabel;
+  const WorkspacePillIcon =
     activeContext?.kind === "no_project"
       ? FolderX
       : activeContext?.kind === "project"
@@ -659,7 +650,7 @@ export function Composer({
   }, [visibleSlashCommands]);
 
   useEffect(() => {
-    if (!slashCommandsEnabled || !slashRuntimeReady || readOnly || textOnly) {
+    if (!slashRuntimeReady || readOnly || textOnly) {
       setSlashSkills([]);
       return;
     }
@@ -681,7 +672,7 @@ export function Composer({
         }
       }
     }
-  }, [readOnly, slashCommandsEnabled, slashRuntimeReady, slashSkillContextKey, slashSkillCountKey, textOnly]);
+  }, [readOnly, slashRuntimeReady, slashSkillContextKey, slashSkillCountKey, textOnly]);
 
   useEffect(() => {
     if (readOnly) {
@@ -733,7 +724,7 @@ export function Composer({
       return;
     }
     resetQueryHistoryNavigation();
-    const submitSlashDraft = slashCommandsEnabled && !(textOnly && !slashCommandsOverride)
+    const submitSlashDraft = !(textOnly && !slashCommandsOverride)
       ? parseComposerSlashDraft(promptOverride)
       : undefined;
     const actionCommand = submitSlashDraft
@@ -918,10 +909,10 @@ export function Composer({
       case "open-browser":
         onOpenWorkspaceTool("browser");
         break;
-      case "open-project":
-        onOpenProject();
+      case "open-workspace":
+        onOpenWorkspace();
         break;
-      case "no-project":
+      case "no-workspace":
         onSelectNoProject();
         break;
       case "context":
@@ -1066,7 +1057,10 @@ export function Composer({
 
   const content = (
     <div className={`composer-stack${isComposerExpanded ? " is-expanded" : ""}`} data-wuu-component="composer">
-      <MemoizedComposerPluginSlot host={pluginHost} id="composer.above" context={pluginSlotContext} />
+      <div className="composer-above-input">
+        {statusAccessory ? <div className="composer-status-accessory">{statusAccessory}</div> : null}
+        <MemoizedComposerPluginSlot host={pluginHost} id="composer.above" context={pluginSlotContext} />
+      </div>
       <div className="composer-shell">
         {slashMenuOpen ? (
           <FloatingMenuPortal
@@ -1152,26 +1146,26 @@ export function Composer({
         />
         <div className="composer-frame-shell">
           <ComposerFeedback text={statusText} liveProgress={statusIsLiveProgress} />
-          {canSelectProject ? (
+          {canSelectWorkspace ? (
             <div className="composer-workspace-bar" ref={menuRef}>
               <div className="hero-project-pill-anchor composer-project-control">
                 <Tooltip
-                  content={projectPillTitle}
-                  disabled={projectPillTitle === projectPillLabel}
+                  content={workspacePillTitle}
+                  disabled={workspacePillTitle === workspacePillLabel}
                 >
                   <button
                     className="hero-project-pill"
                     type="button"
                     aria-haspopup="menu"
                     aria-expanded={menuOpen}
-                    aria-label={t("composer.switchProject", { project: projectPillLabel })}
+                    aria-label={t("composer.switchWorkspace", { workspace: workspacePillLabel })}
                     onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
                     onClick={onToggleMenu}
                   >
                     <span className="hero-project-pill-icon" aria-hidden="true">
-                      <ProjectPillIcon />
+                      <WorkspacePillIcon />
                     </span>
-                    <span className="hero-project-pill-text">{projectPillLabel}</span>
+                    <span className="hero-project-pill-text">{workspacePillLabel}</span>
                   </button>
                 </Tooltip>
                 {menuOpen ? (
@@ -1181,18 +1175,17 @@ export function Composer({
                     placement="above"
                     align="left"
                     width={COMPOSER_PROJECT_MENU_WIDTH}
-                    mobileSheet={{ label: t("composer.switchProject", { project: projectPillLabel }), onClose: onToggleMenu }}
+                    mobileSheet={{ label: t("composer.switchWorkspace", { workspace: workspacePillLabel }), onClose: onToggleMenu }}
                   >
-                    <ProjectPickerMenu
+                    <WorkspacePickerMenu
                       projects={projects}
                       activeContext={activeContext}
-                      query={projectFilter}
-                      setQuery={setProjectFilter}
-                      onSelectProject={onSelectProject}
+                      query={workspaceFilter}
+                      setQuery={setWorkspaceFilter}
+                      onSelectWorkspace={onSelectWorkspace}
                       onSelectNoProject={onSelectNoProject}
-                      onCreateProject={onCreateProject}
-                      onOpenProject={onOpenProject}
-                      folderActions={projectFolderActions}
+                      onCreateWorkspace={onCreateWorkspace}
+                      onOpenWorkspace={onOpenWorkspace}
                     />
                   </FloatingMenuPortal>
                 ) : null}
@@ -1276,7 +1269,6 @@ export function Composer({
               valueRevision={promptRevision}
               submissionClearRevision={submissionClearRevision}
               placeholder={composerPlaceholder}
-              maxLength={maxLength}
               disabled={readOnly}
               ariaControls={slashMenuOpen ? slashMenuID : undefined}
               ariaActiveDescendant={
@@ -1313,8 +1305,7 @@ export function Composer({
               data-wuu-component="composer-toolbar"
             >
               <div className="composer-bar-left">
-                {leadingActions}
-                {!textOnly && !hidePlusButton ? (
+                {!textOnly ? (
                   <ComposerPlusButton
                     variant={variant}
                     disabled={readOnly}
@@ -1333,7 +1324,7 @@ export function Composer({
                     onSelectCommand={(command) => applySlashCommand(command, undefined)}
                   />
                 ) : null}
-                {!textOnly && !hidePermissionControl ? (
+                {!textOnly ? (
                   <div className="permission-menu-anchor" ref={accessMenuRef}>
                     <button
                       className={`permission-chip tone-${permissionOption.tone}`}
@@ -1341,7 +1332,7 @@ export function Composer({
                       aria-haspopup="menu"
                       aria-expanded={accessMenuOpen}
                       aria-label={t("composer.permissionMode", { mode: permissionChipLabel })}
-                      disabled={!initialized || readOnly || running}
+                      disabled={!initialized || readOnly || running || permissionLocked}
                       onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
                       onClick={onToggleAccessMenu}
                     >
@@ -1558,7 +1549,6 @@ type ComposerTextareaProps = {
   valueRevision: number;
   submissionClearRevision: number;
   placeholder: string;
-  maxLength?: number;
   disabled: boolean;
   ariaControls?: string;
   ariaActiveDescendant?: string;
@@ -1580,7 +1570,6 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
     valueRevision,
     submissionClearRevision,
     placeholder,
-    maxLength,
     disabled,
     ariaControls,
     ariaActiveDescendant,
@@ -1639,7 +1628,6 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
         data-wuu-component="composer-input"
         value={value}
         placeholder={placeholder}
-        maxLength={maxLength}
         disabled={disabled}
         aria-readonly={disabled}
         aria-controls={ariaControls}
@@ -1688,17 +1676,17 @@ function composerRuntimeContextKey(context: RuntimeContext): string {
   return context.kind === "project" ? `project:${context.project_id}` : `no_project:${context.cwd}`;
 }
 
-function heroProjectPillLabel(activeContext: RuntimeContext | undefined, activeProject: DesktopProject | undefined): string {
+function heroWorkspacePillLabel(activeContext: RuntimeContext | undefined, activeWorkspace: DesktopProject | undefined): string {
   if (activeContext?.kind === "project") {
-    return activeProject?.name ?? translate("composer.currentProject");
+    return activeWorkspace?.name ?? translate("composer.currentWorkspace");
   }
   if (activeContext?.kind === "no_project") {
     // The no-project workspace is surfaced everywhere else — sidebar group,
     // session tab — as "对话", so the draft's cwd control matches that name
-    // rather than the older, inconsistent "无项目".
+    // rather than the older, inconsistent "无工作区".
     return translate("composer.conversation");
   }
-  return translate("composer.selectProject");
+  return translate("composer.selectWorkspace");
 }
 
 function exactRunnableSlashCommand(commands: ComposerSlashCommand[], draft: ComposerSlashDraft): ComposerSlashCommand | undefined {

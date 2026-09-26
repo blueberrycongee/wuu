@@ -7,7 +7,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/capability"
-	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/extensions"
@@ -60,28 +59,9 @@ const (
 	MethodConfigCatalogRefresh            = "config/model-catalog/refresh"
 	MethodConfigProviderRemove            = "config/provider/remove"
 	MethodSkillList                       = "skill/list"
-	MethodChannelBootstrap                = "channel/bootstrap"
-	MethodChannelAgentList                = "channel/agent/list"
-	MethodChannelAgentInsights            = "channel/agent/insights"
-	MethodChannelAgentCreate              = "channel/agent/create"
-	MethodChannelAgentUpdate              = "channel/agent/update"
-	MethodChannelAgentDelete              = "channel/agent/delete"
-	MethodChannelAgentStart               = "channel/agent/start"
-	MethodChannelAgentReset               = "channel/agent/reset"
-	MethodChannelAgentCreationResolve     = "channel/agent-creation/resolve"
-	MethodChannelRoomList                 = "channel/room/list"
-	MethodChannelRoomCreate               = "channel/room/create"
-	MethodChannelDirectMessageOpen        = "channel/direct-message/open"
-	MethodChannelRoomUpdate               = "channel/room/update"
-	MethodChannelRoomDelete               = "channel/room/delete"
-	MethodChannelRoomRead                 = "channel/room/read"
-	MethodChannelMessageList              = "channel/message/list"
-	MethodChannelMessageSend              = "channel/message/send"
-	MethodChannelTaskCreate               = "channel/task/create"
-	MethodChannelTaskUpdate               = "channel/task/update"
-	MethodChannelMentionStatus            = "channel/human-mention/status"
-	MethodChannelMentionAck               = "channel/human-mention/ack"
 	MethodThreadStart                     = "thread/start"
+	MethodProjectCandidate                = "project/candidate"
+	MethodProjectSession                  = "project/session"
 	MethodThreadResume                    = "thread/resume"
 	MethodThreadFork                      = "thread/fork"
 	MethodThreadEditMessage               = "thread/edit-message"
@@ -1278,10 +1258,13 @@ type ProviderModelVariantSummary struct {
 }
 
 type ThreadStartParams struct {
-	Speed       string `json:"speed,omitempty"`
-	Ephemeral   bool   `json:"ephemeral,omitempty"`
-	CWD         string `json:"cwd,omitempty"`
-	WorkspaceID string `json:"workspace_id,omitempty"`
+	// Project starts a project coordinator in the workspace instead of an
+	// ordinary conversation.
+	Project     *ThreadProjectParams `json:"project,omitempty"`
+	Speed       string               `json:"speed,omitempty"`
+	Ephemeral   bool                 `json:"ephemeral,omitempty"`
+	CWD         string               `json:"cwd,omitempty"`
+	WorkspaceID string               `json:"workspace_id,omitempty"`
 	// Engine selects the agent engine the thread is bound to. Empty is the
 	// settings default engine (or the built-in "wuu" engine); the binding is
 	// fixed at creation.
@@ -1402,6 +1385,56 @@ type EngineUpdateParams = config.EnginesSettingsUpdate
 
 type ThreadStartResult struct {
 	Thread Thread `json:"thread"`
+}
+
+type ThreadProjectParams struct {
+	Name string `json:"name"`
+}
+
+// ProjectCandidateParams lists a project's or a managed session's candidates,
+// or reads, applies, discards or records the publication of one candidate
+// named by session and turn. An extension publishes the candidate; publish
+// records the decision and the URL it returned.
+type ProjectCandidateParams struct {
+	ProjectID string `json:"project_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	TurnID    string `json:"turn_id,omitempty"`
+	Action    string `json:"action"`
+	URL       string `json:"url,omitempty"`
+}
+
+// ProjectCandidate is a managed session's frozen change at the end of a turn:
+// every change of the session not yet applied or published. An empty
+// disposition awaits the user's decision; a newer turn supersedes it.
+type ProjectCandidate struct {
+	SessionID    string    `json:"session_id"`
+	TurnID       string    `json:"turn_id"`
+	BaseRepo     string    `json:"base_repo"`
+	BaseRevision string    `json:"base_revision"`
+	Revision     string    `json:"revision"`
+	ChangedFiles []string  `json:"changed_files"`
+	Disposition  string    `json:"disposition,omitempty"`
+	URL          string    `json:"url,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	Diff         string    `json:"diff,omitempty"`
+}
+
+// ProjectSessionParams adds an ordinary conversation of the project's
+// workspace to the project (adopt), or makes a managed session an ordinary
+// conversation again (release). Both are the user's actions.
+type ProjectSessionParams struct {
+	Action    string `json:"action"`
+	ProjectID string `json:"project_id"`
+	SessionID string `json:"session_id"`
+}
+
+type ProjectSessionResult struct {
+	Thread Thread `json:"thread"`
+}
+
+type ProjectCandidateResult struct {
+	Candidates []ProjectCandidate `json:"candidates,omitempty"`
+	Candidate  *ProjectCandidate  `json:"candidate,omitempty"`
 }
 
 type ThreadResumeParams struct {
@@ -2181,7 +2214,6 @@ const (
 )
 
 type ThreadSessionControl struct {
-	RoomID      string `json:"room_id,omitempty"`
 	ManagerID   string `json:"manager_id"`
 	ManagerName string `json:"manager_name"`
 	State       string `json:"state"`
@@ -2193,16 +2225,22 @@ type Thread struct {
 	SessionControl *ThreadSessionControl `json:"session_control,omitempty"`
 	ID             string                `json:"id"`
 	Source         string                `json:"source,omitempty"`
-	ParentID       string                `json:"parent_id,omitempty"`
-	AgentPath      string                `json:"agent_path,omitempty"`
-	Preview        string                `json:"preview"`
-	Title          string                `json:"title,omitempty"`
-	ModelProvider  string                `json:"model_provider"`
-	Model          string                `json:"model"`
-	ModelVariant   string                `json:"model_variant"`
-	ModelEffort    string                `json:"model_effort"`
-	PermissionMode string                `json:"permission_mode"`
-	ApproveForMe   bool                  `json:"approve_for_me"`
+	// ProjectID is the coordinator conversation that manages this session.
+	ProjectID   string `json:"project_id,omitempty"`
+	ProjectRole string `json:"project_role,omitempty"`
+	// PendingCandidates counts undecided candidates: a managed session's own,
+	// or all of a project coordinator's sessions.
+	PendingCandidates int    `json:"pending_candidates,omitempty"`
+	ParentID          string `json:"parent_id,omitempty"`
+	AgentPath         string `json:"agent_path,omitempty"`
+	Preview           string `json:"preview"`
+	Title             string `json:"title,omitempty"`
+	ModelProvider     string `json:"model_provider"`
+	Model             string `json:"model"`
+	ModelVariant      string `json:"model_variant"`
+	ModelEffort       string `json:"model_effort"`
+	PermissionMode    string `json:"permission_mode"`
+	ApproveForMe      bool   `json:"approve_for_me"`
 	// EngineID is the agent engine the thread is bound to ("wuu" for the
 	// built-in engine; external engines like Claude or Codex will carry
 	// their own ids).
@@ -2575,215 +2613,4 @@ type UsageOverviewResponse struct {
 	TotalSessions int                  `json:"total_sessions"`
 	Metrics       SettingsUsageMetrics `json:"metrics"`
 	Days          []SettingsUsageDay   `json:"days"`
-}
-
-type ChannelAgentListResult struct {
-	Agents []channels.NamedAgent `json:"agents"`
-}
-
-type ChannelAgentLanguageUsage struct {
-	Name  string  `json:"name"`
-	Lines int     `json:"lines"`
-	Share float64 `json:"share"`
-}
-
-type ChannelAgentInsight struct {
-	AgentID            string                      `json:"agent_id"`
-	WindowDays         int                         `json:"window_days"`
-	FilesChanged       int                         `json:"files_changed"`
-	Additions          int                         `json:"additions"`
-	Deletions          int                         `json:"deletions"`
-	InputTokens        int                         `json:"input_tokens"`
-	OutputTokens       int                         `json:"output_tokens"`
-	LastActiveAt       string                      `json:"last_active_at,omitempty"`
-	Workspace          string                      `json:"workspace,omitempty"`
-	Languages          []ChannelAgentLanguageUsage `json:"languages"`
-	AttributionPartial bool                        `json:"attribution_partial"`
-}
-
-type ChannelAgentInsightsResult struct {
-	GeneratedAt string                `json:"generated_at"`
-	Insights    []ChannelAgentInsight `json:"insights"`
-}
-
-type ChannelBootstrapResult = channels.BootstrapResult
-
-type ChannelAgentCreateParams struct {
-	RequestID        string `json:"request_id,omitempty"`
-	Name             string `json:"name"`
-	Role             string `json:"role,omitempty"`
-	AvatarKey        string `json:"avatar_key,omitempty"`
-	AvatarImage      string `json:"avatar_image,omitempty"`
-	EngineOverride   string `json:"engine_override,omitempty"`
-	ProviderOverride string `json:"provider_override,omitempty"`
-	ModelOverride    string `json:"model_override,omitempty"`
-	EffortOverride   string `json:"effort_override,omitempty"`
-}
-
-type ChannelAgentCreateResult struct {
-	Agent channels.NamedAgent `json:"agent"`
-}
-
-type ChannelAgentUpdateParams struct {
-	AgentID          string  `json:"agent_id"`
-	Name             string  `json:"name"`
-	Role             string  `json:"role,omitempty"`
-	AvatarKey        string  `json:"avatar_key,omitempty"`
-	AvatarImage      *string `json:"avatar_image,omitempty"`
-	EngineOverride   string  `json:"engine_override,omitempty"`
-	ProviderOverride string  `json:"provider_override,omitempty"`
-	ModelOverride    string  `json:"model_override,omitempty"`
-	EffortOverride   string  `json:"effort_override,omitempty"`
-}
-
-type ChannelAgentUpdateResult struct {
-	Agent channels.NamedAgent `json:"agent"`
-}
-type ChannelAgentDeleteParams struct {
-	AgentID string `json:"agent_id"`
-}
-type ChannelAgentDeleteResult struct {
-	Deleted bool `json:"deleted"`
-}
-
-type ChannelAgentStartParams struct {
-	AgentID string `json:"agent_id"`
-}
-
-type ChannelAgentStartResult struct {
-	Agent     channels.NamedAgent `json:"agent"`
-	WakeState channels.WakeState  `json:"wake_state"`
-	Started   bool                `json:"started"`
-	ThreadID  string              `json:"thread_id"`
-}
-
-type ChannelAgentResetParams struct {
-	AgentID string `json:"agent_id"`
-}
-
-type ChannelAgentResetResult struct {
-	Agent     channels.NamedAgent `json:"agent"`
-	WakeState channels.WakeState  `json:"wake_state"`
-	Requested bool                `json:"requested"`
-	ThreadID  string              `json:"thread_id"`
-}
-
-type ChannelAgentCreationResolveParams struct {
-	ProposalID string `json:"proposal_id"`
-	Approve    bool   `json:"approve"`
-	Provider   string `json:"provider,omitempty"`
-	Model      string `json:"model,omitempty"`
-}
-
-type ChannelAgentCreationResolveResult struct {
-	Proposal channels.AgentCreationProposal `json:"proposal"`
-}
-
-type ChannelRoomListResult struct {
-	Rooms []channels.Room `json:"rooms"`
-}
-
-type ChannelRoomCreateParams struct {
-	Name        string   `json:"name"`
-	AvatarImage string   `json:"avatar_image,omitempty"`
-	AgentIDs    []string `json:"agent_ids,omitempty"`
-}
-
-type ChannelRoomCreateResult struct {
-	Room channels.Room `json:"room"`
-}
-
-type ChannelDirectMessageOpenParams struct {
-	WorkspaceRoot string                   `json:"workspace_root,omitempty"`
-	WorkspaceID   string                   `json:"workspace_id,omitempty"`
-	Onboarding    *channels.RoomOnboarding `json:"onboarding,omitempty"`
-	AgentID       string                   `json:"agent_id"`
-}
-
-type ChannelDirectMessageOpenResult struct {
-	Room channels.Room `json:"room"`
-}
-
-type ChannelRoomUpdateParams struct {
-	RoomID      string    `json:"room_id"`
-	Name        *string   `json:"name,omitempty"`
-	AvatarImage *string   `json:"avatar_image,omitempty"`
-	AgentIDs    *[]string `json:"agent_ids,omitempty"`
-}
-
-type ChannelRoomUpdateResult struct {
-	Room channels.Room `json:"room"`
-}
-
-type ChannelRoomDeleteParams struct {
-	RoomID string `json:"room_id"`
-}
-type ChannelRoomDeleteResult struct {
-	Deleted bool `json:"deleted"`
-}
-
-type ChannelRoomReadParams struct {
-	RoomID string `json:"room_id"`
-}
-
-type ChannelRoomReadResult struct {
-	Read bool `json:"read"`
-}
-
-type ChannelMessageListParams struct {
-	RoomID                 string `json:"room_id"`
-	AfterSeq               int64  `json:"after_seq,omitempty"`
-	Limit                  int    `json:"limit,omitempty"`
-	BeforeSeq              int64  `json:"before_seq,omitempty"`
-	Latest                 bool   `json:"latest,omitempty"`
-	AttachmentMetadataOnly bool   `json:"attachment_metadata_only,omitempty"`
-}
-
-type ChannelMessageListResult struct {
-	Coordinator *ChannelCoordinatorStatus `json:"coordinator,omitempty"`
-	Messages    []channels.Message        `json:"messages"`
-	Responses   []ChannelResponse         `json:"responses"`
-}
-
-type ChannelMessageSendParams struct {
-	RoomID string           `json:"room_id"`
-	Body   string           `json:"body"`
-	Images []TurnStartImage `json:"images,omitempty"`
-	Files  []TurnStartFile  `json:"files,omitempty"`
-}
-
-type ChannelMessageSendResult struct {
-	Message channels.Message `json:"message"`
-}
-
-type ChannelTaskCreateParams struct {
-	RoomID  string `json:"room_id"`
-	Title   string `json:"title"`
-	OwnerID string `json:"owner_id"`
-}
-
-type ChannelTaskCreateResult struct {
-	Task channels.Message `json:"task"`
-}
-
-type ChannelTaskUpdateParams struct {
-	ExpectedRevision int     `json:"expected_revision,omitempty"`
-	GoalCorrection   string  `json:"goal_correction,omitempty"`
-	Constraints      *string `json:"constraints,omitempty"`
-	Decision         string  `json:"decision,omitempty"`
-	TaskID           string  `json:"task_id"`
-	State            string  `json:"state,omitempty"`
-	OwnerID          string  `json:"owner_id,omitempty"`
-}
-
-type ChannelTaskUpdateResult struct {
-	Task channels.Message `json:"task"`
-}
-
-type ChannelHumanMentionStatusResult struct {
-	Count int `json:"count"`
-}
-
-type ChannelHumanMentionAckResult struct {
-	Acknowledged int `json:"acknowledged"`
 }
