@@ -71,16 +71,22 @@ machine-specific setup in user-level configuration.
   for build and test commands.
 - Run checks appropriate to the change before declaring it complete. Distinguish
   tests and builds from rendered UI, simulator, real-device, and production checks.
-- Add a test only to protect an important contract: a public API, protocol,
-  persistence or migration rule, security or permission boundary, recovery
-  behavior, or a concrete bug that has already escaped. Design that test around
-  observable behavior and the failure cases callers depend on, and place it with
-  the existing suite.
-- Extend an existing behavioral test when one already covers the contract. Skip a
-  new test when the change has no such contract, when the goal is coverage, or
-  when the test would mirror literals, mappings, obvious control flow,
-  implementation details, or a removed feature. Absence is a contract only when
-  callers rely on that absence.
+- Prefer end-to-end tests as the primary testing mechanism. Use them to verify
+  complex features work end to end. At the end of an E2E run, produce a
+  verifiable and repeatable artifact (logs, screenshots, recordings, or other
+  evidence a reviewer can re-check).
+- Never write unit tests after the implementation. If a system must be tested in
+  isolation, first enumerate the ways it could fail, then write the code against
+  those failure cases.
+- Add a focused automated test only to protect an important contract: a public
+  API, protocol, persistence or migration rule, security or permission boundary,
+  recovery behavior, or a concrete bug that has already escaped. Prefer extending
+  an existing behavioral or E2E suite over adding a new unit suite. Design tests
+  around observable behavior and the failure cases callers depend on.
+- Skip a new test when the change has no such contract, when the goal is
+  coverage, or when the test would mirror literals, mappings, obvious control
+  flow, implementation details, or a removed feature. Absence is a contract only
+  when callers rely on that absence.
 - Coordinate concurrency deterministically instead of relying on sleeps when
   practical.
 - Keep merge-gate tests on behavior, protocols, recovery, and public contracts.
