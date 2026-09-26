@@ -4,7 +4,7 @@ Automations send a task prompt on a schedule. Use them for a recurring project c
 
 ## Create a task
 
-1. Open **Automations** and choose the workspace. This selects the task's project without changing your open conversation.
+1. Open **Automations** and choose the workspace. This selects the task's workspace without changing your open conversation.
 2. Choose **New automation**, or start from a suggestion. Enter a name and clear instructions.
 3. Under **Runs in**, choose **New chat each run** or an existing chat.
 4. Set a daily, weekday, weekly, or custom schedule. **More settings** contains timezone, **Run once**, and **Isolated run**.
@@ -19,7 +19,7 @@ checks if their results are available. Do not edit files or publish anything.
 
 ## Choose where it runs
 
-A new-chat task creates a visible conversation for each run. Runs can overlap. Enable **Isolated run** for a separate Git worktree based on the project's current `HEAD`; uncommitted changes are not copied into it.
+A new-chat task creates a visible conversation for each run. Runs can overlap. Enable **Isolated run** for a separate Git worktree based on the workspace's current `HEAD`; uncommitted changes are not copied into it.
 
 An existing-chat task continues that conversation's context and workspace. If it is busy, the message queues behind its current work. This mode cannot create a new worktree. The agent's `cron` tool calls these modes `new_thread` and `thread_heartbeat`.
 

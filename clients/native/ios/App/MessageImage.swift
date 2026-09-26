@@ -71,47 +71,35 @@ struct DraftImage: View {
     }
 }
 
-struct MessageAttachments: View {
-    let model: AppModel
-    let message: ChatMessage
-    var body: some View {
-        AttachmentGallery(items: message.attachments.enumerated().map { AttachmentTile(field: "attachments", index: $0.offset, value: $0.element) },
-            scope: "\(model.activeID ?? ""):\(message.id)", own: message.role == "user", model: model,
-            read: { try await model.attachmentThumbnail(message, index: $0.index) },
-            open: { tile in model.perform { try await model.previewAttachment(message, index: tile.index) } })
-    }
-}
-
-struct AttachmentTile: Identifiable {
-    let field: String
+private struct AttachmentTile: Identifiable {
     let index: Int
     let value: JSONValue
-    var id: String { "\(field):\(index)" }
+    var id: Int { index }
     var isImage: Bool { value["media_type"].string?.hasPrefix("image/") == true }
 }
 
 /// Thumbnails have a stable footprint before and after loading; decoding never moves the timeline.
-struct AttachmentGallery: View {
-    let items: [AttachmentTile]
-    let scope: String
-    let own: Bool
+struct MessageAttachments: View {
     let model: AppModel
-    let read: (AttachmentTile) async throws -> LoadedAttachment
-    let open: (AttachmentTile) -> Void
+    let message: ChatMessage
+    private var tiles: [AttachmentTile] { message.attachments.enumerated().map { AttachmentTile(index: $0.offset, value: $0.element) } }
     var body: some View {
-        if items.contains(where: \.isImage) {
-            ThumbnailLayout(own: own) {
-                ForEach(items.filter(\.isImage)) { tile in
-                    MessageImage(key: "\(scope):\(tile.id):\(tile.value["remote_ref"].string ?? "")",
+        if tiles.contains(where: \.isImage) {
+            ThumbnailLayout(own: message.role == "user") {
+                ForEach(tiles.filter(\.isImage)) { tile in
+                    MessageImage(key: "\(model.activeID ?? ""):\(message.id):\(tile.index):\(tile.value["remote_ref"].string ?? "")",
                         connected: model.connected, loader: model.imagePreviews,
-                        read: { try await read(tile) }, open: { open(tile) })
+                        read: { try await model.attachmentThumbnail(message, index: tile.index) }, open: { open(tile) })
                 }
             }
         }
-        ForEach(items.filter { !$0.isImage }) { tile in
+        ForEach(tiles.filter { !$0.isImage }) { tile in
             Button { open(tile) } label: { Label(tile.value["filename"].string ?? "查看文件", systemImage: "doc") }
                 .disabled(!model.connected || model.loadingAttachment)
         }
+    }
+    private func open(_ tile: AttachmentTile) {
+        model.perform { try await model.previewAttachment(message, index: tile.index) }
     }
 }
 

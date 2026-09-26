@@ -209,7 +209,7 @@ function readableToolActivityCommandInner(
     case "list_files":
       return path && path !== "."
         ? t("toolActivity.viewTarget", { target: formatDirectoryTarget(path) })
-        : t("toolActivity.viewProjectDirectory");
+        : t("toolActivity.viewWorkspaceDirectory");
     case "grep":
     case "glob":
       return path && path !== "."

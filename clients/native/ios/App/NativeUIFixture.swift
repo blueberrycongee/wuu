@@ -4,18 +4,7 @@ import WuuCore
 
 /// Read-only, local fixtures for repeatable simulator checks without touching an account.
 enum NativeUIFixture {
-    static var collaboration: Bool { ProcessInfo.processInfo.arguments.contains("--native-collaboration-fixture") }
-    static var enabled: Bool { ProcessInfo.processInfo.arguments.contains("--native-ui-fixture") || collaboration }
-    @MainActor static func configure(_ model: CollaborationModel, thread: ChatThread) {
-        let room: JSONValue = ["id": "local-room", "kind": "dm", "name": "协作图片验收", "members": []]
-        model.rooms = [CollaborationRoom(room)]
-        var timeline = CollaborationTimeline()
-        timeline.merge(["messages": .array(thread.messages.filter { $0.tool == nil || !$0.attachments.isEmpty }.enumerated().map { index, message in
-            ["id": .string(message.id), "seq": .number(Double(index + 1)), "body": .string(message.text),
-                "author_type": .string(message.role == "user" ? "human" : "agent"), "images": .array(message.attachments)]
-        })])
-        model.timelines["local-room"] = timeline; model.select("local-room")
-    }
+    static var enabled: Bool { ProcessInfo.processInfo.arguments.contains("--native-ui-fixture") }
     static func thread() -> ChatThread {
         let image = UIGraphicsImageRenderer(size: CGSize(width: 240, height: 480)).image { context in
             UIColor.systemTeal.setFill(); context.fill(CGRect(x: 0, y: 0, width: 240, height: 480))
@@ -45,9 +34,6 @@ enum NativeUIFixture {
 struct NativeUIFixtureView: View {
     @Bindable var model: AppModel
     var body: some View {
-        if NativeUIFixture.collaboration {
-            CollaborationView(app: model, model: model.collaboration)
-        } else {
         NavigationStack {
             ConversationTimeline(model: model)
                 .navigationTitle("长会话与图片验收").navigationBarTitleDisplayMode(.inline)
@@ -59,7 +45,6 @@ struct NativeUIFixtureView: View {
                             "items": [["id": "reply", "type": "agent_message", "text": "追加的新消息"]]]])
                     }
                 }
-        }
         }
     }
 }

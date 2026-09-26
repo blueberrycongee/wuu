@@ -127,13 +127,6 @@ func SessionsDir(wuuHome string) string {
 	return filepath.Join(wuuHome, "sessions")
 }
 
-// ChannelsDir returns the user-level state directory for persistent group chat.
-// It is deliberately separate from SessionsDir because rooms and named-agent
-// identities outlive and span individual model sessions.
-func ChannelsDir(wuuHome string) string {
-	return filepath.Join(wuuHome, "channels")
-}
-
 // WorkspaceDirByID returns a stable user-level state directory for a workspace
 // identified by an opaque, location-independent ID (the desktop's stable
 // project id). Unlike WorkspaceDir it hashes the ID rather than the filesystem

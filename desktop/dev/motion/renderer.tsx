@@ -90,11 +90,6 @@ function Fixture(): JSX.Element {
           <div className={`conversation-search-dialog${closing ? " closing" : ""}`}>Search dialog</div>
         </div>
       </div>
-      <div className="motion-surface" data-surface="drawer">
-        <div className={`app-modal-backdrop conversation-search-overlay sidebar-name-dialog-overlay sidebar-name-dialog-overlay-drawer${closing ? " closing" : ""}`}>
-          <div className={`conversation-search-dialog sidebar-name-dialog sidebar-name-dialog-drawer${closing ? " closing" : ""}`}>Side drawer</div>
-        </div>
-      </div>
       <div className="motion-surface" data-surface="archive-tip">
         <div className={`archive-tip${closing ? " leaving" : ""}`} role="status">
           <Archive className="archive-tip-icon" aria-hidden="true" />

@@ -11,7 +11,7 @@ export type EnvironmentActionsDeps = {
   getAppState: () => AppState;
   getEnvironmentRoot: () => string | undefined;
   setAppState: SetAppState;
-  closeProjectMenus: () => void;
+  closeWorkspaceMenus: () => void;
   setEnvironmentPanelOpen: (open: boolean) => void;
   setEnvironmentPanelDismissed: (dismissed: boolean) => void;
   setEnvironmentPanelMenu: (menu: EnvironmentPanelMenu) => void;
@@ -80,7 +80,7 @@ export function createEnvironmentActions(
         gitStatus,
         status: current.status === "ready" ? "ready" : current.status,
       }));
-      deps.closeProjectMenus();
+      deps.closeWorkspaceMenus();
     } catch (error) {
       if (!environmentRootIsCurrent(root)) {
         return;

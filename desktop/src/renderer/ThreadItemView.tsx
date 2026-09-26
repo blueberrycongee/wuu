@@ -48,6 +48,7 @@ import {
 } from "./TurnNotice";
 import { userMessageAnchorID } from "./TurnViewHelpers";
 import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
+import { isProjectEvent, ProjectEventRow } from "./ProjectViews";
 import {
   userFacingErrorForMessage,
 } from "./UserFacingErrors";
@@ -252,6 +253,9 @@ function BuiltInThreadItemView({
       const displayText = text;
       if (isInternalUserNotificationItem(item)) {
         return null;
+      }
+      if (isProjectEvent(item)) {
+        return <ProjectEventRow item={item} />;
       }
       const copyable = displayText.trim() !== "";
       const editable = Boolean(

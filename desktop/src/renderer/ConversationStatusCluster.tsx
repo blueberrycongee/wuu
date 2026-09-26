@@ -90,7 +90,7 @@ export function ConversationStatusCluster({
     <div
       className="jump-to-latest-cluster conversation-status-cluster"
       ref={statusVisible ? clusterRef : undefined}
-      aria-label={t("channels.status")}
+      aria-label={t("common.status")}
     >
       {navigation}
       {todoVisible && todoUpdate ? <TodoStatusCapsule todoUpdate={todoUpdate} /> : null}

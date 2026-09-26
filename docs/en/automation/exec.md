@@ -49,8 +49,7 @@ On resume or fork, explicit `--provider`, `--model`, `--effort`, and `--variant`
 selections apply to the acquired session before execution. Without these flags,
 the saved session selection is retained. A resume saves changes to that session;
 a fork saves them only to the new session. Neither changes workspace defaults or
-the configuration file. Sessions pinned to a named agent still enforce that
-agent's model-selection restrictions.
+the configuration file.
 
 `review` creates a review prompt for the chosen scope and uses the normal tools
 to inspect it. It is not a separate static analyzer. Choose `--permission-mode

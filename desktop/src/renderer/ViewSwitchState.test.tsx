@@ -80,14 +80,14 @@ describe("useViewSwitchState", () => {
     const hook = await renderViewSwitchState();
 
     act(() => {
-      hook.get().beginViewSwitch("project", "project-1");
+      hook.get().beginViewSwitch("workspace", "project-1");
     });
     expect(hook.get().pendingViewSwitch).toEqual({
-      kind: "project",
+      kind: "workspace",
       targetID: "project-1",
       visible: false,
     });
-    expect(hook.get().visiblePendingProjectID).toBe("project-1");
+    expect(hook.get().visiblePendingWorkspaceID).toBe("project-1");
     expect(hook.get().viewContextSwitchPending).toBe(true);
   });
 
@@ -143,7 +143,7 @@ describe("useViewSwitchState", () => {
     expect(hook.get().viewSwitchPending).toBe(false);
   });
 
-  it.each(["thread", "project", "runtime"] as const)(
+  it.each(["thread", "workspace", "runtime"] as const)(
     "shows the shared animation only while a slow %s switch is pending",
     async (kind) => {
       vi.useFakeTimers();
@@ -205,7 +205,7 @@ describe("useViewSwitchState", () => {
     expect(hook.get().visiblePendingThreadID).toBe("uncached");
   });
 
-  it.each(["thread", "project", "runtime"] as const)("never flashes loading for a fast %s switch", async (kind) => {
+  it.each(["thread", "workspace", "runtime"] as const)("never flashes loading for a fast %s switch", async (kind) => {
     vi.useFakeTimers();
     const hook = await renderViewSwitchState();
     let requestID = 0;

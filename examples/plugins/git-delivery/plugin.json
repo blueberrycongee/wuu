@@ -3,7 +3,7 @@
   "id": "git-delivery",
   "name": "Git Delivery",
   "version": "1.0.0",
-  "description": "Publish a reviewed Work candidate as an isolated GitHub draft pull request.",
+  "description": "Publish a reviewed project candidate as an isolated GitHub draft pull request.",
   "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"] },
   "desktop": { "entry": "desktop.js" }
 }

@@ -6230,6 +6230,7 @@ func TestServerThreadStartRejectsUnusableWorkspaceRequests(t *testing.T) {
 		{name: "unknown workspace", params: ThreadStartParams{Workspace: "elsewhere"}},
 		{name: "start point without worktree", params: ThreadStartParams{BaseRevision: "HEAD"}},
 		{name: "ephemeral worktree", params: ThreadStartParams{Workspace: "worktree", Ephemeral: true}},
+		{name: "project worktree", params: ThreadStartParams{Workspace: "worktree", WorkspaceID: "project", CWD: rt.RootDir, Project: &ThreadProjectParams{Name: "Project"}}},
 		{name: "missing start point", params: ThreadStartParams{Workspace: "worktree", BaseRevision: "no-such-branch"}},
 	}
 	for index, tc := range cases {
@@ -6239,6 +6240,12 @@ func TestServerThreadStartRejectsUnusableWorkspaceRequests(t *testing.T) {
 		}
 		if responseByID(t, parseOutput(t, out.String()), id)["error"] == nil {
 			t.Fatalf("%s: thread/start should fail", tc.name)
+		}
+		if tc.params.Project != nil {
+			failure := fmt.Sprint(responseByID(t, parseOutput(t, out.String()), id)["error"])
+			if !strings.Contains(failure, "a project starts in the shared workspace") {
+				t.Fatalf("project worktree request should be rejected explicitly: %s", failure)
+			}
 		}
 	}
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"list","method":"thread/list"}`)); err != nil {

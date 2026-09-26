@@ -1,0 +1,438 @@
+/* Projects in the conversation and the right panel. Sidebar project rows
+ * live with the other session rows in sidebar.css. */
+
+.project-inline-link {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 2px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-sm);
+  padding: 0;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.project-inline-link:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.project-inline-link > svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+}
+
+html[data-focus-modality="keyboard"] .project-inline-link:focus-visible {
+  border-radius: var(--radius-xs);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.project-status-spinner {
+  animation: wuu-spin var(--session-loading-spin-duration) linear infinite;
+}
+
+@container style(--motion-reduced: 1) {
+  .project-status-spinner {
+    animation: none;
+  }
+}
+
+/* The coordinator's running and pending work, just above its composer. */
+.composer-status-accessory {
+  display: flex;
+  min-width: 0;
+  padding-bottom: var(--space-2);
+}
+
+.project-status-strip {
+  display: inline-flex;
+  max-width: 100%;
+  min-height: 26px;
+  align-items: center;
+  gap: var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+  background: var(--surface-1);
+  color: var(--ink-soft);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-sm);
+  font-variant-numeric: tabular-nums;
+  padding: 2px 10px;
+}
+
+.project-status-count {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.project-status-count > svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.project-status-strip:hover {
+  border-color: var(--hairline-strong);
+  color: var(--ink);
+}
+
+.project-status-strip.has-pending {
+  color: var(--ink);
+}
+
+html[data-focus-modality="keyboard"] .project-status-strip:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* A host event in the coordinator's conversation reads as one line with its
+ * next steps; the text the coordinator received is disclosed on request. */
+.project-event {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+  margin: var(--space-1) 0 var(--space-4);
+}
+
+.project-event-line {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 15px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-2);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+}
+
+.project-event-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.project-event-icon {
+  margin-top: calc((var(--control-size-inline) - 15px) / 2);
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--ink-muted);
+}
+
+.project-event-text {
+  align-self: center;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  color: var(--ink);
+}
+
+.project-event-toggle {
+  color: var(--ink-muted);
+}
+
+.project-event-details {
+  margin: 0;
+  max-height: 16em;
+  overflow: auto;
+  border-left: 2px solid var(--hairline);
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  padding: 0 0 0 var(--space-3);
+  white-space: pre-wrap;
+}
+
+/* A managed session's proposal, under the turn that froze it. */
+.project-proposal-summary {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin: var(--space-2) 0 var(--space-6);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  font-size: var(--font-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+.project-proposal-icon {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--ink-muted);
+}
+
+.project-proposal-title {
+  color: var(--ink);
+  font-weight: var(--weight-medium);
+}
+
+.project-proposal-meta {
+  min-width: 0;
+  flex: 1;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.project-proposal-summary[data-disposition="superseded"] {
+  border-style: dashed;
+  background: transparent;
+}
+
+/* The project's name in a managed session's title bar leads back to it. */
+.session-control-project {
+  display: inline-flex;
+  min-width: 0;
+  max-width: min(14em, 24vw);
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font: inherit;
+  padding: 2px 4px;
+}
+
+.session-control-project > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-control-project > svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.session-control-project:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+html[data-focus-modality="keyboard"] .session-control-project:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* Right panel: a project's overview and one session's proposal. */
+.project-panel,
+.project-proposal {
+  display: flex;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+  overflow: auto;
+  padding: var(--space-4);
+}
+
+.project-panel-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.project-panel-header > h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--font-title);
+  font-weight: var(--weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-panel-heading {
+  margin: var(--space-3) 0 0;
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+}
+
+.project-panel-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-panel-row {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: var(--control-row-height);
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-xs);
+  padding: 2px var(--space-2);
+}
+
+.project-panel-row:hover {
+  background: var(--surface-2);
+}
+
+.project-icon-button {
+  flex: none;
+  width: var(--control-size-inline);
+  height: var(--control-size-inline);
+  padding: 0;
+}
+
+/* Reserve only the larger of the compact controls and the session state.
+ * Titles and click targets stay in place when hover or keyboard focus changes. */
+.project-panel-row-tools {
+  display: grid;
+  flex: none;
+  align-items: center;
+}
+
+.project-panel-row-actions,
+.project-panel-row-state {
+  grid-area: 1 / 1;
+  justify-self: end;
+}
+
+.project-panel-row-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.project-panel-row-action {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.project-panel-row:is(:hover, :focus-within) .project-panel-row-action {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.project-panel-row:is(:hover, :focus-within) .project-panel-row-state {
+  visibility: hidden;
+}
+
+.project-panel-row-icon {
+  display: grid;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  color: var(--ink-muted);
+}
+
+.project-panel-row-icon > svg,
+svg.project-panel-row-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.project-panel-row-main {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 2px 0;
+  text-align: left;
+}
+
+.project-panel-row-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-panel-row > .project-panel-row-title {
+  flex: 1;
+}
+
+.project-panel-row-meta {
+  color: var(--ink-muted);
+  font-size: var(--font-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+html[data-focus-modality="keyboard"] .project-panel-row-main:focus-visible {
+  border-radius: var(--radius-xs);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.project-panel-empty {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+}
+
+.project-proposal-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.project-proposal-files {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+}
+
+.project-proposal-files > li {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-proposal-diff {
+  min-height: 8em;
+  flex: 1;
+  overflow: auto;
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-xs);
+}
+
+.project-proposal-diff > .project-panel-empty {
+  padding: var(--space-2) var(--space-3);
+}
+
+.project-proposal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}

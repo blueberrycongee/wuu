@@ -34,8 +34,7 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState) (bool, er
 	if th == nil {
 		return false, errors.New("thread is required")
 	}
-	usesInteractiveExtensions := strings.TrimSpace(th.NamedAgentID) == "" || (s.rt != nil && s.rt.HasCollaborationTools())
-	if usesInteractiveExtensions && s != nil && s.pluginGenerationMutation.Load() {
+	if s != nil && s.pluginGenerationMutation.Load() {
 		return false, nil
 	}
 	if th.admissionReserved || th.executionLease != nil || th.runtimeSelectionMutation {
@@ -45,7 +44,7 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState) (bool, er
 		return false, nil
 	}
 	newPluginLease := false
-	if usesInteractiveExtensions && th.pluginExecutionLease == nil && s != nil && s.rt != nil && strings.TrimSpace(s.rt.WuuHome) != "" {
+	if th.pluginExecutionLease == nil && s != nil && s.rt != nil && strings.TrimSpace(s.rt.WuuHome) != "" {
 		lease, acquired, err := session.TryAcquirePluginGenerationExecutionLease(s.rt.WuuHome)
 		if err != nil {
 			return false, fmt.Errorf("acquire plugin generation execution lease: %w", err)

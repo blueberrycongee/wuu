@@ -6,7 +6,7 @@ import { SidebarCollapseBody, SidebarSection } from "../../src/renderer/SidebarS
 import { I18nProvider } from "../../src/renderer/i18n";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { startFocusModality } from "../../src/renderer/FocusModality";
-import { ProjectGroup } from "../../src/renderer/ThreadSidebar";
+import { WorkspaceGroup } from "../../src/renderer/ThreadSidebar";
 import { summarizeThreadsForSidebar } from "../../src/renderer/AppState";
 import type { Thread } from "../../src/shared/protocol";
 import "../../src/renderer/styles.css";
@@ -19,7 +19,7 @@ applyMessageFlowFontSize(Number(params.get("size")) || 14);
 
 function Fixture(): JSX.Element {
   const [expanded, setExpanded] = useState(true);
-  const [projectExpanded, setProjectExpanded] = useState(true);
+  const [workspaceExpanded, setWorkspaceExpanded] = useState(true);
   const [rows, setRows] = useState(params.has("empty") ? 0 : Number(params.get("rows")) || 12);
   return <div className="app-shell" style={{ display: "flex", height: "100dvh" }}>
     <aside className="sidebar" style={{ width: Number(params.get("width")) || 296, overflow: "auto" }}>
@@ -33,9 +33,9 @@ function Fixture(): JSX.Element {
         <SidebarCollapseBody expanded={expanded} className="sidebar-functional-group-collapse">
           <div className="sidebar-functional-group-body">
             <section className="project-section" data-testid="project">
-              <SidebarSection expanded={projectExpanded} iconKind="project"
-                CollapsedIcon={Folder} ExpandedIcon={FolderOpen} label="Project with nested conversations"
-                ariaLabel="Toggle project" title="Toggle project" onToggle={() => setProjectExpanded(value => !value)}>
+              <SidebarSection expanded={workspaceExpanded} iconKind="project"
+                CollapsedIcon={Folder} ExpandedIcon={FolderOpen} label="Workspace with nested conversations"
+                ariaLabel="Toggle workspace" title="Toggle workspace" onToggle={() => setWorkspaceExpanded(value => !value)}>
                 <div className="thread-list">
                   {Array.from({ length: rows }, (_, i) => <button key={i} className="thread-row sidebar-session-row"
                     data-testid="row" style={{ textAlign: "left", flexShrink: 0 }}>
@@ -83,15 +83,15 @@ function ProjectHistoryFixture(): JSX.Element {
     <aside className="sidebar" style={{ width: Number(params.get("width")) || 296, flexShrink: 0, overflow: "auto" }}>
       <div className="sidebar-content">
         <section className="project-section">
-          <ProjectGroup project={project} activeID={project.id}
+          <WorkspaceGroup project={project} activeID={project.id}
             expandedSidebarSectionIDs={new Set(expanded ? [project.id] : [])}
-            threadsByProjectID={{ [project.id]: threads.map(thread => summarizeThreadsForSidebar([thread])[0]) }}
+            threadsByWorkspaceID={{ [project.id]: threads.map(thread => summarizeThreadsForSidebar([thread])[0]) }}
             activeThreadID={active} lastViewedTurnByThreadID={viewed}
             pendingConversations={Array.from({ length: pending }, (_, index) => ({
               id: `pending-${index}`, title: `Creating conversation ${index + 1}`,
               context: { kind: "project", project_id: project.id, cwd: project.path },
             }))}
-            scratchPseudoProjectID="scratch" scratchPseudoActive={false}
+            scratchPseudoWorkspaceID="scratch" scratchPseudoActive={false}
             onToggleSidebarSectionCollapsed={() => setExpanded(value => !value)}
             onStartNewThread={() => setPending(value => value + 1)}
             onSelectThread={(_, id) => {
