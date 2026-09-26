@@ -120,9 +120,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Keep edited-away conversation branches out of resumed conversations and forks,
-  including subsequent model input, while preserving valid pre-compaction history
-  and the append-only audit transcript.
+- Remote requests can open another workspace while four other workspaces run
+  tasks, without the new app-server client being evicted before its request
+  starts. Idle clients remain eligible for normal reclamation.
 
 - Safe mode stops approved desktop plugin modules from loading or activating,
   while keeping the extension inventory available for recovery and management.
@@ -187,6 +187,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - History search finds literal quotes, paths, line breaks, and HTML characters
   in deduplicated tool results, including model text and multi-part output.
+
+- Keep edited-away conversation branches out of resumed conversations and forks,
+  including subsequent model input, while preserving valid pre-compaction history
+  and the append-only audit transcript.
 
 - Ready Agent Core entries show an external agent's detected executable path in
   its override field without repeating it in the status or help text.
