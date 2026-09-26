@@ -88,7 +88,6 @@ func (s *Server) handleMarkdownImageRead(ctx context.Context, req Request) error
 		TurnID    string `json:"turn_id"`
 		MessageID string `json:"message_id"`
 		Source    string `json:"source"`
-		Seq       int64  `json:"seq"`
 		Offset    int    `json:"offset"`
 		Preview   bool   `json:"preview"`
 		SHA256    string `json:"sha256"`
