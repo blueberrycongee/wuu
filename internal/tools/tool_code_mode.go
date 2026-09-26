@@ -24,9 +24,12 @@ type CodeModeExecTool struct{ toolkit *Toolkit }
 
 func NewCodeModeExecTool(t *Toolkit) *CodeModeExecTool { return &CodeModeExecTool{t} }
 func (*CodeModeExecTool) Name() string                 { return codeModeExecToolName }
-func (*CodeModeExecTool) IsReadOnly() bool             { return true }
-func (*CodeModeExecTool) IsConcurrencySafe() bool      { return false }
-func (*CodeModeExecTool) IsOrchestrator(string) bool   { return true }
+func (e *CodeModeExecTool) IsReadOnly() bool {
+	// Native APIs can mutate unless the process sandbox forbids writes.
+	return e.toolkit.boundary.Enforce && !e.toolkit.boundary.AllowMutations
+}
+func (*CodeModeExecTool) IsConcurrencySafe() bool    { return false }
+func (*CodeModeExecTool) IsOrchestrator(string) bool { return true }
 func (*CodeModeExecTool) Execute(context.Context, string) (string, error) {
 	return "", errors.New("run_code requires the rich tool execution path")
 }

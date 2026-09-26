@@ -19,7 +19,9 @@ That sandbox restricts filesystem writes. It does not isolate network access, al
 Optional PTC programs have full Node APIs and start with an empty environment.
 Their direct filesystem writes use the session command sandbox, including Read
 only and Unconfined behavior. Direct APIs do not pass through individual tool
-checks; nested `tools` calls do. Enabling PTC therefore grants broader API
+checks; nested `tools` calls do. With **Approve for me** enabled in Standard
+mode, every PTC program is reviewed before launch, and nested calls retain
+their own checks. Enabling PTC therefore grants broader API
 access than a runtime limited to tool bindings. PTC is user-controlled and off
 by default; normal project configuration cannot enable it or replace its
 executable. The program control channel is authenticated and listens only on
