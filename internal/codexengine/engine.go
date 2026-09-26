@@ -306,6 +306,22 @@ func (s *Session) matchesThread(threadID string) bool {
 
 // ensureThread runs thread/start once and persists the native thread id.
 func (s *Session) ensureThread(ctx context.Context) error {
+	if s.speed == "" {
+		// Omitting a tier on a warm native thread inherits its previous override.
+		// Resolve the configured default so reset also clears that saved override.
+		var response struct {
+			Config struct {
+				ServiceTier *string `json:"service_tier"`
+			} `json:"config"`
+		}
+		if err := s.client.Request(ctx, "config/read", map[string]any{"cwd": s.rootDir, "includeLayers": false}, &response); err != nil {
+			return fmt.Errorf("codex config/read: %w", err)
+		}
+		s.speed = "standard"
+		if response.Config.ServiceTier != nil && *response.Config.ServiceTier != "" {
+			s.speed = *response.Config.ServiceTier
+		}
+	}
 	s.mu.Lock()
 	ref := s.ref
 	s.mu.Unlock()

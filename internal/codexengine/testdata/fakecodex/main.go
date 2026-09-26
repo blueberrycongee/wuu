@@ -61,6 +61,10 @@ func main() {
 				"platformFamily": "test",
 				"platformOs":     "test",
 			})
+		case "model/list":
+			respond(req.ID, map[string]any{"data": []any{map[string]any{"id": "gpt-6-astra", "model": "gpt-6-astra", "displayName": "GPT-6 Astra", "isDefault": true, "defaultReasoningEffort": "high", "supportedReasoningEfforts": []any{map[string]any{"reasoningEffort": "low"}, map[string]any{"reasoningEffort": "high"}}, "serviceTiers": []any{map[string]any{"id": "fast"}}, "defaultServiceTier": "default"}}})
+		case "config/read":
+			respond(req.ID, map[string]any{"config": map[string]any{"service_tier": os.Getenv("WUU_TEST_CODEX_DEFAULT_TIER")}})
 		case "thread/start":
 			respond(req.ID, map[string]any{
 				"thread": map[string]any{"id": "codex-thread-1", "status": map[string]any{"type": "idle"}},

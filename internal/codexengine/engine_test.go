@@ -33,11 +33,12 @@ func TestEngineSpeedSurvivesNativeResume(t *testing.T) {
 	binary := buildFakeCodex(t)
 	logPath := filepath.Join(t.TempDir(), "requests.jsonl")
 	t.Setenv("WUU_TEST_CODEX_REQUESTS", logPath)
+	t.Setenv("WUU_TEST_CODEX_DEFAULT_TIER", "fast")
 	host := NewHost(binary, t.TempDir())
 	defer host.Release()
 	engine := NewEngine(host)
 	ref := ""
-	for _, speed := range []string{"fast", "standard"} {
+	for _, speed := range []string{"fast", "standard", ""} {
 		sess, err := engine.SessionForThread(context.Background(), agentengine.ThreadBinding{
 			ThreadID: "speed-thread", RootDir: t.TempDir(), Model: "gpt-6-astra",
 			Effort: "high", Speed: speed, ExternalRef: ref,
@@ -70,7 +71,7 @@ func TestEngineSpeedSurvivesNativeResume(t *testing.T) {
 			continue
 		}
 		want := "fast"
-		if len(methods) >= 2 {
+		if len(methods) >= 2 && len(methods) < 4 {
 			want = "default"
 		}
 		if request.Params["serviceTier"] != want {
@@ -81,7 +82,7 @@ func TestEngineSpeedSurvivesNativeResume(t *testing.T) {
 		}
 		methods = append(methods, request.Method)
 	}
-	if strings.Join(methods, ",") != "thread/start,turn/start,thread/resume,turn/start" {
+	if strings.Join(methods, ",") != "thread/start,turn/start,thread/resume,turn/start,thread/resume,turn/start" {
 		t.Fatalf("requests = %v", methods)
 	}
 }
