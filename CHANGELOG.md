@@ -141,6 +141,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   its height follows the window title bar after page zoom and at large UI font
   sizes.
 
+- Plugin workspace delivery includes committed, staged, and unstaged tracked
+  changes since workspace creation. Status and previews use the same baseline;
+  conflicts and unsupported untracked files preserve the workspace. Automatic
+  cleanup retains committed work and workspaces whose baseline is unavailable.
+
 - Work delivery reads structured reports from the final answer, so commentary
   before tool calls no longer causes completed executions to fail validation.
 
