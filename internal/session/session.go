@@ -419,7 +419,7 @@ func listForCWD(sessDir, cwd, workspaceID string, limit int) ([]Session, error) 
 		return listSessions(sessDir, "workspace_id = ?", []any{wsID}, limit)
 	}
 	return listSessions(sessDir,
-		"workspace_id = ? OR (workspace_id = '' AND (cwd = ? OR worktree_base_repo = ?))",
+		"workspace_id = ? OR (cwd = ? AND workspace_id = '') OR (worktree_base_repo = ? AND workspace_id = '')",
 		[]any{wsID, target, target}, limit)
 }
 
@@ -1803,7 +1803,10 @@ WHERE workflow_id = ''`); err != nil {
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_workspace_id ON sessions(workspace_id)`); err != nil {
 		return fmt.Errorf("migrate sessions database: %w", err)
 	}
-	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_worktree_base_repo ON sessions(worktree_base_repo)`); err != nil {
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_cwd_workspace ON sessions(cwd, workspace_id)`); err != nil {
+		return fmt.Errorf("migrate sessions database: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_worktree_workspace ON sessions(worktree_base_repo, workspace_id)`); err != nil {
 		return fmt.Errorf("migrate sessions database: %w", err)
 	}
 	if err := addColumnIfMissing(db, "inference_journal_runtimes", "pid", "INTEGER NOT NULL DEFAULT 0"); err != nil {
