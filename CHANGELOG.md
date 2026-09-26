@@ -32,6 +32,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Optional programmatic tool calling now runs each program in a fresh JavaScript
+  process with the session filesystem sandbox. A default-off global switch and
+  model-family overrides control availability. Nested calls retain normal tool
+  permissions and recording; image/audio results are attached automatically.
+  The previous persistent code runtime and execution/wait tools are retired.
+
 - Creating an agent asks only for its model and name. The name step no longer
   shows switch-model and project controls above the input, and the random-name
   action sits inside the name input. The first conversation opens in the

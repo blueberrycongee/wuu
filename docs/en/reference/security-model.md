@@ -16,6 +16,15 @@ The built-in Wuu engine has Standard, Read only, and Unconfined modes. Dedicated
 
 That sandbox restricts filesystem writes. It does not isolate network access, all file reads, process visibility, or inherited environment variables. Read only is useful for investigation, but is not a data-loss-prevention boundary. Unconfined removes the command sandbox and gives commands the authority of the user running Wuu.
 
+Optional PTC programs have full Node APIs and start with an empty environment.
+Their direct filesystem writes use the session command sandbox, including Read
+only and Unconfined behavior. Direct APIs do not pass through individual tool
+checks; nested `tools` calls do. Enabling PTC therefore grants broader API
+access than a runtime limited to tool bindings. PTC is user-controlled and off
+by default; normal project configuration cannot enable it or replace its
+executable. The program control channel is authenticated and listens only on
+loopback for that invocation.
+
 **Approve for me** adds model review in Standard mode. It does not expand permissions or replace isolation. External Codex and Claude Code sessions use their own execution controls. See [permission modes](permissions.md) for the exact scope and adapter settings.
 
 For hostile repositories or dependencies, use a disposable environment or a separate OS account. Commands typed manually in the desktop terminal are not agent tool calls and do not inherit the agent's permission checks.
@@ -42,7 +51,7 @@ Conversation history, tool results, logs, artifacts, and plugin data can contain
 
 ## Desktop and remote control
 
-`wuu app-server` communicates over the subprocess's standard input and output. It does not itself open a network listener. The desktop shell exposes selected operations through its preload and IPC bridge.
+`wuu app-server` communicates over the subprocess's standard input and output. The control protocol does not require a network listener; optional PTC programs use a temporary authenticated loopback channel. The desktop shell exposes selected operations through its preload and IPC bridge.
 
 Remote control is a separate capability, and the current release build disables its desktop UI. If you build or run the remote components, treat an enrolled device as a controller of the host's workspaces. Use secure relay transport and revoke devices you no longer trust; see [remote and mobile control](../automation/remote.md).
 
