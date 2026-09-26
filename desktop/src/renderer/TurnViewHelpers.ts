@@ -6,6 +6,8 @@ import {
 } from "./message-flow-display";
 import { streamFieldValue } from "./ThreadItemText";
 import { prefersReducedMotion } from "./motion";
+import { createScrollGlide } from "./ScrollGlide";
+import { syncConversationRenderWindow } from "./ConversationRenderWindow";
 import { formatCurrentNumber, getActiveLocale, translateCurrent as t } from "./i18n";
 
 type TurnProgressContent = {
@@ -303,6 +305,8 @@ function findScrollContainer(start: HTMLElement): HTMLElement | null {
   return null;
 }
 
+const jumpGlideFrames = new WeakMap<HTMLElement, number>();
+
 function scrollAnchorIntoContainer(
   node: HTMLElement,
   container: HTMLElement,
@@ -321,10 +325,30 @@ function scrollAnchorIntoContainer(
   if (Math.abs(targetTop - container.scrollTop) < 2) {
     return;
   }
-  container.scrollTo({
-    top: targetTop,
-    behavior: prefersReducedMotion() ? "auto" : "smooth",
-  });
+  const pending = jumpGlideFrames.get(container);
+  if (pending !== undefined) window.cancelAnimationFrame(pending);
+  if (prefersReducedMotion()) {
+    container.scrollTop = targetTop;
+    syncConversationRenderWindow(container);
+    return;
+  }
+  // The conversation's programmatic trajectory. A native smooth scroll runs
+  // on the compositor and would cross turns that are still skipped; writing
+  // each frame here renders them before that frame paints.
+  const glide = createScrollGlide();
+  glide.start(container.scrollTop);
+  let commanded = container.scrollTop;
+  const step = (now: number): void => {
+    jumpGlideFrames.delete(container);
+    // Any other writer — the reader's wheel, a drag, a follow — takes over.
+    if (Math.abs(container.scrollTop - commanded) > 1) return;
+    const { position, done } = glide.step(now, targetTop, container.clientHeight);
+    container.scrollTop = position;
+    commanded = container.scrollTop;
+    syncConversationRenderWindow(container);
+    if (!done) jumpGlideFrames.set(container, window.requestAnimationFrame(step));
+  };
+  jumpGlideFrames.set(container, window.requestAnimationFrame(step));
 }
 
 function attemptJump(turnID: string, itemID: string, highlight: boolean): boolean {
@@ -339,10 +363,9 @@ function attemptJump(turnID: string, itemID: string, highlight: boolean): boolea
   }
   // The .turn ancestor has `content-visibility: auto`, which lets the
   // browser skip layout and paint while the turn is off-screen. The
-  // anchor is still in the DOM tree, so querySelector finds it, but
-  // getBoundingClientRect below would return the placeholder size from
-  // `contain-intrinsic-size` instead of the real coordinates. Reading
-  // any layout property on a skipped subtree forces the browser to
+  // anchor is still in the DOM tree, so querySelector finds it, but its
+  // position inside a skipped turn is unknown until that turn lays out.
+  // Reading any layout property on a skipped subtree forces the browser to
   // compute the real layout, so the subsequent scroll math sees the
   // actual position. Without this, the first click on a query whose
   // turn is above the current scroll viewport either scrolls to the

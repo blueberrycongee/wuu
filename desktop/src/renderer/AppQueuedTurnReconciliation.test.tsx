@@ -341,7 +341,7 @@ describe("queued turn reconciliation", () => {
     const viewport = container.querySelector<HTMLElement>(".scroll-region")!;
     const content = viewport.querySelector<HTMLElement>(".scroll-region-content")!;
     let top = 1400;
-    const tail = () => Number.parseFloat(viewport.parentElement!.style.getPropertyValue("--session-tail-space") || "0");
+    const tail = () => Number.parseFloat(content.style.paddingBottom || "0");
     Object.defineProperties(viewport, {
       clientHeight: { configurable: true, get: () => 600 },
       scrollHeight: { configurable: true, get: () => 2000 + tail() },
@@ -409,7 +409,7 @@ describe("queued turn reconciliation", () => {
     const viewport = container.querySelector<HTMLElement>(".scroll-region")!;
     const content = viewport.querySelector<HTMLElement>(".scroll-region-content")!;
     let top = 1400;
-    const tail = () => Number.parseFloat(viewport.parentElement!.style.getPropertyValue("--session-tail-space") || "0");
+    const tail = () => Number.parseFloat(content.style.paddingBottom || "0");
     Object.defineProperties(viewport, {
       clientHeight: { configurable: true, get: () => 600 },
       scrollHeight: { configurable: true, get: () => 2000 + tail() },

@@ -693,6 +693,9 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
   const followMessageArrival = useCallback((localSend: boolean) => {
     messageScroll.scrollToBottom({ force: localSend, animate: true });
   }, [messageScroll]);
+  const jumpToLatestMessage = useCallback(() => {
+    messageScroll.scrollToBottom({ force: true, animate: true, revealScrollbar: true });
+  }, [messageScroll]);
   const acknowledgeMessageMotion = useChannelMessageMotion(
     messageScroll.scrollRef, section === "rooms" ? selectedRoomID : "",
     loadedRoomIDs.has(selectedRoomID), messages,
@@ -2297,6 +2300,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
               containerRef={messageScroll.scrollRef}
               bottomAnchor={composerAnchor}
               threshold={AUTO_FOLLOW_BOTTOM_THRESHOLD_PX}
+              onJump={jumpToLatestMessage}
               companion={selectedRoom.kind === "dm" && selectedRoomAgents[0] && onOpenSession ? <ManagedAgentWork
                 key={selectedRoom.id}
                 threads={(managedThreadsByAgentID[selectedRoomAgents[0].id] ?? []).filter(thread => !thread.session_control?.room_id || thread.session_control.room_id === selectedRoomID)}

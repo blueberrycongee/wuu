@@ -57,6 +57,12 @@ type JumpToLatestPillProps = {
    * the effect re-runs only when the boolean actually changes.
    */
   onScrolledAwayChange?: (scrolledAway: boolean) => void;
+  /**
+   * Performs the jump through the container's follow controller, which must
+   * resume following immediately. Without it the pill smooth-scrolls to the
+   * bottom measured at click time, which streamed output can outgrow.
+   */
+  onJump?: () => void;
   /** Renders inside the caller's status group instead of floating above the composer. */
   inline?: boolean;
   /** Remains available at the bottom; shares one centered group with the jump action. */
@@ -91,6 +97,7 @@ export function JumpToLatestPill({
   threshold = DEFAULT_THRESHOLD_PX,
   label,
   onScrolledAwayChange,
+  onJump,
   inline = false,
   companion,
   scopeKey,
@@ -316,6 +323,10 @@ export function JumpToLatestPill({
   }
 
   const scrollToBottom = (): void => {
+    if (onJump) {
+      onJump();
+      return;
+    }
     const node = containerRef.current;
     if (!node) {
       return;
