@@ -152,6 +152,14 @@ func TestListForCWDFiltersSessions(t *testing.T) {
 	if recent != "sess-b" {
 		t.Fatalf("MostRecentForCWD() = %q, want sess-b", recent)
 	}
+	empty, err := ListForCWD(dir, filepath.Join(cwdA, "empty"), "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(empty)
+	if err != nil || string(encoded) != "[]" {
+		t.Fatalf("empty workspace list JSON = %s, err = %v", encoded, err)
+	}
 }
 
 func TestListForCWDPreservesScopedOrderAndLimit(t *testing.T) {

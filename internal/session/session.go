@@ -379,6 +379,10 @@ FROM sessions`
 	defer rows.Close()
 
 	var sessions []Session
+	if where != "" {
+		// Scoped lists are also returned directly by the CLI as a JSON array.
+		sessions = make([]Session, 0)
+	}
 	for rows.Next() {
 		s, err := scanSession(rows)
 		if err != nil {
