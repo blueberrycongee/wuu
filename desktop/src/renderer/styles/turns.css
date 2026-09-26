@@ -4248,22 +4248,21 @@ pre {
 .empty-home-heatmap-weeks {
   --empty-home-heatmap-gap: 3px;
   --empty-home-heatmap-label: calc(var(--font-xs) * 1.25);
-  --empty-home-heatmap-cell: clamp(
-    8px,
-    calc(
-      (100cqi - (var(--empty-home-heatmap-weeks) - 1) * var(--empty-home-heatmap-gap)) /
-        var(--empty-home-heatmap-weeks)
-    ),
-    14px
-  );
   display: flex;
   flex-flow: row-reverse wrap;
   align-content: flex-start;
   justify-content: space-between;
   column-gap: var(--empty-home-heatmap-gap);
+  /* Keep cqi on this box's height, not in an inherited cell-size variable:
+     otherwise every day needs style recalculation on each resize frame. */
   height: calc(
     var(--empty-home-heatmap-label) +
-      7 * (var(--empty-home-heatmap-cell) + var(--empty-home-heatmap-gap))
+      7 * (clamp(
+        8px,
+        (100cqi - (var(--empty-home-heatmap-weeks) - 1) * var(--empty-home-heatmap-gap)) /
+          var(--empty-home-heatmap-weeks),
+        14px
+      ) + var(--empty-home-heatmap-gap))
   );
   overflow: hidden;
 }
@@ -4274,8 +4273,17 @@ pre {
 .empty-home-heatmap-week {
   display: grid;
   flex: none;
-  grid-template-columns: var(--empty-home-heatmap-cell);
-  grid-template-rows: var(--empty-home-heatmap-label) repeat(7, var(--empty-home-heatmap-cell));
+  /* Percentage width stays local to layout; the shared row height keeps
+     even the unfinished current week aligned with the full weeks. */
+  width: clamp(
+    8px,
+    (100% - (var(--empty-home-heatmap-weeks) - 1) * var(--empty-home-heatmap-gap)) /
+      var(--empty-home-heatmap-weeks),
+    14px
+  );
+  height: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: var(--empty-home-heatmap-label) repeat(7, minmax(0, 1fr));
   row-gap: var(--empty-home-heatmap-gap);
   --enter-y: 6px;
   animation: wuu-enter var(--motion-slow) var(--ease-out) both;

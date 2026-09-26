@@ -368,6 +368,52 @@ describe("AppSidebar layout", () => {
     expect(workspaceTitles.sort()).toEqual(["Ordinary conversation", "Orphaned session"]);
   });
 
+  it("clears a viewed project's unread dot without marking its hidden sessions read", () => {
+    const project = sidebarThread("coordinator", "Search overhaul", {
+      source: "project", latest_completed_turn_id: "project-turn-1",
+    });
+    const member = sidebarThread("member", "Paginate results", {
+      source: "project-session", project_id: project.id, latest_completed_turn_id: "member-turn-1",
+    });
+    const options: RenderOptions = {
+      workspaceThreadsByWorkspaceID: { "project-1": [project, member] },
+      onSelectThread: vi.fn(),
+    };
+    const hasProjectUnread = () => projectsGroup().querySelector(".project-thread-row")!.classList.contains("has-unread");
+    renderSidebar(options);
+    expect(hasProjectUnread()).toBe(true);
+    act(() => projectsGroup().querySelector<HTMLButtonElement>(".thread-row-main")!.click());
+    expect(options.onSelectThread).toHaveBeenCalledWith(project.id);
+    renderSidebar({ ...options, activeThreadID: project.id });
+    expect(hasProjectUnread()).toBe(false);
+
+    // After navigating away, the persisted read marker still clears the project,
+    // even though its member has never been opened.
+    const viewedOptions: RenderOptions = {
+      ...options,
+      state: {
+        ...initialState,
+        initialized: initialized(),
+        lastViewedTurnByThreadID: { [project.id]: "project-turn-1" },
+      },
+    };
+    renderSidebar(viewedOptions);
+    expect(hasProjectUnread()).toBe(false);
+    act(() => container.querySelector<HTMLButtonElement>(".sidebar-notifications-button")!.click());
+    const unreadList = container.querySelector("#sidebar-unread-heading")?.nextElementSibling;
+    expect(unreadList?.textContent).toContain(member.title);
+    expect(unreadList?.textContent).not.toContain(project.title);
+    act(() => container.querySelector<HTMLButtonElement>(".sidebar-notifications-button")!.click());
+
+    renderSidebar({
+      ...viewedOptions,
+      workspaceThreadsByWorkspaceID: {
+        "project-1": [{ ...project, latest_completed_turn_id: "project-turn-2" }, member],
+      },
+    });
+    expect(hasProjectUnread()).toBe(true);
+  });
+
   it("opens a project draft and adopts a conversation dropped on a project", () => {
     const create = vi.fn();
     const adopt = vi.fn();

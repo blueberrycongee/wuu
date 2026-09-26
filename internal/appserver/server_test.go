@@ -858,6 +858,7 @@ func TestProviderHasAuthChecksCodexOAuthAvailability(t *testing.T) {
 }
 
 func TestProviderSummariesExposeDiscoveredCodexCLILogin(t *testing.T) {
+	t.Setenv("WUU_HOME", t.TempDir())
 	rt := newTestRuntime(t, &fakeClient{})
 	home := os.Getenv("HOME")
 	codexHome := filepath.Join(home, ".codex")

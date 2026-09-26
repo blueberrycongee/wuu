@@ -835,6 +835,7 @@ export class RemoteDesktopBridge {
       requestPluginRuntime: (params) => this.call("plugin/client/request", params),
       readManagedProcess: (params) => this.call("process/read", params),
       holdUserQuestion: (request_id) => this.call("user-question/hold", { request_id }),
+      useCodexCredentials: (provider) => this.call("config/codex/credentials", { provider }),
       loadCodexModels: (provider) => this.call("config/codex/models", { provider }),
       installPluginPackage: async () => {
         const path = await pickComputerFolder((method,params) => this.call(method,params),false,true);

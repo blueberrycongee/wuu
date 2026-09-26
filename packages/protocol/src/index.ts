@@ -2626,6 +2626,7 @@ export type WuuDesktopApi = {
     params: SystemNotificationParams,
   ) => Promise<SystemNotificationResult>;
   getBuildInfo: () => Promise<BuildInfoResult>;
+  useCodexCredentials: (provider: string) => Promise<{ providers: ProviderSummary[] }>;
   loadCodexModels: (provider?: string) => Promise<ConfigCodexModelsResult>;
   refreshModelCatalog: () => Promise<ConfigModelCatalogRefreshResult>;
   // provider/model may be omitted when threadId is set: the server inherits

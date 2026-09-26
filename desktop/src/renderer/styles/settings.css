@@ -1041,6 +1041,18 @@ button.settings-engine-expand:hover {
   gap: var(--space-2);
 }
 
+.settings-codex-login {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.settings-codex-login .settings-subscription-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 .settings-subscription-actions .select-menu {
   width: 100%;
   max-width: 100%;

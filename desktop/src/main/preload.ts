@@ -210,6 +210,7 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:system-notification", params),
   getBuildInfo: () => ipcRenderer.invoke("wuu:build-info"),
   polishText: (text: string) => ipcRenderer.invoke("wuu:text-polish", text),
+  useCodexCredentials: (provider) => ipcRenderer.invoke("wuu:config-codex-credentials", provider),
   loadCodexModels: (provider?: string) =>
     ipcRenderer.invoke("wuu:config-codex-models", provider),
   refreshModelCatalog: () =>

@@ -164,7 +164,7 @@ type ProviderConfig struct {
 	Headers      map[string]string              `json:"headers,omitempty"`
 	// ReuseCodexCredentials lets Codex subscription providers read the local
 	// Codex CLI auth store (CODEX_HOME/auth.json or ~/.codex/auth.json) as a
-	// read-only fallback when wuu does not have its own OAuth session.
+	// selected source, taking precedence over Wuu's saved OAuth session.
 	ReuseCodexCredentials bool `json:"reuse_codex_credentials,omitempty"`
 	// ReuseGrokCredentials lets Grok Build providers read GROK_HOME/auth.json
 	// (or ~/.grok/auth.json) without taking ownership of the CLI login.
@@ -1246,6 +1246,51 @@ func AddProviderIfMissing(configPath, providerName string, provider ProviderConf
 		return fmt.Errorf("marshal config: %w", err)
 	}
 	return securefs.WriteFileAtomic(configPath, append(out, '\n'))
+}
+
+// UseCodexCredentials selects the local Codex login without changing model
+// selections or deleting either application's saved OAuth session.
+func UseCodexCredentials(configPath, providerName string) error {
+	lock, err := storelock.Acquire(filepath.Dir(configPath))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Release() }()
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	var providers map[string]map[string]json.RawMessage
+	if err := json.Unmarshal(raw["providers"], &providers); err != nil {
+		return err
+	}
+	provider, exists := providers[providerName]
+	if !exists {
+		return fmt.Errorf("provider %q not found", providerName)
+	}
+	var providerType string
+	if err := json.Unmarshal(provider["type"], &providerType); err != nil {
+		return err
+	}
+	if !isCodexSubscriptionProvider(providerType) {
+		return errors.New("local Codex login requires a Codex subscription provider")
+	}
+	provider["reuse_codex_credentials"] = json.RawMessage("true")
+	delete(provider, "api_key")
+	delete(provider, "api_key_env")
+	raw["providers"], err = json.Marshal(providers)
+	if err != nil {
+		return err
+	}
+	data, err = json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	return securefs.WriteFileAtomic(configPath, append(data, '\n'))
 }
 
 // RemoveProvider deletes a configured provider from the config file and,

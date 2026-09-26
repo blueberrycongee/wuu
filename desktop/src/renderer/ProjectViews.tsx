@@ -7,18 +7,9 @@ import { baseThreadTitle } from "./ThreadTitles";
 import {
   ChevronDown,
   ChevronUp,
-  CircleCheck,
-  CornerUpLeft,
   FileDiff,
-  GitPullRequest,
-  Hand,
-  Inbox,
   LoaderCircle,
-  LogOut,
   MessagesSquare,
-  Project,
-  Square,
-  X,
 } from "./WuuIcons";
 import { useI18n } from "./i18n";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
@@ -52,19 +43,19 @@ export function ProjectStatusStrip({ project }: { project: Thread }): JSX.Elemen
   );
 }
 
-const PROJECT_EVENTS: Record<string, { label: TranslationKey; Icon: typeof Project }> = {
-  project_message: { label: "projects.event.message", Icon: MessagesSquare },
-  project_user_message: { label: "projects.event.userMessage", Icon: MessagesSquare },
-  project_stopped: { label: "projects.event.stopped", Icon: Square },
-  project_result: { label: "projects.event.result", Icon: MessagesSquare },
-  project_takeover: { label: "projects.event.takeover", Icon: Hand },
-  project_pause: { label: "projects.event.pause", Icon: Hand },
-  project_return: { label: "projects.event.return", Icon: CornerUpLeft },
-  project_applied: { label: "projects.event.applied", Icon: CircleCheck },
-  project_discarded: { label: "projects.event.discarded", Icon: X },
-  project_published: { label: "projects.event.published", Icon: GitPullRequest },
-  project_adopted: { label: "projects.event.adopted", Icon: Inbox },
-  project_released: { label: "projects.event.released", Icon: LogOut },
+const PROJECT_EVENTS: Record<string, TranslationKey> = {
+  project_message: "projects.event.message",
+  project_user_message: "projects.event.userMessage",
+  project_stopped: "projects.event.stopped",
+  project_result: "projects.event.result",
+  project_takeover: "projects.event.takeover",
+  project_pause: "projects.event.pause",
+  project_return: "projects.event.return",
+  project_applied: "projects.event.applied",
+  project_discarded: "projects.event.discarded",
+  project_published: "projects.event.published",
+  project_adopted: "projects.event.adopted",
+  project_released: "projects.event.released",
 };
 
 /** Whether a message is a host event that a coordinator received. */
@@ -73,52 +64,133 @@ export function isProjectEvent(item: Pick<ThreadItem, "origin" | "cause">): bool
 }
 
 /**
+ * A turn's user messages with each run of two or more project events folded
+ * into one group, so a burst of events reads as one marker.
+ */
+export function groupProjectEvents(items: ThreadItem[]): Array<ThreadItem | ThreadItem[]> {
+  const entries: Array<ThreadItem | ThreadItem[]> = [];
+  let run: ThreadItem[] = [];
+  const flush = () => {
+    if (run.length > 1) entries.push(run);
+    else entries.push(...run);
+    run = [];
+  };
+  for (const item of items) {
+    if (isProjectEvent(item)) {
+      run.push(item);
+      continue;
+    }
+    flush();
+    entries.push(item);
+  }
+  flush();
+  return entries;
+}
+
+function eventSession(item: ThreadItem, threads: readonly ProjectThread[] | undefined): ProjectThread | undefined {
+  return threads?.find((thread) => thread.id === item.related_session_id);
+}
+
+/** The session an event names, leading to it when it still exists. */
+function EventSessionName({ item, session }: { item: ThreadItem; session: ProjectThread | undefined }): JSX.Element {
+  const { t } = useI18n();
+  const actions = useProjectActions();
+  const name = session ? baseThreadTitle(session) : item.name?.trim() || t("projects.event.aSession");
+  if (!session || !actions) return <span className="project-event-name"><span>{name}</span></span>;
+  return (
+    <button type="button" className="project-event-name" title={t("projects.openSession")} onClick={() => actions.openThread(session.id)}>
+      <MessagesSquare aria-hidden="true" />
+      <span>{name}</span>
+    </button>
+  );
+}
+
+function EventToggle({ expanded, controls, onToggle }: { expanded: boolean; controls: string; onToggle: () => void }): JSX.Element {
+  const { t } = useI18n();
+  const label = t(expanded ? "projects.event.hideDetails" : "projects.event.details");
+  return (
+    <button type="button" className="icon-button project-event-action project-event-toggle"
+      title={label} aria-label={label} aria-expanded={expanded} aria-controls={controls} onClick={onToggle}>
+      {expanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+    </button>
+  );
+}
+
+// Session names are controls, so they are spliced into the translated sentence.
+function spliceSentence(sentence: string): [string, string] {
+  const [before, after = ""] = sentence.split("\u0000");
+  return [before.trim(), after.trim()];
+}
+
+/**
  * A host event in a coordinator's conversation, such as a session's result
- * or the user's decision. The coordinator read the full text; the row shows
- * what happened and where to go next, and discloses the text on request.
+ * or the user's decision. It reads as a centered marker between messages:
+ * the session's name leads to it, and the text the coordinator read is
+ * disclosed on request.
  */
 export function ProjectEventRow({ item }: { item: ThreadItem }): JSX.Element {
   const { t } = useI18n();
   const actions = useProjectActions();
   const [expanded, setExpanded] = useState(false);
   const detailsID = useId();
-  const event = PROJECT_EVENTS[item.cause ?? ""] ?? PROJECT_EVENTS.project_result;
-  const session = actions?.threads.find((thread) => thread.id === item.related_session_id);
-  const name = session ? baseThreadTitle(session) : item.name?.trim() || t("projects.event.aSession");
+  const label = PROJECT_EVENTS[item.cause ?? ""] ?? PROJECT_EVENTS.project_result;
+  const session = eventSession(item, actions?.threads);
   const pending = session?.pending_candidates ?? 0;
   const reviewable = pending > 0 && (item.cause === "project_result" || item.cause === "project_adopted");
+  const [before, after] = spliceSentence(t(label, { name: "\u0000" }));
   return (
     <div className="project-event" data-cause={item.cause}>
       <div className="project-event-line">
-        <event.Icon className="project-event-icon" aria-hidden="true" />
-        <span className="project-event-text">{t(event.label, { name })}</span>
-        <div className="project-event-actions">
+        <span className="project-event-text">
+          {before}
+          <EventSessionName item={item} session={session} />
+          {after}
+        </span>
+        <span className="project-event-actions">
           {reviewable && session ? (
-            <button type="button" className="icon-button project-icon-button"
+            <button type="button" className="icon-button project-event-action"
               title={t("projects.review")} aria-label={t("projects.review")} onClick={() => actions?.openProposal(session)}>
               <FileDiff aria-hidden="true" />
             </button>
           ) : null}
-          {session && actions ? (
-            <button type="button" className="icon-button project-icon-button"
-              title={t("projects.openSession")} aria-label={t("projects.openSession")} onClick={() => actions.openThread(session.id)}>
-              <MessagesSquare aria-hidden="true" />
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="icon-button project-icon-button project-event-toggle"
-            title={t(expanded ? "projects.event.hideDetails" : "projects.event.details")}
-            aria-label={t(expanded ? "projects.event.hideDetails" : "projects.event.details")}
-            aria-expanded={expanded}
-            aria-controls={detailsID}
-            onClick={() => setExpanded((value) => !value)}
-          >
-            {expanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
-          </button>
-        </div>
+          <EventToggle expanded={expanded} controls={detailsID} onToggle={() => setExpanded((value) => !value)} />
+        </span>
       </div>
       {expanded ? <p id={detailsID} className="project-event-details">{item.text}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * Consecutive host events as one marker naming their first session;
+ * expanding it lists each event with its own actions.
+ */
+export function ProjectEventGroup({ items }: { items: ThreadItem[] }): JSX.Element {
+  const { t, formatNumber } = useI18n();
+  const actions = useProjectActions();
+  const [expanded, setExpanded] = useState(false);
+  const listID = useId();
+  const sessions = new Set(items.map((item) => item.related_session_id || item.name || item.id)).size;
+  const [before, after] = spliceSentence(sessions === 1
+    ? t("projects.event.group", { count: formatNumber(items.length), name: "\u0000" })
+    : t("projects.event.groupSessions", { count: formatNumber(items.length), sessions: formatNumber(sessions), name: "\u0000" }));
+  return (
+    <div className="project-event project-event-group">
+      <div className="project-event-line">
+        <span className="project-event-text">
+          {before}
+          <EventSessionName item={items[0]} session={eventSession(items[0], actions?.threads)} />
+          {after}
+        </span>
+        <span className="project-event-actions">
+          <EventToggle expanded={expanded} controls={listID} onToggle={() => setExpanded((value) => !value)} />
+        </span>
+      </div>
+      {expanded ? (
+        <div id={listID} className="project-event-list">
+          {items.map((item) => <ProjectEventRow key={item.id} item={item} />)}
+        </div>
+      ) : null}
     </div>
   );
 }

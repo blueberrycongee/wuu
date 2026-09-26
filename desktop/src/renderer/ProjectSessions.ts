@@ -9,7 +9,7 @@ export function isProjectCoordinator(thread: Pick<Thread, "source">): boolean {
   return thread.source === PROJECT_SOURCE;
 }
 
-// What a project row shows for its hidden sessions.
+// Project activity includes hidden sessions; unread belongs to the opened conversation.
 export type ProjectRowSummary = {
   running: boolean;
   unread: boolean;
@@ -46,14 +46,14 @@ export function projectDirectory(
     if (sessions) sessions.push(thread);
     else sessionsByProjectID.set(projectID, [thread]);
   }
-  const unread = (thread: ThreadSummary): boolean => thread.id !== activeThreadID &&
-    !isThreadExecuting(thread) && isThreadUnread(thread, lastViewedTurnByThreadID[thread.id]);
   const summaries = new Map<string, ProjectRowSummary>();
   for (const project of projects) {
     const rows = [project, ...(sessionsByProjectID.get(project.id) ?? [])];
     summaries.set(project.id, {
       running: rows.some(isThreadExecuting),
-      unread: rows.some(unread),
+      // Opening this row reads the coordinator, not its hidden member sessions.
+      unread: project.id !== activeThreadID && !isThreadExecuting(project) &&
+        isThreadUnread(project, lastViewedTurnByThreadID[project.id]),
       pendingCandidates: project.pending_candidates ?? 0,
     });
   }

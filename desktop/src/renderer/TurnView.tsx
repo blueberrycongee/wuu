@@ -20,6 +20,7 @@ import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import { TurnEventNotice, StreamStatusNotice, StreamReconnectNotice } from "./TurnNotice";
 import { turnEventForTurn } from "./TurnEvents";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
+import { groupProjectEvents, ProjectEventGroup } from "./ProjectViews";
 import { turnIsAnswerReady, type TurnStreamStatus } from "./AppState";
 import {
   latestAgentMessageItemID,
@@ -265,7 +266,9 @@ function TurnContent({
       data-turn-status={turn.status}
       data-latest-turn={isLatestTurn || undefined}
     >
-      {userItems.map((item) => renderThreadItem(item, false))}
+      {groupProjectEvents(userItems).map((entry) => Array.isArray(entry)
+        ? <ProjectEventGroup key={entry[0].id} items={entry} />
+        : renderThreadItem(entry, false))}
       {assistantDisplay ? (
         <AssistantTurnShell
           turn={turn}

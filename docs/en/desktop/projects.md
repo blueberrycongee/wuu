@@ -32,7 +32,7 @@ To bring existing work into a project, drag a conversation from its workspace on
 A project occupies one row in the sidebar; its sessions do not crowd the workspace list. The row shows when any of its sessions is running and how many proposals await your review. In the project conversation:
 
 - Above the composer, the project's running work and pending reviews open the project in the right panel: what awaits review, then every session. Running indicators describe execution, not project membership.
-- Each event, such as a session finishing a turn, reads as one line with **Review** and **Open session**. **Details** shows the text the coordinator received.
+- Each event, such as a session finishing a turn, reads as one centered line between messages. Its session name opens the session; **Review** opens a pending proposal, and **Details** shows the text the coordinator received. Consecutive events in a turn fold into one line that counts them; expand it to see each event.
 
 In a Git workspace, a session that changes files works in its own Git worktree by default, so their files are isolated. Worktrees do not resolve interface conflicts: assign one writer to each overlapping scope and verify changes together. A session that works in the workspace directly edits its files in place.
 
