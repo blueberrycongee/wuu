@@ -234,7 +234,7 @@ html[data-focus-modality="keyboard"] .session-control-project:focus-visible {
 .project-panel-header {
   display: flex;
   min-width: 0;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
 }
@@ -280,20 +280,40 @@ html[data-focus-modality="keyboard"] .session-control-project:focus-visible {
   background: var(--surface-2);
 }
 
-/* A session's hand-over actions appear where the pointer or focus is. */
+.project-panel-icon-button {
+  flex: none;
+  width: var(--control-size-inline);
+  height: var(--control-size-inline);
+  padding: 0;
+}
+
+/* Reserve only the larger of the compact controls and the session state.
+ * Titles and click targets stay in place when hover or keyboard focus changes. */
+.project-panel-row-tools {
+  display: grid;
+  flex: none;
+  align-items: center;
+}
+
+.project-panel-row-actions,
+.project-panel-row-state {
+  grid-area: 1 / 1;
+  justify-self: end;
+}
+
+.project-panel-row-actions {
+  display: flex;
+  gap: 2px;
+}
+
 .project-panel-row-action {
-  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .project-panel-row:is(:hover, :focus-within) .project-panel-row-action {
-  visibility: visible;
-}
-
-/* A session's state sits in the footprint its actions reserve and gives way
- * to them, so it never narrows the title. */
-.project-panel-row-state {
-  position: absolute;
-  right: var(--space-2);
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .project-panel-row:is(:hover, :focus-within) .project-panel-row-state {

@@ -84,6 +84,17 @@ const threads: Thread[] = [
   thread("chat-2", "Why does the composer jump on paste"),
 ];
 
+if (params.has("long-titles")) {
+  const names: Record<string, string> = {
+    index: "docs vs code: desktop sessions and workspaces",
+    paginate: "docs vs code: startup, configuration and command line",
+    latency: "docs vs code: extensions, plugins and automation",
+  };
+  for (const item of threads) {
+    if (names[item.id]) item.title = names[item.id];
+  }
+}
+
 const candidates: ProjectCandidate[] = [
   {
     session_id: "paginate", turn_id: "paginate-turn", base_repo: "/preview", base_revision: "a".repeat(40),
@@ -179,7 +190,7 @@ function Fixture() {
   const current = threads.find(item => item.id === active);
   const draft = view === "draft" || empty;
   return <WuuUIRoot><ProjectActionsProvider value={actions}>
-    <div className={`app-shell sample-shell${tabs.length ? " right-panel-open" : ""}`} style={{ height: "100dvh" }}>
+    <div className={`app-shell sample-shell${tabs.length ? " right-panel-open" : ""}`} style={{ height: "100dvh", "--workspace-right-panel-width": params.has("panel-width") ? `${Number(params.get("panel-width"))}px` : undefined } as CSSProperties}>
       <AppSidebar
         state={state}
         sidebarWorkspaces={[workspace]} pinnedThreads={[]}

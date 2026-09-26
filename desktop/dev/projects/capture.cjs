@@ -3,7 +3,7 @@
 const { app, BrowserWindow } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
-const output = path.resolve(__dirname, "../../../artifacts/projects");
+const output = process.env.PROJECTS_CAPTURE_DIR || path.resolve(__dirname, "../../../artifacts/projects");
 const base = process.env.PROJECTS_PREVIEW_URL || "http://127.0.0.1:5243";
 fs.mkdirSync(output, { recursive: true });
 app.setPath("userData", fs.mkdtempSync(path.join(output, "profile-")));
@@ -22,6 +22,10 @@ const scenes = [
   ["empty-light-14", "empty&panel=none", 1280],
   ["coordinator-side-taken-over-dark-20", "view=coordinator&panel=project&theme=dark&size=20&side-control=taken_over", 1085, ".project-panel-row-main"],
   ["coordinator-keyboard-focus", "view=coordinator&panel=project", 1440, undefined, ".project-panel-row-main"],
+  ["long-titles-wide", "view=coordinator&panel=project&long-titles&panel-width=600", 1600],
+  ["long-titles-wide-hover", "view=coordinator&panel=project&long-titles&panel-width=600", 1600, ".project-panel-row-main"],
+  ["long-titles-narrow-dark-20", "view=coordinator&panel=project&long-titles&panel-width=320&theme=dark&size=20", 1085, ".project-panel-row-main"],
+  ["coordinator-action-keyboard-focus", "view=coordinator&panel=project", 1440, undefined, ".project-panel-row-action"],
   ["coordinator-hover-session", "view=coordinator&panel=project", 1440, ".project-panel-list .project-panel-row-main"],
 ];
 
@@ -56,10 +60,7 @@ app.whenReady().then(async () => {
       await win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
       win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab" });
       win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab" });
-      await win.webContents.executeJavaScript(`new Promise(resolve => requestAnimationFrame(() => {
-        document.querySelector(${JSON.stringify(focus)}).focus();
-        requestAnimationFrame(resolve);
-      }))`);
+      await win.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(focus)}).focus()`);
       console.log(name, await win.webContents.executeJavaScript(`JSON.stringify({
         focused: document.activeElement?.className,
         modality: document.documentElement.dataset.focusModality,

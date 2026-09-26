@@ -7,7 +7,7 @@ import { candidateStatusKey } from "./ProjectViews";
 import { SelectMenu } from "./SelectMenu";
 import { baseThreadTitle } from "./ThreadTitles";
 import { GitPatchLines } from "./WorkspaceReviewPanels";
-import { ArrowUpRight, FileDiff, LoaderCircle } from "./WuuIcons";
+import { ArrowUpRight, CornerUpLeft, FileDiff, Hand, LoaderCircle, LogOut, MessagesSquare } from "./WuuIcons";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { useI18n } from "./i18n";
 import { showErrorToast } from "./Toast";
@@ -37,9 +37,11 @@ export function ProjectPanel({ projectID }: { projectID: string }): JSX.Element 
   return (
     <section className="project-panel" aria-label={baseThreadTitle(project)}>
       <header className="project-panel-header">
-        <h2>{baseThreadTitle(project)}</h2>
-        <button type="button" className="project-inline-link" onClick={() => actions.openThread(project.id)}>
-          {t("projects.openCoordinator")}
+        <h2 title={baseThreadTitle(project)}>{baseThreadTitle(project)}</h2>
+        <button type="button" className="icon-button project-panel-icon-button"
+          title={t("projects.openCoordinator")} aria-label={t("projects.openCoordinator")}
+          onClick={() => actions.openThread(project.id)}>
+          <MessagesSquare aria-hidden="true" />
         </button>
       </header>
       {pending.length ? <>
@@ -48,14 +50,16 @@ export function ProjectPanel({ projectID }: { projectID: string }): JSX.Element 
           {pending.map(({ session, candidate }) => (
             <li key={session.id} className="project-panel-row">
               <FileDiff className="project-panel-row-icon" aria-hidden="true" />
-              <span className="project-panel-row-title">{baseThreadTitle(session)}</span>
+              <span className="project-panel-row-title" title={baseThreadTitle(session)}>{baseThreadTitle(session)}</span>
               <span className="project-panel-row-meta">
                 {t(candidate.changed_files.length === 1 ? "environment.fileCountOne" : "environment.fileCount", {
                   count: formatNumber(candidate.changed_files.length),
                 })}
               </span>
-              <button type="button" className="settings-button" onClick={() => actions.openProposal(session)}>
-                {t("projects.review")}
+              <button type="button" className="icon-button project-panel-icon-button"
+                title={t("projects.review")} aria-label={t("projects.review")}
+                onClick={() => actions.openProposal(session)}>
+                <FileDiff aria-hidden="true" />
               </button>
             </li>
           ))}
@@ -89,27 +93,32 @@ function ProjectSessionRow({ session }: { session: ProjectThread }): JSX.Element
         {running ? <LoaderCircle className="project-status-spinner" role="img" aria-label={t("projects.running")} /> : null}
       </span>
       <button type="button" className="project-panel-row-main" onClick={() => actions.openThread(session.id)}>
-        <span className="project-panel-row-title">{baseThreadTitle(session)}</span>
+        <span className="project-panel-row-title" title={baseThreadTitle(session)}>{baseThreadTitle(session)}</span>
       </button>
-      {/* Managed is every session's default; only a session out of the coordinator's hands says so. */}
-      {control && !managed ? (
-        <span className="project-panel-row-meta project-panel-row-state">
-          {t(control.state === "taken_over" ? "sessionControl.takenOver" : "sessionControl.paused")}
-        </span>
-      ) : null}
-      {control ? (
-        <button
-          type="button"
-          className="settings-button settings-button-ghost project-panel-row-action"
-          title={managed ? t("projects.takeOverHint") : undefined}
-          onClick={() => managed ? actions.takeOver(session) : actions.returnToProject(session)}
-        >
-          {t(managed ? "projects.takeOver" : "projects.returnToProject")}
-        </button>
-      ) : null}
-      <button type="button" className="settings-button settings-button-ghost project-panel-row-action" onClick={() => actions.release(session)}>
-        {t("projects.release")}
-      </button>
+      <div className="project-panel-row-tools">
+        {control && !managed ? (
+          <span className="project-panel-row-meta project-panel-row-state">
+            {t(control.state === "taken_over" ? "sessionControl.takenOver" : "sessionControl.paused")}
+          </span>
+        ) : null}
+        <div className="project-panel-row-actions">
+          {control ? (
+            <button
+              type="button"
+              className="icon-button project-panel-icon-button project-panel-row-action"
+              title={managed ? `${t("projects.takeOver")} · ${t("projects.takeOverHint")}` : t("projects.returnToProject")}
+              aria-label={t(managed ? "projects.takeOver" : "projects.returnToProject")}
+              onClick={() => managed ? actions.takeOver(session) : actions.returnToProject(session)}
+            >
+              {managed ? <Hand aria-hidden="true" /> : <CornerUpLeft aria-hidden="true" />}
+            </button>
+          ) : null}
+          <button type="button" className="icon-button project-panel-icon-button project-panel-row-action"
+            title={t("projects.release")} aria-label={t("projects.release")} onClick={() => actions.release(session)}>
+            <LogOut aria-hidden="true" />
+          </button>
+        </div>
+      </div>
     </li>
   );
 }
@@ -181,9 +190,11 @@ export function ProposalPanel({ sessionID }: { sessionID: string }): JSX.Element
   return (
     <section className="project-proposal" aria-busy={busy || undefined} aria-label={t("projects.candidate.title")}>
       <header className="project-panel-header">
-        <h2>{title}</h2>
-        <button type="button" className="project-inline-link" onClick={() => actions.openThread(session.id)}>
-          {t("projects.openSession")}
+        <h2 title={title}>{title}</h2>
+        <button type="button" className="icon-button project-panel-icon-button"
+          title={t("projects.openSession")} aria-label={t("projects.openSession")}
+          onClick={() => actions.openThread(session.id)}>
+          <MessagesSquare aria-hidden="true" />
         </button>
       </header>
       {!candidate ? <p className="project-panel-empty">{t("projects.candidate.none")}</p> : (
