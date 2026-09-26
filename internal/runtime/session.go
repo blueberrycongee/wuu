@@ -201,11 +201,15 @@ func (s *Session) MaxParallel() int {
 
 // cloneForThreadModel copies the shared, immutable session dependencies used
 // to build a thread runtime. Thread-specific mutable dependencies are replaced
-// by the caller below.
+// by the caller below. The caller must release the shadow's temporary plugin
+// generation reference after construction; a successful ThreadRuntime retains
+// its own reference.
 func (s *Session) cloneForThreadModel() *Session {
 	if s == nil {
 		return nil
 	}
+	s.pluginGenerationMu.Lock()
+	defer s.pluginGenerationMu.Unlock()
 	clone := &Session{
 		ProviderName:                s.ProviderName,
 		Model:                       s.Model,
@@ -225,6 +229,7 @@ func (s *Session) cloneForThreadModel() *Session {
 		ActivePlugins:               s.ActivePlugins,
 		ExtensionSettings:           s.ExtensionSettings,
 		PluginHost:                  s.PluginHost,
+		pluginGeneration:            s.pluginGeneration,
 		UserQuestions:               s.UserQuestions,
 		DriverProfile:               s.DriverProfile,
 		PluginSessionRouter:         s.PluginSessionRouter,
@@ -259,6 +264,7 @@ func (s *Session) cloneForThreadModel() *Session {
 		DefaultEngine:               s.DefaultEngine,
 		engines:                     s.engines,
 	}
+	clone.pluginGeneration.retain()
 	return clone
 }
 
@@ -1049,6 +1055,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	if selected.Speed == "" && (providerName == "" || model == "" || (providerName == s.ProviderName && model == s.Model && requested.Variant == currentVariant && requested.Effort == currentEffort)) {
 		// Permission changes do not require rebuilding an unchanged model client.
 		shadow := s.cloneForThreadModel()
+		defer s.releasePluginGeneration(shadow.pluginGeneration)
 		shadow.Permissions = permissions
 		threadRuntime, err := shadow.NewThreadRuntimeForRoot(sessionID, rootDir)
 		if err != nil {
@@ -1085,6 +1092,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	}
 
 	shadow := s.cloneForThreadModel()
+	defer s.releasePluginGeneration(shadow.pluginGeneration)
 	shadow.Permissions = permissions
 	shadow.ProviderName = resolvedName
 	shadow.Model = model

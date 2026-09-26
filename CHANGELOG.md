@@ -169,6 +169,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   conflicts and unsupported untracked files preserve the workspace. Automatic
   cleanup retains committed work and workspaces whose baseline is unavailable.
 
+- Retire runtime plugin processes after refresh or disable once their last
+  owning session releases them. Rebuilt generations no longer retain an extra
+  reference; conversations already using an older generation keep it until
+  they rebuild.
+
 - Work delivery reads structured reports from the final answer, so commentary
   before tool calls no longer causes completed executions to fail validation.
 
