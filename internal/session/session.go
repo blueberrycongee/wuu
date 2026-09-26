@@ -1230,6 +1230,29 @@ func migrateSchema(db *sql.DB) error {
 			revision INTEGER NOT NULL,
 			state TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS session_inbox (
+			client_id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			related_session_id TEXT NOT NULL DEFAULT '',
+			content TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			delivered_at TEXT,
+			FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_session_inbox_pending ON session_inbox(session_id, delivered_at, created_at)`,
+		`CREATE TABLE IF NOT EXISTS session_candidates (
+			session_id TEXT NOT NULL,
+			turn_id TEXT NOT NULL,
+			base_repo TEXT NOT NULL,
+			base_revision TEXT NOT NULL,
+			revision TEXT NOT NULL,
+			changed_files_json TEXT NOT NULL DEFAULT '[]',
+			disposition TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			disposed_at TEXT,
+			PRIMARY KEY(session_id, turn_id),
+			FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+		)`,
 		`CREATE TABLE IF NOT EXISTS plugin_turn_lifecycle_outbox (
 				plugin_id TEXT NOT NULL,
 				request_id TEXT NOT NULL,

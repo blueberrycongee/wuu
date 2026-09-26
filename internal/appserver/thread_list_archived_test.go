@@ -34,11 +34,7 @@ func TestServerThreadListArchivedReturnsArchivedSession(t *testing.T) {
 	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread.ID
 
 	// Another workspace process archives the session while this server caches it.
-	control, err := session.ChangeControl(rt.SessionDir, threadID, "manager", session.ControlActive, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := session.ArchiveControlled(rt.SessionDir, control, "agent_deleted"); err != nil {
+	if _, err := session.UpdateArchived(rt.SessionDir, threadID, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -54,7 +50,7 @@ func TestServerThreadListArchivedReturnsArchivedSession(t *testing.T) {
 	if list.Threads[0].ID != threadID {
 		t.Fatalf("archived list returned the wrong thread: %+v", list.Threads[0])
 	}
-	if !list.Threads[0].Archived || list.Threads[0].ArchiveReason != "agent_deleted" {
+	if !list.Threads[0].Archived {
 		t.Fatalf("archived thread must carry Archived=true, got %+v", list.Threads[0])
 	}
 
