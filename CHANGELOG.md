@@ -134,6 +134,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   is ready. Interrupted dispatches reuse their run record after restart, and
   completing a dispatch preserves a newly edited schedule.
 
+- Git review compares symbolic link target paths without reading target contents,
+  including untracked and dangling links and file/link type changes.
+
 - Git changes, statistics, and file previews work before the first commit,
   including staged files and edits made after staging.
 
