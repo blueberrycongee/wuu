@@ -2416,7 +2416,7 @@ html[data-focus-modality="keyboard"] :is(
   transition: opacity var(--motion-fast) var(--ease-out);
 }
 
-.thread-row:is(.running, .has-unread) .project-thread-pending {
+.thread-row:is(.running, .has-unread, .pending-switch) .project-thread-pending {
   right: calc(var(--sidebar-row-pad-x) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
 }
 
@@ -2428,7 +2428,7 @@ html[data-focus-modality="keyboard"] :is(
   padding-right: calc(var(--sidebar-row-action-size) + var(--sidebar-accessory-gap));
 }
 
-.thread-row:is(.running, .has-unread):has(.project-thread-pending) .thread-row-main > .thread-row-title {
+.thread-row:is(.running, .has-unread, .pending-switch):has(.project-thread-pending) .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-row-action-size) * 2 + var(--sidebar-action-gap) + var(--sidebar-accessory-gap));
 }
 
@@ -2447,16 +2447,17 @@ html[data-focus-modality="keyboard"] :is(
   transition: padding-right var(--motion-base) var(--ease-out);
 }
 
-/* Reserve the actual accessory footprint plus a reading gap at every size. */
+/* Reserve the actual accessory footprint plus a reading gap at every size,
+ * including the delayed switching indicator. */
 .thread-row:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-row-action-size) + var(--sidebar-accessory-gap));
 }
 
-.thread-row:is(.running, .has-unread) .thread-row-main > .thread-row-title {
+.thread-row:is(.running, .has-unread, .pending-switch) .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-row-action-size) + var(--sidebar-accessory-gap));
 }
 
-.thread-row:is(.running, .has-unread):has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
+.thread-row:is(.running, .has-unread, .pending-switch):has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-row-action-size) * 2 + var(--sidebar-action-gap) + var(--sidebar-accessory-gap));
 }
 
@@ -2493,8 +2494,8 @@ html[data-focus-modality="keyboard"] :is(
 }
 
 /* Keep the persistent fork marker beside, rather than underneath, a right-edge
- * running/unread indicator. */
-.thread-row:is(.running, .has-unread):has(.thread-row-fork-icon) .thread-row-fork-icon {
+ * running/unread/switching indicator. */
+.thread-row:is(.running, .has-unread, .pending-switch):has(.thread-row-fork-icon) .thread-row-fork-icon {
   right: calc(var(--sidebar-row-pad-x) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
 }
 
