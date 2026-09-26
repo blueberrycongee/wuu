@@ -141,6 +141,9 @@ func (s *Server) handleThreadControl(_ context.Context, req Request) error {
 		_, err = s.projectManagedSession(c.ManagerID, p.ThreadID)
 	}
 	if err == nil && c.State != session.ControlActive {
+		err = s.settleUserControlledTurn(c.ManagerID, p.ThreadID)
+	}
+	if err == nil && c.State != session.ControlActive {
 		c, err = session.ChangeControl(s.rt.SessionDir, p.ThreadID, c.ManagerID, session.ControlActive, c.Revision)
 	}
 	s.controlMu.Unlock()

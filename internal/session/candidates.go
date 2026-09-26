@@ -8,13 +8,22 @@ import (
 	"time"
 )
 
+// A candidate's disposition. Applied and published candidates are delivered:
+// the session's next candidate is measured from the latest of them. A
+// superseded candidate was replaced by a newer turn of the same session.
 const (
-	CandidateApplied   = "applied"
-	CandidateDiscarded = "discarded"
+	CandidateApplied    = "applied"
+	CandidateDiscarded  = "discarded"
+	CandidatePublished  = "published"
+	CandidateSuperseded = "superseded"
 )
 
-// ErrCandidateDecided rejects a second decision on the same candidate.
-var ErrCandidateDecided = errors.New("candidate already has a decision")
+var (
+	// ErrCandidateDecided rejects a second decision on the same candidate.
+	ErrCandidateDecided = errors.New("candidate already has a decision")
+	// ErrCandidateSuperseded rejects a decision on a candidate a newer turn replaced.
+	ErrCandidateSuperseded = errors.New("a newer proposal from this session replaced this one")
+)
 
 // Candidate is a frozen snapshot of a managed session's worktree changes at
 // the end of one turn. The user's disposition is the delivery decision.
@@ -26,13 +35,17 @@ type Candidate struct {
 	Revision     string
 	ChangedFiles []string
 	Disposition  string
-	CreatedAt    time.Time
-	DisposedAt   time.Time
+	// URL is where a published candidate was sent for review.
+	URL        string
+	CreatedAt  time.Time
+	DisposedAt time.Time
 }
 
-const candidateColumns = `session_id,turn_id,base_repo,base_revision,revision,changed_files_json,disposition,created_at,COALESCE(disposed_at,'')`
+const candidateColumns = `session_id,turn_id,base_repo,base_revision,revision,changed_files_json,disposition,url,created_at,COALESCE(disposed_at,'')`
 
 // PutCandidate records a snapshot once; a replayed turn keeps the first one.
+// Each candidate contains every undelivered change of its session, so a new
+// one supersedes the session's older undecided candidates.
 func PutCandidate(dir string, candidate Candidate) error {
 	if candidate.SessionID == "" || candidate.TurnID == "" || candidate.Revision == "" || candidate.BaseRevision == "" {
 		return errors.New("candidate requires a session, turn and revisions")
@@ -51,9 +64,42 @@ func PutCandidate(dir string, candidate Candidate) error {
 	defer db.Close()
 	storeWriteMu.Lock()
 	defer storeWriteMu.Unlock()
-	_, err = db.Exec(`INSERT OR IGNORE INTO session_candidates(session_id,turn_id,base_repo,base_revision,revision,changed_files_json,created_at) VALUES(?,?,?,?,?,?,?)`,
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`INSERT OR IGNORE INTO session_candidates(session_id,turn_id,base_repo,base_revision,revision,changed_files_json,created_at) VALUES(?,?,?,?,?,?,?)`,
 		candidate.SessionID, candidate.TurnID, candidate.BaseRepo, candidate.BaseRevision, candidate.Revision, string(files), timeText(candidate.CreatedAt))
-	return err
+	if err != nil {
+		return err
+	}
+	if inserted, err := result.RowsAffected(); err != nil || inserted == 0 {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE session_candidates SET disposition=?,disposed_at=? WHERE session_id=? AND turn_id<>? AND disposition=''`,
+		CandidateSuperseded, timeText(candidate.CreatedAt), candidate.SessionID, candidate.TurnID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// SupersedeCandidates retires a session's undecided candidates once its
+// worktree holds no undelivered change, and reports how many it retired.
+func SupersedeCandidates(dir, sessionID string) (int64, error) {
+	db, err := openStore(dir)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+	storeWriteMu.Lock()
+	defer storeWriteMu.Unlock()
+	result, err := db.Exec(`UPDATE session_candidates SET disposition=?,disposed_at=? WHERE session_id=? AND disposition=''`,
+		CandidateSuperseded, timeText(time.Now().UTC()), sessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 // ListCandidates returns the candidates of the given sessions, oldest first.
@@ -89,6 +135,36 @@ func ListCandidates(dir string, sessionIDs []string) ([]Candidate, error) {
 	return candidates, rows.Err()
 }
 
+// PendingCandidateCounts counts undecided candidates of live project sessions
+// by session and by the project that manages them, in one store read.
+func PendingCandidateCounts(dir, sessionSource string) (bySession, byProject map[string]int, err error) {
+	bySession, byProject = map[string]int{}, map[string]int{}
+	db, ok, err := openStoreForScan(dir)
+	if err != nil || !ok {
+		return bySession, byProject, err
+	}
+	defer db.Close()
+	if exists, err := storeTableExists(db, "session_candidates"); err != nil || !exists {
+		return bySession, byProject, err
+	}
+	rows, err := db.Query(`SELECT c.session_id,s.parent_id,COUNT(*) FROM session_candidates c JOIN sessions s ON s.id=c.session_id
+		WHERE c.disposition='' AND s.source=? AND s.archived_at IS NULL GROUP BY c.session_id,s.parent_id`, sessionSource)
+	if err != nil {
+		return bySession, byProject, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var sessionID, projectID string
+		var count int
+		if err := rows.Scan(&sessionID, &projectID, &count); err != nil {
+			return bySession, byProject, err
+		}
+		bySession[sessionID] += count
+		byProject[projectID] += count
+	}
+	return bySession, byProject, rows.Err()
+}
+
 // FindCandidate reads one candidate.
 func FindCandidate(dir, sessionID, turnID string) (Candidate, bool, error) {
 	db, ok, err := openStoreForScan(dir)
@@ -106,9 +182,9 @@ func FindCandidate(dir, sessionID, turnID string) (Candidate, bool, error) {
 	return candidate, err == nil, err
 }
 
-// LatestAppliedCandidate is the base for the session's next snapshot, so an
-// applied change is never offered again.
-func LatestAppliedCandidate(dir, sessionID string) (Candidate, bool, error) {
+// LatestDeliveredCandidate is the base for the session's next snapshot, so a
+// change that was applied or published is never offered again.
+func LatestDeliveredCandidate(dir, sessionID string) (Candidate, bool, error) {
 	db, ok, err := openStoreForScan(dir)
 	if err != nil || !ok {
 		return Candidate{}, false, err
@@ -117,17 +193,26 @@ func LatestAppliedCandidate(dir, sessionID string) (Candidate, bool, error) {
 	if exists, err := storeTableExists(db, "session_candidates"); err != nil || !exists {
 		return Candidate{}, false, err
 	}
-	candidate, err := scanCandidate(db.QueryRow(`SELECT `+candidateColumns+` FROM session_candidates WHERE session_id=? AND disposition=? ORDER BY disposed_at DESC LIMIT 1`, sessionID, CandidateApplied))
+	candidate, err := scanCandidate(db.QueryRow(`SELECT `+candidateColumns+` FROM session_candidates WHERE session_id=? AND disposition IN (?,?) ORDER BY disposed_at DESC LIMIT 1`,
+		sessionID, CandidateApplied, CandidatePublished))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Candidate{}, false, nil
 	}
 	return candidate, err == nil, err
 }
 
-// DecideCandidate records the user's disposition exactly once.
-func DecideCandidate(dir, sessionID, turnID, disposition string) (Candidate, error) {
-	if disposition != CandidateApplied && disposition != CandidateDiscarded {
-		return Candidate{}, errors.New("disposition must be applied or discarded")
+// DecideCandidate records the user's disposition exactly once. url records
+// where a published candidate went.
+func DecideCandidate(dir, sessionID, turnID, disposition, url string) (Candidate, error) {
+	switch disposition {
+	case CandidateApplied, CandidateDiscarded:
+		url = ""
+	case CandidatePublished:
+		if strings.TrimSpace(url) == "" {
+			return Candidate{}, errors.New("a published candidate needs its URL")
+		}
+	default:
+		return Candidate{}, errors.New("disposition must be applied, discarded or published")
 	}
 	db, err := openStore(dir)
 	if err != nil {
@@ -136,17 +221,24 @@ func DecideCandidate(dir, sessionID, turnID, disposition string) (Candidate, err
 	defer db.Close()
 	storeWriteMu.Lock()
 	defer storeWriteMu.Unlock()
-	result, err := db.Exec(`UPDATE session_candidates SET disposition=?,disposed_at=? WHERE session_id=? AND turn_id=? AND disposition=''`,
-		disposition, timeText(time.Now().UTC()), sessionID, turnID)
+	result, err := db.Exec(`UPDATE session_candidates SET disposition=?,url=?,disposed_at=? WHERE session_id=? AND turn_id=? AND disposition=''`,
+		disposition, strings.TrimSpace(url), timeText(time.Now().UTC()), sessionID, turnID)
+	if err != nil {
+		return Candidate{}, err
+	}
+	decided, err := scanCandidate(db.QueryRow(`SELECT `+candidateColumns+` FROM session_candidates WHERE session_id=? AND turn_id=?`, sessionID, turnID))
 	if err != nil {
 		return Candidate{}, err
 	}
 	if n, err := result.RowsAffected(); err != nil {
 		return Candidate{}, err
 	} else if n != 1 {
+		if decided.Disposition == CandidateSuperseded {
+			return Candidate{}, ErrCandidateSuperseded
+		}
 		return Candidate{}, ErrCandidateDecided
 	}
-	return scanCandidate(db.QueryRow(`SELECT `+candidateColumns+` FROM session_candidates WHERE session_id=? AND turn_id=?`, sessionID, turnID))
+	return decided, nil
 }
 
 type candidateScanner interface {
@@ -156,7 +248,7 @@ type candidateScanner interface {
 func scanCandidate(row candidateScanner) (Candidate, error) {
 	var candidate Candidate
 	var files, created, disposed string
-	if err := row.Scan(&candidate.SessionID, &candidate.TurnID, &candidate.BaseRepo, &candidate.BaseRevision, &candidate.Revision, &files, &candidate.Disposition, &created, &disposed); err != nil {
+	if err := row.Scan(&candidate.SessionID, &candidate.TurnID, &candidate.BaseRepo, &candidate.BaseRevision, &candidate.Revision, &files, &candidate.Disposition, &candidate.URL, &created, &disposed); err != nil {
 		return Candidate{}, err
 	}
 	if err := json.Unmarshal([]byte(files), &candidate.ChangedFiles); err != nil {

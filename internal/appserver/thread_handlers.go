@@ -449,6 +449,13 @@ func (s *Server) loadPersistedThreadState(id string, now time.Time) (*threadStat
 	if err != nil {
 		return nil, err
 	}
+	if th.Source == projectSource || th.Source == projectSessionSource {
+		bySession, byProject, err := session.PendingCandidateCounts(s.rt.SessionDir, projectSessionSource)
+		if err != nil {
+			return nil, err
+		}
+		th.PendingCandidates = pendingCandidates(th.Source, id, bySession, byProject)
+	}
 	return th, nil
 }
 
@@ -1143,13 +1150,20 @@ func (s *Server) threadListResult(entries map[string]threadListEntry, summaryOnl
 		return ThreadListResult{}, err
 	}
 	threads := make([]threadListEntry, 0, len(entries))
+	var bySession, byProject map[string]int
 	for _, entry := range entries {
 		threads = append(threads, entry)
+		if bySession == nil && (entry.thread.Source == projectSource || entry.thread.Source == projectSessionSource) {
+			if bySession, byProject, err = session.PendingCandidateCounts(s.rt.SessionDir, projectSessionSource); err != nil {
+				return ThreadListResult{}, err
+			}
+		}
 	}
 	sortThreadListEntries(threads)
 	result := make([]Thread, 0, len(threads))
 	for _, entry := range threads {
 		entry.thread.SessionControl = s.threadSessionControl(entry.thread.ID, controls[entry.thread.ID])
+		entry.thread.PendingCandidates = pendingCandidates(entry.thread.Source, entry.thread.ID, bySession, byProject)
 		// Sidebar refreshes are summary lists. Dirty worktree state is a git
 		// status per checkout, and a workspace can store one for many
 		// sessions. Running those on every list blocks the app server.

@@ -49,9 +49,11 @@ type threadState struct {
 	Instructions string
 	// ProjectID is the coordinator of a project's managed session.
 	ProjectID string
-	ParentID  string
-	AgentPath string
-	History   []providers.ChatMessage
+	// PendingCandidates mirrors Thread.PendingCandidates for project threads.
+	PendingCandidates int
+	ParentID          string
+	AgentPath         string
+	History           []providers.ChatMessage
 	// historyHeadSeq is the physical append-only session_messages head that
 	// History was reconstructed through. It must not be derived from the
 	// logical messages: a checkpoint may retain no records or only old seqs.

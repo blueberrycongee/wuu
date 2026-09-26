@@ -38,6 +38,25 @@ func EnqueueInbox(dir string, message InboxMessage) error {
 	return err
 }
 
+// SettleInbox records a client ID as handled without delivering anything, so
+// a later retry of the same message is a no-op.
+func SettleInbox(dir, clientID, sessionID string) error {
+	if strings.TrimSpace(clientID) == "" || strings.TrimSpace(sessionID) == "" {
+		return errors.New("inbox message requires a client ID and target session")
+	}
+	db, err := openStore(dir)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	storeWriteMu.Lock()
+	defer storeWriteMu.Unlock()
+	now := timeText(time.Now().UTC())
+	_, err = db.Exec(`INSERT OR IGNORE INTO session_inbox(client_id,session_id,content,created_at,delivered_at) VALUES(?,?,'',?,?)`,
+		clientID, sessionID, now, now)
+	return err
+}
+
 // PendingInbox settles messages the target already persisted and returns the
 // rest in creation order.
 func PendingInbox(dir, sessionID string) ([]InboxMessage, error) {

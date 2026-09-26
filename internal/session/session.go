@@ -1250,6 +1250,7 @@ func migrateSchema(db *sql.DB) error {
 			revision TEXT NOT NULL,
 			changed_files_json TEXT NOT NULL DEFAULT '[]',
 			disposition TEXT NOT NULL DEFAULT '',
+			url TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			disposed_at TEXT,
 			PRIMARY KEY(session_id, turn_id),
@@ -1857,6 +1858,9 @@ WHERE workflow_id = ''`); err != nil {
 	}
 	if _, err := db.Exec(`DELETE FROM session_controls WHERE manager_id GLOB 'agent-[0-9a-f]*'`); err != nil {
 		return fmt.Errorf("remove retired collaboration session controls: %w", err)
+	}
+	if err := addColumnIfMissing(db, "session_candidates", "url", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
 	}
 	return nil
 }

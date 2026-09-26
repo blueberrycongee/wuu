@@ -24,6 +24,12 @@ import (
 //     after a restart;
 //   - a candidate is applied over conflicting workspace changes, or applied
 //     twice;
+//   - two turns of one session leave overlapping candidates that can each be
+//     decided, so applying them in turn conflicts or records a change twice;
+//   - an applied or published change is offered again;
+//   - turns the user runs while holding control leave no candidate, or are
+//     reported to the coordinator, including after a return and a restart;
+//   - clients are not told when a candidate is frozen or decided;
 //   - the coordinator keeps instructing a session the user took over, or is
 //     not told when the user takes it over or returns it.
 
@@ -262,6 +268,122 @@ func TestProjectDelegatesAndDeliversCandidateOnce(t *testing.T) {
 	reopened.recoverProjectInbox()
 	if ids := deliveredClientIDs(t, rt, coordinator.ID, "project-result:"+worker.ID); len(ids) != 1 {
 		t.Fatalf("result deliveries after restart = %v", ids)
+	}
+	calls.assertIdle(t)
+}
+
+func projectCandidates(t *testing.T, client *rpcClient, projectID string) []ProjectCandidate {
+	t.Helper()
+	var listed ProjectCandidateResult
+	client.rpc(t, MethodProjectCandidate, ProjectCandidateParams{ProjectID: projectID, Action: "list"}, &listed)
+	return listed.Candidates
+}
+
+func TestProjectProposalsSupersedeAndStartFromDelivery(t *testing.T) {
+	srv, client, calls, rt := newProjectFixture(t)
+	coordinator := startProject(t, client, "Search")
+	var turn TurnStartResult
+	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: coordinator.ID, Prompt: "Plan search paging"}, &turn)
+	calls.next(t, "Plan search paging").response <- toolCallResponse("create-paging", "session", `{"action":"create","title":"Paging","prompt":"Implement paging in search.go"}`)
+	calls.next(t, "Implement paging").response <- toolCallResponse("write-search", "write_file", `{"path":"search.go","content":"package search\n\nconst PageSize = 50\n"}`)
+	calls.next(t, "Plan search paging").response <- providersResponse("Started.")
+	calls.next(t, "Implement paging").response <- providersResponse("Paged search.")
+	worker := projectManagedSessions(t, client, coordinator.ID)[0]
+
+	// The coordinator corrects the session before the user reviews its first turn.
+	calls.next(t, "Plan search paging").response <- toolCallResponse("send-docs", "session", `{"action":"send","session_id":"`+worker.ID+`","prompt":"Also document paging in api.md"}`)
+	calls.next(t, "document paging").response <- toolCallResponse("write-api", "write_file", `{"path":"api.md","content":"Results are paged.\n"}`)
+	calls.next(t, "Plan search paging").response <- providersResponse("Sent.")
+	calls.next(t, "document paging").response <- providersResponse("Documented.")
+	calls.next(t, "Plan search paging").response <- providersResponse("Ready for review.")
+	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.PendingCandidates == 1 && thread.Status == ThreadStatusIdle })
+	waitForThread(t, srv, worker.ID, func(thread Thread) bool { return thread.PendingCandidates == 1 })
+
+	candidates := projectCandidates(t, client, coordinator.ID)
+	if len(candidates) != 2 || candidates[0].Disposition != session.CandidateSuperseded || candidates[1].Disposition != "" ||
+		!slices.Equal(candidates[1].ChangedFiles, []string{"api.md", "search.go"}) {
+		t.Fatalf("candidates after two turns = %+v", candidates)
+	}
+	older, latest := candidates[0], candidates[1]
+	if failure := client.call(t, MethodProjectCandidate, ProjectCandidateParams{SessionID: worker.ID, TurnID: older.TurnID, Action: "apply"}, nil); failure == nil {
+		t.Fatal("a superseded candidate was applied")
+	}
+	var published ProjectCandidateResult
+	client.rpc(t, MethodProjectCandidate, ProjectCandidateParams{SessionID: worker.ID, TurnID: latest.TurnID, Action: "publish", URL: "https://example.test/pull/1"}, &published)
+	if published.Candidate == nil || published.Candidate.Disposition != session.CandidatePublished || published.Candidate.URL != "https://example.test/pull/1" {
+		t.Fatalf("published candidate = %+v", published.Candidate)
+	}
+	if failure := client.call(t, MethodProjectCandidate, ProjectCandidateParams{SessionID: worker.ID, TurnID: latest.TurnID, Action: "apply"}, nil); failure == nil {
+		t.Fatal("a published candidate was applied as well")
+	}
+	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.PendingCandidates == 0 })
+
+	// The next proposal holds only what was not published.
+	notice := calls.next(t, "Plan search paging")
+	if last := lastUserRequestMessage(notice.request); last.ClientID != "project-candidate:"+worker.ID+":"+latest.TurnID+":published" {
+		t.Fatalf("publish notice = %+v", last)
+	}
+	notice.response <- toolCallResponse("send-test", "session", `{"action":"send","session_id":"`+worker.ID+`","prompt":"Add a paging test"}`)
+	calls.next(t, "Add a paging test").response <- toolCallResponse("write-test", "write_file", `{"path":"search_test.go","content":"package search\n"}`)
+	calls.next(t, "Plan search paging").response <- providersResponse("Sent.")
+	calls.next(t, "Add a paging test").response <- providersResponse("Tested.")
+	calls.next(t, "Plan search paging").response <- providersResponse("Test ready.")
+	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.PendingCandidates == 1 && thread.Status == ThreadStatusIdle })
+	candidates = projectCandidates(t, client, coordinator.ID)
+	third := candidates[len(candidates)-1]
+	if len(candidates) != 3 || third.BaseRevision != latest.Revision || !slices.Equal(third.ChangedFiles, []string{"search_test.go"}) {
+		t.Fatalf("candidates after publishing = %+v", candidates)
+	}
+	client.rpc(t, MethodProjectCandidate, ProjectCandidateParams{SessionID: worker.ID, TurnID: third.TurnID, Action: "apply"}, nil)
+	if _, err := os.Stat(filepath.Join(rt.RootDir, "search_test.go")); err != nil {
+		t.Fatalf("applied candidate is missing from the workspace: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rt.RootDir, "search.go")); !os.IsNotExist(err) {
+		t.Fatalf("apply re-delivered the published change: %v", err)
+	}
+	calls.next(t, "Plan search paging").response <- providersResponse("Applied.")
+	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
+	calls.assertIdle(t)
+}
+
+func TestProjectFreezesUserTurnsWithoutReportingThem(t *testing.T) {
+	srv, client, calls, rt := newProjectFixture(t)
+	coordinator := startProject(t, client, "Notes")
+	var turn TurnStartResult
+	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: coordinator.ID, Prompt: "Plan the notes"}, &turn)
+	calls.next(t, "Plan the notes").response <- toolCallResponse("create-notes", "session", `{"action":"create","title":"Notes","prompt":"Draft notes.md"}`)
+	calls.next(t, "Draft notes.md").response <- toolCallResponse("write-notes", "write_file", `{"path":"notes.md","content":"draft\n"}`)
+	calls.next(t, "Plan the notes").response <- providersResponse("Started.")
+	calls.next(t, "Draft notes.md").response <- providersResponse("Drafted.")
+	calls.next(t, "Plan the notes").response <- providersResponse("Draft ready.")
+	worker := projectManagedSessions(t, client, coordinator.ID)[0]
+	worker = waitForThread(t, srv, worker.ID, func(thread Thread) bool { return thread.PendingCandidates == 1 })
+
+	var userTurn TurnStartResult
+	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: worker.ID, Prompt: "I will rewrite the notes"}, &userTurn)
+	taken := waitForThread(t, srv, worker.ID, func(thread Thread) bool {
+		return thread.SessionControl != nil && thread.SessionControl.State == session.ControlTakenOver
+	})
+	calls.next(t, "Plan the notes").response <- providersResponse("Understood.")
+	calls.next(t, "rewrite the notes").response <- toolCallResponse("rewrite-notes", "write_file", `{"path":"notes.md","content":"final\n"}`)
+	calls.next(t, "rewrite the notes").response <- providersResponse("Rewritten.")
+	waitForThread(t, srv, worker.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID == userTurn.Turn.ID })
+
+	// The user's turn is frozen for review but belongs to the user.
+	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool {
+		candidates := projectCandidates(t, client, coordinator.ID)
+		return thread.PendingCandidates == 1 && len(candidates) == 2 && candidates[1].TurnID == userTurn.Turn.ID
+	})
+	client.rpc(t, "thread/control/return", map[string]any{"thread_id": worker.ID, "revision": taken.SessionControl.Revision}, nil)
+	calls.next(t, "Plan the notes").response <- providersResponse("I will inspect the notes.")
+	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
+
+	srv.Close()
+	reopened := New(rt, &lockedBuffer{})
+	t.Cleanup(reopened.Close)
+	reopened.recoverProjectInbox()
+	if ids := deliveredClientIDs(t, rt, coordinator.ID, projectResultClientID(worker.ID, userTurn.Turn.ID)); len(ids) != 0 {
+		t.Fatalf("a user-controlled turn was reported after return and restart: %v", ids)
 	}
 	calls.assertIdle(t)
 }

@@ -1391,16 +1391,20 @@ type ThreadProjectParams struct {
 }
 
 // ProjectCandidateParams lists a project's or a managed session's candidates,
-// or reads, applies or discards one candidate named by session and turn.
+// or reads, applies, discards or records the publication of one candidate
+// named by session and turn. An extension publishes the candidate; publish
+// records the decision and the URL it returned.
 type ProjectCandidateParams struct {
 	ProjectID string `json:"project_id,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	TurnID    string `json:"turn_id,omitempty"`
 	Action    string `json:"action"`
+	URL       string `json:"url,omitempty"`
 }
 
-// ProjectCandidate is a managed session's frozen change at the end of a turn.
-// An empty disposition awaits the user's decision.
+// ProjectCandidate is a managed session's frozen change at the end of a turn:
+// every change of the session not yet applied or published. An empty
+// disposition awaits the user's decision; a newer turn supersedes it.
 type ProjectCandidate struct {
 	SessionID    string    `json:"session_id"`
 	TurnID       string    `json:"turn_id"`
@@ -1409,6 +1413,7 @@ type ProjectCandidate struct {
 	Revision     string    `json:"revision"`
 	ChangedFiles []string  `json:"changed_files"`
 	Disposition  string    `json:"disposition,omitempty"`
+	URL          string    `json:"url,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	Diff         string    `json:"diff,omitempty"`
 }
@@ -2207,17 +2212,20 @@ type Thread struct {
 	ID             string                `json:"id"`
 	Source         string                `json:"source,omitempty"`
 	// ProjectID is the coordinator conversation that manages this session.
-	ProjectID      string `json:"project_id,omitempty"`
-	ParentID       string `json:"parent_id,omitempty"`
-	AgentPath      string `json:"agent_path,omitempty"`
-	Preview        string `json:"preview"`
-	Title          string `json:"title,omitempty"`
-	ModelProvider  string `json:"model_provider"`
-	Model          string `json:"model"`
-	ModelVariant   string `json:"model_variant"`
-	ModelEffort    string `json:"model_effort"`
-	PermissionMode string `json:"permission_mode"`
-	ApproveForMe   bool   `json:"approve_for_me"`
+	ProjectID string `json:"project_id,omitempty"`
+	// PendingCandidates counts undecided candidates: a managed session's own,
+	// or all of a project coordinator's sessions.
+	PendingCandidates int    `json:"pending_candidates,omitempty"`
+	ParentID          string `json:"parent_id,omitempty"`
+	AgentPath         string `json:"agent_path,omitempty"`
+	Preview           string `json:"preview"`
+	Title             string `json:"title,omitempty"`
+	ModelProvider     string `json:"model_provider"`
+	Model             string `json:"model"`
+	ModelVariant      string `json:"model_variant"`
+	ModelEffort       string `json:"model_effort"`
+	PermissionMode    string `json:"permission_mode"`
+	ApproveForMe      bool   `json:"approve_for_me"`
 	// EngineID is the agent engine the thread is bound to ("wuu" for the
 	// built-in engine; external engines like Claude or Codex will carry
 	// their own ids).

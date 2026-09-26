@@ -85,6 +85,18 @@ func (s *Server) projectManagedSession(projectID, sessionID string) (session.Ses
 	return metadata, nil
 }
 
+// pendingCandidates reads a project thread's undecided candidate count from
+// counts returned by session.PendingCandidateCounts.
+func pendingCandidates(source, id string, bySession, byProject map[string]int) int {
+	switch source {
+	case projectSource:
+		return byProject[id]
+	case projectSessionSource:
+		return bySession[id]
+	}
+	return 0
+}
+
 func projectIDForSession(metadata session.Session) string {
 	if metadata.Source == projectSessionSource {
 		return metadata.ParentID
@@ -107,8 +119,10 @@ func (s *Server) afterProjectTurn(th *threadState, turn Turn, compactOnly bool) 
 	}
 }
 
-// recordProjectResult tells the coordinator once that a managed turn ended.
-// Turns the user ran after taking over are theirs and are not reported.
+// recordProjectResult freezes a managed turn's changes for the user's review
+// and tells the coordinator once that the turn ended. Turns that end while
+// the user holds control are theirs: their changes are frozen, but they are
+// not reported.
 func (s *Server) recordProjectResult(th *threadState, turn Turn) {
 	if turn.Status == TurnStatusInProgress {
 		return
@@ -116,14 +130,18 @@ func (s *Server) recordProjectResult(th *threadState, turn Turn) {
 	th.mu.Lock()
 	projectID, title := th.ProjectID, th.Title
 	th.mu.Unlock()
+	if _, live := s.projectCoordinator(projectID); !live {
+		return
+	}
+	candidate, err := s.captureCandidate(th, turn)
+	if err != nil {
+		providers.DebugLogf("capture candidate for session %q turn %q: %v", th.ID, turn.ID, err)
+	}
 	control, ok, err := session.ReadControl(s.rt.SessionDir, th.ID)
 	if err != nil || !ok || control.State != session.ControlActive || control.ManagerID != projectID {
 		return
 	}
-	if _, live := s.projectCoordinator(projectID); !live {
-		return
-	}
-	clientID := "project-result:" + th.ID + ":" + turn.ID
+	clientID := projectResultClientID(th.ID, turn.ID)
 	if recorded, err := session.InboxHas(s.rt.SessionDir, clientID); err != nil || recorded {
 		return
 	}
@@ -135,14 +153,30 @@ func (s *Server) recordProjectResult(th *threadState, turn Turn) {
 	if answer := finalAnswerText(turn); answer != "" {
 		fmt.Fprintf(&report, "\n\n%s", excerpt(answer, 2400))
 	}
-	candidate, err := s.captureCandidate(th, turn)
-	if err != nil {
-		providers.DebugLogf("capture candidate for session %q turn %q: %v", th.ID, turn.ID, err)
-	}
 	if candidate != nil {
-		fmt.Fprintf(&report, "\n\nCandidate changes awaiting the user's review: %s", strings.Join(candidate.ChangedFiles, ", "))
+		fmt.Fprintf(&report, "\n\nProposal awaiting the user's review (every change of the session not yet delivered): %s", strings.Join(candidate.ChangedFiles, ", "))
 	}
 	s.enqueueProjectInput(projectID, th.ID, clientID, report.String())
+}
+
+func projectResultClientID(sessionID, turnID string) string {
+	return "project-result:" + sessionID + ":" + turnID
+}
+
+// settleUserControlledTurn marks the session's latest finished turn as handled
+// when the user returns it, so recovery never reports a turn the user ran.
+func (s *Server) settleUserControlledTurn(projectID, sessionID string) error {
+	th, err := s.ensureOwnedThreadLoaded(sessionID)
+	if err != nil || th == nil {
+		return err
+	}
+	th.mu.Lock()
+	turnID := latestCompletedTurnID(th.Turns)
+	th.mu.Unlock()
+	if turnID == "" {
+		return nil
+	}
+	return session.SettleInbox(s.rt.SessionDir, projectResultClientID(sessionID, turnID), projectID)
 }
 
 func finalAnswerText(turn Turn) string {
@@ -201,7 +235,7 @@ func (s *Server) startProjectRecovery() {
 	}
 	pending := false
 	for _, control := range controls {
-		pending = pending || control.State == session.ControlActive && !strings.HasPrefix(control.ManagerID, "plugin:")
+		pending = pending || control.State != session.ControlReleased && !strings.HasPrefix(control.ManagerID, "plugin:")
 	}
 	if !pending {
 		targets, err := session.InboxTargets(s.rt.SessionDir)
@@ -216,8 +250,8 @@ func (s *Server) startProjectRecovery() {
 	}
 }
 
-// recoverProjectInbox reports managed turns that ended while no host was
-// running, then retries undelivered coordinator input. Both steps are
+// recoverProjectInbox freezes and reports managed turns that ended while no
+// host was running, then retries undelivered coordinator input. Each step is
 // idempotent, so running them again never duplicates a delivery.
 func (s *Server) recoverProjectInbox() {
 	controls, err := session.ListControls(s.rt.SessionDir)
@@ -226,7 +260,7 @@ func (s *Server) recoverProjectInbox() {
 		return
 	}
 	for sessionID, control := range controls {
-		if control.State != session.ControlActive {
+		if control.State == session.ControlReleased {
 			continue
 		}
 		if _, err := s.projectManagedSession(control.ManagerID, sessionID); err != nil {

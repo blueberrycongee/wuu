@@ -1586,6 +1586,8 @@ export type Thread = {
   source?: string;
   // The coordinator that manages this session.
   project_id?: string;
+  // Undecided candidates: a managed session's own, or all of a coordinator's sessions.
+  pending_candidates?: number;
   model_provider: string;
   model: string;
   model_variant?: string;
@@ -1637,8 +1639,9 @@ export type ThreadStartParams = {
   project?: { name: string };
 };
 
-// A managed session's frozen change at the end of one turn. An empty
-// disposition awaits the user's decision.
+// A managed session's frozen change at the end of one turn: every change of
+// the session not yet applied or published. An empty disposition awaits the
+// user's decision; a newer turn of the session supersedes it.
 export type ProjectCandidate = {
   session_id: string;
   turn_id: string;
@@ -1646,16 +1649,21 @@ export type ProjectCandidate = {
   base_revision: string;
   revision: string;
   changed_files: string[];
-  disposition?: "applied" | "discarded";
+  disposition?: "applied" | "discarded" | "published" | "superseded";
+  // Where a published candidate was sent for review.
+  url?: string;
   created_at: string;
   // Present only when the candidate was read with action "get".
   diff?: string;
 };
 
+// An extension publishes a candidate; "publish" records the URL it returned
+// as the candidate's decision.
 export type ProjectCandidateParams =
   | { action: "list"; project_id: string }
   | { action: "list"; session_id: string }
-  | { action: "get" | "apply" | "discard"; session_id: string; turn_id: string };
+  | { action: "get" | "apply" | "discard"; session_id: string; turn_id: string }
+  | { action: "publish"; session_id: string; turn_id: string; url: string };
 
 export type ProjectCandidateResult = {
   candidates?: ProjectCandidate[];
