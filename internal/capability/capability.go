@@ -76,6 +76,8 @@ const (
 
 	// Code mode orchestrates the active tools without granting leaf capabilities.
 	CapabilityCodeMode Capability = "tool.code_mode"
+	// Native Lead/Sidekick orchestration, enabled per Fusion conversation.
+	CapabilityFusion Capability = "agent.fusion"
 
 	// Embedded browser automation: the single browser tool backed by a
 	// desktop-hosted hidden WebContentsView + CDP session. Its own capability
@@ -112,6 +114,7 @@ func All() []Capability {
 		CapabilityMCP,
 		CapabilityDiscovery,
 		CapabilityCodeMode,
+		CapabilityFusion,
 		CapabilityBrowser,
 	}
 }

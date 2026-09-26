@@ -10,14 +10,29 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Native Fusion mode pairs a configurable Lead with a persistent Sidekick.
+  Delegations return structured reports for Lead review, reuse the Sidekick's
+  context, and drain execution before handoff or cancellation. Conversations
+  retain their model pair across settings changes and restarts.
+
 - Video output cards and workspace video files open an inline player with
   playback, seeking, volume, and fullscreen controls. Unsupported codecs show
   a message while keeping the download action available.
+
+### Changed
+
+- Model services now include Fusion settings for Lead, Sidekick, reasoning,
+  and the default for new conversations. The composer provider menu offers
+  Fusion alongside connected services. Settings save automatically and restore
+  the previous values if saving fails.
 
 ### Fixed
 
 - Preserve sidebar folder and collaboration folds when returning from settings,
   including after switching between light and dark themes.
+
+- Settings switches now include the track border in their sizing, keeping the
+  thumb centered with equal vertical clearance.
 
 ## [2026.9.25] - 2026-09-25
 

@@ -148,7 +148,9 @@ func (s *Server) finalizeAgentTerminalWithCompleter(threadID string, control *ag
 		})
 		s.completeLiveAgentThread(threadID, control, n.Snapshot, now)
 	}
-	if closed {
+	if closed || n.Snapshot.Type == agentcontrol.FusionSidekickType {
+		// Fusion delivers through its foreground delegation result. Starting a
+		// second root turn here would race the Lead's review and cancellation.
 		return nil
 	}
 	if s.isRootAgentSnapshot(control, threadID, n.Snapshot) {

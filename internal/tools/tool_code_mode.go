@@ -259,7 +259,7 @@ func (t *Toolkit) codeModeEntryDefinitions() []providers.ToolDefinition {
 	all := t.registry.Definitions()
 	out := make([]providers.ToolDefinition, 0, 2)
 	for _, d := range all {
-		if (d.Name == codeModeExecToolName || d.Name == codeModeWaitToolName || d.Name == newContextToolName) && t.SupportsTool(d.Name) {
+		if (d.Name == codeModeExecToolName || d.Name == codeModeWaitToolName || d.Name == newContextToolName || d.Name == fusionDelegateToolName) && t.SupportsTool(d.Name) {
 			if d.Name == codeModeExecToolName {
 				d.Description += t.codeModeToolCatalog()
 			}
@@ -321,7 +321,7 @@ func (t *Toolkit) CodeModeNestedSurface() ([]codemode.ToolDefinition, error) {
 	all := t.registry.Definitions()
 	out := make([]codemode.ToolDefinition, 0, len(all))
 	for _, d := range all {
-		if d.Name == codeModeExecToolName || d.Name == codeModeWaitToolName || d.Name == newContextToolName || !t.SupportsTool(d.Name) {
+		if d.Name == codeModeExecToolName || d.Name == codeModeWaitToolName || d.Name == newContextToolName || d.Name == fusionDelegateToolName || !t.SupportsTool(d.Name) {
 			continue
 		}
 		definition, err := codeModeToolDefinition(d)

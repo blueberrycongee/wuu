@@ -251,7 +251,17 @@ export type RuntimeIssue = {
   message: string;
 };
 
+export type FusionSelection = {
+  lead: ModelAliasSummary;
+  sidekick: ModelAliasSummary;
+};
+export type FusionConfig = FusionSelection & {
+  enabled: boolean;
+  default: boolean;
+};
+
 export type AdvancedSettingsSummary = {
+  fusion?: FusionConfig;
   max_steps: number;
   max_context_tokens: number;
   temperature: number;
@@ -1423,6 +1433,7 @@ export type AuthXAILoginPollResult = {
 };
 
 export type RuntimeAdvancedSettingsUpdate = {
+  fusion?: FusionConfig;
   max_steps?: number;
   max_context_tokens?: number;
   temperature?: number;
@@ -2333,6 +2344,7 @@ export type InstructionsListResult = {
 };
 
 export type Turn = {
+  fusion?: FusionSelection;
   id: string;
   kind?: TurnKind;
   // The runtime selection captured when this turn began. It remains stable

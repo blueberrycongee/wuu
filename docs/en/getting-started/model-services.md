@@ -127,3 +127,15 @@ Built-in views preserve useful structure: search pages keep whole records and sn
 If text replies work but tools fail, check the service's support for tool calling and streaming. A compatible API format alone does not establish that every model supports the same capabilities.
 
 Prompts, selected context, attachments, and tool results can leave your machine through the configured endpoint. The provider's pricing and data policies apply; with a gateway, the gateway receives those requests. Keep real API keys out of project files and Git history.
+
+## Fusion
+
+In **Settings → Model services → Fusion**, enable Fusion and choose the **Lead** and **Sidekick** models. Each can use a different provider and reasoning setting. You can make Fusion the default for new conversations, or choose **Fusion** from the composer chip's provider menu. Changes save automatically; failed saves restore the previous values.
+
+The Lead owns the conversation, planning, difficult decisions, and final review. It can delegate a bounded task to the Sidekick with a brief and acceptance checks. The Sidekick has its own persistent context and shares the conversation's working directory. Later delegations reuse that same context, including after restart; the Lead receives a concise report rather than the worker's entire transcript.
+
+The report states whether work completed, is blocked, needs a decision, or failed, with changed files and verification details. A delegation waits for Sidekick execution and its managed processes to settle before returning. The Lead inspects the actual changes and can accept them, send feedback to the same Sidekick, or take over using its own tools. Cancelling a delegation stops and drains the Sidekick. This version has no classifier or automatic model switching, and does not require the Subagent extension.
+
+A conversation's model pair is fixed when Fusion first starts. Updating the defaults or disabling Fusion does not retarget existing conversations. Removing a provider or disabling a model needed by an existing conversation can prevent it from resuming; restore that provider/model or select a fixed model explicitly. Enabled Fusion references must be changed or Fusion disabled before removing their provider/model.
+
+Fusion runs in Wuu conversations, including Wuu named-agent sessions. External engines manage their own execution and do not support it. `wuu/fusion` is a local conversation selection, not an upstream model name or a CLI model override. Side conversations inherit the active Lead model. Both Lead and Sidekick calls incur their provider's usage charges; delegation and review do not guarantee a cost reduction.

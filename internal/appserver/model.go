@@ -3,6 +3,7 @@ package appserver
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/blueberrycongee/wuu/internal/config"
 	"strings"
 	"time"
 
@@ -1449,6 +1450,14 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(rec.Role), "meta") {
+			if current != nil && strings.HasPrefix(rec.Content, fusionSelectionPrefix) {
+				var decision config.FusionSelection
+				if json.Unmarshal([]byte(strings.TrimPrefix(rec.Content, fusionSelectionPrefix)), &decision) == nil {
+					current.Fusion = &decision
+					current.ModelProvider, current.Model = decision.Lead.Provider, decision.Lead.Model
+				}
+			}
+
 			if current != nil && rec.Content == "token_usage" {
 				setProjectedTurnTiming(current, turnStartedAt[current.ID], rec.At)
 			}
