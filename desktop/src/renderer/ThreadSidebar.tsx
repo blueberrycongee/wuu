@@ -3,6 +3,7 @@ import { Archive, Folder, FolderOpen, MessageSquare, MessageSquarePlus, Messages
 import {
   type DragEvent as ReactDragEvent,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -32,7 +33,8 @@ function unpinnedThreads(threads: ThreadSummary[]): ThreadSummary[] {
 }
 
 const PROJECT_THREAD_INITIAL_VISIBLE_COUNT = 5;
-const PROJECT_THREAD_VISIBLE_INCREMENT = 10;
+const RECENTLY_READ_THREAD_LIMIT = 3;
+const RECENTLY_READ_THREAD_RETENTION_MS = 2 * 60 * 1000;
 const SIDEBAR_THREAD_ORDER_KEY = "wuu.desktop.sidebarThreadOrderByWorkspace";
 const PINNED_THREAD_ORDER_ID = "__wuu_pinned_threads__";
 
@@ -245,23 +247,11 @@ export function ProjectGroup({
   onToggleProjectPinned?: (id: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const [visibleThreadCount, setVisibleThreadCount] = useState<number>(
-    PROJECT_THREAD_INITIAL_VISIBLE_COUNT,
-  );
+  const [historyExpanded, setHistoryExpanded] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
   } | null>(null);
-
-  function showMoreProjectThreads(): void {
-    setVisibleThreadCount(
-      (current) => current + PROJECT_THREAD_VISIBLE_INCREMENT,
-    );
-  }
-
-  function collapseProjectThreads(): void {
-    setVisibleThreadCount(PROJECT_THREAD_INITIAL_VISIBLE_COUNT);
-  }
 
   const pendingProject = pendingProjectID === project.id;
   const loadingProjectThreads = loadingProjectThreadIDs?.has(project.id) ?? false;
@@ -409,42 +399,24 @@ export function ProjectGroup({
         }
       >
         {pendingConversations.length > 0 || projectThreads.length > 0 ? (
-          <>
-            {pendingConversations.length > 0 ? (
-              <div className="thread-list">
-                {pendingConversations.map((pending) => (
-                  <div key={pending.id} className={`thread-row sidebar-session-row running${pending.id === activeSessionTabID ? " active" : ""}`}>
-                    <span className="thread-row-spinner" aria-hidden="true" />
-                    <button
-                      className="thread-row-main"
-                      type="button"
-                      aria-busy="true"
-                      onClick={() => onSelectPendingConversation?.(pending.id)}
-                    >
-                      <ThreadRowTitle title={pending.title} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            {projectThreads.length === 0 ? null : (
-              <ThreadList
-                threads={projectThreads}
-                activeID={activeThreadID}
-                pendingThreadID={pendingThreadID}
-                lastViewedTurnByThreadID={lastViewedTurnByThreadID}
-                visibleCount={visibleThreadCount}
-                onSelect={(threadID) => onSelectThread(project.id, threadID)}
-                onTogglePinned={onToggleThreadPinned}
-                onArchive={onArchiveThread}
-                onDelete={onDeleteThread}
-                onRename={onRenameThread}
-                onReorder={reorderProjectThreads}
-                onShowMore={showMoreProjectThreads}
-                onCollapse={collapseProjectThreads}
-              />
-            )}
-          </>
+          <ThreadList
+            threads={projectThreads}
+            pendingConversations={pendingConversations}
+            activeSessionTabID={activeSessionTabID}
+            onSelectPendingConversation={onSelectPendingConversation}
+            activeID={activeThreadID}
+            pendingThreadID={pendingThreadID}
+            lastViewedTurnByThreadID={lastViewedTurnByThreadID}
+            expanded={historyExpanded}
+            onSelect={(threadID) => onSelectThread(project.id, threadID)}
+            onTogglePinned={onToggleThreadPinned}
+            onArchive={onArchiveThread}
+            onDelete={onDeleteThread}
+            onRename={onRenameThread}
+            onReorder={reorderProjectThreads}
+            onShowMore={() => setHistoryExpanded(true)}
+            onCollapse={() => setHistoryExpanded(false)}
+          />
         ) : null}
       </SidebarSection>
       {contextMenu ? (
@@ -518,10 +490,13 @@ export function SectionRowIcon({
 
 function ThreadList({
   threads,
+  pendingConversations,
+  activeSessionTabID,
+  onSelectPendingConversation,
   activeID,
   pendingThreadID,
   lastViewedTurnByThreadID,
-  visibleCount,
+  expanded,
   onSelect,
   onTogglePinned,
   onArchive,
@@ -532,10 +507,13 @@ function ThreadList({
   onCollapse
 }: {
   threads: ThreadSummary[];
+  pendingConversations: readonly PendingConversation[];
+  activeSessionTabID?: string;
+  onSelectPendingConversation?: (id: string) => void;
   activeID?: string;
   pendingThreadID?: string;
   lastViewedTurnByThreadID: Record<string, string>;
-  visibleCount: number;
+  expanded: boolean;
   onSelect: (id: string) => void;
   onTogglePinned: (thread: ThreadSummary) => void;
   onArchive: (thread: ThreadSummary) => void;
@@ -550,64 +528,94 @@ function ThreadList({
   onCollapse: () => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const [stickyVisibleThreadIDs, setStickyVisibleThreadIDs] = useState<
-    Set<string>
-  >(() => new Set());
-  const visibleThreads = threads;
-  const stickyVisibilityRevision = JSON.stringify(
-    visibleThreads.map((thread) => [
-      thread.id,
-      importantThreadVisible(thread, activeID, pendingThreadID),
-    ]),
-  );
-  useEffect(() => {
-    const validIDs = new Set(visibleThreads.map((thread) => thread.id));
-    setStickyVisibleThreadIDs((current) => {
-      const next = new Set<string>();
-      for (const id of current) {
-        if (validIDs.has(id)) {
-          next.add(id);
-        }
+  const [recentlyRead, setRecentlyRead] = useState<Map<string, number>>(() => new Map());
+  const previousReadState = useRef(new Map<string, { unread: boolean; viewedTurnID?: string }>());
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const nextReadState = new Map(threads.map((thread) => [thread.id, {
+      unread: isThreadUnread(thread, lastViewedTurnByThreadID[thread.id]),
+      viewedTurnID: lastViewedTurnByThreadID[thread.id],
+    }]));
+    const newlyReadIDs = threads.filter((thread) => {
+      const previous = previousReadState.current.get(thread.id);
+      const next = nextReadState.get(thread.id)!;
+      // A running turn can suppress unread status without the user reading it.
+      // Only an actual read-receipt change starts the grace period.
+      return previous?.unread && !next.unread && next.viewedTurnID &&
+        next.viewedTurnID !== previous.viewedTurnID;
+    }).map((thread) => thread.id);
+    previousReadState.current = nextReadState;
+    const now = Date.now();
+    setRecentlyRead((current) => {
+      const next = new Map([...current].filter(([id, expiresAt]) =>
+        nextReadState.has(id) && !nextReadState.get(id)!.unread && expiresAt > now,
+      ));
+      for (const id of newlyReadIDs) {
+        next.delete(id);
+        next.set(id, now + RECENTLY_READ_THREAD_RETENTION_MS);
       }
-      for (const thread of visibleThreads) {
-        if (importantThreadVisible(thread, activeID, pendingThreadID)) {
-          next.add(thread.id);
-        }
-      }
-      return sameStringSet(current, next) ? current : next;
+      while (next.size > RECENTLY_READ_THREAD_LIMIT) next.delete(next.keys().next().value!);
+      return next.size === current.size && [...next].every(([id, expiry]) => current.get(id) === expiry)
+        ? current : next;
     });
-  }, [stickyVisibilityRevision]);
+  }, [threads, lastViewedTurnByThreadID]);
+  useEffect(() => {
+    if (recentlyRead.size === 0) return;
+    const timer = window.setTimeout(() => {
+      setRecentlyRead((current) => new Map([...current].filter(([, expiresAt]) => expiresAt > Date.now())));
+    }, Math.max(0, Math.min(...recentlyRead.values()) - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [recentlyRead]);
   const limitedThreads = limitedProjectThreads(
-    visibleThreads,
-    visibleCount,
+    threads,
+    expanded ? threads.length : PROJECT_THREAD_INITIAL_VISIBLE_COUNT,
     activeID,
     pendingThreadID,
     lastViewedTurnByThreadID,
-    stickyVisibleThreadIDs,
+    recentlyRead,
   );
-  const hiddenCount = visibleThreads.length - limitedThreads.length;
-  const expanded = visibleCount > PROJECT_THREAD_INITIAL_VISIBLE_COUNT;
+  const hiddenCount = threads.length - limitedThreads.length;
   const showFooter = hiddenCount > 0 || expanded;
-
-  function collapseVisibleThreads(): void {
-    setStickyVisibleThreadIDs(new Set());
-    onCollapse();
-  }
+  useLayoutEffect(() => {
+    const scroller = scrollRef.current;
+    const selected = scroller?.querySelector<HTMLElement>(".pending-switch") ??
+      scroller?.querySelector<HTMLElement>(".active");
+    if (!scroller || !selected) return;
+    const viewport = scroller.getBoundingClientRect();
+    const row = selected.getBoundingClientRect();
+    if (row.top < viewport.top) scroller.scrollTop += row.top - viewport.top;
+    else if (row.bottom > viewport.bottom) scroller.scrollTop += row.bottom - viewport.bottom;
+  }, [activeID, pendingThreadID, activeSessionTabID, expanded]);
 
   return (
     <div className="thread-list">
-      <ThreadRows
-        threads={limitedThreads}
-        activeID={activeID}
-        pendingThreadID={pendingThreadID}
-        lastViewedTurnByThreadID={lastViewedTurnByThreadID}
-        onSelect={onSelect}
-        onTogglePinned={onTogglePinned}
-        onArchive={onArchive}
-        onDelete={onDelete}
-        onRename={onRename}
-        onReorder={onReorder}
-      />
+      <div className="thread-list project-thread-scroll" ref={scrollRef}>
+        {pendingConversations.map((pending) => (
+          <div key={pending.id} className={`thread-row sidebar-session-row running${pending.id === activeSessionTabID ? " active" : ""}`}>
+            <span className="thread-row-spinner" aria-hidden="true" />
+            <button
+              className="thread-row-main"
+              type="button"
+              aria-busy="true"
+              onClick={() => onSelectPendingConversation?.(pending.id)}
+            >
+              <ThreadRowTitle title={pending.title} />
+            </button>
+          </div>
+        ))}
+        <ThreadRows
+          threads={limitedThreads}
+          activeID={activeID}
+          pendingThreadID={pendingThreadID}
+          lastViewedTurnByThreadID={lastViewedTurnByThreadID}
+          onSelect={onSelect}
+          onTogglePinned={onTogglePinned}
+          onArchive={onArchive}
+          onDelete={onDelete}
+          onRename={onRename}
+          onReorder={onReorder}
+        />
+      </div>
       {showFooter ? (
         <div className="thread-list-footer">
           {hiddenCount > 0 ? (
@@ -619,7 +627,7 @@ function ThreadList({
             <button
               className="thread-list-collapse-btn"
               type="button"
-              onClick={collapseVisibleThreads}
+              onClick={onCollapse}
               aria-label={t("threadSidebar.collapseExpanded")}
               title={t("common.collapse")}
             >
@@ -638,13 +646,13 @@ function limitedProjectThreads(
   activeID: string | undefined,
   pendingThreadID: string | undefined,
   lastViewedTurnByThreadID: Record<string, string> = {},
-  stickyVisibleThreadIDs: ReadonlySet<string> = new Set(),
+  recentlyRead: ReadonlyMap<string, number> = new Map(),
 ): ThreadSummary[] {
   const visibleIDs = new Set(threads.slice(0, Math.max(0, visibleCount)).map((thread) => thread.id));
   return threads.filter((thread) => {
     if (
       visibleIDs.has(thread.id) ||
-      stickyVisibleThreadIDs.has(thread.id) ||
+      recentlyRead.has(thread.id) ||
       importantThreadVisible(thread, activeID, pendingThreadID) ||
       projectThreadUnread(
         thread,
@@ -657,18 +665,6 @@ function limitedProjectThreads(
     }
     return false;
   });
-}
-
-function sameStringSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
-  if (left.size !== right.size) {
-    return false;
-  }
-  for (const value of left) {
-    if (!right.has(value)) {
-      return false;
-    }
-  }
-  return true;
 }
 
 function importantThreadVisible(

@@ -143,6 +143,24 @@ Use `SidebarCollapseBody` for sidebar sections and nested groups. It animates in
 
 Preview `/dev/sidebar-collapse/` with optional `theme=dark`, `size=20`, and `width=240` query parameters. Run `npm --prefix desktop run test:e2e:sidebar-collapse` for Electron geometry checks covering nested folds, reversals, changing content, and reduced motion. These checks do not replace visual acceptance.
 
+Project conversation lists start with five entries in the existing sidebar order
+(including saved manual ordering), plus selected, switching, running, and unread
+conversations. An unread-to-read receipt retains the conversation for two minutes;
+only the three most recently read conversations per project receive this grace
+period. They keep their existing positions. Becoming unread again, leaving the
+list, or closing the project group clears the corresponding retention. Selected,
+switching, running, and unread conversations remain candidates independently of
+that limit.
+
+Expand includes all history; Collapse returns to that recent range without
+closing the project. Both ranges, including conversations still being created,
+scroll within eight rows of height measured by the shared font-responsive row
+size. Short lists use only their content height. The history controls remain
+outside the scroll area. Add `mode=history` to the preview URL for the real project
+component. The same Electron check covers history expansion, read transitions,
+inner scrolling, creating rows, and live font changes, and writes geometry JSON
+and light/dark, 14/20px, wide/narrow screenshots under `desktop/out/sidebar-collapse-e2e-*`.
+
 ## Motion
 
 Motion tokens live in one place: the ladder in [`base.css`](../../../desktop/src/renderer/styles/base.css). `--motion-fast` (120ms) is pointer feedback, `--motion-base` (180ms) covers menus, popovers, and content swaps, `--motion-slow` (280ms) structural moves, and `--motion-slower` (440ms) large folds. `--ease-out` carries entrances and `--ease-in` exits. Transitions, entrances, and exits read a rung or one of the semantic aliases beside it. A literal duration is reserved for a rhythm, such as a spinner on `--motion-spin`, an ambient loop, or choreography paced by a JS clock, and its rule states its reduced-motion behavior next to it.
