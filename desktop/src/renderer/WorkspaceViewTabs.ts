@@ -9,6 +9,7 @@ import {
 import type { WorkspacePanelView } from "./WorkspacePanels";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import type { ArtifactPreviewRequest } from "./ArtifactPreviewContext";
+import { workspacePathToSlash } from "./WorkspacePaths";
 
 /**
  * Content shown in the workspace right panel's tab strip. Built-in tools are
@@ -167,8 +168,8 @@ function workspaceFileTarget(path: string): WorkspaceFileLinkTarget {
 }
 
 export function normalizeWorkspaceFileTabPath(context: RuntimeContext, path: string): string {
-  const normalizedRoot = context.cwd.trim().replace(/\\/g, "/").replace(/\/+$/, "");
-  const normalizedPath = path.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  const normalizedRoot = workspacePathToSlash(context.cwd, context.cwd).replace(/\/+$/, "");
+  const normalizedPath = workspacePathToSlash(path, context.cwd).replace(/\/+$/, "");
   const relativePath = normalizedPath.startsWith(`${normalizedRoot}/`)
     ? normalizedPath.slice(normalizedRoot.length + 1)
     : normalizedPath.replace(/^\/+/, "");

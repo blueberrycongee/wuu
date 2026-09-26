@@ -117,6 +117,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Starting a new conversation preserves the unfinished draft in the source
   conversation when switching back to it.
 
+- Workspace file reads, saves, and directory expansion preserve leading and
+  trailing whitespace and literal POSIX backslashes in filenames, preventing
+  a selected file from being confused with another file in the workspace.
+
+- Overdue automations keep their scheduled occurrence until the session service
+  is ready. Interrupted dispatches reuse their run record after restart, and
+  completing a dispatch preserves a newly edited schedule.
+
 - Sidebar scroll fades remain tied to the list's own scroll position while
   conversations stream, pause, finish, or switch. Streaming paint reduction
   applies only to nested reasoning and process details.
