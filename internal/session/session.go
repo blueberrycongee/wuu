@@ -18,7 +18,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/statepath"
-	_ "modernc.org/sqlite"
 )
 
 const (

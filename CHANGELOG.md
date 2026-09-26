@@ -110,6 +110,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- History search finds literal quotes, paths, line breaks, and HTML characters
+  in deduplicated tool results, including model text and multi-part output.
+
 - Overdue automations keep their scheduled occurrence until the session service
   is ready. Interrupted dispatches reuse their run record after restart, and
   completing a dispatch preserves a newly edited schedule.

@@ -3,13 +3,30 @@ package session
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"modernc.org/sqlite"
 )
+
+func init() {
+	// Match the same text readers hydrate, before SQL applies the page limit.
+	// Reuse hydration so model_text and multi-part projections cannot drift.
+	sqlite.MustRegisterDeterministicScalarFunction("wuu_history_content", 3, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		record := HistoryRecord{
+			Role:       args[0].(string),
+			Content:    args[1].(string),
+			ToolResult: []byte(args[2].(string)),
+		}
+		hydrateHistoryRecordFromStorage(&record)
+		return record.Content, nil
+	})
+}
 
 const (
 	HistoryFieldContent          = "content"
@@ -293,7 +310,7 @@ func searchHistoryQueryTx(ctx context.Context, tx *sql.Tx, query HistorySearchQu
 		return HistoryPage{HeadSeq: snapshotSeq, SnapshotSeq: snapshotSeq}, nil
 	}
 	searchable := `lower(
-		coalesce(content, '') || char(10) || coalesce(display_content, '') || char(10) ||
+		wuu_history_content(role, content, tool_result_json) || char(10) || coalesce(display_content, '') || char(10) ||
 		coalesce(reasoning_content, '') || char(10) || coalesce(tool_calls_json, '') || char(10) ||
 		coalesce(tool_result_json, '') || char(10) || coalesce(name, '')
 	)`
