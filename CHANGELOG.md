@@ -28,6 +28,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Fusion accepts detailed Sidekick check results without rejecting a completed
+  handoff; concise string checks remain supported.
+
 - Preserve sidebar folder and collaboration folds when returning from settings,
   including after switching between light and dark themes.
 
