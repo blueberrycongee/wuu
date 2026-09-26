@@ -16,7 +16,7 @@ import { GitService, gitWorkingTreeBusy, type CommitMessageGenerator } from "./g
 
 const roots: string[] = [];
 
-function makeRepository(): string {
+function makeRepository(initialCommit = true): string {
   const root = mkdtempSync(join(tmpdir(), "wuu-git-service-"));
   roots.push(root);
   execFileSync("git", ["init", "-q", root]);
@@ -24,9 +24,11 @@ function makeRepository(): string {
   execFileSync("git", ["-C", root, "config", "user.email", "test@example.com"]);
   execFileSync("git", ["-C", root, "config", "user.name", "Wuu Test"]);
   execFileSync("git", ["-C", root, "config", "commit.gpgsign", "false"]);
-  writeFileSync(join(root, "README.md"), "workspace\n");
-  execFileSync("git", ["-C", root, "add", "README.md"]);
-  execFileSync("git", ["-C", root, "commit", "-qm", "initial"]);
+  if (initialCommit) {
+    writeFileSync(join(root, "README.md"), "workspace\n");
+    execFileSync("git", ["-C", root, "add", "README.md"]);
+    execFileSync("git", ["-C", root, "commit", "-qm", "initial"]);
+  }
   return root;
 }
 
@@ -60,6 +62,72 @@ afterEach(() => {
 });
 
 describe("GitService file previews", () => {
+  it.each(["sha1", "sha256"].flatMap((format) =>
+    ["untracked", "staged", "staged then modified"].map((state) => ({ format, state })),
+  ))(
+    "shows $state files and their current contents before the first commit ($format)",
+    ({ format, state }) => {
+      vi.stubEnv("GIT_DEFAULT_HASH", format);
+      const root = makeRepository(false);
+      const path = "README.md";
+      const stagedText = "first\nsecond\n";
+      writeFileSync(join(root, path), stagedText);
+      if (state !== "untracked") {
+        execFileSync("git", ["-C", root, "add", "--", path]);
+      }
+      const text = state === "staged then modified" ? "updated\nsecond\nthird\n" : stagedText;
+      writeFileSync(join(root, path), text);
+      const additions = state === "staged then modified" ? 3 : 2;
+      const status = state === "untracked" ? "untracked" : "added";
+      const service = serviceFor(root);
+
+      expect.soft(service.changes().files).toEqual([
+        { path, status, additions, deletions: 0, binary: false },
+      ]);
+      expect.soft(service.status()).toMatchObject({
+        is_repo: true,
+        diff: { files: 1, additions, deletions: 0 },
+        staged_diff: state === "untracked"
+          ? { files: 0, additions: 0, deletions: 0 }
+          : { files: 1, additions: 2, deletions: 0 },
+      });
+      const preview = service.fileDiff(path);
+      expect(preview).toMatchObject({
+        is_repo: true, path, status, additions, deletions: 0, binary: false,
+        original_text: "", modified_text: text, truncated: false,
+      });
+      expect(preview.patch).toContain("new file mode 100644");
+      expect(preview.patch).toContain("--- /dev/null");
+      expect(preview.patch).toContain(text.trimEnd().split("\n").map((line) => `+${line}`).join("\n"));
+      if (state === "staged then modified") {
+        expect(preview.patch).not.toContain("+first");
+      }
+    },
+  );
+
+  it("previews staged binary files before the first commit", () => {
+    const root = makeRepository(false);
+    const path = "image.bin";
+    writeFileSync(join(root, path), Buffer.from([0, 1, 2]));
+    execFileSync("git", ["-C", root, "add", "--", path]);
+    const service = serviceFor(root);
+
+    expect.soft(service.changes().files).toEqual([
+      { path, status: "added", additions: 0, deletions: 0, binary: true },
+    ]);
+    expect.soft(service.status()).toMatchObject({
+      diff: { files: 1, additions: 0, deletions: 0 },
+      staged_diff: { files: 1, additions: 0, deletions: 0 },
+    });
+    const preview = service.fileDiff(path);
+    expect(preview).toMatchObject({
+      path, status: "added", additions: 0, deletions: 0, binary: true,
+    });
+    expect(preview.patch).toContain("Binary files /dev/null and b/image.bin differ");
+    expect(preview.original_text).toBeUndefined();
+    expect(preview.modified_text).toBeUndefined();
+  });
+
   it.each([
     "plain.txt",
     "中文.txt",

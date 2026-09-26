@@ -278,6 +278,7 @@ function gitChangesResult(context: RuntimeContext): GitChangesResult {
     return { is_repo: false, files: [] };
   }
 
+  const base = gitDiffBase(root);
   const filesByPath = new Map<string, GitChangeFile>();
   for (const file of parseGitNameStatus(
     gitRawOutput(root, [
@@ -285,7 +286,7 @@ function gitChangesResult(context: RuntimeContext): GitChangesResult {
       "--name-status",
       "-z",
       "--find-renames",
-      "HEAD",
+      base,
       "--",
     ]) ?? "",
   )) {
@@ -293,7 +294,7 @@ function gitChangesResult(context: RuntimeContext): GitChangesResult {
   }
 
   for (const file of parseGitNumstatFiles(
-    gitRawOutput(root, ["diff", "--numstat", "-z", "--find-renames", "HEAD", "--"]) ??
+    gitRawOutput(root, ["diff", "--numstat", "-z", "--find-renames", base, "--"]) ??
       "",
   )) {
     const existing = filesByPath.get(file.path);
@@ -362,8 +363,10 @@ function gitFileDiffResult(
     });
   }
 
+  const base = gitDiffBase(root);
   const rawPatch = gitDiffOutput(
     root,
+    base,
     change.old_path ? [change.old_path, relativePath] : [relativePath],
   );
   const truncatedPatch = truncateTextBytes(
@@ -376,7 +379,7 @@ function gitFileDiffResult(
     rawPatch.includes("GIT binary patch");
   const originalText = binary
     ? undefined
-    : gitRevisionFileText(root, "HEAD", change.old_path ?? change.path);
+    : gitRevisionFileText(root, base, change.old_path ?? change.path);
   const modifiedText = binary
     ? undefined
     : readWorkingTreeFileText(absolutePath);
@@ -664,9 +667,16 @@ function emptyGitDiffStats(): GitDiffStats {
   return { files: 0, additions: 0, deletions: 0 };
 }
 
+function gitDiffBase(cwd: string): string {
+  // Before the first commit, compare with the empty tree in this repository's
+  // object format. Hashing empty stdin does not write an object or change the index.
+  return gitOutput(cwd, ["rev-parse", "--verify", "HEAD"]) ??
+    gitRun(cwd, ["hash-object", "-t", "tree", "--stdin"]);
+}
+
 function gitDiffStats(cwd: string, includeUntracked: boolean): GitDiffStats {
   const stats = parseGitNumstat(
-    gitRawOutput(cwd, ["diff", "--numstat", "-z", "HEAD", "--"]) ?? "",
+    gitRawOutput(cwd, ["diff", "--numstat", "-z", gitDiffBase(cwd), "--"]) ?? "",
   );
   if (!includeUntracked) {
     return stats;
@@ -692,7 +702,7 @@ function gitStagedDiffStats(cwd: string): GitDiffStats {
   );
 }
 
-function gitDiffOutput(cwd: string, relativePaths: string[]): string {
+function gitDiffOutput(cwd: string, base: string, relativePaths: string[]): string {
   const result = spawnSync(
     "git",
     [
@@ -703,7 +713,7 @@ function gitDiffOutput(cwd: string, relativePaths: string[]): string {
       "--no-ext-diff",
       "--find-renames",
       "--unified=3",
-      "HEAD",
+      base,
       "--",
       ...relativePaths,
     ],
