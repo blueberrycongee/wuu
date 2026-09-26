@@ -28,6 +28,15 @@ function mockThread(id, source) {
   };
 }
 
+// Opt-in sidebar overflow for the scroll-fade regression using the same bridge.
+const sidebarSeedTime = Date.now();
+for (let index = 0; index < Number(process.env.WUU_STREAM_E2E_SIDEBAR_THREADS || 0); index++) {
+  const thread = mockThread(`sidebar-fade-${index}`);
+  thread.preview = `Conversation ${String(index + 1).padStart(2, "0")}: scroll boundary regression`;
+  thread.created_at = thread.updated_at = new Date(sidebarSeedTime - index * 1000).toISOString();
+  threads.set(thread.id, thread);
+}
+
 contextBridge.exposeInMainWorld("wuu", {
   listProjects: async () => projectList(),
   createBlankProject: async () => projectList(),
@@ -92,7 +101,7 @@ contextBridge.exposeInMainWorld("wuu", {
   },
   resumeThread: async (id) => ({ thread: threads.get(id) ?? null }),
   forkThread: async () => ({ thread: null }),
-  listThreads: async () => ({ threads: [] }),
+  listThreads: async () => ({ threads: process.env.WUU_STREAM_E2E_SIDEBAR_THREADS ? [...threads.values()] : [] }),
   listArchivedThreads: async () => ({ threads: [] }),
   queueTurn: async (threadId, text, _images, id, _files, _permission, _document, _parts, _context, hold) => {
     ipcRenderer.send("test:queued-input", { threadId, text, id, hold });

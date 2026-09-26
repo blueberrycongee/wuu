@@ -275,14 +275,12 @@ describe("JumpToLatestPill", () => {
       clientHeight: 600,
       scrollTop: 920,
     });
-    const pane = document.createElement("main");
-    pane.className = "conversation-pane";
-    pane.style.setProperty("--session-tail-space", "480px");
-    pane.append(node);
-    document.body.append(pane);
-    mountedContainers.push(pane);
+    const content = document.createElement("div");
+    content.className = "scroll-region-content";
+    content.style.paddingBottom = "480px";
+    node.append(content);
     const host = document.createElement("div");
-    node.append(host);
+    content.append(host);
     const root = createRoot(host);
     mountedRoots.push(root);
     act(() => {

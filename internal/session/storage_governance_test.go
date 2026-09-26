@@ -60,7 +60,7 @@ func TestToolResultProjectionIsStoredOnceAndHydrated(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := toolresult.Result{
-		Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: "projected output"}},
+		Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: "projected \"output\"\nC:\\work\\report.txt <end>"}},
 		Meta:    json.RawMessage(`{"source":"test"}`),
 	}
 	payload, err := json.Marshal(result)
@@ -92,6 +92,13 @@ func TestToolResultProjectionIsStoredOnceAndHydrated(t *testing.T) {
 	}
 	if len(history) != 1 || history[0].Content != record.Content || !reflect.DeepEqual(history[0].ToolResult, record.ToolResult) {
 		t.Fatalf("hydrated history = %+v, want %+v", history, record)
+	}
+	page, err := SearchHistoryPage(context.Background(), dir, "thread-tool-storage", record.Content, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Records) != 1 || page.Records[0].Content != record.Content {
+		t.Fatalf("deduplicated tool content was not searchable: %+v", page)
 	}
 }
 

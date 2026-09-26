@@ -847,7 +847,7 @@ export class RemoteDesktopBridge {
       takeoverActivity: (thread_id, activity_id) => this.call("activity/takeover", { thread_id, activity_id }),
       releaseActivity: (thread_id, activity_id) => this.call("activity/release", { thread_id, activity_id }),
       stopActivity: (thread_id, activity_id) => this.call("activity/stop", { thread_id, activity_id }),
-      updateRuntimeSettings: (provider, model, effort, connection, variant, permissionMode, threadId) =>
+      updateRuntimeSettings: (provider, model, effort, connection, variant, permissionMode, threadId, speed) =>
         this.call("config/model/update", {
           ...(provider ? { provider } : {}),
           ...(model ? { model } : {}),
@@ -855,6 +855,7 @@ export class RemoteDesktopBridge {
           ...connection,
           ...(effort === undefined ? {} : { effort }),
           ...(variant === undefined ? {} : { variant }),
+          ...(speed === undefined ? {} : { speed }),
           ...(permissionMode === undefined ? {} : { permission_mode: permissionMode }),
         }),
       removeProvider: (provider, options) => this.call("config/provider/remove", {

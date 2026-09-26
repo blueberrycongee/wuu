@@ -143,6 +143,24 @@ Use `SidebarCollapseBody` for sidebar sections and nested groups. It animates in
 
 Preview `/dev/sidebar-collapse/` with optional `theme=dark`, `size=20`, and `width=240` query parameters. Run `npm --prefix desktop run test:e2e:sidebar-collapse` for Electron geometry checks covering nested folds, reversals, changing content, and reduced motion. These checks do not replace visual acceptance.
 
+Project conversation lists start with five entries in the existing sidebar order
+(including saved manual ordering), plus selected, switching, running, and unread
+conversations. An unread-to-read receipt retains the conversation for two minutes;
+only the three most recently read conversations per project receive this grace
+period. They keep their existing positions. Becoming unread again, leaving the
+list, or closing the project group clears the corresponding retention. Selected,
+switching, running, and unread conversations remain candidates independently of
+that limit.
+
+Expand includes all history; Collapse returns to that recent range without
+closing the project. Both ranges, including conversations still being created,
+scroll within eight rows of height measured by the shared font-responsive row
+size. Short lists use only their content height. The history controls remain
+outside the scroll area. Add `mode=history` to the preview URL for the real project
+component. The same Electron check covers history expansion, read transitions,
+inner scrolling, creating rows, and live font changes, and writes geometry JSON
+and light/dark, 14/20px, wide/narrow screenshots under `desktop/out/sidebar-collapse-e2e-*`.
+
 ## Motion
 
 Motion tokens live in one place: the ladder in [`base.css`](../../../desktop/src/renderer/styles/base.css). `--motion-fast` (120ms) is pointer feedback, `--motion-base` (180ms) covers menus, popovers, and content swaps, `--motion-slow` (280ms) structural moves, and `--motion-slower` (440ms) large folds. `--ease-out` carries entrances and `--ease-in` exits. Transitions, entrances, and exits read a rung or one of the semantic aliases beside it. A literal duration is reserved for a rhythm, such as a spinner on `--motion-spin`, an ambient loop, or choreography paced by a JS clock, and its rule states its reduced-motion behavior next to it.
@@ -173,7 +191,7 @@ Programmatic conversation scrolling uses one trajectory, [`ScrollGlide`](../../.
 
 The glide models a position and a live target, not the remaining distance: the placement compensates a reflow during the React commit, at a timestamp where no frame has elapsed, so a step proportional to elapsed time would move nothing and let the bubble visibly shift until the next frame. Sending therefore ends its placement when the glide lands (about 350ms to cover 96%, then a settling tail) rather than at a fixed deadline; a longer jump takes longer instead of whipping. Reduced motion is decided by the caller, which places the bubble in one write.
 
-Use a CSS transition from the ladder for motion whose geometry is already known: an entrance, a menu, a panel sliding to a fixed size, a hover wash. Reach for a frame-driven trajectory when the destination is only known while the motion runs — scrolling to content that is still arriving — or when something else keeps moving the target underneath it. Such motion needs no deadline and cannot restart; expressed as a transition it would have to be retargeted with a second transition, which is the seam this design removes. Keep a deliberate constant cadence as it is: a summary that reveals at about twelve characters per second is not settling, and a retained glide would turn it into a different animation. A follow that shares its deadline with the height transition of the content it is following — the collaboration receipt — keeps that deadline on purpose, so both finish together.
+Use a CSS transition from the ladder for motion whose geometry is already known: an entrance, a menu, a panel sliding to a fixed size, a hover wash. Reach for a frame-driven trajectory when the destination is only known while the motion runs — scrolling to content that is still arriving — or when something else keeps moving the target underneath it. Such motion needs no deadline and cannot restart; expressed as a transition it would have to be retargeted with a second transition, which is the seam this design removes. Keep a deliberate constant cadence as it is: a summary that reveals at about twelve characters per second is not settling, and a retained glide would turn it into a different animation.
 
 ## Conversation disclosure scrolling
 
@@ -182,6 +200,16 @@ Opening or closing tool/reasoning details preserves the reader's scroll mode. A 
 Sending a query reserves reading space below the bubble. Expanded details may temporarily occupy that space, but closing them restores what remains after actual response growth or deliberate browsing. A temporarily empty gap is not proof that the response has filled the reservation. Inspect repeated toggles while streaming, including a fold taller than the remaining gap and a session switch with the fold open.
 
 Earlier-history paging inserts rows above the viewport. A paused reader's offset belongs to native scroll anchoring, so the manual prepend correction applies only while the offset still sits where the page was requested; adding the inserted height on top of anchoring moves the whole stream down by that height the moment the page arrives, which reads as a jump.
+
+## Following and rendering long conversations
+
+A conversation follows its latest content until the reader takes over. Wheel, touch, keyboard, scrollbar and selection input pause following before the browser delivers the scroll, so a streamed chunk cannot pull the view back. Moving back down to the latest content resumes following within a small band that absorbs output streamed while that scroll settles; moving up never resumes it. Jump to latest resumes following when clicked rather than when its motion lands, and the glide hands over to ordinary following once it is close to the moving bottom.
+
+Off-screen turns skip layout and paint through `content-visibility: auto` and keep the height they last rendered at. Every turn renders once before it may skip, so a skipped turn never falls back to the placeholder height; a placeholder that differs from the real height moves the reader and the scrollbar when the turn finally renders. Chromium decides which skipped turns became visible only after a frame has painted, so [`ConversationRenderWindow`](../../../desktop/src/renderer/ConversationRenderWindow.ts) renders the turns around the viewport from a large scroll's own scroll event. Code that writes `scrollTop` inside a frame, such as a glide or the turn rail, calls it after writing. Do not read geometry inside a skipped turn: the read forces the layout the skip saves. Inactive cached conversations use `content-visibility: hidden`.
+
+Values that change while a response streams, such as a submission's reading reservation, are written on the element that uses them rather than as an inherited custom property on an ancestor, which would restyle every rendered turn. For the same reason, shell children ahead of the conversation, such as the sidebar resizer, stay mounted and are hidden instead of inserted or removed.
+
+`npm --prefix desktop run test:e2e:conversation-scroll` drives these behaviors with native input in a real Electron window: streaming against wheel input, returning to latest, jump to latest, completion and sidebar toggles for a paused reader, large scrolls after a sidebar toggle, history jumps, send placement and handoff, and session restore. It checks painted pixels for blank bands, so it shows its window by default; `WUU_E2E_HIDDEN=true` hides it. A very fast scrollbar drag across a long conversation can still outpace Chromium's rasterization for a frame, as it does when every turn is rendered.
 
 ## Scrollbar visibility
 

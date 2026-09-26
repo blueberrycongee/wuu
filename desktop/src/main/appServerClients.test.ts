@@ -207,6 +207,95 @@ describe("AppServerClientPool Activity routing", () => {
   });
 });
 
+describe("AppServerClientPool admission", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each(["read", "session read", "turn", "error"])(
+    "admits a remote %s while four other workspaces run turns and reclaims idle clients",
+    async (operation) => {
+      vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
+      const contexts = Array.from({ length: 6 }, (_, index) => ({
+        kind: "project" as const,
+        project_id: `project-${index}`,
+        cwd: join(tmpdir(), `admission-${index}`),
+      }));
+      const children = new Map<string, FakeAppServerChild>();
+      const requests = new Map<string, Array<{ id: string; method: string }>>();
+      const disposed: string[] = [];
+      const pool = new AppServerClientPool(
+        () => contexts[0],
+        () => contexts[0].cwd,
+        () => {},
+        (_command, _args, options) => {
+          const child = new FakeAppServerChild();
+          children.set(options.cwd, child);
+          requests.set(options.cwd, []);
+          child.stdin.on("data", data => {
+            const request = JSON.parse(String(data));
+            requests.get(options.cwd)!.push(request);
+            if (request.method === "shutdown") {
+              queueMicrotask(() => child.emit("exit", 0, null));
+            } else if (request.method === "initialize") {
+              queueMicrotask(() => child.stdout.write(`${JSON.stringify({ id: request.id, result: {} })}\n`));
+            }
+          });
+          return child.asChildProcess();
+        },
+        () => ({}),
+      );
+      pool.setClientTorndownHandler(cwd => disposed.push(cwd));
+      const reply = (index: number, response: object) => {
+        const request = requests.get(contexts[index].cwd)!.at(-1)!;
+        children.get(contexts[index].cwd)!.stdout.write(`${JSON.stringify({ id: request.id, ...response })}\n`);
+      };
+      try {
+        for (let index = 0; index < 4; index++) {
+          const started = pool.requestInContext(contexts[index], "turn/start", { thread_id: `thread-${index}` });
+          reply(index, { result: { turn: { status: "in_progress" } } });
+          await started;
+        }
+        const running = pool.runningThreadsSnapshot();
+        expect(running).toHaveLength(4);
+        const fifth = operation === "session read"
+          ? pool.requestInContext(contexts[4], "thread/resume", { session_id: "remote-thread" })
+          : pool.requestInContext(contexts[4], operation === "turn" ? "turn/start" : "thread/list",
+            operation === "turn" ? { thread_id: "remote-thread" } : undefined);
+        // Another admission and startup responses must not evict the pending fifth request.
+        const sixth = pool.requestInContext(contexts[5], "thread/list");
+        await Promise.resolve();
+        expect(disposed).toEqual([]);
+        reply(5, { result: { threads: [] } });
+        await expect(sixth).resolves.toEqual({ threads: [] });
+        expect(disposed).toEqual([contexts[5].cwd]);
+        if (operation === "error") {
+          const rejected = expect(fifth).rejects.toThrow("fixture request failed");
+          reply(4, { error: { code: "error", message: "fixture request failed" } });
+          await rejected;
+        } else {
+          const result = operation === "turn"
+            ? { turn: { status: "in_progress" } }
+            : operation === "session read"
+              ? { thread: { id: "remote-thread", status: "idle" } }
+              : { threads: [] };
+          reply(4, { result });
+          await expect(fifth).resolves.toEqual(result);
+        }
+        if (operation === "turn") {
+          expect(disposed).toEqual([contexts[5].cwd]);
+          expect(pool.runningThreadsSnapshot()).toHaveLength(5);
+          children.get(contexts[4].cwd)!.stdout.write(`${JSON.stringify({
+            method: "turn/completed", params: { thread_id: "remote-thread" },
+          })}\n`);
+        }
+        expect(disposed).toEqual([contexts[5].cwd, contexts[4].cwd]);
+        expect(pool.runningThreadsSnapshot()).toEqual(running);
+      } finally {
+        await pool.shutdown();
+      }
+    },
+  );
+});
+
 describe("AppServerClientPool session routing", () => {
   afterEach(() => vi.unstubAllEnvs());
   it("negotiates initialize capabilities for prewarmed and restarted project processes", async () => {

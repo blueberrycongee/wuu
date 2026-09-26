@@ -75,6 +75,7 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		Model:           th.Model,
 		ModelVariant:    th.ModelVariant,
 		ModelEffort:     th.ModelEffort,
+		Speed:           th.Speed,
 		PermissionMode:  th.PermissionMode,
 		ApproveForMe:    th.ApproveForMe,
 		EngineID:        string(agentengine.NormalizeEngineID(th.EngineID)),

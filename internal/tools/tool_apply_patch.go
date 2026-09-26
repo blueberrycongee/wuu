@@ -721,6 +721,13 @@ func (t *ApplyPatchTool) notifyFileChanged(absPath string) {
 }
 
 func applyPatchChunks(content string, chunks []applyPatchChunk) (string, error) {
+	// Match uniform CRLF files using the parser's LF representation, then
+	// restore their line endings. Leave mixed-ending files byte-preserving.
+	crlf := strings.Count(content, "\r\n")
+	useCRLF := crlf > 0 && crlf == strings.Count(content, "\n")
+	if useCRLF {
+		content = strings.ReplaceAll(content, "\r\n", "\n")
+	}
 	lines, trailingNewline := splitPatchContentLines(content)
 	cursor := 0
 	for _, chunk := range chunks {
@@ -735,7 +742,11 @@ func applyPatchChunks(content string, chunks []applyPatchChunk) (string, error) 
 		lines = next
 		cursor = idx + len(chunk.NewLines)
 	}
-	return joinContentLines(lines, trailingNewline), nil
+	updated := joinContentLines(lines, trailingNewline)
+	if useCRLF {
+		updated = strings.ReplaceAll(updated, "\n", "\r\n")
+	}
+	return updated, nil
 }
 
 func splitPatchContentLines(content string) ([]string, bool) {

@@ -4630,12 +4630,12 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   /* At the latest position, leave room for the controls. Unlike a viewport
      cutoff, this trailing space scrolls away when reading earlier messages. */
   --conversation-flow-bottom-space: calc(
-    var(--conversation-composer-clearance) + var(--session-tail-space, 0px) +
-    var(--conversation-status-space, 0px) + var(--dock-composer-height) -
-    var(--conversation-input-inset, var(--dock-composer-height))
+    var(--conversation-composer-clearance) + var(--conversation-status-space, 0px) +
+    var(--dock-composer-height) - var(--conversation-input-inset, var(--dock-composer-height))
   );
-  /* The first-send lead is applied to the outer content wrapper so animating
-     it does not invalidate inherited styles throughout the conversation. */
+  /* The first-send lead and a submission's reading reservation are padding on
+     the outer content wrapper, so their per-frame changes do not restyle the
+     conversation through an inherited variable. */
   padding-top: var(--conversation-flow-top-gap);
   padding-bottom: var(--conversation-flow-bottom-space);
 }
@@ -4776,4 +4776,23 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
 .scroll-region:not(.empty-scroll-region):not(.workspace-scroll-region),
 .conversation-split-body {
   scrollbar-gutter: stable both-edges;
+}
+
+/* Speed is independent of the model and reasoning slider. */
+.codex-runtime-menu .runtime-panel-context .runtime-panel-fast,
+.codex-runtime-menu .runtime-panel-context .runtime-panel-speed-reset {
+  flex: 0 0 auto;
+  width: var(--runtime-context-row);
+  padding: 0;
+  justify-content: center;
+}
+.codex-runtime-menu .runtime-panel-context .runtime-panel-speed-reset {
+  margin-left: auto;
+}
+.codex-runtime-menu .runtime-panel-fast[aria-pressed="true"],
+.codex-runtime-menu .runtime-panel-fast[aria-pressed="true"] > svg {
+  color: var(--interaction-accent);
+}
+.codex-runtime-menu .runtime-panel-fast[aria-pressed="true"] > svg {
+  fill: currentColor;
 }

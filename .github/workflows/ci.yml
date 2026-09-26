@@ -57,6 +57,10 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
       - name: Check
         run: make check-go
 
@@ -96,6 +100,40 @@ jobs:
 
       - name: Build
         run: make build-desktop
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Check session switch budget ratchet
+        env:
+          PERF_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          node --test desktop/scripts/session-switch-budget.test.cjs
+          git fetch --no-tags --depth=1 origin "$PERF_BASE_SHA"
+          node desktop/scripts/session-switch-budget.cjs "$PERF_BASE_SHA"
+
+      - name: Guard session switch work
+        # Preserve Electron failures through the evidence log pipeline.
+        shell: bash
+        env:
+          WUU_SWITCH_CHECK_BUDGET: "1"
+          WUU_SWITCH_OUTPUT: ${{ runner.temp }}/wuu-session-switch-evidence
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+        run: |
+          go build -o "$WUU_DESKTOP_CORE" ./cmd/wuu
+          mkdir -p "$WUU_SWITCH_OUTPUT"
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/session-switch-e2e.cjs 2>&1 | tee "$WUU_SWITCH_OUTPUT/run.log"
+
+      - name: Upload session switch evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-switch-evidence
+          path: ${{ runner.temp }}/wuu-session-switch-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
 
   clients-check:
     name: Clients check

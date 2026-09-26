@@ -137,6 +137,7 @@ export type InitializeParams = {
 };
 
 export type InitializeResult = {
+  speed?: string;
   status?: "ready" | "needs_setup";
   issues?: RuntimeIssue[];
   protocol_version: string;
@@ -266,7 +267,13 @@ export type AdvancedSettingsSummary = {
   compact_threshold_tokens?: number;
 };
 
+export type PTCSettings = {
+  enabled: boolean;
+  families?: Record<string, boolean>;
+};
+
 export type GeneralSettingsSummary = {
+  ptc?: PTCSettings;
   git_attribution_enabled?: boolean;
   mcp_server_enabled: Record<string, boolean>;
 };
@@ -664,6 +671,8 @@ export type ProviderSummary = {
 };
 
 export type ProviderModelSummary = {
+  fast_mode?: boolean;
+  default_speed?: string;
   id: string;
   display_name?: string;
   default_effort?: string;
@@ -986,6 +995,7 @@ export type ConfigAdvancedUpdateResult = {
 };
 
 export type RuntimeGeneralSettingsUpdate = {
+  ptc?: PTCSettings;
   git_attribution_enabled?: boolean;
   mcp_enabled_toggles?: Record<string, boolean>;
 };
@@ -1058,6 +1068,8 @@ export type EnginePermissionModeInfo = {
 
 /** One model exposed by an external agent engine. */
 export type EngineModelInfo = {
+  fast_mode?: boolean;
+  default_speed?: string;
   id: string;
   display_name?: string;
   default_effort?: string;
@@ -1563,6 +1575,7 @@ export type SessionOrganization = {
 };
 
 export type Thread = {
+  speed?: string;
   session_control?: { manager_id: string; manager_name: string; state: "active" | "paused" | "taken_over"; revision: number };
   id: string;
   parent_id?: string;
@@ -1609,6 +1622,7 @@ export type Thread = {
 };
 
 export type ThreadStartParams = {
+  speed?: string;
   ephemeral?: boolean;
   cwd?: string;
   workspace_id?: string;
@@ -2593,7 +2607,8 @@ export type WuuDesktopApi = {
     connection?: RuntimeConnectionUpdate,
     variant?: string,
     permissionMode?: string,
-    threadId?: string
+    threadId?: string,
+    speed?: string
   ) => Promise<ConfigModelUpdateResult>;
   removeProvider: (
     provider: string,

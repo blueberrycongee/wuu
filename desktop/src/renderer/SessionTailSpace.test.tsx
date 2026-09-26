@@ -59,7 +59,7 @@ function Probe({ id = "a", running = false, split = false, messageID, pluginHost
         scrollTop: { configurable: true, get: () => { top = Math.max(0, Math.min(top, node.scrollHeight - node.clientHeight)); return top; }, set: value => { top = Math.max(0, Math.min(value, node.scrollHeight - node.clientHeight)); } },
       });
     }} onScroll={() => api.handleConversationScroll()}>
-      <div ref={api.scrollContentRef} data-content>
+      <div ref={api.scrollContentRef} className="scroll-region-content" data-content>
         {messageID ? item ? <ImagePreviewProvider><TurnView key={mountKey ?? messageID} turn={primaryTurns[0]} onStreamFrame={api.scheduleStreamScroll} /></ImagePreviewProvider>
           : <>
             <div key={mountKey ?? messageID} data-user-message-id={messageID}><div data-message-arrival /></div>
@@ -83,7 +83,7 @@ function Probe({ id = "a", running = false, split = false, messageID, pluginHost
 // Model content height separately from scrollHeight's viewport floor. Reading
 // scrollTop models Chromium's clamp, including after a layout-only shrink.
 function tailSpace() {
-  return Number.parseFloat(host.querySelector("main")?.style.getPropertyValue("--session-tail-space") || "0");
+  return Number.parseFloat(host.querySelector<HTMLElement>("[data-content]")?.style.paddingBottom || "0");
 }
 function leadSpace() {
   return Number.parseFloat(host.querySelector<HTMLElement>("[data-content]")?.style.paddingTop || "0");

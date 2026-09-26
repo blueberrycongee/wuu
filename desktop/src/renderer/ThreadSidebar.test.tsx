@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act } from "react";
+import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ThreadContextMenu } from "./ThreadContextMenu";
 import { PinnedThreadList, WorkspaceGroup, WorkspaceList } from "./ThreadSidebar";
@@ -172,6 +172,100 @@ describe("WorkspaceList", () => {
     expect(container.textContent).toContain("Wuu session");
     expect(container.textContent).toContain("Interview session");
     expect(container.textContent).not.toContain("Wrong duplicate");
+  });
+
+  // These regressions exercise the list's visible behavior; geometry belongs
+  // to the Electron sidebar-collapse fixture.
+  function renderHistory(overrides: Partial<ComponentProps<typeof WorkspaceGroup>> = {}): void {
+    act(() => {
+      root ??= createRoot(container);
+      root.render(<WorkspaceGroup
+        project={makeWorkspace("history", "History", "/repo/history")}
+        expandedSidebarSectionIDs={new Set(["history"])}
+        threadsByWorkspaceID={{ history: summarizeThreadsForSidebar(Array.from({ length: 30 }, (_, index) =>
+          makeWorkspaceThread(`history-${index}`, "/repo/history", `History ${index}`),
+        )) }}
+        lastViewedTurnByThreadID={{}}
+        scratchPseudoWorkspaceID={SCRATCH_PSEUDO_PROJECT_ID}
+        scratchPseudoActive={false}
+        onToggleSidebarSectionCollapsed={() => {}}
+        onStartNewThread={() => {}}
+        onSelectThread={() => {}}
+        onToggleThreadPinned={() => {}}
+        onArchiveThread={() => {}}
+        onDeleteThread={() => {}}
+        {...overrides}
+      />);
+    });
+  }
+
+  function historyTitles(): string[] {
+    return Array.from(container.querySelectorAll(".thread-row-title"), row => row.textContent ?? "");
+  }
+
+  it("expands the entire history in one action and can return to the recent range", () => {
+    renderHistory();
+    expect(historyTitles()).toHaveLength(5);
+    act(() => container.querySelector<HTMLButtonElement>(".thread-list-more")!.click());
+    expect(historyTitles()).toHaveLength(30);
+    act(() => container.querySelector<HTMLButtonElement>(".thread-list-collapse-btn")!.click());
+    expect(historyTitles()).toHaveLength(5);
+    expect(container.querySelector(".project-row")?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("does not permanently retain previously selected, switching, or running history", () => {
+    renderHistory({ activeThreadID: "history-20", pendingThreadID: "history-21" });
+    expect(historyTitles()).toHaveLength(7);
+    renderHistory();
+    expect(historyTitles()).toHaveLength(5);
+    const threads = summarizeThreadsForSidebar(Array.from({ length: 30 }, (_, index) =>
+      makeWorkspaceThread(`history-${index}`, "/repo/history", `History ${index}`, [],
+        index === 22 ? { status: "in_progress" } : {}),
+    ));
+    renderHistory({ threadsByWorkspaceID: { history: threads } });
+    expect(historyTitles()).toContain("History 22");
+    renderHistory();
+    expect(historyTitles()).toHaveLength(5);
+  });
+
+  it("bounds recently read history and expires it without hiding active or newly unread threads", () => {
+    vi.useFakeTimers();
+    try {
+      const threads = summarizeThreadsForSidebar(Array.from({ length: 10 }, (_, index) =>
+        makeWorkspaceThread(`history-${index}`, "/repo/history", `History ${index}`,
+          index >= 5 ? [{ id: `turn-${index}`, status: "completed" }] : []),
+      ));
+      const viewed: Record<string, string> = {};
+      const render = (activeThreadID?: string) => renderHistory({
+        threadsByWorkspaceID: { history: threads }, lastViewedTurnByThreadID: { ...viewed }, activeThreadID,
+      });
+      render();
+      expect(historyTitles()).toHaveLength(10);
+      for (let index = 5; index < 10; index++) {
+        viewed[`history-${index}`] = `turn-${index}`;
+        render();
+        expect(historyTitles()).toContain(`History ${index}`);
+        act(() => vi.advanceTimersByTime(1000));
+      }
+      expect(historyTitles()).toEqual([0, 1, 2, 3, 4, 7, 8, 9].map(index => `History ${index}`));
+      act(() => vi.advanceTimersByTime(116000));
+      expect(historyTitles()).toContain("History 7");
+      act(() => vi.advanceTimersByTime(1000));
+      expect(historyTitles()).not.toContain("History 7");
+      delete viewed["history-8"];
+      render("history-9");
+      act(() => vi.advanceTimersByTime(120000));
+      expect(historyTitles()).toEqual([0, 1, 2, 3, 4, 8, 9].map(index => `History ${index}`));
+      render();
+      expect(historyTitles()).not.toContain("History 9");
+      viewed["history-8"] = "turn-8";
+      render();
+      expect(historyTitles()).toContain("History 8");
+      act(() => vi.advanceTimersByTime(120000));
+      expect(historyTitles()).toHaveLength(5);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps the parent thread spinning while a direct child agent runs", () => {

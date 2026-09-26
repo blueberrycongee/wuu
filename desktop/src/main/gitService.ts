@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { lstatSync, readlinkSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import type {
   GitChangeFile,
@@ -278,6 +278,7 @@ function gitChangesResult(context: RuntimeContext): GitChangesResult {
     return { is_repo: false, files: [] };
   }
 
+  const base = gitDiffBase(root);
   const filesByPath = new Map<string, GitChangeFile>();
   for (const file of parseGitNameStatus(
     gitRawOutput(root, [
@@ -285,7 +286,7 @@ function gitChangesResult(context: RuntimeContext): GitChangesResult {
       "--name-status",
       "-z",
       "--find-renames",
-      "HEAD",
+      base,
       "--",
     ]) ?? "",
   )) {
@@ -293,7 +294,7 @@ function gitChangesResult(context: RuntimeContext): GitChangesResult {
   }
 
   for (const file of parseGitNumstatFiles(
-    gitRawOutput(root, ["diff", "--numstat", "-z", "--find-renames", "HEAD", "--"]) ??
+    gitRawOutput(root, ["diff", "--numstat", "-z", "--find-renames", base, "--"]) ??
       "",
   )) {
     const existing = filesByPath.get(file.path);
@@ -362,8 +363,10 @@ function gitFileDiffResult(
     });
   }
 
+  const base = gitDiffBase(root);
   const rawPatch = gitDiffOutput(
     root,
+    base,
     change.old_path ? [change.old_path, relativePath] : [relativePath],
   );
   const truncatedPatch = truncateTextBytes(
@@ -376,7 +379,7 @@ function gitFileDiffResult(
     rawPatch.includes("GIT binary patch");
   const originalText = binary
     ? undefined
-    : gitRevisionFileText(root, "HEAD", change.old_path ?? change.path);
+    : gitRevisionFileText(root, base, change.old_path ?? change.path);
   const modifiedText = binary
     ? undefined
     : readWorkingTreeFileText(absolutePath);
@@ -664,9 +667,16 @@ function emptyGitDiffStats(): GitDiffStats {
   return { files: 0, additions: 0, deletions: 0 };
 }
 
+function gitDiffBase(cwd: string): string {
+  // Before the first commit, compare with the empty tree in this repository's
+  // object format. Hashing empty stdin does not write an object or change the index.
+  return gitOutput(cwd, ["rev-parse", "--verify", "HEAD"]) ??
+    gitRun(cwd, ["hash-object", "-t", "tree", "--stdin"]);
+}
+
 function gitDiffStats(cwd: string, includeUntracked: boolean): GitDiffStats {
   const stats = parseGitNumstat(
-    gitRawOutput(cwd, ["diff", "--numstat", "-z", "HEAD", "--"]) ?? "",
+    gitRawOutput(cwd, ["diff", "--numstat", "-z", gitDiffBase(cwd), "--"]) ?? "",
   );
   if (!includeUntracked) {
     return stats;
@@ -692,7 +702,7 @@ function gitStagedDiffStats(cwd: string): GitDiffStats {
   );
 }
 
-function gitDiffOutput(cwd: string, relativePaths: string[]): string {
+function gitDiffOutput(cwd: string, base: string, relativePaths: string[]): string {
   const result = spawnSync(
     "git",
     [
@@ -703,7 +713,7 @@ function gitDiffOutput(cwd: string, relativePaths: string[]): string {
       "--no-ext-diff",
       "--find-renames",
       "--unified=3",
-      "HEAD",
+      base,
       "--",
       ...relativePaths,
     ],
@@ -808,14 +818,11 @@ function untrackedGitFileStats(
 ): { additions: number; binary: boolean } {
   const { absolutePath } = resolveGitRelativePath(root, path);
   try {
-    const stats = statSync(absolutePath);
-    if (!stats.isFile()) {
+    const preview = readGitFilePreview(absolutePath, FILE_PREVIEW_MAX_BYTES);
+    if (!preview) {
       return { additions: 0, binary: false };
     }
-    const previewBuffer = readFilePreviewBuffer(
-      absolutePath,
-      Math.min(stats.size, FILE_PREVIEW_MAX_BYTES),
-    );
+    const previewBuffer = preview.buffer;
     const binary = previewBuffer.includes(0);
     return {
       additions: binary ? 0 : countTextFileLines(absolutePath),
@@ -831,13 +838,12 @@ function gitNewFileDiffResult(
   change: GitChangeFile,
 ): GitFileDiffResult {
   try {
-    const stats = statSync(absolutePath);
-    if (!stats.isFile()) {
+    const preview = readGitFilePreview(absolutePath, GIT_DIFF_PREVIEW_MAX_BYTES + 1);
+    if (!preview) {
       return emptyGitFileDiffResult(change.path, true);
     }
-    const readLimit = Math.min(stats.size, GIT_DIFF_PREVIEW_MAX_BYTES + 1);
-    const buffer = readFilePreviewBuffer(absolutePath, readLimit);
-    const truncated = stats.size > GIT_DIFF_PREVIEW_MAX_BYTES;
+    const { buffer } = preview;
+    const truncated = preview.size > GIT_DIFF_PREVIEW_MAX_BYTES;
     const previewBuffer = buffer.subarray(
       0,
       truncated ? GIT_DIFF_PREVIEW_MAX_BYTES : buffer.length,
@@ -849,6 +855,7 @@ function gitNewFileDiffResult(
           change.path,
           previewBuffer.toString("utf8"),
           truncated,
+          preview.symlink,
         );
     return {
       is_repo: true,
@@ -889,16 +896,28 @@ function gitRevisionFileText(
   return truncateTextBytes(result.stdout, GIT_DIFF_PREVIEW_MAX_BYTES).text;
 }
 
+// Git stores a symlink's target path as its blob, never the target's contents.
+function readGitFilePreview(absolutePath: string, maxBytes: number): {
+  buffer: Buffer;
+  size: number;
+  symlink: boolean;
+} | undefined {
+  const stats = lstatSync(absolutePath);
+  if (stats.isSymbolicLink()) {
+    const buffer = readlinkSync(absolutePath, { encoding: "buffer" });
+    return { buffer: buffer.subarray(0, maxBytes), size: buffer.length, symlink: true };
+  }
+  if (!stats.isFile()) return undefined;
+  return {
+    buffer: readFilePreviewBuffer(absolutePath, Math.min(stats.size, maxBytes)),
+    size: stats.size,
+    symlink: false,
+  };
+}
+
 function readWorkingTreeFileText(absolutePath: string): string {
   try {
-    const stats = statSync(absolutePath);
-    if (!stats.isFile()) {
-      return "";
-    }
-    return readFilePreviewBuffer(
-      absolutePath,
-      Math.min(stats.size, GIT_DIFF_PREVIEW_MAX_BYTES),
-    ).toString("utf8");
+    return readGitFilePreview(absolutePath, GIT_DIFF_PREVIEW_MAX_BYTES)?.buffer.toString("utf8") ?? "";
   } catch {
     return "";
   }
@@ -921,11 +940,12 @@ function buildUntrackedPatch(
   path: string,
   text: string,
   truncated: boolean,
+  symlink: boolean,
 ): string {
   const lines = splitPatchTextLines(text);
   const patchLines = [
     `diff --git a/${path} b/${path}`,
-    "new file mode 100644",
+    `new file mode ${symlink ? "120000" : "100644"}`,
     "--- /dev/null",
     `+++ b/${path}`,
     `@@ -0,0 +1,${lines.length} @@`,
@@ -991,11 +1011,14 @@ function emptyGitFileDiffResult(
 
 function countTextFileLines(filePath: string): number {
   try {
-    const stats = statSync(filePath);
-    if (!stats.isFile() || stats.size > 1024 * 1024) {
+    if (lstatSync(filePath).size > 1024 * 1024) {
       return 0;
     }
-    const content = readFileSync(filePath);
+    const preview = readGitFilePreview(filePath, 1024 * 1024);
+    if (!preview) {
+      return 0;
+    }
+    const content = preview.buffer;
     if (content.includes(0)) {
       return 0;
     }

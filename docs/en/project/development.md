@@ -54,6 +54,41 @@ It uses a temporary profile and synthetic content, not your Wuu data. Run it in
 a graphical desktop session; it does not validate native dialog appearance or
 packaged-app behavior.
 
+### Session switch performance guard
+
+After installing dependencies, build the core and desktop, then run the real
+Electron/main/preload/Go fixture in a graphical session:
+
+```sh
+mkdir -p .tmp/performance
+go build -o "$PWD/.tmp/performance/wuu-core" ./cmd/wuu
+(cd desktop && ./node_modules/.bin/electron-vite build)
+WUU_DESKTOP_CORE="$PWD/.tmp/performance/wuu-core" WUU_SWITCH_CHECK_BUDGET=1 desktop/node_modules/.bin/electron desktop/scripts/session-switch-e2e.cjs
+```
+
+The fixture opens disposable synthetic conversations without inference. It
+records native-click-to-content and draft/send-readiness frame timings, then
+counts work through background resume completion and two more animation frames.
+Frame opportunities do not prove physical presentation; readiness includes the
+input probe's IPC overhead. Initial visits, repeats, pool churn, and archive
+blocking remain separate. Wall-clock P50/P75 are diagnostic, never CI gates.
+
+CI checks repeated large-fixture switches against the resume-call, layout, and
+style-recalculation ceilings in
+[`session-switch-budget.json`](../../../desktop/scripts/session-switch-budget.json).
+These counters include the observer and input probe. The ratchet rejects higher
+ceilings, removed counters, or a changed workload. It uploads raw results, a
+report, logs, and a final synthetic screenshot as `session-switch-evidence`.
+
+For diagnostics, omit `WUU_SWITCH_CHECK_BUDGET` and set `WUU_SWITCH_TURNS=3000`,
+`WUU_SWITCH_ROUNDS`, or `WUU_SWITCH_INIT_DELAY_MS=600`. `WUU_SWITCH_TRACE=1`
+records a Chromium trace with action/content/interactive marks; do not pool
+traced runs with timing baselines. `WUU_SWITCH_OUTPUT` selects the evidence
+directory, excluding the temporary profile and database. `WUU_SWITCH_MAIN`
+selects another built main bundle and its adjacent preload/renderer for A/B
+checks. Results record the loaded artifact hashes; the checkout commit alone
+does not identify an externally selected build.
+
 ## Native phones and remote services
 
 The active phone implementations are SwiftUI on iOS and Jetpack Compose on Android in [`clients/native`](../../../clients/native/README.md) (Chinese). Their dedicated verification command is:

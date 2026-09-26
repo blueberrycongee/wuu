@@ -43,6 +43,8 @@ describe("RuntimePicker", () => {
       | "engineLocked"
       | "engineModel"
       | "engineEffort"
+      | "engineSpeed"
+      | "onSelectSpeed"
       | "onSelectEngine"
       | "onSelectEngineModel"
       | "onSelectEngineEffort"
@@ -90,6 +92,53 @@ describe("RuntimePicker", () => {
       ]
     };
   }
+
+  it("toggles speed independently on a bound engine conversation", async () => {
+    const speed = vi.fn().mockResolvedValue(true);
+    const effort = vi.fn();
+    const model = vi.fn();
+    renderPicker("model", runtimeWithEffort(), vi.fn(), effort, model, createRef(), {
+      activeEngine: "codex", engineLocked: true, engineModel: "gpt-6-astra", engineEffort: "high", engineSpeed: "standard",
+      onSelectSpeed: speed,
+      engines: [{ id: "codex", enabled: true, binary_ok: true, models: [{ id: "gpt-6-astra", fast_mode: true, supported_efforts: ["low", "high"] }] }],
+    });
+    const button = document.querySelector<HTMLButtonElement>('button[aria-label="Fast mode"]');
+    expect(button?.disabled).toBe(false);
+    await act(async () => button?.click());
+    expect(speed).toHaveBeenCalledWith("fast");
+    expect(effort).not.toHaveBeenCalled();
+    expect(model).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { speed: "", defaultSpeed: "fast", enabled: true, next: "standard" },
+    { speed: "", defaultSpeed: "standard", enabled: false, next: "fast" },
+    { speed: "standard", defaultSpeed: "fast", enabled: false, next: "fast" },
+  ])("toggles the effective engine speed for $speed / $defaultSpeed", async ({ speed, defaultSpeed, enabled, next }) => {
+    const onSelectSpeed = vi.fn().mockResolvedValue(true);
+    renderPicker("model", runtimeWithEffort(), vi.fn(), vi.fn(), vi.fn(), createRef(), {
+      activeEngine: "codex", engineLocked: true, engineModel: "gpt-6-astra", engineSpeed: speed,
+      onSelectSpeed,
+      engines: [{ id: "codex", enabled: true, binary_ok: true, models: [{ id: "gpt-6-astra", fast_mode: true, default_speed: defaultSpeed }] }],
+    });
+    const button = document.querySelector<HTMLButtonElement>('button[aria-label="Fast mode"]');
+    expect(button?.getAttribute("aria-pressed")).toBe(String(enabled));
+    await act(async () => button?.click());
+    expect(onSelectSpeed).toHaveBeenCalledWith(next);
+    await act(async () => document.querySelector<HTMLButtonElement>(".runtime-panel-speed-reset")?.click());
+    expect(onSelectSpeed).toHaveBeenLastCalledWith("");
+    expect(button?.getAttribute("aria-pressed")).toBe(String(defaultSpeed === "fast"));
+  });
+
+  it("restores the speed toggle after a rejected update", async () => {
+    const initialized = runtimeWithEffort();
+    initialized.speed = "standard";
+    initialized.providers![0].models![0].fast_mode = true;
+    renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), createRef(), { onSelectSpeed: vi.fn().mockResolvedValue(false) });
+    const button = document.querySelector<HTMLButtonElement>('button[aria-label="Fast mode"]');
+    await act(async () => button?.click());
+    expect(button?.getAttribute("aria-pressed")).toBe("false");
+  });
 
   it("opens the model panel from the trigger with a single click", () => {
     const onToggleMenu = vi.fn();

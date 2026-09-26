@@ -917,6 +917,7 @@ type PluginStorageResult struct {
 }
 
 type ConfigModelUpdateParams struct {
+	Speed          *string `json:"speed,omitempty"`
 	ThreadID       string  `json:"thread_id,omitempty"`
 	Provider       string  `json:"provider,omitempty"`
 	Model          string  `json:"model"`
@@ -1042,8 +1043,9 @@ type ConfigAdvancedUpdateResult struct {
 }
 
 type ConfigGeneralUpdateParams struct {
-	GitAttributionEnabled *bool            `json:"git_attribution_enabled,omitempty"`
-	MCPEnabledToggles     map[string]*bool `json:"mcp_enabled_toggles,omitempty"`
+	PTC                   *config.PTCConfig `json:"ptc,omitempty"`
+	GitAttributionEnabled *bool             `json:"git_attribution_enabled,omitempty"`
+	MCPEnabledToggles     map[string]*bool  `json:"mcp_enabled_toggles,omitempty"`
 }
 
 type ConfigGeneralUpdateResult struct {
@@ -1051,8 +1053,9 @@ type ConfigGeneralUpdateResult struct {
 }
 
 type GeneralSettingsSummary struct {
-	GitAttributionEnabled bool            `json:"git_attribution_enabled"`
-	MCPServerEnabled      map[string]bool `json:"mcp_server_enabled"`
+	PTC                   config.PTCConfig `json:"ptc"`
+	GitAttributionEnabled bool             `json:"git_attribution_enabled"`
+	MCPServerEnabled      map[string]bool  `json:"mcp_server_enabled"`
 }
 
 type AdvancedSettingsSummary struct {
@@ -1212,6 +1215,8 @@ type ProviderSummary struct {
 }
 
 type ProviderModelSummary struct {
+	FastMode         bool                          `json:"fast_mode,omitempty"`
+	DefaultSpeed     string                        `json:"default_speed,omitempty"`
 	ID               string                        `json:"id"`
 	DisplayName      string                        `json:"display_name,omitempty"`
 	DefaultEffort    string                        `json:"default_effort,omitempty"`
@@ -1255,6 +1260,7 @@ type ThreadStartParams struct {
 	// Project starts a project coordinator in the workspace instead of an
 	// ordinary conversation.
 	Project     *ThreadProjectParams `json:"project,omitempty"`
+	Speed       string               `json:"speed,omitempty"`
 	Ephemeral   bool                 `json:"ephemeral,omitempty"`
 	CWD         string               `json:"cwd,omitempty"`
 	WorkspaceID string               `json:"workspace_id,omitempty"`
@@ -1354,6 +1360,8 @@ type EnginePermissionModeInfo struct {
 }
 
 type EngineModelInfo struct {
+	FastMode         bool     `json:"fast_mode,omitempty"`
+	DefaultSpeed     string   `json:"default_speed,omitempty"`
 	ID               string   `json:"id"`
 	DisplayName      string   `json:"display_name,omitempty"`
 	DefaultEffort    string   `json:"default_effort,omitempty"`
@@ -2194,6 +2202,7 @@ type ThreadSessionControl struct {
 }
 
 type Thread struct {
+	Speed          string                `json:"speed,omitempty"`
 	SessionControl *ThreadSessionControl `json:"session_control,omitempty"`
 	ID             string                `json:"id"`
 	Source         string                `json:"source,omitempty"`

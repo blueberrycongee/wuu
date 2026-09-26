@@ -105,6 +105,9 @@ function handoffInitialized(): InitializeResult {
 function renderComposer(props: {
   accessMenuOpen?: boolean;
   activeEngine?: string;
+  engineModel?: string;
+  engineSpeed?: string;
+  onSelectSpeed?: (speed: string) => void | Promise<boolean>;
   engines?: EngineInfo[];
   variant?: ComposerVariant;
   canSelectWorkspace?: boolean;
@@ -181,6 +184,9 @@ function renderComposer(props: {
           readOnly={props.readOnly ?? false}
           initialized={props.initialized ?? initialized(props.permissions)}
           activeEngine={props.activeEngine}
+          engineModel={props.engineModel}
+          engineSpeed={props.engineSpeed}
+          onSelectSpeed={props.onSelectSpeed}
           engines={props.engines}
           gitStatus={props.gitStatus}
           branchPickerDisabled={props.branchPickerDisabled}
@@ -2119,6 +2125,24 @@ describe("Composer send control", () => {
     expect(reviewRow?.children[1]?.classList.contains("composer-plus-menu-item-title")).toBe(true);
     expect(reviewRow?.children[2]?.classList.contains("composer-plus-menu-item-desc")).toBe(true);
     expect(reviewRow?.querySelector(".slash-command-label")).toBeNull();
+  });
+
+  it.each([
+    { speed: "", defaultSpeed: "fast", next: "standard" },
+    { speed: "", defaultSpeed: "standard", next: "fast" },
+    { speed: "standard", defaultSpeed: "fast", next: "fast" },
+  ])("/fast toggles the effective engine speed for $speed / $defaultSpeed", async ({ speed, defaultSpeed, next }) => {
+    const onSelectSpeed = vi.fn().mockResolvedValue(true);
+    const onSend = vi.fn();
+    renderComposer({
+      prompt: "/fast", activeEngine: "codex", engineModel: "gpt-6-astra", engineSpeed: speed,
+      engines: [{ id: "codex", enabled: true, binary_ok: true, models: [{ id: "gpt-6-astra", fast_mode: true, default_speed: defaultSpeed }] }],
+      onSelectSpeed, onSend,
+      activeContext: { kind: "project", project_id: "repo", cwd: "/repo" },
+    });
+    await act(async () => { container.querySelector("textarea")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); });
+    expect(onSelectSpeed).toHaveBeenCalledWith(next);
+    expect(onSend).not.toHaveBeenCalled();
   });
 
   it("sends an exact slash command with arguments on Enter", () => {

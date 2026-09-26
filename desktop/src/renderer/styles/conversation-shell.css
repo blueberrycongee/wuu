@@ -193,20 +193,17 @@
   overflow: clip;
 }
 
-/* visibility:hidden still lays the pane out, and the pane is stretched over
- * the open conversation, so a width change wraps every cached session.
- * content-visibility:hidden does not help: measuring the open scroller forces
- * that subtree to render. Drop the cached sessions out of the tree for the
- * drag; they lay out once when the frame is released. */
+/* visibility:hidden alone still lays the pane out, and the pane is stretched
+ * over the open conversation, so every width change would wrap every cached
+ * session. content-visibility:hidden skips its style, layout and paint while
+ * keeping that rendering state for the next reveal. Geometry inside a hidden
+ * pane must not be read: a read forces the skipped subtree to lay out. */
 .cached-conversation-pane[data-active="false"] {
   position: absolute;
   inset: 0;
   visibility: hidden;
   pointer-events: none;
-}
-
-.window-resizing .cached-conversation-pane[data-active="false"] {
-  display: none;
+  content-visibility: hidden;
 }
 
 .cached-conversation-pane[data-active="true"] {

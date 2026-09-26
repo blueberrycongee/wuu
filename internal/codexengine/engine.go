@@ -73,6 +73,7 @@ func (e *Engine) SessionForThread(ctx context.Context, binding agentengine.Threa
 		rootDir:        binding.RootDir,
 		model:          binding.Model,
 		effort:         ReasoningEffort(binding.Effort),
+		speed:          binding.Speed,
 		permissionMode: binding.PermissionMode,
 		instructions:   binding.Instructions,
 		mcpServers:     binding.MCPServers,
@@ -87,6 +88,7 @@ type sessionOptions struct {
 	rootDir        string
 	model          string
 	effort         ReasoningEffort
+	speed          string
 	permissionMode string
 	instructions   string
 	mcpServers     []agentengine.MCPServer
@@ -114,6 +116,7 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 		rootDir:        opts.rootDir,
 		model:          opts.model,
 		effort:         opts.effort,
+		speed:          opts.speed,
 		permissionMode: opts.permissionMode,
 		instructions:   opts.instructions,
 		mcpServers:     append([]agentengine.MCPServer(nil), opts.mcpServers...),
@@ -135,6 +138,7 @@ type Session struct {
 	rootDir        string
 	model          string
 	effort         ReasoningEffort
+	speed          string
 	permissionMode string
 	instructions   string
 	mcpServers     []agentengine.MCPServer
@@ -302,6 +306,22 @@ func (s *Session) matchesThread(threadID string) bool {
 
 // ensureThread runs thread/start once and persists the native thread id.
 func (s *Session) ensureThread(ctx context.Context) error {
+	if s.speed == "" {
+		// Omitting a tier on a warm native thread inherits its previous override.
+		// Resolve the configured default so reset also clears that saved override.
+		var response struct {
+			Config struct {
+				ServiceTier *string `json:"service_tier"`
+			} `json:"config"`
+		}
+		if err := s.client.Request(ctx, "config/read", map[string]any{"cwd": s.rootDir, "includeLayers": false}, &response); err != nil {
+			return fmt.Errorf("codex config/read: %w", err)
+		}
+		s.speed = "standard"
+		if response.Config.ServiceTier != nil && *response.Config.ServiceTier != "" {
+			s.speed = *response.Config.ServiceTier
+		}
+	}
 	s.mu.Lock()
 	ref := s.ref
 	s.mu.Unlock()
@@ -311,7 +331,7 @@ func (s *Session) ensureThread(ctx context.Context) error {
 		var resp ThreadResumeResponse
 		if err := s.client.Request(ctx, MethodThreadResume, ThreadResumeParams{
 			ThreadID: ref, Model: s.model, CWD: s.rootDir,
-			ApprovalPolicy: approval, Sandbox: sandbox, Config: config,
+			ApprovalPolicy: approval, Sandbox: sandbox, Config: config, ServiceTier: s.serviceTier(),
 			DeveloperInstructs: strings.TrimSpace(s.instructions),
 		}, &resp); err != nil {
 			return fmt.Errorf("codex thread/resume: %w", err)
@@ -326,6 +346,7 @@ func (s *Session) ensureThread(ctx context.Context) error {
 		ApprovalPolicy:     approval,
 		Sandbox:            sandbox,
 		Config:             config,
+		ServiceTier:        s.serviceTier(),
 	}, &resp)
 	if err != nil {
 		return fmt.Errorf("codex thread/start: %w", err)
@@ -374,6 +395,7 @@ func (s *Session) startTurn(ctx context.Context, inputs []UserInput) (TurnStartR
 		Input:           inputs,
 		Model:           s.model,
 		ReasoningEffort: s.effort,
+		ServiceTier:     s.serviceTier(),
 		ApprovalPolicy:  approval,
 		SandboxPolicy:   &sandboxPolicy,
 	}, &resp)
@@ -1076,4 +1098,15 @@ func (sub *turnSubscription) finish(result agent.LoopResult, err error) {
 	case sub.done <- turnOutcome{result: agentengine.TurnResult{Result: result}, err: err}:
 	default:
 	}
+}
+
+func (s *Session) serviceTier() *string {
+	if s.speed == "" {
+		return nil
+	}
+	tier := s.speed
+	if tier == "standard" {
+		tier = "default"
+	}
+	return &tier
 }

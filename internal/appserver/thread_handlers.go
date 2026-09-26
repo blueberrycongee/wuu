@@ -79,6 +79,10 @@ func (s *Server) handleThreadStart(req Request) error {
 		return s.writeResponse(req.ID, nil, agentengine.CheckEngine(engineID))
 	}
 	selection := s.currentSessionRuntimeSelection()
+	selection.Speed = strings.TrimSpace(params.Speed)
+	if err := validateSpeed(selection.Speed); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	if engineID != agentengine.EngineWuu {
 		// Protocol engines do not share Wuu's provider catalog or effort
 		// surface. Empty model/effort means the agent's native default, not
@@ -236,6 +240,7 @@ func (s *Server) startHandoffThread(selection session.RuntimeSelection, params T
 		Model:           selection.Model,
 		Variant:         selection.Variant,
 		Effort:          selection.Effort,
+		Speed:           selection.Speed,
 		PermissionMode:  selection.PermissionMode,
 		Seed: &pluginhost.SessionContextSeed{
 			Version: session.ContextSeedVersionV1,
@@ -283,6 +288,7 @@ func (s *Server) startThreadPrewarm(th *threadState) {
 			Model:          th.Model,
 			Variant:        th.ModelVariant,
 			Effort:         th.ModelEffort,
+			Speed:          th.Speed,
 			PermissionMode: th.PermissionMode,
 		}
 		engineID := agentengine.NormalizeEngineID(th.EngineID)
@@ -529,6 +535,7 @@ type forkSourceThread struct {
 	model          string
 	modelVariant   string
 	modelEffort    string
+	speed          string
 	permissionMode string
 	approveForMe   bool
 	cwd            string
@@ -649,6 +656,7 @@ func (s *Server) handleThreadFork(req Request) error {
 		Model:          source.model,
 		Variant:        source.modelVariant,
 		Effort:         source.modelEffort,
+		Speed:          source.speed,
 		PermissionMode: source.permissionMode,
 		ApproveForMe:   source.approveForMe,
 	})
@@ -826,6 +834,7 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 			model:          th.Model,
 			modelVariant:   th.ModelVariant,
 			modelEffort:    th.ModelEffort,
+			speed:          th.Speed,
 			permissionMode: th.PermissionMode,
 			approveForMe:   th.ApproveForMe,
 			cwd:            th.CWD,
@@ -892,6 +901,7 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 		model:          th.Model,
 		modelVariant:   th.ModelVariant,
 		modelEffort:    th.ModelEffort,
+		speed:          th.Speed,
 		permissionMode: th.PermissionMode,
 		approveForMe:   th.ApproveForMe,
 		cwd:            th.CWD,
@@ -1401,6 +1411,7 @@ func runtimeSelectionFromSession(sess session.Session) session.RuntimeSelection 
 		Model:          strings.TrimSpace(sess.Model),
 		Variant:        strings.TrimSpace(sess.Variant),
 		Effort:         strings.TrimSpace(sess.Effort),
+		Speed:          sess.Speed,
 		PermissionMode: strings.TrimSpace(sess.PermissionMode),
 		ApproveForMe:   sess.ApproveForMe,
 	}
@@ -1414,6 +1425,7 @@ func applyThreadRuntimeSelection(th *threadState, selection session.RuntimeSelec
 	th.Model = strings.TrimSpace(selection.Model)
 	th.ModelVariant = strings.TrimSpace(selection.Variant)
 	th.ModelEffort = strings.TrimSpace(selection.Effort)
+	th.Speed = selection.Speed
 	if mode := strings.TrimSpace(selection.PermissionMode); mode != "" {
 		th.PermissionMode = config.NormalizePermissionMode(mode)
 	}
@@ -1441,6 +1453,7 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 			Model:                 firstNonEmpty(selection.Model, model),
 			ModelVariant:          selection.Variant,
 			ModelEffort:           selection.Effort,
+			Speed:                 selection.Speed,
 			PermissionMode:        permissionMode,
 			ApproveForMe:          sess.ApproveForMe,
 			EngineID:              string(agentengine.NormalizeEngineID(sess.EngineID)),
@@ -1494,7 +1507,7 @@ func (s *Server) threadWithWorktreeStatus(thread Thread) Thread {
 	}
 	manager, err := s.worktreeManager(firstNonEmpty(info.BaseRepo, thread.CWD, s.rt.RootDir))
 	if err == nil {
-		if status, statusErr := manager.Status(info.Path); statusErr == nil {
+		if status, statusErr := manager.Status(&worktree.Worktree{Path: info.Path, HEAD: info.BaseHEAD}); statusErr == nil {
 			info.Dirty = status.Dirty
 			info.ChangedFiles = append([]string(nil), status.ChangedFiles...)
 		}

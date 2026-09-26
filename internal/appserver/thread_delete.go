@@ -116,7 +116,7 @@ func (s *Server) handleThreadDelete(req Request) error {
 		// must never turn into an os.RemoveAll of arbitrary directories.
 		if pathWithinRoot(info.Path, statepath.WorktreeRoot(stateDir)) {
 			if manager, mgrErr := s.worktreeManager(firstNonEmpty(info.BaseRepo, s.rt.RootDir)); mgrErr == nil {
-				_, _ = manager.CleanupIfClean(&worktree.Worktree{Path: info.Path, SessionID: id})
+				_, _ = manager.CleanupIfClean(&worktree.Worktree{Path: info.Path, SessionID: id, HEAD: info.BaseHEAD, BaseRepo: info.BaseRepo})
 			}
 		}
 		if info.BaseRepo != "" {

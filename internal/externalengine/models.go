@@ -9,17 +9,16 @@ type DiscoveredModel struct {
 	DefaultEffort    string
 	SupportedEfforts []string
 	IsDefault        bool
+	FastMode         bool
+	DefaultSpeed     string
 }
 
 type acpConfigOption struct {
-	ID       string `json:"id"`
-	Category string `json:"category"`
-	Type     string `json:"type"`
-	Current  string `json:"currentValue"`
-	Options  []struct {
-		Value string `json:"value"`
-		Name  string `json:"name"`
-	} `json:"options"`
+	ID       string            `json:"id"`
+	Category string            `json:"category"`
+	Type     string            `json:"type"`
+	Current  string            `json:"currentValue"`
+	Options  []acpConfigChoice `json:"options"`
 }
 
 func modelsFromACPSession(session acpSession) []DiscoveredModel {
@@ -28,7 +27,19 @@ func modelsFromACPSession(session acpSession) []DiscoveredModel {
 	if len(models) == 0 {
 		models = modelsFromFirstClass(session)
 	}
-	return attachEfforts(models, efforts, defaultEffort)
+	models = attachEfforts(models, efforts, defaultEffort)
+	option, _, _ := session.speedOption()
+	for i := range models {
+		models[i].FastMode = option != nil
+		if option != nil {
+			_, on, _ := session.speedOption()
+			models[i].DefaultSpeed = "standard"
+			if option.Current == on {
+				models[i].DefaultSpeed = "fast"
+			}
+		}
+	}
+	return models
 }
 
 func thoughtLevelFromOptions(options []acpConfigOption) (efforts []string, current string) {
@@ -36,7 +47,7 @@ func thoughtLevelFromOptions(options []acpConfigOption) (efforts []string, curre
 		if option.Type != "select" || option.Category != "thought_level" {
 			continue
 		}
-		for _, choice := range option.Options {
+		for _, choice := range option.choices() {
 			if id := strings.TrimSpace(choice.Value); id != "" {
 				efforts = append(efforts, id)
 			}
@@ -52,7 +63,7 @@ func modelsFromConfigOptions(options []acpConfigOption) []DiscoveredModel {
 			continue
 		}
 		hasReal := false
-		for _, choice := range option.Options {
+		for _, choice := range option.choices() {
 			if id := strings.TrimSpace(choice.Value); id != "" && !strings.EqualFold(id, "default") {
 				hasReal = true
 				break
@@ -60,7 +71,7 @@ func modelsFromConfigOptions(options []acpConfigOption) []DiscoveredModel {
 		}
 		var models []DiscoveredModel
 		current := strings.TrimSpace(option.Current)
-		for _, choice := range option.Options {
+		for _, choice := range option.choices() {
 			id := strings.TrimSpace(choice.Value)
 			if id == "" || hasReal && strings.EqualFold(id, "default") {
 				continue
@@ -313,7 +324,7 @@ func (o *acpConfigOption) labelFor(id string) string {
 	if id == "" {
 		return ""
 	}
-	for _, choice := range o.Options {
+	for _, choice := range o.choices() {
 		if strings.TrimSpace(choice.Value) != id {
 			continue
 		}
@@ -323,4 +334,45 @@ func (o *acpConfigOption) labelFor(id string) string {
 		return id
 	}
 	return ""
+}
+
+// ACP defines model_config placement, not a universal speed key. Only map
+// advertised speed selectors; never send a guessed option ID or value.
+func (s acpSession) speedOption() (*acpConfigOption, string, string) {
+	for i := range s.ConfigOptions {
+		option := &s.ConfigOptions[i]
+		if option.Type != "select" {
+			continue
+		}
+		switch strings.ReplaceAll(strings.ToLower(option.ID), "-", "_") {
+		case "fast_mode", "speed", "service_tier":
+		default:
+			continue
+		}
+		for _, pair := range [][2]string{{"on", "off"}, {"fast", "standard"}, {"fast", "default"}, {"priority", "default"}} {
+			if option.hasChoice(pair[0]) && option.hasChoice(pair[1]) {
+				return option, pair[0], pair[1]
+			}
+		}
+	}
+	return nil, "", ""
+}
+
+// ACP select options can be flat or grouped; both carry the same values.
+type acpConfigChoice struct {
+	Value   string            `json:"value"`
+	Name    string            `json:"name"`
+	Options []acpConfigChoice `json:"options"`
+}
+
+func (o *acpConfigOption) choices() []acpConfigChoice {
+	var choices []acpConfigChoice
+	for _, choice := range o.Options {
+		if len(choice.Options) > 0 {
+			choices = append(choices, choice.Options...)
+		} else {
+			choices = append(choices, choice)
+		}
+	}
+	return choices
 }

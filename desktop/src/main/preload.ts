@@ -222,6 +222,7 @@ const api: WuuDesktopApi = {
     variant?: string,
     permissionMode?: string,
     threadId?: string,
+    speed?: string,
   ) =>
     ipcRenderer.invoke(
       "wuu:config-model-update",
@@ -232,6 +233,7 @@ const api: WuuDesktopApi = {
       variant,
       permissionMode,
       threadId,
+      speed,
     ),
   removeProvider: (
     provider: string,

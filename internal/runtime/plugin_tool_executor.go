@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -93,6 +94,10 @@ func (e *pluginToolExecutor) FinalizeToolResult(call providers.ToolCall, result 
 }
 
 func (e *pluginToolExecutor) ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+	if kit, ok := e.inner.(*tools.Toolkit); ok && kit.CodeModeOnly() && call.Name != "run_code" && call.Name != "new_context" && !toolctx.IsNestedCall(ctx) {
+		return toolresult.Result{}, errors.New("PTC mode requires calling tools inside run_code")
+	}
+
 	input, err := e.toolInput(ctx, call)
 	if err != nil {
 		return toolresult.Result{}, err

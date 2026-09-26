@@ -194,7 +194,7 @@ func classifyToolKind(name string) ToolKind {
 		return ToolKindSearch
 	case "tool_search":
 		return ToolKindDiscovery
-	case "bash", "process":
+	case "bash", "process", codeModeExecToolName:
 		return ToolKindShell
 	case "git":
 		return ToolKindGit

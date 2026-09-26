@@ -27,6 +27,7 @@ export type DraftRuntimeMemory = {
   provider: string;
   model: string;
   effort: string;
+  speed?: string;
 };
 
 const PERMISSION_MODES = new Set<PermissionMode>(["standard", "read_only", "unconfined"]);
@@ -106,7 +107,7 @@ export function writeDraftRuntimeMemory(memory: DraftRuntimeMemory): void {
     DRAFT_RUNTIME_MEMORY_KEY,
     parseDraftRuntimeMemory,
     draftRuntimeMemoryIdentity,
-    { provider, model, effort: memory.effort },
+    { provider, model, effort: memory.effort, ...(memory.speed ? { speed: memory.speed } : {}) },
   );
 }
 
@@ -130,6 +131,7 @@ function parseDraftRuntimeMemory(value: unknown): DraftRuntimeMemory | undefined
     provider,
     model,
     effort: typeof record.effort === "string" ? record.effort : "",
+    ...(typeof record.speed === "string" ? { speed: record.speed } : {}),
   };
 }
 
@@ -171,6 +173,7 @@ export function applyDraftRuntimeMemory(
       model: remembered.model,
       variant: remembered.effort,
       effort: remembered.effort,
+      speed: remembered.speed,
     };
   }
   if (rememberedMode && rememberedMode !== next.permissions?.mode) {
@@ -215,6 +218,7 @@ export function seedDraftRuntimeFromMemory(state: AppState): AppState {
     && (next.variant ?? "") === (state.initialized.variant ?? "")
     && (next.effort ?? "") === (state.initialized.effort ?? "")
     && (next.permissions?.mode ?? "") === (state.initialized.permissions?.mode ?? "")
+    && next.speed === state.initialized.speed
     && Boolean(next.permissions?.approve_for_me) === Boolean(state.initialized.permissions?.approve_for_me)
   ) {
     return state;
@@ -238,5 +242,6 @@ function runtimeWithinCatalog(
     provider: memory.provider,
     model: memory.model,
     effort: normalizedVariantForProviderModel(memory.effort, provider, memory.model),
+    ...(memory.speed === undefined ? {} : { speed: provider.models?.find(model => model.id === memory.model)?.fast_mode ? memory.speed : "" }),
   };
 }

@@ -1179,6 +1179,9 @@ export function SettingsView({
               />
             ) : activePage === "general" ? (
               <SettingsGeneralPage
+                initialized={initialized}
+                running={running}
+                onGeneralSave={onGeneralSave}
                 desktopBuild={desktopBuild}
                 codexPets={codexPets}
                 codexPetsLoading={codexPetsLoading}
@@ -1893,6 +1896,9 @@ function SettingsRuntimePage({
 /* -------------------------------------------------------------------------- */
 
 function SettingsGeneralPage({
+  initialized,
+  running,
+  onGeneralSave,
   desktopBuild,
   codexPets,
   codexPetsLoading,
@@ -1902,6 +1908,9 @@ function SettingsGeneralPage({
   copyState,
   onCopyVersion
 }: {
+  initialized: InitializeResult | undefined;
+  running: boolean;
+  onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
   desktopBuild: DesktopBuildInfo | undefined;
   codexPets: CodexPetsSnapshot | undefined;
   codexPetsLoading: boolean;
@@ -1912,6 +1921,18 @@ function SettingsGeneralPage({
   onCopyVersion: () => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
+  const ptc = initialized?.general_settings?.ptc ?? { enabled: false };
+  const [ptcBusy, setPTCBusy] = useState(false);
+  const [ptcError, setPTCError] = useState("");
+  const [ptcFamily, setPTCFamily] = useState("gpt");
+  const ptcFamilyValue = ptc.families?.[ptcFamily];
+  async function savePTC(next: NonNullable<RuntimeGeneralSettingsUpdate["ptc"]>): Promise<void> {
+    setPTCBusy(true);
+    setPTCError("");
+    try { await onGeneralSave({ ptc: next }); }
+    catch (error) { setPTCError(error instanceof Error ? error.message : t("settings.saveFailed")); }
+    finally { setPTCBusy(false); }
+  }
   const [codexPetBusy, setCodexPetBusy] = useState(false);
   const [codexPetLocalError, setCodexPetLocalError] = useState("");
   const codexPetOptions = codexPets?.pets ?? [];
@@ -2016,6 +2037,44 @@ function SettingsGeneralPage({
             </div>
           ) : null}
           </> : null}
+        </SettingsGroup>
+      </SettingsSection>
+
+      <SettingsSection title={t("settings.ptcTitle")} testID="settings-ptc">
+        <SettingsGroup>
+          <SettingsRow title={t("settings.ptcEnabled")} description={t("settings.ptcDescription")}>
+            <button className="settings-switch" type="button" role="switch"
+              aria-label={t("settings.ptcEnabled")} aria-checked={ptc.enabled}
+              data-testid="settings-ptc-enabled" disabled={!initialized || running || ptcBusy}
+              onClick={() => void savePTC({ ...ptc, enabled: !ptc.enabled })}>
+              <span className="settings-switch-thumb" aria-hidden="true" />
+            </button>
+          </SettingsRow>
+          <SettingsRow title={t("settings.ptcFamily")} description={t("settings.ptcFamilyHint")}>
+            <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={t("settings.ptcFamily")}
+              value={ptcFamily} onChange={setPTCFamily}
+              options={[
+                ["gpt", "GPT"], ["codex", "Codex"], ["claude", "Claude"], ["gemini", "Gemini"],
+                ["deepseek", "DeepSeek"], ["kimi", "Kimi"], ["qwen", "Qwen"],
+                ["local", t("settings.ptcLocal")], ["portable", t("settings.ptcOther")],
+              ].map(([value, label]) => ({ value, label }))} />
+            <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={t("settings.ptcFamilyMode")}
+              dataTestid="settings-ptc-family-mode"
+              value={ptcFamilyValue === undefined ? "inherit" : ptcFamilyValue ? "on" : "off"}
+              disabled={!initialized || running || ptcBusy}
+              onChange={(value) => {
+                const families = { ...ptc.families };
+                if (value === "inherit") delete families[ptcFamily];
+                else families[ptcFamily] = value === "on";
+                void savePTC({ ...ptc, families });
+              }}
+              options={[
+                { value: "inherit", label: t("settings.ptcInherit") },
+                { value: "on", label: t("settings.ptcOn") },
+                { value: "off", label: t("settings.ptcOff") },
+              ]} />
+          </SettingsRow>
+          {ptcError ? <p className="settings-error" role="alert">{ptcError}</p> : null}
         </SettingsGroup>
       </SettingsSection>
 

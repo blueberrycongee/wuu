@@ -349,7 +349,7 @@ function isNoModelConfiguredError(message: string): boolean {
   );
 }
 
-type EngineRuntimeSelection = { model: string; effort: string };
+type EngineRuntimeSelection = { model: string; effort: string; speed?: string };
 
 function defaultEngineRuntimeSelection(engine?: EngineInfo): EngineRuntimeSelection {
   const model = engine?.models?.find((item) => item.is_default) ?? engine?.models?.[0];
@@ -419,7 +419,10 @@ export function App(): JSX.Element {
     typeof window.wuu.listUserQuestions === "function" &&
     typeof window.wuu.answerUserQuestion === "function" &&
     typeof window.wuu.cancelUserQuestion === "function";
-  useDesktopPluginRuntime(state.initialized?.extension_inventory);
+  useDesktopPluginRuntime(
+    state.initialized?.extension_inventory,
+    state.initialized?.features?.safe_mode,
+  );
   const {
     prompt,
     promptRevision,
@@ -1201,10 +1204,11 @@ export function App(): JSX.Element {
     }
     draftEngineSeed.current.done = true;
     setDraftEngine(remembered.engine);
-    setDraftEngineRuntime({ model: remembered.model, effort: remembered.effort });
+    setDraftEngineRuntime({ model: remembered.model, effort: remembered.effort, speed: remembered.speed });
     draftEngineRuntimeByID.current[remembered.engine] = {
       model: remembered.model,
       effort: remembered.effort,
+      speed: remembered.speed,
     };
     setDraftPermissionMode(remembered.engine === "wuu" ? "" : "unconfined");
   }, [activeThreadID, engineInventory]);
@@ -2261,6 +2265,7 @@ export function App(): JSX.Element {
     scheduleStreamScroll,
     handleConversationScroll,
     enableConversationAutoFollow,
+    jumpToLatest: jumpConversationToLatest,
     disableConversationAutoFollow,
     captureConversationScrollPosition,
     restoreConversationScrollPosition,
@@ -2946,10 +2951,12 @@ export function App(): JSX.Element {
       ? {
           model: activeThread.model,
           effort: activeThread.model_effort ?? activeThread.model_variant ?? "",
+          speed: activeThread.speed ?? "",
         }
       : {
           model: draftEngineRuntime.model || defaultEngineRuntime.model,
           effort: draftEngineRuntime.effort || defaultEngineRuntime.effort,
+          speed: draftEngineRuntime.speed ?? "",
         };
     const composerPermissionMode =
       activeThread?.permission_mode
@@ -3029,6 +3036,15 @@ export function App(): JSX.Element {
         engineLocked={Boolean(activeThread)}
         engineModel={effectiveEngineRuntime.model}
         engineEffort={effectiveEngineRuntime.effort}
+        engineSpeed={effectiveEngineRuntime.speed}
+        onSelectSpeed={async (speed) => {
+          if (effectiveEngine === "wuu" || activeThread) return selectRuntimeSpeed(speed);
+          const runtime = { ...effectiveEngineRuntime, speed };
+          setDraftEngineRuntime(runtime);
+          draftEngineRuntimeByID.current[effectiveEngine] = runtime;
+          writeDraftEngineMemory({ engine: effectiveEngine, ...runtime });
+          return true;
+        }}
         onSelectEngine={selectDraftEngine}
         onSelectEngineModel={(model, effort) => {
           const runtime = { model, effort };
@@ -3050,6 +3066,7 @@ export function App(): JSX.Element {
             writeDraftEngineMemory({
               engine: effectiveEngine,
               model: effectiveEngineRuntime.model,
+              speed: effectiveEngineRuntime.speed,
               effort,
             });
           }
@@ -3702,6 +3719,7 @@ export function App(): JSX.Element {
     loadCodexModelsForProvider,
     selectRuntimeModel,
     selectRuntimeEffort,
+    selectRuntimeSpeed,
     selectPermissionMode,
     interrupt,
     interruptPane,
@@ -4277,6 +4295,7 @@ export function App(): JSX.Element {
     const newThreadEngineRuntime = {
       model: draftEngineRuntime.model || defaultExternalRuntime.model,
       effort: draftEngineRuntime.effort || defaultExternalRuntime.effort,
+      speed: draftEngineRuntime.speed,
     };
     let resolveAdmission!: TurnAdmission["resolve"];
     let cancelPreparation!: () => void;
@@ -4330,6 +4349,7 @@ export function App(): JSX.Element {
                   provider: currentState.initialized?.provider,
                   model: currentState.initialized?.model,
                   effort: currentState.initialized?.variant || currentState.initialized?.effort,
+                  speed: currentState.initialized?.speed,
                   permission_mode: currentState.initialized?.permissions?.mode,
                   approve_for_me: currentState.initialized?.permissions?.approve_for_me,
                 } satisfies ThreadStartParams),
@@ -4894,22 +4914,24 @@ export function App(): JSX.Element {
             />
           ) : null}
 
-          {sidebarDrawerMode ? null : (
-            <div
-              className="sidebar-resizer"
-              inert={rightPanelOpen && rightPanelGlobalized}
-              role="separator"
-              aria-label={t("app.resizeSidebar")}
-              aria-orientation="vertical"
-              aria-valuemin={SIDEBAR_MIN_WIDTH}
-              aria-valuemax={SIDEBAR_MAX_WIDTH}
-              aria-valuenow={sidebarWidth}
-              tabIndex={0}
-              onPointerDown={startSidebarResize}
-              onDoubleClick={toggleSidebar}
-              onKeyDown={handleSidebarSeparatorKey}
-            />
-          )}
+          {/* Hidden rather than unmounted: inserting or removing a shell child
+              ahead of the conversation makes sibling selectors restyle every
+              rendered turn when the sidebar collapses or expands. */}
+          <div
+            className="sidebar-resizer"
+            hidden={sidebarDrawerMode}
+            inert={rightPanelOpen && rightPanelGlobalized}
+            role="separator"
+            aria-label={t("app.resizeSidebar")}
+            aria-orientation="vertical"
+            aria-valuemin={SIDEBAR_MIN_WIDTH}
+            aria-valuemax={SIDEBAR_MAX_WIDTH}
+            aria-valuenow={sidebarWidth}
+            tabIndex={0}
+            onPointerDown={startSidebarResize}
+            onDoubleClick={toggleSidebar}
+            onKeyDown={handleSidebarSeparatorKey}
+          />
       <ConversationSearchOverlay
         state={conversationSearch}
         results={conversationSearchResults}
@@ -5255,6 +5277,7 @@ export function App(): JSX.Element {
               containerRef={conversationScrollRef}
               bottomAnchor={dockComposerNode}
               scopeKey={activeThreadID}
+              onJump={jumpConversationToLatest}
               inline
             />
           ) : null}

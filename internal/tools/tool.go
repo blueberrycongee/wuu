@@ -46,17 +46,15 @@ type RichTool interface {
 }
 
 // CallAwareRichTool is a RichTool that needs the full model tool call, in
-// particular its provider-level call ID. Code-mode exec uses the call ID as
-// the runtime's tool_call_id, which ties the cell to the model step that
-// requested it. Toolkit prefers ExecuteResultCall whenever it is available.
+// particular its provider-level call ID. Toolkit prefers ExecuteResultCall
+// whenever it is available.
 type CallAwareRichTool interface {
 	ExecuteResultCall(ctx context.Context, call providers.ToolCall) (toolresult.Result, error)
 }
 
 // OrchestratorTool marks tools that coordinate nested child tool calls without
-// performing leaf operations themselves. The turn runtime gives them a nested
-// executor and does not hold a leaf execution slot while they run, so a
-// yielded orchestrator (a live code-mode cell) never starves leaf scheduling.
+// holding a leaf execution slot themselves. The turn runtime gives them a
+// nested executor so waiting for child calls cannot starve leaf scheduling.
 type OrchestratorTool interface {
 	// A fused action coordinates leaf calls, while the same tool without
 	// fusion still needs a leaf slot.

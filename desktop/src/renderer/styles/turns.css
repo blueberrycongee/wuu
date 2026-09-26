@@ -106,62 +106,41 @@
 }
 
 .conversation-width .turn[data-latest-turn="true"] {
-  content-visibility: visible;
-  contain-intrinsic-size: none;
   margin-bottom: 0;
 }
 
 /*
- * content-visibility:auto implies paint containment, which clips any
- * descendant painted outside the turn's border box — exactly where the
- * user action overlays go below the bubble. Lift
- * the containment precisely when those overlays can be visible: while
- * the turn is hovered, holds focus, or keeps a latest-answer action
- * bar visible. Off-screen turns keep the rendering shortcut.
+ * Off-screen turns skip layout and paint and keep the height they last
+ * rendered at. That height must be real, so a turn renders once before it may
+ * skip (`data-sized`): the 260px placeholder differs from the real height and
+ * would move the reader and the scrollbar when the turn finally renders.
+ * Turns around the viewport (`data-near`, see ConversationRenderWindow) render
+ * before Chromium's own relevance check catches up with a large scroll, which
+ * would otherwise paint the landing turns blank. The live turn always renders.
+ * Hovered, focused and persistent-action turns render because
+ * content-visibility implies paint containment, which would clip the overlays
+ * below the bubble.
  */
+.turn:not([data-sized]),
+.turn[data-near],
+.turn[data-turn-status="in_progress"],
+.conversation-width .turn[data-latest-turn="true"],
 .turn:hover,
 .turn:focus-within,
 .turn:has(.agent-actions-persistent) {
   content-visibility: visible;
 }
 
-.turn[data-turn-status="in_progress"] {
-  content-visibility: visible;
-  contain-intrinsic-size: none;
-}
-
-/*
- * The last few turns usually fill the initial viewport when a conversation
- * opens pinned to the bottom. Render them for real from the FIRST layout pass:
- * if they carry the 260px estimate instead, the pre-paint scroll-to-bottom
- * measures a wrong scrollHeight, their true heights resolve at first paint
- * (overflow-anchor is disabled while auto-following, so the browser does
- * not compensate), and the ResizeObserver re-pin lands one frame later —
- * a visible vertical jolt right after opening a session. Turns further up
- * keep the cheap estimate. ResizeObserver-based scroll anchoring corrects
- * older estimated turns asynchronously without delaying the first visible
- * frame of a cached conversation.
- */
-.turn:nth-last-child(-n + 5 of .turn) {
-  content-visibility: visible;
-  contain-intrinsic-size: none;
-}
-
 .turn-collapsed {
   content-visibility: visible;
-  contain-intrinsic-size: none;
   margin-bottom: 14px;
 }
 
-/* A live resize still wraps what is on screen. Turns forced visible for the
- * first paint can sit above the viewport; let those keep their remembered
- * height instead of wrapping again on every width change. */
-.window-resizing .turn:nth-last-child(-n + 5 of .turn),
-.window-resizing .turn[data-turn-status="in_progress"],
-.window-resizing .conversation-width .turn[data-latest-turn="true"],
-.window-resizing .turn-collapsed {
+/* A live window or panel drag rewraps every rendered turn on each frame. For
+ * the drag, turns kept rendered only for being near or live may skip when
+ * off-screen, with their remembered height, and wrap once at the final width. */
+.window-resizing .turn:is([data-near], [data-turn-status="in_progress"], [data-latest-turn="true"]):not(:hover, :focus-within, :has(.agent-actions-persistent)) {
   content-visibility: auto;
-  contain-intrinsic-size: auto 260px;
 }
 
 .conversation-turn-history-loader {
@@ -2251,14 +2230,6 @@ html[data-focus-modality="keyboard"] .project-candidate-link:focus-visible {
 .conversation-render-activity.is-reveal-snap .agent-message-actions,
 .conversation-render-activity.is-reveal-snap [data-wuu-mascot-presence] {
   transition: none;
-}
-
-/* Session restore measures the incoming pane before placing the viewport.
-   Skipped turns would otherwise report the 260px estimate and the scroll
-   position would jump once their real height lands. */
-.cached-conversation-pane.is-reveal-measure .turn {
-  content-visibility: visible;
-  contain-intrinsic-size: none;
 }
 
 /* The inner holds the body content. The outer clips it during

@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1017,6 +1019,203 @@ func TestToolkit_Git_ConfigWriteBlocked(t *testing.T) {
 
 // ── structured status tests ──────────────────────────────────────
 
+func setupGitStatusRepo(t *testing.T) (*Toolkit, string) {
+	t.Helper()
+	// Timed-out telemetry status probes must not leave optional index locks.
+	t.Setenv("GIT_OPTIONAL_LOCKS", "0")
+	kit, root := setupGitRepo(t)
+	runGitFixture(t, root, "config", "status.renames", "true")
+	return kit, root
+}
+
+func runGitFixture(t *testing.T, root string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %q: %v\n%s", args, err, out)
+	}
+	return string(out)
+}
+
+func requireGitStatusPaths(t *testing.T, result map[string]any, staged, unstaged map[string]string, untracked []string) {
+	t.Helper()
+	if result["exit_code"] != float64(0) {
+		t.Fatalf("git command failed: %+v", result)
+	}
+	for key, want := range map[string]map[string]string{"staged": staged, "unstaged": unstaged} {
+		entries, ok := result[key].([]any)
+		if !ok {
+			t.Fatalf("missing %s snapshot: %+v", key, result)
+		}
+		got := make(map[string]string)
+		for _, raw := range entries {
+			entry := raw.(map[string]any)
+			got[entry["file"].(string)] = entry["status"].(string)
+		}
+		if len(entries) != len(want) || (len(want) > 0 && !reflect.DeepEqual(got, want)) {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+	entries, ok := result["untracked"].([]any)
+	if !ok {
+		t.Fatalf("missing untracked snapshot: %+v", result)
+	}
+	got := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		got = append(got, entry.(string))
+	}
+	slices.Sort(got)
+	want := slices.Clone(untracked)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("untracked = %q, want %q", got, want)
+	}
+}
+
+func TestToolkit_Git_StatusPathsRoundTrip(t *testing.T) {
+	for _, quotePath := range []string{"true", "false"} {
+		t.Run("quotePath="+quotePath, func(t *testing.T) {
+			for _, name := range []string{
+				"中文.txt", "hello world.txt", " leading.txt", "trailing.txt ",
+				"double\"quote.txt", "single'quote.txt", "back\\slash.txt", "line\nbreak.txt", "tab\tname.txt",
+			} {
+				t.Run(name, func(t *testing.T) {
+					if runtime.GOOS == "windows" && (strings.ContainsAny(name, "\"\\\n\t") || strings.HasSuffix(name, " ")) {
+						t.Skip("filename is not representable on Windows")
+					}
+					kit, root := setupGitStatusRepo(t)
+					runGitFixture(t, root, "config", "core.quotePath", quotePath)
+					runBash(t, root, "printf 'unrelated change\\n' >> hello.txt")
+					if err := os.WriteFile(filepath.Join(root, name), []byte("new\n"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					status := gitCall(t, kit, "status")
+					requireGitStatusPaths(t, status, nil, map[string]string{"hello.txt": "modified"}, []string{name})
+					returned := status["untracked"].([]any)[0].(string)
+					added := gitCall(t, kit, "add", returned)
+					requireGitStatusPaths(t, added, map[string]string{name: "added"}, map[string]string{"hello.txt": "modified"}, nil)
+					if err := os.WriteFile(filepath.Join(root, name), []byte("updated\n"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					status = gitCall(t, kit, "status")
+					requireGitStatusPaths(t, status, map[string]string{name: "added"}, map[string]string{"hello.txt": "modified", name: "modified"}, nil)
+					returned = added["staged"].([]any)[0].(map[string]any)["file"].(string)
+					restored := gitCall(t, kit, "restore --staged", returned)
+					requireGitStatusPaths(t, restored, nil, map[string]string{"hello.txt": "modified"}, []string{name})
+					if got := runGitFixture(t, root, "diff", "--cached", "--name-only", "-z"); got != "" {
+						t.Errorf("unexpected staged paths: %q", got)
+					}
+					if got, err := os.ReadFile(filepath.Join(root, name)); err != nil || string(got) != "updated\n" {
+						t.Errorf("working file changed: %q, %v", got, err)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestToolkit_Git_StatusRenamePathsRoundTrip(t *testing.T) {
+	kit, root := setupGitStatusRepo(t)
+	const source = "old 中文 name.txt"
+	const destination = "new 中文 name.txt"
+	runGitFixture(t, root, "config", "core.quotePath", "true")
+	runGitFixture(t, root, "mv", "hello.txt", source)
+	runGitFixture(t, root, "commit", "-qm", "Prepare rename source")
+	runGitFixture(t, root, "mv", source, destination)
+	if err := os.WriteFile(filepath.Join(root, destination), []byte("modified after rename\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	status := gitCall(t, kit, "status")
+	requireGitStatusPaths(t, status, map[string]string{destination: "renamed"}, map[string]string{destination: "modified"}, nil)
+	returned := status["unstaged"].([]any)[0].(map[string]any)["file"].(string)
+	added := gitCall(t, kit, "add", returned)
+	requireGitStatusPaths(t, added, map[string]string{source: "deleted", destination: "added"}, nil, nil)
+	// Restore the original content so Git still recognizes the rename.
+	if err := os.WriteFile(filepath.Join(root, destination), []byte("hello\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	added = gitCall(t, kit, "add", returned)
+	requireGitStatusPaths(t, added, map[string]string{destination: "renamed"}, nil, nil)
+	returned = added["staged"].([]any)[0].(map[string]any)["file"].(string)
+	restored := gitCall(t, kit, "restore --staged", returned)
+	requireGitStatusPaths(t, restored, map[string]string{source: "deleted"}, nil, []string{destination})
+	if got := runGitFixture(t, root, "diff", "--cached", "--name-only", "-z"); got != source+"\x00" {
+		t.Errorf("unstaging the destination changed another path: %q", got)
+	}
+}
+
+func TestToolkit_Git_BackslashPathsStayLiteral(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("backslash is a directory separator on Windows")
+	}
+	kit, root := setupGitStatusRepo(t)
+	const name = "back\\slash.txt"
+	const other = "backslash.txt"
+	for _, file := range []string{name, other} {
+		if err := os.WriteFile(filepath.Join(root, file), []byte("new\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	added := gitCall(t, kit, "add", name)
+	requireGitStatusPaths(t, added, map[string]string{name: "added"}, nil, []string{other})
+	runGitFixture(t, root, "add", "--", other)
+	restored := gitCall(t, kit, "restore --staged", name)
+	requireGitStatusPaths(t, restored, map[string]string{other: "added"}, nil, []string{name})
+	if got := runGitFixture(t, root, "diff", "--cached", "--name-only", "-z"); got != other+"\x00" {
+		t.Errorf("unstaging a backslash path changed another path: %q", got)
+	}
+}
+
+func TestToolkit_Git_StatusPathsKeepSensitiveGuards(t *testing.T) {
+	for _, unconfined := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unconfined=%t", unconfined), func(t *testing.T) {
+			kit, root := setupGitStatusRepo(t)
+			if unconfined {
+				kit.SetBoundary(UnconfinedBoundary())
+			}
+			const directory = "配置 files"
+			const sensitive = directory + "/.env"
+			if err := os.Mkdir(filepath.Join(root, directory), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, sensitive), []byte("API_KEY=fixture-value\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			status := gitCall(t, kit, "status")
+			requireGitStatusPaths(t, status, nil, nil, []string{directory + "/"})
+			returned := status["untracked"].([]any)[0].(string)
+			if msg := gitErr(t, kit, "add", returned); !strings.Contains(msg, "sensitive path") {
+				t.Fatalf("sensitive directory accepted: %s", msg)
+			}
+			if got := runGitFixture(t, root, "diff", "--cached", "--name-only", "-z"); got != "" {
+				t.Fatalf("rejected add changed index: %q", got)
+			}
+			runGitFixture(t, root, "add", "--", sensitive)
+			status = gitCall(t, kit, "status")
+			requireGitStatusPaths(t, status, map[string]string{sensitive: "added"}, nil, nil)
+			if msg := gitErr(t, kit, "commit", "-m", "Must be rejected"); !strings.Contains(msg, "staged sensitive path") {
+				t.Fatalf("sensitive commit accepted: %s", msg)
+			}
+			returned = status["staged"].([]any)[0].(map[string]any)["file"].(string)
+			restored := gitCall(t, kit, "restore --staged", returned)
+			requireGitStatusPaths(t, restored, nil, nil, []string{directory + "/"})
+			// The source of a staged rename must still participate in the guard.
+			runGitFixture(t, root, "add", "--", sensitive)
+			runGitFixture(t, root, "commit", "-qm", "Prepare sensitive rename fixture")
+			runGitFixture(t, root, "mv", sensitive, directory+"/public.txt")
+			before := runGitFixture(t, root, "diff", "--cached", "--raw", "-z")
+			if msg := gitErr(t, kit, "add", directory); !strings.Contains(msg, "sensitive path") {
+				t.Fatalf("sensitive rename source accepted: %s", msg)
+			}
+			if after := runGitFixture(t, root, "diff", "--cached", "--raw", "-z"); after != before {
+				t.Fatalf("rejected add changed staged rename: %q", after)
+			}
+		})
+	}
+}
+
 func TestToolkit_Git_StatusStructured(t *testing.T) {
 	kit, root := setupGitRepo(t)
 
@@ -1115,56 +1314,84 @@ func TestParseGitPorcelain(t *testing.T) {
 		},
 		{
 			name:      "staged modified",
-			input:     "M  foo.go\n",
+			input:     "M  foo.go\x00",
 			staged:    []fileEntry{{File: "foo.go", Status: "modified"}},
 			unstaged:  []fileEntry{},
 			untracked: []string{},
 		},
 		{
 			name:      "unstaged modified",
-			input:     " M bar.go\n",
+			input:     " M bar.go\x00",
 			staged:    []fileEntry{},
 			unstaged:  []fileEntry{{File: "bar.go", Status: "modified"}},
 			untracked: []string{},
 		},
 		{
 			name:      "both staged and unstaged",
-			input:     "MM baz.go\n",
+			input:     "MM baz.go\x00",
 			staged:    []fileEntry{{File: "baz.go", Status: "modified"}},
 			unstaged:  []fileEntry{{File: "baz.go", Status: "modified"}},
 			untracked: []string{},
 		},
 		{
 			name:      "staged added",
-			input:     "A  new.go\n",
+			input:     "A  new.go\x00",
 			staged:    []fileEntry{{File: "new.go", Status: "added"}},
 			unstaged:  []fileEntry{},
 			untracked: []string{},
 		},
 		{
 			name:      "untracked",
-			input:     "?? unk.go\n",
+			input:     "?? unk.go\x00",
 			staged:    []fileEntry{},
 			unstaged:  []fileEntry{},
 			untracked: []string{"unk.go"},
 		},
 		{
 			name:      "staged deleted",
-			input:     "D  del.go\n",
+			input:     "D  del.go\x00",
 			staged:    []fileEntry{{File: "del.go", Status: "deleted"}},
 			unstaged:  []fileEntry{},
 			untracked: []string{},
 		},
 		{
 			name:      "renamed",
-			input:     "R  old.go -> new.go\n",
-			staged:    []fileEntry{{File: "old.go -> new.go", Status: "renamed"}},
+			input:     "R  new.go\x00old.go\x00",
+			staged:    []fileEntry{{File: "new.go", Status: "renamed"}},
 			unstaged:  []fileEntry{},
 			untracked: []string{},
 		},
 		{
+			name:      "renamed and modified with status-like source",
+			input:     "RM new\nname.go\x00?? old.go\x00?? next.go\x00",
+			staged:    []fileEntry{{File: "new\nname.go", Status: "renamed"}},
+			unstaged:  []fileEntry{{File: "new\nname.go", Status: "modified"}},
+			untracked: []string{"next.go"},
+		},
+		{
+			name:      "copied",
+			input:     "C  copy.go\x00original.go\x00?? next.go\x00",
+			staged:    []fileEntry{{File: "copy.go", Status: "copied"}},
+			unstaged:  []fileEntry{},
+			untracked: []string{"next.go"},
+		},
+		{
+			name:      "worktree rename",
+			input:     " R new.go\x00old.go\x00",
+			staged:    []fileEntry{},
+			unstaged:  []fileEntry{{File: "new.go", Status: "renamed"}},
+			untracked: []string{},
+		},
+		{
+			name:      "unmerged and ignored",
+			input:     "UU conflict.go\x00!! ignored.go\x00",
+			staged:    []fileEntry{{File: "conflict.go", Status: "unmerged"}},
+			unstaged:  []fileEntry{{File: "conflict.go", Status: "unmerged"}},
+			untracked: []string{},
+		},
+		{
 			name:  "mixed",
-			input: "M  staged.go\n M unstaged.go\n?? new.go\nA  added.go\nD  removed.go\n",
+			input: "M  staged.go\x00 M unstaged.go\x00?? new.go\x00A  added.go\x00D  removed.go\x00",
 			staged: []fileEntry{
 				{File: "staged.go", Status: "modified"},
 				{File: "added.go", Status: "added"},

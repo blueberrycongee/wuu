@@ -22,6 +22,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   `project/candidate` app-server method and `project` on `thread/start` expose
   the same model to clients.
 
+- The model popover has an independent Fast mode toggle and reset for supported
+  provider models and native or ACP engines. Conversation and draft selections
+  preserve speed separately from reasoning effort; `/fast` uses the same setting.
+
 - Click the conversation title in the title bar to rename it. An existing
   conversation saves immediately. A new conversation keeps the name when the
   first message creates the session.
@@ -46,6 +50,17 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - The desktop and its documentation call a registered folder a workspace
   (工作区) instead of a project; "project" now means a project coordinator.
+
+- Optional programmatic tool calling now runs each program in a fresh JavaScript
+  process with the session filesystem sandbox. A default-off global switch and
+  model-family overrides control availability. Nested calls retain normal tool
+  permissions and recording; image/audio results are attached automatically.
+  The previous persistent code runtime and execution/wait tools are retired.
+
+- Workspace conversation lists show five recent entries plus active, running,
+  unread, and up to three recently read conversations. Recently read entries
+  expire after two minutes. Expanding includes all history inside an eight-row,
+  font-responsive scroll area, keeping other workspaces in place.
 
 - The Extensions page follows the settings layout: a titled page with its
   actions beside the title, then plugins, official skills, and your skills as
@@ -113,6 +128,48 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   every turn and after a reload. Built-in runs previously dropped them,
   including the Subagent plugin's worker instructions.
 
+- Remote requests can open another workspace while four other workspaces run
+  tasks, without the new app-server client being evicted before its request
+  starts. Idle clients remain eligible for normal reclamation.
+
+- Safe mode stops approved desktop plugin modules from loading or activating,
+  while keeping the extension inventory available for recovery and management.
+
+- Remote Web clients reconnect when the relay stops responding during authentication,
+  and cancel pending authentication immediately when stopped or suspended.
+
+- Git status and staging snapshots preserve literal filenames, including spaces,
+  Unicode, quotes, backslashes, and newlines. Returned rename paths identify the
+  destination, and staging or unstaging a backslash path no longer selects other
+  files through Git pathspec escaping. Sensitive-path protections remain in place.
+
+- Startup permission migration skips symbolic links inside the Wuu data directory,
+  preserving external files and executable permissions. Symlink migration markers
+  are replaced without modifying their targets.
+
+- Workspace file reads, saves, and directory expansion preserve leading and
+  trailing whitespace and literal POSIX backslashes in filenames, preventing
+  a selected file from being confused with another file in the workspace.
+
+- Overdue automations keep their scheduled occurrence until the session service
+  is ready. Interrupted dispatches reuse their run record after restart, and
+  completing a dispatch preserves a newly edited schedule.
+
+- Git review compares symbolic link target paths without reading target contents,
+  including untracked and dangling links and file/link type changes.
+
+- Git changes, statistics, and file previews work before the first commit,
+  including staged files and edits made after staging.
+
+- Sidebar scroll fades remain tied to the list's own scroll position while
+  conversations stream, pause, finish, or switch. Streaming paint reduction
+  applies only to nested reasoning and process details.
+
+- Plugin workspace delivery includes committed, staged, and unstaged tracked
+  changes since workspace creation. Status and previews use the same baseline;
+  conflicts and unsupported untracked files preserve the workspace. Automatic
+  cleanup retains committed work and workspaces whose baseline is unavailable.
+
 - Sending a message keeps one local waiting timer across admission, events,
   snapshots, and conversation switches without changing server timestamps.
   Follow-up messages can queue during new-conversation creation. Stop uses an
@@ -122,6 +179,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Terminal run details preserve output, exit status, and log links when a
   command's model-facing output is JSON, rather than treating that output as
   execution metadata.
+
+- History search finds literal quotes, paths, line breaks, and HTML characters
+  in deduplicated tool results, including model text and multi-part output.
 
 - Ready Agent Core entries show an external agent's detected executable path in
   its override field without repeating it in the status or help text.
@@ -133,6 +193,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Preserve sidebar folder folds when returning from settings, including after
   switching between light and dark themes.
+
+- OpenAI-compatible Chat Completions requests preserve tool calls, reasoning,
+  and participant names in adjacent messages, preventing orphaned tool results
+  in both ordinary and streaming conversations.
+
+- `apply_patch` accepts LF and CRLF patches for CRLF files while preserving
+  their line endings and whether the file ends with a newline.
 
 - `apply_patch` with `then_run` now shows the model the follow-up command's
   outcome; the parent result previously kept the patch-only view.

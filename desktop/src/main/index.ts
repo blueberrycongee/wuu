@@ -1657,6 +1657,7 @@ app.whenReady().then(async () => {
       variant?: string,
       permissionMode?: string,
       threadID?: string,
+      speed?: string,
     ) =>
       appServerRequest<ConfigModelUpdateResult>(event, "config/model/update", {
         // Omitted provider/model are inherited from the target thread, so
@@ -1684,6 +1685,7 @@ app.whenReady().then(async () => {
           : { reuse_codex_credentials: connection.reuse_codex_credentials }),
         ...(effort === undefined ? {} : { effort }),
         ...(variant === undefined ? {} : { variant }),
+        ...(speed === undefined ? {} : { speed }),
         ...(permissionMode === undefined
           ? {}
           : { permission_mode: permissionMode }),
