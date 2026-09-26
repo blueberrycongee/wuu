@@ -14,19 +14,38 @@ func TestThreadListsPreserveSessionControlAcrossWorkspaces(t *testing.T) {
 	owner := &rpcClient{server: New(rt, ownerOutput), out: ownerOutput}
 	t.Cleanup(owner.server.Close)
 	expected := make(map[string]*ThreadSessionControl)
-	for _, state := range []string{session.ControlActive, session.ControlPaused, session.ControlTakenOver, session.ControlReleased, "ordinary"} {
+	// A live project names its sessions' manager; a fence left by an unknown
+	// manager no longer manages anything.
+	const project = "project-a"
+	if _, err := session.CreateWithMetadata(rt.SessionDir, project, rt.RootDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.SetSource(rt.SessionDir, project, projectSource); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.UpdateTitle(rt.SessionDir, project, "Catalog"); err != nil {
+		t.Fatal(err)
+	}
+	expected[project] = nil
+	for _, state := range []string{session.ControlActive, session.ControlPaused, session.ControlTakenOver, session.ControlReleased, "ordinary", "unknown-manager"} {
 		id := "session-" + state
 		if _, err := session.CreateWithMetadata(rt.SessionDir, id, rt.RootDir); err != nil {
 			t.Fatal(err)
 		}
 		expected[id] = nil
-		if state != "ordinary" {
-			control, err := session.ChangeControl(rt.SessionDir, id, "manager-a", state, 0)
+		switch state {
+		case "ordinary":
+		case "unknown-manager":
+			if _, err := session.ChangeControl(rt.SessionDir, id, "manager-gone", session.ControlActive, 0); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			control, err := session.ChangeControl(rt.SessionDir, id, project, state, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if state != session.ControlReleased {
-				expected[id] = &ThreadSessionControl{ManagerID: control.ManagerID, State: control.State, Revision: control.Revision}
+				expected[id] = &ThreadSessionControl{ManagerID: control.ManagerID, ManagerName: "Catalog", State: control.State, Revision: control.Revision}
 			}
 		}
 		loaded, err := owner.server.loadPersistedThreadState(id, time.Now().UTC())
@@ -55,7 +74,7 @@ func TestThreadListsPreserveSessionControlAcrossWorkspaces(t *testing.T) {
 			if got != nil {
 				t.Fatalf("%s retained released or absent control: %+v", thread.ID, got)
 			}
-		} else if got == nil || got.ManagerID != want.ManagerID || got.State != want.State || got.Revision != want.Revision {
+		} else if got == nil || *got != *want {
 			t.Fatalf("%s lost persisted management: got %+v, want %+v", thread.ID, got, want)
 		}
 	}
@@ -83,7 +102,7 @@ func TestThreadListsPreserveSessionControlAcrossWorkspaces(t *testing.T) {
 	assertLists([]string{MethodThreadList, MethodThreadListAll})
 
 	// A relationship released elsewhere must also override a loaded snapshot.
-	if _, err := session.ChangeControl(rt.SessionDir, "session-active", "manager-a", session.ControlReleased, expected["session-active"].Revision); err != nil {
+	if _, err := session.ChangeControl(rt.SessionDir, "session-active", project, session.ControlReleased, expected["session-active"].Revision); err != nil {
 		t.Fatal(err)
 	}
 	expected["session-active"] = nil
@@ -92,9 +111,13 @@ func TestThreadListsPreserveSessionControlAcrossWorkspaces(t *testing.T) {
 	// Metadata responses feed the same sidebar cache, including for unloaded
 	// sessions; archiving must not strip their management relationship either.
 	for id := range expected {
+		if id == project {
+			continue
+		}
 		var archived ThreadArchiveResult
 		other.rpc(t, MethodThreadArchive, ThreadArchiveParams{ThreadID: id, Archived: true}, &archived)
 		assertControl(t, archived.Thread)
 	}
+	delete(expected, project)
 	assertLists([]string{MethodThreadListArchived})
 }

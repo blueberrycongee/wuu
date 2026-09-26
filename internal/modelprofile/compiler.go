@@ -52,6 +52,9 @@ const (
 	SurfaceWorker SurfaceKind = iota
 	// SurfaceMain is the ordinary project main-session surface.
 	SurfaceMain
+	// SurfaceProjectCoordinator investigates and delegates. Its managed
+	// sessions make every change, so it has no file-editing or browser tools.
+	SurfaceProjectCoordinator
 )
 
 // Compiler compiles a model profile into a built-in tool surface. Plugin-owned
@@ -69,6 +72,11 @@ type DefaultCompiler struct{}
 func (DefaultCompiler) Compile(p Profile, kind SurfaceKind) capability.Surface {
 	key := ResolveProfileKey(p)
 	b := newBuilder(p, key)
+	if kind == SurfaceProjectCoordinator {
+		compileProjectCoordinator(b, p)
+		b.sortCaps()
+		return b.surface
+	}
 	switch key {
 	case ProfileOpenAICodex:
 		compileOpenAICodex(b, p)
@@ -230,6 +238,22 @@ func compileGeneric(b *surfaceBuilder, p Profile) {
 	addExtensionTools(b)
 	addGenericEditTools(b)
 	addGenericPrompt(b, p)
+}
+
+func compileProjectCoordinator(b *surfaceBuilder, p Profile) {
+	addFileReadTools(b)
+	addSearchTools(b)
+	addBashFirstTools(b, p)
+	addWebTools(b)
+	addSessionTools(b)
+	addSkillTools(b)
+	addExtensionTools(b)
+	addContextWindowTools(b)
+	b.addVisible("session", capability.CapabilityProjectSessions)
+	b.surface.SystemFragment = strings.TrimSpace(`
+[Tool surface: project coordinator]
+Read, search and run read-only commands to understand the workspace. Use session to start and direct the sessions that make changes.
+` + sharedPromptPolicy)
 }
 
 // ── Shared capability assembly helpers ─────────────────────────────

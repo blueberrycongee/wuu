@@ -60,6 +60,7 @@ const (
 	MethodConfigProviderRemove            = "config/provider/remove"
 	MethodSkillList                       = "skill/list"
 	MethodThreadStart                     = "thread/start"
+	MethodProjectCandidate                = "project/candidate"
 	MethodThreadResume                    = "thread/resume"
 	MethodThreadFork                      = "thread/fork"
 	MethodThreadEditMessage               = "thread/edit-message"
@@ -1251,9 +1252,12 @@ type ProviderModelVariantSummary struct {
 }
 
 type ThreadStartParams struct {
-	Ephemeral   bool   `json:"ephemeral,omitempty"`
-	CWD         string `json:"cwd,omitempty"`
-	WorkspaceID string `json:"workspace_id,omitempty"`
+	// Project starts a project coordinator in the workspace instead of an
+	// ordinary conversation.
+	Project     *ThreadProjectParams `json:"project,omitempty"`
+	Ephemeral   bool                 `json:"ephemeral,omitempty"`
+	CWD         string               `json:"cwd,omitempty"`
+	WorkspaceID string               `json:"workspace_id,omitempty"`
 	// Engine selects the agent engine the thread is bound to. Empty is the
 	// settings default engine (or the built-in "wuu" engine); the binding is
 	// fixed at creation.
@@ -1372,6 +1376,38 @@ type EngineUpdateParams = config.EnginesSettingsUpdate
 
 type ThreadStartResult struct {
 	Thread Thread `json:"thread"`
+}
+
+type ThreadProjectParams struct {
+	Name string `json:"name"`
+}
+
+// ProjectCandidateParams lists a project's or a managed session's candidates,
+// or reads, applies or discards one candidate named by session and turn.
+type ProjectCandidateParams struct {
+	ProjectID string `json:"project_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	TurnID    string `json:"turn_id,omitempty"`
+	Action    string `json:"action"`
+}
+
+// ProjectCandidate is a managed session's frozen change at the end of a turn.
+// An empty disposition awaits the user's decision.
+type ProjectCandidate struct {
+	SessionID    string    `json:"session_id"`
+	TurnID       string    `json:"turn_id"`
+	BaseRepo     string    `json:"base_repo"`
+	BaseRevision string    `json:"base_revision"`
+	Revision     string    `json:"revision"`
+	ChangedFiles []string  `json:"changed_files"`
+	Disposition  string    `json:"disposition,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	Diff         string    `json:"diff,omitempty"`
+}
+
+type ProjectCandidateResult struct {
+	Candidates []ProjectCandidate `json:"candidates,omitempty"`
+	Candidate  *ProjectCandidate  `json:"candidate,omitempty"`
 }
 
 type ThreadResumeParams struct {
@@ -2161,16 +2197,18 @@ type Thread struct {
 	SessionControl *ThreadSessionControl `json:"session_control,omitempty"`
 	ID             string                `json:"id"`
 	Source         string                `json:"source,omitempty"`
-	ParentID       string                `json:"parent_id,omitempty"`
-	AgentPath      string                `json:"agent_path,omitempty"`
-	Preview        string                `json:"preview"`
-	Title          string                `json:"title,omitempty"`
-	ModelProvider  string                `json:"model_provider"`
-	Model          string                `json:"model"`
-	ModelVariant   string                `json:"model_variant"`
-	ModelEffort    string                `json:"model_effort"`
-	PermissionMode string                `json:"permission_mode"`
-	ApproveForMe   bool                  `json:"approve_for_me"`
+	// ProjectID is the coordinator conversation that manages this session.
+	ProjectID      string `json:"project_id,omitempty"`
+	ParentID       string `json:"parent_id,omitempty"`
+	AgentPath      string `json:"agent_path,omitempty"`
+	Preview        string `json:"preview"`
+	Title          string `json:"title,omitempty"`
+	ModelProvider  string `json:"model_provider"`
+	Model          string `json:"model"`
+	ModelVariant   string `json:"model_variant"`
+	ModelEffort    string `json:"model_effort"`
+	PermissionMode string `json:"permission_mode"`
+	ApproveForMe   bool   `json:"approve_for_me"`
 	// EngineID is the agent engine the thread is bound to ("wuu" for the
 	// built-in engine; external engines like Claude or Codex will carry
 	// their own ids).

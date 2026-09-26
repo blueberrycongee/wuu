@@ -1875,6 +1875,10 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	}
 	defer release()
 	th.mu.Lock()
+	if th.Source == projectSource && params.PermissionMode != nil && config.NormalizePermissionMode(*params.PermissionMode) != config.PermissionModeReadOnly {
+		th.mu.Unlock()
+		return s.writeResponse(req.ID, nil, errProjectCoordinatorReadOnly)
+	}
 
 	provider, model := th.ModelProvider, th.Model
 	variant, effort, permission := th.ModelVariant, th.ModelEffort, th.PermissionMode

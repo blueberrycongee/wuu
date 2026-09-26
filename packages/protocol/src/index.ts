@@ -1569,7 +1569,10 @@ export type Thread = {
   agent_path?: string;
   preview: string;
   title?: string;
+  // "project" marks a project coordinator; "project-session" a session it manages.
   source?: string;
+  // The coordinator that manages this session.
+  project_id?: string;
   model_provider: string;
   model: string;
   model_variant?: string;
@@ -1616,6 +1619,33 @@ export type ThreadStartParams = {
   approve_for_me?: boolean;
   provider?: string;
   handoff?: ThreadHandoffParams;
+  // Start a project coordinator in the workspace instead of a conversation.
+  project?: { name: string };
+};
+
+// A managed session's frozen change at the end of one turn. An empty
+// disposition awaits the user's decision.
+export type ProjectCandidate = {
+  session_id: string;
+  turn_id: string;
+  base_repo: string;
+  base_revision: string;
+  revision: string;
+  changed_files: string[];
+  disposition?: "applied" | "discarded";
+  created_at: string;
+  // Present only when the candidate was read with action "get".
+  diff?: string;
+};
+
+export type ProjectCandidateParams =
+  | { action: "list"; project_id: string }
+  | { action: "list"; session_id: string }
+  | { action: "get" | "apply" | "discard"; session_id: string; turn_id: string };
+
+export type ProjectCandidateResult = {
+  candidates?: ProjectCandidate[];
+  candidate?: ProjectCandidate;
 };
 
 export type ThreadHandoffParams = {
@@ -2614,6 +2644,7 @@ export type WuuDesktopApi = {
   listSkills: () => Promise<SkillListResult>;
   readSkillContent: (params: SkillContentParams) => Promise<SkillContentResult>;
   returnManagedSession: (params: { thread_id: string; revision: number }) => Promise<{ control: NonNullable<Thread["session_control"]> }>;
+  projectCandidate?: (params: ProjectCandidateParams) => Promise<ProjectCandidateResult>;
   startThread: (params?: ThreadStartParams, targetContext?: RuntimeContext) => Promise<{ thread: Thread }>;
   loadEarlierThreadHistory?: (threadID: string, cursor: string) => Promise<void>;
   readRemoteAttachment?: (ref: string) => Promise<string>;

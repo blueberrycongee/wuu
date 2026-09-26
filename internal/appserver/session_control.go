@@ -63,11 +63,21 @@ func (s *Server) readThreadSessionControl(id string) (*ThreadSessionControl, err
 	return s.threadSessionControl(id, c), nil
 }
 
-func (s *Server) threadSessionControl(id string, c session.Control) *ThreadSessionControl {
+// threadSessionControl names the manager. A fence left by a project that was
+// archived or deleted no longer manages the session, so it is not shown.
+func (s *Server) threadSessionControl(_ string, c session.Control) *ThreadSessionControl {
 	if c.ManagerID == "" || c.State == session.ControlReleased {
 		return nil
 	}
-	return &ThreadSessionControl{ManagerID: c.ManagerID, ManagerName: c.ManagerID, State: c.State, Revision: c.Revision}
+	name := c.ManagerID
+	if !strings.HasPrefix(c.ManagerID, "plugin:") {
+		project, live := s.projectCoordinator(c.ManagerID)
+		if !live {
+			return nil
+		}
+		name = project.Title
+	}
+	return &ThreadSessionControl{ManagerID: c.ManagerID, ManagerName: name, State: c.State, Revision: c.Revision}
 }
 
 // takeSessionControl records a human takeover or pause of a managed session.
@@ -91,6 +101,7 @@ func (s *Server) takeSessionControl(id, state string) error {
 	}
 	s.revokeSessionInputs(id)
 	s.publishSessionControl(id)
+	s.noticeProjectControl(id, c)
 	return nil
 }
 
@@ -110,8 +121,33 @@ func (s *Server) publishSessionControl(id string) {
 	_ = s.notifyThreadUpdated(snapshot)
 }
 
-// handleThreadControl is a human action. Model and extension control continues
-// through its owner-fenced API; it cannot invoke this return-to-manager path.
+// handleThreadControl is a human action: it returns a taken-over or paused
+// session to its project. Model and extension control goes through their
+// owner-fenced APIs and cannot use this path.
 func (s *Server) handleThreadControl(_ context.Context, req Request) error {
-	return s.writeResponse(req.ID, nil, errors.New("no manager accepts returned sessions"))
+	var p struct {
+		ThreadID string `json:"thread_id"`
+		Revision int64  `json:"revision"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	s.controlMu.Lock()
+	c, exists, err := session.ReadControl(s.rt.SessionDir, p.ThreadID)
+	if err == nil && (!exists || c.Revision != p.Revision) {
+		err = session.ErrControlChanged
+	}
+	if err == nil {
+		_, err = s.projectManagedSession(c.ManagerID, p.ThreadID)
+	}
+	if err == nil && c.State != session.ControlActive {
+		c, err = session.ChangeControl(s.rt.SessionDir, p.ThreadID, c.ManagerID, session.ControlActive, c.Revision)
+	}
+	s.controlMu.Unlock()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	s.publishSessionControl(p.ThreadID)
+	s.noticeProjectControl(p.ThreadID, c)
+	return s.writeResponse(req.ID, map[string]any{"control": s.threadSessionControl(p.ThreadID, c)}, nil)
 }

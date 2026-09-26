@@ -938,6 +938,9 @@ func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, par
 	th.Owner = owner
 	th.Visibility = params.Visibility
 	th.Instructions = params.Instructions
+	if source == projectSessionSource {
+		th.ProjectID = params.ParentSessionID
+	}
 	// Session lineage stays in persisted metadata for management and cancellation.
 	// Thread.ParentID identifies internal agent workers, not ordinary sessions
 	// created from another session; keep this consistent with applySessionMetadata.

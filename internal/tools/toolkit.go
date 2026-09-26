@@ -376,6 +376,9 @@ func (t *Toolkit) rebuildRegistry() {
 	if e.ArtifactPublisher != nil {
 		registered = append(registered, NewPresentArtifactTool(e))
 	}
+	if e.ProjectSessions != nil {
+		registered = append(registered, NewProjectSessionTool(e))
+	}
 	// Code-mode entry tools appear only when a host service is attached to the
 	// session. They stay out of the registry otherwise, so Direct mode never
 	// advertises a runtime it cannot reach.
@@ -948,10 +951,23 @@ func (t *Toolkit) SurfaceToolNames() []string {
 // tool-specific path checks.
 func (t *Toolkit) SetActiveProfile(p modelprofile.Profile, forMainAgent bool) {
 	kind := modelprofile.SurfaceWorker
-	if forMainAgent {
+	if t.env != nil && t.env.ProjectSessions != nil {
+		kind = modelprofile.SurfaceProjectCoordinator
+	} else if forMainAgent {
 		kind = modelprofile.SurfaceMain
 	}
 	t.setActiveProfileForSurface(p, kind)
+}
+
+// SetProjectSessions turns this toolkit into a project coordinator's: the
+// session tool appears and the surface drops file-editing and browser tools.
+func (t *Toolkit) SetProjectSessions(handler ProjectSessionHandler) {
+	if t == nil || t.env == nil {
+		return
+	}
+	t.env.ProjectSessions = handler
+	t.rebuildRegistry()
+	t.SetActiveProfile(t.ActiveProfile(), true)
 }
 
 func (t *Toolkit) setActiveProfileForSurface(p modelprofile.Profile, kind modelprofile.SurfaceKind) {
@@ -967,7 +983,8 @@ func (t *Toolkit) setActiveProfileForSurface(p modelprofile.Profile, kind modelp
 	t.activeProfileMu.Lock()
 	defer t.activeProfileMu.Unlock()
 	t.activeProfile = p
-	if (p == modelprofile.Profile{}) {
+	// A coordinator never falls back to the unrestricted legacy surface.
+	if (p == modelprofile.Profile{}) && kind != modelprofile.SurfaceProjectCoordinator {
 		t.activeSurface = capability.Surface{}
 		t.publishActiveSurfaceLocked()
 		return

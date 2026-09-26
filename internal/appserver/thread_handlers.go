@@ -123,6 +123,21 @@ func (s *Server) handleThreadStart(req Request) error {
 	}
 	// Review is owned by the built-in engine and never expands permission mode.
 	selection.ApproveForMe = selection.ApproveForMe && engineID == agentengine.EngineWuu && approvefor.EnabledForMode(selection.PermissionMode)
+	if params.Project != nil {
+		th, err := s.startProjectThread(selection, engineID, params)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		th.mu.Lock()
+		thread := th.snapshotLocked()
+		th.mu.Unlock()
+		// Host session creation already announced the thread.
+		if err := s.writeResponse(req.ID, ThreadStartResult{Thread: thread}, nil); err != nil {
+			return err
+		}
+		s.pruneCachedThreads(thread.ID)
+		return nil
+	}
 	if params.Handoff != nil {
 		th, err := s.startHandoffThread(selection, params)
 		if err != nil {
@@ -1335,6 +1350,9 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	th.Owner = metadata.Owner
 	th.Visibility = metadata.Visibility
 	th.Instructions = metadata.Instructions
+	if metadata.Source == projectSessionSource {
+		th.ProjectID = metadata.ParentID
+	}
 	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" && selection.Model != "" {
 		applyThreadRuntimeSelection(th, selection)
 	}
@@ -1416,6 +1434,7 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 		thread: Thread{
 			ID:                    sess.ID,
 			Source:                sess.Source,
+			ProjectID:             projectIDForSession(sess),
 			Preview:               firstNonEmpty(sess.Title, sess.Summary),
 			Title:                 sess.Title,
 			ModelProvider:         firstNonEmpty(selection.Provider, provider),

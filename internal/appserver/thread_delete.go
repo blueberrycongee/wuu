@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -116,6 +117,11 @@ func (s *Server) handleThreadDelete(req Request) error {
 		if pathWithinRoot(info.Path, statepath.WorktreeRoot(stateDir)) {
 			if manager, mgrErr := s.worktreeManager(firstNonEmpty(info.BaseRepo, s.rt.RootDir)); mgrErr == nil {
 				_, _ = manager.CleanupIfClean(&worktree.Worktree{Path: info.Path, SessionID: id})
+			}
+		}
+		if info.BaseRepo != "" {
+			if err := worktree.DropSnapshots(context.Background(), info.BaseRepo, id+"-"); err != nil {
+				providers.DebugLogf("drop candidate snapshots of deleted thread %q: %v", id, err)
 			}
 		}
 	}

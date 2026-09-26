@@ -1156,6 +1156,12 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	if err := s.configureSessionToolPolicy(th.ID, threadRuntime); err != nil {
 		return nil, err
 	}
+	th.mu.Lock()
+	coordinator := th.Source == projectSource
+	th.mu.Unlock()
+	if coordinator && threadRuntime.Toolkit != nil {
+		threadRuntime.Toolkit.SetProjectSessions(s.projectSessionHandler(th.ID))
+	}
 	// Stamp the engine the thread is bound to onto the runtime. A cached
 	// runtime keeps its original stamp; threads never silently switch.
 	threadRuntime.EngineID = agentengine.NormalizeEngineID(th.EngineID)
@@ -2139,6 +2145,19 @@ func (s *Server) resolveTurnPermissions(permissionMode *string) (config.Resolved
 }
 
 func (s *Server) resolveThreadTurnPermissions(th *threadState, requested *string) (config.ResolvedPermissions, error) {
+	if th != nil {
+		th.mu.Lock()
+		coordinator := th.Source == projectSource
+		th.mu.Unlock()
+		// A project coordinator delegates every change; no pin or process
+		// override widens it.
+		if coordinator {
+			if requested != nil && config.NormalizePermissionMode(*requested) != config.PermissionModeReadOnly {
+				return config.ResolvedPermissions{}, errProjectCoordinatorReadOnly
+			}
+			return normalizeTurnPermissions(config.ResolvedPermissions{Mode: config.PermissionModeReadOnly}), nil
+		}
+	}
 	if s != nil && s.rt != nil && s.rt.PermissionModeExplicit {
 		// A process-scoped explicit override (exec --permission-mode) beats
 		// the thread pin and persisted session metadata: a user asking for
@@ -2902,6 +2921,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			providers.DebugLogf("notify plugin turn observers for thread %q turn %q: %v", th.ID, turnID, observerErr)
 		}
 	})
+	s.afterProjectTurn(th, turn, turnRuntime.CompactOnly)
 	if reference := turnRuntime.PluginTurn; reference != nil {
 		lifecycleState := pluginhost.TurnLifecycleCompleted
 		errorText := ""

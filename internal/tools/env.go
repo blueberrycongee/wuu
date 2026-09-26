@@ -259,6 +259,9 @@ type Env struct {
 	ProcessMgr             *proc.Manager
 	ProcessSandboxProvider processsandbox.Provider
 	AgentControl           *agentcontrol.AgentControl
+	// ProjectSessions is set only for a project coordinator conversation;
+	// it exposes the session tool and the coordinator's tool surface.
+	ProjectSessions ProjectSessionHandler
 	// BrowserBridge routes the browser tool's actions to the desktop host that
 	// owns the hidden WebContentsView + CDP session. Nil means no embedded
 	// browser backend is attached (for example the CLI/headless runtime), and

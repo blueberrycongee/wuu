@@ -63,6 +63,9 @@ const (
 	CapabilityTodo  Capability = "todo"
 	CapabilitySkill Capability = "skill"
 
+	// A project coordinator's managed sessions.
+	CapabilityProjectSessions Capability = "project.sessions"
+
 	// Extensions (MCP, plugins).
 	CapabilityMCP Capability = "mcp"
 
@@ -105,6 +108,7 @@ func All() []Capability {
 		CapabilityContextWindow,
 		CapabilityTodo,
 		CapabilitySkill,
+		CapabilityProjectSessions,
 		CapabilityMCP,
 		CapabilityDiscovery,
 		CapabilityCodeMode,

@@ -18,6 +18,14 @@ type rpcClient struct {
 
 func (client *rpcClient) rpc(t *testing.T, method string, params, target any) {
 	t.Helper()
+	if failure := client.call(t, method, params, target); failure != nil {
+		t.Fatalf("%s error: %+v", method, failure)
+	}
+}
+
+// call returns the server's error response instead of failing the test.
+func (client *rpcClient) call(t *testing.T, method string, params, target any) *ResponseError {
+	t.Helper()
 	client.nextID++
 	id := json.RawMessage(fmt.Sprintf("%d", client.nextID))
 	encodedParams, err := json.Marshal(params)
@@ -41,12 +49,15 @@ func (client *rpcClient) rpc(t *testing.T, method string, params, target any) {
 			continue
 		}
 		if envelope.Error != nil {
-			t.Fatalf("%s error: %+v", method, envelope.Error)
+			return envelope.Error
 		}
-		if err := json.Unmarshal(envelope.Result, target); err != nil {
-			t.Fatalf("decode %s: %v", method, err)
+		if target != nil {
+			if err := json.Unmarshal(envelope.Result, target); err != nil {
+				t.Fatalf("decode %s: %v", method, err)
+			}
 		}
-		return
+		return nil
 	}
 	t.Fatalf("%s did not return response %s", method, id)
+	return nil
 }
