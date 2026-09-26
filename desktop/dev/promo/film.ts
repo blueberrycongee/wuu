@@ -1,28 +1,19 @@
-import { endCard, END, opening, OPENING_END } from "./bookends";
-import { W, H, type Ctx } from "./cast";
+import { type Ctx } from "./cast";
+import { coverShot } from "./cover";
+import { crewShot, CREW_END } from "./crew";
 import { deskShot, DESK_END } from "./desk";
-import { stageShot, STAGE_END } from "./stage";
-import { seg, smooth } from "./motion";
+import { END } from "./timeline";
 
 export const DURATION = END;
-const transition = document.createElement("canvas");
-transition.width = W;
-transition.height = H;
-const transitionContext = transition.getContext("2d")!;
 
-/** Draws the frame at time `t` (seconds). Shots share no state between frames. */
+/**
+ * Draws the frame at time `t` (seconds). Shots share no state between frames,
+ * and every change of shot is a hard cut on a cue in `cues.json`.
+ */
 export function renderFilm(ctx: Ctx, t: number) {
   ctx.save();
-  if (t < OPENING_END) opening(ctx, t);
-  else if (t >= DESK_END - 0.7 && t < DESK_END + 0.3) {
-    // Composite whole scenes, not individual primitives, to keep the matched
-    // character opaque while only its surroundings change.
-    deskShot(ctx, DESK_END - 0.7);
-    stageShot(transitionContext, DESK_END);
-    ctx.globalAlpha = smooth(seg(t, DESK_END - 0.7, DESK_END + 0.3));
-    ctx.drawImage(transition, 0, 0);
-  } else if (t < DESK_END) deskShot(ctx, t);
-  else if (t < STAGE_END) stageShot(ctx, t);
-  else endCard(ctx, Math.min(t, END));
+  if (t < DESK_END) deskShot(ctx, t);
+  else if (t < CREW_END) crewShot(ctx, t);
+  else coverShot(ctx, Math.min(t, END));
   ctx.restore();
 }

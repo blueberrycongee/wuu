@@ -4,6 +4,7 @@ import icon from "../../../assets/app-icon-source.json";
 import { ENGINE_ICON_EVENODD, ENGINE_ICON_PATHS } from "../../src/renderer/EngineIcons";
 import { WUU_MASCOT_NAME, WUU_MASCOT_TRAITS } from "../../src/renderer/wuu-mascot-spec";
 import { clamp, mixColor, outBack, outCubic, rad, smooth, type Eyes } from "./motion";
+import { cutout } from "./paper";
 
 type Ctx = CanvasRenderingContext2D;
 
@@ -61,7 +62,7 @@ export interface Ball {
   sx?: number; sy?: number; tilt?: number;
   yaw?: number; pitch?: number; roll?: number;
   eyes?: Eyes;
-  marks?: number; markAngle?: number; markColor?: string;
+  marks?: number | number[]; markAngle?: number; markColor?: string;
   skin?: Skin; gear?: Gear; engine?: string; sway?: number;
   sweat?: number; alpha?: number;
   /** Floor height for the contact shadow; omitted when the ball floats. */
@@ -72,6 +73,8 @@ export interface Ball {
   shadow?: number;
   /** Antenna growth from 0 (none) to 1 (full), for characters that sprout one. */
   antenna?: number;
+  /** Width of the white paper margin in pixels; 0 for a bare shape. */
+  rim?: number;
 }
 
 export function drawBall(ctx: Ctx, b: Ball) {
@@ -98,8 +101,11 @@ export function drawBall(ctx: Ctx, b: Ball) {
   ctx.save();
   ctx.globalAlpha *= b.bodyAlpha ?? 1;
   ctx.scale(r / 100, r / 100);
-  ctx.fillStyle = skin.body;
-  ctx.fill(form.path);
+  // Bodies are paper cut-outs: a scissor margin and a hard shadow sized in
+  // screen pixels, whatever the character's radius.
+  const k = 100 / r;
+  const rim = b.rim ?? Math.min(7, 2 + r * 0.05);
+  cutout(ctx, form.path, skin.body, { rim: rim * k, dx: rim * 0.7 * k, dy: rim * k, grain: 0.45 });
   ctx.restore();
   drawFace(ctx, r, b, skin);
   if (b.gear) drawGear(ctx, r, form.ry);
@@ -202,12 +208,15 @@ function capsule(ctx: Ctx, x: number, y: number, w: number, h: number) {
   ctx.fill();
 }
 
-/** The icon's three greeting strokes, popping out one after another. */
-export function drawMarks(ctx: Ctx, r: number, angle: number, amount: number, color: string) {
+/**
+ * The icon's three greeting strokes, popping out one after another. A list
+ * gives each stroke its own progress, so each can land on its own note.
+ */
+function drawMarks(ctx: Ctx, r: number, angle: number, amount: number | number[], color: string) {
   const k = r / icon.radius;
   ctx.fillStyle = color;
   icon.marks.forEach((mark, i) => {
-    const p = clamp(amount * 1.6 - i * 0.3);
+    const p = typeof amount === "number" ? clamp(amount * 1.6 - i * 0.3) : clamp(amount[i]);
     if (p <= 0) return;
     const e = outBack(p);
     const a = rad(angle + (i - 1) * icon.fanSpread);
@@ -288,7 +297,7 @@ function drawGear(ctx: Ctx, r: number, ry: number) {
   ctx.restore();
 }
 
-export function drawShadow(ctx: Ctx, x: number, y: number, rx: number, lift: number) {
+function drawShadow(ctx: Ctx, x: number, y: number, rx: number, lift: number) {
   const k = 1 - clamp(lift) * 0.55;
   ctx.fillStyle = `rgba(35, 38, 37, ${0.1 * k})`;
   ctx.beginPath();
@@ -296,7 +305,7 @@ export function drawShadow(ctx: Ctx, x: number, y: number, rx: number, lift: num
   ctx.fill();
 }
 
-export function drawSweat(ctx: Ctx, x: number, y: number, s: number, alpha: number) {
+function drawSweat(ctx: Ctx, x: number, y: number, s: number, alpha: number) {
   if (alpha <= 0) return;
   ctx.save();
   ctx.globalAlpha *= alpha;
@@ -312,7 +321,7 @@ export function drawSweat(ctx: Ctx, x: number, y: number, s: number, alpha: numb
 // ---------------------------------------------------------------------------
 // Props and interface pieces
 
-export function sparklePath(ctx: Ctx, x: number, y: number, outer: number, inner: number) {
+function sparklePath(ctx: Ctx, x: number, y: number, outer: number, inner: number) {
   ctx.moveTo(x, y - outer);
   ctx.quadraticCurveTo(x + inner, y - inner, x + outer, y);
   ctx.quadraticCurveTo(x + inner, y + inner, x, y + outer);
@@ -345,6 +354,8 @@ export const TITLE_BAR = 44;
 export interface Win {
   x: number; y: number; w: number; h: number; theme: Theme;
   engine?: string; scale?: number; tilt?: number; alpha?: number;
+  /** Paper margin in screen pixels. */
+  rim?: number;
 }
 
 /**
@@ -363,19 +374,11 @@ export function drawWindow(ctx: Ctx, win: Win, content?: (ctx: Ctx, w: number, h
   ctx.rotate(rad(win.tilt ?? 0));
   ctx.scale(scale, scale);
   ctx.translate(-w / 2, -h / 2);
+  const frame = new Path2D();
+  frame.roundRect(0, 0, w, h, radius);
+  cutout(ctx, frame, theme.bg, { rim: (win.rim ?? 7) / scale, dx: 6 / scale, dy: 9 / scale, grain: 0.7 });
   ctx.save();
-  ctx.shadowColor = "rgba(30, 35, 34, 0.045)";
-  ctx.shadowBlur = 16;
-  ctx.shadowOffsetY = 6;
-  ctx.fillStyle = theme.bg;
-  ctx.beginPath();
-  ctx.roundRect(0, 0, w, h, radius);
-  ctx.fill();
-  ctx.restore();
-  ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(0, 0, w, h, radius);
-  ctx.clip();
+  ctx.clip(frame);
   ctx.fillStyle = theme.bar;
   ctx.fillRect(0, 0, w, TITLE_BAR);
   [0, 1, 2].forEach((i) => {
@@ -448,32 +451,5 @@ export function drawRipple(ctx: Ctx, x: number, y: number, p: number, color = IN
   ctx.beginPath();
   ctx.arc(x, y, 10 + 44 * outCubic(p), 0, Math.PI * 2);
   ctx.stroke();
-  ctx.restore();
-}
-
-/** Speech bubble with waiting dots: an agent asking for attention. */
-export function drawBubble(ctx: Ctx, x: number, y: number, s: number, time: number, color = "#FFFFFF", dot = INK) {
-  if (s <= 0.01) return;
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(s, s);
-  ctx.shadowColor = "rgba(80, 58, 30, 0.18)";
-  ctx.shadowBlur = 12;
-  ctx.shadowOffsetY = 4;
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.roundRect(-38, -52, 76, 42, 21);
-  ctx.moveTo(-10, -12);
-  ctx.lineTo(-18, 0);
-  ctx.lineTo(4, -12);
-  ctx.fill();
-  ctx.shadowColor = "transparent";
-  ctx.fillStyle = dot;
-  for (let i = 0; i < 3; i++) {
-    const bounce = Math.max(0, Math.sin(time * 9 - i * 0.9)) * 5;
-    ctx.beginPath();
-    ctx.arc(-16 + i * 16, -31 - bounce, 5, 0, Math.PI * 2);
-    ctx.fill();
-  }
   ctx.restore();
 }

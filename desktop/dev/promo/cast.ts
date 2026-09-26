@@ -1,18 +1,17 @@
 import { agentSkin, drawSparkle, extent, THEMES, type Ball, type Gear, type Skin, type Theme } from "./art";
 import { AVATAR_HUES } from "../../src/renderer/DefaultAvatar";
-import { clamp, lerp, outBack, rad, smooth, type Hop } from "./motion";
+import { clamp, lerp, rad, type Hop } from "./motion";
+import { cutout, TOMATO, WHITE } from "./paper";
 
 export type Ctx = CanvasRenderingContext2D;
 export const W = 1920;
 export const H = 1080;
-export const DESK_HOME = { x: 1745, floor: 1012, r: 118 };
 
-export const CREAM = "#F5F5F2";
 export const NIGHT = "#15161A";
-export const CORAL = "#CA9A86";
-export const SUN = "#CCB780";
-export const MINT = "#90AFA0";
-export const SKY = "#9AAEBF";
+const CORAL = "#CA9A86";
+const SUN = "#CCB780";
+const MINT = "#90AFA0";
+const SKY = "#9AAEBF";
 
 // Each harness uses the product's shape and palette rules, with an
 // antenna carrying the engine's own mark, so no caption is needed.
@@ -25,6 +24,9 @@ export const CODEX: Agent = { engine: "codex", skin: agentSkin(AVATAR_HUES[6], "
 export const CURSOR: Agent = { engine: "cursor", skin: agentSkin(AVATAR_HUES[8], "rounded-square"), theme: THEMES.lilac };
 export const OPENCODE: Agent = { engine: "opencode", skin: agentSkin(AVATAR_HUES[2], "diamond"), theme: THEMES.butter };
 export const PI: Agent = { engine: "pi", skin: agentSkin(AVATAR_HUES[4], "triangle"), theme: MINT_THEME, gear: "leaf" };
+export const DEVIN: Agent = { engine: "devin", skin: agentSkin(AVATAR_HUES[10], "rounded-square"), theme: THEMES.wuu };
+export const GROK: Agent = { engine: "grok", skin: agentSkin(AVATAR_HUES[3], "round"), theme: THEMES.wuu };
+export const HERMES: Agent = { engine: "hermes", skin: agentSkin(AVATAR_HUES[9], "capsule"), theme: THEMES.wuu };
 
 // ---------------------------------------------------------------------------
 // Staging
@@ -53,23 +55,12 @@ export function arc(p: number, x0: number, y0: number, x1: number, y1: number, h
   return [lerp(x0, x1, p), lerp(y0, y1, p) - Math.sin(p * Math.PI) * height];
 }
 
-/** Steady work that lands in small beats, like hammer taps. */
-export function stairs(u: number, n: number) {
-  const k = clamp(u) * n;
-  const whole = Math.floor(k);
-  return Math.min(1, (whole + smooth(k - whole)) / n);
-}
 
 // ---------------------------------------------------------------------------
 // Camera and transitions
 
 export interface Camera { x: number; y: number; zoom: number; rot?: number }
 
-/** Match the outgoing and incoming hero on screen while the setting dissolves. */
-export function matchCamera(ball: Ball): Camera {
-  const zoom = 135 / ball.r;
-  return { x: ball.x - 100 / zoom, y: ball.y - 160 / zoom, zoom };
-}
 
 export function withCamera(ctx: Ctx, cam: Camera, draw: () => void) {
   ctx.save();
@@ -105,33 +96,6 @@ export function drawSpinner(ctx: Ctx, x: number, y: number, r: number, t: number
   ctx.restore();
 }
 
-export function drawCheck(ctx: Ctx, x: number, y: number, r: number, p: number) {
-  if (p <= 0) return;
-  const s = outBack(clamp(p * 1.6));
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(s, s);
-  ctx.fillStyle = "#5FC79E";
-  ctx.beginPath();
-  ctx.arc(0, 0, r, 0, Math.PI * 2);
-  ctx.fill();
-  const draw = clamp(p * 2 - 0.5);
-  ctx.strokeStyle = "#FFFFFF";
-  ctx.lineWidth = r * 0.3;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.beginPath();
-  ctx.moveTo(-r * 0.42, 0);
-  const [mx, my] = [-r * 0.1, r * 0.32];
-  const [ex, ey] = [r * 0.46, -r * 0.34];
-  if (draw < 0.4) ctx.lineTo(lerp(-r * 0.42, mx, draw / 0.4), lerp(0, my, draw / 0.4));
-  else {
-    ctx.lineTo(mx, my);
-    ctx.lineTo(lerp(mx, ex, (draw - 0.4) / 0.6), lerp(my, ey, (draw - 0.4) / 0.6));
-  }
-  ctx.stroke();
-  ctx.restore();
-}
 
 /** Little stars circling a dazed head. */
 export function drawDaze(ctx: Ctx, x: number, y: number, rx: number, t: number, alpha: number) {
@@ -142,18 +106,51 @@ export function drawDaze(ctx: Ctx, x: number, y: number, rx: number, t: number, 
   }
 }
 
-/** Three rising dots: the wordless "hmm…". */
-export function drawThinking(ctx: Ctx, x: number, y: number, s: number, p: number) {
-  [0, 1, 2].forEach((i) => {
-    const k = clamp(p * 3 - i);
-    if (k <= 0) return;
-    const r = (9 + i * 6) * s * outBack(k);
-    ctx.fillStyle = "#FFFFFF";
-    ctx.strokeStyle = "rgba(60, 50, 40, 0.18)";
-    ctx.lineWidth = 3 * s;
+
+const STEEL = "#C9CDD1";
+const PIVOT = "#4A4B50";
+
+/**
+ * Paper scissors pointing along +x from the pivot at (x, y). `open` is the
+ * angle between the blades in degrees; 0 is shut.
+ */
+export function drawScissors(ctx: Ctx, x: number, y: number, size: number, angle: number, open: number) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rad(angle));
+  ctx.scale(size / 100, size / 100);
+  for (const side of [-1, 1]) {
+    ctx.save();
+    ctx.rotate(rad((side * open) / 2));
+    const blade = new Path2D();
+    blade.moveTo(-6, side * 5);
+    blade.quadraticCurveTo(40, side * 9, 98, side * 1.5);
+    blade.lineTo(98, 0);
+    blade.quadraticCurveTo(40, -side * 2, -6, -side * 4);
+    blade.closePath();
+    cutout(ctx, blade, STEEL, { rim: 2.5, dx: 2, dy: 3 });
+    ctx.strokeStyle = PIVOT;
+    ctx.lineWidth = 1.6;
+    ctx.stroke(blade);
+    // Handle: a finger loop on a short shank, cut from red card.
+    const handle = new Path2D();
+    handle.moveTo(-4, side * 2);
+    handle.lineTo(-22, side * 12);
+    handle.lineTo(-16, side * 18);
+    handle.lineTo(2, side * 7);
+    handle.closePath();
+    handle.ellipse(-36, side * 18, 20, 14, rad(side * -18), 0, Math.PI * 2);
+    cutout(ctx, handle, TOMATO, { rim: 2.5, dx: 2, dy: 3, grain: 0.6 });
+    // The finger hole keeps its white margin, as a cut-out would.
+    ctx.fillStyle = WHITE;
     ctx.beginPath();
-    ctx.arc(x + i * 34 * s, y - i * 40 * s, r, 0, Math.PI * 2);
+    ctx.ellipse(-36, side * 18, 10, 6, rad(side * -18), 0, Math.PI * 2);
     ctx.fill();
-    ctx.stroke();
-  });
+    ctx.restore();
+  }
+  ctx.fillStyle = PIVOT;
+  ctx.beginPath();
+  ctx.arc(0, 0, 4.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 }

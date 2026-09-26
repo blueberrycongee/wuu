@@ -9,38 +9,15 @@ export const rad = (deg: number) => (deg * Math.PI) / 180;
 /** Normalised progress of `t` through [a, b]. */
 export const seg = (t: number, a: number, b: number) => clamp((t - a) / (b - a));
 
-export const linear: Ease = (t) => t;
 export const smooth: Ease = (t) => t * t * (3 - 2 * t);
 export const inOut: Ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 export const outCubic: Ease = (t) => 1 - Math.pow(1 - t, 3);
 export const inCubic: Ease = (t) => t * t * t;
-export const outQuart: Ease = (t) => 1 - Math.pow(1 - t, 4);
 export const outBack: Ease = (t) => {
   const c = 0.35, u = t - 1;
   return 1 + (c + 1) * u * u * u + c * u * u;
 };
-export const inBack: Ease = (t) => 2.70158 * t * t * t - 1.70158 * t * t;
-/** Settles with a couple of soft wobbles; good for things that snap into place. */
-export const outElastic: Ease = (t) =>
-  t <= 0 ? 0 : t >= 1 ? 1 : Math.pow(2, -9 * t) * Math.sin((t * 10 - 0.75) * ((2 * Math.PI) / 3.2)) + 1;
 
-/**
- * Piecewise keyframes: [[time, value, ease?], ...]. The ease on a key shapes
- * the segment that arrives at it. Values hold before the first and after the
- * last key.
- */
-export type Key = [number, number, Ease?];
-export function keys(t: number, frames: Key[]): number {
-  if (t <= frames[0][0]) return frames[0][1];
-  for (let i = 1; i < frames.length; i++) {
-    const [t1, v1, ease = inOut] = frames[i];
-    if (t <= t1) {
-      const [t0, v0] = frames[i - 1];
-      return lerp(v0, v1, ease(seg(t, t0, t1)));
-    }
-  }
-  return frames[frames.length - 1][1];
-}
 
 export interface Hop { lift: number; sx: number; sy: number }
 const REST: Hop = { lift: 0, sx: 1, sy: 1 };
@@ -72,7 +49,7 @@ export function squash(t: number, at: number, amount = 0.18, duration = 0.45): {
 }
 
 /** Eyelid openness for a list of blink moments. */
-export function blinks(t: number, moments: number[], duration = 0.18): number {
+function blinks(t: number, moments: number[], duration = 0.18): number {
   for (const m of moments) {
     const p = (t - m) / duration;
     if (p > 0 && p < 1) return p < 0.4 ? 1 - 0.92 * smooth(p / 0.4) : 0.08 + 0.92 * smooth((p - 0.4) / 0.6);
