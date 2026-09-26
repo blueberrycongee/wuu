@@ -538,6 +538,7 @@ func (s *Server) loadPersistedThreadSnapshot(id string) (persistedThreadSnapshot
 }
 
 type forkSourceThread struct {
+	liveHistory    bool
 	history        []providers.ChatMessage
 	displayHistory []providers.ChatMessage
 	rawHistory     []persistedMessage
@@ -593,7 +594,7 @@ func (s *Server) handleThreadFork(req Request) error {
 	if errors.Is(err, errForkTargetNotFound) {
 		history, err = forkHistoryAtTargetWithIdentity(source.history, source.thread.ID, source.thread.Turns, params.TurnID, params.ItemID, target)
 	}
-	if errors.Is(err, errForkTargetNotFound) {
+	if errors.Is(err, errForkTargetNotFound) && source.liveHistory {
 		if liveTurn, ok := turnByID(source.thread.Turns, strings.TrimSpace(params.TurnID)); ok {
 			base := source.history
 			if len(source.rawHistory) > 0 {
@@ -851,8 +852,10 @@ func (s *Server) handleThreadEditMessage(req Request) error {
 func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThread, error) {
 	if th := s.thread(id); th != nil {
 		th.mu.Lock()
+		defer th.mu.Unlock()
 		s.restorePluginToolLabels(th.Turns)
 		source := forkSourceThread{
+			liveHistory:    th.running || !th.PersistHistory,
 			history:        cloneHistory(th.History),
 			displayHistory: cloneHistory(th.History),
 			modelProvider:  th.ModelProvider,
@@ -865,15 +868,19 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 			cwd:            th.CWD,
 			thread:         th.snapshotLocked(),
 		}
-		persisted := th.PersistHistory
-		th.mu.Unlock()
-		if persisted {
+		if th.PersistHistory {
 			loaded, err := s.loadPersistedThreadSnapshot(id)
 			if err != nil {
 				return forkSourceThread{}, err
 			}
 			source.displayHistory = chatMessagesFromPersistedMessages(loaded.displayHistory)
 			source.rawHistory = loaded.rawHistory
+			// An idle cache may predate an edit made by another connection.
+			// Only this connection's executing turn can supply unpersisted
+			// history. Holding th.mu keeps that ownership stable during loading.
+			if !source.liveHistory {
+				source.history = loaded.history
+			}
 		}
 		return source, nil
 	}

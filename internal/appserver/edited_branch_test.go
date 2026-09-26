@@ -154,3 +154,83 @@ func TestEditedBranchSurvivesReloadAndFork(t *testing.T) {
 		})
 	}
 }
+
+// A second connection can cache a legitimate target before another connection
+// edits it. Durable branch state must win over every cached-history fallback.
+func TestEditedBranchRejectsForkFromStaleConnection(t *testing.T) {
+	for _, wholeBranch := range []bool{false, true} {
+		t.Run(fmt.Sprintf("whole_branch_%t", wholeBranch), func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			writerOut, readerOut := &lockedBuffer{}, &lockedBuffer{}
+			writer, reader := New(rt, writerOut), New(rt, readerOut)
+			t.Cleanup(writer.Close)
+			t.Cleanup(reader.Close)
+			sess, err := session.CreateWithMetadata(rt.SessionDir, "stale-fork", rt.RootDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			initial := []providers.ChatMessage{{Role: "user", Content: "kept prompt"}, {Role: "assistant", Content: "kept answer", Phase: providers.MessagePhaseFinalAnswer}, {Role: "user", Content: "obsolete prompt"}, {Role: "assistant", Content: "obsolete answer", Phase: providers.MessagePhaseFinalAnswer}}
+			if err := rewriteChatHistory(rt.SessionDir, sess.ID, initial); err != nil {
+				t.Fatal(err)
+			}
+			rpc := func(server *Server, out *lockedBuffer, id, method string, params any) map[string]any {
+				t.Helper()
+				payload, err := json.Marshal(map[string]any{"id": id, "method": method, "params": params})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := server.handleLine(context.Background(), payload); err != nil {
+					t.Fatal(err)
+				}
+				return responseByID(t, parseOutput(t, out.String()), id)
+			}
+			response := rpc(reader, readerOut, "cached", MethodThreadResume, map[string]any{"session_id": sess.ID, "response_only": true})
+			if response["error"] != nil {
+				t.Fatal(response["error"])
+			}
+			cached := remarshal[ThreadResumeResult](t, response["result"]).Thread
+			oldTurn, oldAnswer := finalAnswerItemForForkTest(t, cached.Turns, "obsolete answer")
+			params := ThreadForkParams{ThreadID: sess.ID, TurnID: oldTurn.ID, ItemID: oldAnswer.ID, Target: &ThreadForkTarget{Seq: oldAnswer.Seq, Type: oldAnswer.Type, SourceID: oldAnswer.SourceID}, Mode: "local"}
+			// The same cached target is valid before the edit.
+			control := rpc(reader, readerOut, "control", MethodThreadFork, params)
+			if control["error"] != nil {
+				t.Fatalf("unedited fork: %v", control["error"])
+			}
+			editTurn := cached.Turns[1]
+			if wholeBranch {
+				editTurn = cached.Turns[0]
+			}
+			edited := rpc(writer, writerOut, "edit", MethodThreadEditMessage, ThreadEditMessageParams{ThreadID: sess.ID, TurnID: editTurn.ID, ItemID: editTurn.Items[0].ID})
+			if edited["error"] != nil {
+				t.Fatal(edited["error"])
+			}
+			stale := rpc(reader, readerOut, "stale", MethodThreadFork, params)
+			if stale["error"] == nil {
+				t.Errorf("retracted target fork succeeded: %+v", stale["result"])
+			}
+			// Whole-thread forks have no target to validate and must also ignore cache.
+			fork := rpc(reader, readerOut, "current", MethodThreadFork, ThreadForkParams{ThreadID: sess.ID, Mode: "local"})
+			if fork["error"] != nil {
+				t.Fatal(fork["error"])
+			}
+			forked := remarshal[ThreadForkResult](t, fork["result"]).Thread
+			history, err := loadChatMessages(rt.SessionDir, forked.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, message := range history {
+				if message.Role == "user" || message.Role == "assistant" {
+					got = append(got, message.Content)
+				}
+			}
+			var want []string
+			if !wholeBranch {
+				want = []string{"kept prompt", "kept answer"}
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("whole fork history = %v, want %v", got, want)
+			}
+		})
+	}
+}
