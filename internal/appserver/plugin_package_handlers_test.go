@@ -88,6 +88,20 @@ func TestPluginDesktopModuleReadRequiresExactApprovedGeneration(t *testing.T) {
 		t.Fatalf("module payload = %+v", result)
 	}
 
+	rt.SafeMode = true
+	record := pluginPackageRecord(t, srv.currentExtensionInventory(), item.ID)
+	if record.Desktop == nil || record.ApprovalState != ExtensionApprovalGranted || record.Enabled == nil || !*record.Enabled {
+		t.Fatalf("safe mode must retain the approved desktop plugin for management: %+v", record)
+	}
+	callPluginPackageRPC(t, srv, "safe", MethodPluginDesktopModuleRead, PluginDesktopModuleReadParams{
+		ID: item.SubjectID, Fingerprint: item.Fingerprint,
+	})
+	safe := responseByID(t, parseOutput(t, out.String()), "safe")
+	if safe["error"] == nil || safe["result"] != nil {
+		t.Fatalf("safe mode returned executable desktop code: %+v", safe)
+	}
+	rt.SafeMode = false
+
 	writePluginPackageFile(t, entryPath, `export function activate() { throw new Error("changed"); }`)
 	callPluginPackageRPC(t, srv, "changed", MethodPluginDesktopModuleRead, PluginDesktopModuleReadParams{
 		ID: item.SubjectID, Fingerprint: item.Fingerprint,
