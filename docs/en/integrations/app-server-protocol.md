@@ -47,7 +47,7 @@ remain invalid; this is recovery behavior, not downgrade compatibility.
 
 | Method | Input | Result |
 | --- | --- | --- |
-| `thread/start` | Optional `cwd`, `workspace_id`, `engine`, `provider`, `model`, `effort`, `permission_mode`, `approve_for_me`, `ephemeral` | `{ "thread": ... }` |
+| `thread/start` | Optional `cwd`, `workspace_id`, `engine`, `provider`, `model`, `effort`, `permission_mode`, `approve_for_me`, `ephemeral`, `workspace`, `base_revision` | `{ "thread": ... }` |
 | `thread/resume` | Optional `session_id`, `response_only`, `history_page` | Thread snapshot and available held/pending user messages |
 | `thread/edit-message` | `thread_id`, `turn_id`, `item_id` | Rewound thread and draft restored from the selected user message |
 | `thread/fork` | `thread_id`; optional `turn_id`, `item_id`, `target`, `mode` | New thread and optional worktree information |
@@ -59,6 +59,15 @@ that cannot be restored after the server exits. Engine binding is fixed at
 creation. New external-engine sessions default to `unconfined` when permission
 mode is omitted; explicitly choose the intended mode. The built-in engine's
 `approve_for_me` review applies only in Standard mode.
+
+`workspace` is `shared` (the default) or `worktree`. A `worktree` session runs in
+a new detached Git worktree of the project, created from `base_revision` (a
+branch, tag, or commit; the project's `HEAD` when omitted) without checking
+anything out in the project. The thread's `cwd` is the worktree, and `worktree`
+reports its path, base commit, and base repository. `base_revision` requires
+`worktree`; ephemeral and handoff sessions cannot use it. A request that cannot
+be honored, such as outside a Git repository or with an unknown revision,
+fails without creating a session or a worktree.
 
 An omitted `session_id` in `thread/resume` selects the most recent visible session
 for the workspace. `response_only` avoids a duplicate resume broadcast to the

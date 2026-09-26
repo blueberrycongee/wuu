@@ -68,6 +68,24 @@ func (s *Server) handleThreadStart(req Request) error {
 	if workspaceID == "" {
 		workspaceID = s.rt.WorkspaceID
 	}
+	workspace := strings.TrimSpace(params.Workspace)
+	switch workspace {
+	case "", "shared":
+		if strings.TrimSpace(params.BaseRevision) != "" {
+			return s.writeResponse(req.ID, nil, errors.New(`base_revision requires workspace "worktree"`))
+		}
+	case "worktree":
+		// Only a persisted, non-handoff session records the binding that later
+		// turns, listing, and deletion use to find and reclaim the checkout.
+		if params.Ephemeral {
+			return s.writeResponse(req.ID, nil, errors.New("an ephemeral thread cannot own a worktree"))
+		}
+		if params.Handoff != nil {
+			return s.writeResponse(req.ID, nil, errors.New("a handoff thread starts in the shared workspace"))
+		}
+	default:
+		return s.writeResponse(req.ID, nil, fmt.Errorf("unsupported workspace %q", params.Workspace))
+	}
 	// Engine selection is a thread-creation decision; threads never silently
 	// switch engines afterwards. The registry is the source of truth: the
 	// built-in wuu engine plus any external engines this build hosts.
@@ -147,8 +165,41 @@ func (s *Server) handleThreadStart(req Request) error {
 	}
 	workspaceKind := workspaceKindForCWD(s.rt.WuuHome, threadCWD)
 	threadSource := ""
+	var threadWorktree session.WorktreeInfo
+	// Non-nil until the thread is registered; a failed start leaves neither a
+	// session nor a checkout behind.
+	var abandonWorktree func()
+	if workspace == "worktree" {
+		manager, err := s.worktreeManager(threadCWD)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		created, err := manager.OpenOrCreate(worktree.OpenOrCreateOptions{
+			SessionID:    id,
+			WorkerID:     "thread",
+			BaseRevision: strings.TrimSpace(params.BaseRevision),
+		})
+		if err != nil {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("worktree create: %w", err))
+		}
+		abandonWorktree = func() {
+			_, _ = session.Delete(s.rt.SessionDir, id)
+			_ = manager.Cleanup(created)
+		}
+		defer func() {
+			if abandonWorktree != nil {
+				abandonWorktree()
+			}
+		}()
+		threadWorktree = session.WorktreeInfo{Path: created.Path, BaseHEAD: created.HEAD, BaseRepo: threadCWD}
+		threadCWD = created.Path
+	}
 	if !params.Ephemeral {
-		if _, err := session.CreateWithMetadata(s.rt.SessionDir, id, threadCWD); err != nil {
+		if threadWorktree.Path != "" {
+			if _, err := session.CreateWithWorktree(s.rt.SessionDir, id, threadCWD, session.ForkMetadata{}, threadWorktree); err != nil {
+				return s.writeResponse(req.ID, nil, err)
+			}
+		} else if _, err := session.CreateWithMetadata(s.rt.SessionDir, id, threadCWD); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 		if err := session.WritePluginGenerationSnapshot(s.rt.SessionDir, id, s.rt.PluginGenerationSnapshot()); err != nil {
@@ -182,10 +233,14 @@ func (s *Server) handleThreadStart(req Request) error {
 	th.WorkspaceID = workspaceID
 	th.WorkspaceKind = workspaceKind
 	th.Ephemeral = params.Ephemeral
+	th.WorktreePath = threadWorktree.Path
+	th.WorktreeBaseHEAD = threadWorktree.BaseHEAD
+	th.WorktreeBaseRepo = threadWorktree.BaseRepo
 
 	s.mu.Lock()
 	s.threads[id] = th
 	s.mu.Unlock()
+	abandonWorktree = nil
 	s.startThreadPrewarm(th)
 
 	th.mu.Lock()

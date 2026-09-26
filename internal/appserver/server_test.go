@@ -6099,6 +6099,169 @@ INSERT INTO tool_invocations (
 	}
 }
 
+// newWorktreeTestServer builds a server whose runtime root is a Git repository
+// with the state directory, toolkit, and process manager that worktree-bound
+// threads resolve their isolated checkout through.
+func newWorktreeTestServer(t *testing.T, client *fakeClient) (*Server, *runtime.Session, *lockedBuffer) {
+	t.Helper()
+	rt := newTestRuntime(t, client)
+	initAppserverGitRepo(t, rt.RootDir)
+	stateDir := filepath.Join(rt.RootDir, ".wuu", "state")
+	rt.StateDir = stateDir
+	kit, err := tools.New(rt.RootDir)
+	if err != nil {
+		t.Fatalf("tools.New: %v", err)
+	}
+	kit.SetStateDir(stateDir)
+	rt.Toolkit = kit
+	rt.StreamRunner.Tools = kit
+	manager, err := process.NewManager(rt.RootDir, filepath.Join(stateDir, "runtime"))
+	if err != nil {
+		t.Fatalf("process.NewManager: %v", err)
+	}
+	rt.ProcessManager = manager
+	out := &lockedBuffer{}
+	return New(rt, out), rt, out
+}
+
+func appserverGitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func startThreadRequest(t *testing.T, id string, params ThreadStartParams) []byte {
+	t.Helper()
+	req, err := json.Marshal(map[string]any{"id": id, "method": MethodThreadStart, "params": params})
+	if err != nil {
+		t.Fatalf("marshal thread/start: %v", err)
+	}
+	return req
+}
+
+// A new conversation can start in its own worktree from another branch. The
+// shared checkout must keep its branch: choosing a start point is not a
+// checkout of the project the user and other conversations work in.
+func TestServerThreadStartInWorktree(t *testing.T) {
+	srv, rt, out := newWorktreeTestServer(t, &fakeClient{})
+	mainBranch := appserverGitOutput(t, rt.RootDir, "rev-parse", "--abbrev-ref", "HEAD")
+	appserverGitOutput(t, rt.RootDir, "switch", "-q", "-c", "feature")
+	if err := os.WriteFile(filepath.Join(rt.RootDir, "feature.txt"), []byte("feature\n"), 0o644); err != nil {
+		t.Fatalf("write feature file: %v", err)
+	}
+	appserverGitOutput(t, rt.RootDir, "add", "feature.txt")
+	appserverGitOutput(t, rt.RootDir, "commit", "-q", "-m", "feature")
+	featureHead := appserverGitOutput(t, rt.RootDir, "rev-parse", "HEAD")
+	appserverGitOutput(t, rt.RootDir, "switch", "-q", mainBranch)
+
+	if err := srv.handleLine(context.Background(), startThreadRequest(t, "1", ThreadStartParams{Workspace: "worktree", BaseRevision: "feature"})); err != nil {
+		t.Fatalf("thread/start: %v", err)
+	}
+	response := responseByID(t, parseOutput(t, out.String()), "1")
+	if response["error"] != nil {
+		t.Fatalf("thread/start returned error: %+v", response["error"])
+	}
+	thread := remarshal[ThreadStartResult](t, response["result"]).Thread
+	if thread.Worktree == nil || thread.CWD == rt.RootDir || thread.CWD != thread.Worktree.Path {
+		t.Fatalf("thread should run from its worktree, got %+v", thread)
+	}
+	if thread.Worktree.BaseHEAD != featureHead || thread.Worktree.BaseRepo != rt.RootDir {
+		t.Fatalf("worktree should start from feature in the project, got %+v want head %s", thread.Worktree, featureHead)
+	}
+	if _, err := os.Stat(filepath.Join(thread.Worktree.Path, "feature.txt")); err != nil {
+		t.Fatalf("worktree should contain the start branch: %v", err)
+	}
+	if got := appserverGitOutput(t, rt.RootDir, "rev-parse", "--abbrev-ref", "HEAD"); got != mainBranch {
+		t.Fatalf("shared checkout moved to %q, want %q", got, mainBranch)
+	}
+
+	metadata, ok, err := session.Find(rt.SessionDir, thread.ID)
+	if err != nil {
+		t.Fatalf("find thread metadata: %v", err)
+	}
+	if !ok || metadata.CWD != thread.Worktree.Path || metadata.WorktreePath != thread.Worktree.Path ||
+		metadata.WorktreeBaseRepo != rt.RootDir || metadata.WorktreeBaseHEAD != featureHead {
+		t.Fatalf("worktree binding not persisted: ok=%v metadata=%+v", ok, metadata)
+	}
+
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"2","method":"thread/list"}`)); err != nil {
+		t.Fatalf("thread/list: %v", err)
+	}
+	list := remarshal[ThreadListResult](t, responseByID(t, parseOutput(t, out.String()), "2")["result"])
+	listed := false
+	for _, candidate := range list.Threads {
+		listed = listed || (candidate.ID == thread.ID && candidate.Worktree != nil)
+	}
+	if !listed {
+		t.Fatalf("thread/list should include the worktree thread under its project, got %+v", list.Threads)
+	}
+
+	threadRuntime, err := srv.ensureThreadRuntime(srv.thread(thread.ID))
+	if err != nil {
+		t.Fatalf("ensureThreadRuntime: %v", err)
+	}
+	if _, err := threadRuntime.Toolkit.Execute(context.Background(), providers.ToolCall{
+		Name:      "write_file",
+		Arguments: `{"path":"isolated.txt","content":"worktree only\n"}`,
+	}); err != nil {
+		t.Fatalf("write_file in worktree runtime: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(thread.Worktree.Path, "isolated.txt")); err != nil {
+		t.Fatalf("expected file in worktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rt.RootDir, "isolated.txt")); !os.IsNotExist(err) {
+		t.Fatalf("shared checkout should not contain the isolated file, stat err=%v", err)
+	}
+}
+
+// A worktree request that cannot be honored fails before any conversation or
+// checkout exists. None of these may fall back to a shared conversation.
+func TestServerThreadStartRejectsUnusableWorkspaceRequests(t *testing.T) {
+	srv, rt, out := newWorktreeTestServer(t, &fakeClient{})
+	cases := []struct {
+		name   string
+		params ThreadStartParams
+	}{
+		{name: "unknown workspace", params: ThreadStartParams{Workspace: "elsewhere"}},
+		{name: "start point without worktree", params: ThreadStartParams{BaseRevision: "HEAD"}},
+		{name: "ephemeral worktree", params: ThreadStartParams{Workspace: "worktree", Ephemeral: true}},
+		{name: "missing start point", params: ThreadStartParams{Workspace: "worktree", BaseRevision: "no-such-branch"}},
+	}
+	for index, tc := range cases {
+		id := fmt.Sprintf("reject-%d", index)
+		if err := srv.handleLine(context.Background(), startThreadRequest(t, id, tc.params)); err != nil {
+			t.Fatalf("%s: thread/start: %v", tc.name, err)
+		}
+		if responseByID(t, parseOutput(t, out.String()), id)["error"] == nil {
+			t.Fatalf("%s: thread/start should fail", tc.name)
+		}
+	}
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"list","method":"thread/list"}`)); err != nil {
+		t.Fatalf("thread/list: %v", err)
+	}
+	if list := remarshal[ThreadListResult](t, responseByID(t, parseOutput(t, out.String()), "list")["result"]); len(list.Threads) != 0 {
+		t.Fatalf("rejected requests created threads: %+v", list.Threads)
+	}
+	if worktrees := appserverGitOutput(t, rt.RootDir, "worktree", "list", "--porcelain"); strings.Count(worktrees, "worktree ") != 1 {
+		t.Fatalf("rejected requests left worktrees:\n%s", worktrees)
+	}
+
+	plain := newTestRuntime(t, &fakeClient{})
+	plainOut := &lockedBuffer{}
+	plainSrv := New(plain, plainOut)
+	if err := plainSrv.handleLine(context.Background(), startThreadRequest(t, "1", ThreadStartParams{Workspace: "worktree"})); err != nil {
+		t.Fatalf("thread/start outside Git: %v", err)
+	}
+	if responseByID(t, parseOutput(t, plainOut.String()), "1")["error"] == nil {
+		t.Fatal("a worktree conversation outside a Git repository should fail")
+	}
+}
+
 func TestServerThreadForkToWorktree(t *testing.T) {
 	client := &fakeClient{
 		responses: []providers.ChatResponse{

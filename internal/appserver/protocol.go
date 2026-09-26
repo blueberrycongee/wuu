@@ -1296,6 +1296,13 @@ type ThreadStartParams struct {
 	Provider       string `json:"provider,omitempty"`
 	// Nil leaves the default unchanged; false explicitly disables approval review.
 	ApproveForMe *bool `json:"approve_for_me,omitempty"`
+	// Workspace is "shared" (the default) to work in the project directly, or
+	// "worktree" to start in an isolated Git worktree of it.
+	Workspace string `json:"workspace,omitempty"`
+	// BaseRevision is the branch, tag, or commit a worktree starts from; empty
+	// uses the project's current HEAD. It requires workspace "worktree" and
+	// never checks anything out in the shared project.
+	BaseRevision string `json:"base_revision,omitempty"`
 	// Handoff creates a seed-backed session from the current conversation.
 	// The destination model is explicit; the cutoff is fixed at submit time.
 	Handoff *ThreadHandoffParams `json:"handoff,omitempty"`

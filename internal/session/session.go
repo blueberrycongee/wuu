@@ -215,7 +215,8 @@ func CreateManagedForkWithMetadata(sessDir, id, cwd string, fork ForkMetadata, m
 	return createWithMetadata(sessDir, id, cwd, fork, managed)
 }
 
-// CreateWithWorktree initializes a forked session bound to an isolated git worktree.
+// CreateWithWorktree initializes a session bound to an isolated git worktree.
+// Fork metadata is empty for a conversation that starts in a new worktree.
 func CreateWithWorktree(sessDir, id, cwd string, fork ForkMetadata, worktree WorktreeInfo) (*Session, error) {
 	return createWithMetadataAndWorktree(sessDir, id, cwd, fork, worktree, ManagedMetadata{})
 }
