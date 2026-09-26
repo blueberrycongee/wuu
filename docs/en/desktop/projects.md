@@ -19,11 +19,11 @@ The lead uses the same tools and permission settings as an ordinary conversation
 
 ## A lead, an optional Side Agent, and Workers
 
-For sustained implementation, the lead can keep one persistent **Side Agent** and add scoped **Workers** for investigation, changes, or verification. The side can create workers too. Workers can communicate but cannot create more project sessions. These are roles on ordinary conversations: they share the same history, model settings, tools, worktrees, and user controls. Reusing a side preserves its context, including after a restart.
+For sustained implementation, the lead can keep one persistent **Side Agent** and add scoped **Workers** for investigation, changes, or verification. The side can create workers too; their completion reports go to both the side that dispatched them and the lead. Workers can communicate but cannot create more project sessions. These are roles on ordinary conversations: they share the same history, model settings, tools, worktrees, and user controls. Reusing a side preserves its context, including after a restart.
 
 The lead delegates goals, constraints, ownership boundaries, dependencies, and acceptance evidence. It should leave implementation decisions to the agent inspecting the code, which can challenge mistaken assumptions. Sessions do not see the lead's conversation: each needs a self-contained brief and relevant user instructions. The lead remains responsible for reviewing and verifying the combined result.
 
-Team members can message each other and the lead directly. Information waits until the recipient's next turn; a question or request can explicitly wake it. Messages preserve their sender and survive restarts. Important decisions should reach the lead, and a peer message does not grant additional user authorization. Human takeover invalidates queued messages involving that session; returning it does not replay those old requests.
+Team members can message each other and the lead directly. Information joins a running turn or waits until the recipient's next turn; a question or request can explicitly wake it. Messages preserve their sender and survive restarts. Important decisions should reach the lead, and a peer message does not grant additional user authorization. Human takeover invalidates queued messages involving that session; returning it does not replay those old requests.
 
 A new member inherits the lead's model unless a configured model alias is selected. Its model can then be changed using the ordinary conversation controls. No extra model or session runtime is introduced.
 

@@ -695,9 +695,20 @@ func TestProjectSideAndWorkersReuseOrdinarySessions(t *testing.T) {
 	if !requestToolNames(workerCall.request)["session"] {
 		t.Fatal("worker has no session communication tool")
 	}
+	if msg := lastUserRequestMessage(workerCall.request); msg.RelatedSessionID != side.ID {
+		t.Fatalf("worker lost its delegator: %+v", msg)
+	}
 	workerCall.response <- providersResponse("Verified.")
+	sideResult := calls.next(t, "Implement the team feature")
+	if msg := lastUserRequestMessage(sideResult.request); msg.RelatedSessionID != workerID || msg.Cause != projectCauseResult {
+		t.Fatalf("side did not receive worker completion: %+v", msg)
+	}
+	sideResult.response <- providersResponse("Worker verified implementation.")
+	side = waitForThread(t, srv, side.ID, func(th Thread) bool {
+		return th.LatestCompletedTurnID != side.LatestCompletedTurnID && th.Status == ThreadStatusIdle
+	})
 	worker := waitForThread(t, srv, workerID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
-	settleCoordinator(t, srv, calls, lead.ID, "Build the team feature", "Verified.", projectResultClientID(worker.ID, worker.LatestCompletedTurnID))
+	settleCoordinator(t, srv, calls, lead.ID, "Build the team feature", "Verified.", projectResultClientID(worker.ID, worker.LatestCompletedTurnID), projectResultClientID(side.ID, side.LatestCompletedTurnID))
 	if worker.ParentID != "" || worker.ProjectID != lead.ID || worker.ProjectRole != "worker" {
 		t.Fatalf("worker is not an ordinary project session: %+v", worker)
 	}
@@ -810,6 +821,35 @@ func TestProjectPeerInboxRecoversWithoutDuplicateDelivery(t *testing.T) {
 	reopened.recoverProjectInbox()
 	if ids := deliveredClientIDs(t, rt, lead.ID, clientID); len(ids) != 1 {
 		t.Fatalf("recovered message occurrences: %v", ids)
+	}
+	calls.assertIdle(t)
+}
+
+// A message admitted while the recipient is waiting on its model is still
+// pending input; taking over its sender must revoke it before consumption.
+func TestProjectPeerSteerDoesNotOutliveSenderControl(t *testing.T) {
+	srv, client, calls, rt := newProjectFixture(t)
+	lead := startProject(t, client, "Steering fence")
+	view, err := srv.projectSessionHandler(lead.ID)(context.Background(), "sender", tools.ProjectSessionRequest{Action: "create", Prompt: "Inspect steering"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls.next(t, "Inspect steering").response <- providersResponse("Sender ready.")
+	sender := waitForThread(t, srv, view.(projectSessionView).SessionID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
+	settleCoordinator(t, srv, calls, lead.ID, "Sender ready.", "Ready.", projectResultClientID(sender.ID, sender.LatestCompletedTurnID))
+	var turn TurnStartResult
+	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: lead.ID, Prompt: "Wait for the current model response"}, &turn)
+	held := calls.next(t, "Wait for the current model response")
+	if _, err := srv.projectSessionHandler(sender.ID)(context.Background(), "revoked-steer", tools.ProjectSessionRequest{Action: "message", SessionID: lead.ID, Prompt: "Revoked peer input"}); err != nil {
+		t.Fatal(err)
+	}
+	srv.drainSessionInbox(lead.ID)
+	takeProjectSession(t, client, sender.ID, sender.SessionControl.Revision)
+	srv.drainSessionInbox(lead.ID)
+	held.response <- providersResponse("Current work done.")
+	settleCoordinator(t, srv, calls, lead.ID, "Sender ready.", "Noted takeover.", projectControlClientID(sender.ID, sender.SessionControl.Revision+1))
+	if ids := deliveredClientIDs(t, rt, lead.ID, "project-message:"+sender.ID+":revoked-steer"); len(ids) != 0 {
+		t.Fatalf("revoked peer steer reached the model: %v", ids)
 	}
 	calls.assertIdle(t)
 }

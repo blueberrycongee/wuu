@@ -1,6 +1,7 @@
 package session
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -146,4 +147,32 @@ func InboxHas(dir, clientID string) (bool, error) {
 	var found bool
 	err = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM session_inbox WHERE client_id=?)`, clientID).Scan(&found)
 	return found, err
+}
+
+// ValidateInboxControls also fences input already admitted to an in-memory
+// steer queue. Its sender may be taken over before the recipient consumes it.
+func ValidateInboxControls(dir, clientID string) error {
+	db, ok, err := openStoreForScan(dir)
+	if err != nil || !ok {
+		return err
+	}
+	var encoded string
+	err = db.QueryRow(`SELECT controls_json FROM session_inbox WHERE client_id=?`, clientID).Scan(&encoded)
+	db.Close()
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var controls []Control
+	if err := json.Unmarshal([]byte(encoded), &controls); err != nil {
+		return err
+	}
+	for _, control := range controls {
+		if err := ValidateControl(dir, control); err != nil {
+			return err
+		}
+	}
+	return nil
 }

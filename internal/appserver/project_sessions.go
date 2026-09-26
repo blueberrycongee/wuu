@@ -76,7 +76,7 @@ func (s *Server) projectSessionHandler(actorID string) tools.ProjectSessionHandl
 			if !lead {
 				callID = actorID + ":" + callID
 			}
-			return s.createProjectSession(ctx, project, callID, request)
+			return s.createProjectSession(ctx, project, actor, callID, request)
 		case "message":
 			return s.messageProjectSession(actorID, callID, request)
 		case "send", "stop":
@@ -84,7 +84,7 @@ func (s *Server) projectSessionHandler(actorID string) tools.ProjectSessionHandl
 				return nil, errors.New("only the project lead controls other sessions; use message for peer communication")
 			}
 			if request.Action == "send" {
-				return s.sendProjectSession(ctx, project, "project:"+project.ID+":"+callID, request)
+				return s.sendProjectSession(ctx, project, actor, "project:"+project.ID+":"+callID, request)
 			}
 			if _, err := s.projectManagedSession(project.ID, request.SessionID); err != nil {
 				return nil, err
@@ -211,7 +211,7 @@ func (s *Server) projectSessionView(metadata session.Session) (projectSessionVie
 	return view, nil
 }
 
-func (s *Server) createProjectSession(ctx context.Context, project session.Session, callID string, request tools.ProjectSessionRequest) (any, error) {
+func (s *Server) createProjectSession(ctx context.Context, project, actor session.Session, callID string, request tools.ProjectSessionRequest) (any, error) {
 	role := firstNonEmpty(strings.TrimSpace(request.Role), "worker")
 	if role != "side" && role != "worker" {
 		return nil, errors.New("role must be side or worker")
@@ -292,12 +292,12 @@ func (s *Server) createProjectSession(ctx context.Context, project session.Sessi
 		return nil, err
 	}
 	s.publishSessionControl(th.ID)
-	return s.sendProjectSession(ctx, project, requestID, tools.ProjectSessionRequest{SessionID: th.ID, Prompt: prompt})
+	return s.sendProjectSession(ctx, project, actor, requestID, tools.ProjectSessionRequest{SessionID: th.ID, Prompt: prompt})
 }
 
 // sendProjectSession starts a turn or steers the running one. Input the
 // session cannot admit now fails instead of waiting in a volatile queue.
-func (s *Server) sendProjectSession(ctx context.Context, project session.Session, clientID string, request tools.ProjectSessionRequest) (any, error) {
+func (s *Server) sendProjectSession(ctx context.Context, project, actor session.Session, clientID string, request tools.ProjectSessionRequest) (any, error) {
 	prompt := strings.TrimSpace(request.Prompt)
 	if prompt == "" {
 		return nil, errors.New("send needs an instruction in prompt")
@@ -321,12 +321,15 @@ func (s *Server) sendProjectSession(ctx context.Context, project session.Session
 	if err != nil {
 		return nil, err
 	}
+	if _, _, _, err := s.projectActor(actor.ID); err != nil {
+		return nil, err
+	}
 	snapshot := turnRuntimeSnapshot{}.withPermissions(permissions)
 	snapshot.Control = &control
 	msg := providers.ChatMessage{
-		Role: "user", Content: prompt, ClientID: clientID, Name: project.Title,
+		Role: "user", Content: prompt, ClientID: clientID, Name: actor.Title,
 		Origin: pluginhost.SessionInputPlugin, Cause: "project",
-		PresentationKind: pluginhost.SessionPresentationSessionMessage, RelatedSessionID: project.ID, ReadOnly: true,
+		PresentationKind: pluginhost.SessionPresentationSessionMessage, RelatedSessionID: actor.ID, ReadOnly: true,
 	}
 	result, admitted, err := s.trySubmitSessionInput(ctx, th, msg, pluginhost.SessionIfRunningSteer, snapshot)
 	if err != nil {

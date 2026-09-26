@@ -13,7 +13,14 @@ import (
 
 var errSessionInputApplied = errors.New("session input is already durable")
 
-// trySubmitSessionInput is shared by extension sends and Collaboration. The
+func (s *Server) validateInboxInput(msg providers.ChatMessage) error {
+	if msg.Origin == pluginhost.SessionInputPlugin && (msg.Cause == "project_message" || msg.Cause == projectCauseResult) {
+		return session.ValidateInboxControls(s.rt.SessionDir, msg.ClientID)
+	}
+	return nil
+}
+
+// trySubmitSessionInput is shared by extension sends and project sessions. The
 // caller retains queued work in its own durable policy/outbox; acceptance and
 // steering use the same host runtime, execution lease and control fence.
 func (s *Server) trySubmitSessionInput(ctx context.Context, th *threadState, msg providers.ChatMessage, mode string, snapshot turnRuntimeSnapshot) (pluginhost.SessionSendResult, bool, error) {
@@ -177,6 +184,10 @@ func (s *Server) startSubmittedSessionTurn(ctx context.Context, th *threadState,
 func (s *Server) pruneRevokedSteersLocked(th *threadState) {
 	next := th.pendingSteers[:0]
 	for _, msg := range th.pendingSteers {
+		if err := s.validateInboxInput(msg); err != nil {
+			delete(th.pendingSteerControls, msg.ClientID)
+			continue
+		}
 		if c, ok := th.pendingSteerControls[msg.ClientID]; ok {
 			if err := session.ValidateControl(s.rt.SessionDir, c); err != nil {
 				delete(th.pendingSteerControls, msg.ClientID)

@@ -3580,6 +3580,10 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		th.mu.Unlock()
 		cancel()
 	}
+	if err := s.validateInboxInput(userMsg); err != nil {
+		abortAdmission()
+		return startedThreadTurn{}, false, err
+	}
 	if snapshot.Control != nil {
 		if err := session.ValidateControl(s.rt.SessionDir, *snapshot.Control); err != nil {
 			abortAdmission()
