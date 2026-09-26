@@ -2105,9 +2105,25 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   background: var(--paper);
 }
 
-/* The extensions catalog is a .settings-page: the same UI-text column, page
- * header, and section rhythm as Settings, so a plugin's status reads the
- * same here as a model service's does there. */
+/* Keep the settings column and type hierarchy; the catalog uses open lists
+ * because each row is a destination rather than an inline settings form. */
+.skills-catalog {
+  --settings-gap: var(--space-6);
+}
+
+.catalog-header {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.skills-catalog .settings-group {
+  border: 0;
+  padding: 0;
+}
+
+.skills-catalog .settings-section {
+  gap: var(--space-2);
+}
 
 .catalog-search {
   display: flex;
@@ -2149,20 +2165,19 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   padding: var(--compact-padding-block) var(--compact-padding-inline);
 }
 
-/* One row anatomy for plugins and skills, matching the settings service
- * rows: mark, name over a one-line description, trailing status or source,
- * and a disclosure chevron. The chevron owns the last column, so trailing
- * labels end on one axis whether or not a row has one. */
+/* The chevron owns the last column, so trailing labels end on one axis
+ * whether or not a row has one. */
 .catalog-row {
   display: grid;
   width: 100%;
   min-width: 0;
-  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  min-height: calc(var(--control-field-height) + var(--space-2) * 2);
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: var(--space-3);
   border: 0;
-  padding: var(--space-3) 0;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
   background: transparent;
   color: var(--ink);
   cursor: pointer;
@@ -2170,16 +2185,16 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   text-align: left;
 }
 
-.catalog-row + .catalog-row {
-  border-top: 1px solid var(--hairline-soft);
+.catalog-row:hover {
+  background: var(--surface-2);
+}
+
+html[data-focus-modality="keyboard"] .catalog-row:focus-visible {
+  outline-offset: -2px;
 }
 
 .catalog-row > .settings-disclosure-chevron {
   grid-column: 4;
-}
-
-.catalog-row:hover .settings-disclosure-chevron {
-  color: var(--ink);
 }
 
 .catalog-row-copy {
@@ -2188,7 +2203,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   gap: 2px;
 }
 
-.catalog-row-title,
 .catalog-row-description {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2196,6 +2210,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 }
 
 .catalog-row-title {
+  overflow-wrap: anywhere;
   color: var(--ink);
   font-size: var(--font-ui);
   line-height: 1.4;
@@ -2214,7 +2229,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   white-space: nowrap;
 }
 
-/* The mark tile takes the settings row mark footprint, so plugin glyphs,
+/* The mark takes the settings row mark footprint, so plugin glyphs,
  * skill marks, and package artwork sit in one column at any size. */
 .skill-artwork {
   display: grid;
@@ -2224,7 +2239,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   place-items: center;
   overflow: hidden;
   border-radius: var(--radius-xs);
-  background: var(--surface-2);
   color: var(--ink);
 }
 
@@ -2241,7 +2255,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 
 /* In a narrow column the trailing label moves under the description, so
  * the name keeps the width it needs. */
-@container settings-page (max-width: 32em) {
+@container settings-page (max-width: 40em) {
   .catalog-row {
     grid-template-columns: auto minmax(0, 1fr) auto;
     row-gap: var(--space-1);
@@ -2251,10 +2265,21 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
     grid-column: 2;
     grid-row: 2;
     justify-self: start;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .catalog-row-description {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .catalog-row > .settings-disclosure-chevron {
     grid-column: 3;
+    grid-row: 1;
   }
 }
 
@@ -2267,37 +2292,49 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   padding-top: 14px;
 }
 
-/* The plugin detail dialog reuses the skill-preview shell but keeps its own
- * rhythm: the identity block (artwork / name / description) is separated
- * from the body by a single hairline, and the body is a flex column with one
- * 16px gap — no stacked margins competing with the Modal grid gap. */
+/* Keep identity on one row and let description, details and actions span
+ * the dialog. The shared Modal still owns focus, dismissal and scrolling. */
 
 .skill-preview-dialog.plugin-detail-dialog {
   width: min(620px, calc(100vw - 64px));
   height: auto;
   max-height: min(84vh, 860px);
-  grid-template-rows: auto auto auto auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto auto;
   overflow: auto;
 }
 
 .skill-preview-dialog.plugin-detail-dialog .environment-dialog-header {
-  padding-bottom: 0;
+  display: contents;
 }
 
-.plugin-detail-dialog .environment-dialog-icon .skill-artwork {
-  width: round(up, calc(var(--font-ui) * 3), 2px);
-  height: round(up, calc(var(--font-ui) * 3), 2px);
-  box-shadow: var(--shadow-soft);
+.plugin-detail-dialog .environment-dialog-icon {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: start;
 }
 
-.plugin-detail-dialog .environment-dialog-icon .skill-artwork svg {
-  width: var(--icon-size-xl);
-  height: var(--icon-size-xl);
+.plugin-detail-dialog .skill-artwork {
+  width: var(--control-field-height);
+  height: var(--control-field-height);
+}
+
+.plugin-detail-dialog .environment-dialog-header > button {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: start;
 }
 
 .plugin-detail-dialog h2 {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.plugin-detail-dialog > :is(.environment-dialog-subtitle, .plugin-detail-body, .environment-dialog-footer) {
+  grid-column: 1 / -1;
 }
 
 .skill-preview-dialog.plugin-detail-dialog .environment-dialog-footer {
@@ -2400,9 +2437,9 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   line-height: 1.45;
 }
 
-/* Permissions are grouped by capability and rendered as readable chips;
+/* Permissions are grouped by capability and rendered as plain labels;
  * the raw manifest code stays available as a tooltip. Groups share one
- * label column sized by the longest label, so chips start on one edge in
+ * label column sized by the longest label, so permissions start on one edge in
  * every language and font size. */
 .plugin-permission-groups {
   display: grid;
@@ -2426,18 +2463,17 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-1) var(--space-3);
 }
 
 .plugin-permission-chip {
-  border: 1px solid var(--skills-section-border);
-  border-radius: var(--radius-pill);
-  padding: 1px 10px;
-  background: var(--wuu-badge-neutral-background, var(--skill-artwork-neutral-bg));
+  min-width: 0;
+  max-width: 100%;
   color: var(--ink-secondary);
   font-size: var(--font-sm);
-  line-height: 1.7;
-  white-space: nowrap;
+  line-height: 1.6;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* Path and fingerprint are diagnostic data, not trust information — they
