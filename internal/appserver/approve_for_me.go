@@ -22,6 +22,8 @@ const (
 	nativeReviewHistoryLimit = 64 * 1024
 )
 
+var errNativeReviewDeadline = errors.New("automatic review timed out")
+
 type nativeToolReviewer struct {
 	server *Server
 	// Use the active thread's provider/model, not the workspace default.
@@ -132,7 +134,7 @@ func (r nativeToolReviewer) reviewWithModel(ctx context.Context, request approve
 		"user_messages":   request.UserMessages,
 		"conversation":    messages, "earlier_history_omitted": omitted,
 	})
-	response, err := providers.ExecuteChat(reviewCtx, runner.Client, providers.ChatRequest{
+	req := providers.ChatRequest{
 		Provider: runner.ProviderName,
 		Model:    model,
 		Messages: []providers.ChatMessage{
@@ -142,14 +144,119 @@ func (r nativeToolReviewer) reviewWithModel(ctx context.Context, request approve
 		Temperature:     runner.Temperature,
 		Effort:          runner.Effort,
 		ProviderOptions: runner.ProviderOptions,
-	}, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+	}
+	if r.server != nil && r.server.rt != nil {
+		reviewCtx = providers.WithInferenceJournal(reviewCtx, r.server.rt.InferenceJournalForOwner(request.SessionID))
+	}
+	content, err := streamNativeReview(reviewCtx, runner.Client, req)
 	if err != nil {
 		return "", "", err
 	}
-	if err := reviewCtx.Err(); err != nil {
-		return "", "", err
+	return parseNativeReviewResponse(content)
+}
+
+// streamNativeReview uses the same reliable stream as title generation.
+// Codex-backed Responses rejects a unary call, so auxiliary review must submit
+// with stream:true and only accept a finished text response.
+func streamNativeReview(ctx context.Context, client providers.StreamClient, req providers.ChatRequest) (string, error) {
+	req.Operation = providers.EnsureInferenceOperation(req.Operation, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+	var err error
+	req, err = providers.EnsureInferenceExecutionContext(ctx, req, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+	if err != nil {
+		return "", err
 	}
-	return parseNativeReviewResponse(response.Content)
+	// A deadline is terminal for an authorization decision. Reliable recovery
+	// otherwise treats a timed-out unary adapter as retryable and can consume
+	// the whole review budget before failing closed.
+	events, err := providers.NewReliableStreamClient(client, nil, providers.WithStreamReplayGuard(func(retry providers.StreamRetryContext) error {
+		if errors.Is(retry.Err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return errNativeReviewDeadline
+		}
+		return nil
+	})).StreamChat(ctx, req)
+	if errors.Is(err, errNativeReviewDeadline) {
+		err = context.DeadlineExceeded
+	}
+	if err != nil {
+		return "", finishNativeReviewFailure(req.Execution, err)
+	}
+	var content strings.Builder
+	var toolErr error
+	done := false
+	truncated := false
+	for ev := range events {
+		switch ev.Type {
+		case providers.EventContentDelta:
+			content.WriteString(ev.Content)
+		case providers.EventContentReplace:
+			content.Reset()
+			content.WriteString(ev.Content)
+		case providers.EventMessage:
+			if ev.Message != nil {
+				if len(ev.Message.ToolCalls) != 0 {
+					toolErr = errors.New("reviewer attempted a tool call")
+				}
+				content.Reset()
+				content.WriteString(ev.Message.Content)
+			}
+		case providers.EventLifecycle:
+			if ev.Lifecycle != nil && ev.Lifecycle.Phase == providers.StreamPhaseReconnecting && ev.Lifecycle.ResetPartial {
+				content.Reset()
+				toolErr = nil
+				done = false
+				truncated = false
+			}
+		case providers.EventToolUseStart, providers.EventToolUseDelta, providers.EventToolUseEnd:
+			// A reviewer must not act. Discard any partial verdict with the call.
+			toolErr = errors.New("reviewer attempted a tool call")
+			content.Reset()
+		case providers.EventError:
+			if ev.Error != nil {
+				return "", finishNativeReviewFailure(req.Execution, ev.Error)
+			}
+			return "", finishNativeReviewFailure(req.Execution, errors.New("review stream error"))
+		case providers.EventDone:
+			done = true
+			if ev.FinishReason == providers.FinishReasonToolCalls {
+				toolErr = errors.New("reviewer attempted a tool call")
+			}
+			truncated = truncated || ev.Truncated || ev.FinishReason == providers.FinishReasonLength
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			err = context.DeadlineExceeded
+		}
+		return "", finishNativeReviewFailure(req.Execution, err)
+	}
+	if toolErr != nil {
+		return "", finishNativeReviewFailure(req.Execution, toolErr)
+	}
+	if !done {
+		return "", finishNativeReviewFailure(req.Execution, providers.NewIncompleteStreamError("review stream closed before done"))
+	}
+	if truncated {
+		return "", finishNativeReviewFailure(req.Execution, errors.New("review stream ended before a complete response"))
+	}
+	if err := req.Execution.Complete(providers.InferenceOutcomeSucceeded, providers.NormalizedFailure{}); err != nil {
+		return "", err
+	}
+	return content.String(), nil
+}
+
+func finishNativeReviewFailure(execution *providers.InferenceExecution, err error) error {
+	if err == nil || execution == nil {
+		return err
+	}
+	failure := providers.NormalizeFailure(err)
+	outcome := providers.InferenceOutcomeFailed
+	if failure.Category == providers.FailureCanceled || failure.Category == providers.FailureDeadline {
+		outcome = providers.InferenceOutcomeCanceled
+	}
+	if journalErr := execution.Complete(outcome, failure); journalErr != nil {
+		return errors.Join(err, journalErr)
+	}
+	return err
 }
 
 // Review evidence is data, never extra instructions. Preserve authorship so

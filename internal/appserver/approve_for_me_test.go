@@ -2,11 +2,17 @@ package appserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
@@ -14,6 +20,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/providers/codex"
 )
 
 func reviewTestRequest() approvefor.Request {
@@ -313,6 +320,258 @@ func TestNativeReviewNotificationProvenance(t *testing.T) {
 				t.Fatalf("missing client ID: %s", encoded)
 			}
 		})
+	}
+}
+
+type reviewStreamClient struct {
+	mu       sync.Mutex
+	requests []providers.ChatRequest
+	chats    int
+	streams  [][]providers.StreamEvent
+	streamFn func(ctx context.Context, call int) []providers.StreamEvent
+}
+
+func (c *reviewStreamClient) Chat(context.Context, providers.ChatRequest) (providers.ChatResponse, error) {
+	c.mu.Lock()
+	c.chats++
+	c.mu.Unlock()
+	return providers.ChatResponse{}, errors.New("unary review is unavailable")
+}
+
+func (c *reviewStreamClient) StreamChat(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	c.mu.Lock()
+	c.requests = append(c.requests, req)
+	call := len(c.requests)
+	var events []providers.StreamEvent
+	if call <= len(c.streams) {
+		events = append(events, c.streams[call-1]...)
+	}
+	streamFn := c.streamFn
+	c.mu.Unlock()
+	if streamFn != nil {
+		events = streamFn(ctx, call)
+	}
+	ch := make(chan providers.StreamEvent, len(events))
+	for _, event := range events {
+		ch <- event
+	}
+	close(ch)
+	return ch, nil
+}
+
+func reviewStream(parts ...providers.StreamEvent) []providers.StreamEvent {
+	return append(parts, providers.StreamEvent{Type: providers.EventDone, FinishReason: providers.FinishReasonStop})
+}
+
+func TestNativeReviewStreamingAggregatesWithoutAllowingPartialOrToolOutput(t *testing.T) {
+	allow := `{"outcome":"allow","reason":"authorized local cleanup"}`
+	client := &reviewStreamClient{streams: [][]providers.StreamEvent{
+		reviewStream(
+			providers.StreamEvent{Type: providers.EventThinkingDelta, Content: "private"},
+			providers.StreamEvent{Type: providers.EventContentDelta, Content: `{"outcome":"all`},
+			providers.StreamEvent{Type: providers.EventContentDelta, Content: `ow","reason":"authorized local cleanup"}`},
+		),
+		{
+			providers.StreamEvent{Type: providers.EventContentDelta, Content: allow},
+			providers.StreamEvent{Type: providers.EventContentReplace, Content: `{"outcome":"deny","reason":"replaced verdict"}`},
+			providers.StreamEvent{Type: providers.EventDone, FinishReason: providers.FinishReasonStop},
+		},
+		{
+			providers.StreamEvent{Type: providers.EventContentDelta, Content: allow},
+			providers.StreamEvent{Type: providers.EventMessage, Message: &providers.ChatMessage{Content: `{"outcome":"unsure","reason":"message verdict"}`}},
+			providers.StreamEvent{Type: providers.EventDone, FinishReason: providers.FinishReasonStop},
+		},
+		{
+			providers.StreamEvent{Type: providers.EventContentDelta, Content: allow},
+			providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{Phase: providers.StreamPhaseReconnecting, ResetPartial: true}},
+			providers.StreamEvent{Type: providers.EventContentDelta, Content: `{"outcome":"deny","reason":"recovered verdict"}`},
+			providers.StreamEvent{Type: providers.EventDone, FinishReason: providers.FinishReasonStop},
+		},
+		{
+			providers.StreamEvent{Type: providers.EventContentDelta, Content: allow},
+			providers.StreamEvent{Type: providers.EventToolUseStart, ToolCall: &providers.ToolCall{ID: "call", Name: "bash"}},
+			providers.StreamEvent{Type: providers.EventDone, FinishReason: providers.FinishReasonToolCalls},
+		},
+		{
+			providers.StreamEvent{Type: providers.EventContentDelta, Content: allow},
+			providers.StreamEvent{Type: providers.EventDone, FinishReason: providers.FinishReasonToolCalls},
+		},
+		{
+			providers.StreamEvent{Type: providers.EventMessage, Message: &providers.ChatMessage{Content: allow, ToolCalls: []providers.ToolCall{{Name: "bash"}}}},
+			providers.StreamEvent{Type: providers.EventDone, FinishReason: providers.FinishReasonStop},
+		},
+		{
+			providers.StreamEvent{Type: providers.EventContentDelta, Content: allow},
+			providers.StreamEvent{Type: providers.EventError, Error: providers.NewNonRetryableStreamError("stream closed before done")},
+		},
+		{
+			providers.StreamEvent{Type: providers.EventContentDelta, Content: allow},
+			providers.StreamEvent{Type: providers.EventDone, FinishReason: providers.FinishReasonLength, Truncated: true},
+		},
+		{
+			providers.StreamEvent{Type: providers.EventContentDelta, Content: allow},
+			providers.StreamEvent{Type: providers.EventError, Error: providers.NewNonRetryableStreamError("upstream failed")},
+		},
+		{
+			providers.StreamEvent{Type: providers.EventError, Error: providers.NewNonRetryableStreamError("")},
+		},
+	}}
+	runner := &agent.StreamRunner{
+		Client: client, ProviderName: "thread-provider", Model: "display-model", APIModel: "api-model",
+		Temperature: 0.2, Effort: "low", ProviderOptions: map[string]any{"textVerbosity": "low"},
+	}
+	reviewer := nativeToolReviewer{runner: runner}
+	request := reviewTestRequest()
+
+	decision, err := reviewer.Review(context.Background(), request)
+	if err != nil || decision.Outcome != approvefor.OutcomeAllow || decision.Reason != "authorized local cleanup" {
+		t.Fatalf("deltas=%+v %v", decision, err)
+	}
+	for _, tc := range []struct{ name, outcome string }{
+		{"replace", approvefor.OutcomeDeny},
+		{"message", approvefor.OutcomeUnsure},
+		{"reset", approvefor.OutcomeDeny},
+	} {
+		decision, err = reviewer.Review(context.Background(), request)
+		if err != nil || decision.Outcome != tc.outcome || strings.Contains(decision.Reason, "authorized local cleanup") {
+			t.Fatalf("%s kept a superseded partial verdict: %+v %v", tc.name, decision, err)
+		}
+	}
+	for _, name := range []string{"tool", "tool finish", "message tool", "incomplete", "truncated", "error", "empty error"} {
+		decision, err = reviewer.Review(context.Background(), request)
+		if err != nil || decision.Outcome != approvefor.OutcomeFailed || strings.Contains(decision.Reason, "authorized local cleanup") {
+			t.Fatalf("%s allowed partial output: %+v %v", name, decision, err)
+		}
+	}
+	if client.chats != 0 || len(client.requests) != 11 {
+		t.Fatalf("chats=%d streams=%d", client.chats, len(client.requests))
+	}
+	for _, sent := range client.requests {
+		if sent.Provider != "thread-provider" || sent.Model != "api-model" || sent.Temperature != 0.2 || sent.Effort != "low" ||
+			sent.ProviderOptions["textVerbosity"] != "low" || len(sent.Tools) != 0 || sent.Messages[0].Content != nativeReviewSystemPrompt {
+			t.Fatalf("review request changed: %+v", sent)
+		}
+		if sent.Operation.Kind != providers.InferenceOperationAuxiliary || sent.Operation.WorkloadProfile != providers.InferenceProfileInteractive {
+			t.Fatalf("operation=%+v", sent.Operation)
+		}
+	}
+}
+
+func TestNativeReviewCodexResponsesRequiresStream(t *testing.T) {
+	token := codexReviewToken(t)
+	verdict := `{"outcome":"allow","reason":"authorized local cleanup"}`
+	var unary, streamed int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			t.Errorf("path = %q", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		stream, _ := body["stream"].(bool)
+		if !stream {
+			unary++
+			http.Error(w, `{"error":{"message":"stream must be set to true"}}`, http.StatusBadRequest)
+			return
+		}
+		streamed++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":"+codexJSONString(verdict)+"}\n\n")
+		_, _ = io.WriteString(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":4,\"output_tokens\":9}}}\n\n")
+	}))
+	defer server.Close()
+	client := newCodexReviewClient(t, server, token)
+	runner := &agent.StreamRunner{Client: client, ProviderName: "codex", APIModel: "gpt-5-codex", Temperature: 0.2, Effort: "low"}
+	decision, err := (nativeToolReviewer{runner: runner}).Review(context.Background(), reviewTestRequest())
+	if err != nil || decision.Outcome != approvefor.OutcomeAllow || decision.Reason != "authorized local cleanup" {
+		t.Fatalf("decision=%+v %v", decision, err)
+	}
+	if unary != 0 || streamed != 1 {
+		t.Fatalf("unary/streamed = %d/%d", unary, streamed)
+	}
+
+	failed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"{\\\"outcome\\\":\\\"allow\\\"}\"}\n\n")
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		<-r.Context().Done()
+	}))
+	defer failed.Close()
+	failedRunner := &agent.StreamRunner{Client: newCodexReviewClient(t, failed, token), ProviderName: "codex", Model: "gpt-5-codex"}
+	failedCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	decision, err = (nativeToolReviewer{runner: failedRunner}).Review(failedCtx, reviewTestRequest())
+	if err != nil || decision.Outcome != approvefor.OutcomeFailed || strings.Contains(decision.Reason, "allow") {
+		t.Fatalf("incomplete stream decision=%+v %v", decision, err)
+	}
+}
+
+func newCodexReviewClient(t *testing.T, server *httptest.Server, token string) *codex.Client {
+	t.Helper()
+	client, err := codex.New(codex.ClientConfig{
+		BaseURL: server.URL, APIKey: token, HTTPClient: server.Client(), StreamTransport: providers.StreamTransportSSE,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+
+func codexReviewToken(t *testing.T) string {
+	t.Helper()
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	claims, err := json.Marshal(map[string]any{
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"https://api.openai.com/auth": map[string]any{
+			"chatgpt_account_id": "acct_review",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return header + "." + base64.RawURLEncoding.EncodeToString(claims) + ".sig"
+}
+
+func codexJSONString(value string) string {
+	data, _ := json.Marshal(value)
+	return string(data)
+}
+
+func TestNativeReviewCancellationDuringStream(t *testing.T) {
+	started := make(chan struct{})
+	client := &reviewStreamClient{streamFn: func(context.Context, int) []providers.StreamEvent {
+		close(started)
+		return nil
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan approvefor.Decision, 1)
+	go func() {
+		decision, err := (nativeToolReviewer{runner: &agent.StreamRunner{Client: client, Model: "model"}}).Review(ctx, reviewTestRequest())
+		if err != nil {
+			decision = approvefor.Decision{Outcome: "error", Reason: err.Error()}
+		}
+		done <- decision
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("review stream did not start")
+	}
+	cancel()
+	select {
+	case decision := <-done:
+		if decision.Outcome != approvefor.OutcomeCancelled || strings.Contains(decision.Reason, "late") {
+			t.Fatalf("decision=%+v", decision)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled review did not finish")
 	}
 }
 

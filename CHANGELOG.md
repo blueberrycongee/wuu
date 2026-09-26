@@ -28,6 +28,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Approve for me uses streaming review requests so Codex-backed conversations
+  can complete automatic checks; incomplete or interrupted reviews remain blocked.
+
 - Preserve sidebar folder and collaboration folds when returning from settings,
   including after switching between light and dark themes.
 
