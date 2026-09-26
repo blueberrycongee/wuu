@@ -972,6 +972,7 @@ export interface HostServiceContracts {
       model?: string;
       variant?: string;
       effort?: string;
+      speed?: string;
       permission_mode?: string;
       instructions?: string;
       tool_policy?: { allow?: string[]; deny?: string[] };

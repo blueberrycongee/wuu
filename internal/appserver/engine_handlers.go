@@ -359,6 +359,8 @@ func acpEngineModels(models []externalengine.DiscoveredModel) []EngineModelInfo 
 			DefaultEffort:    strings.TrimSpace(model.DefaultEffort),
 			SupportedEfforts: append([]string(nil), model.SupportedEfforts...),
 			IsDefault:        model.IsDefault,
+			FastMode:         model.FastMode,
+			DefaultSpeed:     model.DefaultSpeed,
 		})
 	}
 	return out
@@ -392,7 +394,25 @@ func codexEngineModels(models []codexengine.ModelListItem) []EngineModelInfo {
 				efforts = append(efforts, value)
 			}
 		}
+		fast := false
+		for _, tier := range model.ServiceTiers {
+			if tier.ID == "fast" || tier.ID == "priority" {
+				fast = true
+			}
+		}
+		if len(model.ServiceTiers) == 0 {
+			for _, tier := range model.AdditionalSpeedTiers {
+				if tier == "fast" {
+					fast = true
+				}
+			}
+		}
+		defaultSpeed := "standard"
+		if model.DefaultServiceTier == "fast" || model.DefaultServiceTier == "priority" {
+			defaultSpeed = "fast"
+		}
 		out = append(out, EngineModelInfo{
+			FastMode: fast, DefaultSpeed: defaultSpeed,
 			ID:               id,
 			DisplayName:      strings.TrimSpace(model.DisplayName),
 			DefaultEffort:    strings.TrimSpace(string(model.DefaultReasoningEffort)),
@@ -410,7 +430,7 @@ func claudeEngineModels() []EngineModelInfo {
 	efforts := []string{"low", "medium", "high", "xhigh", "max"}
 	return []EngineModelInfo{
 		{ID: "sonnet", DisplayName: "Sonnet", DefaultEffort: "high", SupportedEfforts: efforts, IsDefault: true},
-		{ID: "opus", DisplayName: "Opus", DefaultEffort: "high", SupportedEfforts: efforts},
+		{ID: "opus", DisplayName: "Opus", FastMode: true, DefaultEffort: "high", SupportedEfforts: efforts},
 		{ID: "haiku", DisplayName: "Haiku", DefaultEffort: "high", SupportedEfforts: efforts},
 	}
 }

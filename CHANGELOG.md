@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- The model popover has an independent Fast mode toggle and reset for supported
+  provider models and native or ACP engines. Conversation and draft selections
+  preserve speed separately from reasoning effort; `/fast` uses the same setting.
+
 - Click the conversation title in the title bar to rename it. An existing
   conversation saves immediately. A new conversation keeps the name when the
   first message creates the session.

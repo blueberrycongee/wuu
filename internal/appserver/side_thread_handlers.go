@@ -294,6 +294,7 @@ func (s *Server) mainThreadModelSelection(mainID string) runtime.ThreadModelSele
 			Model:          strings.TrimSpace(th.Model),
 			Variant:        strings.TrimSpace(th.ModelVariant),
 			Effort:         strings.TrimSpace(th.ModelEffort),
+			Speed:          th.Speed,
 			PermissionMode: strings.TrimSpace(th.PermissionMode),
 		}
 		th.mu.Unlock()
@@ -314,6 +315,7 @@ func (s *Server) mainThreadModelSelection(mainID string) runtime.ThreadModelSele
 		Model:          selection.Model,
 		Variant:        selection.Variant,
 		Effort:         selection.Effort,
+		Speed:          selection.Speed,
 		PermissionMode: selection.PermissionMode,
 	}
 }

@@ -110,3 +110,9 @@ Wuu 保留原始工具结果，并向模型提供稳定、有限的视图。普�
 如果能回复文字却不能使用工具，检查服务是否支持工具调用和流式响应。兼容某种 API 格式，不代表所有模型具备相同能力。
 
 提示词、选入上下文的内容、附件和工具结果可能通过配置的端点离开本机。费用与数据政策由服务商决定；使用网关时，请求会经过该网关。不要把真实 API key 写入项目文件或 Git 历史。
+
+## 模型浮层中的 Fast mode
+
+对于支持的 provider/model 组合，闪电按钮只修改处理速度，不切换模型或推理强度。速度按会话保存，也会记住新会话草稿的选择。重置会继承 provider 配置；显式关闭则覆盖配置中已开启的加速。也可以使用 `/fast on`、`/fast off` 和 `/fast status`。
+
+Wuu 会识别目录中共用同一 API 模型且声明了加速参数的别名，已有 `-fast` 模型选择继续有效。自定义服务确认其接口支持对应协议后，可显式设置 `providers.<provider>.models.<model>.fast_mode: true`；设为 `false` 可隐藏推断出的支持能力。OpenAI 兼容请求传递 `service_tier: "priority"` / `"default"`；Anthropic 请求传递 `speed: "fast"` / `"standard"`，仅启用加速时附带必需的 Fast mode beta 头。Anthropic 官方接口按其[文档中的支持模型（英文）](https://platform.claude.com/docs/en/build-with-claude/fast-mode)识别能力，兼容端点需自行声明。此选项不会把推理强度当作速度档位。

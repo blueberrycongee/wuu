@@ -435,10 +435,14 @@ func TestPluginSessionCreateIsIdempotentAndPrivateSessionsStayOutOfSearch(t *tes
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(srv.Close)
-	params := pluginhost.SessionCreateParams{RequestID: "same-create", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh}
+	params := pluginhost.SessionCreateParams{Speed: "fast", RequestID: "same-create", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh}
 	first, err := rt.PluginSessionRouter.Create(context.Background(), "dream", params)
 	if err != nil || !first.Created {
 		t.Fatalf("first create = %+v, %v", first, err)
+	}
+	saved, found, err := session.Find(rt.SessionDir, first.SessionID)
+	if err != nil || !found || saved.Speed != "fast" {
+		t.Fatalf("plugin speed selection was lost: %+v, %v", saved, err)
 	}
 	second, err := rt.PluginSessionRouter.Create(context.Background(), "dream", params)
 	if err != nil || second.Created || second.SessionID != first.SessionID {

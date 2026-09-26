@@ -94,6 +94,7 @@ func (e *Engine) SessionForThread(ctx context.Context, binding agentengine.Threa
 		rootDir:        firstNonEmpty(binding.RootDir, e.rootDir),
 		model:          binding.Model,
 		effort:         binding.Effort,
+		speed:          binding.Speed,
 		permissionMode: binding.PermissionMode,
 		instructions:   binding.Instructions,
 		mcpServers:     binding.MCPServers,
@@ -107,6 +108,7 @@ type sessionOptions struct {
 	rootDir        string
 	model          string
 	effort         string
+	speed          string
 	permissionMode string
 	instructions   string
 	mcpServers     []agentengine.MCPServer
@@ -123,6 +125,7 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 		rootDir:        opts.rootDir,
 		model:          opts.model,
 		effort:         opts.effort,
+		speed:          opts.speed,
 		permissionMode: opts.permissionMode,
 		instructions:   opts.instructions,
 		mcpServers:     append([]agentengine.MCPServer(nil), opts.mcpServers...),
@@ -140,6 +143,7 @@ type Session struct {
 	rootDir        string
 	model          string
 	effort         string
+	speed          string
 	permissionMode string
 	instructions   string
 	mcpServers     []agentengine.MCPServer
@@ -290,6 +294,13 @@ func (s *Session) spawn(ctx context.Context, sub *turnSubscription) (*Transport,
 	}
 	if effort := strings.TrimSpace(s.effort); effort != "" {
 		args = append(args, "--effort", effort)
+	}
+	if s.speed != "" {
+		settings, err := json.Marshal(map[string]bool{"fastMode": s.speed == "fast"})
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, "--settings", string(settings))
 	}
 	if ref != "" {
 		args = append(args, "--resume", ref)

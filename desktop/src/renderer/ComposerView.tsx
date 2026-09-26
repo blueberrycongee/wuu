@@ -1,4 +1,5 @@
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
+import { effectiveModelSpeed } from "./RuntimeHelpers";
 import {
   ChevronDown,
   ChevronUp,
@@ -45,7 +46,6 @@ import {
   isComposerTextComposing,
   nextEnabledSlashCommandIndex,
   parseComposerSlashDraft,
-  runtimeFastModelTarget,
   type ComposerSlashCommand,
   type ComposerSlashDraft
 } from "./ComposerSlashCommands";
@@ -180,6 +180,8 @@ export function Composer({
   engineLocked,
   engineModel,
   engineEffort,
+  engineSpeed,
+  onSelectSpeed,
   onSelectEngine,
   onSelectEngineModel,
   onSelectEngineEffort,
@@ -285,6 +287,8 @@ export function Composer({
   engineLocked?: boolean;
   engineModel?: string;
   engineEffort?: string;
+  engineSpeed?: string;
+  onSelectSpeed?: (speed: string) => void | Promise<boolean>;
   onSelectEngine?: (id: string) => void;
   onSelectEngineModel?: (model: string, effort: string) => void;
   onSelectEngineEffort?: (effort: string) => void;
@@ -588,6 +592,14 @@ export function Composer({
     () => new Set(registeredPluginCommands.map((command) => `${command.pluginId}:${command.id}`)),
     [registeredPluginCommands],
   );
+  const fastModeModel = activeEngine && activeEngine !== "wuu"
+    ? engines?.find(engine => engine.id === activeEngine)?.models?.find(model => engineModel ? model.id === engineModel : model.is_default)
+    : initialized?.providers?.find(provider => provider.name === initialized.provider)?.models?.find(model => model.id === initialized.model);
+  const fastModeSupported = Boolean(onSelectSpeed && fastModeModel?.fast_mode);
+  const fastModeEnabled = effectiveModelSpeed(
+    activeEngine && activeEngine !== "wuu" ? engineSpeed : initialized?.speed,
+    fastModeModel?.default_speed,
+  ) === "fast";
   const builtinSlashCommands = useMemo(
     () => buildComposerSlashCommands({
       activeContext,
@@ -598,11 +610,11 @@ export function Composer({
       handoffDisabledReason,
       skills: slashSkills,
       availablePluginRuntimeCommands,
+      fastMode: { supported: fastModeSupported, enabled: fastModeEnabled },
     }),
-    [activeContext, availablePluginRuntimeCommands, compactDisabledReason, handoffDisabledReason, initialized, locale, running, sideThreadDisabledReason, slashSkills]
+    [fastModeSupported, fastModeEnabled, activeContext, availablePluginRuntimeCommands, compactDisabledReason, handoffDisabledReason, initialized, locale, running, sideThreadDisabledReason, slashSkills]
   );
   const slashCommands = slashCommandsOverride ?? builtinSlashCommands;
-  const fastModelTarget = useMemo(() => runtimeFastModelTarget(initialized), [initialized]);
   const permissionMode = permissionModeFromSummary(initialized?.permissions);
   const enginePermissionModes = engines?.find((engine) => engine.id === activeEngine)?.permission_modes;
   const permissionOption = permissionModeOption(permissionMode, activeEngine, enginePermissionModes);
@@ -945,8 +957,12 @@ export function Composer({
         onToggleCodexRuntimeMenu("model");
         break;
       case "fast":
-        if (fastModelTarget && !fastModelTarget.current) {
-          onSelectRuntimeModel(fastModelTarget.provider, fastModelTarget.model);
+        if (draft?.args.trim() === "status") {
+          onToggleCodexRuntimeMenu("model");
+        } else if (fastModeSupported) {
+          const argument = draft?.args.trim();
+          if (argument && !["on", "off"].includes(argument)) { onToggleCodexRuntimeMenu("model"); break; }
+          void onSelectSpeed?.(argument === "on" ? "fast" : argument === "off" ? "standard" : fastModeEnabled ? "standard" : "fast");
         }
         break;
       case "effort":
@@ -1380,6 +1396,8 @@ export function Composer({
                         engineLocked={engineLocked}
                         engineModel={engineModel}
                         engineEffort={engineEffort}
+                        engineSpeed={engineSpeed}
+                        onSelectSpeed={onSelectSpeed}
                         onSelectEngine={onSelectEngine}
                         onSelectEngineModel={onSelectEngineModel}
                         onSelectEngineEffort={onSelectEngineEffort}

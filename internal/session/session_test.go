@@ -111,9 +111,14 @@ func TestSetRuntimeSelectionPersists(t *testing.T) {
 		Model:          "k3",
 		Variant:        "high",
 		Effort:         "xhigh",
+		Speed:          "fast",
 		PermissionMode: "read_only",
 	}); err != nil {
 		t.Fatal(err)
+	}
+	saved, ok, err := Find(dir, "thread-model")
+	if err != nil || !ok || saved.Speed != "fast" {
+		t.Fatalf("speed round trip: %+v %v", saved, err)
 	}
 	sessions, err := List(dir, 0)
 	if err != nil {

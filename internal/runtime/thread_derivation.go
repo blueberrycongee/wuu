@@ -59,6 +59,9 @@ func (s *Session) DeriveThreadModel(cfg config.Config, selected ThreadModelSelec
 	ruleProviderName, ruleProviderCfg := modelcatalog.EnrichProvider(resolvedName, providerCfg, model)
 	apiModel := modelcatalog.APIModel(ruleProviderCfg, model)
 	selection := modelvariant.ResolveForProvider(ruleProviderName, ruleProviderCfg, model, strings.TrimSpace(selected.Variant), strings.TrimSpace(selected.Effort))
+	if err := modelvariant.ApplySpeed(ruleProviderCfg, model, selected.Speed, &selection); err != nil {
+		return ThreadModelDerivation{}, err
+	}
 	roles, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{
 		ProviderName:   resolvedName,
 		ProviderConfig: providerCfg,

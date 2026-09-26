@@ -27,6 +27,18 @@ func main() {
 			time.Sleep(time.Hour)
 		}
 	}
+	if path := os.Getenv("WUU_TEST_CLAUDE_ARGS"); path != "" {
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+		if err != nil {
+			panic(err)
+		}
+		if err := json.NewEncoder(file).Encode(os.Args[1:]); err != nil {
+			panic(err)
+		}
+		if err := file.Close(); err != nil {
+			panic(err)
+		}
+	}
 	// Resume mode: emit init with the requested session id.
 	resumeID := ""
 	for i, arg := range os.Args {

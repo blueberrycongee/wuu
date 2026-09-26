@@ -267,6 +267,8 @@ type ProviderModelLimitConfig struct {
 // metadata fields are intentionally accepted so wuu can derive the same
 // model-specific variants when a config was copied from OpenCode/models.dev.
 type ProviderModelConfig struct {
+	// FastMode overrides inferred acceleration support for this model.
+	FastMode         *bool                          `json:"fast_mode,omitempty"`
 	ID               string                         `json:"id,omitempty"`
 	Name             string                         `json:"name,omitempty"`
 	Family           string                         `json:"family,omitempty"`
