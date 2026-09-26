@@ -377,3 +377,132 @@ func TestRefusesReadOnlyDir(t *testing.T) {
 		t.Fatalf("expected error writing to read-only dir, got nil")
 	}
 }
+
+func TestTightenHomeOnce_SkipsSymlinks(t *testing.T) {
+	skipIfNotUnix(t)
+	for _, kind := range []string{"directory", "file", "dangling", "cycle"} {
+		t.Run(kind, func(t *testing.T) {
+			root, external := t.TempDir(), t.TempDir()
+			target := filepath.Join(external, "run.sh")
+			content := "#!/bin/sh\nexit 0\n"
+			if err := os.WriteFile(target, []byte(content), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(external, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			link := filepath.Join(root, "linked")
+			destination := target
+			switch kind {
+			case "directory":
+				destination = external
+			case "dangling":
+				destination = filepath.Join(external, "missing")
+			case "cycle":
+				destination = link
+			}
+			if err := os.Symlink(destination, link); err != nil {
+				t.Fatal(err)
+			}
+			legacy := filepath.Join(root, "legacy.json")
+			if err := os.WriteFile(legacy, []byte("legacy"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(legacy, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := TightenHomeOnce(root); err != nil {
+				t.Errorf("migration: %v", err)
+			}
+			for path, want := range map[string]os.FileMode{target: 0o755, external: 0o755, legacy: FileMode, filepath.Join(root, permissionMigrationMarker): FileMode} {
+				info, err := os.Stat(path)
+				if err != nil {
+					t.Error(err)
+					continue
+				}
+				if info.Mode().Perm() != want {
+					t.Errorf("%s mode = %04o, want %04o", path, info.Mode().Perm(), want)
+				}
+			}
+			if got, err := os.ReadFile(target); err != nil || string(got) != content {
+				t.Errorf("external content = %q, err = %v", got, err)
+			}
+			if got, err := os.Readlink(link); err != nil || got != destination {
+				t.Errorf("link = %q, err = %v", got, err)
+			}
+		})
+	}
+}
+
+func TestTightenHomeOnce_ReplacesSymlinkMarker(t *testing.T) {
+	skipIfNotUnix(t)
+	for _, kind := range []string{"file", "directory", "dangling", "cycle"} {
+		t.Run(kind, func(t *testing.T) {
+			root, external := t.TempDir(), t.TempDir()
+			marker := filepath.Join(root, permissionMigrationMarker)
+			target := filepath.Join(external, "target")
+			if kind == "directory" {
+				if err := os.Mkdir(target, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			} else if kind == "file" {
+				if err := os.WriteFile(target, []byte("untouched"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if kind == "file" || kind == "directory" {
+				if err := os.Chmod(target, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if kind == "cycle" {
+				target = marker
+			}
+			if err := os.Symlink(target, marker); err != nil {
+				t.Fatal(err)
+			}
+			legacy := filepath.Join(root, "legacy")
+			if err := os.WriteFile(legacy, []byte("legacy"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(legacy, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := TightenHomeOnce(root); err != nil {
+				t.Errorf("migration: %v", err)
+			}
+			for _, path := range []string{marker, legacy} {
+				info, err := os.Lstat(path)
+				if err != nil {
+					t.Error(err)
+					continue
+				}
+				if !info.Mode().IsRegular() || info.Mode().Perm() != FileMode {
+					t.Errorf("%s mode = %v, want regular 0600", path, info.Mode())
+				}
+			}
+			if kind == "file" || kind == "directory" {
+				info, err := os.Stat(target)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if info.Mode().Perm() != 0o755 {
+					t.Errorf("target mode = %04o, want 0755", info.Mode().Perm())
+				}
+			}
+			if kind == "file" {
+				if got, err := os.ReadFile(target); err != nil || string(got) != "untouched" {
+					t.Errorf("target content = %q, err = %v", got, err)
+				}
+			}
+			if kind == "dangling" {
+				if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("dangling target created: %v", err)
+				}
+			}
+		})
+	}
+}

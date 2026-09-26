@@ -3003,3 +3003,34 @@ func TestLatestClaudeCatalogToolContinuation(t *testing.T) {
 		}
 	}
 }
+
+func TestFastModeSendsSpeedAndRequiredBeta(t *testing.T) {
+	for _, speed := range []string{"fast", "standard"} {
+		t.Run(speed, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if body["speed"] != speed {
+					t.Errorf("speed = %v", body["speed"])
+				}
+				hasBeta := strings.Contains(r.Header.Get("anthropic-beta"), "fast-mode-2026-02-01")
+				if hasBeta != (speed == "fast") {
+					t.Errorf("speed %s beta = %s", speed, r.Header.Get("anthropic-beta"))
+				}
+				w.Header().Set("content-type", "application/json")
+				_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"hello"}]}`))
+			}))
+			defer server.Close()
+			client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.Chat(context.Background(), providers.ChatRequest{Model: "claude-opus-4-8", Messages: []providers.ChatMessage{{Role: "user", Content: "hi"}}, ProviderOptions: map[string]any{"speed": speed}})
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

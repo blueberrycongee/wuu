@@ -165,14 +165,14 @@ func PreCreateFile(path string) error {
 // TightenRecursive walks root and tightens any file or directory whose
 // mode is wider than FileMode / DirMode. Wider here means: the
 // "group" or "other" read / write / execute bits are set. Returns the
-// first error encountered; on POSIX the operation is best-effort and
-// the caller is expected to log + continue.
+// first error encountered; symbolic links are skipped. On POSIX the operation
+// is best-effort and the caller is expected to log + continue.
 //
 // This exists because pre-launch installs left 0o644 / 0o755 files in
 // place. Future installs land at the right mode via the helpers above;
 // existing files get normalized by a one-time startup migration.
 func TightenRecursive(root string) (retErr error) {
-	info, err := os.Stat(root)
+	info, err := os.Lstat(root)
 	if err != nil {
 		return fmt.Errorf("securefs: stat root %s: %w", root, err)
 	}
@@ -188,7 +188,7 @@ func TightenRecursive(root string) (retErr error) {
 	for len(queue) > 0 {
 		next := queue[0]
 		queue = queue[1:]
-		entry, err := os.Stat(next.path)
+		entry, err := os.Lstat(next.path)
 		if err != nil {
 			if retErr == nil {
 				retErr = fmt.Errorf("securefs: walk stat %s: %w", next.path, err)
@@ -229,7 +229,7 @@ const permissionMigrationMarker = ".permissions-v1"
 // retries the migration.
 func TightenHomeOnce(root string) error {
 	marker := filepath.Join(root, permissionMigrationMarker)
-	if info, err := os.Stat(marker); err == nil {
+	if info, err := os.Lstat(marker); err == nil && info.Mode()&os.ModeSymlink == 0 {
 		if info.IsDir() {
 			return fmt.Errorf("securefs: permission migration marker %s is a directory", marker)
 		}
@@ -239,13 +239,21 @@ func TightenHomeOnce(root string) error {
 			}
 		}
 		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("securefs: stat permission migration marker: %w", err)
 	}
 
+	// The configured home itself may be a symlink; only links inside it are
+	// excluded from migration.
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("securefs: resolve home: %w", err)
+	}
+	root = resolved
 	if err := TightenRecursive(root); err != nil {
 		return err
 	}
+	// Replace a symlink marker itself; never chmod or write its target.
 	if err := WriteFileAtomic(marker, []byte("completed\n")); err != nil {
 		return fmt.Errorf("securefs: write permission migration marker: %w", err)
 	}

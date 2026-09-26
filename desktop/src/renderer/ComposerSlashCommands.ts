@@ -51,12 +51,6 @@ export type ComposerSlashDraft = {
   args: string;
 };
 
-export type ComposerFastModelTarget = {
-  provider: string;
-  model: string;
-  current: boolean;
-};
-
 const COMPOSER_SLASH_COMMAND_LIMIT = 8;
 // Skills are appended after the built-ins, so the shared limit alone would drop
 // every skill from the unsearched view. Reserve slots for them instead, keeping
@@ -94,6 +88,7 @@ export function buildComposerSlashCommands({
   handoffDisabledReason,
   skills = [],
   availablePluginRuntimeCommands = new Set<string>(),
+  fastMode,
 }: {
   activeContext?: RuntimeContext;
   initialized?: InitializeResult;
@@ -103,11 +98,12 @@ export function buildComposerSlashCommands({
   handoffDisabledReason?: string;
   skills?: SkillSummary[];
   availablePluginRuntimeCommands?: ReadonlySet<string>;
+  fastMode?: { supported: boolean; enabled: boolean };
 }): ComposerSlashCommand[] {
   const needsRuntime = activeContext && initialized ? undefined : t("slash.selectWorkspaceFirst");
   const needsWorkspace = activeContext ? undefined : t("slash.selectWorkspaceFirst");
   const needsIdleThread = running ? t("slash.taskRunning") : undefined;
-  const fastTarget = runtimeFastModelTarget(initialized);
+
   const commands: ComposerSlashCommand[] = [
     {
       id: "review",
@@ -344,19 +340,19 @@ export function buildComposerSlashCommands({
       keywords: ["provider", "effort", "variant", "模型", "参数档位"],
       disabledReason: needsRuntime ?? needsIdleThread
     },
-    ...(fastTarget
+    ...(fastMode?.supported
       ? [
           {
             id: "fast",
             name: "fast",
             title: t("slash.fast.title"),
-            description: fastTarget.current ? t("slash.fast.currentDescription") : t("slash.fast.description"),
+            description: fastMode.enabled ? t("slash.fast.currentDescription") : t("slash.fast.description"),
             tag: t("slash.tag.configuration"),
             kind: "action",
             action: "fast",
             aliases: ["quick"],
             keywords: ["fast", "priority", "快速", "高速"],
-            disabledReason: needsRuntime ?? needsIdleThread ?? (fastTarget.current ? t("slash.fast.alreadyEnabled") : undefined)
+            disabledReason: needsRuntime ?? needsIdleThread
           } satisfies ComposerSlashCommand
         ]
       : []),
@@ -429,32 +425,6 @@ export function buildSideThreadSlashCommands(): ComposerSlashCommand[] {
       keywords: ["reset", "rebase", "clear", "清空", "重置", "变基"]
     }
   ];
-}
-
-export function runtimeFastModelTarget(initialized?: InitializeResult): ComposerFastModelTarget | undefined {
-  if (!initialized) {
-    return undefined;
-  }
-  const provider = initialized.providers?.find((item) => item.name === initialized.provider);
-  if (!provider) {
-    return undefined;
-  }
-  const currentModel = initialized.model.trim();
-  if (!currentModel) {
-    return undefined;
-  }
-  const currentFast = currentModel.toLowerCase().endsWith("-fast");
-  const baseModel = currentFast ? currentModel.slice(0, -"-fast".length) : currentModel;
-  const fastModel = `${baseModel}-fast`;
-  const hasFastModel = provider.models?.some((model) => model.id === fastModel);
-  if (!hasFastModel && !currentFast) {
-    return undefined;
-  }
-  return {
-    provider: provider.name,
-    model: currentFast ? currentModel : fastModel,
-    current: currentFast
-  };
 }
 
 export function filterComposerSlashCommands(commands: ComposerSlashCommand[], query: string): ComposerSlashCommand[] {

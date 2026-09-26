@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- The model popover has an independent Fast mode toggle and reset for supported
+  provider models and native or ACP engines. Conversation and draft selections
+  preserve speed separately from reasoning effort; `/fast` uses the same setting.
+
 - Click the conversation title in the title bar to rename it. An existing
   conversation saves immediately. A new conversation keeps the name when the
   first message creates the session.
@@ -110,10 +114,17 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Remote Web clients reconnect when the relay stops responding during authentication,
+  and cancel pending authentication immediately when stopped or suspended.
+
 - Git status and staging snapshots preserve literal filenames, including spaces,
   Unicode, quotes, backslashes, and newlines. Returned rename paths identify the
   destination, and staging or unstaging a backslash path no longer selects other
   files through Git pathspec escaping. Sensitive-path protections remain in place.
+
+- Startup permission migration skips symbolic links inside the Wuu data directory,
+  preserving external files and executable permissions. Symlink migration markers
+  are replaced without modifying their targets.
 
 - Workspace file reads, saves, and directory expansion preserve leading and
   trailing whitespace and literal POSIX backslashes in filenames, preventing
@@ -122,6 +133,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Overdue automations keep their scheduled occurrence until the session service
   is ready. Interrupted dispatches reuse their run record after restart, and
   completing a dispatch preserves a newly edited schedule.
+
+- Git review compares symbolic link target paths without reading target contents,
+  including untracked and dangling links and file/link type changes.
 
 - Git changes, statistics, and file previews work before the first commit,
   including staged files and edits made after staging.
@@ -133,6 +147,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - The new-agent setup header drags the window across its full width again, and
   its height follows the window title bar after page zoom and at large UI font
   sizes.
+
+- Plugin workspace delivery includes committed, staged, and unstaged tracked
+  changes since workspace creation. Status and previews use the same baseline;
+  conflicts and unsupported untracked files preserve the workspace. Automatic
+  cleanup retains committed work and workspaces whose baseline is unavailable.
 
 - Work delivery reads structured reports from the final answer, so commentary
   before tool calls no longer causes completed executions to fail validation.

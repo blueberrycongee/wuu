@@ -103,6 +103,7 @@ class RelaySocket {
   private waiter: { resolve: (m: RelayMsg) => void; reject: (e: Error) => void } | null = null;
   private openPromise: Promise<void>;
   private closedErr: Error | null = null;
+  private readonly fail: (err: Error) => void;
 
   constructor(readonly ws: WebSocketLike) {
     let openResolve!: () => void;
@@ -116,6 +117,7 @@ class RelaySocket {
     // targets, so the factory contract is: events fire asynchronously.
     ws.addEventListener("open", () => openResolve());
     ws.addEventListener("message", (ev: unknown) => {
+      if (this.closedErr) return;
       const data = (ev as { data?: unknown }).data;
       if (typeof data !== "string") return;
       let msg: RelayMsg;
@@ -133,8 +135,8 @@ class RelaySocket {
         this.queue.push(msg);
       }
     });
-    const fail = (reason: string) => {
-      const err = new SocketClosed(reason);
+    this.fail = (err: Error) => {
+      if (this.closedErr) return;
       this.closedErr = err;
       openReject(err);
       if (this.waiter) {
@@ -143,8 +145,8 @@ class RelaySocket {
         w.reject(err);
       }
     };
-    ws.addEventListener("close", () => fail("relay socket closed"));
-    ws.addEventListener("error", () => fail("relay socket error"));
+    ws.addEventListener("close", () => this.fail(new SocketClosed("relay socket closed")));
+    ws.addEventListener("error", () => this.fail(new SocketClosed("relay socket error")));
     // Swallow the unhandled-rejection that occurs when open succeeds first.
     this.openPromise.catch(() => {});
   }
@@ -162,8 +164,8 @@ class RelaySocket {
   }
 
   async read(): Promise<RelayMsg> {
-    if (this.queue.length > 0) return this.queue.shift()!;
     if (this.closedErr) throw this.closedErr;
+    if (this.queue.length > 0) return this.queue.shift()!;
     if (this.waiter) throw new Error("concurrent relay reads are not supported");
     return new Promise<RelayMsg>((resolve, reject) => {
       this.waiter = { resolve, reject };
@@ -175,7 +177,10 @@ class RelaySocket {
     this.ws.send(JSON.stringify(msg));
   }
 
-  close(): void {
+  close(err: Error = new SocketClosed()): void {
+    // A half-open peer may never finish the WebSocket close handshake.
+    this.fail(err);
+    this.queue = [];
     try {
       this.ws.close();
     } catch {
@@ -264,6 +269,7 @@ export interface RemoteClientOptions {
   logf?: (msg: string) => void;
   reconnectMinMs?: number;
   reconnectMaxMs?: number;
+  /** Deadline for opening the socket and, separately, the relay auth exchange. */
   dialTimeoutMs?: number;
   ackIntervalMs?: number;
   pingIntervalMs?: number;
@@ -493,18 +499,23 @@ export class RemoteClient {
   }
 
   private async authenticate(sock: RelaySocket): Promise<boolean> {
-    sock.write({ type: TYPE_HELLO, proto: PROTO_VERSION, role: ROLE_PHONE, pub: encodeKey(this.id.public_()), to: encodeKey(this.hostPub) });
-    const challenge = await sock.read();
-    if (challenge.type !== TYPE_CHALLENGE) {
-      throw new Error(`relay: expected challenge, got ${challenge.type} (${challenge.msg ?? ""})`);
+    const timer = setTimeout(() => sock.close(new Error("relay auth timeout")), this.dialTimeoutMs);
+    try {
+      sock.write({ type: TYPE_HELLO, proto: PROTO_VERSION, role: ROLE_PHONE, pub: encodeKey(this.id.public_()), to: encodeKey(this.hostPub) });
+      const challenge = await sock.read();
+      if (challenge.type !== TYPE_CHALLENGE) {
+        throw new Error(`relay: expected challenge, got ${challenge.type} (${challenge.msg ?? ""})`);
+      }
+      const nonce = b64decode(challenge.nonce ?? "");
+      sock.write({ type: TYPE_AUTH, sig: b64encode(this.id.signRelayAuth(nonce, ROLE_PHONE)) });
+      const ok = await sock.read();
+      if (ok.type !== TYPE_AUTH_OK) {
+        throw new Error(`relay auth failed: ${ok.code ?? ""} (${ok.msg ?? ""})`);
+      }
+      return ok.online === true;
+    } finally {
+      clearTimeout(timer);
     }
-    const nonce = b64decode(challenge.nonce ?? "");
-    sock.write({ type: TYPE_AUTH, sig: b64encode(this.id.signRelayAuth(nonce, ROLE_PHONE)) });
-    const ok = await sock.read();
-    if (ok.type !== TYPE_AUTH_OK) {
-      throw new Error(`relay auth failed: ${ok.code ?? ""} (${ok.msg ?? ""})`);
-    }
-    return ok.online === true;
   }
 
   private async dispatch(msg: RelayMsg): Promise<void> {
