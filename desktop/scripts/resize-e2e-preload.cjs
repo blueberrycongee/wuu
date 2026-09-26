@@ -27,7 +27,7 @@ const heavyAnswer = Array.from({ length: 12 }, (_value, index) => {
     "```"
   ].join("\n");
 }).join("\n\n");
-const turns = Array.from({ length: 36 }, (_value, index) => ({
+const turns = Array.from({ length: Number(process.env.WUU_RESIZE_E2E_TURNS ?? 36) }, (_value, index) => ({
   id: `resize-turn-${index}`,
   status: "completed",
   items_view: "full",

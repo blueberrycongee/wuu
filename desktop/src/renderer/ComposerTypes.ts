@@ -17,6 +17,7 @@ export type CodexModelLoadState = {
 export type CodexRuntimeMenu = "model" | null;
 export type ComposerVariant = "dock" | "document" | "hero";
 export type FloatingMenuOwner =
+  | "vim-navigation"
   | "sidebar-account"
   | "conversation-actions"
   | "composer-handoff"

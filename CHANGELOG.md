@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Optional Vim-style desktop navigation covers reading, conversation search and
+  switching, new drafts, and workspace tools, with prefix hints and a keyboard
+  shortcut reference in Settings. Text inputs and embedded tools retain their keys.
+
 - Click the conversation title in the title bar to rename it. An existing
   conversation saves immediately. A new conversation keeps the name when the
   first message creates the session.
@@ -109,6 +113,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   of 2048, so a typical source file or document is read in one call.
 
 ### Fixed
+
+- Starting a new conversation preserves the unfinished draft in the source
+  conversation when switching back to it.
 
 - Workspace file reads, saves, and directory expansion preserve leading and
   trailing whitespace and literal POSIX backslashes in filenames, preventing

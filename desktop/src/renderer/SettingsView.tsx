@@ -86,6 +86,7 @@ import { normalizedVariantForProviderModel, providerModelReasoningMode, provider
 import { ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
 import { BackgroundSettings } from "./background/BackgroundSettings";
+import { KeyboardShortcutsSettings } from "./KeyboardShortcutsSettings";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsStatus, type SettingsStatusTone } from "./SettingsSection";
 import { toastErrorMessage } from "./Toast";
@@ -124,6 +125,7 @@ type NativeSettingsPage =
   | "advanced"
   | "general"
   | "appearance"
+  | "keyboard"
   | "remote"
   | "mcp"
   | "usage"
@@ -143,6 +145,7 @@ const NATIVE_PAGE_ICONS: Record<NativeSettingsPage, IconComponent> = {
   advanced: Gauge,
   general: Settings,
   appearance: Monitor,
+  keyboard: KeyRound,
   remote: Smartphone,
   mcp: Plug,
   usage: BarChart3,
@@ -161,7 +164,7 @@ function nativeSettingsGroups(): { label: TranslationKey; pages: NativeSettingsP
     },
     {
       label: "settings.groupApp",
-      pages: ["general", "appearance", ...(remoteControlAvailable() ? ["remote" as const] : [])],
+      pages: ["general", "appearance", "keyboard", ...(remoteControlAvailable() ? ["remote" as const] : [])],
     },
     { label: "settings.groupExtensions", pages: ["mcp"] },
     { label: "settings.groupData", pages: ["usage", "archive"] },
@@ -1199,6 +1202,8 @@ export function SettingsView({
                 copyState={copyState}
                 onCopyVersion={copyVersionInfo}
               />
+            ) : activePage === "keyboard" ? (
+              <KeyboardShortcutsSettings />
             ) : activePage === "appearance" ? (
               <SettingsAppearancePage />
             ) : activePage === "mcp" ? (
@@ -2971,6 +2976,8 @@ function settingsPageTitle(page: NativeSettingsPage, t: Translate): string {
       return t("settings.runtime");
     case "general":
       return t("settings.general");
+    case "keyboard":
+      return t("vim.title");
     case "appearance":
       return t("settings.appearance");
     case "remote":

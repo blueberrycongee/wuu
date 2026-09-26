@@ -637,17 +637,20 @@ export function createSessionTabActions(
     if (!nextTab) {
       return;
     }
-    deps.setAppState((current) => seedDraftRuntimeFromMemory({
-      ...persistActiveSessionTabDraft(current, outgoingDraft),
-      thread: undefined,
-      secondaryThread: undefined,
-      activePane: "primary",
-      sessionTabs: ensureSessionTab(current.sessionTabs, nextTab),
-      activeSessionTabID: nextTab.id,
-      allowThreadAutoActivation: false,
-      running: false,
-      status: "ready",
-    }));
+    deps.setAppState((current) => {
+      const withDraft = persistActiveSessionTabDraft(current, outgoingDraft);
+      return seedDraftRuntimeFromMemory({
+        ...withDraft,
+        thread: undefined,
+        secondaryThread: undefined,
+        activePane: "primary",
+        sessionTabs: ensureSessionTab(withDraft.sessionTabs, nextTab),
+        activeSessionTabID: nextTab.id,
+        allowThreadAutoActivation: false,
+        running: false,
+        status: "ready",
+      });
+    });
   }
 
   return {

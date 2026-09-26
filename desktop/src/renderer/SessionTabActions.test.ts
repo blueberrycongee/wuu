@@ -118,27 +118,21 @@ describe("createSessionTabActions", () => {
     expect(harness.getAppState().thread).toBeUndefined();
   });
 
-  it("starts a new no-project conversation in the current workspace", async () => {
+  it("starts a new conversation and preserves the source conversation draft", async () => {
     const context = noProjectContext();
+    const thread = {
+      id: "thread-1", title: "existing", preview: "existing", cwd: context.cwd,
+      status: "idle" as const, model_provider: "fake", model: "fake-model",
+      created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", turns: [],
+    };
+    const source = createThreadSessionTab(thread, context);
+    const draft = { ...emptyComposerDraft(), prompt: "keep this unfinished follow-up" };
     const harness = buildActions({
       initial: {
-        ...initialState,
-        activeContext: context,
-        thread: {
-          id: "thread-1",
-          title: "existing",
-          preview: "existing",
-          cwd: context.cwd,
-          status: "idle",
-          model_provider: "fake",
-          model: "fake-model",
-          pinned: false,
-          archived: false,
-          created_at: "2026-01-01T00:00:00Z",
-          updated_at: "2026-01-01T00:00:00Z",
-          turns: [],
-        },
+        ...initialState, activeContext: context, thread,
+        activeSessionTabID: source.id, sessionTabs: [source],
       },
+      draft,
     });
 
     await harness.actions.startNewThread();
@@ -146,6 +140,8 @@ describe("createSessionTabActions", () => {
     expect(harness.nextDraftSessionTab).toHaveBeenCalledWith(context);
     expect(harness.getAppState().thread).toBeUndefined();
     expect(harness.getAppState().activeSessionTabID).toBe("draft:new");
+    expect(harness.getCurrentDraft()).toEqual(emptyComposerDraft());
+    expect(sessionTabPrompt(harness.getAppState().sessionTabs, source.id)).toBe(draft.prompt);
   });
 
   it("restores the last composer provider, model, and effort on a new conversation", async () => {
