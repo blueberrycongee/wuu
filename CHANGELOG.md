@@ -123,6 +123,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   is ready. Interrupted dispatches reuse their run record after restart, and
   completing a dispatch preserves a newly edited schedule.
 
+- Git changes, statistics, and file previews work before the first commit,
+  including staged files and edits made after staging.
+
 - Sidebar scroll fades remain tied to the list's own scroll position while
   conversations stream, pause, finish, or switch. Streaming paint reduction
   applies only to nested reasoning and process details.
