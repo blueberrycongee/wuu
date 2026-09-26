@@ -370,17 +370,21 @@ import(pathToFileURL(mainBundle).href).then(async () => {
     preloadSha256: hash(path.resolve(path.dirname(mainBundle), '../preload/index.cjs')),
     rendererAssets: Object.fromEntries(fs.readdirSync(rendererAssets).sort().map(name => [name, hash(path.join(rendererAssets, name))])),
     endpoint: 'Native mousedown timestamp to target pane intersecting viewport for two animation frames; then native draft insertion, focus and enabled Send for two frames. Includes probe IPC overhead; frames do not prove physical display presentation.',
-    attribution: 'RPC durations are main handler envelopes (overlapping, not additive). Core stdout bytes include all clients/background work. Disk and network are not separately measured. No inference; safe mode excludes normal plugin startup. CDP counters include the observer and draft probe; they are diagnostic, not ratchets.',
+    attribution: 'RPC durations are main handler envelopes (overlapping, not additive). Core stdout bytes include all clients/background work. Disk and network are not separately measured. No inference; safe mode excludes normal plugin startup. Interaction-window CDP counters are diagnostic. Settled work counters additionally cover background resume and two frames; only repeated large-fixture samples use the opt-in budget gate. Both include observer and draft-probe work.',
   };
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ metadata, summary, results, timings }, null, 2));
   const report = [
     '# Session switch baseline', '',
     `Source: ${metadata.sourceCommit}. ${metadata.platform}/${metadata.arch}; Electron ${process.versions.electron}; ${metadata.turns} turns; safe mode ${metadata.safeMode}; delay ${initDelayMs}ms.`, '',
     metadata.endpoint, '', metadata.attribution, '',
+    `Work budget: ${checkBudget ? 'enforced' : 'diagnostic only'}. Trace: ${traceEnabled ? 'enabled; exclude from timing baselines' : 'disabled'}.`, '',
+    '| Repeated large-fixture work | Observed maximum | Configured ceiling |',
+    '| --- | ---: | ---: |',
+    ...Object.entries(budget.ceilings).map(([counter, ceiling]) => `| ${counter} | ${Math.max(...results.filter(r => r.scenario === 'repeat' && r.history === 'large').map(r => r.work[counter]))} | ${ceiling} |`), '',
     '| Scenario / history / first visit / observed spawns | n | Content P50 / P75 (ms) | Interactive P50 / P75 (ms) |',
     '| --- | ---: | ---: | ---: |',
     ...Object.entries(summary).map(([key, s]) => `| ${key} | ${s.n} | ${s.contentFrameMs.p50.toFixed(1)} / ${s.contentFrameMs.p75.toFixed(1)} | ${s.interactiveFrameMs.p50.toFixed(1)} / ${s.interactiveFrameMs.p75.toFixed(1)} |`),
-    '', 'Local diagnostic samples only. Do not pool scenarios or compare against the old paintMs/readyMs definition. Repeat fresh processes on the same machine before setting a ceiling. Full samples and build hashes are in results.json.', '',
+    '', 'Wall-clock samples are diagnostic, not thresholds. Do not pool scenarios, runtimes, or traced runs, or compare against the old paintMs/readyMs definition. Full samples and build hashes are in results.json.', '',
   ].join('\n');
   fs.writeFileSync(path.join(output, 'report.md'), report);
   fs.writeFileSync(path.join(output, 'final.png'), (await main.webContents.capturePage()).toPNG());
