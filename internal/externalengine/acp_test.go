@@ -535,6 +535,7 @@ func TestACPHelper(t *testing.T) {
 	}
 	var promptID json.RawMessage
 	selectedModel, selectedEffort, selectedMode := "", "", ""
+	selectedSpeed := "off"
 	for scanner.Scan() {
 		var msg rpcMessage
 		if json.Unmarshal(scanner.Bytes(), &msg) != nil {
@@ -553,6 +554,10 @@ func TestACPHelper(t *testing.T) {
 			}
 			result = map[string]any{"protocolVersion": version, "agentCapabilities": caps}
 		case "session/new":
+			if scenario == "speed" {
+				result = speedACPSessionResult("model-a", "fast-mode", selectedSpeed)
+				break
+			}
 			if scenario == "grok" {
 				result = grokACPSessionResult()
 				break
@@ -607,6 +612,22 @@ func TestACPHelper(t *testing.T) {
 			selectedModel = params.ModelID
 			result = map[string]any{}
 		case "session/set_config_option":
+			if scenario == "speed" {
+				var params struct {
+					ConfigID string
+					Value    string
+				}
+				_ = json.Unmarshal(msg.Params, &params)
+				if params.ConfigID == "model" {
+					selectedModel = params.Value
+				}
+				// Changing the model changes the native speed option ID.
+				if params.ConfigID == "fast_mode" {
+					selectedSpeed = params.Value
+				}
+				result = speedACPSessionResult(selectedModel, "fast_mode", selectedSpeed)
+				break
+			}
 			var params struct {
 				ConfigID string `json:"configId"`
 				Value    string `json:"value"`
@@ -630,6 +651,11 @@ func TestACPHelper(t *testing.T) {
 			}
 			text("old replay")
 		case "session/prompt":
+			if scenario == "speed" {
+				text(selectedSpeed)
+				result = map[string]string{"stopReason": "end_turn"}
+				break
+			}
 			promptID = msg.ID
 			if strings.HasPrefix(scenario, "echo-prompt") {
 				var params struct {
@@ -909,5 +935,54 @@ func TestACPRejectsUnadvertisedGrokModel(t *testing.T) {
 	_, err = session.RunTurn(ctx, testInput(), nil)
 	if err == nil || !strings.Contains(err.Error(), "not-a-grok-model") {
 		t.Fatalf("unadvertised model error = %v", err)
+	}
+}
+
+func speedACPSessionResult(model, speedID, speed string) map[string]any {
+	return map[string]any{"sessionId": "native-session", "configOptions": []any{
+		map[string]any{"id": "model", "category": "model", "type": "select", "currentValue": model, "options": []any{map[string]any{"value": "model-a"}, map[string]any{"value": "model-b"}}},
+		map[string]any{"id": speedID, "name": "Fast mode", "category": "model_config", "type": "select", "currentValue": speed, "options": []any{map[string]any{"value": "off"}, map[string]any{"value": "on"}}},
+	}}
+}
+
+func TestACPSpeedUsesRefreshedConfigAfterModelChange(t *testing.T) {
+	for _, speed := range []string{"fast", "standard"} {
+		t.Run(speed, func(t *testing.T) {
+			binding := testBinding()
+			binding.Model = "model-b"
+			binding.Speed = speed
+			sess, err := testEngine(t, "speed").SessionForThread(context.Background(), binding)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			result, err := sess.RunTurn(ctx, testInput(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "off"
+			if speed == "fast" {
+				want = "on"
+			}
+			if result.Result.Content != want {
+				t.Fatalf("native speed = %q, want %q", result.Result.Content, want)
+			}
+		})
+	}
+}
+
+func TestACPRejectsUnadvertisedSpeed(t *testing.T) {
+	binding := testBinding()
+	binding.Speed = "fast"
+	sess, err := testEngine(t, "normal").SessionForThread(context.Background(), binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err = sess.RunTurn(ctx, testInput(), nil)
+	if err == nil || !strings.Contains(err.Error(), "speed") {
+		t.Fatalf("unadvertised speed = %v", err)
 	}
 }

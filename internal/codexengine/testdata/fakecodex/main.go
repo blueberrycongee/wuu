@@ -45,6 +45,14 @@ func main() {
 		if err := json.Unmarshal([]byte(line), &req); err != nil {
 			continue
 		}
+		if path := os.Getenv("WUU_TEST_CODEX_REQUESTS"); path != "" {
+			f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+			if err != nil {
+				panic(err)
+			}
+			fmt.Fprintln(f, line)
+			f.Close()
+		}
 		switch req.Method {
 		case "initialize":
 			respond(req.ID, map[string]any{

@@ -43,6 +43,9 @@ func (e *Engine) SessionForThread(ctx context.Context, binding agentengine.Threa
 	if binding.RootDir == "" {
 		binding.RootDir = e.root
 	}
+	if binding.Speed != "" && e.entry.Protocol != "acp" {
+		return nil, fmt.Errorf("%s does not expose speed selection through this integration", e.entry.Name)
+	}
 	binding.MCPServers = append([]agentengine.MCPServer(nil), binding.MCPServers...)
 	if e.entry.Protocol != "acp" && binding.Effort != "" {
 		return nil, fmt.Errorf("%s does not expose reasoning effort through this integration; clear the effort selection", e.entry.Name)

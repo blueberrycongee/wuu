@@ -9,6 +9,8 @@ type DiscoveredModel struct {
 	DefaultEffort    string
 	SupportedEfforts []string
 	IsDefault        bool
+	FastMode         bool
+	DefaultSpeed     string
 }
 
 type acpConfigOption struct {
@@ -28,7 +30,19 @@ func modelsFromACPSession(session acpSession) []DiscoveredModel {
 	if len(models) == 0 {
 		models = modelsFromFirstClass(session)
 	}
-	return attachEfforts(models, efforts, defaultEffort)
+	models = attachEfforts(models, efforts, defaultEffort)
+	option, _, _ := session.speedOption()
+	for i := range models {
+		models[i].FastMode = option != nil
+		if option != nil {
+			_, on, _ := session.speedOption()
+			models[i].DefaultSpeed = "standard"
+			if option.Current == on {
+				models[i].DefaultSpeed = "fast"
+			}
+		}
+	}
+	return models
 }
 
 func thoughtLevelFromOptions(options []acpConfigOption) (efforts []string, current string) {
@@ -323,4 +337,26 @@ func (o *acpConfigOption) labelFor(id string) string {
 		return id
 	}
 	return ""
+}
+
+// ACP defines model_config placement, not a universal speed key. Only map
+// advertised speed selectors; never send a guessed option ID or value.
+func (s acpSession) speedOption() (*acpConfigOption, string, string) {
+	for i := range s.ConfigOptions {
+		option := &s.ConfigOptions[i]
+		if option.Type != "select" {
+			continue
+		}
+		switch strings.ReplaceAll(strings.ToLower(option.ID), "-", "_") {
+		case "fast_mode", "speed", "service_tier":
+		default:
+			continue
+		}
+		for _, pair := range [][2]string{{"on", "off"}, {"fast", "standard"}, {"fast", "default"}, {"priority", "default"}} {
+			if option.hasChoice(pair[0]) && option.hasChoice(pair[1]) {
+				return option, pair[0], pair[1]
+			}
+		}
+	}
+	return nil, "", ""
 }

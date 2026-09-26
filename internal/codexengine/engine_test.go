@@ -29,6 +29,63 @@ func buildFakeCodex(t *testing.T) string {
 	return binary
 }
 
+func TestEngineSpeedSurvivesNativeResume(t *testing.T) {
+	binary := buildFakeCodex(t)
+	logPath := filepath.Join(t.TempDir(), "requests.jsonl")
+	t.Setenv("WUU_TEST_CODEX_REQUESTS", logPath)
+	host := NewHost(binary, t.TempDir())
+	defer host.Release()
+	engine := NewEngine(host)
+	ref := ""
+	for _, speed := range []string{"fast", "standard"} {
+		sess, err := engine.SessionForThread(context.Background(), agentengine.ThreadBinding{
+			ThreadID: "speed-thread", RootDir: t.TempDir(), Model: "gpt-6-astra",
+			Effort: "high", Speed: speed, ExternalRef: ref,
+			PersistRef: func(value string) error { ref = value; return nil },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, err = sess.RunTurn(ctx, agentengine.TurnInput{History: []providers.ChatMessage{{Role: "user", Content: "hello"}}}, nil)
+		cancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var methods []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var request struct {
+			Method string
+			Params map[string]any
+		}
+		if err := json.Unmarshal([]byte(line), &request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Method != "thread/start" && request.Method != "thread/resume" && request.Method != "turn/start" {
+			continue
+		}
+		want := "fast"
+		if len(methods) >= 2 {
+			want = "default"
+		}
+		if request.Params["serviceTier"] != want {
+			t.Fatalf("%s tier = %v, want %s", request.Method, request.Params["serviceTier"], want)
+		}
+		if request.Method == "turn/start" && request.Params["reasoningEffort"] != "high" {
+			t.Fatalf("speed changed effort: %v", request.Params)
+		}
+		methods = append(methods, request.Method)
+	}
+	if strings.Join(methods, ",") != "thread/start,turn/start,thread/resume,turn/start" {
+		t.Fatalf("requests = %v", methods)
+	}
+}
+
 func TestEngineEndToEndFakeCodex(t *testing.T) {
 	binary := buildFakeCodex(t)
 	host := NewHost(binary, t.TempDir())

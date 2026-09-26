@@ -517,6 +517,17 @@ type acpPermission struct {
 }
 
 func (s *Session) applyACPSelection(ctx context.Context, r *rpc, session acpSession, ref string) error {
+	// Responses contain the full configuration after dependent changes.
+	setOption := func(id, value string) error {
+		var updated acpSession
+		if err := r.call(ctx, "session/set_config_option", map[string]any{"sessionId": ref, "configId": id, "value": value}, &updated); err != nil {
+			return err
+		}
+		if updated.ConfigOptions != nil {
+			session.ConfigOptions = updated.ConfigOptions
+		}
+		return nil
+	}
 	if model := strings.TrimSpace(s.binding.Model); model != "" {
 		if !session.hasAdvertisedModel(model) {
 			if session.Models == nil && session.modelConfigOption() == nil {
@@ -537,7 +548,7 @@ func (s *Session) applyACPSelection(ctx context.Context, r *rpc, session acpSess
 		default:
 			option := session.modelConfigOption()
 			if option != nil && strings.TrimSpace(option.Current) != model {
-				if err := r.call(ctx, "session/set_config_option", map[string]any{"sessionId": ref, "configId": option.ID, "value": model}, nil); err != nil {
+				if err := setOption(option.ID, model); err != nil {
 					return err
 				}
 			}
@@ -554,8 +565,27 @@ func (s *Session) applyACPSelection(ctx context.Context, r *rpc, session acpSess
 			if configID == "" {
 				configID = "reasoning_effort"
 			}
-			if err := r.call(ctx, "session/set_config_option", map[string]any{"sessionId": ref, "configId": configID, "value": effort}, nil); err != nil {
+			if err := setOption(configID, effort); err != nil {
 				return err
+			}
+		}
+	}
+	if s.binding.Speed != "" {
+		option, on, off := session.speedOption()
+		if option == nil {
+			return fmt.Errorf("%s does not advertise speed selection for this model", s.engine.entry.Name)
+		}
+		value := off
+		if s.binding.Speed == "fast" {
+			value = on
+		}
+		if option.Current != value {
+			if err := setOption(option.ID, value); err != nil {
+				return err
+			}
+			confirmed, _, _ := session.speedOption()
+			if confirmed == nil || confirmed.Current != value {
+				return fmt.Errorf("%s did not apply the requested speed", s.engine.entry.Name)
 			}
 		}
 	}
