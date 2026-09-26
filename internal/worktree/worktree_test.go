@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -997,5 +999,75 @@ func TestCleanupSessionPreservesCommittedWork(t *testing.T) {
 				t.Fatalf("output lost: %q %v", content, err)
 			}
 		})
+	}
+}
+
+func TestWorkspaceDeliveryPreservesLiteralPaths(t *testing.T) {
+	for _, name := range []string{"报告.txt", " leading space.txt ", "arrow -> name.txt", "quote\"slash\\tab\tline\n.txt"} {
+		if runtime.GOOS == "windows" && (strings.ContainsAny(name, "\"\\\t\n") || strings.HasSuffix(name, " ")) {
+			continue
+		}
+		for _, mode := range []string{"staged", "renamed", "untracked"} {
+			t.Run(mode+"/"+name, func(t *testing.T) {
+				dir := t.TempDir()
+				initRepo(t, dir)
+				runGit(t, dir, "config", "core.quotePath", "true")
+				m, err := NewManager(dir, filepath.Join(t.TempDir(), "worktrees"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				wt, err := m.OpenOrCreate(OpenOrCreateOptions{SessionID: "paths", WorkerID: "worker"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = m.Cleanup(wt) })
+				content := "literal output"
+				if mode == "renamed" {
+					runGit(t, wt.Path, "mv", "--", "README.md", name)
+					content = "hello"
+				} else {
+					if err := os.WriteFile(filepath.Join(wt.Path, name), []byte(content), 0644); err != nil {
+						t.Fatal(err)
+					}
+					if mode == "staged" {
+						runGit(t, wt.Path, "--literal-pathspecs", "add", "--", name)
+					}
+				}
+				status, err := m.Status(wt)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(status.ChangedFiles, []string{name}) {
+					t.Errorf("status paths=%q, want one literal path %q", status.ChangedFiles, name)
+				}
+				if mode == "untracked" {
+					if preview := m.MergePreview(wt, dir); preview.CanApply {
+						t.Fatal("untracked path advertised as applicable")
+					}
+					if _, err := m.ApplyToTarget(wt, dir); err == nil {
+						t.Fatal("untracked path applied")
+					}
+					if got, err := os.ReadFile(filepath.Join(wt.Path, name)); err != nil || string(got) != content {
+						t.Fatalf("untracked output lost: %q %v", got, err)
+					}
+					return
+				}
+				result, err := m.ApplyToTarget(wt, dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !result.Applied || !reflect.DeepEqual(result.ChangedFiles, []string{name}) {
+					t.Errorf("apply result=%+v, want one literal path %q", result, name)
+				}
+				if got, err := os.ReadFile(filepath.Join(dir, name)); err != nil || string(got) != content {
+					t.Fatalf("literal output not delivered: %q %v", got, err)
+				}
+				if mode == "renamed" {
+					if _, err := os.Stat(filepath.Join(dir, "README.md")); !os.IsNotExist(err) {
+						t.Fatalf("rename source remains: %v", err)
+					}
+				}
+			})
+		}
 	}
 }

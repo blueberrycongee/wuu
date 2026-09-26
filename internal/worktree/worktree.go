@@ -64,7 +64,7 @@ type LeaseOptions struct {
 type Status struct {
 	Dirty        bool     `json:"dirty"`
 	ChangedFiles []string `json:"changed_files,omitempty"`
-	Porcelain    []string `json:"porcelain,omitempty"`
+	Porcelain    []string `json:"porcelain,omitempty"` // XY status plus a literal destination path per entry
 }
 
 type MergePreview struct {
@@ -295,17 +295,25 @@ func (m *Manager) Status(target any) (Status, error) {
 	if _, err := os.Stat(path); err != nil {
 		return Status{}, fmt.Errorf("stat worktree: %w", err)
 	}
-	cmd := exec.Command("git", "status", "--porcelain=v1")
+	cmd := exec.Command("git", "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	cmd.Dir = path
 	out, err := cmd.Output()
 	if err != nil {
 		return Status{}, fmt.Errorf("git status: %w", err)
 	}
-	lines := splitLines(strings.TrimRight(string(out), "\n"))
-	changed := make([]string, 0, len(lines))
-	for _, line := range lines {
+	records := strings.Split(string(out), "\x00")
+	lines := make([]string, 0, len(records))
+	changed := make([]string, 0, len(records))
+	for i := 0; i < len(records); i++ {
+		line := records[i]
 		if file := porcelainFile(line); file != "" {
+			lines = append(lines, line)
 			changed = append(changed, file)
+			// With -z, rename/copy records list the literal destination first,
+			// followed by a separate NUL-delimited source path.
+			if strings.ContainsAny(line[:2], "RC") {
+				i++
+			}
 		}
 	}
 	base, err := worktreeBase(target)
@@ -806,11 +814,7 @@ func porcelainFile(line string) string {
 	if len(line) < 4 {
 		return ""
 	}
-	file := strings.TrimSpace(line[3:])
-	if idx := strings.LastIndex(file, " -> "); idx >= 0 {
-		file = strings.TrimSpace(file[idx+4:])
-	}
-	return file
+	return line[3:]
 }
 
 func untrackedFiles(lines []string) []string {
@@ -823,21 +827,6 @@ func untrackedFiles(lines []string) []string {
 		}
 	}
 	sort.Strings(out)
-	return out
-}
-
-func splitLines(value string) []string {
-	if strings.TrimSpace(value) == "" {
-		return nil
-	}
-	raw := strings.Split(value, "\n")
-	out := make([]string, 0, len(raw))
-	for _, line := range raw {
-		line = strings.TrimRight(line, "\r")
-		if strings.TrimSpace(line) != "" {
-			out = append(out, line)
-		}
-	}
 	return out
 }
 
