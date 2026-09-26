@@ -111,6 +111,8 @@ jobs:
           node desktop/scripts/session-switch-budget.cjs "$PERF_BASE_SHA"
 
       - name: Guard session switch work
+        # Preserve Electron failures through the evidence log pipeline.
+        shell: bash
         env:
           WUU_SWITCH_CHECK_BUDGET: "1"
           WUU_SWITCH_OUTPUT: ${{ runner.temp }}/wuu-session-switch-evidence
