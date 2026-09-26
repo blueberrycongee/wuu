@@ -66,7 +66,8 @@ export function parseLinkTarget(value: string | undefined): LinkTarget {
 }
 
 export function parseWorkspaceFileTarget(value: string): WorkspaceFileLinkTarget | undefined {
-  const raw = value.trim();
+  // Filesystem callers supply exact names; parseLinkTarget trims link text.
+  const raw = value;
   if (!raw || BLOCKED_PROTOCOL_PATTERN.test(raw)) {
     return undefined;
   }
