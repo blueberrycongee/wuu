@@ -538,6 +538,7 @@ func (s *Server) loadPersistedThreadSnapshot(id string) (persistedThreadSnapshot
 }
 
 type forkSourceThread struct {
+	liveHistory    bool
 	history        []providers.ChatMessage
 	displayHistory []providers.ChatMessage
 	rawHistory     []persistedMessage
@@ -581,7 +582,7 @@ func (s *Server) handleThreadFork(req Request) error {
 		target.SourceID = strings.TrimSpace(params.Target.SourceID)
 	}
 	// The provider checkpoint is only the active model context. Fork from the
-	// durable transcript first so earlier conversation is not silently lost.
+	// active transcript first so earlier conversation is not silently lost.
 	var history []providers.ChatMessage
 	err = errForkTargetNotFound
 	if len(source.rawHistory) > 0 {
@@ -593,7 +594,7 @@ func (s *Server) handleThreadFork(req Request) error {
 	if errors.Is(err, errForkTargetNotFound) {
 		history, err = forkHistoryAtTargetWithIdentity(source.history, source.thread.ID, source.thread.Turns, params.TurnID, params.ItemID, target)
 	}
-	if errors.Is(err, errForkTargetNotFound) {
+	if errors.Is(err, errForkTargetNotFound) && source.liveHistory {
 		if liveTurn, ok := turnByID(source.thread.Turns, strings.TrimSpace(params.TurnID)); ok {
 			base := source.history
 			if len(source.rawHistory) > 0 {
@@ -791,8 +792,12 @@ func (s *Server) handleThreadEditMessage(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	committedHistory := nextHistory
+	var committedDisplay []persistedMessage
 	if th.PersistHistory {
-		if err := rewriteChatHistoryAtBaseline(s.rt.SessionDir, th.ID, nextHistory, historyBaselineSeq); err != nil {
+		// The resolved edit target supplies the physical cut, even when the
+		// provider context has already released the earlier conversation.
+		fromSeq := th.History[len(nextHistory)].Seq
+		if err := session.RewriteHistoryRecordsForEdit(s.rt.SessionDir, th.ID, historyRecordsFromChatMessages(nextHistory), fromSeq, historyBaselineSeq); err != nil {
 			releaseThreadMutationLease(th.ID, mutationLease)
 			th.mu.Unlock()
 			return s.writeResponse(req.ID, nil, err)
@@ -803,6 +808,13 @@ func (s *Server) handleThreadEditMessage(req Request) error {
 			th.mu.Unlock()
 			return s.writeResponse(req.ID, nil, loadErr)
 		}
+		activeRecords, loadErr := loadPersistedMessages(s.rt.SessionDir, th.ID, true)
+		if loadErr != nil {
+			releaseThreadMutationLease(th.ID, mutationLease)
+			th.mu.Unlock()
+			return s.writeResponse(req.ID, nil, loadErr)
+		}
+		committedDisplay = displayHistoryAcrossProviderCheckpoint(activeRecords, committedRecords)
 		committedHistory = chatMessagesFromPersistedMessages(committedRecords)
 		th.historyHeadSeq = committedHeadSeq
 		if err := session.UpdateIndex(s.rt.SessionDir, th.ID, persistableMessageCount(committedHistory), threadPreview(committedHistory)); err != nil {
@@ -814,6 +826,10 @@ func (s *Server) handleThreadEditMessage(req Request) error {
 	now := time.Now().UTC()
 	th.History = committedHistory
 	th.Turns = turnsFromHistory(th.ID, committedHistory, now)
+	if th.PersistHistory {
+		th.Turns = turnsFromPersistedHistory(th.ID, committedDisplay, now, s.resolveParticipantSummary)
+		s.restorePluginToolLabels(th.Turns)
+	}
 	th.UpdatedAt = now
 	th.currentTurn = ""
 	th.currentExecutionRunID = ""
@@ -836,8 +852,10 @@ func (s *Server) handleThreadEditMessage(req Request) error {
 func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThread, error) {
 	if th := s.thread(id); th != nil {
 		th.mu.Lock()
+		defer th.mu.Unlock()
 		s.restorePluginToolLabels(th.Turns)
 		source := forkSourceThread{
+			liveHistory:    th.running || !th.PersistHistory,
 			history:        cloneHistory(th.History),
 			displayHistory: cloneHistory(th.History),
 			modelProvider:  th.ModelProvider,
@@ -850,15 +868,19 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 			cwd:            th.CWD,
 			thread:         th.snapshotLocked(),
 		}
-		persisted := th.PersistHistory
-		th.mu.Unlock()
-		if persisted {
+		if th.PersistHistory {
 			loaded, err := s.loadPersistedThreadSnapshot(id)
 			if err != nil {
 				return forkSourceThread{}, err
 			}
 			source.displayHistory = chatMessagesFromPersistedMessages(loaded.displayHistory)
 			source.rawHistory = loaded.rawHistory
+			// An idle cache may predate an edit made by another connection.
+			// Only this connection's executing turn can supply unpersisted
+			// history. Holding th.mu keeps that ownership stable during loading.
+			if !source.liveHistory {
+				source.history = loaded.history
+			}
 		}
 		return source, nil
 	}

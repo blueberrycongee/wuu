@@ -168,7 +168,7 @@ VALUES ('thread-maintenance', 2, 'current', 1, '[]', '2026-01-02T00:00:00Z')`,
 	if invocationResult != "" || messageContent != "" || checkpointCount != 1 || checkpointVersion != 2 {
 		t.Fatalf("maintained storage = invocation %q, message %q, checkpoints %d@%d", invocationResult, messageContent, checkpointCount, checkpointVersion)
 	}
-	history, err := loadHistoryRecordsDB(db, "thread-maintenance", false)
+	history, err := loadHistoryRecordsDB(db, "thread-maintenance", false, false)
 	if err != nil {
 		t.Fatal(err)
 	}

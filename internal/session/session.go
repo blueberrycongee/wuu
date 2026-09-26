@@ -1012,6 +1012,11 @@ func RewriteHistoryRecords(sessDir, id string, records []HistoryRecord) error {
 	if _, err := tx.Exec(`DELETE FROM session_messages WHERE session_id = ?`, id); err != nil {
 		return fmt.Errorf("clear session history: %w", err)
 	}
+	// Physical replacement reuses sequence addresses, so branch ranges from
+	// the previous transcript no longer identify the same records.
+	if _, err := tx.Exec(`DELETE FROM session_history_retractions WHERE session_id = ?`, id); err != nil {
+		return fmt.Errorf("clear session history retractions: %w", err)
+	}
 	for i, rec := range records {
 		if err := insertHistoryRecordTx(tx, id, i+1, rec); err != nil {
 			return err
@@ -1025,6 +1030,17 @@ func RewriteHistoryRecords(sessDir, id string, records []HistoryRecord) error {
 
 // LoadHistoryRecords returns history records in write order.
 func LoadHistoryRecords(sessDir, id string, includeMeta bool) ([]HistoryRecord, error) {
+	return loadHistoryRecords(sessDir, id, includeMeta, false)
+}
+
+// LoadActiveHistoryRecords returns the current conversation branch, including
+// history released by compaction but excluding suffixes retracted by editing.
+// Use LoadHistoryRecords or ReadHistoryQuery to inspect the physical audit log.
+func LoadActiveHistoryRecords(sessDir, id string, includeMeta bool) ([]HistoryRecord, error) {
+	return loadHistoryRecords(sessDir, id, includeMeta, true)
+}
+
+func loadHistoryRecords(sessDir, id string, includeMeta, activeOnly bool) ([]HistoryRecord, error) {
 	db, err := openStore(sessDir)
 	if err != nil {
 		return nil, err
@@ -1035,7 +1051,7 @@ func LoadHistoryRecords(sessDir, id string, includeMeta bool) ([]HistoryRecord, 
 	} else if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrSessionNotFound, id)
 	}
-	return loadHistoryRecordsDB(db, id, includeMeta)
+	return loadHistoryRecordsDB(db, id, includeMeta, activeOnly)
 }
 
 func openStore(sessDir string) (*sql.DB, error) {
@@ -1264,6 +1280,13 @@ func migrateSchema(db *sql.DB) error {
 				UNIQUE(session_id, position),
 				FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
 			)`,
+		`CREATE TABLE IF NOT EXISTS session_history_retractions (
+			session_id TEXT NOT NULL,
+			from_seq INTEGER NOT NULL,
+			through_seq INTEGER NOT NULL,
+			PRIMARY KEY(session_id, from_seq, through_seq),
+			FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+		)`,
 		`CREATE TABLE IF NOT EXISTS session_history_checkpoints (
 			session_id      TEXT NOT NULL,
 			version         INTEGER NOT NULL,
@@ -2156,8 +2179,15 @@ const historyRecordsSelect = `
 	       provider, model
 	FROM session_messages`
 
-func loadHistoryRecordsDB(db *sql.DB, id string, includeMeta bool) ([]HistoryRecord, error) {
+func loadHistoryRecordsDB(db *sql.DB, id string, includeMeta, activeOnly bool) ([]HistoryRecord, error) {
 	query := historyRecordsSelect + ` WHERE session_id = ?`
+	if activeOnly {
+		query += ` AND NOT EXISTS (
+			SELECT 1 FROM session_history_retractions r
+			WHERE r.session_id = session_messages.session_id
+			AND session_messages.seq BETWEEN r.from_seq AND r.through_seq
+		)`
+	}
 	args := []any{id}
 	if !includeMeta {
 		query += ` AND lower(role) <> 'meta'`

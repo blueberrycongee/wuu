@@ -196,6 +196,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - History search finds literal quotes, paths, line breaks, and HTML characters
   in deduplicated tool results, including model text and multi-part output.
 
+- Keep edited-away conversation branches out of resumed conversations and forks,
+  including subsequent model input, while preserving valid pre-compaction history
+  and the append-only audit transcript.
+
 - Pasted-text cards retain their segments and titles when conversations are
   restored or forked. Canonical message text and model input remain unchanged.
 
