@@ -235,29 +235,42 @@ async function switchTo(win, index, scenario) {
     firstOpen: !seen.has(index), via: 'native-sidebar-click', contentFrameMs, ...interaction,
     hostEnvelopeMs: performance.now() - start, wireBytes: wireBytes - bytesBefore,
     coreSpawns: coreSpawns - spawnsBefore, renderer,
-    rpc: timings.slice(offset).map(t => ({ channel: t.channel, startMs: t.startedAt - start, ms: t.ms })),
   };
   if (initDelayMs && !seen.has(index)) assert.ok(result.interactiveFrameMs >= initDelayMs, 'Readiness endpoint missed injected initialize delay');
   seen.add(index);
   results.push(result);
   // Drain background catalog work outside the measurement window. The archive
   // fault deliberately stays unresolved and is reported as a separate scenario.
-  const deadline = Date.now() + 30000;
-  while (!archiveGate && timings.slice(offset).some(t => t.ms === null)) {
-    assert.ok(Date.now() < deadline, 'Background IPC did not settle');
-    await delay(25);
-  }
   if (!archiveGate) {
-    // Work counters cover the background snapshot and its render too. A fast
-    // cached paint must not hide a costly resume arriving after the UI endpoint.
-    await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    const settled = await debug.sendCommand('Performance.getMetrics');
+    const deadline = Date.now() + 30000;
+    let settled;
+    let rpcCount;
+    do {
+      assert.ok(Date.now() < deadline, 'Background IPC did not settle');
+      while (timings.slice(offset).some(t => t.ms === null)) {
+        assert.ok(Date.now() < deadline, 'Background IPC did not settle');
+        await delay(25);
+      }
+      // Resume responses can start catalog requests in the renderer. Include
+      // those requests and their renders before finalizing the work counters.
+      rpcCount = timings.length;
+      await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      settled = await debug.sendCommand('Performance.getMetrics');
+    } while (timings.length !== rpcCount || timings.slice(offset).some(t => t.ms === null));
     const metrics = Object.fromEntries(settled.metrics.map(m => [m.name, m.value]));
     result.work = {
       resumeCalls: timings.slice(offset).filter(t => t.channel === 'wuu:thread-resume').length,
       layoutCount: metrics.LayoutCount - prior.LayoutCount,
       recalcStyleCount: metrics.RecalcStyleCount - prior.RecalcStyleCount,
     };
+  }
+  // Include RPCs started during background resume and copy their final durations.
+  // The archive-blocked sample intentionally retains its unresolved gate.
+  result.rpc = timings.slice(offset).map(t => ({ channel: t.channel, startMs: t.startedAt - start, ms: t.ms }));
+  if (!archiveGate) {
+    for (const timing of result.rpc) {
+      assert.ok(Number.isFinite(timing.ms), `${scenario}/${index}: ${timing.channel} lost its completed RPC duration`);
+    }
     if (checkBudget && scenario === 'repeat' && result.history === 'large') assertSample(result.work);
   }
   console.log(JSON.stringify(result));
