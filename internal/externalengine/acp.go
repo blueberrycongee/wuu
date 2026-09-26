@@ -112,10 +112,27 @@ func (e *Engine) DiscoverCatalog(ctx context.Context) (DiscoveredCatalog, error)
 		// user discovers that the agent needs configuration of its own.
 		return DiscoveredCatalog{}, acpEngineError(e.entry, p, fmt.Errorf("session/new: %w", err))
 	}
-	return DiscoveredCatalog{
-		Models: modelsFromACPSession(session),
-		Modes:  permissionModesFromACPSession(session),
-	}, nil
+	models := modelsFromACPSession(session)
+	modes := permissionModesFromACPSession(session)
+	restore := trackACPConfiguration(r, &session, session.ID)
+	defer restore()
+	for i := range models {
+		if models[i].IsDefault {
+			continue
+		}
+		models[i].FastMode, models[i].DefaultSpeed = false, ""
+		if err := session.selectModel(ctx, r, session.ID, models[i].ID); err != nil {
+			continue
+		}
+		option, on, _ := session.speedOption()
+		if option != nil {
+			models[i].FastMode, models[i].DefaultSpeed = true, "standard"
+			if option.Current == on {
+				models[i].DefaultSpeed = "fast"
+			}
+		}
+	}
+	return DiscoveredCatalog{Models: models, Modes: modes}, nil
 }
 
 func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *turn) error {
@@ -517,6 +534,8 @@ type acpPermission struct {
 }
 
 func (s *Session) applyACPSelection(ctx context.Context, r *rpc, session acpSession, ref string) error {
+	restore := trackACPConfiguration(r, &session, ref)
+	defer restore()
 	// Responses contain the full configuration after dependent changes.
 	setOption := func(id, value string) error {
 		var updated acpSession
@@ -535,23 +554,8 @@ func (s *Session) applyACPSelection(ctx context.Context, r *rpc, session acpSess
 			}
 			return fmt.Errorf("model %q is not advertised by this engine", model)
 		}
-		// Grok Build's picker is first-class `models` + session/set_model.
-		// Setting the same id through a category=model config option can be
-		// ignored on older CLIs, so prefer set_model when that list exists.
-		switch {
-		case session.firstClassHasModel(model):
-			if session.firstClassCurrent() != model {
-				if err := r.call(ctx, "session/set_model", map[string]any{"sessionId": ref, "modelId": model}, nil); err != nil {
-					return err
-				}
-			}
-		default:
-			option := session.modelConfigOption()
-			if option != nil && strings.TrimSpace(option.Current) != model {
-				if err := setOption(option.ID, model); err != nil {
-					return err
-				}
-			}
+		if err := session.selectModel(ctx, r, ref, model); err != nil {
+			return err
 		}
 	}
 	effort := strings.TrimSpace(s.binding.Effort)
@@ -733,6 +737,63 @@ func parseACPUpdate(ref string, raw json.RawMessage, t *turn) error {
 		if t != nil {
 			t.emit(providers.StreamEvent{Type: providers.EventTodoUpdate, TodoUpdate: &providers.TodoUpdate{Todos: update.Entries}})
 		}
+	}
+	return nil
+}
+
+// ACP agents may publish model-dependent options through notifications before
+// acknowledging set_model, or in the complete set_config_option response.
+func trackACPConfiguration(r *rpc, session *acpSession, ref string) func() {
+	previous := r.handle
+	r.handle = func(ctx context.Context, method string, raw json.RawMessage, request bool) (any, error) {
+		if !request && method == "session/update" {
+			var notification struct {
+				SessionID string `json:"sessionId"`
+				Update    struct {
+					Kind    string            `json:"sessionUpdate"`
+					Options []acpConfigOption `json:"configOptions"`
+				} `json:"update"`
+			}
+			if err := json.Unmarshal(raw, &notification); err != nil {
+				return nil, err
+			}
+			if notification.SessionID == ref && notification.Update.Kind == "config_option_update" {
+				session.ConfigOptions = notification.Update.Options
+			}
+		}
+		if previous != nil {
+			return previous(ctx, method, raw, request)
+		}
+		return nil, nil
+	}
+	return func() { r.handle = previous }
+}
+
+func (session *acpSession) selectModel(ctx context.Context, r *rpc, ref, model string) error {
+	var updated acpSession
+	switch {
+	case session.firstClassHasModel(model):
+		if session.firstClassCurrent() == model {
+			return nil
+		}
+		if err := r.call(ctx, "session/set_model", map[string]any{"sessionId": ref, "modelId": model}, &updated); err != nil {
+			return err
+		}
+		session.Models.Current = model
+	default:
+		option := session.modelConfigOption()
+		if option == nil {
+			return errors.New("engine does not advertise model selection")
+		}
+		if strings.TrimSpace(option.Current) == model {
+			return nil
+		}
+		if err := r.call(ctx, "session/set_config_option", map[string]any{"sessionId": ref, "configId": option.ID, "value": model}, &updated); err != nil {
+			return err
+		}
+	}
+	if updated.ConfigOptions != nil {
+		session.ConfigOptions = updated.ConfigOptions
 	}
 	return nil
 }

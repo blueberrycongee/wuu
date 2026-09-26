@@ -837,6 +837,7 @@ func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, par
 		selection.Model = params.Model
 		selection.Variant = params.Variant
 		selection.Effort = params.Effort
+		selection.Speed = params.Speed
 		if params.PermissionMode != "" {
 			selection.PermissionMode = params.PermissionMode
 		}

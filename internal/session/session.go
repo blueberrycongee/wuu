@@ -57,6 +57,7 @@ type Session struct {
 	Model                 string    `json:"model,omitempty"`
 	Variant               string    `json:"variant,omitempty"`
 	Effort                string    `json:"effort,omitempty"`
+	Speed                 string    `json:"speed,omitempty"`
 	PermissionMode        string    `json:"permission_mode,omitempty"`
 	ApproveForMe          bool      `json:"approve_for_me,omitempty"`
 	Instructions          string    `json:"instructions,omitempty"`
@@ -359,7 +360,7 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-	       provider, model, variant, effort, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
+	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
 	       COALESCE((SELECT m.client_id FROM session_messages m
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -541,7 +542,7 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-       provider, model, variant, effort, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
+       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
        COALESCE((SELECT m.client_id FROM session_messages m
                  WHERE m.session_id = sessions.id AND m.role = 'meta'
                    AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -642,6 +643,7 @@ type RuntimeSelection struct {
 	Model          string
 	Variant        string
 	Effort         string
+	Speed          string
 	PermissionMode string
 	ApproveForMe   bool
 }
@@ -661,6 +663,7 @@ func SetRuntimeSelection(sessDir, id string, selection RuntimeSelection) (Sessio
 		s.Model = selection.Model
 		s.Variant = strings.TrimSpace(selection.Variant)
 		s.Effort = strings.TrimSpace(selection.Effort)
+		s.Speed = selection.Speed
 		s.PermissionMode = strings.TrimSpace(selection.PermissionMode)
 		s.ApproveForMe = selection.ApproveForMe
 	})
@@ -1779,6 +1782,9 @@ WHERE workflow_id = ''`); err != nil {
 	if err := addColumnIfMissing(db, "sessions", "variant", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(db, "sessions", "speed", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	if err := addColumnIfMissing(db, "sessions", "effort", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -1902,8 +1908,8 @@ func insertSessionSQL() string {
 		forked_from_id, forked_from_turn_id, forked_from_item_id,
 		pinned_at, folder_id, archived_at, archive_reason, worktree_path, worktree_base_head, worktree_base_repo,
 		workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-		provider, model, variant, effort, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 }
 
 func updateSessionTx(tx *sql.Tx, sess Session) error {
@@ -1913,7 +1919,7 @@ SET created_at = ?, updated_at = ?, title = ?, summary = ?, entries = ?, cwd = ?
     forked_from_id = ?, forked_from_turn_id = ?, forked_from_item_id = ?,
     pinned_at = ?, folder_id = ?, archived_at = ?, archive_reason = ?, worktree_path = ?, worktree_base_head = ?, worktree_base_repo = ?,
     workspace_id = ?, source = ?, owner = ?, visibility = ?, parent_id = ?, context_source = ?, creation_request_id = ?,
-	provider = ?, model = ?, variant = ?, effort = ?, permission_mode = ?, approve_for_me = ?, engine_id = ?, engine_ref = ?, instructions = ?, tool_policy_json = ?
+	provider = ?, model = ?, variant = ?, effort = ?, speed = ?, permission_mode = ?, approve_for_me = ?, engine_id = ?, engine_ref = ?, instructions = ?, tool_policy_json = ?
 WHERE id = ?`,
 		timeText(sess.CreatedAt), timeText(sess.UpdatedAt), sess.Title, sess.Summary, sess.Entries, normalizeCWD(sess.CWD),
 		sess.ForkedFromID, sess.ForkedFromTurnID, sess.ForkedFromItemID,
@@ -1922,7 +1928,7 @@ WHERE id = ?`,
 		strings.TrimSpace(sess.WorkspaceID), strings.TrimSpace(sess.Source),
 		strings.TrimSpace(sess.Owner), strings.TrimSpace(sess.Visibility), strings.TrimSpace(sess.ParentID), strings.TrimSpace(sess.ContextSource), strings.TrimSpace(sess.CreationRequestID),
 		strings.TrimSpace(sess.Provider), strings.TrimSpace(sess.Model), strings.TrimSpace(sess.Variant),
-		strings.TrimSpace(sess.Effort), strings.TrimSpace(sess.PermissionMode),
+		strings.TrimSpace(sess.Effort), strings.TrimSpace(sess.Speed), strings.TrimSpace(sess.PermissionMode),
 		boolToInt(sess.ApproveForMe),
 		strings.TrimSpace(sess.EngineID),
 		strings.TrimSpace(sess.EngineRef),
@@ -1965,7 +1971,7 @@ func sessionArgs(sess Session) []any {
 		strings.TrimSpace(sess.Provider),
 		strings.TrimSpace(sess.Model),
 		strings.TrimSpace(sess.Variant),
-		strings.TrimSpace(sess.Effort),
+		strings.TrimSpace(sess.Effort), strings.TrimSpace(sess.Speed),
 		strings.TrimSpace(sess.PermissionMode),
 		boolToInt(sess.ApproveForMe),
 		strings.TrimSpace(sess.EngineID),
@@ -1982,7 +1988,7 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-	       provider, model, variant, effort, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
+	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
 	       COALESCE((SELECT m.client_id FROM session_messages m
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -1999,7 +2005,7 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-	       provider, model, variant, effort, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
+	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
 	       COALESCE((SELECT m.client_id FROM session_messages m
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -2034,7 +2040,7 @@ func scanSession(scanner interface {
 		&pinnedAt, &s.FolderID, &archivedAt, &s.ArchiveReason,
 		&s.WorktreePath, &s.WorktreeBaseHEAD, &s.WorktreeBaseRepo,
 		&s.WorkspaceID, &s.Source, &s.Owner, &s.Visibility, &s.ParentID, &s.ContextSource, &s.CreationRequestID,
-		&s.Provider, &s.Model, &s.Variant, &s.Effort, &s.PermissionMode, &s.ApproveForMe, &s.EngineID, &s.EngineRef, &s.Instructions, &s.ToolPolicyJSON,
+		&s.Provider, &s.Model, &s.Variant, &s.Effort, &s.Speed, &s.PermissionMode, &s.ApproveForMe, &s.EngineID, &s.EngineRef, &s.Instructions, &s.ToolPolicyJSON,
 		&s.LatestCompletedTurnID,
 	); err != nil {
 		return Session{}, err

@@ -938,6 +938,7 @@ type PluginStorageResult struct {
 }
 
 type ConfigModelUpdateParams struct {
+	Speed          *string `json:"speed,omitempty"`
 	ThreadID       string  `json:"thread_id,omitempty"`
 	Provider       string  `json:"provider,omitempty"`
 	Model          string  `json:"model"`
@@ -1233,6 +1234,8 @@ type ProviderSummary struct {
 }
 
 type ProviderModelSummary struct {
+	FastMode         bool                          `json:"fast_mode,omitempty"`
+	DefaultSpeed     string                        `json:"default_speed,omitempty"`
 	ID               string                        `json:"id"`
 	DisplayName      string                        `json:"display_name,omitempty"`
 	DefaultEffort    string                        `json:"default_effort,omitempty"`
@@ -1273,6 +1276,7 @@ type ProviderModelVariantSummary struct {
 }
 
 type ThreadStartParams struct {
+	Speed       string `json:"speed,omitempty"`
 	Ephemeral   bool   `json:"ephemeral,omitempty"`
 	CWD         string `json:"cwd,omitempty"`
 	WorkspaceID string `json:"workspace_id,omitempty"`
@@ -1372,6 +1376,8 @@ type EnginePermissionModeInfo struct {
 }
 
 type EngineModelInfo struct {
+	FastMode         bool     `json:"fast_mode,omitempty"`
+	DefaultSpeed     string   `json:"default_speed,omitempty"`
 	ID               string   `json:"id"`
 	DisplayName      string   `json:"display_name,omitempty"`
 	DefaultEffort    string   `json:"default_effort,omitempty"`
@@ -2181,6 +2187,7 @@ type ThreadSessionControl struct {
 }
 
 type Thread struct {
+	Speed          string                `json:"speed,omitempty"`
 	SessionControl *ThreadSessionControl `json:"session_control,omitempty"`
 	ID             string                `json:"id"`
 	Source         string                `json:"source,omitempty"`

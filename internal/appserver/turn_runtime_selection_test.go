@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -348,5 +349,58 @@ func TestEnsureThreadRuntimePermissionPinDriftDoesNotRebuild(t *testing.T) {
 	}
 	if reused != first {
 		t.Fatal("permission pin drift alone should not rebuild the cached runtime")
+	}
+}
+
+func TestThreadSpeedSelectionPersistsAndRebuilds(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	cfg := `{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","api_key":"test","model":"fake-model","models":{"fake-model":{"fast_mode":true,"variants":{"high":{"reasoningEffort":"high"}}}}}}}`
+	if err := os.WriteFile(rt.ConfigPath, []byte(cfg), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	call := func(id, method string, params any) map[string]any {
+		t.Helper()
+		raw, err := json.Marshal(map[string]any{"id": id, "method": method, "params": params})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = srv.handleLine(context.Background(), raw); err != nil {
+			t.Fatal(err)
+		}
+		response := responseByID(t, parseOutput(t, out.String()), id)
+		if response["error"] != nil {
+			t.Fatalf("%s: %v", method, response["error"])
+		}
+		return response
+	}
+	start := call("speed-start", "thread/start", map[string]any{"speed": "fast", "effort": "high"})
+	th := remarshal[ThreadStartResult](t, start["result"]).Thread
+	if th.Speed != "fast" {
+		t.Fatalf("thread speed = %q", th.Speed)
+	}
+	first, err := srv.ensureThreadRuntime(srv.thread(th.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.StreamRunner.ProviderOptions["serviceTier"] != "priority" {
+		t.Fatalf("fast options = %v", first.StreamRunner.ProviderOptions)
+	}
+	call("speed-off", "config/model/update", map[string]any{"thread_id": th.ID, "speed": "standard"})
+	next, err := srv.ensureThreadRuntime(srv.thread(th.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next == first || next.StreamRunner.ProviderOptions["serviceTier"] != "default" {
+		t.Fatalf("stale speed runtime: %v", next.StreamRunner.ProviderOptions)
+	}
+	saved, ok, err := session.Find(rt.SessionDir, th.ID)
+	if err != nil || !ok || saved.Speed != "standard" || saved.Variant != "high" {
+		t.Fatalf("saved selection = %+v, %v", saved, err)
+	}
+	resumed := remarshal[ThreadResumeResult](t, call("speed-resume", "thread/resume", map[string]any{"session_id": th.ID})["result"]).Thread
+	if resumed.Speed != "standard" {
+		t.Fatalf("resumed speed = %q", resumed.Speed)
 	}
 }

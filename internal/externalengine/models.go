@@ -14,14 +14,11 @@ type DiscoveredModel struct {
 }
 
 type acpConfigOption struct {
-	ID       string `json:"id"`
-	Category string `json:"category"`
-	Type     string `json:"type"`
-	Current  string `json:"currentValue"`
-	Options  []struct {
-		Value string `json:"value"`
-		Name  string `json:"name"`
-	} `json:"options"`
+	ID       string            `json:"id"`
+	Category string            `json:"category"`
+	Type     string            `json:"type"`
+	Current  string            `json:"currentValue"`
+	Options  []acpConfigChoice `json:"options"`
 }
 
 func modelsFromACPSession(session acpSession) []DiscoveredModel {
@@ -50,7 +47,7 @@ func thoughtLevelFromOptions(options []acpConfigOption) (efforts []string, curre
 		if option.Type != "select" || option.Category != "thought_level" {
 			continue
 		}
-		for _, choice := range option.Options {
+		for _, choice := range option.choices() {
 			if id := strings.TrimSpace(choice.Value); id != "" {
 				efforts = append(efforts, id)
 			}
@@ -66,7 +63,7 @@ func modelsFromConfigOptions(options []acpConfigOption) []DiscoveredModel {
 			continue
 		}
 		hasReal := false
-		for _, choice := range option.Options {
+		for _, choice := range option.choices() {
 			if id := strings.TrimSpace(choice.Value); id != "" && !strings.EqualFold(id, "default") {
 				hasReal = true
 				break
@@ -74,7 +71,7 @@ func modelsFromConfigOptions(options []acpConfigOption) []DiscoveredModel {
 		}
 		var models []DiscoveredModel
 		current := strings.TrimSpace(option.Current)
-		for _, choice := range option.Options {
+		for _, choice := range option.choices() {
 			id := strings.TrimSpace(choice.Value)
 			if id == "" || hasReal && strings.EqualFold(id, "default") {
 				continue
@@ -327,7 +324,7 @@ func (o *acpConfigOption) labelFor(id string) string {
 	if id == "" {
 		return ""
 	}
-	for _, choice := range o.Options {
+	for _, choice := range o.choices() {
 		if strings.TrimSpace(choice.Value) != id {
 			continue
 		}
@@ -359,4 +356,23 @@ func (s acpSession) speedOption() (*acpConfigOption, string, string) {
 		}
 	}
 	return nil, "", ""
+}
+
+// ACP select options can be flat or grouped; both carry the same values.
+type acpConfigChoice struct {
+	Value   string            `json:"value"`
+	Name    string            `json:"name"`
+	Options []acpConfigChoice `json:"options"`
+}
+
+func (o *acpConfigOption) choices() []acpConfigChoice {
+	var choices []acpConfigChoice
+	for _, choice := range o.Options {
+		if len(choice.Options) > 0 {
+			choices = append(choices, choice.Options...)
+		} else {
+			choices = append(choices, choice)
+		}
+	}
+	return choices
 }

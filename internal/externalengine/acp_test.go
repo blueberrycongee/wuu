@@ -554,7 +554,7 @@ func TestACPHelper(t *testing.T) {
 			}
 			result = map[string]any{"protocolVersion": version, "agentCapabilities": caps}
 		case "session/new":
-			if scenario == "speed" {
+			if scenario == "speed" || scenario == "speed-catalog" {
 				result = speedACPSessionResult("model-a", "fast-mode", selectedSpeed)
 				break
 			}
@@ -612,7 +612,7 @@ func TestACPHelper(t *testing.T) {
 			selectedModel = params.ModelID
 			result = map[string]any{}
 		case "session/set_config_option":
-			if scenario == "speed" {
+			if scenario == "speed" || scenario == "speed-catalog" {
 				var params struct {
 					ConfigID string
 					Value    string
@@ -626,6 +626,9 @@ func TestACPHelper(t *testing.T) {
 					selectedSpeed = params.Value
 				}
 				result = speedACPSessionResult(selectedModel, "fast_mode", selectedSpeed)
+				if scenario == "speed-catalog" && selectedModel == "model-b" {
+					result.(map[string]any)["configOptions"] = result.(map[string]any)["configOptions"].([]any)[:1]
+				}
 				break
 			}
 			var params struct {
@@ -651,7 +654,7 @@ func TestACPHelper(t *testing.T) {
 			}
 			text("old replay")
 		case "session/prompt":
-			if scenario == "speed" {
+			if scenario == "speed" || scenario == "speed-catalog" {
 				text(selectedSpeed)
 				result = map[string]string{"stopReason": "end_turn"}
 				break
@@ -941,7 +944,7 @@ func TestACPRejectsUnadvertisedGrokModel(t *testing.T) {
 func speedACPSessionResult(model, speedID, speed string) map[string]any {
 	return map[string]any{"sessionId": "native-session", "configOptions": []any{
 		map[string]any{"id": "model", "category": "model", "type": "select", "currentValue": model, "options": []any{map[string]any{"value": "model-a"}, map[string]any{"value": "model-b"}}},
-		map[string]any{"id": speedID, "name": "Fast mode", "category": "model_config", "type": "select", "currentValue": speed, "options": []any{map[string]any{"value": "off"}, map[string]any{"value": "on"}}},
+		map[string]any{"id": speedID, "name": "Fast mode", "category": "model_config", "type": "select", "currentValue": speed, "options": []any{map[string]any{"group": "speed", "name": "Speed", "options": []any{map[string]any{"value": "off"}, map[string]any{"value": "on"}}}}},
 	}}
 }
 
@@ -984,5 +987,15 @@ func TestACPRejectsUnadvertisedSpeed(t *testing.T) {
 	_, err = sess.RunTurn(ctx, testInput(), nil)
 	if err == nil || !strings.Contains(err.Error(), "speed") {
 		t.Fatalf("unadvertised speed = %v", err)
+	}
+}
+
+func TestACPCatalogReportsSpeedPerModel(t *testing.T) {
+	catalog, err := testEngine(t, "speed-catalog").DiscoverCatalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Models) != 2 || !catalog.Models[0].FastMode || catalog.Models[1].FastMode {
+		t.Fatalf("wrong per-model speed capabilities: %+v", catalog.Models)
 	}
 }

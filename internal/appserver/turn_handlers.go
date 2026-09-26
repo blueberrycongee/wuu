@@ -1110,6 +1110,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 				Model:          th.Model,
 				Variant:        th.ModelVariant,
 				Effort:         th.ModelEffort,
+				Speed:          th.Speed,
 				PermissionMode: th.PermissionMode,
 			},
 		}
@@ -1151,6 +1152,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	model := th.Model
 	modelVariant := th.ModelVariant
 	modelEffort := th.ModelEffort
+	speed := th.Speed
 	permissionMode := th.PermissionMode
 	namedAgentID := strings.TrimSpace(th.NamedAgentID)
 	collaborationSessionRef := strings.TrimSpace(th.CollaborationSessionRef)
@@ -1170,6 +1172,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		Model:          model,
 		Variant:        modelVariant,
 		Effort:         modelEffort,
+		Speed:          speed,
 		PermissionMode: permissionMode,
 	}
 	var threadRuntime *runtime.ThreadRuntime
@@ -1221,6 +1224,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 			Model:          healed.Model,
 			Variant:        healed.Variant,
 			Effort:         healed.Effort,
+			Speed:          healed.Speed,
 			PermissionMode: healed.PermissionMode,
 		}
 		if namedAgentID != "" {
@@ -1324,6 +1328,7 @@ func (s *Server) healThreadSelectionForRemovedProvider(th *threadState) session.
 		Model:          defaults.Model,
 		Variant:        strings.TrimSpace(th.ModelVariant),
 		Effort:         strings.TrimSpace(th.ModelEffort),
+		Speed:          th.Speed,
 		PermissionMode: strings.TrimSpace(th.PermissionMode),
 		ApproveForMe:   th.ApproveForMe,
 	}
@@ -1367,6 +1372,7 @@ func (s *Server) threadRuntimeMatchesSelectionLocked(th *threadState, existing *
 		Model:    strings.TrimSpace(th.Model),
 		Variant:  strings.TrimSpace(th.ModelVariant),
 		Effort:   strings.TrimSpace(th.ModelEffort),
+		Speed:    th.Speed,
 	}
 	return got == want
 }
@@ -2316,6 +2322,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		RootDir:        firstNonEmpty(th.CWD, s.rt.RootDir),
 		Model:          th.Model,
 		Effort:         th.ModelEffort,
+		Speed:          th.Speed,
 		PermissionMode: th.PermissionMode,
 		Instructions:   sessionInstructions,
 		MCPServers:     hostMCPServers,

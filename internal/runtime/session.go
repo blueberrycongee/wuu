@@ -306,6 +306,7 @@ type ThreadRuntime struct {
 // ThreadModelSelection is the model choice persisted with one conversation.
 // Empty fields mean the workspace runtime defaults should be used.
 type ThreadModelSelection struct {
+	Speed          string
 	Provider       string
 	Model          string
 	Variant        string
@@ -1088,6 +1089,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 		Model:          model,
 		Variant:        strings.TrimSpace(selected.Variant),
 		Effort:         strings.TrimSpace(selected.Effort),
+		Speed:          selected.Speed,
 		PermissionMode: strings.TrimSpace(selected.PermissionMode),
 	}
 	permissionMode := requested.PermissionMode
@@ -1105,7 +1107,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 		currentVariant = strings.TrimSpace(s.StreamRunner.Variant)
 		currentEffort = strings.TrimSpace(s.StreamRunner.Effort)
 	}
-	if providerName == "" || model == "" || (providerName == s.ProviderName && model == s.Model && requested.Variant == currentVariant && requested.Effort == currentEffort) {
+	if selected.Speed == "" && (providerName == "" || model == "" || (providerName == s.ProviderName && model == s.Model && requested.Variant == currentVariant && requested.Effort == currentEffort)) {
 		// Permission changes do not require rebuilding an unchanged model client.
 		shadow := s.cloneForThreadModel()
 		shadow.Permissions = permissions
@@ -1128,6 +1130,9 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	variant := strings.TrimSpace(selected.Variant)
 	effort := strings.TrimSpace(selected.Effort)
 	selection := modelvariant.ResolveForProvider(ruleProviderName, ruleProviderCfg, model, variant, effort)
+	if err := modelvariant.ApplySpeed(ruleProviderCfg, model, selected.Speed, &selection); err != nil {
+		return nil, err
+	}
 	client, err := providerfactory.BuildStreamClient(ruleProviderCfg, resolvedName)
 	if err != nil {
 		return nil, fmt.Errorf("build thread model client: %w", err)
