@@ -1,6 +1,6 @@
 # Projects
 
-A project is a conversation with a coordinator for a larger piece of work in one workspace, such as a feature, a migration, or a cleanup. The coordinator plans the work, keeps your goals and decisions in view, and hands every change to sessions it manages. You review what those sessions produce and decide what reaches the workspace.
+The Project Agent is your lead: it keeps your goals and decisions in view, works directly when useful, and delegates independent work to sessions it manages. You review proposals from isolated sessions and decide what reaches the workspace.
 
 ## Start a project
 
@@ -15,11 +15,17 @@ Keep the public API unchanged.
 
 Sending the first message creates the project and names it after that message's first line. Rename it like any conversation. A workspace can hold several projects.
 
-The coordinator reads the workspace, including instructions such as `AGENTS.md` ([configuration](../reference/configuration.md)) and skills, but it cannot change anything. It can read and search files, run read-only commands, and use the web. It cannot edit files, run commands that change anything, or operate the browser. For a small, self-contained task, an ordinary conversation is faster and uses fewer tokens.
+The lead uses the same tools and permission settings as an ordinary conversation, including workspace instructions such as `AGENTS.md` ([configuration](../reference/configuration.md)) and skills. It can make changes directly when its permission mode allows them; those edits affect its current workspace immediately. Small tasks do not need a team.
 
-## Sessions do the work
+## A lead, an optional Side Agent, and Workers
 
-The coordinator starts a managed session for each independent piece of work and writes it a brief. A session does not see the project conversation, only its brief and later instructions. Each session is an ordinary conversation that you can open at any time.
+For sustained implementation, the lead can keep one persistent **Side Agent** and add scoped **Workers** for investigation, changes, or verification. The side can create workers too. Workers can communicate but cannot create more project sessions. These are roles on ordinary conversations: they share the same history, model settings, tools, worktrees, and user controls. Reusing a side preserves its context, including after a restart.
+
+The lead delegates goals, constraints, ownership boundaries, dependencies, and acceptance evidence. It should leave implementation decisions to the agent inspecting the code, which can challenge mistaken assumptions. Sessions do not see the lead's conversation: each needs a self-contained brief and relevant user instructions. The lead remains responsible for reviewing and verifying the combined result.
+
+Team members can message each other and the lead directly. Information waits until the recipient's next turn; a question or request can explicitly wake it. Messages preserve their sender and survive restarts. Important decisions should reach the lead, and a peer message does not grant additional user authorization. Human takeover invalidates queued messages involving that session; returning it does not replay those old requests.
+
+A new member inherits the lead's model unless a configured model alias is selected. Its model can then be changed using the ordinary conversation controls. No extra model or session runtime is introduced.
 
 To bring existing work into a project, drag a conversation from its workspace onto the project in the sidebar. The coordinator manages it from then on and reads its latest answer. Only a conversation of the project's workspace can join.
 
@@ -28,7 +34,7 @@ A project occupies one row in the sidebar; its sessions do not crowd the workspa
 - Above the composer, the project's running work and pending reviews open the project in the right panel: what awaits review, then every session. A session that you took over or paused says so.
 - Each event, such as a session finishing a turn, reads as one line with **Review** and **Open session**. **Details** shows the text the coordinator received.
 
-In a Git workspace, a session that changes files works in its own Git worktree by default, so parallel sessions do not overwrite each other. A session that works in the workspace directly edits its files in place.
+In a Git workspace, a session that changes files works in its own Git worktree by default, so their files are isolated. Worktrees do not resolve interface conflicts: assign one writer to each overlapping scope and verify changes together. A session that works in the workspace directly edits its files in place.
 
 When a session's turn ends, the coordinator decides the next step: a correction, a follow-up session, or telling you what is ready. A result is evidence, not proof that the goal is met. To get an independent check, ask the coordinator to review a change. It starts a separate session from a frozen copy of the change, so the review can run tests without altering it.
 

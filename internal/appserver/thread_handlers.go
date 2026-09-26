@@ -1375,6 +1375,7 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	th.Visibility = metadata.Visibility
 	th.Instructions = effectiveSessionInstructions(metadata)
 	th.ProjectID = projectIDForSession(metadata)
+	th.ProjectRole = projectRoleForSession(metadata)
 	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" && selection.Model != "" {
 		applyThreadRuntimeSelection(th, selection)
 	}
@@ -1459,6 +1460,7 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 			ID:                    sess.ID,
 			Source:                sess.Source,
 			ProjectID:             projectIDForSession(sess),
+			ProjectRole:           projectRoleForSession(sess),
 			Preview:               firstNonEmpty(sess.Title, sess.Summary),
 			Title:                 sess.Title,
 			ModelProvider:         firstNonEmpty(selection.Provider, provider),

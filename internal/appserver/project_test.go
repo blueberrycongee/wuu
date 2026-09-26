@@ -668,6 +668,9 @@ func TestProjectSideAndWorkersReuseOrdinarySessions(t *testing.T) {
 	}
 	sideCall.response <- providersResponse("Implementation ready.")
 	side := projectManagedSessions(t, client, lead.ID)[0]
+	if side.ProjectRole != "side" {
+		t.Fatalf("listed side role = %q", side.ProjectRole)
+	}
 	settleCoordinator(t, srv, calls, lead.ID, "Build the team feature", "Waiting for review.", projectResultClientID(side.ID, waitForThread(t, srv, side.ID, func(th Thread) bool { return th.LatestCompletedTurnID != "" }).LatestCompletedTurnID))
 
 	handler := srv.projectSessionHandler(lead.ID)
@@ -695,7 +698,7 @@ func TestProjectSideAndWorkersReuseOrdinarySessions(t *testing.T) {
 	workerCall.response <- providersResponse("Verified.")
 	worker := waitForThread(t, srv, workerID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
 	settleCoordinator(t, srv, calls, lead.ID, "Build the team feature", "Verified.", projectResultClientID(worker.ID, worker.LatestCompletedTurnID))
-	if worker.ParentID != "" || worker.ProjectID != lead.ID {
+	if worker.ParentID != "" || worker.ProjectID != lead.ID || worker.ProjectRole != "worker" {
 		t.Fatalf("worker is not an ordinary project session: %+v", worker)
 	}
 

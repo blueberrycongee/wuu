@@ -2226,7 +2226,8 @@ type Thread struct {
 	ID             string                `json:"id"`
 	Source         string                `json:"source,omitempty"`
 	// ProjectID is the coordinator conversation that manages this session.
-	ProjectID string `json:"project_id,omitempty"`
+	ProjectID   string `json:"project_id,omitempty"`
+	ProjectRole string `json:"project_role,omitempty"`
 	// PendingCandidates counts undecided candidates: a managed session's own,
 	// or all of a project coordinator's sessions.
 	PendingCandidates int    `json:"pending_candidates,omitempty"`

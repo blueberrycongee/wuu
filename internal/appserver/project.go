@@ -130,6 +130,13 @@ func pendingCandidates(source, id string, bySession, byProject map[string]int) i
 	return 0
 }
 
+func projectRoleForSession(metadata session.Session) string {
+	if metadata.Source == projectSessionSource {
+		return firstNonEmpty(metadata.ProjectRole, "worker")
+	}
+	return ""
+}
+
 func projectIDForSession(metadata session.Session) string {
 	if metadata.Source == projectSessionSource {
 		return metadata.ParentID

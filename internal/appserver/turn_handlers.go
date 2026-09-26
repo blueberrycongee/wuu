@@ -276,6 +276,7 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 		th.mu.Lock()
 		th.Source = metadata.Source
 		th.ProjectID = projectIDForSession(metadata)
+		th.ProjectRole = projectRoleForSession(metadata)
 		th.Instructions = effectiveSessionInstructions(metadata)
 		th.mu.Unlock()
 		isProject := metadata.Source == projectSource || metadata.Source == projectSessionSource

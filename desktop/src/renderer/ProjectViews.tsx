@@ -47,6 +47,7 @@ export function ProjectStatusStrip({ project }: { project: Thread }): JSX.Elemen
 }
 
 const PROJECT_EVENTS: Record<string, { label: TranslationKey; Icon: typeof Workflow }> = {
+  project_message: { label: "projects.event.message", Icon: MessagesSquare },
   project_result: { label: "projects.event.result", Icon: MessagesSquare },
   project_takeover: { label: "projects.event.takeover", Icon: Hand },
   project_pause: { label: "projects.event.pause", Icon: Hand },

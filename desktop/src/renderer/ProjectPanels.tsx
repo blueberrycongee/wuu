@@ -61,12 +61,17 @@ export function ProjectPanel({ projectID }: { projectID: string }): JSX.Element 
           ))}
         </ul>
       </> : null}
-      <h3 className="project-panel-heading">{t("projects.panel.sessions")}</h3>
-      {sessions.length ? (
-        <ul className="project-panel-list">
-          {sessions.map((session) => <ProjectSessionRow key={session.id} session={session} />)}
-        </ul>
-      ) : <p className="project-panel-empty">{t("projects.panel.noSessions")}</p>}
+      {sessions.length ? ([
+        { label: t("projects.role.side"), members: sessions.filter((session) => session.project_role === "side") },
+        { label: t("projects.role.workers"), members: sessions.filter((session) => session.project_role !== "side") },
+      ].filter((group) => group.members.length > 0).map((group) => (
+        <div key={group.label}>
+          <h3 className="project-panel-heading">{group.label}</h3>
+          <ul className="project-panel-list">
+            {group.members.map((session) => <ProjectSessionRow key={session.id} session={session} />)}
+          </ul>
+        </div>
+      ))) : <p className="project-panel-empty">{t("projects.panel.noSessions")}</p>}
     </section>
   );
 }

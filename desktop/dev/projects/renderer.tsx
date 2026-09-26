@@ -54,6 +54,7 @@ const coordinatorTurn: Turn = { id: "project-turn", status: "completed", duratio
   projectEvent("result", "project_result", "paginate", "Paginate search results",
     "Session \"Paginate search results\" finished a turn: completed.\n\nAdded cursor pagination with a page size of 50 and tests.\n\nProposal awaiting the user's review (every change of the session not yet delivered): internal/search/paginate.go, internal/search/paginate_test.go, desktop/src/renderer/SearchResults.tsx"),
   { id: "ready", type: "agent_message", terminal: true, status: "completed", text: "分页已完成，测试通过，可以审阅「Paginate search results」的改动。索引重建还在运行。" },
+  projectEvent("peer", "project_message", "index", "Rebuild the search index", "分页接口已确认，索引计数使用过滤后的总行数。"),
   projectEvent("adopted", "project_adopted", "latency", "Measure search latency",
     "The user added the conversation \"Measure search latency\" to this project."),
 ] };
@@ -68,16 +69,16 @@ const sessionTurn: Turn = { id: "paginate-turn", status: "completed", duration_m
 const empty = params.has("empty");
 const threads: Thread[] = [
   ...(empty ? [] : [
-    thread("project", "Search overhaul", { source: "project", permission_mode: "read_only", pending_candidates: 1, turns: [coordinatorTurn], latest_completed_turn_id: "project-turn" }),
+    thread("project", "Search overhaul", { source: "project", permission_mode: "standard", pending_candidates: 1, turns: [coordinatorTurn], latest_completed_turn_id: "project-turn" }),
     thread("index", "Rebuild the search index", {
-      source: "project-session", project_id: "project", status: "in_progress", session_control: { ...control, state: "active" },
+      source: "project-session", project_id: "project", project_role: "side", status: "in_progress", session_control: { ...control, state: "active" },
     }),
     thread("paginate", "Paginate search results", {
       source: "project-session", project_id: "project", pending_candidates: 1, turns: [sessionTurn], latest_completed_turn_id: "paginate-turn",
       session_control: { ...control, state: "active" },
     }),
     thread("latency", "Measure search latency", { source: "project-session", project_id: "project", session_control: { ...control, state: "taken_over" } }),
-    thread("release", "Release checklist", { source: "project", permission_mode: "read_only", created_at: "2026-09-24T08:00:00Z" }),
+    thread("release", "Release checklist", { source: "project", permission_mode: "standard", created_at: "2026-09-24T08:00:00Z" }),
   ]),
   thread("chat", "Explain the release checklist"),
   thread("chat-2", "Why does the composer jump on paste"),

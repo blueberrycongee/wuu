@@ -949,6 +949,7 @@ func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, par
 	th.Instructions = effectiveSessionInstructions(initial)
 	if source == projectSessionSource {
 		th.ProjectID = params.ParentSessionID
+		th.ProjectRole = projectRoleForSession(initial)
 	}
 	// Session lineage stays in persisted metadata for management and cancellation.
 	// Thread.ParentID identifies internal agent workers, not ordinary sessions

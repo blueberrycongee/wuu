@@ -52,18 +52,26 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 
 ## 运行项目
 
-`thread/start` 带 `project: {"name": "..."}` 时，在工作区创建项目协调者。返回的会话带
-`source: "project"` 和 `permission_mode: "read_only"`，`config/model/update` 与 `turn/start`
-都不能放宽它。协调者通过 `session` 工具管理会话。每个托管会话都是普通会话，带
+`thread/start` 带 `project: {"name": "..."}` 时，在工作区创建项目主 Agent。返回的会话带
+`source: "project"`，遵循普通会话的模型和权限设置。主 Agent 可以直接动手，通过
+`session` 工具管理其他会话。每个托管会话都是普通会话，带
 `source: "project-session"`，`project_id` 指向其协调者；它的 `session_control` 以
 `manager_name` 给出项目名。项目相关会话带 `pending_candidates`：托管会话自己未决定的候选数，
 或协调者全部会话的候选数。候选被冻结或决定时，这个计数会刷新并通知。
+
+托管会话提供 `project_role: "side" | "worker"`，旧成员默认视为 Worker。
+`session create` 接受 `role`（默认 worker）和可选的 `model_alias`。只有主 Agent
+能创建 Side；重复创建会返回已有的活跃 Side，不会发送新任务。主 Agent 和 Side
+都能创建 Worker。活跃成员均可 `list`、`inspect` 和 `message`，只有主 Agent 能
+`send` 和 `stop`。消息仅限项目内，包含 `prompt`、`session_id` 和可选的 `wake`
+（默认 false）。排队消息保存发送者和接收者的控制版本，人工接管与交还会使旧消息失效。
 
 协调者以用户条目接收宿主事件，条目带 `origin: "plugin"`，`related_session_id` 指向相关会话，
 `cause` 给出事件：
 
 | Cause | 事件 | 协调者空闲时是否开始新回合 |
 |---|---|---|
+| `project_message` | 成员发来的消息，主 Agent 或其他成员均可接收 | 仅当 `wake` 为 true |
 | `project_result` | 托管会话的一个回合结束，附带用户在其中写的内容 | 是 |
 | `project_takeover`、`project_pause` | 用户接管或暂停了会话 | 否，随下一个回合送达 |
 | `project_return` | 用户交还了会话 | 是 |

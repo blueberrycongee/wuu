@@ -61,20 +61,30 @@ for future conversations. Do not try to override a turn's permission mode throug
 ## Run a project
 
 `thread/start` with `project: {"name": "..."}` creates a project coordinator in the
-workspace. The returned thread has `source: "project"` and `permission_mode:
-"read_only"`; `config/model/update` and `turn/start` refuse to widen it. The
-coordinator manages sessions through its `session` tool. Each managed session is an
+workspace. The returned thread has `source: "project"` and follows ordinary
+session permission and model settings. The lead can work directly and manages
+other sessions through its `session` tool. Each managed session is an
 ordinary thread with `source: "project-session"` and `project_id` naming its
 coordinator, and its `session_control` names the project as `manager_name`. Project
 threads carry `pending_candidates`: a session's undecided candidates, or all of a
 coordinator's. The count is refreshed and announced when a candidate is frozen or
 decided.
 
+Managed threads expose `project_role: "side" | "worker"`; older members default to
+worker. `session create` accepts `role` (worker by default) and optional
+`model_alias`. Only the lead creates a side; repeated creation returns the existing
+live side without sending a new prompt. Lead and side can create workers. All
+active members can `list`, `inspect`, and `message`; only the lead can `send` and
+`stop`. Messages stay in the project and include `prompt`, `session_id`, and
+optional `wake` (false by default). Both sender and recipient control revisions
+fence queued messages across takeover and return.
+
 The coordinator receives host events as user items with `origin: "plugin"`,
 `related_session_id` naming the session, and a `cause`:
 
 | Cause | Event | Starts a turn when idle |
 |---|---|---|
+| `project_message` | Message from a team member, received by any member or the lead | Only when `wake` is true |
 | `project_result` | A managed turn ended, with what the user wrote into it | Yes |
 | `project_takeover`, `project_pause` | The user took over or paused a session | No, joins the next turn |
 | `project_return` | The user returned a session | Yes |

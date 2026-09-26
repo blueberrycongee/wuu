@@ -48,7 +48,8 @@ type threadState struct {
 	// refreshed runtime system prompt.
 	Instructions string
 	// ProjectID is the coordinator of a project's managed session.
-	ProjectID string
+	ProjectID   string
+	ProjectRole string
 	// PendingCandidates mirrors Thread.PendingCandidates for project threads.
 	PendingCandidates int
 	ParentID          string

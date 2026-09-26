@@ -67,6 +67,7 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		ID:                th.ID,
 		Source:            th.Source,
 		ProjectID:         th.ProjectID,
+		ProjectRole:       th.ProjectRole,
 		PendingCandidates: th.PendingCandidates,
 		ParentID:          th.ParentID,
 		AgentPath:         th.AgentPath,
