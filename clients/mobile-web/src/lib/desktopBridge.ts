@@ -434,7 +434,7 @@ export class RemoteDesktopBridge {
     }
   }
 
-  private async call<T>(method: string, params?: unknown, targetWorkdir?: string): Promise<T> {
+  private async call<T>(method: string, params?: unknown, targetWorkdir?: string, onResult?: (result: T, workdir: string) => void): Promise<T> {
     const snapshotRead = SNAPSHOT_READ_METHODS.has(method);
     this.assertAvailable(snapshotRead);
     const revision = this.connection.revision;
@@ -448,12 +448,22 @@ export class RemoteDesktopBridge {
       // Browser login runs on the host and can outlive an ordinary RPC. Keep
       // its deadline beyond the host's five-minute bound so errors arrive intact.
       const timeout = method === "engine/authenticate" ? 310_000 : snapshotRead ? SNAPSHOT_READ_TIMEOUT_MS : 30_000;
-      const result = await this.client.call<T>(method, params, timeout, workdir);
+      const install = onResult ? (result: T) => {
+        if (this.stopped || this.connection.revision !== revision) {
+          throw new Error("Remote connection changed while the request was in flight");
+        }
+        this.recordThreadLocations(result);
+        this.recordQuestionLocations(result, workdir);
+        onResult(result, workdir);
+      } : undefined;
+      const result = await this.client.call<T>(method, params, timeout, workdir, ...(install ? [install] : []));
       if (this.stopped || this.connection.revision !== revision) {
         throw new Error("Remote connection changed while the request was in flight");
       }
-      this.recordThreadLocations(result);
-      this.recordQuestionLocations(result, workdir);
+      if (!install) {
+        this.recordThreadLocations(result);
+        this.recordQuestionLocations(result, workdir);
+      }
       return result;
     })();
     if (key) this.snapshotReads.set(key, request);
@@ -685,12 +695,12 @@ export class RemoteDesktopBridge {
         const data = await this.readAttachment(ref);
         return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(data), char => char.charCodeAt(0))));
       },
-      resumeThread: async (sessionId?: string) => {
+      resumeThread: (sessionId?: string) => {
         const params = { session_id: sessionId ?? "", response_only: true };
-        const result = await this.call<ThreadResumeResult>("thread/resume", params);
-        // Preserve renderer and pending-message synchronization at the response boundary.
-        this.emitServerEvent({ workdir: this.requestWorkdir(params), kind: "notification", message: { method: "thread/resumed", params: result } });
-        return result;
+        return this.call<ThreadResumeResult>("thread/resume", params, undefined, (result, workdir) => {
+          // Install once per wire response, before queued deltas can be published.
+          this.emitServerEvent({ workdir, kind: "notification", message: { method: "thread/resumed", params: result } });
+        });
       },
       startThread: (params = {}, targetContext = this.activeContext) => this.call("thread/start", {
         ...params,

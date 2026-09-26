@@ -235,7 +235,8 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		s.persistRevocationReport(generation)
 		return nil, err
 	}
-	generation.retain()
+	// Activation acquires the Session reference. A prepared candidate has no
+	// live owners and must not keep an extra reference after publication.
 	return generation, nil
 }
 

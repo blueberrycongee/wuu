@@ -360,6 +360,7 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 		ReasoningContent:  msg.ReasoningContent,
 		ReasoningBlocks:   append([]providers.ReasoningBlock(nil), msg.ReasoningBlocks...),
 		ProviderItems:     append([]providers.ProviderItem(nil), msg.ProviderItems...),
+		ContentParts:      append([]providers.MessageContentPart(nil), msg.ContentParts...),
 		DiscoveredTools:   providers.CloneLoadableToolDefinitions(msg.DiscoveredTools),
 		ToolCallID:        msg.ToolCallID,
 		ToolInvocationID:  msg.ToolInvocationID,

@@ -138,6 +138,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Remote Web clients reconnect when the relay stops responding during authentication,
   and cancel pending authentication immediately when stopped or suspended.
 
+- Remote Web conversation restore installs compressed snapshots before subsequent
+  streaming updates, preventing missing text when the local display cache is behind.
+
 - Git status and staging snapshots preserve literal filenames, including spaces,
   Unicode, quotes, backslashes, and newlines. Returned rename paths identify the
   destination, and staging or unstaging a backslash path no longer selects other
@@ -170,6 +173,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   conflicts and unsupported untracked files preserve the workspace. Automatic
   cleanup retains committed work and workspaces whose baseline is unavailable.
 
+- Retire runtime plugin processes after refresh or disable once their last
+  owning session releases them. Rebuilt generations no longer retain an extra
+  reference; conversations already using an older generation keep it until
+  they rebuild.
+
 - Sending a message keeps one local waiting timer across admission, events,
   snapshots, and conversation switches without changing server timestamps.
   Follow-up messages can queue during new-conversation creation. Stop uses an
@@ -182,6 +190,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - History search finds literal quotes, paths, line breaks, and HTML characters
   in deduplicated tool results, including model text and multi-part output.
+
+- Pasted-text cards retain their segments and titles when conversations are
+  restored or forked. Canonical message text and model input remain unchanged.
 
 - Ready Agent Core entries show an external agent's detected executable path in
   its override field without repeating it in the status or help text.
