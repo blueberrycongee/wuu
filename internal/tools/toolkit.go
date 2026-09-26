@@ -1040,6 +1040,14 @@ func (t *Toolkit) exposedSurfaceLocked() capability.Surface {
 	surface := t.withDisabledToolsRemoved(t.withCodeModeSurface(cloneSurface(t.surfaceForToolLoadingMode(t.activeSurface))))
 	if t.CodeModeOnly() && !t.IsRoomAgent() {
 		_, hasContextControl := surface.Tools[newContextToolName]
+		// Retain reachable bindings for skill filtering while projecting the
+		// separate top-level entry points used by the model and frontend.
+		surface.NestedTools = surface.Tools
+		for name, capability := range surface.DeferredTools {
+			surface.NestedTools[name] = capability
+		}
+		delete(surface.NestedTools, codeModeExecToolName)
+		delete(surface.NestedTools, newContextToolName)
 		surface.Tools = map[string]capability.Capability{codeModeExecToolName: capability.CapabilityCodeMode}
 		if hasContextControl {
 			surface.Tools[newContextToolName] = capability.CapabilityContextWindow
@@ -1083,6 +1091,7 @@ func (t *Toolkit) withDisabledToolsRemoved(surface capability.Surface) capabilit
 	for name := range t.disabledTools {
 		delete(out.Tools, name)
 		delete(out.DeferredTools, name)
+		delete(out.NestedTools, name)
 		delete(out.HiddenTools, name)
 	}
 	return out
@@ -1143,6 +1152,12 @@ func cloneSurface(surface capability.Surface) capability.Surface {
 		out.HiddenTools = make(map[string]capability.Capability, len(surface.HiddenTools))
 		for name, cap := range surface.HiddenTools {
 			out.HiddenTools[name] = cap
+		}
+	}
+	if len(surface.NestedTools) > 0 {
+		out.NestedTools = make(map[string]capability.Capability, len(surface.NestedTools))
+		for name, cap := range surface.NestedTools {
+			out.NestedTools[name] = cap
 		}
 	}
 	out.Capabilities = append([]capability.Capability(nil), surface.Capabilities...)
