@@ -120,6 +120,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Remote requests can open another workspace while four other workspaces run
+  tasks, without the new app-server client being evicted before its request
+  starts. Idle clients remain eligible for normal reclamation.
+
 - Safe mode stops approved desktop plugin modules from loading or activating,
   while keeping the extension inventory available for recovery and management.
 
