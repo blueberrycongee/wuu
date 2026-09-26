@@ -28,7 +28,7 @@ Claude Opus 5.5 和 Fable 5.1 始终使用自适应思考。Wuu 将已保存的 
 
 | 连接方式 | 设置方法 |
 |---|---|
-| Codex 订阅 | 先在 Codex CLI 登录，再在首次设置中选择复用检测到的登录。手动配置时，使用 `openai-codex` 服务并启用 `reuse_codex_credentials`。Wuu 桌面端不会自行发起 OpenAI OAuth 登录。 |
+| Codex 订阅 | 先在 Codex CLI 登录，再在首次设置中选择复用检测到的登录。手动配置时，使用 `openai-codex` 服务并启用 `reuse_codex_credentials`。Wuu 桌面端不会自行发起 OpenAI OAuth 登录。 在“设置 → 订阅”中，点击“使用本机 Codex 登录”即可优先使用本机登录，不改变模型选择；“重新检查登录”通过拉取模型列表验证认证。Wuu 每次请求都会读取本机登录，凭据刷新后无需重启。 |
 | xAI SuperGrok | 添加 **xAI SuperGrok** 服务，按提示在浏览器登录。CLI 使用 `wuu login xai`，运行时选择 `--provider xai-subscription`。 |
 | Grok Build | 先运行 `grok login`，再在 Wuu 中选择检测到的服务，或传入 `--provider grok-build`。登录过期后重新在 Grok CLI 登录；Wuu 不刷新或修改这类凭据。 |
 

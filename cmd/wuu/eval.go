@@ -222,7 +222,7 @@ func runLiveCodexOAuthEval(cfg liveCodexOAuthEvalConfig) error {
 	if homeDir == "" {
 		homeDir = os.Getenv("HOME")
 	}
-	source, authErr := codex.LocalOAuthStatus(homeDir)
+	source, authErr := codex.LocalOAuthStatus(homeDir, true)
 	if authErr != nil {
 		msg := fmt.Sprintf("SKIP live Codex OAuth eval: %v", authErr)
 		if cfg.JSONOutput {

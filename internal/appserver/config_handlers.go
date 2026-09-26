@@ -1628,6 +1628,25 @@ func (s *Server) currentConfigModelUpdateResult() ConfigModelUpdateResult {
 	}
 }
 
+func (s *Server) handleConfigCodexCredentials(req Request) error {
+	var params ConfigCodexModelsParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := config.UseCodexCredentials(s.rt.ConfigPath, strings.TrimSpace(params.Provider)); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.refreshConfigIfChanged(); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	// Explicitly discard idle snapshots even when reuse was already enabled.
+	// In-flight turns retain their admitted configuration until completion.
+	s.resetThreadRuntimesForGeneralSettings("")
+	return s.writeResponse(req.ID, struct {
+		Providers []ProviderSummary `json:"providers"`
+	}{s.providerSummaries()}, nil)
+}
+
 func (s *Server) handleConfigCodexModels(ctx context.Context, req Request) error {
 	var params ConfigCodexModelsParams
 	if err := decodeParams(req.Params, &params); err != nil {
@@ -2452,7 +2471,9 @@ func providerSummariesFromConfig(cfg config.Config, home string) []ProviderSumma
 		}
 		if isCodexProviderType(provider.Type) {
 			summary.ReuseCodexCredentials = provider.ReuseCodexCredentials
-			if source, err := codex.LocalOAuthStatus(home); err == nil {
+			if explicitProviderAPIKey(provider) != "" {
+				summary.CodexCredentialSource = "explicit"
+			} else if source, err := codex.LocalOAuthStatus(home, provider.ReuseCodexCredentials); err == nil {
 				summary.CodexCredentialSource = source
 			}
 		}
@@ -2466,7 +2487,7 @@ func providerHasAuth(name string, provider config.ProviderConfig, home string) b
 		if strings.TrimSpace(provider.APIKey) != "" || configuredEnvValue(provider.APIKeyEnv) != "" {
 			return true
 		}
-		source, err := codex.LocalOAuthStatus(home)
+		source, err := codex.LocalOAuthStatus(home, provider.ReuseCodexCredentials)
 		return err == nil && (source == "wuu-auth-store" || provider.ReuseCodexCredentials)
 	}
 	if config.IsXAISubscriptionProvider(provider.Type) {

@@ -1628,6 +1628,9 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:open-external", async (_event, url: string) => {
     await openExternalNavigation(url);
   });
+  ipcMain.handle("wuu:config-codex-credentials", (event, provider: string) =>
+    appServerRequest(event, "config/codex/credentials", { provider }),
+  );
   ipcMain.handle("wuu:config-codex-models", (event, provider?: string) =>
     appServerRequest<ConfigCodexModelsResult>(event, "config/codex/models", {
       provider: provider ?? "",
