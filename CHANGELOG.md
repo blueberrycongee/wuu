@@ -43,6 +43,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Overdue automations keep their scheduled occurrence until the session service
+  is ready. Interrupted dispatches reuse their run record after restart, and
+  completing a dispatch preserves a newly edited schedule.
+
 - Terminal run details preserve output, exit status, and log links when a
   command's model-facing output is JSON, rather than treating that output as
   execution metadata.

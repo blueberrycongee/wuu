@@ -469,11 +469,9 @@ func (c *controller) fireDue(ctx context.Context) {
 		due = append(due, task)
 	}
 	c.mu.Unlock()
-	// The dispatch opportunity is spent only once the execution service
-	// accepted the task (see consume). During startup the plugin activates
-	// before the host binds the session service; firing into that window used
-	// to delete one-shot tasks and advance recurring ones without ever
-	// running them, so the catch-up run was lost.
+	// Keep the occurrence due while the session service is unbound. The
+	// plugin activates before app-server startup, so its first tick may
+	// arrive before a dispatch attempt can reach the execution service.
 	for _, task := range due {
 		if c.fire(ctx, task, now) {
 			c.consume(ctx, task, now)
@@ -481,14 +479,14 @@ func (c *controller) fireDue(ctx context.Context) {
 	}
 }
 
-// consume spends one dispatch opportunity for a task that fire() reported as
-// dispatched: one-shot tasks leave the schedule, and recurring tasks move to
-// their next occurrence.
+// consume finishes the attempted occurrence without consuming a later edit.
+// Dispatch failures other than an unbound service retain the existing policy:
+// one-shot tasks leave the schedule and recurring tasks advance.
 func (c *controller) consume(ctx context.Context, task Task, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	existing, ok := c.tasks[task.ID]
-	if !ok || existing.Paused {
+	if !ok || existing.Paused || !existing.NextRunAt.Equal(task.NextRunAt) {
 		return
 	}
 	if existing.Recurring {
@@ -516,9 +514,25 @@ func (c *controller) fire(ctx context.Context, task Task, now time.Time) bool {
 	c.mu.Lock()
 	workspaceID := c.workspaceID
 	workspaceRoot := c.workspaceRoot
-	c.runs = append(c.runs, run)
-	if len(c.runs) > maxRuns {
-		c.runs = c.runs[len(c.runs)-maxRuns:]
+	// A restart can leave a due occurrence with a durable run but without
+	// its schedule consumed. Reuse that record and the host's request identity.
+	found := false
+	for _, existing := range c.runs {
+		if existing.ID != runID {
+			continue
+		}
+		if runSettled(existing.Status) {
+			c.mu.Unlock()
+			return true
+		}
+		found = true
+		break
+	}
+	if !found {
+		c.runs = append(c.runs, run)
+		if len(c.runs) > maxRuns {
+			c.runs = c.runs[len(c.runs)-maxRuns:]
+		}
 	}
 	_ = c.saveLocked(ctx)
 	c.mu.Unlock()
@@ -552,23 +566,27 @@ func (c *controller) fire(ctx context.Context, task Task, now time.Time) bool {
 		if runSettled(c.runs[index].Status) {
 			return true
 		}
+		// The process protocol exposes the router's unavailable error as text.
+		if err != nil && strings.Contains(err.Error(), "session service is unavailable") {
+			if c.runs[index].Status != "starting" {
+				// A previous process already recorded host acceptance.
+				return true
+			}
+			// Nothing was ever dispatched: the host has not bound the
+			// session service yet, so the startup catch-up must not be
+			// burned here. Drop the placeholder run and let a later tick
+			// retry the task while it is still due.
+			c.runs = append(c.runs[:index], c.runs[index+1:]...)
+			_ = c.saveLocked(ctx)
+			return false
+		}
 		c.runs[index].SessionID = sessionID
 		c.runs[index].WorkspaceRoot = executionRoot
 		if err != nil {
-			if sessionServiceUnavailable(err) {
-				// Nothing was ever dispatched: the host has not bound the
-				// session service yet, so the startup catch-up must not be
-				// burned here. Drop the placeholder run and let a later tick
-				// retry the task while it is still due.
-				c.runs = append(c.runs[:index], c.runs[index+1:]...)
-				_ = c.saveLocked(ctx)
-				return false
-			}
 			finished := c.now().UTC()
 			c.runs[index].Status = "failed"
 			c.runs[index].CompletedAt = &finished
 			c.runs[index].Error = err.Error()
-			return true
 		} else if c.runs[index].Status == "running" && sent.State != "running" {
 			// A running lifecycle event arrived while the send call was still in
 			// flight; do not downgrade the run back to the queued state reported
@@ -585,14 +603,6 @@ func (c *controller) fire(ctx context.Context, task Task, now time.Time) bool {
 	}
 	_ = c.saveLocked(ctx)
 	return true
-}
-
-// sessionServiceUnavailable reports a host that accepted the call but has not
-// bound the session service yet, which is the window between plugin activation
-// and appserver startup. The plugin runs in its own process and only sees the
-// error text, so that window is detected by message.
-func sessionServiceUnavailable(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "session service is unavailable")
 }
 
 func (c *controller) settle(ctx context.Context, input pluginapi.TurnLifecycleInput) error {
