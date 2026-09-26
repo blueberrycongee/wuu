@@ -110,11 +110,6 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Plugin workspace delivery includes committed, staged, and unstaged tracked
-  changes since workspace creation. Status and previews use the same baseline;
-  conflicts and unsupported untracked files preserve the workspace. Automatic
-  cleanup retains committed work and workspaces whose baseline is unavailable.
-
 - Git status and staging snapshots preserve literal filenames, including spaces,
   Unicode, quotes, backslashes, and newlines. Returned rename paths identify the
   destination, and staging or unstaging a backslash path no longer selects other
@@ -138,6 +133,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - The new-agent setup header drags the window across its full width again, and
   its height follows the window title bar after page zoom and at large UI font
   sizes.
+
+- Plugin workspace delivery includes committed, staged, and unstaged tracked
+  changes since workspace creation. Status and previews use the same baseline;
+  conflicts and unsupported untracked files preserve the workspace. Automatic
+  cleanup retains committed work and workspaces whose baseline is unavailable.
 
 - Work delivery reads structured reports from the final answer, so commentary
   before tool calls no longer causes completed executions to fail validation.
