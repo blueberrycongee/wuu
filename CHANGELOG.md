@@ -120,10 +120,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Retire runtime plugin processes after refresh or disable once their last
-  owning session releases them. Rebuilt generations no longer retain an extra
-  reference; conversations already using an older generation keep it until
-  they rebuild.
+- Remote requests can open another workspace while four other workspaces run
+  tasks, without the new app-server client being evicted before its request
+  starts. Idle clients remain eligible for normal reclamation.
 
 - Safe mode stops approved desktop plugin modules from loading or activating,
   while keeping the extension inventory available for recovery and management.
@@ -166,6 +165,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   changes since workspace creation. Status and previews use the same baseline;
   conflicts and unsupported untracked files preserve the workspace. Automatic
   cleanup retains committed work and workspaces whose baseline is unavailable.
+
+- Retire runtime plugin processes after refresh or disable once their last
+  owning session releases them. Rebuilt generations no longer retain an extra
+  reference; conversations already using an older generation keep it until
+  they rebuild.
 
 - Work delivery reads structured reports from the final answer, so commentary
   before tool calls no longer causes completed executions to fail validation.
