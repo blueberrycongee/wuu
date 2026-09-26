@@ -121,3 +121,102 @@ func TestThreadListsPreserveSessionControlAcrossWorkspaces(t *testing.T) {
 	delete(expected, project)
 	assertLists([]string{MethodThreadListArchived})
 }
+
+func TestProjectGroupingDistinguishesArchivedAndMissingCoordinators(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	client := &rpcClient{server: srv, out: out}
+	for _, id := range []string{"project", "member", "orphan"} {
+		if _, err := session.CreateWithMetadata(rt.SessionDir, id, rt.RootDir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := session.SetSource(rt.SessionDir, "project", projectSource); err != nil {
+		t.Fatal(err)
+	}
+	for member, parent := range map[string]string{"member": "project", "orphan": "missing"} {
+		if _, err := session.SetProjectMembership(rt.SessionDir, member, projectSessionSource, parent, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertGrouping := func(memberExists bool) {
+		t.Helper()
+		for _, method := range []string{MethodThreadList, MethodThreadListAll} {
+			var result struct {
+				Threads []struct {
+					ID            string `json:"id"`
+					ProjectID     string `json:"project_id"`
+					ProjectExists bool   `json:"project_exists"`
+				} `json:"threads"`
+			}
+			client.rpc(t, method, ThreadListParams{SummaryOnly: true}, &result)
+			found := 0
+			for _, thread := range result.Threads {
+				if thread.ID != "member" && thread.ID != "orphan" {
+					continue
+				}
+				found++
+				want := thread.ID == "member" && memberExists
+				if thread.ProjectID == "" || thread.ProjectExists != want {
+					t.Fatalf("%s grouping = %+v, exists want %t", method, thread, want)
+				}
+			}
+			if found != 2 {
+				t.Fatalf("missing surviving sessions: %+v", result)
+			}
+		}
+	}
+	assertGrouping(true)
+	client.rpc(t, MethodThreadArchive, ThreadArchiveParams{ThreadID: "project", Archived: true}, nil)
+	if err := srv.notifyThreadStarted(Thread{ID: "member", Source: projectSessionSource, ProjectID: "project"}); err != nil {
+		t.Fatal(err)
+	}
+	rows := parseOutput(t, out.String())
+	started := remarshal[struct {
+		Thread struct {
+			ProjectExists bool `json:"project_exists"`
+		} `json:"thread"`
+	}](t, rows[len(rows)-1]["params"])
+	if !started.Thread.ProjectExists {
+		t.Fatal("member notification lost archived coordinator grouping")
+	}
+	assertGrouping(true)
+	// Loading a member and then deleting its coordinator must not retain stale grouping.
+	var resumed struct {
+		Thread struct {
+			ProjectExists bool `json:"project_exists"`
+		} `json:"thread"`
+	}
+	client.rpc(t, MethodThreadResume, ThreadResumeParams{SessionID: "member"}, &resumed)
+	if !resumed.Thread.ProjectExists {
+		t.Fatal("resume lost archived coordinator")
+	}
+	client.rpc(t, MethodThreadDelete, ThreadDeleteParams{ThreadID: "project"}, nil)
+	updatedMember := false
+	for _, row := range parseOutput(t, out.String()) {
+		if row["method"] != NotificationThreadUpdated {
+			continue
+		}
+		params := remarshal[struct {
+			Thread struct {
+				ID            string `json:"id"`
+				ProjectExists *bool  `json:"project_exists"`
+			} `json:"thread"`
+		}](t, row["params"])
+		if params.Thread.ID == "member" && params.Thread.ProjectExists != nil && !*params.Thread.ProjectExists {
+			updatedMember = true
+		}
+	}
+	if !updatedMember {
+		t.Fatal("deletion did not refresh surviving member grouping")
+	}
+	assertGrouping(false)
+	// A fresh server must recover pre-existing orphans without rewriting membership.
+	freshOut := &lockedBuffer{}
+	fresh := New(rt, freshOut)
+	t.Cleanup(fresh.Close)
+	client = &rpcClient{server: fresh, out: freshOut}
+	assertGrouping(false)
+}

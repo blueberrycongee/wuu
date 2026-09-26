@@ -128,8 +128,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Fixed
 
 - Managed project sessions no longer spill into the desktop sidebar's ordinary
-  conversation list when their coordinator is archived or absent after reload.
-  Their ownership and running state are preserved.
+  conversation list when their coordinator is archived, including after reload.
+  Their ownership and running state are preserved; sessions whose coordinator
+  was deleted or is missing remain accessible in the ordinary list.
 
 - Instructions given when an extension creates a session now reach the model on
   every turn and after a reload. Built-in runs previously dropped them,

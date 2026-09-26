@@ -1558,6 +1558,7 @@ function summarizeThreadForSidebar(
     title: thread.title,
     source: thread.source,
     project_id: thread.project_id,
+    project_exists: thread.project_exists,
     project_role: thread.project_role,
     pending_candidates: thread.pending_candidates,
     model_provider: thread.model_provider,
@@ -1732,6 +1733,10 @@ function mergeListedThread(existing: Thread, listed: Thread): Thread {
     !turns.some((turn) => turn.status === "in_progress");
   return {
     ...listed,
+    project_exists: listed.project_exists ?? (
+      listed.source === existing.source && listed.project_id === existing.project_id
+        ? existing.project_exists : undefined
+    ),
     title: listed.title?.trim() ? listed.title : existing.title,
     preview: listed.preview?.trim() ? listed.preview : existing.preview,
     status: listedStatusRegresses ? existing.status : listed.status,

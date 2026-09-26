@@ -1586,6 +1586,8 @@ export type Thread = {
   source?: string;
   // The coordinator that manages this session.
   project_id?: string;
+  /** Resolved coordinator existence, including archived projects. Omitted by incremental events. */
+  project_exists?: boolean;
   // Managed sessions share the ordinary thread lifecycle. Older members are workers.
   project_role?: "side" | "worker";
   // Undecided candidates: a managed session's own, or all of a coordinator's sessions.

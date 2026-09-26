@@ -2236,6 +2236,9 @@ type Thread struct {
 	// ProjectID is the coordinator conversation that manages this session.
 	ProjectID   string `json:"project_id,omitempty"`
 	ProjectRole string `json:"project_role,omitempty"`
+	// ProjectExists resolves grouping independently of coordinator visibility.
+	// Lists, resumes and metadata responses include it; incremental events may omit it.
+	ProjectExists *bool `json:"project_exists,omitempty"`
 	// PendingCandidates counts undecided candidates: a managed session's own,
 	// or all of a project coordinator's sessions.
 	PendingCandidates int    `json:"pending_candidates,omitempty"`

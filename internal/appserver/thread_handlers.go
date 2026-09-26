@@ -1241,7 +1241,12 @@ func (s *Server) threadListResult(entries map[string]threadListEntry, summaryOnl
 	}
 	sortThreadListEntries(threads)
 	result := make([]Thread, 0, len(threads))
+	projectExistence := make(map[string]bool)
 	for _, entry := range threads {
+		entry.thread, err = s.withProjectGrouping(entry.thread, projectExistence)
+		if err != nil {
+			return ThreadListResult{}, err
+		}
 		entry.thread.SessionControl = s.threadSessionControl(entry.thread.ID, controls[entry.thread.ID])
 		entry.thread.PendingCandidates = pendingCandidates(entry.thread.Source, entry.thread.ID, bySession, byProject)
 		// Sidebar refreshes are summary lists. Dirty worktree state is a git
@@ -1572,7 +1577,34 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 }
 
 func (s *Server) threadWithChildAgents(thread Thread) (Thread, error) {
+	var err error
+	thread, err = s.withProjectGrouping(thread, nil)
+	if err != nil {
+		return thread, err
+	}
 	return s.threadWithChildAgentsStatus(thread, true)
+}
+
+// A missing coordinator makes its surviving sessions recoverable as ordinary
+// rows. Archived coordinators still exist; their absence from active lists is
+// not evidence that membership ended. Cache lookups across each list request.
+func (s *Server) withProjectGrouping(thread Thread, cache map[string]bool) (Thread, error) {
+	if thread.Source != projectSessionSource || thread.ProjectID == "" {
+		return thread, nil
+	}
+	exists, cached := cache[thread.ProjectID]
+	if !cached {
+		parent, found, err := session.Find(s.rt.SessionDir, thread.ProjectID)
+		if err != nil {
+			return thread, err
+		}
+		exists = found && parent.Source == projectSource
+		if cache != nil {
+			cache[thread.ProjectID] = exists
+		}
+	}
+	thread.ProjectExists = &exists
+	return thread, nil
 }
 
 func (s *Server) threadWithChildAgentsStatus(thread Thread, worktreeStatus bool) (Thread, error) {
