@@ -60,6 +60,11 @@ const coordinatorTurn: Turn = { id: "project-turn", status: "completed", duratio
     "The user added the conversation \"Measure search latency\" to this project."),
 ] };
 
+const followUpTurn: Turn = { id: "project-follow-up", status: "completed", duration_ms: 8000, items_view: "full", items: [
+  projectEvent("index-done", "project_result", "index", "Rebuild the search index", "Session \"Rebuild the search index\" finished a turn: completed."),
+  { id: "index-ready", type: "agent_message", terminal: true, status: "completed", text: "索引重建完成，计数与分页一致。" },
+] };
+
 const sessionTurn: Turn = { id: "paginate-turn", status: "completed", duration_ms: 64000, items_view: "full", items: [
   { id: "brief", type: "user_message", status: "completed", origin: "plugin", cause: "project", name: "Search overhaul", read_only: true,
     text: "Implement cursor pagination for catalog search with a page size of 50. Keep the public API unchanged. Add tests." },
@@ -70,7 +75,7 @@ const sessionTurn: Turn = { id: "paginate-turn", status: "completed", duration_m
 const empty = params.has("empty");
 const threads: Thread[] = [
   ...(empty ? [] : [
-    thread("project", "Search overhaul", { source: "project", permission_mode: "standard", pending_candidates: 1, turns: [coordinatorTurn], latest_completed_turn_id: "project-turn" }),
+    thread("project", "Search overhaul", { source: "project", permission_mode: "standard", pending_candidates: 1, turns: [coordinatorTurn, followUpTurn], latest_completed_turn_id: "project-follow-up" }),
     thread("index", "Rebuild the search index", {
       source: "project-session", project_id: "project", project_role: "side", status: "in_progress", session_control: { ...control, state: params.get("side-control") === "taken_over" ? "taken_over" : "active" },
     }),

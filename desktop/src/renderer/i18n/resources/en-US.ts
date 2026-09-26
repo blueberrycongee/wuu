@@ -2090,6 +2090,8 @@ export const enUS = {
   "projects.event.published": "You published the changes from {name}",
   "projects.event.adopted": "You added {name} to the project",
   "projects.event.released": "You removed {name} from the project",
+  "projects.event.group": "{count} updates from {name}",
+  "projects.event.groupSessions": "{count} updates from {sessions} sessions, including {name}",
   "projects.event.details": "Details",
   "projects.event.hideDetails": "Hide details",
 } as const satisfies Record<TranslationKey, string>;
