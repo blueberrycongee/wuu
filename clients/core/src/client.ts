@@ -822,14 +822,15 @@ export class RemoteClient {
   }
 
   /** Convenience: waits for attach and issues one call within one total
-   *  deadline. The remaining budget follows the request after attach. */
-  async call<T = unknown>(method: string, params?: unknown, timeoutMs?: number, workdir?: string): Promise<T> {
+   *  deadline. The remaining budget follows the request after attach.
+   *  onResult synchronously installs the response before later notifications. */
+  async call<T = unknown>(method: string, params?: unknown, timeoutMs?: number, workdir?: string, onResult?: (result: T) => void): Promise<T> {
     const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs;
     await this.waitAttached(timeoutMs);
     const proto = this.proto;
     if (!proto) throw new Error("not attached to host");
     const remainingMs = deadline === undefined ? undefined : Math.max(0, deadline - Date.now());
-    return proto.call<T>(method, params, remainingMs, workdir);
+    return proto.call<T>(method, params, remainingMs, workdir, onResult);
   }
 
   isAttached(): boolean {

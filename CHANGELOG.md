@@ -130,6 +130,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Remote Web clients reconnect when the relay stops responding during authentication,
   and cancel pending authentication immediately when stopped or suspended.
 
+- Remote Web conversation restore installs compressed snapshots before subsequent
+  streaming updates, preventing missing text when the local display cache is behind.
+
 - Git status and staging snapshots preserve literal filenames, including spaces,
   Unicode, quotes, backslashes, and newlines. Returned rename paths identify the
   destination, and staging or unstaging a backslash path no longer selects other
