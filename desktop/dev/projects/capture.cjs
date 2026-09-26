@@ -20,14 +20,17 @@ const scenes = [
   ["session-proposal-dark-20", "view=session&panel=proposal&theme=dark&size=20", 1440],
   ["draft-light-14", "view=draft&panel=none", 1280],
   ["empty-light-14", "empty&panel=none", 1280],
+  ["coordinator-side-taken-over-dark-20", "view=coordinator&panel=project&theme=dark&size=20&side-control=taken_over", 1085, ".project-panel-row-main"],
+  ["coordinator-keyboard-focus", "view=coordinator&panel=project", 1440, undefined, ".project-panel-row-main"],
   ["coordinator-hover-session", "view=coordinator&panel=project", 1440, ".project-panel-list .project-panel-row-main"],
 ];
 
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: false, width: 1440, height: 900,
     webPreferences: { contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+  win.webContents.debugger.attach("1.3");
   win.webContents.on("console-message", event => { if (event.level === "error") errors.push(event.message); });
-  for (const [name, query, width, hover] of scenes) {
+  for (const [name, query, width, hover, focus] of scenes) {
     win.setContentSize(width, 900);
     await win.loadURL(`${base}/dev/projects/?${query}`);
     await win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
@@ -48,6 +51,20 @@ app.whenReady().then(async () => {
       })()`);
       win.webContents.sendInputEvent({ type: "mouseMove", x: point.x, y: point.y });
       await new Promise(resolve => setTimeout(resolve, 300));
+    }
+    if (focus) {
+      await win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
+      win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab" });
+      win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab" });
+      await win.webContents.executeJavaScript(`new Promise(resolve => requestAnimationFrame(() => {
+        document.querySelector(${JSON.stringify(focus)}).focus();
+        requestAnimationFrame(resolve);
+      }))`);
+      console.log(name, await win.webContents.executeJavaScript(`JSON.stringify({
+        focused: document.activeElement?.className,
+        modality: document.documentElement.dataset.focusModality,
+        visible: document.activeElement?.matches(':focus-visible')
+      })`));
     }
     fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage()).toPNG());
   }

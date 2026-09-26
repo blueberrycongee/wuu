@@ -71,7 +71,7 @@ const threads: Thread[] = [
   ...(empty ? [] : [
     thread("project", "Search overhaul", { source: "project", permission_mode: "standard", pending_candidates: 1, turns: [coordinatorTurn], latest_completed_turn_id: "project-turn" }),
     thread("index", "Rebuild the search index", {
-      source: "project-session", project_id: "project", project_role: "side", status: "in_progress", session_control: { ...control, state: "active" },
+      source: "project-session", project_id: "project", project_role: "side", status: "in_progress", session_control: { ...control, state: params.get("side-control") === "taken_over" ? "taken_over" : "active" },
     }),
     thread("paginate", "Paginate search results", {
       source: "project-session", project_id: "project", pending_candidates: 1, turns: [sessionTurn], latest_completed_turn_id: "paginate-turn",
