@@ -32,6 +32,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Project conversation lists show five recent entries plus active, running,
+  unread, and up to three recently read conversations. Recently read entries
+  expire after two minutes. Expanding includes all history inside an eight-row,
+  font-responsive scroll area, keeping other projects in place.
+
 - Creating an agent asks only for its model and name. The name step no longer
   shows switch-model and project controls above the input, and the random-name
   action sits inside the name input. The first conversation opens in the
@@ -110,6 +115,18 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   copying earlier content or scanning every historical turn. Workspace session
   lists filter in SQLite while preserving project moves, worktree membership,
   pinned ordering, and activity ordering.
+
+- Workspace file reads, saves, and directory expansion preserve leading and
+  trailing whitespace and literal POSIX backslashes in filenames, preventing
+  a selected file from being confused with another file in the workspace.
+
+- Overdue automations keep their scheduled occurrence until the session service
+  is ready. Interrupted dispatches reuse their run record after restart, and
+  completing a dispatch preserves a newly edited schedule.
+
+- Sidebar scroll fades remain tied to the list's own scroll position while
+  conversations stream, pause, finish, or switch. Streaming paint reduction
+  applies only to nested reasoning and process details.
 
 - The new-agent setup header drags the window across its full width again, and
   its height follows the window title bar after page zoom and at large UI font

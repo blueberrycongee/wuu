@@ -2396,6 +2396,17 @@ html[data-focus-modality="keyboard"] :is(
   padding-right: var(--sidebar-row-pad-x);
 }
 
+/* Share the font-responsive row metric; the footer stays outside the viewport. */
+.project-thread-scroll {
+  max-height: calc(var(--sidebar-row-height) * 8 + var(--sidebar-row-gap) * 7);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+
+.project-thread-scroll > .sidebar-session-row {
+  flex-shrink: 0;
+}
+
 .thread-list-more,
 .thread-list-collapse-btn {
   flex: 0 0 auto;

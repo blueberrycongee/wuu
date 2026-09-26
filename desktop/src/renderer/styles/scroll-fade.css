@@ -96,11 +96,10 @@
   }
 }
 
-/* A live turn pinned to the latest line changes these scrollports every
- * chunk. The scroll timeline then recomputes the mask on that cadence.
- * Drop it until the reader leaves the live edge or the turn settles. Inline
- * strips sit outside the stream, so they keep their edges. */
-:root[data-stream-following] [data-scroll-fade]:not([data-scroll-fade="inline"]) {
+/* Only nested reasoning/process scrollports grow with the live turn.
+ * Drop their masks until the reader leaves the live edge or the turn settles.
+ * Navigation and attachment strips keep following their own scroll bounds. */
+:root[data-stream-following] [data-scroll-fade][data-wuu-nested-scroll] {
   animation: none;
   mask-image: none;
 }
