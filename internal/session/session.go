@@ -346,13 +346,17 @@ func CreateInitializedWithLaunch(sessDir string, sess Session, records []History
 
 // List reads sessions and returns the most recent sessions (up to limit).
 func List(sessDir string, limit int) ([]Session, error) {
+	return listSessions(sessDir, "", nil, limit)
+}
+
+func listSessions(sessDir, where string, args []any, limit int) ([]Session, error) {
 	db, err := openStore(sessDir)
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 
-	rows, err := db.Query(`
+	query := `
 SELECT id, created_at, updated_at, title, summary, entries, cwd,
        forked_from_id, forked_from_turn_id, forked_from_item_id,
        pinned_at, folder_id, archived_at, archive_reason,
@@ -363,13 +367,21 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
 	                 ORDER BY m.seq DESC LIMIT 1), '')
-FROM sessions`)
+FROM sessions`
+	if where != "" {
+		query += " WHERE " + where
+	}
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
 	}
 	defer rows.Close()
 
 	var sessions []Session
+	if where != "" {
+		// Scoped lists are also returned directly by the CLI as a JSON array.
+		sessions = make([]Session, 0)
+	}
 	for rows.Next() {
 		s, err := scanSession(rows)
 		if err != nil {
@@ -401,36 +413,17 @@ func listForCWD(sessDir, cwd, workspaceID string, limit int) ([]Session, error) 
 	if target == "" && wsID == "" {
 		return List(sessDir, limit)
 	}
-	sessions, err := List(sessDir, 0)
-	if err != nil {
-		return nil, err
+	// Writes normalize paths and trim workspace IDs. A stable ID survives moves;
+	// only sessions predating IDs may fall back to the current project path.
+	if wsID == "" {
+		return listSessions(sessDir, "cwd = ? OR worktree_base_repo = ?", []any{target, target}, limit)
 	}
-	matchesCWD := func(s Session) bool {
-		return target != "" &&
-			(normalizeCWD(s.CWD) == target || normalizeCWD(s.WorktreeBaseRepo) == target)
+	if target == "" {
+		return listSessions(sessDir, "workspace_id = ?", []any{wsID}, limit)
 	}
-	filtered := make([]Session, 0, len(sessions))
-	for _, s := range sessions {
-		if wsID != "" {
-			// A workspace with a stable id (a registered project) matches by
-			// that id, so its sessions follow the project across moves even
-			// though CWD still records the old path. As a graceful transition,
-			// sessions predating the id still match by path while they live at
-			// the workspace's current location.
-			if strings.TrimSpace(s.WorkspaceID) == wsID ||
-				(strings.TrimSpace(s.WorkspaceID) == "" && matchesCWD(s)) {
-				filtered = append(filtered, s)
-			}
-			continue
-		}
-		if matchesCWD(s) {
-			filtered = append(filtered, s)
-		}
-	}
-	if limit > 0 && len(filtered) > limit {
-		filtered = filtered[:limit]
-	}
-	return filtered, nil
+	return listSessions(sessDir,
+		"workspace_id = ? OR (cwd = ? AND workspace_id = '') OR (worktree_base_repo = ? AND workspace_id = '')",
+		[]any{wsID, target, target}, limit)
 }
 
 // Find returns metadata for a session ID.
@@ -1811,6 +1804,12 @@ WHERE workflow_id = ''`); err != nil {
 		return err
 	}
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_workspace_id ON sessions(workspace_id)`); err != nil {
+		return fmt.Errorf("migrate sessions database: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_cwd_workspace ON sessions(cwd, workspace_id)`); err != nil {
+		return fmt.Errorf("migrate sessions database: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_worktree_workspace ON sessions(worktree_base_repo, workspace_id)`); err != nil {
 		return fmt.Errorf("migrate sessions database: %w", err)
 	}
 	if err := addColumnIfMissing(db, "inference_journal_runtimes", "pid", "INTEGER NOT NULL DEFAULT 0"); err != nil {

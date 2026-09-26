@@ -1357,10 +1357,7 @@ export function reconcileResumedThreadTurns(
 ): Thread {
   const localTurns = local ? reconcileOptimisticTurns(local.turns, resumed.turns) : undefined;
   if (localTurns) {
-    const turns = resumed.turns.map((turn) => {
-      const previous = localTurns.find((candidate) => candidate.id === turn.id);
-      return previous && previous.status !== "in_progress" && turn.status === "in_progress" ? previous : turn;
-    });
+    const turns = preserveTerminalTurns(resumed.turns, localTurns);
     if (turns.some((turn, index) => turn !== resumed.turns[index])) resumed = { ...resumed, turns };
   }
   if (!localTurns || localTurns.length < resumed.turns.length) {
@@ -1402,10 +1399,7 @@ export function reconcileResumedThreadTurns(
 // in-progress tail when a stale snapshot still omits it.
 function mergeThreadUpdatedTurns(incoming: Turn[], current: Turn[]): Turn[] {
   current = reconcileOptimisticTurns(current, incoming);
-  incoming = incoming.map((turn) => {
-    const previous = current.find((candidate) => candidate.id === turn.id);
-    return previous && previous.status !== "in_progress" && turn.status === "in_progress" ? previous : turn;
-  });
+  incoming = preserveTerminalTurns(incoming, current);
   if (incoming.length === 0) {
     return current;
   }
@@ -1425,6 +1419,14 @@ function mergeThreadUpdatedTurns(incoming: Turn[], current: Turn[]): Turn[] {
   )
     ? [...incoming, ...localTail]
     : incoming;
+}
+
+function preserveTerminalTurns(incoming: Turn[], current: Turn[]): Turn[] {
+  const currentByID = new Map(current.map((turn) => [turn.id, turn]));
+  return incoming.map((turn) => {
+    const previous = currentByID.get(turn.id);
+    return previous && previous.status !== "in_progress" && turn.status === "in_progress" ? previous : turn;
+  });
 }
 
 function turnItemsArePrefix(resumed: Turn, local: Turn): boolean {

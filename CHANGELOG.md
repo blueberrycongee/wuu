@@ -185,6 +185,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   one closes any other open context menu, including the composer edit menu, and
   hides hover tooltips until it closes.
 
+- Long conversations reconcile restored turns without quadratic ID matching.
+  Streaming text, reasoning, and tool arguments accumulate without repeatedly
+  copying earlier content or scanning every historical turn. Workspace session
+  lists filter in SQLite while preserving project moves, worktree membership,
+  pinned ordering, and activity ordering.
+
 ## [2026.9.25] - 2026-09-25
 
 ### Changed

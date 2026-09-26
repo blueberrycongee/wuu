@@ -21,6 +21,51 @@ func TestThreadSnapshotExposesInterruptedOrchestration(t *testing.T) {
 	}
 }
 
+func TestThreadStateStreamSnapshotsSurviveReplaceAndCompletion(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	for _, kind := range []string{"content", "reasoning", "arguments"} {
+		t.Run(kind, func(t *testing.T) {
+			th := newThreadState("thread", nil, "provider", "model", "/repo", false, now)
+			th.startTurnLocked("turn", providers.ChatMessage{Role: "user", Content: "inspect"}, now)
+			delta, replace := providers.EventContentDelta, providers.EventContentReplace
+			if kind == "reasoning" {
+				delta, replace = providers.EventThinkingDelta, providers.EventThinkingReplace
+			} else if kind == "arguments" {
+				delta, replace = providers.EventToolUseDelta, providers.EventToolUseStart
+				th.applyStreamEventLocked("turn", providers.StreamEvent{Type: providers.EventToolUseStart, ToolCall: &providers.ToolCall{ID: "call", Name: "read_file"}}, now)
+			}
+			read := func(snapshot Thread) string {
+				items := snapshot.Turns[0].Items
+				item := items[len(items)-1]
+				if kind == "arguments" {
+					return item.Arguments
+				}
+				return item.Text
+			}
+			th.applyStreamEventLocked("turn", providers.StreamEvent{Type: delta, Content: "abcdefgh"}, now)
+			beforeAppend := th.snapshotLocked()
+			th.applyStreamEventLocked("turn", providers.StreamEvent{Type: delta, Content: "ijk"}, now)
+			beforeReplace := th.snapshotLocked()
+			th.applyStreamEventLocked("turn", providers.StreamEvent{
+				Type: replace, Content: "new-", ToolCall: &providers.ToolCall{ID: "call", Name: "read_file", Arguments: "new-"},
+			}, now)
+			th.applyStreamEventLocked("turn", providers.StreamEvent{Type: delta, Content: "tail"}, now)
+			if got := read(th.snapshotLocked()); got != "new-tail" {
+				t.Fatalf("replacement followed by delta = %q", got)
+			}
+			th.finishTurnLocked("turn", TurnStatusCompleted, nil, now, "stop", "", false)
+			if got := read(th.snapshotLocked()); got != "new-tail" {
+				t.Fatalf("completed snapshot = %q", got)
+			}
+			th.startTurnLocked("next", providers.ChatMessage{Role: "user", Content: "continue"}, now)
+			th.applyStreamEventLocked("next", providers.StreamEvent{Type: providers.EventContentDelta, Content: "another answer"}, now)
+			if read(beforeAppend) != "abcdefgh" || read(beforeReplace) != "abcdefghijk" {
+				t.Fatal("later stream events mutated an earlier snapshot")
+			}
+		})
+	}
+}
+
 func TestEmptyTurnsKeepItemsAsAnArray(t *testing.T) {
 	now := time.Unix(0, 0).UTC()
 	tests := []struct {

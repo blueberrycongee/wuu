@@ -152,6 +152,76 @@ func TestListForCWDFiltersSessions(t *testing.T) {
 	if recent != "sess-b" {
 		t.Fatalf("MostRecentForCWD() = %q, want sess-b", recent)
 	}
+	empty, err := ListForCWD(dir, filepath.Join(cwdA, "empty"), "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(empty)
+	if err != nil || string(encoded) != "[]" {
+		t.Fatalf("empty workspace list JSON = %s, err = %v", encoded, err)
+	}
+}
+
+func TestListForCWDPreservesScopedOrderAndLimit(t *testing.T) {
+	dir := t.TempDir()
+	cwd := filepath.Join(t.TempDir(), "project")
+	at := time.Date(2026, 9, 26, 0, 0, 0, 0, time.UTC)
+	db, err := openStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	for _, sess := range []Session{
+		{ID: "pinned", CWD: "/old/project", WorkspaceID: "workspace", CreatedAt: at.Add(-time.Hour), PinnedAt: &at},
+		{ID: "fraction", CWD: cwd, WorkspaceID: "workspace", UpdatedAt: at.Add(time.Millisecond)},
+		{ID: "tie-b", CWD: cwd, WorkspaceID: "workspace", UpdatedAt: at},
+		{ID: "tie-a", CWD: cwd, CreatedAt: at},
+		{ID: "worktree", CWD: "/worktree", WorktreeBaseRepo: cwd, CreatedAt: at.Add(-time.Minute)},
+		{ID: "other-workspace", CWD: cwd, WorkspaceID: "other", UpdatedAt: at.Add(time.Hour)},
+		{ID: "other-path", CWD: "/elsewhere", UpdatedAt: at.Add(time.Hour)},
+	} {
+		if err := insertSessionTx(tx, sess); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := insertHistoryRecordTx(tx, "pinned", 1, HistoryRecord{Role: "meta", Content: "turn_terminal", ClientID: "completed-turn"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, workspace string
+		limit           int
+		want            []string
+	}{
+		{"registered", " workspace ", 0, []string{"pinned", "fraction", "tie-b", "tie-a", "worktree"}},
+		{"limited", "workspace", 2, []string{"pinned", "fraction"}},
+		{"path only", "", 0, []string{"other-workspace", "fraction", "tie-b", "tie-a", "worktree"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := ListForCWD(dir, cwd+string(filepath.Separator)+".", test.workspace, test.limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != len(test.want) {
+				t.Fatalf("got %d sessions, want %v", len(got), test.want)
+			}
+			for i, id := range test.want {
+				if got[i].ID != id {
+					t.Fatalf("session %d = %q, want %q", i, got[i].ID, id)
+				}
+				if id == "pinned" && got[i].LatestCompletedTurnID != "completed-turn" {
+					t.Fatalf("terminal turn missing: %+v", got[i])
+				}
+			}
+		})
+	}
 }
 
 func TestListForCWDMatchesByWorkspaceIDAcrossMoves(t *testing.T) {
