@@ -161,6 +161,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   animations, and provider remove controls keep their icon centered and color
   stable on hover.
 
+- OpenAI-compatible Chat Completions requests preserve tool calls, reasoning,
+  and participant names in adjacent messages, preventing orphaned tool results
+  in both ordinary and streaming conversations.
+
 - Deleting an agent archives sessions still under its management in a separate
   Agent archive, keeping them out of workspace and unread lists. Previously
   orphaned sessions are reconciled, and user-taken-over sessions stay available.
