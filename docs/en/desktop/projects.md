@@ -61,7 +61,7 @@ To make a session an ordinary conversation again, choose **Remove from project**
 - Wuu must be running for sessions to work. Results from turns that ended while Wuu was closed arrive when it starts again.
 - Projects do not have timers or external triggers yet.
 - Each session makes its own model requests, so delegating work uses more tokens than one conversation.
-- Archiving or deleting a project ends its management. Its sessions remain as ordinary conversations.
+- Archiving or deleting a project does not move its managed sessions into the desktop sidebar's ordinary conversation list. Archiving does not archive or stop those sessions; restore the project to access them in its project view. Use **Remove from project** before deleting a project if you want to keep a session in the ordinary list.
 - The phone apps open a project's conversations directly; they do not group them.
 
 For a quick task delegated inside one conversation, use [subagents](subagents.md).
