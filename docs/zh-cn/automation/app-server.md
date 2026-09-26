@@ -56,14 +56,31 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 `source: "project"` 和 `permission_mode: "read_only"`，`config/model/update` 与 `turn/start`
 都不能放宽它。协调者通过 `session` 工具管理会话。每个托管会话都是普通会话，带
 `source: "project-session"`，`project_id` 指向其协调者；它的 `session_control` 以
-`manager_name` 给出项目名。
+`manager_name` 给出项目名。项目相关会话带 `pending_candidates`：托管会话自己未决定的候选数，
+或协调者全部会话的候选数。候选被冻结或决定时，这个计数会刷新并通知。
 
-托管会话的一个回合结束时，协调者会收到一条用户条目，带 `origin: "plugin"`、
-`presentation_kind: "session_message"`，`related_session_id` 为该会话。在托管会话中开始、
-引导或排队回合即接管它，中断则暂停它。用 `thread/control/return` 传入 `thread_id` 和当前
-`revision` 即可交还。每次变化都会通知协调者。
+协调者以用户条目接收宿主事件，条目带 `origin: "plugin"`，`related_session_id` 指向相关会话，
+`cause` 给出事件：
 
-`project/candidate` 用于审阅 worktree 改动：
+| Cause | 事件 | 协调者空闲时是否开始新回合 |
+|---|---|---|
+| `project_result` | 托管会话的一个回合结束，附带用户在其中写的内容 | 是 |
+| `project_takeover`、`project_pause` | 用户接管或暂停了会话 | 否，随下一个回合送达 |
+| `project_return` | 用户交还了会话 | 是 |
+| `project_applied`、`project_discarded`、`project_published` | 用户决定了候选 | 是 |
+| `project_adopted` | 用户把对话加入了项目 | 是 |
+| `project_released` | 用户把会话移出了项目 | 否，随下一个回合送达 |
+
+在托管会话中开始、引导或排队回合，会话仍由项目管理。`thread/control/take` 传入 `thread_id`
+和当前 `revision` 即接管，中断会暂停管理，`thread/control/return` 交还。用户掌控期间结束的回合
+会冻结候选供审阅，但不会报告给协调者。
+
+`project/session` 修改项目成员：`adopt` 传入 `project_id` 和 `session_id`，把项目所在工作区
+的普通对话交给项目管理；`release` 在托管会话的待决候选已决定后，让它重新成为普通对话。两者都
+返回更新后的 `thread`。
+
+`project/candidate` 用于审阅 worktree 改动。一个候选包含该会话所有尚未应用或发布的改动；新候选
+会取代该会话未决定的旧候选。
 
 | 动作 | 参数 | 结果 |
 |---|---|---|
@@ -71,9 +88,10 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 | `get` | `session_id`、`turn_id` | 带 `diff` 的 `candidate` |
 | `apply` | `session_id`、`turn_id` | `disposition: "applied"` 的 `candidate` |
 | `discard` | `session_id`、`turn_id` | `disposition: "discarded"` 的 `candidate` |
+| `publish` | `session_id`、`turn_id`、`url` | `disposition: "published"` 且带 `url` 的 `candidate` |
 
-`apply` 只把冻结的改动写入工作区，不暂存。发生冲突时返回错误，工作区和候选都不变。每个
-候选只能决定一次，再次 `apply` 或 `discard` 会失败。
+`apply` 只把冻结的改动写入工作区，不暂存。发生冲突时返回错误，工作区和候选都不变。候选由扩展
+发布，`publish` 记录扩展返回的链接。每个候选只能决定一次，已被取代的候选不能再决定。
 
 ## 查询订阅状态
 

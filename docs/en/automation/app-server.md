@@ -65,15 +65,36 @@ workspace. The returned thread has `source: "project"` and `permission_mode:
 "read_only"`; `config/model/update` and `turn/start` refuse to widen it. The
 coordinator manages sessions through its `session` tool. Each managed session is an
 ordinary thread with `source: "project-session"` and `project_id` naming its
-coordinator, and its `session_control` names the project as `manager_name`.
+coordinator, and its `session_control` names the project as `manager_name`. Project
+threads carry `pending_candidates`: a session's undecided candidates, or all of a
+coordinator's. The count is refreshed and announced when a candidate is frozen or
+decided.
 
-When a managed turn ends, the coordinator receives one user item with `origin:
-"plugin"`, `presentation_kind: "session_message"` and `related_session_id` set to
-the session. Starting, steering or queuing a turn in a managed session takes it
-over, and interrupting pauses it. `thread/control/return` with `thread_id` and the
-current `revision` hands it back. The coordinator is told about each change.
+The coordinator receives host events as user items with `origin: "plugin"`,
+`related_session_id` naming the session, and a `cause`:
 
-`project/candidate` reviews worktree changes:
+| Cause | Event | Starts a turn when idle |
+|---|---|---|
+| `project_result` | A managed turn ended, with what the user wrote into it | Yes |
+| `project_takeover`, `project_pause` | The user took over or paused a session | No, joins the next turn |
+| `project_return` | The user returned a session | Yes |
+| `project_applied`, `project_discarded`, `project_published` | The user decided a candidate | Yes |
+| `project_adopted` | The user added a conversation to the project | Yes |
+| `project_released` | The user removed a session from the project | No, joins the next turn |
+
+Starting, steering or queuing a turn in a managed session keeps it under the project.
+`thread/control/take` with `thread_id` and the current `revision` takes it over,
+interrupting pauses it, and `thread/control/return` hands it back. Turns that end
+while the user holds control are frozen for review but not reported.
+
+`project/session` changes membership: `adopt` with `project_id` and `session_id`
+brings an ordinary conversation of the project's workspace under the project, and
+`release` makes a managed session an ordinary conversation again once its pending
+candidate is decided. Both return the updated `thread`.
+
+`project/candidate` reviews worktree changes. A candidate holds every change of its
+session not yet applied or published; a newer one supersedes the session's undecided
+candidates.
 
 | Action | Parameters | Result |
 |---|---|---|
@@ -81,10 +102,12 @@ current `revision` hands it back. The coordinator is told about each change.
 | `get` | `session_id`, `turn_id` | `candidate` with `diff` |
 | `apply` | `session_id`, `turn_id` | `candidate` with `disposition: "applied"` |
 | `discard` | `session_id`, `turn_id` | `candidate` with `disposition: "discarded"` |
+| `publish` | `session_id`, `turn_id`, `url` | `candidate` with `disposition: "published"` and `url` |
 
 `apply` writes only the frozen change into the workspace and leaves it unstaged. A
-conflict returns an error and changes neither the workspace nor the candidate. A
-candidate takes one decision; a second `apply` or `discard` fails.
+conflict returns an error and changes neither the workspace nor the candidate. An
+extension publishes a candidate; `publish` records the link it returned. A candidate
+takes one decision, and a superseded one takes none.
 
 ## Probe the protocol
 
