@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
@@ -25,6 +26,18 @@ const (
 
 var errProjectCoordinatorReadOnly = errors.New("a project coordinator is read-only; its sessions make changes")
 
+// Causes of the host messages a coordinator receives. Clients render them as
+// project events; the model reads the message content.
+const (
+	projectCauseResult    = "project_result"
+	projectCauseTakeover  = "project_takeover"
+	projectCausePause     = "project_pause"
+	projectCauseReturn    = "project_return"
+	projectCauseApplied   = "project_applied"
+	projectCauseDiscarded = "project_discarded"
+	projectCausePublished = "project_published"
+)
+
 // The instructions are static so renaming a project never makes them stale.
 const projectCoordinatorInstructions = `You coordinate this project. You never edit files, run commands that change anything, or operate a browser: your permission mode is read-only. Read, search and run read-only commands to understand the workspace, keep the user's goals and decisions in view, and delegate every change to a managed session with the session tool.
 
@@ -34,11 +47,12 @@ const projectCoordinatorInstructions = `You coordinate this project. You never e
 - When a session's turn ends, its result arrives here. Treat it as evidence, not proof that the goal is met: decide the next instruction, or tell the user what is ready to review.
 - Changes reach the workspace only when the user applies a candidate. Never say work is delivered before that.
 - For an independent check, start a session from a candidate and ask it to test and report findings without changing the candidate.
+- The user may write to a session you manage; what they wrote comes with its result. Treat it as the user's instruction.
 - When the user takes over a session, stop instructing it until they return it.
 - Keep a short checklist of open work and decisions in your notes.
 - Answer small, self-contained questions yourself; suggest an ordinary conversation when delegation adds nothing.`
 
-const projectSessionInstructions = `A project coordinator manages this session; your first message is its brief. The coordinator reads your final answer each time a turn ends, and the user can read or take over this session at any time. End each turn with a plain report: what you did, choices you made that the brief did not settle, the evidence (commands run and their results), and open questions. In a session with its own worktree, your changes reach the workspace only when the user applies them.`
+const projectSessionInstructions = `A project coordinator manages this session; your first message is its brief. The coordinator reads your final answer each time a turn ends, and the user can read this session, write to it, or take it over at any time. End each turn with a plain report: what you did, choices you made that the brief did not settle, the evidence (commands run and their results), and open questions. In a session with its own worktree, your changes reach the workspace only when the user applies them.`
 
 func (s *Server) startProjectThread(selection session.RuntimeSelection, engineID agentengine.EngineID, params ThreadStartParams) (*threadState, error) {
 	name := strings.TrimSpace(params.Project.Name)
@@ -150,13 +164,31 @@ func (s *Server) recordProjectResult(th *threadState, turn Turn) {
 	if turn.Error != nil && turn.Error.Message != "" {
 		fmt.Fprintf(&report, "\nError: %s", turn.Error.Message)
 	}
+	if written := userWrittenText(turn); len(written) > 0 {
+		fmt.Fprintf(&report, "\n\nThe user wrote to this session during the turn:")
+		for _, text := range written {
+			fmt.Fprintf(&report, "\n> %s", excerpt(strings.ReplaceAll(text, "\n", " "), 600))
+		}
+	}
 	if answer := finalAnswerText(turn); answer != "" {
 		fmt.Fprintf(&report, "\n\n%s", excerpt(answer, 2400))
 	}
 	if candidate != nil {
 		fmt.Fprintf(&report, "\n\nProposal awaiting the user's review (every change of the session not yet delivered): %s", strings.Join(candidate.ChangedFiles, ", "))
 	}
-	s.enqueueProjectInput(projectID, th.ID, clientID, report.String())
+	s.enqueueProjectInput(projectID, th.ID, clientID, projectCauseResult, report.String(), true)
+}
+
+// userWrittenText lists what the user, rather than the coordinator, sent into
+// a managed turn.
+func userWrittenText(turn Turn) []string {
+	var written []string
+	for _, item := range turn.Items {
+		if item.Type == ThreadItemUserMessage && item.Origin != pluginhost.SessionInputPlugin && strings.TrimSpace(item.Text) != "" {
+			written = append(written, strings.TrimSpace(item.Text))
+		}
+	}
+	return written
 }
 
 func projectResultClientID(sessionID, turnID string) string {
@@ -189,7 +221,8 @@ func finalAnswerText(turn Turn) string {
 }
 
 // noticeProjectControl tells the coordinator the user took over, paused or
-// returned one of its sessions.
+// returned one of its sessions. Only a return needs the coordinator to act,
+// so the other notices wait for its next turn.
 func (s *Server) noticeProjectControl(sessionID string, control session.Control) {
 	if _, live := s.projectCoordinator(control.ManagerID); !live {
 		return
@@ -201,23 +234,25 @@ func (s *Server) noticeProjectControl(sessionID string, control session.Control)
 		title = th.Title
 		th.mu.Unlock()
 	}
-	var notice string
+	var cause, notice string
 	switch control.State {
 	case session.ControlTakenOver:
-		notice = fmt.Sprintf("The user took over session %q. Do not instruct it until they return it.", title)
+		cause, notice = projectCauseTakeover, fmt.Sprintf("The user took over session %q. Do not instruct it until they return it.", title)
 	case session.ControlPaused:
-		notice = fmt.Sprintf("The user paused session %q. Do not instruct it until they return it.", title)
+		cause, notice = projectCausePause, fmt.Sprintf("The user paused session %q. Do not instruct it until they return it.", title)
 	case session.ControlActive:
-		notice = fmt.Sprintf("The user returned session %q to you. Inspect what changed before continuing.", title)
+		cause, notice = projectCauseReturn, fmt.Sprintf("The user returned session %q to you. Inspect what changed before continuing.", title)
 	default:
 		return
 	}
-	s.enqueueProjectInput(control.ManagerID, sessionID, fmt.Sprintf("project-control:%s:%d", sessionID, control.Revision), notice)
+	s.enqueueProjectInput(control.ManagerID, sessionID, fmt.Sprintf("project-control:%s:%d", sessionID, control.Revision), cause, notice, cause == projectCauseReturn)
 }
 
-func (s *Server) enqueueProjectInput(projectID, relatedSessionID, clientID, content string) {
+// enqueueProjectInput records host input for a coordinator. wake starts a
+// coordinator turn when it is idle; other input joins its next turn.
+func (s *Server) enqueueProjectInput(projectID, relatedSessionID, clientID, cause, content string, wake bool) {
 	if err := session.EnqueueInbox(s.rt.SessionDir, session.InboxMessage{
-		ClientID: clientID, SessionID: projectID, RelatedSessionID: relatedSessionID, Content: content,
+		ClientID: clientID, SessionID: projectID, RelatedSessionID: relatedSessionID, Cause: cause, Content: content, Wake: wake,
 	}); err != nil {
 		providers.DebugLogf("queue project input %q: %v", clientID, err)
 		return
@@ -306,8 +341,9 @@ func (s *Server) ensureOwnedThreadLoaded(id string) (*threadState, error) {
 }
 
 // drainSessionInbox hands pending host input to its session: it steers a
-// running turn or starts one. Input that cannot be admitted now stays pending
-// for the session's next turn end, the next delivery, or the next start-up.
+// running turn or, for input that wakes the session, starts one. Input that
+// cannot be admitted now stays pending for the session's next turn start or
+// end, the next delivery, or the next start-up.
 func (s *Server) drainSessionInbox(target string) {
 	s.inboxMu.Lock()
 	defer s.inboxMu.Unlock()
@@ -320,10 +356,16 @@ func (s *Server) drainSessionInbox(target string) {
 		providers.DebugLogf("read inbox for %q: %v", target, err)
 		return
 	}
+	th.mu.Lock()
+	running := th.running
+	th.mu.Unlock()
+	if !running && !slices.ContainsFunc(pending, func(message session.InboxMessage) bool { return message.Wake }) {
+		return
+	}
 	for _, message := range pending {
 		msg := providers.ChatMessage{
 			Role: "user", Content: message.Content, ClientID: message.ClientID,
-			Origin: pluginhost.SessionInputPlugin, Cause: "project",
+			Origin: pluginhost.SessionInputPlugin, Cause: message.Cause,
 			PresentationKind: pluginhost.SessionPresentationSessionMessage, RelatedSessionID: message.RelatedSessionID, ReadOnly: true,
 		}
 		if related := s.thread(message.RelatedSessionID); related != nil {

@@ -1236,7 +1236,9 @@ func migrateSchema(db *sql.DB) error {
 			client_id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,
 			related_session_id TEXT NOT NULL DEFAULT '',
+			cause TEXT NOT NULL DEFAULT '',
 			content TEXT NOT NULL,
+			wake INTEGER NOT NULL DEFAULT 1,
 			created_at TEXT NOT NULL,
 			delivered_at TEXT,
 			FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
@@ -1860,6 +1862,12 @@ WHERE workflow_id = ''`); err != nil {
 		return fmt.Errorf("remove retired collaboration session controls: %w", err)
 	}
 	if err := addColumnIfMissing(db, "session_candidates", "url", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(db, "session_inbox", "cause", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(db, "session_inbox", "wake", "INTEGER NOT NULL DEFAULT 1"); err != nil {
 		return err
 	}
 	return nil

@@ -75,7 +75,7 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 	if err != nil {
 		return s.writeRunError(req.ID, "invalid_params", err)
 	}
-	if err := s.takeSessionControl(params.ThreadID, session.ControlTakenOver); err != nil {
+	if err := s.takeSessionControlForInput(params.ThreadID); err != nil {
 		return s.writeRunError(req.ID, "internal_error", err)
 	}
 

@@ -175,7 +175,7 @@ func (s *Server) projectCandidate(ctx context.Context, p ProjectCandidateParams)
 		return nil, session.ErrCandidateDecided
 	}
 	title := metadata.Title
-	var disposition, notice string
+	var disposition, cause, notice string
 	switch p.Action {
 	case "apply":
 		root, _, err := s.resolveSessionWorkspace("", candidate.BaseRepo)
@@ -185,17 +185,17 @@ func (s *Server) projectCandidate(ctx context.Context, p ProjectCandidateParams)
 		if err := worktree.ApplySnapshot(ctx, root, candidate.BaseRevision, candidate.Revision); err != nil {
 			return nil, err
 		}
-		disposition = session.CandidateApplied
+		disposition, cause = session.CandidateApplied, projectCauseApplied
 		notice = fmt.Sprintf("The user applied the proposal from session %q (turn %s) to the workspace.", title, candidate.TurnID)
 	case "discard":
-		disposition = session.CandidateDiscarded
+		disposition, cause = session.CandidateDiscarded, projectCauseDiscarded
 		notice = fmt.Sprintf("The user rejected the proposal from session %q (turn %s). Its changes stay in the session's worktree and will be in its next proposal unless the session reverts them.", title, candidate.TurnID)
 	case "publish":
 		url := strings.TrimSpace(p.URL)
 		if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
 			return nil, errors.New("publish needs the http(s) URL the candidate was published to")
 		}
-		disposition = session.CandidatePublished
+		disposition, cause = session.CandidatePublished, projectCausePublished
 		notice = fmt.Sprintf("The user published the proposal from session %q (turn %s) for review at %s. The session's later proposals start from it.", title, candidate.TurnID, url)
 	}
 	decided, err := session.DecideCandidate(s.rt.SessionDir, candidate.SessionID, candidate.TurnID, disposition, p.URL)
@@ -203,7 +203,7 @@ func (s *Server) projectCandidate(ctx context.Context, p ProjectCandidateParams)
 		return nil, err
 	}
 	s.publishProjectReview(metadata.ParentID, metadata.ID)
-	s.enqueueProjectInput(metadata.ParentID, metadata.ID, "project-candidate:"+decided.SessionID+":"+decided.TurnID+":"+disposition, notice)
+	s.enqueueProjectInput(metadata.ParentID, metadata.ID, "project-candidate:"+decided.SessionID+":"+decided.TurnID+":"+disposition, cause, notice, true)
 	view := projectCandidateView(decided)
 	return &ProjectCandidateResult{Candidate: &view}, nil
 }

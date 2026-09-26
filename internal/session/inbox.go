@@ -14,8 +14,13 @@ type InboxMessage struct {
 	ClientID         string
 	SessionID        string
 	RelatedSessionID string
-	Content          string
-	CreatedAt        time.Time
+	// Cause names the event for clients that render the delivered message.
+	Cause   string
+	Content string
+	// Wake starts a turn when the target is idle. Other messages wait for the
+	// target's next turn, whatever starts it.
+	Wake      bool
+	CreatedAt time.Time
 }
 
 // EnqueueInbox records a message once; repeating a client ID is a no-op.
@@ -33,8 +38,8 @@ func EnqueueInbox(dir string, message InboxMessage) error {
 	defer db.Close()
 	storeWriteMu.Lock()
 	defer storeWriteMu.Unlock()
-	_, err = db.Exec(`INSERT OR IGNORE INTO session_inbox(client_id,session_id,related_session_id,content,created_at) VALUES(?,?,?,?,?)`,
-		message.ClientID, message.SessionID, message.RelatedSessionID, message.Content, timeText(message.CreatedAt))
+	_, err = db.Exec(`INSERT OR IGNORE INTO session_inbox(client_id,session_id,related_session_id,cause,content,wake,created_at) VALUES(?,?,?,?,?,?,?)`,
+		message.ClientID, message.SessionID, message.RelatedSessionID, message.Cause, message.Content, message.Wake, timeText(message.CreatedAt))
 	return err
 }
 
@@ -73,7 +78,7 @@ func PendingInbox(dir, sessionID string) ([]InboxMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT client_id,session_id,related_session_id,content,created_at FROM session_inbox
+	rows, err := db.Query(`SELECT client_id,session_id,related_session_id,cause,content,wake,created_at FROM session_inbox
 		WHERE session_id=? AND delivered_at IS NULL ORDER BY created_at, rowid`, sessionID)
 	if err != nil {
 		return nil, err
@@ -83,7 +88,7 @@ func PendingInbox(dir, sessionID string) ([]InboxMessage, error) {
 	for rows.Next() {
 		var message InboxMessage
 		var created string
-		if err := rows.Scan(&message.ClientID, &message.SessionID, &message.RelatedSessionID, &message.Content, &created); err != nil {
+		if err := rows.Scan(&message.ClientID, &message.SessionID, &message.RelatedSessionID, &message.Cause, &message.Content, &message.Wake, &created); err != nil {
 			return nil, err
 		}
 		message.CreatedAt = parseTime(created)

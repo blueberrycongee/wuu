@@ -1103,6 +1103,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleThreadTextSnapshot(req)
 	case "thread/control/return":
 		return s.handleThreadControl(ctx, req)
+	case "thread/control/take":
+		return s.handleThreadTakeControl(req)
 	case MethodProjectCandidate:
 		return s.handleProjectCandidate(ctx, req)
 	case MethodThreadPin:

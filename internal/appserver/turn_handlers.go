@@ -200,7 +200,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 		return s.writeResponse(req.ID, nil, err)
 	}
 	userMsg.ClientID = strings.TrimSpace(params.ClientID)
-	if err := s.takeSessionControl(params.ThreadID, session.ControlTakenOver); err != nil {
+	if err := s.takeSessionControlForInput(params.ThreadID); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	snapshot := turnRuntimeSnapshot{}.withPermissions(permissions)
@@ -510,7 +510,7 @@ func (s *Server) handleTurnQueue(req Request) error {
 	}
 	msg.ClientID = queueID
 	if !params.Hold {
-		if err := s.takeSessionControl(params.ThreadID, session.ControlTakenOver); err != nil {
+		if err := s.takeSessionControlForInput(params.ThreadID); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 	}
@@ -719,7 +719,7 @@ func (s *Server) handleTurnSteer(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := s.takeSessionControl(params.ThreadID, session.ControlTakenOver); err != nil {
+	if err := s.takeSessionControlForInput(params.ThreadID); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 
@@ -2283,7 +2283,12 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		if th.steerWake == nil {
 			th.steerWake = make(chan struct{})
 		}
+		coordinator := th.Source == projectSource
 		th.mu.Unlock()
+		if coordinator {
+			// Project input that waits for the coordinator's next turn joins this one.
+			s.startBackground(func() { s.drainSessionInbox(th.ID) })
+		}
 	}
 	if len(frozenTreeContext) > 0 {
 		requestContext = append(append([]agent.ContextSegment(nil), requestContext...), frozenTreeContext...)

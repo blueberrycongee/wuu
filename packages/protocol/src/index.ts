@@ -2147,6 +2147,10 @@ export type ThreadItem = {
   // their trusted source and plugin-selected presentation separately.
   origin?: string;
   origin_id?: string;
+  // Host messages to a project coordinator name their event: "project_result",
+  // "project_takeover", "project_pause", "project_return", "project_applied",
+  // "project_discarded" or "project_published"; related_session_id names the
+  // managed session.
   cause?: string;
   presentation_kind?: string;
   arguments?: string;

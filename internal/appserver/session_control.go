@@ -80,6 +80,26 @@ func (s *Server) threadSessionControl(_ string, c session.Control) *ThreadSessio
 	return &ThreadSessionControl{ManagerID: c.ManagerID, ManagerName: name, State: c.State, Revision: c.Revision}
 }
 
+// takeSessionControlForInput applies the user's message to a managed session.
+// A project keeps its control state: a managed session goes on under the
+// project, which learns what the user wrote from the turn's result, and a
+// session the user holds stays theirs. Other managers yield to the user.
+func (s *Server) takeSessionControlForInput(id string) error {
+	if s == nil || s.rt == nil {
+		return nil
+	}
+	c, ok, err := session.ReadControl(s.rt.SessionDir, id)
+	if err != nil {
+		return err
+	}
+	if ok && c.State != session.ControlReleased && !strings.HasPrefix(c.ManagerID, "plugin:") {
+		if _, live := s.projectCoordinator(c.ManagerID); live {
+			return nil
+		}
+	}
+	return s.takeSessionControl(id, session.ControlTakenOver)
+}
+
 // takeSessionControl records a human takeover or pause of a managed session.
 // Admitted automatic instructions are revoked before the manager is told.
 func (s *Server) takeSessionControl(id, state string) error {
@@ -119,6 +139,37 @@ func (s *Server) publishSessionControl(id string) {
 	snapshot := th.snapshotLocked()
 	th.mu.Unlock()
 	_ = s.notifyThreadUpdated(snapshot)
+}
+
+// handleThreadTakeControl is a human action: the user takes a managed
+// session from its project, which stops instructing it until it is returned.
+func (s *Server) handleThreadTakeControl(req Request) error {
+	var p struct {
+		ThreadID string `json:"thread_id"`
+		Revision int64  `json:"revision"`
+	}
+	if err := decodeParams(req.Params, &p); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	s.controlMu.Lock()
+	c, exists, err := session.ReadControl(s.rt.SessionDir, p.ThreadID)
+	if err == nil && (!exists || c.Revision != p.Revision || c.State != session.ControlActive) {
+		err = session.ErrControlChanged
+	}
+	if err == nil {
+		_, err = s.projectManagedSession(c.ManagerID, p.ThreadID)
+	}
+	if err == nil {
+		c, err = session.ChangeControl(s.rt.SessionDir, p.ThreadID, c.ManagerID, session.ControlTakenOver, c.Revision)
+	}
+	s.controlMu.Unlock()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	s.revokeSessionInputs(p.ThreadID)
+	s.publishSessionControl(p.ThreadID)
+	s.noticeProjectControl(p.ThreadID, c)
+	return s.writeResponse(req.ID, map[string]any{"control": s.threadSessionControl(p.ThreadID, c)}, nil)
 }
 
 // handleThreadControl is a human action: it returns a taken-over or paused
