@@ -110,6 +110,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Startup permission migration skips symbolic links inside the Wuu data directory,
+  preserving external files and executable permissions. Symlink migration markers
+  are replaced without modifying their targets.
+
 - Git status and staging snapshots preserve literal filenames, including spaces,
   Unicode, quotes, backslashes, and newlines. Returned rename paths identify the
   destination, and staging or unstaging a backslash path no longer selects other
