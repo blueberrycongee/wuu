@@ -333,7 +333,7 @@ export const enUS = {
   "settings.ptcFamilyMode": "PTC for this model family",
   "settings.ptcLocal": "Local models",
   "settings.ptcOther": "Other models",
-  "settings.ptcInherit": "Use global setting",
+  "settings.ptcInherit": "Use global",
   "settings.ptcOn": "Enabled",
   "settings.ptcOff": "Disabled",
   "settings.saveFailed": "Failed to save",
