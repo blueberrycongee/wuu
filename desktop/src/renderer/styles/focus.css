@@ -31,6 +31,12 @@ html[data-focus-modality="keyboard"] :is(
   outline: none;
 }
 
+/* The heading clips overflow for long titles, so the title button draws its
+ * ring inside its own box instead of outside it. */
+html[data-focus-modality="keyboard"] .conversation-title-rename:focus-visible {
+  outline-offset: -2px;
+}
+
 html[data-focus-modality="keyboard"] :is(
   .menu-search,
   .catalog-search,

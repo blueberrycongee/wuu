@@ -336,7 +336,7 @@ function ConversationTitleText({
   return (
     <h1
       ref={headingRef}
-      className={editing ? "is-editing" : undefined}
+      className={editing ? "is-editing" : editable ? "is-editable" : undefined}
       tabIndex={-1}
     >
       {editing ? (

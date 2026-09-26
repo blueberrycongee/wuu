@@ -6,7 +6,7 @@ import { TurnView } from "../../src/renderer/TurnView";
 import { WorkspaceRightPanel, type WorkspacePanelView } from "../../src/renderer/WorkspacePanels";
 import type { WorkspaceViewTab } from "../../src/renderer/WorkspaceViewTabs";
 import { initialState, type ThreadSummary } from "../../src/renderer/AppState";
-import { ConversationTitleActions } from "../../src/renderer/ConversationShellRenderers";
+import { ConversationTitleActions, ConversationTitleContent } from "../../src/renderer/ConversationShellRenderers";
 import type { SettingsUsageDay, WuuDesktopApi, Turn, UsageOverviewResponse } from "../../src/shared/protocol";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { ImagePreviewProvider } from "../../src/renderer/ImagePreview";
@@ -74,6 +74,7 @@ function Fixture() {
   const [rightOpen, setRightOpen] = useState(true);
   const [globalized, setGlobalized] = useState(params.has("globalized"));
   const [environmentOpen, setEnvironmentOpen] = useState(false);
+  const [title, setTitle] = useState(titles[0]);
   const environmentToggleRef = useRef<HTMLButtonElement>(null);
   const dock = useRef<HTMLElement>(null);
   const [dockHeight, setDockHeight] = useState(0);
@@ -98,7 +99,7 @@ function Fixture() {
         </section></div><button className="nav-item"><Settings/><span>设置</span></button>
       </div></aside>
       <main className="conversation-pane" style={{ "--dock-composer-height": `${dockHeight}px` } as CSSProperties}>
-        <header className="titlebar"><div className="title-block"><PanelLeft className="icon"/><span>优化软件排版问题</span></div>
+        <header className="titlebar"><div className="title-block"><PanelLeft className="icon"/><ConversationTitleContent state={initialState} activeTitle={title} onStartNewThread={noop} onRenameTitle={setTitle} titleEditKey="sample-0"/></div>
           <ConversationTitleActions state={initialState} compactNavigation={params.has("compact")} onStartNewThread={noop}
             environmentToggleRef={environmentToggleRef} environmentPanelVisible={environmentOpen}
             onToggleEnvironmentPanel={() => setEnvironmentOpen(value => !value)}
