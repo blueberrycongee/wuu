@@ -209,7 +209,6 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 
 	payload := chatCompletionsRequest{
 		Model:           req.Model,
-		Messages:        make([]chatMessage, 0, len(req.Messages)),
 		Temperature:     effectiveTemperature(req),
 		MaxTokens:       req.MaxTokens,
 		ReasoningFormat: c.reasoningFormat,
@@ -223,16 +222,7 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 		return providers.ChatResponse{}, err
 	}
 	req.Messages = providers.VideoMessagesForEndpoint(prepared, c.baseURL)
-	for _, msg := range req.Messages {
-		mapped := mapMessage(req.Model, msg)
-		if mapped.Role != "tool" && mapped.ToolCallID == "" {
-			if n := len(payload.Messages); n > 0 && payload.Messages[n-1].Role == mapped.Role && payload.Messages[n-1].ToolCallID == "" {
-				payload.Messages[n-1].Content = mergeContent(payload.Messages[n-1].Content, mapped.Content)
-				continue
-			}
-		}
-		payload.Messages = append(payload.Messages, mapped)
-	}
+	payload.Messages = mapMessages(req.Model, req.Messages)
 	if len(req.Tools) > 0 {
 		payload.ToolChoice = "auto"
 		if req.ForceToolName != "" {
@@ -367,7 +357,6 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 
 	payload := chatCompletionsRequest{
 		Model:       req.Model,
-		Messages:    make([]chatMessage, 0, len(req.Messages)),
 		Temperature: effectiveTemperature(req),
 		MaxTokens:   req.MaxTokens,
 		Stream:      true,
@@ -385,16 +374,7 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		return nil, err
 	}
 	req.Messages = providers.VideoMessagesForEndpoint(prepared, c.baseURL)
-	for _, msg := range req.Messages {
-		mapped := mapMessage(req.Model, msg)
-		if mapped.Role != "tool" && mapped.ToolCallID == "" {
-			if n := len(payload.Messages); n > 0 && payload.Messages[n-1].Role == mapped.Role && payload.Messages[n-1].ToolCallID == "" {
-				payload.Messages[n-1].Content = mergeContent(payload.Messages[n-1].Content, mapped.Content)
-				continue
-			}
-		}
-		payload.Messages = append(payload.Messages, mapped)
-	}
+	payload.Messages = mapMessages(req.Model, req.Messages)
 	if len(req.Tools) > 0 {
 		payload.ToolChoice = "auto"
 		if req.ForceToolName != "" {
@@ -772,6 +752,27 @@ func (c *Client) readSSE(ctx context.Context, resp *http.Response, lease *provid
 		Type:  providers.EventError,
 		Error: err,
 	})
+}
+
+func mapMessages(model string, messages []providers.ChatMessage) []chatMessage {
+	out := make([]chatMessage, 0, len(messages))
+	for _, msg := range messages {
+		mapped := mapMessage(model, msg)
+		if n := len(out); n > 0 {
+			previous := &out[n-1]
+			// Content-only merging must not discard tool calls or reasoning,
+			// or attribute one participant's content to another participant.
+			if mapped.Role != "tool" && previous.Role == mapped.Role && previous.Name == mapped.Name &&
+				previous.ToolCallID == "" && mapped.ToolCallID == "" &&
+				len(previous.ToolCalls) == 0 && len(mapped.ToolCalls) == 0 &&
+				previous.ReasoningContent == nil && mapped.ReasoningContent == nil {
+				previous.Content = mergeContent(previous.Content, mapped.Content)
+				continue
+			}
+		}
+		out = append(out, mapped)
+	}
+	return out
 }
 
 func mapMessage(model string, msg providers.ChatMessage) chatMessage {
