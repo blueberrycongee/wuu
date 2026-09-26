@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -276,8 +275,8 @@ func (s *Server) createProjectSession(ctx context.Context, project, actor sessio
 	if title == "" {
 		title = excerpt(prompt, 60)
 	}
-	th, err := s.createHostSessionThreadAtRevision(projectSessionOwner, projectSessionSource, "", pluginhost.SessionCreateParams{
-		RequestID: requestID, Name: title, Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh,
+	th, err := s.createHostSessionThreadAtRevision(projectSessionOwner, projectSessionSource, "", hostSessionCreateParams{
+		RequestID: requestID, Name: title, Visibility: sessionVisibilityUser, ContextSource: sessionContextFresh,
 		ParentSessionID: project.ID, Workspace: workspace, WorkspaceID: project.WorkspaceID,
 		Provider: provider, Model: model, Variant: variant, Effort: effort,
 		PermissionMode: project.PermissionMode, ModelAlias: request.ModelAlias,
@@ -328,10 +327,10 @@ func (s *Server) sendProjectSession(ctx context.Context, project, actor session.
 	snapshot.Control = &control
 	msg := providers.ChatMessage{
 		Role: "user", Content: prompt, ClientID: clientID, Name: actor.Title,
-		Origin: pluginhost.SessionInputPlugin, Cause: "project",
-		PresentationKind: pluginhost.SessionPresentationSessionMessage, RelatedSessionID: actor.ID, ReadOnly: true,
+		Origin: sessionInputHost, Cause: "project",
+		PresentationKind: sessionPresentationMessage, RelatedSessionID: actor.ID, ReadOnly: true,
 	}
-	result, admitted, err := s.trySubmitSessionInput(ctx, th, msg, pluginhost.SessionIfRunningSteer, snapshot)
+	result, admitted, err := s.trySubmitSessionInput(ctx, th, msg, sessionIfRunningSteer, snapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -390,7 +389,7 @@ func (s *Server) adoptProjectSession(projectID, sessionID string) (session.Sessi
 		return session.Session{}, fmt.Errorf("%w: %q", session.ErrSessionNotFound, sessionID)
 	}
 	if metadata.ID == project.ID || metadata.Source != "" || metadata.ParentID != "" ||
-		metadata.Visibility == pluginhost.SessionVisibilityPlugin || metadata.Owner != "" && metadata.Owner != projectSessionOwner {
+		metadata.Visibility == sessionVisibilityPlugin || metadata.Owner != "" && metadata.Owner != projectSessionOwner {
 		return session.Session{}, errors.New("only an ordinary conversation can join a project")
 	}
 	if metadata.WorkspaceID != project.WorkspaceID {

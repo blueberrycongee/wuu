@@ -88,6 +88,7 @@ function ProjectHistoryFixture(): JSX.Element {
               expandedSidebarSectionIDs={new Set(expanded ? [project.id] : [])}
               threadsByWorkspaceID={{ [project.id]: threads.map(thread => summarizeThreadsForSidebar([thread])[0]) }}
               activeThreadID={active} lastViewedTurnByThreadID={viewed}
+              pendingThreadID={params.get("switching") ?? undefined}
               pendingConversations={Array.from({ length: pending }, (_, index) => ({
                 id: `pending-${index}`, title: `Creating conversation ${index + 1}`,
                 context: { kind: "project", project_id: project.id, cwd: project.path },

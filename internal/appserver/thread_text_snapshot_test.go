@@ -11,17 +11,22 @@ import (
 )
 
 func TestTextSnapshotPreservesSessionAttributionWithoutInternalInput(t *testing.T) {
-	thread := Thread{ID: "target", Turns: []Turn{{ID: "turn", Items: []ThreadItem{{
-		ID: "message", Type: ThreadItemUserMessage, Text: "Visible coordination body", InputText: "hidden delivery context",
-		Origin: "plugin", PresentationKind: "session_message", Name: "Source task", RelatedSessionID: "source",
-	}}}}}
-	snapshot := textSnapshot(thread)
-	if len(snapshot.Messages) != 1 {
-		t.Fatal("message missing from account snapshot")
-	}
-	text := snapshot.Messages[0].Text
-	if !strings.Contains(text, "Source task") || !strings.Contains(text, "source") || !strings.Contains(text, "Visible coordination body") || strings.Contains(text, "hidden delivery context") {
-		t.Fatalf("unsafe or unattributed account copy: %s", text)
+	// Preserve attribution for both host messages and persisted plugin messages.
+	for _, origin := range []string{"host", "plugin"} {
+		t.Run(origin, func(t *testing.T) {
+			thread := Thread{ID: "target", Turns: []Turn{{ID: "turn", Items: []ThreadItem{{
+				ID: "message", Type: ThreadItemUserMessage, Text: "Visible coordination body", InputText: "hidden delivery context",
+				Origin: origin, PresentationKind: "session_message", Name: "Source task", RelatedSessionID: "source",
+			}}}}}
+			snapshot := textSnapshot(thread)
+			if len(snapshot.Messages) != 1 {
+				t.Fatal("message missing from account snapshot")
+			}
+			text := snapshot.Messages[0].Text
+			if !strings.Contains(text, "Source task") || !strings.Contains(text, "source") || !strings.Contains(text, "Visible coordination body") || strings.Contains(text, "hidden delivery context") {
+				t.Fatalf("unsafe or unattributed account copy: %s", text)
+			}
+		})
 	}
 }
 

@@ -6,16 +6,18 @@ import org.junit.Test
 
 class ChatPagingTest {
     @Test fun sessionMessageSourceSurvivesLiveDeliveryAndReload() {
-        val item = json("id" to "message", "type" to "user_message", "text" to "Coordination update",
-            "input_text" to "Internal delivery context", "origin" to "plugin", "presentation_kind" to "session_message",
-            "name" to "Source task", "related_session_id" to "source")
-        val live = ChatThread(JSONObject("""{"id":"target","turns":[{"id":"turn","items":[]}]}"""))
-        live.apply("item/completed", json("thread_id" to "target", "turn_id" to "turn", "item" to item))
-        val restored = ChatThread(JSONObject("""{"id":"target","turns":[{"id":"turn","items":[$item]}]}"""))
-        assertEquals(restored.messages, live.messages)
-        assertEquals("source", live.messages.single().sourceSessionId)
-        assertEquals("Source task", live.messages.single().sourceSessionName)
-        assertEquals("Coordination update", live.messages.single().text)
+        for (origin in listOf("host", "plugin")) {
+            val item = json("id" to "message", "type" to "user_message", "text" to "Coordination update",
+                "input_text" to "Internal delivery context", "origin" to origin, "presentation_kind" to "session_message",
+                "name" to "Source task", "related_session_id" to "source")
+            val live = ChatThread(JSONObject("""{"id":"target","turns":[{"id":"turn","items":[]}]}"""))
+            live.apply("item/completed", json("thread_id" to "target", "turn_id" to "turn", "item" to item))
+            val restored = ChatThread(JSONObject("""{"id":"target","turns":[{"id":"turn","items":[$item]}]}"""))
+            assertEquals(restored.messages, live.messages)
+            assertEquals("source", live.messages.single().sourceSessionId)
+            assertEquals("Source task", live.messages.single().sourceSessionName)
+            assertEquals("Coordination update", live.messages.single().text)
+        }
     }
 
     @Test fun userStopPreservesPartialAnswerWithoutSynthesizingFailure() {

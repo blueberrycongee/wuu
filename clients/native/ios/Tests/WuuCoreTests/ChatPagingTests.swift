@@ -3,23 +3,25 @@ import XCTest
 
 final class ChatPagingTests: XCTestCase {
     func testInternalNotificationsStayOutOfLiveAndPagedConversationWithoutHidingPeerMessages() {
-        let envelope = "<process_notification>{\"process_id\":\"p1\"}</process_notification>"
-        let items: [JSONValue] = [
-            ["id": "user", "type": "user_message", "text": "Check the background command"],
-            ["id": "process", "type": "user_message", "name": "wuu_process_notification", "text": .string(envelope)],
-            ["id": "agent", "type": "user_message", "name": "wuu_agent_notification", "text": "Internal handoff"],
-            ["id": "peer", "type": "user_message", "name": "wuu_process_notification", "text": .string(envelope),
-             "origin": "plugin", "presentation_kind": "session_message", "related_session_id": "source"],
-            ["id": "answer", "type": "agent_message", "text": "The command completed"]]
-        var live = ChatThread(["id": "t", "turns": [["id": "turn", "items": []]]])
-        for item in items { live.apply("item/completed", ["thread_id": "t", "turn_id": "turn", "item": item]) }
-        var paged = ChatThread(["id": "t", "history_cursor": "older", "turns": []])
-        paged.prependHistory(["thread_id": "t", "cursor": "older", "turns": [["id": "turn", "items": .array(items)]]])
-        XCTAssertEqual(live.messages.map(\.id), ["turn:user", "turn:peer", "turn:answer"])
-        XCTAssertEqual(paged.rows.flatMap(\.messages), live.messages)
-        XCTAssertEqual(live.messages[1].sourceSessionID, "source")
-        XCTAssertEqual(live.messages[1].text, envelope)
-        XCTAssertEqual(live.turns.first?["items"].array.count, items.count)
+        for origin in ["host", "plugin"] {
+            let envelope = "<process_notification>{\"process_id\":\"p1\"}</process_notification>"
+            let items: [JSONValue] = [
+                ["id": "user", "type": "user_message", "text": "Check the background command"],
+                ["id": "process", "type": "user_message", "origin": "host", "name": "wuu_process_notification", "text": .string(envelope)],
+                ["id": "agent", "type": "user_message", "origin": "host", "name": "wuu_agent_notification", "text": "Internal handoff"],
+                ["id": "peer", "type": "user_message", "name": "wuu_process_notification", "text": .string(envelope),
+                 "origin": .string(origin), "presentation_kind": "session_message", "related_session_id": "source"],
+                ["id": "answer", "type": "agent_message", "text": "The command completed"]]
+            var live = ChatThread(["id": "t", "turns": [["id": "turn", "items": []]]])
+            for item in items { live.apply("item/completed", ["thread_id": "t", "turn_id": "turn", "item": item]) }
+            var paged = ChatThread(["id": "t", "history_cursor": "older", "turns": []])
+            paged.prependHistory(["thread_id": "t", "cursor": "older", "turns": [["id": "turn", "items": .array(items)]]])
+            XCTAssertEqual(live.messages.map(\.id), ["turn:user", "turn:peer", "turn:answer"])
+            XCTAssertEqual(paged.rows.flatMap(\.messages), live.messages)
+            XCTAssertEqual(live.messages[1].sourceSessionID, "source")
+            XCTAssertEqual(live.messages[1].text, envelope)
+            XCTAssertEqual(live.turns.first?["items"].array.count, items.count)
+        }
     }
 
     func testCachedRowsFollowTextToolStatusRemovalAndHistory() {
@@ -37,17 +39,19 @@ final class ChatPagingTests: XCTestCase {
     }
 
     func testSessionMessageSourceSurvivesLiveDeliveryAndReload() {
-        let item: JSONValue = ["id": "message", "type": "user_message", "text": "Coordination update",
-            "input_text": "Internal delivery context", "origin": "plugin", "presentation_kind": "session_message",
-            "name": "Source task", "related_session_id": "source"]
-        let turn: JSONValue = ["id": "turn", "items": [item]]
-        var live = ChatThread(["id": "target", "turns": [["id": "turn", "items": []]]])
-        live.apply("item/completed", ["thread_id": "target", "turn_id": "turn", "item": item])
-        let restored = ChatThread(["id": "target", "turns": [turn]])
-        XCTAssertEqual(live.messages, restored.messages)
-        XCTAssertEqual(live.messages.first?.sourceSessionID, "source")
-        XCTAssertEqual(live.messages.first?.sourceSessionName, "Source task")
-        XCTAssertEqual(live.messages.first?.text, "Coordination update")
+        for origin in ["host", "plugin"] {
+            let item: JSONValue = ["id": "message", "type": "user_message", "text": "Coordination update",
+                "input_text": "Internal delivery context", "origin": .string(origin), "presentation_kind": "session_message",
+                "name": "Source task", "related_session_id": "source"]
+            let turn: JSONValue = ["id": "turn", "items": [item]]
+            var live = ChatThread(["id": "target", "turns": [["id": "turn", "items": []]]])
+            live.apply("item/completed", ["thread_id": "target", "turn_id": "turn", "item": item])
+            let restored = ChatThread(["id": "target", "turns": [turn]])
+            XCTAssertEqual(live.messages, restored.messages)
+            XCTAssertEqual(live.messages.first?.sourceSessionID, "source")
+            XCTAssertEqual(live.messages.first?.sourceSessionName, "Source task")
+            XCTAssertEqual(live.messages.first?.text, "Coordination update")
+        }
     }
 
     func testUserStopPreservesPartialAnswerWithoutSynthesizingFailure() {
