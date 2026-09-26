@@ -49,6 +49,7 @@ remain invalid; this is recovery behavior, not downgrade compatibility.
 | --- | --- | --- |
 | `thread/start` | Optional `cwd`, `workspace_id`, `engine`, `provider`, `model`, `effort`, `permission_mode`, `approve_for_me`, `ephemeral` | `{ "thread": ... }` |
 | `thread/resume` | Optional `session_id`, `response_only`, `history_page` | Thread snapshot and available held/pending user messages |
+| `thread/edit-message` | `thread_id`, `turn_id`, `item_id` | Rewound thread and draft restored from the selected user message |
 | `thread/fork` | `thread_id`; optional `turn_id`, `item_id`, `target`, `mode` | New thread and optional worktree information |
 | `thread/list`, `thread/listAll`, `thread/listArchived`, `thread/search` | Method-specific filters | Session metadata |
 | `thread/rename`, `thread/pin`, `thread/archive`, `thread/delete` | Target and method-specific changes | Updated state or operation result |
@@ -63,6 +64,14 @@ An omitted `session_id` in `thread/resume` selects the most recent visible sessi
 for the workspace. `response_only` avoids a duplicate resume broadcast to the
 requester. `history_page` requests bounded recent history rather than the full
 snapshot. Forks retain the source conversation and copy its selection.
+
+For the built-in engine, `thread/edit-message` retracts the selected user message
+and later messages from the active conversation. Resuming and forking use that
+active branch, including valid history released from model context by compaction.
+The physical audit transcript remains append-only; editing does not erase its
+records. Retraction metadata is recorded for new edits; previously edited
+sessions without that metadata cannot reliably distinguish discarded branches
+from compacted history.
 
 ## Turns and execution runs
 

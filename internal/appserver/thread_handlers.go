@@ -581,7 +581,7 @@ func (s *Server) handleThreadFork(req Request) error {
 		target.SourceID = strings.TrimSpace(params.Target.SourceID)
 	}
 	// The provider checkpoint is only the active model context. Fork from the
-	// durable transcript first so earlier conversation is not silently lost.
+	// active transcript first so earlier conversation is not silently lost.
 	var history []providers.ChatMessage
 	err = errForkTargetNotFound
 	if len(source.rawHistory) > 0 {
@@ -791,8 +791,12 @@ func (s *Server) handleThreadEditMessage(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	committedHistory := nextHistory
+	var committedDisplay []persistedMessage
 	if th.PersistHistory {
-		if err := rewriteChatHistoryAtBaseline(s.rt.SessionDir, th.ID, nextHistory, historyBaselineSeq); err != nil {
+		// The resolved edit target supplies the physical cut, even when the
+		// provider context has already released the earlier conversation.
+		fromSeq := th.History[len(nextHistory)].Seq
+		if err := session.RewriteHistoryRecordsForEdit(s.rt.SessionDir, th.ID, historyRecordsFromChatMessages(nextHistory), fromSeq, historyBaselineSeq); err != nil {
 			releaseThreadMutationLease(th.ID, mutationLease)
 			th.mu.Unlock()
 			return s.writeResponse(req.ID, nil, err)
@@ -803,6 +807,13 @@ func (s *Server) handleThreadEditMessage(req Request) error {
 			th.mu.Unlock()
 			return s.writeResponse(req.ID, nil, loadErr)
 		}
+		activeRecords, loadErr := loadPersistedMessages(s.rt.SessionDir, th.ID, true)
+		if loadErr != nil {
+			releaseThreadMutationLease(th.ID, mutationLease)
+			th.mu.Unlock()
+			return s.writeResponse(req.ID, nil, loadErr)
+		}
+		committedDisplay = displayHistoryAcrossProviderCheckpoint(activeRecords, committedRecords)
 		committedHistory = chatMessagesFromPersistedMessages(committedRecords)
 		th.historyHeadSeq = committedHeadSeq
 		if err := session.UpdateIndex(s.rt.SessionDir, th.ID, persistableMessageCount(committedHistory), threadPreview(committedHistory)); err != nil {
@@ -814,6 +825,10 @@ func (s *Server) handleThreadEditMessage(req Request) error {
 	now := time.Now().UTC()
 	th.History = committedHistory
 	th.Turns = turnsFromHistory(th.ID, committedHistory, now)
+	if th.PersistHistory {
+		th.Turns = turnsFromPersistedHistory(th.ID, committedDisplay, now, s.resolveParticipantSummary)
+		s.restorePluginToolLabels(th.Turns)
+	}
 	th.UpdatedAt = now
 	th.currentTurn = ""
 	th.currentExecutionRunID = ""

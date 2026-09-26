@@ -40,11 +40,22 @@ func RewriteHistoryRecordsAtBaseline(sessDir, id string, records []HistoryRecord
 	return err
 }
 
+// RewriteHistoryRecordsForEdit atomically replaces provider context and retracts
+// the edited suffix from the active transcript. Physical audit rows and messages
+// committed after baselineSeq remain intact, including pre-compaction history.
+func RewriteHistoryRecordsForEdit(sessDir, id string, records []HistoryRecord, fromSeq, baselineSeq int) error {
+	if fromSeq <= 0 || fromSeq > baselineSeq {
+		return fmt.Errorf("invalid history edit range %d..%d", fromSeq, baselineSeq)
+	}
+	_, err := storeHistoryCheckpointAtBaseline(sessDir, id, HistoryCheckpointKindProviderRewrite, records, baselineSeq, nil, fromSeq)
+	return err
+}
+
 // StoreHistoryCheckpointAtBaseline atomically stores a replacement for history
 // read through baselineSeq. Messages already committed after the baseline are
 // appended to the exact replacement inside the same write transaction.
 func StoreHistoryCheckpointAtBaseline(sessDir, id, kind string, replacement []HistoryRecord, baselineSeq int) (HistoryCheckpoint, error) {
-	return storeHistoryCheckpointAtBaseline(sessDir, id, kind, replacement, baselineSeq, nil)
+	return storeHistoryCheckpointAtBaseline(sessDir, id, kind, replacement, baselineSeq, nil, 0)
 }
 
 // StoreContextWindow commits the provider checkpoint and its note anchor in one
@@ -53,10 +64,10 @@ func StoreContextWindow(sessDir, id string, replacement []HistoryRecord, baselin
 	if strings.TrimSpace(note.ProviderKey) == "" {
 		return HistoryCheckpoint{}, errors.New("context window requires a note provider key")
 	}
-	return storeHistoryCheckpointAtBaseline(sessDir, id, "context_window", replacement, baselineSeq, &note)
+	return storeHistoryCheckpointAtBaseline(sessDir, id, "context_window", replacement, baselineSeq, &note, 0)
 }
 
-func storeHistoryCheckpointAtBaseline(sessDir, id, kind string, replacement []HistoryRecord, baselineSeq int, note *CompactionNote) (HistoryCheckpoint, error) {
+func storeHistoryCheckpointAtBaseline(sessDir, id, kind string, replacement []HistoryRecord, baselineSeq int, note *CompactionNote, retractFromSeq int) (HistoryCheckpoint, error) {
 	id = strings.TrimSpace(id)
 	kind = strings.TrimSpace(kind)
 	if baselineSeq < 0 {
@@ -167,6 +178,13 @@ func storeHistoryCheckpointAtBaseline(sessDir, id, kind string, replacement []Hi
 		WHERE session_id = ? AND version < ?`, id, version); err != nil {
 		return HistoryCheckpoint{}, fmt.Errorf("remove superseded history checkpoint: %w", err)
 	}
+	if retractFromSeq > 0 {
+		if _, err := tx.Exec(`INSERT INTO session_history_retractions (session_id, from_seq, through_seq)
+			VALUES (?, ?, ?)`, id, retractFromSeq, baselineSeq); err != nil {
+			return HistoryCheckpoint{}, fmt.Errorf("retract edited history: %w", err)
+		}
+	}
+
 	if note != nil {
 		anchor := note.CoveredHash
 		if strings.TrimSpace(note.Markdown) == "" {
