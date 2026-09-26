@@ -120,6 +120,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Remote requests can open another workspace while four other workspaces run
+  tasks, without the new app-server client being evicted before its request
+  starts. Idle clients remain eligible for normal reclamation.
+
 - Remote Web clients reconnect when the relay stops responding during authentication,
   and cancel pending authentication immediately when stopped or suspended.
 
