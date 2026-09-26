@@ -526,7 +526,7 @@ func (s *Server) loadPersistedThreadSnapshot(id string) (persistedThreadSnapshot
 	if strings.HasPrefix(metadata.Source, namedAgentSessionSource) {
 		loaded.history = repaired
 	} else {
-		loaded.history = replaceBaseSystemPrompt(repaired, systemPrompt)
+		loaded.history = replaceBaseSystemPrompt(repaired, sessionSystemPrompt(systemPrompt, metadata.Instructions))
 	}
 	return loaded, nil
 }
@@ -1380,6 +1380,7 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	}
 	th.Owner = metadata.Owner
 	th.Visibility = metadata.Visibility
+	th.Instructions = metadata.Instructions
 	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" && selection.Model != "" {
 		applyThreadRuntimeSelection(th, selection)
 	}

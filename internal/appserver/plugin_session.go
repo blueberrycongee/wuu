@@ -867,10 +867,7 @@ func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, par
 	}
 	if params.ContextSource != pluginhost.SessionContextSourceSeed {
 		if prompt := strings.TrimSpace(s.rt.StreamRunner.SystemPrompt); prompt != "" && len(history) == 0 {
-			history = append(history, providers.ChatMessage{Role: "system", Content: prompt})
-		}
-		if params.Instructions != "" {
-			history = applyPluginSessionInstructions(history, params.Instructions)
+			history = append(history, providers.ChatMessage{Role: "system", Content: sessionSystemPrompt(prompt, params.Instructions)})
 		}
 	}
 	toolPolicyJSON := ""
@@ -974,6 +971,7 @@ func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, par
 	th.Title = params.Name
 	th.Owner = owner
 	th.Visibility = params.Visibility
+	th.Instructions = params.Instructions
 	// Session lineage stays in persisted metadata for management and cancellation.
 	// Thread.ParentID identifies internal agent workers, not ordinary sessions
 	// created from another session; keep this consistent with applySessionMetadata.
@@ -1113,18 +1111,15 @@ func normalizeSessionToolPolicy(policy pluginhost.SessionToolPolicy) (pluginhost
 	return pluginhost.SessionToolPolicy{Allow: allow, Deny: deny}, nil
 }
 
-func applyPluginSessionInstructions(history []providers.ChatMessage, instructions string) []providers.ChatMessage {
+// sessionSystemPrompt appends create-time session instructions to the runtime
+// prompt. The runtime prompt is configuration refreshed on every turn and
+// reload; the instructions are session state that must survive each refresh.
+func sessionSystemPrompt(prompt, instructions string) string {
 	instructions = strings.TrimSpace(instructions)
 	if instructions == "" {
-		return history
+		return prompt
 	}
-	for index := range history {
-		if strings.EqualFold(strings.TrimSpace(history[index].Role), "system") {
-			history[index].Content = strings.TrimSpace(history[index].Content) + "\n\n# Session instructions\n\n" + instructions
-			return history
-		}
-	}
-	return append([]providers.ChatMessage{{Role: "system", Content: "# Session instructions\n\n" + instructions}}, history...)
+	return strings.TrimSpace(prompt) + "\n\n# Session instructions\n\n" + instructions
 }
 
 func pluginTurnRequestContext(input []pluginhost.SessionContextBlock) ([]agent.ContextSegment, error) {

@@ -2011,7 +2011,7 @@ func (s *Server) resetThreadRuntimesForGeneralSettings(systemPrompt string) {
 			continue
 		}
 		if strings.TrimSpace(systemPrompt) != "" {
-			th.History = replaceBaseSystemPrompt(th.History, systemPrompt)
+			th.History = replaceBaseSystemPrompt(th.History, sessionSystemPrompt(systemPrompt, th.Instructions))
 			if th.PersistHistory {
 				if err := rewriteChatHistory(s.rt.SessionDir, th.ID, th.History); err != nil {
 					providers.DebugLogf("rewrite thread %q system prompt after general settings update: %v", th.ID, err)

@@ -332,7 +332,7 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 	th.mu.Lock()
 	if threadRuntime.StreamRunner != nil {
 		if prompt := strings.TrimSpace(threadRuntime.StreamRunner.SystemPrompt); prompt != "" {
-			th.History = replaceBaseSystemPrompt(th.History, prompt)
+			th.History = replaceBaseSystemPrompt(th.History, sessionSystemPrompt(prompt, th.Instructions))
 		}
 	}
 	history := cloneHistory(th.History)
@@ -1278,7 +1278,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	if th.execRuntime == nil {
 		if threadRuntime.StreamRunner != nil {
 			if prompt := strings.TrimSpace(threadRuntime.StreamRunner.SystemPrompt); prompt != "" {
-				th.History = replaceBaseSystemPrompt(th.History, prompt)
+				th.History = replaceBaseSystemPrompt(th.History, sessionSystemPrompt(prompt, th.Instructions))
 			}
 		}
 		th.execRuntime = threadRuntime

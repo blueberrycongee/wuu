@@ -42,10 +42,13 @@ var (
 )
 
 type threadState struct {
-	ID           string
-	Source       string
-	Owner        string
-	Visibility   string
+	ID         string
+	Source     string
+	Owner      string
+	Visibility string
+	// Instructions are create-time session instructions appended to every
+	// refreshed runtime system prompt.
+	Instructions string
 	NamedAgentID string
 	// CollaborationSessionRef is non-empty only when this Named Agent thread is
 	// bound to one durable Room/Work session. Ordinary Named Agent conversations
