@@ -110,9 +110,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- OpenAI-compatible Chat Completions requests preserve tool calls, reasoning,
-  and participant names in adjacent messages, preventing orphaned tool results
-  in both ordinary and streaming conversations.
+- Workspace file reads, saves, and directory expansion preserve leading and
+  trailing whitespace and literal POSIX backslashes in filenames, preventing
+  a selected file from being confused with another file in the workspace.
 
 - Overdue automations keep their scheduled occurrence until the session service
   is ready. Interrupted dispatches reuse their run record after restart, and
@@ -152,6 +152,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   The catalog no longer shows ineffective per-model remove controls or selection
   animations, and provider remove controls keep their icon centered and color
   stable on hover.
+
+- OpenAI-compatible Chat Completions requests preserve tool calls, reasoning,
+  and participant names in adjacent messages, preventing orphaned tool results
+  in both ordinary and streaming conversations.
 
 - Deleting an agent archives sessions still under its management in a separate
   Agent archive, keeping them out of workspace and unread lists. Previously
