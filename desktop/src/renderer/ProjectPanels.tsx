@@ -42,8 +42,8 @@ export function ProjectPanel({ projectID }: { projectID: string }): JSX.Element 
           {t("projects.openCoordinator")}
         </button>
       </header>
-      <h3 className="project-panel-heading">{t("projects.panel.review")}</h3>
-      {pending.length ? (
+      {pending.length ? <>
+        <h3 className="project-panel-heading">{t("projects.panel.review")}</h3>
         <ul className="project-panel-list">
           {pending.map(({ session, candidate }) => (
             <li key={session.id} className="project-panel-row">
@@ -60,7 +60,7 @@ export function ProjectPanel({ projectID }: { projectID: string }): JSX.Element 
             </li>
           ))}
         </ul>
-      ) : <p className="project-panel-empty">{t("projects.panel.noReview")}</p>}
+      </> : null}
       <h3 className="project-panel-heading">{t("projects.panel.sessions")}</h3>
       {sessions.length ? (
         <ul className="project-panel-list">
@@ -78,19 +78,20 @@ function ProjectSessionRow({ session }: { session: ProjectThread }): JSX.Element
   const running = isThreadExecuting(session);
   const control = session.session_control;
   const managed = control?.state === "active";
-  const details = [
-    t(running ? "projects.running" : "projects.idle"),
-    control ? t(`sessionControl.${control.state === "taken_over" ? "takenOver" : control.state}`) : "",
-  ].filter(Boolean).join(" · ");
   return (
     <li className="project-panel-row">
-      <span className="project-panel-row-icon" aria-hidden="true">
-        {running ? <LoaderCircle className="project-status-spinner" /> : null}
+      <span className="project-panel-row-icon">
+        {running ? <LoaderCircle className="project-status-spinner" role="img" aria-label={t("projects.running")} /> : null}
       </span>
       <button type="button" className="project-panel-row-main" onClick={() => actions.openThread(session.id)}>
         <span className="project-panel-row-title">{baseThreadTitle(session)}</span>
-        <small>{details}</small>
       </button>
+      {/* Managed is every session's default; only a session out of the coordinator's hands says so. */}
+      {control && !managed ? (
+        <span className="project-panel-row-meta project-panel-row-state">
+          {t(control.state === "taken_over" ? "sessionControl.takenOver" : "sessionControl.paused")}
+        </span>
+      ) : null}
       {control ? (
         <button
           type="button"
@@ -193,7 +194,6 @@ export function ProposalPanel({ sessionID }: { sessionID: string }): JSX.Element
               </a>
             ) : null}
           </p>
-          {candidate.disposition === "discarded" ? <p className="project-panel-empty">{t("projects.candidate.rejectedHint")}</p> : null}
           <ul className="project-proposal-files">
             {files.map((path) => <li key={path} title={path}>{path}</li>)}
           </ul>

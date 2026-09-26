@@ -12,7 +12,6 @@ export type ProjectThread = Thread | ThreadSummary;
 export type ProjectActions = {
   // Every conversation the renderer knows, across workspaces.
   threads: readonly ProjectThread[];
-  workspaceName: (workspaceID?: string) => string | undefined;
   openThread: (threadID: string) => void;
   openProjectPanel: (project: ProjectThread) => void;
   openProposal: (session: ProjectThread) => void;

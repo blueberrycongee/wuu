@@ -20,46 +20,6 @@ import {
 import { useI18n } from "./i18n";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 
-/** The empty project draft: what a project does before its first message. */
-export function ProjectDraftIntro({ workspaceName, onSwitchToConversation }: {
-  workspaceName?: string;
-  onSwitchToConversation: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  return (
-    <div className="project-draft-intro">
-      <p>{t("projects.draftHint")}</p>
-      <p className="project-draft-meta">
-        {workspaceName ? <span>{t("projects.inWorkspace", { workspace: workspaceName })}</span> : null}
-        <button type="button" className="project-inline-link" onClick={onSwitchToConversation}>
-          {t("projects.switchToConversation")}
-        </button>
-      </p>
-    </div>
-  );
-}
-
-/** The top of a project coordinator's conversation. */
-export function ProjectConversationHeader({ project }: { project: Thread }): JSX.Element {
-  const { t } = useI18n();
-  const actions = useProjectActions();
-  const workspace = actions?.workspaceName(project.workspace_id);
-  return (
-    <header className="project-conversation-header">
-      <Workflow className="project-conversation-icon" aria-hidden="true" />
-      <h2>{baseThreadTitle(project)}</h2>
-      <p className="project-conversation-meta">
-        {workspace ? <span>{t("projects.inWorkspace", { workspace })}</span> : null}
-        {actions ? (
-          <button type="button" className="project-inline-link" onClick={() => actions.openProjectPanel(project)}>
-            {t("projects.viewProject")}
-          </button>
-        ) : null}
-      </p>
-    </header>
-  );
-}
-
 /** The coordinator's running and pending work, above its composer. */
 export function ProjectStatusStrip({ project }: { project: Thread }): JSX.Element | null {
   const { t, formatNumber } = useI18n();

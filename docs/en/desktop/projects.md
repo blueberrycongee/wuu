@@ -4,7 +4,7 @@ A project is a conversation with a coordinator for a larger piece of work in one
 
 ## Start a project
 
-Projects have their own group at the top of the sidebar. Choose **+** in **Projects** to start one in the current workspace, or **New project** in a workspace's menu to start one there. A project draft opens; **Start an ordinary conversation instead** turns it back into a conversation draft.
+Projects have their own group at the top of the sidebar. Choose **+** in **Projects** to start one in the current workspace, or **New project** in a workspace's menu to start one there. A project draft opens; **New conversation** turns it back into a conversation draft.
 
 Tell the coordinator the result you want and the constraints:
 
@@ -25,8 +25,7 @@ To bring existing work into a project, drag a conversation from its workspace on
 
 A project occupies one row in the sidebar; its sessions do not crowd the workspace list. The row shows when any of its sessions is running and how many proposals await your review. In the project conversation:
 
-- **View project** opens the project in the right panel: what awaits review, then every session with its state.
-- Above the composer, the project's running work and pending reviews link to the same view.
+- Above the composer, the project's running work and pending reviews open the project in the right panel: what awaits review, then every session. A session that you took over or paused says so.
 - Each event, such as a session finishing a turn, reads as one line with **Review** and **Open session**. **Details** shows the text the coordinator received.
 
 In a Git workspace, a session that changes files works in its own Git worktree by default, so parallel sessions do not overwrite each other. A session that works in the workspace directly edits its files in place.

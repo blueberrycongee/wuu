@@ -14,7 +14,7 @@ import { initialState, summarizeThreadsForSidebar, type AppState } from "../../s
 import { ConversationTitleActions } from "../../src/renderer/ConversationShellRenderers";
 import { EmptyConversationHome } from "../../src/renderer/LoadingViews";
 import { ProjectActionsProvider, type ProjectActions } from "../../src/renderer/ProjectActions";
-import { ProjectConversationHeader, ProjectDraftIntro, ProjectStatusStrip, useTurnProposals } from "../../src/renderer/ProjectViews";
+import { ProjectStatusStrip, useTurnProposals } from "../../src/renderer/ProjectViews";
 import { TurnView } from "../../src/renderer/TurnView";
 import { WorkspaceRightPanel } from "../../src/renderer/WorkspacePanels";
 import { workspaceProjectViewTab, workspaceProposalViewTab, type WorkspaceViewTab } from "../../src/renderer/WorkspaceViewTabs";
@@ -136,7 +136,6 @@ if (params.get("publisher") !== "0") {
 function Conversation({ current }: { current: Thread }) {
   const renderTurnProposal = useTurnProposals(current);
   return <div className="conversation-width session-flow">
-    {current.source === "project" ? <ProjectConversationHeader project={current} /> : null}
     {current.turns.filter(turn => turn.items.length).map(turn => <div key={turn.id}>
       <TurnView turn={turn} onStreamFrame={noop} isLatestTurn cwd="/preview" />
       {renderTurnProposal(turn.id)}
@@ -171,7 +170,7 @@ function Fixture() {
     setActiveTab(tab.id);
   };
   const actions = useMemo<ProjectActions>(() => ({
-    threads, workspaceName: () => workspace.name, openThread: setActive,
+    threads, openThread: setActive,
     openProjectPanel: (project) => openTab(workspaceProjectViewTab(project.id, project.title ?? "")),
     openProposal: (session) => openTab(workspaceProposalViewTab(session.id, session.title ?? "")),
     takeOver: noop, returnToProject: noop, release: noop,
@@ -206,9 +205,7 @@ function Fixture() {
             rightPanelOpen={tabs.length > 0} onToggleRightPanel={noop} />
         </header>
         <div className={`scroll-region${draft ? " empty-scroll-region" : ""}`}>
-          {draft ? <EmptyConversationHome title="新项目">
-            <ProjectDraftIntro workspaceName={workspace.name} onSwitchToConversation={noop} />
-          </EmptyConversationHome> : current ? <Conversation current={current} /> : null}
+          {draft ? <EmptyConversationHome title="新项目" /> : current ? <Conversation current={current} /> : null}
         </div>
         <footer className="composer-wrap dock-composer-wrap"><div className="composer-stack"><div className="composer-shell">
           {!draft && current?.source === "project" ? <div className="composer-status-accessory"><ProjectStatusStrip project={current} /></div> : null}

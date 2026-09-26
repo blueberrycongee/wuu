@@ -35,8 +35,7 @@ import { latestAgentMessageLocation } from "./TurnViewHelpers";
 import type { HistoryMessageEditState } from "./ConversationHistoryActions";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { PluginConversationCards } from "./plugins/PluginConversationCards";
-import { isProjectCoordinator } from "./ProjectSessions";
-import { ProjectConversationHeader, useTurnProposals } from "./ProjectViews";
+import { useTurnProposals } from "./ProjectViews";
 import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 import {
   markSessionSwitch,
@@ -348,7 +347,6 @@ const CachedConversationPane = memo(function CachedConversationPane({
               threadID={thread.id}
               turns={threadTurns}
               renderBeforeTurns={[
-                ...(isProjectCoordinator(thread) ? [<ProjectConversationHeader key="project-header" project={thread} />] : []),
                 ...entriesBeforeTurns.map(renderContextEntry),
               ]}
               renderAfterMissingTurn={

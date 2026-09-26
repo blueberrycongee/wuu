@@ -294,7 +294,7 @@ import {
 } from "./ThreadTitles";
 import { ProjectActionsProvider, type ProjectActions, type ProjectThread } from "./ProjectActions";
 import { isProjectCoordinator } from "./ProjectSessions";
-import { ProjectDraftIntro, ProjectStatusStrip } from "./ProjectViews";
+import { ProjectStatusStrip } from "./ProjectViews";
 import { createRuntimeSettingsActions } from "./RuntimeSettingsActions";
 import { createConversationPaneActions } from "./ConversationPaneActions";
 import {
@@ -3573,7 +3573,6 @@ export function App(): JSX.Element {
   });
   const projectActions = useMemo<ProjectActions>(() => ({
     threads: sidebarThreads,
-    workspaceName: (workspaceID) => state.projects.find((workspace) => workspace.id === workspaceID)?.name,
     openThread: openProjectThread,
     openProjectPanel,
     openProposal: openProjectProposal,
@@ -3588,7 +3587,7 @@ export function App(): JSX.Element {
       void window.wuu.returnManagedSession({ thread_id: session.id, revision: control.revision }).catch(showErrorToast);
     },
     release: releaseProjectSession,
-  }), [openProjectPanel, openProjectProposal, openProjectThread, releaseProjectSession, sidebarThreads, state.projects]);
+  }), [openProjectPanel, openProjectProposal, openProjectThread, releaseProjectSession, sidebarThreads]);
 
   function focusHeroAfter(
     action: Promise<void | boolean>,
@@ -5314,14 +5313,7 @@ export function App(): JSX.Element {
                     : "idle"
                 }
               >
-                {activeProjectDraft ? (
-                  <ProjectDraftIntro
-                    workspaceName={state.activeContext?.kind === "project"
-                      ? state.projects.find((workspace) => workspace.id === state.activeProjectId)?.name
-                      : undefined}
-                    onSwitchToConversation={() => setDraftProjectMode(false)}
-                  />
-                ) : <EmptyHomeOverview />}
+                {activeProjectDraft ? null : <EmptyHomeOverview />}
               </EmptyConversationHome>
               )
             ) : (

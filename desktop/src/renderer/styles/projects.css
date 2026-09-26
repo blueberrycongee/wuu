@@ -45,65 +45,6 @@ html[data-focus-modality="keyboard"] .project-inline-link:focus-visible {
   }
 }
 
-/* The empty project draft explains what a project does, under its title. */
-.project-draft-intro {
-  display: grid;
-  grid-column: 1 / -1;
-  gap: var(--space-2);
-  max-width: 36em;
-  color: var(--ink-soft);
-}
-
-.project-draft-intro > p {
-  margin: 0;
-}
-
-.project-draft-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-1) var(--space-4);
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-}
-
-/* The top of a coordinator conversation names the project and its workspace. */
-.project-conversation-header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-1) var(--space-2);
-  margin: 0 0 var(--space-6);
-}
-
-.project-conversation-icon {
-  width: var(--icon-size);
-  height: var(--icon-size);
-  color: var(--ink-soft);
-}
-
-.project-conversation-header > h2 {
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  color: var(--ink);
-  font-size: var(--font-title);
-  font-weight: var(--weight-semibold);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.project-conversation-meta {
-  display: flex;
-  grid-column: 2;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-1) var(--space-4);
-  margin: 0;
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-}
-
 /* The coordinator's running and pending work, just above its composer. */
 .composer-status-accessory {
   display: flex;
@@ -325,6 +266,7 @@ html[data-focus-modality="keyboard"] .session-control-project:focus-visible {
 }
 
 .project-panel-row {
+  position: relative;
   display: flex;
   min-width: 0;
   min-height: var(--control-row-height);
@@ -345,6 +287,17 @@ html[data-focus-modality="keyboard"] .session-control-project:focus-visible {
 
 .project-panel-row:is(:hover, :focus-within) .project-panel-row-action {
   visibility: visible;
+}
+
+/* A session's state sits in the footprint its actions reserve and gives way
+ * to them, so it never narrows the title. */
+.project-panel-row-state {
+  position: absolute;
+  right: var(--space-2);
+}
+
+.project-panel-row:is(:hover, :focus-within) .project-panel-row-state {
+  visibility: hidden;
 }
 
 .project-panel-row-icon {
@@ -387,7 +340,6 @@ svg.project-panel-row-icon {
   flex: 1;
 }
 
-.project-panel-row-main > small,
 .project-panel-row-meta {
   color: var(--ink-muted);
   font-size: var(--font-xs);
