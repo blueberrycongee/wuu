@@ -10,6 +10,18 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Projects: a coordinator conversation for a larger piece of work in one
+  workspace. Create one from the workspace menu; a workspace can hold several.
+  The coordinator reads the workspace but cannot change it. It delegates every
+  change to sessions it manages, which appear nested under the project and open
+  like any conversation. Sessions that change files work in their own Git
+  worktree. When a turn ends, its result reaches the coordinator once, including
+  after a restart, and its changes wait as proposed changes that you apply to
+  the workspace, open as a PR through an extension, or discard. Sending a message in
+  a session takes it over until you return it to the project. The
+  `project/candidate` app-server method and `project` on `thread/start` expose
+  the same model to clients.
+
 - Click the conversation title in the title bar to rename it. An existing
   conversation saves immediately. A new conversation keeps the name when the
   first message creates the session.
@@ -31,6 +43,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   activity data is never changed.
 
 ### Changed
+
+- The desktop and its documentation call a registered folder a workspace
+  (工作区) instead of a project; "project" now means a project coordinator.
 
 - The Extensions page follows the settings layout: a titled page with its
   actions beside the title, then plugins, official skills, and your skills as
@@ -93,6 +108,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   `~/.wuu/channels`, which can be deleted.
 
 ### Fixed
+
+- Instructions given when an extension creates a session now reach the model on
+  every turn and after a reload. Built-in runs previously dropped them,
+  including the Subagent plugin's worker instructions.
 
 - Sending a message keeps one local waiting timer across admission, events,
   snapshots, and conversation switches without changing server timestamps.

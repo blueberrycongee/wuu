@@ -58,6 +58,34 @@ the client to wait and retry. A request without `thread_id` updates defaults
 for future conversations. Do not try to override a turn's permission mode through
 `turn/start`.
 
+## Run a project
+
+`thread/start` with `project: {"name": "..."}` creates a project coordinator in the
+workspace. The returned thread has `source: "project"` and `permission_mode:
+"read_only"`; `config/model/update` and `turn/start` refuse to widen it. The
+coordinator manages sessions through its `session` tool. Each managed session is an
+ordinary thread with `source: "project-session"` and `project_id` naming its
+coordinator, and its `session_control` names the project as `manager_name`.
+
+When a managed turn ends, the coordinator receives one user item with `origin:
+"plugin"`, `presentation_kind: "session_message"` and `related_session_id` set to
+the session. Starting, steering or queuing a turn in a managed session takes it
+over, and interrupting pauses it. `thread/control/return` with `thread_id` and the
+current `revision` hands it back. The coordinator is told about each change.
+
+`project/candidate` reviews worktree changes:
+
+| Action | Parameters | Result |
+|---|---|---|
+| `list` | `project_id` or `session_id` | `candidates`, oldest first |
+| `get` | `session_id`, `turn_id` | `candidate` with `diff` |
+| `apply` | `session_id`, `turn_id` | `candidate` with `disposition: "applied"` |
+| `discard` | `session_id`, `turn_id` | `candidate` with `disposition: "discarded"` |
+
+`apply` writes only the frozen change into the workspace and leaves it unstaged. A
+conflict returns an error and changes neither the workspace nor the candidate. A
+candidate takes one decision; a second `apply` or `discard` fails.
+
 ## Probe the protocol
 
 ```bash

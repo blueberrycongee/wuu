@@ -50,6 +50,31 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 等待后重试。不带 `thread_id` 的请求修改未来
 对话的默认设置。不要通过 `turn/start` 临时覆盖单个回合的权限模式。
 
+## 运行项目
+
+`thread/start` 带 `project: {"name": "..."}` 时，在工作区创建项目协调者。返回的会话带
+`source: "project"` 和 `permission_mode: "read_only"`，`config/model/update` 与 `turn/start`
+都不能放宽它。协调者通过 `session` 工具管理会话。每个托管会话都是普通会话，带
+`source: "project-session"`，`project_id` 指向其协调者；它的 `session_control` 以
+`manager_name` 给出项目名。
+
+托管会话的一个回合结束时，协调者会收到一条用户条目，带 `origin: "plugin"`、
+`presentation_kind: "session_message"`，`related_session_id` 为该会话。在托管会话中开始、
+引导或排队回合即接管它，中断则暂停它。用 `thread/control/return` 传入 `thread_id` 和当前
+`revision` 即可交还。每次变化都会通知协调者。
+
+`project/candidate` 用于审阅 worktree 改动：
+
+| 动作 | 参数 | 结果 |
+|---|---|---|
+| `list` | `project_id` 或 `session_id` | `candidates`，按时间先后 |
+| `get` | `session_id`、`turn_id` | 带 `diff` 的 `candidate` |
+| `apply` | `session_id`、`turn_id` | `disposition: "applied"` 的 `candidate` |
+| `discard` | `session_id`、`turn_id` | `disposition: "discarded"` 的 `candidate` |
+
+`apply` 只把冻结的改动写入工作区，不暂存。发生冲突时返回错误，工作区和候选都不变。每个
+候选只能决定一次，再次 `apply` 或 `discard` 会失败。
+
 ## 查询订阅状态
 
 `engine/list` 可选参数 `{ "include_quota": true }` 通过支持的本地 CLI（目前为 Codex）读取账户额度，并返回内置订阅来源 `subscription_providers`。`quota` 包含 `status`（`available` 或 `unavailable`）、`checked_at` 和可选 `windows`；窗口提供 `id`、`label`、`used_percent`、`window_minutes`、`resets_at`。缺失额度表示未支持或未查询，不代表无限额度。过期快照应提示刷新，不能在重置时间自行补满。
