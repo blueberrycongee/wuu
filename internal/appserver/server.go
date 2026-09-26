@@ -300,6 +300,7 @@ type Server struct {
 	// handleSideThreadGetHistory treat nil as the "feature off" path.
 	sideThreadStore *sidethread.Store
 	controlMu       sync.Mutex
+	projectCreateMu sync.Mutex
 	// inboxMu orders deliveries into a session so pending input is admitted
 	// in creation order; candidateMu serializes candidate decisions.
 	inboxMu     sync.Mutex

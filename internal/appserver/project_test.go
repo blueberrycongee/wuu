@@ -652,3 +652,161 @@ func jsonNumber(value int64) string {
 	encoded, _ := json.Marshal(value)
 	return string(encoded)
 }
+
+// Team contracts: the side session survives reload and is reused, workers use
+// the same ordinary session runtime, and peer messages cannot cross a project
+// or bypass a human control fence (including queued messages after a return).
+func TestProjectSideAndWorkersReuseOrdinarySessions(t *testing.T) {
+	srv, client, calls, rt := newProjectFixture(t)
+	lead := startProject(t, client, "Team")
+	var turn TurnStartResult
+	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: lead.ID, Prompt: "Build the team feature"}, &turn)
+	calls.next(t, "Build the team feature").response <- toolCallResponse("create-side", "session", `{"action":"create","role":"side","title":"Implementation","prompt":"Implement the team feature"}`)
+	sideCall := calls.next(t, "Implement the team feature")
+	if !requestToolNames(sideCall.request)["session"] {
+		t.Fatal("side has no session communication tool")
+	}
+	sideCall.response <- providersResponse("Implementation ready.")
+	side := projectManagedSessions(t, client, lead.ID)[0]
+	settleCoordinator(t, srv, calls, lead.ID, "Build the team feature", "Waiting for review.", projectResultClientID(side.ID, waitForThread(t, srv, side.ID, func(th Thread) bool { return th.LatestCompletedTurnID != "" }).LatestCompletedTurnID))
+
+	handler := srv.projectSessionHandler(lead.ID)
+	reused, err := handler(context.Background(), "reuse-side", tools.ProjectSessionRequest{Action: "create", Role: "side", Prompt: "Continue the implementation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reused.(projectSessionView).SessionID != side.ID {
+		t.Fatalf("created a second side: %+v", reused)
+	}
+	if len(projectManagedSessions(t, client, lead.ID)) != 1 {
+		t.Fatal("side was duplicated")
+	}
+	calls.assertIdle(t)
+
+	workerView, err := srv.projectSessionHandler(side.ID)(context.Background(), "create-verifier", tools.ProjectSessionRequest{Action: "create", Role: "worker", Prompt: "Verify the team feature"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerID := workerView.(projectSessionView).SessionID
+	workerCall := calls.next(t, "Verify the team feature")
+	if !requestToolNames(workerCall.request)["session"] {
+		t.Fatal("worker has no session communication tool")
+	}
+	workerCall.response <- providersResponse("Verified.")
+	worker := waitForThread(t, srv, workerID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
+	settleCoordinator(t, srv, calls, lead.ID, "Build the team feature", "Verified.", projectResultClientID(worker.ID, worker.LatestCompletedTurnID))
+	if worker.ParentID != "" || worker.ProjectID != lead.ID {
+		t.Fatalf("worker is not an ordinary project session: %+v", worker)
+	}
+
+	srv.Close()
+	reopened := New(rt, &lockedBuffer{})
+	t.Cleanup(reopened.Close)
+	reused, err = reopened.projectSessionHandler(lead.ID)(context.Background(), "reuse-after-restart", tools.ProjectSessionRequest{Action: "create", Role: "side", Prompt: "Continue"})
+	if err != nil || reused.(projectSessionView).SessionID != side.ID {
+		t.Fatalf("reloaded side = %+v, %v", reused, err)
+	}
+	metadata, found, err := session.Find(rt.SessionDir, side.ID)
+	if err != nil || !found || metadata.ProjectRole != "side" {
+		t.Fatalf("persisted side = %+v, %v", metadata, err)
+	}
+	calls.assertIdle(t)
+}
+
+func TestProjectPeerMessagesRespectMembershipAndTakeover(t *testing.T) {
+	srv, client, calls, rt := newProjectFixture(t)
+	lead := startProject(t, client, "Peers")
+	var turn TurnStartResult
+	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: lead.ID, Prompt: "Coordinate peer work"}, &turn)
+	calls.next(t, "Coordinate peer work").response <- providersResponse("Ready.")
+	waitForThread(t, srv, lead.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
+	create := func(id, prompt string) Thread {
+		t.Helper()
+		view, err := srv.projectSessionHandler(lead.ID)(context.Background(), id, tools.ProjectSessionRequest{Action: "create", Prompt: prompt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		calls.next(t, prompt).response <- providersResponse("Ready.")
+		th := waitForThread(t, srv, view.(projectSessionView).SessionID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
+		settleCoordinator(t, srv, calls, lead.ID, "Coordinate peer work", "Ready.", projectResultClientID(th.ID, th.LatestCompletedTurnID))
+		return th
+	}
+	sender := create("sender", "Inspect the API")
+	receiver := create("receiver", "Implement the API")
+	handler := srv.projectSessionHandler(sender.ID)
+	if _, err := handler(context.Background(), "nested-create", tools.ProjectSessionRequest{Action: "create", Prompt: "Create a nested worker"}); err == nil {
+		t.Fatal("worker spawned an unbounded worker hierarchy")
+	}
+	outsider := startProject(t, client, "Other project")
+	if _, err := handler(context.Background(), "cross-project", tools.ProjectSessionRequest{Action: "message", SessionID: outsider.ID, Prompt: "Cross project", Wake: true}); err == nil {
+		t.Fatal("peer message crossed project boundary")
+	}
+	if _, err := handler(context.Background(), "peer-question", tools.ProjectSessionRequest{Action: "message", SessionID: receiver.ID, Prompt: "Does total count filtered rows?", Wake: true}); err != nil {
+		t.Fatal(err)
+	}
+	reply := calls.next(t, "Does total count filtered rows?")
+	msg := lastUserRequestMessage(reply.request)
+	if msg.RelatedSessionID != sender.ID || msg.Cause != "project_message" || msg.Origin != "plugin" {
+		t.Fatalf("peer provenance lost: %+v", msg)
+	}
+	reply.response <- providersResponse("Yes, filtered rows.")
+	receiver = waitForThread(t, srv, receiver.ID, func(th Thread) bool {
+		return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != receiver.LatestCompletedTurnID
+	})
+	settleCoordinator(t, srv, calls, lead.ID, "Coordinate peer work", "Understood.", projectResultClientID(receiver.ID, receiver.LatestCompletedTurnID))
+	if _, err := handler(context.Background(), "stale-peer", tools.ProjectSessionRequest{Action: "message", SessionID: receiver.ID, Prompt: "Stale queued advice"}); err != nil {
+		t.Fatal(err)
+	}
+	taken := takeProjectSession(t, client, receiver.ID, receiver.SessionControl.Revision)
+	if _, err := handler(context.Background(), "during-takeover", tools.ProjectSessionRequest{Action: "message", SessionID: receiver.ID, Prompt: "Ignore takeover", Wake: true}); err == nil {
+		t.Fatal("message bypassed takeover")
+	}
+	client.rpc(t, "thread/control/return", map[string]any{"thread_id": receiver.ID, "revision": taken.Revision}, nil)
+	// Returning must not revive queued input admitted before the takeover.
+	srv.drainSessionInbox(receiver.ID)
+	if ids := deliveredClientIDs(t, rt, receiver.ID, "project-message:"+sender.ID+":stale-peer"); len(ids) != 0 {
+		t.Fatalf("stale peer message delivered: %v", ids)
+	}
+	settleCoordinator(t, srv, calls, lead.ID, "Coordinate peer work", "Returned.", projectControlClientID(receiver.ID, taken.Revision+1))
+	calls.assertIdle(t)
+}
+
+// A crash after enqueue must preserve provenance, deliver once on restart,
+// and leave informational messages dormant until another turn supplies work.
+func TestProjectPeerInboxRecoversWithoutDuplicateDelivery(t *testing.T) {
+	srv, client, calls, rt := newProjectFixture(t)
+	lead := startProject(t, client, "Recovery")
+	view, err := srv.projectSessionHandler(lead.ID)(context.Background(), "member", tools.ProjectSessionRequest{Action: "create", Prompt: "Prepare recovery work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls.next(t, "Prepare recovery work").response <- providersResponse("Ready.")
+	member := waitForThread(t, srv, view.(projectSessionView).SessionID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
+	resultID := projectResultClientID(member.ID, member.LatestCompletedTurnID)
+	settleCoordinator(t, srv, calls, lead.ID, "Ready.", "Noted.", resultID)
+	if _, err := srv.projectSessionHandler(member.ID)(context.Background(), "information", tools.ProjectSessionRequest{Action: "message", SessionID: lead.ID, Prompt: "Informational recovery note"}); err != nil {
+		t.Fatal(err)
+	}
+	srv.drainSessionInbox(lead.ID)
+	if ids := deliveredClientIDs(t, rt, lead.ID, "project-message:"+member.ID+":information"); len(ids) != 0 {
+		t.Fatal("information woke idle lead")
+	}
+	control, _, err := session.ReadControl(rt.SessionDir, member.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientID := "project-message:" + member.ID + ":persisted-question"
+	if err := session.EnqueueInbox(rt.SessionDir, session.InboxMessage{ClientID: clientID, SessionID: lead.ID, RelatedSessionID: member.ID, Cause: "project_message", Content: "Recovered peer question", Wake: true, Controls: []session.Control{control}}); err != nil {
+		t.Fatal(err)
+	}
+	srv.Close()
+	reopened := New(rt, &lockedBuffer{})
+	t.Cleanup(reopened.Close)
+	reopened.recoverProjectInbox()
+	settleCoordinator(t, reopened, calls, lead.ID, "Ready.", "Recovered.", clientID, "project-message:"+member.ID+":information")
+	reopened.recoverProjectInbox()
+	if ids := deliveredClientIDs(t, rt, lead.ID, clientID); len(ids) != 1 {
+		t.Fatalf("recovered message occurrences: %v", ids)
+	}
+	calls.assertIdle(t)
+}

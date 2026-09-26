@@ -37,6 +37,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/sessiontrace"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
+	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 type queuedTurn struct {
@@ -268,6 +269,23 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 	threadRuntime, err := s.ensureThreadRuntime(th)
 	if err != nil || threadRuntime == nil {
 		return threadRuntime, err
+	}
+	if metadata, found, err := session.Find(s.rt.SessionDir, th.ID); err != nil {
+		return nil, err
+	} else if found {
+		th.mu.Lock()
+		th.Source = metadata.Source
+		th.ProjectID = projectIDForSession(metadata)
+		th.Instructions = effectiveSessionInstructions(metadata)
+		th.mu.Unlock()
+		isProject := metadata.Source == projectSource || metadata.Source == projectSessionSource
+		if threadRuntime.Toolkit != nil {
+			var handler tools.ProjectSessionHandler
+			if isProject {
+				handler = s.projectSessionHandler(th.ID)
+			}
+			threadRuntime.Toolkit.SetProjectSessions(handler)
+		}
 	}
 	if err := s.refreshThreadGitAttribution(threadRuntime); err != nil {
 		// Attribution is metadata, not a reason to block the user's turn when a
@@ -1166,7 +1184,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		return nil, err
 	}
 	th.mu.Lock()
-	coordinator := th.Source == projectSource
+	coordinator := th.Source == projectSource || th.Source == projectSessionSource
 	th.mu.Unlock()
 	if coordinator && threadRuntime.Toolkit != nil {
 		threadRuntime.Toolkit.SetProjectSessions(s.projectSessionHandler(th.ID))
@@ -2270,10 +2288,10 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		if th.steerWake == nil {
 			th.steerWake = make(chan struct{})
 		}
-		coordinator := th.Source == projectSource
+		coordinator := th.Source == projectSource || th.Source == projectSessionSource
 		th.mu.Unlock()
 		if coordinator {
-			// Project input that waits for the coordinator's next turn joins this one.
+			// Deferred team input joins the recipient's next turn.
 			s.startBackground(func() { s.drainSessionInbox(th.ID) })
 		}
 	}

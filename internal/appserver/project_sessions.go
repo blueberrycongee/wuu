@@ -14,6 +14,7 @@ import (
 )
 
 type projectSessionView struct {
+	Role                  string                    `json:"role"`
 	SessionID             string                    `json:"session_id"`
 	Title                 string                    `json:"title"`
 	State                 string                    `json:"state"`
@@ -30,37 +31,122 @@ type projectCandidateSummary struct {
 	Disposition  string   `json:"disposition,omitempty"`
 }
 
-// projectSessionHandler serves the session tool of one coordinator.
-func (s *Server) projectSessionHandler(projectID string) tools.ProjectSessionHandler {
+// projectActor resolves the live team and rejects actions after human takeover.
+func (s *Server) projectActor(id string) (session.Session, session.Session, *session.Control, error) {
+	if project, live := s.projectCoordinator(id); live {
+		return project, project, nil, nil
+	}
+	actor, found, err := session.Find(s.rt.SessionDir, id)
+	if err != nil {
+		return session.Session{}, actor, nil, err
+	}
+	project, live := s.projectCoordinator(actor.ParentID)
+	if !found || !live || actor.Source != projectSessionSource || actor.ArchivedAt != nil {
+		return project, actor, nil, errors.New("this session is not in an active project")
+	}
+	control, ok, err := session.ReadControl(s.rt.SessionDir, actor.ID)
+	if err != nil {
+		return project, actor, nil, err
+	}
+	if !ok || control.ManagerID != project.ID || control.State != session.ControlActive {
+		return project, actor, nil, session.ErrControlChanged
+	}
+	return project, actor, &control, nil
+}
+
+func (s *Server) projectSessionHandler(actorID string) tools.ProjectSessionHandler {
 	return func(ctx context.Context, callID string, request tools.ProjectSessionRequest) (any, error) {
-		project, live := s.projectCoordinator(projectID)
-		if !live {
-			return nil, errors.New("this project is no longer active")
+		project, actor, _, err := s.projectActor(actorID)
+		if err != nil {
+			return nil, err
 		}
+		lead := actor.ID == project.ID
 		switch request.Action {
 		case "list":
-			return s.listProjectSessions(projectID)
-		case "create":
-			return s.createProjectSession(ctx, project, callID, request)
-		case "send":
-			return s.sendProjectSession(ctx, project, "project:"+projectID+":"+callID, request)
-		case "stop":
-			if _, err := s.projectManagedSession(projectID, request.SessionID); err != nil {
+			listed, err := s.listProjectSessions(project.ID)
+			if err != nil {
 				return nil, err
+			}
+			listed.(map[string]any)["project_id"] = project.ID
+			return listed, nil
+		case "create":
+			if !lead && (actor.ProjectRole != "side" || request.Role == "side") {
+				return nil, errors.New("only the lead can create a side; only the lead and side can create workers")
+			}
+			if !lead {
+				callID = actorID + ":" + callID
+			}
+			return s.createProjectSession(ctx, project, callID, request)
+		case "message":
+			return s.messageProjectSession(actorID, callID, request)
+		case "send", "stop":
+			if !lead {
+				return nil, errors.New("only the project lead controls other sessions; use message for peer communication")
+			}
+			if request.Action == "send" {
+				return s.sendProjectSession(ctx, project, "project:"+project.ID+":"+callID, request)
+			}
+			if _, err := s.projectManagedSession(project.ID, request.SessionID); err != nil {
+				return nil, err
+			}
+			control, ok, err := session.ReadControl(s.rt.SessionDir, request.SessionID)
+			if err != nil {
+				return nil, err
+			}
+			if !ok || control.State != session.ControlActive || control.ManagerID != project.ID {
+				return nil, session.ErrControlChanged
 			}
 			if err := s.interruptOwnedThreadExecution(request.SessionID); err != nil {
 				return nil, err
 			}
 			return map[string]string{"session_id": request.SessionID, "state": "stopping"}, nil
 		case "inspect":
-			if _, err := s.projectManagedSession(projectID, request.SessionID); err != nil {
-				return nil, err
+			if request.SessionID != project.ID {
+				if _, err := s.projectManagedSession(project.ID, request.SessionID); err != nil {
+					return nil, err
+				}
 			}
 			return s.sessionTranscriptExcerpt(ctx, request.SessionID, request.Query, request.Before, request.Limit)
 		default:
-			return nil, errors.New("action must be list, create, send, stop or inspect")
+			return nil, errors.New("action must be list, create, send, message, stop or inspect")
 		}
 	}
+}
+
+func (s *Server) messageProjectSession(actorID, callID string, request tools.ProjectSessionRequest) (any, error) {
+	prompt := strings.TrimSpace(request.Prompt)
+	if prompt == "" || actorID == request.SessionID {
+		return nil, errors.New("message needs content and a different recipient")
+	}
+	s.controlMu.Lock()
+	project, actor, senderControl, err := s.projectActor(actorID)
+	var targetControl *session.Control
+	if err == nil {
+		targetProject, _, control, targetErr := s.projectActor(request.SessionID)
+		err = targetErr
+		if err == nil && targetProject.ID != project.ID {
+			err = errors.New("messages must stay within the project")
+		}
+		targetControl = control
+	}
+	if err != nil {
+		s.controlMu.Unlock()
+		return nil, err
+	}
+	message := session.InboxMessage{ClientID: "project-message:" + actor.ID + ":" + callID, SessionID: request.SessionID, RelatedSessionID: actor.ID, Cause: "project_message", Content: prompt, Wake: request.Wake}
+	if senderControl != nil {
+		message.Controls = append(message.Controls, *senderControl)
+	}
+	if targetControl != nil {
+		message.Controls = append(message.Controls, *targetControl)
+	}
+	err = session.EnqueueInbox(s.rt.SessionDir, message)
+	s.controlMu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	s.startBackground(func() { s.drainSessionInbox(request.SessionID) })
+	return map[string]string{"session_id": request.SessionID, "state": "queued", "client_id": message.ClientID}, nil
 }
 
 // projectSessions lists a project's live managed sessions, oldest first.
@@ -108,7 +194,7 @@ func (s *Server) listProjectSessions(projectID string) (any, error) {
 }
 
 func (s *Server) projectSessionView(metadata session.Session) (projectSessionView, error) {
-	view := projectSessionView{SessionID: metadata.ID, Title: metadata.Title, State: "idle", Workspace: "shared", LatestCompletedTurnID: metadata.LatestCompletedTurnID}
+	view := projectSessionView{Role: firstNonEmpty(metadata.ProjectRole, "worker"), SessionID: metadata.ID, Title: metadata.Title, State: "idle", Workspace: "shared", LatestCompletedTurnID: metadata.LatestCompletedTurnID}
 	if metadata.WorktreePath != "" {
 		view.Workspace = "worktree"
 	}
@@ -126,6 +212,25 @@ func (s *Server) projectSessionView(metadata session.Session) (projectSessionVie
 }
 
 func (s *Server) createProjectSession(ctx context.Context, project session.Session, callID string, request tools.ProjectSessionRequest) (any, error) {
+	role := firstNonEmpty(strings.TrimSpace(request.Role), "worker")
+	if role != "side" && role != "worker" {
+		return nil, errors.New("role must be side or worker")
+	}
+	// Serialize same-host creation through launch; the store's unique side index
+	// also prevents another host from creating a second live side.
+	s.projectCreateMu.Lock()
+	defer s.projectCreateMu.Unlock()
+	if role == "side" {
+		members, err := s.projectSessions(project.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, member := range members {
+			if member.ProjectRole == "side" {
+				return s.projectSessionView(member)
+			}
+		}
+	}
 	prompt := strings.TrimSpace(request.Prompt)
 	if prompt == "" {
 		return nil, errors.New("create needs a brief in prompt")
@@ -174,12 +279,9 @@ func (s *Server) createProjectSession(ctx context.Context, project session.Sessi
 	th, err := s.createHostSessionThreadAtRevision(projectSessionOwner, projectSessionSource, "", pluginhost.SessionCreateParams{
 		RequestID: requestID, Name: title, Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh,
 		ParentSessionID: project.ID, Workspace: workspace, WorkspaceID: project.WorkspaceID,
-		// Sessions write, so they run in the workspace's default mode rather
-		// than inheriting the coordinator's read-only pin.
 		Provider: provider, Model: model, Variant: variant, Effort: effort,
-		PermissionMode: s.currentSessionRuntimeSelection().PermissionMode,
-		Instructions:   projectSessionInstructions,
-	}, baseRevision)
+		PermissionMode: project.PermissionMode, ModelAlias: request.ModelAlias,
+	}, baseRevision, role)
 	if err != nil {
 		return nil, err
 	}

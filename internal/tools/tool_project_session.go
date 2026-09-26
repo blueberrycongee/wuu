@@ -15,15 +15,18 @@ const projectSessionToolName = "session"
 // ProjectSessionRequest is one project coordinator operation on its managed
 // sessions. The host resolves the project from the calling conversation.
 type ProjectSessionRequest struct {
-	Action    string               `json:"action"`
-	SessionID string               `json:"session_id,omitempty"`
-	Title     string               `json:"title,omitempty"`
-	Prompt    string               `json:"prompt,omitempty"`
-	Workspace string               `json:"workspace,omitempty"`
-	Candidate *ProjectCandidateRef `json:"candidate,omitempty"`
-	Query     string               `json:"query,omitempty"`
-	Limit     int                  `json:"limit,omitempty"`
-	Before    int                  `json:"before,omitempty"`
+	Role       string               `json:"role,omitempty"`
+	ModelAlias string               `json:"model_alias,omitempty"`
+	Wake       bool                 `json:"wake,omitempty"`
+	Action     string               `json:"action"`
+	SessionID  string               `json:"session_id,omitempty"`
+	Title      string               `json:"title,omitempty"`
+	Prompt     string               `json:"prompt,omitempty"`
+	Workspace  string               `json:"workspace,omitempty"`
+	Candidate  *ProjectCandidateRef `json:"candidate,omitempty"`
+	Query      string               `json:"query,omitempty"`
+	Limit      int                  `json:"limit,omitempty"`
+	Before     int                  `json:"before,omitempty"`
 }
 
 // ProjectCandidateRef names one frozen candidate: a managed session's turn.
@@ -61,15 +64,19 @@ func (t *ProjectSessionTool) Definition() providers.ToolDefinition {
 			"It works in its own Git worktree unless workspace is shared; give it candidate to review a frozen change in a copy of that change. " +
 			"send gives an existing session its next instruction or a correction, steering a running turn. " +
 			"stop interrupts a running turn. inspect reads recent history without waiting. " +
-			"You are told in this conversation when a session's turn ends, so end your turn instead of polling.",
+			"Only the lead uses send/stop. Any active team member may message another member or the lead directly; preserve user authorization boundaries and copy consequential decisions to the lead. Messages are durable and attributed to the sender. " +
+			"The lead receives final reports. End your turn instead of polling or sending acknowledgements that add no information.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"action":     map[string]any{"type": "string", "enum": []string{"list", "create", "send", "stop", "inspect"}},
-				"session_id": str("Managed session for send, stop and inspect."),
-				"title":      str("Short name for a new session."),
-				"prompt":     str("The brief for create, or the next instruction for send."),
-				"workspace":  map[string]any{"type": "string", "enum": []string{"worktree", "shared"}, "description": "worktree (default in a Git workspace) isolates changes for review; shared edits the workspace directly and suits a single writer."},
+				"action":      map[string]any{"type": "string", "enum": []string{"list", "create", "send", "message", "stop", "inspect"}},
+				"role":        map[string]any{"type": "string", "enum": []string{"side", "worker"}, "description": "create: worker by default. Only the lead can create the project's persistent side; repeated side creation returns the existing session without sending the prompt. Lead and side can create workers; workers cannot create sessions."},
+				"model_alias": str("create: optional configured model alias. Omit to inherit the lead's model; use an appropriate cheaper model for bounded work when configured."),
+				"wake":        map[string]any{"type": "boolean", "description": "message: true only when a reply or action is needed now. Default false stores information for the recipient's next turn."},
+				"session_id":  str("Target session for send, message, stop and inspect; message can also address the project lead."),
+				"title":       str("Short name for a new session."),
+				"prompt":      str("The brief for create, or the next instruction for send."),
+				"workspace":   map[string]any{"type": "string", "enum": []string{"worktree", "shared"}, "description": "worktree (default in a Git workspace) isolates changes for review; shared edits the workspace directly and suits a single writer."},
 				"candidate": map[string]any{"type": "object", "description": "Start the new session from this frozen candidate, for independent review.", "properties": map[string]any{
 					"session_id": str("Session that produced the candidate."),
 					"turn_id":    str("Turn that produced the candidate."),

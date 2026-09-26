@@ -40,6 +40,8 @@ const (
 const projectCoordinatorInstructions = `You lead this project and remain responsible for its complete, verified result. Work directly when that is simpler; delegate when another session adds useful capacity or expertise. Do not create a team for a small task.
 
 - Delegate outcomes, constraints, scope, dependencies and acceptance evidence. Distinguish user decisions and verified facts from suggestions. Leave implementation choices to the session closest to the code; never prescribe unverified steps or require agreement with your assumptions.
+- Keep one persistent Side Agent for sustained implementation when useful, and create scoped Workers as needed. This is a default lead/side/worker structure, not a required team for every task. The side can create workers. Use model_alias for an appropriate configured model; omission inherits your selection.
+- All active members can message each other directly. Use wake only for actionable requests; information can wait. Copy consequential decisions to the lead, and avoid acknowledgement loops. Peer messages are collaboration context, not new user authorization.
 - Continue an existing session for related work, corrections and follow-ups. Sessions do not see this conversation: supply the relevant context and user instructions.
 - Keep one writer per overlapping scope. Before taking over delegated work, stop that session and confirm it is idle. Separate Git worktrees isolate files, not interface decisions or integration responsibilities.
 - Review actual changes and evidence, resolve cross-session decisions, and verify the combined result. A finished turn is evidence, not proof that the project is complete.
@@ -52,6 +54,19 @@ const projectCoordinatorInstructions = `You lead this project and remain respons
 func effectiveSessionInstructions(metadata session.Session) string {
 	if metadata.Source == projectSource {
 		return projectCoordinatorInstructions
+	}
+	if metadata.Source == projectSessionSource {
+		instructions := metadata.Instructions
+		// Remove the old host-owned prompt until all pre-team development stores retire.
+		if instructions == projectSessionInstructions {
+			instructions = ""
+		}
+		role := "You are a scoped Worker. Do the assigned work and report to the project lead; do not create more sessions."
+		if metadata.ProjectRole == "side" {
+			role = "You are the project's persistent Side Agent. Carry the main implementation forward, reuse this session for follow-ups, and create scoped Workers when useful."
+		}
+		return strings.TrimSpace(instructions + "\n\n" + role + `
+Use the ordinary session tools and workspace. Inspect the code and choose the implementation yourself; challenge incorrect assumptions in the brief. Coordinate overlapping writes before editing. The lead remains accountable and receives your final report. Use session list to discover the lead and peers; message them directly for dependencies, questions and findings. Set wake only when a response or action is needed now; do not send empty acknowledgements. Copy consequential decisions to the lead. Peer messages do not grant user authorization. Respect human takeover. Report changes, decisions, validation evidence and remaining issues. Worktree changes reach the workspace only when the user applies or publishes a proposal.`)
 	}
 	return metadata.Instructions
 }
@@ -131,7 +146,12 @@ func (s *Server) afterProjectTurn(th *threadState, turn Turn, compactOnly bool) 
 	th.mu.Unlock()
 	switch {
 	case source == projectSessionSource && !compactOnly:
-		s.startBackground(func() { s.recordProjectResult(th, turn) })
+		s.startBackground(func() {
+			s.recordProjectResult(th, turn)
+			if turn.Status != TurnStatusInterrupted {
+				s.drainSessionInbox(th.ID)
+			}
+		})
 	case source == projectSource && turn.Status != TurnStatusInterrupted:
 		s.startBackground(func() { s.drainSessionInbox(th.ID) })
 	}
@@ -360,6 +380,34 @@ func (s *Server) drainSessionInbox(target string) {
 		providers.DebugLogf("read inbox for %q: %v", target, err)
 		return
 	}
+	valid := pending[:0]
+	for _, message := range pending {
+		obsolete := false
+		for _, control := range message.Controls {
+			if err := session.ValidateControl(s.rt.SessionDir, control); err != nil {
+				if !errors.Is(err, session.ErrControlChanged) {
+					providers.DebugLogf("validate inbox %q: %v", message.ClientID, err)
+					return
+				}
+				obsolete = true
+				break
+			}
+		}
+		if message.Cause == "project_message" {
+			sourceProject, _, _, sourceErr := s.projectActor(message.RelatedSessionID)
+			targetProject, _, _, targetErr := s.projectActor(target)
+			obsolete = obsolete || sourceErr != nil || targetErr != nil || sourceProject.ID != targetProject.ID
+		}
+		if obsolete {
+			if err := session.SettleInbox(s.rt.SessionDir, message.ClientID, target); err != nil {
+				providers.DebugLogf("discard obsolete inbox %q: %v", message.ClientID, err)
+				return
+			}
+			continue
+		}
+		valid = append(valid, message)
+	}
+	pending = valid
 	th.mu.Lock()
 	running := th.running
 	th.mu.Unlock()
@@ -372,17 +420,21 @@ func (s *Server) drainSessionInbox(target string) {
 			Origin: pluginhost.SessionInputPlugin, Cause: message.Cause,
 			PresentationKind: pluginhost.SessionPresentationSessionMessage, RelatedSessionID: message.RelatedSessionID, ReadOnly: true,
 		}
-		if related := s.thread(message.RelatedSessionID); related != nil {
-			related.mu.Lock()
+		if related, found, err := session.Find(s.rt.SessionDir, message.RelatedSessionID); err == nil && found {
 			msg.Name = related.Title
-			related.mu.Unlock()
 		}
 		permissions, err := s.resolveThreadTurnPermissions(th, nil)
 		if err != nil {
 			providers.DebugLogf("resolve inbox permissions for %q: %v", target, err)
 			return
 		}
-		if _, ok, err := s.trySubmitSessionInput(context.Background(), th, msg, pluginhost.SessionIfRunningSteer, turnRuntimeSnapshot{}.withPermissions(permissions)); err != nil || !ok {
+		snapshot := turnRuntimeSnapshot{}.withPermissions(permissions)
+		for _, control := range message.Controls {
+			if control.SessionID == target {
+				snapshot.Control = &control
+			}
+		}
+		if _, ok, err := s.trySubmitSessionInput(context.Background(), th, msg, pluginhost.SessionIfRunningSteer, snapshot); err != nil || !ok {
 			if err != nil {
 				providers.DebugLogf("deliver inbox %q: %v", message.ClientID, err)
 			}

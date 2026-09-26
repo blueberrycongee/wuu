@@ -758,10 +758,10 @@ func (s *Server) createPluginSessionThread(owner string, params pluginhost.Sessi
 }
 
 func (s *Server) createHostSessionThread(owner, source, id string, params pluginhost.SessionCreateParams) (*threadState, error) {
-	return s.createHostSessionThreadAtRevision(owner, source, id, params, "")
+	return s.createHostSessionThreadAtRevision(owner, source, id, params, "", "")
 }
 
-func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, params pluginhost.SessionCreateParams, baseRevision string) (*threadState, error) {
+func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, params pluginhost.SessionCreateParams, baseRevision, projectRole string) (*threadState, error) {
 	if s.rt == nil || s.rt.StreamRunner == nil {
 		return nil, errors.New("runtime session is required")
 	}
@@ -884,7 +884,7 @@ func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, par
 		WorktreePath: worktree.Path, WorktreeBaseHEAD: worktree.BaseHEAD, WorktreeBaseRepo: worktree.BaseRepo,
 		Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant,
 		Effort: selection.Effort, Speed: selection.Speed, PermissionMode: selection.PermissionMode, ApproveForMe: selection.ApproveForMe,
-		Instructions: params.Instructions, ToolPolicyJSON: toolPolicyJSON,
+		ProjectRole: projectRole, Instructions: params.Instructions, ToolPolicyJSON: toolPolicyJSON,
 	}
 	var records []session.HistoryRecord
 	artifactStateDir := ""

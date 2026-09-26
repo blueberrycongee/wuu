@@ -963,6 +963,9 @@ func (t *Toolkit) SetProjectSessions(handler ProjectSessionHandler) {
 	if t == nil || t.env == nil {
 		return
 	}
+	if t.env.ProjectSessions == nil && handler == nil {
+		return
+	}
 	t.env.ProjectSessions = handler
 	t.rebuildRegistry()
 	t.SetActiveProfile(t.ActiveProfile(), true)

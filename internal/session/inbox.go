@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -21,6 +22,8 @@ type InboxMessage struct {
 	// target's next turn, whatever starts it.
 	Wake      bool
 	CreatedAt time.Time
+	// Controls fence queued input across human takeover and return.
+	Controls []Control
 }
 
 // EnqueueInbox records a message once; repeating a client ID is a no-op.
@@ -31,6 +34,10 @@ func EnqueueInbox(dir string, message InboxMessage) error {
 	if message.CreatedAt.IsZero() {
 		message.CreatedAt = time.Now().UTC()
 	}
+	controls, err := json.Marshal(message.Controls)
+	if err != nil {
+		return err
+	}
 	db, err := openStore(dir)
 	if err != nil {
 		return err
@@ -38,8 +45,8 @@ func EnqueueInbox(dir string, message InboxMessage) error {
 	defer db.Close()
 	storeWriteMu.Lock()
 	defer storeWriteMu.Unlock()
-	_, err = db.Exec(`INSERT OR IGNORE INTO session_inbox(client_id,session_id,related_session_id,cause,content,wake,created_at) VALUES(?,?,?,?,?,?,?)`,
-		message.ClientID, message.SessionID, message.RelatedSessionID, message.Cause, message.Content, message.Wake, timeText(message.CreatedAt))
+	_, err = db.Exec(`INSERT OR IGNORE INTO session_inbox(client_id,session_id,related_session_id,cause,content,wake,created_at,controls_json) VALUES(?,?,?,?,?,?,?,?)`,
+		message.ClientID, message.SessionID, message.RelatedSessionID, message.Cause, message.Content, message.Wake, timeText(message.CreatedAt), string(controls))
 	return err
 }
 
@@ -57,7 +64,7 @@ func SettleInbox(dir, clientID, sessionID string) error {
 	storeWriteMu.Lock()
 	defer storeWriteMu.Unlock()
 	now := timeText(time.Now().UTC())
-	_, err = db.Exec(`INSERT OR IGNORE INTO session_inbox(client_id,session_id,content,created_at,delivered_at) VALUES(?,?,'',?,?)`,
+	_, err = db.Exec(`INSERT OR IGNORE INTO session_inbox(client_id,session_id,content,created_at,delivered_at) VALUES(?,?,'',?,?) ON CONFLICT(client_id) DO UPDATE SET delivered_at=excluded.delivered_at`,
 		clientID, sessionID, now, now)
 	return err
 }
@@ -78,7 +85,7 @@ func PendingInbox(dir, sessionID string) ([]InboxMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT client_id,session_id,related_session_id,cause,content,wake,created_at FROM session_inbox
+	rows, err := db.Query(`SELECT client_id,session_id,related_session_id,cause,content,wake,created_at,controls_json FROM session_inbox
 		WHERE session_id=? AND delivered_at IS NULL ORDER BY created_at, rowid`, sessionID)
 	if err != nil {
 		return nil, err
@@ -87,8 +94,11 @@ func PendingInbox(dir, sessionID string) ([]InboxMessage, error) {
 	var pending []InboxMessage
 	for rows.Next() {
 		var message InboxMessage
-		var created string
-		if err := rows.Scan(&message.ClientID, &message.SessionID, &message.RelatedSessionID, &message.Cause, &message.Content, &message.Wake, &created); err != nil {
+		var created, controls string
+		if err := rows.Scan(&message.ClientID, &message.SessionID, &message.RelatedSessionID, &message.Cause, &message.Content, &message.Wake, &created, &controls); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(controls), &message.Controls); err != nil {
 			return nil, err
 		}
 		message.CreatedAt = parseTime(created)
