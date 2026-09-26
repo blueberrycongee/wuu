@@ -81,19 +81,56 @@ Anthropic Messages 可通过 `pause_turn` 明确要求继续。Responses 兼容�
 图片格式会报错；SVG 仍作为源码文字读取。行范围和续读参数只适用于文本。
 
 明确标记为仅支持文字的模型会收到图片不受支持的提示，而非图片像素；请选择支持图片
-的模型进行查看。切换模型不会删除历史中保存的图片结果。启用可选的 Code Mode 时，
-用 `image(part)` 转发图片内容块；`text(result)` 只输出文字。例如：
+的模型进行查看。切换模型不会删除历史中保存的图片结果。启用可选的 PTC 时，
+成功工具调用返回的图片和音频会自动附加：
 
 ```javascript
-const result = await tools.read_file({path: "screenshots/settings.png"});
-for (const part of result.content) {
-  if (part.type === "image") image(part);
-  else if (part.type === "text") text(part.text);
-}
+await tools.read_file({path: "screenshots/settings.png"});
 ```
 
 `present_artifact` 用于向用户展示交付物，不会替模型查看图片。外部 Agent 引擎使用
 各自的文件与读图工具。
+
+## 可选的程序化工具调用
+
+在**设置 → 常规 → 程序化工具调用**中启用 PTC，内置引擎就能通过 JavaScript
+或可擦除类型标注的 TypeScript 程序组合工具调用。默认关闭。每个模型家族可以
+跟随全局开关、开启或关闭；明确的家族设置优先于全局开关，切换模型时重新判断。
+只能在没有运行中回合时修改，下个回合生效。外部引擎仍使用自身的工具。
+
+启用后，模型调用 `run_code`，传入 `code`、简短的 `description` 和可选的
+`timeout_ms`。工具描述列出当前可用绑定及参数 schema。程序通过
+`await tools[name](args)` 调用，得到含 `content` 和可选 `structured_content`
+的 Wuu 工具结果对象。禁用或不可用的工具不会出现在绑定中；各模型家族原有的
+编辑工具仍通过绑定使用。上下文重置在可用时保留为独立的顶层控制。
+不会按家族自动启用，也不预设某一家族的性能收益。
+
+只有打印内容、JSON 返回值及成功调用返回的图片和音频进入程序的模型观察结果。
+中间工具调用仍经过原有权限、调度、事件与记录流水线。绑定失败可通过
+`ToolCallError` 捕获。写入及有依赖的操作应依次等待；独立读取可分批并行。
+
+每次程序使用新的 Node 进程，环境变量初始为空。可通过 `await import(...)`
+使用原生 API。文件写入使用与命令工具相同的会话进程沙箱；该沙箱不隔离网络
+或所有文件读取，详见[安全模型](../reference/security-model.md)。默认总时限
+120 秒，最多 600 秒，包含工具和权限等待时间。没有持久状态或 `yield`/`wait`
+续执行。取消会停止程序及其活动中的嵌套调用；已经完成的副作用不会回滚，程序
+也不会自动重放。打印和返回的文本上限为 1 MiB；媒体还受共享富结果限额约束。
+
+桌面版使用随应用打包的运行时。CLI 需要 `PATH` 上的 Node.js 22.19 或更新版本，
+也可以在用户配置中设置 `ptc.node_executable`。用户配置示例：
+
+```json
+{
+  "ptc": {
+    "enabled": false,
+    "families": { "gpt": true }
+  }
+}
+```
+
+普通项目配置不能修改 PTC 或替换其执行器。旧 `code_mode` 字段仅为迁移保留读取
+能力，不会启用 PTC；保存 PTC 设置时会删除旧字段。旧的持久单元及执行／等待
+工具不再支持。
 
 ## 大型工具结果
 

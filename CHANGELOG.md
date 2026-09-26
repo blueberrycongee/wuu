@@ -36,6 +36,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Optional programmatic tool calling now runs each program in a fresh JavaScript
+  process with the session filesystem sandbox. A default-off global switch and
+  model-family overrides control availability. Nested calls retain normal tool
+  permissions and recording; image/audio results are attached automatically.
+  The previous persistent code runtime and execution/wait tools are retired.
+
 - Project conversation lists show five recent entries plus active, running,
   unread, and up to three recently read conversations. Recently read entries
   expire after two minutes. Expanding includes all history inside an eight-row,

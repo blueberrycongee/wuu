@@ -328,6 +328,9 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 			return
 		default:
 		}
+		if run.parent != nil {
+			runCtx = toolctx.WithNestedCall(runCtx)
+		}
 		if toolIsOrchestrator(r.executor, call) {
 			runCtx = toolctx.WithNestedExecutor(runCtx, &nestedToolScope{runtime: r, parent: run, ctx: runCtx, calls: make(map[string]*toolRun)})
 		} else {

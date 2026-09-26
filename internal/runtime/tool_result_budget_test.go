@@ -75,7 +75,6 @@ func TestNativeToolResultBudgetHTTP(t *testing.T) {
 			home, root := t.TempDir(), t.TempDir()
 			t.Setenv("HOME", home)
 			t.Setenv("WUU_HOME", filepath.Join(home, "state"))
-			t.Setenv("WUU_CODE_MODE_HOST", "")
 			plugin := &budgetToolClient{}
 			var wantIDs []string
 			for i, size := range tc.sizes {

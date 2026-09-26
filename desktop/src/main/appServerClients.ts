@@ -578,6 +578,7 @@ export class AppServerClient {
       resourcesPath,
       process.platform,
     );
+    helperEnv.WUU_NODE_EXECUTABLE = process.execPath;
     if (app.isPackaged) {
       configurePackagedCUA(helperEnv, resourcesPath, process.platform);
     }

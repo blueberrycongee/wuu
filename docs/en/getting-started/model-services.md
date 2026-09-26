@@ -97,20 +97,67 @@ ranges and continuations apply to text, not images.
 
 A model explicitly marked as text-only receives an unsupported-image marker,
 not the pixels. Choose an image-capable model to inspect the image. Original
-image results remain in history when the model changes. With optional Code Mode,
-forward image parts with `image(part)`; `text(result)` only prints text. For
-example:
+image results remain in history when the model changes. With optional PTC,
+successful image and audio tool results are attached automatically:
 
 ```javascript
-const result = await tools.read_file({path: "screenshots/settings.png"});
-for (const part of result.content) {
-  if (part.type === "image") image(part);
-  else if (part.type === "text") text(part.text);
-}
+await tools.read_file({path: "screenshots/settings.png"});
 ```
 
 `present_artifact` displays a deliverable to the user; it does not inspect the
 image for the model. External agent engines use their own file and image tools.
+
+## Optional programmatic tool calling
+
+In **Settings → General → Programmatic tool calling**, enable PTC to let the
+built-in engine compose tool calls in a JavaScript or erasable TypeScript
+program. It is off by default. Each model family can follow the global switch,
+enable PTC, or disable it. An explicit family choice wins over the global
+switch; switching models resolves the setting again. Changes require idle
+turns and apply to the next turn. External engines keep their own tools.
+
+When enabled, the model calls `run_code` with `code`, a short `description`,
+and an optional `timeout_ms`. Its description lists the current tool bindings
+and argument schemas. The program uses `await tools[name](args)`; the result is
+a Wuu tool-result object with `content` and optional `structured_content`.
+Unavailable and disabled tools are excluded. Family-specific editing tools
+remain available through the bindings. Context reset, when available, remains
+a separate top-level control. There are no family-specific performance claims
+or automatic opt-ins.
+
+Only printed values, a JSON return value, and successful image/audio outputs
+become the program's observation. Intermediate tool calls still pass through
+the normal permission, scheduling, event, and recording pipeline. Catch
+`ToolCallError` to handle a failed binding. Await writes and dependent work in
+order; use bounded parallel batches for independent reads.
+
+Each program starts a fresh Node process with an empty environment. Native
+APIs are available through `await import(...)`. Filesystem writes use the same
+session process sandbox as command tools; network access and all file reads
+are not isolated by that sandbox. See the [security model](../reference/security-model.md).
+The default elapsed deadline is 120 seconds, including tool and approval
+waits, with a 600-second maximum. Programs have no persistent state or
+`yield`/`wait` continuation. Cancellation stops the program and its active
+nested calls; completed effects are not rolled back or automatically replayed.
+Printed/returned text is limited to 1 MiB; media also obeys the shared rich
+result limits.
+
+Desktop uses its bundled runtime. CLI use requires Node.js 22.19 or later on
+`PATH`, or a user-configured `ptc.node_executable`. In user configuration:
+
+```json
+{
+  "ptc": {
+    "enabled": false,
+    "families": { "gpt": true }
+  }
+}
+```
+
+Normal project configuration cannot change PTC settings or its executable.
+The retired `code_mode` setting is accepted for configuration migration but
+never enables PTC; saving PTC settings removes it. Old persistent cells and
+the previous execution/wait tools are no longer supported.
 
 ## Large tool results
 

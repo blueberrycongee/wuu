@@ -9,7 +9,7 @@ import (
 	"io"
 )
 
-// The V1 transport uses little-endian length-prefixed JSON, not JSON lines.
+// The private Node control channel uses little-endian length-prefixed JSON, not JSON lines.
 // Check the limit before allocating: a corrupt host must not grow the client
 // heap according to an arbitrary length header.
 const maxFrameBytes = 64 * 1024 * 1024

@@ -71,6 +71,17 @@ func TestAttributionUpdateDuringTurnDefersRuntimeChange(t *testing.T) {
 		t.Fatalf("rejected update changed attribution: %v", err)
 	}
 
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"ptc","method":"config/general/update","params":{"ptc":{"enabled":true}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if responseByID(t, parseOutput(t, out.String()), "ptc")["error"] == nil {
+		t.Fatal("PTC update should be rejected during a turn")
+	}
+	cfg, _, err = config.LoadPath(rt.ConfigPath)
+	if err != nil || cfg.PTC.Enabled {
+		t.Fatalf("rejected PTC update changed configuration: %v", err)
+	}
+
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"attribution","method":"config/general/update","params":{"git_attribution_enabled":false}}`)); err != nil {
 		t.Fatal(err)
 	}
