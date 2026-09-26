@@ -120,6 +120,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Pasted-text cards retain their segments and titles when conversations are
+  restored or forked. Canonical message text and model input remain unchanged.
+
 - Remote Web clients reconnect when the relay stops responding during authentication,
   and cancel pending authentication immediately when stopped or suspended.
 
