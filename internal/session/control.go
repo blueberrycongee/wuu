@@ -41,6 +41,33 @@ func ReadControl(dir, id string) (Control, bool, error) {
 	return c, err == nil, err
 }
 
+// ListControls reads the persisted execution fences with one store open, so
+// cross-workspace conversation lists do not need a database lookup per session.
+func ListControls(dir string) (map[string]Control, error) {
+	db, ok, err := openStoreForScan(dir)
+	if err != nil || !ok {
+		return nil, err
+	}
+	defer db.Close()
+	if exists, err := storeTableExists(db, "session_controls"); err != nil || !exists {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT session_id,manager_id,revision,state FROM session_controls`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	controls := make(map[string]Control)
+	for rows.Next() {
+		var c Control
+		if err := rows.Scan(&c.SessionID, &c.ManagerID, &c.Revision, &c.State); err != nil {
+			return nil, err
+		}
+		controls[c.SessionID] = c
+	}
+	return controls, rows.Err()
+}
+
 // ChangeControl uses compare-and-swap so a stale process cannot undo a human
 // takeover. A released relationship retains its revision to fence old work.
 func ChangeControl(dir, id, manager, state string, expected int64) (Control, error) {

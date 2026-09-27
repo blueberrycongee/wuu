@@ -1,12 +1,14 @@
 /* Shared icon-button optics. Load after appearance.css so utility sizes do not
  * override these role-based sizes. Business colors and activation stay local. */
 :root {
-  --control-size-inline: max(28px, calc(var(--font-ui) * 1.4 + 8px));
+  --control-size-inline: max(28px, round(nearest, calc(var(--font-ui) * 1.4 + 8px), 2px));
   --control-size-toolbar: max(32px, var(--control-field-height, calc(var(--font-ui) * 1.4 + 12px)));
   --control-size-roomy: max(36px, var(--control-field-height, calc(var(--font-ui) * 1.4 + 12px)));
   --control-size-touch: 44px;
   --control-toolbar-gap: 8px;
-  --control-toolbar-inset: 16px;
+  /* Toolbars align glyph ink, not button boxes, to the pane inset. */
+  --control-toolbar-glyph-offset: calc((var(--control-size-toolbar) - var(--icon-size)) / 2);
+  --control-toolbar-inset: calc(var(--pane-inset) - var(--control-toolbar-glyph-offset));
 }
 
 :is(.icon-button, .settings-icon-button, .composer-tool-button,
@@ -20,44 +22,26 @@
   --control-icon-size: var(--icon-size-sm);
 }
 
-/* Sidebar actions share the navigation glyph scale, including nested project
- * actions. Utility classes must not make pin/archive smaller than new-thread. */
-:is(.sidebar-row-icon-button, .sidebar-functional-action, .sidebar-notifications-button) {
+/* Row actions share the navigation glyph scale. Utility classes must not
+ * make pin/archive smaller than new-thread. */
+:is(.sidebar-row-icon-button, .sidebar-notifications-button) {
   --control-icon-size: var(--sidebar-primary-icon-size);
+}
+
+/* Section heading + is a heading accessory, not a navigation glyph.
+ * Keep it at xs so it does not read larger than the heading it belongs to. */
+.sidebar-functional-action {
+  --control-icon-size: var(--icon-size-xs);
 }
 
 :is(.icon-button, .settings-icon-button, .composer-tool-button,
     .sidebar-row-icon-button, .sidebar-functional-action, .sidebar-notifications-button,
-    .session-tab-close, .workspace-tool-tab-close) > svg.lucide {
+    .session-tab-close, .workspace-tool-tab-close) > :is(svg.wuu-icon, svg.lucide) {
   display: block;
   flex: 0 0 auto;
   width: var(--control-icon-size);
   height: var(--control-icon-size);
   stroke-width: var(--control-icon-stroke);
-}
-
-/* Increase sparse glyphs' span, inversely scaling their stroke so the rendered
- * line weight stays equal to enclosed glyphs at every appearance scale. */
-:is(.icon-button, .settings-icon-button, .composer-tool-button,
-    .sidebar-row-icon-button, .sidebar-functional-action) > svg.lucide-plus {
-  width: calc(var(--control-icon-size) * 10 / 9);
-  height: calc(var(--control-icon-size) * 10 / 9);
-  stroke-width: calc(var(--control-icon-stroke) * 0.9);
-}
-
-:is(.icon-button, .settings-icon-button, .composer-tool-button,
-    .sidebar-row-icon-button, .session-tab-close, .workspace-tool-tab-close) > svg.lucide-x {
-  width: calc(var(--control-icon-size) * 7 / 6);
-  height: calc(var(--control-icon-size) * 7 / 6);
-  stroke-width: calc(var(--control-icon-stroke) * 6 / 7);
-}
-
-/* SquarePen's nib reaches the viewBox edge, so at the shared toolbar size it
- * reads larger than the side-panel toggle. Shrink the glyph; keep the 1.75px
- * stroke so line weight still matches the toggle beside it. */
-.titlebar .session-tab-new > svg.lucide-square-pen {
-  width: calc(var(--control-icon-size) * 15.5 / 16);
-  height: calc(var(--control-icon-size) * 15.5 / 16);
 }
 
 :is(.session-tab-close, .workspace-tool-tab-close) {
@@ -71,9 +55,15 @@
   gap: var(--control-toolbar-gap);
 }
 
-.titlebar .icon-button {
+/* All top-row controls share geometry, including narrow windows and the
+ * fixed toggle above a hover drawer. Size the placeholder from this token too. */
+:is(.titlebar, .settings-titlebar, .traffic-spacer, .workspace-panel-tabbar,
+    .side-thread-panel__header, .globalized-sidebar-toggle-region) .icon-button {
+  flex: 0 0 auto;
   width: var(--control-size-toolbar);
   height: var(--control-size-toolbar);
+  padding: 0;
+  background-clip: border-box;
 }
 
 .icon-button {
@@ -89,9 +79,13 @@
   color: var(--ink);
 }
 
-:is(.icon-button, .composer-tool-button, .sidebar-row-icon-button,
-    .session-tab-close, .workspace-tool-tab-close):focus-visible {
-  outline: 2px solid var(--focus-ring);
+html[data-focus-modality="keyboard"] :is(
+  .icon-button,
+  .composer-tool-button,
+  .sidebar-row-icon-button,
+  .session-tab-close,
+  .workspace-tool-tab-close
+):focus-visible {
   outline-offset: -2px;
 }
 
@@ -102,9 +96,7 @@
 }
 
 @media (pointer: coarse) {
-  :is(.titlebar, .settings-titlebar, .workspace-panel-tabbar) .icon-button,
-  .globalized-sidebar-toggle-region .globalized-sidebar-toggle {
-    min-width: var(--control-size-touch);
-    min-height: var(--control-size-touch);
+  :root {
+    --control-size-toolbar: max(var(--control-size-touch), var(--control-field-height));
   }
 }

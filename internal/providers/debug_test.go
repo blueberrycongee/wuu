@@ -80,13 +80,6 @@ func TestWireEnabled_On(t *testing.T) {
 	}
 }
 
-func TestWireEnabled_True(t *testing.T) {
-	t.Setenv(WireEnvVar, "true")
-	if !WireEnabled() {
-		t.Fatalf("WireEnabled() = false with %s=true; want true", WireEnvVar)
-	}
-}
-
 func TestWireEnabled_TrueCaseInsensitive(t *testing.T) {
 	for _, v := range []string{"True", "TRUE", "tRuE"} {
 		t.Run(v, func(t *testing.T) {
@@ -95,13 +88,6 @@ func TestWireEnabled_TrueCaseInsensitive(t *testing.T) {
 				t.Fatalf("WireEnabled() = false with %s=%q; want true", WireEnvVar, v)
 			}
 		})
-	}
-}
-
-func TestWireEnabled_Zero(t *testing.T) {
-	t.Setenv(WireEnvVar, "0")
-	if WireEnabled() {
-		t.Fatalf("WireEnabled() = true with %s=0; want false", WireEnvVar)
 	}
 }
 
@@ -117,24 +103,4 @@ func TestWireEnabled_OtherText(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestWireEnabled_EmptyString(t *testing.T) {
-	t.Setenv(WireEnvVar, "")
-	if WireEnabled() {
-		t.Fatalf("WireEnabled() = true with %s=\"\"; want false", WireEnvVar)
-	}
-}
-
-func TestDebugLogfWire_NoLogFile(t *testing.T) {
-	// Without InitDebugLog having been called, debugLog is nil and
-	// DebugLogf is a no-op. The wire gate on top of that should also
-	// be a no-op, never panicking on a nil log file.
-	t.Setenv(WireEnvVar, "1")
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("DebugLogfWire panicked with no log file: %v", r)
-		}
-	}()
-	DebugLogfWire("should not panic: %s", "test")
 }

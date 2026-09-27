@@ -3,7 +3,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import {
   SettingsView,
-  type ArchivedRoomView,
   type ArchivedSessionView,
   type SettingsPage,
 } from "./SettingsView";
@@ -116,6 +115,7 @@ function readyEngineInventory(): EngineListResult {
 
 function renderSettings(props: {
   initialized: InitializeResult | undefined;
+  running?: boolean;
   usage?: SettingsUsageResponse;
   usageLoading?: boolean;
   usageError?: string;
@@ -140,9 +140,7 @@ function renderSettings(props: {
   // 直接传对象字面量，避免引入 ThreadSummary（它要求 turns/turn_count
   // 等计算字段，测试场景下冗余）。
   archivedThreads?: readonly ArchivedSessionView[];
-  archivedRooms?: readonly ArchivedRoomView[];
   onUnarchiveThread?: (thread: ArchivedSessionView) => void;
-  onUnarchiveRoom?: (room: ArchivedRoomView) => void;
   locale?: "zh-CN" | "en-US";
 }): { about: Element | null; text: () => string; rootText: () => string } {
   if (props.locale) {
@@ -153,7 +151,7 @@ function renderSettings(props: {
     <SettingsView
         initialized={props.initialized}
         initialPage={props.initialPage ?? "general"}
-        running={false}
+        running={props.running ?? false}
         usage={props.usage}
         usageLoading={props.usageLoading}
         usageError={props.usageError}
@@ -176,7 +174,6 @@ function renderSettings(props: {
         sidebarCollapsed={props.sidebarCollapsed ?? false}
         sidebarAnimating={false}
         onToggleSidebar={props.onToggleSidebar ?? (() => {})}
-        sidebarMotionMs={240}
         onBack={() => {}}
         onSave={props.onSave ?? (async () => {})}
         onRemoveProvider={props.onRemoveProvider ?? (async () => {})}
@@ -186,9 +183,7 @@ function renderSettings(props: {
         onSidebarResizeStart={noopResizeStart}
         onSidebarSeparatorKey={noopResizeKey}
         archivedThreads={props.archivedThreads ?? []}
-        archivedRooms={props.archivedRooms ?? []}
         onUnarchiveThread={props.onUnarchiveThread ?? (() => {})}
-        onUnarchiveRoom={props.onUnarchiveRoom ?? (() => {})}
     />
   );
   act(() => {
@@ -211,7 +206,7 @@ describe("SettingsView shell", () => {
     await act(async () => { await Promise.resolve(); });
     expect(window.wuu.getBuildInfo).not.toHaveBeenCalled();
     expect(container.querySelector('[data-testid="settings-codex-pet-enabled"]')).toBeNull();
-    expect(container.querySelector('[data-testid="settings-appearance"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="settings-general"]')).not.toBeNull();
   });
 
   it("exposes phone access on a native host", async () => {
@@ -224,19 +219,20 @@ describe("SettingsView shell", () => {
     expect(window.wuu.getRemoteControlSnapshot).toHaveBeenCalled();
   });
 
-  it("exposes the sidebar state and invokes the toggle action", () => {
+  it.each([false, true])("exposes the sidebar state and invokes the toggle action (collapsed=%s)", (sidebarCollapsed) => {
     installBuildInfoStub({
       core: undefined,
       desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
     });
     const onToggleSidebar = vi.fn();
-    renderSettings({ initialized: baseInitialized(), onToggleSidebar });
+    renderSettings({ initialized: baseInitialized(), onToggleSidebar, sidebarCollapsed });
 
     const toggle = container.querySelector<HTMLButtonElement>(
-      ".settings-titlebar .settings-sidebar-toggle",
+      ".settings-sidebar-toggle",
     );
     expect(toggle).not.toBeNull();
-    expect(toggle?.getAttribute("aria-pressed")).toBe("true");
+    expect(container.querySelectorAll(".settings-sidebar-toggle")).toHaveLength(1);
+    expect(toggle?.getAttribute("aria-pressed")).toBe(String(!sidebarCollapsed));
 
     act(() => {
       toggle?.click();
@@ -340,17 +336,17 @@ describe("SettingsView shell", () => {
     const scroll = container.querySelector<HTMLElement>(".settings-scroll")!;
     const providersPage = container.querySelector<HTMLElement>(".settings-page")!;
     scroll.scrollTop = 420;
-    const advancedButton = Array.from(
+    const runtimeButton = Array.from(
       container.querySelectorAll<HTMLButtonElement>(".settings-nav-item"),
-    ).find((button) => button.textContent?.includes("高级"));
+    ).find((button) => button.textContent?.includes("运行"));
 
     act(() => {
-      advancedButton?.click();
+      runtimeButton?.click();
     });
 
     expect(scroll.scrollTop).toBe(0);
     expect(container.querySelector(".settings-page")).not.toBe(providersPage);
-    expect(container.querySelector(".settings-page-title")?.textContent).toBe("高级");
+    expect(container.querySelector(".settings-page-title")?.textContent).toBe("运行");
   });
 });
 
@@ -434,8 +430,8 @@ describe("SettingsView provider configuration", () => {
     const options = container.querySelectorAll<HTMLButtonElement>(".settings-provider-button");
     await act(async () => { options[1].click(); });
     expect(onSave).not.toHaveBeenCalled();
-    expect(options[1].getAttribute("aria-pressed")).toBe("true");
-    expect(options[0].getAttribute("aria-pressed")).toBe("false");
+    expect(options[1].getAttribute("aria-expanded")).toBe("true");
+    expect(options[0].getAttribute("aria-expanded")).toBe("false");
     const model = container.querySelector<HTMLInputElement>('input[aria-label="模型名称"]')!;
     expect(model.value).toBe("second-model");
     await act(async () => { setInputValue(model, "updated-model"); });
@@ -458,7 +454,7 @@ describe("SettingsView provider configuration", () => {
     const model = container.querySelector<HTMLInputElement>('input[aria-label="模型名称"]')!;
     await act(async () => { setInputValue(model, "draft-model"); });
     renderSettings({ initialized: { ...initial, providers: initial.providers?.map((p) => ({ ...p })) }, initialPage: "providers", onSave, runningProviderNames: ["grok"] });
-    expect(container.querySelectorAll(".settings-provider-button")[1].getAttribute("aria-pressed")).toBe("true");
+    expect(container.querySelectorAll(".settings-provider-button")[1].getAttribute("aria-expanded")).toBe("true");
     expect(model.value).toBe("draft-model");
     expect(onSave).not.toHaveBeenCalled();
   });
@@ -673,6 +669,51 @@ describe("SettingsView provider configuration", () => {
     expect(container.querySelector(".settings-provider-remove")).toBeNull();
   });
 
+  it("keeps model buttons in the same order when the selected model changes", async () => {
+    installBuildInfoStub({
+      core: undefined,
+      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
+    });
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const provider = {
+      name: "grok-build",
+      type: "grok-build",
+      model: "grok-4.7",
+      models: [
+        { id: "grok-4.7" },
+        { id: "grok-4.5" },
+        { id: "grok-4.6" },
+      ],
+    };
+    const modelButtons = () => Array.from(container.querySelectorAll<HTMLButtonElement>(
+      ".settings-provider-model-list > .settings-button",
+    ));
+    renderSettings({
+      initialPage: "providers",
+      initialized: baseInitialized({ provider: provider.name, model: provider.model, providers: [provider] }),
+      onSave,
+    });
+    expect(modelButtons().map((button) => button.textContent)).toEqual(["grok-4.5", "grok-4.6", "grok-4.7"]);
+    expect(modelButtons().map((button) => button.getAttribute("aria-pressed"))).toEqual(["false", "false", "true"]);
+
+    await act(async () => {
+      modelButtons()[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(onSave).toHaveBeenCalledWith("grok-build", "grok-4.5", undefined, undefined, expect.any(String));
+    renderSettings({
+      initialPage: "providers",
+      initialized: baseInitialized({
+        provider: provider.name,
+        model: "grok-4.5",
+        providers: [{ ...provider, model: "grok-4.5", models: [provider.models[1], provider.models[0], provider.models[2]] }],
+      }),
+      onSave,
+    });
+    expect(modelButtons().map((button) => button.textContent)).toEqual(["grok-4.5", "grok-4.6", "grok-4.7"]);
+    expect(modelButtons().map((button) => button.getAttribute("aria-pressed"))).toEqual(["true", "false", "false"]);
+  });
+
   it("shows an alert instead of removing a provider used by a running turn", async () => {
     installBuildInfoStub({
       core: undefined,
@@ -707,10 +748,14 @@ describe("SettingsView provider configuration", () => {
       onRemoveProvider,
     });
 
-    const removeButtons = Array.from(container.querySelectorAll<HTMLButtonElement>(".settings-provider-remove"));
-    expect(removeButtons).toHaveLength(2);
+    // Removal lives in the open service's editor, so open "drop" first.
     await act(async () => {
-      removeButtons[1].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      container.querySelectorAll<HTMLButtonElement>(".settings-provider-button")[1].click();
+    });
+    const removeButtons = Array.from(container.querySelectorAll<HTMLButtonElement>(".settings-provider-remove"));
+    expect(removeButtons).toHaveLength(1);
+    await act(async () => {
+      removeButtons[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -814,26 +859,6 @@ describe("SettingsView provider model catalog", () => {
     expect(container.textContent).toContain("connection unavailable");
   });
 
-  it("removes tags without selecting them, switches away from a removed default, and protects the last model", async () => {
-    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "1970-01-01T00:00:00Z" } });
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    const initialized = baseInitialized({ provider: "kimi", model: "k3", providers: [
-      { name: "kimi", type: "openai", model: "k3", models: [{ id: "k3" }, { id: "k2" }] },
-    ] });
-    renderSettings({ initialPage: "providers", initialized, onSave });
-    const remove = (model: string) => container.querySelector<HTMLButtonElement>(`button[aria-label="删除 ${model}"]`)!;
-    await act(async () => { remove("k2").click(); });
-    expect(onSave).toHaveBeenCalledTimes(1);
-    expect(onSave).toHaveBeenLastCalledWith("kimi", "k3", undefined, { remove_model: "k2" }, expect.any(String));
-    await act(async () => { remove("k3").click(); });
-    expect(onSave).toHaveBeenLastCalledWith("kimi", "k2", undefined, { remove_model: "k3" }, expect.any(String));
-    renderSettings({ initialPage: "providers", onSave, initialized: { ...initialized, model: "k2", providers: [
-      { name: "kimi", type: "openai", model: "k2", models: [{ id: "k2" }] },
-    ] } });
-    expect(remove("k3")).toBeNull();
-    expect(remove("k2").disabled).toBe(true);
-  });
-
   it("shows all known models, preserves an unlisted selection, and saves a catalog choice", async () => {
     installBuildInfoStub({
       core: undefined,
@@ -853,73 +878,13 @@ describe("SettingsView provider model catalog", () => {
     });
     const modelButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('form button[aria-pressed]'));
     expect(modelButtons.map((button) => button.textContent)).toEqual(["custom-k3", "k2", "p7"]);
+    expect(container.querySelectorAll(".settings-provider-model-list button")).toHaveLength(3);
     expect(modelButtons[0].getAttribute("aria-pressed")).toBe("true");
     await act(async () => {
       modelButtons[1].click();
     });
     expect(onSave).toHaveBeenCalledWith("kimi", "k2", undefined, undefined, expect.any(String));
     expect(modelButtons[1].getAttribute("aria-pressed")).toBe("true");
-  });
-});
-
-describe("SettingsView collaboration models", () => {
-  it("saves and clears the independent verification model", async () => {
-    installBuildInfoStub({
-      core: undefined,
-      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
-    });
-    const onAdvancedSave = vi.fn().mockResolvedValue(undefined);
-    renderSettings({
-      initialPage: "collaboration",
-      initialized: baseInitialized({
-        provider: "openai",
-        model: "gpt-default",
-        providers: [{
-          name: "openai",
-          type: "openai",
-          model: "gpt-default",
-          models: [
-            { id: "gpt-default", display_name: "GPT Default" },
-            { id: "gpt-review", display_name: "GPT Review" },
-          ],
-        }],
-        model_roles: [
-          { role: "verification", provider: "openai", model: "gpt-default", inherited: true },
-        ],
-      }),
-      onAdvancedSave,
-    });
-
-    const page = container.querySelector('[data-testid="settings-collaboration"]');
-    expect(page).not.toBeNull();
-    const triggers = Array.from(page!.querySelectorAll<HTMLButtonElement>(".settings-select-trigger"));
-    expect(triggers).toHaveLength(1);
-
-    await act(async () => {
-      triggers[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    const verificationOption = Array.from(
-      document.querySelectorAll<HTMLButtonElement>(".select-menu-panel .select-menu-item"),
-    ).find((item) => item.getAttribute("data-value") === "openai\u0000gpt-review");
-    await act(async () => {
-      verificationOption?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(onAdvancedSave).toHaveBeenLastCalledWith({
-      verification_model: { provider: "openai", model: "gpt-review" },
-    });
-
-    await act(async () => {
-      triggers[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    const inheritOption = Array.from(
-      document.querySelectorAll<HTMLButtonElement>(".select-menu-panel .select-menu-item"),
-    ).find((item) => item.getAttribute("data-value") === "");
-    await act(async () => {
-      inheritOption?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(onAdvancedSave).toHaveBeenLastCalledWith({
-      verification_model: { provider: "", model: "" },
-    });
   });
 });
 
@@ -1071,7 +1036,46 @@ describe("SettingsView advanced settings", () => {
 });
 
 describe("SettingsView general settings", () => {
-  it("loads and toggles WUU Agent commit attribution", async () => {
+  it("shows a rejected attribution save locally and allows retry without changing the switch", async () => {
+    installBuildInfoStub({
+      core: undefined,
+      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
+    });
+    const reason = "settings write rejected";
+    const failure = new Error(`Error invoking remote method 'wuu:config-general-update': Error: ${reason}`);
+    let rejectSave!: (error: Error) => void;
+    const pendingSave = new Promise<void>((_resolve, reject) => { rejectSave = reject; });
+    const onGeneralSave = vi.fn()
+      .mockReturnValueOnce(pendingSave)
+      .mockResolvedValue(undefined);
+    renderSettings({
+      initialized: baseInitialized({
+        general_settings: { git_attribution_enabled: true, mcp_server_enabled: {} },
+      }),
+      initialPage: "advanced",
+      onGeneralSave,
+    });
+    const attributionSwitch = container.querySelector<HTMLButtonElement>(
+      '[data-testid="settings-git-attribution"]',
+    )!;
+
+    await act(async () => { attributionSwitch.click(); });
+    expect(attributionSwitch.disabled).toBe(true);
+    await act(async () => { rejectSave(failure); });
+
+    const generalSection = container.querySelector('[data-testid="settings-git"]')!;
+    expect(generalSection.querySelector('[role="alert"]')?.textContent).toBe(reason);
+    expect(container.textContent).not.toContain("wuu:config-general-update");
+    expect(attributionSwitch.getAttribute("aria-checked")).toBe("true");
+    expect(attributionSwitch.disabled).toBe(false);
+
+    await act(async () => { attributionSwitch.click(); });
+    expect(generalSection.querySelector('[role="alert"]')).toBeNull();
+    expect(onGeneralSave).toHaveBeenCalledTimes(2);
+    expect(onGeneralSave).toHaveBeenLastCalledWith({ git_attribution_enabled: false });
+  });
+
+  it.each([false, true])("loads and toggles WUU Agent commit attribution while running=%s", async (running) => {
     installBuildInfoStub({
       core: undefined,
       desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
@@ -1079,13 +1083,14 @@ describe("SettingsView general settings", () => {
     const onGeneralSave = vi.fn().mockResolvedValue(undefined);
     renderSettings({
       locale: "en-US",
+      running,
       initialized: baseInitialized({
         general_settings: {
           git_attribution_enabled: true,
           mcp_server_enabled: {},
         },
       }),
-      initialPage: "general",
+      initialPage: "advanced",
       onGeneralSave,
     });
     await act(async () => {
@@ -1117,7 +1122,7 @@ describe("SettingsView general settings", () => {
     });
     const onGeneralSave = vi.fn().mockResolvedValue(undefined);
     const { rootText } = renderSettings({
-      initialPage: "general",
+      initialPage: "mcp",
       initialized: baseInitialized({
         general_settings: {
           mcp_server_enabled: {
@@ -1131,7 +1136,7 @@ describe("SettingsView general settings", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(container.querySelector("[data-testid=\"settings-general\"]")).not.toBeNull();
+    expect(container.querySelector("[data-testid=\"settings-mcp\"]")).not.toBeNull();
     expect(rootText()).toContain("docs");
     expect(rootText()).toContain("search");
 
@@ -1356,7 +1361,7 @@ describe("SettingsView About section", () => {
         },
       ],
     });
-    const { rootText } = renderSettings({ initialized: baseInitialized() });
+    const { rootText } = renderSettings({ initialized: baseInitialized(), initialPage: "mcp" });
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
@@ -1412,7 +1417,7 @@ describe("SettingsView About section", () => {
     });
     api.openExternal = vi.fn().mockResolvedValue(undefined);
 
-    renderSettings({ initialized: baseInitialized() });
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp" });
     const rendered = container;
     await act(async () => {
       await Promise.resolve();
@@ -1623,7 +1628,7 @@ describe("SettingsView archive page", () => {
     });
   });
 
-  // ArchivedSessionView 的结构子集：渲染层读取标题、时间和归档时所属项目。
+  // ArchivedSessionView 的结构子集：渲染层读取标题、时间和归档时所属工作区。
   // 这里直接返回对象字面量，结构上兼容 SettingsView 里的 ArchivedSessionView，
   // 避免引入 ThreadSummary（它要求 turns/turn_count 等计算字段，测试场景下冗余）。
   function archivedThread(
@@ -1701,7 +1706,7 @@ describe("SettingsView archive page", () => {
     expect(groups[1]?.textContent).toContain("1 个会话");
   });
 
-  it("filters archived threads by project", () => {
+  it("filters archived threads by workspace", () => {
     renderSettings({
       initialized: baseInitialized(),
       initialPage: "archive",
@@ -1720,7 +1725,7 @@ describe("SettingsView archive page", () => {
     });
 
     const trigger = container.querySelector<HTMLButtonElement>(
-      '[aria-label="按项目筛选"]',
+      '[aria-label="按工作区筛选"]',
     );
     act(() => {
       trigger?.click();
@@ -1795,7 +1800,7 @@ describe("SettingsView archive page", () => {
 
   it("invokes onUnarchiveThread with the clicked thread", () => {
     const onUnarchiveThread = vi.fn();
-    const target = archivedThread("dm-1", { title: "DM 旧会话" });
+    const target = archivedThread("old-1", { title: "旧会话" });
     renderSettings({
       initialized: baseInitialized(),
       initialPage: "archive",
@@ -1813,29 +1818,5 @@ describe("SettingsView archive page", () => {
 
     expect(onUnarchiveThread).toHaveBeenCalledTimes(1);
     expect(onUnarchiveThread).toHaveBeenCalledWith(target);
-  });
-
-  it("lists archived group chats and restores them independently", () => {
-    const onUnarchiveRoom = vi.fn();
-    const room: ArchivedRoomView = {
-      id: "room-1",
-      name: "设计讨论",
-      created_at: "2026-06-18T12:00:00Z",
-    };
-    renderSettings({
-      initialized: baseInitialized(),
-      initialPage: "archive",
-      archivedRooms: [room],
-      onUnarchiveRoom,
-    });
-
-    const roomGroup = container.querySelector('[data-archive-kind="rooms"]');
-    expect(roomGroup?.textContent).toContain("设计讨论");
-    const restoreButton = roomGroup?.querySelector<HTMLButtonElement>(
-      ".settings-archive-restore",
-    );
-    act(() => restoreButton?.click());
-
-    expect(onUnarchiveRoom).toHaveBeenCalledWith(room);
   });
 });

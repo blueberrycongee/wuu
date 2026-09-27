@@ -43,11 +43,10 @@ const FileSelectionContext = createContext<FileSelectionActions | null>(null);
 export const useFileSelectionActions = () => useContext(FileSelectionContext);
 
 export function FileSelectionProvider({
-  ownerKey, interactionOwnerKey, prompt, getPrompt, setPrompt, onEdit, onOpenFile, disabled, children,
+  ownerKey, interactionOwnerKey, getPrompt, setPrompt, onEdit, onOpenFile, disabled, children,
 }: {
   ownerKey?: string;
   interactionOwnerKey?: string;
-  prompt: string;
   getPrompt: () => string;
   setPrompt: (value: string) => void;
   onEdit: (part: FileSelectionPart) => Promise<boolean>;
@@ -57,7 +56,7 @@ export function FileSelectionProvider({
 }): JSX.Element {
   const connected = useWorkbenchConnected();
   useSyncExternalStore(subscribeCollapsedPromptParts, getCollapsedPromptRevision);
-  const parts = ownerKey ? readCollapsedPromptParts(ownerKey, prompt) ?? [] : [];
+  const parts = ownerKey ? readCollapsedPromptParts(ownerKey, getPrompt()) ?? [] : [];
   const comments = parts.filter((part): part is FileSelectionPart => part.type === "file_selection" && part.intent === "comment");
 
   function updateParts(update: (parts: MessageContentPart[]) => MessageContentPart[]): void {

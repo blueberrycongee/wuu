@@ -3,7 +3,7 @@ package capability
 import "sort"
 
 // Surface is the per-model compilation of internal capabilities to
-// direct, deferred, and hidden tool entries plus a profile-specific
+// direct, deferred, nested, and hidden tool entries plus a profile-specific
 // system prompt fragment.
 //
 // The toolkit consumes a Surface to decide which ToolDefinitions to
@@ -34,6 +34,10 @@ type Surface struct {
 	// top-level tool list so the provider prompt-cache prefix stays
 	// stable across turns.
 	DeferredTools map[string]Capability
+
+	// NestedTools maps tools available through a program binding rather than
+	// a top-level call. Skill requirements can use these tools as well.
+	NestedTools map[string]Capability
 
 	// HiddenTools maps profile companion tool names that are known
 	// to this compiled surface but are not advertised to the model.

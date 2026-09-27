@@ -3,8 +3,8 @@
 // inputs the model APIs cannot consume, shrink oversized images to a
 // documented budget, and re-encode with a stable quality ladder.
 //
-// Two consumer paths use this package: the CLI loader in internal/exec and the
-// app-server image normalizer in internal/appserver. The Electron renderer
+// The CLI loader, app-server image normalizer, and file-reading tools use this
+// package. The Electron renderer
 // (desktop/src/renderer/ComposerMessages.ts) keeps its own canvas path as a
 // fast pre-compression before the bytes ever cross the IPC boundary; the
 // constants there must stay aligned with this package's defaults.

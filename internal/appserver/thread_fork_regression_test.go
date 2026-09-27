@@ -129,7 +129,8 @@ func TestServerThreadForkLiveAnswerDoesNotDuplicateArchivedToolPrefix(t *testing
 
 	liveTurnID := sourceID + "-turn-0002"
 	th := &threadState{
-		ID: sourceID,
+		ID:      sourceID,
+		running: true,
 		// Active model context has the same partial live turn but no final answer.
 		History: []providers.ChatMessage{
 			{Role: "user", Content: "inspect it"},

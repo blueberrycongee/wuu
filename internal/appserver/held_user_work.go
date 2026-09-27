@@ -137,7 +137,7 @@ func heldUserMessageSummary(threadID string, turn queuedTurn) HeldUserMessage {
 	return HeldUserMessage{
 		ID: turn.id, ThreadID: threadID, Origin: turn.origin,
 		Prompt: strings.TrimSpace(chatMessageDisplayContent(turn.msg)), Images: images, Files: files,
-		ContentParts:   append([]providers.MessageContentPart(nil), turn.msg.ContentParts...),
+		ContentParts:   providers.CloneMessageContentParts(turn.msg.ContentParts),
 		ActiveDocument: cloneActiveDocument(turn.snapshot.ActiveDocument),
 	}
 }

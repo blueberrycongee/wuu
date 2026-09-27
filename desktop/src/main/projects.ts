@@ -75,6 +75,26 @@ export class ProjectManager {
     return context;
   }
 
+  resolveSubmissionContext(context: RuntimeContext): RuntimeContext {
+    this.load();
+    if (context.kind === "project") {
+      const project = this.store.projects.find((candidate) => candidate.id === context.project_id);
+      if (!project || resolve(project.path) !== resolve(context.cwd)) {
+        throw new Error("submission workspace is no longer registered at this path");
+      }
+      if (!isDirectory(project.path)) {
+        throw new Error(activeProjectUnavailableIssue(project).message);
+      }
+      return { kind: "project", project_id: project.id, cwd: project.path };
+    }
+    if (context.kind !== "no_project" || !isDirectory(context.cwd)) {
+      throw new Error("submission workspace is unavailable");
+    }
+    // Scratch conversations can retain a legacy cwd. Resolving a submission
+    // must not select it globally or recreate a removed directory.
+    return { kind: "no_project", cwd: resolve(context.cwd) };
+  }
+
   private reconcileRuntimeContext(): RuntimeContext {
     const active = this.store.active_context;
     if (active?.kind === "project") {
@@ -107,7 +127,7 @@ export class ProjectManager {
     this.load();
     const resolvedPath = resolve(projectPath);
     if (!isDirectory(resolvedPath)) {
-      throw new Error("selected project is not a directory");
+      throw new Error("selected workspace folder is not a directory");
     }
     const now = new Date().toISOString();
     // Dedup by path — a project is one folder — but the id is a stable, opaque
@@ -141,7 +161,7 @@ export class ProjectManager {
       (candidate) => candidate.id === projectIDToSelect,
     );
     if (!project) {
-      throw new Error("project not found");
+      throw new Error("workspace not found");
     }
     this.store.active_context = {
       kind: "project",
@@ -177,7 +197,7 @@ export class ProjectManager {
       (project) => project.id === projectIDToRelocate,
     );
     if (index < 0) {
-      throw new Error("project not found");
+      throw new Error("workspace not found");
     }
     // Keep the stable id; only the path (and derived name) move. Because the
     // workspace state dir and its sessions are keyed by the id, everything

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -224,22 +225,37 @@ func (s *Server) refreshConfigIfChanged() error {
 	// Compute under the same lock used to apply an interactive config update.
 	// Computing first could leave `next` stale while waiting for the lock, then
 	// hot-apply the interactive update a second time after it completed.
-	next, err := s.effectiveConfigFingerprint()
-	if err != nil {
-		return err
-	}
-	if next == s.configFingerprint {
-		return nil
-	}
-	// First observation only establishes the baseline. Later changes hot-apply
-	// the effective config and then publish a config/changed notification.
-	if s.configFingerprint == "" {
-		s.configFingerprint = next
+	sources := s.configSourceFingerprint()
+	if s.configRejectedSources != "" && sources == s.configRejectedSources {
 		return nil
 	}
 	cfg, _, err := s.rt.LoadEffectiveConfig()
 	if err != nil {
+		// Retry a rejected document only after its bytes change. Runtime apply
+		// failures below remain retryable because their cause can be transient.
+		s.configRejectedSources = sources
+		if s.out != nil {
+			if notifyErr := s.writeNotification(NotificationConfigError, ConfigErrorNotification{Message: err.Error()}); notifyErr != nil {
+				return notifyErr
+			}
+		}
 		return err
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(data)
+	next := hex.EncodeToString(sum[:])
+	recovered := s.configRejectedSources != ""
+	if next == s.configFingerprint && !recovered {
+		return nil
+	}
+	// First observation only establishes the baseline. Later changes hot-apply
+	// the effective config and then publish a config/changed notification.
+	if s.configFingerprint == "" && !recovered {
+		s.configFingerprint = next
+		return nil
 	}
 	if err := s.applyExternalConfigChange(cfg); err != nil {
 		// Keep the previous fingerprint so the watcher retries after the user
@@ -247,6 +263,7 @@ func (s *Server) refreshConfigIfChanged() error {
 		return err
 	}
 	s.configFingerprint = next
+	s.configRejectedSources = ""
 	if s.out == nil {
 		return nil
 	}
@@ -298,6 +315,30 @@ func (s *Server) applyExternalConfigChange(cfg config.Config) error {
 	}
 
 	return s.applyModelSelectionToRuntime(cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, providerClientChanged, previousProvider, client, true)
+}
+
+// Hash source bytes, including absent files, so invalid JSON and new fields can
+// be watched without decoding them. Include every overlay that can repair a load.
+func (s *Server) configSourceFingerprint() string {
+	paths := make([]string, 0)
+	for path := range s.configWatchPaths() {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	hash := sha256.New()
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		hash.Write([]byte(path))
+		hash.Write([]byte{0})
+		if err != nil {
+			hash.Write([]byte(err.Error()))
+		} else {
+			sum := sha256.Sum256(data)
+			hash.Write(sum[:])
+		}
+		hash.Write([]byte{0})
+	}
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func (s *Server) effectiveConfigFingerprint() (string, error) {

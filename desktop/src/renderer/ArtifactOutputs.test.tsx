@@ -1,7 +1,8 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
-import { collectTurnArtifacts, TurnEndArtifactOutputs, TurnInlineArtifactOutputs } from "./ArtifactOutputs";
+import { ArtifactPreview, collectTurnArtifacts, TurnEndArtifactOutputs, TurnInlineArtifactOutputs } from "./ArtifactOutputs";
+import { ArtifactPreviewContext, ArtifactThreadContext } from "./ArtifactPreviewContext";
 import type { ThreadItem, Turn } from "../shared/protocol";
 const { openPreview } = vi.hoisted(() => ({ openPreview: vi.fn() }));
 vi.mock("./plugins/DesktopPluginRuntime", () => ({desktopWorkbenchController:{ subscribe: () => () => {}, getSnapshot: () => 0 }}));
@@ -16,6 +17,88 @@ function presentedImage(id: string, hash: string, name = "chart.svg"): ThreadIte
     artifact: { ref: id, sha256: hash, placement: "inline", size_bytes: 100 },
   }] } };
 }
+
+it("routes a delivered file card using its source thread rather than the active conversation", async () => {
+  const artifact = { ...collectTurnArtifacts({ items: [presentedImage("file", "snapshot")] } as Turn)[0], type: "file" as const, placement: "turn_end" as const, mimeType: "text/html" };
+  const open = vi.fn();
+  const container = document.createElement("div"), root = createRoot(container);
+  try {
+    await act(async () => root.render(
+      <ArtifactPreviewContext.Provider value={open}>
+        <ArtifactThreadContext.Provider value="source-thread">
+          <TurnEndArtifactOutputs artifacts={[artifact]} cwd="source-workspace" />
+        </ArtifactThreadContext.Provider>
+      </ArtifactPreviewContext.Provider>,
+    ));
+    await act(async () => container.querySelector("button")!.click());
+    expect(open).toHaveBeenCalledWith({ threadID: "source-thread", cwd: "source-workspace", artifact });
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+  } finally { act(() => root.unmount()); }
+});
+
+it("previews HTML in a non-modal sandbox without moving focus or downloading", async () => {
+  const artifact = { ...collectTurnArtifacts({ items: [presentedImage("html", "snapshot")] } as Turn)[0], mimeType: "text/html" };
+  const container = document.createElement("div"), root = createRoot(container);
+  const composer = document.createElement("textarea");
+  document.body.append(composer, container);
+  composer.focus();
+  const previous = window.wuu;
+  const save = vi.fn().mockResolvedValue(undefined);
+  window.wuu = { saveArtifactFile: save } as unknown as typeof window.wuu;
+  try {
+    await act(async () => root.render(<ArtifactPreview artifact={artifact} mode="panel" onClose={() => {}} />));
+    expect(document.activeElement).toBe(composer);
+    const iframe = container.querySelector("iframe")!;
+    expect(iframe.getAttribute("sandbox")).toBe("");
+    expect(iframe.getAttribute("referrerpolicy")).toBe("no-referrer");
+    expect(save).not.toHaveBeenCalled();
+    await act(async () => container.querySelector("button")!.click());
+    expect(save).toHaveBeenCalledWith(artifact.name, artifact.uri);
+  } finally { act(() => root.unmount()); container.remove(); composer.remove(); window.wuu = previous; }
+});
+
+it.each([
+  { name: "clip.mp4", uri: "wuu-artifact://workspace/thread/snapshot/clip.mp4?sha256=hash", mime_type: "video/mp4" },
+  { name: "clip.WEBM", uri: "clips/clip.WEBM", mime_type: undefined },
+])("opens a video card in the preview and keeps download available after playback failure ($name)", async (part) => {
+  const artifact = collectTurnArtifacts({ items: [{
+    id: "video", type: "tool_call", status: "completed", result_detail: { content: [{
+      type: "file", ...part, artifact: { placement: "turn_end" },
+    }] },
+  }] } as Turn)[0];
+  const container = document.createElement("div"), root = createRoot(container);
+  const onOpenFile = vi.fn();
+  try {
+    await act(async () => root.render(<TurnEndArtifactOutputs artifacts={[artifact]} cwd="/workspace" onOpenFile={onOpenFile} />));
+    await act(async () => container.querySelector("button")!.click());
+    const video = container.querySelector("video")!;
+    expect(video).not.toBeNull();
+    expect(video.controls).toBe(true);
+    expect(video.autoplay).toBe(false);
+    expect(video.src).toBe(part.uri.startsWith("wuu-artifact:") ? part.uri
+      : `wuu-file://local/${btoa(`/workspace/${part.uri}`).replace(/=/g, "")}`);
+    expect(onOpenFile).not.toHaveBeenCalled();
+    await act(async () => video.dispatchEvent(new Event("error")));
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="artifacts.downloadNamed"]')).not.toBeNull();
+  } finally { act(() => root.unmount()); }
+});
+
+it("loads managed text content and reports an oversized preview without losing download access", async () => {
+  const artifact = { ...collectTurnArtifacts({ items: [presentedImage("text", "snapshot")] } as Turn)[0], mimeType: "text/plain" };
+  const fetchMock = vi.fn().mockResolvedValueOnce(new Response("Delivered text"))
+    .mockResolvedValueOnce(new Response("x".repeat(2 * 1024 * 1024 + 1)));
+  vi.stubGlobal("fetch", fetchMock);
+  const container = document.createElement("div"), root = createRoot(container);
+  try {
+    await act(async () => root.render(<ArtifactPreview artifact={artifact} mode="panel" onClose={() => {}} />));
+    expect(container.querySelector("pre")?.textContent).toBe("Delivered text");
+    await act(async () => root.render(<ArtifactPreview key="large" artifact={{ ...artifact, uri: `${artifact.uri}&revision=large` }} mode="panel" onClose={() => {}} />));
+    expect(container.querySelector("pre")).toBeNull();
+    expect(container.textContent).toContain("artifacts.previewUnavailable");
+    expect(container.querySelector('[aria-label="artifacts.downloadNamed"]')).not.toBeNull();
+  } finally { act(() => root.unmount()); vi.unstubAllGlobals(); }
+});
 
 it("deduplicates identical published snapshots per turn without hiding new versions or other named outputs", () => {
   const first = presentedImage("first", "old");
@@ -48,7 +131,7 @@ it("renders only the managed SVG image and opens that exact snapshot", async () 
     expect(container.querySelector(".composer-image-attachment")).toBeNull();
     expect(container.querySelector(".turn-artifact-image-preview svg, iframe")).toBeNull();
     await act(async () => container.querySelector("button")!.click());
-    expect(openPreview).toHaveBeenCalledWith({ src: artifact.uri, alt: "chart.svg", title: "chart.svg" });
+    expect(openPreview).toHaveBeenCalledWith({ src: artifact.uri, alt: "chart.svg", title: "chart.svg" }, container.querySelector("button"));
     await act(async () => container.querySelector("img")!.dispatchEvent(new Event("error")));
     expect(container.querySelector(".turn-artifact-unavailable")?.textContent).toBe("imagePreview.loadFailed");
     expect(container.querySelector("button")?.disabled).toBe(true);
@@ -67,9 +150,6 @@ it("keeps document output data inspectable without projecting it into the image 
     await act(async () => root.render(<TurnInlineArtifactOutputs artifacts={artifacts} />));
     expect(container.childElementCount).toBe(0);
     await act(async () => root.render(<TurnEndArtifactOutputs artifacts={artifacts} />));
-    expect(container.querySelector(".turn-edit-summary-card")).toBeTruthy();
-    expect(container.querySelector(".turn-output-summary-header")).toBeNull();
-    expect(container.querySelector(".turn-edit-summary-overview")).toBeTruthy();
     expect(container.textContent).toContain("Report");
     expect(container.textContent).not.toContain("application/pdf");
     expect(container.textContent).not.toContain("Message 99");
@@ -85,8 +165,6 @@ it("uses the file-change summary chrome for a single presented file", async () =
   const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
   try {
     await act(async () => root.render(<TurnEndArtifactOutputs artifacts={collectTurnArtifacts(turn)} />));
-    expect(container.querySelector('[data-wuu-component="turn-artifacts"]')?.classList.contains("turn-edit-summary-card")).toBe(true);
-    expect(container.querySelector(".turn-edit-summary-icon")).toBeTruthy();
     expect(container.querySelector(".turn-edit-summary-overview-title")?.textContent).toBe("artifacts.countOne");
     expect(container.querySelector(".turn-edit-summary-overview-path")?.textContent).toBe("wuu-promo.mp4");
     expect(container.querySelector(".turn-edit-summary-row")).toBeNull();

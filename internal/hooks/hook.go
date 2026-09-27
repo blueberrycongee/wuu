@@ -47,6 +47,10 @@ func (h *CommandHook) Execute(ctx context.Context, input *Input) (*Output, error
 	}
 	cmd := exec.CommandContext(runCtx, shell.Path, shell.CommandArgs(h.Command)...)
 	cmd.Env = shellpath.CommandEnv(os.Environ())
+	configureHookProcess(cmd)
+	// Descendants can retain the pipes even after the shell exits. Bound that
+	// drain separately so a canceled or finished hook cannot strand the caller.
+	cmd.WaitDelay = time.Second
 
 	inputJSON, err := json.Marshal(input)
 	if err != nil {
@@ -54,25 +58,29 @@ func (h *CommandHook) Execute(ctx context.Context, input *Input) (*Output, error
 	}
 	cmd.Stdin = bytes.NewReader(inputJSON)
 
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr hookOutputBuffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	runErr := cmd.Run()
+	if err := runCtx.Err(); err != nil {
+		return nil, fmt.Errorf("hook %q interrupted: %w", h.Command, err)
+	}
+	if stdout.exceeded || stderr.exceeded {
+		return nil, fmt.Errorf("hook %q output exceeds %d bytes per stream", h.Command, maxHookOutputBytes)
+	}
 
 	exitCode := 0
 	if runErr != nil {
 		var exitErr *exec.ExitError
 		if errors.As(runErr, &exitErr) {
 			exitCode = exitErr.ExitCode()
-		} else if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-			return nil, fmt.Errorf("hook %q timed out after %s", h.Command, timeout)
 		} else {
 			return nil, fmt.Errorf("hook %q failed: %w", h.Command, runErr)
 		}
 	}
 
-	out, parseErr := ParseOutput(stdout.Bytes(), exitCode)
+	out, parseErr := ParseOutput(stdout.buf.Bytes(), exitCode)
 	if parseErr != nil {
 		return nil, fmt.Errorf("parse hook output: %w", parseErr)
 	}
@@ -80,7 +88,7 @@ func (h *CommandHook) Execute(ctx context.Context, input *Input) (*Output, error
 	if out.IsBlocked() {
 		reason := out.Reason
 		if reason == "" {
-			reason = strings.TrimSpace(stderr.String())
+			reason = strings.TrimSpace(stderr.buf.String())
 		}
 		if reason == "" {
 			reason = fmt.Sprintf("hook %q blocked", h.Command)
@@ -92,10 +100,30 @@ func (h *CommandHook) Execute(ctx context.Context, input *Input) (*Output, error
 	// real hook failure, not a block signal.
 	if exitCode != 0 && exitCode != 2 {
 		return out, fmt.Errorf("hook %q failed (exit %d): %s",
-			h.Command, exitCode, strings.TrimSpace(stderr.String()))
+			h.Command, exitCode, strings.TrimSpace(stderr.buf.String()))
 	}
 
 	return out, nil
+}
+
+const maxHookOutputBytes = 1 << 20
+
+// Keep draining after the limit to avoid pipe deadlocks, but never interpret a
+// truncated JSON response as a complete decision.
+type hookOutputBuffer struct {
+	buf      bytes.Buffer
+	exceeded bool
+}
+
+func (b *hookOutputBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	remaining := maxHookOutputBytes - b.buf.Len()
+	if n > remaining {
+		b.exceeded = true
+		p = p[:remaining]
+	}
+	_, _ = b.buf.Write(p)
+	return n, nil
 }
 
 // IsBlocked reports whether err wraps ErrBlocked.

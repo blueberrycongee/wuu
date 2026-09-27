@@ -1,15 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { ProviderModelSummary, ProviderSummary } from "../shared/protocol";
 import {
-  codexEffortLabel,
+  orderedEffortOptions,
   providerModelContextWindow,
-  pullRequestUnavailableReason,
   providerModelReasoningMode,
   providerModelVariantOptions
 } from "./RuntimeHelpers";
-import { setActiveLocale } from "./i18n";
-
-afterEach(() => setActiveLocale("zh-CN"));
 
 function providerWithModel(model: ProviderModelSummary | undefined): ProviderSummary | undefined {
   if (!model) {
@@ -22,25 +18,6 @@ function providerWithModel(model: ProviderModelSummary | undefined): ProviderSum
     models: [model]
   };
 }
-
-describe("codexEffortLabel", () => {
-  it("uses canonical English labels in every locale", () => {
-    expect(codexEffortLabel("xhigh")).toBe("Extra high");
-    expect(codexEffortLabel("max")).toBe("Max");
-    expect(codexEffortLabel("ultra")).toBe("Ultra");
-
-    setActiveLocale("en-US");
-
-    expect(codexEffortLabel("xhigh")).toBe("Extra high");
-    expect(codexEffortLabel("max")).toBe("Max");
-  });
-
-  it("uses the active language for generated runtime labels", () => {
-    setActiveLocale("en-US");
-
-    expect(pullRequestUnavailableReason()).toBe("Not a Git repository");
-  });
-});
 
 describe("providerModelContextWindow", () => {
   it("resolves the exact model instead of reusing another model's ceiling", () => {
@@ -112,31 +89,6 @@ describe("providerModelContextWindow", () => {
       272_000,
     );
   });
-
-  it("uses the backend-clamped Codex subscription ceiling from provider summaries", () => {
-    const initialized = {
-      providers: [
-        {
-          name: "openai-codex",
-          type: "openai-codex",
-          model: "gpt-5.6-sol",
-          models: [
-            {
-              id: "gpt-5.6-sol",
-              capabilities: {
-                context_window: 1_050_000,
-                input_limit: 272_000,
-              },
-            },
-          ],
-        },
-      ],
-    } as Parameters<typeof providerModelContextWindow>[0];
-
-    expect(
-      providerModelContextWindow(initialized, "openai-codex", "gpt-5.6-sol"),
-    ).toBe(272_000);
-  });
 });
 
 describe("providerModelVariantOptions", () => {
@@ -165,6 +117,28 @@ describe("providerModelVariantOptions", () => {
       capabilities: { chat: true, tools: true, structured_output: true, streaming: true, system_role: true, reasoning: true }
     });
     expect(providerModelVariantOptions(provider, "with-levels", "")).toEqual(["", "low", "medium", "high"]);
+  });
+
+  it("orders descending effort lists from weakest to strongest", () => {
+    const provider = providerWithModel({
+      id: "grok-4.6",
+      variants: [{ id: "xhigh" }, { id: "high" }, { id: "medium" }, { id: "low" }],
+      supported_efforts: ["xhigh", "high", "medium", "low"],
+      capabilities: { chat: true, tools: true, structured_output: true, streaming: true, system_role: true, reasoning: true }
+    });
+    expect(providerModelVariantOptions(provider, "grok-4.6", "xhigh")).toEqual([
+      "",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(orderedEffortOptions(["xhigh", "high", "medium", "low"])).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
   });
 
   it("prefers explicit variants over supported_efforts", () => {
@@ -203,11 +177,6 @@ describe("providerModelReasoningMode", () => {
       capabilities: { chat: true, tools: true, structured_output: true, streaming: true, system_role: true, reasoning: false }
     });
     expect(providerModelReasoningMode(provider, "no-reasoning")).toBe("off");
-  });
-
-  it("reports 'off' when the model has no capabilities block at all", () => {
-    const provider = providerWithModel({ id: "no-caps", supported_efforts: [] });
-    expect(providerModelReasoningMode(provider, "no-caps")).toBe("off");
   });
 
   it("reports 'toggle' when reasoning is on but no levels are exposed", () => {

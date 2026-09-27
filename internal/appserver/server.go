@@ -17,7 +17,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
-	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/execution"
@@ -30,7 +29,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/sidethread"
-	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
@@ -42,18 +40,19 @@ var (
 )
 
 type threadState struct {
-	ID           string
-	Source       string
-	Owner        string
-	Visibility   string
-	NamedAgentID string
-	// CollaborationSessionRef is non-empty only when this Named Agent thread is
-	// bound to one durable Room/Work session. Ordinary Named Agent conversations
-	// keep Agent-level chat semantics even when their thread ID is non-default.
-	CollaborationSessionRef string
-	ParentID                string
-	AgentPath               string
-	History                 []providers.ChatMessage
+	ID         string
+	Source     string
+	Owner      string
+	Visibility string
+	// Instructions are create-time session instructions appended to every
+	// refreshed runtime system prompt.
+	Instructions string
+	// ProjectID is the coordinator of a project's managed session.
+	ProjectID   string
+	ProjectRole string
+	ParentID    string
+	AgentPath   string
+	History     []providers.ChatMessage
 	// historyHeadSeq is the physical append-only session_messages head that
 	// History was reconstructed through. It must not be derived from the
 	// logical messages: a checkpoint may retain no records or only old seqs.
@@ -66,6 +65,7 @@ type threadState struct {
 	Model          string
 	ModelVariant   string
 	ModelEffort    string
+	Speed          string
 	PermissionMode string
 	ApproveForMe   bool
 	// EngineID is the agent engine this thread is bound to. It is fixed at
@@ -86,6 +86,7 @@ type threadState struct {
 	PinnedAt                 *time.Time
 	FolderID                 string
 	ArchivedAt               *time.Time
+	ArchiveReason            string
 	Turns                    []Turn
 	PersistHistory           bool
 	ReadOnly                 bool
@@ -129,7 +130,6 @@ type threadState struct {
 	activeSteerContextSet          bool
 	steerDocumentOverrides         []activeDocumentOverride
 	interrupting                   bool
-	namedAgentRoomIDs              []string
 	// Worker-tree freeze (turn/interrupt): while set, agent-completion drains
 	// hold their pending synthetic turns. The next user-initiated turn folds
 	// the whole-tree snapshot into its request (frozenTreeContext) and marks
@@ -140,6 +140,7 @@ type threadState struct {
 
 	nextItemIndex         int
 	activeAgentItemID     string
+	agentStream           *agentMessageStream
 	activeReasoningItemID string
 	toolItems             map[string]string
 	hiddenToolEvent       bool
@@ -190,10 +191,8 @@ type Server struct {
 	out     io.Writer
 	writeMu sync.Mutex
 
-	settingsUsageMu           sync.Mutex
-	settingsUsageCache        *settingsUsageCacheEntry
-	channelAgentInsightsMu    sync.Mutex
-	channelAgentInsightsCache *channelAgentInsightsCacheEntry
+	settingsUsageMu    sync.Mutex
+	settingsUsageCache *settingsUsageCacheEntry
 
 	// clientCalls is the pending table for server-initiated requests over the
 	// negotiated reverse-RPC channel. Keyed by the
@@ -240,18 +239,18 @@ type Server struct {
 	userQuestionStop   chan struct{}
 	userQuestionDone   chan struct{}
 
-	rewriteChatHistoryForTest            func(string, string, []providers.ChatMessage) error
-	afterLifecycleHistoryAppendForTest   func(threadID string)
-	deleteSessionForTest                 func(string) (session.Session, error)
-	afterWorkerShutdownStopWavesForTest  func()
-	beforeQueuedTurnBackgroundForTest    func()
-	afterNamedAgentWakeCompletionForTest func(agentID string)
+	rewriteChatHistoryForTest           func(string, string, []providers.ChatMessage) error
+	afterLifecycleHistoryAppendForTest  func(threadID string)
+	deleteSessionForTest                func(string) (session.Session, error)
+	afterWorkerShutdownStopWavesForTest func()
+	beforeQueuedTurnBackgroundForTest   func()
 
 	codexModelsMu   sync.Mutex
 	codexModelCache map[string]map[string]config.ProviderModelConfig
 
 	engineModelCatalogMu         sync.Mutex
 	codexEngineModelCatalogCache *codexEngineModelCatalogCacheEntry
+	acpEngineModelCatalogCache   map[string]*codexEngineModelCatalogCacheEntry
 
 	xaiLoginMu sync.Mutex
 	xaiLogins  *xaisub.LoginHub
@@ -274,6 +273,8 @@ type Server struct {
 	activityUnsubscribe          func()
 	backgroundMu                 sync.Mutex
 	backgroundWG                 sync.WaitGroup
+	engineAuthMu                 sync.Mutex
+	engineAuthCancels            map[string]context.CancelFunc
 	closeOnce                    sync.Once
 	closed                       atomic.Bool
 	pluginGenerationMutation     atomic.Bool
@@ -282,6 +283,9 @@ type Server struct {
 	pluginGenerationRefreshMu    sync.Mutex
 	configRefreshMu              sync.Mutex
 	configFingerprint            string
+	configRejectedSources        string
+	providerSummariesMu          sync.Mutex
+	lastProviderSummaries        []ProviderSummary
 	pluginLifecycleReplayPending atomic.Bool
 	refreshExtensionsForTest     func(config.Config) error
 	refreshConfigForTest         func() error
@@ -293,21 +297,14 @@ type Server struct {
 	// sideThreadStore persists side threads (1:<=1 binding per main
 	// thread). Nil when SessionDir is unset; handleSideThreadOpen /
 	// handleSideThreadGetHistory treat nil as the "feature off" path.
-	sideThreadStore             *sidethread.Store
-	channelService              *channels.Service
-	channelMaintenanceStop      chan struct{}
-	channelMaintenanceDone      chan struct{}
-	channelMaintenanceStopOnce  sync.Once
-	namedAgentMu                sync.Mutex
-	harnessMu                   sync.Mutex
-	namedAgentMCPMu             sync.Mutex
-	namedAgentMCPServer         *http.Server
-	namedAgentMCPBaseURL        string
-	namedAgentMCPTokenByAgent   map[string]string
-	namedAgentMCPAgentByToken   map[string]string
-	namedAgentMCPSessionByToken map[string]string
-	sideTurnMu                  sync.Mutex
-	sideTurns                   map[string]*sideThreadTurn
+	sideThreadStore *sidethread.Store
+	controlMu       sync.Mutex
+	projectCreateMu sync.Mutex
+	// inboxMu orders deliveries into a session so pending input is admitted
+	// in creation order.
+	inboxMu    sync.Mutex
+	sideTurnMu sync.Mutex
+	sideTurns  map[string]*sideThreadTurn
 }
 
 func New(rt *runtime.Session, out io.Writer) *Server {
@@ -332,7 +329,6 @@ func NewWithCredentialStore(rt *runtime.Session, out io.Writer, store credential
 		drainingQueuedTurns:          make(map[string]bool),
 		codexModelCache:              make(map[string]map[string]config.ProviderModelConfig),
 		inferenceMaintenanceStop:     make(chan struct{}),
-		channelMaintenanceStop:       make(chan struct{}),
 		sideTurns:                    make(map[string]*sideThreadTurn),
 		clientCalls:                  make(map[string]chan clientResponse),
 		clientMethods:                make(map[string]struct{}),
@@ -399,17 +395,6 @@ func NewWithCredentialStore(rt *runtime.Session, out io.Writer, store credential
 		}
 		s.runStore = runStore
 	}
-	if rt != nil && strings.TrimSpace(rt.WuuHome) != "" {
-		channelService, err := channels.Open(statepath.ChannelsDir(rt.WuuHome), nil)
-		if err != nil {
-			s.startupErr = fmt.Errorf("open channels store: %w", err)
-			return s
-		}
-		s.channelService = channelService
-		channelService.SetWakeSink(s)
-		channelService.SetSessionController(s)
-		s.startChannelMaintenance()
-	}
 	if bootOwner {
 		s.recoverSideThreadsOnBoot()
 		s.settleOnBoot()
@@ -441,10 +426,8 @@ func NewWithCredentialStore(rt *runtime.Session, out io.Writer, store credential
 		s.startBackground(s.replayPendingPluginTurnLifecycles)
 	}
 	s.startInferenceJournalMaintenance()
-	if s.channelService != nil {
-		// Finish boot recovery before accepting new channel work. Otherwise a
-		// newly delivered wake can also be picked up as an outstanding boot wake.
-		s.restoreNamedAgentWakes()
+	if rt != nil && rt.SessionDir != "" {
+		s.startProjectRecovery()
 	}
 	s.startPluginGenerationWatch()
 	s.startConfigWatch()
@@ -517,6 +500,11 @@ func (s *Server) maintainSessionStoragePass(ctx context.Context) {
 		providers.DebugLogf("worktree storage maintenance: %v", err)
 	} else if orphanWorktrees > 0 {
 		providers.DebugLogf("worktree storage maintenance: removed %d orphan owner group(s)", orphanWorktrees)
+	}
+	if stateDir, err := s.workspaceStateDir(); err == nil {
+		if err := maintainInputImageStorage(stateDir, time.Now().UTC()); err != nil {
+			providers.DebugLogf("input image storage maintenance: %v", err)
+		}
 	}
 }
 
@@ -658,87 +646,6 @@ func (s *Server) stopInferenceJournalMaintenance() {
 	}
 }
 
-const channelMaintenanceInterval = time.Minute
-
-func (s *Server) startChannelMaintenance() {
-	if s == nil || s.channelService == nil {
-		return
-	}
-	s.channelMaintenanceDone = make(chan struct{})
-	go func() {
-		defer close(s.channelMaintenanceDone)
-		s.runChannelMaintenance(context.Background())
-		ticker := time.NewTicker(channelMaintenanceInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				s.runChannelMaintenance(context.Background())
-			case <-s.channelMaintenanceStop:
-				return
-			}
-		}
-	}()
-}
-
-func (s *Server) runChannelMaintenance(ctx context.Context) {
-	if s == nil || s.channelService == nil {
-		return
-	}
-	if err := s.reconcileHarnessSessions(ctx); err != nil {
-		log.Printf("wuu: Harness session recovery: %v", err)
-	}
-	if err := s.channelService.ExpireDrafts(ctx); err != nil {
-		log.Printf("wuu: channels maintenance: %v", err)
-	}
-	if _, err := s.channelService.FireDueReminders(ctx); err != nil {
-		log.Printf("wuu: channel reminders: %v", err)
-	}
-	if err := s.reconcileChannelWorkRuns(ctx); err != nil {
-		log.Printf("wuu: channel work recovery: %v", err)
-	}
-	// A wake can remain outstanding if delivery failed after the database
-	// transaction committed. Retry outstanding wakes during maintenance so a
-	// transient runtime error cannot leave an agent permanently stuck at
-	// "assigned".
-	agents, err := s.channelService.ListAgentRuntimes(ctx)
-	if err != nil {
-		log.Printf("wuu: channel wake recovery: %v", err)
-		return
-	}
-	for _, agent := range agents {
-		{
-			s.namedAgentMu.Lock()
-			resumeErr := s.resumeNamedAgentBoundSessionsLocked(ctx, agent)
-			s.namedAgentMu.Unlock()
-			if resumeErr != nil {
-				log.Printf("wuu: channel session recovery %q: %v", agent.ID, resumeErr)
-			}
-		}
-		state, err := s.channelService.WakeState(ctx, agent.ID)
-		if err != nil {
-			log.Printf("wuu: channel wake state %q: %v", agent.ID, err)
-			continue
-		}
-		if !state.Outstanding {
-			continue
-		}
-		if err := s.deliverNamedAgentWake(ctx, agent.ID); err != nil {
-			log.Printf("wuu: channel wake recovery %q: %v", agent.ID, err)
-		}
-	}
-}
-
-func (s *Server) stopChannelMaintenance() {
-	if s == nil || s.channelMaintenanceDone == nil {
-		return
-	}
-	s.channelMaintenanceStopOnce.Do(func() {
-		close(s.channelMaintenanceStop)
-	})
-	<-s.channelMaintenanceDone
-}
-
 func (s *Server) startBackground(work func()) bool {
 	if s == nil || work == nil {
 		return false
@@ -785,6 +692,7 @@ func (s *Server) Close() {
 	}
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
+		s.cancelEngineAuth("")
 		if s.storageMaintenanceCancel != nil {
 			s.storageMaintenanceCancel()
 			s.storageMaintenanceCancel = nil
@@ -843,7 +751,6 @@ func (s *Server) Close() {
 		}
 
 		s.stopInferenceJournalMaintenance()
-		s.stopChannelMaintenance()
 
 		// Stop every browser activity this process owns BEFORE dropping the
 		// activity subscription below. Stop emits an EventStopped that
@@ -877,7 +784,7 @@ func (s *Server) Close() {
 		s.queuedTurnMu.Unlock()
 		for threadID, entries := range queuedOnClose {
 			for _, entry := range entries {
-				s.notifyPluginTurnDiscarded(threadID, entry, "app-server closed before queued turn started")
+				s.notifyPluginTurnDiscardedWithRetry(threadID, entry, "app-server closed before queued turn started", true)
 			}
 		}
 		s.agentCompletionMu.Lock()
@@ -887,14 +794,7 @@ func (s *Server) Close() {
 		s.waitForOwnedShutdown(threads, controls)
 		s.interruptAttachedRunsOnClose()
 		for _, th := range threads {
-			releaseThreadRuntime(th)
-		}
-		s.closeNamedAgentMCP()
-		if s.channelService != nil {
-			if err := s.channelService.Close(); err != nil {
-				log.Printf("wuu: close channels store: %v", err)
-			}
-			s.channelService = nil
+			s.releaseThreadRuntime(th)
 		}
 		s.releasePresence()
 	})
@@ -1091,6 +991,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return nil
 	case MethodEngineUpdate:
 		return s.handleEngineUpdate(req)
+	case MethodEngineAuthMethods, MethodEngineAuthenticate, MethodEngineAuthCancel:
+		return s.handleEngineAuth(ctx, req)
 	case MethodExtensionCatalogRefresh:
 		return s.handleExtensionCatalogRefresh(req)
 	case MethodExtensionPackageUpdate:
@@ -1131,6 +1033,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleUserQuestionCancel(req)
 	case MethodUserQuestionHold:
 		return s.handleUserQuestionHold(req)
+	case MethodConfigCodexCredentials:
+		return s.handleConfigCodexCredentials(req)
 	case MethodConfigCodexModels:
 		// Model discovery performs an external Codex request. Keep it off the
 		// serial stdio dispatch loop so unrelated local mutations, especially a
@@ -1163,52 +1067,6 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleConfigProviderRemove(req)
 	case MethodSkillList:
 		return s.handleSkillList(req)
-	case MethodChannelBootstrap:
-		return s.handleChannelBootstrap(ctx, req)
-	case MethodChannelContinuity:
-		return s.handleChannelContinuity(ctx, req)
-	case MethodChannelSessionList, MethodChannelSessionCreate, MethodChannelSessionRead, MethodChannelSessionSend, MethodChannelSessionStop, MethodChannelSessionResume:
-		return s.handleChannelSession(ctx, req)
-	case MethodChannelAgentList:
-		return s.handleChannelAgentList(ctx, req)
-	case MethodChannelAgentInsights:
-		return s.handleChannelAgentInsights(ctx, req)
-	case MethodChannelAgentCreate:
-		return s.handleChannelAgentCreate(ctx, req)
-	case MethodChannelAgentUpdate:
-		return s.handleChannelAgentUpdate(ctx, req)
-	case MethodChannelAgentDelete:
-		return s.handleChannelAgentDelete(ctx, req)
-	case MethodChannelAgentStart:
-		return s.handleChannelAgentStart(ctx, req)
-	case MethodChannelAgentReset:
-		return s.handleChannelAgentReset(ctx, req)
-	case MethodChannelAgentCreationResolve:
-		return s.handleChannelAgentCreationResolve(ctx, req)
-	case MethodChannelRoomList:
-		return s.handleChannelRoomList(ctx, req)
-	case MethodChannelRoomCreate:
-		return s.handleChannelRoomCreate(ctx, req)
-	case MethodChannelDirectMessageOpen:
-		return s.handleChannelDirectMessageOpen(ctx, req)
-	case MethodChannelRoomUpdate:
-		return s.handleChannelRoomUpdate(ctx, req)
-	case MethodChannelRoomDelete:
-		return s.handleChannelRoomDelete(ctx, req)
-	case MethodChannelRoomRead:
-		return s.handleChannelRoomRead(ctx, req)
-	case MethodChannelMessageList:
-		return s.handleChannelMessageList(ctx, req)
-	case MethodChannelMessageSend:
-		return s.handleChannelMessageSend(ctx, req)
-	case MethodChannelTaskCreate:
-		return s.handleChannelTaskCreate(ctx, req)
-	case MethodChannelTaskUpdate:
-		return s.handleChannelTaskUpdate(ctx, req)
-	case MethodChannelMentionStatus:
-		return s.handleChannelHumanMentionStatus(ctx, req)
-	case MethodChannelMentionAck:
-		return s.handleChannelHumanMentionAck(ctx, req)
 	case MethodThreadStart:
 		return s.handleThreadStart(req)
 	case MethodThreadResume:
@@ -1217,8 +1075,6 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleThreadHistoryRead(req)
 	case "message/image/read":
 		return s.handleMarkdownImageRead(ctx, req)
-	case "channel/attachment/read":
-		return s.handleChannelAttachmentRead(ctx, req)
 	case "thread/attachment/read", "thread/content/read":
 		return s.handleThreadAttachmentRead(req)
 	case MethodThreadFork:
@@ -1251,6 +1107,12 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleThreadPreview(req)
 	case "thread/textSnapshot":
 		return s.handleThreadTextSnapshot(req)
+	case "thread/control/return":
+		return s.handleThreadControl(ctx, req)
+	case "thread/control/take":
+		return s.handleThreadTakeControl(req)
+	case MethodProjectSession:
+		return s.handleProjectSession(req)
 	case MethodThreadPin:
 		return s.handleThreadPin(req)
 	case MethodThreadOrganizationUpdate:
@@ -1286,11 +1148,6 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleWorkspaceView(req)
 	case MethodWorkspaceList:
 		return s.handleWorkspaceList(req)
-	case MethodHarnessDispatch:
-		if !s.startBackground(func() { _ = s.handleHarnessDispatch(ctx, req) }) {
-			return s.writeResponse(req.ID, nil, errServerClosed)
-		}
-		return nil
 	case MethodWorkspaceStateCleanup:
 		return s.handleWorkspaceStateCleanup(req)
 	case MethodThreadRegenerateTitle:
@@ -1389,6 +1246,18 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return errShutdown
 	case MethodSettingsUsage:
 		return s.handleSettingsUsage(req)
+	case MethodUsageOverview:
+		// Every visit to the empty conversation home requests this summary.
+		// Keep the store read off the serial stdio loop so a prompt sent right
+		// away does not wait behind it.
+		if !s.startBackground(func() {
+			if err := s.handleUsageOverview(req); err != nil {
+				log.Printf("wuu: usage/overview: %v", err)
+			}
+		}) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
 	case MethodDevicePushRegister:
 		return s.handleDevicePushRegister(req)
 	case MethodDevicePushUnregister:

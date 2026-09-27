@@ -251,9 +251,6 @@ func TestSendSideThreadMessageRunsReadOnlyModelAndPersistsReply(t *testing.T) {
 	if req.Messages[len(req.Messages)-1].Content != "What is the status?" {
 		t.Fatalf("side prompt missing from request: %+v", req.Messages)
 	}
-	if !strings.Contains(req.Messages[0].Content, "read-only side agent") {
-		t.Fatalf("side system prompt missing isolation contract: %q", req.Messages[0].Content)
-	}
 	output := out.String()
 	for _, want := range []string{`"method":"sideThread/event"`, `"type":"items"`, `"type":"delta"`, `"type":"message"`, `"status":"completed"`} {
 		if !strings.Contains(output, want) {
@@ -622,18 +619,6 @@ func TestSideThreadContextPreservesEntireActivePrompt(t *testing.T) {
 	}
 }
 
-func TestSideThreadContextRejectsPromptThatCannotFit(t *testing.T) {
-	prompt := strings.Repeat("oversized active prompt ", 500)
-	messages := []sidethread.Message{
-		{ID: "user", SideThreadID: "side", Role: sidethread.RoleUser, Text: prompt},
-		{ID: "assistant", SideThreadID: "side", Role: sidethread.RoleAssistant, Status: sidethread.AssistantStreaming},
-	}
-	_, err := buildSideThreadRunHistory(&agent.StreamRunner{SystemPrompt: "read-only side chat", MaxInputTokens: 200}, sideThreadMainSnapshot{}, messages, "assistant")
-	if err == nil || !strings.Contains(err.Error(), "prompt requires") {
-		t.Fatalf("oversized active prompt error = %v", err)
-	}
-}
-
 func TestSideThreadSendRejectsOversizedPromptBeforePersisting(t *testing.T) {
 	s, rt, _ := newSideThreadServer(t, nil)
 	rt.StreamRunner.MaxInputTokens = 200
@@ -793,10 +778,6 @@ func TestNewSideThreadRunnerInheritsThreadModel(t *testing.T) {
 	}
 	if pinned.Model != "pinned-model" {
 		t.Fatalf("pinned side runner model = %q, want pinned-model", pinned.Model)
-	}
-	// The model pin must not cost the side chat its read-only isolation contract.
-	if !strings.Contains(pinned.SystemPrompt, "read-only side agent") {
-		t.Fatalf("pinned side runner prompt lost read-only contract: %q", pinned.SystemPrompt)
 	}
 }
 

@@ -23,9 +23,9 @@ import {
   type ComposerFile,
   type ComposerImage,
 } from "./ComposerMessages";
-import { localizedText, translateCurrent } from "./i18n";
-
-type ComposerDraftStatusSetter = (status: string) => void;
+import { translateCurrent } from "./i18n";
+import type { ResponseSelection } from "../shared/protocol";
+import { showErrorToast } from "./Toast";
 
 // The textarea owns the input-critical value. Publishing its draft to App
 // after an idle window preserves tab/plugin state without making the entire
@@ -45,6 +45,8 @@ export type ComposerDraftStateController = {
   composerImages: ComposerImage[];
   setComposerImages: Dispatch<SetStateAction<ComposerImage[]>>;
   composerFiles: ComposerFile[];
+  composerSelections: ResponseSelection[];
+  setComposerSelections: Dispatch<SetStateAction<ResponseSelection[]>>;
   setComposerFiles: Dispatch<SetStateAction<ComposerFile[]>>;
   splitComposerDrafts: Record<ConversationPaneID, ComposerDraftState>;
   setSplitComposerDrafts: Dispatch<
@@ -97,7 +99,6 @@ export async function buildComposerAttachments(
 
 async function attachComposerAttachmentFilesToDraft(
   files: File[],
-  setStatus: ComposerDraftStatusSetter,
   targets: ComposerAttachmentTargets,
 ): Promise<void> {
   if (files.length === 0) {
@@ -106,7 +107,7 @@ async function attachComposerAttachmentFilesToDraft(
   const imageFiles = files.filter(isComposerImageFile);
   const documentFiles = files.filter(isComposerDocumentFile);
   if (imageFiles.length === 0 && documentFiles.length === 0) {
-    setStatus(localizedText("composer.attachment.imagesAndPdfOnly"));
+    showErrorToast(translateCurrent("composer.attachment.imagesAndPdfOnly"));
     return;
   }
   try {
@@ -117,15 +118,11 @@ async function attachComposerAttachmentFilesToDraft(
       targets.onFile,
     );
   } catch (error) {
-    setStatus(error instanceof Error ? error.message : translateCurrent("composer.attachment.addFailed"));
+    showErrorToast(error, translateCurrent("composer.attachment.addFailed"));
   }
 }
 
-export function useComposerDraftState({
-  setStatus,
-}: {
-  setStatus: ComposerDraftStatusSetter;
-}): ComposerDraftStateController {
+export function useComposerDraftState(): ComposerDraftStateController {
   const [prompt, setPromptState] = useState("");
   const [promptRevision, setPromptRevision] = useState(0);
   const promptRef = useRef("");
@@ -172,11 +169,12 @@ export function useComposerDraftState({
   useEffect(() => cancelPromptCommit, [cancelPromptCommit]);
   const [composerImages, setComposerImages] = useState<ComposerImage[]>([]);
   const [composerFiles, setComposerFiles] = useState<ComposerFile[]>([]);
+  const [composerSelections, setComposerSelections] = useState<ResponseSelection[]>([]);
   const [splitComposerDrafts, setSplitComposerDrafts] = useState<
     Record<ConversationPaneID, ComposerDraftState>
   >(initialSplitComposerDrafts);
   async function attachComposerAttachmentFiles(files: File[]): Promise<void> {
-    await attachComposerAttachmentFilesToDraft(files, setStatus, {
+    await attachComposerAttachmentFilesToDraft(files, {
       onImagePlaceholder: (placeholder) =>
         setComposerImages((current) => [...current, placeholder]),
       onImageEncoded: (encoded) =>
@@ -225,7 +223,7 @@ export function useComposerDraftState({
     pane: ConversationPaneID,
     files: File[],
   ): Promise<void> {
-    await attachComposerAttachmentFilesToDraft(files, setStatus, {
+    await attachComposerAttachmentFilesToDraft(files, {
       onImagePlaceholder: (placeholder) =>
         updateSplitComposerDraft(pane, (draft) => ({
           ...draft,
@@ -278,6 +276,7 @@ export function useComposerDraftState({
       prompt: promptRef.current,
       images: composerImages,
       files: composerFiles,
+      selections: composerSelections,
     });
   }
 
@@ -286,6 +285,7 @@ export function useComposerDraftState({
     setPrompt(nextDraft.prompt);
     setComposerImages(nextDraft.images);
     setComposerFiles(nextDraft.files);
+    setComposerSelections(nextDraft.selections ?? []);
   }
 
   return {
@@ -297,6 +297,8 @@ export function useComposerDraftState({
     setComposerImages,
     composerFiles,
     setComposerFiles,
+    composerSelections,
+    setComposerSelections,
     splitComposerDrafts,
     setSplitComposerDrafts,
     attachComposerAttachmentFiles,

@@ -1,14 +1,17 @@
-import { act, createElement } from "react";
+import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ComposerDraftState } from "./AppState";
+import { cloneSessionTabDraft, createDraftSessionTab, initialState, type AppState } from "./AppState";
+import { createWorkspaceActions } from "./WorkspaceActions";
 import type { ComposerFile, ComposerImage } from "./ComposerMessages";
 import {
   COMPOSER_PROMPT_IDLE_COMMIT_MS,
   useComposerDraftState,
   type ComposerDraftStateController,
 } from "./ComposerDraftState";
-import { resolveLocalizedText } from "./i18n";
+import { clearToasts, ToastViewport } from "./Toast";
+import { WuuUIRoot } from "./ui/layers/UILayerHost";
 
 let mountedRoots: Root[] = [];
 let cleanupCallbacks: Array<() => void> = [];
@@ -20,6 +23,7 @@ afterEach(() => {
   mountedRoots = [];
   for (const cleanup of cleanupCallbacks.splice(0)) cleanup();
   document.body.innerHTML = "";
+  clearToasts();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -31,13 +35,11 @@ async function flushEffects(): Promise<void> {
 
 async function renderComposerDraftState(): Promise<{
   get: () => ComposerDraftStateController;
-  setStatus: ReturnType<typeof vi.fn>;
 }> {
   let latest: ComposerDraftStateController | undefined;
-  const setStatus = vi.fn();
 
   function Probe() {
-    latest = useComposerDraftState({ setStatus });
+    latest = useComposerDraftState();
     return null;
   }
 
@@ -47,7 +49,7 @@ async function renderComposerDraftState(): Promise<{
   mountedRoots.push(root);
 
   await act(async () => {
-    root.render(createElement(Probe));
+    root.render(<WuuUIRoot><Probe /><ToastViewport /></WuuUIRoot>);
     await flushEffects();
   });
 
@@ -58,7 +60,6 @@ async function renderComposerDraftState(): Promise<{
       }
       return latest;
     },
-    setStatus,
   };
 }
 
@@ -121,19 +122,61 @@ function stubFileReader(result: string): void {
 }
 
 describe("useComposerDraftState", () => {
-  it("rejects unsupported primary composer attachments without changing the draft", async () => {
+  it("persists the complete draft before opening skills and clears the primary composer", async () => {
+    const hook = await renderComposerDraftState();
+    const draft = { prompt: "Question", images: [], files: [], selections: [{ id: "quote", text: "Answer", source: { thread_id: "a", turn_id: "t", item_id: "i", start_offset: 0, end_offset: 6 } }] };
+    await act(async () => hook.get().restorePrimaryComposerDraft(draft));
+    const context = { kind: "no_project" as const, cwd: "/tmp" };
+    let state: AppState = { ...initialState, activeContext: context, activeSessionTabID: "draft", sessionTabs: [createDraftSessionTab("draft", context)] };
+    const actions = createWorkspaceActions({
+      getAppState: () => state,
+      setAppState: (update) => { state = typeof update === "function" ? update(state) : update; },
+      getActiveTitle: () => "Draft",
+      getPrimaryComposerDraft: () => hook.get().currentPrimaryComposerDraft(),
+      restorePrimaryComposerDraft: (value) => hook.get().restorePrimaryComposerDraft(value),
+      setSplitComposerDrafts: (value) => hook.get().setSplitComposerDrafts(value),
+      cancelViewSwitch: vi.fn(), setContextCompositionEntries: vi.fn(), setInstructionFilesEntries: vi.fn(),
+      scheduleStreamScroll: vi.fn(), closeWorkspaceMenus: vi.fn(), setSettingsInitialPage: vi.fn(), setSettingsOpen: vi.fn(),
+    });
+    await act(async () => actions.openSkillsTab());
+    expect(cloneSessionTabDraft(state.sessionTabs.find(tab => tab.id === "draft")!)).toEqual(draft);
+    expect(hook.get().currentPrimaryComposerDraft()).toEqual({ prompt: "", images: [], files: [] });
+    expect(hook.get().composerSelections).toEqual([]);
+  });
+
+  it("keeps response selections independent across restored and split drafts", async () => {
+    const hook = await renderComposerDraftState();
+    const selection = { id: "quote-a", text: "同一段 🌊", comment: "Why?", source: { thread_id: "a", turn_id: "turn", item_id: "answer", start_offset: 8, end_offset: 14 } };
+    const original = { prompt: "Compare", images: [], files: [], selections: [selection] };
+    await act(async () => { hook.get().restorePrimaryComposerDraft(original); });
+    const saved = hook.get().currentPrimaryComposerDraft();
+    await act(async () => { hook.get().restorePrimaryComposerDraft({ prompt: "Other thread", images: [], files: [] }); });
+    expect(hook.get().currentPrimaryComposerDraft().selections ?? []).toEqual([]);
+    await act(async () => {
+      hook.get().setSplitComposerDrafts({ primary: { prompt: "Other", images: [], files: [] }, secondary: saved });
+    });
+    await act(async () => { hook.get().moveSplitDraftToGlobalComposer("secondary"); });
+    expect(hook.get().currentPrimaryComposerDraft()).toEqual(original);
+    expect(hook.get().splitComposerDrafts.secondary.selections ?? []).toEqual([]);
+    expect(hook.get().currentPrimaryComposerDraft().selections?.[0]).not.toBe(selection);
+  });
+
+  it.each(["global", "primary", "secondary"] as const)("rejects unsupported %s attachments with a toast without changing the draft", async (pane) => {
     const hook = await renderComposerDraftState();
     const unsupported = new File(["hello"], "notes.txt", { type: "text/plain" });
 
     await act(async () => {
-      await hook.get().attachComposerAttachmentFiles([unsupported]);
+      if (pane === "global") await hook.get().attachComposerAttachmentFiles([unsupported]);
+      else await hook.get().attachSplitComposerAttachmentFiles(pane, [unsupported]);
     });
 
-    expect(resolveLocalizedText(hook.setStatus.mock.calls[0][0] as string)).toBe(
-      "仅支持图片、PDF 和视频附件",
-    );
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
     expect(hook.get().composerImages).toEqual([]);
     expect(hook.get().composerFiles).toEqual([]);
+    expect(hook.get().splitComposerDrafts.primary.images).toEqual([]);
+    expect(hook.get().splitComposerDrafts.primary.files).toEqual([]);
+    expect(hook.get().splitComposerDrafts.secondary.images).toEqual([]);
+    expect(hook.get().splitComposerDrafts.secondary.files).toEqual([]);
   });
 
   it("attaches PDF files to the primary composer draft", async () => {
@@ -152,7 +195,7 @@ describe("useComposerDraftState", () => {
       await flushEffects();
     });
 
-    expect(hook.setStatus).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="alert"]')).toBeNull();
     expect(hook.get().composerFiles).toHaveLength(1);
     expect(hook.get().composerFiles[0]).toMatchObject({
       media_type: "application/pdf",
@@ -174,9 +217,7 @@ describe("useComposerDraftState", () => {
     });
 
     expect(arrayBuffer).not.toHaveBeenCalled();
-    expect(resolveLocalizedText(hook.setStatus.mock.calls[0][0] as string)).toBe(
-      "「huge.pdf」超过 PDF 20MB 大小上限",
-    );
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("huge.pdf");
     expect(hook.get().composerFiles).toEqual([]);
     expect(hook.get().composerImages).toEqual([]);
   });

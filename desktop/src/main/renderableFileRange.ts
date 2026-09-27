@@ -1,16 +1,14 @@
 import { createReadStream, statSync } from "node:fs";
 import { Readable } from "node:stream";
 
-// Chromium's built-in PDF viewer issues byte-range requests once the
-// response advertises `Accept-Ranges: bytes`. Without range support the
-// viewer has to download the whole document before it can render the first
-// page; with it, the first page renders after the first chunk + xref fetch.
+// PDF previews and media seeking use byte ranges to avoid downloading the
+// entire file before displaying a page or playing from a new position.
 
 export type ByteRange = { start: number; end: number };
 
 // Parses a single `Range: bytes=...` header. Multi-range requests are
-// ignored (callers fall back to a full 200 body) because PDF viewers never
-// send them and multipart/byteranges bodies are not worth the complexity.
+// ignored (callers fall back to a full 200 body); PDF.js and Chromium media
+// loading use single ranges, so multipart bodies are unnecessary here.
 export function parseByteRangeHeader(
   header: string | null,
   size: number,
@@ -52,9 +50,9 @@ export function parseByteRangeHeader(
   return { start, end: Math.min(end, size - 1) };
 }
 
-export function pdfResponseHeaders(base?: HeadersInit): Headers {
+export function renderableResponseHeaders(mimeType: string, base?: HeadersInit): Headers {
   const headers = new Headers(base);
-  headers.set("content-type", "application/pdf");
+  headers.set("content-type", mimeType);
   headers.set("access-control-allow-origin", "*");
   headers.set("accept-ranges", "bytes");
   return headers;
@@ -63,7 +61,7 @@ export function pdfResponseHeaders(base?: HeadersInit): Headers {
 // Serves the byte range named by the request's Range header, or returns
 // undefined when the header is absent/unparseable and the caller should
 // fall back to a full-body response.
-export function rangedPdfResponse(request: Request, filePath: string): Response | undefined {
+export function rangedFileResponse(request: Request, filePath: string, mimeType: string): Response | undefined {
   const rangeHeader = request.headers.get("range");
   if (!rangeHeader) {
     return undefined;
@@ -81,7 +79,7 @@ export function rangedPdfResponse(request: Request, filePath: string): Response 
   if (range === "unsatisfiable") {
     return new Response("Range not satisfiable", {
       status: 416,
-      headers: pdfResponseHeaders({ "content-range": `bytes */${size}` }),
+      headers: renderableResponseHeaders(mimeType, { "content-range": `bytes */${size}` }),
     });
   }
   const body = Readable.toWeb(
@@ -89,7 +87,7 @@ export function rangedPdfResponse(request: Request, filePath: string): Response 
   ) as unknown as ReadableStream;
   return new Response(body, {
     status: 206,
-    headers: pdfResponseHeaders({
+    headers: renderableResponseHeaders(mimeType, {
       "content-range": `bytes ${range.start}-${range.end}/${size}`,
       "content-length": String(range.end - range.start + 1),
     }),

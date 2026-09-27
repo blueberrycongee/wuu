@@ -122,6 +122,20 @@ func (e *sessionToolPolicyExecutor) ExecuteResult(ctx context.Context, call prov
 	return toolresult.FromText(text), err
 }
 
+func (e *sessionToolPolicyExecutor) FinalizeToolResult(call providers.ToolCall, result toolresult.Result) toolresult.Result {
+	if !e.allowed("read_file") {
+		// A restricted session cannot follow archive cursors. Preserve its full
+		// evidence instead of advertising recovery that the policy forbids.
+		result = result.Clone()
+		result.ModelText = nil
+		return result
+	}
+	if finalizer, ok := e.base.(agent.ToolResultFinalizer); ok {
+		return finalizer.FinalizeToolResult(call, result)
+	}
+	return result
+}
+
 func (e *sessionToolPolicyExecutor) SupportsTool(name string) bool {
 	if !e.allowed(name) {
 		return false

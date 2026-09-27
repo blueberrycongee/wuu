@@ -7,7 +7,6 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/blueberrycongee/wuu/internal/imageproc"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -17,6 +16,19 @@ import (
 const (
 	attachmentFallbackTokenEstimate = 2000
 	toolDefinitionOverhead          = 500
+	// JSONNonCJKTokenNumerator/JSONNonCJKTokenDenominator estimate ASCII JSON
+	// at 10/28 chars per token (~2.8). Keep callers on these constants so a
+	// later calibration does not leave byte-length estimates on /3.
+	JSONNonCJKTokenNumerator   = 10
+	JSONNonCJKTokenDenominator = 28
+	// AssistantNonCJKTokenNumerator/AssistantNonCJKTokenDenominator estimate
+	// assistant and reasoning ASCII denser than ordinary prose. grok-4.6 counted
+	// long coding transcripts about 9% higher than the 4 chars/token heuristic,
+	// which kept local usage under the compact threshold until the provider
+	// rejected the prompt. 10/36 (~3.6 chars/token) covers that undercount
+	// without treating assistant text as JSON.
+	AssistantNonCJKTokenNumerator   = 10
+	AssistantNonCJKTokenDenominator = 36
 )
 
 // EstimateTokens provides a rough token count estimate.
@@ -45,17 +57,50 @@ func EstimateTokens(text string) int {
 	return (nonCJK / 4) + (cjkCount*7)/10 + 1
 }
 
-// EstimateJSONTokens estimates tokens for JSON content, which tokenizes
-// denser than prose because structural characters ({, }, :, ", ,) often
-// stand alone. Measured at ~3.0 chars/token on real tool-argument payloads
-// (2026-07-06 MiniMax probe: est/real 1.51 with the former /2, 1.00 with
-// /3), so /3 keeps estimates honest without the old 1.5-2x inflation that
-// pushed tool-heavy sessions into premature compaction.
+// EstimateAssistantTokens estimates assistant and reasoning text. grok-4.6
+// counted long coding transcripts denser than the prose heuristic, including
+// reasoning that still used EstimateTokens. Keep CJK at 0.7 so mixed payloads
+// are not undercounted.
+func EstimateAssistantTokens(text string) int {
+	if text == "" {
+		return 0
+	}
+
+	var cjkCount, totalChars int
+	for _, r := range text {
+		totalChars++
+		if isCJK(r) {
+			cjkCount++
+		}
+	}
+
+	nonCJK := totalChars - cjkCount
+	return (nonCJK*AssistantNonCJKTokenNumerator)/AssistantNonCJKTokenDenominator + (cjkCount*7)/10 + 1
+}
+
+// EstimateJSONTokens estimates tokens for JSON and other punctuation-heavy
+// tool payloads. Structural characters often stand alone, so ASCII is denser
+// than prose. The 2026-07-06 MiniMax probe measured tool-argument JSON at
+// ~3.0 chars/token; a later grok-4.6 named-agent overflow counted JSON tool
+// results about 30% higher than the prose estimator (~2.8 chars/token).
+// Using 10/28 for non-CJK keeps that observed density with a small buffer,
+// while CJK keeps the prose 0.7 tokens/char coefficient so mixed payloads
+// are not undercounted.
 func EstimateJSONTokens(text string) int {
 	if text == "" {
 		return 0
 	}
-	return utf8.RuneCountInString(text)/3 + 1
+
+	var cjkCount, totalChars int
+	for _, r := range text {
+		totalChars++
+		if isCJK(r) {
+			cjkCount++
+		}
+	}
+
+	nonCJK := totalChars - cjkCount
+	return (nonCJK*JSONNonCJKTokenNumerator)/JSONNonCJKTokenDenominator + (cjkCount*7)/10 + 1
 }
 
 // EstimateMessagesTokens estimates total tokens for a message list.
@@ -63,8 +108,10 @@ func EstimateMessagesTokens(messages []providers.ChatMessage) int {
 	total := 0
 	hasTools := false
 	for _, msg := range messages {
-		total += EstimateTokens(msg.Content)
-		total += EstimateTokens(msg.ReasoningContent)
+		total += estimateMessageBodyTokens(msg)
+		if msg.ReasoningContent != "" {
+			total += EstimateAssistantTokens(msg.ReasoningContent)
+		}
 		total += 4
 		for _, tc := range msg.ToolCalls {
 			hasTools = true
@@ -145,6 +192,27 @@ func ceilDivUint32(n, d uint32) int {
 		return 0
 	}
 	return int((uint64(n) + uint64(d) - 1) / uint64(d))
+}
+
+func estimateMessageBodyTokens(msg providers.ChatMessage) int {
+	body := msg.Content
+	role := strings.TrimSpace(msg.Role)
+	if strings.EqualFold(role, "assistant") {
+		return EstimateAssistantTokens(body)
+	}
+	if !strings.EqualFold(role, "tool") {
+		return EstimateTokens(body)
+	}
+	if msg.ToolResult != nil {
+		if projected := strings.TrimSpace(msg.ToolResult.TextProjection()); projected != "" {
+			body = projected
+		}
+	}
+	// Tool results are punctuation-heavy even when they are not valid JSON
+	// (logs, envelopes, truncated payloads). Validating megabyte bodies just
+	// to choose an estimator is too expensive and undercounts the JSON-like
+	// cases that delay compaction.
+	return EstimateJSONTokens(body)
 }
 
 func isCJK(r rune) bool {

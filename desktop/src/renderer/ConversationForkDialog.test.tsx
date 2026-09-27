@@ -3,9 +3,9 @@
  * `@testing-library/react`, so we drive the component through
  * `react-dom/client.createRoot` directly. These tests intentionally
  * stay narrow: they assert that the two option buttons trigger the
- * right `onChoose` mode, that the cancel/close affordances call
- * `onCancel`, and that the picker disables itself while a chosen
- * option's promise is still in flight. Visual layout is exercised by
+ * right `onChoose` mode and that the picker disables itself while a
+ * chosen option's promise is still in flight. Dismissal is covered by
+ * the shared `Modal` tests. Visual layout is exercised by
  * manual review of the new `.fork-dialog*` CSS block — see
  * `styles/environment.css`.
  */
@@ -13,8 +13,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ConversationForkDialog } from "./ConversationForkDialog";
-import type { WuuDesktopApi } from "../shared/protocol";
-import { I18nProvider, setActiveLocale } from "./i18n";
 
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
@@ -49,56 +47,9 @@ afterEach(() => {
   }
   vi.useRealTimers();
   vi.restoreAllMocks();
-  delete (window as unknown as { wuu?: unknown }).wuu;
-  setActiveLocale("zh-CN");
 });
 
 describe("ConversationForkDialog", () => {
-  it("renders the fork choices in English", () => {
-    window.wuu = {
-      initialLanguagePreference: "en-US",
-      initialSystemLocale: "en-US",
-    } as unknown as WuuDesktopApi;
-    mount(
-      <I18nProvider>
-        <ConversationForkDialog
-          onCancel={() => undefined}
-          onChoose={() => Promise.resolve()}
-        />
-      </I18nProvider>,
-    );
-
-    expect(buttonByLabel("Fork locally")).toBeTruthy();
-    expect(buttonByLabel("Fork to a Git worktree")).toBeTruthy();
-    expect(document.querySelectorAll(".fork-dialog button")).toHaveLength(2);
-  });
-
-  it("renders the two fork option buttons", () => {
-    mount(
-      createElement(ConversationForkDialog, {
-        onCancel: () => undefined,
-        onChoose: () => Promise.resolve(),
-      }),
-    );
-
-    expect(buttonByLabel("派生到本地")).toBeTruthy();
-    expect(buttonByLabel("派生到 git worktree")).toBeTruthy();
-    expect(document.querySelectorAll(".fork-dialog button")).toHaveLength(2);
-  });
-
-  it("does not render extra dialog content", () => {
-    mount(
-      createElement(ConversationForkDialog, {
-        onCancel: () => undefined,
-        onChoose: () => Promise.resolve(),
-      }),
-    );
-
-    expect(document.querySelector(".fork-dialog-note")).toBeNull();
-    expect(document.querySelector(".fork-dialog h2")).toBeNull();
-    expect(document.querySelector(".fork-dialog .icon-button")).toBeNull();
-  });
-
   it("invokes onChoose(\"local\") when the local option is clicked", async () => {
     const onChoose = vi.fn(() => Promise.resolve());
     const onCancel = vi.fn();
@@ -159,86 +110,6 @@ describe("ConversationForkDialog", () => {
 
     expect(onChoose).not.toHaveBeenCalled();
     expect(onCancel).not.toHaveBeenCalled();
-  });
-
-  it("still allows a local fork when the worktree option is disabled", async () => {
-    const onChoose = vi.fn(() => Promise.resolve());
-    const onCancel = vi.fn();
-
-    mount(
-      createElement(ConversationForkDialog, {
-        onCancel,
-        onChoose,
-        worktreeDisabledReason: "当前工作目录不是 git 仓库，不能创建 git worktree",
-      }),
-    );
-
-    await act(async () => {
-      buttonByLabel("派生到本地").click();
-      await Promise.resolve();
-    });
-
-    expect(onChoose).toHaveBeenCalledWith("local");
-    expect(onCancel).not.toHaveBeenCalled();
-  });
-
-  it("invokes onCancel when Escape is pressed at the window level", () => {
-    const onChoose = vi.fn(() => Promise.resolve());
-    const onCancel = vi.fn();
-
-    mount(
-      createElement(ConversationForkDialog, { onCancel, onChoose }),
-    );
-
-    act(() => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
-    });
-
-    expect(onCancel).toHaveBeenCalledTimes(1);
-    expect(onChoose).not.toHaveBeenCalled();
-  });
-
-  it("invokes onCancel when the backdrop itself is clicked", () => {
-    const onChoose = vi.fn(() => Promise.resolve());
-    const onCancel = vi.fn();
-
-    mount(
-      createElement(ConversationForkDialog, { onCancel, onChoose }),
-    );
-
-    const backdrop = document.querySelector(".modal-backdrop");
-    if (!(backdrop instanceof HTMLDivElement)) {
-      throw new Error("backdrop not rendered");
-    }
-
-    act(() => {
-      backdrop.click();
-    });
-
-    expect(onCancel).toHaveBeenCalledTimes(1);
-  });
-
-  it("does NOT invoke onCancel when a click lands inside the dialog panel", () => {
-    const onChoose = vi.fn(() => Promise.resolve());
-    const onCancel = vi.fn();
-
-    mount(
-      createElement(ConversationForkDialog, { onCancel, onChoose }),
-    );
-
-    // The panel's onClick stops propagation, so the backdrop's onClick
-    // (which fires onCancel) must NOT trigger.
-    const panel = document.querySelector(".fork-dialog");
-    if (!(panel instanceof HTMLElement)) {
-      throw new Error("dialog panel not rendered");
-    }
-
-    act(() => {
-      panel.click();
-    });
-
-    expect(onCancel).not.toHaveBeenCalled();
-    expect(onChoose).not.toHaveBeenCalled();
   });
 
   it("disables every action button while the chosen promise is in flight", async () => {

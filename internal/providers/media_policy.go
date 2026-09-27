@@ -22,6 +22,32 @@ type MediaInputPolicy struct {
 	FileKnown  bool
 }
 
+// ValidateRequiredMedia prevents a task from continuing after selected evidence
+// is dropped. Unknown catalog capabilities retain the existing provider-validated
+// pass-through behavior; an explicit unsupported capability fails closed.
+func ValidateRequiredMedia(msgs []ChatMessage, policy MediaInputPolicy) error {
+	for _, msg := range msgs {
+		for _, image := range msg.Images {
+			if image.Required && policy.ImageKnown && !policy.Image {
+				return fmt.Errorf("required image input is not supported by the selected model; choose an image-capable model")
+			}
+		}
+		for _, file := range msg.Files {
+			if !file.Required {
+				continue
+			}
+			if IsVideoMediaType(file.MediaType) {
+				if policy.VideoKnown && !policy.Video {
+					return fmt.Errorf("required video input is not supported by the selected model and connection")
+				}
+			} else if policy.FileKnown && !policy.File {
+				return fmt.Errorf("required file input is not supported by the selected model; choose a file-capable model")
+			}
+		}
+	}
+	return nil
+}
+
 // MediaOmissionMarker renders the fixed short marker that replaces stripped
 // media in the model context. It intentionally carries no OCR, description,
 // base64, or dimensions, matching the chat_read marker agents already see.

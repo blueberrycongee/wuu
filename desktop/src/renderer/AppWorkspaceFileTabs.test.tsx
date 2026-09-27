@@ -36,7 +36,6 @@ vi.mock("./JumpToLatestPill", () => ({
 }));
 
 import { App, SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./App";
-import { RIGHT_PANEL_MOTION_MS } from "./AppLayoutState";
 import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
 import * as composerMessages from "./ComposerMessages";
 import { useFileSelectionActions, type FileSelectionSource } from "./FileSelectionContext";
@@ -50,6 +49,7 @@ vi.mock("./FileSelectionSurface", () => ({
     return <div>{children({})}</div>;
   },
 }));
+import { rightPanelMotionMs } from "./AppLayoutState";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -291,7 +291,7 @@ describe("workspace file tabs", () => {
     await flushAsync();
   }
 
-  it.each(["thread", "turn"] as const)("restores canonical comments and interleaved draft after first %s failure", async (failure) => {
+  it.each(["thread", "turn"] as const)("preserves file comments after first %s failure without replacing a newer draft", async (failure) => {
     await openSelectionDocument();
     const newConversation = container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建会话"]');
     expect(newConversation).not.toBeNull();
@@ -311,22 +311,24 @@ describe("workspace file tabs", () => {
     const next = selectionActions!.comments[0];
     if (failure === "thread") {
       await act(async () => threadStart.reject(new Error("offline")));
-      // The turn request was never reached, so do not reuse its deferred stub.
-      startTurnMock.mockReset().mockResolvedValue({ turn: completedThread().turns[0] });
     } else {
       await act(async () => threadStart.resolve({ thread: { ...completedThread(), id: "thread-selection-new", turns: [] } }));
       expect(startTurnMock).toHaveBeenCalledTimes(1);
-      expect(selectionActions!.comments).toEqual([next]);
       await act(async () => turnStart.reject(new Error("offline")));
+      expect(startTurnMock.mock.calls[0][6]).toEqual([original, { type: "text", text: "Original question" }]);
     }
     await flushAsync();
     expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value)
-      .toBe("Original question\nNext question");
-    expect(selectionActions!.comments).toEqual([original, next]);
-    await submitMainPrompt();
-    const retry = startTurnMock.mock.calls.at(-1)!;
-    expect(retry[6]).toEqual([original, next, { type: "text", text: "Original question\nNext question" }]);
-    expect(retry[1]).toBe(retry[6].map((part: { text: string }) => part.text).join("").trim());
+      .toBe("Next question");
+    expect(selectionActions!.comments).toEqual([next]);
+    if (failure === "thread") {
+      const recovery = document.querySelector<HTMLButtonElement>('[role="alert"] .archive-tip-action');
+      expect(recovery).not.toBeNull();
+      await act(async () => recovery!.click());
+      expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value)
+        .toBe("Original question");
+      expect(selectionActions!.comments).toEqual([original]);
+    }
   });
 
   it.each([
@@ -364,7 +366,7 @@ describe("workspace file tabs", () => {
     if (accepted) {
       const call = queued ? vi.mocked(window.wuu.queueTurn).mock.calls[0] : startTurnMock.mock.calls[0];
       expect(call[0]).toBe(secondary.id);
-      expect(call.at(-1)).toEqual([expect.objectContaining({ type: "file_selection", intent: "edit", source: selectionSource })]);
+      expect(call[queued ? 7 : 6]).toEqual([expect.objectContaining({ type: "file_selection", intent: "edit", source: selectionSource })]);
     }
     expect(panes[0].querySelector("textarea")!.value).toBe("Primary draft");
     expect(panes[1].querySelector("textarea")!.value).toBe("Secondary draft");
@@ -457,7 +459,7 @@ describe("workspace file tabs", () => {
     }]);
   });
 
-  it("restores failed queue metadata without overwriting a comment entered during submission", async () => {
+  it("keeps new file comments when a queued selection send fails", async () => {
     await openSelectionDocument();
     const running: Thread = { ...completedThread(), status: "in_progress", turns: [
       ...completedThread().turns,
@@ -474,18 +476,18 @@ describe("workspace file tabs", () => {
     await typeMainPrompt("Queued question");
     act(() => selectionActions!.addComment(selectionSource, "Queued comment"));
     const original = selectionActions!.comments[0];
-    await submitMainPrompt("Tab");
+    await act(async () => container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!
+      .dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true })));
+    await flushAsync();
     expect(window.wuu.queueTurn).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(window.wuu.queueTurn).mock.calls[0][7]).toEqual([original, { type: "text", text: "Queued question" }]);
     await typeMainPrompt("New question");
     act(() => selectionActions!.addComment(selectionSource, "New comment"));
     const next = selectionActions!.comments[0];
     await act(async () => queued.reject(new Error("offline")));
-    expect(selectionActions!.comments).toEqual([original, next]);
+    expect(selectionActions!.comments).toEqual([next]);
     expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value)
-      .toBe("Queued question\nNew question");
-    await submitMainPrompt("Tab");
-    expect(vi.mocked(window.wuu.queueTurn).mock.calls.at(-1)![7])
-      .toEqual([original, next, { type: "text", text: "Queued question\nNew question" }]);
+      .toBe("New question");
   });
 
   it("opens a document beside the active conversation instead of replacing it", async () => {
@@ -528,7 +530,7 @@ describe("workspace file tabs", () => {
     expect(rightFilePreview?.textContent).toContain("Artifact");
 
     act(() => {
-      vi.advanceTimersByTime(RIGHT_PANEL_MOTION_MS);
+      vi.advanceTimersByTime(rightPanelMotionMs());
     });
     const shell = container.querySelector<HTMLElement>(".app-shell");
     expect(shell?.classList.contains("right-panel-animating")).toBe(false);
@@ -600,13 +602,16 @@ describe("workspace file tabs", () => {
       "Rewrite the weak section.",
       [],
       [],
-      "standard",
+      undefined,
       { path: "README.md" },
+      undefined,
+      { kind: "no_project", cwd: "/tmp/wuu-artifact-tab-test" },
+      expect.any(String),
     );
     expect(container.querySelector('[data-testid="workspace-document-turn-drawer"]')).not.toBeNull();
 
     act(() => {
-      vi.advanceTimersByTime(RIGHT_PANEL_MOTION_MS);
+      vi.advanceTimersByTime(rightPanelMotionMs());
     });
     expect(shell?.classList.contains("right-panel-animating")).toBe(false);
 
@@ -634,7 +639,7 @@ describe("workspace file tabs", () => {
     });
     await flushAsync();
     act(() => {
-      vi.advanceTimersByTime(RIGHT_PANEL_MOTION_MS);
+      vi.advanceTimersByTime(rightPanelMotionMs());
     });
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[aria-label="展开为全面板"]')?.click();

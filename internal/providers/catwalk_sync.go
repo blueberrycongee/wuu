@@ -94,13 +94,6 @@ func (s *CatwalkSync) Refresh(ctx context.Context) error {
 	return s.fetchOnce(ctx)
 }
 
-// CachedETag returns the most recently stored ETag (empty if none).
-func (s *CatwalkSync) CachedETag() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.etag
-}
-
 func (s *CatwalkSync) populate(ctx context.Context) {
 	// Step 1: load whatever's on disk, or fall back to embedded.
 	cached, etag, _ := s.loadCache()

@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clampWorkspaceFileTreeWidth,
+  WORKSPACE_FILE_CONTENT_MIN_WIDTH,
   WORKSPACE_FILE_TREE_DEFAULT_WIDTH,
   WORKSPACE_FILE_TREE_MAX_WIDTH,
   WORKSPACE_FILE_TREE_MIN_WIDTH,
@@ -12,6 +13,7 @@ import {
 import type { RuntimeContext } from "../shared/protocol";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import {
+  workspaceArtifactViewTab,
   workspaceDiffViewTab,
   workspaceFileViewTab,
   workspaceToolViewTab,
@@ -26,8 +28,19 @@ import { WorkbenchController } from "./plugins/Workbench";
 // (activeContext vs workspaceContext) actually reached the terminal panel,
 // without pulling in the real xterm/node-pty-backed component.
 vi.mock("./WorkspaceTerminalPanel", () => ({
-  WorkspaceTerminalPanel: ({ activeContext }: { activeContext?: RuntimeContext }) => (
-    <div data-testid="terminal-panel" data-cwd={activeContext?.cwd ?? ""} />
+  preloadWorkspaceTerminalRuntime: () => undefined,
+  WorkspaceTerminalPanel: ({
+    active = true,
+    activeContext,
+  }: {
+    active?: boolean;
+    activeContext?: RuntimeContext;
+  }) => (
+    <div
+      data-testid="terminal-panel"
+      data-active={active ? "true" : "false"}
+      data-cwd={activeContext?.cwd ?? ""}
+    />
   ),
 }));
 
@@ -227,6 +240,22 @@ describe("WorkspaceRightPanel", () => {
     await act(async () => presentationHost?.invoke("header.close-tab", { tabId: tab.id }));
     expect(onSelectTab).toHaveBeenCalledWith(tab.id);
     expect(onCloseTab).toHaveBeenCalledWith(tab.id);
+    const onOpenTool = vi.fn();
+    onCloseTab.mockClear();
+    act(() => root?.render(
+      <WorkspaceRightPanel {...baseProps()} compactNavigation tabs={[tab]} activeTabID={tab.id}
+        onOpenTool={onOpenTool} onCloseTab={onCloseTab}
+        pluginHost={pluginHost} workbenchController={workbenchController} />,
+    ));
+    expect(snapshots.at(-1)?.tabs).toBeUndefined();
+    expect(presentationHost?.actions).not.toContain("header.select-tab");
+    expect(presentationHost?.actions).not.toContain("header.close-tab");
+    await expect(presentationHost!.invoke("header.select-tab", { tabId: tab.id })).rejects.toThrow();
+    expect(snapshots.at(-1)?.canNavigateBack).toBe(true);
+    await act(async () => presentationHost?.invoke("header.navigate-back"));
+    expect(onOpenTool).toHaveBeenCalledWith("files");
+    act(() => container?.querySelector<HTMLButtonElement>(".workspace-panel-close-tab")?.click());
+    expect(onCloseTab).toHaveBeenCalledWith(tab.id);
   });
 
   it("prewarms the hidden lightweight body during idle time", () => {
@@ -362,6 +391,45 @@ describe("WorkspaceRightPanel", () => {
     const panel = container?.querySelector<HTMLElement>(".workspace-right-panel");
     expect(panel?.hasAttribute("inert")).toBe(true);
     expect(panel?.querySelector(".workspace-monaco-editor")).toBeNull();
+  });
+
+  it("pauses a retained artifact video when the panel closes without resuming on reopen", async () => {
+    const fileTab = workspaceFileViewTab({
+      context: { kind: "project", project_id: "project-1", cwd: "/repo/project" },
+      path: "src/App.tsx",
+    });
+    const artifactTab = workspaceArtifactViewTab({
+      threadID: "thread-1",
+      artifact: {
+        id: "video", itemId: "delivery", index: 0, type: "file",
+        name: "clip.webm", mimeType: "video/webm", placement: "turn_end",
+        uri: "wuu-artifact://workspace/thread/snapshot/clip.webm?sha256=hash",
+      },
+    });
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const props = { ...baseProps(), tabs: [fileTab, artifactTab], activeTabID: artifactTab.id };
+    try {
+      mount(<WorkspaceRightPanel {...props} />);
+      await act(async () => Promise.resolve());
+      const video = container!.querySelector("video")!;
+      expect(video).not.toBeNull();
+      expect(pause).not.toHaveBeenCalled();
+      await act(async () => video.play());
+      play.mockClear();
+
+      await act(async () => root!.render(<WorkspaceRightPanel {...props} open={false} present={false} />));
+      expect(container!.querySelector("video")).toBe(video);
+      expect(pause).toHaveBeenCalledTimes(1);
+      expect(pause.mock.contexts[0]).toBe(video);
+
+      await act(async () => root!.render(<WorkspaceRightPanel {...props} />));
+      expect(container!.querySelector("video")).toBe(video);
+      expect(play).not.toHaveBeenCalled();
+    } finally {
+      pause.mockRestore();
+      play.mockRestore();
+    }
   });
 
   it("renders file content on the left and the persistent file tree on the right", async () => {
@@ -646,6 +714,56 @@ describe("WorkspaceRightPanel", () => {
       panelWidth = 600;
       act(() => resizeCallback?.([], {} as ResizeObserver));
       expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe("320px");
+    } finally {
+      if (originalResizeObserver) {
+        globalThis.ResizeObserver = originalResizeObserver;
+      } else {
+        Reflect.deleteProperty(globalThis, "ResizeObserver");
+      }
+    }
+  });
+
+  it("fits the stored tree width when a panel that started closed opens", async () => {
+    const originalResizeObserver = globalThis.ResizeObserver;
+    let resizeCallback: ResizeObserverCallback | undefined;
+    class MockResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback;
+      }
+      observe(): void {}
+      disconnect(): void {}
+    }
+    globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
+
+    try {
+      window.localStorage.setItem("wuu.desktop.fileTreeWidth", "320");
+      const context: RuntimeContext = {
+        kind: "project",
+        project_id: "project-1",
+        cwd: "/repo/project",
+      };
+      const filesTab = workspaceToolViewTab("files");
+      const props = { ...baseProps(), workspaceContext: context };
+      mount(<WorkspaceRightPanel {...props} open={false} present={false} />);
+      await act(async () => Promise.resolve());
+      expect(container!.querySelector(".workspace-files-split")).toBeNull();
+
+      act(() => {
+        root!.render(
+          <WorkspaceRightPanel {...props} tabs={[filesTab]} activeTabID={filesTab.id} />,
+        );
+      });
+      await act(async () => Promise.resolve());
+
+      const split = container!.querySelector<HTMLElement>(".workspace-files-split")!;
+      Object.defineProperty(split, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ width: 479 }),
+      });
+      act(() => resizeCallback?.([], {} as ResizeObserver));
+      expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe(
+        `${479 - WORKSPACE_FILE_CONTENT_MIN_WIDTH}px`,
+      );
     } finally {
       if (originalResizeObserver) {
         globalThis.ResizeObserver = originalResizeObserver;
@@ -994,7 +1112,7 @@ describe("WorkspaceRightPanel context routing (Bug 3: worktree-fork panel root)"
     );
 
     const panel = container?.querySelector<HTMLElement>(".workspace-right-panel");
-    expect(panel?.textContent).toContain("没有项目");
+    expect(panel?.textContent).toContain("没有工作区");
   });
 
   it("roots the terminal on workspaceContext, not activeContext", async () => {
@@ -1019,5 +1137,55 @@ describe("WorkspaceRightPanel context routing (Bug 3: worktree-fork panel root)"
     expect(container?.querySelector(".workspace-right-panel.detail.terminal")).not.toBeNull();
     const terminalPanel = container?.querySelector<HTMLElement>('[data-testid="terminal-panel"]');
     expect(terminalPanel?.getAttribute("data-cwd")).toBe(worktreeContext.cwd);
+    expect(document.querySelector(".view-switch-loading")).toBeNull();
+  });
+
+  it("keeps the terminal inside the panel when another workspace tab is selected", async () => {
+    const terminalTab = workspaceToolViewTab("terminal");
+    const filesTab = workspaceToolViewTab("files");
+
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={[terminalTab, filesTab]}
+        activeTabID={terminalTab.id}
+        workspaceContext={projectContext}
+      />,
+    );
+    await act(async () => {});
+    const terminalPanel = container?.querySelector<HTMLElement>('[data-testid="terminal-panel"]');
+    expect(terminalPanel?.getAttribute("data-active")).toBe("true");
+    expect(terminalPanel?.closest(".workspace-right-panel")).not.toBeNull();
+    expect(document.querySelector(".view-switch-loading")).toBeNull();
+
+    await act(async () => {
+      root?.render(
+        <WorkspaceRightPanel
+          {...baseProps()}
+          tabs={[terminalTab, filesTab]}
+          activeTabID={filesTab.id}
+          workspaceContext={projectContext}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const held = container?.querySelector<HTMLElement>('[data-testid="terminal-panel"]');
+    expect(held).toBe(terminalPanel);
+    expect(held?.getAttribute("data-active")).toBe("false");
+    expect(held?.closest(".workspace-panel-content-swap")?.hasAttribute("hidden")).toBe(true);
+
+    await act(async () => {
+      root?.render(
+        <WorkspaceRightPanel
+          {...baseProps()}
+          tabs={[filesTab]}
+          activeTabID={filesTab.id}
+          workspaceContext={projectContext}
+        />,
+      );
+      await Promise.resolve();
+    });
+    expect(container?.querySelector('[data-testid="terminal-panel"]')).toBeNull();
   });
 });

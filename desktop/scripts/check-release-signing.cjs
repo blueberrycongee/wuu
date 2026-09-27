@@ -4,7 +4,7 @@ function releaseSigningIdentity(env = process.env) {
   const identity = env.WUU_RELEASE_SIGN_ID?.trim();
   // Pin a certificate fingerprint, never a name that could select a new key.
   if (!identity || !/^[A-Fa-f0-9]{40}$/.test(identity)) {
-    throw new Error("Set WUU_RELEASE_SIGN_ID to the persistent release certificate SHA-1 fingerprint. Ad-hoc release signing is not allowed.");
+    throw new Error("Set WUU_RELEASE_SIGN_ID to the persistent certificate SHA-1 fingerprint for certificate-backed signing.");
   }
   return identity.toUpperCase();
 }

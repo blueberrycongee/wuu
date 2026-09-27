@@ -1,4 +1,4 @@
-import { CornerDownRight, Github, Loader2, Sparkles } from "lucide-react";
+import { CornerDownRight, Github, Loader2, Sparkles } from "./WuuIcons";
 import {
   type FormEvent as ReactFormEvent,
   useState,

@@ -13,6 +13,7 @@ import {
   requestConversationTurnReveal,
   userMessageAnchorID,
 } from "./TurnViewHelpers";
+import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -91,55 +92,7 @@ function mountTurns(turns: Turn[], forcedFullTurnIDs?: string[]): void {
   );
 }
 
-function pendingSpawnTurn(): Turn {
-  const turn = makeTurn(1);
-  return {
-    ...turn,
-    items: [
-      ...turn.items.slice(0, 1),
-      {
-        id: "spawn-1",
-        type: "tool_call",
-        name: "spawn_agent",
-        status: "completed",
-        result: JSON.stringify({
-          agent_id: "worker-1",
-          task_name: "sleep_two_minutes",
-          status: "running",
-        }),
-      },
-      ...turn.items.slice(1),
-    ],
-  };
-}
-
 describe("ConversationTurnList", () => {
-  it("renders a pending spawn turn through the ordinary turn renderer", () => {
-    const turn = pendingSpawnTurn();
-    render(
-      <ConversationTurnList
-        threadID="thread-1"
-        turns={[turn]}
-        renderTurn={() => <div data-testid="ordinary-turn" />}
-      />,
-    );
-
-    expect(container.querySelector('[data-testid="ordinary-turn"]')).not.toBeNull();
-  });
-
-  it("keeps an ordinary single turn on the ordinary renderer", () => {
-    const turn = makeTurn(1);
-    render(
-      <ConversationTurnList
-        threadID="thread-1"
-        turns={[turn]}
-        renderTurn={() => <div data-testid="ordinary-turn" />}
-      />,
-    );
-
-    expect(container.querySelector('[data-testid="ordinary-turn"]')).not.toBeNull();
-  });
-
   it("renders all turns fully below the collapse threshold", () => {
     const turns = Array.from(
       { length: TURN_LIST_COLLAPSE_THRESHOLD },
@@ -187,6 +140,19 @@ describe("ConversationTurnList", () => {
     ).toBeNull();
     expect(container.querySelector(".conversation-turn-history-loader")).not.toBeNull();
   });
+
+  it.each([TURN_LIST_COLLAPSE_THRESHOLD, TURN_LIST_COLLAPSE_THRESHOLD + 10])(
+    "retains mounted replies when a queued turn appends to %s turns", count => {
+      const turns = Array.from({ length: count }, (_, index) => makeTurn(index));
+      render(turnList(turns));
+      const before = [...container.querySelectorAll('[data-testid="full-turn"]')];
+      render(turnList([...turns, makeTurn(count)]));
+      for (const node of before) {
+        expect(container.querySelector(`[data-testid="full-turn"][data-turn-id="${node.getAttribute("data-turn-id")}"]`)).toBe(node);
+      }
+      expect(container.querySelectorAll('[data-testid="full-turn"]')).toHaveLength(before.length + 1);
+    },
+  );
 
   it("loads earlier turns in bounded batches and expands a loaded turn", () => {
     const turns = Array.from(
@@ -279,6 +245,95 @@ describe("ConversationTurnList", () => {
     expect(scrollNode.querySelectorAll(".turn")).toHaveLength(
       TURN_LIST_INITIAL_TAIL_TURNS + TURN_LIST_PREPEND_BATCH_TURNS,
     );
+  });
+
+  it.each([0, 200, 500])("anchors a prepend during a gesture and tail growth (native adjustment: %s)", async (nativeAdjustment) => {
+    const prior = window.wuu;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const turns = [makeTurn(40), makeTurn(41)];
+    let tailGrowth = 0;
+    let appliedNativeAdjustment = false;
+    const view = (historyCursor?: string) => (
+      <ConversationTurnList
+        threadID="remote"
+        historyCursor={historyCursor}
+        turns={turns}
+        renderTurn={(turn) => <div data-turn-id={turn.id} ref={node => {
+          if (!node) return;
+          node.getBoundingClientRect = () => {
+            const index = [...container.querySelectorAll('[data-turn-id]')].indexOf(node);
+            const top = index * 500 - container.scrollTop;
+            return { top, bottom: top + 500, height: 500 } as DOMRect;
+          };
+          if (turn.id === "turn-39" && !appliedNativeAdjustment) {
+            appliedNativeAdjustment = true;
+            container.scrollTop += nativeAdjustment;
+          }
+        }}>{turn.id}</div>}
+      />
+    );
+    window.wuu = {
+      ...prior,
+      loadEarlierThreadHistory: async () => {
+        calls += 1;
+        await gate;
+        turns.unshift(makeTurn(39));
+        tailGrowth = 900;
+        root!.render(view());
+      },
+    };
+    container.className = "scroll-region";
+    Object.defineProperty(container, "scrollHeight", {
+      configurable: true,
+      get: () => container.querySelectorAll("[data-turn-id]").length * 500 + tailGrowth,
+    });
+    Object.defineProperty(container, "clientHeight", { configurable: true, value: 300 });
+    try {
+      render(view("cursor"));
+      container.scrollTop = 120;
+      await act(async () => {
+        container.dispatchEvent(new Event("scroll"));
+      });
+      expect(calls).toBe(1);
+
+      // The user continues the gesture while the request is pending.
+      container.scrollTop = 320;
+
+      await act(async () => {
+        release();
+      });
+      expect(container.scrollTop).toBe(820);
+      expect(container.querySelector('[data-turn-id="turn-40"]')!.getBoundingClientRect().top).toBe(-320);
+    } finally {
+      window.wuu = prior;
+    }
+  });
+
+  it("does not move the shared viewport when a hidden pane receives history", () => {
+    container.className = "scroll-region";
+    const prior = window.wuu;
+    window.wuu = { ...prior, loadEarlierThreadHistory: async () => {} };
+    Object.defineProperty(container, "scrollHeight", {
+      configurable: true,
+      get: () => container.querySelectorAll('[data-turn-id]').length * 500,
+    });
+    const view = (turns: Turn[], active: boolean) => <ConversationRenderActivityProvider active={active}>
+      <ConversationTurnList threadID="hidden" historyCursor="cursor" turns={turns}
+        renderTurn={turn => <div data-turn-id={turn.id} />} />
+    </ConversationRenderActivityProvider>;
+    try {
+      render(view([makeTurn(40)], true));
+      render(view([makeTurn(40)], false));
+      container.scrollTop = 120;
+      render(view([makeTurn(39), makeTurn(40)], false));
+      expect(container.scrollTop).toBe(120);
+    } finally {
+      window.wuu = prior;
+    }
   });
 
   it("reveals an unloaded turn before an anchor jump retries", () => {

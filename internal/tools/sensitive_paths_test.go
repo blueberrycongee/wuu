@@ -23,47 +23,6 @@ func runtimeHome(t *testing.T) string {
 	return filepath.ToSlash(filepath.Clean(home))
 }
 
-func TestIsNamedAgentIdentityNotebookPath(t *testing.T) {
-	runtimeDir := runtimeHome(t)
-
-	cases := []struct {
-		name string
-		path string
-		want bool
-	}{
-		{"identity notebook file", runtimeDir + "/channels/agents/agent-1/memory/test.md", true},
-		{"identity notebook root", runtimeDir + "/channels/agents/agent-1/memory", true},
-		{"user memory", runtimeDir + "/memory/test.md", false},
-		{"legacy participant memory", runtimeDir + "/participants/agent-1/memory/test.md", false},
-		{"channel database", runtimeDir + "/channels/channels.db", false},
-		{"workspace root", "/Users/somebody/work/foo", false},
-		{"unrelated dot wuu sibling", "/Users/somebody/.wuuish/foo", false},
-		{"partial suffix only", runtimeDir + "ish/foo", false},
-		{"empty path", "", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := isNamedAgentIdentityNotebookPath(tc.path); got != tc.want {
-				t.Fatalf("isNamedAgentIdentityNotebookPath(%q) = %v, want %v", tc.path, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestRejectSensitiveToolPath_AllowsNamedAgentIdentityNotebook(t *testing.T) {
-	target := runtimeHome(t) + "/channels/agents/agent-1/memory/test.md"
-
-	kit, err := New(t.TempDir())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	kit.env.AllowMutations = true
-
-	if err := rejectSensitiveToolPath(kit.env, "write_file", "write", target); err != nil {
-		t.Fatalf("named-agent identity notebook should be allowed when mutations are enabled: %v", err)
-	}
-}
-
 func TestRejectSensitiveToolPath_BlocksUserMemory(t *testing.T) {
 	target := runtimeHome(t) + "/memory/test.md"
 
@@ -161,36 +120,6 @@ func TestReadFile_BlocksUserMemoryInStandardMode(t *testing.T) {
 	}
 	if strings.Contains(result, "durable preference") || strings.Contains(err.Error(), "durable preference") {
 		t.Fatalf("read_file leaked user memory: result=%q err=%v", result, err)
-	}
-}
-
-func TestReadFile_AllowsNamedAgentIdentityNotebookInExplicitScope(t *testing.T) {
-	wuuHome := filepath.Join(t.TempDir(), ".wuu")
-	t.Setenv("WUU_HOME", wuuHome)
-	notebook := filepath.Join(wuuHome, "channels", "agents", "agent-1", "memory")
-	target := filepath.Join(notebook, "MEMORY.md")
-	if err := os.MkdirAll(notebook, 0o755); err != nil {
-		t.Fatalf("mkdir identity notebook: %v", err)
-	}
-	if err := os.WriteFile(target, []byte("durable identity\n"), 0o600); err != nil {
-		t.Fatalf("write identity notebook: %v", err)
-	}
-
-	kit, err := New(t.TempDir())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	kit.SetBoundary(StandardBoundary())
-	kit.SetFileScopeRoots([]string{kit.RootDir(), notebook})
-	result, err := kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "read_file",
-		Arguments: fmt.Sprintf(`{"path":%q}`, target),
-	})
-	if err != nil {
-		t.Fatalf("read_file identity notebook: %v", err)
-	}
-	if !strings.Contains(result, "durable identity") {
-		t.Fatalf("read_file result missing identity content: %s", result)
 	}
 }
 
@@ -350,5 +279,77 @@ func TestUnconfinedSensitiveWriteBlockedAndReadRedacted(t *testing.T) {
 	}
 	if !strings.Contains(result, "[REDACTED]") {
 		t.Fatalf("unconfined read of .env should mask credential values: %s", result)
+	}
+}
+
+func TestSensitivePathReason_SourceFilesAreNotCredentialStores(t *testing.T) {
+	allowed := []string{
+		"internal/subscriptionquota/credentials.go",
+		"internal/example/credentials.go",
+		"src/auth/client_secret.ts",
+		"pkg/secrets.py",
+		"Credentials.GO",
+	}
+	for _, path := range allowed {
+		if reason, ok := sensitivePathReason(path); ok {
+			t.Fatalf("source file %q classified as sensitive (%s)", path, reason)
+		}
+	}
+
+	blocked := []string{
+		"credentials.json",
+		"secrets.yaml",
+		"config/client_secret.json",
+		"aws/credentials",
+		"secret",
+		"credentials.go.json",
+		"credentials.go/token.json",
+		"secrets.ts/client.go",
+		".env",
+		"id_rsa",
+	}
+	for _, path := range blocked {
+		if _, ok := sensitivePathReason(path); !ok {
+			t.Fatalf("credential store %q should stay sensitive", path)
+		}
+	}
+}
+
+func TestUnconfined_AllowsCredentialSourceButBlocksCredentialStore(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	kit.SetBoundary(UnconfinedBoundary())
+
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "write_file",
+		Arguments: `{"path":"internal/example/credentials.go","content":"package example\n"}`,
+	})
+	if err != nil {
+		t.Fatalf("write_file should allow credential source: %v", err)
+	}
+	written, err := os.ReadFile(filepath.Join(root, "internal", "example", "credentials.go"))
+	if err != nil || string(written) != "package example\n" {
+		t.Fatalf("credential source write = %q, err=%v", written, err)
+	}
+
+	for _, path := range []string{"secrets.yaml", "credentials.go/token.json", "secrets.ts/client.go"} {
+		t.Run(path, func(t *testing.T) {
+			_, err := kit.Execute(context.Background(), providers.ToolCall{
+				Name:      "write_file",
+				Arguments: `{"path":"` + path + `","content":"placeholder\n"}`,
+			})
+			if err == nil || !strings.Contains(err.Error(), "credential or secret path") {
+				t.Fatalf("expected credential-store refusal, got: %v", err)
+			}
+			if strings.Contains(err.Error(), "explicit secret handling") || !strings.Contains(err.Error(), "including unconfined") {
+				t.Fatalf("refusal should say the guard holds in unconfined and must not ask for secret handling: %v", err)
+			}
+			if _, statErr := os.Stat(filepath.Join(root, path)); !os.IsNotExist(statErr) {
+				t.Fatalf("credential store should not be created, stat err=%v", statErr)
+			}
+		})
 	}
 }

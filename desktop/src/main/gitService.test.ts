@@ -3,19 +3,21 @@ import {
   mkdtempSync,
   mkdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeContext } from "../shared/protocol";
 import { GitService, gitWorkingTreeBusy, type CommitMessageGenerator } from "./gitService";
 
 const roots: string[] = [];
 
-function makeRepository(): string {
+function makeRepository(initialCommit = true): string {
   const root = mkdtempSync(join(tmpdir(), "wuu-git-service-"));
   roots.push(root);
   execFileSync("git", ["init", "-q", root]);
@@ -23,9 +25,11 @@ function makeRepository(): string {
   execFileSync("git", ["-C", root, "config", "user.email", "test@example.com"]);
   execFileSync("git", ["-C", root, "config", "user.name", "Wuu Test"]);
   execFileSync("git", ["-C", root, "config", "commit.gpgsign", "false"]);
-  writeFileSync(join(root, "README.md"), "workspace\n");
-  execFileSync("git", ["-C", root, "add", "README.md"]);
-  execFileSync("git", ["-C", root, "commit", "-qm", "initial"]);
+  if (initialCommit) {
+    writeFileSync(join(root, "README.md"), "workspace\n");
+    execFileSync("git", ["-C", root, "add", "README.md"]);
+    execFileSync("git", ["-C", root, "commit", "-qm", "initial"]);
+  }
   return root;
 }
 
@@ -44,13 +48,269 @@ function serviceFor(
   );
 }
 
+beforeEach(() => {
+  // Force Git's default quoting regardless of the developer's configuration.
+  vi.stubEnv("GIT_CONFIG_COUNT", "1");
+  vi.stubEnv("GIT_CONFIG_KEY_0", "core.quotePath");
+  vi.stubEnv("GIT_CONFIG_VALUE_0", "true");
+});
+
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 describe("GitService file previews", () => {
+  it.skipIf(process.platform === "win32").each(["target.txt", "binary.bin", "missing.txt", "directory"])(
+    "previews symlink values through untracked, staged, modified and deleted states (%s)",
+    (target) => {
+      const root = makeRepository();
+      writeFileSync(join(root, "target.txt"), "target contents\nsecond line\n");
+      writeFileSync(join(root, "binary.bin"), Buffer.from([0, 1, 2]));
+      mkdirSync(join(root, "directory"));
+      execFileSync("git", ["-C", root, "add", "-A"]);
+      execFileSync("git", ["-C", root, "commit", "-qm", "add targets"]);
+      const service = serviceFor(root);
+      symlinkSync(target, join(root, "link"));
+      for (const staged of [false, true]) {
+        if (staged) execFileSync("git", ["-C", root, "add", "link"]);
+        expect.soft(service.changes().files).toEqual([
+          { path: "link", status: staged ? "added" : "untracked", additions: 1, deletions: 0, binary: false },
+        ]);
+        expect.soft(service.status().diff).toEqual({ files: 1, additions: 1, deletions: 0 });
+        const preview = service.fileDiff("link");
+        expect.soft(preview).toMatchObject({ original_text: "", modified_text: target, binary: false });
+        expect.soft(preview.patch).toContain("new file mode 120000");
+        expect.soft(preview.patch).toContain(`+${target}`);
+      }
+      execFileSync("git", ["-C", root, "commit", "-qm", "add link"]);
+      unlinkSync(join(root, "link"));
+      symlinkSync("another-missing.txt", join(root, "link"));
+      expect.soft(service.fileDiff("link")).toMatchObject({
+        original_text: target, modified_text: "another-missing.txt", binary: false,
+      });
+      unlinkSync(join(root, "link"));
+      expect(service.fileDiff("link")).toMatchObject({
+        status: "deleted", original_text: target, modified_text: "", binary: false,
+      });
+    },
+  );
+
+  it.skipIf(process.platform === "win32")("previews file and symlink type conversions in both directions", () => {
+    const root = makeRepository();
+    const service = serviceFor(root);
+    unlinkSync(join(root, "README.md"));
+    symlinkSync("missing.txt", join(root, "README.md"));
+    expect(service.fileDiff("README.md")).toMatchObject({
+      original_text: "workspace\n", modified_text: "missing.txt", binary: false,
+    });
+    execFileSync("git", ["-C", root, "add", "README.md"]);
+    execFileSync("git", ["-C", root, "commit", "-qm", "convert to link"]);
+    unlinkSync(join(root, "README.md"));
+    writeFileSync(join(root, "README.md"), "regular text\n");
+    expect(service.fileDiff("README.md")).toMatchObject({
+      original_text: "missing.txt", modified_text: "regular text\n", binary: false,
+    });
+  });
+
+  it.each(["sha1", "sha256"].flatMap((format) =>
+    ["untracked", "staged", "staged then modified"].map((state) => ({ format, state })),
+  ))(
+    "shows $state files and their current contents before the first commit ($format)",
+    ({ format, state }) => {
+      vi.stubEnv("GIT_DEFAULT_HASH", format);
+      const root = makeRepository(false);
+      const path = "README.md";
+      const stagedText = "first\nsecond\n";
+      writeFileSync(join(root, path), stagedText);
+      if (state !== "untracked") {
+        execFileSync("git", ["-C", root, "add", "--", path]);
+      }
+      const text = state === "staged then modified" ? "updated\nsecond\nthird\n" : stagedText;
+      writeFileSync(join(root, path), text);
+      const additions = state === "staged then modified" ? 3 : 2;
+      const status = state === "untracked" ? "untracked" : "added";
+      const service = serviceFor(root);
+
+      expect.soft(service.changes().files).toEqual([
+        { path, status, additions, deletions: 0, binary: false },
+      ]);
+      expect.soft(service.status()).toMatchObject({
+        is_repo: true,
+        diff: { files: 1, additions, deletions: 0 },
+        staged_diff: state === "untracked"
+          ? { files: 0, additions: 0, deletions: 0 }
+          : { files: 1, additions: 2, deletions: 0 },
+      });
+      const preview = service.fileDiff(path);
+      expect(preview).toMatchObject({
+        is_repo: true, path, status, additions, deletions: 0, binary: false,
+        original_text: "", modified_text: text, truncated: false,
+      });
+      expect(preview.patch).toContain("new file mode 100644");
+      expect(preview.patch).toContain("--- /dev/null");
+      expect(preview.patch).toContain(text.trimEnd().split("\n").map((line) => `+${line}`).join("\n"));
+      if (state === "staged then modified") {
+        expect(preview.patch).not.toContain("+first");
+      }
+    },
+  );
+
+  it("previews staged binary files before the first commit", () => {
+    const root = makeRepository(false);
+    const path = "image.bin";
+    writeFileSync(join(root, path), Buffer.from([0, 1, 2]));
+    execFileSync("git", ["-C", root, "add", "--", path]);
+    const service = serviceFor(root);
+
+    expect.soft(service.changes().files).toEqual([
+      { path, status: "added", additions: 0, deletions: 0, binary: true },
+    ]);
+    expect.soft(service.status()).toMatchObject({
+      diff: { files: 1, additions: 0, deletions: 0 },
+      staged_diff: { files: 1, additions: 0, deletions: 0 },
+    });
+    const preview = service.fileDiff(path);
+    expect(preview).toMatchObject({
+      path, status: "added", additions: 0, deletions: 0, binary: true,
+    });
+    expect(preview.patch).toContain("Binary files /dev/null and b/image.bin differ");
+    expect(preview.original_text).toBeUndefined();
+    expect(preview.modified_text).toBeUndefined();
+  });
+
+  it.each([
+    "plain.txt",
+    "中文.txt",
+    " leading space.txt",
+    ...(process.platform === "win32" ? [] : [
+      "trailing space.txt ",
+      "tab\tname.txt",
+      "line\nname.txt",
+      'quote"name.txt',
+      "back\\slash.txt",
+    ]),
+  ])("preserves filename %j across untracked, staged, modified and deleted changes", (path) => {
+    const root = makeRepository();
+    const text = "第一行\n第二行\n";
+    writeFileSync(join(root, path), text);
+    const service = serviceFor(root);
+
+    const changes = service.changes();
+    expect.soft(changes.files).toEqual([
+      { path, status: "untracked", additions: 2, deletions: 0, binary: false },
+    ]);
+    const result = service.fileDiff(changes.files[0].path);
+    expect.soft(result).toMatchObject({
+      path,
+      status: "untracked",
+      additions: 2,
+      deletions: 0,
+      binary: false,
+      original_text: "",
+      modified_text: text,
+      truncated: false,
+    });
+    expect.soft(result.patch).toContain("+第一行\n+第二行");
+    expect.soft(service.status().diff).toEqual({ files: 1, additions: 2, deletions: 0 });
+
+    execFileSync("git", ["--literal-pathspecs", "-C", root, "add", "--", path]);
+    const staged = service.changes();
+    expect.soft(staged.files).toEqual([
+      { path, status: "added", additions: 2, deletions: 0, binary: false },
+    ]);
+    const stagedPreview = service.fileDiff(staged.files[0].path);
+    expect.soft(stagedPreview).toMatchObject({
+      path, status: "added", original_text: "", modified_text: text,
+      additions: 2, deletions: 0, binary: false,
+    });
+    expect.soft(stagedPreview.patch).toContain("+第一行\n+第二行");
+    expect.soft(service.status()).toMatchObject({
+      diff: { files: 1, additions: 2, deletions: 0 },
+      staged_diff: { files: 1, additions: 2, deletions: 0 },
+    });
+
+    execFileSync("git", ["-C", root, "commit", "-qm", "add file"]);
+    const modifiedText = `${text}第三行\n`;
+    writeFileSync(join(root, path), modifiedText);
+    for (const staged of [false, true]) {
+      if (staged) {
+        execFileSync("git", ["--literal-pathspecs", "-C", root, "add", "--", path]);
+      }
+      const changes = service.changes();
+      expect.soft(changes.files).toEqual([
+        { path, status: "modified", additions: 1, deletions: 0, binary: false },
+      ]);
+      const preview = service.fileDiff(changes.files[0].path);
+      expect.soft(preview).toMatchObject({
+        path, status: "modified", original_text: text, modified_text: modifiedText,
+        additions: 1, deletions: 0, binary: false,
+      });
+      expect.soft(preview.patch).toContain("+第三行");
+      expect.soft(service.status()).toMatchObject({
+        diff: { files: 1, additions: 1, deletions: 0 },
+        staged_diff: staged
+          ? { files: 1, additions: 1, deletions: 0 }
+          : { files: 0, additions: 0, deletions: 0 },
+      });
+    }
+
+    execFileSync("git", ["-C", root, "commit", "-qm", "modify file"]);
+    rmSync(join(root, path));
+    const deleted = service.changes();
+    expect.soft(deleted.files).toEqual([
+      { path, status: "deleted", additions: 0, deletions: 3, binary: false },
+    ]);
+    const deletedPreview = service.fileDiff(deleted.files[0].path);
+    expect.soft(deletedPreview).toMatchObject({
+      path, status: "deleted", original_text: modifiedText, modified_text: "",
+      additions: 0, deletions: 3, binary: false,
+    });
+    expect.soft(deletedPreview.patch).toContain("-第一行\n-第二行\n-第三行");
+  });
+
+  it("keeps rename paths, text revisions and binary statistics aligned with other changes", () => {
+    const root = makeRepository();
+    const oldPath = process.platform === "win32" ? "旧 name.txt" : "旧\tname.txt";
+    const path = process.platform === "win32" ? "新 name.txt" : "新\nname.txt";
+    const originalText = "first\nsecond\nthird\nfourth\n";
+    const modifiedText = "first\nsecond\nthird\nupdated\n";
+    writeFileSync(join(root, oldPath), originalText);
+    writeFileSync(join(root, "binary old.bin"), Buffer.from([0, 1, 2]));
+    execFileSync("git", ["-C", root, "add", "-A"]);
+    execFileSync("git", ["-C", root, "commit", "-qm", "add rename sources"]);
+    renameSync(join(root, oldPath), join(root, path));
+    writeFileSync(join(root, path), modifiedText);
+    renameSync(join(root, "binary old.bin"), join(root, "binary new.bin"));
+    writeFileSync(join(root, "README.md"), "updated workspace\n");
+    execFileSync("git", ["-C", root, "add", "-A"]);
+    const service = serviceFor(root);
+
+    const changes = service.changes();
+    expect.soft(changes.files).toHaveLength(3);
+    expect.soft(changes.files).toEqual(expect.arrayContaining([
+      { path, old_path: oldPath, status: "renamed", additions: 1, deletions: 1, binary: false },
+      { path: "binary new.bin", old_path: "binary old.bin", status: "renamed", additions: 0, deletions: 0, binary: true },
+      { path: "README.md", status: "modified", additions: 1, deletions: 1, binary: false },
+    ]));
+    const preview = service.fileDiff(path);
+    expect.soft(preview).toMatchObject({
+      path, old_path: oldPath, status: "renamed", additions: 1, deletions: 1,
+      original_text: originalText, modified_text: modifiedText,
+    });
+    expect.soft(preview.patch).toContain("-fourth\n+updated");
+    expect.soft(preview.patch).not.toContain("+first");
+    expect.soft(service.fileDiff("binary new.bin")).toMatchObject({
+      status: "renamed", binary: true, additions: 0, deletions: 0,
+    });
+    expect.soft(service.status()).toMatchObject({
+      diff: { files: 3, additions: 2, deletions: 2 },
+      staged_diff: { files: 3, additions: 2, deletions: 2 },
+    });
+  });
+
   it("returns ignored text files as complete new-file previews", () => {
     const root = makeRepository();
     writeFileSync(join(root, ".gitignore"), "/docs/plans/*\n");
@@ -68,14 +328,22 @@ describe("GitService file previews", () => {
     expect(result.modified_text).toBe("# Brief\n\nBody\n");
   });
 
-  it("returns both text revisions for a modified file", () => {
+  it("returns only the selected literal filename and both revisions for a modified file", () => {
     const root = makeRepository();
-    writeFileSync(join(root, "README.md"), "workspace improved\n");
+    const path = "file[1].txt";
+    writeFileSync(join(root, path), "workspace\n");
+    writeFileSync(join(root, "file1.txt"), "other file\n");
+    execFileSync("git", ["-C", root, "add", "-A"]);
+    execFileSync("git", ["-C", root, "commit", "-qm", "add literal path fixtures"]);
+    writeFileSync(join(root, path), "workspace improved\n");
+    writeFileSync(join(root, "file1.txt"), "unrelated change\n");
 
-    const result = serviceFor(root).fileDiff("README.md");
+    const result = serviceFor(root).fileDiff(path);
 
     expect(result.original_text).toBe("workspace\n");
     expect(result.modified_text).toBe("workspace improved\n");
+    expect(result.patch).toContain("+workspace improved");
+    expect(result.patch).not.toContain("unrelated change");
   });
 
   it("keeps ignored files out of the workspace Git change list", () => {
@@ -160,6 +428,8 @@ describe("GitService commit message generation", () => {
   it("returns the AI message without committing, staging unstaged files", async () => {
     const root = makeRepository();
     writeChange(root);
+    const path = process.platform === "win32" ? " 中文.txt" : " 中文\tname.txt ";
+    writeFileSync(join(root, path), "new file\n");
     const before = headHash(root);
     const calls: { diff: string; files: string[] }[] = [];
     const generate: CommitMessageGenerator = async (_context, input) => {
@@ -172,10 +442,11 @@ describe("GitService commit message generation", () => {
     expect(result.message).toBe("feat(desktop): add feature flag");
     expect(headHash(root)).toBe(before);
     expect(calls).toHaveLength(1);
-    expect(calls[0].files).toEqual(["feature.ts"]);
+    expect(calls[0].files).toEqual(expect.arrayContaining(["feature.ts", path]));
+    expect(calls[0].files).toHaveLength(2);
     expect(calls[0].diff).toContain("+export const feature = true;");
     // Generation stages the change exactly like a commit would.
-    expect(serviceFor(root).status().staged_diff?.files).toBe(1);
+    expect(serviceFor(root).status().staged_diff?.files).toBe(2);
   });
 
   it("leaves unstaged files alone when include_unstaged is false", async () => {
@@ -321,7 +592,7 @@ describe("GitService worktree roots", () => {
     const unrelated = makeRepository();
 
     expect(() => serviceFor(root).status({}, unrelated)).toThrow(
-      "Git working directory is not associated with the current project",
+      "Git working directory is not associated with the current workspace",
     );
   });
 

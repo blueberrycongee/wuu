@@ -15,8 +15,9 @@ export type ComposerSlashCommandAction =
   | "open-skills"
   | "open-files"
   | "open-terminal"
-  | "open-project"
-  | "no-project"
+  | "open-browser"
+  | "open-workspace"
+  | "no-workspace"
   | "context"
   | "instructions"
   | "plugin"
@@ -48,12 +49,6 @@ export type ComposerSlashCommand = {
 export type ComposerSlashDraft = {
   query: string;
   args: string;
-};
-
-export type ComposerFastModelTarget = {
-  provider: string;
-  model: string;
-  current: boolean;
 };
 
 const COMPOSER_SLASH_COMMAND_LIMIT = 8;
@@ -93,6 +88,7 @@ export function buildComposerSlashCommands({
   handoffDisabledReason,
   skills = [],
   availablePluginRuntimeCommands = new Set<string>(),
+  fastMode,
 }: {
   activeContext?: RuntimeContext;
   initialized?: InitializeResult;
@@ -102,11 +98,12 @@ export function buildComposerSlashCommands({
   handoffDisabledReason?: string;
   skills?: SkillSummary[];
   availablePluginRuntimeCommands?: ReadonlySet<string>;
+  fastMode?: { supported: boolean; enabled: boolean };
 }): ComposerSlashCommand[] {
   const needsRuntime = activeContext && initialized ? undefined : t("slash.selectWorkspaceFirst");
   const needsWorkspace = activeContext ? undefined : t("slash.selectWorkspaceFirst");
   const needsIdleThread = running ? t("slash.taskRunning") : undefined;
-  const fastTarget = runtimeFastModelTarget(initialized);
+
   const commands: ComposerSlashCommand[] = [
     {
       id: "review",
@@ -297,26 +294,38 @@ export function buildComposerSlashCommands({
       disabledReason: needsWorkspace
     },
     {
-      id: "project",
-      name: "project",
-      title: t("slash.project.title"),
-      description: t("slash.project.description"),
-      tag: t("slash.tag.project"),
+      id: "browser",
+      name: "browser",
+      title: t("slash.browser.title"),
+      description: t("slash.browser.description"),
+      tag: t("slash.tag.workspace"),
       kind: "action",
-      action: "open-project",
-      aliases: ["open"],
-      keywords: ["folder", "workspace", "项目"]
+      action: "open-browser",
+      aliases: ["web"],
+      keywords: ["浏览器", "browser", "webpage", "url"],
+      disabledReason: needsWorkspace
     },
     {
-      id: "no-project",
-      name: "no-project",
-      title: t("slash.noProject.title"),
-      description: t("slash.noProject.description"),
-      tag: t("slash.tag.project"),
+      id: "workspace",
+      name: "workspace",
+      title: t("slash.workspace.title"),
+      description: t("slash.workspace.description"),
+      tag: t("slash.tag.workspace"),
       kind: "action",
-      action: "no-project",
+      action: "open-workspace",
+      aliases: ["open"],
+      keywords: ["folder", "工作区"]
+    },
+    {
+      id: "no-workspace",
+      name: "no-workspace",
+      title: t("slash.noWorkspace.title"),
+      description: t("slash.noWorkspace.description"),
+      tag: t("slash.tag.workspace"),
+      kind: "action",
+      action: "no-workspace",
       aliases: ["scratch", "none"],
-      keywords: ["temporary", "临时", "无项目"],
+      keywords: ["temporary", "临时", "无工作区"],
       disabledReason: needsIdleThread
     },
     {
@@ -331,19 +340,19 @@ export function buildComposerSlashCommands({
       keywords: ["provider", "effort", "variant", "模型", "参数档位"],
       disabledReason: needsRuntime ?? needsIdleThread
     },
-    ...(fastTarget
+    ...(fastMode?.supported
       ? [
           {
             id: "fast",
             name: "fast",
             title: t("slash.fast.title"),
-            description: fastTarget.current ? t("slash.fast.currentDescription") : t("slash.fast.description"),
+            description: fastMode.enabled ? t("slash.fast.currentDescription") : t("slash.fast.description"),
             tag: t("slash.tag.configuration"),
             kind: "action",
             action: "fast",
             aliases: ["quick"],
             keywords: ["fast", "priority", "快速", "高速"],
-            disabledReason: needsRuntime ?? needsIdleThread ?? (fastTarget.current ? t("slash.fast.alreadyEnabled") : undefined)
+            disabledReason: needsRuntime ?? needsIdleThread
           } satisfies ComposerSlashCommand
         ]
       : []),
@@ -416,32 +425,6 @@ export function buildSideThreadSlashCommands(): ComposerSlashCommand[] {
       keywords: ["reset", "rebase", "clear", "清空", "重置", "变基"]
     }
   ];
-}
-
-export function runtimeFastModelTarget(initialized?: InitializeResult): ComposerFastModelTarget | undefined {
-  if (!initialized) {
-    return undefined;
-  }
-  const provider = initialized.providers?.find((item) => item.name === initialized.provider);
-  if (!provider) {
-    return undefined;
-  }
-  const currentModel = initialized.model.trim();
-  if (!currentModel) {
-    return undefined;
-  }
-  const currentFast = currentModel.toLowerCase().endsWith("-fast");
-  const baseModel = currentFast ? currentModel.slice(0, -"-fast".length) : currentModel;
-  const fastModel = `${baseModel}-fast`;
-  const hasFastModel = provider.models?.some((model) => model.id === fastModel);
-  if (!hasFastModel && !currentFast) {
-    return undefined;
-  }
-  return {
-    provider: provider.name,
-    model: currentFast ? currentModel : fastModel,
-    current: currentFast
-  };
 }
 
 export function filterComposerSlashCommands(commands: ComposerSlashCommand[], query: string): ComposerSlashCommand[] {

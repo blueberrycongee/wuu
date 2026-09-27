@@ -3,12 +3,10 @@ package providers
 import (
 	"bufio"
 	"bytes"
-	"fmt"
+	"errors"
 	"io"
 	"strings"
 )
-
-const maxSSEEventSize = 1024 * 1024
 
 // SSEEvent contains the fields consumed by model streaming protocols.
 type SSEEvent struct {
@@ -30,7 +28,8 @@ type SSEReader struct {
 // onLine observes heartbeats as well as data, preserving idle timeout behavior.
 func NewSSEReader(r io.Reader, onLine func()) *SSEReader {
 	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxSSEEventSize)
+	// Leave room for the data field prefix, its terminator, and a skipped LF.
+	scanner.Buffer(make([]byte, 0, 64*1024), MaxStreamEventBytes+len("data: ")+2)
 	skipLF := false
 	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
 		skipped := 0
@@ -70,7 +69,7 @@ func (r *SSEReader) Scan() bool {
 		line := r.scanner.Text()
 		if line == "" {
 			if hasData {
-				event.Data = strings.TrimSuffix(data.String(), "\n")
+				event.Data = data.String()
 				r.event = event
 				return true
 			}
@@ -87,17 +86,25 @@ func (r *SSEReader) Scan() bool {
 		case "event":
 			event.Event = value
 		case "data":
-			size += len(value) + 1
-			if size > maxSSEEventSize {
-				r.err = fmt.Errorf("SSE event exceeds %d bytes", maxSSEEventSize)
+			size += len(value)
+			if hasData {
+				size++
+			}
+			if size > MaxStreamEventBytes {
+				r.err = &StreamEventTooLargeError{Transport: "SSE", LimitBytes: MaxStreamEventBytes}
 				return false
+			}
+			if hasData {
+				data.WriteByte('\n')
 			}
 			hasData = true
 			data.WriteString(value)
-			data.WriteByte('\n')
 		}
 	}
 	r.err = r.scanner.Err()
+	if errors.Is(r.err, bufio.ErrTooLong) {
+		r.err = &StreamEventTooLargeError{Transport: "SSE", LimitBytes: MaxStreamEventBytes}
+	}
 	if r.err == nil && (hasData || event.Event != "") {
 		r.err = NewIncompleteStreamError("stream closed before SSE event delimiter")
 	}

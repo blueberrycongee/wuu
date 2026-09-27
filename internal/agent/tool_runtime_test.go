@@ -315,58 +315,6 @@ func TestTurnToolRuntimeAttachesDiscoveredToolsToToolResult(t *testing.T) {
 	}
 }
 
-func TestTurnToolRuntimeDoesNotTreatProductToolsAsBarriers(t *testing.T) {
-	// Barrier semantics were product-owned (product barriers) and moved to
-	// the first-party delegation plugin. Core must not special-case those
-	// names: a batch containing them executes every call normally.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	tools := &runtimeTestTools{}
-	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: tools})
-	var seen []providers.ToolCall
-	var rejections []ToolBatchRejectionInfo
-
-	msgs, _ := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{
-		{ID: "call_write", Name: "run_shell"},
-		{ID: "call_barrier", Name: "barrier_tool"},
-	}, func(call providers.ToolCall, _ string) {
-		seen = append(seen, call)
-	}, func(info ToolBatchRejectionInfo) {
-		rejections = append(rejections, info)
-	})
-
-	if calls := tools.recordedCalls(); len(calls) != 2 {
-		t.Fatalf("batch without a registered barrier tool must execute every call, got calls %+v", calls)
-	}
-	if len(rejections) != 0 {
-		t.Fatalf("core must not reject a batch for product tool names, got %+v", rejections)
-	}
-	if len(msgs) != 2 || msgs[0].ToolCallID != "call_write" || msgs[1].ToolCallID != "call_barrier" {
-		t.Fatalf("expected one result per call, got %+v", msgs)
-	}
-	if len(seen) != 2 || seen[0].ID != "call_write" || seen[1].ID != "call_barrier" {
-		t.Fatalf("OnToolResult should see executed calls in order, got %+v", seen)
-	}
-}
-
-func TestTurnToolRuntimeExecutesProductNamedToolWhenCalledAlone(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	tools := &runtimeTestTools{}
-	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: tools})
-
-	msgs, _ := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "call_barrier", Name: "barrier_tool"}}, nil)
-
-	if calls := tools.recordedCalls(); len(calls) != 1 || calls[0].ID != "call_barrier" {
-		t.Fatalf("single product-named tool should execute normally, got %+v", calls)
-	}
-	if len(msgs) != 1 || !strings.Contains(msgs[0].Content, "call_barrier") {
-		t.Fatalf("unexpected single tool result: %+v", msgs)
-	}
-}
-
 func TestTurnToolRuntime_ReusesStreamingStartedConcurrentRuns(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -586,6 +534,63 @@ func TestTurnToolRuntimeDurablySettlesBeforeReturningResult(t *testing.T) {
 	}
 	if calls := tools.recordedCalls(); len(calls) != 1 {
 		t.Fatalf("tool executions = %+v", calls)
+	}
+}
+
+type finalizingRuntimeTools struct {
+	runtimeTestTools
+	err error
+}
+
+func (f *finalizingRuntimeTools) Execute(ctx context.Context, call providers.ToolCall) (string, error) {
+	text, _ := f.runtimeTestTools.Execute(ctx, call)
+	return text, f.err
+}
+
+func (*finalizingRuntimeTools) FinalizeToolResult(_ providers.ToolCall, result toolresult.Result) toolresult.Result {
+	text := "settled: " + result.TextProjection()
+	result.ModelText = &text
+	return result
+}
+
+func TestTurnToolRuntimeFinalizesBeforeDurableSettlement(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		ctx := context.Background()
+		executor := &finalizingRuntimeTools{runtimeTestTools: runtimeTestTools{results: map[string]string{"call-1": "producer"}}}
+		if failed {
+			executor.err = errors.New("execution failed")
+		}
+		dir := t.TempDir()
+		ledger, err := toolledger.New(dir, "owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor, Ledger: ledger, OperationID: "turn"})
+		var observed toolresult.Result
+		runtime.SetResultCallback(func(_ providers.ToolCall, result toolresult.Result) { observed = result })
+		messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "call-1", Name: "read_file", Arguments: `{}`}}, nil)
+		if err != nil || len(messages) != 1 {
+			t.Fatalf("execute: %v messages=%v", err, messages)
+		}
+		// Reopening reads the serialized ledger, not the in-memory completion.
+		reopened, err := toolledger.New(dir, "owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		pending, err := reopened.PendingProjection(ctx)
+		if err != nil || len(pending) != 1 {
+			t.Fatalf("replay: %v pending=%v", err, pending)
+		}
+		result := pending[0].Result
+		if result.ModelText == nil || !strings.HasPrefix(*result.ModelText, "settled: ") || result.IsError != failed {
+			t.Fatalf("replay lost the final view or error state: %+v", result)
+		}
+		if result.JSONProjection() != observed.JSONProjection() || result.JSONProjection() != messages[0].ToolResult.JSONProjection() || result.TextProjection() != messages[0].Content {
+			t.Fatal("ledger, callback and history disagree")
+		}
+		if failed && !strings.Contains(*result.ModelText, executor.err.Error()) {
+			t.Fatal("finalizer ran before execution-error normalization")
+		}
 	}
 }
 

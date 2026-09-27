@@ -40,7 +40,7 @@ var fieldBounds = [5]struct{ min, max int }{
 	{0, 23}, // hour
 	{1, 31}, // day of month
 	{1, 12}, // month
-	{0, 7},  // day of week (7 = Sunday, mapped to 0)
+	{0, 7},  // day of week (0 and 7 = Sunday)
 }
 
 func isValidCronField(field string, position int) bool {
@@ -110,11 +110,14 @@ func (ce CronExpression) matches(t time.Time) bool {
 	// they are ORed (match either). Otherwise they are ANDed.
 	domStar := ce.DayOfMonth == "*" || ce.DayOfMonth == "?"
 	dowStar := ce.DayOfWeek == "*" || ce.DayOfWeek == "?"
-	dayMatch := matchField(ce.DayOfMonth, t.Day(), 1, 31) &&
-		matchField(ce.DayOfWeek, int(t.Weekday()), 0, 6)
+	// Match Sunday's alias against the original field so ranges and steps keep
+	// their selection semantics (5-7/2 includes Sunday, but 6-7/2 does not).
+	dowMatch := matchField(ce.DayOfWeek, int(t.Weekday()), 0, 7) ||
+		(t.Weekday() == time.Sunday && matchField(ce.DayOfWeek, 7, 0, 7))
+	domMatch := matchField(ce.DayOfMonth, t.Day(), 1, 31)
+	dayMatch := domMatch && dowMatch
 	if !domStar && !dowStar {
-		dayMatch = matchField(ce.DayOfMonth, t.Day(), 1, 31) ||
-			matchField(ce.DayOfWeek, int(t.Weekday()), 0, 6)
+		dayMatch = domMatch || dowMatch
 	}
 
 	return matchField(ce.Minute, t.Minute(), 0, 59) &&

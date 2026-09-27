@@ -2,14 +2,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { parseByteRangeHeader, rangedPdfResponse } from "./renderableFileRange";
+import { parseByteRangeHeader, rangedFileResponse } from "./renderableFileRange";
 
 const tempDirs: string[] = [];
 
-function makePdfFile(contents: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "wuu-pdf-range-"));
+function makeFile(contents: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "wuu-file-range-"));
   tempDirs.push(dir);
-  const filePath = join(dir, "sample.pdf");
+  const filePath = join(dir, "sample.bin");
   writeFileSync(filePath, contents);
   return filePath;
 }
@@ -60,55 +60,55 @@ describe("parseByteRangeHeader", () => {
   });
 });
 
-describe("rangedPdfResponse", () => {
+describe.each(["application/pdf", "video/mp4", "video/webm"])("rangedFileResponse (%s)", (mimeType) => {
   it("returns undefined when the request has no Range header", () => {
-    const filePath = makePdfFile("0123456789");
+    const filePath = makeFile("0123456789");
     const request = new Request("wuu-file://local/abc");
-    expect(rangedPdfResponse(request, filePath)).toBeUndefined();
+    expect(rangedFileResponse(request, filePath, mimeType)).toBeUndefined();
   });
 
   it("serves the requested bytes with 206 metadata", async () => {
-    const filePath = makePdfFile("0123456789");
+    const filePath = makeFile("0123456789");
     const request = new Request("wuu-file://local/abc", {
       headers: { range: "bytes=2-5" },
     });
-    const response = rangedPdfResponse(request, filePath);
+    const response = rangedFileResponse(request, filePath, mimeType);
     expect(response).toBeDefined();
     expect(response!.status).toBe(206);
     expect(response!.headers.get("content-range")).toBe("bytes 2-5/10");
     expect(response!.headers.get("content-length")).toBe("4");
-    expect(response!.headers.get("content-type")).toBe("application/pdf");
+    expect(response!.headers.get("content-type")).toBe(mimeType);
     expect(response!.headers.get("accept-ranges")).toBe("bytes");
     expect(response!.headers.get("access-control-allow-origin")).toBe("*");
     await expect(response!.text()).resolves.toBe("2345");
   });
 
   it("serves a suffix range from the end of the file", async () => {
-    const filePath = makePdfFile("0123456789");
+    const filePath = makeFile("0123456789");
     const request = new Request("wuu-file://local/abc", {
       headers: { range: "bytes=-3" },
     });
-    const response = rangedPdfResponse(request, filePath);
+    const response = rangedFileResponse(request, filePath, mimeType);
     expect(response!.status).toBe(206);
     expect(response!.headers.get("content-range")).toBe("bytes 7-9/10");
     await expect(response!.text()).resolves.toBe("789");
   });
 
   it("answers 416 with the total size for an unsatisfiable range", async () => {
-    const filePath = makePdfFile("0123456789");
+    const filePath = makeFile("0123456789");
     const request = new Request("wuu-file://local/abc", {
       headers: { range: "bytes=10-20" },
     });
-    const response = rangedPdfResponse(request, filePath);
+    const response = rangedFileResponse(request, filePath, mimeType);
     expect(response!.status).toBe(416);
     expect(response!.headers.get("content-range")).toBe("bytes */10");
   });
 
   it("falls back to a full response for an unparseable range", () => {
-    const filePath = makePdfFile("0123456789");
+    const filePath = makeFile("0123456789");
     const request = new Request("wuu-file://local/abc", {
       headers: { range: "bytes=banana" },
     });
-    expect(rangedPdfResponse(request, filePath)).toBeUndefined();
+    expect(rangedFileResponse(request, filePath, mimeType)).toBeUndefined();
   });
 });

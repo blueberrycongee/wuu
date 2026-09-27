@@ -24,12 +24,17 @@ async function run() {
   const win = new BrowserWindow({
     width: 1180,
     height: 820,
-    show: true,
+    show: false,
+    ...(process.platform === "darwin" ? {
+      titleBarStyle: "hiddenInset",
+      trafficLightPosition: { x: 18, y: 17 },
+    } : {}),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       preload,
-      sandbox: false
+      sandbox: false,
+      backgroundThrottling: false
     }
   });
 
@@ -39,6 +44,18 @@ async function run() {
 
   await loadFile(win, rendererHtml);
   await waitFor(win, () => Boolean(document.querySelector(".conversation-pane")), 5000);
+  await verifyTitlebarContinuity(win);
+  win.setContentSize(1180, 820);
+  win.webContents.setZoomFactor(1);
+  await waitFor(win, () => !document.querySelector(".app-shell")?.classList.contains("compact-navigation"), 3000);
+  await evaluate(win, () => {
+    document.documentElement.style.setProperty("--desktop-page-zoom", "1");
+    document.documentElement.style.setProperty("--font-ui", "14px");
+    document.querySelector('[data-wuu-component="sidebar-toggle"]').click();
+  });
+  await waitFor(win, () => !document.querySelector(".app-shell")?.classList.contains("sidebar-collapsed"), 3000);
+  win.show();
+  win.focus();
   await evaluate(win, () => {
     const button = document.querySelector(".sidebar-account-trigger");
     if (!(button instanceof HTMLButtonElement)) {
@@ -55,7 +72,7 @@ async function run() {
   await waitFor(win, () => Boolean(document.querySelector(".settings-shell")), 3000);
 
   await evaluate(win, () => {
-    const button = document.querySelector(".settings-titlebar .settings-sidebar-toggle");
+    const button = document.querySelector(".settings-sidebar-toggle");
     if (!(button instanceof HTMLButtonElement)) {
       throw new Error("Settings sidebar toggle not found.");
     }
@@ -115,6 +132,131 @@ async function run() {
   console.log(JSON.stringify({ before, after, readability, transformSamples }));
   win.close();
   app.quit();
+}
+
+// Exercise the real app, not copies of header markup or stylesheet literals.
+// Page switching must preserve the control's hit box and rendered glyph;
+// Default zoom preserves the native center; zooming in must not clip chrome.
+async function verifyTitlebarContinuity(win) {
+  const results = [];
+  for (const theme of ["light", "dark"]) {
+    for (const font of [14, 20]) {
+      for (const zoom of [1, 1.2 ** -0.5, 1.5, 2]) {
+        win.webContents.setZoomFactor(zoom);
+        await win.webContents.executeJavaScript(`
+          document.documentElement.dataset.platform = ${JSON.stringify(process.platform)};
+          document.documentElement.dataset.hostKind = 'desktop';
+          document.documentElement.dataset.theme = ${JSON.stringify(theme)};
+          document.documentElement.style.setProperty('--font-ui', '${font}px');
+          document.documentElement.style.setProperty('--desktop-page-zoom', '${zoom}');
+        `);
+        for (const layout of ["docked", "collapsed", "compact"]) {
+          // Keep the CSS viewport in the requested layout as page zoom changes.
+          win.setContentSize(Math.round((layout === "compact" ? 600 : 1180) * zoom), 820);
+          await waitFor(win, layout === "compact"
+            ? () => document.querySelector(".app-shell").classList.contains("compact-navigation")
+            : () => !document.querySelector(".app-shell").classList.contains("compact-navigation"), 3000);
+          await waitFor(win, () => !document.querySelector(".app-shell")?.classList.contains("sidebar-animating"), 3000);
+          const collapsed = await evaluate(win, () => document.querySelector(".app-shell").classList.contains("sidebar-collapsed"));
+          if (collapsed !== (layout !== "docked")) {
+            await evaluate(win, () => document.querySelector('[data-wuu-component="sidebar-toggle"]').click());
+          }
+          await settleChrome(win);
+          const main = await chromeToggleGeometry(win);
+          assert.deepEqual(main.clippedChrome, [], `Main chrome must fit: ${JSON.stringify({ theme, font, zoom, layout, main })}`);
+          if (layout !== "docked") {
+            await evaluate(win, () => {
+              const button = document.querySelector('[data-wuu-component="sidebar-toggle"]');
+              const rect = button.getBoundingClientRect();
+              button.dispatchEvent(new PointerEvent("pointerover", {
+                bubbles: true, pointerType: "mouse",
+                clientX: rect.x + rect.width / 2, clientY: rect.y + rect.height / 2,
+              }));
+            });
+            await waitFor(win, () => Boolean(document.querySelector(".sidebar-drawer-open")), 3000);
+            await settleChrome(win);
+            const drawer = await chromeToggleGeometry(win);
+            assert.deepEqual(drawer.clippedChrome, [], `Drawer chrome must fit: ${JSON.stringify({ theme, font, zoom, layout, drawer })}`);
+            for (const key of ["x", "y", "width", "height"]) {
+              assert.ok(Math.abs(drawer[key] - main[key]) < 0.1, `Opening the drawer moved ${key}: ${JSON.stringify({layout,zoom,main,drawer})}`);
+            }
+            assert.ok(Math.abs(drawer.titleX - main.titleX) < 0.1, "Opening the drawer must not move the adjacent title");
+          }
+          await evaluate(win, () => document.querySelector(".sidebar-account-trigger").click());
+          await waitFor(win, () => Boolean(document.querySelector('[data-settings-page="providers"]')), 3000);
+          await evaluate(win, () => document.querySelector('[data-settings-page="providers"]').click());
+          await waitFor(win, () => Boolean(document.querySelector(".settings-shell")), 3000);
+          await settleChrome(win);
+          const settings = await chromeToggleGeometry(win);
+          const context = JSON.stringify({ theme, font, zoom, layout, main, settings });
+          assert.deepEqual(settings.clippedChrome, [], `Settings chrome must fit: ${context}`);
+          for (const key of ["x", "y", "width", "height", "iconWidth", "iconHeight"]) {
+            assert.ok(Math.abs(main[key] - settings[key]) < 0.1, `Switching pages moved/resized ${key}: ${context}`);
+          }
+          assert.equal(settings.icon, main.icon, `Switching pages changed the sidebar glyph: ${context}`);
+          if (zoom <= 1) {
+            assert.ok(Math.abs((main.y + main.height / 2) * zoom - 24) < 0.1, `Native chrome center drifted: ${context}`);
+          }
+          assert.ok(main.hit && settings.hit, `The visible toggle must own its center hit: ${context}`);
+          results.push({ theme, font, zoom, layout, x: main.x, centerY: (main.y + main.height / 2) * zoom });
+          await evaluate(win, () => document.querySelector(".settings-back-button").click());
+          await waitFor(win, () => Boolean(document.querySelector(".app-shell")), 3000);
+          await evaluate(win, () => {
+            document.querySelector('[data-wuu-component="sidebar-toggle"]').dispatchEvent(new PointerEvent("pointerout", {
+              bubbles: true, pointerType: "mouse", clientX: 550, clientY: 700, relatedTarget: document.body,
+            }));
+          });
+          await waitFor(win, () => !document.querySelector(".sidebar-drawer-open, .sidebar-drawer-closing"), 3000);
+        }
+      }
+    }
+  }
+  console.log(JSON.stringify({ titlebarContinuity: results }));
+}
+
+async function settleChrome(win) {
+  await waitFor(win, () => !document.querySelector(".sidebar-animating, .sidebar-drawer-docking"), 3000);
+  await evaluate(win, async () => {
+    await document.fonts.ready;
+    await new Promise(requestAnimationFrame);
+    const chrome = document.querySelectorAll(".titlebar, .settings-titlebar, .sidebar, .settings-sidebar, .sidebar-content");
+    await Promise.all([...chrome].flatMap(element => element.getAnimations()).filter(animation =>
+      animation.playState === "running" && Number.isFinite(animation.effect.getComputedTiming().endTime)
+    ).map(animation => animation.finished.catch(() => {})));
+    await new Promise(requestAnimationFrame);
+  });
+}
+
+async function chromeToggleGeometry(win) {
+  return evaluate(win, () => {
+    const button = document.querySelector('[data-wuu-component="sidebar-toggle"]');
+    const rect = button.getBoundingClientRect();
+    const icon = button.querySelector("svg");
+    const glyph = icon.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    const headers = new Set([
+      button.closest(".traffic-spacer, .titlebar, .settings-titlebar"),
+      document.querySelector(".titlebar"),
+    ].filter(Boolean));
+    const clippedChrome = [];
+    for (const header of headers) {
+      const bounds = header.getBoundingClientRect();
+      for (const element of header.querySelectorAll(".icon-button, .conversation-title-heading")) {
+        const box = element.getBoundingClientRect();
+        if (!box.width || !box.height || getComputedStyle(element).visibility === "hidden") continue;
+        if (box.top < Math.max(0, bounds.top) - 0.1 || box.bottom > bounds.bottom + 0.1) {
+          clippedChrome.push({ target: element.className, top: box.top, bottom: box.bottom, headerTop: bounds.top, headerBottom: bounds.bottom });
+        }
+      }
+    }
+    return {
+      x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+      iconWidth: glyph.width, iconHeight: glyph.height, icon: icon.innerHTML,
+      hit: button === hit || button.contains(hit),
+      clippedChrome,
+      titleX: document.querySelector(".conversation-title-heading")?.getBoundingClientRect().x,
+    };
+  });
 }
 
 async function toggleHitState(win) {

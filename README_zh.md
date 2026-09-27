@@ -4,13 +4,13 @@
 
 wuu 是一个开源桌面应用，让你和 AI Agent 一起处理本地项目。接上 OpenAI、Anthropic 这类服务，选好文件夹，就可以让 Agent 阅读代码、修改文件或运行命令，再在应用里查看文件、改动和执行结果。
 
-你可以回到已有对话继续工作，也可以让多个 Agent 在群聊中协作。插件可以添加工具和桌面功能，见[扩展 Wuu](docs/zh-cn/customize/index.md)。
+你可以回到已有对话继续工作。插件可以添加工具和桌面功能，见[扩展 Wuu](docs/zh-cn/customize/index.md)。
 
 ![wuu 桌面应用](https://github.com/user-attachments/assets/2d9030aa-ca03-42b1-9333-f79cc5aff95b)
 
 ## 开始使用
 
-桌面预览版支持 Apple 芯片 Mac。从 [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest) 下载，将 `wuu.app` 放入 `/Applications` 后打开。预览版使用自签身份，没有 Apple Developer ID 和公证；如果 macOS 阻止打开，请按[安装指南](docs/zh-cn/getting-started/installation.md)处理。
+桌面预览版支持 Apple 芯片 Mac。从 [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest) 下载，将 `wuu.app` 放入 `/Applications` 后打开。这是未签名预览版（仅使用 ad-hoc 签名），没有 Apple Developer ID 和公证；如果 macOS 阻止打开，请按[安装指南](docs/zh-cn/getting-started/installation.md)处理。
 
 打开设置，接上模型，再把本地项目文件夹添加为工作区。可以先试一个小任务，完成后检查改动和测试结果。[快速开始](docs/zh-cn/getting-started/index.md)里有一个示例。
 

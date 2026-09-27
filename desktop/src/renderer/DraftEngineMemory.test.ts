@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { EngineListResult } from "../shared/protocol";
 import {
-  clearDraftEngineMemory,
   lastEffortForEngineModel,
   readDraftEngineMemory,
+  rememberedEngineRuntime,
   resolveDraftEngineMemory,
   writeDraftEngineMemory,
 } from "./DraftEngineMemory";
@@ -43,6 +43,17 @@ function inventory(overrides?: Partial<EngineListResult>): EngineListResult {
 }
 
 describe("draft engine memory", () => {
+  it("uses the live inventory for protocol engines and drops stale model overrides when the agent owns its catalog", () => {
+    const live = inventory({ engines: [{ id: "devin", enabled: true, binary_ok: true }] });
+    writeDraftEngineMemory({ engine: "devin", model: "stale-model", effort: "high" });
+    expect(resolveDraftEngineMemory(live)).toEqual({ engine: "devin", model: "", effort: "" });
+    expect(rememberedEngineRuntime("devin", live)).toEqual({ model: "", effort: "" });
+    live.engines[0].enabled = false;
+    expect(resolveDraftEngineMemory(live)).toBeUndefined();
+    live.engines[0].enabled = true;
+    expect(resolveDraftEngineMemory(live)?.engine).toBe("devin");
+  });
+
   it("restores the engine, model and effort last picked in the composer", () => {
     writeDraftEngineMemory({
       engine: "codex",
@@ -89,15 +100,6 @@ describe("draft engine memory", () => {
       model: "",
       effort: "",
     });
-  });
-
-  it("ignores a disabled engine", () => {
-    writeDraftEngineMemory({ engine: "claude", model: "", effort: "" });
-    const disabled = inventory({
-      engines: [{ id: "claude", enabled: false, binary_ok: true }],
-    });
-
-    expect(resolveDraftEngineMemory(disabled)).toBeUndefined();
   });
 
   it("drops a model the engine no longer reports so the default applies", () => {
@@ -157,6 +159,51 @@ describe("draft engine memory", () => {
     expect(resolveDraftEngineMemory(inventory())).toBeUndefined();
   });
 
+  it("keeps each engine's model and effort while the other one is in use", () => {
+    writeDraftEngineMemory({ engine: "codex", model: "gpt-5-codex", effort: "high" });
+    writeDraftEngineMemory({ engine: "claude", model: "claude-opus-5", effort: "medium" });
+
+    expect(rememberedEngineRuntime("codex", inventory())).toEqual({
+      model: "gpt-5-codex",
+      effort: "high",
+    });
+    expect(rememberedEngineRuntime("claude", inventory())).toEqual({
+      model: "claude-opus-5",
+      effort: "medium",
+    });
+    expect(lastEffortForEngineModel("codex", "gpt-5-codex")).toBe("high");
+    // The built-in engine has its own provider/model memory.
+    expect(rememberedEngineRuntime("wuu", inventory())).toBeUndefined();
+    expect(readDraftEngineMemory()).toEqual({
+      engine: "claude",
+      model: "claude-opus-5",
+      effort: "medium",
+    });
+  });
+
+  it("leaves the engine default in charge when its remembered model is gone", () => {
+    writeDraftEngineMemory({ engine: "codex", model: "retired-model", effort: "high" });
+
+    expect(rememberedEngineRuntime("codex", inventory())).toBeUndefined();
+  });
+
+  it("reads the single-selection payload written by an older build", () => {
+    window.localStorage.setItem(
+      MEMORY_KEY,
+      JSON.stringify({ engine: "codex", model: "gpt-5-codex", effort: "high" }),
+    );
+
+    expect(readDraftEngineMemory()).toEqual({
+      engine: "codex",
+      model: "gpt-5-codex",
+      effort: "high",
+    });
+    expect(rememberedEngineRuntime("codex", inventory())).toEqual({
+      model: "gpt-5-codex",
+      effort: "high",
+    });
+  });
+
   it("treats corrupted storage as no remembered engine", () => {
     window.localStorage.setItem(MEMORY_KEY, "not json");
     expect(readDraftEngineMemory()).toBeUndefined();
@@ -166,14 +213,6 @@ describe("draft engine memory", () => {
 
     window.localStorage.setItem(MEMORY_KEY, JSON.stringify(["codex"]));
     expect(readDraftEngineMemory()).toBeUndefined();
-  });
-
-  it("clears the memory so the settings default takes over again", () => {
-    writeDraftEngineMemory({ engine: "codex", model: "", effort: "" });
-    clearDraftEngineMemory();
-
-    expect(readDraftEngineMemory()).toBeUndefined();
-    expect(resolveDraftEngineMemory(inventory())).toBeUndefined();
   });
 
   it("clears the memory when written without an engine", () => {

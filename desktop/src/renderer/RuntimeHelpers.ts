@@ -1,6 +1,10 @@
 import type { CodexModelSummary, GitStatusResult, InitializeResult, ProviderModelSummary, ProviderSummary } from "../shared/protocol";
 import { translateCurrent as t } from "./i18n";
 
+export function effectiveModelSpeed(speed?: string, defaultSpeed?: string): string | undefined {
+  return speed || defaultSpeed;
+}
+
 export function providerIsCodex(initialized: InitializeResult, providerName: string): boolean {
   const summary = initialized.providers?.find((provider) => provider.name === providerName);
   const type = (summary?.type ?? providerName).trim().toLowerCase().replaceAll("_", "-");
@@ -52,6 +56,37 @@ export function variantLabel(variant: string): string {
   return codexEffortLabel(variant);
 }
 
+const EFFORT_RANK: Record<string, number> = {
+  "": 0,
+  none: 1,
+  minimal: 2,
+  low: 3,
+  medium: 4,
+  high: 5,
+  xhigh: 6,
+  max: 7,
+  ultra: 8,
+};
+
+function effortRank(effort: string): number {
+  return EFFORT_RANK[effort] ?? 100;
+}
+
+// Keep discrete effort controls in increasing intensity so the leftmost stop
+// is the weakest level and Extra high / Max sit on the right.
+export function orderedEffortOptions(options: string[]): string[] {
+  const unique: string[] = [];
+  for (const option of options) {
+    if (!unique.includes(option)) unique.push(option);
+  }
+  return unique.sort((left, right) => {
+    const leftRank = effortRank(left);
+    const rightRank = effortRank(right);
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    return left.localeCompare(right);
+  });
+}
+
 export function providerModelDisplayName(model?: ProviderModelSummary): string {
   return model?.display_name || model?.id || "model";
 }
@@ -101,7 +136,7 @@ export function providerModelVariantOptions(
   if (supported.length === 0 && model?.capabilities?.reasoning === true && !options.includes("none")) {
     options.push("none");
   }
-  return options;
+  return orderedEffortOptions(options);
 }
 
 export function providerModelReasoningMode(
@@ -178,7 +213,7 @@ export function codexEffortOptions(model: CodexModelSummary | undefined, current
   if (currentEffort && !options.includes(currentEffort)) {
     options.push(currentEffort);
   }
-  return options;
+  return orderedEffortOptions(options);
 }
 
 export function normalizedEffortForModel(currentEffort: string, model: CodexModelSummary): string {

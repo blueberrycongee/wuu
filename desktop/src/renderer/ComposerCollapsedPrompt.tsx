@@ -1,17 +1,16 @@
-import { FileText, X } from "lucide-react";
+import { FileText } from "./WuuIcons";
 import {
   type ClipboardEvent as ReactClipboardEvent,
-  type RefObject,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore
 } from "react";
 import { clipboardAttachmentFiles } from "./ComposerMessages";
+import { ComposerDocumentCard } from "./ComposerDocumentCard";
 import type { MessageContentPart } from "../shared/protocol";
-import { translateCurrent as translate } from "./i18n";
+import { translateCurrent as translate, useI18n } from "./i18n";
 import { TruncatedText } from "./TruncatedText";
 import { buildFileSelectionPart } from "./FileSelectionContext";
 
@@ -132,10 +131,20 @@ export function collapsedComposerPromptTitle(text: string): string {
   return firstLine || translate("composer.longText");
 }
 
+function lineCount(text: string): number {
+  const trimmed = text.trimEnd();
+  let lines = 1;
+  for (let index = 0; index < trimmed.length; index += 1) {
+    const code = trimmed.charCodeAt(index);
+    if (code === 10 || (code === 13 && trimmed.charCodeAt(index + 1) !== 10)) lines += 1;
+  }
+  return lines;
+}
+
 /**
- * A compact, attachment-like chip for one folded long paste. The whole chip
- * body reveals the text back into the textarea; the circular remove button
- * overlays the top-right corner, mirroring the file attachment chip.
+ * One folded long paste as a document card. The body reveals the text back
+ * into the textarea; the meta line gives its size so a fold can be told apart
+ * from another paste that starts with the same line.
  */
 export function CollapsedComposerPromptCard({
   text,
@@ -146,29 +155,22 @@ export function CollapsedComposerPromptCard({
   onReveal: () => void;
   onRemove: () => void;
 }): JSX.Element {
+  const { t, formatNumber } = useI18n();
   const title = collapsedComposerPromptTitle(text);
+  const lines = useMemo(() => lineCount(text), [text]);
   return (
-    <div className="composer-collapsed-prompt-card">
-      <button
-        className="composer-collapsed-prompt-main"
-        type="button"
-        aria-label={translate("composer.showCollapsedTextNamed", { title })}
-        onClick={onReveal}
-      >
-        <span className="composer-collapsed-prompt-icon" aria-hidden="true">
-          <FileText className="icon" />
-        </span>
-        <TruncatedText as="strong" className="composer-collapsed-prompt-title" text={title} />
-      </button>
-      <button
-        className="composer-collapsed-prompt-remove"
-        type="button"
-        aria-label={translate("composer.removeCollapsedText")}
-        onClick={onRemove}
-      >
-        <X aria-hidden="true" />
-      </button>
-    </div>
+    <ComposerDocumentCard
+      className="composer-collapsed-prompt-card"
+      icon={<FileText className="icon" />}
+      title={<TruncatedText as="strong" className="composer-document-card-title" text={title} />}
+      meta={lines > 1
+        ? t("composer.pastedTextLines", { count: formatNumber(lines) })
+        : t("composer.pastedTextCharacters", { count: formatNumber(text.length) })}
+      openLabel={t("composer.showCollapsedTextNamed", { title })}
+      onOpen={onReveal}
+      removeLabel={t("composer.removeCollapsedText")}
+      onRemove={onRemove}
+    />
   );
 }
 
@@ -207,7 +209,6 @@ export function useCollapsedComposerPrompt({
   /** Exact part-text prefix to prepend when changing the visible draft. */
   prefix: string;
   visiblePrompt: string;
-  listRef: RefObject<HTMLDivElement | null>;
   handlePaste: (
     event: ReactClipboardEvent<HTMLTextAreaElement>,
     options: CollapsedComposerPromptPasteOptions
@@ -278,14 +279,6 @@ export function useCollapsedComposerPrompt({
       setLocalBlocks([]);
     }
   }, [localBlocks.length, prefix, prompt, storageKey]);
-
-  useLayoutEffect(() => {
-    const list = listRef.current;
-    if (!list || activeBlocks.length === 0) {
-      return;
-    }
-    list.scrollTop = list.scrollHeight;
-  }, [activeBlocks.length]);
 
   function handlePaste(
     event: ReactClipboardEvent<HTMLTextAreaElement>,
@@ -368,7 +361,6 @@ export function useCollapsedComposerPrompt({
     hasBlocks,
     prefix,
     visiblePrompt,
-    listRef,
     handlePaste,
     revealBlock,
     removeBlock,

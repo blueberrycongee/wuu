@@ -1,9 +1,9 @@
-import type { ChannelRoomOnboarding } from "../shared/protocol";
+import { forgetLocalTurnTiming } from "./LocalTurnTiming";
 import { subscribeServerEvents } from "./ServerEvents";
 import { PhoneNavigationContext } from "./PhoneNavigationContext";
 import { AccountScreen } from "./AccountScreen";
 import { hostSupports } from "./HostCapabilities";
-import { isTouchWebShell } from "./ComposerFocus";
+import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { useSidebarTouchGesture } from "./SidebarTouchGesture";
 import { readThreadReadState, writeThreadReadState } from "./ThreadReadState";
 import { FileSelectionProvider, type FileSelectionPart } from "./FileSelectionContext";
@@ -23,18 +23,19 @@ import {
 } from "react";
 import type {
   ActivitySession,
+  BrowserDockTarget,
   Agent,
-  ChannelRoom,
   DesktopProject,
   EngineInfo,
   EngineListResult,
   EngineUpdateParams,
   ExtensionPackageUpdateParams,
+  GitStatusResult,
   InitializeResult,
   InputFile,
   InputImage,
   MessageContentPart,
-  NamedAgent,
+  ResponseSelection,
   PopOutInitResult,
   PluginPackageInstallResult,
   PluginPackageRemoveResult,
@@ -50,15 +51,16 @@ import type {
   UserQuestionRequest,
 } from "../shared/protocol";
 import {
+  OPTIMISTIC_TURN_ID_PREFIX,
   awaitComposerImages,
   createComposerMessage,
+  composerContextFromMessage,
   createOptimisticCompactTurn,
   createOptimisticTurn,
   dropOptimisticTurn,
   failOptimisticCompactTurn,
   inputFilesFromComposer,
   inputImagesFromComposer,
-  interruptLatestOptimisticTurn,
   interruptOptimisticTurn,
   isOptimisticTurnInterrupted,
   replaceOptimisticTurn,
@@ -86,7 +88,10 @@ import {
 import { QueryHistoryRail } from "./QueryHistoryRail";
 import { UserQuestionCard } from "./UserQuestionCard";
 import { ConversationSearchOverlay } from "./ConversationSearchOverlay";
-import { useConversationScrollState } from "./ConversationScrollState";
+import {
+  useConversationScrollState,
+  type ConversationScrollSnapshot,
+} from "./ConversationScrollState";
 import { PullToNewSession } from "./PullToNewSession";
 import { useConversationSearch } from "./ConversationSearchState";
 import {
@@ -97,14 +102,7 @@ import { SideThreadComposer } from "./SideThreadComposer";
 import { ConversationForkDialog } from "./ConversationForkDialog";
 import { firstUserMessageText } from "./TurnViewHelpers";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
-import {
-  AppSidebar,
-} from "./AppSidebar";
-import { ChannelView, type ChannelSection } from "./ChannelView";
-import { collaborationConversations, managedSidebarThreads, orderedPinnedCollaborationConversations, type CollaborationConversation } from "./CollaborationConversations";
-import { CollaborationSidebar } from "./CollaborationSidebar";
-import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft } from "./AgentOnboarding";
-import type { AppMode } from "./AppModeSwitch";
+import { AppSidebar } from "./AppSidebar";
 import {
   type EnvironmentPanelMenu,
   type EnvironmentPanelMotionState,
@@ -123,11 +121,14 @@ import {
   activeTurnIDForThread,
   bindActiveSessionTabToThread,
   cloneSessionTabDraft,
+  sessionTabDraftForThread,
+  composerDraftHasContent,
   conversationPaneThreadsByID,
   createDraftSessionTab,
   emptyComposerDraft,
   ensureSessionTab,
   handleStreamingNotification,
+  isCoalescedBackgroundThreadEvent,
   initialSplitComposerDrafts,
   initialState,
   isAnyThreadRunning,
@@ -148,6 +149,7 @@ import {
   reduceServerEvent,
   reconcileListedThreadState,
   resolveComposerRunningAction,
+  resolveThreadRuntimeContext,
   requireThread,
   runtimeContextKey,
   sameRuntimeContext,
@@ -156,9 +158,9 @@ import {
   sessionTabForLoadedRuntime,
   setThreadForPane,
   sortThreads,
-  summarizeProjectThreadsForSidebar,
+  summarizeWorkspaceThreadsForSidebar,
   summarizeThreadsForSidebar,
-  threadBelongsToProject,
+  threadBelongsToWorkspace,
   threadForTab,
   threadForPane,
   threadSessionTabID,
@@ -176,21 +178,11 @@ import {
   type ThreadSummary,
 } from "./AppState";
 import {
-  archiveChannelRoomPreference,
-  readChannelRoomPreferences,
-  togglePinnedChannelRoom,
-  unarchiveChannelRoomPreference,
-  visibleChannelRooms,
-  writeChannelRoomPreferences,
-  type ChannelRoomPreferences,
-} from "./ChannelRoomPreferences";
-import { sameChannelRooms, sameNamedAgents } from "./ChannelRoomState";
-import {
-  RIGHT_PANEL_MOTION_MS,
-  SIDEBAR_DRAWER_EXIT_MS,
+  rightPanelMotionMs,
+  sidebarDrawerExitMs,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
-  SIDEBAR_MOTION_MS,
+  sidebarMotionMs,
   WORKSPACE_RIGHT_PANEL_MAX_WIDTH,
   WORKSPACE_RIGHT_PANEL_MIN_WIDTH,
   useAppLayoutState,
@@ -200,6 +192,7 @@ import { motionDurationMs } from "./motion";
 import type { ContextCompositionEntry } from "./ContextCompositionCard";
 import type { InstructionFilesEntry } from "./InstructionFilesCard";
 import {
+  rememberedEngineRuntime,
   resolveDraftEngineMemory,
   writeDraftEngineMemory,
 } from "./DraftEngineMemory";
@@ -211,6 +204,7 @@ import {
   EmptyConversationHome,
   RuntimeLoading,
 } from "./LoadingViews";
+import { EmptyHomeOverview } from "./EmptyHomeOverview";
 import { WuuMascotRuntimeProvider } from "./WuuMascot";
 import { deriveActiveSessionHints } from "./activeSessionHint";
 import {
@@ -221,7 +215,6 @@ import type { SettingsPage } from "./SettingsView";
 import {
   ENABLE_CONVERSATION_TURN_RAIL,
   ENABLE_EMBEDDED_BROWSER,
-  ENABLE_GROUP_CHAT,
   ENABLE_ACCOUNT,
 } from "./FeatureFlags";
 import { ArchiveTip } from "./ArchiveTip";
@@ -229,17 +222,18 @@ import { TopNotice } from "./TopNotice";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { showErrorToast, showToast } from "./Toast";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
-import { CircleAlert, RefreshCw, X } from "lucide-react";
+import { CircleAlert, RefreshCw } from "./WuuIcons";
 import type {
 } from "../shared/protocol";
 import { useSettingsRuntimeState } from "./SettingsRuntimeState";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { JumpToLatestPill } from "./JumpToLatestPill";
+import { BrowserPiPHostReporter } from "./BrowserPiPHostReporter";
 import { ConversationStatusCluster } from "./ConversationStatusCluster";
 import { externalAgentActivityStore } from "./ExternalAgentActivityStore";
 import { SkillsCatalog } from "./SkillsCatalog";
 import { userVisibleThreads } from "./SkillsAssistant";
-import { useBrowserVisibility } from "./BrowserVisibility";
+import { isForegroundControlled, useBrowserVisibility } from "./BrowserVisibility";
 import { useSideThreadController } from "./SideThreadController";
 import {
   isCancellationMessage,
@@ -255,17 +249,27 @@ import { WorkspaceDocumentTurnDock } from "./WorkspaceDocumentTurnDock";
 import { useWorkspaceToolState } from "./WorkspaceToolState";
 import type { WorkspaceViewTab } from "./WorkspaceViewTabs";
 import { ImagePreviewProvider } from "./ImagePreview";
+import { ArtifactPreviewContext } from "./ArtifactPreviewContext";
+import { useArtifactAutoPreview } from "./ArtifactAutoPreview";
+import {
+  openWorkspaceBrowserOrExternal,
+  workspaceBrowserFocusDecision,
+  WorkspaceBrowserOpenContext,
+  type WorkspaceBrowserOpenTarget,
+} from "./WorkspaceBrowserOpen";
+import { requestWorkspaceBrowserNavigation } from "./WorkspaceBrowserNavigation";
 import {
   desktopPluginHost,
   desktopWorkbenchController,
   useDesktopPluginRuntime,
 } from "./plugins/DesktopPluginRuntime";
 import { DesktopWorkbench } from "./plugins";
-import { WINDOW_RESIZING_CLASS } from "./WindowResizeState";
+import { usePrimaryPluginViewCover } from "./PrimaryPluginViewCover";
+import { releaseWindowResizeClass, WINDOW_RESIZING_CLASS } from "./WindowResizeState";
 import { useComposerDraftState } from "./ComposerDraftState";
 import { useComposerPendingState } from "./ComposerPendingState";
 import { useSidebarDrawerState } from "./SidebarDrawerState";
-import { useSidebarProjectState } from "./SidebarProjectState";
+import { useSidebarWorkspaceState } from "./SidebarWorkspaceState";
 import { useViewSwitchState } from "./ViewSwitchState";
 import { turnTelemetryStore } from "./TurnTelemetryStore";
 import {
@@ -280,14 +284,23 @@ import {
   loadPopOutRuntime,
   loadRuntime,
   loadRuntimeRestore,
+  loadThreadListRefresh,
   applyRuntimeRestore,
   selectRuntimeContext,
 } from "./RuntimeLoadState";
-import { createProjectRuntimeActions } from "./ProjectRuntimeActions";
+import { createWorkspaceRuntimeActions } from "./WorkspaceRuntimeActions";
 import { createWorkspaceActions } from "./WorkspaceActions";
 import { createSessionTabActions } from "./SessionTabActions";
 import { createThreadActivationActions } from "./ThreadActivationActions";
 import { createThreadMutationActions } from "./ThreadMutationActions";
+import {
+  baseThreadTitle,
+  conversationHeadingTitle,
+  customDraftConversationTitle,
+} from "./ThreadTitles";
+import { ProjectActionsProvider, type ProjectActions, type ProjectThread } from "./ProjectActions";
+import { isProjectCoordinator, projectSessionsOf } from "./ProjectSessions";
+import { ProjectStatusCapsule } from "./ProjectViews";
 import { createRuntimeSettingsActions } from "./RuntimeSettingsActions";
 import { createConversationPaneActions } from "./ConversationPaneActions";
 import {
@@ -314,11 +327,6 @@ import {
 } from "./SessionRuntimeState";
 export { SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./SidebarDrawerState";
 
-const ENVIRONMENT_PANEL_MOTION_MS = motionDurationMs(
-  "--environment-panel-motion-duration",
-  260,
-);
-const WORKSPACE_SHEET_EXIT_MS = motionDurationMs("--sheet-exit-duration", 220);
 const ENGINE_INVENTORY_STALE_MS = 6 * 60 * 60 * 1000;
 // Globalized-sheet phases: docked (grid child) → arming (promoted to a
 // full-window fixed sheet, teleported over its dock slot for one frame) →
@@ -351,7 +359,7 @@ function isNoModelConfiguredError(message: string): boolean {
   );
 }
 
-type EngineRuntimeSelection = { model: string; effort: string };
+type EngineRuntimeSelection = { model: string; effort: string; speed?: string };
 
 function defaultEngineRuntimeSelection(engine?: EngineInfo): EngineRuntimeSelection {
   const model = engine?.models?.find((item) => item.is_default) ?? engine?.models?.[0];
@@ -403,6 +411,13 @@ function formatUserQuestionSteerPrompt(
   }).join("\n\n");
 }
 
+// A project's name until the user renames it: its goal's first line, short
+// enough for the sidebar.
+function projectNameFromGoal(goal: string): string {
+  const line = goal.split("\n").find((part) => part.trim())?.trim().replace(/\s+/g, " ") ?? "";
+  return line.length > 48 ? `${line.slice(0, 47)}…` : line;
+}
+
 export function App(): JSX.Element {
   const phoneNavigation = useContext(PhoneNavigationContext);
   const { locale, t } = useI18n();
@@ -421,7 +436,10 @@ export function App(): JSX.Element {
     typeof window.wuu.listUserQuestions === "function" &&
     typeof window.wuu.answerUserQuestion === "function" &&
     typeof window.wuu.cancelUserQuestion === "function";
-  useDesktopPluginRuntime(state.initialized?.extension_inventory);
+  useDesktopPluginRuntime(
+    state.initialized?.extension_inventory,
+    state.initialized?.features?.safe_mode,
+  );
   const {
     prompt,
     promptRevision,
@@ -431,6 +449,8 @@ export function App(): JSX.Element {
     setComposerImages,
     composerFiles,
     setComposerFiles,
+    composerSelections,
+    setComposerSelections,
     splitComposerDrafts,
     setSplitComposerDrafts,
     attachComposerAttachmentFiles,
@@ -443,19 +463,39 @@ export function App(): JSX.Element {
     moveSplitDraftToGlobalComposer,
     currentPrimaryComposerDraft,
     restorePrimaryComposerDraft,
-  } = useComposerDraftState({
-    setStatus: (status) =>
-      setState((current) => ({
-        ...current,
-        status,
-      })),
-  });
+  } = useComposerDraftState();
+  useEffect(() => {
+    const addSelection = (event: Event) => {
+      const selection = (event as CustomEvent<ResponseSelection>).detail;
+      const current = appStateRef.current;
+      const pane = current.thread?.id === selection.source.thread_id ? "primary"
+        : current.secondaryThread?.id === selection.source.thread_id ? "secondary" : undefined;
+      // A toolbar belongs to its response, not to whichever composer is active.
+      if (!pane || threadForPane(current, pane)?.read_only) return;
+      const copy = { ...selection, source: { ...selection.source } };
+      if (current.thread && current.secondaryThread) {
+        setSplitComposerDrafts((drafts) => ({ ...drafts, [pane]: {
+          ...drafts[pane], selections: [...(drafts[pane].selections ?? []), copy],
+        } }));
+      } else {
+        setComposerSelections((selections) => [...selections, copy]);
+      }
+      const owner = current.secondaryThread
+        ? [...document.querySelectorAll<HTMLElement>(".conversation-split-pane[data-thread-id]")].find((element) => element.dataset.threadId === selection.source.thread_id)
+        : document.querySelector<HTMLElement>("[data-main-conversation-composer]");
+      focusComposerTextarea(owner?.querySelector<HTMLTextAreaElement>("textarea") ?? null);
+    };
+    window.addEventListener("wuu:add-response-selection", addSelection);
+    return () => window.removeEventListener("wuu:add-response-selection", addSelection);
+  }, [setComposerSelections, setSplitComposerDrafts]);
   const [historyMessageEdit, setHistoryMessageEdit] =
     useState<HistoryMessageEditState | undefined>(undefined);
   const fileSelectionDraftOwners = useRef(new Map<string, string>());
+  const composerDraftsRef = useRef({ primary: currentPrimaryComposerDraft, split: splitComposerDrafts });
+  composerDraftsRef.current = { primary: currentPrimaryComposerDraft, split: splitComposerDrafts };
   const [activitySessions, setActivitySessions] = useState(emptyActivitySessions);
-  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
-  const closeProjectMenu = useCallback(() => setProjectMenuOpen(false), []);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const closeWorkspaceMenu = useCallback(() => setWorkspaceMenuOpen(false), []);
   const appShellRef = useRef<HTMLDivElement>(null);
   const settingsShellRef = useRef<HTMLDivElement>(null);
   const [mainComposerFocusRequest, setMainComposerFocusRequest] =
@@ -491,7 +531,7 @@ export function App(): JSX.Element {
   } = useAppLayoutState({
     layoutRootRef: appShellRef,
     settingsLayoutRootRef: settingsShellRef,
-    onCloseProjectMenu: closeProjectMenu,
+    onCloseWorkspaceMenu: closeWorkspaceMenu,
   });
   const [rightPanelManualGlobalized, setRightPanelManualGlobalized] =
     useState(false);
@@ -524,7 +564,7 @@ export function App(): JSX.Element {
     setWorkspaceSheetPhase("exiting");
     const timer = window.setTimeout(
       () => setWorkspaceSheetPhase("docking"),
-      WORKSPACE_SHEET_EXIT_MS,
+      motionDurationMs("--sheet-exit-duration", 220),
     );
     return () => window.clearTimeout(timer);
   }, [rightPanelGlobalized, workspaceSheetPhase]);
@@ -544,10 +584,14 @@ export function App(): JSX.Element {
     });
     return () => cancelAnimationFrame(raf);
   }, [workspaceSheetPhase]);
+  // The bell view is a sidebar-level navigation mode rather than sidebar-local
+  // state: settings and account replace the whole workbench tree, so the flag
+  // has to live above it for the user to come back to the view they left.
+  const [unreadViewOpen, setUnreadViewOpen] = useState(false);
+  const [attentionStickyIDs, setAttentionStickyIDs] = useState<Set<string>>(() => new Set());
   // A manually expanded workspace owns the main stage, not the navigation
   // rail. Keep a docked sidebar docked; only an already-collapsed or compact
   // sidebar remains a drawer while the workspace is expanded.
-  const [appMode, setAppMode] = useState<AppMode>("harness");
   const sidebarDrawerMode = compactNavigation || sidebarCollapsed;
   const {
     sidebarDrawerPhase,
@@ -562,8 +606,8 @@ export function App(): JSX.Element {
     appShellRef,
     sidebarCollapsed: sidebarDrawerMode,
     resizingSidebar,
-    motionMs: SIDEBAR_DRAWER_EXIT_MS,
-    dockingMotionMs: SIDEBAR_MOTION_MS,
+    motionMs: sidebarDrawerExitMs,
+    dockingMotionMs: sidebarMotionMs,
   });
   const sidebarDrawerVisible = sidebarDrawerPhase === "open";
   const toggleSessionSwitcher = useCallback((): void => {
@@ -591,8 +635,8 @@ export function App(): JSX.Element {
   const {
     collapsedSidebarSectionIDs,
     expandedSidebarSectionIDs,
-    loadingProjectThreadIDs,
-    projectThreadsByProjectID,
+    loadingWorkspaceThreadIDs,
+    workspaceThreadsByWorkspaceID,
     cachedScratchThreads,
     sidebarSectionOrder,
     setSidebarSectionOrder,
@@ -602,14 +646,14 @@ export function App(): JSX.Element {
     removeCachedSidebarThread,
     syncSidebarServerEvent,
     toggleSidebarSectionCollapsed,
-  } = useSidebarProjectState({
+  } = useSidebarWorkspaceState({
     // Let the visible workspace finish booting before background catalogs
     // compete for the same remote connection.
     backgroundLoadingEnabled: Boolean(state.initialized) || state.status !== "connecting",
     projects: state.projects,
     threads: state.threads,
     activeContext: state.activeContext,
-    activeProjectID: state.activeProjectId,
+    activeWorkspaceID: state.activeProjectId,
     setStatus: (status) =>
       setState((current) => ({
         ...current,
@@ -617,6 +661,8 @@ export function App(): JSX.Element {
       })),
   });
   const syncSidebarServerEventStable = useStableCallback(syncSidebarServerEvent);
+  // Settings and account pages unmount the sidebar; keep manual folds here.
+  const [collapsedFolderIDs, setCollapsedFolderIDs] = useState<Set<string>>(() => new Set());
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
   const [accessMenuOpen, setAccessMenuOpen] = useState(false);
   const [codexRuntimeMenu, setCodexRuntimeMenu] =
@@ -640,35 +686,6 @@ export function App(): JSX.Element {
     () => window.wuu?.initialOnboardingComplete ?? true,
   );
 
-  const [collaborationSection, setCollaborationSection] = useState<ChannelSection>("rooms");
-  const [newRoomRequest, setNewRoomRequest] = useState(0);
-  const [editChannelAgentRequestID, setEditChannelAgentRequestID] = useState("");
-  const [editChannelRoomRequestID, setEditChannelRoomRequestID] = useState("");
-  const [agentOnboardingActive, setAgentOnboardingActive] = useState(false);
-  const [agentOnboardingDraft, setAgentOnboardingDraft] = useState<AgentOnboardingDraft | null>(null);
-  const [namedAgents, setNamedAgents] = useState<NamedAgent[]>([]);
-  const directoryRefreshInFlightRef = useRef(false);
-  const channelDirectoryGenerationRef = useRef(0);
-  const [channelDirectoryLoaded, setChannelDirectoryLoaded] = useState(false);
-  const [selectedCollaborationAgentID, setSelectedCollaborationAgentID] = useState("");
-  const selectedCollaborationAgentRequestRef = useRef("");
-  const directMessageRequestGenerationRef = useRef(0);
-  const [selectedChannelRoomIDState, setSelectedChannelRoomIDState] = useState(() => readChannelRoomPreferences().selectedRoomID ?? "");
-  const [channelComposerDrafts, setChannelComposerDrafts] = useState<Record<string, ComposerDraftState>>({});
-  // Rooms (with per-room unread counts) live at the App level so the unified
-  // sidebar and the channel canvas share one source of truth; selection is
-  // controlled here and passed into ChannelView.
-  const [channelRooms, setChannelRooms] = useState<ChannelRoom[]>([]);
-  const [channelRoomPreferences, setChannelRoomPreferences] =
-    useState<ChannelRoomPreferences>(readChannelRoomPreferences);
-  useEffect(() => {
-    // Migrate preferences saved by older builds from origin-bound
-    // localStorage into desktop-settings.json on the first launch.
-    writeChannelRoomPreferences(channelRoomPreferences);
-    // Only the initial snapshot is migrated here; user changes persist in
-    // updateChannelRoomPreferences below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   const [settingsInitialPage, setSettingsInitialPage] =
     useState<SettingsPage>("providers");
   const {
@@ -682,67 +699,18 @@ export function App(): JSX.Element {
     updateCodexPets,
   } = useSettingsRuntimeState({ settingsOpen });
 
-  // Poll the room list so the sidebar 协作 section always shows current
-  // unread counts, independent of whether the channel canvas is open.
-  useEffect(() => {
-    if (
-      !ENABLE_GROUP_CHAT ||
-      !window.wuu ||
-      typeof window.wuu.listChannelRooms !== "function" ||
-      !state.initialized
-    ) {
-      setChannelRooms([]);
-      setNamedAgents([]);
-      setChannelDirectoryLoaded(false);
-      return;
-    }
-    let active = true;
-    const refresh = async (): Promise<void> => {
-      if (directoryRefreshInFlightRef.current) return;
-      directoryRefreshInFlightRef.current = true;
-      const generation = ++channelDirectoryGenerationRef.current;
-      try {
-        const result = await window.wuu!.listChannelRooms();
-        if (active && generation === channelDirectoryGenerationRef.current) {
-          const rooms = result.rooms ?? [];
-          setChannelRooms((current) =>
-            sameChannelRooms(current, rooms) ? current : rooms,
-          );
-          setChannelDirectoryLoaded(true);
-        }
-        if (typeof window.wuu!.listNamedAgents === "function") {
-          const agentResult = await window.wuu!.listNamedAgents();
-          if (active && generation === channelDirectoryGenerationRef.current) {
-            const agents = agentResult.agents ?? [];
-            setNamedAgents((current) =>
-              sameNamedAgents(current, agents) ? current : agents,
-            );
-          }
-        }
-      } catch (reason) {
-        console.warn("collaboration directory refresh failed", reason);
-      } finally {
-        directoryRefreshInFlightRef.current = false;
-      }
-    };
-    void refresh();
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void refresh();
-    }, 2_000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [state.initialized]);
-  const [projectFilter, setProjectFilter] = useState("");
+  const [workspaceFilter, setWorkspaceFilter] = useState("");
   const {
     workspaceViewTabs,
     workspaceActiveViewTabID,
     workspaceActiveFileTabID,
+    ensureWorkspaceToolTab,
     openWorkspaceTool,
     openWorkspacePluginTool,
     openWorkspaceDiffTab,
     openWorkspaceFileTab,
+    openWorkspaceArtifactTab,
+    openWorkspaceProjectTab,
     showWorkspaceToolPicker,
     focusWorkspaceViewTab,
     closeWorkspaceViewTab,
@@ -836,11 +804,6 @@ export function App(): JSX.Element {
     toggleSidebar,
     workspaceRightPanelDockableWithoutSidebar,
   ]);
-  const clearChannelRoomUnread = useCallback((roomID: string): void => {
-    setChannelRooms((current) =>
-      current.map((room) => (room.id === roomID ? { ...room, unread_count: 0 } : room)),
-    );
-  }, []);
   const [environmentDialog, setEnvironmentDialog] =
     useState<EnvironmentDialog | null>(null);
   const [contextCompositionEntries, setContextCompositionEntries] = useState<
@@ -891,9 +854,11 @@ export function App(): JSX.Element {
       // snapshot says a loaded thread is idle while the renderer still has an
       // in-progress turn, repair immediately instead of waiting for the
       // throttled cross-process discovery refresh.
-      void window.wuu.listThreads().then((listed) => {
+      void loadThreadListRefresh(current).then((listed) => {
         if (disposed) return;
-        setState((state) => reconcileListedThreadState(state, listed.threads));
+        setState((state) => state.activeContext === current.activeContext
+          ? reconcileListedThreadState(state, listed)
+          : state);
       }).catch(() => {
         // A later running snapshot or ordinary refresh retries.
       });
@@ -1001,8 +966,9 @@ export function App(): JSX.Element {
   const {
     pendingViewSwitch,
     visiblePendingThreadID,
-    visiblePendingProjectID,
+    visiblePendingWorkspaceID,
     viewSwitchPending,
+    submissionTargetPending,
     viewContextSwitchPending,
     beginViewSwitch,
     beginInstantThreadSwitch,
@@ -1021,7 +987,7 @@ export function App(): JSX.Element {
   const gitRefreshTimerRef = useRef<number | undefined>(undefined);
   const gitRefreshInFlightRef = useRef(false);
   const gitRefreshQueuedRef = useRef(false);
-  const projectMenuRef = useRef<HTMLDivElement>(null);
+  const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const runtimeMenuRef = useRef<HTMLDivElement>(null);
   const accessMenuRef = useRef<HTMLDivElement>(null);
   const codexRuntimeRef = useRef<HTMLDivElement>(null);
@@ -1035,10 +1001,6 @@ export function App(): JSX.Element {
     fullPanel: false,
     open: false,
   });
-  // The conversation scroll state is created later in the component, but the
-  // composer pending state needs to register deferred placement intent from
-  // drawer actions. Route it through a ref assigned after that hook mounts.
-  const requestDeferredQueryScrollRef = useRef<(sourceID: string) => void>(() => {});
   const {
     pendingComposerMessagesByThread,
     pendingComposerMessagesByThreadRef,
@@ -1058,9 +1020,26 @@ export function App(): JSX.Element {
     threadHasPendingComposerMessages,
   } = useComposerPendingState({
     getAppState: () => appStateRef.current,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftForThread: (threadID) => {
+      const current = appStateRef.current;
+      if (current.thread && current.secondaryThread) {
+        if (current.thread.id === threadID) return composerDraftsRef.current.split.primary;
+        if (current.secondaryThread.id === threadID) return composerDraftsRef.current.split.secondary;
+      }
+      return activeThreadIDForState(current) === threadID || current.activeSessionTabID === threadID
+        ? composerDraftsRef.current.primary() : sessionTabDraftForThread(current, threadID);
+    },
     restoreComposerDraftForThread: (threadID, draft) => {
-      if (activeThreadIDForState(appStateRef.current) === threadID) {
+      const currentState = appStateRef.current;
+      if (currentState.thread && currentState.secondaryThread) {
+        const pane = currentState.thread.id === threadID ? "primary"
+          : currentState.secondaryThread.id === threadID ? "secondary" : undefined;
+        if (pane) {
+          setSplitComposerDrafts((current) => ({ ...current, [pane]: draft }));
+          return;
+        }
+      }
+      if ((activeThreadIDForState(appStateRef.current) === threadID || appStateRef.current.activeSessionTabID === threadID)) {
         restorePrimaryComposerDraft(draft);
         return;
       }
@@ -1073,6 +1052,7 @@ export function App(): JSX.Element {
                 prompt: draft.prompt,
                 images: draft.images.map((image) => ({ ...image })),
                 files: draft.files.map((file) => ({ ...file })),
+                selections: draft.selections?.map((selection) => ({ ...selection, source: { ...selection.source } })),
               }
             : tab,
         ),
@@ -1084,48 +1064,13 @@ export function App(): JSX.Element {
         status,
       })),
     sendComposerMessageToThread,
-    requestDeferredQueryScroll: (sourceID) =>
-      requestDeferredQueryScrollRef.current(sourceID),
+    preserveFailedComposerMessage,
   });
   const runtimeVariantByModelRef = useRef(new Map<string, string>());
   const cachedThreadPaneHistoryRef = useRef<string[]>([]);
   const cachedConversationPaneThreadsRef = useRef(new Map<string, Thread>());
   const draftSessionTabCounterRef = useRef(0);
   const currentSessionTab = activeSessionTab(state);
-  const activeChannelRooms = useMemo(
-    () => visibleChannelRooms(channelRooms, channelRoomPreferences),
-    [channelRoomPreferences, channelRooms],
-  );
-  const archivedChannelRooms = useMemo(
-    () => channelRooms.filter((room) => channelRoomPreferences.archivedRoomIDs.includes(room.id)),
-    [channelRoomPreferences.archivedRoomIDs, channelRooms],
-  );
-  const selectedChannelRoomID = selectedCollaborationAgentID
-    ? activeChannelRooms.find((room) => room.kind === "dm" && room.members.some(
-      (member) => member.member_type === "agent" && member.member_id === selectedCollaborationAgentID,
-    ))?.id ?? ""
-    : (activeChannelRooms.some((room) => room.id === selectedChannelRoomIDState)
-      ? selectedChannelRoomIDState
-      : channelDirectoryLoaded ? activeChannelRooms[0]?.id ?? "" : "");
-  useEffect(() => {
-    if (appMode !== "collaboration" || !selectedChannelRoomID) return;
-    setSelectedChannelRoomIDState(selectedChannelRoomID);
-    if (channelRoomPreferences.selectedRoomID === selectedChannelRoomID) return;
-    updateChannelRoomPreferences((current) => ({ ...current, selectedRoomID: selectedChannelRoomID }));
-  }, [appMode, selectedChannelRoomID, channelRoomPreferences.selectedRoomID]);
-  const selectedCollaborationAgent =
-    namedAgents.find((agent) => agent.id === selectedCollaborationAgentID);
-  const activeChannelComposerDraft = useMemo(
-    () => channelComposerDrafts[selectedChannelRoomID] ?? emptyComposerDraft(),
-    [channelComposerDrafts, selectedChannelRoomID],
-  );
-  const channelUnreadByRoomID = useMemo(
-    () =>
-      Object.fromEntries(
-        activeChannelRooms.map((room) => [room.id, room.unread_count ?? 0]),
-      ),
-    [activeChannelRooms],
-  );
 
   const currentSkillsTabID =
     currentSessionTab?.kind === "skills" ? currentSessionTab.id : undefined;
@@ -1183,8 +1128,8 @@ export function App(): JSX.Element {
         return;
       }
       appShellRef.current
-        ?.querySelector<HTMLButtonElement>(
-          '.session-tab-main[aria-selected="true"]',
+        ?.querySelector<HTMLHeadingElement>(
+          ".conversation-title-heading h1",
         )
         ?.focus();
     }
@@ -1203,7 +1148,7 @@ export function App(): JSX.Element {
   const activeWorkspaceViewTab = workspaceActiveViewTabID
     ? workspaceViewTabs.find((tab) => tab.id === workspaceActiveViewTabID)
     : undefined;
-  const workspaceProjectSelectionEnabled =
+  const workspaceSelectionEnabled =
     rightPanelGlobalized &&
     (activeWorkspaceViewTab?.kind === "files" ||
       activeWorkspaceViewTab?.kind === "file");
@@ -1221,6 +1166,7 @@ export function App(): JSX.Element {
       : undefined;
   const activeThread = activeThreadForState(state);
   const activeThreadID = activeThread?.id;
+  const activeProjectDraft = !activeThread && currentSessionTab?.kind === "draft" && currentSessionTab.project === true;
   const activeThreadRunning = isThreadRunning(activeThread);
   const activeThreadHasRunningTurn = activeThread?.turns.some(turn => turn.status === "in_progress") ?? false;
   useEffect(() => {
@@ -1246,11 +1192,8 @@ export function App(): JSX.Element {
         return;
       }
       runningThreadReconcileInFlightRef.current = key;
-      const refresh = executorRunning
-        ? window.wuu.resumeThread(activeThreadID).then(result => result.thread ? [result.thread] : [])
-        : window.wuu.listThreads().then(result => result.threads);
-      void refresh
-        .then((listed) => {
+      void window.wuu.resumeThread(activeThreadID)
+        .then(({ thread }) => {
           if (disposed) {
             return;
           }
@@ -1261,10 +1204,8 @@ export function App(): JSX.Element {
             ) {
               return current;
             }
-            if (executorRunning && !listed[0]) return current;
-            return reconcileListedThreadState(current, executorRunning
-              ? upsertThread(current.threads, listed[0])
-              : listed);
+            if (!thread) return current;
+            return reconcileListedThreadState(current, upsertThread(current.threads, thread));
           });
         })
         .catch(() => {
@@ -1303,6 +1244,12 @@ export function App(): JSX.Element {
   // child model/effort choice when the user switches back within the draft.
   const draftEngineRuntimeByID = useRef<Record<string, EngineRuntimeSelection>>({});
   const [draftPermissionMode, setDraftPermissionMode] = useState<PermissionMode | "">("");
+  // Present while the next conversation starts in its own worktree. It belongs
+  // to one project root, so switching projects never carries one repository's
+  // start branch into another. An empty start branch means the project's HEAD.
+  const [draftWorktree, setDraftWorktree] = useState<{ cwd: string; startBranch: string }>();
+  const draftWorktreeFor = (context: RuntimeContext | undefined, gitStatus: GitStatusResult | undefined) =>
+    draftWorktree && gitStatus?.is_repo && draftWorktree.cwd === context?.cwd ? draftWorktree : undefined;
   const draftEngineSeed = useRef<{ threadID?: string; done: boolean }>({
     threadID: activeThreadID,
     done: false,
@@ -1313,6 +1260,7 @@ export function App(): JSX.Element {
       setDraftEngine("");
       setDraftEngineRuntime({ model: "", effort: "" });
       setDraftPermissionMode("");
+      setDraftWorktree(undefined);
     }
     // Only a brand-new conversation seeds from memory. An open thread is
     // already bound to its engine, and a seeded draft would otherwise win the
@@ -1328,10 +1276,11 @@ export function App(): JSX.Element {
     }
     draftEngineSeed.current.done = true;
     setDraftEngine(remembered.engine);
-    setDraftEngineRuntime({ model: remembered.model, effort: remembered.effort });
+    setDraftEngineRuntime({ model: remembered.model, effort: remembered.effort, speed: remembered.speed });
     draftEngineRuntimeByID.current[remembered.engine] = {
       model: remembered.model,
       effort: remembered.effort,
+      speed: remembered.speed,
     };
     setDraftPermissionMode(remembered.engine === "wuu" ? "" : "unconfined");
   }, [activeThreadID, engineInventory]);
@@ -1339,9 +1288,10 @@ export function App(): JSX.Element {
     const runtime = draftEngineRuntimeByID.current[id]
       ?? (id === "wuu"
         ? { model: "", effort: "" }
-        : defaultEngineRuntimeSelection(
-            engineInventory?.engines.find((engine) => engine.id === id),
-          ));
+        : rememberedEngineRuntime(id, engineInventory)
+          ?? defaultEngineRuntimeSelection(
+              engineInventory?.engines.find((engine) => engine.id === id),
+            ));
     draftEngineSeed.current.done = true;
     setDraftEngine(id);
     setDraftPermissionMode(id === "wuu" ? "" : "unconfined");
@@ -1424,7 +1374,7 @@ export function App(): JSX.Element {
     );
   }
 
-  async function takeoverBrowserActivity(): Promise<void> {
+  async function pauseBrowserTask(): Promise<void> {
     if (!activeBrowserActivity) {
       return;
     }
@@ -1435,39 +1385,10 @@ export function App(): JSX.Element {
       );
       mergeActivityResponse(result.activity);
     } catch (error) {
-      showErrorToast(error, t("app.browserTakeoverFailed"));
+      showErrorToast(error, t("app.browserPauseFailed"));
     }
   }
 
-  async function releaseBrowserActivity(): Promise<void> {
-    if (!activeBrowserActivity) {
-      return;
-    }
-    try {
-      const result = await window.wuu.releaseActivity(
-        activeBrowserActivity.thread_id,
-        activeBrowserActivity.id,
-      );
-      mergeActivityResponse(result.activity);
-    } catch (error) {
-      showErrorToast(error, t("app.browserReleaseFailed"));
-    }
-  }
-
-  async function stopBrowserActivity(): Promise<void> {
-    if (!activeBrowserActivity) {
-      return;
-    }
-    try {
-      const result = await window.wuu.stopActivity(
-        activeBrowserActivity.thread_id,
-        activeBrowserActivity.id,
-      );
-      mergeActivityResponse(result.activity);
-    } catch (error) {
-      showErrorToast(error, t("app.browserStopFailed"));
-    }
-  }
   const sessionRuntime = useMemo(
     () => runtimeViewForSession(state.initialized, activeThread),
     [state.initialized, activeThread],
@@ -1509,23 +1430,26 @@ export function App(): JSX.Element {
   );
   availableConversationThreadsByIDRef.current = availableConversationThreadsByID;
   // Per-thread keep-alive for the main conversation pane. Recently visited
-  // tabs stay mounted within both a pane-count cap and an estimated rendered-
-  // turn budget. This avoids the old three-tab performance cliff without
-  // allowing many long conversations to retain unbounded DOM.
+  // conversations stay mounted within both a pane-count cap and an estimated
+  // rendered-turn budget. This avoids the old three-tab performance cliff
+  // without allowing many long conversations to retain unbounded DOM.
   //
-  // Crucially we derive the cache synchronously from state.sessionTabs
-  // and state.thread via useMemo, not via useState + useEffect. The
-  // async effect path rendered once with the new activeThreadID but
-  // the stale cache (no pane for the new thread) and then a second
-  // time with the cache updated — the "two flickers" the user saw.
-  // Computing the cache from state in the same render closes that
-  // empty frame.
+  // Crucially we derive the cache synchronously from the active thread
+  // via useMemo, not via useState + useEffect. The async effect path
+  // rendered once with the new activeThreadID but the stale cache (no
+  // pane for the new thread) and then a second time with the cache
+  // updated — the "two flickers" the user saw. Computing the cache from
+  // state in the same render closes that empty frame.
   const cachedThreadPaneIDs = useMemo(() => {
     const activeID = state.thread?.id;
-    // Conversation navigation lives in the sidebar. Keep only the active
-    // pane mounted so opening many sessions cannot retain their full DOM and
-    // markdown trees in the renderer.
-    const openThreadIDs = new Set(activeID ? [activeID] : []);
+    // Sidebar navigation does not keep a tab strip of open conversations, but
+    // recently visited panes still stay mounted within the existing count and
+    // render-weight caps. Unmounting the outgoing pane on every click rebuilt
+    // the markdown tree after paint and flashed the incoming session.
+    const openThreadIDs = new Set(cachedThreadPaneHistoryRef.current);
+    if (activeID) {
+      openThreadIDs.add(activeID);
+    }
     const next = selectCachedConversationPaneIDs({
       activeThreadID: activeID,
       previousThreadIDs: cachedThreadPaneHistoryRef.current,
@@ -1534,7 +1458,7 @@ export function App(): JSX.Element {
     });
     cachedThreadPaneHistoryRef.current = next;
     return next;
-  }, [state.thread?.id, state.sessionTabs]);
+  }, [state.thread?.id]);
   const cachedConversationThreadsByID = useMemo(
     () =>
       retainCachedConversationPaneThreads({
@@ -1592,7 +1516,7 @@ export function App(): JSX.Element {
     getAppState: () => appStateRef.current,
     cacheThreads: cacheSidebarThreads,
     onOpen: () => {
-      setProjectMenuOpen(false);
+      setWorkspaceMenuOpen(false);
       setRuntimeMenuOpen(false);
       setAccessMenuOpen(false);
       setBranchMenuOpen(false);
@@ -1645,15 +1569,18 @@ export function App(): JSX.Element {
     Boolean(pendingFork) ||
     conversationSearch.open;
   useBrowserVisibility({
-    activeThreadID,
-    activeBrowserActivity,
-    overlaySuppressed: browserOverlaySuppressed,
-    onOpenBrowser: () => openWorkspaceTool("browser"),
     onInvalidateWorkdir: (workdir) =>
       setActivitySessions((current) =>
         clearActivitiesForWorkdir(current, workdir),
       ),
   });
+  const [browserDockTarget, setBrowserDockTarget] = useState<BrowserDockTarget>();
+  const [pendingBrowserDock, setPendingBrowserDock] = useState<{
+    target: BrowserDockTarget;
+    ready: boolean;
+  }>();
+  const openWorkspaceBrowserRef = useRef(openWorkspaceTool);
+  openWorkspaceBrowserRef.current = openWorkspaceTool;
   const activeTodoUpdate = latestTodoUpdateForThread(activeThread);
   const activeContextKey = state.activeContext
     ? runtimeContextKey(state.activeContext)
@@ -1718,7 +1645,14 @@ export function App(): JSX.Element {
       }
       resizing = nextResizing;
       windowResizingRef.current = nextResizing;
-      root.classList.toggle(WINDOW_RESIZING_CLASS, nextResizing);
+      if (nextResizing) {
+        root.classList.add(WINDOW_RESIZING_CLASS);
+      } else {
+        // Apply frozen composer/scroll/footer geometry while transitions are
+        // still off. Waiting until after the class drops left a delayed jump
+        // once the window chrome was already still.
+        releaseWindowResizeClass(WINDOW_RESIZING_CLASS);
+      }
       if (
         !nextResizing &&
         pendingEnvironmentPanelHasRoomRef.current !== undefined
@@ -1817,6 +1751,26 @@ export function App(): JSX.Element {
     };
   }, []);
 
+  const pendingBackgroundThreadEventsRef = useRef<ServerEvent[]>([]);
+  const backgroundThreadEventTimerRef = useRef<number | undefined>(undefined);
+  const flushBackgroundThreadEventsRef = useRef<() => void>(() => {});
+  flushBackgroundThreadEventsRef.current = () => {
+    if (backgroundThreadEventTimerRef.current !== undefined) {
+      window.clearTimeout(backgroundThreadEventTimerRef.current);
+      backgroundThreadEventTimerRef.current = undefined;
+    }
+    const pending = pendingBackgroundThreadEventsRef.current;
+    if (pending.length === 0) {
+      return;
+    }
+    pendingBackgroundThreadEventsRef.current = [];
+    setState((current) => pending.reduce(reduceServerEvent, current));
+  };
+  useLayoutEffect(() => {
+    // Opening a session has to see the tool rows that were still queued.
+    flushBackgroundThreadEventsRef.current();
+  }, [activeThreadID, state.secondaryThread?.id]);
+
   useEffect(() => {
     let mounted = true;
     const off = subscribeServerEvents((event) => {
@@ -1910,6 +1864,20 @@ export function App(): JSX.Element {
       if (handling === "skip") {
         return;
       }
+      // A background ACP session emits a tool row for every harness call.
+      // Fold those into one update so the open conversation is not reconciled
+      // on each of them. The sort key of a running session does not change.
+      if (isCoalescedBackgroundThreadEvent(event, appStateRef.current)) {
+        pendingBackgroundThreadEventsRef.current.push(event);
+        if (backgroundThreadEventTimerRef.current === undefined) {
+          backgroundThreadEventTimerRef.current = window.setTimeout(() => {
+            backgroundThreadEventTimerRef.current = undefined;
+            flushBackgroundThreadEventsRef.current();
+          }, 150);
+        }
+        return;
+      }
+      flushBackgroundThreadEventsRef.current();
       if (serverEventShouldRefreshGit(event)) {
         scheduleGitStatusRefresh(600);
       }
@@ -1930,9 +1898,9 @@ export function App(): JSX.Element {
           }
           return;
         }
-        const listedProjects = await window.wuu.listProjects();
-        const runtimeState = listedProjects.active_context
-          ? listedProjects
+        const listedWorkspaces = await window.wuu.listProjects();
+        const runtimeState = listedWorkspaces.active_context
+          ? listedWorkspaces
           : await window.wuu.selectNoProject(false);
         const loadedState = await loadRuntime(runtimeState);
         if (!mounted) {
@@ -1959,6 +1927,11 @@ export function App(): JSX.Element {
     return () => {
       mounted = false;
       off();
+      if (backgroundThreadEventTimerRef.current !== undefined) {
+        window.clearTimeout(backgroundThreadEventTimerRef.current);
+        backgroundThreadEventTimerRef.current = undefined;
+      }
+      pendingBackgroundThreadEventsRef.current = [];
       if (gitRefreshTimerRef.current !== undefined) {
         window.clearTimeout(gitRefreshTimerRef.current);
         gitRefreshTimerRef.current = undefined;
@@ -2006,19 +1979,20 @@ export function App(): JSX.Element {
       }
       lastRefreshAt = now;
       try {
-        const listed = await window.wuu.listThreads();
+        const snapshot = appStateRef.current;
+        const listed = await loadThreadListRefresh(snapshot);
         if (disposed) {
           return;
         }
         setState((current) => {
-          if (!current.initialized) {
+          if (!current.initialized || current.activeContext !== snapshot.activeContext) {
             return current;
           }
           // Besides sidebar pickup, this is the durable repair path when a
           // renderer misses turn/completed during a tab/workspace transition.
           // Reconcile the visible panes and composer running flag as one state
           // update instead of refreshing only the sidebar copy.
-          return reconcileListedThreadState(current, listed.threads);
+          return reconcileListedThreadState(current, listed);
         });
       } catch {
         // Transient listing failure; do not surface into app status.
@@ -2055,8 +2029,8 @@ export function App(): JSX.Element {
       if (!(target instanceof Node)) {
         return;
       }
-      if (projectMenuOpen && !projectMenuRef.current?.contains(target)) {
-        setProjectMenuOpen(false);
+      if (workspaceMenuOpen && !workspaceMenuRef.current?.contains(target)) {
+        setWorkspaceMenuOpen(false);
       }
       if (
         (runtimeMenuOpen || branchMenuOpen) &&
@@ -2103,7 +2077,7 @@ export function App(): JSX.Element {
     environmentPanelHasRoom,
     environmentPanelMenu,
     environmentPanelOpen,
-    projectMenuOpen,
+    workspaceMenuOpen,
     runtimeMenuOpen,
   ]);
 
@@ -2125,7 +2099,7 @@ export function App(): JSX.Element {
     return () => window.removeEventListener("focus", handleFocus);
   }, []);
 
-  const activeProject = useMemo(
+  const activeWorkspace = useMemo(
     () =>
       state.projects.find((project) => project.id === state.activeProjectId),
     [state.activeProjectId, state.projects],
@@ -2137,14 +2111,11 @@ export function App(): JSX.Element {
   const showingManagementCatalog = showingSkillsCatalog;
   const activeTitle = showingSkillsCatalog
     ? t("skills.title")
-    : currentSessionTab?.kind === "channel-room"
-      ? currentSessionTab.title
-      : currentSessionTab?.kind === "agents"
-        ? t("channels.agents")
-        : currentSessionTab?.kind === "tasks"
-          ? t("channels.tasks")
-    : resolveLocalizedText(activeThread?.preview ?? "") ||
-      t("tabs.newConversation");
+    : conversationHeadingTitle(
+      activeThread,
+      currentSessionTab?.kind === "draft" ? currentSessionTab.title : undefined,
+      t("tabs.newConversation"),
+    );
   const popOutWindowTitle =
     popOutInit?.kind === "thread"
       ? activeThread?.title?.trim() ||
@@ -2161,19 +2132,116 @@ export function App(): JSX.Element {
   const greetingContext: GreetingContext =
     state.activeContext?.kind === "project"
       ? {
-          kind: "project",
-          projectName: activeProject?.name ?? t("greeting.projectFallback"),
+          kind: "workspace",
+          workspaceName: activeWorkspace?.name ?? t("greeting.workspaceFallback"),
         }
       : { kind: "wuu" };
   const emptyThreadTitle = greetingFor(currentHour, greetingContext);
-  const [pendingNewThreadTurn, setPendingNewThreadTurn] = useState<{
+  type TurnAdmission = {
+    thread?: Thread;
+    ready: Promise<Thread | undefined>;
+    resolve: (thread: Thread | undefined) => void;
+    stopRequested: boolean;
+    sent: boolean;
+    cancelled: Promise<undefined>;
+    cancelPreparation: () => void;
+  };
+  const turnAdmissionsRef = useRef(new Map<string, TurnAdmission>());
+  const queueLanesRef = useRef(new Map<string, { tail: Promise<void>; stopVersion: number }>());
+  const stopDeliveredRef = useRef(new Map<string, symbol>());
+  const stopTargetsRef = useRef(new Map<string, string>());
+  const stopRequestsRef = useRef<Record<string, "pending" | "retry">>({});
+  const [stopRequests, setStopRequests] = useState(stopRequestsRef.current);
+  function setStopRequest(threadID: string, phase?: "pending" | "retry"): void {
+    const next = { ...stopRequestsRef.current };
+    if (phase) next[threadID] = phase;
+    else {
+      delete next[threadID];
+      stopDeliveredRef.current.delete(threadID);
+      stopTargetsRef.current.delete(threadID);
+    }
+    stopRequestsRef.current = next;
+    setStopRequests(next);
+  }
+  useEffect(() => {
+    for (const threadID of Object.keys(stopRequestsRef.current)) {
+      const thread = threadForTab(state, threadID);
+      const target = stopTargetsRef.current.get(threadID);
+      const targetEnded = thread?.turns.some((turn) => turn.status !== "in_progress" && (
+        turn.id === target || turn.items.some((item) => item.type === "user_message"
+          && item.source_id && `${OPTIMISTIC_TURN_ID_PREFIX}${item.source_id}` === target)
+      ));
+      if (thread && !isThreadRunning(thread) && !turnAdmissionsRef.current.has(threadID)
+        && (stopRequestsRef.current[threadID] !== "retry" || targetEnded)) {
+        setStopRequest(threadID);
+      } else if (thread && stopRequestsRef.current[threadID] === "pending" && thread.turns.some(
+        (turn) => turn.status === "in_progress" && !turn.answer_ready_at && !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX),
+      )) {
+        void interruptAcceptedThread(threadID);
+      }
+    }
+  }, [state, stopRequests]);
+
+  async function requestThreadStop(thread: Thread): Promise<void> {
+    const admission = turnAdmissionsRef.current.get(thread.id);
+    if (admission) {
+      admission.stopRequested = true;
+      if (!admission.sent) admission.cancelPreparation();
+    }
+    const lane = queueLanesRef.current.get(thread.id);
+    if (lane) lane.stopVersion += 1;
+    if (stopRequestsRef.current[thread.id] === "pending") return;
+    const target = thread.turns.at(-1);
+    if (target) stopTargetsRef.current.set(thread.id, target.id);
+    setStopRequest(thread.id, "pending");
+    // Preparation can be cancelled locally. In-flight admission is stopped as
+    // soon as its real turn is known; never mark it terminal on user intent.
+    if (admission && !thread.turns.some((turn) =>
+      turn.status === "in_progress" && !turn.answer_ready_at && !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX))) return;
+    await interruptAcceptedThread(thread.id);
+  }
+
+  async function interruptAcceptedThread(threadID: string): Promise<void> {
+    if (stopDeliveredRef.current.has(threadID)) return;
+    const delivery = Symbol();
+    stopDeliveredRef.current.set(threadID, delivery);
+    try {
+      const result = await window.wuu.interruptTurn(threadID);
+      if (!result.ok) throw new Error(t("composer.stopUnconfirmed"));
+    } catch (error) {
+      if (stopDeliveredRef.current.get(threadID) !== delivery) return;
+      stopDeliveredRef.current.delete(threadID);
+      setStopRequest(threadID, "retry");
+      showErrorToast(error);
+    }
+  }
+
+  type PendingThreadCreation = {
     sessionTabID: string;
+    context: RuntimeContext;
     turn: Turn;
-  }>();
-  const activePendingNewThreadTurn =
-    pendingNewThreadTurn?.sessionTabID === state.activeSessionTabID
-      ? pendingNewThreadTurn.turn
-      : undefined;
+    cancel: () => void;
+  };
+  const pendingThreadCreationsRef = useRef(new Map<string, PendingThreadCreation>());
+  const [pendingThreadCreations, setPendingThreadCreations] = useState<PendingThreadCreation[]>([]);
+  function clearPendingThreadCreation(turnID: string): void {
+    for (const [tabID, pending] of pendingThreadCreationsRef.current) {
+      if (pending.turn.id !== turnID) continue;
+      pendingThreadCreationsRef.current.delete(tabID);
+      setPendingThreadCreations([...pendingThreadCreationsRef.current.values()]);
+      return;
+    }
+  }
+  const [failedDraftTabIDs, setFailedDraftTabIDs] = useState<string[]>([]);
+  useEffect(() => {
+    setFailedDraftTabIDs((ids) => ids.includes(state.activeSessionTabID)
+      ? ids.filter((id) => id !== state.activeSessionTabID)
+      : ids);
+  }, [state.activeSessionTabID]);
+  const activePendingThreadCreation = pendingThreadCreations.find(
+    (pending) => pending.sessionTabID === state.activeSessionTabID,
+  );
+  const activePendingNewThreadTurn = activePendingThreadCreation?.turn;
   const turns = activeThread?.turns ?? [];
   const activeContextCompositionEntries = activeThreadID
     ? contextCompositionEntries.filter((entry) => entry.threadID === activeThreadID)
@@ -2183,6 +2251,19 @@ export function App(): JSX.Element {
     !activePendingNewThreadTurn &&
     turns.length === 0 &&
     activeContextCompositionEntries.length === 0;
+
+  useArtifactAutoPreview({
+    thread: activeThread,
+    enabled: Boolean(state.initialized)
+      && !poppedOutMode && !isTouchWebShell() && !activeThread?.read_only
+      && !showingManagementCatalog && !emptyConversation && !browserOverlaySuppressed
+      && !workspaceRightPanelAutoGlobalized
+      && activeBrowserActivity?.state !== "foreground_controlled"
+      && activeBrowserActivity?.state !== "user_controlled",
+    panelOpen: rightPanelOpen,
+    activeTabID: workspaceActiveViewTabID,
+    onOpen: openWorkspaceArtifactTab,
+  });
 
   // Past user queries for the input-box hover popover. We collect them
   // in turn order, oldest first, so the popover mirrors the order in
@@ -2201,34 +2282,37 @@ export function App(): JSX.Element {
     }
     return entries;
   }, [turns]);
+  const showingPrimaryPluginView = usePrimaryPluginViewCover();
   const mainConversationDockVisible =
     Boolean(state.initialized) &&
     !splitConversation &&
     !showingManagementCatalog &&
-    !rightPanelGlobalized;
+    !rightPanelGlobalized &&
+    !showingPrimaryPluginView;
 
   // The account-based phone app keeps visible session navigation alongside swipes.
   const composerNavigation = !phoneNavigation && compactNavigation && isTouchWebShell() &&
-    mainConversationDockVisible && appMode === "harness" && !poppedOutMode;
+    mainConversationDockVisible && !poppedOutMode;
 
   useEffect(() => {
-    // Diff tabs are scoped to the thread whose turn they came from: they
-    // don't make sense to keep browsing once we've navigated away from
-    // that thread (or away from the conversation view entirely), so prune
-    // them eagerly instead of leaving stale diffs sitting in the tab strip.
-    const isStaleDiffTab = (tab: WorkspaceViewTab): boolean =>
-      tab.kind === "diff" &&
-      (!activeThreadID ||
-        tab.threadID !== activeThreadID ||
-        showingManagementCatalog ||
-        emptyConversation);
-    if (!workspaceViewTabs.some(isStaleDiffTab)) {
+    // Delivered snapshots may belong to either visible conversation pane.
+    // Closing them on navigation also releases viewer resources.
+    const isStaleTurnTab = (tab: WorkspaceViewTab): boolean => {
+      if (tab.kind === "artifact") {
+        return showingManagementCatalog || emptyConversation
+          || ![state.thread, state.secondaryThread].some((thread) =>
+            thread?.id === tab.threadID && thread.cwd === tab.cwd);
+      }
+      return tab.kind === "diff" &&
+        (!activeThreadID || tab.threadID !== activeThreadID || showingManagementCatalog || emptyConversation);
+    };
+    if (!workspaceViewTabs.some(isStaleTurnTab)) {
       return;
     }
     const activeTab = workspaceViewTabs.find((tab) => tab.id === workspaceActiveViewTabID);
-    const closingActiveDiffTab = Boolean(activeTab && isStaleDiffTab(activeTab));
-    closeWorkspaceViewTabsWhere(isStaleDiffTab);
-    if (closingActiveDiffTab) {
+    const closingActiveTurnTab = Boolean(activeTab && isStaleTurnTab(activeTab));
+    closeWorkspaceViewTabsWhere(isStaleTurnTab);
+    if (closingActiveTurnTab) {
       setRightPanelOpenWithMotion(false);
     }
   }, [
@@ -2238,9 +2322,10 @@ export function App(): JSX.Element {
     showingManagementCatalog,
     workspaceActiveViewTabID,
     workspaceViewTabs,
+    state.thread,
+    state.secondaryThread,
   ]);
 
-  const [statusClusterNode, statusClusterRef] = useState<HTMLDivElement | null>(null);
   const {
     conversationScrollRef,
     scrollContentRef,
@@ -2248,14 +2333,15 @@ export function App(): JSX.Element {
     conversationPaneRef,
     dockComposerRef,
     dockComposerNode,
+    statusClusterRef,
     scheduleStreamScroll,
     handleConversationScroll,
     enableConversationAutoFollow,
+    jumpToLatest: jumpConversationToLatest,
     disableConversationAutoFollow,
     captureConversationScrollPosition,
     restoreConversationScrollPosition,
     requestSubmittedQueryScroll,
-    requestDeferredQueryScroll,
     acknowledgeSubmittedMessage,
     discardSubmittedMessage,
   } = useConversationScrollState({
@@ -2267,10 +2353,6 @@ export function App(): JSX.Element {
     emptyConversation,
     initialized: Boolean(state.initialized),
     running: isStateActiveThreadRunning(state),
-    statusClusterNode,
-  });
-  useLayoutEffect(() => {
-    requestDeferredQueryScrollRef.current = requestDeferredQueryScroll;
   });
   const activeManagementTabID = showingManagementCatalog
     ? currentSessionTab?.id
@@ -2390,13 +2472,9 @@ export function App(): JSX.Element {
   // Captures the user's scroll position when they open the inline edit on a
   // historical message so cancel can put them back exactly where they were
   // instead of dropping them at the latest content via the resize observer.
-  const preEditScrollSnapshotRef = useRef<
-    | {
-        scrollTop: number;
-        autoFollow: boolean;
-      }
-    | undefined
-  >(undefined);
+  const preEditScrollSnapshotRef = useRef<ConversationScrollSnapshot | undefined>(
+    undefined,
+  );
   const rememberConversationScrollForEdit = useCallback((): void => {
     preEditScrollSnapshotRef.current = captureConversationScrollPosition();
   }, [captureConversationScrollPosition]);
@@ -2494,6 +2572,25 @@ export function App(): JSX.Element {
       openTurnFileDiffPanel(thread.id, selection);
     },
   );
+  const openWorkspaceBrowser = useStableCallback((target: WorkspaceBrowserOpenTarget): void => {
+    requestWorkspaceBrowserNavigation(target);
+    const focus = workspaceBrowserFocusDecision({
+      rightPanelOpen,
+      activeTabID: workspaceActiveViewTabID,
+      browserForegroundOccupied: isForegroundControlled(activeBrowserActivity),
+    });
+    if (!focus.stealFocus) {
+      ensureWorkspaceToolTab("browser");
+      return;
+    }
+    openWorkspaceTool("browser");
+  });
+  const openWorkspaceBrowserURL = useStableCallback((
+    url: string,
+    modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number },
+  ): void => {
+    openWorkspaceBrowserOrExternal(url, modifiers, openWorkspaceBrowser);
+  });
   const openWorkspaceFile = useStableCallback((path: string): void => {
     // Stamp the same derived context the workspace panel's file tree/preview
     // are rooted at (workspacePanelContext), not the raw activeContext — for
@@ -2509,11 +2606,6 @@ export function App(): JSX.Element {
     }
     openWorkspaceFileTab({ context, path });
   });
-  const openAgentMemoryDirectory = useStableCallback((path: string): void => {
-    setFocusedWorkspaceContext({ kind: "no_project", cwd: path });
-    setRightPanelManualGlobalized(false);
-    openWorkspaceTool("files");
-  });
   const openWorkspaceFileForThread = useStableCallback((thread: Thread, path: string): void => {
     const context = workspacePanelContext(appStateRef.current.activeContext, thread);
     if (!context) {
@@ -2524,13 +2616,13 @@ export function App(): JSX.Element {
   const rememberWorkspaceDirtyFiles = useStableCallback((dirty: boolean): void => {
     workspaceHasDirtyFilesRef.current = dirty;
   });
-  const sidebarProjectThreadsByProjectID = projectThreadsByProjectID;
+  const sidebarWorkspaceThreadsByWorkspaceID = workspaceThreadsByWorkspaceID;
   const sidebarThreads = useMemo(() => {
     const byID = new Map<string, Thread>();
     for (const thread of cachedScratchThreads) {
       byID.set(thread.id, thread);
     }
-    for (const threads of Object.values(sidebarProjectThreadsByProjectID)) {
+    for (const threads of Object.values(sidebarWorkspaceThreadsByWorkspaceID)) {
       for (const thread of threads) {
         byID.set(thread.id, thread);
       }
@@ -2541,7 +2633,7 @@ export function App(): JSX.Element {
     return sortThreads([...byID.values()]);
   }, [
     cachedScratchThreads,
-    sidebarProjectThreadsByProjectID,
+    sidebarWorkspaceThreadsByWorkspaceID,
     state.threads,
   ]);
   const visibleRunningThreadIDs = useMemo(
@@ -2551,14 +2643,14 @@ export function App(): JSX.Element {
     ),
     [crossWorkdirRunningThreadIDs, sidebarThreads, state.secondaryThread, state.thread],
   );
-  const sidebarProjectThreadSummariesByProjectID = useMemo(
-    () => summarizeProjectThreadsForSidebar(
-      sidebarProjectThreadsByProjectID,
+  const sidebarWorkspaceThreadSummariesByWorkspaceID = useMemo(
+    () => summarizeWorkspaceThreadsForSidebar(
+      sidebarWorkspaceThreadsByWorkspaceID,
       state.threads,
       visibleRunningThreadIDs,
     ),
     [
-      sidebarProjectThreadsByProjectID,
+      sidebarWorkspaceThreadsByWorkspaceID,
       state.threads,
       visibleRunningThreadIDs,
     ],
@@ -2571,15 +2663,6 @@ export function App(): JSX.Element {
     () => pinnedThreadSummaries(sidebarThreadSummaries),
     [sidebarThreadSummaries],
   );
-  const sidebarConversations = useMemo(() => ENABLE_GROUP_CHAT
-    ? collaborationConversations(namedAgents, channelRooms, channelRoomPreferences.pinnedRoomIDs, "", channelRoomPreferences.archivedRoomIDs)
-    : [], [namedAgents, channelRooms, channelRoomPreferences]);
-  const pinnedSidebarConversations = useMemo(
-    () => orderedPinnedCollaborationConversations(sidebarConversations, channelRoomPreferences.pinnedRoomIDs),
-    [sidebarConversations, channelRoomPreferences.pinnedRoomIDs],
-  );
-  const managedSidebar = useMemo(() => managedSidebarThreads(sidebarThreadSummaries, sidebarConversations),
-    [sidebarThreadSummaries, sidebarConversations]);
   const sidebarScratchThreads = useMemo(
     () => scratchThreadSummaries(sidebarThreadSummaries, state.projects),
     [sidebarThreadSummaries, state.projects],
@@ -2589,7 +2672,7 @@ export function App(): JSX.Element {
   // threads are the scratch conversations pulled out of
   // sidebarThreadSummaries above. path is intentionally "" — ThreadSidebar
   // special-cases the scratch pseudo id and skips its cwd-path filter.
-  const scratchPseudoProject = useMemo<DesktopProject>(
+  const scratchPseudoWorkspace = useMemo<DesktopProject>(
     () => ({
       id: SCRATCH_PSEUDO_PROJECT_ID,
       name: t("sidebar.conversations"),
@@ -2599,16 +2682,16 @@ export function App(): JSX.Element {
     }),
     [t],
   );
-  const sidebarProjects = useMemo<DesktopProject[]>(
-    () => [scratchPseudoProject, ...state.projects],
-    [scratchPseudoProject, state.projects],
+  const sidebarWorkspaces = useMemo<DesktopProject[]>(
+    () => [scratchPseudoWorkspace, ...state.projects],
+    [scratchPseudoWorkspace, state.projects],
   );
-  const sidebarThreadsByProjectID = useMemo(
-    () => Object.fromEntries(Object.entries({
+  const sidebarThreadsByWorkspaceID = useMemo(
+    () => ({
       [SCRATCH_PSEUDO_PROJECT_ID]: sidebarScratchThreads,
-      ...sidebarProjectThreadSummariesByProjectID,
-    }).map(([id, threads]) => [id, threads.filter(thread => !managedSidebar.threadIDs.has(thread.id))])),
-    [sidebarScratchThreads, sidebarProjectThreadSummariesByProjectID, managedSidebar],
+      ...sidebarWorkspaceThreadSummariesByWorkspaceID,
+    }),
+    [sidebarScratchThreads, sidebarWorkspaceThreadSummariesByWorkspaceID],
   );
   const activeThreadReadOnly = Boolean(activeThread?.read_only);
   const activeThreadIsRunning = isStateActiveThreadRunning(state);
@@ -2715,7 +2798,7 @@ export function App(): JSX.Element {
     }
     return Array.from(names);
   }, [state.thread, state.secondaryThread, state.threads]);
-  const sideThreadPanelVisible = Boolean(appMode === "harness" && activeThreadID && sideThread.entry?.open);
+  const sideThreadPanelVisible = Boolean(activeThreadID && sideThread.entry?.open);
   useEffect(() => {
     if (!sideThreadPanelVisible || isTouchWebShell()) {
       return undefined;
@@ -2730,7 +2813,6 @@ export function App(): JSX.Element {
   // (full-window sheet) right panel blocks it, because that mode makes the
   // entire conversation pane inert.
   const environmentPanelCanShow = Boolean(
-    appMode === "harness" &&
     state.initialized &&
     !poppedOutMode &&
     !rightPanelGlobalized &&
@@ -2747,8 +2829,7 @@ export function App(): JSX.Element {
     environmentPanelVisible ? "open" : "closing";
   // The sidebar is the single conversation switcher. Session state remains
   // available for recovery and drafts, but the titlebar no longer renders a
-  // growing tab strip or keeps background conversation panes mounted.
-  const sessionTabsVisible = false;
+  // growing tab strip.
   const sidebarVisible = !poppedOutMode;
   const sidebarToggleVisible = sidebarVisible;
 
@@ -2807,7 +2888,7 @@ export function App(): JSX.Element {
       setEnvironmentPanelMounted(false);
       setEnvironmentPanelClosing(false);
       setEnvironmentPanelReserved(false);
-    }, ENVIRONMENT_PANEL_MOTION_MS);
+    }, motionDurationMs("--environment-panel-exit-duration", 220));
     return () => window.clearTimeout(timer);
   }, [
     environmentPanelHasRoom,
@@ -2932,8 +3013,10 @@ export function App(): JSX.Element {
         : rawContextUsage;
     const streamStatus = activeThreadStreamStatus;
     const defaultEngine = engineInventory?.settings?.default_engine ?? "";
-    const effectiveEngine =
-      (activeThread?.engine_id ?? "") || draftEngine || defaultEngine || "wuu";
+    // A project coordinator runs on the Wuu engine.
+    const effectiveEngine = activeProjectDraft
+      ? "wuu"
+      : (activeThread?.engine_id ?? "") || draftEngine || defaultEngine || "wuu";
     const effectiveEngineInfo = engineInventory?.engines.find(
       (engine) => engine.id === effectiveEngine,
     );
@@ -2942,16 +3025,21 @@ export function App(): JSX.Element {
       ? {
           model: activeThread.model,
           effort: activeThread.model_effort ?? activeThread.model_variant ?? "",
+          speed: activeThread.speed ?? "",
         }
       : {
           model: draftEngineRuntime.model || defaultEngineRuntime.model,
           effort: draftEngineRuntime.effort || defaultEngineRuntime.effort,
+          speed: draftEngineRuntime.speed ?? "",
         };
-    const composerPermissionMode =
-      activeThread?.permission_mode
+    const projectComposer = activeProjectDraft || (activeThread !== undefined && isProjectCoordinator(activeThread));
+    const composerPermissionMode = activeProjectDraft
+      ? "read_only"
+      : activeThread?.permission_mode
       || (!activeThread && effectiveEngine !== "wuu"
         ? draftPermissionMode || "unconfined"
         : conversationRuntime?.permissions?.mode);
+    const composerWorktree = draftWorktreeFor(state.activeContext, state.gitStatus);
     const composerRuntime = conversationRuntime && composerPermissionMode
       ? {
           ...conversationRuntime,
@@ -2961,7 +3049,7 @@ export function App(): JSX.Element {
     return (
       <>
       <Composer
-        canSelectProject={!composerNavigation && !activeThread && !activePendingNewThreadTurn}
+        canSelectWorkspace={!composerNavigation && !activeThread && !activePendingNewThreadTurn}
         hideExpandButton={composerNavigation}
         topAccessory={pendingUserQuestionOffer ? (
           <UserQuestionCard
@@ -2984,20 +3072,30 @@ export function App(): JSX.Element {
         ) : undefined}
         variant={variant}
         mainConversation
+        permissionLocked={projectComposer}
+        placeholder={activeProjectDraft ? t("projects.draftPlaceholder") : undefined}
         containerRef={variant === "dock" ? dockComposerRef : undefined}
         prompt={prompt}
         promptRevision={promptRevision}
         setPrompt={setPromptFromInput}
         files={composerFiles}
+        selections={composerSelections}
+        onChangeSelection={(selection) => setComposerSelections((current) => current.map((entry) => entry.id === selection.id ? selection : entry))}
+        onRemoveSelection={(id) => setComposerSelections((current) => current.filter((entry) => entry.id !== id))}
         images={composerImages}
-        queuedMessages={queuedMessages}
+        queuedMessages={activePendingThreadCreation
+          ? pendingComposerMessagesForActiveThread(activePendingThreadCreation.sessionTabID).queued
+          : queuedMessages}
         guideMessages={guideMessages}
-        sendDisabled={viewSwitchPending}
+        sendDisabled={submissionTargetPending || Boolean(activeThread && stopRequests[activeThread.id])}
+        stopState={activeThread ? stopRequests[activeThread.id] : undefined}
         running={
+          Boolean(activePendingThreadCreation) ||
           (!activeThreadReadOnly && composerTurnRunning) ||
           viewContextSwitchPending
         }
         runtimeControlsDisabled={
+          Boolean(activePendingThreadCreation) ||
           (!activeThreadReadOnly && activeThreadIsRunning) ||
           viewContextSwitchPending
         }
@@ -3017,9 +3115,18 @@ export function App(): JSX.Element {
         initialized={composerRuntime}
         engines={engineInventory?.engines}
         activeEngine={effectiveEngine !== "wuu" ? effectiveEngine : ""}
-        engineLocked={Boolean(activeThread)}
+        engineLocked={Boolean(activeThread) || activeProjectDraft}
         engineModel={effectiveEngineRuntime.model}
         engineEffort={effectiveEngineRuntime.effort}
+        engineSpeed={effectiveEngineRuntime.speed}
+        onSelectSpeed={async (speed) => {
+          if (effectiveEngine === "wuu" || activeThread) return selectRuntimeSpeed(speed);
+          const runtime = { ...effectiveEngineRuntime, speed };
+          setDraftEngineRuntime(runtime);
+          draftEngineRuntimeByID.current[effectiveEngine] = runtime;
+          writeDraftEngineMemory({ engine: effectiveEngine, ...runtime });
+          return true;
+        }}
         onSelectEngine={selectDraftEngine}
         onSelectEngineModel={(model, effort) => {
           const runtime = { model, effort };
@@ -3041,15 +3148,29 @@ export function App(): JSX.Element {
             writeDraftEngineMemory({
               engine: effectiveEngine,
               model: effectiveEngineRuntime.model,
+              speed: effectiveEngineRuntime.speed,
               effort,
             });
           }
         }}
         gitStatus={state.gitStatus}
         branchPickerDisabled={viewContextSwitchPending}
+        worktree={activeProjectDraft ? undefined : {
+          enabled: Boolean(composerWorktree),
+          startBranch: composerWorktree?.startBranch ?? "",
+          onToggle: () => {
+            const cwd = state.activeContext?.cwd;
+            setDraftWorktree(composerWorktree || !cwd ? undefined : { cwd, startBranch: "" });
+          },
+          onSelectStartBranch: (startBranch) => {
+            const cwd = state.activeContext?.cwd;
+            if (cwd) setDraftWorktree({ cwd, startBranch });
+            setBranchMenuOpen(false);
+          },
+        }}
         projects={state.projects}
         activeContext={state.activeContext}
-        activeProject={activeProject}
+        activeWorkspace={activeWorkspace}
         compactDisabledReason={
           !activeThread
             ? t("app.openConversationFirst")
@@ -3075,8 +3196,8 @@ export function App(): JSX.Element {
         branchMenuOpen={branchMenuOpen}
         menuRef={runtimeMenuRef}
         accessMenuRef={accessMenuRef}
-        projectFilter={projectFilter}
-        setProjectFilter={setProjectFilter}
+        workspaceFilter={workspaceFilter}
+        setWorkspaceFilter={setWorkspaceFilter}
         onToggleMenu={() => {
           setAccessMenuOpen(false);
           setBranchMenuOpen(false);
@@ -3124,20 +3245,20 @@ export function App(): JSX.Element {
           void selectPermissionMode(mode, approveForMe);
         }}
         onOpenSettings={() => {
-          closeProjectMenus();
+          closeWorkspaceMenus();
           setSettingsInitialPage("providers");
           setSettingsOpen(true);
         }}
         onOpenSkillsCatalog={openSkillsTab}
-        onSelectProject={(id) => void selectProjectForNewThread(id)}
+        onSelectWorkspace={(id) => void selectWorkspaceForNewThread(id)}
         onSelectNoProject={() => void useNoProject(false)}
         onSelectGitBranch={checkoutBranch}
         onCreateGitBranch={async (branch) => {
           await createAndCheckoutBranch(branch);
           setBranchMenuOpen(false);
         }}
-        onCreateProject={() => void createBlankProject()}
-        onOpenProject={() => void chooseProjectFolder()}
+        onCreateWorkspace={() => void createBlankProject()}
+        onOpenWorkspace={() => void chooseProjectFolder()}
         onStartNewThread={startNewThreadWithComposerFocus}
         onHandoffSession={handoffActiveThread}
         onOpenSideThread={openSideThreadPanel}
@@ -3150,21 +3271,26 @@ export function App(): JSX.Element {
         onRemoveImage={removeComposerImage}
         onRemoveQueuedMessage={removeQueuedMessage}
         onRemoveGuideMessage={removeGuideMessage}
-        onGuideQueuedMessage={(id) => void guideQueuedMessage(id)}
+        onGuideQueuedMessage={(id) => {
+          if (!activeThread || !stopRequestsRef.current[activeThread.id]) void guideQueuedMessage(id);
+        }}
         onEditQueuedMessage={(id) => void editQueuedMessage(id)}
         onEditGuideMessage={(id) => void editGuideMessage(id)}
-        onSend={(promptOverride, contentParts) => void sendPrompt("queue", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)}
+        onSend={(promptOverride, contentParts) => sendPrompt("queue", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)}
         onSteer={
           activeThreadIsRunning && activeThread && activeThreadCanSteer
-            ? (promptOverride, contentParts) => void sendPrompt("steer", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)
+            ? (promptOverride, contentParts) => sendPrompt("steer", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)
             : undefined
         }
         onQueue={
-          activeThreadIsRunning && activeThread
-            ? (promptOverride, contentParts) => void sendPrompt("queue", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)
+          (activePendingThreadCreation || (activeThreadIsRunning && activeThread))
+            ? (promptOverride, contentParts) => sendPrompt("queue", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)
             : undefined
         }
-        onInterrupt={() => void interrupt()}
+        onInterrupt={() => {
+          if (activePendingThreadCreation) activePendingThreadCreation.cancel();
+          else void interrupt();
+        }}
         queryHistorySessionID={activeThread?.id ?? currentSessionTab?.id}
         queryHistory={queryTextsForThread(activeThread)}
         requestedHandoffIntent={requestedHandoffIntentForThread(activeThread)}
@@ -3174,7 +3300,7 @@ export function App(): JSX.Element {
   }
 
   function openProviderSettings(): void {
-    closeProjectMenus();
+    closeWorkspaceMenus();
     setSettingsInitialPage("providers");
     setSettingsOpen(true);
   }
@@ -3195,7 +3321,7 @@ export function App(): JSX.Element {
     // Used by both the sidebar entry (when one is added later) and the
     // archive-tip toast: always jump the Settings shell to the Archive page,
     // even if Settings was already open on a different tab.
-    setProjectMenuOpen(false);
+    setWorkspaceMenuOpen(false);
     setRuntimeMenuOpen(false);
     setCodexRuntimeMenu(null);
     setSettingsInitialPage("archive");
@@ -3231,15 +3357,15 @@ export function App(): JSX.Element {
     }
   }
 
-  function closeProjectMenus(): void {
-    setProjectMenuOpen(false);
+  function closeWorkspaceMenus(): void {
+    setWorkspaceMenuOpen(false);
     setRuntimeMenuOpen(false);
     setAccessMenuOpen(false);
     setCodexRuntimeMenu(null);
     setBranchMenuOpen(false);
     setEnvironmentPanelMenu(null);
     setSettingsOpen(false);
-    setProjectFilter("");
+    setWorkspaceFilter("");
   }
 
   const {
@@ -3260,7 +3386,7 @@ export function App(): JSX.Element {
         activeThreadForState(appStateRef.current),
       )?.cwd,
     setAppState: setState,
-    closeProjectMenus,
+    closeWorkspaceMenus,
     setEnvironmentPanelOpen,
     setEnvironmentPanelDismissed,
     setEnvironmentPanelMenu,
@@ -3333,14 +3459,14 @@ export function App(): JSX.Element {
   }
 
   const {
-    selectProjectForNewThread,
-    startNewThreadForProject,
+    selectWorkspaceForNewThread,
+    startNewThreadInWorkspace,
     createBlankProject,
     chooseProjectFolder,
     removeProject,
     relocateProject,
     useNoProject,
-  } = createProjectRuntimeActions({
+  } = createWorkspaceRuntimeActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
     getPrimaryComposerDraft: currentPrimaryComposerDraft,
@@ -3349,7 +3475,8 @@ export function App(): JSX.Element {
       restorePrimaryComposerDraft(emptyComposerDraft()),
     restoreLoadedRuntimeComposerDraft,
     nextDraftSessionTab,
-    closeProjectMenus,
+    isDraftPending: (tabID) => pendingThreadCreationsRef.current.has(tabID),
+    closeWorkspaceMenus,
     
     beginViewSwitch,
     finishViewSwitch,
@@ -3359,7 +3486,7 @@ export function App(): JSX.Element {
 
   const {
     selectThread,
-    selectProjectThread,
+    selectWorkspaceThread,
     activateThread,
     selectChildAgent,
   } = createThreadActivationActions({
@@ -3372,8 +3499,8 @@ export function App(): JSX.Element {
     resetSplitComposerDrafts: () =>
       setSplitComposerDrafts(initialSplitComposerDrafts()),
     getSidebarThreads: () => sidebarThreads,
-    getSidebarProjectThreadsByProjectID: () =>
-      sidebarProjectThreadsByProjectID,
+    getSidebarWorkspaceThreadsByWorkspaceID: () =>
+      sidebarWorkspaceThreadsByWorkspaceID,
     getRunningThreadIDs: () => crossWorkdirRunningThreadIDs,
     
     beginViewSwitch,
@@ -3381,9 +3508,34 @@ export function App(): JSX.Element {
     finishViewSwitch,
     cancelViewSwitch,
     isCurrentViewSwitchRequest,
-    loadRuntime,
     selectRuntimeContext,
   });
+
+  useEffect(() => {
+    const subscribe = window.wuu.onBrowserDock;
+    if (typeof subscribe !== "function") return undefined;
+    return subscribe((payload) => {
+      if (!payload || [payload.thread_id, payload.workdir, payload.tabID]
+        .some((value) => typeof value !== "string" || !value.trim())) return;
+      setPendingBrowserDock({ target: payload, ready: false });
+      revealConversationFromFocusedWorkspace();
+      void activateThread(payload.thread_id).then(() => {
+        setPendingBrowserDock((current) => current?.target === payload
+          ? { target: payload, ready: true } : current);
+      });
+    });
+  }, [activateThread, revealConversationFromFocusedWorkspace]);
+
+  useEffect(() => {
+    if (!pendingBrowserDock?.ready) return;
+    const { target } = pendingBrowserDock;
+    setPendingBrowserDock(undefined);
+    // Activation may fail or be superseded. Wait for its committed state before
+    // opening the panel, and never substitute the previously active session.
+    if (activeThreadID !== target.thread_id || state.activeContext?.cwd !== target.workdir) return;
+    setBrowserDockTarget(target);
+    openWorkspaceBrowserRef.current("browser");
+  }, [pendingBrowserDock, activeThreadID, state.activeContext?.cwd]);
 
   // The pet bubble click sends a `wuu:codex-pet-jump` event from main;
   // bring the conversation forward and switch to the target thread.
@@ -3392,25 +3544,14 @@ export function App(): JSX.Element {
     const api = window.wuu as Partial<typeof window.wuu>;
     if (typeof api.onCodexPetJumpRequest !== "function") return;
     return api.onCodexPetJumpRequest((event) => {
-      setAppMode("harness");
       revealConversationFromFocusedWorkspace();
       void activateThread(event.thread_id);
     });
   }, [activateThread, revealConversationFromFocusedWorkspace]);
 
-  const openCollaborationHarnessSession = useStableCallback((id: string) => {
-    openHarnessView();
-    revealConversationFromFocusedWorkspace();
-    void activateThread(id);
-  });
-
   const {
-    selectSessionTab,
-    closeSessionTab,
-    closeSessionTabs,
     startNewThread,
-    reorderSessionTabs,
-    popOutSessionTab,
+    selectSessionTab,
   } = createSessionTabActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
@@ -3423,6 +3564,7 @@ export function App(): JSX.Element {
     getCrossWorkspaceThreads: () => sidebarThreads,
     getRunningThreadIDs: () => crossWorkdirRunningThreadIDs,
     nextDraftSessionTab,
+    isDraftPending: (tabID) => pendingThreadCreationsRef.current.has(tabID),
     selectThread,
     beginViewSwitch,
     beginInstantThreadSwitch,
@@ -3432,145 +3574,84 @@ export function App(): JSX.Element {
     selectRuntimeContext,
   });
 
-  function prepareChannelTab(): void {
+  function closePrimaryPluginView(): void {
     desktopWorkbenchController.deactivateRegion("primary");
-    setProjectMenuOpen(false);
-    setRuntimeMenuOpen(false);
-    setCodexRuntimeMenu(null);
-    setEnvironmentPanelMenu(null);
-    setRightPanelOpenWithMotion(false);
   }
 
-  function selectChannelRoom(roomID: string): void {
-    if (channelRoomPreferences.archivedRoomIDs.includes(roomID)) unarchiveChannelRoom({ id: roomID });
-    setAgentOnboardingActive(false);
-    // A newly opened room can arrive before the directory update renders.
-    setSelectedChannelRoomIDState(roomID);
-    selectedCollaborationAgentRequestRef.current = "";
-    setSelectedCollaborationAgentID("");
-    setCollaborationSection("rooms");
-    setAppMode("collaboration");
-    clearChannelRoomUnread(roomID);
-    prepareChannelTab();
+  // The active draft starts a project or an ordinary conversation; the entry
+  // the user chose decides which.
+  function setDraftProjectMode(project: boolean): void {
+    setState((current) => ({
+      ...current,
+      sessionTabs: current.sessionTabs.map((tab) => {
+        if (tab.id !== current.activeSessionTabID || tab.kind !== "draft" || Boolean(tab.project) === project) return tab;
+        const { project: _wasProject, ...conversation } = tab;
+        return project
+          ? { ...tab, project: true, title: t("projects.newProject") }
+          : { ...conversation, title: tab.title === t("projects.newProject") ? t("tabs.newConversation") : tab.title };
+      }),
+    }));
   }
 
-  const updateChannelRoomDraft = useCallback((
-    roomID: string,
-    draft: ComposerDraftState,
-  ): void => {
-    if (!roomID) return;
-    setChannelComposerDrafts((current) => {
-      const existing = current[roomID];
-      if (
-        existing?.prompt === draft.prompt
-        && existing.images === draft.images
-        && existing.files === draft.files
-      ) {
-        return current;
-      }
-      return { ...current, [roomID]: draft };
-    });
-  }, []);
-
-  const updateSelectedChannelRoomDraft = useCallback((draft: ComposerDraftState): void => {
-    updateChannelRoomDraft(selectedChannelRoomID, draft);
-  }, [selectedChannelRoomID, updateChannelRoomDraft]);
-
-  function openCollaborationView(): void {
-    setAppMode("collaboration");
-    prepareChannelTab();
-  }
-
-  function openHarnessView(): void {
-    desktopWorkbenchController.deactivateRegion("primary");
-    setAppMode("harness");
-    selectedCollaborationAgentRequestRef.current = "";
-    setSelectedCollaborationAgentID("");
-  }
-
-  function openChannelsView(): void {
-    selectedCollaborationAgentRequestRef.current = "";
-    setSelectedCollaborationAgentID("");
-    setCollaborationSection("rooms");
-    openCollaborationView();
-  }
-
-  async function selectCollaborationAgent(agentID: string): Promise<void> {
-    setAgentOnboardingActive(false);
-    if (!namedAgents.some((agent) => agent.id === agentID)) return;
-    try {
-      await openCollaborationAgentConversation(agentID);
-    } catch (error) {
-      if (selectedCollaborationAgentRequestRef.current === agentID) showErrorToast(error);
+  // A project starts as a draft like a conversation: its first message names
+  // the project and becomes the coordinator's first instruction.
+  function startNewProject(workspaceID?: string): void {
+    const current = appStateRef.current;
+    const targetID = workspaceID
+      ?? (current.activeContext?.kind === "project" ? current.activeContext.project_id : undefined)
+      ?? current.projects.find((workspace) => !workspace.missing)?.id;
+    const workspace = current.projects.find((candidate) => candidate.id === targetID);
+    if (!workspace || workspace.missing) {
+      showErrorToast(t("projects.needsWorkspace"));
+      return;
     }
-  }
-
-  async function openCollaborationAgentConversation(agentID: string, onboarding?: ChannelRoomOnboarding): Promise<void> {
-    const requestGeneration = ++directMessageRequestGenerationRef.current;
-    selectedCollaborationAgentRequestRef.current = agentID;
-    setSelectedCollaborationAgentID(agentID);
-    setCollaborationSection("rooms");
-    setAppMode("collaboration");
-    prepareChannelTab();
-    const existingDirectMessage = activeChannelRooms.find(
-      (room) => room.kind === "dm" && room.members.some(
-        (member) => member.member_type === "agent" && member.member_id === agentID,
-      ),
-    );
-    if (existingDirectMessage) {
-      setSelectedChannelRoomIDState(existingDirectMessage.id);
-      clearChannelRoomUnread(existingDirectMessage.id);
-    }
-    const isCurrentRequest = () => selectedCollaborationAgentRequestRef.current === agentID
-      && requestGeneration === directMessageRequestGenerationRef.current;
-    const result = await window.wuu.openChannelDirectMessage({ agent_id: agentID, ...(onboarding ? { onboarding } : {}) }).catch((reason: unknown) => {
-      if (!isCurrentRequest()) return null;
-      setSelectedCollaborationAgentID("");
-      throw reason;
-    });
-    if (!result || !isCurrentRequest()) return;
-    // An older directory poll must not erase the DM that was just opened.
-    channelDirectoryGenerationRef.current += 1;
-    setChannelRooms((current) => {
-      const existing = current.findIndex((room) => room.id === result.room.id);
-      if (existing < 0) return [...current, result.room];
-      const next = [...current];
-      next[existing] = result.room;
-      return next;
-    });
-    if (channelRoomPreferences.archivedRoomIDs.includes(result.room.id)) unarchiveChannelRoom(result.room);
-    setSelectedChannelRoomIDState(result.room.id);
-    setSelectedCollaborationAgentID("");
-    clearChannelRoomUnread(result.room.id);
-  }
-
-  function openNewNamedAgent(): void {
+    closePrimaryPluginView();
+    revealConversationFromFocusedWorkspace();
     closeCompactSessionSwitcher();
-    openCollaborationView();
-    setCollaborationSection("rooms");
-    setAgentOnboardingActive(true);
-    setAgentOnboardingDraft((current) => current ?? createAgentOnboardingDraft(state.initialized));
+    const origin = document.activeElement;
+    focusHeroAfter(
+      startNewThreadInWorkspace(workspace.id).then((started) => {
+        if (started) setDraftProjectMode(true);
+        return started;
+      }),
+      origin,
+      (next) => next.activeContext?.kind === "project" && next.activeProjectId === workspace.id,
+    );
   }
 
-  function openAgentProviderSettings(): void {
-    setSettingsInitialPage("providers");
-    setSettingsOpen(true);
+  async function adoptIntoProject(projectID: string, threadID: string): Promise<void> {
+    if (!window.wuu.projectSession) return;
+    try {
+      const { thread } = await window.wuu.projectSession({ action: "adopt", project_id: projectID, session_id: threadID });
+      updateCachedSidebarThread(thread);
+    } catch (error) {
+      showErrorToast(error);
+    }
   }
 
-  function openNewChannelRoom(): void {
-    setAgentOnboardingActive(false);
-    openChannelsView();
-    setNewRoomRequest((count) => count + 1);
-  }
-
-  function openAgentManagement(): void {
-    setAgentOnboardingActive(false);
-    selectedCollaborationAgentRequestRef.current = "";
-    setSelectedCollaborationAgentID("");
-    setCollaborationSection("agents");
-    setAppMode("collaboration");
-    prepareChannelTab();
-  }
+  const openProjectThread = useStableCallback((threadID: string) => {
+    closePrimaryPluginView();
+    void activateThread(threadID);
+  });
+  const openProjectPanel = useStableCallback((project: ProjectThread) => {
+    openWorkspaceProjectTab(project.id, baseThreadTitle(project));
+  });
+  const releaseProjectSession = useStableCallback((session: ProjectThread) => {
+    if (!session.project_id || !window.wuu.projectSession) return;
+    void window.wuu.projectSession({ action: "release", project_id: session.project_id, session_id: session.id })
+      .then(({ thread }) => updateCachedSidebarThread(thread))
+      .catch(showErrorToast);
+  });
+  const projectActions = useMemo<ProjectActions>(() => ({
+    threads: sidebarThreads,
+    openThread: openProjectThread,
+    openProjectPanel,
+    release: releaseProjectSession,
+  }), [openProjectPanel, openProjectThread, releaseProjectSession, sidebarThreads]);
+  const activeProjectSessions = useMemo(
+    () => activeThread && isProjectCoordinator(activeThread) ? projectSessionsOf(activeThread.id, sidebarThreads) : [],
+    [activeThread, sidebarThreads],
+  );
 
   function focusHeroAfter(
     action: Promise<void | boolean>,
@@ -3599,7 +3680,7 @@ export function App(): JSX.Element {
     const origin = document.activeElement;
     const context = appStateRef.current.activeContext;
     focusHeroAfter(
-      startNewThread(),
+      startNewThread().then(() => setDraftProjectMode(false)),
       origin,
       (current) => sameRuntimeContext(current.activeContext, context),
     );
@@ -3669,6 +3750,7 @@ export function App(): JSX.Element {
     void startNewThread().then(() => {
       setComposerImages([]);
       setComposerFiles([]);
+      setComposerSelections([]);
       setPrompt(`/${skill.name} `);
       requestMainComposerFocus("hero", origin);
     });
@@ -3718,12 +3800,15 @@ export function App(): JSX.Element {
     return result;
   }
 
-  function startNewThreadForProjectWithComposerFocus(id: string): void {
+  function startNewThreadInWorkspaceWithComposerFocus(id: string): void {
     const origin = document.activeElement;
     focusHeroAfter(
-      id === SCRATCH_PSEUDO_PROJECT_ID
+      (id === SCRATCH_PSEUDO_PROJECT_ID
         ? useNoProject(true)
-        : startNewThreadForProject(id),
+        : startNewThreadInWorkspace(id)).then((started) => {
+        setDraftProjectMode(false);
+        return started;
+      }),
       origin,
       (current) =>
         id === SCRATCH_PSEUDO_PROJECT_ID
@@ -3754,47 +3839,27 @@ export function App(): JSX.Element {
     clearThreadPendingComposerMessages,
   });
 
-  function updateChannelRoomPreferences(
-    update: (current: ChannelRoomPreferences) => ChannelRoomPreferences,
-  ): void {
-    setChannelRoomPreferences((current) => {
-      const next = update(current);
-      writeChannelRoomPreferences(next);
+  function commitConversationTitle(nextTitle: string): void {
+    const trimmed = nextTitle.trim();
+    if (!trimmed) return;
+    const current = appStateRef.current;
+    const thread = activeThreadForState(current);
+    if (thread && !thread.read_only && !thread.ephemeral) {
+      void renameThread(thread, trimmed);
+      return;
+    }
+    const tab = activeSessionTab(current);
+    if (tab?.kind !== "draft" || tab.title.trim() === trimmed) return;
+    setState((state) => {
+      const next = {
+        ...state,
+        sessionTabs: state.sessionTabs.map((item) =>
+          item.id === tab.id && item.kind === "draft" ? { ...item, title: trimmed } : item,
+        ),
+      };
+      appStateRef.current = next;
       return next;
     });
-  }
-
-  function unarchiveChannelRoom(room: Pick<ChannelRoom, "id">): void {
-    updateChannelRoomPreferences((current) => unarchiveChannelRoomPreference(current, room.id));
-  }
-
-  async function updateCollaborationConversationPreference(conversation: CollaborationConversation, action: "pin" | "hide"): Promise<void> {
-    try {
-      // Agents without a DM need a persisted conversation ID, but managing it
-      // must not navigate away from the user's current chat.
-      const room = conversation.room ?? (await window.wuu.openChannelDirectMessage({ agent_id: conversation.agent!.id })).room;
-      if (!conversation.room) setChannelRooms((current) => [...current.filter((entry) => entry.id !== room.id), room]);
-      updateChannelRoomPreferences((current) => action === "pin"
-        ? togglePinnedChannelRoom(current, room.id)
-        : archiveChannelRoomPreference(current, room.id));
-    } catch (reason) {
-      showErrorToast(reason);
-    }
-  }
-
-  async function deleteCollaborationConversation(conversation: CollaborationConversation): Promise<void> {
-    const { agent, room, name } = conversation;
-    if (!agent && room?.kind !== "channel") return;
-    if (!window.confirm(t(agent ? "channels.deleteAgentConfirm" : "channels.deleteRoomConfirm", { name }))) return;
-    try {
-      if (agent) await window.wuu.deleteNamedAgent({ agent_id: agent.id });
-      else await window.wuu.deleteChannelRoom({ room_id: room!.id });
-      const [agentResult, roomResult] = await Promise.all([window.wuu.listNamedAgents(), window.wuu.listChannelRooms()]);
-      setNamedAgents(agentResult.agents);
-      setChannelRooms(roomResult.rooms);
-    } catch (reason) {
-      showErrorToast(reason);
-    }
   }
 
   const {
@@ -3807,6 +3872,7 @@ export function App(): JSX.Element {
     loadCodexModelsForProvider,
     selectRuntimeModel,
     selectRuntimeEffort,
+    selectRuntimeSpeed,
     selectPermissionMode,
     interrupt,
     interruptPane,
@@ -3821,24 +3887,7 @@ export function App(): JSX.Element {
     setBranchMenuOpen,
     setCodexRuntimeMenu,
     clearThreadPendingComposerMessages,
-    markOptimisticTurnInterrupted: (threadID) => {
-      const interruptedAt = Date.now();
-      const interruptPendingTurn = (current: AppState): AppState => {
-        let changed = false;
-        const next = updateThreadByID(current, threadID, (thread) => {
-          const interrupted = interruptLatestOptimisticTurn(thread, interruptedAt);
-          changed = interrupted !== thread;
-          return interrupted;
-        });
-        // No server terminal event exists yet for a pending submission. Clear
-        // its local running flag as well as freezing the optimistic turn.
-        return changed && activeThreadForState(current)?.id === threadID
-          ? { ...next, running: isThreadRunning(activeThreadForState(next)) }
-          : next;
-      };
-      appStateRef.current = interruptPendingTurn(appStateRef.current);
-      setState(interruptPendingTurn);
-    },
+    requestThreadStop,
     variantByModel: runtimeVariantByModelRef.current,
   });
 
@@ -3854,15 +3903,13 @@ export function App(): JSX.Element {
     getActiveTitle: () => activeTitle,
     getPrimaryComposerDraft: currentPrimaryComposerDraft,
     setSplitComposerDrafts,
-    setPrompt,
-    setComposerImages,
-    setComposerFiles,
+    restorePrimaryComposerDraft,
     
     cancelViewSwitch,
     setContextCompositionEntries,
     setInstructionFilesEntries,
     scheduleStreamScroll,
-    closeProjectMenus,
+    closeWorkspaceMenus,
     setSettingsInitialPage,
     setSettingsOpen,
   });
@@ -3885,13 +3932,15 @@ export function App(): JSX.Element {
     setPendingFork,
     setHistoryMessageEdit,
     
-    getPrompt: () => currentPrimaryComposerDraft().prompt,
-    getComposerImages: () => composerImages,
-    getComposerFiles: () => composerFiles,
-    getSplitComposerDrafts: () => splitComposerDrafts,
+    getPrompt: () => composerDraftsRef.current.primary().prompt,
+    getComposerImages: () => composerDraftsRef.current.primary().images,
+    getComposerFiles: () => composerDraftsRef.current.primary().files,
+    getComposerSelections: () => composerDraftsRef.current.primary().selections ?? [],
+    getSplitComposerDrafts: () => composerDraftsRef.current.split,
     setPrompt,
     setComposerImages,
     setComposerFiles,
+    setComposerSelections,
     setSplitComposerDrafts,
     restorePrimaryComposerDraft,
     closeConversationSearch,
@@ -3906,92 +3955,66 @@ export function App(): JSX.Element {
     worktreeForkNonGitReason: t("app.worktreeRequiresGit"),
   });
 
-  const restoreFailedComposerDraft = useStableCallback((
-    ownerKey: string | undefined,
-    message: QueuedComposerMessage,
-    pane?: ConversationPaneID,
-  ) => {
-    if (!ownerKey) return;
-    const current = appStateRef.current;
-    const tab = current.sessionTabs.find((candidate) =>
-      candidate.kind === "thread" ? candidate.threadID === ownerKey : candidate.id === ownerKey);
-    const ownsPane = pane !== undefined && threadForPane(current, pane)?.id === ownerKey;
-    const ownsMain = pane === undefined &&
-      (activeThreadForState(current)?.id ?? current.activeSessionTabID) === ownerKey;
-    if (!ownsPane && !ownsMain && !tab) return;
-    const draft = ownsPane ? splitComposerDrafts[pane!]
-      : ownsMain ? currentPrimaryComposerDraft() : cloneSessionTabDraft(tab!);
-    const failedParts = message.contentParts ?? [{ type: "text" as const, text: message.text }];
-    const liveParts = readCollapsedPromptParts(ownerKey, draft.prompt)
-      ?? [{ type: "text" as const, text: draft.prompt }];
-    const failedText = failedParts.filter((part) => part.type === "text");
-    const liveText = liveParts.filter((part) => part.type === "text");
-    // Keep attached parts before visible text, including comments added while
-    // the failed request was pending. Restore metadata and text together.
-    const parts: MessageContentPart[] = [
-      ...failedParts.filter((part) => part.type !== "text"),
-      ...liveParts.filter((part) => part.type !== "text"),
-      ...failedText,
-      ...(failedText.some((part) => part.text) && liveText.some((part) => part.text)
-        ? [{ type: "text" as const, text: "\n" }] : []),
-      ...liveText,
-    ];
-    const restored = {
-      prompt: parts.map((part) => part.text).join(""),
-      images: [...message.images, ...draft.images.filter((image) => !message.images.some((sent) => sent.id === image.id))],
-      files: [...message.files, ...draft.files.filter((file) => !message.files.some((sent) => sent.id === file.id))],
+  function preserveFailedComposerMessage(threadID: string, message: QueuedComposerMessage): void {
+    const failedTurn: Turn = {
+      ...createOptimisticTurn(message, Date.now()),
+      status: "failed",
+      error: { message: t("composer.sendFailed") },
     };
-    rememberCollapsedPromptParts(ownerKey, restored.prompt, parts);
-    if (ownsPane) {
-      setSplitComposerDrafts((drafts) => ({ ...drafts, [pane!]: restored }));
-    } else if (ownsMain) {
-      restorePrimaryComposerDraft(restored);
-    } else {
-      setState((next) => ({
-        ...next,
-        sessionTabs: next.sessionTabs.map((candidate) => candidate.id === tab!.id
-          ? { ...candidate, ...restored } : candidate),
-      }));
-    }
-  });
+    const preserve = (state: AppState) => updateThreadByID(state, threadID, (thread) => upsertTurn(thread, failedTurn));
+    appStateRef.current = preserve(appStateRef.current);
+    setState(preserve);
+  }
 
-  async function sendPrompt(
+  function sendPrompt(
     runningAction: "queue" | "steer" = "queue",
     promptOverride?: string,
     contentParts?: MessageContentPart[],
     consumedOfferID?: string,
-  ): Promise<void> {
-    if (viewSwitchPending) {
-      return;
+    pane?: ConversationPaneID,
+  ): boolean {
+    if (submissionTargetPending) {
+      return false;
     }
-    if (consumedOfferID && pendingUserQuestionOffer?.request_id === consumedOfferID) {
-      void cancelUserQuestion(consumedOfferID).catch(() => undefined);
-    }
+    const draft = pane ? splitComposerDrafts[pane] : currentPrimaryComposerDraft();
     const draftMessage = createComposerMessage(
-      promptOverride ?? currentPrimaryComposerDraft().prompt,
-      composerImages,
-      composerFiles,
+      promptOverride ?? draft.prompt,
+      draft.images,
+      draft.files,
       contentParts,
+      draft.selections,
     );
-    const activeDocumentPath = activeWorkspaceFile;
+    const activeDocumentPath = pane ? undefined : activeWorkspaceFile;
     const message =
       draftMessage && activeDocumentPath
         ? { ...draftMessage, activeDocument: { path: activeDocumentPath } }
         : draftMessage;
     const currentState = appStateRef.current;
-    const targetThread = activeThreadForState(currentState);
+    const targetPane = pane ?? currentState.activePane;
+    const targetThread = threadForPane(currentState, targetPane);
     if (targetThread?.read_only) {
       setState((current) => ({
         ...current,
         status: localizedText("app.childTaskReadOnly"),
       }));
-      return;
+      return false;
     }
-    if (!message || !currentState.activeContext || !currentState.initialized) {
-      return;
+    if (
+      !message || !currentState.activeContext || !currentState.initialized ||
+      (pane && !targetThread) || (targetThread && stopRequestsRef.current[targetThread.id])
+    ) {
+      return false;
+    }
+    if (!targetThread && (draftEngine || engineInventory?.settings?.default_engine || "wuu") === "wuu"
+      && !hasReadyProvider(currentState.initialized.providers)) {
+      showNoModelConfiguredToast();
+      return false;
+    }
+    if (consumedOfferID && pendingUserQuestionOffer?.request_id === consumedOfferID) {
+      void cancelUserQuestion(consumedOfferID).catch(() => undefined);
     }
     let focusRequest: MainComposerFocusRequest | undefined;
-    if (emptyConversation) {
+    if (!pane && emptyConversation) {
       const activeElement = document.activeElement;
       if (
         activeElement === document.body ||
@@ -4000,31 +4023,65 @@ export function App(): JSX.Element {
         focusRequest = requestMainComposerFocus("dock", activeElement);
       }
     }
-    setPrompt("");
-    setComposerImages([]);
-    setComposerFiles([]);
-    if (
-      isStateActiveThreadRunning(currentState) &&
-      !activeTurnIsAnswerReady(targetThread)
-    ) {
-      const resolvedAction = resolveComposerRunningAction(runningAction, targetThread);
-      const sent = resolvedAction === "steer"
-        ? await steerComposerMessage(message, targetThread)
-        : await queueComposerMessage(message, targetThread);
-      if (!sent) {
-        restoreFailedComposerDraft(targetThread?.id ?? currentState.activeSessionTabID, message);
+    // Capture the destination and install pending state before preparation yields.
+    let submittedThread = targetThread;
+    const submissionKey = targetThread?.id ?? currentState.activeSessionTabID;
+    const admission = turnAdmissionsRef.current.get(submissionKey);
+    const busy = targetThread && isThreadRunning(targetThread) && !activeTurnIsAnswerReady(targetThread);
+    const operation = admission || (!busy && queueLanesRef.current.has(submissionKey))
+      ? queueComposerMessage(message, targetThread, admission)
+      : busy
+      ? resolveComposerRunningAction(runningAction, targetThread) === "steer"
+        ? steerComposerMessage(message, targetThread)
+        : queueComposerMessage(message, targetThread)
+      : sendComposerMessage(message, targetThread, targetPane, (thread) => { submittedThread = thread; });
+    if (pane) {
+      setSplitComposerDrafts((current) => ({ ...current, [pane]: emptyComposerDraft() }));
+    } else {
+      restorePrimaryComposerDraft(emptyComposerDraft());
+    }
+    const sessionTabID = currentState.activeSessionTabID;
+    void operation.then((sent) => {
+      if (sent) return;
+      submittedThread ??= admission?.thread;
+      const latest = appStateRef.current;
+      const recoveryDraft = { ...composerContextFromMessage(message.text, message.contentParts), images: message.images, files: message.files };
+      const latestTab = activeSessionTab(latest);
+      const stillTarget = submittedThread
+        ? latestTab?.kind === "thread" &&
+          (pane ? Boolean(latest.secondaryThread) : !latest.secondaryThread) &&
+          threadForPane(latest, targetPane)?.id === submittedThread.id
+        : latestTab?.kind === "draft" && latest.activeSessionTabID === sessionTabID;
+      const latestDraft = pane ? composerDraftsRef.current.split[pane] : composerDraftsRef.current.primary();
+      if (stillTarget && !composerDraftHasContent(latestDraft)) {
+        if (pane) {
+          setSplitComposerDrafts((current) => ({ ...current, [pane]: recoveryDraft }));
+        } else {
+          restorePrimaryComposerDraft(recoveryDraft);
+        }
+      } else if (submittedThread) {
+        // Keep failed input in its conversation without replacing a newer draft.
+        preserveFailedComposerMessage(submittedThread.id, message);
+      } else {
+        // Thread creation failed before there was a conversation to retain the
+        // input. A separate draft must not replace newer work in the source tab.
+        const recoveryTab = createDraftSessionTab(`draft:recovery:${message.id}`, currentState.activeContext!, recoveryDraft);
+        rememberCollapsedPromptParts(recoveryTab.id, recoveryDraft.prompt, recoveryDraft.contentParts);
+        const preserve = (state: AppState): AppState => ({
+          ...state,
+          // Keep the newer tab as the workspace's default draft.
+          sessionTabs: [recoveryTab, ...state.sessionTabs],
+        });
+        appStateRef.current = preserve(appStateRef.current);
+        setState(preserve);
+        setFailedDraftTabIDs((ids) => [...ids, recoveryTab.id]);
       }
-      return;
-    }
-    const sent = await sendComposerMessage(message, true);
-    if (!sent && focusRequest) {
-      cancelMainComposerFocusRequest(focusRequest);
-      requestMainComposerFocus(
-        "hero",
-        focusRequest.origin,
-        focusRequest.interactionVersion,
-      );
-    }
+      if (stillTarget && focusRequest) {
+        cancelMainComposerFocusRequest(focusRequest);
+        requestMainComposerFocus("hero", focusRequest.origin, focusRequest.interactionVersion);
+      }
+    });
+    return true;
   }
 
   async function submitFileSelectionEdit(part: FileSelectionPart): Promise<boolean> {
@@ -4040,7 +4097,7 @@ export function App(): JSX.Element {
     if (isThreadRunning(thread) && !activeTurnIsAnswerReady(thread)) {
       return queueComposerMessage(message, thread);
     }
-    return splitPane ? sendComposerMessageToPane(message, splitPane) : sendComposerMessage(message);
+    return sendComposerMessage(message, thread, splitPane ?? current.activePane);
   }
 
   async function compactActiveThread(): Promise<void> {
@@ -4174,27 +4231,48 @@ export function App(): JSX.Element {
   async function queueComposerMessage(
     message: QueuedComposerMessage,
     targetThread = activeThreadForState(appStateRef.current),
+    admission = targetThread ? turnAdmissionsRef.current.get(targetThread.id) : undefined,
   ): Promise<boolean> {
     const currentState = appStateRef.current;
+    const queueKey = targetThread?.id ?? currentState.activeSessionTabID;
+    const pendingKey = () => admission?.thread?.id ?? queueKey;
     const text = message.text.trim();
     const imageCount = message.images.length;
     const files = inputFilesFromComposer(message.files);
     if (
       (!text && imageCount === 0 && files.length === 0) ||
-      !targetThread ||
-      targetThread.read_only ||
+      (!targetThread && !admission) ||
+      targetThread?.read_only ||
       !currentState.activeContext ||
       !currentState.initialized ||
-      viewSwitchPending
+      submissionTargetPending
     ) {
       return false;
     }
-    enqueueComposerMessage(targetThread.id, {
+    enqueueComposerMessage(queueKey, {
       ...message,
       operationState: "preparing",
     });
-    if (activeThreadIDForState(currentState) === targetThread.id) requestDeferredQueryScroll(message.id);
+    const lane = queueLanesRef.current.get(queueKey) ?? { tail: Promise.resolve(), stopVersion: 0 };
+    // Stop holds messages already waiting; later user sends keep their order
+    // behind them without inheriting that earlier stop request.
+    const stopVersion = lane.stopVersion;
+    const previous = lane.tail;
+    let release!: () => void;
+    const tail = new Promise<void>((resolve) => { release = resolve; });
+    lane.tail = tail;
+    queueLanesRef.current.set(queueKey, lane);
     try {
+      await previous;
+      if (admission) targetThread = await admission.ready;
+      if (!targetThread) {
+        const stillPending = Boolean(pendingComposerMessagesByThreadRef.current[pendingKey()]?.queued.some(
+          (candidate) => candidate.id === message.id,
+        ));
+        removePendingComposerMessageByID(pendingKey(), message.id, "queue");
+        return !stillPending;
+      }
+      const targetContext = resolveThreadRuntimeContext(targetThread, currentState.projects);
       const encodedImages = await awaitComposerImages(message.images);
       if (
         !pendingComposerMessagesByThreadRef.current[targetThread.id]?.queued.some(
@@ -4218,9 +4296,11 @@ export function App(): JSX.Element {
         images,
         message.id,
         files,
-        targetThread.permission_mode || currentState.initialized.permissions?.mode,
+        targetThread.permission_mode,
         message.activeDocument,
-        ...(message.contentParts === undefined ? [] : [message.contentParts] as const),
+        message.contentParts,
+        targetContext,
+        lane.stopVersion !== stopVersion || Boolean(admission?.stopRequested),
       );
       updateThreadPendingComposerMessages(targetThread.id, (previous) => ({
         ...previous,
@@ -4238,20 +4318,28 @@ export function App(): JSX.Element {
       return true;
     } catch (error) {
       const stillPending = Boolean(
-        pendingComposerMessagesByThreadRef.current[targetThread.id]?.queued.some(
+        pendingComposerMessagesByThreadRef.current[pendingKey()]?.queued.some(
           (candidate) => candidate.id === message.id,
         ),
       );
-      removePendingComposerMessageByID(targetThread.id, message.id, "queue");
+      removePendingComposerMessageByID(pendingKey(), message.id, "queue");
       if (stillPending) discardSubmittedMessage(message.id);
       if (stillPending) {
         setState((current) => ({
           ...current,
           status:
-            error instanceof Error ? error.message : t("app.queueFailed"),
+            activeThreadIDForState(current) === pendingKey()
+              ? error instanceof Error ? error.message : t("app.queueFailed")
+              : current.status,
         }));
       }
       return !stillPending;
+    } finally {
+      release();
+      if (lane.tail === tail) {
+        queueLanesRef.current.delete(queueKey);
+        if (admission?.thread) queueLanesRef.current.delete(admission.thread.id);
+      }
     }
   }
 
@@ -4260,6 +4348,7 @@ export function App(): JSX.Element {
     targetThread = activeThreadForState(appStateRef.current),
   ): Promise<boolean> {
     const currentState = appStateRef.current;
+    const targetContext = targetThread ? resolveThreadRuntimeContext(targetThread, currentState.projects) : undefined;
     const text = message.text.trim();
     const files = inputFilesFromComposer(message.files);
     const turnID = targetThread ? activeTurnIDForThread(targetThread) : undefined;
@@ -4270,7 +4359,7 @@ export function App(): JSX.Element {
       !turnID ||
       !currentState.activeContext ||
       !currentState.initialized ||
-      viewSwitchPending
+      submissionTargetPending
     ) {
       return false;
     }
@@ -4281,7 +4370,6 @@ export function App(): JSX.Element {
         { ...message, origin: "steer", operationState: "preparing" },
       ],
     }));
-    if (activeThreadIDForState(currentState) === targetThread.id) requestDeferredQueryScroll(message.id);
     try {
       const encodedImages = await awaitComposerImages(message.images);
       if (
@@ -4307,7 +4395,8 @@ export function App(): JSX.Element {
         message.id,
         files,
         message.activeDocument,
-        ...(message.contentParts === undefined ? [] : [message.contentParts] as const),
+        message.contentParts,
+        targetContext,
       );
       updateThreadPendingComposerMessages(targetThread.id, (previous) => ({
         ...previous,
@@ -4330,7 +4419,9 @@ export function App(): JSX.Element {
         setState((current) => ({
           ...current,
           status:
-            error instanceof Error ? error.message : t("composer.guideFailed"),
+            activeThreadIDForState(current) === targetThread.id
+              ? error instanceof Error ? error.message : t("composer.guideFailed")
+              : current.status,
         }));
       }
       return !stillPending;
@@ -4339,7 +4430,9 @@ export function App(): JSX.Element {
 
   async function sendComposerMessage(
     message: QueuedComposerMessage,
-    restoreDraftOnError = false,
+    targetThread = activeThreadForState(appStateRef.current),
+    targetPane = appStateRef.current.activePane,
+    onThreadCreated?: (thread: Thread) => void,
   ): Promise<boolean> {
     // Captured before any await: on a brand-new conversation the thread
     // itself is created over IPC first, and the optimistic turn's live
@@ -4347,11 +4440,6 @@ export function App(): JSX.Element {
     // round-trip finishes.
     const sendClickedAtMs = Date.now();
     const currentState = appStateRef.current;
-    const targetThread = activeThreadForState(currentState);
-    const targetPane: ConversationPaneID =
-      currentState.activePane === "secondary" && currentState.secondaryThread
-        ? "secondary"
-        : "primary";
     const text = message.text.trim();
     const imageCount = message.images.length;
     const files = inputFilesFromComposer(message.files);
@@ -4360,15 +4448,23 @@ export function App(): JSX.Element {
       !currentState.activeContext ||
       !currentState.initialized ||
       targetThread?.read_only ||
-      viewSwitchPending ||
-      (isStateActiveThreadRunning(currentState) &&
+      submissionTargetPending ||
+      (targetThread && isThreadRunning(targetThread) &&
         !activeTurnIsAnswerReady(targetThread))
     ) {
       return false;
     }
-    const activeContext = currentState.activeContext;
-    const newThreadEngine =
-      (targetThread?.engine_id ?? "")
+    const activeContext = targetThread
+      ? resolveThreadRuntimeContext(targetThread, currentState.projects)
+      : currentState.activeContext;
+    const sendingDraftTab = targetThread
+      ? undefined
+      : currentState.sessionTabs.find((tab) => tab.id === currentState.activeSessionTabID);
+    const projectDraft = sendingDraftTab?.kind === "draft" && sendingDraftTab.project === true &&
+      activeContext.kind === "project" ? sendingDraftTab : undefined;
+    const newThreadEngine = projectDraft
+      ? "wuu"
+      : (targetThread?.engine_id ?? "")
       || draftEngine
       || engineInventory?.settings?.default_engine
       || "wuu";
@@ -4382,35 +4478,68 @@ export function App(): JSX.Element {
     const newThreadEngineRuntime = {
       model: draftEngineRuntime.model || defaultExternalRuntime.model,
       effort: draftEngineRuntime.effort || defaultExternalRuntime.effort,
+      speed: draftEngineRuntime.speed,
     };
+    const newThreadWorktree = targetThread ? undefined : draftWorktreeFor(activeContext, currentState.gitStatus);
+    let resolveAdmission!: TurnAdmission["resolve"];
+    let cancelPreparation!: () => void;
+    const admission: TurnAdmission = {
+      thread: targetThread,
+      ready: new Promise((resolve) => { resolveAdmission = resolve; }),
+      resolve: (thread) => resolveAdmission(thread),
+      stopRequested: false,
+      sent: false,
+      cancelled: new Promise((resolve) => { cancelPreparation = () => resolve(undefined); }),
+      cancelPreparation: () => cancelPreparation(),
+    };
+    const admissionKey = targetThread?.id ?? currentState.activeSessionTabID;
+    turnAdmissionsRef.current.set(admissionKey, admission);
     const optimisticTurn = createOptimisticTurn(message, sendClickedAtMs);
-    requestSubmittedQueryScroll(optimisticTurn.items[0].id);
-    appStateRef.current = {
-      ...currentState,
-      running: true,
-      status: localizedText("app.sendingRequest"),
-    };
-    setState((current) => ({
-      ...current,
-      running: true,
-      status: localizedText("app.sendingRequest"),
-    }));
+    const previousTurnIDs = new Set(targetThread?.turns.map((turn) => turn.id));
+    if (!targetThread || activeThreadIDForState(currentState) === targetThread.id) {
+      requestSubmittedQueryScroll(optimisticTurn.items[0].id);
+      appStateRef.current = { ...currentState, running: true, status: localizedText("app.sendingRequest") };
+      setState((current) => ({ ...current, running: true, status: localizedText("app.sendingRequest") }));
+    }
     let optimisticTurnID: string | undefined;
     let optimisticThreadID: string | undefined;
-    // Render a tab-scoped optimistic turn before a new thread exists. Once
-    // thread/start returns, the same turn moves into normal thread state.
-    if (!targetThread && currentState.activeSessionTabID) {
-      setPendingNewThreadTurn({
+    // Creation belongs to the draft, independently of background list refreshes.
+    let creationCancelled = false;
+    const cancelledCreation = !targetThread ? new Promise<never>((_, reject) => {
+      pendingThreadCreationsRef.current.set(currentState.activeSessionTabID, {
         sessionTabID: currentState.activeSessionTabID,
+        context: activeContext,
         turn: optimisticTurn,
+        cancel: () => {
+          creationCancelled = true;
+          admission.stopRequested = true;
+          reject(new Error("Thread creation cancelled"));
+        },
       });
-    }
+      setPendingThreadCreations([...pendingThreadCreationsRef.current.values()]);
+    }) : undefined;
     try {
-      const thread =
+      let thread =
         targetThread ??
         requireThread(
-          await window.wuu.startThread({
+          await Promise.race([window.wuu.startThread(projectDraft && activeContext.kind === "project" ? {
+            // A renamed draft names the project; otherwise its goal does.
+            project: { name: customDraftConversationTitle(projectDraft.title, t("projects.newProject")) || projectNameFromGoal(text) },
+            workspace_id: activeContext.project_id,
+            cwd: activeContext.cwd,
+            engine: "wuu",
+            provider: currentState.initialized?.provider,
+            model: currentState.initialized?.model,
+            effort: currentState.initialized?.variant || currentState.initialized?.effort,
+            speed: currentState.initialized?.speed,
+          } satisfies ThreadStartParams : {
             ...(draftEngine ? { engine: draftEngine } : {}),
+            ...(newThreadWorktree
+              ? {
+                  workspace: "worktree",
+                  ...(newThreadWorktree.startBranch ? { base_revision: newThreadWorktree.startBranch } : {}),
+                } satisfies ThreadStartParams
+              : {}),
             ...(newThreadEngine !== "wuu"
               ? {
                   ...newThreadEngineRuntime,
@@ -4420,59 +4549,87 @@ export function App(): JSX.Element {
                   provider: currentState.initialized?.provider,
                   model: currentState.initialized?.model,
                   effort: currentState.initialized?.variant || currentState.initialized?.effort,
+                  speed: currentState.initialized?.speed,
                   permission_mode: currentState.initialized?.permissions?.mode,
                   approve_for_me: currentState.initialized?.permissions?.approve_for_me,
                 } satisfies ThreadStartParams),
-          }),
+          }, activeContext).then(async (result) => {
+            if (creationCancelled && result.thread) {
+              // No turn was submitted to this newly created session. A late
+              // response must not leave an empty conversation after Stop.
+              try {
+                const threadID = result.thread.id;
+                await window.wuu.deleteThread(threadID);
+                removeCachedSidebarThread(threadID);
+                setState((current) => ({
+                  ...current,
+                  threads: current.threads.filter((thread) => thread.id !== threadID),
+                }));
+              } catch (error) {
+                showErrorToast(error);
+              }
+            }
+            return result;
+          }), cancelledCreation!]),
           "thread/start did not return a thread",
         );
+      if (!targetThread && !creationCancelled && !projectDraft) {
+        const draftTab = currentState.sessionTabs.find(
+          (tab) => tab.id === currentState.activeSessionTabID,
+        );
+        const customTitle = customDraftConversationTitle(
+          draftTab?.kind === "draft" ? draftTab.title : undefined,
+          t("tabs.newConversation"),
+        );
+        // Set the user's name before the first turn so a generated title
+        // cannot replace a name they already chose.
+        if (customTitle) {
+          try {
+            const renamed = await window.wuu.renameThread(thread.id, customTitle);
+            if (renamed.thread) {
+              thread = renamed.thread;
+              updateCachedSidebarThread(thread);
+            }
+          } catch (error) {
+            showErrorToast(error, t("thread.rename.failed"));
+          }
+        }
+      }
+      admission.thread = thread;
       if (!targetThread) {
-        const draftPrompt = currentPrimaryComposerDraft().prompt;
         const oldOwner = currentState.activeSessionTabID;
         if (oldOwner) fileSelectionDraftOwners.current.set(thread.id, oldOwner);
+        const draftPrompt = currentPrimaryComposerDraft().prompt;
         const draftParts = oldOwner ? readCollapsedPromptParts(oldOwner, draftPrompt) : undefined;
-        // A first inline edit binds the draft tab to a thread while keeping
-        // any unrelated comment draft intact under its new owner identity.
         rememberCollapsedPromptParts(thread.id, draftPrompt, draftParts);
+        turnAdmissionsRef.current.set(thread.id, admission);
+        turnAdmissionsRef.current.delete(admissionKey);
+        const lane = queueLanesRef.current.get(admissionKey);
+        if (lane) {
+          queueLanesRef.current.set(thread.id, lane);
+          queueLanesRef.current.delete(admissionKey);
+        }
+        const pending = pendingComposerMessagesByThreadRef.current[admissionKey];
+        if (pending) {
+          updateThreadPendingComposerMessages(thread.id, (previous) => ({
+            ...previous, queued: [...previous.queued, ...pending.queued],
+          }));
+          clearThreadPendingComposerMessages(admissionKey);
+        }
+        onThreadCreated?.(thread);
+        const adoptThread = (current: AppState): AppState => {
+          const stillTarget = current.activeSessionTabID === currentState.activeSessionTabID
+            && sameRuntimeContext(current.activeContext, activeContext);
+          return {
+            ...(stillTarget ? setThreadForPane(current, targetPane, thread) : current),
+            sessionTabs: bindActiveSessionTabToThread(current.sessionTabs, currentState.activeSessionTabID, thread, activeContext),
+            activeSessionTabID: stillTarget ? threadSessionTabID(thread.id) : current.activeSessionTabID,
+            threads: upsertThread(current.threads, thread),
+          };
+        };
+        appStateRef.current = adoptThread(appStateRef.current);
+        setState(adoptThread);
       }
-      appStateRef.current = {
-        ...setThreadForPane(appStateRef.current, targetPane, thread),
-        activePane: targetPane,
-        allowThreadAutoActivation: true,
-        sessionTabs:
-          targetPane === "primary"
-            ? bindActiveSessionTabToThread(
-                appStateRef.current.sessionTabs,
-                appStateRef.current.activeSessionTabID,
-                thread,
-                activeContext,
-              )
-            : appStateRef.current.sessionTabs,
-        activeSessionTabID:
-          targetPane === "primary"
-            ? threadSessionTabID(thread.id)
-            : appStateRef.current.activeSessionTabID,
-        threads: upsertThread(appStateRef.current.threads, thread),
-      };
-      setState((current) => ({
-        ...setThreadForPane(current, targetPane, thread),
-        activePane: targetPane,
-        allowThreadAutoActivation: true,
-        sessionTabs:
-          targetPane === "primary"
-            ? bindActiveSessionTabToThread(
-                current.sessionTabs,
-                current.activeSessionTabID,
-                thread,
-                activeContext,
-              )
-            : current.sessionTabs,
-        activeSessionTabID:
-          targetPane === "primary"
-            ? threadSessionTabID(thread.id)
-            : current.activeSessionTabID,
-        threads: upsertThread(current.threads, thread),
-      }));
       optimisticTurnID = optimisticTurn.id;
       optimisticThreadID = thread.id;
       appStateRef.current = updateThreadByID(
@@ -4487,51 +4644,44 @@ export function App(): JSX.Element {
           (currentThread) => upsertTurn(currentThread, optimisticTurn),
         ),
       );
-      setPendingNewThreadTurn((current) =>
-        current?.turn.id === optimisticTurn.id ? undefined : current,
-      );
-      const encodedImages = await awaitComposerImages(message.images);
+      clearPendingThreadCreation(optimisticTurn.id);
+      const encodedImages = await Promise.race([awaitComposerImages(message.images), admission.cancelled]);
+      if (!encodedImages || admission.stopRequested) {
+        const settle = (current: AppState) => updateThreadByID(current, thread.id,
+          (value) => interruptOptimisticTurn(value, optimisticTurn.id, Date.now()),
+          activeThreadIDForState(current) === thread.id ? { running: false } : {});
+        appStateRef.current = settle(appStateRef.current);
+        setState(settle);
+        return true;
+      }
+      admission.sent = true;
       const images = inputImagesFromComposer(encodedImages);
       const result = await window.wuu.startTurn(
         thread.id,
         text,
         images,
         files,
-        thread.permission_mode || currentState.initialized.permissions?.mode,
+        thread.permission_mode || (!targetThread
+          ? currentState.initialized.permissions?.mode : undefined),
         message.activeDocument,
-        ...(message.contentParts === undefined ? [] : [message.contentParts] as const),
+        message.contentParts,
+        activeContext,
+        message.id,
       );
-      const interruptedBeforeAcceptance = isOptimisticTurnInterrupted(
-        appStateRef.current.threads.find((candidate) => candidate.id === thread.id),
-        optimisticTurnID,
-      );
-      if (interruptedBeforeAcceptance && result.turn.status === "in_progress") {
-        try {
-          await window.wuu.interruptTurn(thread.id);
-        } catch {
-          // Keep the explicit local stop visible. A later server snapshot can
-          // still reconcile the accepted turn to its terminal state.
-        }
-      }
-      const acceptedTurn: Turn = interruptedBeforeAcceptance
-        ? { ...result.turn, status: "interrupted" }
-        : result.turn;
+      const acceptedTurn = result.turn;
       const acceptedMessage = acceptedTurn.items.find(item => item.type === "user_message");
       if (acceptedMessage) acknowledgeSubmittedMessage(optimisticTurn.items[0].id, acceptedMessage.id);
-      setState((current) =>
-        updateThreadByID(
-          setThreadForPane(current, targetPane, thread),
-          thread.id,
-          (currentThread) =>
-            replaceOptimisticTurn(
-              currentThread,
-              optimisticTurnID ?? result.turn.id,
-              acceptedTurn,
-              upsertTurn,
-            ),
-        ),
+      const accept = (current: AppState) => updateThreadByID(
+        current, thread.id,
+        (currentThread) => replaceOptimisticTurn(currentThread, optimisticTurn.id, acceptedTurn, upsertTurn),
       );
+      appStateRef.current = accept(appStateRef.current);
+      setState(accept);
+      if (admission.stopRequested && isThreadRunning(threadForTab(appStateRef.current, thread.id))) {
+        await interruptAcceptedThread(thread.id);
+      }
     } catch (error) {
+      admission.stopRequested = true;
       const rawMessage = rawErrorMessage(error, t("composer.sendFailed"));
       const errorMessage = statusMessageForError(rawMessage, t("composer.sendFailed"));
       const noModelConfigured = isNoModelConfiguredError(rawMessage);
@@ -4545,31 +4695,12 @@ export function App(): JSX.Element {
         currentThread,
         message,
         optimisticTurnID,
+        previousTurnIDs,
       );
       const keepAcceptedTurn = alreadyAccepted && !interrupted;
-      const droppedState =
-        optimisticTurnID && optimisticThreadID
-          ? updateThreadByID(
-              appStateRef.current,
-              optimisticThreadID,
-              (currentThread) =>
-                interrupted
-                  ? interruptOptimisticTurn(currentThread, optimisticTurnID, Date.now())
-                  : keepAcceptedTurn
-                    ? currentThread
-                    : dropOptimisticTurn(currentThread, optimisticTurnID),
-            )
-          : appStateRef.current;
       if (!interrupted && !keepAcceptedTurn) discardSubmittedMessage(optimisticTurn.items[0].id);
-      appStateRef.current = {
-        ...droppedState,
-        running: keepAcceptedTurn,
-        // A missing model configuration is announced via the onboarding
-        // toast; do not also flag the composer status row with the error.
-        status: noModelConfigured || interrupted || keepAcceptedTurn ? "" : errorMessage,
-      };
-      setState((current) => ({
-        ...(optimisticTurnID && optimisticThreadID
+      const settle = (current: AppState): AppState => {
+        const next = optimisticTurnID && optimisticThreadID
           ? updateThreadByID(
               current,
               optimisticThreadID,
@@ -4580,238 +4711,35 @@ export function App(): JSX.Element {
                     ? currentThread
                     : dropOptimisticTurn(currentThread, optimisticTurnID),
             )
-          : current),
-        running: keepAcceptedTurn,
-        status: noModelConfigured || interrupted || keepAcceptedTurn ? "" : errorMessage,
-      }));
-      setPendingNewThreadTurn((current) =>
-        current?.turn.id === optimisticTurn.id ? undefined : current,
-      );
-      if (noModelConfigured) {
-        showNoModelConfiguredToast();
-      }
-      if (restoreDraftOnError && !interrupted && !keepAcceptedTurn) {
-        restoreFailedComposerDraft(
-          optimisticThreadID ?? targetThread?.id ?? currentState.activeSessionTabID,
-          message,
-        );
-      }
-      return interrupted || keepAcceptedTurn;
-    }
-    return true;
-  }
-
-  async function sendPromptForPane(
-    pane: ConversationPaneID,
-    promptOverride?: string,
-    contentParts?: MessageContentPart[],
-  ): Promise<void> {
-    if (viewSwitchPending) {
-      return;
-    }
-    const draft = splitComposerDrafts[pane] ?? emptyComposerDraft();
-    const message = createComposerMessage(
-      promptOverride ?? draft.prompt,
-      draft.images,
-      draft.files,
-      contentParts,
-    );
-    const currentState = appStateRef.current;
-    const targetThread = threadForPane(currentState, pane);
-    if (targetThread?.read_only) {
-      setState((current) => ({
-        ...current,
-        status: localizedText("app.childTaskReadOnly"),
-      }));
-      return;
-    }
-    if (
-      !message ||
-      !targetThread ||
-      !currentState.activeContext ||
-      !currentState.initialized
-    ) {
-      return;
-    }
-    if (isThreadRunning(targetThread) && !activeTurnIsAnswerReady(targetThread)) {
-      const queued = await queueComposerMessage(message, targetThread);
-      if (queued) {
-        setSplitComposerDrafts((current) => ({
-          ...current,
-          [pane]: emptyComposerDraft(),
-        }));
-        setState((current) => ({
-          ...current,
-          activePane: pane,
-        }));
-      }
-      return;
-    }
-    setSplitComposerDrafts((current) => ({
-      ...current,
-      [pane]: emptyComposerDraft(),
-    }));
-    const sent = await sendComposerMessageToPane(message, pane);
-    if (!sent) {
-      restoreFailedComposerDraft(targetThread.id, message, pane);
-    }
-  }
-
-  async function sendComposerMessageToPane(
-    message: QueuedComposerMessage,
-    pane: ConversationPaneID,
-  ): Promise<boolean> {
-    const currentState = appStateRef.current;
-    const targetThread = threadForPane(currentState, pane);
-    const text = message.text.trim();
-    const imageCount = message.images.length;
-    const files = inputFilesFromComposer(message.files);
-    if (
-      (!text && imageCount === 0 && files.length === 0) ||
-      !targetThread ||
-      targetThread.read_only ||
-      !currentState.activeContext ||
-      !currentState.initialized ||
-      viewSwitchPending ||
-      (isThreadRunning(targetThread) && !activeTurnIsAnswerReady(targetThread))
-    ) {
-      return false;
-    }
-    if ((targetThread.engine_id || "wuu") === "wuu" && !hasReadyProvider(currentState.initialized?.providers)) {
-      showNoModelConfiguredToast();
-      return false;
-    }
-    enableConversationAutoFollow();
-    appStateRef.current = {
-      ...currentState,
-      activePane: pane,
-      running: true,
-      status: localizedText("app.sendingRequest"),
-    };
-    setState((current) => ({
-      ...current,
-      activePane: pane,
-      running: true,
-      status: localizedText("app.sendingRequest"),
-    }));
-    let optimisticTurnID: string | undefined;
-    try {
-      // Insert an optimistic in_progress turn before the IPC round-trip
-      // so the live "正在回复/处理" timer starts at the user's click
-      // moment instead of waiting for the server's first turn
-      // notification. The placeholder is replaced (or dropped on error)
-      // once the real turn arrives or the request fails.
-      const optimisticTurn = createOptimisticTurn(message, Date.now());
-      optimisticTurnID = optimisticTurn.id;
-      appStateRef.current = updateThreadByID(
-        appStateRef.current,
-        targetThread.id,
-        (thread) => upsertTurn(thread, optimisticTurn),
-      );
-      setState((current) =>
-        updateThreadByID(
-          current,
-          targetThread.id,
-          (thread) => upsertTurn(thread, optimisticTurn),
-        ),
-      );
-      const encodedImages = await awaitComposerImages(message.images);
-      const images = inputImagesFromComposer(encodedImages);
-      const result = await window.wuu.startTurn(
-        targetThread.id,
-        text,
-        images,
-        files,
-        targetThread.permission_mode || currentState.initialized.permissions?.mode,
-        message.activeDocument,
-        ...(message.contentParts === undefined ? [] : [message.contentParts] as const),
-      );
-      const interruptedBeforeAcceptance = isOptimisticTurnInterrupted(
-        appStateRef.current.threads.find(
-          (candidate) => candidate.id === targetThread.id,
-        ),
-        optimisticTurnID,
-      );
-      if (interruptedBeforeAcceptance && result.turn.status === "in_progress") {
-        try {
-          await window.wuu.interruptTurn(targetThread.id);
-        } catch {
-          // Keep the explicit local stop visible until server state catches up.
-        }
-      }
-      const acceptedTurn: Turn = interruptedBeforeAcceptance
-        ? { ...result.turn, status: "interrupted" }
-        : result.turn;
-      setState((current) =>
-        updateThreadByID(
-          { ...current, activePane: pane },
-          targetThread.id,
-          (thread) =>
-            replaceOptimisticTurn(
-              thread,
-              optimisticTurnID ?? result.turn.id,
-              acceptedTurn,
-              upsertTurn,
-            ),
-        ),
-      );
-    } catch (error) {
-      const rawMessage = rawErrorMessage(error, t("composer.sendFailed"));
-      const errorMessage = statusMessageForError(rawMessage, t("composer.sendFailed"));
-      const noModelConfigured = isNoModelConfiguredError(rawMessage);
-      const currentThread = appStateRef.current.threads.find(
-        (candidate) => candidate.id === targetThread.id,
-      );
-      const interrupted =
-        isCancellationMessage(rawMessage.toLowerCase()) ||
-        isOptimisticTurnInterrupted(currentThread, optimisticTurnID);
-      const alreadyAccepted = threadHasAcceptedComposerMessage(
-        currentThread,
-        message,
-        optimisticTurnID,
-      );
-      const keepAcceptedTurn = alreadyAccepted && !interrupted;
-      const droppedState = optimisticTurnID
-        ? updateThreadByID(
-            appStateRef.current,
-            targetThread.id,
-            (thread) =>
-              interrupted
-                ? interruptOptimisticTurn(thread, optimisticTurnID, Date.now())
-                : keepAcceptedTurn
-                  ? thread
-                  : dropOptimisticTurn(thread, optimisticTurnID),
-          )
-        : appStateRef.current;
-      appStateRef.current = {
-        ...droppedState,
-        activePane: pane,
-        running: keepAcceptedTurn,
-        // A missing model configuration is announced via the onboarding
-        // toast; do not also flag the composer status row with the error.
-        status: noModelConfigured || interrupted || keepAcceptedTurn ? "" : errorMessage,
+          : current;
+        const stillTarget = optimisticThreadID
+          ? activeThreadIDForState(current) === optimisticThreadID
+          : current.activeSessionTabID === currentState.activeSessionTabID;
+        return stillTarget ? {
+          ...next,
+          running: keepAcceptedTurn,
+          status: noModelConfigured || interrupted || keepAcceptedTurn ? "" : errorMessage,
+        } : next;
       };
-      setState((current) => ({
-        ...(optimisticTurnID
-          ? updateThreadByID(
-              current,
-              targetThread.id,
-              (thread) =>
-                interrupted
-                  ? interruptOptimisticTurn(thread, optimisticTurnID, Date.now())
-                  : keepAcceptedTurn
-                    ? thread
-                    : dropOptimisticTurn(thread, optimisticTurnID),
-            )
-          : current),
-        activePane: pane,
-        running: keepAcceptedTurn,
-        status: noModelConfigured || interrupted || keepAcceptedTurn ? "" : errorMessage,
-      }));
+      appStateRef.current = settle(appStateRef.current);
+      setState(settle);
+      clearPendingThreadCreation(optimisticTurn.id);
+      if (!optimisticThreadID) forgetLocalTurnTiming(optimisticTurn.id);
       if (noModelConfigured) {
         showNoModelConfiguredToast();
       }
-      return interrupted || keepAcceptedTurn;
+      if (admission.sent && optimisticThreadID && stopRequestsRef.current[optimisticThreadID]) {
+        await interruptAcceptedThread(optimisticThreadID!);
+      }
+      return !creationCancelled && (interrupted || keepAcceptedTurn);
+    } finally {
+      admission.resolve(admission.thread);
+      turnAdmissionsRef.current.delete(admissionKey);
+      if (admission.thread) {
+        turnAdmissionsRef.current.delete(admission.thread.id);
+        // Re-evaluate a locally cancelled preparation with no server event.
+        setStopRequests({ ...stopRequestsRef.current });
+      }
     }
     return true;
   }
@@ -4820,151 +4748,27 @@ export function App(): JSX.Element {
     message: QueuedComposerMessage,
     targetThread: Thread,
   ): Promise<boolean> {
-    const currentState = appStateRef.current;
-    const text = message.text.trim();
-    const imageCount = message.images.length;
-    const files = inputFilesFromComposer(message.files);
-    if (
-      (!text && imageCount === 0 && files.length === 0) ||
-      targetThread.read_only ||
-      !currentState.activeContext ||
-      !currentState.initialized ||
-      viewSwitchPending ||
-      isThreadRunning(targetThread)
-    ) {
-      return false;
-    }
-    const targetIsActive = activeThreadIDForState(currentState) === targetThread.id;
-    const optimisticTurn = createOptimisticTurn(message, Date.now());
-    if (targetIsActive) {
-      requestSubmittedQueryScroll(optimisticTurn.items[0].id);
-      appStateRef.current = {
-        ...currentState,
-        running: true,
-        status: localizedText("app.sendingRequest"),
-      };
-      setState((current) => ({
-        ...current,
-        running: true,
-        status: localizedText("app.sendingRequest"),
-      }));
-    }
-    let optimisticTurnID: string | undefined;
-    try {
-      // Insert an optimistic in_progress turn before the IPC round-trip
-      // so the live "正在回复/处理" timer starts at the user's click
-      // moment instead of waiting for the server's first turn
-      // notification. The placeholder is replaced (or dropped on error)
-      // once the real turn arrives or the request fails.
-      optimisticTurnID = optimisticTurn.id;
-      appStateRef.current = updateThreadByID(
-        appStateRef.current,
-        targetThread.id,
-        (thread) => upsertTurn(thread, optimisticTurn),
-      );
-      setState((current) =>
-        updateThreadByID(
-          current,
-          targetThread.id,
-          (thread) => upsertTurn(thread, optimisticTurn),
-        ),
-      );
-      const encodedImages = await awaitComposerImages(message.images);
-      const images = inputImagesFromComposer(encodedImages);
-      const result = await window.wuu.startTurn(
-        targetThread.id,
-        text,
-        images,
-        files,
-        targetThread.permission_mode || currentState.initialized.permissions?.mode,
-        message.activeDocument,
-        ...(message.contentParts === undefined ? [] : [message.contentParts] as const),
-      );
-      const interruptedBeforeAcceptance = isOptimisticTurnInterrupted(
-        appStateRef.current.threads.find(
-          (candidate) => candidate.id === targetThread.id,
-        ),
-        optimisticTurnID,
-      );
-      if (interruptedBeforeAcceptance && result.turn.status === "in_progress") {
-        try {
-          await window.wuu.interruptTurn(targetThread.id);
-        } catch {
-          // Keep the explicit local stop visible until server state catches up.
-        }
-      }
-      const acceptedTurn: Turn = interruptedBeforeAcceptance
-        ? { ...result.turn, status: "interrupted" }
-        : result.turn;
-      const acceptedMessage = acceptedTurn.items.find((item) => item.type === "user_message");
-      if (acceptedMessage) acknowledgeSubmittedMessage(optimisticTurn.items[0].id, acceptedMessage.id);
-      setState((current) =>
-        updateThreadByID(
-          current,
-          targetThread.id,
-          (thread) =>
-            replaceOptimisticTurn(
-              thread,
-              optimisticTurnID ?? result.turn.id,
-              acceptedTurn,
-              upsertTurn,
-            ),
-          targetIsActive ? { running: true } : {},
-        ),
-      );
-    } catch (error) {
-      const rawMessage = rawErrorMessage(error, t("composer.sendFailed"));
-      const errorMessage = statusMessageForError(rawMessage, t("composer.sendFailed"));
-      const currentThread = appStateRef.current.threads.find(
-        (candidate) => candidate.id === targetThread.id,
-      );
-      const interrupted =
-        isCancellationMessage(rawMessage.toLowerCase()) ||
-        isOptimisticTurnInterrupted(currentThread, optimisticTurnID);
-      const alreadyAccepted = threadHasAcceptedComposerMessage(
-        currentThread,
-        message,
-        optimisticTurnID,
-      );
-      const keepAcceptedTurn = alreadyAccepted && !interrupted;
-      const droppedState = optimisticTurnID
-        ? updateThreadByID(
-            appStateRef.current,
-            targetThread.id,
-            (thread) =>
-              interrupted
-                ? interruptOptimisticTurn(thread, optimisticTurnID, Date.now())
-                : keepAcceptedTurn
-                  ? thread
-                  : dropOptimisticTurn(thread, optimisticTurnID),
-          )
-        : appStateRef.current;
-      appStateRef.current = {
-        ...droppedState,
-        running: targetIsActive ? keepAcceptedTurn : appStateRef.current.running,
-        status: interrupted || keepAcceptedTurn ? "" : errorMessage,
-      };
-      if (!interrupted && !keepAcceptedTurn) discardSubmittedMessage(optimisticTurn.items[0].id);
-      setState((current) => ({
-        ...(optimisticTurnID
-          ? updateThreadByID(
-              current,
-              targetThread.id,
-              (thread) =>
-                interrupted
-                  ? interruptOptimisticTurn(thread, optimisticTurnID, Date.now())
-                  : keepAcceptedTurn
-                    ? thread
-                    : dropOptimisticTurn(thread, optimisticTurnID),
-            )
-          : current),
-        running: targetIsActive ? keepAcceptedTurn : current.running,
-        status: interrupted || keepAcceptedTurn ? "" : errorMessage,
-      }));
-      return interrupted || keepAcceptedTurn;
-    }
-    return true;
+    return sendComposerMessage(message, targetThread);
   }
+
+  const failedDraftTabID = failedDraftTabIDs[0];
+  const failedDraftNotice = failedDraftTabID ? (
+    <UILayerPortal layer="notice">
+      <TopNotice
+        key={failedDraftTabID}
+        message={t("composer.failedDraftSaved")}
+        icon={CircleAlert}
+        isError
+        persistent
+        action={{ label: t("composer.openFailedDraft"), onClick: () => { void selectSessionTab(failedDraftTabID); } }}
+        dismissAriaLabel={t("composer.discardFailedDraft")}
+        onDismiss={() => {
+          setFailedDraftTabIDs((ids) => ids.filter((id) => id !== failedDraftTabID));
+          setState((current) => ({ ...current, sessionTabs: current.sessionTabs.filter((tab) => tab.id !== failedDraftTabID) }));
+        }}
+      />
+    </UILayerPortal>
+  ) : null;
 
   const archiveTipNode = archiveTip ? (
     <UILayerPortal layer="notice">
@@ -5033,6 +4837,7 @@ export function App(): JSX.Element {
       <>
         {archiveTipNode}
         {modelCatalogTipNode}
+        {!archiveTip && !modelCatalogTip && failedDraftNotice}
         <SettingsShellRenderer
           initialized={state.initialized}
           initialPage={settingsInitialPage}
@@ -5058,7 +4863,6 @@ export function App(): JSX.Element {
           sidebarCollapsed={sidebarCollapsed}
           sidebarAnimating={sidebarAnimating}
           onToggleSidebar={toggleSidebar}
-          sidebarMotionMs={SIDEBAR_MOTION_MS}
           onBack={() => {
             setSettingsOpen(false);
           }}
@@ -5077,17 +4881,15 @@ export function App(): JSX.Element {
             .filter((thread) => thread.archived)
             .map((thread) => {
               const project = state.projects.find((candidate) =>
-                threadBelongsToProject(thread, candidate),
+                threadBelongsToWorkspace(thread, candidate),
               );
               return {
                 ...thread,
                 archive_project_id: project?.id ?? "",
-                archive_project_name: project?.name ?? t("appState.noProject"),
+                archive_project_name: project?.name ?? t("appState.noWorkspace"),
               };
             })}
-          archivedRooms={archivedChannelRooms}
           onUnarchiveThread={(thread) => void unarchiveThread(thread)}
-          onUnarchiveRoom={unarchiveChannelRoom}
         />
       </>
     );
@@ -5117,26 +4919,11 @@ export function App(): JSX.Element {
     );
   }
 
-  const collaborationNavigation = sidebarToggleVisible && sidebarDrawerMode && !rightPanelGlobalized ? (
-    <button
-      className="icon-button side-panel-toggle-button sidebar-toggle-button sidebar-collapse-toggle"
-      data-wuu-component="sidebar-toggle"
-      type="button"
-      aria-label={t(
-        sidebarDrawerVisible
-          ? "app.collapseLeftSidebar"
-          : "app.expandLeftSidebar",
-      )}
-      aria-pressed={sidebarDrawerVisible}
-      onClick={toggleSessionSwitcher}
-      onPointerEnter={scheduleSidebarDrawerOpen}
-      onPointerLeave={(event) =>
-        scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
-      }
-    >
-      <SidePanelToggleIcon side="left" open={sidebarDrawerVisible} />
-    </button>
-  ) : null;
+  const conversationTitleEditable =
+    !showingSkillsCatalog &&
+    !showingPrimaryPluginView &&
+    ((activeThread !== undefined && !activeThread.read_only && !activeThread.ephemeral) ||
+      currentSessionTab?.kind === "draft");
 
   const selectionUsesSplitDraft = splitConversation && !rightPanelGlobalized;
   const selectionThread = selectionUsesSplitDraft ? threadForPane(state, state.activePane) : activeThread;
@@ -5150,7 +4937,6 @@ export function App(): JSX.Element {
       <FileSelectionProvider
         ownerKey={selectionThread?.id ?? currentSessionTab?.id}
         interactionOwnerKey={selectionThread ? fileSelectionDraftOwners.current.get(selectionThread.id) : undefined}
-        prompt={selectionUsesSplitDraft ? splitComposerDrafts[state.activePane].prompt : prompt}
         getPrompt={() => selectionUsesSplitDraft ? splitComposerDrafts[appStateRef.current.activePane].prompt : currentPrimaryComposerDraft().prompt}
         setPrompt={(value) => selectionUsesSplitDraft ? setSplitComposerPrompt(appStateRef.current.activePane, value) : setPrompt(value)}
         onEdit={submitFileSelectionEdit}
@@ -5159,7 +4945,11 @@ export function App(): JSX.Element {
       >
       {archiveTipNode}
       {modelCatalogTipNode}
+      {!archiveTip && !modelCatalogTip && failedDraftNotice}
       <ImagePreviewProvider>
+      <ProjectActionsProvider value={projectActions}>
+      <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
+      <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceArtifactTab}>
         <div
           ref={appShellRef}
           className={shellClassName}
@@ -5167,6 +4957,7 @@ export function App(): JSX.Element {
           data-wuu-component="app-shell"
           data-wuu-sidebar-mode={sidebarDrawerVisible ? "drawer" : sidebarDrawerMode ? "collapsed" : "docked"}
         >
+          <BrowserPiPHostReporter />
           {!poppedOutMode ? (
             <>
           <div
@@ -5201,163 +4992,62 @@ export function App(): JSX.Element {
           <AppSidebar
             onToggleSidebar={sidebarDrawerMode ? undefined : toggleSessionSwitcher}
             sidebarCollapsed={sidebarCollapsed}
-            collaborationNavigationNodes={ENABLE_GROUP_CHAT ? [
-              { id: "section:collaboration", kind: "section", label: t("sidebar.collaboration") },
-              { id: "command:new-channel", kind: "command", parentId: "section:collaboration", depth: 1,
-                label: t("channels.newConversation"), disabled: !state.initialized,
-                onActivate: () => { closeCompactSessionSwitcher(); openNewChannelRoom(); } },
-              ...sidebarConversations.filter((conversation) => !conversation.pinned).flatMap((conversation) => [{
-                  id: `collaboration:${conversation.id}`, kind: "room" as const,
-                  parentId: "section:collaboration", depth: 1, label: conversation.name,
-                  active: appMode === "collaboration" && collaborationSection === "rooms" && !agentOnboardingActive && (conversation.room
-                    ? conversation.room.id === selectedChannelRoomID : conversation.agent?.id === selectedCollaborationAgent?.id),
-                  pinned: false, unread: Boolean(conversation.room?.unread_count),
-                  running: conversation.room?.activity_status === "thinking" || conversation.agent?.activity_status === "thinking",
-                  disabled: !state.initialized,
-                  onActivate: () => {
-                    closeCompactSessionSwitcher();
-                    if (conversation.room) selectChannelRoom(conversation.room.id);
-                    else if (conversation.agent) void selectCollaborationAgent(conversation.agent.id);
-                  },
-                  onTogglePinned: () => { void updateCollaborationConversationPreference(conversation, "pin"); },
-                }]),
-            ] : undefined}
-            pinnedCollaborationConversations={ENABLE_GROUP_CHAT ? pinnedSidebarConversations : []}
-            collaborationAgents={namedAgents}
-            selectedCollaborationAgentID={appMode === "collaboration" && collaborationSection === "rooms" ? selectedCollaborationAgent?.id : undefined}
-            selectedCollaborationRoomID={appMode === "collaboration" && collaborationSection === "rooms" ? selectedChannelRoomID : undefined}
-            collaborationDraftSelected={appMode === "collaboration" && agentOnboardingActive}
-            onSelectCollaborationConversation={(conversation) => {
-              closeCompactSessionSwitcher();
-              if (conversation.room) selectChannelRoom(conversation.room.id);
-              else if (conversation.agent) void selectCollaborationAgent(conversation.agent.id);
-            }}
-            onToggleCollaborationPinned={(conversation) => void updateCollaborationConversationPreference(conversation, "pin")}
-            onHideCollaborationConversation={(conversation) => void updateCollaborationConversationPreference(conversation, "hide")}
-            onDeleteCollaborationConversation={(conversation) => void deleteCollaborationConversation(conversation)}
-            onEditCollaborationAgent={(agentID) => {
-              closeCompactSessionSwitcher();
-              openChannelsView();
-              setAgentOnboardingActive(false);
-              setNewRoomRequest(0);
-              setEditChannelRoomRequestID("");
-              setEditChannelAgentRequestID(agentID);
-            }}
-            onEditCollaborationRoom={(roomID) => {
-              closeCompactSessionSwitcher();
-              openChannelsView();
-              setAgentOnboardingActive(false);
-              setNewRoomRequest(0);
-              setEditChannelAgentRequestID("");
-              setEditChannelRoomRequestID(roomID);
-            }}
-            collaborationNavigation={ENABLE_GROUP_CHAT ? (
-            <CollaborationSidebar
-              embedded
-              initialized={Boolean(state.initialized)}
-              agents={namedAgents}
-              rooms={channelRooms}
-              pinnedRoomIDs={channelRoomPreferences.pinnedRoomIDs}
-              archivedRoomIDs={channelRoomPreferences.archivedRoomIDs}
-              onTogglePinned={(conversation) => void updateCollaborationConversationPreference(conversation, "pin")}
-              onHideConversation={(conversation) => void updateCollaborationConversationPreference(conversation, "hide")}
-              onDeleteConversation={(conversation) => void deleteCollaborationConversation(conversation)}
-              selectedAgentID={appMode === "collaboration" && collaborationSection === "rooms" ? selectedCollaborationAgent?.id : undefined}
-              selectedRoomID={appMode === "collaboration" && collaborationSection === "rooms" ? selectedChannelRoomID : undefined}
-              onSelectAgent={(agent) => {
-                closeCompactSessionSwitcher();
-                selectCollaborationAgent(agent);
-              }}
-              onSelectRoom={(roomID) => {
-                closeCompactSessionSwitcher();
-                selectChannelRoom(roomID);
-              }}
-              onManageAgents={() => {
-                closeCompactSessionSwitcher();
-                openAgentManagement();
-              }}
-              onEditAgent={(agentID) => {
-                closeCompactSessionSwitcher();
-                openChannelsView();
-                setAgentOnboardingActive(false);
-                setNewRoomRequest(0);
-                setEditChannelRoomRequestID("");
-                setEditChannelAgentRequestID(agentID);
-              }}
-              onEditRoom={(roomID) => {
-                closeCompactSessionSwitcher();
-                openChannelsView();
-                setAgentOnboardingActive(false);
-                setNewRoomRequest(0);
-                setEditChannelAgentRequestID("");
-                setEditChannelRoomRequestID(roomID);
-              }}
-              draftAgent={agentOnboardingDraft?.createdAgent ? undefined : agentOnboardingDraft ?? undefined}
-              draftSelected={appMode === "collaboration" && agentOnboardingActive}
-              onSelectDraft={openNewNamedAgent}
-              onCreateRoom={() => {
-                closeCompactSessionSwitcher();
-                openNewChannelRoom();
-              }}
-              onSwitchToHarness={() => {
-                closeCompactSessionSwitcher();
-                openHarnessView();
-              }}
-              onOpenAccount={ENABLE_ACCOUNT ? () => {
-                if (window.wuu.openAccountWindow) void window.wuu.openAccountWindow().catch(error => showErrorToast(error));
-                else setAccountOpen(true);
-              } : undefined}
-              onOpenSettings={(page = "providers") => {
-                setSettingsInitialPage(page);
-                setSettingsOpen(true);
-              }}
-            />
-          ) : undefined}
             sidebarVisible={!sidebarDrawerMode || sidebarDrawerVisible}
             mobileNavigation={compactNavigation && isTouchWebShell()}
             drawerVisible={sidebarDrawerVisible}
             onNavigateAway={closeCompactSessionSwitcher}
             state={state}
-            sidebarProjects={sidebarProjects}
-            activeProjectID={
-              workspaceProjectSelectionEnabled && workspaceContext?.kind === "project"
+            sidebarWorkspaces={sidebarWorkspaces}
+            pendingConversations={pendingThreadCreations.map((pending) => ({
+              id: pending.sessionTabID,
+              context: pending.context,
+              title: pending.turn.items[0].text || t("tabs.newConversation"),
+            }))}
+            onSelectPendingConversation={(tabID) => {
+              closePrimaryPluginView();
+              closeCompactSessionSwitcher();
+              void selectSessionTab(tabID);
+            }}
+            activeWorkspaceID={
+              workspaceSelectionEnabled && workspaceContext?.kind === "project"
                 ? workspaceContext.project_id
                 : undefined
             }
-            pinnedThreads={sidebarPinnedThreads.filter(thread => !managedSidebar.threadIDs.has(thread.id))}
-            activeThreadID={appMode === "harness" ? activeThreadID : undefined}
+            pinnedThreads={sidebarPinnedThreads}
+            activeThreadID={activeThreadID}
             pendingThreadID={visiblePendingThreadID}
-            pendingProjectID={visiblePendingProjectID}
+            pendingWorkspaceID={visiblePendingWorkspaceID}
             collapsedSidebarSectionIDs={collapsedSidebarSectionIDs}
+            collapsedFolderIDs={collapsedFolderIDs}
+            setCollapsedFolderIDs={setCollapsedFolderIDs}
             expandedSidebarSectionIDs={expandedSidebarSectionIDs}
-            loadingProjectThreadIDs={loadingProjectThreadIDs}
-            projectThreadsByProjectID={sidebarThreadsByProjectID}
-            projectMenuOpen={projectMenuOpen}
-            projectMenuRef={projectMenuRef}
+            loadingWorkspaceThreadIDs={loadingWorkspaceThreadIDs}
+            workspaceThreadsByWorkspaceID={sidebarThreadsByWorkspaceID}
+            workspaceMenuOpen={workspaceMenuOpen}
+            workspaceMenuRef={workspaceMenuRef}
             searchOpen={conversationSearch.open}
             sectionOrder={sidebarSectionOrder}
             onStartNewThread={() => {
-              openHarnessView();
+              closePrimaryPluginView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
               startNewThreadWithComposerFocus();
             }}
             onOpenSkillsTab={() => {
-              openHarnessView();
+              closePrimaryPluginView();
               closeCompactSessionSwitcher();
               openSkillsTab();
-            }}
-            groupChatEnabled={ENABLE_GROUP_CHAT}
-            onSwitchToCollaboration={() => {
-              closeCompactSessionSwitcher();
-              openCollaborationView();
             }}
             onMarkThreadsViewed={(threads) => {
               setState((current) => markThreadSummariesViewed(current, threads));
             }}
+            unreadViewOpen={unreadViewOpen}
+            onToggleUnreadView={() => setUnreadViewOpen((open) => !open)}
+            attentionStickyIDs={attentionStickyIDs}
+            onAttentionStickyIDsChange={setAttentionStickyIDs}
             onToggleConversationSearch={toggleConversationSearch}
             onSelectThread={(id) => {
-              openHarnessView();
+              closePrimaryPluginView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
               void activateThread(id);
@@ -5378,18 +5068,18 @@ export function App(): JSX.Element {
             }}
             onDeleteThread={(thread) => void deleteThread(thread)}
             onRenameThread={(thread, title) => void renameThread(thread, title)}
-            onToggleProjectMenu={() => setProjectMenuOpen((open) => !open)}
-            onCreateProject={() => void createBlankProject()}
-            onOpenProjectFolder={() => void chooseProjectFolder()}
+            onToggleWorkspaceMenu={() => setWorkspaceMenuOpen((open) => !open)}
+            onCreateWorkspace={() => void createBlankProject()}
+            onOpenWorkspaceFolder={() => void chooseProjectFolder()}
             onToggleSidebarSectionCollapsed={toggleSidebarSectionCollapsed}
-            onSelectProjectWorkspace={
-              workspaceProjectSelectionEnabled
+            onFocusWorkspace={
+              workspaceSelectionEnabled
                 ? (id) => {
                     const project = state.projects.find((item) => item.id === id);
                     if (!project || project.missing) {
                       return;
                     }
-                    openHarnessView();
+                    closePrimaryPluginView();
                     setFocusedWorkspaceContext({
                       kind: "project",
                       project_id: project.id,
@@ -5400,20 +5090,22 @@ export function App(): JSX.Element {
                   }
                 : undefined
             }
-            onStartNewThreadForProject={(id) => {
-              openHarnessView();
+            onStartNewThreadInWorkspace={(id) => {
+              closePrimaryPluginView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
-              startNewThreadForProjectWithComposerFocus(id);
+              startNewThreadInWorkspaceWithComposerFocus(id);
             }}
-            onSelectProjectThread={(projectID, threadID) => {
-              openHarnessView();
+            onSelectWorkspaceThread={(workspaceID, threadID) => {
+              closePrimaryPluginView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
-              void selectProjectThread(projectID, threadID);
+              void selectWorkspaceThread(workspaceID, threadID);
             }}
-            onRemoveProject={(id) => void removeProject(id)}
-            onRelocateProject={(id) => void relocateProject(id)}
+            onRemoveWorkspace={(id) => void removeProject(id)}
+            onRelocateWorkspace={(id) => void relocateProject(id)}
+            onCreateProject={startNewProject}
+            onAdoptIntoProject={(projectID, threadID) => void adoptIntoProject(projectID, threadID)}
             onReorderSections={setSidebarSectionOrder}
             onPointerEnter={openSidebarDrawer}
             onPointerLeave={(event) =>
@@ -5424,7 +5116,7 @@ export function App(): JSX.Element {
                 else setAccountOpen(true);
               } : undefined}
             onOpenSettings={(page = "providers") => {
-              setProjectMenuOpen(false);
+              setWorkspaceMenuOpen(false);
               setRuntimeMenuOpen(false);
               setCodexRuntimeMenu(null);
               setSettingsInitialPage(page);
@@ -5433,42 +5125,32 @@ export function App(): JSX.Element {
           />
 
           {compactNavigation ? (
-            <>
-              <button
-                className="compact-session-switcher-backdrop"
-                type="button"
-                aria-label={t("app.collapseLeftSidebar")}
-                onClick={closeSidebarDrawer}
-              />
-              {sidebarDrawerVisible ? (
-                <button
-                  className="icon-button compact-session-switcher-close"
-                  type="button"
-                  aria-label={t("app.collapseLeftSidebar")}
-                  onClick={closeSidebarDrawer}
-                >
-                  <X className="icon-lg" />
-                </button>
-              ) : null}
-            </>
+            <button
+              className="compact-session-switcher-backdrop"
+              type="button"
+              aria-label={t("app.collapseLeftSidebar")}
+              onClick={closeSidebarDrawer}
+            />
           ) : null}
 
-          {sidebarDrawerMode ? null : (
-            <div
-              className="sidebar-resizer"
-              inert={rightPanelOpen && rightPanelGlobalized}
-              role="separator"
-              aria-label={t("app.resizeSidebar")}
-              aria-orientation="vertical"
-              aria-valuemin={SIDEBAR_MIN_WIDTH}
-              aria-valuemax={SIDEBAR_MAX_WIDTH}
-              aria-valuenow={sidebarWidth}
-              tabIndex={0}
-              onPointerDown={startSidebarResize}
-              onDoubleClick={toggleSidebar}
-              onKeyDown={handleSidebarSeparatorKey}
-            />
-          )}
+          {/* Hidden rather than unmounted: inserting or removing a shell child
+              ahead of the conversation makes sibling selectors restyle every
+              rendered turn when the sidebar collapses or expands. */}
+          <div
+            className="sidebar-resizer"
+            hidden={sidebarDrawerMode}
+            inert={rightPanelOpen && rightPanelGlobalized}
+            role="separator"
+            aria-label={t("app.resizeSidebar")}
+            aria-orientation="vertical"
+            aria-valuemin={SIDEBAR_MIN_WIDTH}
+            aria-valuemax={SIDEBAR_MAX_WIDTH}
+            aria-valuenow={sidebarWidth}
+            tabIndex={0}
+            onPointerDown={startSidebarResize}
+            onDoubleClick={toggleSidebar}
+            onKeyDown={handleSidebarSeparatorKey}
+          />
       <ConversationSearchOverlay
         state={conversationSearch}
         results={conversationSearchResults}
@@ -5484,7 +5166,7 @@ export function App(): JSX.Element {
         onKeyDown={handleConversationSearchKeyDown}
         onSelectIndex={setConversationSearchSelectedIndex}
         onSelectResult={(result) => {
-          openHarnessView();
+          closePrimaryPluginView();
           return selectConversationSearchResult(result);
         }}
       />
@@ -5494,77 +5176,15 @@ export function App(): JSX.Element {
       <main
         inert={rightPanelOpen && rightPanelGlobalized}
         data-wuu-component="conversation-pane"
+        data-primary-plugin-view={showingPrimaryPluginView ? "" : undefined}
         data-composer-navigation={composerNavigation || undefined}
-        className={`conversation-pane${ENABLE_GROUP_CHAT && appMode === "collaboration" && collaborationSection === "rooms" ? " collaboration-room-pane" : ""}${environmentPanelVisible ? " environment-panel-visible" : ""}${
-          appMode === "harness" && environmentPanelReserved ? " environment-panel-reserved" : ""
+        className={`conversation-pane${environmentPanelVisible ? " environment-panel-visible" : ""}${
+          environmentPanelReserved ? " environment-panel-reserved" : ""
         }${
           sideThreadPanelVisible ? " side-thread-panel-visible" : ""
-        }${sessionTabsVisible && appMode === "harness" ? " session-tabs-visible" : ""}`}
+        }`}
         ref={conversationPaneRef}
       >
-        {ENABLE_GROUP_CHAT && appMode === "collaboration" ? (
-          <>
-            {collaborationSection !== "rooms" ? <header className="titlebar" data-wuu-component="conversation-titlebar">
-              <div className="title-block channel-title-block">
-                {collaborationNavigation}
-                <span className="collaboration-titlebar-label">
-                  {t(collaborationSection === "agents" ? "channels.manageAgents" : "sidebar.collaboration")}
-                </span>
-              </div>
-              <div
-                className="title-actions channel-title-actions-placeholder"
-                aria-hidden="true"
-              />
-            </header> : null}
-            {agentOnboardingActive && agentOnboardingDraft ? (
-              <AgentOnboarding
-                navigation={collaborationNavigation}
-                draft={agentOnboardingDraft}
-                onDraftChange={setAgentOnboardingDraft}
-                initialized={state.initialized}
-                onCreate={async (params) => {
-                  const { agent } = await window.wuu.createNamedAgent(params);
-                  setNamedAgents((current) => current.some((item) => item.id === agent.id)
-                    ? current.map((item) => item.id === agent.id ? agent : item)
-                    : [...current, agent]);
-                  return agent;
-                }}
-                onOpenConversation={(agent, onboarding) => openCollaborationAgentConversation(agent.id, onboarding)}
-                onManageProviders={openAgentProviderSettings}
-                onClose={() => { setAgentOnboardingDraft(null); setAgentOnboardingActive(false); }}
-              />
-            ) : <ChannelView
-              navigation={collaborationNavigation}
-              initialized={sessionRuntime ?? state.initialized}
-              engines={engineInventory?.engines}
-              section={collaborationSection}
-              archivedRoomIDs={channelRoomPreferences.archivedRoomIDs}
-              selectedRoomID={selectedChannelRoomID}
-              onSelectRoom={selectChannelRoom}
-              onRoomRead={clearChannelRoomUnread}
-              onOpenMemoryDirectory={openAgentMemoryDirectory}
-              onOpenSession={openCollaborationHarnessSession}
-              managedThreadsByAgentID={managedSidebar.byAgentID}
-              lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
-              onOpenAgentConversation={selectCollaborationAgent}
-              composerDraft={activeChannelComposerDraft}
-              onComposerDraftChange={updateSelectedChannelRoomDraft}
-              directoryAgents={namedAgents}
-              directoryRooms={channelRooms}
-              onDirectoryAgentsChange={setNamedAgents}
-              onDirectoryRoomsChange={setChannelRooms}
-              newRoomRequest={newRoomRequest}
-              onNewRoomRequestHandled={() => setNewRoomRequest(0)}
-              editAgentRequestID={editChannelAgentRequestID}
-              onEditAgentRequestHandled={() => setEditChannelAgentRequestID("")}
-              editRoomRequestID={editChannelRoomRequestID}
-              onEditRoomRequestHandled={() => setEditChannelRoomRequestID("")}
-              onCreateAgent={openNewNamedAgent}
-              onManageProviders={openAgentProviderSettings}
-            />}
-          </>
-        ) : (
-          <>
         {composerNavigation ? <div aria-hidden="true" /> : (
         <header className="titlebar" data-wuu-component="conversation-titlebar">
           <div className="title-block">
@@ -5590,19 +5210,12 @@ export function App(): JSX.Element {
             ) : null}
             <ConversationTitleContent
               state={state}
-              crossWorkspaceThreads={sidebarThreads}
               runningThreadIDs={visibleRunningThreadIDs}
-              sessionTabsVisible={sessionTabsVisible}
               pendingSwitchThreadID={visiblePendingThreadID}
-              pendingComposerMessagesByThread={pendingComposerMessagesByThread}
-              channelUnreadByRoomID={channelUnreadByRoomID}
               activeTitle={activeTitle}
-              onSelectSessionTab={(tabID) => void selectSessionTab(tabID)}
-              onCloseSessionTab={(tabID) => void closeSessionTab(tabID)}
-              onCloseSessionTabs={(tabIDs) => void closeSessionTabs(tabIDs)}
-              onPopOutSessionTab={(tabID) => void popOutSessionTab(tabID)}
               onStartNewThread={startNewThreadWithComposerFocus}
-              onReorderSessionTabs={reorderSessionTabs}
+              onRenameTitle={conversationTitleEditable ? commitConversationTitle : undefined}
+              titleEditKey={activeThread?.id ?? currentSessionTab?.id}
             />
           </div>
           <ConversationTitleActions
@@ -5699,9 +5312,11 @@ export function App(): JSX.Element {
 
         {state.initialized ? (
           <div
+            data-pip-anchor-host="conversation"
             className={`scroll-region${emptyConversation ? " empty-scroll-region" : ""}${
               splitConversation ? " split-scroll-region" : ""
             }${showingManagementCatalog ? " skills-scroll-region" : ""}`}
+            inert={showingPrimaryPluginView}
             onScroll={(event) => handleConversationScroll(event.currentTarget)}
             ref={conversationScrollRef}
           >
@@ -5736,7 +5351,8 @@ export function App(): JSX.Element {
                     splitLeftPercent={splitLeftPercent}
                     splitComposerDrafts={splitComposerDrafts}
                     splitPaneRefs={splitPaneRefs}
-                    viewSwitchPending={viewContextSwitchPending}
+                    stopRequests={stopRequests}
+                    viewSwitchPending={submissionTargetPending}
                     historyMessageEdit={historyMessageEdit}
                     onSplitResizeStart={startSplitResize}
                     onSplitSeparatorDoubleClick={resetSplitPercent}
@@ -5750,14 +5366,17 @@ export function App(): JSX.Element {
                     }
                     onRemoveFile={removeSplitComposerFile}
                     onRemoveImage={removeSplitComposerImage}
+                    onChangeSelection={(pane, selection) => setSplitComposerDrafts((current) => ({ ...current, [pane]: { ...current[pane], selections: current[pane].selections?.map((entry) => entry.id === selection.id ? selection : entry) } }))}
+                    onRemoveSelection={(pane, id) => setSplitComposerDrafts((current) => ({ ...current, [pane]: { ...current[pane], selections: current[pane].selections?.filter((entry) => entry.id !== id) } }))}
                     onSend={(pane, promptOverride, contentParts) =>
-                      void sendPromptForPane(pane, promptOverride, contentParts)
+                      sendPrompt("queue", promptOverride, contentParts, undefined, pane)
                     }
                     onInterrupt={(pane) => void interruptPane(pane)}
                     onForkMessage={(thread, turnID, itemID) =>
                       void forkThreadFromMessage(thread, turnID, itemID)
                     }
                     onOpenFile={openWorkspaceFileForThread}
+                    onOpenURL={openWorkspaceBrowserURL}
                     onOpenAgent={(agent) => void selectChildAgent(agent)}
                     canEditThreadMessage={canShowHistoryEditButton}
                     onEditMessage={startEditingThreadMessageFromHistory}
@@ -5799,15 +5418,19 @@ export function App(): JSX.Element {
                     />
                   </div>
                 ) : emptyConversation ? (
+              showingPrimaryPluginView ? null : (
               <EmptyConversationHome
-                title={emptyThreadTitle}
+                title={activeProjectDraft ? t("projects.newProject") : emptyThreadTitle}
                 // A draft lowers the greeting mascot’s gaze toward the composer.
                 activity={
-                  prompt.trim().length > 0 || composerImages.length > 0 || composerFiles.length > 0
+                  prompt.trim().length > 0 || composerImages.length > 0 || composerFiles.length > 0 || composerSelections.length > 0
                     ? "compose"
                     : "idle"
                 }
-              />
+              >
+                {activeProjectDraft ? null : <EmptyHomeOverview />}
+              </EmptyConversationHome>
+              )
             ) : (
               <CachedConversationPanes
                 threadIDs={cachedThreadPaneIDs}
@@ -5826,6 +5449,7 @@ export function App(): JSX.Element {
                 canEditThreadMessage={canEditCachedThreadMessage}
                 onForkMessage={handleCachedPaneForkMessage}
                 onOpenFile={openWorkspaceFileForThread}
+                onOpenURL={openWorkspaceBrowserURL}
                 onOpenAgent={handleCachedPaneOpenAgent}
                 onEditMessage={handleCachedPaneEditMessage}
                 onCancelEditMessage={handleCachedPaneCancelEditMessage}
@@ -5869,15 +5493,18 @@ export function App(): JSX.Element {
             <JumpToLatestPill
               containerRef={conversationScrollRef}
               bottomAnchor={dockComposerNode}
+              scopeKey={activeThreadID}
+              onJump={jumpConversationToLatest}
               inline
             />
           ) : null}
+          hostStatus={activeProjectSessions.length > 0 && activeThread ? (
+            <ProjectStatusCapsule project={activeThread} sessions={activeProjectSessions} />
+          ) : undefined}
           threadId={activeThreadID}
           todoUpdate={activeTodoUpdateForThread(activeThread)}
           onOpenSession={handleOpenThreadInSplit}
         />
-          </>
-        )}
       </main>
 
       <>
@@ -5928,9 +5555,9 @@ export function App(): JSX.Element {
             workspaceRightPanelDockableWithoutSidebar
           }
           browserActivity={activeBrowserActivity}
-          onBrowserActivityTakeover={() => void takeoverBrowserActivity()}
-          onBrowserActivityRelease={() => void releaseBrowserActivity()}
-          onBrowserActivityStop={() => void stopBrowserActivity()}
+          browserDockTarget={browserDockTarget}
+          browserOverlaySuppressed={browserOverlaySuppressed}
+          onBrowserUserInteraction={pauseBrowserTask}
           focusedComposer={
             rightPanelGlobalized && activeWorkspaceFileTabID
               ? (
@@ -6039,14 +5666,16 @@ export function App(): JSX.Element {
           reportError: (pluginId, generation, error) => {
             console.error(`Plugin view ${pluginId}@${generation} failed to render`, error);
           },
-          // Auxiliary views portal into the right panel, which can be
-          // collapsed independently; reveal it so the opened view shows.
           requestRegionVisible: (region) => {
+            if (region === "primary" && rightPanelGlobalized) setRightPanelOpenWithMotion(false);
             if (region === "auxiliary") setRightPanelOpenWithMotion(true);
           },
         }}
       />
       </div>
+    </ArtifactPreviewContext.Provider>
+    </WorkspaceBrowserOpenContext.Provider>
+    </ProjectActionsProvider>
     </ImagePreviewProvider>
     </FileSelectionProvider>
     </WuuMascotRuntimeProvider>

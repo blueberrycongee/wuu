@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { X } from "lucide-react";
+import { X } from "./WuuIcons";
 import { useI18n } from "./i18n";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import type { FloatingMenuOwner } from "./ComposerTypes";

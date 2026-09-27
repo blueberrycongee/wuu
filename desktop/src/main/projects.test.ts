@@ -242,6 +242,27 @@ describe("ProjectManager project store migration", () => {
 });
 
 describe("ProjectManager runtime context availability", () => {
+  it("resolves a captured submission without selecting it and rejects stale destinations", async () => {
+    const activePath = await createProjectDir("active");
+    const targetPath = await createProjectDir("target");
+    const active: RuntimeContext = { kind: "project", project_id: "active", cwd: activePath };
+    const target: RuntimeContext = { kind: "project", project_id: "target", cwd: targetPath };
+    await writeStore(canonicalStorePath(), [
+      project("active", "active", activePath),
+      project("target", "target", targetPath),
+    ], active);
+    const manager = new ProjectManager();
+    expect(manager.resolveSubmissionContext(target)).toEqual(target);
+    expect(manager.list().active_context).toEqual(active);
+    expect(() => manager.resolveSubmissionContext({ ...target, cwd: activePath })).toThrow();
+    expect(() => manager.resolveSubmissionContext({ ...target, project_id: "removed" })).toThrow();
+    await rm(targetPath, { recursive: true });
+    expect(() => manager.resolveSubmissionContext(target)).toThrow();
+    expect(() => manager.resolveSubmissionContext({ kind: "no_project", cwd: targetPath })).toThrow();
+    expect(await pathExists(targetPath)).toBe(false);
+    expect(manager.list().active_context).toEqual(active);
+  });
+
   it("registers a workspace without changing the active runtime context", async () => {
     const activePath = await createProjectDir("active");
     const addedPath = await createProjectDir("added");

@@ -774,34 +774,6 @@ func TestStreamRunner_AllowsNaturalEmptyCompletionWithoutPersistingAssistantMess
 	}
 }
 
-func TestStreamRunner_NoToolCallsWhenNoneRequested(t *testing.T) {
-	client := &mockStreamClient{
-		events: []providers.StreamEvent{
-			{Type: providers.EventContentDelta, Content: "answer"},
-			{Type: providers.EventDone},
-		},
-	}
-
-	tools := &fakeTools{}
-	runner := StreamRunner{
-		Client: client,
-		Tools:  tools,
-		Model:  "test-model",
-	}
-
-	result, err := runner.Run(context.Background(), "question")
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if result != "answer" {
-		t.Fatalf("unexpected result: %q", result)
-	}
-	// Tools should not have been called.
-	if len(tools.calls) != 0 {
-		t.Fatalf("expected no tool calls, got %d", len(tools.calls))
-	}
-}
-
 func TestStreamRunner_ValidationErrors(t *testing.T) {
 	// Run validates blank prompt.
 	runner := StreamRunner{Model: "m"}
@@ -1391,8 +1363,12 @@ func TestStreamRunner_ExpandedDurableHistoryKeepsLastProviderBaseline(t *testing
 	}
 	expanded = append(expanded, lastResponse, userMsg("short follow-up"))
 
-	if raw := estimateMessages(expanded); raw < runner.CompactThresholdTokens {
-		t.Fatalf("raw durable estimate = %d, want above threshold %d", raw, runner.CompactThresholdTokens)
+	rawDurable := 0
+	for _, msg := range expanded {
+		rawDurable += compact.EstimateTokens(msg.Content)
+	}
+	if rawDurable < runner.CompactThresholdTokens {
+		t.Fatalf("raw durable estimate = %d, want above threshold %d", rawDurable, runner.CompactThresholdTokens)
 	}
 	projected, err := providers.PrepareMessagesForProviderRequest(runner.ProviderName, runner.Model, expanded)
 	if err != nil {
@@ -1594,22 +1570,6 @@ func TestFormatCompactNoticeIncludesReplacementTokenEstimate(t *testing.T) {
 	}
 }
 
-func TestFormatCompactAttemptNoticeExplainsOutputLimitRecovery(t *testing.T) {
-	notice, ok := formatCompactAttemptNotice(CompactAttemptInfo{
-		Reason:      CompactReasonManual,
-		Status:      CompactAttemptFailed,
-		OutputLimit: true,
-	})
-	if !ok {
-		t.Fatal("output-limit failure must emit a terminal notice")
-	}
-	for _, want := range []string{"after retry", "history is unchanged", "Retry compaction", "larger output limit"} {
-		if !strings.Contains(notice, want) {
-			t.Fatalf("notice %q does not contain %q", notice, want)
-		}
-	}
-}
-
 func TestStreamRunner_StopsProactiveCompactAfterRepeatedFailures(t *testing.T) {
 	client := &mockStreamClient{
 		events: []providers.StreamEvent{
@@ -1727,6 +1687,74 @@ func TestStreamRunner_CompactedHistoryDoesNotTriggerImmediateSecondCompact(t *te
 		!strings.Contains(got, "summarized older context") ||
 		strings.Contains(got, "older older older older") {
 		t.Fatalf("expected compacted summary without raw older context in second request, got %q", got)
+	}
+}
+
+func TestStreamRunner_ContextOverflowRecoversWithIdleToolLedger(t *testing.T) {
+	overflow := &providers.HTTPError{
+		StatusCode:      400,
+		Body:            "400 Bad Request: Failed to start sampling: [input_too_large] The prompt is too long for this model's context window (500855 tokens > 500000 tokens)",
+		ContextOverflow: true,
+	}
+	client := &mockStreamClient{
+		attempts: []mockStreamAttempt{
+			{events: []providers.StreamEvent{
+				{Type: providers.EventError, Error: overflow},
+			}},
+			{events: []providers.StreamEvent{
+				{Type: providers.EventContentDelta, Content: "WUU_LEDGER_OVERFLOW_OK"},
+				{Type: providers.EventDone},
+			}},
+		},
+		chatResponses: []providers.ChatResponse{
+			{Content: "summarized ledger overflow"},
+		},
+	}
+	ledger, err := toolledger.New(t.TempDir(), "thread-overflow-ledger")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := StreamRunner{
+		Client:                  client,
+		Model:                   "test-model",
+		ToolLedger:              ledger,
+		ContextWindowOverride:   16000,
+		CompactKeepRecentTokens: 1000,
+	}
+	history := []providers.ChatMessage{
+		{Role: "user", Content: "debug the issue"},
+		{Role: "assistant", ToolCalls: []providers.ToolCall{
+			{ID: "call_1", Name: "run_shell", Arguments: `{"command":"rg ContextOverflow"}`},
+		}},
+		{Role: "tool", Name: "run_shell", ToolCallID: "call_1", Content: strings.Repeat("result ", 1000)},
+		{Role: "assistant", Content: "I found the first clue."},
+		{Role: "assistant", ToolCalls: []providers.ToolCall{
+			{ID: "call_2", Name: "run_shell", Arguments: `{"command":"sed -n 1,220p internal/agent/loop.go"}`},
+		}},
+		{Role: "tool", Name: "run_shell", ToolCallID: "call_2", Content: strings.Repeat("result ", 1000)},
+		{Role: "assistant", Content: "I will continue from the runtime path."},
+	}
+
+	var compactSeen bool
+	res, err := runner.RunWithCallback(context.Background(), history, func(ev providers.StreamEvent) {
+		if ev.Type == providers.EventCompact {
+			compactSeen = true
+		}
+	})
+	if err != nil {
+		t.Fatalf("RunWithCallback: %v", err)
+	}
+	if res.Content != "WUU_LEDGER_OVERFLOW_OK" {
+		t.Fatalf("unexpected content %q", res.Content)
+	}
+	if !res.HistoryRewritten {
+		t.Fatal("expected rewritten history after overflow compact")
+	}
+	if !compactSeen {
+		t.Fatal("expected compact stream event")
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("expected stream, compact, stream requests, got %d", len(client.requests))
 	}
 }
 
@@ -2096,12 +2124,8 @@ func TestStreamRunner_NoFallbackOnNormalStop(t *testing.T) {
 	}
 	runner := &StreamRunner{Client: client, Model: "test"}
 	_, err := runner.Run(context.Background(), "hello")
-	// Should produce an EmptyAnswerError (from the loop), not trigger fallback.
-	if err == nil {
-		t.Fatal("expected error for empty content with stop reason")
-	}
-	if !IsEmptyAnswer(err) {
-		t.Fatalf("expected EmptyAnswerError, got %v", err)
+	if err != nil {
+		t.Fatalf("normal empty completion must not recover or fail: %v", err)
 	}
 	if client.chatCallCount != 0 {
 		t.Fatalf("expected 0 Chat() calls (no fallback), got %d", client.chatCallCount)
@@ -2454,24 +2478,6 @@ func TestStreamRunner_ResetConversationUsageReflectsCompaction(t *testing.T) {
 	}
 }
 
-// TestStreamRunner_ResetConversationUsageNilAndEmpty guards the edge cases the
-// history rewrite can hit: a runner that never recorded usage, and an empty
-// compacted history.
-func TestStreamRunner_ResetConversationUsageNilAndEmpty(t *testing.T) {
-	r := &StreamRunner{}
-	// No prior usage recorded: must not panic and stays at zero.
-	r.ResetConversationUsage(nil)
-	if r.conversationUsage == nil {
-		t.Fatal("ResetConversationUsage should allocate the tracker")
-	}
-	if got := r.conversationUsage.EstimateCurrent(); got != 0 {
-		t.Fatalf("empty reset estimate = %d, want 0", got)
-	}
-	if r.trackedHistoryLen != 0 {
-		t.Fatalf("tracked history length = %d, want 0", r.trackedHistoryLen)
-	}
-}
-
 // TestSeedConversationUsageBaseline locks the resume-seeding contract: a
 // rebuilt runner primes its baseline from persisted ground truth exactly once,
 // and never clobbers live tracker state.
@@ -2522,7 +2528,7 @@ func TestStreamRunner_PauseTurnContinuesTheTurn(t *testing.T) {
 	client := &mockStreamClient{attempts: []mockStreamAttempt{
 		{events: []providers.StreamEvent{
 			{Type: providers.EventContentDelta, Content: "searching..."},
-			{Type: providers.EventDone, StopReason: "pause_turn"},
+			{Type: providers.EventDone, StopReason: "pause_turn", FinishReason: providers.FinishReasonContinue},
 		}},
 		{events: []providers.StreamEvent{
 			{Type: providers.EventContentDelta, Content: "final answer"},

@@ -1,81 +1,120 @@
-# App-server integration basics
+# Connect a client to app-server
 
-The app-server is the protocol boundary between the Wuu core and the desktop, scripts,
-or editor shells. When building a new client, reuse this protocol instead of
-reimplementing the agent loop in the shell.
+Use app-server when building a client that needs to manage sessions, stream turns,
+or control runs. For a script that only submits a task and captures its result,
+[`wuu exec`](exec.md) provides that lifecycle already.
 
-## Transport format
+## Start the process
 
-The current protocol transports **line-delimited JSON (JSONL)** over standard input
-and output. Every request carries an `id`, a `method`, and optional `params`:
-
-```json
-{"id":"1","method":"initialize","params":{}}
+```bash
+wuu app-server --workdir /path/to/project
 ```
 
-A successful response uses the same `id`:
+Keep stdin and stdout connected to your client. Each protocol message is a JSON
+object on one line; stdout is the protocol stream, so keep process diagnostics
+separate. The server uses local configuration unless you supply an explicit
+`--config` file. `--safe-mode` starts without activating plugins for recovery.
+
+Send `initialize` first:
 
 ```json
-{"id":"1","result":{}}
+{"id":"1","method":"initialize","params":{"protocol_version":"wuu-app-server/v0.1","client":{"name":"example-client"}}}
 ```
 
-An error response contains `error`; notification messages have no `id`, for example:
+Responses carry the same `id` and either `result` or `error`. Notifications have
+`method` and `params` without an `id`. Check initialization's `status` and `issues`:
+a successful protocol response can still report `needs_setup`.
+
+## Run a task
+
+Create a session, then use the returned `result.thread.id`:
 
 ```json
-{"method":"turn/completed","params":{}}
+{"id":"2","method":"thread/start","params":{}}
+{"id":"3","method":"run/start","params":{"thread_id":"THREAD_ID","prompt":"summarize this repository","request":{"mode":"start"}}}
 ```
 
-`initialize` returns the current protocol version, `wuu-app-server/v0.1`. This is a
-controlled integration protocol whose fields may still evolve; clients should handle
-messages by method and event type, not by relying on natural-language error text.
+These are sequential requests, not a batch to paste unchanged: replace `THREAD_ID`
+with the actual ID after the first response. Keep reading notifications until
+`run/updated` reports a terminal status for the returned run ID. A `run/start`
+response means the run was admitted, not that the task completed.
 
-## Lifecycle of a task
+Interactive clients can use `turn/start` instead, consuming turn and item updates.
+Automation runs can include several continuation or schema-correction turns,
+so `turn/completed` alone does not settle a run. Use `run/interrupt` to stop a run,
+and request `shutdown` before closing a client-owned server.
 
-A client should drive the core in this order:
+## Reuse a session
 
-1. `initialize`: establish the connection and obtain capabilities, configuration, and
-   the protocol version;
-2. `thread/start` or `thread/resume`: create or resume a session;
-3. `turn/start`: interactive clients such as the desktop start a single-turn task, or
-   use `run/start` to start the automated run that `wuu exec` uses;
-4. consume `turn/*` notifications and wait for `run/updated` to reach a terminal state
-   (automation runs);
-5. `shutdown`: request a clean shutdown when the client exits.
+`thread/resume` takes `session_id`; omitting it selects the most recent visible
+session in the workspace. `thread/fork` takes `thread_id` and creates a separate
+conversation. `thread/start` with `ephemeral: true` creates an in-memory session
+that cannot be resumed after the server exits.
 
-`thread/start` creates a persistent session by default; a session passed with
-`{"ephemeral": true}` exists only in memory and cannot be resumed after the server
-exits. `thread/fork` can create a new branch from an existing session, turn, or entry.
+A conversation keeps its own model and permission selection. Change it through
+`config/model/update` with `thread_id` while the conversation is idle. This does
+not change workspace defaults. A busy conversation returns `thread_busy`, allowing
+the client to wait and retry. A request without `thread_id` updates defaults
+for future conversations. Do not try to override a turn's permission mode through
+`turn/start`.
 
-## Common methods
+## Run a project
 
-| Method | Purpose |
-| --- | --- |
-| `thread/start` | Create a session |
-| `thread/resume` | Resume a session; an empty session ID means the most recent visible session |
-| `thread/fork` | Create a branch from an existing session |
-| `turn/start` | Start an interactive single turn, which may include attachments |
-| `run/start` | Start an automation run, used by `wuu exec` |
-| `turn/interrupt` | Interrupt a single-turn task |
-| `run/interrupt` | Interrupt an automation run |
-| `shutdown` | Ask the server to shut down |
+`thread/start` with `project: {"name": "..."}` creates a project coordinator in the
+workspace. The returned thread has `source: "project"` and follows ordinary
+session permission and model settings. The lead can work directly and manages
+other sessions through its `session` tool. Each managed session is an
+ordinary thread with `source: "project-session"` and `project_id` naming its
+coordinator, and its `session_control` names the project as `manager_name`.
+A worktree session's changes stay in its worktree until the team delivers them with
+ordinary Git commands; no protocol step waits for a user decision.
 
-Model and permission mode are session choices. To change them, call
-`config/model/update` first rather than overriding them temporarily in a single-turn
-request; a running session cannot change the model or permission mode already adopted
-for this turn.
+Managed threads expose `project_role: "side" | "worker"`; older members default to
+worker. `session create` accepts `role` (worker by default) and optional
+`model_alias`. Only the lead creates a side; repeated creation returns the existing
+live side without sending a new prompt. Lead and side can create workers. All
+active members can `list`, `inspect`, and `message`; only the lead can `send` and
+`stop`. Messages stay in the project and include `prompt`, `session_id`, and
+optional `wake` (false by default). Stopping or directly messaging a member keeps
+its project membership and does not invalidate queued team messages.
 
-## Local debugging
+The coordinator receives host events as user items with `origin: "plugin"`,
+`related_session_id` naming the session, and a `cause`:
 
-The repository provides CLI debug entry points that start a local server and send a
-single protocol request:
+| Cause | Event | Starts a turn when idle |
+|---|---|---|
+| `project_message` | Message from a team member, received by any member or the lead | Only when `wake` is true |
+| `project_result` | A managed turn ended, with what the user wrote into it | Yes, except interrupted turns |
+| `project_stopped` | The user stopped a member's current turn | No, joins the next turn |
+| `project_user_message` | The user wrote directly to a member | No, joins the next turn |
+| `project_adopted` | The user added a conversation to the project | Yes |
+| `project_released` | The user removed a session from the project | No, joins the next turn |
+
+Starting, steering, queuing or interrupting a turn in a project member keeps its
+membership active. Direct user messages send a notice to the coordinator without
+waking it from idle. Interrupted results are also delivered without waking an idle
+coordinator; normal results wake it. Worktree changes stay in the member's worktree.
+The same interrupted-result policy applies after recovery and to reports sent to
+the Side Agent that dispatched the member.
+The `thread/control/take` and `thread/control/return` ownership lifecycle is for
+plugin-managed sessions, not project members.
+
+`project/session` changes membership: `adopt` with `project_id` and `session_id`
+brings an ordinary conversation of the project's workspace under the project, and
+`release` makes a managed session an ordinary conversation again. Both return the
+updated `thread`.
+
+## Probe the protocol
 
 ```bash
 wuu debug app-server initialize --workdir /path/to/project
-wuu debug app-server send thread/start '{}'
+wuu debug app-server send --workdir /path/to/project config/read '{}'
 ```
 
-Production authentication, sandboxing, organization membership, secret injection, and
-quotas are handled by an external control plane; they are not capabilities the
-app-server itself provides. See the [app-server protocol
-documentation](../integrations/app-server-protocol.md) for the complete methods and
-parameter reference.
+Each debug command starts a server, performs the request, and shuts it down. Use a
+long-lived client for streamed execution rather than chaining independent probes.
+
+The stdio protocol is a trusted local control surface, not an authenticated network
+service. A remote or hosted deployment must provide its own transport security and
+isolation around it. The [protocol reference](../integrations/app-server-protocol.md)
+covers message shapes, capabilities, selection rules, and cloud process identity.

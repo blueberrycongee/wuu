@@ -2,11 +2,47 @@ package providers
 
 import (
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
+
+func TestBudgetedToolResultRequestCloneIsolation(t *testing.T) {
+	for _, text := range []string{"bounded", ""} {
+		t.Run(fmt.Sprintf("bytes_%d", len(text)), func(t *testing.T) {
+			result := toolresult.Result{
+				Content:           []toolresult.ContentPart{{Type: "text", Text: "original recovery text"}, {Type: "image", MIMEType: "image/png", Data: "aW1hZ2U="}},
+				StructuredContent: json.RawMessage(`{"continuation":{"next":"recovery-cursor"}}`),
+				Meta:              json.RawMessage(`{"private":"metadata"}`), IsError: true, ModelText: &text,
+			}
+			history := []ChatMessage{
+				{Role: "assistant", ToolCalls: []ToolCall{{ID: "call_1", Name: "lookup", Arguments: `{}`}}},
+				{Role: "tool", ToolCallID: "call_1", Content: text, ToolResult: &result},
+			}
+			original := CloneChatMessages(history)
+			for range 2 {
+				prepared, err := PrepareMessagesForModelRequest("gpt-4o", history)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if prepared[1].Content != text || !prepared[1].ToolResult.IsError || len(prepared) != 3 || len(prepared[2].Images) != 1 {
+					t.Fatal("settled result or observation lost")
+				}
+				*prepared[1].ToolResult.ModelText = "request-only mutation"
+				prepared[1].ToolResult.Content[0].Text = "request-only mutation"
+				prepared[1].ToolResult.StructuredContent[0] = ' '
+				prepared[1].ToolResult.Meta[0] = ' '
+				prepared[2].Images[0].Data = "changed"
+				if !reflect.DeepEqual(history, original) {
+					t.Fatal("prepared result aliases stored history")
+				}
+			}
+		})
+	}
+}
 
 func TestProjectToolResultPreservesOrderAndHidesPrivateMetadata(t *testing.T) {
 	result := toolresult.Result{

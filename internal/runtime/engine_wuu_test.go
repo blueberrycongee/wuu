@@ -3,30 +3,52 @@ package runtime
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 )
 
-func TestWuuEngineDescriptor(t *testing.T) {
-	e := &WuuEngine{}
-	desc, err := e.Descriptor(context.Background())
+func TestProtocolEngineRebuildUsesSettingsWithoutLaunchingAgents(t *testing.T) {
+	binary, err := os.Executable()
 	if err != nil {
-		t.Fatalf("Descriptor: %v", err)
+		t.Fatal(err)
 	}
-	if desc.ID != agentengine.EngineWuu {
-		t.Fatalf("descriptor id = %q, want wuu", desc.ID)
+	// The test binary is executable but not an agent. Registration must only
+	// inspect executable availability, never perform a protocol handshake.
+	for _, entry := range enginecatalog.Entries() {
+		if entry.Protocol == "acp" || entry.Protocol == "opencode" {
+			t.Setenv("WUU_"+strings.ToUpper(entry.ID)+"_BINARY", binary)
+		}
 	}
-	if desc.Version == "" {
-		t.Fatal("descriptor version must not be empty")
+	s := &Session{RootDir: t.TempDir(), engines: agentengine.NewRegistry()}
+	s.RebuildProtocolEngines(nil)
+	for _, entry := range enginecatalog.Entries() {
+		if (entry.Protocol == "acp" || entry.Protocol == "opencode") && !s.EngineAvailable(agentengine.EngineID(entry.ID)) {
+			t.Fatalf("detected engine %s unavailable", entry.ID)
+		}
 	}
-}
-
-func TestWuuEngineSessionNilRunner(t *testing.T) {
-	sess := &wuuEngineSession{}
-	if _, err := sess.RunTurn(context.Background(), agentengine.TurnInput{}, nil); err == nil {
-		t.Fatal("RunTurn on a session without a runner must fail")
+	disabled := false
+	cfg := &config.EnginesConfig{
+		Cursor:   &config.EngineBinaryConfig{Enabled: &disabled},
+		OpenCode: &config.EngineBinaryConfig{BinaryPath: filepath.Join(t.TempDir(), "missing-agent")},
+	}
+	s.RebuildProtocolEngines(cfg)
+	if s.EngineAvailable("cursor") || s.EngineAvailable("opencode") || !s.EngineAvailable("hermes") {
+		t.Fatal("rebuild did not respect disable/path override or changed an unrelated engine")
+	}
+	sess := s.EngineSessionForThread(context.Background(), &ThreadRuntime{EngineID: "cursor"}, agentengine.ThreadBinding{})
+	if _, err := sess.RunTurn(context.Background(), agentengine.TurnInput{}, nil); !errors.Is(err, agentengine.ErrUnknownEngine) {
+		t.Fatalf("disabled thread must fail rather than fall back: %v", err)
+	}
+	s.RebuildProtocolEngines(nil)
+	if !s.EngineAvailable("cursor") || !s.EngineAvailable("opencode") {
+		t.Fatal("restoring auto settings did not restore detection")
 	}
 }
 
@@ -48,20 +70,6 @@ func TestWuuEngineSessionInterrupt(t *testing.T) {
 	}
 	if err := sess.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
-	}
-}
-
-func TestSessionForThreadNilHandling(t *testing.T) {
-	e := &WuuEngine{}
-	if sess := e.SessionForThread(nil); sess != nil {
-		t.Fatal("SessionForThread(nil) must return nil")
-	}
-	rt := &ThreadRuntime{}
-	if sess := e.SessionForThread(rt); sess != nil {
-		t.Fatal("SessionForThread with nil runner must return nil")
-	}
-	if sess := e.SessionForRunner(nil); sess != nil {
-		t.Fatal("SessionForRunner(nil) must return nil")
 	}
 }
 
@@ -113,13 +121,6 @@ func TestEngineSessionForThreadUsesRegisteredExternalFactory(t *testing.T) {
 	}
 	if factory.binding.ThreadID != binding.ThreadID || factory.binding.RootDir != binding.RootDir {
 		t.Fatalf("binding = %+v, want %+v", factory.binding, binding)
-	}
-}
-
-func TestEngineUnavailableSession(t *testing.T) {
-	sess := EngineUnavailableSession(agentengine.EngineID("codex"))
-	if _, err := sess.RunTurn(context.Background(), agentengine.TurnInput{}, nil); !errors.Is(err, agentengine.ErrUnknownEngine) {
-		t.Fatalf("RunTurn = %v, want ErrUnknownEngine", err)
 	}
 }
 

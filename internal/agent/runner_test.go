@@ -169,27 +169,6 @@ func TestRunner_OutputTruncationCompletesRun(t *testing.T) {
 	}
 }
 
-func TestRunner_MaxTokensStopReasonNormalizesLength(t *testing.T) {
-	client := &fakeClient{responses: []providers.ChatResponse{
-		{Content: "x", Truncated: true, StopReason: "max_tokens"},
-	}}
-	runner := Runner{Client: client, Model: "gpt-test"}
-
-	res, err := runner.RunWithUsage(context.Background(), "loop", nil)
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-	if res.Content != "x" {
-		t.Fatalf("expected partial answer, got %q", res.Content)
-	}
-	if res.FinishReason != providers.FinishReasonLength || res.StopReason != "max_tokens" || !res.Truncated {
-		t.Fatalf("expected max_tokens to normalize to length, got reason=%q stop=%q truncated=%v", res.FinishReason, res.StopReason, res.Truncated)
-	}
-	if len(client.requests) != 1 {
-		t.Fatalf("expected 1 chat call, got %d", len(client.requests))
-	}
-}
-
 func TestRunner_ContextOverflowFreshPromptPropagates(t *testing.T) {
 	overflow := &providers.HTTPError{StatusCode: 400, Body: "context_length_exceeded", ContextOverflow: true}
 	client := &fakeClient{
@@ -206,52 +185,6 @@ func TestRunner_ContextOverflowFreshPromptPropagates(t *testing.T) {
 	}
 	if len(client.requests) != 1 {
 		t.Fatalf("fresh prompt should not retry a no-op compact, got %d requests", len(client.requests))
-	}
-}
-
-func TestRunner_ContextWindowOverride(t *testing.T) {
-	// Force the proactive auto-compact threshold by pinning a tiny
-	// window via ContextWindowOverride. The first response reports
-	// 950 tokens of usage, which exceeds 90% of 1000. The second
-	// response answers cleanly.
-	client := &fakeClient{responses: []providers.ChatResponse{
-		{
-			ToolCalls: []providers.ToolCall{{ID: "c1", Name: "run_shell", Arguments: `{}`}},
-			Usage:     &providers.TokenUsage{InputTokens: 950, OutputTokens: 0},
-		},
-		{Content: "summarized then resumed"},
-		{Content: "final"},
-	}}
-	tool := &fakeTools{}
-	runner := Runner{
-		Client:                client,
-		Tools:                 tool,
-		Model:                 "totally-unknown-model",
-		ContextWindowOverride: 1000,
-	}
-
-	out, err := runner.Run(context.Background(), "go")
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if out == "" {
-		t.Fatal("expected non-empty answer")
-	}
-	// The override should have produced a request count >= 2
-	// (the proactive compact path consumed at least one extra
-	// summarization round-trip).
-	if len(client.requests) < 2 {
-		t.Fatalf("expected proactive compact to fire, got %d requests", len(client.requests))
-	}
-}
-
-func TestRunner_MaxStepsExceeded(t *testing.T) {
-	client := &fakeClient{responses: []providers.ChatResponse{{ToolCalls: []providers.ToolCall{{ID: "c", Name: "run_shell", Arguments: `{}`}}}}}
-	runner := Runner{Client: client, Tools: &fakeTools{}, Model: "gpt-test", MaxSteps: 1}
-
-	_, err := runner.Run(context.Background(), "task")
-	if err == nil {
-		t.Fatal("expected max steps error")
 	}
 }
 

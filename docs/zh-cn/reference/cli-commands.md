@@ -1,142 +1,84 @@
-# CLI 常用命令
+# CLI 命令
 
-`wuu` 命令行适合在终端中初始化配置、运行任务、恢复会话和检查执行记录。运行
-`wuu --help` 可查看当前版本完整帮助；本文只列出面向日常使用、已稳定提供的入口。
+CLI 可用于初始化配置、执行任务、检查已保存会话和管理本地扩展。`wuu --help` 提供命令摘要。以下示例中的大写 ID 和路径需要替换为实际值；除非某个命令另有说明，选项应放在位置参数之前。
 
-## 初始化和检查模型
-
-在首次使用 CLI 的机器上初始化用户目录和默认配置：
+## 初始化与查看构建
 
 ```bash
 wuu init
-```
-
-已有配置时不要随意覆盖；需要明确重建时才使用 `--force`：
-
-```bash
-wuu init --force
-```
-
-查看配置中可用的模型服务和模型：
-
-```bash
-wuu models
-wuu models --json
-wuu models --provider <provider-name>
-```
-
-`models` 只读取配置并输出可用模型，不会启动 Agent 回合。需要指定项目配置时可以加
-`--workdir <目录>`。
-
-## 运行、恢复和分叉任务
-
-最常用的入口是 [`wuu exec`](../automation/exec.md)：
-
-```bash
-wuu exec --workdir /path/to/project "运行测试并修复失败项"
-```
-
-最近一次会话可以继续：
-
-```bash
-wuu exec --continue "继续处理刚才的问题"
-```
-
-也可以使用线程 ID 精确恢复，或从原会话创建分支：
-
-```bash
-wuu exec resume <thread-id> "继续这个会话"
-wuu exec fork <thread-id> "尝试另一种实现方案"
-```
-
-`wuu -c` 和 `wuu -r <thread-id>` 是 `wuu exec` 对应选项的顶层快捷方式。
-
-## 查看和管理会话
-
-```bash
-wuu session list
-wuu session show <thread-id>
-wuu session search "关键词"
-wuu session trace <thread-id>
-```
-
-常用用途：
-
-- `list`：列出当前工作区的会话；
-- `show`：查看会话的基本信息；
-- `search`：按标题或历史内容检索；
-- `trace`：查看工具调用和回合事件，适合排查任务为什么失败。
-
-需要脚本处理时，支持 `--json` 的子命令应优先使用 JSON 输出，而不要解析人类可读文本。
-
-归档会话会把它从默认列表隐藏，但不会删除记录：
-
-```bash
-wuu session archive <thread-id>
-```
-
-删除会话及其工作区产物前请确认 ID：
-
-```bash
-wuu session delete <thread-id>
-```
-
-导出会话历史为 JSONL 文件：
-
-```bash
-wuu session export <thread-id> --out conversation.jsonl
-```
-
-## 评审改动
-
-可以让 Agent 直接评审当前未提交改动、某个基线或某次提交：
-
-```bash
-wuu exec review --uncommitted
-wuu exec review --base main
-wuu exec review --commit <commit-sha>
-```
-
-评审仍遵循当前工作区的权限模式；如果只希望检查而不修改文件，请显式指定只读权限：
-
-```bash
-wuu exec review --uncommitted --permission-mode read_only
-```
-
-## 管理插件
-
-插件以目录或 zip 包的形式本地安装，安装后需要批准才会激活。面向用户的说明见
-[插件](../customize/plugins.md)，开发与打包见[编写插件](../customize/plugin-authoring.md)。
-
-```bash
-wuu plugin list                        # 查看已安装插件与状态
-wuu plugin inspect ./path/to/plugin    # 安装前检查包内容、权限请求与 fingerprint
-wuu plugin install ./plugin-1.0.0.zip  # 安装目录或 zip 包
-wuu plugin update my-plugin ./plugin-1.1.0.zip # 暂存替换目录或 zip
-wuu plugin approve my-plugin           # 检查后批准
-wuu plugin reject my-plugin
-wuu plugin enable my-plugin
-wuu plugin disable my-plugin
-wuu plugin remove my-plugin
-```
-
-插件开发闭环使用 `create`、`validate`、`build`、`test`、`pack` 和 `dev`：
-`wuu plugin dev .` 授权当前目录为开发目录并热重载；`wuu plugin pack .` 生成可分发的
-zip 包。
-
-## 版本和兼容入口
-
-```bash
 wuu version
 wuu version --long
 wuu version --json
 ```
 
-旧脚本中如果仍使用 `wuu run`，它会转发到 `wuu exec`。新脚本建议直接使用 `wuu exec`，
-因为 `run` 不支持旧版的 `--max-steps`、`--temperature` 和 `--system-prompt` 选项。
+`init` 创建用户配置，已有文件时拒绝覆盖。只有确实需要替换时才使用 `wuu init --force`。开始任务前，先配置可用的模型连接。
 
-## 相关文档
+`wuu models --provider NAME --json` 对 `openai-codex` provider 执行在线模型查询。它不是所有已配置服务的通用离线列表，当前会拒绝其他 provider 类型，并需要对应的连接和认证。
 
-- [用 `wuu exec` 做自动化](../automation/exec.md)：stdin、附件、JSONL、退出码和 CI 用法；
-- [权限模式](permissions.md)：了解任务能否读写文件或执行命令；
-- [配置参考](configuration.md)：配置文件和模型服务的详细说明。
+## 执行、继续与审查
+
+```bash
+wuu exec --workdir /path/to/project "运行相关测试并解释失败原因"
+wuu exec --continue "继续调查"
+wuu exec resume THREAD_ID "继续这个任务"
+wuu exec fork THREAD_ID "尝试另一种方案"
+wuu exec review --uncommitted --permission-mode read_only
+wuu exec review --base main --permission-mode read_only
+wuu exec review --commit COMMIT_SHA --permission-mode read_only
+```
+
+`wuu -c` 和 `wuu -r THREAD_ID` 分别是 exec 继续和恢复的快捷方式。Fork 从已保存上下文创建新会话，不要与桌面的 worktree 分叉混淆。审查仍使用所选权限模式，只需要调查时请选择 Read only。
+
+标准输入、附件、JSONL 输出、schema、超时和退出码见 [`wuu exec`](../automation/exec.md)。`wuu run` 保留为兼容入口，新脚本应使用 `exec`。
+
+## 检查会话
+
+```bash
+wuu session list --json
+wuu session list --all-workdirs --include-archived
+wuu session show --json THREAD_ID
+wuu session show --last
+wuu session trace --json THREAD_ID
+wuu session search --workdir /path/to/project "关键词"
+```
+
+列表默认限定当前工作区。`show` 读取元数据和历史；`trace` 回放已保存轨迹，不重新执行工具，也不请求模型。搜索检查元数据和历史。脚本优先使用命令支持的 JSON 输出，不要解析展示文本。
+
+## 归档、导出与删除
+
+```bash
+wuu session archive THREAD_ID
+wuu session export --out conversation.jsonl THREAD_ID
+wuu session export --json --out conversation.json THREAD_ID
+wuu session delete THREAD_ID
+```
+
+归档从普通列表隐藏会话，不删除记录。导出默认以 JSONL 写入元数据头和历史记录；`--json` 则写入一个包含元数据与历史的对象。`--out` 会创建或覆盖输出文件，分享前应检查导出内容。
+
+删除会移除已保存的会话数据及关联工作区产物。操作前确认 ID，并保留需要的成果。
+
+## 检查执行记录
+
+```bash
+wuu runs --json
+wuu runs read RUN_ID
+```
+
+这些命令读取持久化的执行 Run 清单，与桌面 Automation 插件的任务和运行列表不同。
+
+## 技能与插件
+
+```bash
+wuu skills lint .wuu/skills
+wuu plugin list
+wuu plugin install ./my-plugin.zip
+wuu plugin approve my-plugin
+wuu plugin disable my-plugin
+wuu plugin remove my-plugin
+```
+
+Lint 行为见[技能](../customize/skill-authoring.md)，本地安装和更新见[插件](../customize/plugins.md)。作者还可以使用 `create`、`dev`、`validate`、`build`、`test` 和 `pack`，详见[编写参考](../customize/plugin-authoring.md)。
+
+## 集成与诊断
+
+[`wuu app-server`](../automation/app-server.md) 提供客户端使用的持久子进程协议。[`wuu remote` 与 `wuu relay`](../automation/remote.md)运行远程控制组件。报告问题时，应记录版本、命令、工作区和最小脱敏错误，见[故障排查](../help/troubleshooting.md)。

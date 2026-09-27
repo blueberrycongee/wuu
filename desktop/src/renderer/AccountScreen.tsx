@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft } from "./WuuIcons";
 import { AccountPanel, type AccountDriver } from "./AccountPanel";
 import { useI18n } from "./i18n";
 import "./AccountScreen.css";

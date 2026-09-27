@@ -1,6 +1,8 @@
 import type { CodexModelSummary } from "../shared/protocol";
 import { resolveLocalizedText } from "./i18n";
 
+export const COMPOSER_PROJECT_MENU_WIDTH = 320;
+
 export type CodexModelLoadState = {
   provider?: string;
   loading: boolean;
@@ -30,10 +32,7 @@ export type FloatingMenuOwner =
   | "codex-runtime"
   | "composer-query-history"
   | "minute-clock"
-  | "channel-agent"
-  | "channel-mention"
-  | "managed-sessions"
-  | "collaboration-new"
+  | "project-sessions"
   | "select-menu";
 export type FloatingMenuPlacement = "above" | "below" | "middle";
 export type FloatingMenuAlign = "left" | "center" | "right";
@@ -44,6 +43,8 @@ export type PermissionMode =
 
 const HIDDEN_COMPOSER_STATUSES = new Set([
   "ready",
+  "connecting",
+  "no-runtime",
   "正在发送请求",
   "Sending request",
 ]);
@@ -56,3 +57,12 @@ export function composerStatusText(status: string): string {
 export function composerStatusIsLiveProgress(liveProgress?: boolean): boolean {
   return liveProgress === true;
 }
+
+/** Starting a new conversation in its own Git worktree, and where from. */
+export type ComposerWorktreeControl = {
+  enabled: boolean;
+  /** Branch the worktree starts from; empty starts from the project's HEAD. */
+  startBranch: string;
+  onToggle: () => void;
+  onSelectStartBranch: (branch: string) => void;
+};

@@ -2,7 +2,7 @@
  * Regression test for two 对话 (scratch) sidebar bugs:
  *
  * Bug 1 (dead click): clicking a scratch conversation row called
- * selectProjectThread(SCRATCH_PSEUDO_PROJECT_ID, threadID). Since the
+ * selectWorkspaceThread(SCRATCH_PSEUDO_PROJECT_ID, threadID). Since the
  * scratch pseudo project never exists in state.projects, the lookup
  * silently failed and the click did nothing.
  *
@@ -257,7 +257,7 @@ describe("对话 (scratch) sidebar thread selection", () => {
     });
     await flushAsync();
 
-    // Bug 1: this used to be a dead click (selectProjectThread bailed out
+    // Bug 1: this used to be a dead click (selectWorkspaceThread bailed out
     // because SCRATCH_PSEUDO_PROJECT_ID is not in state.projects).
     expect(resumeThread).toHaveBeenCalledWith("thread-scratch-b");
     // Bug 2: the context switch must actually happen — activeContext has
@@ -278,7 +278,7 @@ describe("对话 (scratch) sidebar thread selection", () => {
     // Pinned threads never show up in any project's (or the scratch pseudo
     // project's) own thread list — they move to 置顶 instead. So clicking
     // one always goes through activateThread's "thread not found in any
-    // real project's loaded list" fallback, not selectProjectThread.
+    // real project's loaded list" fallback, not selectWorkspaceThread.
     const threadA = scratchThreadA();
     const pinnedB = pinnedScratchThreadB();
     const { selectNoProject, resumeThread } = installWuuApi([

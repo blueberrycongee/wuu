@@ -83,7 +83,10 @@ class MainActivity : ComponentActivity() {
     when {
         model.account == null -> LoginScreen(model)
         model.host == null -> DevicesScreen(model)
-        else -> HostScreen(model) { ConversationScreen(model) }
+        else -> {
+            LaunchedEffect(model.activeID, model.workspace) { model.rememberLocation() }
+            Box(Modifier.fillMaxSize().navigationBarsPadding().imePadding()) { ConversationScreen(model) }
+        }
     }
     model.recovery?.let { secret ->
         AlertDialog(onDismissRequest = {}, title = { Text("保存账号恢复密钥") },
@@ -138,6 +141,7 @@ class MainActivity : ComponentActivity() {
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val context = LocalContext.current
     var menu by remember { mutableStateOf(false) }
+    var accountPanel by remember { mutableStateOf(false) }
     var renameID by remember { mutableStateOf<String?>(null) }
     var renameTitle by remember { mutableStateOf("") }
     var settings by remember { mutableStateOf<Pair<String, ThreadSettings>?>(null) }
@@ -167,6 +171,7 @@ class MainActivity : ComponentActivity() {
                     Text(model.host?.optString("name") ?: "电脑列表", modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
+                IconButton(onClick = { accountPanel = true }) { Icon(Icons.Default.AccountCircle, "账号") }
                 IconButton(onClick = { scope.launch { drawer.close() } }) { Icon(Icons.Default.Close, "关闭会话列表") }
                 IconButton(onClick = { scope.launch { drawer.close(); model.perform { model.newThread() } } }, enabled = model.connected) { Icon(Icons.Default.Add, "新会话") }
             }
@@ -321,6 +326,7 @@ class MainActivity : ComponentActivity() {
     }
     model.attachmentPreview?.let { AttachmentPreview(model, it) }
     settings?.let { (id, initial) -> ThreadSettingsSheet(model, id, initial) { settings = null } }
+    if (accountPanel) AccountSettingsSheet(model) { accountPanel = false }
     renameID?.let { id -> AlertDialog(onDismissRequest = { renameID = null }, title = { Text("重命名会话") },
         text = { OutlinedTextField(renameTitle, { renameTitle = it }, label = { Text("标题") }) },
         confirmButton = { TextButton(onClick = { val title = renameTitle; renameID = null; model.perform { model.rename(id, title) } }) { Text("保存") } },

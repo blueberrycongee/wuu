@@ -26,13 +26,17 @@ type persistedToolCall struct {
 }
 
 type persistedImage struct {
-	MediaType string `json:"media_type"`
-	Data      string `json:"data"`
-	Width     uint32 `json:"width,omitempty"`
-	Height    uint32 `json:"height,omitempty"`
+	LocalPath      string `json:"local_path,omitempty"`
+	ProviderItemID string `json:"provider_item_id,omitempty"`
+	Required       bool   `json:"required,omitempty"`
+	MediaType      string `json:"media_type"`
+	Data           string `json:"data"`
+	Width          uint32 `json:"width,omitempty"`
+	Height         uint32 `json:"height,omitempty"`
 }
 
 type persistedFile struct {
+	Required  bool   `json:"required,omitempty"`
 	MediaType string `json:"media_type"`
 	Data      string `json:"data"`
 	Filename  string `json:"filename,omitempty"`
@@ -148,7 +152,7 @@ func chatMessagesFromPersistedMessages(records []persistedMessage) []providers.C
 			ReasoningContent:     rec.ReasoningContent,
 			ReasoningBlocks:      append([]providers.ReasoningBlock(nil), rec.ReasoningBlocks...),
 			ProviderItems:        append([]providers.ProviderItem(nil), rec.ProviderItems...),
-			ContentParts:         append([]providers.MessageContentPart(nil), rec.ContentParts...),
+			ContentParts:         providers.CloneMessageContentParts(rec.ContentParts),
 			ToolCallID:           rec.ToolCallID,
 			ToolInvocationID:     rec.ToolInvocationID,
 			ToolResultKind:       providers.NormalizeToolCallKind(rec.ToolResultKind),
@@ -163,10 +167,13 @@ func chatMessagesFromPersistedMessages(records []persistedMessage) []providers.C
 				continue
 			}
 			msg.Images = append(msg.Images, providers.InputImage{
-				MediaType: image.MediaType,
-				Data:      image.Data,
-				Width:     image.Width,
-				Height:    image.Height,
+				LocalPath:      image.LocalPath,
+				Required:       image.Required,
+				ProviderItemID: image.ProviderItemID,
+				MediaType:      image.MediaType,
+				Data:           image.Data,
+				Width:          image.Width,
+				Height:         image.Height,
 			})
 		}
 		for _, file := range rec.Files {
@@ -174,6 +181,7 @@ func chatMessagesFromPersistedMessages(records []persistedMessage) []providers.C
 				continue
 			}
 			msg.Files = append(msg.Files, providers.InputFile{
+				Required:  file.Required,
 				MediaType: file.MediaType,
 				Data:      file.Data,
 				Filename:  file.Filename,
@@ -353,8 +361,8 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 		Steered:           msg.Steered,
 		ReasoningContent:  msg.ReasoningContent,
 		ReasoningBlocks:   append([]providers.ReasoningBlock(nil), msg.ReasoningBlocks...),
-		ContentParts:      append([]providers.MessageContentPart(nil), msg.ContentParts...),
 		ProviderItems:     append([]providers.ProviderItem(nil), msg.ProviderItems...),
+		ContentParts:      providers.CloneMessageContentParts(msg.ContentParts),
 		DiscoveredTools:   providers.CloneLoadableToolDefinitions(msg.DiscoveredTools),
 		ToolCallID:        msg.ToolCallID,
 		ToolInvocationID:  msg.ToolInvocationID,
@@ -372,10 +380,13 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 			continue
 		}
 		out.Images = append(out.Images, persistedImage{
-			MediaType: image.MediaType,
-			Data:      data,
-			Width:     image.Width,
-			Height:    image.Height,
+			LocalPath:      image.LocalPath,
+			Required:       image.Required,
+			ProviderItemID: image.ProviderItemID,
+			MediaType:      image.MediaType,
+			Data:           data,
+			Width:          image.Width,
+			Height:         image.Height,
 		})
 	}
 	for _, file := range msg.Files {
@@ -384,6 +395,7 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 			continue
 		}
 		out.Files = append(out.Files, persistedFile{
+			Required:  file.Required,
 			MediaType: file.MediaType,
 			Data:      data,
 			Filename:  file.Filename,
@@ -422,8 +434,10 @@ func loadMetaMessages(sessDir, id string) ([]persistedMessage, error) {
 	return nil, nil
 }
 
+// loadPersistedMessages reads the active branch; physical audit readers use
+// session.LoadHistoryRecords directly.
 func loadPersistedMessages(sessDir, id string, includeMeta bool) ([]persistedMessage, error) {
-	records, err := sessionstore.LoadHistoryRecords(sessDir, id, includeMeta)
+	records, err := sessionstore.LoadActiveHistoryRecords(sessDir, id, includeMeta)
 	if err != nil {
 		return nil, fmt.Errorf("load session history: %w", err)
 	}
@@ -469,7 +483,8 @@ func persistedMessagesFromProviderSnapshot(snapshot sessionstore.ProviderHistory
 // displayHistoryAcrossProviderCheckpoint restores the user-visible transcript
 // that predates the current provider checkpoint without putting compacted tool
 // payloads and reasoning back on the wire. The provider snapshot remains the
-// source of truth from its earliest retained record onward.
+// source of truth from its earliest retained record onward. raw must already
+// exclude edited suffixes; an empty checkpoint still preserves that older past.
 func displayHistoryAcrossProviderCheckpoint(raw, provider []persistedMessage) []persistedMessage {
 	firstRetainedSeq := 0
 	for _, rec := range provider {
@@ -477,12 +492,12 @@ func displayHistoryAcrossProviderCheckpoint(raw, provider []persistedMessage) []
 			firstRetainedSeq = rec.Seq
 		}
 	}
-	if firstRetainedSeq <= 1 {
+	if firstRetainedSeq == 1 {
 		return provider
 	}
 	display := make([]persistedMessage, 0, len(raw)+len(provider))
 	for _, rec := range raw {
-		if rec.Seq <= 0 || rec.Seq >= firstRetainedSeq {
+		if rec.Seq <= 0 || (firstRetainedSeq > 0 && rec.Seq >= firstRetainedSeq) {
 			continue
 		}
 		switch strings.ToLower(strings.TrimSpace(rec.Role)) {
@@ -657,7 +672,7 @@ func shouldPersistMessage(msg providers.ChatMessage) bool {
 		return true
 	case "system":
 		content := strings.TrimSpace(msg.Content)
-		return strings.HasPrefix(content, compact.ConversationSummaryPrefix)
+		return msg.Cause == "fresh_context" || strings.HasPrefix(content, compact.ConversationSummaryPrefix)
 	default:
 		return false
 	}
@@ -697,10 +712,10 @@ func replaceBaseSystemPrompt(history []providers.ChatMessage, prompt string) []p
 		return []providers.ChatMessage{{Role: "system", Content: prompt}}
 	}
 	if strings.EqualFold(out[0].Role, "system") {
-		// A compact summary is durable conversation state, not the ephemeral
-		// runtime prompt. Sessions whose persisted history starts at a compact
-		// boundary need the current base prompt inserted before that summary.
-		if compact.IsConversationSummaryContent(out[0].Content) {
+		// Durable context boundaries (recovery instructions or legacy summaries)
+		// belong to conversation state. Insert the ephemeral runtime prompt
+		// before them rather than replacing their content after persistence.
+		if shouldPersistMessage(out[0]) {
 			return append([]providers.ChatMessage{{Role: "system", Content: prompt}}, out...)
 		}
 		if out[0].Content == prompt {

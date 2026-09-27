@@ -27,10 +27,29 @@ export function RuntimeLoading({
   );
 }
 
-export function ViewSwitchLoading({ inline = false }: { inline?: boolean }): JSX.Element {
+export function WorkspacePanelLoading(): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <div className="workspace-panel-loading" role="status" aria-label={t("workspace.terminal.status.starting")}>
+      <div className="workspace-panel-loading-rail" aria-hidden="true" />
+    </div>
+  );
+}
+
+const VIEW_SWITCH_LOADING_CLASS = {
+  window: "view-switch-loading",
+  conversation: "view-switch-loading-conversation",
+  inline: "view-switch-loading-inline",
+} as const;
+
+export function ViewSwitchLoading({
+  placement = "window",
+}: {
+  placement?: keyof typeof VIEW_SWITCH_LOADING_CLASS;
+}): JSX.Element {
   const { t } = useI18n();
   const indicator = (
-    <div className={inline ? "view-switch-loading-inline" : "view-switch-loading"} role="status" aria-label={t("loading.switching")}>
+    <div className={VIEW_SWITCH_LOADING_CLASS[placement]} role="status" aria-label={t("loading.switching")}>
       <div className="wuu-launch-mark view-switch-mark" aria-hidden="true">
         <span>w</span>
         <span>u</span>
@@ -39,9 +58,10 @@ export function ViewSwitchLoading({ inline = false }: { inline?: boolean }): JSX
       <div className="wuu-launch-rail view-switch-rail" aria-hidden="true" />
     </div>
   );
-  // Connection cards embed the mark beside recovery controls. View switches
-  // escape pane clipping and stacking contexts to cover the whole app.
-  return inline ? indicator : createPortal(indicator, document.body);
+  // Connection cards embed the mark beside recovery controls, and conversation
+  // switches cover only the conversation so navigation stays visible. Window
+  // loading escapes pane clipping and stacking contexts to cover the whole app.
+  return placement === "window" ? createPortal(indicator, document.body) : indicator;
 }
 
 export function EmptyConversationHome({
@@ -51,9 +71,8 @@ export function EmptyConversationHome({
   children
 }: {
   title: string;
-  // Optional element rendered directly under the title in the same
-  // grid cell so it can sit a few pixels below the greeting without
-  // inheriting the very large row-gap reserved for the hero composer.
+  // Optional element rendered in the title's own header row, so it sits
+  // beside the greeting instead of one row-gap below it with the children.
   belowTitle?: JSX.Element;
   activity?: WuuMascotActivity;
   children?: JSX.Element | null;

@@ -176,8 +176,52 @@ type File struct {
 	Filename  string `json:"filename,omitempty"`
 }
 
-// SendOptions describes one agent invocation. Runtime defaults remain in force
-// for empty provider/model/profile fields.
+// ModelSelection changes only this session's model selection, not workspace
+// defaults. Empty provider/model and nil variant/effort preserve the selection.
+type ModelSelection struct {
+	Provider string
+	Model    string
+	Variant  *string
+	Effort   *string
+}
+
+// SelectModel applies a persistent session selection before the next Run. The
+// server rejects changes while the session is busy or its selection is pinned.
+func (s *Session) SelectModel(ctx context.Context, selection ModelSelection) error {
+	if s == nil || s.client == nil {
+		return errors.New("session is required")
+	}
+	provider, model := strings.TrimSpace(selection.Provider), strings.TrimSpace(selection.Model)
+	if provider == "" && model == "" && selection.Variant == nil && selection.Effort == nil {
+		return nil
+	}
+	if err := s.client.rpc.call(ctx, appserver.MethodConfigModelUpdate, appserver.ConfigModelUpdateParams{
+		ThreadID: s.id, Provider: provider, Model: model,
+		Variant: selection.Variant, Effort: selection.Effort,
+	}, nil); err != nil {
+		return err
+	}
+	// config/model/update returns workspace defaults, not the target thread.
+	// Read the authoritative selection without waiting on asynchronous events.
+	var result struct {
+		Thread json.RawMessage `json:"thread"`
+	}
+	if err := s.client.rpc.call(ctx, appserver.MethodThreadResume, appserver.ThreadResumeParams{
+		SessionID: s.id, ResponseOnly: true, HistoryPage: true,
+	}, &result); err != nil {
+		return err
+	}
+	snapshot, err := decodeSessionSnapshot(result.Thread)
+	if err != nil {
+		return err
+	}
+	s.client.rememberSession(snapshot)
+	return nil
+}
+
+// SendOptions describes one agent invocation. Selection and limit fields below
+// record invocation intent; configure the Runtime and call SelectModel before
+// Send to apply them. PermissionMode and OutputSchema are enforced by the Run.
 type SendOptions struct {
 	Prompt         string
 	Images         []Image
@@ -389,6 +433,9 @@ func (r *Run) Wait(ctx context.Context) (RunResult, error) {
 			if !ok {
 				if ctx.Err() != nil {
 					return RunResult{}, ctx.Err()
+				}
+				if err := subscription.Err(); err != nil {
+					return RunResult{}, err
 				}
 				if snapshot, found := r.Snapshot(); found && snapshot.Status.Terminal() {
 					if result, ready := r.terminalResult(snapshot); ready {

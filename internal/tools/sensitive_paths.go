@@ -1,12 +1,35 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
+
+// sourceCredentialExtensions are source-code suffixes. A filename such as
+// credentials.go is authentication source, not a credential store. The
+// credential/secret substring rule does not apply to these extensions.
+// Credential stores keep their own suffixes (.json, .yaml, .pem, .env, …)
+// and remain sensitive even when the basename also contains those words.
+var sourceCredentialExtensions = map[string]struct{}{
+	".c": {}, ".cc": {}, ".cpp": {}, ".cs": {}, ".go": {}, ".h": {},
+	".hpp": {}, ".java": {}, ".js": {}, ".jsx": {}, ".kt": {}, ".m": {},
+	".mjs": {}, ".mm": {}, ".php": {}, ".py": {}, ".rb": {}, ".rs": {},
+	".scala": {}, ".svelte": {}, ".swift": {}, ".ts": {}, ".tsx": {},
+	".vue": {}, ".cjs": {},
+}
+
+func isSourceCredentialPath(part string) bool {
+	dot := strings.LastIndex(part, ".")
+	if dot <= 0 || dot == len(part)-1 {
+		return false
+	}
+	_, ok := sourceCredentialExtensions[part[dot:]]
+	return ok
+}
 
 func sensitivePathReason(path string) (string, bool) {
 	normalized := filepath.ToSlash(strings.TrimSpace(path))
@@ -15,7 +38,7 @@ func sensitivePathReason(path string) (string, bool) {
 	}
 	lower := strings.ToLower(normalized)
 	parts := strings.Split(lower, "/")
-	for _, part := range parts {
+	for i, part := range parts {
 		part = strings.Trim(part, `"'`)
 		switch {
 		case part == ".git" || part == ".hg" || part == ".svn":
@@ -28,7 +51,7 @@ func sensitivePathReason(path string) (string, bool) {
 			return ".netrc credentials", true
 		case part == ".npmrc" || part == ".pypirc" || part == ".pgpass":
 			return "credential configuration", true
-		case strings.Contains(part, "credential") || strings.Contains(part, "secret"):
+		case (strings.Contains(part, "credential") || strings.Contains(part, "secret")) && (i != len(parts)-1 || !isSourceCredentialPath(part)):
 			return "credential or secret path", true
 		case part == "id_rsa" || part == "id_ed25519" || part == "id_ecdsa":
 			return "SSH private key", true
@@ -42,27 +65,6 @@ func sensitivePathReason(path string) (string, bool) {
 func isSensitivePath(path string) bool {
 	_, ok := sensitivePathReason(path)
 	return ok
-}
-
-// isNamedAgentIdentityNotebookPath reports whether an absolute path belongs
-// to a collaboration named agent's identity notebook. This is the only core
-// file-tool exception under WUU_HOME: user and session memory belongs to the
-// Memory plugin and must be reached through that plugin's tools.
-func isNamedAgentIdentityNotebookPath(absPath string) bool {
-	if strings.TrimSpace(absPath) == "" {
-		return false
-	}
-	home, err := statepath.Home("")
-	if err != nil {
-		return false
-	}
-	agentsDir := filepath.Join(home, "channels", "agents")
-	rel, err := filepath.Rel(agentsDir, absPath)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return false
-	}
-	parts := strings.Split(filepath.ToSlash(rel), "/")
-	return len(parts) >= 2 && strings.TrimSpace(parts[0]) != "" && parts[1] == "memory"
 }
 
 // wuuCredentialFileNames are the app's own credential files at the root of
@@ -118,12 +120,9 @@ func rejectSensitiveReadPath(env *Env, toolName, absPath string) error {
 	if env.BypassToolHardProtections() {
 		return nil
 	}
-	if env.AllowMutations && isNamedAgentIdentityNotebookPath(absPath) {
-		return nil
-	}
 	displayPath := env.NormalizeDisplayPath(absPath)
 	if reason, ok := sensitivePathReason(displayPath); ok {
-		return fmt.Errorf("%s refuses to read sensitive path %q (%s). Use a safer metadata command or ask the user for explicit secret handling", toolName, displayPath, reason)
+		return fmt.Errorf("%s refuses to read sensitive path %q (%s). Chat approval does not lift this guard. Use a metadata-only command, or edit the file outside the session", toolName, displayPath, reason)
 	}
 	return nil
 }
@@ -134,15 +133,38 @@ func rejectSensitiveToolPath(env *Env, toolName, action, absPath string) error {
 	}
 	// Sensitive-path writes stay blocked in every mode, including
 	// unconfined: lifting the path boundary does not lift secret guards.
-	// A named agent's identity notebook is explicit collaboration state and is
-	// included in that agent's file scope. Other WUU_HOME state stays behind
-	// dedicated core or plugin APIs.
-	if env.AllowMutations && isNamedAgentIdentityNotebookPath(absPath) {
-		return nil
-	}
 	displayPath := env.NormalizeDisplayPath(absPath)
 	if reason, ok := sensitivePathReason(displayPath); ok {
-		return fmt.Errorf("%s refuses to %s sensitive path %q (%s). Use dedicated metadata-safe tools or ask the user for explicit secret handling", toolName, action, displayPath, reason)
+		return fmt.Errorf("%s refuses to %s sensitive path %q (%s). This guard applies in every permission mode, including unconfined, and chat approval does not lift it. Edit the file outside the session", toolName, action, displayPath, reason)
 	}
 	return nil
+}
+
+// resolveReadTarget checks the actual file after worktree rebasing and symlink resolution.
+func resolveReadTarget(ctx context.Context, env *Env, toolName, path string, managed bool) (string, error) {
+	// Resolve aliases before the final sensitive-path check. An innocently
+	// named symlink must not expose a credential file within a workspace root.
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	if !managed {
+		// Hosted worktrees can live under WUU_HOME. Recheck the actual target
+		// against that execution root, not the infrastructure path above it.
+		execRoot, err := env.ExecRootDir(ctx)
+		if err != nil {
+			return "", err
+		}
+		boundary := &Env{
+			RootDir: execRoot, FileScopeRoots: append([]string{execRoot}, env.FileScopeRoots...),
+			Unconfined: env.Unconfined, PermissionMode: env.PermissionMode, AllowMutations: env.AllowMutations,
+		}
+		if _, err := boundary.ResolvePath(resolved); err != nil {
+			return "", err
+		}
+		if err := rejectSensitiveReadPath(boundary, toolName, resolved); err != nil {
+			return "", err
+		}
+	}
+	return resolved, nil
 }

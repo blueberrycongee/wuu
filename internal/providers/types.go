@@ -93,7 +93,11 @@ func NormalizeToolCallKind(kind string) ToolCallKind {
 type FinishReason string
 
 const (
-	FinishReasonStop          FinishReason = "stop"
+	FinishReasonStop FinishReason = "stop"
+
+	// FinishReasonContinue requests another model round without requiring a
+	// client tool call. It is not a retry, truncation, or proof of task completion.
+	FinishReasonContinue      FinishReason = "continue"
 	FinishReasonLength        FinishReason = "length"
 	FinishReasonToolCalls     FinishReason = "tool_calls"
 	FinishReasonContentFilter FinishReason = "content_filter"
@@ -107,7 +111,7 @@ func NormalizeFinishReason(stopReason string, truncated bool, hasToolCalls bool)
 		return FinishReasonLength
 	}
 	switch reason {
-	case "stop", "end_turn", "stop_sequence", "pause_turn", "completed":
+	case "stop", "end_turn", "stop_sequence", "completed":
 		if hasToolCalls {
 			return FinishReasonToolCalls
 		}
@@ -145,8 +149,15 @@ type ToolCall struct {
 	Display              *ToolCallDisplay `json:"display,omitempty"`
 }
 
-// InputImage carries one user-provided image in base64 form.
+// InputImage carries a user-provided or generated image in base64 form.
 type InputImage struct {
+	// LocalPath identifies an expiring input working copy, not provider wire data.
+	LocalPath string `json:"local_path,omitempty"`
+	// ProviderItemID identifies a generated image for native output replay.
+	ProviderItemID string `json:"provider_item_id,omitempty"`
+	// Required evidence must cause an error instead of an unsupported-media omission.
+	// This is local admission metadata, never a provider wire field.
+	Required  bool
 	MediaType string
 	Data      string
 	Width     uint32
@@ -157,6 +168,8 @@ type InputImage struct {
 // Images are still represented by InputImage for backward compatibility;
 // non-image media such as PDFs use InputFile.
 type InputFile struct {
+	// Required has the same admission semantics as InputImage.Required.
+	Required  bool
 	MediaType string
 	Data      string
 	Filename  string
@@ -219,17 +232,52 @@ type FileSelectionSource struct {
 	Revision    string `json:"revision"`
 }
 
+// ResponseSelection identifies a quoted assistant response and its authored comment.
+type ResponseSelection struct {
+	ID      string                  `json:"id"`
+	Text    string                  `json:"text"`
+	Comment string                  `json:"comment,omitempty"`
+	Source  ResponseSelectionSource `json:"source"`
+}
+
+// ResponseSelectionSource records the original response and UTF-16 selection range.
+type ResponseSelectionSource struct {
+	ThreadID    string `json:"thread_id"`
+	TurnID      string `json:"turn_id"`
+	ItemID      string `json:"item_id"`
+	StartOffset int    `json:"start_offset"`
+	EndOffset   int    `json:"end_offset"`
+	// RangeText is the exact DOM textContent slice when readable selection text differs.
+	RangeText string `json:"range_text,omitempty"`
+}
+
 // MessageContentPart preserves the authored structure of one user message.
 // Providers still consume ChatMessage.Content as flattened text.
 type MessageContentPart struct {
-	Type string `json:"type"`
-	// Text is the full model-visible block, including all file-selection context.
-	Text    string               `json:"text,omitempty"`
-	Title   string               `json:"title,omitempty"`
-	Source  *FileSelectionSource `json:"source,omitempty"`
-	Intent  string               `json:"intent,omitempty"`
-	Comment string               `json:"comment,omitempty"`
-	ID      string               `json:"id,omitempty"`
+	Type      string               `json:"type"`
+	Text      string               `json:"text,omitempty"`
+	Title     string               `json:"title,omitempty"`
+	Source    *FileSelectionSource `json:"source,omitempty"`
+	Intent    string               `json:"intent,omitempty"`
+	Comment   string               `json:"comment,omitempty"`
+	ID        string               `json:"id,omitempty"`
+	Selection *ResponseSelection   `json:"selection,omitempty"`
+}
+
+// CloneMessageContentParts returns independently mutable presentation metadata.
+func CloneMessageContentParts(parts []MessageContentPart) []MessageContentPart {
+	out := append([]MessageContentPart(nil), parts...)
+	for i := range out {
+		if out[i].Source != nil {
+			source := *out[i].Source
+			out[i].Source = &source
+		}
+		if out[i].Selection != nil {
+			selection := *out[i].Selection
+			out[i].Selection = &selection
+		}
+	}
+	return out
 }
 
 // ChatMessage is a generic multi-provider chat message.
@@ -403,6 +451,7 @@ type ChatRequest struct {
 
 // ChatResponse is the normalized response from providers.
 type ChatResponse struct {
+	Images            []InputImage
 	Content           string
 	Phase             MessagePhase
 	ProviderItemID    string
@@ -434,6 +483,7 @@ type Client interface {
 type StreamEventType string
 
 const (
+	EventImage           StreamEventType = "image"
 	EventContentDelta    StreamEventType = "content_delta"
 	EventContentReplace  StreamEventType = "content_replace"
 	EventThinkingDelta   StreamEventType = "thinking_delta"
@@ -671,6 +721,7 @@ func (u TokenUsage) TotalContextTokens() int {
 
 // StreamEvent is a single event from a streaming chat response.
 type StreamEvent struct {
+	Image            *InputImage
 	Type             StreamEventType
 	Content          string
 	Phase            MessagePhase

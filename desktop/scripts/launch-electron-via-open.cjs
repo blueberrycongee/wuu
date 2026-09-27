@@ -13,6 +13,8 @@ const {
 const { tmpdir } = require("node:os");
 const { isAbsolute, join, resolve } = require("node:path");
 
+const { devHome } = require("./dev-home.cjs");
+
 const desktopRoot = resolve(__dirname, "..");
 const repoRoot = resolve(desktopRoot, "..");
 const electronApp = process.env.WUU_DEV_ELECTRON_APP
@@ -48,6 +50,7 @@ function launchEnvironment(
     WUU_DESKTOP_CORE: desktopCore,
     WUU_DESKTOP_USE_GO_RUN: desktopCore ? undefined : "1",
     WUU_SOURCE_ROOT: root,
+    WUU_HOME: devHome(env, root),
     WUU_WEB_URL: env.WUU_WEB_URL,
     WUU_WEB_LISTEN: env.WUU_WEB_LISTEN,
     WUU_WEB_RELAY_URL: env.WUU_WEB_RELAY_URL,

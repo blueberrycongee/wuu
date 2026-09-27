@@ -1,6 +1,7 @@
-import { act } from "react";
+import { act, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ComposerContextMenu } from "./ComposerContextMenu";
 import { ThreadContextMenu } from "./ThreadContextMenu";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 
@@ -45,10 +46,109 @@ describe("ThreadContextMenu", () => {
     expect(menu?.style.left).toBe("770px");
     expect(menu?.style.top).toBe("500px");
     expect(menu?.dataset.origin).toBe("bottom-right");
+    expect(menu?.dataset.placed).toBe("true");
     expect(menu?.style.visibility).toBe("");
-    expect(menu?.dataset.wuuComponent).toBe("menu");
-    expect(menu?.dataset.wuuLayer).toBe("menu");
-    expect(menu?.dataset.wuuState).toBe("open");
     expect(menu?.closest('[data-wuu-layer-host="true"]')).not.toBeNull();
+  });
+
+  it("does not dismiss on the opening right-click or a later right-click", async () => {
+    const onClose = vi.fn();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    act(() => {
+      root = createRoot(container!);
+      root.render(
+        <WuuUIRoot>
+          <ThreadContextMenu
+            x={40}
+            y={80}
+            items={[{ label: "归档", onSelect: () => {} }]}
+            onClose={onClose}
+          />
+        </WuuUIRoot>,
+      );
+    });
+
+    act(() => {
+      document.body.dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, button: 2 }),
+      );
+    });
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
+      });
+    });
+
+    act(() => {
+      document.body.dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, button: 2 }),
+      );
+    });
+    expect(onClose).not.toHaveBeenCalled();
+
+    act(() => {
+      document.body.dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, button: 0 }),
+      );
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("dismisses any other open context menu before it can paint", () => {
+    function Menus({ rowMenusOpen }: { rowMenusOpen: boolean }): JSX.Element {
+      const textareaRef = useRef<HTMLTextAreaElement>(null);
+      const [composerMenuOpen, setComposerMenuOpen] = useState(true);
+      const [firstRowMenuOpen, setFirstRowMenuOpen] = useState(true);
+      return (
+        <WuuUIRoot>
+          <textarea ref={textareaRef} />
+          {composerMenuOpen ? (
+            <ComposerContextMenu
+              textareaRef={textareaRef}
+              x={10}
+              y={20}
+              hasSelection={false}
+              onClose={() => setComposerMenuOpen(false)}
+              onValueChange={() => {}}
+            />
+          ) : null}
+          {rowMenusOpen && firstRowMenuOpen ? (
+            <ThreadContextMenu
+              x={30}
+              y={40}
+              items={[{ label: "第一个", onSelect: () => {} }]}
+              onClose={() => setFirstRowMenuOpen(false)}
+            />
+          ) : null}
+          {rowMenusOpen ? (
+            <ThreadContextMenu
+              x={50}
+              y={60}
+              items={[{ label: "第二个", onSelect: () => {} }]}
+              onClose={() => {}}
+            />
+          ) : null}
+        </WuuUIRoot>
+      );
+    }
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    act(() => {
+      root = createRoot(container!);
+      root.render(<Menus rowMenusOpen={false} />);
+    });
+    expect(document.body.querySelectorAll('[role="menu"]')).toHaveLength(1);
+
+    act(() => {
+      root?.render(<Menus rowMenusOpen />);
+    });
+
+    const menus = document.body.querySelectorAll('[role="menu"]');
+    expect(menus).toHaveLength(1);
+    expect(menus[0]?.textContent).toBe("第二个");
   });
 });

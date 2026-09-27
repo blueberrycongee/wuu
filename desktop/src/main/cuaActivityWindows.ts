@@ -1,5 +1,12 @@
 import { screen, type Rectangle } from "electron";
 import type { ActivitySession, ServerEvent } from "../shared/protocol";
+import {
+  browserPiPScreenRect,
+  PIP_ANCHOR_MARGIN,
+  PIP_CARD_SIZE,
+  type BrowserPiPScreenLayout,
+  type PipRect,
+} from "./browserPiPPlacement";
 import { CUANativePiP, resolveCUAFrameHelper, type CUANativePiPEvent } from "./cuaFrameStreams";
 import type { WindowRegistry } from "./windowRegistry";
 
@@ -45,6 +52,31 @@ export function nativePiPInitialBounds(mainBounds: Rectangle | undefined, workAr
   return { x, y, width: PIP_WIDTH, height: PIP_HEIGHT };
 }
 
+// Fallback before the conversation column is measured. The live card then
+// moves to a corner of that column; this only covers the first frame.
+export function browserPiPInitialBounds(mainBounds: Rectangle | undefined, workArea: Rectangle): Rectangle {
+  const width = PIP_CARD_SIZE.width;
+  const height = PIP_CARD_SIZE.height;
+  const inset = PIP_ANCHOR_MARGIN;
+  if (!mainBounds) {
+    return {
+      x: workArea.x + workArea.width - width - inset,
+      y: workArea.y + workArea.height - height - inset,
+      width,
+      height,
+    };
+  }
+  const x = Math.min(
+    workArea.x + workArea.width - width - inset,
+    Math.max(workArea.x + inset, mainBounds.x + mainBounds.width - width - inset),
+  );
+  const y = Math.min(
+    workArea.y + workArea.height - height - inset,
+    Math.max(workArea.y + inset, mainBounds.y + mainBounds.height - height - inset),
+  );
+  return { x, y, width, height };
+}
+
 // Native preview needs a resolved process, regardless of which extension owns it.
 export function isObservableActivity(activity: ActivitySession): boolean {
   if (activity.kind === "browser") return true;
@@ -56,9 +88,12 @@ export function isObservableActivity(activity: ActivitySession): boolean {
 // hide the surface but keep the observation so agent control restores it.
 // CUA surfaces stay up: there the user controls the target app itself, not a
 // Wuu panel showing the same pixels.
-export function pipVisibleForActivity(activity: ActivitySession): boolean {
-  if (activity.kind !== "browser") return true;
-  return activity.state !== "foreground_controlled" && activity.state !== "user_controlled";
+export function pipVisibleForActivity(activity: ActivitySession, inPanel = false): boolean {
+  // Ordinary browser actions report background control even after an explicit
+  // visibility promotion. That execution state must not hide the watch-only
+  // preview; only presenting the same page in the panel replaces it.
+  if (activity.kind === "browser") return !inPanel;
+  return true;
 }
 
 type ActivitySnapshot = (threadID: string) => Promise<ActivitySession[]>;
@@ -71,8 +106,24 @@ type ActivitySnapshot = (threadID: string) => Promise<ActivitySession[]>;
 export type ObservationPiPHandle = Pick<CUANativePiP, "start" | "setVisible" | "animateInteraction" | "stop"> & {
   updateActivity?(activity: ActivitySession): void;
   setLive?(live: boolean): void;
+  setTurnCompleted?(completed: boolean): void;
   setAppearance?(dark: boolean): void;
+  setHostLayout?(layout: BrowserPiPScreenLayout | null): void;
+  setHostParent?(parent: BrowserPiPHostWindow | null): void;
+  // Browser surfaces can swap tabs without replacing the user's window.
+  retarget?(activity: ActivitySession, sink: ObservationPiPEventSink): void;
 };
+
+export interface BrowserPiPHostWindow {
+  isDestroyed(): boolean;
+  isVisible(): boolean;
+  isMinimized(): boolean;
+  getContentBounds(): Rectangle;
+  readonly webContents: { getZoomFactor(): number };
+  on(event: "move" | "resize" | "show" | "hide" | "minimize" | "restore", listener: () => void): void;
+  removeListener(event: "move" | "resize" | "show" | "hide" | "minimize" | "restore", listener: () => void): void;
+  isFocused?(): boolean;
+}
 
 // Surface→coordinator reporting. onEvent carries ready/user_close/geometry
 // style events; onFailure is a retryable stream failure; onGone means the
@@ -120,10 +171,20 @@ export class ObservationCoordinator {
   private pendingStop: Promise<void> = Promise.resolve();
   private closed = false;
   private userBounds: Rectangle | undefined;
+  private browserHost: {
+    id: number;
+    client: { host: PipRect; obstacles: PipRect[] };
+    contentSize: { width: number; height: number };
+    window: BrowserPiPHostWindow;
+    detach: () => void;
+  } | undefined;
+  private browserScreenLayout: BrowserPiPScreenLayout | null | undefined;
   private reconcileTimer: NodeJS.Timeout | undefined;
   private reconcileInFlight = false;
   private activeThreadID: string | undefined;
   private darkAppearance: boolean | undefined;
+  private browserInPanel: ((activity: ActivitySession) => boolean) | undefined;
+  private onBrowserExpand: ((activity: ActivitySession) => void) | undefined;
 
   constructor(
     private readonly registry: WindowRegistry,
@@ -138,12 +199,46 @@ export class ObservationCoordinator {
       this.update(activity);
       return;
     }
+    const current = this.current;
+    if (event.kind === "notification" && current?.activity.kind === "browser"
+      && event.workdir === current.activity.workdir) {
+      const { method, params } = event.message;
+      const turn = params as { thread_id?: string; turn?: { status: string }; awaiting_auto_continuation?: boolean; truncated?: boolean } | undefined;
+      if (turn?.thread_id === current.threadID) {
+        if (method === "turn/started" || method === "turn/error") {
+          current.pip.setTurnCompleted?.(false);
+        } else if (method === "turn/completed" && this.pipVisibility(current.activity)
+          && !this.dismissedAt.has(current.threadID)) {
+          // Stopping a browser activity is not evidence that its task succeeded.
+          current.pip.setTurnCompleted?.(turn.turn?.status === "completed"
+            && !turn.awaiting_auto_continuation && !turn.truncated);
+        }
+      }
+    }
     this.scheduleReconcile();
   }
 
   setAppearance(dark: boolean): void {
     this.darkAppearance = dark;
     this.current?.pip.setAppearance?.(dark);
+  }
+
+  setBrowserInPanel(check: (activity: ActivitySession) => boolean): void {
+    this.browserInPanel = check;
+  }
+
+  setBrowserExpandHandler(handler: (activity: ActivitySession) => void): void {
+    this.onBrowserExpand = handler;
+  }
+
+  refreshBrowserPresentation(): void {
+    if (!this.current) return;
+    this.current.pip.setVisible(this.pipVisibility(this.current.activity));
+  }
+
+  private pipVisibility(activity: ActivitySession): boolean {
+    return activityVisibleForThread(activity.thread_id, this.activeThreadID)
+      && pipVisibleForActivity(activity, this.browserInPanel?.(activity) ?? false);
   }
 
   setActiveThread(threadID?: string): void {
@@ -189,6 +284,8 @@ export class ObservationCoordinator {
     this.activeThreadID = undefined;
     this.replacement = undefined;
     this.observations.clear();
+    this.browserHost?.detach();
+    this.browserHost = undefined;
     if (this.reconcileTimer) clearTimeout(this.reconcileTimer);
     for (const timer of this.retryTimers.values()) clearTimeout(timer);
     this.retryTimers.clear();
@@ -210,7 +307,7 @@ export class ObservationCoordinator {
     const key = observationKey(activity);
     if (this.current?.key === key) {
       this.current.activity = activity;
-      this.current.pip.setVisible(pipVisibleForActivity(activity));
+      this.current.pip.setVisible(this.pipVisibility(activity));
       this.current.pip.setLive?.(activity.state !== "stopped");
       this.current.pip.updateActivity?.(activity);
       this.animateInteractionIfNew(activity, this.current.pip);
@@ -219,6 +316,19 @@ export class ObservationCoordinator {
     if (activity.state === "stopped" || this.retryTimers.has(threadID) || (this.retryAttempts.get(threadID) ?? 0) >= 4) return;
     if (this.replacement?.key === key) {
       this.replacement.activity = activity;
+      return;
+    }
+    const current = this.current;
+    if (current?.pip.retarget && current.activity.kind === "browser" && activity.kind === "browser"
+      && current.threadID === activity.thread_id && current.activity.workdir === activity.workdir) {
+      current.key = key;
+      current.activity = activity;
+      current.phase = "preparing";
+      current.pip.retarget(activity, this.eventSink(key));
+      if (this.current !== current) return;
+      current.pip.setVisible(this.pipVisibility(activity));
+      current.pip.setLive?.(true);
+      this.animateInteractionIfNew(activity, current.pip);
       return;
     }
     if (this.current || this.replacementInFlight) {
@@ -234,7 +344,8 @@ export class ObservationCoordinator {
     this.current = { key, threadID: activity.thread_id, activity, pip, phase: "preparing" };
     pip.start();
     if (this.darkAppearance !== undefined) pip.setAppearance?.(this.darkAppearance);
-    pip.setVisible(pipVisibleForActivity(activity));
+    this.pushBrowserHost(pip);
+    pip.setVisible(this.pipVisibility(activity));
     pip.setLive?.(activity.state !== "stopped");
     pip.updateActivity?.(activity);
     this.animateInteractionIfNew(activity, pip);
@@ -278,12 +389,8 @@ export class ObservationCoordinator {
   }
 
   private spawnPiP(activity: ActivitySession, key: string): ObservationPiPHandle | undefined {
-    const sink: ObservationPiPEventSink = {
-      onEvent: (event) => this.handlePiPEvent(key, event),
-      onFailure: (message) => this.handlePiPFailure(key, message),
-      onGone: () => this.handlePiPGone(key),
-    };
-    if (this.pipFactory) return this.pipFactory(activity, key, sink, () => this.initialBounds());
+    const sink = this.eventSink(key);
+    if (this.pipFactory) return this.pipFactory(activity, key, sink, () => this.initialBounds(activity));
     // No factory: the historical default is the native CUA helper only.
     if (activity.kind !== "cua") return undefined;
     const helper = resolveCUAFrameHelper();
@@ -301,6 +408,14 @@ export class ObservationCoordinator {
     );
   }
 
+  private eventSink(key: string): ObservationPiPEventSink {
+    return {
+      onEvent: (event) => this.handlePiPEvent(key, event),
+      onFailure: (message) => this.handlePiPFailure(key, message),
+      onGone: () => this.handlePiPGone(key),
+    };
+  }
+
   private handlePiPEvent(key: string, event: CUANativePiPEvent): void {
     const entry = this.current?.key === key ? this.current : undefined;
     if (!entry) return;
@@ -314,6 +429,9 @@ export class ObservationCoordinator {
       case "user_close":
         this.dismissedAt.set(entry.threadID, new Date().toISOString());
         if (this.current?.key === key) this.stopCurrent();
+        return;
+      case "expand":
+        if (entry.activity.kind === "browser") this.onBrowserExpand?.(entry.activity);
         return;
       case "control":
         if (this.control && (event.action === "takeover" || event.action === "release" || event.action === "stop")) {
@@ -330,6 +448,9 @@ export class ObservationCoordinator {
       case "user_input":
         return;
       case "geometry":
+        // The browser card's resting place is a corner of the conversation
+        // column, not the last screen rectangle it occupied while dragging.
+        if (entry.activity.kind === "browser") return;
         if ([event.x, event.y, event.width, event.height].every((value) => typeof value === "number")) {
           this.userBounds = { x: event.x!, y: event.y!, width: event.width!, height: event.height! };
         }
@@ -396,8 +517,90 @@ export class ObservationCoordinator {
     this.reconcileTimer.unref?.();
   }
 
-  private initialBounds(): Rectangle {
-    if (this.userBounds) return this.userBounds;
+  // Client rectangles are viewport coordinates from the conversation window.
+  // Reproject moves immediately. Resizes need fresh renderer measurements;
+  // projecting the previous column size first makes the card jump backwards.
+  setBrowserPiPHostLayout(
+    webContentsId: number,
+    hostWindow: BrowserPiPHostWindow,
+    client: { host: PipRect; obstacles: PipRect[] } | null,
+  ): void {
+    if (
+      client &&
+      this.browserHost &&
+      this.browserHost.id !== webContentsId &&
+      !this.browserHost.window.isDestroyed() &&
+      hostWindow.isFocused?.() === false
+    ) {
+      return;
+    }
+    if (!client) {
+      if (this.browserHost?.id !== webContentsId) return;
+      this.browserHost.detach();
+      this.browserHost = undefined;
+      this.browserScreenLayout = null;
+      this.current?.pip.setHostLayout?.(null);
+      return;
+    }
+    if (!this.browserHost || this.browserHost.id !== webContentsId || this.browserHost.window !== hostWindow) {
+      this.browserHost?.detach();
+      const reproject = (): void => {
+        const source = this.browserHost;
+        if (!source || source.window.isDestroyed()) return;
+        const content = source.window.getContentBounds();
+        // Dragging the top/left edge can emit move and resize together.
+        if (content.width !== source.contentSize.width || content.height !== source.contentSize.height) return;
+        this.browserScreenLayout = this.projectBrowserHost();
+        this.pushBrowserHost(this.current?.pip);
+      };
+      hostWindow.on("move", reproject);
+      this.browserHost = {
+        id: webContentsId,
+        client,
+        contentSize: hostWindow.getContentBounds(),
+        window: hostWindow,
+        detach: () => {
+          try {
+            hostWindow.removeListener("move", reproject);
+          } catch {
+            // The window can already be destroyed.
+          }
+        },
+      };
+    } else {
+      this.browserHost.client = client;
+      this.browserHost.contentSize = hostWindow.getContentBounds();
+    }
+    this.browserScreenLayout = this.projectBrowserHost();
+    this.pushBrowserHost(this.current?.pip);
+  }
+
+  private projectBrowserHost(): BrowserPiPScreenLayout | null {
+    const source = this.browserHost;
+    if (!source || source.window.isDestroyed()) return null;
+    const content = source.window.getContentBounds();
+    const zoom = source.window.webContents.getZoomFactor();
+    let visibleFrame: Rectangle;
+    try {
+      visibleFrame = screen.getDisplayMatching(content).workArea;
+    } catch {
+      visibleFrame = { x: content.x, y: content.y, width: content.width, height: content.height };
+    }
+    return {
+      host: browserPiPScreenRect(source.client.host, content, zoom),
+      obstacles: source.client.obstacles.map((obstacle) => browserPiPScreenRect(obstacle, content, zoom)),
+      visibleFrame,
+    };
+  }
+
+  private pushBrowserHost(pip: ObservationPiPHandle | undefined): void {
+    if (!pip?.setHostLayout || this.browserScreenLayout === undefined) return;
+    pip.setHostParent?.(this.browserHost && !this.browserHost.window.isDestroyed() ? this.browserHost.window : null);
+    pip.setHostLayout(this.browserScreenLayout);
+  }
+
+  private initialBounds(activity?: ActivitySession): Rectangle {
+    if (activity?.kind !== "browser" && this.userBounds) return this.userBounds;
     const mainWindow = this.registry.mainWindow();
     const mainBounds = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()
       ? mainWindow.getContentBounds()
@@ -406,6 +609,7 @@ export class ObservationCoordinator {
     const workArea = mainBounds
       ? screen.getDisplayMatching(mainBounds).workArea
       : screen.getDisplayNearestPoint(cursor).workArea;
+    if (activity?.kind === "browser") return browserPiPInitialBounds(mainBounds, workArea);
     return nativePiPInitialBounds(mainBounds, workArea);
   }
 }

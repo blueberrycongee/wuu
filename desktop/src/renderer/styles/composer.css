@@ -123,6 +123,7 @@
 
 .user-question-option-label {
   font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
   line-height: 1.45;
 }
 
@@ -291,18 +292,11 @@
   font-family: inherit;
   font-size: var(--font-ui);
   line-height: 28px;
-  outline: 0;
   box-shadow: none;
 }
 
 .user-question-offer-input::placeholder {
   color: var(--ink-tertiary);
-}
-
-.user-question-offer-input:focus {
-  outline: 0;
-  border: 0;
-  box-shadow: none;
 }
 
 .user-question-skip {
@@ -342,11 +336,6 @@
 
 .user-question-custom::placeholder {
   color: var(--ink-tertiary);
-}
-
-.user-question-custom:focus {
-  outline: 0;
-  border-color: var(--ink);
 }
 
 .user-question-actions {
@@ -428,9 +417,8 @@
   /* Keep the ambient shadow close to the frame so its geometric edge remains
      legible against the message canvas instead of reading as a wider haze. */
   --composer-frame-shadow: var(--shadow-composer);
-  --composer-image-attachment-button-shadow: var(--shadow-card);
-  --composer-file-attachment-button-hover-bg: #eceee9;
-  --composer-textarea-placeholder: color-mix(in srgb, var(--ink) 26%, var(--paper));
+  --composer-surface-bg: var(--wuu-color-surface, #fdfdfe);
+  --composer-textarea-placeholder: var(--ink-muted);
   --composer-textarea-disabled: var(--wuu-color-text-muted, #6d7471);
   --composer-send-button-disabled-text: rgba(255, 255, 255, 0.86);
   --composer-slash-menu-bg: rgba(255, 255, 255, 0.96);
@@ -460,16 +448,18 @@
   /* Keep the bottom inset stable across viewport widths and composer states. */
   padding-block: clamp(12px, calc(0.833333vw + 8.666667px), 16px)
     var(--composer-dock-bottom-space);
-  /* Match the scroll region's stable scrollbar gutter so the dock composer
-     and message flow are centered inside the same visible content box.
-     --scrollbar-width is stamped from a runtime measurement (see
-     ScrollbarMetrics.ts): 0 on overlay-scrollbar platforms such as macOS,
-     and the platform's real thin-scrollbar width where scrollbars are
-     classic, so this stays correct on every machine. */
-  padding-right: var(--scrollbar-width);
+  /* Mirror the scroll region's reserved gutter. That region keeps its stable
+     gutter on BOTH edges (see .scroll-region) so the message flow is centered
+     on the pane's own centerline; matching it with an equal inset on each side
+     keeps the dock composer on the same centerline instead of half a gutter to
+     the left of it. --scrollbar-width is stamped from a runtime measurement
+     (see ScrollbarMetrics.ts): 0 on overlay-scrollbar platforms such as macOS,
+     and the platform's real thin-scrollbar width where scrollbars are classic,
+     so this stays correct on every machine. */
+  padding-inline: var(--scrollbar-width);
   background: transparent;
   pointer-events: none;
-  transition: padding-right var(--environment-flow-motion-duration) var(--environment-panel-motion-easing);
+  transition: padding-inline var(--environment-flow-motion-duration) var(--environment-panel-motion-easing);
   transition-delay: 0ms;
 }
 
@@ -570,20 +560,100 @@
   width: 100%;
 }
 
-/* Separate workspace context from the input actions. */
+/* Two outlined groups sit on the canvas: the project the conversation belongs
+ * to, and where in its repository the work starts. Segments share their
+ * group's border, so hover surfaces fill the group edge to edge. */
 .composer-workspace-bar {
   display: flex;
   align-items: center;
+  gap: var(--space-2);
   min-width: 0;
-  min-height: 46px;
-  margin: 0 14px -10px;
-  padding: 4px 8px 12px;
-  border-radius: calc(var(--radius-md) - 4px) calc(var(--radius-md) - 4px) 0 0;
-  background: var(--surface-1);
+  margin: 0 var(--space-3) var(--space-2);
+}
+
+.composer-workspace-group {
+  display: inline-flex;
+  align-items: stretch;
+  min-width: 0;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+}
+
+.composer-workspace-group :focus-visible {
+  z-index: 1;
 }
 
 .composer-workspace-bar .hero-project-pill-anchor {
   max-width: 100%;
+}
+
+.composer-workspace-bar .hero-project-pill {
+  height: auto;
+  /* The group border completes the shared control row height. */
+  min-height: calc(var(--control-row-height) - 2px);
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-sm);
+}
+
+.composer-git-controls {
+  max-width: 50%;
+}
+
+.composer-git-controls .hero-project-pill {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.composer-worktree-toggle {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: calc(var(--control-row-height) - 2px);
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-inline-start: 1px solid var(--hairline);
+  border-start-end-radius: var(--radius-pill);
+  border-end-end-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--font-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.composer-worktree-toggle:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.composer-worktree-toggle[aria-pressed="false"]:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+/* On reads like the other composer toggles (Fast mode): accent label and icon. */
+.composer-worktree-toggle[aria-pressed="true"],
+.composer-worktree-toggle[aria-pressed="true"] .hero-project-pill-icon {
+  color: var(--interaction-accent);
+}
+
+.composer-worktree-toggle:disabled {
+  cursor: default;
+}
+
+.composer-workspace-bar .hero-project-pill::before {
+  inset: 0;
+}
+
+.composer-workspace-bar .hero-project-pill:hover:not(:disabled)::before,
+.composer-workspace-bar .hero-project-pill[aria-expanded="true"]::before {
+  background: var(--surface-2);
 }
 
 .composer .codex-runtime-trigger {
@@ -594,7 +664,7 @@
   position: relative;
   width: 100%;
   border-radius: var(--session-composer-radius, var(--radius-md));
-  background: var(--paper);
+  background: var(--composer-surface-bg);
   box-shadow: var(--composer-frame-shadow);
   contain: layout paint;
   overflow: hidden;
@@ -605,7 +675,7 @@
   position: absolute;
   inset: 0;
   z-index: 2;
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--hairline-soft);
   border-radius: inherit;
   pointer-events: none;
 }
@@ -617,7 +687,7 @@
 
 .hero-composer-wrap .composer-frame {
   border-radius: var(--session-composer-radius, var(--radius-md));
-  background: var(--paper);
+  background: var(--composer-surface-bg);
   box-shadow: var(--composer-frame-shadow);
 }
 
@@ -627,8 +697,6 @@
   --composer-collapsed-min-height: 118px;
   width: 100%;
 }
-
-
 
 .composer-expand-button {
   position: absolute;
@@ -703,11 +771,7 @@
   pointer-events: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .composer-stack,
-  .composer,
-  .composer-pending-drawer,
-  .composer textarea,
+@container style(--motion-reduced: 1) {
   .composer-expand-button {
     transition: none;
   }
@@ -715,13 +779,15 @@
 }
 
 .composer {
-  --composer-text-start: 16px;
-  --composer-control-icon-inset: 8px;
+  /* Text and toolbar glyphs share the card inset used by code blocks and
+   * bubbles; the toolbar subtracts its 32px buttons' glyph offset. */
+  --composer-text-start: var(--card-padding);
+  --composer-control-icon-inset: calc((32px - var(--icon-size)) / 2);
   position: relative;
   width: 100%;
   min-height: var(--composer-collapsed-min-height);
   border-radius: 0;
-  background: var(--paper);
+  background: var(--composer-surface-bg);
   overflow: visible;
 }
 
@@ -730,22 +796,28 @@
   transform: translateY(calc(var(--composer-expanded-offset) * -1));
 }
 
+.composer-above-input {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+/* Above-input accessories follow the frame as typing grows it upward. */
+.composer-stack .composer-above-input,
 .composer-stack .composer-pending-drawer {
   transform: translateY(calc(var(--composer-expanded-offset) * -1));
 }
 
 .hero-composer-wrap .composer {
-  --composer-text-start: 16px;
+  --composer-text-start: var(--card-padding);
   min-height: var(--composer-collapsed-min-height);
 }
 
-/* Match .composer textarea padding-left so the attachment thumbnail's left
-   edge sits flush with the placeholder/text x-origin. */
+/* Pending attachments above the composer input. */
 .composer-attachments {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 12px var(--composer-text-start) 0;
 }
 
 .composer-file-input {
@@ -771,35 +843,6 @@
   object-fit: cover;
 }
 
-.composer-attachment-remove {
-  padding: 0;
-  line-height: 0;
-}
-
-.composer-attachment-remove svg {
-  display: block;
-}
-
-.composer-image-attachment .composer-attachment-remove {
-  position: absolute;
-  top: -7px;
-  right: -7px;
-  display: grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-pill);
-  background: var(--paper);
-  color: var(--ink);
-  box-shadow: var(--composer-image-attachment-button-shadow);
-}
-
-.composer-image-attachment .composer-attachment-remove:hover {
-  background: var(--surface-2);
-  color: var(--ink);
-}
-
 .composer-file-attachment {
   position: relative;
   display: inline-flex;
@@ -807,7 +850,7 @@
   max-width: min(260px, 100%);
   min-height: 38px;
   gap: 8px;
-  padding: 8px 34px 8px 10px;
+  padding: 8px 10px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   background: var(--surface-1);
@@ -822,25 +865,6 @@
   white-space: nowrap;
   font-size: 0.82rem;
   font-weight: 600;
-}
-
-.composer-file-attachment .composer-attachment-remove {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  display: grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--ink-tertiary);
-}
-
-.composer-file-attachment .composer-attachment-remove:hover {
-  background: var(--composer-file-attachment-button-hover-bg);
-  color: var(--ink);
 }
 
 .composer-input-header {
@@ -925,6 +949,13 @@
   border-top: 1px solid var(--hairline-soft);
 }
 
+/* A queue acknowledges receipt locally; it never launches the conversation. */
+.composer-pending-arrival,
+.composer-queue-row {
+  --enter-opacity: 0.75;
+  animation: wuu-enter var(--motion-fast) var(--ease-out);
+}
+
 .composer-queue-row:hover .composer-queue-preview,
 .composer-queue-row:focus-within .composer-queue-preview {
   background: var(--ink-overlay-4);
@@ -981,16 +1012,18 @@
   color: var(--danger);
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
+  .composer-pending-arrival,
   .composer-queue-row {
+    animation: none;
     transition: none;
   }
 }
 
-.composer-accessory-drawer {
-  --composer-drawer-row-height: 32px;
+/* Accessories above the input tuck their lower edge behind its frame. */
+.composer-accessory-drawer,
+.composer-attachment-tray {
   --composer-drawer-overlap: 8px;
-  --composer-drawer-max-height: min(34dvh, 280px);
   position: relative;
   z-index: 0;
   width: calc(100% - 24px);
@@ -1003,6 +1036,11 @@
   background: var(--conversation-floating-surface-bg);
   box-shadow: var(--shadow-tray);
   color: var(--ink);
+}
+
+.composer-accessory-drawer {
+  --composer-drawer-row-height: 32px;
+  --composer-drawer-max-height: min(34dvh, 280px);
   font-size: 13.5px;
   line-height: 1.5;
 }
@@ -1086,17 +1124,12 @@
   max-height: max(0px, calc(var(--composer-drawer-max-height) - var(--composer-drawer-row-height) - var(--composer-drawer-overlap)));
   overflow-y: auto;
   overscroll-behavior: contain;
-  animation: composer-drawer-reveal 120ms var(--ease-out);
+  --enter-y: 2px;
+  animation: wuu-enter var(--motion-fast) var(--ease-out);
 }
 
-@keyframes composer-drawer-reveal {
-  from { opacity: 0; transform: translateY(2px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .composer-accessory-drawer { transition: none !important; }
-  .composer-drawer-details { animation: none; }
 }
 
 @media (pointer: coarse) {
@@ -1154,18 +1187,6 @@
   top: 14px;
 }
 
-.composer.has-collapsed-prompt textarea {
-  height: 52px;
-  min-height: 52px;
-  padding-top: 8px;
-}
-
-.hero-composer-wrap .composer.has-collapsed-prompt textarea {
-  height: 56px;
-  min-height: 56px;
-  padding-top: 8px;
-}
-
 .document-composer-wrap .composer-stack {
   --composer-collapsed-min-height: 80px;
 }
@@ -1176,10 +1197,10 @@
 
 .document-composer-wrap .composer-accessory-drawer {
   transition:
-    max-height 180ms var(--ease-out),
+    max-height var(--motion-base) var(--ease-out),
     transform var(--motion-fast) var(--ease-out),
     translate var(--motion-fast) var(--ease-out),
-    border-radius 180ms var(--ease-out),
+    border-radius var(--motion-base) var(--ease-out),
     border-color var(--motion-fast) var(--ease-out),
     box-shadow var(--motion-fast) var(--ease-out);
 }
@@ -1212,119 +1233,6 @@
   padding-bottom: 2px;
 }
 
-/* Folded long pastes render as compact attachment-like chips above the
-   textarea. The strip shares the file-attachment visual language: wrap,
-   chip-width cards, and a circular remove button overlaying the top-right
-   corner instead of a full-height column. */
-.composer-collapsed-prompt-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  max-height: min(168px, 26vh);
-  box-sizing: border-box;
-  align-items: flex-start;
-  margin: 10px 44px 0 14px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-right: 4px;
-  scrollbar-gutter: stable;
-}
-
-.composer-collapsed-prompt-card {
-  position: relative;
-  display: inline-flex;
-  min-width: 0;
-  max-width: min(260px, 100%);
-  min-height: 38px;
-  flex: 0 1 auto;
-  align-items: center;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  background: var(--surface-1);
-  box-shadow: var(--shadow-soft);
-}
-
-.hero-composer-wrap .composer-collapsed-prompt-list {
-  margin: 14px 52px 0 22px;
-}
-
-.composer-collapsed-prompt-main {
-  display: inline-flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 32px 7px 8px;
-  border: 0;
-  border-radius: inherit;
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-}
-
-.composer-collapsed-prompt-main:hover {
-  background: var(--surface-2);
-}
-
-.composer-collapsed-prompt-main:focus-visible,
-.composer-collapsed-prompt-remove:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
-.composer-collapsed-prompt-icon {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  flex: 0 0 24px;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--ink-muted);
-}
-
-.composer-collapsed-prompt-icon svg {
-  width: var(--icon-size-sm);
-  height: var(--icon-size-sm);
-}
-
-.composer-collapsed-prompt-title {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ink);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-  line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.composer-collapsed-prompt-remove {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  display: grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--ink-tertiary);
-}
-
-.composer-collapsed-prompt-remove:hover {
-  background: var(--composer-file-attachment-button-hover-bg);
-  color: var(--ink);
-}
-
-.composer-collapsed-prompt-remove svg {
-  width: var(--icon-size-sm);
-  height: var(--icon-size-sm);
-}
-
 .composer textarea::placeholder {
   color: var(--composer-textarea-placeholder);
 }
@@ -1343,7 +1251,7 @@
   align-items: center;
   gap: 8px;
   overflow: hidden;
-  padding: 0 8px 4px calc(var(--composer-text-start) - var(--composer-control-icon-inset));
+  padding: 0 calc(var(--composer-text-start) - var(--composer-control-icon-inset)) 4px;
   container: composer-toolbar / inline-size;
 }
 
@@ -1514,12 +1422,15 @@
   min-width: 0;
   height: 32px;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink-muted);
-  font-size: var(--font-ui);
+  /* Compact composer chrome matches the model picker and workspace bar, not
+     the reading-size --font-ui used for menus and body copy. */
+  font-size: var(--font-sm);
   font-weight: 400;
+  line-height: 1;
   padding: 0 8px;
   white-space: nowrap;
 }
@@ -1529,6 +1440,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Beat .composer-bar svg so the warning glyph and chevron stay on the
+   compact chrome size instead of the 16px toolbar-icon default. */
+.composer-bar .permission-chip svg,
+.permission-chip svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
 }
 
 /* The tone belongs to the mode itself: unconfined keeps its danger-red label
@@ -1553,161 +1472,21 @@
   opacity: 0.55;
 }
 
-/*
- * Members affordance in the group composer bar: a flat button with an
- * avatar stack and the member count — no pill border/background, no
- * hover-expanding name list. Details live in the group info panel it
- * opens.
- */
-.group-members-capsule {
-  appearance: none;
-  display: inline-flex;
-  height: 32px;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--ink-muted);
-  cursor: pointer;
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-  line-height: 1;
-  padding: 0 8px;
-  white-space: nowrap;
-  transition:
-    background-color var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out);
-}
-
-.group-members-capsule:hover,
-.group-members-capsule:focus-visible {
-  background: var(--ink-overlay-6);
-  color: var(--ink);
-  outline: 0;
-}
-
-.group-members-capsule-avatars {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-}
-
-.group-members-capsule-avatar,
-.group-members-capsule-more,
-.group-members-capsule-empty {
-  position: relative;
-  display: inline-flex;
-  width: 20px;
-  height: 20px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  border: 1.5px solid var(--paper);
-  border-radius: var(--radius-pill);
-  background: var(--bg, var(--paper));
-  color: var(--ink);
-  font-size: 10px;
-  font-weight: var(--weight-semibold);
-  overflow: hidden;
-}
-
-.group-members-capsule-avatar + .group-members-capsule-avatar,
-.group-members-capsule-more {
-  margin-left: -7px;
-}
-
-.group-members-capsule-avatar img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.group-members-capsule-more {
-  background: var(--surface-3);
-  color: var(--ink-muted);
-  font-size: 9px;
-}
-
-.group-members-capsule-empty svg {
-  width: 12px;
-  height: 12px;
-}
-
-.group-members-capsule-count {
-  flex: 0 0 auto;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .group-members-capsule {
-    transition: none;
-  }
-}
-
-/*
- * Chat-style (DM/group) composer "work focus" chip. Mirrors
- * permission-menu-anchor's width cap so a long project name still
- * truncates via .permission-chip span's existing ellipsis rule instead
- * of pushing the rest of composer-bar-left around. The default "全部
- * 工作区" state instead renders through .composer-tool-button (fixed
- * 32x32, icon only) so it reads as inert as the Paperclip/Slash buttons
- * beside it until the user actually narrows the focus.
- */
-.chat-focus-menu-anchor {
-  position: relative;
-  display: inline-flex;
-  min-width: 0;
-  max-width: 160px;
-  flex: 0 1 auto;
-}
-
-.chat-focus-chip:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
 .composer-spacer {
   min-width: 0;
   flex: 1 1 8px;
 }
 
-/* The main composer status row is a filled chip — same family as the inline
-   turn notices above. Split panes use a quieter inline status because their
-   toolbar is narrower and already sits beside the attachment control. */
-.status-label {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.composer-feedback {
   min-width: 0;
-  flex: 0 0 auto;
-  background: var(--surface-3);
+  max-height: 6em;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
   color: var(--ink);
-  border-radius: var(--radius-pill);
-  padding: 4px 12px;
+  padding: var(--space-2) var(--space-3);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  line-height: 1.4;
-  max-width: min(360px, 100%);
-}
-
-.status-label::before,
-.status-label::after {
-  display: none;
-}
-
-.status-label-text,
-.split-composer-status-text {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-  max-width: 100%;
-  color: inherit;
-  font-size: inherit;
-  font-weight: inherit;
+  line-height: var(--line-ui);
 }
 
 .composer-action-button {
@@ -1724,18 +1503,6 @@
     box-shadow var(--motion-base) var(--ease-out);
 }
 
-.composer-convert-task-button {
-  background: transparent;
-  color: var(--ink-muted);
-  border: 1px solid var(--hairline);
-}
-
-.composer-convert-task-button:hover {
-  background: var(--surface-2);
-  color: var(--info);
-  border-color: var(--info);
-}
-
 /* Send and stop share the utility-button footprint so the primary action
  * stays clear without overpowering the composer or shifting between states. */
 .composer-send-button,
@@ -1750,33 +1517,9 @@
 }
 
 .composer-send-button svg {
-  width: 14px;
-  height: 14px;
-  stroke-width: 2;
-  /*
-   * Point the paper plane straight up. lucide Send is drawn flying to the
-   * upper-right (NE); a -45deg turn about its center makes it ascend
-   * vertically, which reads as a cleaner "发送 / 向上" than the default
-   * diagonal tilt. transform-origin:center is required — SVG defaults the
-   * origin to 0 0, which would swing the glyph out of the button.
-   *
-   * The plane's ink is not centered in its 24x24 viewBox: the arrowhead's
-   * area centroid sits at ~(13.8, 10.2). After the -45deg rotation that
-   * centroid lands ~2.56 viewBox units directly above the box center — so
-   * without correction the plane floats high in the round button. The
-   * translateY(1.48px) (== 2.56 * 14/24 render scale) drops the centroid
-   * back onto the button's center. translateY runs after the rotate here,
-   * so it nudges in screen space (straight down), not along the tilt.
-   */
-  transform: translateY(1.48px) rotate(-45deg);
-  transform-origin: center;
-}
-
-.composer-send-button svg.lucide-arrow-up {
   width: 18px;
   height: 18px;
-  stroke-width: 1.75;
-  transform: none;
+  stroke-width: var(--icon-stroke);
 }
 
 .composer-send-button:hover {
@@ -1814,7 +1557,7 @@
 }
 
 .hero-project-pill-anchor {
-  /* Shrink-to-fit: width follows content (icon + label + chevron).
+  /* Shrink-to-fit: width follows content (icon + label).
    * Caps at 220px so a very long project name can't push the other
    * composer-bar items out, and lets flex-shrink + text-overflow ellipsis
    * handle narrow bars. */
@@ -1827,7 +1570,7 @@
 }
 
 .hero-project-pill {
-  /* Refined project selector: icon + text + chevron only, no colored icon background,
+  /* Refined project selector: icon + text only, no colored icon background,
    * gradient, or shadow. Sits visually beside composer-tool-button and
    * permission-chip, not as a primary button. */
   display: inline-flex;
@@ -1845,8 +1588,8 @@
   padding: 0 8px;
   cursor: pointer;
   transition:
-    background-color var(--motion-fast) var(--menu-enter-easing),
-    color var(--motion-fast) var(--menu-enter-easing);
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
 }
 
 .hero-project-pill:hover,
@@ -1884,13 +1627,6 @@
   width: var(--icon-size);
   height: var(--icon-size);
   flex: 0 0 auto;
-}
-
-.hero-project-pill-chevron {
-  width: var(--icon-size-sm);
-  height: var(--icon-size-sm);
-  flex: 0 0 auto;
-  color: var(--ink-tertiary);
 }
 
 /* Keep the toolbar easy to click while keeping its visual chrome compact. */
@@ -2025,15 +1761,16 @@
   left: 12px;
   bottom: 42px;
   z-index: 30;
-  display: grid;
-  width: 280px;
-  max-height: min(360px, calc(100vh - 180px));
+  display: flex;
+  flex-direction: column;
+  width: var(--composer-project-menu-width);
+  max-height: min(400px, var(--floating-menu-available-height, calc(100vh - 120px)));
   overflow: hidden;
   border: 1px solid var(--menu-border);
-  border-radius: var(--menu-shell-radius);
+  border-radius: calc(var(--radius-sm) + var(--space-2));
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
-  padding: var(--menu-inset);
+  padding: var(--space-2);
   transform-origin: bottom left;
   --menu-enter-y: 4px;
   animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
@@ -2084,101 +1821,10 @@
 
 .slash-command-empty {
   color: var(--ink-muted);
-  font-size: var(--font-ui);
-  line-height: 18px;
+  font-size: var(--font-menu);
+  line-height: var(--line-ui);
   padding: 14px 12px 15px;
   text-align: center;
-}
-
-.mention-menu {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  z-index: 35;
-  display: grid;
-  width: min(460px, 100%);
-  max-height: min(320px, calc(100vh - 190px));
-  overflow: hidden;
-  padding: var(--menu-inset);
-  border: 1px solid var(--hairline);
-  border-radius: var(--menu-shell-radius);
-  background: var(--paper);
-  box-shadow: var(--shadow-pop);
-  transform-origin: bottom center;
-  animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
-}
-
-.mention-list {
-  display: grid;
-  gap: 1px;
-  max-height: 300px;
-  overflow-y: auto;
-  padding-right: 2px;
-}
-
-.mention-item {
-  display: grid;
-  min-height: 44px;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.mention-item:hover,
-.mention-item.selected {
-  background: var(--surface-2);
-}
-
-.mention-avatar {
-  display: grid;
-  width: 18px;
-  height: 18px;
-  place-items: center;
-  overflow: hidden;
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  line-height: var(--line-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mention-copy {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.mention-copy strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ink);
-  font-size: var(--font-content);
-  font-weight: var(--weight-medium);
-  line-height: var(--line-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mention-copy small,
-.mention-name {
-  overflow: hidden;
-  color: var(--ink-muted);
-  font-size: var(--font-xs);
-  line-height: var(--line-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mention-name {
-  max-width: 112px;
 }
 
 .permission-menu-anchor .access-menu,
@@ -2190,8 +1836,8 @@
 }
 
 .access-menu {
-  gap: 2px;
-  background: var(--paper);
+  gap: 1px;
+  background: var(--menu-bg);
   padding: var(--menu-inset);
   width: 176px;
 }
@@ -2216,8 +1862,8 @@
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
-  font-size: var(--font-ui);
-  font-weight: 400;
+  font-size: var(--font-menu);
+  font-weight: var(--weight-medium);
   line-height: var(--line-ui);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
@@ -2235,8 +1881,8 @@
   height: auto;
   min-height: var(--control-row-height);
   justify-content: flex-start;
-  gap: 8px;
-  border: 1px solid transparent;
+  gap: var(--menu-item-gap);
+  border: 0;
   border-radius: var(--radius-xs);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
@@ -2253,9 +1899,9 @@
 .permission-mode-option strong {
   color: var(--ink);
   flex: 1;
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-  line-height: 16px;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2272,8 +1918,8 @@
 }
 
 .composer-context-menu button svg {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
   flex: 0 0 auto;
 }
 
@@ -2292,9 +1938,9 @@
 .composer-plus-menu-section {
   padding: 6px 8px 4px;
   color: var(--ink-muted);
-  font-size: var(--font-ui);
-  font-weight: 400;
-  line-height: 18px;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
   user-select: none;
 }
 
@@ -2307,10 +1953,10 @@
   min-height: var(--control-row-height);
   gap: 8px;
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
-  line-height: 1.4;
+  line-height: var(--line-ui);
   border-radius: var(--radius-xs);
   color: var(--ink-soft);
-  font-weight: 400;
+  font-weight: var(--weight-medium);
 }
 
 .composer-plus-menu button .composer-plus-menu-item-title {
@@ -2319,18 +1965,19 @@
   overflow-wrap: anywhere;
   overflow: visible;
   color: inherit;
-  font-weight: 400;
+  font-weight: inherit;
 }
 
 .composer-plus-menu button .composer-plus-menu-item-desc {
   flex: 1 1 0%;
   color: color-mix(in srgb, var(--ink-soft) 55%, var(--paper));
-  font-weight: 400;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-regular);
 }
 
 .composer-plus-menu button svg {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
   stroke-width: 1.75;
 }
 
@@ -2356,7 +2003,7 @@
 
 .composer-menu-note strong {
   color: var(--ink);
-  font-size: var(--font-ui);
+  font-size: var(--font-menu);
 }
 
 .composer-menu-note.warning strong {
@@ -2373,32 +2020,47 @@
 
 .project-picker-list {
   display: grid;
-  max-height: 188px;
+  min-height: 0;
+  flex: 0 1 auto;
+  max-height: 240px;
   overflow: auto;
-  gap: 1px;
+  gap: 2px;
+  padding-block: var(--space-1);
 }
 
 .composer-project-menu button {
   display: flex;
+  flex-shrink: 0;
   height: auto;
   min-height: var(--control-row-height);
   align-items: center;
   gap: var(--menu-item-gap);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
-  font-size: var(--font-ui);
+  font-size: var(--font-menu);
   font-weight: 400;
   line-height: var(--line-ui);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
 }
 
+.composer-project-menu > button,
+.project-picker-list > button {
+  display: grid;
+  grid-template-columns: var(--icon-size-sm) minmax(0, 1fr) var(--icon-size-sm);
+  padding: var(--space-2) var(--space-1);
+}
+
+.composer-project-menu > button {
+  font-weight: var(--weight-medium);
+}
+
 .composer-project-menu button:hover:not(:disabled) {
   background: var(--menu-hover);
 }
 
-.composer-project-menu button span {
+.composer-project-menu button > span {
   min-width: 0;
   flex: 1;
   overflow: hidden;
@@ -2406,17 +2068,42 @@
   white-space: nowrap;
 }
 
-.composer-project-menu svg {
-  width: 16px;
-  height: 16px;
+.project-picker-item-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-project-menu button svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
   color: var(--composer-project-menu-icon);
   flex: 0 0 auto;
 }
 
 .composer-project-menu .menu-search {
-  gap: 8px;
+  padding: var(--space-2) var(--space-1);
+  border-bottom: 0;
   font-weight: 400;
   line-height: var(--line-ui);
+}
+
+.composer-project-menu .menu-search input {
+  font-size: var(--font-menu);
+}
+
+.project-picker-heading {
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-1) var(--space-1);
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  font-weight: 400;
+}
+
+.composer-project-menu .menu-search svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
 }
 
 .project-picker-empty {
@@ -2427,8 +2114,9 @@
 
 .project-picker-divider {
   height: 1px;
-  background: var(--surface-3);
-  margin: 6px 0;
+  flex-shrink: 0;
+  background: var(--hairline-soft);
+  margin: var(--space-1);
 }
 
 /* Right-click edit menu for the composer textarea (ComposerContextMenu
@@ -2440,22 +2128,22 @@
    access/branch menu shell above.
 
    The visual language follows .thread-row-context-menu (the
-   conversation row's right-click panel) — token surface, menu-enter
-   animation — but a step more compact: this menu is five short verbs,
-   not a list of titled rows. It is always fully visible (the component
-   flips above the cursor when the bottom of the viewport is close, and
-   clamps as a last resort) and therefore never scrolls internally.
-   data-origin names the corner anchored to the cursor so the enter
-   animation scales out of it. */
+   conversation row's right-click panel) — UI type size, token surface,
+   menu-enter animation. This menu is five short verbs, not a list of
+   titled rows. It is always fully visible (the component flips above
+   the cursor when the bottom of the viewport is close, and clamps as a
+   last resort) and therefore never scrolls internally. data-origin names
+   the corner anchored to the cursor so the enter animation scales out
+   of it. */
 .composer-textarea-context-menu {
   position: fixed;
   z-index: 2147482000;
   min-width: 116px;
   border: 1px solid var(--menu-border);
-  border-radius: calc(var(--radius-xs) + 4px);
+  border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
-  padding: 4px;
+  padding: var(--menu-inset);
   animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
 }
 
@@ -2486,15 +2174,17 @@
 .composer-textarea-context-menu-item {
   display: flex;
   width: 100%;
-  height: 26px;
+  height: auto;
+  min-height: var(--control-row-height);
   align-items: center;
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
-  font-size: var(--font-sm);
+  font-size: var(--font-menu);
   font-weight: var(--weight-medium);
-  padding: 0 10px;
+  line-height: var(--line-ui);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
   cursor: pointer;
 }
@@ -2548,22 +2238,11 @@
   background: var(--surface-2);
   box-shadow: var(--composer-frame-shadow);
   transform-origin: bottom center;
-  animation: composer-camera-enter 420ms cubic-bezier(.16, 1, .3, 1) both;
+  --enter-y: 100%;
+  animation: wuu-enter var(--motion-slower) var(--ease-out) both;
 }
 
 :root[data-host-kind="web"] .composer-camera[data-exiting] { pointer-events: none; }
-
-@keyframes composer-camera-enter {
-  from {
-    opacity: 0;
-    transform: translateY(100%);
-  }
-
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
 
 :root[data-host-kind="web"] .composer-camera-viewport {
   position: relative;
@@ -2650,7 +2329,7 @@
   color: var(--paper);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  transition: transform 140ms ease-out;
+  transition: transform var(--motion-fast) var(--ease-out);
   cursor: pointer;
 }
 
@@ -2671,7 +2350,7 @@
   border-radius: 50%;
   background: var(--paper);
   background-clip: padding-box;
-  transition: transform 140ms ease-out, opacity 140ms ease-out;
+  transition: transform var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out);
   cursor: pointer;
 }
 
@@ -2697,7 +2376,7 @@
   inset: 0;
   background: var(--paper);
   pointer-events: none;
-  animation: composer-camera-flash 200ms ease-out both;
+  animation: composer-camera-flash var(--motion-base) var(--ease-out) both;
 }
 
 @keyframes composer-camera-flash {
@@ -2710,13 +2389,8 @@
   :root[data-host-kind="web"] .composer-camera-dialog { border-radius: 24px; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  :root[data-host-kind="web"] .composer-camera,
-  :root[data-host-kind="web"] .composer-camera-flash {
-    animation: none;
-  }
+@container style(--motion-reduced: 1) {
   :root[data-host-kind="web"] .composer-camera-flash { display: none; }
-  :root[data-host-kind="web"] .composer-camera-controls button { transition: none; }
 }
 
 .composer-workspace-bar > .composer-project-control {
@@ -2726,31 +2400,18 @@
 
 .composer-branch-control {
   min-width: 0;
-  max-width: 50%;
-  margin-left: 2px;
+  flex: 0 1 auto;
 }
 
 .composer-branch-control .hero-project-pill {
   max-width: 100%;
 }
 
-.composer-branch-menu {
-  width: 280px;
-  max-height: min(280px, calc(100vh - 120px));
-}
-
-.composer-branch-menu .project-picker-list button {
-  width: 100%;
-  height: auto;
-  min-height: var(--control-row-height);
-  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
-}
-
 .composer-branch-menu small {
   display: block;
-  margin-top: 3px;
+  margin-top: 2px;
   color: var(--ink-muted);
-  font-size: var(--font-sm);
+  font-size: var(--font-xs);
   font-weight: 400;
 }
 
@@ -2779,22 +2440,25 @@
 }
 
 @media (pointer: fine) {
-  .composer-workspace-bar {
-    min-height: 40px;
-    padding: 2px 6px 10px;
-  }
-
-  .composer-workspace-bar .hero-project-pill {
-    height: 28px;
-    gap: 5px;
-    padding-inline: 6px;
-    font-size: var(--font-sm);
-  }
-
   .composer-workspace-bar .hero-project-pill-icon,
   .composer-workspace-bar .hero-project-pill-icon svg {
     width: 14px;
     height: 14px;
     flex-basis: 14px;
   }
+}
+
+
+.composer-stop-button svg.composer-stop-progress {
+  width: 14px;
+  height: 14px;
+  fill: none;
+}
+.composer-stop-progress.is-spinning {
+  animation: wuu-spin var(--motion-spin) linear infinite;
+}
+
+.composer-stop-button[aria-busy="true"] {
+  opacity: 1;
+  cursor: progress;
 }

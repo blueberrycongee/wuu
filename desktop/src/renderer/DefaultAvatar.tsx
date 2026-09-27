@@ -1,10 +1,4 @@
-import type { JSX } from "react";
-
-/*
- * Shared deterministic palette used by blobatars elsewhere in the desktop.
- * Human participants deliberately do not use it: the neutral person mark
- * below keeps people visually distinct from agent characters.
- */
+/* Shared deterministic palette used by blobatars elsewhere in the desktop. */
 
 // Muted agent hues carried forward from the previous avatar palette.
 export const AVATAR_HUES = [14, 33, 52, 96, 150, 182, 202, 222, 250, 288, 322, 350] as const;
@@ -25,17 +19,4 @@ function fnv1a(seed: string): number {
 /** Hue bucket in [0, DEFAULT_AVATAR_COUNT) for the seed. */
 export function avatarHueIndex(seed: string): number {
   return fnv1a(seed) % DEFAULT_AVATAR_COUNT;
-}
-
-/** Neutral fallback for a human participant without an uploaded avatar. */
-export function HumanAvatarMark(): JSX.Element {
-  return (
-    <span className="default-avatar human-avatar-mark" aria-hidden="true">
-      <svg viewBox="0 0 48 48" focusable="false">
-        <rect width="48" height="48" rx="10" className="human-avatar-background" />
-        <circle cx="24" cy="19" r="7" className="human-avatar-figure" />
-        <path d="M11.5 40c.8-8 5.1-12 12.5-12s11.7 4 12.5 12z" className="human-avatar-figure" />
-      </svg>
-    </span>
-  );
 }

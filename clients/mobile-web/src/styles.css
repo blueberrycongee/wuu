@@ -214,7 +214,7 @@ input, textarea {
 .account-home .account-resume .account-primary { background: var(--surface-1); border: 0; color: var(--ink); font-size: 14px; }
 .account-home .account-resume > button:not(.account-primary) { border: 0; }
 /* Text entry uses a quiet filled surface, including when the mobile IME is open. */
-:root[data-host-kind="web"] :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea):is(:focus, :focus-visible) {
+:root[data-host-kind="web"][data-focus-modality="pointer"] :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea):is(:focus, :focus-visible) {
   outline: none;
   box-shadow: none;
 }

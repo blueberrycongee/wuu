@@ -8,12 +8,17 @@
  */
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ProcessSurface } from "./ProcessSurface";
+import {
+  PROCESS_SUMMARY_COUNT_DEBOUNCE_MS,
+  PROCESS_SUMMARY_COUNT_MAX_WAIT_MS,
+} from "./ProcessSummary";
 import type { ThreadItem } from "../shared/protocol";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { modelMascotAccessory } from "./WuuMascot";
 import { translateCurrent as t } from "./i18n";
+import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 
 beforeAll(() => {
   // jsdom does not lay out real heights. Stub getBoundingClientRect so
@@ -35,6 +40,20 @@ beforeAll(() => {
   };
 });
 
+function makeBrowserNavigate(
+  id: string,
+  url: string,
+  status: ThreadItem["status"] = "completed",
+): ThreadItem {
+  return {
+    id,
+    type: "tool_call",
+    status,
+    name: "browser",
+    arguments: JSON.stringify({ action: "navigate", url }),
+  };
+}
+
 function makeReadFile(
   id: string,
   path: string,
@@ -47,6 +66,29 @@ function makeReadFile(
     name: "read_file",
     arguments: JSON.stringify({ path }),
   };
+}
+
+function makeSearch(
+  id: string,
+  pattern: string,
+  status: ThreadItem["status"] = "in_progress",
+): ThreadItem {
+  return {
+    id,
+    type: "tool_call",
+    status,
+    name: "grep",
+    arguments: JSON.stringify({ pattern }),
+  };
+}
+
+function makeSearches(
+  count: number,
+  status: ThreadItem["status"] = "in_progress",
+): ThreadItem[] {
+  return Array.from({ length: count }, (_, index) =>
+    makeSearch(`search-${index + 1}`, `query-${index + 1}`, status),
+  );
 }
 
 function makeReasoning(
@@ -118,6 +160,21 @@ afterEach(() => {
 });
 
 describe("ProcessSurface", () => {
+  it("opens a compact browser activity from the process summary", () => {
+    const onOpenURL = vi.fn();
+    const { container } = render({
+      processItems: [makeBrowserNavigate("browser-1", "http://app.local:3000")],
+      streaming: false,
+      onOpenURL,
+    });
+    const summary = container.querySelector(".process-surface-row") as HTMLElement | null;
+    expect(summary).not.toBeNull();
+    act(() => {
+      summary?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(onOpenURL).toHaveBeenCalledWith("http://app.local:3000", undefined);
+  });
+
   it("nests the single-tool presenter inside the complete process boundary", async () => {
     await desktopPluginHost.activateGeneration({
       pluginId: "test:tool-activity-presenter",
@@ -762,6 +819,137 @@ describe("ProcessSurface", () => {
     });
     const countAfter = container.querySelector(".process-surface-count");
     expect(countAfter?.classList.contains("is-changing")).toBe(false);
+  });
+
+  it("debounces live same-kind count ticks and flushes on settle", () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render({
+        processItems: makeSearches(2),
+        streaming: true,
+      });
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
+
+      rerender({ processItems: makeSearches(3), streaming: true });
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
+
+      act(() => {
+        vi.advanceTimersByTime(PROCESS_SUMMARY_COUNT_DEBOUNCE_MS - 1);
+      });
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
+
+      rerender({ processItems: makeSearches(4), streaming: true });
+      act(() => {
+        vi.advanceTimersByTime(PROCESS_SUMMARY_COUNT_DEBOUNCE_MS - 1);
+      });
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("4");
+
+      rerender({ processItems: makeSearches(5), streaming: true });
+      rerender({ processItems: makeSearches(5, "completed"), streaming: false });
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("5");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("snaps a delayed aggregated count when the conversation becomes visible", () => {
+    vi.useFakeTimers();
+    try {
+      if (container) unmount();
+      container = document.createElement("div");
+      document.body.appendChild(container);
+      root = createRoot(container);
+      const mount = (active: boolean, count: number): void => {
+        act(() => {
+          root!.render(
+            (
+              <ConversationRenderActivityProvider active={active}>
+                <ProcessSurface processItems={makeSearches(count)} streaming />
+              </ConversationRenderActivityProvider>
+            ) as ReactElement,
+          );
+        });
+      };
+      mount(false, 2);
+      mount(false, 4);
+      // A hidden conversation keeps the frozen count it last published.
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
+
+      mount(true, 4);
+      // The first visible frame snaps the frozen count to the live aggregation.
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("4");
+      expect(container.querySelector(".process-text-motion-enter")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("caps how long a live count can stay stale during a continuous burst", () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render({
+        processItems: makeSearches(2),
+        streaming: true,
+      });
+
+      rerender({ processItems: makeSearches(3), streaming: true });
+      act(() => {
+        vi.advanceTimersByTime(PROCESS_SUMMARY_COUNT_DEBOUNCE_MS - 1);
+      });
+      rerender({ processItems: makeSearches(4), streaming: true });
+      act(() => {
+        vi.advanceTimersByTime(
+          PROCESS_SUMMARY_COUNT_MAX_WAIT_MS - (PROCESS_SUMMARY_COUNT_DEBOUNCE_MS - 1),
+        );
+      });
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("4");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the expanded tool trail live while the summary count is held", () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render({
+        processItems: makeSearches(2),
+        streaming: true,
+      });
+      setProcessFoldOpen(container.querySelector("details.process-surface-fold"), true);
+
+      rerender({ processItems: makeSearches(3), streaming: true });
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
+      expect(container.querySelectorAll(".activity-timeline-item")).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("publishes a new process kind immediately even while a count is held", () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render({
+        processItems: makeSearches(2),
+        streaming: true,
+      });
+      rerender({ processItems: makeSearches(3), streaming: true });
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
+
+      rerender({
+        processItems: [...makeSearches(3), makeReadFile("read-1", "session.ts", "in_progress")],
+        streaming: true,
+      });
+      const summary = container.querySelector(".process-surface-summary-line")?.textContent;
+      expect(summary).toContain("3");
+      expect(summary).toContain("session.ts");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("uses the renderReasoningItem callback for reasoning items in the body", () => {

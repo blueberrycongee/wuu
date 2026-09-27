@@ -1,12 +1,13 @@
 import {
+  Component,
   memo,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
 import type { Turn } from "../shared/protocol";
 import { queryTextForUserItem } from "./AppState";
@@ -21,7 +22,11 @@ import {
   type ConversationTurnRevealDetail,
   userMessageAnchorID,
 } from "./TurnViewHelpers";
+import { submitGlideActive, subscribeSubmitGlide } from "./AutoFollowScroll";
 import { useI18n } from "./i18n";
+import { ImagePreviewGallery } from "./ImagePreviewGallery";
+import { useConversationRenderActive } from "./ConversationRenderActivity";
+import { captureReadingAnchor, readingAnchorScrollTop, type ConversationReadingAnchor } from "./ConversationReadingAnchor";
 
 export {
   TURN_LIST_COLLAPSE_THRESHOLD,
@@ -54,7 +59,44 @@ type PrependScrollSnapshot = {
   node: HTMLElement;
   scrollHeight: number;
   scrollTop: number;
+  anchor?: ConversationReadingAnchor;
 };
+
+type HistoryAnchorProps = {
+  turns: Turn[];
+  active: boolean;
+  loaderRef: RefObject<HTMLButtonElement | null>;
+  children: ReactNode;
+};
+
+// Read the outgoing DOM immediately before React mutates it, not when the
+// request starts: the reader may keep scrolling while history loads.
+class HistoryAnchor extends Component<HistoryAnchorProps> {
+  getSnapshotBeforeUpdate(previous: HistoryAnchorProps): PrependScrollSnapshot | null {
+    const first = previous.turns[0]?.id;
+    if (!previous.active || !this.props.active || !first ||
+      this.props.turns[0]?.id === first || !this.props.turns.some(turn => turn.id === first)) return null;
+    const loader = this.props.loaderRef.current;
+    const node = loader ? turnListScrollContainer(loader) : null;
+    if (!node) return null;
+    return { node, scrollHeight: node.scrollHeight, scrollTop: node.scrollTop, anchor: captureReadingAnchor(node) };
+  }
+
+  componentDidUpdate(_previous: HistoryAnchorProps, _state: unknown, snapshot: PrependScrollSnapshot | null): void {
+    if (!snapshot) return;
+    const { node, anchor } = snapshot;
+    if (anchor) {
+      const top = readingAnchorScrollTop(node, anchor);
+      // Native anchoring may already have compensated. Write only the residual;
+      // unrelated output below the anchor never contributes to the adjustment.
+      if (top !== undefined && Math.abs(top - node.scrollTop) > 0.5) node.scrollTop = top;
+    } else if (Math.abs(node.scrollTop - snapshot.scrollTop) <= 1) {
+      node.scrollTop += Math.max(0, node.scrollHeight - snapshot.scrollHeight);
+    }
+  }
+
+  render(): ReactNode { return this.props.children; }
+}
 
 function initialTurnWindowCount(turnCount: number): number {
   if (turnCount <= TURN_LIST_COLLAPSE_THRESHOLD) {
@@ -92,14 +134,39 @@ export function ConversationTurnList({
   autoLoadEarlier = true,
 }: ConversationTurnListProps): JSX.Element {
   const { t, formatNumber } = useI18n();
+  const renderActive = useConversationRenderActive();
   const [expandedTurnIDs, setExpandedTurnIDs] = useState<Set<string>>(
     () => new Set(),
   );
   const [turnWindow, setTurnWindow] = useState<TurnWindowState>(() =>
     initialTurnWindowState(threadID, turns.length),
   );
+  const tailID = turns.at(-1)?.id;
+  const [previousTail, setPreviousTail] = useState({ threadID, id: tailID });
+  if (previousTail.threadID !== threadID || previousTail.id !== tailID) {
+    setPreviousTail({ threadID, id: tailID });
+    const previousIndex = previousTail.threadID === threadID
+      ? turns.findIndex(turn => turn.id === previousTail.id) : -1;
+    if (previousIndex >= 0 && previousIndex < turns.length - 1) {
+      // Appending output must not evict mounted history or collapse a reply
+      // above the reader. Cold mounts and explicit history loads remain bounded;
+      // retain already revealed content for this mounted conversation.
+      const previousCount = previousIndex + 1;
+      const added = turns.length - previousCount;
+      setTurnWindow(current => ({
+        ...current,
+        visibleCount: Math.max(current.visibleCount, initialTurnWindowCount(previousCount)) + added,
+      }));
+      const firstFull = previousCount <= TURN_LIST_COLLAPSE_THRESHOLD
+        ? 0 : Math.max(0, previousCount - TURN_LIST_RECENT_FULL_TURNS);
+      const nextFull = Math.max(0, turns.length - TURN_LIST_RECENT_FULL_TURNS);
+      setExpandedTurnIDs(current => new Set([
+        ...current,
+        ...turns.slice(firstFull, Math.min(nextFull, previousCount)).map(turn => turn.id),
+      ]));
+    }
+  }
   const historyLoaderRef = useRef<HTMLButtonElement | null>(null);
-  const prependScrollSnapshotRef = useRef<PrependScrollSnapshot | null>(null);
   const forcedFull = useMemo(
     () => new Set(forcedFullTurnIDs ?? []),
     [forcedFullTurnIDs],
@@ -144,16 +211,6 @@ export function ConversationTurnList({
     setTurnWindow(initialTurnWindowState(threadID, turns.length));
   }, [threadID, turnWindow.threadID, turns.length]);
 
-  useLayoutEffect(() => {
-    const snapshot = prependScrollSnapshotRef.current;
-    if (!snapshot) {
-      return;
-    }
-    prependScrollSnapshotRef.current = null;
-    const addedHeight = snapshot.node.scrollHeight - snapshot.scrollHeight;
-    snapshot.node.scrollTop = snapshot.scrollTop + Math.max(0, addedHeight);
-  }, [visibleStartIndex, turns.length]);
-
   useEffect(() => {
     setExpandedTurnIDs((current) => {
       if (current.size === 0) {
@@ -193,7 +250,7 @@ export function ConversationTurnList({
   }, []);
 
   const loadEarlierTurns = useCallback(
-    (preserveScrollPosition = true) => {
+    () => {
       if (!hasEarlierTurns) {
         return;
       }
@@ -201,23 +258,11 @@ export function ConversationTurnList({
         0,
         visibleStartIndex - TURN_LIST_PREPEND_BATCH_TURNS,
       );
-      if (preserveScrollPosition) {
-        const loader = historyLoaderRef.current;
-        const node = loader ? turnListScrollContainer(loader) : null;
-        if (node) {
-          prependScrollSnapshotRef.current = {
-            node,
-            scrollHeight: node.scrollHeight,
-            scrollTop: node.scrollTop,
-          };
-        }
-      }
       if (!hasLocalEarlier && historyCursor && window.wuu.loadEarlierThreadHistory) {
         if (loadingRemote.current) return;
         loadingRemote.current = true; setRemoteBusy(true); setRemoteError("");
         setTurnWindow({ threadID, visibleCount: turns.length + 20, coldWindowed: true });
         void window.wuu.loadEarlierThreadHistory(threadID, historyCursor).catch(error => {
-          prependScrollSnapshotRef.current = null;
           setRemoteError(error instanceof Error ? error.message : String(error));
         }).finally(() => { loadingRemote.current = false; setRemoteBusy(false); });
         return;
@@ -246,7 +291,6 @@ export function ConversationTurnList({
       if (turnIndex < 0 || turnIndex >= visibleStartIndex) {
         return;
       }
-      prependScrollSnapshotRef.current = null;
       setTurnWindow({
         threadID,
         visibleCount: turns.length - turnIndex,
@@ -270,21 +314,29 @@ export function ConversationTurnList({
       return;
     }
     const loadIfNearTop = (): void => {
+      // Reading scrollTop on every glide frame forces a layout. Preload still
+      // runs once the glide settles.
+      if (submitGlideActive()) return;
       if (node.scrollTop <= TURN_LIST_PRELOAD_SCROLL_TOP_PX) {
-        loadEarlierTurns(true);
+        loadEarlierTurns();
       }
     };
+    const unsubscribeGlide = subscribeSubmitGlide(loadIfNearTop);
     node.addEventListener("scroll", loadIfNearTop, { passive: true });
-    return () => node.removeEventListener("scroll", loadIfNearTop);
+    return () => {
+      unsubscribeGlide();
+      node.removeEventListener("scroll", loadIfNearTop);
+    };
   }, [autoLoadEarlier, hasEarlierTurns, loadEarlierTurns, remoteBusy]);
 
   return (
-    <>
+    <ImagePreviewGallery key={threadID}>
+    <HistoryAnchor turns={visibleTurns} active={renderActive} loaderRef={historyLoaderRef}>
       {hasEarlierTurns ? (
         <button
           disabled={remoteBusy}
           className="conversation-turn-history-loader"
-          onClick={() => loadEarlierTurns(true)}
+          onClick={() => loadEarlierTurns()}
           ref={historyLoaderRef}
           type="button"
         >
@@ -318,7 +370,8 @@ export function ConversationTurnList({
         );
       })}
       {renderAfterMissingTurn}
-    </>
+    </HistoryAnchor>
+    </ImagePreviewGallery>
   );
 }
 

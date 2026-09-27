@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/contextbudget"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -25,19 +26,49 @@ import (
 // provider text and preserves rich media and structured metadata intact.
 
 const (
-	// defaultProjectionTokenBudget is the per-result estimated-token target
-	// above which an eligible result is projected. It matches the shell/grep
-	// tool caps' order of magnitude while cutting the long tail: on the local
-	// corpus a 2,048-token budget touched ~13% of eligible results yet removed
-	// ~24% of their tokens. It is an experiment starting point, not a proven
-	// optimum, and is deliberately shared across tools to reduce variables.
+	// defaultProjectionTokenBudget bounds list-shaped results (glob, grep,
+	// list_files, thread_get) and the generic settlement of any other text
+	// result. Those envelopes already paginate, so a small page costs little.
 	defaultProjectionTokenBudget = 2048
+
+	// readFileProjectionTokenBudget is the read_file page size. Paging a file
+	// the model needs anyway multiplies model round trips: every extra page
+	// re-reads the whole history and adds a decision. The budget therefore sits
+	// where accidental reads begin (roughly a 32 KiB source file), not at the
+	// size of a typical file; callers still narrow deliberate reads with
+	// offset/limit.
+	readFileProjectionTokenBudget = 8192
+
+	// commandProjectionTokenBudget bounds the rendered bash and process views.
+	// Producers already bound their output (maxShellExcerptBytes per stream, a
+	// 32 KiB default process read), so this only trims dense output such as
+	// CJK logs that byte limits underestimate.
+	commandProjectionTokenBudget = 8192
 
 	// projectorVersion is recorded in diagnostics so telemetry can attribute a
 	// projected result to the exact projector revision that produced it. Bump
 	// on any change that alters projected bytes for the same input.
-	projectorVersion = "3"
+	projectorVersion = "8"
 )
+
+// commandViewRenderers render the plain-text model view of command tools.
+var commandViewRenderers = map[string]func(rawText string, budgetTokens int) (string, projectionOmission, bool){
+	"bash":    renderBashModelView,
+	"process": renderProcessModelView,
+}
+
+// projectionTokenBudget returns the per-result budget for a tool; tools without
+// a dedicated budget share the default.
+func projectionTokenBudget(toolName string) int {
+	switch toolName {
+	case "read_file":
+		return readFileProjectionTokenBudget
+	case "bash", "process":
+		return commandProjectionTokenBudget
+	default:
+		return defaultProjectionTokenBudget
+	}
+}
 
 // projectionMode selects how the stable projection participates in a run.
 //
@@ -89,9 +120,12 @@ func resolveProjectionMode(configured string) projectionMode {
 // and coordination (load_skill/...) results. Never switch this to a
 // prefix/substring match: "mcp_x_bash" must not match "bash".
 var builtInProjectionAllowlist = map[string]bool{
+	"glob":       true,
+	"grep":       true,
 	"read_file":  true,
 	"list_files": true,
 	"bash":       true,
+	"process":    true,
 	"thread_get": true,
 }
 
@@ -112,6 +146,7 @@ const (
 	reasonNoProjector projectionReason = "no_projector" // eligible + over budget but no projector registered
 	reasonProjected   projectionReason = "projected"    // tool-specific projection applied
 	reasonFailOpen    projectionReason = "fail_open"    // projector/artifact failed; full result preserved
+	reasonRendered    projectionReason = "rendered"     // plain-text model view rendered from the envelope
 )
 
 // ProjectionDiagnostics captures non-content facts about one projection
@@ -183,6 +218,36 @@ func estimateResultTokens(text string) int {
 	return contextbudget.EstimateTokens(text)
 }
 
+// FinalizeToolResult covers every executor path, including extensions and
+// normalized execution errors, before the invocation ledger is settled. Built-in
+// execution also uses this boundary for direct callers and telemetry. A settled
+// result is never paged again or resized to make room for sibling results.
+func (t *Toolkit) FinalizeToolResult(call providers.ToolCall, result toolresult.Result) toolresult.Result {
+	settled, _, _, _ := t.finalizeToolResult(call, result)
+	return settled
+}
+
+func (t *Toolkit) finalizeToolResult(call providers.ToolCall, result toolresult.Result) (toolresult.Result, string, bool, *ProjectionDiagnostics) {
+	if result.ModelText != nil {
+		return result, "", false, nil
+	}
+	var diagnostic *ProjectionDiagnostics
+	mode := t.env.toolResultProjectionMode()
+	budget := projectionTokenBudget(call.Name)
+	if result.IsTextOnly() && mode != projectionModeOff && builtInProjectionAllowlist[call.Name] {
+		stable, diag := finalizeBuiltInToolResult(t.env.SessionDir, call.Name, call.ID, result, budget)
+		diagnostic = &diag
+		if mode == projectionModeActive && diag.Applied {
+			// ResultBudgeted drives truncation warnings and recovery context. A
+			// rendered view omits evidence only when it had to drop lines.
+			budgeted := diag.Reason == reasonProjected || diag.OmittedLines > 0
+			return stable, diag.ArtifactRef, budgeted, diagnostic
+		}
+	}
+	settled, ref, paged := finalizeGenericToolResult(t.env.SessionDir, call.ID, result, budget)
+	return settled, ref, paged, diagnostic
+}
+
 // projectionHash returns a stable content hash of projected text so telemetry
 // can verify a projected result never changes across requests in an epoch.
 func projectionHash(text string) string {
@@ -216,10 +281,10 @@ func ensureProjectionArtifact(sessionDir, callID, rawText, existingRef string) (
 // is used verbatim for both the history Content and the rich ToolResult, so the
 // projection is the single source of truth downstream.
 //
-// It is fail-safe by construction: a non-eligible tool, an under-budget result,
-// a missing projector, a declining projector, or an unrecoverable artifact all
-// return the input result unchanged. Only a successful projection with a
-// recoverable artifact replaces the result.
+// The bash view needs no separate artifact because its envelope carries the
+// full log reference. Evidence-dropping projections require a recoverable
+// artifact; ineligible or already settled results and failed projections keep
+// their input unchanged.
 func finalizeBuiltInToolResult(sessionDir, toolName, callID string, raw toolresult.Result, budgetTokens int) (toolresult.Result, ProjectionDiagnostics) {
 	if budgetTokens <= 0 {
 		budgetTokens = defaultProjectionTokenBudget
@@ -238,11 +303,30 @@ func finalizeBuiltInToolResult(sessionDir, toolName, callID string, raw toolresu
 	diag.ProjectedTokens = diag.OriginalTokens
 	diag.ProjectionHash = diag.OriginalHash
 
-	if !builtInProjectionAllowlist[toolName] || !raw.IsTextOnly() {
+	if raw.ModelText != nil || !builtInProjectionAllowlist[toolName] || !raw.IsTextOnly() {
 		diag.Reason = reasonNotEligible
 		return raw, diag
 	}
 	diag.Eligible = true
+
+	// Command tools render a plain-text view instead of paging their JSON
+	// envelope. The producers already bound their output and name how to
+	// recover the rest (the full log, or process reads by offset), so no
+	// separate artifact is needed.
+	if render := commandViewRenderers[toolName]; render != nil {
+		if view, om, ok := render(rawText, budgetTokens); ok {
+			stable := settleModelText(raw, view)
+			diag.Applied = true
+			diag.Reason = reasonRendered
+			diag.ProjectedBytes = len(view)
+			diag.ProjectedTokens = estimateResultTokens(view)
+			diag.ProjectionHash = projectionHash(view)
+			diag.ArtifactRef = extractBashFullLogRef(rawText)
+			diag.ArtifactReused = diag.ArtifactRef != ""
+			diag.OmittedLines = om.Lines
+			return stable, diag
+		}
+	}
 
 	if diag.OriginalTokens <= budgetTokens && !builtInAlwaysProject[toolName] {
 		diag.Reason = reasonUnderBudget
@@ -255,9 +339,9 @@ func finalizeBuiltInToolResult(sessionDir, toolName, callID string, raw toolresu
 		return raw, diag
 	}
 
-	// Guarantee recoverability before dropping any evidence. bash carries its
-	// own full_log_ref in the envelope; other tools persist the raw text once.
-	ref, reused, artifactOK := ensureProjectionArtifact(sessionDir, callID, rawText, extractProjectionArtifactRef(toolName, rawText))
+	// Guarantee recoverability before dropping any evidence: persist the raw
+	// text once so the projection can point at it.
+	ref, reused, artifactOK := ensureProjectionArtifact(sessionDir, callID, rawText, "")
 	if !artifactOK {
 		diag.Reason = reasonFailOpen
 		diag.ArtifactFailed = true
@@ -273,8 +357,7 @@ func finalizeBuiltInToolResult(sessionDir, toolName, callID string, raw toolresu
 		return raw, diag
 	}
 
-	stable := toolresult.FromText(projected)
-	stable.IsError = raw.IsError
+	stable := settleModelText(raw, projected)
 
 	diag.Applied = true
 	diag.Reason = reasonProjected
@@ -289,18 +372,3 @@ func finalizeBuiltInToolResult(sessionDir, toolName, callID string, raw toolresu
 	diag.OmittedBytes = om.Bytes
 	return stable, diag
 }
-
-// extractProjectionArtifactRef returns a pre-existing recoverable reference
-// embedded in a tool's own envelope (currently only bash's full_log_ref) so the
-// finalizer reuses it instead of persisting a duplicate copy. Populated per
-// tool in Phase 2; returns "" when the tool has no embedded reference.
-func extractProjectionArtifactRef(toolName, rawText string) string {
-	if fn := projectionArtifactExtractors[toolName]; fn != nil {
-		return fn(rawText)
-	}
-	return ""
-}
-
-// projectionArtifactExtractors maps a tool name to a function that pulls a
-// recoverable reference out of its raw envelope. Populated in Phase 2.
-var projectionArtifactExtractors = map[string]func(rawText string) string{}

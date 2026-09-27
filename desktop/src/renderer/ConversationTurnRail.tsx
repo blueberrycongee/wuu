@@ -17,6 +17,8 @@ import {
   createWindowResizeSettleScheduler,
   isWindowResizing,
 } from "./WindowResizeState";
+import { atLatestScrollView, submitGlideActive, subscribeSubmitGlide } from "./AutoFollowScroll";
+import { syncConversationRenderWindow } from "./ConversationRenderWindow";
 import { useI18n } from "./i18n";
 
 // Keep vertical capacity calculations aligned with the CSS bar height and gap.
@@ -277,6 +279,9 @@ export function ConversationTurnRail({
     > | undefined;
     const updateViewportTurn = () => {
       frameID = undefined;
+      // The send glide scrolls every frame. Measuring every turn then costs
+      // more than the motion; the settle event catches the landed turn.
+      if (submitGlideActive()) return;
       if (isWindowResizing()) {
         resizeSettleUpdate?.schedule();
         return;
@@ -287,6 +292,7 @@ export function ConversationTurnRail({
       );
     };
     const scheduleUpdate = () => {
+      if (submitGlideActive()) return;
       if (isWindowResizing()) {
         resizeSettleUpdate?.schedule();
         return;
@@ -298,6 +304,7 @@ export function ConversationTurnRail({
     };
 
     resizeSettleUpdate = createWindowResizeSettleScheduler(scheduleUpdate);
+    const unsubscribeGlide = subscribeSubmitGlide(scheduleUpdate);
     scheduleUpdate();
     scrollNode.addEventListener("scroll", scheduleUpdate, { passive: true });
     window.addEventListener("resize", scheduleUpdate);
@@ -307,6 +314,7 @@ export function ConversationTurnRail({
         window.cancelAnimationFrame(frameID);
       }
       resizeSettleUpdate?.cancel();
+      unsubscribeGlide();
       scrollNode.removeEventListener("scroll", scheduleUpdate);
       window.removeEventListener("resize", scheduleUpdate);
     };
@@ -401,6 +409,7 @@ export function ConversationTurnRail({
         onWheelScrollAway?.();
       }
       scrollNode.scrollTop = previousScrollTop + deltaY;
+      syncConversationRenderWindow(scrollNode);
       if (scrollNode.scrollTop !== previousScrollTop) {
         event.preventDefault();
       }
@@ -483,6 +492,7 @@ export function ConversationTurnRail({
           Math.max(0, (event.clientY - railRect.top) / railHeight),
         );
         scrollNode.scrollTop = ratio * maxScrollTop;
+        syncConversationRenderWindow(scrollNode);
         // The scroll container just jumped; refresh the highlight so it
         // lines up with the bar now under the cursor (rail content may
         // have shifted under a stationary mouse).
@@ -510,6 +520,7 @@ export function ConversationTurnRail({
       );
       if (scrollNode.scrollTop !== nextScrollTop) {
         scrollNode.scrollTop = nextScrollTop;
+        syncConversationRenderWindow(scrollNode);
         drag.moved = true;
         event.preventDefault();
       }
@@ -646,11 +657,7 @@ function visibleTurnIDForScrollNode(
   if (turns.length === 0) {
     return undefined;
   }
-  const distanceFromBottom = Math.max(
-    0,
-    scrollNode.scrollHeight - scrollNode.scrollTop - scrollNode.clientHeight,
-  );
-  if (distanceFromBottom <= 4) {
+  if (atLatestScrollView(scrollNode, 4)) {
     return turns[turns.length - 1]?.id;
   }
 

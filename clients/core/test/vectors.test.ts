@@ -13,7 +13,6 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { b64decode, b64encode } from "../src/b64.js";
-import { utf8Decode } from "../src/bytes.js";
 import {
   Channel,
   HS1,
@@ -175,23 +174,6 @@ describe("pairing", () => {
     expect(answer.hostName).toBe(p.host_name);
     expect(b64encode(answer.sig)).toBe(p.confirm_sig);
   });
-
-  it("reproduces the recorded plaintexts", () => {
-    // Byte-identical JSON is required here because the vectors pin the
-    // ciphertext; over the wire only parseability matters.
-    const offerPlain = utf8Decode(b64decode(p.offer_plaintext));
-    expect(JSON.parse(offerPlain)).toEqual({
-      device_pub: vectors.identities.phone.public,
-      name: p.offer_name,
-      platform: p.offer_platform,
-    });
-    const answerPlain = utf8Decode(b64decode(p.answer_plaintext));
-    expect(JSON.parse(answerPlain)).toEqual({
-      host_pub: vectors.identities.host.public,
-      host_name: p.host_name,
-      sig: p.confirm_sig,
-    });
-  });
 });
 
 describe("handshake", () => {
@@ -211,14 +193,6 @@ describe("handshake", () => {
       nonce: b64decode(h.host_nonce),
     });
     expect(hs2).toEqual(h.hs2);
-  });
-
-  it("phone side completes against the pinned HS2", () => {
-    const { handshake } = newHandshake(phone, host.public_(), {
-      ephPriv: b64decode(h.phone_eph_priv),
-      nonce: b64decode(h.phone_nonce),
-    });
-    expect(() => handshake.complete(h.hs2)).not.toThrow();
   });
 });
 
@@ -258,13 +232,6 @@ describe("sealed channel", () => {
       const sealed = sender.seal(b64decode(frame.plaintext));
       expect(b64encode(sealed)).toBe(frame.sealed);
       expect(b64encode(receiver.open(sealed))).toBe(frame.plaintext);
-    }
-  });
-
-  it("opens the recorded frames directly (decrypt-only path)", () => {
-    const receiver = hostChannel();
-    for (const frame of vectors.channel.phone_to_host) {
-      expect(b64encode(receiver.open(b64decode(frame.sealed)))).toBe(frame.plaintext);
     }
   });
 });

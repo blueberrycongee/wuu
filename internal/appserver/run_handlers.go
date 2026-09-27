@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -70,11 +71,11 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 	if validator != nil {
 		prompt = validator.InitialPrompt(prompt)
 	}
-	userMsg, err := userMessageFromPrompt(prompt, images, files)
+	userMsg, err := s.userMessageWithInputImages(params.ThreadID, prompt, images, files, params.Images)
 	if err != nil {
 		return s.writeRunError(req.ID, "invalid_params", err)
 	}
-	if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
+	if err := s.takeSessionControlForInput(params.ThreadID); err != nil {
 		return s.writeRunError(req.ID, "internal_error", err)
 	}
 
@@ -82,6 +83,10 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 	params.Request.ImageCount = len(images)
 	params.Request.FileCount = len(files)
 	params.Request.StructuredOutput = len(params.OutputSchema) > 0
+	resumeBrowser, err := s.rt.ActivityRegistry.PrepareResume(params.ThreadID, activity.KindBrowser)
+	if err != nil {
+		return s.writeRunError(req.ID, "internal_error", err)
+	}
 	workspace, initialRuntime, ephemeral := s.executionFactsForThread(th, nil, turnRuntimeSnapshot{}.withPermissions(permissions))
 	run, err := s.runStore.Create(ctx, execution.CreateParams{
 		RuntimeID: s.rt.InferenceJournalRuntime.RuntimeID(),
@@ -160,6 +165,7 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 		_, _ = s.failAndDetachExecutionRun(run.ID, execution.StatusInterrupted, "notification_failed", "protocol", err)
 		return errors.Join(err, persistErr)
 	}
+	resumeBrowser()
 	launch.Commit()
 	return nil
 }
@@ -186,7 +192,7 @@ func (s *Server) handleRunInterrupt(ctx context.Context, req Request) error {
 	if !view.Attached {
 		return s.writeRunError(req.ID, "run_not_attached", fmt.Errorf("run %q is not attached to this app-server", runID))
 	}
-	if err := s.takeHarnessControl(view.Run.ThreadID, session.ControlPaused); err != nil {
+	if err := s.takeSessionControl(view.Run.ThreadID, session.ControlPaused); err != nil {
 		return s.writeRunError(req.ID, "internal_error", err)
 	}
 	interruptStatus := execution.StatusInterrupted

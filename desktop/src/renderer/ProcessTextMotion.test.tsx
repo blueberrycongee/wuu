@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AnimatedProcessText } from "./ProcessTextMotion";
+import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
@@ -61,6 +62,32 @@ describe("AnimatedProcessText", () => {
       true,
     );
     expect(exit?.textContent).toBe("正在思考");
+  });
+
+  it("does not mark catch-up text as an entering transition", () => {
+    if (container) unmount();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root!.render(
+        <ConversationRenderActivityProvider active={false}>
+          <AnimatedProcessText text="正在思考" />
+        </ConversationRenderActivityProvider>,
+      );
+    });
+    act(() => {
+      root!.render(
+        <ConversationRenderActivityProvider active>
+          <AnimatedProcessText text="思考过程" />
+        </ConversationRenderActivityProvider>,
+      );
+    });
+
+    const current = container.querySelector(".process-text-motion-current");
+    expect(current?.textContent).toBe("思考过程");
+    expect(current?.classList.contains("process-text-motion-enter")).toBe(false);
+    expect(container.querySelector(".process-text-motion-exit")).toBeNull();
   });
 
   it("tweens the container width from the outgoing text to the incoming text", () => {

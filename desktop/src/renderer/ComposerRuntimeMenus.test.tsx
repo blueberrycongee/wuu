@@ -43,6 +43,8 @@ describe("RuntimePicker", () => {
       | "engineLocked"
       | "engineModel"
       | "engineEffort"
+      | "engineSpeed"
+      | "onSelectSpeed"
       | "onSelectEngine"
       | "onSelectEngineModel"
       | "onSelectEngineEffort"
@@ -91,6 +93,53 @@ describe("RuntimePicker", () => {
     };
   }
 
+  it("toggles speed independently on a bound engine conversation", async () => {
+    const speed = vi.fn().mockResolvedValue(true);
+    const effort = vi.fn();
+    const model = vi.fn();
+    renderPicker("model", runtimeWithEffort(), vi.fn(), effort, model, createRef(), {
+      activeEngine: "codex", engineLocked: true, engineModel: "gpt-6-astra", engineEffort: "high", engineSpeed: "standard",
+      onSelectSpeed: speed,
+      engines: [{ id: "codex", enabled: true, binary_ok: true, models: [{ id: "gpt-6-astra", fast_mode: true, supported_efforts: ["low", "high"] }] }],
+    });
+    const button = document.querySelector<HTMLButtonElement>('button[aria-label="Fast mode"]');
+    expect(button?.disabled).toBe(false);
+    await act(async () => button?.click());
+    expect(speed).toHaveBeenCalledWith("fast");
+    expect(effort).not.toHaveBeenCalled();
+    expect(model).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { speed: "", defaultSpeed: "fast", enabled: true, next: "standard" },
+    { speed: "", defaultSpeed: "standard", enabled: false, next: "fast" },
+    { speed: "standard", defaultSpeed: "fast", enabled: false, next: "fast" },
+  ])("toggles the effective engine speed for $speed / $defaultSpeed", async ({ speed, defaultSpeed, enabled, next }) => {
+    const onSelectSpeed = vi.fn().mockResolvedValue(true);
+    renderPicker("model", runtimeWithEffort(), vi.fn(), vi.fn(), vi.fn(), createRef(), {
+      activeEngine: "codex", engineLocked: true, engineModel: "gpt-6-astra", engineSpeed: speed,
+      onSelectSpeed,
+      engines: [{ id: "codex", enabled: true, binary_ok: true, models: [{ id: "gpt-6-astra", fast_mode: true, default_speed: defaultSpeed }] }],
+    });
+    const button = document.querySelector<HTMLButtonElement>('button[aria-label="Fast mode"]');
+    expect(button?.getAttribute("aria-pressed")).toBe(String(enabled));
+    await act(async () => button?.click());
+    expect(onSelectSpeed).toHaveBeenCalledWith(next);
+    await act(async () => document.querySelector<HTMLButtonElement>(".runtime-panel-speed-reset")?.click());
+    expect(onSelectSpeed).toHaveBeenLastCalledWith("");
+    expect(button?.getAttribute("aria-pressed")).toBe(String(defaultSpeed === "fast"));
+  });
+
+  it("restores the speed toggle after a rejected update", async () => {
+    const initialized = runtimeWithEffort();
+    initialized.speed = "standard";
+    initialized.providers![0].models![0].fast_mode = true;
+    renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), createRef(), { onSelectSpeed: vi.fn().mockResolvedValue(false) });
+    const button = document.querySelector<HTMLButtonElement>('button[aria-label="Fast mode"]');
+    await act(async () => button?.click());
+    expect(button?.getAttribute("aria-pressed")).toBe("false");
+  });
+
   it("opens the model panel from the trigger with a single click", () => {
     const onToggleMenu = vi.fn();
     renderPicker(null, runtimeWithEffort(), onToggleMenu);
@@ -99,10 +148,23 @@ describe("RuntimePicker", () => {
     expect(trigger?.getAttribute("aria-expanded")).toBe("false");
     expect(trigger?.textContent).toContain("Claude Sonnet");
     expect(trigger?.textContent).toContain("Medium");
+    expect(trigger?.textContent).not.toContain("Wuu");
+    expect(trigger?.getAttribute("aria-label")).toContain("Wuu");
 
     act(() => trigger?.click());
 
     expect(onToggleMenu).toHaveBeenCalledWith("model");
+  });
+
+  it("names no level for a model without levels", () => {
+    const initialized = runtimeWithEffort();
+    delete initialized.providers![0].models![0].supported_efforts;
+    initialized.variant = "";
+    renderPicker(null, initialized);
+
+    const trigger = document.querySelector<HTMLButtonElement>(".codex-runtime-trigger");
+    expect(trigger?.querySelector(".codex-runtime-effort")).toBeNull();
+    expect(trigger?.getAttribute("aria-label")).not.toContain("Default");
   });
 
   it("shows the level stored in effort when the variant column is empty", () => {
@@ -158,32 +220,72 @@ describe("RuntimePicker", () => {
     expect(modelItems[0]?.getAttribute("aria-checked")).toBe("true");
   });
 
-  it("fits the model page to the visible rows instead of stretching them", () => {
+  it("sizes each page to the rows it shows", () => {
+    const rows = (): string =>
+      document.querySelector<HTMLElement>(".codex-model-menu")?.style.getPropertyValue("--runtime-rows") ?? "";
     const initialized = runtimeWithEffort();
     initialized.providers![0].models = [
       { id: "grok-4.6", display_name: "Grok 4.6", supported_efforts: ["low", "medium", "high"] },
       { id: "grok-4.5", display_name: "Grok 4.5", supported_efforts: ["low", "medium", "high"] }
     ];
-    renderPicker("model", initialized);
-    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")?.click());
-    const two = Number.parseInt(
-      document.querySelector<HTMLElement>(".codex-model-menu")?.style.getPropertyValue("--runtime-models-height") ?? "",
-      10
-    );
+    initialized.model = "grok-4.6";
+    initialized.providers![0].model = "grok-4.6";
+    renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), createRef<HTMLDivElement>(), {
+      engines: Array.from({ length: 7 }, (_, index) => ({
+        id: index === 0 ? "wuu" : `engine-${index}`,
+        enabled: true,
+        binary_ok: true
+      })),
+      onSelectEngine: vi.fn()
+    });
 
-    initialized.providers![0].models = [
-      { id: "grok-4.6", display_name: "Grok 4.6", supported_efforts: ["low", "medium", "high"] }
-    ];
-    renderPicker("model", initialized);
-    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")?.click());
-    const one = Number.parseInt(
-      document.querySelector<HTMLElement>(".codex-model-menu")?.style.getPropertyValue("--runtime-models-height") ?? "",
-      10
-    );
+    // The shell height morphs between pages instead of following its
+    // content, so a count that misses a row clips the last one.
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-context button")?.click());
+    expect(rows()).toBe("7");
 
-    expect(two).toBeGreaterThan(one);
-    expect(two - one).toBe(37);
-    expect(two).toBeLessThan(320);
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-back")?.click());
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")?.click());
+    expect(rows()).toBe("2");
+
+    const search = document.querySelector<HTMLInputElement>(".select-menu-search input")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "4.6");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(rows()).toBe("1");
+  });
+
+  it("steps back with Escape before closing the panel", () => {
+    const onToggleMenu = vi.fn();
+    renderPicker("model", runtimeWithEffort(), onToggleMenu);
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")?.click());
+    const search = document.querySelector<HTMLInputElement>(".select-menu-search input")!;
+
+    act(() => { search.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    expect(document.querySelector(".runtime-panel.is-summary")).not.toBeNull();
+    expect(onToggleMenu).not.toHaveBeenCalled();
+
+    const model = document.querySelector<HTMLButtonElement>(".runtime-panel-model")!;
+    act(() => { model.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    expect(onToggleMenu).toHaveBeenCalledWith("model");
+  });
+
+  it("picks the first matching model when Enter is pressed in search", () => {
+    const onSelectModel = vi.fn();
+    const initialized = runtimeWithEffort();
+    initialized.providers![0].models!.push({ id: "claude-opus", display_name: "Claude Opus", supported_efforts: ["low", "high"] });
+    renderPicker("model", initialized, vi.fn(), vi.fn(), onSelectModel);
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")?.click());
+    const search = document.querySelector<HTMLInputElement>(".select-menu-search input")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "opus");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => { search.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); });
+
+    expect(onSelectModel).toHaveBeenCalledWith("work", "claude-opus", "");
+    expect(document.querySelector(".runtime-panel.is-summary")).not.toBeNull();
   });
 
   it("presents engines as the parent navigation for the selected engine's models", () => {
@@ -233,9 +335,72 @@ describe("RuntimePicker", () => {
       "Wuu",
       "Codex"
     ]);
+    expect(engineChoices.every((choice) => choice.querySelector("svg.engine-icon"))).toBe(true);
     expect(engineChoices[1]?.getAttribute("aria-checked")).toBe("true");
     act(() => engineChoices[0]?.click());
     expect(onSelectEngine).toHaveBeenCalledWith("wuu");
+  });
+
+  it("offers installed protocol engines and retains an unavailable active binding without leaking Wuu models", () => {
+    const onSelectEngine = vi.fn();
+    renderPicker("model", runtimeWithEffort(), vi.fn(), vi.fn(), vi.fn(), createRef(), {
+      activeEngine: "devin",
+      engines: [
+        { id: "devin", display_name: "Devin", enabled: false, binary_ok: false },
+        { id: "hermes", display_name: "Hermes", enabled: true, binary_ok: true },
+        { id: "grok", enabled: false, binary_ok: false },
+      ],
+      onSelectEngine,
+    });
+    expect(document.querySelector('.codex-runtime-menu')!.textContent).not.toContain("Claude Sonnet");
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-context button")!.click());
+    const choices = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'));
+    expect(choices.find((choice) => choice.getAttribute("aria-checked") === "true")!.textContent).toContain("Devin");
+    expect(choices.some((choice) => choice.textContent?.includes("grok"))).toBe(false);
+    act(() => choices.find((choice) => choice.textContent?.includes("Hermes"))!.click());
+    expect(onSelectEngine).toHaveBeenCalledExactlyOnceWith("hermes");
+  });
+
+  it("lists advertised Grok models instead of Agent default", () => {
+    renderPicker("model", runtimeWithEffort(), vi.fn(), vi.fn(), vi.fn(), createRef(), {
+      activeEngine: "grok",
+      engineModel: "grok-4.6",
+      engineEffort: "high",
+      engines: [
+        {
+          id: "grok",
+          display_name: "Grok",
+          enabled: true,
+          binary_ok: true,
+          models: [
+            {
+              id: "grok-4.6",
+              display_name: "Grok 4.6",
+              supported_efforts: ["low", "medium", "high"],
+              is_default: true
+            },
+            {
+              id: "grok-4.5",
+              display_name: "Grok 4.5",
+              supported_efforts: ["low", "medium", "high"]
+            }
+          ]
+        }
+      ],
+      onSelectEngineModel: vi.fn()
+    });
+    const triggerButton = document.querySelector<HTMLButtonElement>(".codex-runtime-trigger");
+    const trigger = triggerButton?.textContent ?? "";
+    expect(trigger).toContain("Grok 4.6");
+    expect(trigger).not.toMatch(/Grok\s·/);
+    expect(trigger).not.toContain("Agent 默认模型");
+    expect(triggerButton?.querySelector("svg.engine-icon")).not.toBeNull();
+    expect(triggerButton?.getAttribute("aria-label")).toContain("Grok");
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")?.click());
+    const items = Array.from(document.querySelectorAll<HTMLButtonElement>(".codex-model-item")).map((item) =>
+      item.querySelector(".codex-model-item-name")?.textContent
+    );
+    expect(items).toEqual(["Grok 4.6", "Grok 4.5"]);
   });
 
   it("keeps every engine visible when the current conversation locks engine switching", () => {
@@ -274,6 +439,17 @@ describe("RuntimePicker", () => {
     expect(permissionModeOption("standard")).toMatchObject({
       label: "Full trust within workspace",
       chipLabel: "Standard",
+    });
+  });
+
+  it("uses advertised ACP permission labels when the engine publishes them", () => {
+    expect(permissionModeOption("unconfined", "devin", [
+      { mode: "standard", id: "ask", label: "Ask" },
+      { mode: "unconfined", id: "bypass", label: "Bypass Permissions" },
+    ])).toMatchObject({
+      label: "Bypass Permissions",
+      chipLabel: "Bypass Permissions",
+      tone: "danger",
     });
   });
 
@@ -373,6 +549,114 @@ describe("RuntimePicker", () => {
     expect(document.querySelector(".runtime-panel-context")?.textContent).toContain("deepseek");
     act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")?.click());
     expect(document.querySelector(".codex-model-item-name")?.textContent).toBe("DeepSeek Chat");
+  });
+
+  it("reuses the model and effort a provider was last used with", () => {
+    writeDraftRuntimeMemory({
+      provider: "deepseek",
+      model: "deepseek-reasoner",
+      effort: "high",
+    });
+    const initialized = runtimeWithEffort();
+    initialized.provider = "tokenhub";
+    initialized.model = "gpt-5.6-sol";
+    initialized.providers = [
+      {
+        name: "deepseek",
+        type: "openai-compatible",
+        model: "deepseek-chat",
+        models: [
+          { id: "deepseek-chat", display_name: "DeepSeek Chat" },
+          {
+            id: "deepseek-reasoner",
+            display_name: "DeepSeek Reasoner",
+            supported_efforts: ["low", "high"],
+            default_effort: "low",
+          },
+        ],
+      },
+      {
+        name: "tokenhub",
+        type: "openai-compatible",
+        model: "gpt-5.6-sol",
+        models: [{ id: "gpt-5.6-sol", display_name: "GPT-5.6 Sol" }],
+      },
+    ];
+    const onSelectModel = vi.fn();
+
+    renderPicker("model", initialized, vi.fn(), vi.fn(), onSelectModel);
+    const providerContext = Array.from(document.querySelectorAll<HTMLButtonElement>(".runtime-panel-context button"))
+      .find((button) => button.textContent?.includes("tokenhub"));
+    act(() => providerContext?.click());
+    // The configured model stays the fallback, but the provider's own last pick
+    // wins so switching back does not reset the model or its effort.
+    const deepseek = Array.from(document.querySelectorAll<HTMLButtonElement>(".runtime-provider-option"))
+      .find((button) => button.textContent?.includes("deepseek"));
+    act(() => deepseek?.click());
+
+    expect(onSelectModel).toHaveBeenCalledWith("deepseek", "deepseek-reasoner", "high");
+  });
+
+  it("falls back to the provider's configured model when the remembered one is gone", () => {
+    writeDraftRuntimeMemory({
+      provider: "deepseek",
+      model: "retired-model",
+      effort: "high",
+    });
+    const initialized = runtimeWithEffort();
+    initialized.provider = "tokenhub";
+    initialized.model = "gpt-5.6-sol";
+    initialized.providers = [
+      {
+        name: "deepseek",
+        type: "openai-compatible",
+        model: "deepseek-chat",
+        models: [{ id: "deepseek-chat", display_name: "DeepSeek Chat" }],
+      },
+      {
+        name: "tokenhub",
+        type: "openai-compatible",
+        model: "gpt-5.6-sol",
+        models: [{ id: "gpt-5.6-sol", display_name: "GPT-5.6 Sol" }],
+      },
+    ];
+    const onSelectModel = vi.fn();
+
+    renderPicker("model", initialized, vi.fn(), vi.fn(), onSelectModel);
+    const providerContext = Array.from(document.querySelectorAll<HTMLButtonElement>(".runtime-panel-context button"))
+      .find((button) => button.textContent?.includes("tokenhub"));
+    act(() => providerContext?.click());
+    const deepseek = Array.from(document.querySelectorAll<HTMLButtonElement>(".runtime-provider-option"))
+      .find((button) => button.textContent?.includes("deepseek"));
+    act(() => deepseek?.click());
+
+    expect(onSelectModel).toHaveBeenCalledWith("deepseek", "deepseek-chat", "");
+  });
+
+  it("places extra high at the rightmost stop even when efforts arrive descending", () => {
+    const initialized = runtimeWithEffort();
+    initialized.provider = "Grok";
+    initialized.model = "grok-4.6";
+    initialized.variant = "xhigh";
+    initialized.providers![0] = {
+      name: "Grok",
+      type: "grok-build",
+      model: "grok-4.6",
+      models: [{
+        id: "grok-4.6",
+        display_name: "Grok 4.6",
+        variants: [{ id: "xhigh" }, { id: "high" }, { id: "medium" }, { id: "low" }],
+        supported_efforts: ["xhigh", "high", "medium", "low"],
+      }],
+    };
+
+    renderPicker("model", initialized);
+
+    const slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
+    expect(slider.max).toBe("4");
+    expect(slider.value).toBe("4");
+    expect(slider.getAttribute("aria-valuetext")).toBe("Extra high");
+    expect(document.querySelector(".runtime-panel-model .runtime-panel-effort-value")?.textContent).toBe("Extra high");
   });
 
   it("selects a discrete effort by dragging the unlabeled slider", () => {

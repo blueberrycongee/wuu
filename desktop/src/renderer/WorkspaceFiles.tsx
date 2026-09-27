@@ -1,8 +1,9 @@
+import { useActiveContextMenu } from "./ActiveContextMenu";
 import { isTouchWebShell } from "./ComposerFocus";
 import { hostSupports } from "./HostCapabilities";
 import { preparePresortedFileTreeInput } from "@pierre/trees";
 import { FileTree, useFileTree } from "@pierre/trees/react";
-import { AlertCircle, FileText, FolderOpen, FolderX } from "lucide-react";
+import { AlertCircle, FileText, FolderOpen, FolderX } from "./WuuIcons";
 import { type CSSProperties, Suspense, lazy, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   RuntimeContext,
@@ -16,10 +17,12 @@ import { RichContent } from "./RichContent";
 import { FileSelectionSurface } from "./FileSelectionSurface";
 import type { WorkspaceMonacoViewState } from "./WorkspaceMonacoEditor";
 import { desktopApiErrorMessage } from "./WorkspaceReviewHelpers";
+import { workspacePathToSlash } from "./WorkspacePaths";
 import { translateCurrent, useI18n } from "./i18n";
 import { desktopPlatform } from "./platform";
 import { FilePreviewPresentation } from "./plugins/FilePreviewPresentation";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
+import { VideoPreview } from "./VideoPreview";
 
 // monaco-editor is several MB of JS; a static import here would drag it into
 // the eager startup chunk. Load it only when a code editor actually mounts.
@@ -54,7 +57,9 @@ const WORKSPACE_TREE_CSS = `
     --trees-font-size-override: var(--font-ui);
     --trees-search-font-weight-override: 400;
     --trees-focus-ring-color-override: var(--focus-ring);
-    --trees-item-margin-x-override: 5px;
+    /* Rows and the search field share one outer edge and one content axis:
+       highlight edges meet the field border, icons meet the placeholder. */
+    --trees-item-margin-x-override: 8px;
     --trees-padding-inline-override: 0px;
   }
 
@@ -62,20 +67,21 @@ const WORKSPACE_TREE_CSS = `
     box-sizing: border-box;
     width: 100%;
     margin-inline: 0;
-    padding-inline: 8px;
+    padding-inline: var(--trees-item-margin-x);
   }
 
   [data-file-tree-search-input] {
     min-width: 0;
     margin-inline-end: 40px;
+    padding-inline: calc(var(--trees-item-padding-x) - 1px);
     border: var(--wuu-workspace-file-tree-search-border, 1px solid var(--hairline-strong));
     border-radius: var(--wuu-workspace-file-tree-search-radius, var(--radius-sm));
     background: var(--wuu-workspace-file-tree-search-background, transparent);
     color: var(--wuu-workspace-file-tree-color, var(--ink));
   }
 
-  [data-file-tree-search-input]:focus-visible,
-  [data-file-tree-search-input][data-file-tree-search-input-fake-focus="true"] {
+  :host-context(html[data-focus-modality="pointer"]) [data-file-tree-search-input]:focus-visible,
+  :host-context(html[data-focus-modality="pointer"]) [data-file-tree-search-input][data-file-tree-search-input-fake-focus="true"] {
     outline: none;
   }
 `;
@@ -130,7 +136,7 @@ export function WorkspaceFileTree({
   }, [open, workspaceRoot, locale]);
 
   if (!workspaceRoot) {
-    return <WorkspacePanelEmpty title={t("workspace.files.noProject")} hint={t("workspace.files.noProjectDescription")} />;
+    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} hint={t("workspace.files.noWorkspaceDescription")} />;
   }
 
   if (loading && !directories[""]) {
@@ -355,6 +361,7 @@ function WorkspaceTreeContextMenu({
 }): JSX.Element {
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement | null>(null);
+  useActiveContextMenu(onClose);
   // The menu mounts at the cursor, but until React commits the first
   // paint its own size isn't known — measure on the layout effect that
   // runs just before paint, clamp to viewport so the user never sees
@@ -530,8 +537,8 @@ function normalizeSelectedWorkspaceFilePath(path: string | undefined, workspaceR
   if (!path || !workspaceRoot) {
     return undefined;
   }
-  const normalizedPath = normalizePathSeparators(path).replace(/\/+$/, "");
-  const normalizedRoot = normalizePathSeparators(workspaceRoot).replace(/\/+$/, "");
+  const normalizedPath = workspacePathToSlash(path, workspaceRoot).replace(/\/+$/, "");
+  const normalizedRoot = workspacePathToSlash(workspaceRoot, workspaceRoot).replace(/\/+$/, "");
   const relativePath = normalizedPath.startsWith(`${normalizedRoot}/`)
     ? normalizedPath.slice(normalizedRoot.length + 1)
     : normalizedPath.startsWith("/")
@@ -544,8 +551,7 @@ function normalizeSelectedWorkspaceFilePath(path: string | undefined, workspaceR
 }
 
 function normalizeWorkspaceRelativeFilePath(path: string): string | undefined {
-  const value = normalizePathSeparators(path)
-    .trim()
+  const value = path
     .replace(/^\.\/+/, "")
     .replace(/^\/+/, "")
     .replace(/\/+$/, "");
@@ -553,10 +559,6 @@ function normalizeWorkspaceRelativeFilePath(path: string): string | undefined {
     return undefined;
   }
   return value;
-}
-
-function normalizePathSeparators(path: string): string {
-  return path.trim().replace(/\\/g, "/");
 }
 
 function parentDirectoryPathsForFile(path: string): string[] {
@@ -715,8 +717,8 @@ export function WorkspaceFilePreview({
     return (
       <div className="workspace-main-empty">
         <FolderX size={36} />
-        <strong>{t("workspace.files.noProject")}</strong>
-        {!isTouchWebShell() && <span>{t("workspace.files.previewNoProjectDescription")}</span>}
+        <strong>{t("workspace.files.noWorkspace")}</strong>
+        {!isTouchWebShell() && <span>{t("workspace.files.previewNoWorkspaceDescription")}</span>}
       </div>
     );
   }
@@ -753,7 +755,11 @@ export function WorkspaceFilePreview({
         <span>{selectedWorkspaceFilePath}</span>
       </div>
     ) : file.renderable_url ? (
-      file.renderable_kind === "pdf" ? (
+      file.renderable_kind === "video" ? (
+        <article className="workspace-file-preview readonly">
+          <VideoPreview src={file.renderable_url} title={file.path} active={active} />
+        </article>
+      ) : file.renderable_kind === "pdf" ? (
         <article className="workspace-file-preview readonly">
           <Suspense fallback={<div className="workspace-file-pdf-preview" />}>
             <WorkspacePdfPreview url={file.renderable_url} title={file.path} />

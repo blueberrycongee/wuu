@@ -8,6 +8,8 @@ import {
 } from "./LinkTargets";
 import type { WorkspacePanelView } from "./WorkspacePanels";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
+import type { ArtifactPreviewRequest } from "./ArtifactPreviewContext";
+import { workspacePathToSlash } from "./WorkspacePaths";
 
 /**
  * Content shown in the workspace right panel's tab strip. Built-in tools are
@@ -48,7 +50,38 @@ export type WorkspacePluginViewTab = {
   icon?: ExtensionIconDescriptor;
 };
 
-export type WorkspaceViewTab = WorkspaceToolViewTab | WorkspaceDiffViewTab | WorkspaceFileViewTab | WorkspacePluginViewTab;
+export type WorkspaceArtifactViewTab = ArtifactPreviewRequest & {
+  kind: "artifact";
+  id: string;
+  title: string;
+};
+
+export function workspaceArtifactViewTab(input: ArtifactPreviewRequest): WorkspaceArtifactViewTab {
+  const { artifact, threadID, cwd } = input;
+  // Snapshot identity is separate from the editable workspace file path.
+  const identity = [threadID, cwd, artifact.sha256 ?? artifact.uri ?? artifact.id, artifact.name, artifact.mimeType];
+  return { ...input, kind: "artifact", id: `artifact:${JSON.stringify(identity)}`, title: artifact.name };
+}
+
+// A project's overview beside the conversation.
+export type WorkspaceProjectViewTab = {
+  kind: "project";
+  id: string;
+  projectID: string;
+  title: string;
+};
+
+export function workspaceProjectViewTab(projectID: string, title: string): WorkspaceProjectViewTab {
+  return { kind: "project", id: `project:${projectID}`, projectID, title };
+}
+
+export type WorkspaceViewTab =
+  | WorkspaceToolViewTab
+  | WorkspaceDiffViewTab
+  | WorkspaceFileViewTab
+  | WorkspacePluginViewTab
+  | WorkspaceArtifactViewTab
+  | WorkspaceProjectViewTab;
 
 export type WorkspaceViewTabsState = {
   tabs: WorkspaceViewTab[];
@@ -153,8 +186,8 @@ function workspaceFileTarget(path: string): WorkspaceFileLinkTarget {
 }
 
 export function normalizeWorkspaceFileTabPath(context: RuntimeContext, path: string): string {
-  const normalizedRoot = context.cwd.trim().replace(/\\/g, "/").replace(/\/+$/, "");
-  const normalizedPath = path.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  const normalizedRoot = workspacePathToSlash(context.cwd, context.cwd).replace(/\/+$/, "");
+  const normalizedPath = workspacePathToSlash(path, context.cwd).replace(/\/+$/, "");
   const relativePath = normalizedPath.startsWith(`${normalizedRoot}/`)
     ? normalizedPath.slice(normalizedRoot.length + 1)
     : normalizedPath.replace(/^\/+/, "");
@@ -176,7 +209,12 @@ export function workspaceFileBasename(path: string): string {
  * a new one. Opening the first file replaces the temporary Files browser
  * entry; closing the final file restores that entry.
  */
-export function openViewTab(state: WorkspaceViewTabsState, tab: WorkspaceViewTab): WorkspaceViewTabsState {
+export function openViewTab(
+  state: WorkspaceViewTabsState,
+  tab: WorkspaceViewTab,
+  options: { activate?: boolean } = {},
+): WorkspaceViewTabsState {
+  const activate = options.activate !== false;
   if (tab.kind === "file") {
     const existingFileIndex = state.tabs.findIndex((candidate) => candidate.id === tab.id);
     const tabsWithoutBrowser = state.tabs.filter((candidate) => candidate.kind !== "files");
@@ -184,12 +222,12 @@ export function openViewTab(state: WorkspaceViewTabsState, tab: WorkspaceViewTab
     const tabs = existingFileIndex < 0
       ? [...tabsWithoutBrowser, tab]
       : tabsWithoutBrowser.map((candidate, index) => (index === adjustedFileIndex ? tab : candidate));
-    return focusViewTab({ ...state, tabs }, tab.id);
+    return activate ? focusViewTab({ ...state, tabs }, tab.id) : { ...state, tabs };
   }
   const index = state.tabs.findIndex((candidate) => candidate.id === tab.id);
   const tabs =
     index < 0 ? [...state.tabs, tab] : state.tabs.map((candidate, i) => (i === index ? tab : candidate));
-  return focusViewTab({ ...state, tabs }, tab.id);
+  return activate ? focusViewTab({ ...state, tabs }, tab.id) : { ...state, tabs };
 }
 
 /** Focuses the tab with the given id (or the tool picker, when `id` is undefined). */
@@ -300,7 +338,7 @@ export function useWorkspaceViewTabs(): {
   tabs: WorkspaceViewTab[];
   activeTabID: string | undefined;
   activeFileTabID: string | undefined;
-  openTab: (tab: WorkspaceViewTab) => void;
+  openTab: (tab: WorkspaceViewTab, options?: { activate?: boolean }) => void;
   focusTab: (id: string | undefined) => void;
   closeTab: (id: string) => void;
   closeTabsWhere: (predicate: (tab: WorkspaceViewTab) => boolean) => void;
@@ -308,8 +346,8 @@ export function useWorkspaceViewTabs(): {
 } {
   const [state, setState] = useState<WorkspaceViewTabsState>(initialWorkspaceViewTabsState);
 
-  const openTab = useCallback((tab: WorkspaceViewTab) => {
-    setState((current) => openViewTab(current, tab));
+  const openTab = useCallback((tab: WorkspaceViewTab, options?: { activate?: boolean }) => {
+    setState((current) => openViewTab(current, tab, options));
   }, []);
   const focusTab = useCallback((id: string | undefined) => {
     setState((current) => focusViewTab(current, id));

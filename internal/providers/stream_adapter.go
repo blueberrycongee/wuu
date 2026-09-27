@@ -51,6 +51,9 @@ func (a adaptedStreamClient) StreamChat(ctx context.Context, req ChatRequest) (<
 	if resp.Content != "" {
 		events = append(events, StreamEvent{Type: EventContentDelta, Content: resp.Content, Phase: resp.Phase})
 	}
+	for _, image := range resp.Images {
+		events = append(events, StreamEvent{Type: EventImage, Image: &image})
+	}
 	for _, call := range resp.ToolCalls {
 		toolCall := call
 		events = append(events, StreamEvent{

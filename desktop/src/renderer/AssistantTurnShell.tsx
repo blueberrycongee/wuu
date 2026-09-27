@@ -1,4 +1,5 @@
-import { ChevronRight } from "lucide-react";
+import { localTurnTiming } from "./LocalTurnTiming";
+import { ChevronRight } from "./WuuIcons";
 import {
   type SyntheticEvent,
   useCallback,
@@ -41,7 +42,11 @@ import {
   useAutoFollowScrollContainer,
 } from "./AutoFollowScroll";
 import { AnimatedProcessText } from "./ProcessTextMotion";
-import { useConversationRenderActive } from "./ConversationRenderActivity";
+import { motionDurationMs } from "./motion";
+import {
+  useConversationRenderActive,
+  useConversationRevealSnap,
+} from "./ConversationRenderActivity";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import {
   collectTurnArtifacts,
@@ -80,6 +85,7 @@ export function AssistantTurnShell({
   display,
   cwd,
   onOpenFile,
+  onOpenURL,
   onOpenAgent,
   actionableAgentMessageID,
   latestAgentMessageID,
@@ -94,6 +100,7 @@ export function AssistantTurnShell({
   display: AssistantTurnDisplay;
   cwd?: string;
   onOpenFile?: (path: string) => void;
+  onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
   onOpenAgent?: (agentID: string) => void;
   actionableAgentMessageID?: string;
   latestAgentMessageID?: string;
@@ -130,7 +137,7 @@ export function AssistantTurnShell({
   // in the process region, but the source affordance belongs beside the
   // process header so it reads as turn metadata instead of extra answer
   // content. Dedupe by host is handled inside collectTurnSources so a
-  // burst of hits on docs.anthropic.com still produces a single icon.
+  // burst of hits on the same domain still produces a single icon.
   // process_group entries wrap several raw items under one .items array,
   // so we flatten entries.items ?? [entry.item] before feeding the helper.
   const turnSources = useMemo(
@@ -140,11 +147,13 @@ export function AssistantTurnShell({
       ),
     [display.entries],
   );
-  const handleOpenSource = useCallback((url: string): void => {
-    if (typeof window !== "undefined") {
-      void window.wuu?.openExternal?.(url);
-    }
-  }, []);
+  const handleOpenSource = useCallback((
+    url: string,
+    modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number },
+  ): void => {
+    if (modifiers) onOpenURL?.(url, modifiers);
+    else onOpenURL?.(url);
+  }, [onOpenURL]);
 
   // An in_progress turn always shows the process header, even before the
   // first server item arrives (the optimistic placeholder right after
@@ -163,11 +172,12 @@ export function AssistantTurnShell({
     Boolean(display.latestProcessPreview) ||
     turn.status === "in_progress" ||
     turn.status === "interrupted" ||
+    turn.status === "failed" ||
     hasAnswer;
   const answerHandoffRequested = answerEntries.some(
     (entry) =>
       entry.item.type === "agent_message" &&
-      streamFieldValue(turn.id, entry.item, "text").trim().length > 0,
+      (streamFieldValue(turn.id, entry.item, "text").trim().length > 0 || (entry.item.images?.length ?? 0) > 0),
   );
   const processCollapseRequested = answerHandoffRequested;
   const className = [
@@ -245,7 +255,7 @@ function TurnProcessFold({
   collapseRequested: boolean;
   latestPreview?: TurnProcessPreview;
   sources: ReturnType<typeof collectTurnSources>;
-  onOpenSource?: (url: string) => void;
+  onOpenSource?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
   cwd?: string;
   onOpenFile?: (path: string) => void;
   onOpenAgent?: (agentID: string) => void;
@@ -265,6 +275,7 @@ function TurnProcessFold({
   editSummaryCard?: JSX.Element;
 }): JSX.Element {
   const renderActive = useConversationRenderActive();
+  const revealSnap = useConversationRevealSnap();
   const [expanded, setExpanded] = useState(!collapseRequested);
   const handoffHandledRef = useRef(collapseRequested);
   // Once the reader changes the fold manually, that preference owns the
@@ -272,6 +283,15 @@ function TurnProcessFold({
   const userToggledRef = useRef(false);
   const autoCollapsePendingRef = useRef(false);
   const previousExpanded = useRef(expanded);
+  // A hidden pane does not render, so an answer handoff that happened while
+  // it was cached is still pending. Apply it in this commit. The passive
+  // effect below would close the fold after paint and play the height
+  // transition across the message stream.
+  if (revealSnap && !userToggledRef.current && expanded !== !collapseRequested) {
+    handoffHandledRef.current = collapseRequested;
+    autoCollapsePendingRef.current = false;
+    setExpanded(!collapseRequested);
+  }
   const detailsID = `${turn.id}-process-fold`;
 
   const parsedStartedAt = parseTurnTimestampMs(turn.started_at);
@@ -301,7 +321,10 @@ function TurnProcessFold({
       : reportedDuration ?? settledTimestampDuration;
   // The visible timer stops at answer readiness. Provider cleanup can continue
   // internally, but must not make a completed-looking answer keep aging.
-  const completedDuration = answerReadyDuration ?? settledDuration;
+  const localTiming = localTurnTiming(turn);
+  const completedDuration = localTiming
+    ? localTiming.finished ? localTiming.elapsed : undefined
+    : answerReadyDuration ?? settledDuration;
   const liveDuration =
     completedDuration === undefined &&
     turn.status === "in_progress";
@@ -318,7 +341,7 @@ function TurnProcessFold({
   }
   const liveNow = useLiveNow(liveDuration && renderActive);
   const liveElapsedMs = liveDuration
-    ? Math.max(0, liveNow - startedAt)
+    ? localTiming?.elapsed ?? Math.max(0, liveNow - startedAt)
     : undefined;
   // Keep the last live elapsed value outside the component lifecycle. A
   // paused turn settles as "interrupted" and its server snapshot usually
@@ -349,7 +372,7 @@ function TurnProcessFold({
   const metaParts = turnProcessMetaParts(
     turn,
     elapsedMs,
-    pausedElapsedMs !== undefined,
+    pausedElapsedMs !== undefined || completedDuration !== undefined,
     answerReady,
   );
 
@@ -388,7 +411,7 @@ function TurnProcessFold({
         if (autoCollapse) {
           onCollapseComplete?.();
         }
-      }, 440);
+      }, motionDurationMs("--collapse-motion-duration", 440) + 32);
       previousExpanded.current = expanded;
       return () => window.clearTimeout(timeoutId);
     }
@@ -700,8 +723,9 @@ function ReasoningFold({
     };
     body.addEventListener("transitionend", snapToBottom);
     // Fallback when transitionend never fires (reduced motion, or the
-    // grid already settled before the listener attached).
-    window.setTimeout(snapToBottom, 280);
+    // grid already settled before the listener attached). The body's
+    // grid-template-rows transition runs on --motion-slow.
+    window.setTimeout(snapToBottom, motionDurationMs("--motion-slow", 280));
   }, [reasoningScroll]);
   return (
     <details
@@ -766,12 +790,9 @@ function turnProcessTitle(
       ? taskFinishedLabel(elapsedMs)
       : translate("task.status.completed");
   }
-  if (turn.status === "completed" || turn.status === "interrupted") {
-    if (!hasKnownDuration) {
-      return turn.status === "interrupted"
-        ? turnProgressContent(turn, elapsedMs, hasFinalText).label
-        : translate("task.status.completed");
-    }
+  if (turn.status === "interrupted") return translate("turn.orchestrationPaused");
+  if (turn.status === "completed") {
+    if (!hasKnownDuration) return translate("task.status.completed");
     return taskFinishedLabel(elapsedMs);
   }
   return turnProgressContent(turn, elapsedMs, hasFinalText).label;

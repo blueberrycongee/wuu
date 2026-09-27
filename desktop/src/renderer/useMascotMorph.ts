@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef } from "react";
+import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
 import type { WuuMascotActivity } from "./wuu-mascot-spec";
 
 export type MascotMorph = "dots" | "orbit" | "radar" | "progress" | "gather" | "wave" | "send" | "receive" | "dock" | "ball" | "whirl" | "pencil" | "bang" | "standby" | "idle" | "liquid" | "responding" | "queued" | "waiting" | "failed" | "interrupted" | "scan" | "terminal";
@@ -224,7 +225,7 @@ export function useMascotMorph(host: SVGSVGElement | null, mode: MascotMorph, pa
     const rings = [...host.querySelectorAll<SVGPathElement>("[data-morph-ring]")];
     const bars = [...host.querySelectorAll<SVGRectElement>("[data-morph-bar]")];
     const ink = [...host.querySelectorAll<SVGRectElement>("[data-morph-ink]")];
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let reduced = prefersReducedMotion();
     const current = scene();
     let frame = 0, previous = performance.now(), time = 0, lastMode = props.current.mode, lastReplay = props.current.replay;
     let inView = true, settledFor = 0;
@@ -237,6 +238,16 @@ export function useMascotMorph(host: SVGSVGElement | null, mode: MascotMorph, pa
     const draw = (now: number) => {
       frame = 0;
       const { mode: nextMode, paused: stopped, replay: nextReplay } = props.current;
+      // A settled activity morph used to rewrite the SVG on every display
+      // frame for the whole turn. Keep the blend at full rate, then paint
+      // the steady motion at about 30fps.
+      const steady = settledFor >= 1200 && !stopped && !STATIC_MORPHS.has(nextMode);
+      if (steady && now - previous < 32) {
+        if (!document.hidden && inView && paintable() && !reduced) {
+          frame = requestAnimationFrame(draw);
+        }
+        return;
+      }
       // A frame's timestamp can precede the clock sampled while resuming it.
       const dt = Math.max(0, Math.min(40, now - previous)); previous = now;
       const changed = nextMode !== lastMode || nextReplay !== lastReplay;
@@ -248,10 +259,10 @@ export function useMascotMorph(host: SVGSVGElement | null, mode: MascotMorph, pa
         if (nextReplay !== lastReplay) time = 0;
         lastReplay = nextReplay;
       }
-      if (!stopped && !reduced.matches) time += dt / 1000;
+      if (!stopped && !reduced) time += dt / 1000;
       settledFor += dt;
-      const target = targetScene(nextMode, reduced.matches ? 1.1 : time);
-      const speed = reduced.matches ? 1 : 1 - Math.exp(-dt / 95);
+      const target = targetScene(nextMode, reduced ? 1.1 : time);
+      const speed = reduced ? 1 : 1 - Math.exp(-dt / 95);
       blend(current.core, target.core, speed);
       current.particles.forEach((p, i) => blend(p, target.particles[i], speed));
       current.rings.forEach((p, i) => blend(p, target.rings[i], speed));
@@ -277,19 +288,19 @@ export function useMascotMorph(host: SVGSVGElement | null, mode: MascotMorph, pa
       rings.forEach((node, i) => { const r = current.rings[i]; node.setAttribute("d", arc(r)); node.setAttribute("stroke-width", `${r.width}`); node.setAttribute("opacity", `${r.alpha}`); });
       bars.forEach((node, i) => setBar(node, current.bars[i]));
       ink.forEach((node, i) => setBar(node, current.ink[i]));
-      if (!document.hidden && inView && paintable() && !reduced.matches && (settledFor < 1200 || (!stopped && !STATIC_MORPHS.has(nextMode)))) frame = requestAnimationFrame(draw);
+      if (!document.hidden && inView && paintable() && !reduced && (settledFor < 1200 || (!stopped && !STATIC_MORPHS.has(nextMode)))) frame = requestAnimationFrame(draw);
     };
     const paintable = () => !host.closest('[data-renderer-hidden], .cached-conversation-pane[data-active="false"]');
     const resume = () => { if (!frame && !document.hidden && inView && paintable()) { previous = performance.now(); frame = requestAnimationFrame(draw); } };
     wake.current = () => { settledFor = 0; resume(); };
-    reduced.addEventListener("change", resume);
+    const stopReducedMotion = subscribeReducedMotion((value) => { reduced = value; resume(); });
     const observer = new IntersectionObserver(entries => { inView = entries[0].isIntersecting; if (!inView) { cancelAnimationFrame(frame); frame = 0; } else resume(); });
     observer.observe(host);
     const visibility = new MutationObserver(resume);
     for (let node: Element | null = host.parentElement; node; node = node.parentElement) visibility.observe(node, { attributes: true, attributeFilter: ["data-active", "data-renderer-hidden"] });
     document.addEventListener("visibilitychange", resume);
     resume();
-    return () => { wake.current = null; cancelAnimationFrame(frame); observer.disconnect(); visibility.disconnect(); document.removeEventListener("visibilitychange", resume); reduced.removeEventListener("change", resume); overlay.remove(); original.style.transform = saved.transform; original.style.transformOrigin = saved.origin; original.style.opacity = saved.opacity; };
+    return () => { wake.current = null; cancelAnimationFrame(frame); observer.disconnect(); visibility.disconnect(); document.removeEventListener("visibilitychange", resume); stopReducedMotion(); overlay.remove(); original.style.transform = saved.transform; original.style.transformOrigin = saved.origin; original.style.opacity = saved.opacity; };
   }, [host, identity, id]);
   useEffect(() => { wake.current?.(); }, [mode, paused, replay]);
 }

@@ -86,7 +86,26 @@ export type HighlightedWorkspaceCode = {
   language: string;
 };
 
+/** Chat blocks above this stay one text node until the reader asks for color. */
+export const CODE_HIGHLIGHT_CHAR_LIMIT = 8_000;
+
+/** Past this, highlighting the whole block builds enough spans to exhaust the renderer. */
+export const CODE_HIGHLIGHT_HARD_LIMIT = 100_000;
+
+export function shouldHighlightCode(text: string, revealedText: string | null): boolean {
+  if (text.length <= CODE_HIGHLIGHT_CHAR_LIMIT) return true;
+  if (text.length > CODE_HIGHLIGHT_HARD_LIMIT) return false;
+  return revealedText === text;
+}
+
+function escapeHtml(text: string): string {
+  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
 export function highlightCode(language: string, text: string): HighlightedWorkspaceCode {
+  if (text.length > CODE_HIGHLIGHT_HARD_LIMIT) {
+    return { html: escapeHtml(text), language: "plaintext" };
+  }
   const normalizedLanguage = language.trim().toLowerCase();
   const resolvedLanguage = LANGUAGE_BY_EXTENSION[normalizedLanguage] ?? normalizedLanguage;
   const supportedLanguage = hljs.getLanguage(resolvedLanguage) ? resolvedLanguage : "plaintext";

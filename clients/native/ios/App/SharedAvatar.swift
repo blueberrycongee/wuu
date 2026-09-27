@@ -79,8 +79,3 @@ private struct AvatarSurface: UIViewRepresentable {
         }
     }
 }
-
-func avatarRecord(_ agent: CollaborationAgent?) -> JSONValue {
-    ["id": .string(agent?.id ?? "wuu"), "avatar_key": .string(agent?.value["avatar_key"].string ?? "abstract-1"),
-     "avatar_image": .string(agent?.value["avatar_image"].string ?? ""), "activity_status": .string(agent?.value["activity_status"].string ?? "idle")]
-}

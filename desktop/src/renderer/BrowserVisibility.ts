@@ -1,18 +1,12 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { ActivitySession, BrowserBoundsRect } from "../shared/protocol";
+import { submitGlideActive, subscribeSubmitGlide } from "./AutoFollowScroll";
 
-// Renderer-side visibility takeover for agent-owned browser activities (M3).
-//
-// The agent's page lives in a main-owned WebContentsView (never inside the
-// unstable WorkspaceBrowserPanel component). When it is promoted to the
-// foreground the main process overlays that view on top of the window; this
-// hook feeds main everything it needs from the renderer: where the browser
-// panel sits (bounds), when a full-window overlay must temporarily hide the
-// view (suppress), when to force the panel open (foreground promotion), and a
-// local fallback that drops ghost activity UI when a core is torn down.
-//
-// The DOM/effect wiring is deliberately thin; every decision is factored into
-// the pure helpers below so they can be unit-tested without a real webview.
+// The workspace browser panel and the agent's page are the same tab. Painting
+// is owned by the panel: it reports a rectangle while that tab is on screen.
+// The agent does not open or close the panel; the floating card is the live
+// preview until the user docks the page. A torn-down core still drops leftover
+// activity UI here.
 
 // ── Pure helpers (unit-tested) ─────────────────────────────────────────────
 
@@ -36,6 +30,20 @@ export function browserTabIDForActivity(activity: ActivitySession): string {
   return activity.target && activity.target.length > 0
     ? activity.target
     : activity.id;
+}
+
+// The panel shows the agent's tab while that activity is alive, and a
+// per-thread tab otherwise. Both are the same kind of page: one web contents
+// the address bar can drive.
+export function displayedBrowserTabID(
+  activity: ActivitySession | undefined,
+  threadID: string | undefined,
+): string | undefined {
+  if (activity?.kind === "browser" && activity.state !== "stopped") {
+    return browserTabIDForActivity(activity);
+  }
+  if (threadID && threadID.length > 0) return `user:${threadID}`;
+  return undefined;
 }
 
 export function roundRect(rect: BrowserBoundsRect): BrowserBoundsRect {
@@ -68,9 +76,8 @@ export function boundsChanged(
   );
 }
 
-// Prefer the inner host div (design §3.4). It goes `display:none` while the
-// user webview shows the home page, so fall back to the always-present frame
-// so the agent overlay still gets a real region to sit in.
+// Prefer the inner host. Fall back to the frame when the host has no area
+// so the page still has a rectangle to occupy.
 export function pickBoundsRect(
   hostRect: BrowserBoundsRect | undefined,
   frameRect: BrowserBoundsRect | undefined,
@@ -82,39 +89,6 @@ export function pickBoundsRect(
     return frameRect;
   }
   return hostRect ?? frameRect;
-}
-
-export type ForegroundSnapshot = {
-  threadID?: string;
-  activityID?: string;
-  state?: string;
-};
-
-// Decide whether an observed browser activity should force the browser panel
-// open. Mirrors useThreadBrowserPreview's "switching threads only restores,
-// never force-opens" discipline: a genuine foreground *transition* on the
-// activity currently in view opens the panel; merely switching to a thread
-// whose activity is already foreground does not.
-export function computeForegroundPromotion(
-  previous: ForegroundSnapshot,
-  threadID: string | undefined,
-  activity: ActivitySession | undefined,
-): { open: boolean; snapshot: ForegroundSnapshot } {
-  const snapshot: ForegroundSnapshot = {
-    threadID,
-    activityID: activity?.id,
-    state: activity?.state,
-  };
-  if (previous.threadID !== threadID) {
-    return { open: false, snapshot };
-  }
-  if (!isForegroundControlled(activity)) {
-    return { open: false, snapshot };
-  }
-  const wasForeground =
-    previous.activityID === activity.id &&
-    previous.state === "foreground_controlled";
-  return { open: !wasForeground, snapshot };
 }
 
 // ── DOM measurement (thin, not unit-tested — jsdom rects are all zero) ───────
@@ -226,6 +200,9 @@ export function observeBrowserPanelBounds(
   }
 
   function scheduleMeasure(): void {
+    // Conversation send scrolls this window every frame. The browser panel
+    // does not move with that glide; measuring it then walks the document.
+    if (submitGlideActive()) return;
     if (rafHandle === undefined) {
       rafHandle = window.requestAnimationFrame(flushMeasure);
     }
@@ -270,6 +247,7 @@ export function observeBrowserPanelBounds(
   }
   window.addEventListener("resize", scheduleMeasure);
   window.addEventListener("scroll", scheduleMeasure, true);
+  const unsubscribeGlide = subscribeSubmitGlide(scheduleMeasure);
   document.addEventListener("transitionrun", handleTransitionRun);
   document.addEventListener("transitionend", handleTransitionStop);
   document.addEventListener("transitioncancel", handleTransitionStop);
@@ -284,6 +262,7 @@ export function observeBrowserPanelBounds(
     }
     resizeObserver?.disconnect();
     mountObserver?.disconnect();
+    unsubscribeGlide();
     window.removeEventListener("resize", scheduleMeasure);
     window.removeEventListener("scroll", scheduleMeasure, true);
     document.removeEventListener("transitionrun", handleTransitionRun);
@@ -295,87 +274,15 @@ export function observeBrowserPanelBounds(
 // ── Hook ─────────────────────────────────────────────────────────────────
 
 export function useBrowserVisibility({
-  activeThreadID,
-  activeBrowserActivity,
-  overlaySuppressed,
-  onOpenBrowser,
   onInvalidateWorkdir,
 }: {
-  activeThreadID: string | undefined;
-  activeBrowserActivity: ActivitySession | undefined;
-  overlaySuppressed: boolean;
-  onOpenBrowser: () => void;
   onInvalidateWorkdir: (workdir: string) => void;
 }): void {
-  const onOpenBrowserRef = useRef(onOpenBrowser);
   const onInvalidateWorkdirRef = useRef(onInvalidateWorkdir);
-  const foregroundSnapshotRef = useRef<ForegroundSnapshot>({});
 
-  useEffect(() => {
-    onOpenBrowserRef.current = onOpenBrowser;
-  }, [onOpenBrowser]);
   useEffect(() => {
     onInvalidateWorkdirRef.current = onInvalidateWorkdir;
   }, [onInvalidateWorkdir]);
-
-  // Foreground promotion: open the browser panel only on a genuine foreground
-  // event, never on a plain thread switch (restore, not force).
-  useEffect(() => {
-    const { open, snapshot } = computeForegroundPromotion(
-      foregroundSnapshotRef.current,
-      activeThreadID,
-      activeBrowserActivity,
-    );
-    foregroundSnapshotRef.current = snapshot;
-    if (open) {
-      onOpenBrowserRef.current();
-    }
-  }, [activeThreadID, activeBrowserActivity]);
-
-  // Stable identity of the currently-visible agent view; only changes when the
-  // target (workdir/tab) or its visibility actually changes, so the effects
-  // below do not restart on every unrelated activity merge.
-  const foregroundTarget = useMemo(() => {
-    if (!isForegroundControlled(activeBrowserActivity)) {
-      return undefined;
-    }
-    return {
-      workdir: activeBrowserActivity.workdir,
-      tabID: browserTabIDForActivity(activeBrowserActivity),
-    };
-  }, [
-    activeBrowserActivity?.kind,
-    activeBrowserActivity?.state,
-    activeBrowserActivity?.workdir,
-    activeBrowserActivity?.target,
-    activeBrowserActivity?.id,
-  ]);
-
-  // Bounds reporter: event-driven while the panel is still, with short rAF
-  // tracking only for geometry-changing CSS transitions.
-  useEffect(() => {
-    const report = window.wuu.reportBrowserBounds;
-    if (!foregroundTarget || typeof report !== "function") {
-      return undefined;
-    }
-    const { workdir, tabID } = foregroundTarget;
-    return observeBrowserPanelBounds((rect) => report(workdir, tabID, rect));
-  }, [foregroundTarget]);
-
-  // Overlay suppression: hide the agent view while a full-window overlay is
-  // open (native views float above DOM and would occlude the modal). Cleanup
-  // always lifts suppression so the view is never left permanently hidden.
-  useEffect(() => {
-    const suppress = window.wuu.suppressBrowserOverlay;
-    if (!foregroundTarget || typeof suppress !== "function") {
-      return undefined;
-    }
-    const { workdir, tabID } = foregroundTarget;
-    suppress(workdir, tabID, overlaySuppressed);
-    return () => {
-      suppress(workdir, tabID, false);
-    };
-  }, [foregroundTarget, overlaySuppressed]);
 
   // Server-exit fallback: when a core is torn down/evicted its Close-time
   // "stopped" events can be lost, leaving ghost browser activity UI hanging

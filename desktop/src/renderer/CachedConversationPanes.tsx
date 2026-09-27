@@ -23,7 +23,7 @@ import {
   ContextCompositionCard,
   type ContextCompositionEntry,
 } from "./ContextCompositionCard";
-import { ForkWorktreeNotice } from "./ForkWorktreeNotice";
+import { WorktreeNotice } from "./WorktreeNotice";
 import {
   InstructionFilesCard,
   type InstructionFilesEntry,
@@ -57,6 +57,7 @@ export type CachedConversationPanesProps = {
   canEditThreadMessage: (thread: Thread) => boolean;
   onForkMessage: (thread: Thread, turnID: string, itemID: string) => void;
   onOpenFile?: (thread: Thread, path: string) => void;
+  onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
   onOpenAgent: (agent: Agent) => void;
   onEditMessage: (thread: Thread, turnID: string, item: ThreadItem) => void;
   onCancelEditMessage: () => void;
@@ -91,6 +92,7 @@ export const CachedConversationPanes = memo(function CachedConversationPanes({
   canEditThreadMessage,
   onForkMessage,
   onOpenFile,
+  onOpenURL,
   onOpenAgent,
   onEditMessage,
   onCancelEditMessage,
@@ -127,6 +129,7 @@ export const CachedConversationPanes = memo(function CachedConversationPanes({
             canEditThreadMessage={canEditThreadMessage}
             onForkMessage={onForkMessage}
             onOpenFile={onOpenFile}
+            onOpenURL={onOpenURL}
             onOpenAgent={onOpenAgent}
             onEditMessage={onEditMessage}
             onCancelEditMessage={onCancelEditMessage}
@@ -165,6 +168,7 @@ const CachedConversationPane = memo(function CachedConversationPane({
   canEditThreadMessage,
   onForkMessage,
   onOpenFile,
+  onOpenURL,
   onOpenAgent,
   onEditMessage,
   onCancelEditMessage,
@@ -317,10 +321,10 @@ const CachedConversationPane = memo(function CachedConversationPane({
       onDismiss={onDismissInstructions}
     />
   ));
-  const forkWorktreeNotice =
-    thread.worktree && thread.forked_from_id ? (
-      <ForkWorktreeNotice thread={thread} />
-    ) : null;
+  const worktreeNotice = thread.worktree ? <WorktreeNotice key="worktree-notice" thread={thread} /> : null;
+  // A fork's notice follows its copied history; a conversation started in a
+  // worktree opens with it.
+  const worktreeNoticeFirst = !thread.forked_from_id;
   const latestTurn = threadTurns[threadTurns.length - 1];
   const latestTurnStreamStatus = latestTurn
     ? turnStreamStatus[latestTurn.id]
@@ -341,12 +345,13 @@ const CachedConversationPane = memo(function CachedConversationPane({
               threadID={thread.id}
               turns={threadTurns}
               renderBeforeTurns={[
+                ...(worktreeNoticeFirst ? [worktreeNotice] : []),
                 ...entriesBeforeTurns.map(renderContextEntry),
               ]}
               renderAfterMissingTurn={
                 <>
                   {entriesAfterMissingTurn.map(renderContextEntry)}
-                  {forkWorktreeNotice}
+                  {worktreeNoticeFirst ? null : worktreeNotice}
                   {threadInstructionCards}
                   <PluginConversationCards
                     host={desktopPluginHost}
@@ -378,6 +383,7 @@ const CachedConversationPane = memo(function CachedConversationPane({
                   turn={turn}
                   cwd={thread.cwd ?? activeContextCwd}
                   onOpenFile={onOpenFile ? handleOpenFile : undefined}
+                  onOpenURL={onOpenURL}
                   onOpenAgent={handleOpenAgentByID}
                   latestAgentMessageID={
                     latestAgentLocation?.turnID === turn.id
@@ -466,6 +472,7 @@ type PaneTurnViewProps = {
   editingMessage?: HistoryMessageEditState;
   streamStatus?: TurnStreamStatus;
   onOpenFile?: (path: string) => void;
+  onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
   onOpenAgent: (agentID: string) => void;
   onStreamFrame: () => void;
   onCollapseComplete: () => void;
@@ -499,6 +506,7 @@ const PaneTurnView = memo(function PaneTurnView({
   editingMessage,
   streamStatus,
   onOpenFile,
+  onOpenURL,
   onOpenAgent,
   onStreamFrame,
   onCollapseComplete,
@@ -513,6 +521,7 @@ const PaneTurnView = memo(function PaneTurnView({
       turn={turn}
       cwd={cwd}
       onOpenFile={onOpenFile}
+      onOpenURL={onOpenURL}
       onOpenAgent={onOpenAgent}
       latestAgentMessageID={latestAgentMessageID}
       isLatestTurn={isLatestTurn}

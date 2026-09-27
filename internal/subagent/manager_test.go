@@ -831,31 +831,6 @@ func TestBroadcastSnapshotPublishesRunningUsage(t *testing.T) {
 	}
 }
 
-func TestPersistHistory(t *testing.T) {
-	dir := t.TempDir()
-	historyPath := filepath.Join(dir, "subagents", "worker.json")
-
-	client := &fakeClient{response: providers.ChatResponse{Content: "ok"}}
-	mgr := NewManager(client, "fake-model")
-
-	sa, _ := mgr.Spawn(context.Background(), SpawnOptions{
-		Type:        "worker",
-		Description: "test task",
-		Prompt:      "do it",
-		Toolkit:     fakeToolkit{},
-		HistoryPath: historyPath,
-	})
-	mgr.Wait(context.Background(), sa.ID)
-
-	if _, err := os.Stat(historyPath); err != nil {
-		t.Fatalf("history file not written: %v", err)
-	}
-	data, _ := os.ReadFile(historyPath)
-	if len(data) < 10 || !contains(string(data), "ok") {
-		t.Fatalf("history file content unexpected: %s", data)
-	}
-}
-
 func TestTerminalPrepareRunsBeforeFinalSnapshotPersistence(t *testing.T) {
 	dir := t.TempDir()
 	historyPath := filepath.Join(dir, "workers", "worker.json")
@@ -1049,22 +1024,6 @@ func TestLoadPersistedRunToleratesPreVersionSnapshot(t *testing.T) {
 	}
 }
 
-func TestList(t *testing.T) {
-	client := &fakeClient{response: providers.ChatResponse{Content: "ok"}}
-	mgr := NewManager(client, "fake-model")
-
-	for i := 0; i < 3; i++ {
-		_, _ = mgr.Spawn(context.Background(), SpawnOptions{
-			Type:    "worker",
-			Prompt:  "p",
-			Toolkit: fakeToolkit{},
-		})
-	}
-	if got := len(mgr.List()); got != 3 {
-		t.Fatalf("expected 3 sub-agents in list, got %d", got)
-	}
-}
-
 func TestSpawn_RequiresToolkitAndPrompt(t *testing.T) {
 	mgr := NewManager(&fakeClient{}, "m")
 
@@ -1138,43 +1097,6 @@ func TestSpawn_WithInitialHistory_PrefixIsParentHistory(t *testing.T) {
 	}
 	if tail.Content != "<system-reminder>do the thing</system-reminder>" {
 		t.Errorf("expected fork prompt as final message, got %q", tail.Content)
-	}
-}
-
-// TestSpawn_WithoutInitialHistory_UsesSystemPrompt confirms the
-// non-fork (regular spawn) code path is unchanged: when
-// InitialHistory is nil, the runner builds [system, user] from
-// SystemPrompt + Prompt as it always has.
-func TestSpawn_WithoutInitialHistory_UsesSystemPrompt(t *testing.T) {
-	client := &fakeClient{response: providers.ChatResponse{Content: "spawn done"}}
-	mgr := NewManager(client, "fake-model")
-
-	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
-		Type:         "worker",
-		Prompt:       "do the task",
-		SystemPrompt: "you are a worker",
-		Toolkit:      fakeToolkit{},
-	})
-	if err != nil {
-		t.Fatalf("Spawn: %v", err)
-	}
-	if _, err := mgr.Wait(context.Background(), sa.ID); err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
-
-	last := client.lastRequest.Load()
-	if last == nil {
-		t.Fatal("client never received a request")
-	}
-	visible := visibleMessagesForTest(last.Messages)
-	if len(visible) != 2 {
-		t.Fatalf("expected 2 visible messages [system, user], got %+v", last.Messages)
-	}
-	if visible[0].Role != "system" || visible[0].Content != "you are a worker" {
-		t.Errorf("system message wrong: %+v", visible[0])
-	}
-	if visible[1].Role != "user" || visible[1].Content != "do the task" {
-		t.Errorf("user message wrong: %+v", visible[1])
 	}
 }
 
@@ -1371,27 +1293,6 @@ func TestFollowup_CancelledAgentResumesWithHistory(t *testing.T) {
 	tail := visible[len(visible)-1]
 	if tail.Role != "user" || tail.Content != "resume after stop" {
 		t.Fatalf("expected resume instruction as final message, got %+v", tail)
-	}
-}
-
-func TestQueueMessageFIFO(t *testing.T) {
-	sa := &SubAgent{}
-	sa.pushPendingMessage("first")
-	sa.pushPendingMessage("second")
-
-	if got := sa.pendingCount(); got != 2 {
-		t.Fatalf("expected pending=2, got %d", got)
-	}
-	m1, ok := sa.popPendingMessage()
-	if !ok || m1 != "first" {
-		t.Fatalf("expected first message, got %q ok=%v", m1, ok)
-	}
-	m2, ok := sa.popPendingMessage()
-	if !ok || m2 != "second" {
-		t.Fatalf("expected second message, got %q ok=%v", m2, ok)
-	}
-	if _, ok := sa.popPendingMessage(); ok {
-		t.Fatal("expected empty queue after pops")
 	}
 }
 

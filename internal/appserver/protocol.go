@@ -7,7 +7,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/capability"
-	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/extensions"
@@ -30,6 +29,9 @@ const (
 	MethodConfigGeneralUpdate             = "config/general/update"
 	MethodEngineList                      = "engine/list"
 	MethodEngineUpdate                    = "engine/update"
+	MethodEngineAuthMethods               = "engine/auth/methods"
+	MethodEngineAuthenticate              = "engine/authenticate"
+	MethodEngineAuthCancel                = "engine/auth/cancel"
 	MethodExtensionCatalogRefresh         = "extension/catalog/refresh"
 	MethodExtensionPackageUpdate          = "extension/package/update"
 	MethodPluginPackageInspect            = "plugin/package/inspect"
@@ -50,6 +52,7 @@ const (
 	MethodUserQuestionRespond             = "user-question/respond"
 	MethodUserQuestionCancel              = "user-question/cancel"
 	MethodUserQuestionHold                = "user-question/hold"
+	MethodConfigCodexCredentials          = "config/codex/credentials"
 	MethodConfigCodexModels               = "config/codex/models"
 	MethodAuthXAILoginStart               = "auth/xai/login/start"
 	MethodAuthXAILoginPoll                = "auth/xai/login/poll"
@@ -57,28 +60,8 @@ const (
 	MethodConfigCatalogRefresh            = "config/model-catalog/refresh"
 	MethodConfigProviderRemove            = "config/provider/remove"
 	MethodSkillList                       = "skill/list"
-	MethodChannelBootstrap                = "channel/bootstrap"
-	MethodChannelAgentList                = "channel/agent/list"
-	MethodChannelAgentInsights            = "channel/agent/insights"
-	MethodChannelAgentCreate              = "channel/agent/create"
-	MethodChannelAgentUpdate              = "channel/agent/update"
-	MethodChannelAgentDelete              = "channel/agent/delete"
-	MethodChannelAgentStart               = "channel/agent/start"
-	MethodChannelAgentReset               = "channel/agent/reset"
-	MethodChannelAgentCreationResolve     = "channel/agent-creation/resolve"
-	MethodChannelRoomList                 = "channel/room/list"
-	MethodChannelRoomCreate               = "channel/room/create"
-	MethodChannelDirectMessageOpen        = "channel/direct-message/open"
-	MethodChannelRoomUpdate               = "channel/room/update"
-	MethodChannelRoomDelete               = "channel/room/delete"
-	MethodChannelRoomRead                 = "channel/room/read"
-	MethodChannelMessageList              = "channel/message/list"
-	MethodChannelMessageSend              = "channel/message/send"
-	MethodChannelTaskCreate               = "channel/task/create"
-	MethodChannelTaskUpdate               = "channel/task/update"
-	MethodChannelMentionStatus            = "channel/human-mention/status"
-	MethodChannelMentionAck               = "channel/human-mention/ack"
 	MethodThreadStart                     = "thread/start"
+	MethodProjectSession                  = "project/session"
 	MethodThreadResume                    = "thread/resume"
 	MethodThreadFork                      = "thread/fork"
 	MethodThreadEditMessage               = "thread/edit-message"
@@ -137,6 +120,9 @@ const (
 	MethodActivityRelease                 = "activity/release"
 	MethodActivityStop                    = "activity/stop"
 	MethodShutdown                        = "shutdown"
+	// MethodUsageOverview returns the desktop empty-home usage summary from
+	// token_usage rows alone, with days in the caller's time zone.
+	MethodUsageOverview = "usage/overview"
 	// MethodSettingsUsage returns the aggregated per-provider/model token
 	// usage snapshot for the desktop settings page. Range filter selects
 	// the time window ("all", "7d", "30d", "90d"); empty defaults to "all".
@@ -198,6 +184,7 @@ const (
 	NotificationMCPStatusUpdated       = "mcp/status/updated"
 	NotificationPluginInventoryChanged = "plugin/inventory/changed"
 	NotificationConfigChanged          = "config/changed"
+	NotificationConfigError            = "config/error"
 	NotificationUserQuestionRequested  = "user-question/requested"
 	NotificationUserQuestionResolved   = "user-question/resolved"
 )
@@ -206,6 +193,10 @@ type PluginInventoryChangedNotification struct {
 	Epoch              uint64                     `json:"epoch"`
 	ExtensionInventory []ExtensionInventoryRecord `json:"extension_inventory"`
 	Skills             []SkillSummary             `json:"skills"`
+}
+
+type ConfigErrorNotification struct {
+	Message string `json:"message"`
 }
 
 type ConfigChangedNotification struct {
@@ -384,8 +375,15 @@ type BrowserListTabsParams struct {
 	Workdir string `json:"workdir"`
 }
 
+type BrowserListedTab struct {
+	TabID string `json:"tab_id"`
+	URL   string `json:"url,omitempty"`
+	Title string `json:"title,omitempty"`
+}
+
 type BrowserListTabsResult struct {
-	TabIDs []string `json:"tab_ids"`
+	TabIDs []string           `json:"tab_ids"`
+	Tabs   []BrowserListedTab `json:"tabs,omitempty"`
 }
 
 type RuntimeIssue struct {
@@ -920,6 +918,7 @@ type PluginStorageResult struct {
 }
 
 type ConfigModelUpdateParams struct {
+	Speed          *string `json:"speed,omitempty"`
 	ThreadID       string  `json:"thread_id,omitempty"`
 	Provider       string  `json:"provider,omitempty"`
 	Model          string  `json:"model"`
@@ -1045,8 +1044,9 @@ type ConfigAdvancedUpdateResult struct {
 }
 
 type ConfigGeneralUpdateParams struct {
-	GitAttributionEnabled *bool            `json:"git_attribution_enabled,omitempty"`
-	MCPEnabledToggles     map[string]*bool `json:"mcp_enabled_toggles,omitempty"`
+	PTC                   *config.PTCConfig `json:"ptc,omitempty"`
+	GitAttributionEnabled *bool             `json:"git_attribution_enabled,omitempty"`
+	MCPEnabledToggles     map[string]*bool  `json:"mcp_enabled_toggles,omitempty"`
 }
 
 type ConfigGeneralUpdateResult struct {
@@ -1054,8 +1054,9 @@ type ConfigGeneralUpdateResult struct {
 }
 
 type GeneralSettingsSummary struct {
-	GitAttributionEnabled bool            `json:"git_attribution_enabled"`
-	MCPServerEnabled      map[string]bool `json:"mcp_server_enabled"`
+	PTC                   config.PTCConfig `json:"ptc"`
+	GitAttributionEnabled bool             `json:"git_attribution_enabled"`
+	MCPServerEnabled      map[string]bool  `json:"mcp_server_enabled"`
 }
 
 type AdvancedSettingsSummary struct {
@@ -1207,9 +1208,16 @@ type ProviderSummary struct {
 	ReuseCodexCredentials bool                   `json:"reuse_codex_credentials,omitempty"`
 	CodexCredentialSource string                 `json:"codex_credential_source,omitempty"`
 	Models                []ProviderModelSummary `json:"models,omitempty"`
+	// LatestRequest is the newest settled request recorded for this built-in
+	// model service. It stays on the provider because these credentials are
+	// not the external engine's credentials.
+	LatestRequest *EngineLatestRequest       `json:"latest_request,omitempty"`
+	LocalUsage    *session.SubscriptionUsage `json:"local_usage,omitempty"`
 }
 
 type ProviderModelSummary struct {
+	FastMode         bool                          `json:"fast_mode,omitempty"`
+	DefaultSpeed     string                        `json:"default_speed,omitempty"`
 	ID               string                        `json:"id"`
 	DisplayName      string                        `json:"display_name,omitempty"`
 	DefaultEffort    string                        `json:"default_effort,omitempty"`
@@ -1250,21 +1258,34 @@ type ProviderModelVariantSummary struct {
 }
 
 type ThreadStartParams struct {
-	Ephemeral   bool   `json:"ephemeral,omitempty"`
-	CWD         string `json:"cwd,omitempty"`
-	WorkspaceID string `json:"workspace_id,omitempty"`
+	// Project starts a project coordinator in the workspace instead of an
+	// ordinary conversation.
+	Project     *ThreadProjectParams `json:"project,omitempty"`
+	Speed       string               `json:"speed,omitempty"`
+	Ephemeral   bool                 `json:"ephemeral,omitempty"`
+	CWD         string               `json:"cwd,omitempty"`
+	WorkspaceID string               `json:"workspace_id,omitempty"`
 	// Engine selects the agent engine the thread is bound to. Empty is the
 	// settings default engine (or the built-in "wuu" engine); the binding is
 	// fixed at creation.
 	Engine string `json:"engine,omitempty"`
 	// Model and Effort are engine-native runtime options for the new thread.
-	// Empty values inherit the current runtime selection.
+	// Empty values inherit the current Wuu runtime selection for the built-in
+	// engine. Protocol engines treat empty values as the agent's native
+	// default and never inherit Wuu's provider catalog or effort.
 	Model          string `json:"model,omitempty"`
 	Effort         string `json:"effort,omitempty"`
 	PermissionMode string `json:"permission_mode,omitempty"`
 	Provider       string `json:"provider,omitempty"`
 	// Nil leaves the default unchanged; false explicitly disables approval review.
 	ApproveForMe *bool `json:"approve_for_me,omitempty"`
+	// Workspace is "shared" (the default) to work in the project directly, or
+	// "worktree" to start in an isolated Git worktree of it.
+	Workspace string `json:"workspace,omitempty"`
+	// BaseRevision is the branch, tag, or commit a worktree starts from; empty
+	// uses the project's current HEAD. It requires workspace "worktree" and
+	// never checks anything out in the shared project.
+	BaseRevision string `json:"base_revision,omitempty"`
 	// Handoff creates a seed-backed session from the current conversation.
 	// The destination model is explicit; the cutoff is fixed at submit time.
 	Handoff *ThreadHandoffParams `json:"handoff,omitempty"`
@@ -1280,6 +1301,9 @@ type ThreadHandoffParams struct {
 // EngineInfo describes one agent engine for the settings surface.
 type EngineInfo struct {
 	ID           string   `json:"id"`
+	DisplayName  string   `json:"display_name,omitempty"`
+	Protocol     string   `json:"protocol,omitempty"`
+	InstallURL   string   `json:"install_url,omitempty"`
 	Version      string   `json:"version,omitempty"`
 	Capabilities []string `json:"capabilities,omitempty"`
 	// Enabled reports whether the engine is registered (settings-driven).
@@ -1293,9 +1317,59 @@ type EngineInfo struct {
 	// Models is the engine-owned model inventory used by the composer picker.
 	Models      []EngineModelInfo `json:"models,omitempty"`
 	ModelsError string            `json:"models_error,omitempty"`
+	// PermissionModes is the host access menu for this engine. ACP agents
+	// advertise native ids/labels; omitted modes are not offered in the
+	// composer. Empty native id still means the host can apply the selection
+	// through its approval bridge.
+	PermissionModes []EnginePermissionModeInfo `json:"permission_modes,omitempty"`
+	// LatestRequest is the newest settled request this engine has recorded.
+	// It is omitted when no turn has settled for the engine.
+	LatestRequest *EngineLatestRequest       `json:"latest_request,omitempty"`
+	Quota         *SubscriptionQuota         `json:"quota,omitempty"`
+	LocalUsage    *session.SubscriptionUsage `json:"local_usage,omitempty"`
+}
+
+// SubscriptionQuota reports only upstream account allowances. Missing windows
+// never mean unlimited usage. CheckedAt identifies the age of the snapshot.
+type SubscriptionQuota struct {
+	Status    string                    `json:"status"`
+	CheckedAt string                    `json:"checked_at"`
+	Windows   []SubscriptionQuotaWindow `json:"windows,omitempty"`
+}
+
+type SubscriptionQuotaWindow struct {
+	ID            string  `json:"id"`
+	Label         string  `json:"label,omitempty"`
+	UsedPercent   float64 `json:"used_percent"`
+	WindowMinutes int     `json:"window_minutes,omitempty"`
+	ResetsAt      string  `json:"resets_at,omitempty"`
+}
+
+// EngineLatestRequest is one settled request the subscription dashboard can
+// prove from stored history. Usage is present only when that request's engine
+// already reported tokens; a zero UsageReported means usage is unknown, not
+// zero.
+type EngineLatestRequest struct {
+	Status              string `json:"status,omitempty"`
+	Error               string `json:"error,omitempty"`
+	At                  string `json:"at,omitempty"`
+	Model               string `json:"model,omitempty"`
+	InputTokens         int    `json:"input_tokens,omitempty"`
+	OutputTokens        int    `json:"output_tokens,omitempty"`
+	CacheCreationTokens int    `json:"cache_creation_tokens,omitempty"`
+	CacheReadTokens     int    `json:"cache_read_tokens,omitempty"`
+	UsageReported       bool   `json:"usage_reported,omitempty"`
+}
+
+type EnginePermissionModeInfo struct {
+	Mode  string `json:"mode"`
+	ID    string `json:"id,omitempty"`
+	Label string `json:"label,omitempty"`
 }
 
 type EngineModelInfo struct {
+	FastMode         bool     `json:"fast_mode,omitempty"`
+	DefaultSpeed     string   `json:"default_speed,omitempty"`
 	ID               string   `json:"id"`
 	DisplayName      string   `json:"display_name,omitempty"`
 	DefaultEffort    string   `json:"default_effort,omitempty"`
@@ -1308,17 +1382,32 @@ type EngineModelInfo struct {
 type EngineListResult struct {
 	Engines  []EngineInfo          `json:"engines"`
 	Settings *config.EnginesConfig `json:"settings,omitempty"`
+	// Included only for an explicit subscription dashboard refresh.
+	SubscriptionProviders []ProviderSummary `json:"subscription_providers,omitempty"`
 }
 
 // EngineUpdateParams is the engine/update request body. Nil fields are
 // left unchanged.
-type EngineUpdateParams struct {
-	DefaultEngine *string                    `json:"default_engine,omitempty"`
-	Codex         *config.EngineBinaryUpdate `json:"codex,omitempty"`
-	Claude        *config.EngineBinaryUpdate `json:"claude,omitempty"`
-}
+type EngineUpdateParams = config.EnginesSettingsUpdate
 
 type ThreadStartResult struct {
+	Thread Thread `json:"thread"`
+}
+
+type ThreadProjectParams struct {
+	Name string `json:"name"`
+}
+
+// ProjectSessionParams adds an ordinary conversation of the project's
+// workspace to the project (adopt), or makes a managed session an ordinary
+// conversation again (release). Both are the user's actions.
+type ProjectSessionParams struct {
+	Action    string `json:"action"`
+	ProjectID string `json:"project_id"`
+	SessionID string `json:"session_id"`
+}
+
+type ProjectSessionResult struct {
 	Thread Thread `json:"thread"`
 }
 
@@ -1708,6 +1797,8 @@ type GitCommitMessageResult struct {
 }
 
 type TurnStartParams struct {
+	// ClientID correlates renderer intent with the persisted user item.
+	ClientID       string                         `json:"client_id,omitempty"`
 	ThreadID       string                         `json:"thread_id"`
 	Prompt         string                         `json:"prompt"`
 	Images         []TurnStartImage               `json:"images,omitempty"`
@@ -1790,6 +1881,8 @@ type ThreadCompactStartResult struct {
 }
 
 type TurnQueueParams struct {
+	// Hold retains input without dispatch when a client has requested Stop.
+	Hold           bool                           `json:"hold,omitempty"`
 	ThreadID       string                         `json:"thread_id"`
 	Prompt         string                         `json:"prompt"`
 	Images         []TurnStartImage               `json:"images,omitempty"`
@@ -2102,19 +2195,26 @@ type ThreadSessionControl struct {
 }
 
 type Thread struct {
+	Speed          string                `json:"speed,omitempty"`
 	SessionControl *ThreadSessionControl `json:"session_control,omitempty"`
 	ID             string                `json:"id"`
 	Source         string                `json:"source,omitempty"`
-	ParentID       string                `json:"parent_id,omitempty"`
-	AgentPath      string                `json:"agent_path,omitempty"`
-	Preview        string                `json:"preview"`
-	Title          string                `json:"title,omitempty"`
-	ModelProvider  string                `json:"model_provider"`
-	Model          string                `json:"model"`
-	ModelVariant   string                `json:"model_variant"`
-	ModelEffort    string                `json:"model_effort"`
-	PermissionMode string                `json:"permission_mode"`
-	ApproveForMe   bool                  `json:"approve_for_me"`
+	// ProjectID is the coordinator conversation that manages this session.
+	ProjectID   string `json:"project_id,omitempty"`
+	ProjectRole string `json:"project_role,omitempty"`
+	// ProjectExists resolves grouping independently of coordinator visibility.
+	// Lists, resumes and metadata responses include it; incremental events may omit it.
+	ProjectExists  *bool  `json:"project_exists,omitempty"`
+	ParentID       string `json:"parent_id,omitempty"`
+	AgentPath      string `json:"agent_path,omitempty"`
+	Preview        string `json:"preview"`
+	Title          string `json:"title,omitempty"`
+	ModelProvider  string `json:"model_provider"`
+	Model          string `json:"model"`
+	ModelVariant   string `json:"model_variant"`
+	ModelEffort    string `json:"model_effort"`
+	PermissionMode string `json:"permission_mode"`
+	ApproveForMe   bool   `json:"approve_for_me"`
 	// EngineID is the agent engine the thread is bound to ("wuu" for the
 	// built-in engine; external engines like Claude or Codex will carry
 	// their own ids).
@@ -2129,6 +2229,7 @@ type Thread struct {
 	Pinned                bool          `json:"pinned,omitempty"`
 	FolderID              string        `json:"folder_id,omitempty"`
 	Archived              bool          `json:"archived,omitempty"`
+	ArchiveReason         string        `json:"archive_reason,omitempty"`
 	ForkedFromID          string        `json:"forked_from_id,omitempty"`
 	ForkedFromTurnID      string        `json:"forked_from_turn_id,omitempty"`
 	ForkedFromItemID      string        `json:"forked_from_item_id,omitempty"`
@@ -2202,6 +2303,8 @@ type TurnError struct {
 	Category   string `json:"category,omitempty"`
 	Provider   string `json:"provider,omitempty"`
 	StatusCode int    `json:"status_code,omitempty"`
+	// Recovery describes the final failed stream operation, when available.
+	Recovery *providers.StreamRecoveryInfo `json:"recovery,omitempty"`
 }
 
 type ThreadItemType string
@@ -2441,8 +2544,9 @@ type SettingsUsageMetrics struct {
 }
 
 // SettingsUsageDay is one calendar day of token activity, bucketed by the
-// token_usage row's At timestamp (UTC). Days are emitted in ascending
-// date order; gaps in the visible window are filled in by the desktop.
+// token_usage row's At timestamp (UTC for settings/usage, the requested zone
+// for usage/overview). Days are emitted in ascending date order; gaps in the
+// visible window are filled in by the desktop.
 type SettingsUsageDay struct {
 	Date                string  `json:"date"`
 	InputTokens         int     `json:"input_tokens"`
@@ -2469,207 +2573,18 @@ type SettingsUsageResponse struct {
 	Days            []SettingsUsageDay   `json:"days"`
 }
 
-type ChannelAgentListResult struct {
-	Agents []channels.NamedAgent `json:"agents"`
+// UsageOverviewParams selects the IANA time zone, such as
+// "America/Los_Angeles", whose calendar days bucket usage/overview. Empty
+// means UTC; an unknown zone is an error rather than a silent UTC fallback.
+type UsageOverviewParams struct {
+	TimeZone string `json:"timezone,omitempty"`
 }
 
-type ChannelAgentLanguageUsage struct {
-	Name  string  `json:"name"`
-	Lines int     `json:"lines"`
-	Share float64 `json:"share"`
-}
-
-type ChannelAgentInsight struct {
-	AgentID            string                      `json:"agent_id"`
-	WindowDays         int                         `json:"window_days"`
-	FilesChanged       int                         `json:"files_changed"`
-	Additions          int                         `json:"additions"`
-	Deletions          int                         `json:"deletions"`
-	InputTokens        int                         `json:"input_tokens"`
-	OutputTokens       int                         `json:"output_tokens"`
-	LastActiveAt       string                      `json:"last_active_at,omitempty"`
-	Workspace          string                      `json:"workspace,omitempty"`
-	Languages          []ChannelAgentLanguageUsage `json:"languages"`
-	AttributionPartial bool                        `json:"attribution_partial"`
-}
-
-type ChannelAgentInsightsResult struct {
-	GeneratedAt string                `json:"generated_at"`
-	Insights    []ChannelAgentInsight `json:"insights"`
-}
-
-type ChannelBootstrapResult = channels.BootstrapResult
-
-type ChannelAgentCreateParams struct {
-	RequestID        string `json:"request_id,omitempty"`
-	Name             string `json:"name"`
-	Role             string `json:"role,omitempty"`
-	AvatarKey        string `json:"avatar_key,omitempty"`
-	AvatarImage      string `json:"avatar_image,omitempty"`
-	EngineOverride   string `json:"engine_override,omitempty"`
-	ProviderOverride string `json:"provider_override,omitempty"`
-	ModelOverride    string `json:"model_override,omitempty"`
-	EffortOverride   string `json:"effort_override,omitempty"`
-}
-
-type ChannelAgentCreateResult struct {
-	Agent channels.NamedAgent `json:"agent"`
-}
-
-type ChannelAgentUpdateParams struct {
-	AgentID          string  `json:"agent_id"`
-	Name             string  `json:"name"`
-	Role             string  `json:"role,omitempty"`
-	AvatarKey        string  `json:"avatar_key,omitempty"`
-	AvatarImage      *string `json:"avatar_image,omitempty"`
-	EngineOverride   string  `json:"engine_override,omitempty"`
-	ProviderOverride string  `json:"provider_override,omitempty"`
-	ModelOverride    string  `json:"model_override,omitempty"`
-	EffortOverride   string  `json:"effort_override,omitempty"`
-}
-
-type ChannelAgentUpdateResult struct {
-	Agent channels.NamedAgent `json:"agent"`
-}
-type ChannelAgentDeleteParams struct {
-	AgentID string `json:"agent_id"`
-}
-type ChannelAgentDeleteResult struct {
-	Deleted bool `json:"deleted"`
-}
-
-type ChannelAgentStartParams struct {
-	AgentID string `json:"agent_id"`
-}
-
-type ChannelAgentStartResult struct {
-	Agent     channels.NamedAgent `json:"agent"`
-	WakeState channels.WakeState  `json:"wake_state"`
-	Started   bool                `json:"started"`
-	ThreadID  string              `json:"thread_id"`
-}
-
-type ChannelAgentResetParams struct {
-	AgentID string `json:"agent_id"`
-}
-
-type ChannelAgentResetResult struct {
-	Agent     channels.NamedAgent `json:"agent"`
-	WakeState channels.WakeState  `json:"wake_state"`
-	Requested bool                `json:"requested"`
-	ThreadID  string              `json:"thread_id"`
-}
-
-type ChannelAgentCreationResolveParams struct {
-	ProposalID string `json:"proposal_id"`
-	Approve    bool   `json:"approve"`
-	Provider   string `json:"provider,omitempty"`
-	Model      string `json:"model,omitempty"`
-}
-
-type ChannelAgentCreationResolveResult struct {
-	Proposal channels.AgentCreationProposal `json:"proposal"`
-}
-
-type ChannelRoomListResult struct {
-	Rooms []channels.Room `json:"rooms"`
-}
-
-type ChannelRoomCreateParams struct {
-	Name        string   `json:"name"`
-	AvatarImage string   `json:"avatar_image,omitempty"`
-	AgentIDs    []string `json:"agent_ids,omitempty"`
-}
-
-type ChannelRoomCreateResult struct {
-	Room channels.Room `json:"room"`
-}
-
-type ChannelDirectMessageOpenParams struct {
-	Onboarding *channels.RoomOnboarding `json:"onboarding,omitempty"`
-	AgentID    string                   `json:"agent_id"`
-}
-
-type ChannelDirectMessageOpenResult struct {
-	Room channels.Room `json:"room"`
-}
-
-type ChannelRoomUpdateParams struct {
-	RoomID      string    `json:"room_id"`
-	Name        *string   `json:"name,omitempty"`
-	AvatarImage *string   `json:"avatar_image,omitempty"`
-	AgentIDs    *[]string `json:"agent_ids,omitempty"`
-}
-
-type ChannelRoomUpdateResult struct {
-	Room channels.Room `json:"room"`
-}
-
-type ChannelRoomDeleteParams struct {
-	RoomID string `json:"room_id"`
-}
-type ChannelRoomDeleteResult struct {
-	Deleted bool `json:"deleted"`
-}
-
-type ChannelRoomReadParams struct {
-	RoomID string `json:"room_id"`
-}
-
-type ChannelRoomReadResult struct {
-	Read bool `json:"read"`
-}
-
-type ChannelMessageListParams struct {
-	RoomID                 string `json:"room_id"`
-	AfterSeq               int64  `json:"after_seq,omitempty"`
-	Limit                  int    `json:"limit,omitempty"`
-	BeforeSeq              int64  `json:"before_seq,omitempty"`
-	Latest                 bool   `json:"latest,omitempty"`
-	AttachmentMetadataOnly bool   `json:"attachment_metadata_only,omitempty"`
-}
-
-type ChannelMessageListResult struct {
-	Coordinator *ChannelCoordinatorStatus `json:"coordinator,omitempty"`
-	Messages    []channels.Message        `json:"messages"`
-	Responses   []ChannelResponse         `json:"responses"`
-}
-
-type ChannelMessageSendParams struct {
-	RoomID string           `json:"room_id"`
-	Body   string           `json:"body"`
-	Images []TurnStartImage `json:"images,omitempty"`
-	Files  []TurnStartFile  `json:"files,omitempty"`
-}
-
-type ChannelMessageSendResult struct {
-	Message channels.Message `json:"message"`
-}
-
-type ChannelTaskCreateParams struct {
-	RoomID  string `json:"room_id"`
-	Title   string `json:"title"`
-	OwnerID string `json:"owner_id"`
-}
-
-type ChannelTaskCreateResult struct {
-	Task channels.Message `json:"task"`
-}
-
-type ChannelTaskUpdateParams struct {
-	TaskID  string `json:"task_id"`
-	State   string `json:"state,omitempty"`
-	OwnerID string `json:"owner_id,omitempty"`
-}
-
-type ChannelTaskUpdateResult struct {
-	Task channels.Message `json:"task"`
-}
-
-type ChannelHumanMentionStatusResult struct {
-	Count int `json:"count"`
-}
-
-type ChannelHumanMentionAckResult struct {
-	Acknowledged int `json:"acknowledged"`
+// UsageOverviewResponse summarizes the same token_usage trail as
+// settings/usage without reading conversation content, so it has no model or
+// skill breakdowns. An empty store reports zero totals and no days.
+type UsageOverviewResponse struct {
+	TotalSessions int                  `json:"total_sessions"`
+	Metrics       SettingsUsageMetrics `json:"metrics"`
+	Days          []SettingsUsageDay   `json:"days"`
 }

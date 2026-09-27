@@ -3,11 +3,56 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
+
+func TestBudgetedToolResultSurvivesStorageHydration(t *testing.T) {
+	for _, text := range []string{"budgeted projection", ""} {
+		t.Run(fmt.Sprintf("bytes_%d", len(text)), func(t *testing.T) {
+			dir := t.TempDir()
+			if _, err := CreateWithMetadata(dir, "budget-storage", t.TempDir()); err != nil {
+				t.Fatal(err)
+			}
+			result := toolresult.Result{
+				Content:           []toolresult.ContentPart{{Type: "text", Text: "original unbounded text"}},
+				StructuredContent: json.RawMessage(`{"continuation":{"next":"cursor"}}`),
+				Meta:              json.RawMessage(`{"private":"metadata"}`), ModelText: &text, IsError: true,
+			}
+			payload, err := json.Marshal(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := AppendHistoryRecord(dir, "budget-storage", HistoryRecord{Role: "tool", Content: text, ToolCallID: "call_1", ToolResult: payload}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := MaintainRedundantStorage(context.Background(), dir); err != nil {
+				t.Fatal(err)
+			}
+			history, err := LoadHistoryRecords(dir, "budget-storage", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(history) != 1 || history[0].Content != text {
+				t.Fatal("storage hydration restored omitted text")
+			}
+			var restored toolresult.Result
+			if err := json.Unmarshal(history[0].ToolResult, &restored); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(restored, result) {
+				t.Fatal("storage lost projection or recovery data")
+			}
+			if providers.ProjectToolResult(restored).ToolText != text {
+				t.Fatal("replay restored omitted text")
+			}
+		})
+	}
+}
 
 func TestToolResultProjectionIsStoredOnceAndHydrated(t *testing.T) {
 	dir := t.TempDir()
@@ -15,7 +60,7 @@ func TestToolResultProjectionIsStoredOnceAndHydrated(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := toolresult.Result{
-		Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: "projected output"}},
+		Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: "projected \"output\"\nC:\\work\\report.txt <end>"}},
 		Meta:    json.RawMessage(`{"source":"test"}`),
 	}
 	payload, err := json.Marshal(result)
@@ -47,6 +92,13 @@ func TestToolResultProjectionIsStoredOnceAndHydrated(t *testing.T) {
 	}
 	if len(history) != 1 || history[0].Content != record.Content || !reflect.DeepEqual(history[0].ToolResult, record.ToolResult) {
 		t.Fatalf("hydrated history = %+v, want %+v", history, record)
+	}
+	page, err := SearchHistoryPage(context.Background(), dir, "thread-tool-storage", record.Content, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Records) != 1 || page.Records[0].Content != record.Content {
+		t.Fatalf("deduplicated tool content was not searchable: %+v", page)
 	}
 }
 
@@ -116,7 +168,7 @@ VALUES ('thread-maintenance', 2, 'current', 1, '[]', '2026-01-02T00:00:00Z')`,
 	if invocationResult != "" || messageContent != "" || checkpointCount != 1 || checkpointVersion != 2 {
 		t.Fatalf("maintained storage = invocation %q, message %q, checkpoints %d@%d", invocationResult, messageContent, checkpointCount, checkpointVersion)
 	}
-	history, err := loadHistoryRecordsDB(db, "thread-maintenance", false)
+	history, err := loadHistoryRecordsDB(db, "thread-maintenance", false, false)
 	if err != nil {
 		t.Fatal(err)
 	}

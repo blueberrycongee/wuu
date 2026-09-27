@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -81,29 +80,9 @@ func (t *PresentArtifactTool) ExecuteResultCall(ctx context.Context, call provid
 			return toolresult.Result{}, err
 		}
 	}
-	// Resolve aliases before the final sensitive-path check. An innocently
-	// named symlink must not publish a credential file within a workspace root.
-	resolved, err = filepath.EvalSymlinks(resolved)
+	resolved, err = resolveReadTarget(ctx, t.env, t.Name(), resolved, managed)
 	if err != nil {
 		return toolresult.Result{}, err
-	}
-	if !managed {
-		// Hosted worktrees can live under WUU_HOME. Recheck the actual target
-		// against that execution root, not the infrastructure path above it.
-		execRoot, err := t.env.ExecRootDir(ctx)
-		if err != nil {
-			return toolresult.Result{}, err
-		}
-		boundary := &Env{
-			RootDir: execRoot, FileScopeRoots: append([]string{execRoot}, t.env.FileScopeRoots...),
-			Unconfined: t.env.Unconfined, PermissionMode: t.env.PermissionMode, AllowMutations: t.env.AllowMutations,
-		}
-		if _, err := boundary.ResolvePath(resolved); err != nil {
-			return toolresult.Result{}, err
-		}
-		if err := rejectSensitiveReadPath(boundary, t.Name(), resolved); err != nil {
-			return toolresult.Result{}, err
-		}
 	}
 	part, err := t.env.ArtifactPublisher(ctx, ArtifactPublishRequest{
 		Path: resolved, ThreadID: t.env.SessionID, StateDir: t.env.StateDir, CWD: t.env.RootDir, CallID: call.ID,

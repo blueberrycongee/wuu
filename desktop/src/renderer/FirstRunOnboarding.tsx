@@ -1,4 +1,4 @@
-import { Check, LoaderCircle } from "lucide-react";
+import { Check, LoaderCircle } from "./WuuIcons";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   EngineInfo,
@@ -10,6 +10,8 @@ import type {
   RuntimeConnectionUpdate,
 } from "../shared/protocol";
 import { useI18n } from "./i18n";
+import { engineLabel } from "./EngineDisplay";
+import { EngineIcon } from "./EngineIcons";
 import { ONBOARDING_ENGINES, ONBOARDING_PLUGIN_ORDER, PLUGIN_DESCRIPTION_KEYS, RECOMMENDED_PLUGIN_IDS } from "./onboardingCatalog";
 import { OnboardingMascotStage } from "./OnboardingMascotStage";
 import { PREVIEW_PLUGINS } from "./onboardingPreview";
@@ -133,11 +135,16 @@ export function FirstRunOnboarding({
     return ids;
   }, [bundledPlugins, selectedPluginIDs]);
   const selectableEngines = useMemo(
-    () => ONBOARDING_ENGINES.flatMap((choice) => {
-      if (choice.id === "wuu") return [{ ...choice, ready: true }];
-      const engine = engines?.engines.find((item) => item.id === choice.id);
-      return engine ? [{ ...choice, ready: engine.enabled && engine.binary_ok }] : [];
-    }),
+    () => [
+      { ...ONBOARDING_ENGINES[0], ready: true },
+      ...(engines?.engines ?? []).filter((engine) => engine.id !== "wuu").map((engine) => ({
+        id: engine.id,
+        label: engineLabel(engine.id, engine),
+        ready: engine.enabled && engine.binary_ok,
+        readyDescription: ONBOARDING_ENGINES.find((choice) => choice.id === engine.id)?.readyDescription ?? "settings.engineReady" as const,
+        missingDescription: engine.binary_ok ? "settings.engineDisabled" as const : "settings.engineNotInstalled" as const,
+      })),
+    ],
     [engines],
   );
 
@@ -473,6 +480,9 @@ export function FirstRunOnboarding({
                     disabled={savingRuntime || !engine.ready}
                     onClick={() => setSelectedEngine(engine.id)}
                   >
+                    <span className="onboarding-plugin-icon" aria-hidden="true">
+                      <EngineIcon engine={engine.id} />
+                    </span>
                     <span className="onboarding-choice-copy">
                       <strong>
                         {engine.label}
@@ -546,7 +556,7 @@ export function FirstRunOnboarding({
                       setProviderType(next);
                       if (next === "xai-subscription") {
                         if (!providerName.trim()) setProviderName("xai-subscription");
-                        if (!model.trim()) setModel("grok-4.6");
+                        if (!model.trim()) setModel("grok-4.7");
                       } else if (next === "grok-build") {
                         setProviderName("grok-build");
                         setModel("grok-4.5");

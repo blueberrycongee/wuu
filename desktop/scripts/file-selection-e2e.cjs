@@ -86,6 +86,7 @@ async function run() {
       await waitFor(() => Boolean(document.querySelector("[data-main-conversation-composer] .file-selection-quote-chip")), "selected text tag");
       assert.equal(await evaluate(composerValue), draft, "Selected text must remain folded instead of expanding into the draft");
       assert.equal(await evaluate(() => Boolean(document.querySelector(".file-selection-comments"))), false, "A quote must not create a document comment");
+      await frame();
       const tag = await visibleGeometry("[data-main-conversation-composer] .file-selection-quote-chip .file-selection-tag");
       win.webContents.sendInputEvent({ type: "mouseMove", x: Math.round(tag.x + tag.width / 2), y: Math.round(tag.y + tag.height / 2) });
       await waitFor(expected => document.querySelector(".file-selection-quote-text")?.textContent === expected, "hovered original text", quote);

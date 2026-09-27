@@ -28,7 +28,7 @@ function Harness({ storageKey, initialPrompt = "question" }: { storageKey: strin
   const [value, setValue] = useState(initialPrompt);
   prompt = value;
   owner = storageKey;
-  return <FileSelectionProvider ownerKey={storageKey} prompt={value} getPrompt={() => prompt}
+  return <FileSelectionProvider ownerKey={storageKey} getPrompt={() => prompt}
     setPrompt={setValue} onEdit={edit} onOpenFile={() => {}}>
     <Probe value={value} setValue={setValue} />
   </FileSelectionProvider>;

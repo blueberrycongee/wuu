@@ -399,7 +399,7 @@ func appendResponsesInputItem(input []responsesInputItem, msg providers.ChatMess
 		input = append(input, responsesInputItem{
 			Type:   "function_call_output",
 			CallID: msg.ToolCallID,
-			Output: msg.Content,
+			Output: &msg.Content,
 		})
 		if nativeDeferred {
 			if tools := responsesToolDefinitionsFromLoadable(model, msg.DiscoveredTools); len(tools) > 0 {
@@ -429,6 +429,12 @@ func appendResponsesInputItem(input []responsesInputItem, msg providers.ChatMess
 				Content: []responsesInputContentPart{{Type: "output_text", Text: msg.Content}},
 			})
 		}
+		for _, image := range msg.Images {
+			input = append(input, responsesInputItem{
+				Type: "image_generation_call", ID: image.ProviderItemID,
+				Status: "completed", Result: image.Data,
+			})
+		}
 		for _, call := range msg.ToolCalls {
 			if nativeDeferred && isResponsesToolSearchCall(call) {
 				input = append(input, responsesInputItem{
@@ -449,7 +455,7 @@ func appendResponsesInputItem(input []responsesInputItem, msg providers.ChatMess
 				Arguments: call.Arguments,
 			})
 		}
-		if strings.TrimSpace(msg.Content) == "" && len(msg.ToolCalls) == 0 && len(msg.ProviderItems) == 0 {
+		if strings.TrimSpace(msg.Content) == "" && len(msg.ToolCalls) == 0 && len(msg.ProviderItems) == 0 && len(msg.Images) == 0 {
 			input = append(input, responsesInputItem{Role: "assistant", Content: ""})
 		}
 		return input
@@ -880,8 +886,8 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 	pending := newResponsesPendingTools()
 	pendingReasoning := newResponsesPendingReasoning()
 	var sawToolCall bool
-	var currentTextPhase providers.MessagePhase
-	var currentTextItemID string
+	var text responsesTextStream
+	var images responsesImageStream
 
 	scanner := providers.NewSSEReader(resp.Body, resetIdle)
 	for scanner.Scan() {
@@ -894,7 +900,14 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 		}
 
 		var event responsesStreamEvent
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
+		err := json.Unmarshal([]byte(data), &event)
+		if err == nil {
+			err = text.consume(event, emit)
+		}
+		if err == nil {
+			err = images.consume(event, emit)
+		}
+		if err != nil {
 			providers.DebugLogfWire("Responses SSE parse error: %v, data: %s", err, data)
 			err = fmt.Errorf("parse chunk: %w", err)
 			failOpenAIResponseLease(lease, resp, err)
@@ -909,26 +922,10 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 		case "response.reasoning_summary_part.done":
 			pendingReasoning.appendDelta(event, "\n\n", emit)
 
-		case "response.output_text.delta":
-			if event.Delta != "" {
-				if event.ItemID != "" {
-					currentTextItemID = event.ItemID
-				}
-				emit.Send(providers.StreamEvent{Type: providers.EventContentDelta, Content: event.Delta, Phase: currentTextPhase, ProviderItemID: currentTextItemID})
-			}
-
 		case "response.output_item.added":
 			switch event.Item.Type {
 			case "reasoning":
 				pendingReasoning.start(event.Item, event.outputIndex())
-			case "message":
-				if event.Item.ID != "" {
-					currentTextItemID = event.Item.ID
-				}
-				if phase := providers.NormalizeMessagePhase(event.Item.Phase); phase != "" {
-					currentTextPhase = phase
-					emit.Send(providers.StreamEvent{Type: providers.EventContentDelta, Phase: currentTextPhase, ProviderItemID: currentTextItemID})
-				}
 			case "function_call", "tool_search_call":
 				sawToolCall = true
 				disarmFinalAnswerTail()
@@ -948,13 +945,6 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 			case "reasoning":
 				pendingReasoning.emitDone(event, emit)
 			case "message":
-				if event.Item.ID != "" {
-					currentTextItemID = event.Item.ID
-				}
-				if phase := providers.NormalizeMessagePhase(event.Item.Phase); phase != "" {
-					currentTextPhase = phase
-					emit.Send(providers.StreamEvent{Type: providers.EventContentDelta, Phase: currentTextPhase, ProviderItemID: currentTextItemID})
-				}
 				if responsesFinalAnswerItemDone(event, sawToolCall) {
 					armFinalAnswerTail()
 				}
@@ -970,7 +960,7 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 
 		case "response.completed", "response.done", "response.incomplete":
 			pending.emitEnds(emit)
-			usage, stopReason, finishReason, truncated := responsesDoneMetadata(event.Response, sawToolCall)
+			usage, stopReason, finishReason, truncated := responsesDoneMetadata(event.Response, sawToolCall, event.Type)
 			lease.SucceedWithUsage(usage)
 			emit.Send(providers.StreamEvent{
 				Type:              providers.EventDone,
@@ -982,26 +972,8 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 			})
 			return
 
-		case "response.failed":
-			if event.Response != nil && event.Response.Error != nil {
-				err := event.Response.Error.asError()
-				lease.FailError(err)
-				emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
-				return
-			}
-			err := errors.New("response failed")
-			lease.FailError(err)
-			emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
-			return
-
-		case "error":
-			if event.Error != nil {
-				err := event.Error.asError()
-				lease.FailError(err)
-				emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
-				return
-			}
-			err := errors.New("response stream error")
+		case "response.failed", "error":
+			err := event.asError()
 			lease.FailError(err)
 			emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
 			return
@@ -1076,7 +1048,7 @@ func responsesInferredFinalAnswerDoneEvent() providers.StreamEvent {
 	}
 }
 
-func responsesDoneMetadata(resp *responsesResponse, sawToolCall bool) (*providers.TokenUsage, string, providers.FinishReason, bool) {
+func responsesDoneMetadata(resp *responsesResponse, sawToolCall bool, eventType string) (*providers.TokenUsage, string, providers.FinishReason, bool) {
 	if resp == nil {
 		if sawToolCall {
 			return nil, "tool_calls", providers.FinishReasonToolCalls, false
@@ -1086,6 +1058,9 @@ func responsesDoneMetadata(resp *responsesResponse, sawToolCall bool) (*provider
 
 	usage := resp.Usage.asTokenUsage()
 	stopReason := strings.ToLower(strings.TrimSpace(resp.Status))
+	if stopReason == "" && eventType == "response.completed" {
+		stopReason = "completed"
+	}
 	truncated := false
 	if resp.IncompleteDetails != nil && strings.TrimSpace(resp.IncompleteDetails.Reason) != "" {
 		stopReason = strings.ToLower(strings.TrimSpace(resp.IncompleteDetails.Reason))
@@ -1094,7 +1069,15 @@ func responsesDoneMetadata(resp *responsesResponse, sawToolCall bool) (*provider
 	if sawToolCall && !truncated {
 		stopReason = "tool_calls"
 	}
-	return usage, stopReason, providers.NormalizeFinishReason(stopReason, truncated, sawToolCall), truncated
+	finishReason := providers.NormalizeFinishReason(stopReason, truncated, sawToolCall)
+	// end_turn is an optional Responses extension, not a Chat Completions
+	// finish_reason. Missing/null must not turn ordinary BYOK completions into
+	// extra billable requests. Incomplete/error evidence always wins over it.
+	if stopReason == "completed" && eventType != "response.incomplete" &&
+		resp.Error == nil && resp.IncompleteDetails == nil && resp.EndTurn != nil && !*resp.EndTurn {
+		finishReason = providers.FinishReasonContinue
+	}
+	return usage, stopReason, finishReason, truncated
 }
 
 type responsesPendingTool struct {
@@ -1364,6 +1347,7 @@ type responsesReasoning struct {
 }
 
 type responsesInputItem struct {
+	Result    string          `json:"result,omitempty"`
 	Raw       json.RawMessage `json:"-"`
 	Type      string          `json:"type,omitempty"`
 	ID        string          `json:"id,omitempty"`
@@ -1375,7 +1359,7 @@ type responsesInputItem struct {
 	Status    string          `json:"status,omitempty"`
 	Execution string          `json:"execution,omitempty"`
 	Arguments any             `json:"arguments,omitempty"`
-	Output    string          `json:"output,omitempty"`
+	Output    *string         `json:"output,omitempty"`
 	Tools     any             `json:"tools,omitempty"`
 }
 
@@ -1421,6 +1405,7 @@ type responsesToolDefinition struct {
 type responsesResponse struct {
 	ID                string                      `json:"id,omitempty"`
 	Status            string                      `json:"status"`
+	EndTurn           *bool                       `json:"end_turn,omitempty"`
 	Output            []responsesOutputItem       `json:"output"`
 	Usage             *responsesUsage             `json:"usage,omitempty"`
 	Error             *responsesError             `json:"error,omitempty"`
@@ -1432,6 +1417,7 @@ func (r responsesResponse) asChatResponse(model string) (providers.ChatResponse,
 		return providers.ChatResponse{}, r.Error.asError()
 	}
 
+	var images []providers.InputImage
 	var contentParts []string
 	calls := make([]providers.ToolCall, 0)
 	reasoningBlocks := make([]providers.ReasoningBlock, 0)
@@ -1439,6 +1425,12 @@ func (r responsesResponse) asChatResponse(model string) (providers.ChatResponse,
 	var providerItemID string
 	for _, item := range r.Output {
 		switch item.Type {
+		case "image_generation_call":
+			image, err := item.generatedImage()
+			if err != nil {
+				return providers.ChatResponse{}, err
+			}
+			images = append(images, image)
 		case "reasoning":
 			reasoningBlocks = append(reasoningBlocks, responsesReasoningBlock(item))
 		case "message":
@@ -1475,25 +1467,17 @@ func (r responsesResponse) asChatResponse(model string) (providers.ChatResponse,
 		}
 	}
 
-	stopReason := strings.ToLower(strings.TrimSpace(r.Status))
-	truncated := false
-	if r.IncompleteDetails != nil && strings.TrimSpace(r.IncompleteDetails.Reason) != "" {
-		stopReason = strings.ToLower(strings.TrimSpace(r.IncompleteDetails.Reason))
-		truncated = stopReason == "max_output_tokens"
-	}
-	if len(calls) > 0 && !truncated {
-		stopReason = "tool_calls"
-	}
-	finishReason := providers.NormalizeFinishReason(stopReason, truncated, len(calls) > 0)
+	usage, stopReason, finishReason, truncated := responsesDoneMetadata(&r, len(calls) > 0, "")
 
 	return providers.ChatResponse{
+		Images:            images,
 		Content:           strings.Join(contentParts, "\n"),
 		Phase:             phase,
 		ProviderItemID:    providerItemID,
 		ProviderItemModel: model,
 		ReasoningBlocks:   reasoningBlocks,
 		ToolCalls:         calls,
-		Usage:             r.Usage.asTokenUsage(),
+		Usage:             usage,
 		StopReason:        stopReason,
 		FinishReason:      finishReason,
 		Truncated:         truncated,
@@ -1501,18 +1485,20 @@ func (r responsesResponse) asChatResponse(model string) (providers.ChatResponse,
 }
 
 type responsesOutputItem struct {
-	Raw       json.RawMessage `json:"-"`
-	ID        string          `json:"id"`
-	Type      string          `json:"type"`
-	Role      string          `json:"role,omitempty"`
-	Phase     string          `json:"phase,omitempty"`
-	Status    string          `json:"status,omitempty"`
-	Content   json.RawMessage `json:"content,omitempty"`
-	Summary   json.RawMessage `json:"summary,omitempty"`
-	CallID    string          `json:"call_id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Execution string          `json:"execution,omitempty"`
-	Arguments json.RawMessage `json:"arguments,omitempty"`
+	Result       string          `json:"result,omitempty"`
+	OutputFormat string          `json:"output_format,omitempty"`
+	Raw          json.RawMessage `json:"-"`
+	ID           string          `json:"id"`
+	Type         string          `json:"type"`
+	Role         string          `json:"role,omitempty"`
+	Phase        string          `json:"phase,omitempty"`
+	Status       string          `json:"status,omitempty"`
+	Content      json.RawMessage `json:"content,omitempty"`
+	Summary      json.RawMessage `json:"summary,omitempty"`
+	CallID       string          `json:"call_id,omitempty"`
+	Name         string          `json:"name,omitempty"`
+	Execution    string          `json:"execution,omitempty"`
+	Arguments    json.RawMessage `json:"arguments,omitempty"`
 }
 
 func (i *responsesOutputItem) UnmarshalJSON(data []byte) error {
@@ -1608,18 +1594,24 @@ func rawResponseArgumentsString(raw json.RawMessage) string {
 }
 
 type responsesContentPart struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
+	Type    string `json:"type"`
+	Text    string `json:"text,omitempty"`
+	Refusal string `json:"refusal,omitempty"`
 }
 
 func parseResponsesContent(raw json.RawMessage) (string, error) {
+	parts, err := parseResponsesContentParts(raw)
+	return strings.Join(parts, "\n"), err
+}
+
+func parseResponsesContentParts(raw json.RawMessage) ([]string, error) {
 	if len(raw) == 0 {
-		return "", nil
+		return nil, nil
 	}
 
 	var asString string
 	if err := json.Unmarshal(raw, &asString); err == nil {
-		return asString, nil
+		return []string{asString}, nil
 	}
 
 	var parts []responsesContentPart
@@ -1631,12 +1623,16 @@ func parseResponsesContent(raw json.RawMessage) (string, error) {
 				if part.Text != "" {
 					out = append(out, part.Text)
 				}
+			case "refusal":
+				if part.Refusal != "" {
+					out = append(out, part.Refusal)
+				}
 			}
 		}
-		return strings.Join(out, "\n"), nil
+		return out, nil
 	}
 
-	return "", fmt.Errorf("unsupported response content: %s", string(raw))
+	return nil, fmt.Errorf("unsupported response content: %s", string(raw))
 }
 
 type responsesIncompleteDetails struct {
@@ -1697,6 +1693,8 @@ func (e *responsesError) asError() error {
 
 type responsesStreamEvent struct {
 	Type        string              `json:"type"`
+	Code        string              `json:"code,omitempty"`
+	Message     string              `json:"message,omitempty"`
 	Delta       string              `json:"delta,omitempty"`
 	Arguments   json.RawMessage     `json:"arguments,omitempty"`
 	ItemID      string              `json:"item_id,omitempty"`
@@ -1704,6 +1702,39 @@ type responsesStreamEvent struct {
 	Item        responsesOutputItem `json:"item,omitempty"`
 	Response    *responsesResponse  `json:"response,omitempty"`
 	Error       *responsesError     `json:"error,omitempty"`
+}
+
+// Responses uses top-level code/message for error events. Compatible gateways
+// also send error objects, and response.failed carries response.error. Prefer
+// those more specific objects, filling missing fields from the top level.
+func (e responsesStreamEvent) errorDetail() responsesError {
+	detail := responsesError{Code: e.Code, Message: e.Message}
+	nested := e.Error
+	if e.Type == "response.failed" && e.Response != nil && e.Response.Error != nil {
+		nested = e.Response.Error
+	}
+	if nested != nil {
+		detail.Type = nested.Type
+		if strings.TrimSpace(nested.Code) != "" {
+			detail.Code = nested.Code
+		} else if strings.TrimSpace(nested.Type) != "" {
+			detail.Code = nested.Type
+		}
+		if strings.TrimSpace(nested.Message) != "" {
+			detail.Message = nested.Message
+		}
+	}
+	return detail
+}
+
+func (e responsesStreamEvent) asError() error {
+	detail := e.errorDetail()
+	if strings.TrimSpace(detail.Code) == "" && strings.TrimSpace(detail.Message) == "" {
+		// Retain the protocol identity without copying arbitrary event fields
+		// (which can include response content) into durable error messages.
+		return &providers.StreamError{ProviderFamily: "openai", Message: "Responses " + e.Type + " event without error code or message"}
+	}
+	return detail.asError()
 }
 
 func (e responsesStreamEvent) outputIndex() int {

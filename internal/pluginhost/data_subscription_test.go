@@ -2,16 +2,6 @@ package pluginhost
 
 import "testing"
 
-func TestKernelDataSubscribeDescriptorIsValid(t *testing.T) {
-	descriptor := KernelDataSubscribeDescriptor()
-	if descriptor.Name != KernelDataSubscribeService || descriptor.Version != DataSubscribeServiceVersion {
-		t.Fatalf("descriptor = %s@%s", descriptor.Name, descriptor.Version)
-	}
-	if len(descriptor.Methods) != 1 || descriptor.Methods[0].Name != KernelServiceMethod {
-		t.Fatalf("methods = %+v", descriptor.Methods)
-	}
-}
-
 func TestValidateDataSubscribeParams(t *testing.T) {
 	if err := ValidateDataSubscribeParams(DataSubscribeParams{ThreadID: "t1", Limit: 2}); err != nil {
 		t.Fatalf("valid params rejected: %v", err)

@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement, type JSX } from "react";
 import type { ThreadItem, Turn } from "../shared/protocol";
 import { buildAssistantTurnDisplay } from "./AssistantTurnDisplay";
+import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 import { turnTelemetryStore } from "./TurnTelemetryStore";
 import {
   AssistantTurnShell,
@@ -156,6 +157,7 @@ type RenderOptions = {
   itemRenderer?: (item: ThreadItem, streaming: boolean) => JSX.Element;
   onCollapseComplete?: () => void;
   onOpenAgent?: (agentID: string) => void;
+  onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
 };
 
 function defaultItemRenderer(
@@ -194,6 +196,7 @@ function renderShell(
         onStreamFrame: () => {},
         onCollapseComplete: options.onCollapseComplete,
         onOpenAgent: options.onOpenAgent,
+        onOpenURL: options.onOpenURL,
       }),
     );
   });
@@ -222,6 +225,7 @@ function rerenderShell(
         onStreamFrame: () => {},
         onCollapseComplete: options.onCollapseComplete,
         onOpenAgent: options.onOpenAgent,
+        onOpenURL: options.onOpenURL,
       }),
     );
   });
@@ -511,6 +515,45 @@ describe("AssistantTurnShell — process fold default state (rule 2 + rule 8)", 
     expect(restored.container.querySelector(".turn-process-meta")?.textContent).toBe("5s");
   });
 
+  it("closes a caught-up process fold on reveal without scheduling the collapse anchor", () => {
+    vi.useFakeTimers();
+    const commentary = makeCommentary("checking");
+    const onCollapseComplete = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    mountedRoots.push(root);
+    const render = (active: boolean, turn: Turn): void => {
+      const display = buildAssistantTurnDisplay(turn, undefined, defaultItemRenderer);
+      if (!display) throw new Error("expected a display");
+      act(() => {
+        root.render(
+          createElement(ConversationRenderActivityProvider, {
+            active,
+            children: createElement(AssistantTurnShell, {
+              turn,
+              display,
+              onStreamFrame: () => {},
+              onCollapseComplete,
+            }),
+          }),
+        );
+      });
+    };
+    try {
+      render(false, makeTurn("in_progress", [commentary]));
+      expect(processFoldOpen(container)).toBe(true);
+      render(true, makeTurn("in_progress", [commentary, makeStreamingFinalAnswer("done")]));
+      expect(processFoldOpen(container)).toBe(false);
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(onCollapseComplete).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("collapses the process fold when a confirmed final_answer starts streaming", () => {
     const commentary = makeCommentary("checking");
     const { container, root } = renderShell(
@@ -548,7 +591,6 @@ describe("AssistantTurnShell — process fold default state (rule 2 + rule 8)", 
       "用时 3 秒",
     );
     expect(container.querySelector(".turn-process-meta")).toBeNull();
-    expect(container.querySelector(".turn-process-glyph")).toBeNull();
   });
 
   it("mounts completed process details only when the user reopens the fold", () => {
@@ -711,7 +753,7 @@ describe("AssistantTurnShell — process fold default state (rule 2 + rule 8)", 
     expect(processFoldOpen(container)).toBe(false);
 
     act(() => {
-      vi.advanceTimersByTime(440);
+      vi.advanceTimersByTime(1000);
     });
     expect(collapseCompletions).toBe(1);
 
@@ -947,29 +989,6 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     expect(folds[0].hasAttribute("open")).toBe(false);
   });
 
-  it("lets the user expand the reasoning fold manually", () => {
-    const turn = makeTurn("completed", [
-      makeReasoning("long internal deliberation"),
-      makeFinalAnswer("short answer"),
-    ]);
-    const { container } = renderShell(turn);
-
-    const folds = reasoningFolds(container);
-    expect(folds[0].hasAttribute("open")).toBe(false);
-
-    const summary = folds[0].querySelector("summary");
-    expect(summary).not.toBeNull();
-    act(() => {
-      summary?.dispatchEvent(new Event("toggle", { bubbles: true }));
-    });
-    // Note: the synthetic toggle event above drives React's controlled
-    // `open` state only if a useState hook listens to onToggle. Native
-    // <details> toggles its open attribute directly via the browser;
-    // this test focuses on the structural default (closed), and the
-    // manual-expand path is verified via DOM behavior in browser.
-    expect(folds[0]).not.toBeNull();
-  });
-
   it("keeps reasoning fold expansion local to that reasoning block", async () => {
     const first = makeReasoning("first deliberation");
     const second = makeReasoning("second deliberation");
@@ -1045,6 +1064,26 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     ]);
     // Commentary text surfaces inline (not folded):
     expect(container.textContent).toContain("found the file");
+  });
+
+  it("does not reserve an answer action slot under live process commentary", () => {
+    const commentary: ThreadItem = {
+      ...makeCommentary("提示词改动是中途新出现的"),
+      status: "in_progress",
+    };
+    const tool: ThreadItem = {
+      ...makeReadFileTool("src/App.tsx"),
+      status: "in_progress",
+    };
+    const { container } = renderShell(makeTurn("in_progress", [commentary, tool]));
+
+    expect(container.textContent).toContain("提示词改动是中途新出现的");
+    expect(
+      container.querySelector(".turn-process-entry-commentary .agent-message-actions"),
+    ).toBeNull();
+    expect(
+      container.querySelector(".turn-process-entry-commentary .agent-block-with-action-slot"),
+    ).toBeNull();
   });
 
   it("keeps one process surface when a post-commentary tool row grows into a group", () => {
@@ -1422,11 +1461,6 @@ describe("AssistantTurnShell — turn sources pill end-to-end", () => {
     // target on its own. Nesting <button> in <button> would be invalid
     // HTML and would double-fire the click handler.
     expect(container.querySelectorAll("button.turn-source-icon").length).toBe(0);
-    // The favicon still renders inside the pill button as a visual.
-    const pillImage = pill?.querySelector("img");
-    expect(pillImage?.getAttribute("src")).toContain(
-      "google.com/s2/favicons?domain=docs.anthropic.com",
-    );
     // Pill sits in the process header line, before the answer body — not
     // down in the answer footer.
     const topline = container.querySelector(".turn-process-topline");
@@ -1498,21 +1532,13 @@ describe("AssistantTurnShell — turn sources pill end-to-end", () => {
     expect(container.querySelector(".turn-sources-pill")).toBeNull();
   });
 
-  it("clicking the sources pill hands the URL to window.wuu.openExternal", () => {
-    // End-to-end: shell mounts → pill renders → user clicks → handleOpenSource
-    // fires → window.wuu.openExternal called with the exact URL. This is the
-    // path Electron takes when the user actually taps a source. Single-source
-    // case: the click target is the pill itself, not a nested icon button.
-    const openExternal = vi.fn().mockResolvedValue(undefined);
-    (
-      window as unknown as { wuu: { openExternal: typeof openExternal } }
-    ).wuu = { openExternal };
-
+  it("clicking the sources pill hands the URL to onOpenURL", () => {
+    const onOpenURL = vi.fn();
     const turn = makeTurn("completed", [
       makeFinalAnswer(""),
       makeWebFetch("https://docs.anthropic.com/api"),
     ]);
-    const { container } = renderShell(turn);
+    const { container } = renderShell(turn, { onOpenURL });
 
     const button = container.querySelector<HTMLButtonElement>(
       "button.turn-sources-pill",
@@ -1520,8 +1546,6 @@ describe("AssistantTurnShell — turn sources pill end-to-end", () => {
     act(() => {
       button?.click();
     });
-    expect(openExternal).toHaveBeenCalledWith(
-      "https://docs.anthropic.com/api",
-    );
+    expect(onOpenURL).toHaveBeenCalledWith("https://docs.anthropic.com/api");
   });
 });

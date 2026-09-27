@@ -16,8 +16,14 @@ import {
   browserPermissionDecision,
   configureBrowserProxy,
   interactableNodesFromSnapshot,
+  pageReadableContent,
+  readableBlocksFromSnapshot,
+  keyChord,
+  keyDispatch,
+  spectatorScrollbarCSS,
   tabKey,
   valueFor,
+  wheelDeltas,
 } from "./browserHostWindows";
 
 let nextWebContentsID = 1;
@@ -48,13 +54,28 @@ class FakeView implements BrowserViewHandle {
   readonly sentCommands: Array<{ method: string; params?: Record<string, unknown> }> = [];
   readonly responders = new Map<string, (params?: Record<string, unknown>) => Record<string, unknown>>();
   readonly loadedURLs: string[] = [];
+  readonly loadedBounds: Rectangle[] = [];
   captureCount = 0;
+  captureEmpty = false;
   boundsSet: Rectangle | undefined;
   visibleState: boolean | undefined;
   backgroundThrottling = true;
   readonly backgroundThrottlingChanges: boolean[] = [];
   zoomFactor = 1;
+  scriptResult: unknown = undefined;
+  cssSerial = 0;
+  readonly insertedCSS = new Map<string, string>();
+  readonly removedCSS: string[] = [];
   readonly listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+  readonly scripts: string[] = [];
+  back = false;
+  forward = false;
+  loading = false;
+  goBackCount = 0;
+  goForwardCount = 0;
+  reloadCount = 0;
+  stopCount = 0;
+  windowOpenHandler: ((details: { url?: string }) => { action: "deny" } | { action: "allow" }) | undefined;
   closed = false;
 
   readonly debuggerHandle: BrowserDebuggerHandle = {
@@ -67,6 +88,17 @@ class FakeView implements BrowserViewHandle {
     isAttached: () => this.attached,
     sendCommand: async (method, params) => {
       this.sentCommands.push({ method, params });
+      const rawType = params && typeof params.type === "string" ? params.type : "";
+      if (method === "Input.dispatchMouseEvent") {
+        const type = rawType === "mousePressed" ? "mouseDown"
+          : rawType === "mouseReleased" ? "mouseUp"
+          : rawType;
+        for (const listener of this.listeners.get("before-mouse-event") ?? []) listener({}, { type });
+      }
+      if (method === "Input.dispatchKeyEvent") {
+        const type = rawType === "rawKeyDown" || rawType === "keyDown" ? "keyDown" : rawType;
+        for (const listener of this.listeners.get("before-input-event") ?? []) listener({}, { type });
+      }
       const responder = this.responders.get(method);
       return responder ? responder(params) : {};
     },
@@ -79,7 +111,37 @@ class FakeView implements BrowserViewHandle {
       this.backgroundThrottling = allowed;
       this.backgroundThrottlingChanges.push(allowed);
     },
-    setWindowOpenHandler: () => undefined,
+    setWindowOpenHandler: (handler: (details: { url?: string }) => { action: "deny" } | { action: "allow" }) => {
+      this.windowOpenHandler = handler;
+    },
+    canGoBack: () => this.back,
+    canGoForward: () => this.forward,
+    goBack: () => {
+      this.goBackCount += 1;
+    },
+    goForward: () => {
+      this.goForwardCount += 1;
+    },
+    reload: () => {
+      this.reloadCount += 1;
+    },
+    stop: () => {
+      this.stopCount += 1;
+    },
+    isLoading: () => this.loading,
+    executeJavaScript: async (code: string) => {
+      this.scripts.push(code);
+      return this.scriptResult;
+    },
+    insertCSS: async (css: string) => {
+      const key = `css-${++this.cssSerial}`;
+      this.insertedCSS.set(key, css);
+      return key;
+    },
+    removeInsertedCSS: async (key: string) => {
+      this.removedCSS.push(key);
+      this.insertedCSS.delete(key);
+    },
     setZoomFactor: (factor: number) => {
       this.zoomFactor = factor;
     },
@@ -90,6 +152,7 @@ class FakeView implements BrowserViewHandle {
     },
     loadURL: async (url: string) => {
       this.loadedURLs.push(url);
+      this.loadedBounds.push(this.getBounds());
       this.url = url;
     },
     getURL: () => this.url,
@@ -97,8 +160,8 @@ class FakeView implements BrowserViewHandle {
     capturePage: async (): Promise<BrowserNativeImageHandle> => {
       this.captureCount += 1;
       return {
-        toPNG: () => Buffer.from("fake-png"),
-        getSize: () => ({ width: 800, height: 600 }),
+        toPNG: () => (this.captureEmpty ? Buffer.alloc(0) : Buffer.from("fake-png")),
+        getSize: () => (this.captureEmpty ? { width: 0, height: 0 } : { width: 800, height: 600 }),
       };
     },
     close: () => {
@@ -210,6 +273,10 @@ function serverRequest(
   };
 }
 
+async function flushMicrotasks(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 async function openTab(harness: Harness, workdir: string, tabID: string): Promise<void> {
   await harness.coordinator.handleServerRequest(
     serverRequest("browser/open_tab", { workdir, tab_id: tabID }, `open-${workdir}-${tabID}`),
@@ -228,24 +295,31 @@ function twoNodeSnapshot(): Record<string, unknown> {
       "Submit", // 3
       "href", // 4
       "https://x.test/", // 5
+      "#text", // 6 nodeName for the link's text node
+      "Release notes", // 7 text content
     ],
     documents: [
       {
         nodes: {
-          nodeName: [0, 1],
-          backendNodeId: [100, 200],
+          nodeName: [0, 1, 6],
+          parentIndex: [-1, -1, 1],
+          backendNodeId: [100, 200, 201],
           attributes: [
             [2, 3], // node 0: aria-label=Submit
             [4, 5], // node 1: href=https://x.test/
+            [],
           ],
         },
         layout: {
-          nodeIndex: [0, 1],
+          nodeIndex: [0, 1, 2],
+          text: [-1, -1, 7],
           bounds: [
             [5, 6, 50, 20],
             [7, 8, 60, 18],
+            [7, 8, 60, 18],
           ],
         },
+        textBoxes: { layoutIndex: [2], start: [0], length: [13] },
       },
     ],
   };
@@ -318,10 +392,16 @@ describe("BrowserHostCoordinator CDP routing", () => {
       ),
     );
 
-    const observeResult = harness.reply.respond.mock.calls.at(-1)?.[1] as { result: { nodes: Array<Record<string, unknown>> } };
+    const observeResult = harness.reply.respond.mock.calls.at(-1)?.[1] as {
+      result: { nodes: Array<Record<string, unknown>>; content: Array<Record<string, unknown>> };
+    };
     expect(observeResult.result.nodes).toHaveLength(2);
     expect(observeResult.result.nodes[0]).toMatchObject({ node_id: 1, role: "button", name: "Submit", bounds: [5, 6, 50, 20] });
     expect(observeResult.result.nodes[1]).toMatchObject({ node_id: 2, role: "link" });
+    // The link's readable text and its click id come from the same snapshot.
+    expect(observeResult.result.content).toEqual([
+      { kind: "paragraph", text: "Release notes", node_id: 2 },
+    ]);
 
     // node_id 2 must resolve to backendNodeId 200 via the per-tab map.
     let requestedBackend: unknown;
@@ -343,6 +423,40 @@ describe("BrowserHostCoordinator CDP routing", () => {
     expect(mouseCommands[0]?.params).toMatchObject({ type: "mousePressed", x: 20, y: 30, button: "left" });
     expect(mouseCommands[1]?.params).toMatchObject({ type: "mouseReleased", x: 20, y: 30 });
     expect(harness.reply.respond).toHaveBeenLastCalledWith("click-1", { result: { ok: true } });
+  });
+
+  it("continues readable content from content_offset", async () => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const children = Array.from({ length: 25 }, (_, index) => ({
+      tag: "p",
+      text: `Paragraph ${index} stays readable.`,
+    }));
+    harness.views[0].responders.set("DOMSnapshot.captureSnapshot", () => buildSnapshot([
+      { tag: "main", children },
+    ]));
+
+    await harness.coordinator.handleServerRequest(
+      serverRequest(
+        "browser/cdp",
+        { workdir: "/repo", tab_id: "t1", method: "observe", params: { screenshot: false, content_offset: 20 } },
+        "obs-page",
+      ),
+    );
+
+    const observeResult = harness.reply.respond.mock.calls.at(-1)?.[1] as {
+      result: { content: Array<{ text?: string }>; content_offset: number; content_total: number; content_next_offset?: number };
+    };
+    expect(observeResult.result.content_offset).toBe(20);
+    expect(observeResult.result.content_total).toBe(25);
+    expect(observeResult.result.content_next_offset).toBeUndefined();
+    expect(observeResult.result.content.map((block) => block.text)).toEqual([
+      "Paragraph 20 stays readable.",
+      "Paragraph 21 stays readable.",
+      "Paragraph 22 stays readable.",
+      "Paragraph 23 stays readable.",
+      "Paragraph 24 stays readable.",
+    ]);
   });
 
   it("rejects click(node_id) when the tab has not been observed", async () => {
@@ -472,6 +586,19 @@ describe("BrowserHostCoordinator screenshot", () => {
       path: "/artifacts/shot.png",
     });
   });
+
+  it("rejects an empty capture instead of writing it", async () => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    harness.views[0].captureEmpty = true;
+
+    await harness.coordinator.handleServerRequest(
+      serverRequest("browser/screenshot", { workdir: "/repo", tab_id: "t1", dest_path: "/artifacts/shot.png" }, "shot-empty"),
+    );
+
+    expect(harness.writtenPng.has("/artifacts/shot.png")).toBe(false);
+    expect(harness.reply.reject).toHaveBeenLastCalledWith("shot-empty", expect.stringContaining("empty frame"));
+  });
 });
 
 describe("BrowserHostCoordinator lifecycle", () => {
@@ -531,7 +658,13 @@ describe("BrowserHostCoordinator lifecycle", () => {
     await harness.coordinator.handleServerRequest(
       serverRequest("browser/list_tabs", { workdir: "/repoA" }, "list-1"),
     );
-    expect(harness.reply.respond).toHaveBeenLastCalledWith("list-1", { tab_ids: ["a1", "a2"] });
+    expect(harness.reply.respond).toHaveBeenLastCalledWith("list-1", {
+      tab_ids: ["a1", "a2"],
+      tabs: [
+        { tab_id: "a1", url: "https://example.com/", title: "Example" },
+        { tab_id: "a2", url: "https://example.com/", title: "Example" },
+      ],
+    });
   });
 
   it("destroyAll tears down every view and the host window", async () => {
@@ -588,6 +721,125 @@ describe("BrowserHostCoordinator visibility takeover", () => {
     expect(view.boundsSet).toEqual({ x: 126, y: 64, width: 1001, height: 751 });
     expect(view.zoomFactor).toBe(1);
   });
+
+  it("does not paint a tab until the panel reports a rectangle", async () => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    await harness.coordinator.handleServerRequest(
+      serverRequest("browser/set_visibility", { workdir: "/repo", tab_id: "t1", visible: true }, "vis-early"),
+    );
+    expect(harness.mainWindow.added).toContain(view);
+    expect(view.visibleState).toBe(false);
+    expect(harness.coordinator.isInPanel("/repo", "t1")).toBe(false);
+  });
+
+  it("parks the tab when the panel reports an empty rectangle", async () => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    const window = harness.mainWindow as unknown as BrowserParentWindowHandle;
+    harness.coordinator.reportBounds("/repo", "t1", window, { x: 8, y: 9, width: 200, height: 100 }, 1);
+    expect(harness.coordinator.isInPanel("/repo", "t1")).toBe(true);
+
+    harness.coordinator.reportBounds("/repo", "t1", window, null, 1);
+    expect(harness.coordinator.isInPanel("/repo", "t1")).toBe(false);
+    expect(harness.mainWindow.removed).toContain(view);
+  });
+
+  it("ignores a late rectangle after hide until the panel asks again", async () => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    const window = harness.mainWindow as unknown as BrowserParentWindowHandle;
+    const rect = { x: 4, y: 6, width: 300, height: 180 };
+    harness.coordinator.reportBounds("/repo", "t1", window, rect, 1);
+    await harness.coordinator.handleServerRequest(
+      serverRequest("browser/set_visibility", { workdir: "/repo", tab_id: "t1", visible: false }, "vis-hide"),
+    );
+    const addedAfterHide = harness.mainWindow.added.length;
+    harness.coordinator.reportBounds("/repo", "t1", window, rect, 1);
+    expect(harness.mainWindow.added).toHaveLength(addedAfterHide);
+    expect(harness.coordinator.isInPanel("/repo", "t1")).toBe(false);
+
+    harness.coordinator.reportBounds("/repo", "t1", window, rect, 1, true);
+    expect(harness.coordinator.isInPanel("/repo", "t1")).toBe(true);
+    expect(view.boundsSet).toEqual(rect);
+  });
+
+  it("reports a press in the panel and ignores hovering, scrolling, and agent input", async () => {
+    const harness = makeHarness();
+    const userInput: string[] = [];
+    harness.coordinator.setRendererSink({
+      surface: () => undefined,
+      userInput: (payload) => userInput.push(payload.tabID),
+      adopted: () => undefined,
+      presented: () => undefined,
+    });
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    const window = harness.mainWindow as unknown as BrowserParentWindowHandle;
+    harness.coordinator.reportBounds("/repo", "t1", window, { x: 1, y: 2, width: 80, height: 60 }, 1);
+
+    const fireMouse = (type: string) => {
+      view.listeners.get("before-mouse-event")?.[0]?.({}, { type });
+    };
+    for (const type of ["mouseEnter", "mouseMove", "mouseLeave", "mouseUp", "mouseWheel"]) fireMouse(type);
+    expect(userInput).toEqual([]);
+
+    fireMouse("mouseDown");
+    expect(userInput).toEqual(["t1"]);
+
+    await harness.coordinator.handleServerRequest(
+      serverRequest(
+        "browser/cdp",
+        { workdir: "/repo", tab_id: "t1", method: "click", params: { x: 3, y: 4 } },
+        "click-1",
+      ),
+    );
+    expect(userInput).toEqual(["t1"]);
+  });
+
+  it("adopts a page-opened window as another tab", async () => {
+    const harness = makeHarness();
+    const adopted: string[] = [];
+    harness.coordinator.setRendererSink({
+      surface: () => undefined,
+      userInput: () => undefined,
+      adopted: (payload) => adopted.push(payload.tabID),
+      presented: () => undefined,
+    });
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    view.windowOpenHandler?.({ url: "https://example.com/next" });
+    await vi.waitFor(() => expect(adopted).toHaveLength(1));
+    expect(harness.views).toHaveLength(2);
+    expect(harness.views[1].loadedURLs).toContain("https://example.com/next");
+    expect(adopted[0].startsWith("popup-t1-")).toBe(true);
+
+    await harness.coordinator.handleServerRequest(
+      serverRequest("browser/list_tabs", { workdir: "/repo" }, "list-popup"),
+    );
+    const listed = harness.reply.respond.mock.calls.at(-1)?.[1] as {
+      tab_ids: string[];
+      tabs: Array<{ tab_id: string; url: string }>;
+    };
+    expect(listed.tab_ids).toContain("t1");
+    expect(listed.tabs.find((tab) => tab.tab_id.startsWith("popup-t1-"))?.url).toBe("https://example.com/next");
+  });
+
+  it("navigates through the same tab the panel is showing", async () => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    view.back = true;
+    const snapshot = await harness.coordinator.runCommand("/repo", "t1", "navigate", "https://example.com/page");
+    expect(view.loadedURLs).toContain("https://example.com/page");
+    expect(snapshot?.url).toBe("https://example.com/page");
+    expect(snapshot?.tabID).toBe("t1");
+    await harness.coordinator.runCommand("/repo", "t1", "back");
+    expect(view.goBackCount).toBe(1);
+  });
 });
 
 describe("BrowserHostCoordinator permission ownership", () => {
@@ -639,7 +891,39 @@ describe("pure helpers", () => {
     const nodes = interactableNodesFromSnapshot(twoNodeSnapshot());
     expect(nodes).toHaveLength(2);
     expect(nodes[0]).toMatchObject({ backendNodeId: 100, role: "button", name: "Submit", bounds: [5, 6, 50, 20] });
-    expect(nodes[1]).toMatchObject({ backendNodeId: 200, role: "link" });
+    expect(nodes[1]).toMatchObject({ backendNodeId: 200, role: "link", name: "Release notes" });
+  });
+
+  it("reads nested link text by layout index without dropping repeated words or requiring text boxes", () => {
+    const snapshot = {
+      strings: ["HTML", "HEAD", "BODY", "A", "SPAN", "#text", "Model ", "Model", " release", "href", "/release"],
+      documents: [{
+        nodes: {
+          nodeName: [0, 1, 2, 3, 5, 4, 5, 5],
+          parentIndex: [-1, 0, 0, 2, 3, 3, 5, 3],
+          backendNodeId: [10, 11, 12, 13, 14, 15, 16, 17],
+          attributes: [[], [], [], [9, 10], [], [], [], []],
+        },
+        layout: {
+          nodeIndex: [0, 2, 3, 4, 5, 6, 7],
+          text: [-1, -1, -1, 6, -1, 7, 8],
+          bounds: Array.from({ length: 7 }, () => [0, 0, 100, 20]),
+        },
+      }],
+    };
+    expect(interactableNodesFromSnapshot(snapshot)).toEqual([
+      expect.objectContaining({ backendNodeId: 13, role: "link", name: "Model Model release" }),
+    ]);
+  });
+
+  it("scrolls down one viewport when no wheel delta is given", () => {
+    expect(wheelDeltas(undefined, undefined)).toEqual({ dx: 0, dy: 600 });
+    expect(wheelDeltas(0, -120)).toEqual({ dx: 0, dy: -120 });
+  });
+
+  it("dispatches Enter as a real key, including when passed as a list", () => {
+    expect(keyChord(["Enter"])).toEqual(["Enter"]);
+    expect(keyDispatch("Enter")).toMatchObject({ key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
   });
 
   it("drops zero-area and non-interactable nodes", () => {
@@ -676,9 +960,176 @@ describe("pure helpers", () => {
     expect(nodes).toHaveLength(1);
     expect(nodes[0]).toMatchObject({ backendNodeId: 9, role: "button" });
   });
+
+  it("reads release-page text that is not itself a control", () => {
+    const snapshot = buildSnapshot([
+      { tag: "nav", children: [{ tag: "a", attrs: { href: "/home" }, text: "Home" }] },
+      {
+        tag: "main",
+        children: [
+          { tag: "h1", text: "MiMo V2.6" },
+          { tag: "div", text: "Context length 256k. Parameters 7B." },
+          {
+            tag: "p",
+            children: [
+              { tag: "#text", text: "See the" },
+              { tag: "a", attrs: { href: "/collection" }, text: "collection" },
+              { tag: "#text", text: "for scores." },
+            ],
+          },
+          { tag: "ol", children: [{ tag: "li", text: "First" }, { tag: "li", text: "Second" }] },
+          {
+            tag: "table",
+            children: [
+              { tag: "tr", children: [{ tag: "th", text: "Benchmark" }, { tag: "th", text: "Score" }] },
+              {
+                tag: "tr",
+                children: [
+                  { tag: "td", text: "MMLU" },
+                  { tag: "td", children: [{ tag: "a", attrs: { href: "/mmlu" }, text: "85.2" }] },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      { tag: "footer", children: [{ tag: "a", attrs: { href: "/privacy" }, text: "Privacy" }] },
+    ]);
+    const nodes = interactableNodesFromSnapshot(snapshot);
+    const blocks = readableBlocksFromSnapshot(snapshot);
+    const collection = nodes.find((node) => node.name === "collection");
+    const score = nodes.find((node) => node.name === "85.2");
+
+    expect(nodes.map((node) => node.name).sort()).toEqual(["85.2", "Home", "Privacy", "collection"]);
+    expect(blocks.map((block) => block.kind)).toEqual(["heading", "paragraph", "paragraph", "list", "table"]);
+    expect(blocks[0]).toMatchObject({ kind: "heading", level: 1, text: "MiMo V2.6" });
+    expect(blocks[1]).toMatchObject({ text: "Context length 256k. Parameters 7B." });
+    expect(blocks[2]).toMatchObject({
+      text: "See the collection for scores.",
+      links: [{ text: "collection", backendNodeId: collection?.backendNodeId }],
+    });
+    expect(blocks[3]).toMatchObject({ kind: "list", ordered: true, items: [{ text: "First" }, { text: "Second" }] });
+    expect(blocks[4]).toMatchObject({
+      header: [{ text: "Benchmark" }, { text: "Score" }],
+      rows: [[{ text: "MMLU" }, { text: "85.2", backendNodeId: score?.backendNodeId }]],
+    });
+    expect(JSON.stringify(blocks)).not.toContain("Home");
+    expect(JSON.stringify(blocks)).not.toContain("Privacy");
+  });
+
+  it("pages a long article on block boundaries", () => {
+    const children = Array.from({ length: 25 }, (_, index) => ({
+      tag: "p",
+      text: `Paragraph ${index} stays readable.`,
+    }));
+    const blocks = readableBlocksFromSnapshot(buildSnapshot([{ tag: "main", children }]));
+    expect(blocks).toHaveLength(25);
+
+    const first = pageReadableContent(blocks, 0);
+    expect(first.blocks).toHaveLength(20);
+    expect(first.total).toBe(25);
+    expect(first.nextOffset).toBe(20);
+
+    const second = pageReadableContent(blocks, first.nextOffset ?? 0);
+    expect(second.offset).toBe(20);
+    expect(second.blocks.map((block) => block.text)).toEqual([
+      "Paragraph 20 stays readable.",
+      "Paragraph 21 stays readable.",
+      "Paragraph 22 stays readable.",
+      "Paragraph 23 stays readable.",
+      "Paragraph 24 stays readable.",
+    ]);
+    expect(second.nextOffset).toBeUndefined();
+
+    const past = pageReadableContent(blocks, 100);
+    expect(past.blocks).toEqual([]);
+    expect(past.offset).toBe(25);
+    expect(past.nextOffset).toBeUndefined();
+  });
+
+  it("splits one long paragraph instead of returning it whole", () => {
+    const text = Array.from({ length: 400 }, () => "word").join(" ");
+    const blocks = readableBlocksFromSnapshot(buildSnapshot([{ tag: "p", text }]));
+    expect(blocks.length).toBeGreaterThan(1);
+    expect(blocks.every((block) => (block.text?.length ?? 0) <= 1600)).toBe(true);
+    expect(blocks.map((block) => block.text).join(" ")).toBe(text);
+  });
 });
 
+interface SnapshotSpec {
+  tag: string;
+  attrs?: Record<string, string>;
+  text?: string;
+  children?: SnapshotSpec[];
+}
+
+function buildSnapshot(roots: SnapshotSpec[]): Record<string, unknown> {
+  const strings: string[] = [];
+  const intern = (value: string): number => {
+    const existing = strings.indexOf(value);
+    if (existing >= 0) return existing;
+    strings.push(value);
+    return strings.length - 1;
+  };
+  const nodeName: number[] = [];
+  const parentIndex: number[] = [];
+  const backendNodeId: number[] = [];
+  const attributes: number[][] = [];
+  const layoutNodeIndex: number[] = [];
+  const layoutText: number[] = [];
+  const bounds: number[][] = [];
+  let backend = 1;
+  let y = 0;
+  const add = (node: SnapshotSpec, parent: number): void => {
+    const index = nodeName.length;
+    nodeName.push(intern(node.tag === "#text" ? "#text" : node.tag.toUpperCase()));
+    parentIndex.push(parent);
+    backendNodeId.push(backend);
+    backend += 1;
+    const attrs: number[] = [];
+    for (const [key, value] of Object.entries(node.attrs ?? {})) attrs.push(intern(key), intern(value));
+    attributes.push(attrs);
+    const box = [0, y, 160, 18];
+    y += 18;
+    layoutNodeIndex.push(index);
+    if (node.tag === "#text") {
+      layoutText.push(intern(node.text ?? ""));
+      bounds.push(box);
+      return;
+    }
+    layoutText.push(-1);
+    bounds.push(box);
+    if (node.text) add({ tag: "#text", text: node.text }, index);
+    for (const child of node.children ?? []) add(child, index);
+  };
+  for (const root of roots) add(root, -1);
+  return {
+    strings,
+    documents: [{
+      nodes: { nodeName, parentIndex, backendNodeId, attributes },
+      layout: { nodeIndex: layoutNodeIndex, text: layoutText, bounds },
+    }],
+  };
+}
+
 describe("BrowserHostCoordinator preview surface accessors", () => {
+  it("lays out a new hidden page before navigation and preserves an existing tab's geometry", async () => {
+    const harness = makeHarness();
+    await harness.coordinator.handleServerRequest(serverRequest("browser/open_tab", {
+      workdir: "/repo", tab_id: "t1", initial_url: "https://example.com/",
+    }));
+    const view = harness.views[0];
+    const viewport = view.loadedBounds[0];
+    expect(viewport.width).toBeGreaterThanOrEqual(1024);
+    expect(viewport.height).toBeGreaterThanOrEqual(600);
+    expect(harness.coordinator.tabBounds("/repo", "t1")).toEqual(viewport);
+
+    const preview = { x: 0, y: 0, width: 320, height: 200 };
+    harness.coordinator.mountTabOnWindow("/repo", "t1", new FakeWindow(), preview, 0.25);
+    await openTab(harness, "/repo", "t1");
+    expect(view.getBounds()).toEqual(preview);
+  });
+
   it("reports tab bounds for a live tab and undefined once it is gone", async () => {
     const harness = makeHarness();
     await openTab(harness, "/repo", "t1");
@@ -730,6 +1181,35 @@ describe("BrowserHostCoordinator preview surface accessors", () => {
     expect(view.zoomFactor).toBe(1);
     expect(pip.removed).toContain(view);
     expect(view.boundsSet).toEqual({ x: 0, y: 0, width: 1280, height: 800 });
+  });
+
+  it("stops painting scrollbars on the watch-only card and restores them in the panel", async () => {
+    expect(spectatorScrollbarCSS(true)).toContain("scrollbar-width: none");
+    expect(spectatorScrollbarCSS(false)).not.toMatch(/width:\s*0/);
+    expect(spectatorScrollbarCSS(false)).toContain("scrollbar-color: transparent transparent");
+
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
+    const pip = new FakeWindow();
+    harness.coordinator.mountTabOnWindow("/repo", "t1", pip, { x: 0, y: 0, width: 260, height: 163 }, 0.203);
+    await flushMicrotasks();
+    expect([...view.insertedCSS.values()][0]).toContain("scrollbar-width: none");
+
+    view.scriptResult = false;
+    harness.coordinator.mountTabOnWindow("/repo", "t1", pip, { x: 0, y: 0, width: 260, height: 163 }, 0.203);
+    await flushMicrotasks();
+    const classic = [...view.insertedCSS.values()];
+    expect(classic).toHaveLength(1);
+    expect(classic[0]).not.toMatch(/width:\s*0/);
+
+    await harness.coordinator.handleServerRequest(
+      serverRequest("browser/set_visibility", { workdir: "/repo", tab_id: "t1", visible: true }, "vis-scroll"),
+    );
+    await flushMicrotasks();
+    expect(view.insertedCSS.size).toBe(0);
+    expect(view.zoomFactor).toBe(1);
   });
 
   it("normalizes zoom when a takeover adopts a PiP-mounted tab, and refuses to yank it back", async () => {
@@ -810,6 +1290,80 @@ describe("BrowserHostCoordinator preview surface accessors", () => {
     expect(harness.coordinator.tabSurfaceMeta("/repo", "missing")).toBeUndefined();
   });
 
+  it.each(["panel", "pip"])("waits for the %s cursor before dispatching input", async (surface) => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    let arrive!: () => void;
+    let started!: () => void;
+    const moving = new Promise<void>((resolve) => { started = resolve; });
+    const arrival = new Promise<void>((resolve) => { arrive = resolve; });
+    if (surface === "panel") {
+      harness.coordinator.reportBounds("/repo", "t1", harness.mainWindow, { x: 0, y: 0, width: 800, height: 600 }, 1);
+      view.webContents.executeJavaScript = async (code) => {
+        if (code.includes("return runtime.moveTo")) { started(); return arrival; }
+      };
+    } else {
+      harness.coordinator.mountTabOnWindow("/repo", "t1", new FakeWindow(), { x: 0, y: 0, width: 320, height: 200 }, .25);
+      harness.coordinator.addInteractionListener((_workdir, _tabID, hint) => {
+        if (hint.kind === "move") { started(); return arrival; }
+      });
+    }
+    const action = harness.coordinator.handleServerRequest(serverRequest("browser/cdp", {
+      workdir: "/repo", tab_id: "t1", method: "click", params: { x: 40, y: 60 },
+    }));
+    await moving;
+    expect(view.sentCommands.filter((command) => command.method === "Input.dispatchMouseEvent")).toHaveLength(0);
+    arrive();
+    await action;
+    expect(view.sentCommands.filter((command) => command.method === "Input.dispatchMouseEvent")).toHaveLength(2);
+    expect(harness.reply.reject).not.toHaveBeenCalled();
+  });
+
+  it("rejects an action when the user takes control during pointer travel", async () => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    harness.coordinator.reportBounds("/repo", "t1", harness.mainWindow, { x: 0, y: 0, width: 800, height: 600 }, 1);
+    let arrive!: () => void;
+    let started!: () => void;
+    const moving = new Promise<void>((resolve) => { started = resolve; });
+    const arrival = new Promise<void>((resolve) => { arrive = resolve; });
+    view.webContents.executeJavaScript = async (code) => {
+      if (code.includes("return runtime.moveTo")) { started(); return arrival; }
+      if (code.includes("runtime.hide")) arrive();
+    };
+    const action = harness.coordinator.handleServerRequest(serverRequest("browser/cdp", {
+      workdir: "/repo", tab_id: "t1", method: "click", params: { x: 40, y: 60 },
+    }));
+    await moving;
+    for (const listener of view.listeners.get("before-mouse-event") ?? []) listener({}, { type: "mouseDown" });
+    await action;
+    expect(view.sentCommands.filter((command) => command.method === "Input.dispatchMouseEvent")).toHaveLength(0);
+    expect(harness.reply.reject).toHaveBeenCalledWith("server-request-1", "Browser action interrupted by user input");
+  });
+
+  it("bounds the arrival wait when a preview renderer stops responding", async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = makeHarness();
+      await openTab(harness, "/repo", "t1");
+      harness.coordinator.mountTabOnWindow("/repo", "t1", new FakeWindow(), { x: 0, y: 0, width: 320, height: 200 }, .25);
+      harness.coordinator.addInteractionListener((_workdir, _tabID, hint) => {
+        if (hint.kind === "move") return new Promise(() => undefined);
+      });
+      const action = harness.coordinator.handleServerRequest(serverRequest("browser/cdp", {
+        workdir: "/repo", tab_id: "t1", method: "click", params: { x: 40, y: 60 },
+      }));
+      await vi.advanceTimersByTimeAsync(1000);
+      await action;
+      expect(harness.reply.respond).toHaveBeenCalled();
+      expect(harness.reply.reject).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("emits interaction hints after click, scroll, and type dispatch", async () => {
     const harness = makeHarness();
     const hints: Array<{ workdir: string; tabID: string; hint: unknown }> = [];
@@ -822,8 +1376,6 @@ describe("BrowserHostCoordinator preview surface accessors", () => {
     await harness.coordinator.handleServerRequest(
       serverRequest("browser/cdp", { workdir: "/repo", tab_id: "t1", method: "click", params: { x: 40, y: 60 } }, "click-1"),
     );
-    // scroll without a node_id dispatches at 0,0 (existing behavior), and the
-    // hint must mirror the point the event was actually dispatched at.
     await harness.coordinator.handleServerRequest(
       serverRequest("browser/cdp", { workdir: "/repo", tab_id: "t1", method: "scroll", params: { x: 10, y: 10, dx: 0, dy: 240 } }, "scroll-1"),
     );
@@ -840,7 +1392,7 @@ describe("BrowserHostCoordinator preview surface accessors", () => {
 
     expect(hints).toEqual([
       { workdir: "/repo", tabID: "t1", hint: { kind: "click", x: 40, y: 60 } },
-      { workdir: "/repo", tabID: "t1", hint: { kind: "scroll", x: 0, y: 0, direction: "down" } },
+      { workdir: "/repo", tabID: "t1", hint: { kind: "scroll", x: 10, y: 10, direction: "down" } },
       { workdir: "/repo", tabID: "t1", hint: { kind: "type", x: 20, y: 30 } },
     ]);
   });

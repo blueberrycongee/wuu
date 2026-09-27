@@ -1,0 +1,350 @@
+/* Projects in the conversation and the right panel. Sidebar project rows
+ * live with the other session rows in sidebar.css. */
+
+.project-status-spinner {
+  animation: wuu-spin var(--session-loading-spin-duration) linear infinite;
+}
+
+@container style(--motion-reduced: 1) {
+  .project-status-spinner {
+    animation: none;
+  }
+}
+
+/* The coordinator's running and pending work. Size, surface and states come
+ * from .conversation-status-capsule; only the count groups are laid out here. */
+.project-status-capsule {
+  flex: 0 0 auto;
+  gap: var(--space-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.project-status-count {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.project-status-count > svg {
+  flex: none;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  color: var(--ink-muted);
+}
+
+/* A host event in the coordinator's conversation reads as a centered marker
+ * between messages; the text the coordinator received is disclosed on
+ * request. The sentence stays on the conversation's axis: its controls sit
+ * in a side column balanced by an empty one. */
+.project-event {
+  display: grid;
+  min-width: 0;
+  justify-items: center;
+  gap: var(--space-2);
+  margin: var(--space-1) 0;
+}
+
+.project-event-line {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  line-height: max(24px, calc(var(--font-sm) + 10px));
+}
+
+.project-event-text {
+  grid-column: 2;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: center;
+  /* A CJK phrase wraps as a whole rather than orphaning a character. */
+  word-break: keep-all;
+}
+
+.project-event-actions {
+  display: flex;
+  grid-column: 3;
+  justify-self: start;
+  gap: 2px;
+  padding-left: var(--space-1);
+}
+
+/* The name aligns to the sentence's baseline; its icon is centered. */
+.project-event-name {
+  display: inline-flex;
+  max-width: min(16em, 100%);
+  align-items: baseline;
+  gap: 4px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  line-height: 1.5;
+  margin: 0 2px;
+  padding: 1px 4px;
+}
+
+.project-event-name > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-event-name > svg {
+  flex: none;
+  align-self: center;
+  width: 14px;
+  height: 14px;
+  color: var(--ink-muted);
+}
+
+button.project-event-name {
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+button.project-event-name:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+html[data-focus-modality="keyboard"] button.project-event-name:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* A group's events, disclosed under its marker. */
+.project-event-list {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+}
+
+.project-event-action {
+  flex: none;
+  width: max(24px, calc(var(--font-sm) + 10px));
+  height: max(24px, calc(var(--font-sm) + 10px));
+  border-radius: var(--radius-xs);
+  color: var(--ink-muted);
+  padding: 0;
+}
+
+.project-event-action > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.project-event-details {
+  width: min(100%, 44em);
+  margin: 0;
+  max-height: 16em;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+/* The project's name in a managed session's title bar leads back to it. */
+.session-control-project {
+  display: inline-flex;
+  min-width: 0;
+  max-width: min(14em, 24vw);
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font: inherit;
+  padding: 2px 4px;
+}
+
+.session-control-project > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-control-project > svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.session-control-project:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+html[data-focus-modality="keyboard"] .session-control-project:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* Right panel: a project's overview. */
+.project-panel {
+  display: flex;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+  overflow: auto;
+  padding: var(--space-4);
+}
+
+.project-panel-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.project-panel-header > h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--font-title);
+  font-weight: var(--weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-panel-heading {
+  margin: var(--space-3) 0 0;
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+}
+
+.project-panel-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-panel-row {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: var(--control-row-height);
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-xs);
+  /* Rows share the headings' text edge; only the hover surface extends into
+   * the panel padding. */
+  margin-inline: calc(-1 * var(--space-2));
+  padding: 2px var(--space-2);
+}
+
+.project-panel-row:hover {
+  background: var(--surface-2);
+}
+
+.project-icon-button {
+  flex: none;
+  width: var(--control-size-inline);
+  height: var(--control-size-inline);
+  padding: 0;
+}
+
+/* Reserve only the larger of the compact controls and the session state.
+ * Titles and click targets stay in place when hover or keyboard focus changes. */
+.project-panel-row-tools {
+  display: grid;
+  flex: none;
+  align-items: center;
+}
+
+.project-panel-row-actions,
+.project-panel-row-state {
+  grid-area: 1 / 1;
+  justify-self: end;
+}
+
+.project-panel-row-actions {
+  display: flex;
+  gap: 2px;
+}
+
+/* A running session's spinner sits where the row actions appear on hover,
+ * so titles keep one text edge. */
+.project-panel-row-state {
+  display: flex;
+  align-items: center;
+}
+
+.project-panel-row-state > svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+}
+
+.project-panel-row-action {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.project-panel-row:is(:hover, :focus-within) .project-panel-row-action {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.project-panel-row:is(:hover, :focus-within) .project-panel-row-state {
+  visibility: hidden;
+}
+
+.project-panel-row-main {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 2px 0;
+  text-align: left;
+}
+
+.project-panel-row-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-panel-row-meta {
+  color: var(--ink-muted);
+  font-size: var(--font-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+html[data-focus-modality="keyboard"] .project-panel-row-main:focus-visible {
+  border-radius: var(--radius-xs);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.project-panel-empty {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+}

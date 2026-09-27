@@ -300,6 +300,9 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 	}
 	run.cancel = cancel
 	call := run.call
+	// Final-call registration can refresh metadata while this streamed run is
+	// already starting. Use the scheduling decision made under the runtime lock.
+	concurrencySafe := run.concurrencySafe
 	run.mu.Unlock()
 
 	go func() {
@@ -307,6 +310,9 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 			defer cancel()
 			if executionErr != nil {
 				result = toolresult.FromErrorText(errorJSON(executionErr))
+			}
+			if finalizer, ok := r.executor.(ToolResultFinalizer); ok {
+				result = finalizer.FinalizeToolResult(call, result)
 			}
 			if r.ledger != nil {
 				if settleErr := r.ledger.Settle(context.WithoutCancel(runCtx), run.invocationID, result); settleErr != nil {
@@ -322,11 +328,14 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 			return
 		default:
 		}
+		if run.parent != nil {
+			runCtx = toolctx.WithNestedCall(runCtx)
+		}
 		if toolIsOrchestrator(r.executor, call) {
 			runCtx = toolctx.WithNestedExecutor(runCtx, &nestedToolScope{runtime: r, parent: run, ctx: runCtx, calls: make(map[string]*toolRun)})
 		} else {
 			runCtx = toolctx.WithNestedExecutor(runCtx, nil)
-			release, err := r.gate.acquire(runCtx, run.concurrencySafe)
+			release, err := r.gate.acquire(runCtx, concurrencySafe)
 			if err != nil {
 				finish(toolresult.Result{}, err)
 				return

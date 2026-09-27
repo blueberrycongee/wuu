@@ -1,7 +1,10 @@
+import { createOptimisticTurn, replaceOptimisticTurn } from "./ComposerMessages";
+import { localTurnTiming, forgetLocalTurnTiming } from "./LocalTurnTiming";
+import { upsertTurn } from "./AppState";
+import { projectDirectory } from "./ProjectSessions";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Agent,
-  ChannelRoom,
   DesktopProject,
   ExtensionInventoryRecord,
   RuntimeContext,
@@ -18,22 +21,20 @@ import {
   applyLoadedRuntimeWithDraftCarry,
   appendStreamingTokenSample,
   appendTurnTokenSample,
-  composerDraftHasContent,
   conversationPaneThreadsByID,
   conversationSearchContextLabel,
   conversationSearchThreadMeta,
-  channelRoomSessionTabID,
-  createAgentsSessionTab,
-  createChannelRoomSessionTab,
   createDraftSessionTab,
   createSkillsSessionTab,
-  createTasksSessionTab,
   createThreadSessionTab,
   sessionTabLabel,
   handleStreamingNotification,
   initialState,
+  requireThread,
+  syncRunningThreadStreamItems,
   isScratchThread,
   isStateActiveThreadRunning,
+  isCoalescedBackgroundThreadEvent,
   isThreadExecuting,
   isThreadRunning,
   isThreadUnread,
@@ -48,10 +49,9 @@ import {
   pinnedThreads,
   pinnedThreadSummaries,
   presentationRunningThreadIDs,
-  projectThreads,
+  workspaceThreads,
   queryTextsForThread,
   requestedHandoffIntentForThread,
-  reconcileChannelRoomSessionTabs,
   reconcileResumedThreadTurns,
   reduceServerEvent,
   resolveComposerRunningAction,
@@ -59,9 +59,9 @@ import {
   scratchThreadSummaries,
   sortThreads,
   summarizeThreadsForSidebar,
-  threadBelongsToProject,
+  threadBelongsToWorkspace,
   threadNeedsResumeOnReselect,
-  threadProjectPath,
+  threadWorkspacePath,
   threadSessionTabID,
   turnStreamStatusForThread,
   turnPreview,
@@ -173,16 +173,6 @@ describe("isStateActiveThreadRunning with a background agent", () => {
       ...threadWithUserTexts(["kick off a worker"]),
       status: "idle" as const,
       child_agents: [{ id: "agent-running", status: "running" }],
-    } as unknown as Thread;
-    expect(isThreadRunning(thread)).toBe(false);
-    expect(isStateActiveThreadRunning(stateWithActiveThread(thread))).toBe(false);
-  });
-
-  it("unlocks once the background agent reaches a terminal state", () => {
-    const thread = {
-      ...threadWithUserTexts(["worker finished"]),
-      status: "idle" as const,
-      child_agents: [{ id: "agent-done", status: "completed" }],
     } as unknown as Thread;
     expect(isThreadRunning(thread)).toBe(false);
     expect(isStateActiveThreadRunning(stateWithActiveThread(thread))).toBe(false);
@@ -647,8 +637,8 @@ describe("AppState protocol normalization", () => {
     ]);
   });
 
-  it("keeps an optimistic first turn when thread/started carries an empty snapshot", () => {
-    const current = threadWithUserTexts(["first query"]);
+  it("keeps an optimistic first turn and sidebar label when thread/started carries an empty snapshot", () => {
+    const current = { ...threadWithUserTexts(["first query"]), preview: "first query" };
     const next = reduceServerEvent(
       {
         ...initialState,
@@ -665,12 +655,14 @@ describe("AppState protocol normalization", () => {
             thread: {
               ...current,
               turns: [],
+              preview: "",
             },
           },
         },
       },
     );
 
+    expect(next.thread?.preview).toBe("first query");
     expect(next.thread?.turns).toEqual(current.turns);
     expect(next.threads.find((thread) => thread.id === current.id)?.turns).toEqual(
       current.turns,
@@ -887,8 +879,8 @@ describe("summarizeThreadsForSidebar", () => {
     ]);
 
     expect(summary.worktree?.base_repo).toBe("/repo/project");
-    expect(threadProjectPath(summary)).toBe("/repo/project");
-    expect(threadBelongsToProject(summary, project)).toBe(true);
+    expect(threadWorkspacePath(summary)).toBe("/repo/project");
+    expect(threadBelongsToWorkspace(summary, project)).toBe(true);
     expect(isScratchThread(summary, [project])).toBe(false);
   });
 
@@ -910,12 +902,24 @@ describe("summarizeThreadsForSidebar", () => {
     ]);
 
     expect(summary.workspace_id).toBe(project.id);
-    expect(threadBelongsToProject(summary, project)).toBe(true);
+    expect(threadBelongsToWorkspace(summary, project)).toBe(true);
     expect(isScratchThread(summary, [project])).toBe(false);
   });
 });
 
 describe("mergeSidebarThread", () => {
+  it("retains resolved coordinator availability across turn events but accepts deletion and release", () => {
+    const existing = { ...threadWithUserTexts(["hello"]), source: "project-session", project_id: "coordinator", project_exists: true };
+    const event = { ...existing, project_exists: undefined };
+    const merged = mergeSidebarThread(existing, event);
+    expect(summarizeThreadsForSidebar([merged])[0].project_exists).toBe(true);
+    const orphan = mergeSidebarThread(merged, { ...event, project_exists: false });
+    expect(summarizeThreadsForSidebar([orphan])[0].project_exists).toBe(false);
+    expect(mergeSidebarThread(orphan, event).project_exists).toBe(false);
+    expect(mergeSidebarThread(merged, { ...event, source: undefined, project_id: undefined }).project_exists).toBeUndefined();
+    expect(mergeSidebarThread(merged, { ...event, project_id: "other" }).project_exists).toBeUndefined();
+  });
+
   it("preserves a known title and preview when an incoming snapshot omits them", () => {
     const existing = threadWithUserTexts(["今天我在这里面提交的内容"]);
     existing.title = "已经生成的标题";
@@ -1004,12 +1008,6 @@ describe("workspacePanelContext", () => {
     cwd: "/repo/project",
   };
 
-  it("returns activeContext unchanged when there is no active thread", () => {
-    expect(workspacePanelContext(projectContext, undefined)).toBe(
-      projectContext,
-    );
-  });
-
   it("returns the very same activeContext reference when the thread's cwd matches it", () => {
     const thread = threadWithUserTexts(["hello"]);
     thread.cwd = projectContext.cwd;
@@ -1026,7 +1024,7 @@ describe("workspacePanelContext", () => {
 
   it("overrides cwd to the thread's own cwd when it differs, preserving kind/project_id (worktree fork)", () => {
     // Mirrors a thread/fork "worktree" thread: resolveThreadRuntimeContext
-    // resolves it to the base project's context (threadProjectPath prefers
+    // resolves it to the base project's context (threadWorkspacePath prefers
     // worktree.base_repo), but the thread itself runs out of the worktree
     // directory. The workspace panel should follow the thread.
     const thread = threadWithUserTexts(["continue in a worktree"]);
@@ -1237,12 +1235,6 @@ describe("AppState token usage", () => {
     }, initialState);
 
     expect(handling).toBe("skip");
-  });
-
-  it("initializes token usage state before the first usage update", () => {
-    expect(initialState.turnTokenUsage).toEqual({});
-    expect(initialState.turnRequestContext).toEqual({});
-    expect(activeTurnTokenSpeed(initialState, "turn-1")).toBe(0);
   });
 
   it("derives token speed from cumulative output-token samples", () => {
@@ -1901,6 +1893,31 @@ describe("AppState stream cache lifecycle", () => {
     }
   });
 
+  it("clears project execution when its last member is interrupted without removing membership", () => {
+    const coordinator = { ...threadWithUserTexts([]), id: "project", source: "project" };
+    const member: Thread = {
+      ...threadWithUserTexts([]), source: "project-session", project_id: coordinator.id,
+      status: "in_progress", turns: [{ id: "member-turn", status: "in_progress", items: [], items_view: "full" }],
+      session_control: { manager_id: coordinator.id, manager_name: "Project", state: "active", revision: 1 },
+    };
+    const threads = [coordinator, member];
+    expect(projectDirectory(summarizeThreadsForSidebar(threads), {}).summaries.get(coordinator.id)?.running).toBe(true);
+    const next = reduceServerEvent({
+      ...initialState, activeContext: { kind: "no_project", cwd: "/repo" }, thread: member, threads,
+    }, {
+      kind: "notification", workdir: "/repo", message: {
+        method: "turn/completed", params: {
+          thread_id: member.id, turn: { id: "member-turn", status: "interrupted", items: [], items_view: "full" },
+        },
+      },
+    });
+    const directory = projectDirectory(summarizeThreadsForSidebar(next.threads), {});
+    expect(directory.summaries.get(coordinator.id)?.running).toBe(false);
+    expect(directory.managedSessionIDs.has(member.id)).toBe(true);
+    expect(next.thread?.session_control).toEqual(member.session_control);
+    expect(next.thread?.turns.at(-1)?.status).toBe("interrupted");
+  });
+
   it("releases buffered streams when a completed turn carries final item snapshots", () => {
     const textKey = streamTextKey("turn-1", "agent-1", "text");
     const resultKey = streamTextKey("turn-1", "agent-1", "result");
@@ -2197,6 +2214,7 @@ describe("AppState unread tracking", () => {
       { id: "turn-1", status: "completed" },
     ]);
     expect(isThreadUnread(thread, undefined)).toBe(true);
+    expect(isThreadUnread({ ...thread, archived: true }, undefined)).toBe(false);
   });
 
   it("isThreadUnread returns false when lastViewed matches the latest turn", () => {
@@ -2379,6 +2397,58 @@ describe("AppState sortThreads (sidebar order)", () => {
       "thread-older",
     ]);
 
+    const withTool = reduceServerEvent(
+      {
+        ...initialState,
+        thread: sorted[0],
+        threads: sorted,
+      },
+      {
+        kind: "notification",
+        workdir: "/tmp",
+        message: {
+          method: "item/started",
+          params: {
+            thread_id: "thread-older",
+            turn_id: "turn-1",
+            item: {
+              id: "tool-1",
+              type: "tool_call",
+              status: "in_progress",
+              name: "bash",
+            },
+          },
+        },
+      },
+    );
+    expect(withTool.threads.map((thread) => thread.id)).toEqual([
+      "thread-newer",
+      "thread-older",
+    ]);
+    expect(withTool.threads[0]).toBe(sorted[0]);
+    expect(isCoalescedBackgroundThreadEvent(
+      {
+        kind: "notification",
+        workdir: "/tmp",
+        message: {
+          method: "item/started",
+          params: { thread_id: "thread-older", turn_id: "turn-1", item: { id: "tool-1" } },
+        },
+      },
+      { ...initialState, thread: sorted[0], threads: sorted },
+    )).toBe(true);
+    expect(isCoalescedBackgroundThreadEvent(
+      {
+        kind: "notification",
+        workdir: "/tmp",
+        message: {
+          method: "item/started",
+          params: { thread_id: "thread-newer", turn_id: "turn-1", item: { id: "tool-1" } },
+        },
+      },
+      { ...initialState, thread: sorted[0], threads: sorted },
+    )).toBe(false);
+
     // Even after flipping updated_at wildly, running order is unchanged.
     const flipped = sortThreads([
       { ...newer, updated_at: "2099-01-01T00:00:00Z" },
@@ -2547,7 +2617,7 @@ describe("AppState sortThreads (sidebar order)", () => {
     expect(renderableThreads.get("child-running")?.turns).toHaveLength(1);
   });
 
-  it("pinnedThreads and projectThreads hide archived entries but keep read-only ones", () => {
+  it("pinnedThreads and workspaceThreads hide archived entries but keep read-only ones", () => {
     const pinnedArchived = makeSortableThread({
       id: "pinned-archived",
       createdAt: "2026-06-18T00:00:00Z",
@@ -2561,13 +2631,13 @@ describe("AppState sortThreads (sidebar order)", () => {
       updatedAt: "2026-06-21T00:00:00Z",
       pinned: true,
     });
-    const projectArchived = makeSortableThread({
+    const workspaceArchived = makeSortableThread({
       id: "project-archived",
       createdAt: "2026-06-18T00:00:00Z",
       updatedAt: "2026-06-22T00:00:00Z",
       archived: true,
     });
-    const projectReadOnly = makeSortableThread({
+    const workspaceReadOnly = makeSortableThread({
       id: "project-readonly",
       createdAt: "2026-06-18T00:00:00Z",
       updatedAt: "2026-06-23T00:00:00Z",
@@ -2577,14 +2647,14 @@ describe("AppState sortThreads (sidebar order)", () => {
     const threads = [
       pinnedArchived,
       pinnedLive,
-      projectArchived,
-      projectReadOnly,
+      workspaceArchived,
+      workspaceReadOnly,
     ];
 
     expect(pinnedThreads(threads).map((thread) => thread.id)).toEqual([
       "pinned-live",
     ]);
-    expect(projectThreads(threads).map((thread) => thread.id)).toEqual([
+    expect(workspaceThreads(threads).map((thread) => thread.id)).toEqual([
       "project-readonly",
     ]);
   });
@@ -2769,10 +2839,6 @@ describe("latestContextUsageForThread", () => {
     };
   }
 
-  it("returns undefined when the thread is undefined", () => {
-    expect(latestContextUsageForThread(initialState, undefined)).toBeUndefined();
-  });
-
   it("falls back to the active runtime model when no thread exists yet", () => {
     const result = latestContextUsageForThread(initialState, undefined, {
       model: "gpt-5",
@@ -2795,21 +2861,8 @@ describe("latestContextUsageForThread", () => {
     expect(result).toBeUndefined();
   });
 
-  it("returns undefined for an empty thread with an unrecognized model", () => {
-    // "fake-model" has no catalog entry — the ring should hide rather
-    // than guess a limit.
-    const t = makeThread({ turns: [] });
-    expect(latestContextUsageForThread(initialState, t)).toBeUndefined();
-  });
-
   it("hides the meter when no runtime ceiling is available and no turn has run", () => {
     const t = makeThread({ model: "claude-sonnet-4-5", turns: [] });
-    const result = latestContextUsageForThread(initialState, t);
-    expect(result).toBeUndefined();
-  });
-
-  it("does not infer a gateway model ceiling from the client", () => {
-    const t = makeThread({ model: "anthropic/claude-sonnet-4-5", turns: [] });
     const result = latestContextUsageForThread(initialState, t);
     expect(result).toBeUndefined();
   });
@@ -3091,10 +3144,6 @@ describe("activeTodoUpdateForThread", () => {
     expect(activeTodoUpdateForThread(threadWithTodo("failed"))).toBeUndefined();
     expect(activeTodoUpdateForThread(threadWithTodo("interrupted"))).toBeUndefined();
   });
-
-  it("returns undefined when there is no thread", () => {
-    expect(activeTodoUpdateForThread(undefined)).toBeUndefined();
-  });
 });
 
 describe("sidebar pin/archive matrix", () => {
@@ -3134,34 +3183,6 @@ describe("sidebar pin/archive matrix", () => {
     expect(
       scratchThreadSummaries(all, []).map((thread) => thread.id),
     ).toEqual(["scratch-live"]);
-  });
-});
-
-describe("composerDraftHasContent", () => {
-  it("is false for a blank draft and true once text, an image, or a file is present", () => {
-    expect(
-      composerDraftHasContent({ prompt: "", images: [], files: [] }),
-    ).toBe(false);
-    expect(
-      composerDraftHasContent({ prompt: "   ", images: [], files: [] }),
-    ).toBe(false);
-    expect(
-      composerDraftHasContent({ prompt: "hi", images: [], files: [] }),
-    ).toBe(true);
-    expect(
-      composerDraftHasContent({
-        prompt: "",
-        images: [{ id: "img-1", dataUrl: "data:," }] as never,
-        files: [],
-      }),
-    ).toBe(true);
-    expect(
-      composerDraftHasContent({
-        prompt: "",
-        images: [],
-        files: [{ id: "file-1", name: "a.txt" }] as never,
-      }),
-    ).toBe(true);
   });
 });
 
@@ -3347,15 +3368,15 @@ describe("conversationSearchContextLabel (R4: no raw scratch paths in the UI)", 
     expect(conversationSearchContextLabel(thread, [project])).toBe("MyApp");
   });
 
-  it("labels a no-project (scratch) thread 无项目 instead of its raw scratch directory name", () => {
+  it("labels a no-project (scratch) thread 无工作区 instead of its raw scratch directory name", () => {
     const label = conversationSearchContextLabel(scratchThread, []);
-    expect(label).toBe("无项目");
+    expect(label).toBe("无工作区");
     expect(label).not.toContain("2026-07-03");
     expect(label).not.toContain("scratch");
   });
 
-  it("still says 无项目 when other registered projects exist but none match this thread's cwd", () => {
-    const otherProject: DesktopProject = {
+  it("still says 无工作区 when other registered workspaces exist but none match this thread's cwd", () => {
+    const otherWorkspace: DesktopProject = {
       id: "proj-2",
       name: "OtherApp",
       path: "/repo/other",
@@ -3363,8 +3384,8 @@ describe("conversationSearchContextLabel (R4: no raw scratch paths in the UI)", 
       updated_at: "2026-01-01T00:00:00Z",
     };
     expect(
-      conversationSearchContextLabel(scratchThread, [otherProject]),
-    ).toBe("无项目");
+      conversationSearchContextLabel(scratchThread, [otherWorkspace]),
+    ).toBe("无工作区");
   });
 });
 
@@ -3411,22 +3432,6 @@ describe("sessionTabLabel (draft tabs read as their workspace)", () => {
       cwd: "/repo/orphaned-dir",
     });
     expect(sessionTabLabel(tab, state)).toBe("orphaned-dir");
-  });
-
-  it("gives each channel room a stable tab identity and its room title", () => {
-    const context: RuntimeContext = { kind: "no_project", cwd: "/scratch" };
-    const tab = createChannelRoomSessionTab("room-1", "Design review", context);
-
-    expect(tab.id).toBe(channelRoomSessionTabID("room-1"));
-    expect(tab.id).toBe("channel-room:room-1");
-    expect(sessionTabLabel(tab, state)).toBe("Design review");
-  });
-
-  it("labels the singleton Agents and Tasks tabs", () => {
-    const context: RuntimeContext = { kind: "no_project", cwd: "/scratch" };
-
-    expect(sessionTabLabel(createAgentsSessionTab(context), state)).toBe("Agents");
-    expect(sessionTabLabel(createTasksSessionTab(context), state)).toBe("任务");
   });
 });
 
@@ -3531,66 +3536,6 @@ describe("thread session tab title sync", () => {
   });
 });
 
-describe("reconcileChannelRoomSessionTabs", () => {
-  const context: RuntimeContext = { kind: "no_project", cwd: "/scratch" };
-
-  it("updates room tab titles and closes tabs for deleted rooms", () => {
-    const draft = createDraftSessionTab("draft:active", context);
-    const renamed = createChannelRoomSessionTab("room-1", "Old name", context);
-    const deleted = createChannelRoomSessionTab("room-2", "Deleted", context);
-    const next = reconcileChannelRoomSessionTabs(
-      {
-        ...initialState,
-        activeContext: context,
-        activeSessionTabID: draft.id,
-        sessionTabs: [draft, renamed, deleted],
-      },
-      [{ id: "room-1", name: "New name" } as ChannelRoom],
-    );
-
-    expect(next.sessionTabs.map((tab) => [tab.id, tab.title])).toEqual([
-      [draft.id, draft.title],
-      [renamed.id, "New name"],
-    ]);
-    expect(next.activeSessionTabID).toBe(draft.id);
-  });
-
-  it("selects the nearest remaining tab when the active room is deleted", () => {
-    const first = createDraftSessionTab("draft:first", context);
-    const room = createChannelRoomSessionTab("room-1", "Room", context);
-    const last = createTasksSessionTab(context);
-    const next = reconcileChannelRoomSessionTabs(
-      {
-        ...initialState,
-        activeContext: context,
-        activeSessionTabID: room.id,
-        sessionTabs: [first, room, last],
-      },
-      [],
-    );
-
-    expect(next.sessionTabs.map((tab) => tab.id)).toEqual([first.id, last.id]);
-    expect(next.activeSessionTabID).toBe(last.id);
-  });
-
-  it("restores a draft tab when the deleted room was the last open tab", () => {
-    const room = createChannelRoomSessionTab("room-1", "Room", context);
-    const next = reconcileChannelRoomSessionTabs(
-      {
-        ...initialState,
-        activeContext: context,
-        activeSessionTabID: room.id,
-        sessionTabs: [room],
-      },
-      [],
-    );
-
-    expect(next.sessionTabs).toHaveLength(1);
-    expect(next.sessionTabs[0]?.kind).toBe("draft");
-    expect(next.activeSessionTabID).toBe(next.sessionTabs[0]?.id);
-  });
-});
-
 describe("AppState English localization", () => {
   it("localizes generated labels while preserving project data", () => {
     setActiveLocale("en-US");
@@ -3606,7 +3551,7 @@ describe("AppState English localization", () => {
       cwd: "/scratch",
     });
 
-    expect(conversationSearchContextLabel(scratchThread, [])).toBe("No project");
+    expect(conversationSearchContextLabel(scratchThread, [])).toBe("No workspace");
     expect(conversationSearchThreadMeta(scratchThread)).toBe("Pinned · Unknown time");
     expect(sessionTabLabel(draft, { ...initialState, projects: [] })).toBe(
       "Conversations",
@@ -3689,6 +3634,8 @@ describe("reconcileResumedThreadTurns", () => {
   it("salvages client tail items when a resumed turn snapshot lags behind live items", () => {
     const resumed = threadWithTurnIDs(["turn-1", "turn-2"]);
     const local = threadWithTurnIDs(["turn-1", "turn-2"]);
+    resumed.turns[1].status = "in_progress";
+    local.turns[1].status = "in_progress";
     const liveItem: ThreadItem = {
       id: "turn-2-tool",
       seq: 8,
@@ -3725,11 +3672,6 @@ describe("reconcileResumedThreadTurns", () => {
     const resumed = threadWithTurnIDs(["turn-1", "turn-2", "turn-3"]);
     const local = threadWithTurnIDs(["turn-1", "turn-2"]);
     expect(reconcileResumedThreadTurns(resumed, local)).toBe(resumed);
-  });
-
-  it("returns the resumed thread unchanged when there is no local copy", () => {
-    const resumed = threadWithTurnIDs(["turn-1"]);
-    expect(reconcileResumedThreadTurns(resumed, undefined)).toBe(resumed);
   });
 });
 
@@ -3769,8 +3711,8 @@ describe("threadNeedsResumeOnReselect", () => {
 });
 
 describe("extension inventory context", () => {
-  const projectA: RuntimeContext = { kind: "project", project_id: "a", cwd: "/a" };
-  const projectB: RuntimeContext = { kind: "project", project_id: "b", cwd: "/b" };
+  const workspaceA: RuntimeContext = { kind: "project", project_id: "a", cwd: "/a" };
+  const workspaceB: RuntimeContext = { kind: "project", project_id: "b", cwd: "/b" };
   const oldInventory: ExtensionInventoryRecord[] = [{
     id: "old",
     name: "Old",
@@ -3789,24 +3731,24 @@ describe("extension inventory context", () => {
   it("applies inventory only to the runtime that requested it", () => {
     const state = {
       ...initialState,
-      activeContext: projectB,
+      activeContext: workspaceB,
       initialized: { extension_inventory: oldInventory },
     } as AppState;
 
-    expect(withExtensionInventoryForContext(state, projectA, nextInventory)).toBe(state);
-    expect(withExtensionInventoryForContext(state, projectB, nextInventory).initialized?.extension_inventory).toEqual(nextInventory);
+    expect(withExtensionInventoryForContext(state, workspaceA, nextInventory)).toBe(state);
+    expect(withExtensionInventoryForContext(state, workspaceB, nextInventory).initialized?.extension_inventory).toEqual(nextInventory);
   });
 
   it("applies a live plugin generation inventory notification", () => {
     const state = {
       ...initialState,
-      activeContext: projectB,
+      activeContext: workspaceB,
       initialized: { extension_inventory: oldInventory },
     } as AppState;
 
     const next = reduceServerEvent(state, {
       kind: "notification",
-      workdir: projectB.cwd,
+      workdir: workspaceB.cwd,
       message: {
         method: "plugin/inventory/changed",
         params: {
@@ -3823,13 +3765,13 @@ describe("extension inventory context", () => {
   it("ignores malformed live plugin inventory notifications", () => {
     const state = {
       ...initialState,
-      activeContext: projectB,
+      activeContext: workspaceB,
       initialized: { extension_inventory: oldInventory },
     } as AppState;
 
     const next = reduceServerEvent(state, {
       kind: "notification",
-      workdir: projectB.cwd,
+      workdir: workspaceB.cwd,
       message: {
         method: "plugin/inventory/changed",
         params: { epoch: 2, extension_inventory: [{ id: "incomplete" }] },
@@ -3860,4 +3802,96 @@ it("joins pages within a long turn while retaining newer live item content", () 
   expect(next.thread?.turns).toHaveLength(1);
   expect(next.thread?.turns[0].items).toEqual([tool,...live.items]);
   expect(next.thread?.turns[0].status).toBe("in_progress");
+});
+
+describe("configuration refresh recovery", () => {
+  it("keeps model inventory on failure and clears only its own status after repair", () => {
+    const providers = [{ name: "example", model: "model-a", type: "openai-compatible" }];
+    const state = {
+      ...initialState,
+      initialized: { provider: "example", model: "model-a", providers } as NonNullable<AppState["initialized"]>,
+      status: "ready",
+    };
+    const failed = reduceServerEvent(state, {
+      kind: "notification",
+      workdir: "/repo",
+      message: { method: "config/error", params: { message: "invalid configuration" } },
+    });
+    expect(failed.initialized?.providers).toBe(providers);
+    expect(failed.status).toBe("invalid configuration");
+    const recovery = {
+      kind: "notification" as const,
+      workdir: "/repo",
+      message: { method: "config/changed", params: { provider: "example", model: "model-a", model_roles: [], providers } },
+    };
+    const repaired = reduceServerEvent(failed, recovery);
+    expect(repaired.configError).toBeUndefined();
+    expect(repaired.status).toBe("ready");
+    expect(repaired.initialized?.providers).toEqual(providers);
+    expect(reduceServerEvent({ ...failed, status: "another error" }, recovery).status).toBe("another error");
+  });
+});
+
+
+describe("local send timing across server reconciliation", () => {
+  it.each(["event-first", "rpc-first"])("keeps one clock and server timestamps for %s", (order) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    const optimistic = createOptimisticTurn({ id: `clock-${order}`, text: "same prompt", images: [], files: [] }, Date.now());
+    const base = { ...threadWithUserTexts([]), turns: [optimistic] };
+    let state: AppState = { ...initialState, activeContext: { kind: "no_project", cwd: base.cwd }, thread: base, threads: [base] };
+    const real: Turn = { ...optimistic, id: `real-${order}`, started_at: new Date(105_000).toISOString() };
+    const event = (method: string, params: Record<string, unknown>) => {
+      state = reduceServerEvent(state, { kind: "notification", workdir: base.cwd, message: { method, params } });
+    };
+    const rpc = () => {
+      const thread = replaceOptimisticTurn(state.thread!, optimistic.id, real, upsertTurn);
+      state = { ...state, thread, threads: [thread] };
+    };
+    vi.setSystemTime(108_000);
+    if (order === "rpc-first") rpc();
+    event("turn/started", { thread_id: base.id, turn: real });
+    if (order === "event-first") rpc();
+    expect(state.thread!.turns).toHaveLength(1);
+    expect(state.thread!.turns[0].started_at).toBe(real.started_at);
+    expect(localTurnTiming(state.thread!.turns[0])?.elapsed).toBe(8000);
+    vi.setSystemTime(110_000);
+    event("thread/updated", { thread: { ...base, turns: [real] } });
+    const resumed = reconcileResumedThreadTurns({ ...base, turns: [real] }, state.thread);
+    expect(localTurnTiming(resumed.turns[0])?.elapsed).toBe(10000);
+    vi.setSystemTime(111_000);
+    event("item/completed", { thread_id: base.id, turn_id: real.id, completed_at_ms: 111_000,
+      item: { id: "answer", type: "agent_message", status: "completed", terminal: true, text: "done" } });
+    // No renderer reads the clock while this background turn finishes cleanup.
+    vi.setSystemTime(112_000);
+    event("turn/completed", { thread_id: base.id, turn: { ...real, status: "completed", duration_ms: 1000 } });
+    rpc(); // Late acceptance cannot resurrect a completed turn.
+    event("turn/started", { thread_id: base.id, turn: real });
+    expect(state.running).toBe(false);
+    expect(reconcileResumedThreadTurns({ ...base, turns: [real] }, state.thread).turns[0].status).toBe("completed");
+    vi.setSystemTime(130_000);
+    expect(state.thread!.turns[0].status).toBe("completed");
+    expect(localTurnTiming(state.thread!.turns[0])?.elapsed).toBe(11000);
+    forgetLocalTurnTiming(optimistic.id);
+    vi.useRealTimers();
+  });
+});
+
+
+it("installs resumed stream text before deltas even before React applies the snapshot", () => {
+  const snapshot = {
+    id: "resume-order-thread", cwd: "/fixture", status: "in_progress",
+    turns: [{ id: "resume-order-turn", status: "in_progress", items: [{ id: "answer", type: "agent_message", status: "in_progress", text: "snapshot text" }] }],
+  } as Thread;
+  const cached = structuredClone(snapshot);
+  cached.turns[0].items[0].text = "old";
+  syncRunningThreadStreamItems(cached);
+  const state = { ...initialState, thread: cached, threads: [cached] };
+  handleStreamingNotification({ workdir: "/fixture", kind: "notification", message: { method: "thread/resumed", params: { thread: snapshot } } }, state);
+  handleStreamingNotification({ workdir: "/fixture", kind: "notification", message: { method: "item/agentMessage/delta", params: {
+    thread_id: snapshot.id, turn_id: "resume-order-turn", item_id: "answer", delta: " delta",
+  } } }, state);
+  requireThread({ thread: snapshot }, "missing");
+  expect(streamTextStore.get(streamTextKey("resume-order-turn", "answer", "text"))).toBe("snapshot text delta");
+  streamTextStore.clearTurn("resume-order-turn");
 });

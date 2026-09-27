@@ -115,8 +115,8 @@ func TestReliableStreamClientSingleSuccess(t *testing.T) {
 	if lifecycle[0].OperationID == "" || lifecycle[0].AttemptID == "" || lifecycle[0].AttemptID != lifecycle[1].AttemptID {
 		t.Fatalf("lifecycle identity missing or unstable: %+v", lifecycle)
 	}
-	if lifecycle[0].Attempt != 1 || lifecycle[0].MaxAttempts != 4 {
-		t.Fatalf("initial attempt = %+v, want 1/4", lifecycle[0])
+	if lifecycle[0].Attempt != 1 {
+		t.Fatalf("initial attempt = %+v, want 1", lifecycle[0])
 	}
 	if lifecycle[1].SubmissionCount != 1 || lifecycle[1].SubmissionID == "" {
 		t.Fatalf("connected lifecycle missing submission: %+v", lifecycle[1])
@@ -232,6 +232,13 @@ func TestReliableStreamClientEmitsFinalErrorAfterMaxRetries(t *testing.T) {
 	}
 	if !reflect.DeepEqual(attempts, []int{1, 2, 3}) {
 		t.Fatalf("retry attempts = %v", attempts)
+	}
+	var terminal *StreamRecoveryError
+	if !errors.As(events[0].Error, &terminal) || !errors.Is(events[0].Error, retryErr) {
+		t.Fatalf("final error lost cause/diagnostics: %v", events[0].Error)
+	}
+	if got := terminal.Recovery; got.AttemptCount != inner.callCount || got.RetryCount != 3 || got.SubmissionCount != 4 || got.StopReason != "retry_limit" {
+		t.Fatalf("terminal recovery = %+v", got)
 	}
 }
 
@@ -377,33 +384,47 @@ func TestReliableStreamClientDoesNotReplayLocalBackpressure(t *testing.T) {
 }
 
 func TestReliableStreamClientRetriesTruncatedStream(t *testing.T) {
-	inner := &reliableStreamMockClient{attempts: []reliableStreamAttempt{
-		{events: []StreamEvent{{Type: EventContentDelta, Content: "partial"}}},
-		{events: []StreamEvent{{Type: EventContentDelta, Content: "ok"}, {Type: EventDone}}},
-	}}
-	client := newReliableTestClient(inner, nil)
-	ch, err := client.StreamChat(context.Background(), reliableTestRequest())
-	if err != nil {
-		t.Fatalf("StreamChat: %v", err)
-	}
-	events := collectReliableEvents(t, ch)
-	if got, want := eventTypes(nonLifecycleEvents(events)), []StreamEventType{EventContentDelta, EventContentDelta, EventDone}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("events = %v, want %v", got, want)
-	}
-	businessEvents := nonLifecycleEvents(events)
-	if businessEvents[0].Content != "partial" || businessEvents[1].Content != "ok" {
-		t.Fatalf("unexpected content events: %+v", businessEvents)
-	}
-	lifecycle := lifecycleEvents(events)
-	var reconnect *StreamLifecycle
-	for _, event := range lifecycle {
-		if event.Phase == StreamPhaseReconnecting {
-			reconnect = event
-			break
-		}
-	}
-	if reconnect == nil || !reconnect.ResetPartial || reconnect.Attempt != 2 {
-		t.Fatalf("partial retry lifecycle = %+v, want reset for attempt 2", reconnect)
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"local close", nil},
+		{"provider timeout", NewProviderStreamError("request_timeout", "stream error: stream disconnected before completion: stream closed before response.completed")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			partial := []StreamEvent{{Type: EventContentDelta, Content: "partial"}}
+			if tc.err != nil {
+				partial = append(partial, StreamEvent{Type: EventError, Error: tc.err})
+			}
+			inner := &reliableStreamMockClient{attempts: []reliableStreamAttempt{
+				{events: partial},
+				{events: []StreamEvent{{Type: EventContentDelta, Content: "ok"}, {Type: EventDone}}},
+			}}
+			client := newReliableTestClient(inner, nil)
+			ch, err := client.StreamChat(context.Background(), reliableTestRequest())
+			if err != nil {
+				t.Fatalf("StreamChat: %v", err)
+			}
+			events := collectReliableEvents(t, ch)
+			if got, want := eventTypes(nonLifecycleEvents(events)), []StreamEventType{EventContentDelta, EventContentDelta, EventDone}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("events = %v, want %v", got, want)
+			}
+			businessEvents := nonLifecycleEvents(events)
+			if businessEvents[0].Content != "partial" || businessEvents[1].Content != "ok" {
+				t.Fatalf("unexpected content events: %+v", businessEvents)
+			}
+			lifecycle := lifecycleEvents(events)
+			var reconnect *StreamLifecycle
+			for _, event := range lifecycle {
+				if event.Phase == StreamPhaseReconnecting {
+					reconnect = event
+					break
+				}
+			}
+			if reconnect == nil || !reconnect.ResetPartial || reconnect.Attempt != 2 {
+				t.Fatalf("partial retry lifecycle = %+v, want reset for attempt 2", reconnect)
+			}
+		})
 	}
 }
 

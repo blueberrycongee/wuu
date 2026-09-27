@@ -39,6 +39,30 @@ func TestSessionCreationRoutesExplicitWorkspaceInsteadOfParentHome(t *testing.T)
 	if meta.CWD != project || meta.WorkspaceID != "target" || meta.ParentID != parent.SessionID {
 		t.Fatalf("wrong workspace or ancestry: %+v", meta)
 	}
+	th := srv.thread(created.SessionID)
+	if th == nil {
+		t.Fatal("created session was not loaded")
+	}
+	th.mu.Lock()
+	liveID, liveCWD := th.WorkspaceID, th.CWD
+	th.mu.Unlock()
+	if liveID != "target" || liveCWD != project {
+		t.Fatalf("live thread lost workspace identity: id=%q cwd=%q", liveID, liveCWD)
+	}
+	started := false
+	for _, notification := range notificationsByMethod(parseOutput(t, srv.out.(*lockedBuffer).String()), NotificationThreadStarted) {
+		thread := remarshal[ThreadStartedNotification](t, notification["params"]).Thread
+		if thread.ID != created.SessionID {
+			continue
+		}
+		started = true
+		if thread.WorkspaceID != "target" || thread.CWD != project {
+			t.Fatalf("thread/started lost workspace identity: %+v", thread)
+		}
+	}
+	if !started {
+		t.Fatal("created session did not emit thread/started")
+	}
 	if _, _, err := srv.resolveSessionWorkspace("target", rt.RootDir); err == nil {
 		t.Fatal("mismatched root accepted")
 	}

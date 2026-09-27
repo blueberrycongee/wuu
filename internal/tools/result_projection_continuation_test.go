@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -77,7 +79,7 @@ func TestBoundedSearchProjectionUsesArtifactWithoutInventingContinuation(t *test
 	}
 	projection := parsed["projection"].(map[string]any)
 	recover, _ := projection["recover"].(string)
-	if !strings.Contains(recover, "/s/bounded.txt") || !strings.Contains(recover, "narrow") {
+	if !strings.Contains(recover, "/s/bounded.txt") {
 		t.Fatalf("bounded projection recovery is not actionable: %+v", projection)
 	}
 }
@@ -171,79 +173,51 @@ func TestReadFileProjectorPointsAtRemainingRequestedLines(t *testing.T) {
 	}
 }
 
-func TestBashProjectorExposesRankedNonOverlappingArtifactRanges(t *testing.T) {
-	raw := bashEnvelope(map[string]any{
-		"output":          strings.Repeat("combined\n", 5000),
-		"stdout_tail":     strings.Repeat("stdout tail\n", 1000),
-		"stderr_tail":     strings.Repeat("stderr tail\n", 1000),
-		"full_log_sha256": "shell-hash",
-		"full_log_sections": map[string]any{
-			"stdout_start": 100,
-			"stdout_end":   100000,
-			"stderr_start": 100100,
-			"stderr_end":   200000,
-		},
-	})
-	pc := projectorContext{CallID: "bash", BudgetTokens: defaultProjectionTokenBudget, ArtifactRef: "/s/shell.log"}
-	out, _, ok := projectBashResult(raw, pc)
-	if !ok {
-		t.Fatal("bash projector declined")
-	}
-	m := parseOut(t, out)
-	ranges := m["continuation"].(map[string]any)["ranges"].([]any)
-	if len(ranges) != 2 || ranges[0].(map[string]any)["stream"] != "stderr" || ranges[1].(map[string]any)["stream"] != "stdout" {
-		t.Fatalf("bash recovery ranges are not failure-first: %+v", ranges)
-	}
-	for _, value := range ranges {
-		next := value.(map[string]any)["next"].(map[string]any)
-		continuation, err := decodeReadFileContinuation(next["continuation"].(string))
-		if err != nil || continuation.ExpectedSHA256 != "shell-hash" {
-			t.Fatalf("bash recovery range is not snapshot-bound: %+v", next)
-		}
-		if continuation.ByteOffset == nil || continuation.ByteEndOffset == nil || *continuation.ByteEndOffset <= *continuation.ByteOffset {
-			t.Fatalf("empty or reversed recovery range: %+v", continuation)
-		}
-	}
-}
-
 func TestGenericProjectionContinuationCoversOnlyOmittedBytes(t *testing.T) {
 	text := strings.Repeat("head-tail-evidence-", 5000)
-	out := buildBoundedResultReference("/s/generic.txt", text, toolresult.FromText(text), defaultResultBudget)
+	out, ok := buildBoundedResultReference("/s/generic.txt", text, false, defaultProjectionTokenBudget)
+	if !ok {
+		t.Fatal("first page did not fit")
+	}
 	m := parseOut(t, out)
-	head := m["preview_head"].(string)
-	tail := m["preview_tail"].(string)
+	head := m["content"].(string)
 	next := m["continuation"].(map[string]any)["next"].(map[string]any)
 	continuation, err := decodeReadFileContinuation(next["continuation"].(string))
 	if err != nil || continuation.ExpectedSHA256 == "" {
 		t.Fatalf("generic continuation is not snapshot-bound: %+v", next)
 	}
-	if continuation.ByteOffset == nil || continuation.ByteEndOffset == nil || *continuation.ByteOffset != len(head) || *continuation.ByteEndOffset != len(text)-len(tail) {
-		t.Fatalf("generic continuation overlaps preview: head=%d tail=%d range=%+v", len(head), len(tail), continuation)
+	if continuation.ByteOffset == nil || continuation.ByteEndOffset == nil || *continuation.ByteOffset != len(head) || *continuation.ByteEndOffset != len(text) {
+		t.Fatalf("generic continuation overlaps preview: head=%d range=%+v", len(head), continuation)
 	}
 }
 
-func TestGenericProjectionLineLimitPreviewDoesNotOverlapItself(t *testing.T) {
-	text := strings.Repeat("x\n", defaultResultMaxLines+100)
-	out := buildBoundedResultReference("/s/lines.txt", text, toolresult.FromText(text), defaultResultBudget)
+func TestGenericProjectionKeepsWholeLines(t *testing.T) {
+	text := strings.Repeat("xyz\n", 10_000)
+	out, ok := buildBoundedResultReference("/s/lines.txt", text, false, defaultProjectionTokenBudget)
+	if !ok {
+		t.Fatal("first page did not fit")
+	}
 	m := parseOut(t, out)
-	head := m["preview_head"].(string)
-	tail := m["preview_tail"].(string)
-	if len(head)+len(tail) > len(text) || head != text[:len(head)] || tail != text[len(text)-len(tail):] {
-		t.Fatalf("line-limit preview overlapped or selected unstable evidence: head=%d tail=%d total=%d", len(head), len(tail), len(text))
+	head := m["content"].(string)
+	if head == "" || !strings.HasPrefix(text, head) || !strings.HasSuffix(head, "\n") {
+		t.Fatal("page did not keep a continuous prefix of whole lines")
 	}
 	continuation := m["continuation"].(map[string]any)
-	if continuation["has_more"].(bool) != (len(head)+len(tail) < len(text)) {
+	if continuation["has_more"].(bool) != (len(head) < len(text)) {
 		t.Fatalf("line-limit continuation did not match omitted bytes: %+v", continuation)
 	}
 }
 
 func TestStructuredGenericProjectionHasSnapshotBoundByteContinuation(t *testing.T) {
-	raw := toolresult.Result{StructuredContent: json.RawMessage(`{"records":["one","two","three"]}`)}
+	raw := toolresult.Result{StructuredContent: json.RawMessage(`{"records":"` + strings.Repeat("one two three", 2000) + `"}`)}
 	contextual := raw.TextProjection()
-	out := buildBoundedResultReference("/s/structured.json", contextual, raw, defaultResultBudget)
+	out, ok := buildBoundedResultReference("/s/structured.json", contextual, false, defaultProjectionTokenBudget)
+	if !ok {
+		t.Fatal("first page did not fit")
+	}
 	m := parseOut(t, out)
-	if m["kind"] != "archived_structured_tool_result" {
-		t.Fatalf("structured result did not use an index envelope: %+v", m)
+	if !strings.HasPrefix(contextual, m["content"].(string)) {
+		t.Fatal("structured result did not preserve a continuous first page")
 	}
 	next := m["continuation"].(map[string]any)["next"].(map[string]any)
 	continuation, err := decodeReadFileContinuation(next["continuation"].(string))
@@ -262,10 +236,14 @@ func TestReadFileProjectedPagesPreserveRequestedRange(t *testing.T) {
 	kit.env.SessionDir = t.TempDir()
 	var file, expected strings.Builder
 	for i := 1; i <= 600; i++ {
-		line := fmt.Sprintf("record-%04d %s", i, strings.Repeat("x", 100))
+		indent := []string{"", "\t\t", "    ", " \t "}[i%4]
+		line := fmt.Sprintf("%srecord-%04d | %s", indent, i, strings.Repeat("x", 100))
+		if i%17 == 0 || i == 450 {
+			line = ""
+		}
 		fmt.Fprintln(&file, line)
 		if i >= 51 && i <= 450 {
-			fmt.Fprintf(&expected, "%6d\t%s\n", i, line)
+			fmt.Fprintln(&expected, line)
 		}
 	}
 	path := filepath.Join(root, "records.txt")
@@ -284,6 +262,7 @@ func TestReadFileProjectedPagesPreserveRequestedRange(t *testing.T) {
 	}
 	var actual strings.Builder
 	var savedNext string
+	nextLine := 51
 	pages := 0
 	for ; pages < 100; pages++ {
 		if err := tool.ValidateInput(args); err != nil {
@@ -295,7 +274,27 @@ func TestReadFileProjectedPagesPreserveRequestedRange(t *testing.T) {
 		}
 		result, _ := finalizeBuiltInToolResult(kit.env.SessionDir, "read_file", fmt.Sprintf("read-%d", pages), toolresult.FromText(raw), defaultProjectionTokenBudget)
 		page := parseOut(t, result.TextProjection())
-		actual.WriteString(page["content"].(string))
+		lines := contentLines(page["content"].(string))
+		rangeMeta := page["range"].(map[string]any)
+		if len(lines) == 0 || page["start_line"] != float64(nextLine) ||
+			page["num_lines"] != float64(len(lines)) ||
+			rangeMeta["start_line"] != float64(nextLine) ||
+			rangeMeta["end_line"] != float64(nextLine+len(lines)-1) {
+			t.Fatalf("page does not continue requested range at line %d: %+v", nextLine, page)
+		}
+		for i, displayed := range lines {
+			marker, body, ok := strings.Cut(displayed, "|")
+			wantMarker := ""
+			if i == 0 || nextLine%10 == 0 {
+				wantMarker = fmt.Sprint(nextLine)
+			}
+			if !ok || marker != wantMarker {
+				t.Fatalf("invalid line anchor at %d: %q", nextLine, displayed)
+			}
+			actual.WriteString(body)
+			actual.WriteByte('\n')
+			nextLine++
+		}
 		if continuation, ok := page["continuation"].(map[string]any); ok && continuation["has_more"] == true {
 			next, _ := json.Marshal(continuation["next"])
 			args = string(next)
@@ -304,11 +303,92 @@ func TestReadFileProjectedPagesPreserveRequestedRange(t *testing.T) {
 			break
 		}
 	}
-	if pages == 0 || pages == 100 || actual.String() != expected.String() {
+	if pages == 0 || pages == 100 || nextLine != 451 || actual.String() != expected.String() {
 		t.Fatalf("projected pages changed requested content: pages=%d, got bytes=%d want=%d", pages+1, actual.Len(), expected.Len())
+	}
+	// Copying only the content after each display delimiter must produce a
+	// usable exact-edit anchor, including mixed tabs/spaces and literal pipes.
+	old := actual.String()
+	replacement := strings.ReplaceAll(old, "record-", "updated-")
+	if _, err := NewEditFileTool(kit.env).Execute(context.Background(), mustMarshalMap(map[string]any{
+		"path": "records.txt", "old_text": old, "new_text": replacement,
+	})); err != nil {
+		t.Fatalf("exact edit from projected reads: %v", err)
+	}
+	if got := mustReadFile(t, path); got != strings.Replace(file.String(), old, replacement, 1) {
+		t.Fatal("round-trip edit changed indentation or content outside the requested range")
 	}
 	mustWriteFile(t, path, "changed\n")
 	if _, err := tool.Execute(context.Background(), savedNext); err == nil || !strings.Contains(err.Error(), "stale") {
 		t.Fatalf("projected continuation accepted changed file: %v", err)
+	}
+}
+
+func TestReadFileByteRecoverySurvivesResultSettlement(t *testing.T) {
+	t.Setenv(projectionModeEnvVar, "active")
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "escaped text", body: strings.Repeat("\t\r\n\"\\<>&", 1800)},
+		{name: "short lines", body: strings.Repeat("\n", 10000)},
+		{name: "binary", body: strings.Repeat("\x00\xff\n", 3500)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kit, err := New(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			kit.env.SessionDir = t.TempDir()
+			artifact := filepath.Join(kit.env.SessionDir, "tool-results", "output.txt")
+			prefix := "previously displayed head\n"
+			original := prefix + tc.body + "previously displayed tail\n"
+			mustWriteFile(t, artifact, original)
+			end := len(prefix) + len(tc.body)
+			token := encodeReadFileByteContinuation(artifact, len(prefix), projectionPreviewBytes, end, sha256Hex([]byte(original)))
+			args := mustMarshalMap(map[string]any{"continuation": token})
+			var recovered strings.Builder
+			for pageNumber := 0; ; pageNumber++ {
+				if pageNumber == 20 {
+					t.Fatal("byte recovery did not finish")
+				}
+				result, err := kit.ExecuteResult(context.Background(), providers.ToolCall{
+					ID: fmt.Sprintf("recover-%d", pageNumber), Name: "read_file", Arguments: args,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				page := parseOut(t, result.TextProjection())
+				if page["action"] != "read_bytes" || page["byte_offset"] != float64(len(prefix)+recovered.Len()) {
+					t.Fatalf("recovery left its byte range on page %d: action=%v offset=%v", pageNumber, page["action"], page["byte_offset"])
+				}
+				content, _ := page["content"].(string)
+				if page["encoding"] == "base64" {
+					decoded, err := base64.StdEncoding.DecodeString(page["content_base64"].(string))
+					if err != nil {
+						t.Fatal(err)
+					}
+					content = string(decoded)
+				}
+				if len(content) == 0 || page["byte_count"] != float64(len(content)) || len(content) > projectionPreviewBytes {
+					t.Fatalf("byte page count disagrees with displayed content: count=%v displayed=%d", page["byte_count"], len(content))
+				}
+				recovered.WriteString(content)
+				continuation := page["continuation"].(map[string]any)
+				if continuation["has_more"] != true {
+					break
+				}
+				args = mustMarshalMap(continuation["next"].(map[string]any))
+			}
+			if recovered.String() != tc.body {
+				t.Fatalf("recovery changed the omitted range: got %d bytes, want %d", recovered.Len(), len(tc.body))
+			}
+			mustWriteFile(t, artifact, original+"changed")
+			if _, err := kit.ExecuteResult(context.Background(), providers.ToolCall{
+				ID: "recover-stale", Name: "read_file", Arguments: args,
+			}); err == nil || !strings.Contains(err.Error(), "stale") {
+				t.Fatalf("byte recovery accepted a changed artifact: %v", err)
+			}
+		})
 	}
 }

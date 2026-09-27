@@ -106,3 +106,12 @@ if (typeof globalThis.ClipboardItem !== "function") {
     },
   });
 }
+
+// jsdom has no layout engine; suites that inspect resizing supply their own observer.
+if (typeof globalThis.ResizeObserver !== "function") {
+  globalThis.ResizeObserver = class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  };
+}

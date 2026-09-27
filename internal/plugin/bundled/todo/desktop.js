@@ -34,17 +34,26 @@ export async function activate(api) {
         margin: 0;
         padding: 0;
         list-style: none;
+        line-height: 1.5;
       }
       .plugin-todo-item {
         display: grid;
-        grid-template-columns: 18px minmax(0, 1fr);
-        gap: calc(var(--wuu-space-unit, 4px) * 2 * var(--wuu-space-density, 1));
+        grid-template-columns: 14px minmax(0, 1fr);
+        column-gap: 8px;
         align-items: start;
         min-width: 0;
+        overflow-wrap: anywhere;
       }
       .plugin-todo-marker {
+        display: grid;
+        height: 1lh;
+        place-items: center;
         color: var(--wuu-color-text-muted, currentColor);
-        text-align: center;
+      }
+      .plugin-todo-marker svg {
+        display: block;
+        width: 14px;
+        height: 14px;
       }
       .plugin-todo-item[data-status="in_progress"] .plugin-todo-marker {
         color: var(--wuu-color-accent, currentColor);
@@ -74,14 +83,19 @@ function renderTodos(h, items) {
     items.map((item, index) => h(
       "li",
       { className: "plugin-todo-item", "data-status": item.status, key: `${index}:${item.content}` },
-      h("span", { className: "plugin-todo-marker", "aria-hidden": true }, marker(item.status)),
+      h("span", { className: "plugin-todo-marker", "aria-hidden": true }, marker(h, item.status)),
       h("span", null, item.content),
     )),
   );
 }
 
-function marker(status) {
-  if (status === "completed") return "✓";
-  if (status === "in_progress") return "●";
-  return "○";
+function marker(h, status) {
+  // SVG keeps all three states centered independently of font glyph metrics.
+  return h("svg", {
+    viewBox: "0 0 24 24", width: 14, height: 14, fill: "none",
+    stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round",
+    strokeLinejoin: "round", focusable: "false",
+  }, status === "completed"
+    ? h("path", { d: "m5 12 4 4L19 6" })
+    : h("circle", { cx: 12, cy: 12, r: 8, fill: status === "in_progress" ? "currentColor" : "none" }));
 }

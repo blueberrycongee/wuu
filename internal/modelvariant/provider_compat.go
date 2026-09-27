@@ -61,6 +61,10 @@ func BaseOptionsForProvider(providerName string, provider config.ProviderConfig,
 	}
 
 	applyCompatSamplingDefaults(result, desc)
+	if (desc.APINPM == compatNPMAnthropic || desc.APINPM == compatNPMVertexAnthropic) && AnthropicRequiresBoundThinking(desc.APIID) {
+		result["temperatureSupported"] = false
+		setOptionDefault(result, "thinking", map[string]any{"type": "adaptive", "display": "summarized"})
+	}
 	if desc.APINPM == compatNPMVertexAnthropic || (desc.APINPM == compatNPMAnthropic && !strings.Contains(desc.APIID, "claude")) {
 		setOptionDefault(result, "toolStreaming", false)
 	}
@@ -103,12 +107,12 @@ func BaseOptionsForProvider(providerName string, provider config.ProviderConfig,
 		desc.APINPM == compatNPMAnthropic && isGLM53(desc.APIID) {
 		result["thinking"] = map[string]any{"type": "enabled"}
 	}
-	if isDirectXAI(desc) && isGrok46(desc.APIID) && isResponsesWire(provider) {
+	if isDirectXAI(desc) && isLatestGrokResponsesModel(desc.APIID) && isResponsesWire(provider) {
 		setOptionDefault(result, "store", false)
 		setOptionDefault(result, "include", []any{"reasoning.encrypted_content"})
 		setOptionDefault(result, "maxOutputTokens", 128_000)
 	}
-	if isDirectDeepSeek(desc) && strings.Contains(desc.APIID, "deepseek-v4") && isResponsesWire(provider) {
+	if isDirectDeepSeek(desc) && isDeepSeekV4Family(desc) && isResponsesWire(provider) {
 		setOptionDefault(result, "omitStore", true)
 		setOptionDefault(result, "omitPromptCacheKey", true)
 	}
@@ -140,7 +144,7 @@ func BaseOptionsForProvider(providerName string, provider config.ProviderConfig,
 	}
 	if gptFamily := compatOpenAIGPTFamily(desc.APIID); gptFamily != 0 && !strings.Contains(desc.APIID, "gpt-5-chat") && !strings.Contains(desc.APIID, "gpt-6-chat") {
 		defaultEffort := "medium"
-		if gptFamily >= 6 {
+		if gptFamily >= 6 && !strings.Contains(desc.APIID, "gpt-6-sol") && !strings.Contains(desc.APIID, "gpt-6-luna") {
 			defaultEffort = "low"
 		}
 		if !compatOpenAIGPTProModel(desc.APIID) {
@@ -213,15 +217,20 @@ func inferredOptionsForProvider(providerName string, provider config.ProviderCon
 	id := desc.ModelID
 	apiID := desc.APIID
 	adaptiveEfforts := compatAnthropicAdaptiveEfforts(apiID)
-	if (desc.APINPM == compatNPMAnthropic || desc.APINPM == compatNPMVertexAnthropic) && forceAdaptiveThinking(provider.Models[model].Options) {
+	if forceAdaptiveThinking(provider.Models[model].Options) &&
+		(desc.APINPM == compatNPMAnthropic || desc.APINPM == compatNPMVertexAnthropic || desc.APINPM == compatNPMOpenAICompatible) {
 		efforts := modelReasoningEfforts(provider.Models[model])
 		if len(efforts) == 0 {
 			efforts = compatWidelySupportedEfforts()
 		}
+		effortKey := "effort"
+		if desc.APINPM == compatNPMOpenAICompatible {
+			effortKey = "reasoningEffort"
+		}
 		return compatVariantsFromEfforts(efforts, func(effort string) map[string]any {
 			return map[string]any{
 				"thinking": map[string]any{"type": "adaptive", "display": "summarized"},
-				"effort":   effort,
+				effortKey:  effort,
 			}
 		})
 	}
@@ -259,8 +268,8 @@ func inferredOptionsForProvider(providerName string, provider config.ProviderCon
 		}
 		return compatReasoningEffortVariants(efforts)
 	}
-	if strings.Contains(apiID, "deepseek-v4") && desc.APINPM == compatNPMAnthropic {
-		return compatDeepSeekV4AnthropicVariants()
+	if isDeepSeekV4Family(desc) && desc.APINPM == compatNPMAnthropic {
+		return compatDeepSeekV4AnthropicVariants(modelReasoningEfforts(provider.Models[model]))
 	}
 
 	switch desc.APINPM {
@@ -300,8 +309,8 @@ func inferredOptionsForProvider(providerName string, provider config.ProviderCon
 		}
 		return compatVariantsFromEfforts(efforts, compatOpenAIProviderVariantOptions)
 	case compatNPMCerebras, compatNPMTogetherAI, compatNPMXAI, compatNPMDeepInfra, compatNPMVenice, compatNPMOpenAICompatible:
-		if strings.Contains(apiID, "deepseek-v4") {
-			return compatDeepSeekV4Variants(provider.WireAPI)
+		if isDeepSeekV4Family(desc) {
+			return compatDeepSeekV4Variants(provider.WireAPI, modelReasoningEfforts(provider.Models[model]))
 		}
 		efforts := modelReasoningEfforts(provider.Models[model])
 		if len(efforts) == 0 {
@@ -396,9 +405,9 @@ func isGLM53(id string) bool {
 	return strings.Contains(id, "glm-5.3") || strings.Contains(id, "glm5.3")
 }
 
-func isGrok46(id string) bool {
+func isLatestGrokResponsesModel(id string) bool {
 	id = strings.ToLower(strings.TrimSpace(id))
-	return strings.Contains(id, "grok-4.6")
+	return strings.Contains(id, "grok-4.6") || strings.Contains(id, "grok-4.7")
 }
 
 func isResponsesWire(provider config.ProviderConfig) bool {
@@ -414,11 +423,11 @@ func isDirectDeepSeek(desc compatModelDescriptor) bool {
 }
 
 // compatGrokFallbackEfforts fills the reasoning tiers for Grok models that are
-// not yet in the embedded catalog. Grok 4.6 follows xAI's documented effort
-// vocabulary (low/medium/high plus xhigh for the latest models), corroborated
-// by OpenRouter's model metadata; earlier Grok 4.x fall back to low/medium/high.
+// not yet in the embedded catalog. Grok 4.6 and 4.7 follow xAI's documented
+// effort vocabulary (low/medium/high plus xhigh); earlier Grok 4.x fall back
+// to low/medium/high.
 func compatGrokFallbackEfforts(id string) []string {
-	if strings.Contains(id, "grok-4.6") {
+	if strings.Contains(id, "grok-4.6") || strings.Contains(id, "grok-4.7") {
 		return []string{"low", "medium", "high", "xhigh"}
 	}
 	return []string{"low", "medium", "high"}

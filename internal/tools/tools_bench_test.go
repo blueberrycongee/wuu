@@ -49,7 +49,7 @@ func BenchmarkPersistResultSmall(b *testing.B) {
 	result := toolresult.FromText("package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _ = finalizeGenericToolResult(sessionDir, "call_123", result, defaultResultBudget)
+		_, _, _ = finalizeGenericToolResult(sessionDir, "call_123", result, defaultProjectionTokenBudget)
 	}
 }
 
@@ -64,7 +64,7 @@ func BenchmarkPersistResultLarge(b *testing.B) {
 	resultValue := toolresult.FromText(string(result))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _ = finalizeGenericToolResult(sessionDir, "call_"+strconv.Itoa(i), resultValue, defaultResultBudget)
+		_, _, _ = finalizeGenericToolResult(sessionDir, "call_"+strconv.Itoa(i), resultValue, defaultProjectionTokenBudget)
 	}
 }
 

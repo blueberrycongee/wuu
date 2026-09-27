@@ -1,4 +1,4 @@
-import { ArrowRight, Circle, CircleDot, Pencil, Square, SquareCheck, X } from "lucide-react";
+import { ArrowRight, Circle, CircleDot, Pencil, Square, SquareCheck, X } from "./WuuIcons";
 import { useEffect, useMemo, useState } from "react";
 import type {
   UserQuestionAnswer,

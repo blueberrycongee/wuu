@@ -1,17 +1,26 @@
+import { ArrowDown } from "./WuuIcons";
 import {
   type RefObject,
   type ReactNode,
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from "react";
-import { observeAutoFollowResizeTargets } from "./AutoFollowScroll";
+import {
+  atLatestScrollView,
+  latestFollowScrollTop,
+  observeAutoFollowResizeTargets,
+  submitGlideActive,
+  subscribeSubmitGlide,
+} from "./AutoFollowScroll";
 import { dockComposerVisualHeight } from "./ConversationScrollState";
 import {
   createWindowResizeSettleScheduler,
   isWindowResizing,
 } from "./WindowResizeState";
 import { useI18n } from "./i18n";
+import { prefersReducedMotion } from "./motion";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 
 /**
@@ -48,10 +57,22 @@ type JumpToLatestPillProps = {
    * the effect re-runs only when the boolean actually changes.
    */
   onScrolledAwayChange?: (scrolledAway: boolean) => void;
-  /** In-flow status groups reserve space instead of covering conversation content. */
+  /**
+   * Performs the jump through the container's follow controller, which must
+   * resume following immediately. Without it the pill smooth-scrolls to the
+   * bottom measured at click time, which streamed output can outgrow.
+   */
+  onJump?: () => void;
+  /** Renders inside the caller's status group instead of floating above the composer. */
   inline?: boolean;
   /** Remains available at the bottom; shares one centered group with the jump action. */
   companion?: ReactNode;
+  /**
+   * Identifies the conversation shown in a reused container. A conversation
+   * reopens where it was left, so its last visibility applies before the first
+   * scroll event instead of the outgoing conversation's pill for a frame.
+   */
+  scopeKey?: string;
 };
 
 const DEFAULT_THRESHOLD_PX = 80;
@@ -76,13 +97,27 @@ export function JumpToLatestPill({
   threshold = DEFAULT_THRESHOLD_PX,
   label,
   onScrolledAwayChange,
+  onJump,
   inline = false,
   companion,
+  scopeKey,
 }: JumpToLatestPillProps): React.ReactElement | null {
   const { t } = useI18n();
   const accessibleLabel = label ?? t("conversation.jumpToLatest");
+  const scrolledAwayByScopeRef = useRef(new Map<string, boolean>());
   const [scrolledAway, setScrolledAway] = useState(false);
+  const [renderedScopeKey, setRenderedScopeKey] = useState(scopeKey);
   const [position, setPosition] = useState<PillPosition | null>(null);
+  if (renderedScopeKey !== scopeKey) {
+    // Adjust during render: the commit that swaps conversations must already
+    // carry the incoming visibility, before scroll restoration measures it.
+    setRenderedScopeKey(scopeKey);
+    setScrolledAway(scopeKey !== undefined && scrolledAwayByScopeRef.current.get(scopeKey) === true);
+  }
+
+  useEffect(() => {
+    if (scopeKey !== undefined) scrolledAwayByScopeRef.current.set(scopeKey, scrolledAway);
+  }, [scopeKey, scrolledAway]);
 
   // Mirror the scrolled-away boolean to the parent whenever it flips. The
   // parent uses this to swap a sibling progress pill out of the same
@@ -99,12 +134,14 @@ export function JumpToLatestPill({
     }
 
     const update = (): void => {
-      const distanceFromBottom =
-        node.scrollHeight - node.scrollTop - node.clientHeight;
-      setScrolledAway(distanceFromBottom > threshold);
+      // Same skip as the turn rail: the glide already knows it is leaving the
+      // bottom, and a per-frame scrollHeight read forces a layout.
+      if (submitGlideActive()) return;
+      setScrolledAway(!atLatestScrollView(node, threshold));
     };
     const resizeSettleUpdate = createWindowResizeSettleScheduler(update);
     const scheduleUpdate = (): void => {
+      if (submitGlideActive()) return;
       if (isWindowResizing()) {
         resizeSettleUpdate.schedule();
         return;
@@ -115,6 +152,7 @@ export function JumpToLatestPill({
     // Initial sync after mount (covers the case where the container is
     // already scrolled up at the time the pill mounts, e.g., when the
     // user navigated away and then re-entered the conversation).
+    const unsubscribeGlide = subscribeSubmitGlide(scheduleUpdate);
     scheduleUpdate();
     node.addEventListener("scroll", scheduleUpdate, { passive: true });
 
@@ -145,6 +183,7 @@ export function JumpToLatestPill({
 
     return () => {
       resizeSettleUpdate.cancel();
+      unsubscribeGlide();
       node.removeEventListener("scroll", scheduleUpdate);
       childObserver?.disconnect();
       resizeObserver?.disconnect();
@@ -284,30 +323,20 @@ export function JumpToLatestPill({
   }
 
   const scrollToBottom = (): void => {
+    if (onJump) {
+      onJump();
+      return;
+    }
     const node = containerRef.current;
     if (!node) {
       return;
     }
-    node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
+    node.scrollTo({ top: latestFollowScrollTop(node), behavior: prefersReducedMotion() ? "auto" : "smooth" });
   };
 
   const pillBody = (
     <>
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 14 14"
-        fill="none"
-        aria-hidden="true"
-      >
-        <path
-          d="M7 1V11M7 11L3 7M7 11L11 7"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
+      <ArrowDown size={14} />
       <span>{accessibleLabel}</span>
     </>
   );

@@ -191,7 +191,7 @@ func (s *Server) activePluginSetting(id, fingerprint, key string) (pluginpkg.Plu
 	}
 	key = strings.TrimSpace(key)
 	// Inventory descriptors expose manifest setting IDs in their qualified
-	// form (for example, "note-compaction.checkpoint_interval_tokens"), while
+	// form (for example, "example.display_mode"), while
 	// plugin host calls use the manifest-local key. Accept both at this desktop
 	// boundary and persist only the local key.
 	key = strings.TrimPrefix(key, plugin.ID+".")

@@ -12,16 +12,19 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 // ResolveBinary locates the claude executable. The WUU_CLAUDE_BINARY
-// environment variable wins; otherwise PATH lookup of "claude".
+// environment variable wins. Otherwise lookup uses PATH and the standard
+// install locations, because a Finder or Dock launch does not receive the
+// terminal PATH.
 func ResolveBinary() (string, error) {
 	if path := strings.TrimSpace(envClaudeBinary()); path != "" {
 		return path, nil
 	}
-	path, err := exec.LookPath("claude")
+	path, err := enginecatalog.LookBinary("claude")
 	if err != nil {
 		return "", errors.New("claude binary not found: set WUU_CLAUDE_BINARY or install the claude CLI on PATH")
 	}
@@ -91,6 +94,7 @@ func (e *Engine) SessionForThread(ctx context.Context, binding agentengine.Threa
 		rootDir:        firstNonEmpty(binding.RootDir, e.rootDir),
 		model:          binding.Model,
 		effort:         binding.Effort,
+		speed:          binding.Speed,
 		permissionMode: binding.PermissionMode,
 		instructions:   binding.Instructions,
 		mcpServers:     binding.MCPServers,
@@ -104,6 +108,7 @@ type sessionOptions struct {
 	rootDir        string
 	model          string
 	effort         string
+	speed          string
 	permissionMode string
 	instructions   string
 	mcpServers     []agentengine.MCPServer
@@ -120,6 +125,7 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 		rootDir:        opts.rootDir,
 		model:          opts.model,
 		effort:         opts.effort,
+		speed:          opts.speed,
 		permissionMode: opts.permissionMode,
 		instructions:   opts.instructions,
 		mcpServers:     append([]agentengine.MCPServer(nil), opts.mcpServers...),
@@ -137,6 +143,7 @@ type Session struct {
 	rootDir        string
 	model          string
 	effort         string
+	speed          string
 	permissionMode string
 	instructions   string
 	mcpServers     []agentengine.MCPServer
@@ -287,6 +294,13 @@ func (s *Session) spawn(ctx context.Context, sub *turnSubscription) (*Transport,
 	}
 	if effort := strings.TrimSpace(s.effort); effort != "" {
 		args = append(args, "--effort", effort)
+	}
+	if s.speed != "" {
+		settings, err := json.Marshal(map[string]bool{"fastMode": s.speed == "fast"})
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, "--settings", string(settings))
 	}
 	if ref != "" {
 		args = append(args, "--resume", ref)

@@ -12,9 +12,10 @@ const processNotificationText =
   '<process_notification>{"process_id":"proc-1"}</process_notification>';
 
 describe("process notification classification", () => {
-  it("keeps attributed session messages visible even when they quote internal envelopes", () => {
+  it.each(["host", "plugin"])("keeps %s session messages visible even when they quote internal envelopes", (origin) => {
     for (const name of [PROCESS_NOTIFICATION_NAME, AGENT_NOTIFICATION_NAME]) {
-      expect(isInternalUserNotificationItem({ name, text: processNotificationText, origin: "plugin", presentation_kind: "session_message" })).toBe(false);
+      expect(isInternalUserNotificationItem({ name, text: processNotificationText, origin, presentation_kind: "session_message" })).toBe(false);
+      expect(isInternalUserNotificationItem({ name, text: processNotificationText, origin, presentation_kind: "query_bubble" })).toBe(true);
     }
   });
 

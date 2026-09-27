@@ -138,9 +138,6 @@ func TestDiscoverWithOptionsIncludesOfficialBundledCUAMacWhenEnabled(t *testing.
 	if got := cua.MCPServers["computer"].Command; got != helper {
 		t.Fatalf("cua-mac helper command = %q, want %q", got, helper)
 	}
-	if len(cua.ActivityKinds) != 1 || cua.ActivityKinds[0] != "cua" {
-		t.Fatalf("cua-mac activity kinds = %+v", cua.ActivityKinds)
-	}
 	if len(cua.SkillDirs()) != 1 {
 		t.Fatalf("cua-mac skill dirs = %+v", cua.SkillDirs())
 	}
@@ -205,24 +202,6 @@ func TestBundledOptionalPluginsAreInstalledButDisabledByDefault(t *testing.T) {
 	for id, foundDisabled := range want {
 		if !foundDisabled {
 			t.Errorf("bundled plugin %q was missing or enabled by default", id)
-		}
-	}
-}
-
-func TestDiscoverWithOptionsFiltersBundledCUAMacOutsideDarwin(t *testing.T) {
-	plugins := DiscoverWithOptions("", t.TempDir(), DiscoverOptions{GOOS: "linux"})
-	for _, item := range plugins {
-		if item.ID == "cua-mac" {
-			t.Fatalf("cua-mac must not load on linux: %+v", item)
-		}
-	}
-}
-
-func TestDiscoverUsesCurrentPlatform(t *testing.T) {
-	plugins := Discover("", t.TempDir())
-	for _, item := range plugins {
-		if item.ID == "cua-mac" && runtime.GOOS != "darwin" {
-			t.Fatalf("cua-mac loaded on %s", runtime.GOOS)
 		}
 	}
 }

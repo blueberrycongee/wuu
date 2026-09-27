@@ -215,6 +215,45 @@ describe("SkillsCatalog", () => {
     expect(container.textContent).not.toContain("Use when no safer interface is available.");
   });
 
+  it("hides every section that a search leaves empty", async () => {
+    installSkillList([existingSkill]);
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        <SkillsCatalog
+          extensionInventory={[{
+            id: "plugin:user:scheduler",
+            name: "Scheduler",
+            kind: "plugin",
+            provenance: { kind: "plugin", source: "community", scope: "user", plugin_id: "scheduler" },
+            state: "read_only",
+          }]}
+        />,
+      );
+    });
+    const sectionRows = () => Array.from(container.querySelectorAll("section section")).map(
+      (section) => Array.from(section.querySelectorAll("button")).map((row) => row.textContent ?? ""),
+    );
+    const search = async (query: string) => {
+      const input = container.querySelector<HTMLInputElement>(".catalog-search input")!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, query);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+
+    expect(sectionRows()).toHaveLength(2);
+
+    await search("existing");
+    expect(sectionRows()).toEqual([[expect.stringContaining("existing-skill")]]);
+
+    await search("scheduler");
+    expect(sectionRows()).toEqual([[expect.stringContaining("Scheduler")]]);
+
+    await search("no such extension");
+    expect(sectionRows()).toEqual([]);
+  });
+
   it("lists installed plugins and tags plugin-provided skills", async () => {
     installSkillList([
       {

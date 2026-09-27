@@ -63,9 +63,14 @@ func surfaceAllowsSkillTool(surface capability.Surface, name string) bool {
 	if _, ok := surface.DeferredTools[name]; ok {
 		return true
 	}
+	if _, ok := surface.NestedTools[name]; ok {
+		return true
+	}
 	switch name {
 	case "bash":
 		return surfaceHasVisibleCapability(surface, capability.CapabilityCommandBash)
+	case "process":
+		return surfaceHasVisibleCapability(surface, capability.CapabilityCommandBackground)
 	case "git":
 		return false
 	default:
@@ -77,7 +82,7 @@ func isKnownSurfaceSkillTool(name string) bool {
 	switch strings.TrimSpace(name) {
 	case "read_file", "list_files", "write_file", "edit_file", "apply_patch",
 		"grep", "glob",
-		"bash", "git",
+		"bash", "process", "git",
 		"tool_search", "load_skill",
 		"web_fetch", "web_search",
 		"wuu_browser",

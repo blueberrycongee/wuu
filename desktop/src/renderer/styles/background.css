@@ -1,0 +1,74 @@
+/* One viewport-sized image keeps the artwork continuous across navigation and
+ * content. Only the main canvases reveal it; controls and overlays retain their
+ * theme surfaces so the picture cannot compromise their reading contrast. */
+html[data-app-background] body {
+  isolation: isolate;
+  background: var(--paper);
+}
+
+.app-background {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  animation: wuu-fade-in var(--motion-base) var(--ease-out);
+}
+
+html[data-app-background] :is(
+  .conversation-pane, .settings-main, .workspace-right-panel,
+  .workspace-panel-body, .workspace-bottom-panel, .side-thread-panel,
+  .account-screen, .plugin-workbench-view-primary,
+  .plugin-view-content, .empty-home, .project-empty-pane,
+  .skills-scroll-region, .conversation-split-pane
+) {
+  background: transparent;
+}
+
+/* The rule above punches through the primary plugin page so artwork can
+   continue under it. That also reveals the empty-session greeting and the
+   dock composer, which share the pane. Restore an opaque canvas here; the
+   later rule wins on equal specificity. */
+html[data-app-background] .plugin-workbench-view-primary {
+  background: var(--wuu-color-canvas, var(--paper));
+}
+
+/* :is() cannot wrap pseudo-elements. The dock covers paint the strip below the
+ * rounded composer, so they keep a paper fill that would cut the image short
+ * at the bottom of the conversation. */
+html[data-app-background] .dock-composer-wrap::before {
+  background: transparent;
+}
+
+html[data-app-background] :is(.sidebar, .settings-sidebar) {
+  background: color-mix(in srgb, var(--sidebar-material-fill) 25%, transparent);
+}
+
+/* Drawers overlap readable content, rather than merely sitting beside it. */
+html[data-app-background] :is(.sidebar-collapsed, .compact-navigation) :is(.sidebar, .settings-sidebar) {
+  background: var(--sidebar-drawer-bg);
+}
+
+.background-file-picker {
+  position: relative;
+  overflow: hidden;
+}
+
+.background-file-picker input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+html[data-focus-modality="keyboard"] .background-file-picker:has(input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.background-file-picker.disabled { opacity: 0.5; }
+
+@media (forced-colors: active), print { .app-background { display: none; } }

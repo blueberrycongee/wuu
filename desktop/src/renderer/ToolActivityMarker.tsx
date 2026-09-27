@@ -2,11 +2,11 @@ import type { JSX } from "react";
 import {
   BookOpen, FilePlus, FileText, FolderOpen, Globe, Layers, ListTodo,
   MessageCircle, NotebookPen, Pencil, Search, Terminal, Users,
-  type LucideIcon,
-} from "lucide-react";
+  type IconComponent,
+} from "./WuuIcons";
 import type { ToolActivityKind } from "./ToolActivityHelpers";
 
-const ACTIVITY_ICONS: Record<ToolActivityKind, LucideIcon> = {
+const ACTIVITY_ICONS: Record<ToolActivityKind, IconComponent> = {
   read: FileText,
   list: FolderOpen,
   search: Search,

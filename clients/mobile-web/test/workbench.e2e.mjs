@@ -285,7 +285,7 @@ try {
       assert(rect && rect.y >= header.y && rect.y + rect.height <= header.y + header.height + 1, 'navigation buttons stay inside the header');
     }
     await page.getByRole('button', { name: '展开左侧栏', exact: true }).filter({visible:true}).tap();
-    const closeDrawer = page.locator('.compact-session-switcher-close');
+    const closeDrawer = page.locator('.compact-session-switcher-backdrop');
     await closeDrawer.waitFor({ state: 'visible' });
     await until(async () => {
       const pane = await page.locator('.conversation-pane').boundingBox();

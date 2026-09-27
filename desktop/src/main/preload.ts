@@ -3,26 +3,15 @@ import {
   MESSAGE_FLOW_FONT_SIZE_RANGE,
   isLanguagePreference,
   type DesktopPlatform,
-  type ChannelAgentCreateParams,
-  type ChannelAgentUpdateParams,
-  type ChannelAgentDeleteParams,
-  type ChannelAgentStartParams,
-  type ChannelAgentResetParams,
-  type ChannelAgentCreationResolveParams,
-  type ChannelMessageListParams,
-  type ChannelMessageSendParams,
-  type ChannelRoomCreateParams,
-  type ChannelDirectMessageOpenParams,
-  type ChannelRoomUpdateParams,
-  type ChannelRoomDeleteParams,
-  type ChannelRoomReadParams,
-  type ChannelRoomPreferences,
-  type ChannelTaskCreateParams,
-  type ChannelTaskUpdateParams,
   type MessageFlowFontSize,
   type PopOutInitResult,
+  type BrowserCommandParams,
+  type BrowserDockTarget,
+  type BrowserSurfaceSnapshot,
+  type BrowserTabAdopted,
   type RemoteControlEvent,
   type RunningThreadSnapshot,
+  type RuntimeContext,
   type ServerEvent,
   type SideThreadEventEnvelope,
   type SideThreadSendParams,
@@ -30,6 +19,7 @@ import {
   type ThreadForkTarget,
   type ThemePreference,
   type LanguagePreference,
+  type UsageOverviewParams,
   type WindowResizeState,
   type WuuDesktopApi,
 } from "../shared/protocol";
@@ -70,16 +60,6 @@ const initialOnboardingComplete = (() => {
     // A missing handler means an older main process. Do not trap the renderer
     // behind a flow it cannot persist.
     return true;
-  }
-})();
-
-const initialChannelRoomPreferences = ((): ChannelRoomPreferences | undefined => {
-  try {
-    return ipcRenderer.sendSync("wuu:channel-room-preferences-get-sync") as
-      | ChannelRoomPreferences
-      | undefined;
-  } catch {
-    return undefined;
   }
 })();
 
@@ -230,6 +210,7 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:system-notification", params),
   getBuildInfo: () => ipcRenderer.invoke("wuu:build-info"),
   polishText: (text: string) => ipcRenderer.invoke("wuu:text-polish", text),
+  useCodexCredentials: (provider) => ipcRenderer.invoke("wuu:config-codex-credentials", provider),
   loadCodexModels: (provider?: string) =>
     ipcRenderer.invoke("wuu:config-codex-models", provider),
   refreshModelCatalog: () =>
@@ -242,6 +223,7 @@ const api: WuuDesktopApi = {
     variant?: string,
     permissionMode?: string,
     threadId?: string,
+    speed?: string,
   ) =>
     ipcRenderer.invoke(
       "wuu:config-model-update",
@@ -252,6 +234,7 @@ const api: WuuDesktopApi = {
       variant,
       permissionMode,
       threadId,
+      speed,
     ),
   removeProvider: (
     provider: string,
@@ -261,8 +244,11 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:config-advanced-update", settings),
   updateGeneralSettings: (settings) =>
     ipcRenderer.invoke("wuu:config-general-update", settings),
-  listEngines: () => ipcRenderer.invoke("wuu:engines-list"),
+  listEngines: (options) => ipcRenderer.invoke("wuu:engines-list", options),
   updateEngines: (params) => ipcRenderer.invoke("wuu:engines-update", params),
+  listEngineAuthMethods: (engineID) => ipcRenderer.invoke("wuu:engine-auth-methods", engineID),
+  authenticateEngine: (engineID, methodID) => ipcRenderer.invoke("wuu:engine-authenticate", { engine_id: engineID, method_id: methodID }),
+  cancelEngineAuth: (engineID) => ipcRenderer.invoke("wuu:engine-auth-cancel", engineID),
   updateExtensionPackage: (params) =>
     ipcRenderer.invoke("wuu:extension-package-update", params),
   refreshExtensionCatalog: () =>
@@ -281,52 +267,12 @@ const api: WuuDesktopApi = {
   requestPluginRuntime: (params) => ipcRenderer.invoke("wuu:plugin-runtime-request", params),
   listSkills: () => ipcRenderer.invoke("wuu:skill-list"),
   readSkillContent: (params) => ipcRenderer.invoke("wuu:skill-content", params),
-  channelContinuity: (params) => ipcRenderer.invoke("wuu:channel-continuity", params),
-  listChannelSessions: (params) => ipcRenderer.invoke("wuu:channel-session-list", params),
-  createChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-create", params),
-  readChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-read", params),
-  sendChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-send", params),
-  stopChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-stop", params),
-  resumeChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-resume", params),
-  listNamedAgents: () => ipcRenderer.invoke("wuu:channel-agent-list"),
-  getNamedAgentInsights: () => ipcRenderer.invoke("wuu:channel-agent-insights"),
-  bootstrapChannels: () => ipcRenderer.invoke("wuu:channel-bootstrap"),
-  createNamedAgent: (params: ChannelAgentCreateParams) =>
-    ipcRenderer.invoke("wuu:channel-agent-create", params),
-  updateNamedAgent: (params: ChannelAgentUpdateParams) =>
-    ipcRenderer.invoke("wuu:channel-agent-update", params),
-  deleteNamedAgent: (params: ChannelAgentDeleteParams) =>
-    ipcRenderer.invoke("wuu:channel-agent-delete", params),
-  startNamedAgent: (params: ChannelAgentStartParams) =>
-    ipcRenderer.invoke("wuu:channel-agent-start", params),
-  resetNamedAgent: (params: ChannelAgentResetParams) =>
-    ipcRenderer.invoke("wuu:channel-agent-reset", params),
-  resolveChannelAgentCreation: (params: ChannelAgentCreationResolveParams) =>
-    ipcRenderer.invoke("wuu:channel-agent-creation-resolve", params),
-  listChannelRooms: () => ipcRenderer.invoke("wuu:channel-room-list"),
-  createChannelRoom: (params: ChannelRoomCreateParams) =>
-    ipcRenderer.invoke("wuu:channel-room-create", params),
-  openChannelDirectMessage: (params: ChannelDirectMessageOpenParams) =>
-    ipcRenderer.invoke("wuu:channel-direct-message-open", params),
-  updateChannelRoom: (params: ChannelRoomUpdateParams) =>
-    ipcRenderer.invoke("wuu:channel-room-update", params),
-  deleteChannelRoom: (params: ChannelRoomDeleteParams) =>
-    ipcRenderer.invoke("wuu:channel-room-delete", params),
-  markChannelRoomRead: (params: ChannelRoomReadParams) =>
-    ipcRenderer.invoke("wuu:channel-room-read", params),
-  listChannelMessages: (params: ChannelMessageListParams) =>
-    ipcRenderer.invoke("wuu:channel-message-list", params),
-  sendChannelMessage: (params: ChannelMessageSendParams) =>
-    ipcRenderer.invoke("wuu:channel-message-send", params),
-  createChannelTask: (params: ChannelTaskCreateParams) =>
-    ipcRenderer.invoke("wuu:channel-task-create", params),
-  updateChannelTask: (params: ChannelTaskUpdateParams) =>
-    ipcRenderer.invoke("wuu:channel-task-update", params),
-  getChannelHumanMentionStatus: () =>
-    ipcRenderer.invoke("wuu:channel-human-mention-status"),
-  ackChannelHumanMentions: () =>
-    ipcRenderer.invoke("wuu:channel-human-mention-ack"),
+  returnManagedSession: (params) => ipcRenderer.invoke("wuu:session-control-return", params),
+  takeOverManagedSession: (params) => ipcRenderer.invoke("wuu:session-control-take", params),
+  projectSession: (params) => ipcRenderer.invoke("wuu:project-session", params),
   getSettingsUsage: () => ipcRenderer.invoke("wuu:settings-usage"),
+  getUsageOverview: (params: UsageOverviewParams) =>
+    ipcRenderer.invoke("wuu:usage-overview", params),
   listMCPServers: () => ipcRenderer.invoke("wuu:mcp-list"),
   connectMCPServer: (name: string) => ipcRenderer.invoke("wuu:mcp-connect", name),
   disconnectMCPServer: (name: string) =>
@@ -354,8 +300,8 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:codex-pet-runtime", runtime),
   updateCodexPetHints: (hints) =>
     ipcRenderer.invoke("wuu:codex-pet-hints", hints),
-  startThread: (params?: ThreadStartParams) =>
-    ipcRenderer.invoke("wuu:thread-start", params),
+  startThread: (params?: ThreadStartParams, targetContext?: RuntimeContext) =>
+    ipcRenderer.invoke("wuu:thread-start", params, targetContext),
   resumeThread: (sessionId?: string) =>
     ipcRenderer.invoke("wuu:thread-resume", sessionId),
   forkThread: (
@@ -392,7 +338,6 @@ const api: WuuDesktopApi = {
   },
   initialThemePreference,
   initialLanguagePreference,
-  initialChannelRoomPreferences,
   initialSystemLocale: Intl.DateTimeFormat().resolvedOptions().locale,
   getLanguagePreference: () => ipcRenderer.invoke("wuu:language-preference-get"),
   getPluginConflictPreferences: () => ipcRenderer.invoke("wuu:plugin-conflict-preferences-get"),
@@ -413,8 +358,6 @@ const api: WuuDesktopApi = {
     return () =>
       ipcRenderer.removeListener("wuu:language-preference-changed", listener);
   },
-  updateChannelRoomPreferences: (preferences: ChannelRoomPreferences) =>
-    ipcRenderer.invoke("wuu:channel-room-preferences-set", preferences),
   initialMessageFlowFontSize,
   getThemePreference: () => ipcRenderer.invoke("wuu:theme-preference-get"),
   setThemePreference: (theme: ThemePreference) =>
@@ -470,17 +413,31 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:file-show-in-folder", path),
   showWorkspaceItemMenu: (path: string) =>
     ipcRenderer.invoke("wuu:file-show-menu", path),
+  saveArtifactFile: async (name: string, source: string) => {
+    // Blob URLs belong to this renderer and cannot be fetched by the main process.
+    if (source.startsWith("blob:")) {
+      const response = await fetch(source);
+      const blob = await response.blob();
+      source = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+    }
+    await ipcRenderer.invoke("wuu:artifact-save", name, source);
+  },
   openExternal: (url: string) =>
     ipcRenderer.invoke("wuu:open-external", url),
-  startTurn: (threadId: string, prompt: string, images, files, permissionMode, activeDocument, contentParts) =>
-    ipcRenderer.invoke("wuu:turn-start", threadId, prompt, images, files, permissionMode, activeDocument, contentParts),
-  queueTurn: (threadId: string, prompt: string, images, clientId, files, permissionMode, activeDocument, contentParts) =>
-    ipcRenderer.invoke("wuu:turn-queue", threadId, prompt, images, clientId, files, permissionMode, activeDocument, contentParts),
+  startTurn: (threadId: string, prompt: string, images, files, permissionMode, activeDocument, contentParts, targetContext, clientId) =>
+    ipcRenderer.invoke("wuu:turn-start", threadId, prompt, images, files, permissionMode, activeDocument, contentParts, targetContext, clientId),
+  queueTurn: (threadId: string, prompt: string, images, clientId, files, permissionMode, activeDocument, contentParts, targetContext, hold) =>
+    ipcRenderer.invoke("wuu:turn-queue", threadId, prompt, images, clientId, files, permissionMode, activeDocument, contentParts, targetContext, hold),
   updateQueuedTurn: (threadId: string, queueId: string, prompt: string, images, files, contentParts) =>
     ipcRenderer.invoke("wuu:turn-update-queued", threadId, queueId, prompt, images, files, contentParts),
   dequeueTurn: (threadId: string, queueId: string) =>
     ipcRenderer.invoke("wuu:turn-dequeue", threadId, queueId),
-  steerTurn: (threadId: string, expectedTurnId: string, prompt: string, images, clientId, files, activeDocument, contentParts) =>
+  steerTurn: (threadId: string, expectedTurnId: string, prompt: string, images, clientId, files, activeDocument, contentParts, targetContext) =>
     ipcRenderer.invoke(
       "wuu:turn-steer",
       threadId,
@@ -491,6 +448,7 @@ const api: WuuDesktopApi = {
       files,
       activeDocument,
       contentParts,
+      targetContext,
     ),
   unsteerTurn: (threadId: string, steerId: string) =>
     ipcRenderer.invoke("wuu:turn-unsteer", threadId, steerId),
@@ -608,24 +566,80 @@ const api: WuuDesktopApi = {
 // frozen WuuDesktopApi) so the renderer can position/hide an agent's
 // WebContentsView and drop ghost activity UI on core teardown. The invoke
 // channels are paired with ipcMain.handle in index.ts (IpcChannelParity).
-type BrowserBoundsRect = { x: number; y: number; width: number; height: number };
+type BrowserBoundsRect = { x: number; y: number; width: number; height: number } | null;
 type BrowserTakeoverApi = {
-  reportBrowserBounds: (workdir: string, tabID: string, rect: BrowserBoundsRect) => void;
+  reportBrowserBounds: (
+    workdir: string,
+    tabID: string,
+    rect: BrowserBoundsRect,
+    force?: boolean,
+  ) => void;
   suppressBrowserOverlay: (workdir: string, tabID: string, suppressed: boolean) => void;
   onBrowserInvalidate: (handler: (payload: { workdir: string }) => void) => () => void;
+  browserCommand: (params: BrowserCommandParams) => Promise<BrowserSurfaceSnapshot | null>;
+  browserSurface: (workdir: string, tabID: string) => Promise<BrowserSurfaceSnapshot | null>;
+  onBrowserSurface: (handler: (snapshot: BrowserSurfaceSnapshot) => void) => () => void;
+  onBrowserUserInput: (
+    handler: (payload: { workdir: string; tabID: string }) => void,
+  ) => () => void;
+  onBrowserTabAdopted: (handler: (payload: BrowserTabAdopted) => void) => () => void;
+  onBrowserDock: (handler: (payload: BrowserDockTarget) => void) => () => void;
+  reportBrowserPiPHostLayout: (
+    payload: {
+      host: { x: number; y: number; width: number; height: number };
+      obstacles: Array<{ x: number; y: number; width: number; height: number }>;
+    } | null,
+  ) => void;
 };
 const browserApi = api as WuuDesktopApi & BrowserTakeoverApi;
-browserApi.reportBrowserBounds = (workdir, tabID, rect) => {
-  void ipcRenderer.invoke("wuu:browser-report-bounds", { workdir, tabID, rect });
+browserApi.reportBrowserBounds = (workdir, tabID, rect, force) => {
+  void ipcRenderer.invoke("wuu:browser-report-bounds", {
+    workdir,
+    tabID,
+    rect,
+    force: force === true,
+  });
 };
 browserApi.suppressBrowserOverlay = (workdir, tabID, suppressed) => {
   void ipcRenderer.invoke("wuu:browser-overlay-suppress", { workdir, tabID, suppressed });
 };
+browserApi.browserCommand = (params) =>
+  ipcRenderer.invoke("wuu:browser-command", params) as Promise<BrowserSurfaceSnapshot | null>;
+browserApi.browserSurface = (workdir, tabID) =>
+  ipcRenderer.invoke("wuu:browser-surface", { workdir, tabID }) as Promise<BrowserSurfaceSnapshot | null>;
 browserApi.onBrowserInvalidate = (handler) => {
   const listener = (_event: Electron.IpcRendererEvent, payload: { workdir: string }) =>
     handler(payload);
   ipcRenderer.on("wuu:browser-invalidate", listener);
   return () => ipcRenderer.removeListener("wuu:browser-invalidate", listener);
+};
+browserApi.onBrowserSurface = (handler) => {
+  const listener = (_event: Electron.IpcRendererEvent, snapshot: BrowserSurfaceSnapshot) =>
+    handler(snapshot);
+  ipcRenderer.on("wuu:browser-surface", listener);
+  return () => ipcRenderer.removeListener("wuu:browser-surface", listener);
+};
+browserApi.onBrowserUserInput = (handler) => {
+  const listener = (
+    _event: Electron.IpcRendererEvent,
+    payload: { workdir: string; tabID: string },
+  ) => handler(payload);
+  ipcRenderer.on("wuu:browser-user-input", listener);
+  return () => ipcRenderer.removeListener("wuu:browser-user-input", listener);
+};
+browserApi.onBrowserTabAdopted = (handler) => {
+  const listener = (_event: Electron.IpcRendererEvent, payload: BrowserTabAdopted) =>
+    handler(payload);
+  ipcRenderer.on("wuu:browser-tab-adopted", listener);
+  return () => ipcRenderer.removeListener("wuu:browser-tab-adopted", listener);
+};
+browserApi.reportBrowserPiPHostLayout = (payload) => {
+  void ipcRenderer.invoke("wuu:browser-pip-host-layout", payload);
+};
+browserApi.onBrowserDock = (handler) => {
+  const listener = (_event: Electron.IpcRendererEvent, payload: BrowserDockTarget) => handler(payload);
+  ipcRenderer.on("wuu:browser-dock", listener);
+  return () => ipcRenderer.removeListener("wuu:browser-dock", listener);
 };
 
 contextBridge.exposeInMainWorld("wuu", api);

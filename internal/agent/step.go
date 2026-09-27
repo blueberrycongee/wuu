@@ -21,6 +21,7 @@ type StepResult struct {
 	// Content is the assistant's text for this round (concatenation
 	// of all content deltas in the streaming case).
 	Content string
+	Images  []providers.InputImage
 	// Phase is the provider-supplied assistant message phase when
 	// available. Empty means unknown and callers may infer from tool use.
 	Phase providers.MessagePhase

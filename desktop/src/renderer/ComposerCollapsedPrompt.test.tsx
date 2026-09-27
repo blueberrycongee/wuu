@@ -2,6 +2,8 @@ import { useState } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ResponseSelection } from "../shared/protocol";
+import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
 import {
   CollapsedComposerPromptCard,
   getCollapsedPromptRevision,
@@ -20,6 +22,42 @@ import { buildFileSelectionPart } from "./FileSelectionContext";
 let container: HTMLDivElement;
 let root: Root | null = null;
 let storageKeyCounter = 0;
+
+it("keeps each quote as its own tray card and edits or removes one without losing the other", () => {
+  const quote: ResponseSelection = {
+    id: "quote-1", text: `${longText()}\nFinal quoted line`,
+    source: { thread_id: "thread", turn_id: "turn", item_id: "item", start_offset: 0, end_offset: 200 },
+  };
+  const second = { ...quote, id: "quote-2", text: "Another passage" };
+  let latest: ResponseSelection | undefined;
+  function Harness(): JSX.Element {
+    const [selections, setSelections] = useState([quote, second]);
+    return <ComposerAttachmentTray images={[]} files={[]} pastedTexts={[]} selections={selections}
+      onRemoveImage={() => {}} onRemoveFile={() => {}} onRevealText={() => {}} onRemoveText={() => {}}
+      onChangeSelection={(selection) => { latest = selection; setSelections((current) => current.map((item) => item.id === selection.id ? selection : item)); }}
+      onRemoveSelection={(id) => setSelections((current) => current.filter((selection) => selection.id !== id))} />;
+  }
+  act(() => { root = createRoot(container); root.render(<Harness />); });
+  const cards = () => container.querySelectorAll(".composer-attachment-tray .composer-response-selection-card");
+  expect(cards()).toHaveLength(2);
+  expect(cards()[0].querySelector(".composer-document-card-title")?.textContent).toBe(quote.text.replace(/\s+/g, " "));
+  act(() => cards()[0].querySelector<HTMLButtonElement>(".composer-document-card-main")!.click());
+  expect(document.querySelector("[role=dialog] blockquote")?.textContent).toBe(quote.text);
+  const textarea = document.querySelector<HTMLTextAreaElement>("[role=dialog] textarea")!;
+  expect(document.activeElement).toBe(textarea);
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "Explain this part");
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(latest).toEqual({ ...quote, comment: "Explain this part" });
+  expect(cards()[0].querySelector(".composer-document-card-meta")?.textContent).toBe("Explain this part");
+  act(() => document.querySelector<HTMLButtonElement>("[role=dialog] .composer-response-selection-remove")!.click());
+  expect(document.querySelector("[role=dialog]")).toBeNull();
+  expect(cards()).toHaveLength(1);
+  expect(cards()[0].querySelector(".composer-document-card-title")?.textContent).toBe(second.text);
+  act(() => cards()[0].querySelector<HTMLButtonElement>(".composer-attachment-card-remove")!.click());
+  expect(container.querySelector("ul")).toBeNull();
+});
 
 beforeEach(() => {
   container = document.createElement("div");
@@ -100,7 +138,7 @@ function FoldHarness({
   return (
     <div>
       {fold.hasBlocks ? (
-        <div className="composer-collapsed-prompt-list">
+        <div>
           {fold.blocks.map((block, index) => (
             <CollapsedComposerPromptCard
               key={block.id}
@@ -218,7 +256,7 @@ describe("useCollapsedComposerPrompt persistence", () => {
     });
     act(() => {
       container
-        .querySelector<HTMLButtonElement>(".composer-collapsed-prompt-main")
+        .querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main")
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
     expect(foldedCard()).toBeNull();

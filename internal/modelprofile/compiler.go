@@ -52,24 +52,9 @@ const (
 	SurfaceWorker SurfaceKind = iota
 	// SurfaceMain is the ordinary project main-session surface.
 	SurfaceMain
-	// SurfaceNamedAgent is a persistent group-chat agent. It keeps the complete
-	// main-agent surface and adds the group-chat tools.
-	SurfaceNamedAgent
-	// SurfaceRoomAgent coordinates work using read-only evidence and collaboration tools.
-	SurfaceRoomAgent
+	// SurfaceProjectSession adds project communication to an ordinary session.
+	SurfaceProjectSession
 )
-
-func (k SurfaceKind) includesSessionWorkspace() bool {
-	return k == SurfaceMain || k == SurfaceNamedAgent
-}
-
-func (k SurfaceKind) includesChat() bool {
-	return k == SurfaceNamedAgent
-}
-
-func (k SurfaceKind) includesContextWindows() bool {
-	return k == SurfaceMain || k == SurfaceNamedAgent
-}
 
 // Compiler compiles a model profile into a built-in tool surface. Plugin-owned
 // product tools are not part of this compiler.
@@ -81,22 +66,12 @@ type Compiler interface {
 // stateless: callers should keep a single instance and reuse it.
 type DefaultCompiler struct{}
 
-// Compile implements Compiler. Named agents add collaboration chat tools;
-// workers receive only the built-in executor surface selected by their role.
+// Compile implements Compiler. Workers receive only the built-in executor
+// surface selected by their role.
 func (DefaultCompiler) Compile(p Profile, kind SurfaceKind) capability.Surface {
 	key := ResolveProfileKey(p)
 	b := newBuilder(p, key)
-	if kind == SurfaceRoomAgent {
-		addFileReadTools(b)
-		addSearchTools(b)
-		addContextWindowTools(b)
-		for _, name := range []string{"yield_turn", "chat_check", "chat_read", "session", "chat_session", "collaboration_send", "chat_task", "chat_work", "chat_verify", "chat_roster", "chat_wake", "chat_memory"} {
-			b.addVisible(name, capability.CapabilityChat)
-		}
-		b.surface.SystemFragment = "You coordinate one room. Delegate execution to named member sessions. Project writes, shell execution and public messages are unavailable."
-		b.sortCaps()
-		return b.surface
-	}
+
 	switch key {
 	case ProfileOpenAICodex:
 		compileOpenAICodex(b, p)
@@ -107,17 +82,16 @@ func (DefaultCompiler) Compile(p Profile, kind SurfaceKind) capability.Surface {
 	default:
 		compileGeneric(b, p)
 	}
-	if kind.includesSessionWorkspace() {
+	if kind != SurfaceWorker {
 		addSessionWorkspaceTool(b)
 	}
 	// Presentation reads into host-owned storage, without editing the workspace.
-	// Room coordinators above deliberately do not publish execution outputs.
 	b.addVisible("present_artifact", capability.CapabilityArtifactPresent)
-	if kind.includesContextWindows() {
+	if kind != SurfaceWorker {
 		addContextWindowTools(b)
 	}
-	if kind.includesChat() {
-		addChatTools(b)
+	if kind == SurfaceProjectSession {
+		b.addVisible("session", capability.CapabilityProjectSessions)
 	}
 	b.sortCaps()
 	return b.surface
@@ -283,7 +257,7 @@ func addSearchTools(b *surfaceBuilder) {
 func addBashFirstTools(b *surfaceBuilder, p Profile) {
 	if p.Execution.AllowDirectShell {
 		b.addVisible("bash", capability.CapabilityCommandBash)
-		b.addVisibleCapability(capability.CapabilityCommandBackground)
+		b.addVisible("process", capability.CapabilityCommandBackground)
 	}
 }
 
@@ -292,14 +266,12 @@ func addWebTools(b *surfaceBuilder) {
 	b.addVisible("web_fetch", capability.CapabilityWebFetch)
 }
 
-// addBrowserTools defers the embedded browser tool on every profile. It is
-// registered unconditionally and never reads the environment: the compiler must
-// stay pure so surface tests do not drift with WUU_ENABLE_BROWSER. Runtime
-// gating lives entirely in the toolkit's disabledTools (default off, flipped by
-// SetBrowserEnabled), so a deferred entry here is inert until both the surface
-// exposes it AND the toolkit enables it.
+// addBrowserTools exposes the embedded browser tool on every profile. The
+// compiler stays pure and never reads the environment. Runtime opt-out still
+// lives in the toolkit's disabledTools, flipped by SetBrowserEnabled, so a
+// session can hide the tool without changing the compiled surface.
 func addBrowserTools(b *surfaceBuilder) {
-	b.addDeferred("wuu_browser", capability.CapabilityBrowser)
+	b.addVisible("wuu_browser", capability.CapabilityBrowser)
 }
 
 func addSessionTools(b *surfaceBuilder) {
@@ -311,27 +283,10 @@ func addSessionWorkspaceTool(b *surfaceBuilder) {
 }
 
 func addContextWindowTools(b *surfaceBuilder) {
+	b.addVisible("notes", capability.CapabilityContextWindow)
 	b.addVisible("new_context", capability.CapabilityContextWindow)
 	b.addVisible("history_read", capability.CapabilityContextHistory)
 	b.addVisible("history_search", capability.CapabilityContextHistory)
-}
-
-func addChatTools(b *surfaceBuilder) {
-	b.addVisible("yield_turn", capability.CapabilityChat)
-	b.addVisible("chat_check", capability.CapabilityChat)
-	b.addVisible("chat_read", capability.CapabilityChat)
-	b.addVisible("chat_session", capability.CapabilityChat)
-	b.addVisible("session", capability.CapabilityChat)
-	b.addVisible("chat_send", capability.CapabilityChat)
-	b.addVisible("collaboration_send", capability.CapabilityChat)
-	b.addVisible("chat_draft", capability.CapabilityChat)
-	b.addVisible("chat_task", capability.CapabilityChat)
-	b.addVisible("chat_work", capability.CapabilityChat)
-	b.addVisible("chat_verify", capability.CapabilityChat)
-	b.addVisible("chat_remind", capability.CapabilityChat)
-	b.addVisible("chat_wake", capability.CapabilityChat)
-	b.addVisible("chat_memory", capability.CapabilityChat)
-	b.addVisible("chat_roster", capability.CapabilityChat)
 }
 
 func addSkillTools(b *surfaceBuilder) {

@@ -18,7 +18,7 @@ export function threadShowsForkMarker(
 
 /**
  * Base title for a thread (no fork marker). The sidebar uses this and pairs
- * the result with a separate `GitFork` icon to indicate forks, instead of
+ * the result with a separate fork icon to indicate forks, instead of
  * relying on a text suffix that gets truncated on long titles.
  */
 export function baseThreadTitle(
@@ -60,4 +60,32 @@ export function threadDisplayTitle(
     return baseTitle;
   }
   return translateCurrent("thread.forkTitle", { title: baseTitle });
+}
+
+/** Title shown in the conversation title bar. A saved title wins over the generated preview. */
+export function conversationHeadingTitle(
+  thread: Pick<ThreadTitleSource, "title" | "preview"> | undefined,
+  draftTitle: string | undefined,
+  fallback: string,
+): string {
+  if (thread) {
+    return thread.title?.trim() || resolveLocalizedText(thread.preview?.trim() ?? "") || fallback;
+  }
+  return draftTitle?.trim() || fallback;
+}
+
+/**
+ * A draft stores the default "new conversation" label until the user renames it.
+ * That placeholder must not be written as a session title, or a later generated
+ * title would leave the user's unchanged label stuck in place.
+ */
+export function customDraftConversationTitle(
+  draftTitle: string | undefined,
+  defaultTitle: string,
+): string {
+  const trimmed = draftTitle?.trim() ?? "";
+  if (!trimmed || trimmed === defaultTitle.trim()) {
+    return "";
+  }
+  return trimmed;
 }

@@ -651,6 +651,7 @@ func providerIDCandidates(providerName string, provider config.ProviderConfig, i
 		"xai-oauth":           "xai",
 		"grok-subscription":   "xai",
 		"supergrok":           "xai",
+		"kimi-for-coding":     "kimi-code-plan-cn",
 	}
 	var out []string
 	seen := map[string]bool{}

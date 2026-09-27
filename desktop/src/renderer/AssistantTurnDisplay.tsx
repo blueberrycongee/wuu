@@ -137,7 +137,7 @@ export function buildAssistantTurnDisplay(
 
     sawAssistantWork = true;
 
-    // An agent_message with no visible text is only a transport placeholder.
+    // An agent_message with no text or images is only a transport placeholder.
     // Never turn it into a layout entry: providers can leave more than one
     // live placeholder between tool calls, and every empty entry would still
     // contribute the process list's vertical gap, producing a large blank
@@ -147,7 +147,7 @@ export function buildAssistantTurnDisplay(
     if (item.type === "agent_message") {
       const streaming = isProcessItemLive(item);
       const text = streamFieldValue(turn.id, item, "text");
-      if (text.trim().length === 0) continue;
+      if (text.trim().length === 0 && (item.images?.length ?? 0) === 0) continue;
       const shouldDelayCursor = turnHasReasoning && !firstTextItemRendered;
       firstTextItemRendered = true;
       if (

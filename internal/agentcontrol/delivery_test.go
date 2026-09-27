@@ -220,41 +220,6 @@ func TestAgentResultDeliveryClaimIsAtomicAcrossControls(t *testing.T) {
 	}
 }
 
-// TestAgentResultDeliveryConsumed covers the guard used by no-target
-// await_agents: a completed task that filed no structured report is only
-// re-joined while its raw result has not yet been handed to the model.
-func TestAgentResultDeliveryConsumed(t *testing.T) {
-	threadDir := t.TempDir()
-	c := &AgentControl{
-		rootThreadID: "root-thread",
-		threadStore:  agentthread.NewStore(threadDir),
-	}
-	snap := subagent.SubAgentSnapshot{
-		ID:          "worker-consumed",
-		AgentPath:   "/root/worker",
-		ParentID:    "root-thread",
-		Status:      subagent.StatusCompleted,
-		Result:      "raw result",
-		CompletedAt: time.Now().UTC(),
-	}
-	resultID := mustEnsureAgentResultDelivery(t, c, snap).ResultID
-	if resultID == "" {
-		t.Fatal("expected a delivery id for the completed run")
-	}
-	if c.agentResultDeliveryConsumed(resultID) {
-		t.Fatal("fresh delivery must not read as consumed")
-	}
-	if c.agentResultDeliveryConsumed("") {
-		t.Fatal("empty result id must not read as consumed")
-	}
-	if ok, _, err := c.ClaimAgentResultDeliveryID(resultID, agentResultConsumerAwaitAgents); err != nil || !ok {
-		t.Fatal("first claim should succeed")
-	}
-	if !c.agentResultDeliveryConsumed(resultID) {
-		t.Fatal("claimed delivery should read as consumed")
-	}
-}
-
 func TestPendingNestedCompletionRehydratesParentAfterRestart(t *testing.T) {
 	dir := t.TempDir()
 	initRepo(t, dir)

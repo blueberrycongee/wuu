@@ -18,7 +18,7 @@ it("loads an image only on demand, retries failures and retains references when 
     expect(container.querySelector('[role="alert"]')?.textContent).toBe("offline");
     expect(open).not.toHaveBeenCalled();
     await act(async () => container.querySelector("button")!.click());
-    expect(open).toHaveBeenCalledWith("data:image/png;base64,aW1hZ2U=");
+    expect(open).toHaveBeenCalledWith("data:image/png;base64,aW1hZ2U=", expect.any(HTMLElement));
     expect(container.querySelector("img")?.src).toBe("data:image/png;base64,aW1hZ2U=");
     expect(inputImagesFromComposer([{...image,id:"edit"}])).toEqual([image]);
   } finally { act(() => root.unmount()); container.remove(); window.wuu = prior; }
@@ -41,6 +41,6 @@ it("requests a thumbnail near the viewport and downloads the original only when 
     expect(container.querySelector("img")?.src).toBe("data:image/jpeg;base64,dGh1bWI=");
     expect(read).not.toHaveBeenCalled(); expect(open).not.toHaveBeenCalled();
     await act(async () => container.querySelector("img")!.click());
-    expect(open).toHaveBeenCalledWith("data:image/png;base64,b3JpZ2luYWw=");
+    expect(open).toHaveBeenCalledWith("data:image/png;base64,b3JpZ2luYWw=", container.querySelector("img"));
   } finally { act(() => root.unmount()); container.remove(); window.wuu = prior; vi.unstubAllGlobals(); }
 });

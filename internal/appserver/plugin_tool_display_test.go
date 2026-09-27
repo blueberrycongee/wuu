@@ -10,14 +10,14 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/plugins/notecompaction"
+	pluginapi "github.com/blueberrycongee/wuu/packages/plugin-go"
 )
 
 type toolLabelTestClient struct {
 	tools []pluginhost.ToolRegistration
 }
 
-func (*toolLabelTestClient) ID() string { return "note-compaction" }
+func (*toolLabelTestClient) ID() string { return "localized-tools" }
 func (*toolLabelTestClient) Status() pluginhost.Status {
 	return pluginhost.Status{State: pluginhost.StateActive}
 }
@@ -28,8 +28,10 @@ func (*toolLabelTestClient) ExecuteTool(context.Context, pluginhost.ToolExecuteP
 }
 
 func TestPluginToolLabelsSurvivePersistenceAndRestoreLegacyCalls(t *testing.T) {
-	// Exercise the bundled Go plugin's wire declaration through the host schema.
-	raw, err := json.Marshal(notecompaction.Handler().Definition.Tools)
+	// Exercise a Go extension's wire declaration through the host schema.
+	raw, err := json.Marshal([]pluginapi.Tool{{ID: "inspect", Description: "Inspect session state", InputSchema: map[string]any{"type": "object"}, Display: &pluginapi.ToolDisplay{
+		Label: "Inspect", LabelTranslations: map[string]string{"zh-CN": "检查"},
+	}}})
 	if err != nil {
 		t.Fatal(err)
 	}

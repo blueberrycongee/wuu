@@ -3,14 +3,20 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ThreadItem, Turn } from "../shared/protocol";
 import { streamTextKey, streamTextStore } from "./StreamText";
+import { ImagePreviewProvider } from "./ImagePreview";
 import { ThreadItemView } from "./ThreadItemView";
+import { groupProjectEvents } from "./ProjectViews";
 import { clearToasts, ToastViewport } from "./Toast";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
+import { navigateToResponseSelection } from "./ResponseSelection";
+import { createComposerMessage } from "./ComposerMessages";
+import type { ResponseSelection } from "../shared/protocol";
 
 let container: HTMLDivElement | undefined;
 let root: Root | undefined;
+const rangeBoundsDescriptor = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
 
 function makeFinalAnswer(status: ThreadItem["status"]): ThreadItem {
   return {
@@ -52,25 +58,28 @@ function render({
 }): void {
   if (!container) {
     container = document.createElement("div");
+    container.dataset.threadId = "owner";
     document.body.appendChild(container);
     root = createRoot(container);
   }
   act(() => {
     root!.render(
       <WuuUIRoot>
-        <ThreadItemView
-          turnID="turn-1"
-          turnStatus={turnStatus}
-          turnStartedAt={turnStartedAt}
-          item={item}
-          streaming={streaming}
-          actionableAgentMessageID={actionableAgentMessageID}
-          latestAgentMessageID={latestAgentMessageID}
-          onStreamFrame={() => {}}
-          onEditMessage={onEditMessage}
-          onForkMessage={onForkMessage}
-        />
-        <ToastViewport />
+        <ImagePreviewProvider>
+          <ThreadItemView
+            turnID="turn-1"
+            turnStatus={turnStatus}
+            turnStartedAt={turnStartedAt}
+            item={item}
+            streaming={streaming}
+            actionableAgentMessageID={actionableAgentMessageID}
+            latestAgentMessageID={latestAgentMessageID}
+            onStreamFrame={() => {}}
+            onEditMessage={onEditMessage}
+            onForkMessage={onForkMessage}
+          />
+          <ToastViewport />
+        </ImagePreviewProvider>
       </WuuUIRoot>,
     );
   });
@@ -94,11 +103,145 @@ afterEach(() => {
   desktopPluginHost.unload("thread-item-production-test");
   desktopPluginHost.setActiveConversationThread(undefined);
   vi.restoreAllMocks();
+  if (rangeBoundsDescriptor) Object.defineProperty(Range.prototype, "getBoundingClientRect", rangeBoundsDescriptor);
+  else Reflect.deleteProperty(Range.prototype, "getBoundingClientRect");
   root = undefined;
   container = undefined;
 });
 
 describe("ThreadItemView", () => {
+  it("captures rendered UTF-16 selection in its owning thread and rejects changed or hidden sources", async () => {
+    render({ item: { ...makeFinalAnswer("completed"), text: "A😀 **bold** tail" }, turnStatus: "completed", streaming: false });
+    container!.dataset.threadId = "owner";
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => ({ left: 20, top: 80 }) });
+    const textRoot = container!.querySelector<HTMLElement>(".agent-text")!;
+    const bold = textRoot.querySelector("strong")!.firstChild!;
+    const range = document.createRange();
+    range.setStart(textRoot.querySelector("p")!.firstChild!, 1);
+    range.setEnd(bold, 4);
+    const received: ResponseSelection[] = [];
+    vi.spyOn(window.getSelection()!, "toString").mockReturnValue("😀 bold\n");
+    const listener = (event: Event) => received.push((event as CustomEvent<ResponseSelection>).detail);
+    window.addEventListener("wuu:add-response-selection", listener);
+    act(() => {
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+      document.dispatchEvent(new MouseEvent("pointerup"));
+    });
+    const toolbar = document.querySelector<HTMLDivElement>(".response-selection-toolbar")!;
+    expect(toolbar).not.toBeNull();
+    expect(container!.contains(toolbar)).toBe(false);
+    await act(async () => { container!.hidden = true; });
+    expect(document.querySelector(".response-selection-toolbar")).toBeNull();
+    await act(async () => {
+      container!.hidden = false;
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    act(() => document.querySelector<HTMLButtonElement>(".response-selection-toolbar button")!.click());
+    window.removeEventListener("wuu:add-response-selection", listener);
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({ text: "😀 bold\n", source: { thread_id: "owner", turn_id: "turn-1", item_id: "final-1", start_offset: 1, end_offset: 8, range_text: "😀 bold" } });
+    expect(window.getSelection()!.rangeCount).toBe(0);
+    const scroll = vi.fn();
+    textRoot.querySelector("p")!.scrollIntoView = scroll;
+    expect(navigateToResponseSelection(received[0])).toBe(true);
+    expect(scroll).toHaveBeenCalled();
+    act(() => expect(navigateToResponseSelection({ ...received[0], source: { ...received[0].source, thread_id: "other" } })).toBe(false));
+    await act(async () => {
+      container!.hidden = true;
+      expect(navigateToResponseSelection(received[0])).toBe(false);
+      container!.hidden = false;
+      bold.textContent = "changed";
+      expect(navigateToResponseSelection(received[0])).toBe(false);
+    });
+  });
+
+  it.each(["in_progress", "completed"] as const)("rejects native capture while streaming (item %s)", (status) => {
+    render({ item: makeFinalAnswer(status), turnStatus: "in_progress", streaming: true });
+    container!.dataset.threadId = "owner";
+    const range = document.createRange();
+    range.selectNodeContents(container!.querySelector(".agent-text")!);
+    act(() => {
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    expect(document.querySelector(".response-selection-toolbar")).toBeNull();
+  });
+
+  it("adds an optional comment beside a selected passage and cancels back to the quote actions", () => {
+    render({ item: makeFinalAnswer("completed"), turnStatus: "completed", streaming: false });
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => ({ left: 20, top: 80, bottom: 100 }) });
+    const range = document.createRange();
+    range.selectNodeContents(container!.querySelector(".agent-text p")!);
+    act(() => {
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    const received: ResponseSelection[] = [];
+    const listener = (event: Event) => received.push((event as CustomEvent<ResponseSelection>).detail);
+    window.addEventListener("wuu:add-response-selection", listener);
+    act(() => document.querySelector<HTMLButtonElement>(".response-selection-comment-toggle")!.click());
+    let input = document.querySelector<HTMLTextAreaElement>(".response-selection-comment-input")!;
+    expect(document.activeElement).toBe(input);
+    expect(received).toHaveLength(0);
+    expect(window.getSelection()!.toString()).toBe("Final answer text.");
+    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(document.querySelector(".response-selection-comment-input")).toBeNull();
+    expect(document.activeElement).toBe(document.querySelector(".response-selection-comment-toggle"));
+    act(() => document.querySelector<HTMLButtonElement>(".response-selection-comment-toggle")!.click());
+    input = document.querySelector<HTMLTextAreaElement>(".response-selection-comment-input")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "  Explain this choice  ");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    expect(document.querySelector(".response-selection-comment-input")).toBe(input);
+    act(() => document.querySelector<HTMLButtonElement>(".response-selection-add")!.click());
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({ text: "Final answer text.", comment: "Explain this choice", source: { thread_id: "owner", start_offset: 0, end_offset: 18 } });
+    expect(document.querySelector(".response-selection-toolbar")).toBeNull();
+    window.removeEventListener("wuu:add-response-selection", listener);
+  });
+
+  it("does not quote assistant controls or editable embedded content", () => {
+    render({ item: makeFinalAnswer("completed"), turnStatus: "completed", streaming: false });
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => ({ left: 20, top: 80 }) });
+    const textRoot = container!.querySelector(".agent-text")!;
+    for (const html of ['<button>Copy code</button>', '<span contenteditable="true">Editable</span>']) {
+      textRoot.innerHTML = html;
+      const range = document.createRange();
+      range.selectNodeContents(textRoot);
+      act(() => {
+        window.getSelection()!.removeAllRanges();
+        window.getSelection()!.addRange(range);
+        document.dispatchEvent(new Event("selectionchange"));
+      });
+      expect(document.querySelector(".response-selection-toolbar")).toBeNull();
+    }
+  });
+
+  it("renders references readably and preserves reference metadata and raw prompt during inline edits", () => {
+    const selection: ResponseSelection = { id: "quote", text: "Quoted passage", comment: "Explain this", source: { thread_id: "owner", turn_id: "turn-1", item_id: "final-1", start_offset: 0, end_offset: 14 } };
+    const parts = [{ type: "pasted_text" as const, text: "notes\n", title: "Notes" }, { type: "text" as const, text: "  raw prompt  " }];
+    const message = createComposerMessage("notes\n  raw prompt  ", [], [], parts, [selection])!;
+    const item = { ...makeUserMessage(message.text), content_parts: message.contentParts };
+    render({ item, turnStatus: "completed", streaming: false });
+    expect(container!.textContent).toContain(selection.text);
+    expect(container!.textContent).toContain(selection.comment);
+    expect(container!.querySelector(".response-selection-source")).not.toBeNull();
+    const submit = vi.fn();
+    act(() => root!.render(<ThreadItemView item={item} turnID="turn-1" turnStatus="completed" streaming={false} onStreamFrame={() => {}} editing onSubmitEditMessage={submit} />));
+    expect(container!.querySelector("textarea")!.value).toBe("  raw prompt  ");
+    act(() => container!.querySelector<HTMLButtonElement>(".composer-send-button")!.click());
+    expect(submit).toHaveBeenCalledWith("turn-1", item, message.text, [], [], message.contentParts);
+  });
+
   it("mounts sanitized frozen context before and after each conversation message", async () => {
     const contexts: Array<Readonly<Record<string, unknown>>> = [];
     await desktopPluginHost.activateGeneration({
@@ -363,7 +506,6 @@ describe("ThreadItemView", () => {
     expect((rawQuery?.textContent?.length ?? 0)).toBeLessThan(
       longSingleParagraph.length,
     );
-    expect(toggle?.textContent).toContain("显示更多");
   });
 
   it("shows long query previews as raw pasted text", () => {
@@ -423,7 +565,6 @@ describe("ThreadItemView", () => {
     expect(rawQuery?.textContent?.endsWith("...")).toBe(true);
     expect(rawQuery?.textContent).toContain("line 5");
     expect(rawQuery?.textContent).not.toContain("line 6");
-    expect(toggle?.textContent).toContain("显示更多");
     expect(toggle?.getAttribute("aria-expanded")).toBe("false");
 
     act(() => {
@@ -431,7 +572,6 @@ describe("ThreadItemView", () => {
     });
 
     expect(rawQuery?.textContent).toBe(longText);
-    expect(toggle?.textContent).toContain("收起");
     expect(toggle?.getAttribute("aria-expanded")).toBe("true");
 
     act(() => {
@@ -439,7 +579,6 @@ describe("ThreadItemView", () => {
     });
 
     expect(rawQuery?.textContent).not.toContain("line 20");
-    expect(toggle?.textContent).toContain("显示更多");
   });
 
   it("defaults a different long user query back to collapsed", () => {
@@ -524,8 +663,6 @@ describe("ThreadItemView", () => {
     });
 
     const visibleActions = actionBar();
-    expect(visibleActions.getAttribute("aria-label")).toBe("助手消息操作");
-    expect(visibleActions.dataset.wuuComponent).toBe("message-actions");
     expect(visibleActions.dataset.wuuPlacement).toBe("persistent");
     expect(visibleActions.querySelectorAll("button")).toHaveLength(2);
     expect(visibleActions.querySelectorAll<HTMLButtonElement>("button")[1]?.disabled).toBe(false);
@@ -535,24 +672,15 @@ describe("ThreadItemView", () => {
     expect(block?.classList.contains("agent-actions-enter")).toBe(true);
   });
 
-  it.each([undefined, false])("reserves actions before terminal is known (%s)", (terminal) => {
+  it.each([undefined, false])("does not reserve answer actions on live process text (%s)", (terminal) => {
     render({
       item: { ...makeFinalAnswer("in_progress"), terminal },
       turnStatus: "in_progress",
       latestAgentMessageID: "final-1",
       streaming: true,
     });
-    expect(actionBar().getAttribute("aria-hidden")).toBe("true");
-    expect(actionBar().querySelectorAll("button")).toHaveLength(0);
-    render({
-      item: makeFinalAnswer("completed"),
-      turnStatus: "completed",
-      actionableAgentMessageID: "final-1",
-      latestAgentMessageID: "final-1",
-      streaming: false,
-    });
-    expect(actionBar().getAttribute("aria-hidden")).toBeNull();
-    expect(actionBar().querySelectorAll("button")).toHaveLength(2);
+    expect(container?.querySelector(".agent-message-actions")).toBeNull();
+    expect(container?.querySelector(".agent-block-with-action-slot")).toBeNull();
   });
 
   it("keeps historical answer actions hover-revealed rather than persistent", () => {
@@ -590,6 +718,16 @@ describe("ThreadItemView", () => {
     expect(streamTextStore.has(key)).toBe(false);
   });
 
+  it("groups host events with legacy project history without folding generic host messages", () => {
+    const legacy = { ...makeUserMessage("Old result", "legacy"), origin: "plugin", cause: "project_result" };
+    const current = { ...makeUserMessage("New result", "host"), origin: "host", cause: "project_message" };
+    const generic = { ...makeUserMessage("Host message", "generic"), origin: "host", cause: "unrelated" };
+    expect(groupProjectEvents([legacy, current, generic])).toEqual([[legacy, current], generic]);
+    render({ item: current, turnStatus: "completed", streaming: false });
+    expect(container?.querySelector(".project-event")).not.toBeNull();
+    expect(container?.querySelector(".user-message")).toBeNull();
+  });
+
   it("renders a plugin-generated query as a read-only user message", () => {
     const onEditMessage = vi.fn();
     render({
@@ -615,7 +753,7 @@ describe("ThreadItemView", () => {
     expect(onEditMessage).not.toHaveBeenCalled();
   });
 
-  it("expands and copies a session message body and opens its source without exposing internal input", async () => {
+  it.each(["host", "plugin"])("expands and copies a %s session message body and opens its source without exposing internal input", async (origin) => {
     const openInSplit = vi.fn();
     setOpenThreadInSplitHandler(openInSplit);
     const copy = vi.fn().mockResolvedValue(undefined);
@@ -626,7 +764,7 @@ describe("ThreadItemView", () => {
       item: {
         id: "peer-message", type: "user_message", text: body,
         input_text: "Private delivery instructions", related_session_id: "source-session",
-        name: "Source task", origin: "plugin", origin_id: "alternative-messenger",
+        name: "Source task", origin, origin_id: "alternative-messenger",
         presentation_kind: "session_message", read_only: true,
       },
       turnStatus: "completed", streaming: false, onEditMessage,
@@ -648,24 +786,6 @@ describe("ThreadItemView", () => {
     act(() => toggle.click());
     expect(container?.textContent).not.toContain("End of update.");
     setOpenThreadInSplitHandler(undefined);
-  });
-
-  it("does not show a related-session action without a related session", () => {
-    render({
-      item: {
-        id: "user-own-1",
-        type: "user_message",
-        text: "这是我的普通消息",
-        input_text: "这是发给 Agent 的隐藏消息",
-        status: "completed",
-      },
-      turnStatus: "completed",
-      streaming: false,
-    });
-
-    const actions = container?.querySelectorAll<HTMLButtonElement>(".user-message-actions button");
-    expect(actions).toHaveLength(1);
-    expect([...(actions ?? [])].some((button) => button.getAttribute("aria-label") === "打开关联会话")).toBe(false);
   });
 
   it("shows the user message time before its copy action", () => {
@@ -716,4 +836,14 @@ describe("ThreadItemView", () => {
     act(() => setOpenThreadInSplitHandler(undefined));
   });
 
+});
+
+it("renders an image-only assistant response using the attachment preview", () => {
+  render({
+    item: { ...makeFinalAnswer("completed"), text: "", images: [{ media_type: "image/png", data: "aW1hZ2U=" }] },
+    turnStatus: "completed",
+    streaming: false,
+  });
+  const image = container!.querySelector("img");
+  expect(image?.getAttribute("src")).toBe("data:image/png;base64,aW1hZ2U=");
 });

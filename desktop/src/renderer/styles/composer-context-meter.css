@@ -25,14 +25,9 @@
   flex: 0 0 auto;
   cursor: default;
   color: var(--context-meter-text);
-  /* Wrap focus visibility to the ring outline so the meter is keyboard
-     accessible for the hover-driven breakdown tooltip. */
-  outline: none;
 }
 
 .composer-context-meter:focus-visible {
-  outline: 2px solid var(--composer-context-meter-focus-outline);
-  outline-offset: 2px;
   border-radius: var(--radius-pill);
 }
 
@@ -56,11 +51,11 @@
   stroke-width: 2;
   stroke-linecap: round;
   /* Dash math: strokeDasharray is the full circumference, strokeDashoffset
-     shrinks toward 0 as the fill grows. The 420ms easing mirrors the
-     token-speed gauge so the two meters settle at the same cadence. */
+     shrinks toward 0 as the fill grows. The fold rung matches the
+     token-speed gauge's color settle, so the two meters share a cadence. */
   transition:
-    stroke-dashoffset 420ms var(--ease-out),
-    stroke 420ms var(--ease-out);
+    stroke-dashoffset var(--motion-slower) var(--ease-out),
+    stroke var(--motion-slower) var(--ease-out);
   will-change: stroke-dashoffset;
 }
 
@@ -133,7 +128,7 @@
   white-space: nowrap;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .composer-context-meter-progress {
     transition: none;
   }

@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp } from "./WuuIcons";
 import { createContext, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import type { ThreadItem, Turn } from "../shared/protocol";
 import { StreamingMarkdown } from "./StreamingMarkdown";

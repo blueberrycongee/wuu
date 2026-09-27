@@ -20,6 +20,15 @@ import (
 
 type ApplyPatchTool struct{ env *Env }
 
+type applyPatchArgs struct {
+	PatchText  string          `json:"patchText"`
+	Patch      string          `json:"patch"`
+	PatchText2 string          `json:"patch_text"`
+	DryRun     bool            `json:"dry_run"`
+	DryRun2    bool            `json:"dryRun"`
+	ThenRun    json.RawMessage `json:"then_run,omitempty"`
+}
+
 func NewApplyPatchTool(env *Env) *ApplyPatchTool { return &ApplyPatchTool{env: env} }
 
 func (t *ApplyPatchTool) Name() string            { return "apply_patch" }
@@ -58,7 +67,7 @@ func (t *ApplyPatchTool) Classify(argsJSON string) ToolClassification {
 func (t *ApplyPatchTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        "apply_patch",
-		Description: "Apply a structured workspace patch using *** Begin Patch / *** End Patch. Supports Add, Update, optional Move, and Delete sections. Update and delete hunks are validated against the current file content; stale or ambiguous anchors fail. dry_run validates without writing.",
+		Description: "Apply a structured workspace patch using *** Begin Patch / *** End Patch. Supports Add, Update, optional Move, and Delete sections. Each resolved path, including move sources and destinations, may appear in only one file section; combine multiple updates into that section's @@ chunks. Update and delete hunks are validated against the current file content; stale or ambiguous anchors fail. dry_run validates without writing. When the follow-up validation command is already known, supply then_run to apply the complete patch and run that command in one call. Omit it when the next action depends on inspecting the patch result. A failed command keeps the patch; never reapply a successful patch just to retry validation.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -66,6 +75,7 @@ func (t *ApplyPatchTool) Definition() providers.ToolDefinition {
 					"type":        "string",
 					"description": "Full patch text including *** Begin Patch and *** End Patch markers.",
 				},
+				"then_run": applyPatchThenRunSchema(t.env),
 				"dry_run": map[string]any{
 					"type":        "boolean",
 					"description": "Validate and preview the patch without writing files or firing file-change hooks.",
@@ -77,11 +87,7 @@ func (t *ApplyPatchTool) Definition() providers.ToolDefinition {
 }
 
 func (t *ApplyPatchTool) ValidateInput(argsJSON string) error {
-	var args struct {
-		PatchText  string `json:"patchText"`
-		Patch      string `json:"patch"`
-		PatchText2 string `json:"patch_text"`
-	}
+	var args applyPatchArgs
 	if err := decodeArgs(argsJSON, &args); err != nil {
 		return err
 	}
@@ -89,6 +95,9 @@ func (t *ApplyPatchTool) ValidateInput(argsJSON string) error {
 		strings.TrimSpace(args.PatchText2) == "" &&
 		strings.TrimSpace(args.Patch) == "" {
 		return errors.New("apply_patch requires patchText")
+	}
+	if _, err := args.followUp(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -99,15 +108,16 @@ func (t *ApplyPatchTool) Execute(ctx context.Context, argsJSON string) (string, 
 }
 
 func (t *ApplyPatchTool) ExecuteResult(ctx context.Context, argsJSON string) (toolresult.Result, error) {
-	var args struct {
-		PatchText  string `json:"patchText"`
-		Patch      string `json:"patch"`
-		PatchText2 string `json:"patch_text"`
-		DryRun     bool   `json:"dry_run"`
-		DryRun2    bool   `json:"dryRun"`
-	}
+	var args applyPatchArgs
 	if err := decodeArgs(argsJSON, &args); err != nil {
 		return toolresult.Result{}, err
+	}
+	thenRun, err := args.followUp()
+	if err != nil {
+		return toolresult.Result{}, err
+	}
+	if thenRun != nil {
+		return t.executeFusedPatch(ctx, args, *thenRun)
 	}
 	patchText := args.PatchText
 	if strings.TrimSpace(patchText) == "" {
@@ -132,10 +142,27 @@ func (t *ApplyPatchTool) ExecuteResult(ctx context.Context, argsJSON string) (to
 
 	files := make([]applyPatchFileResult, 0, len(patch.Hunks))
 	plans := make([]applyPatchHunkPlan, 0, len(patch.Hunks))
-	for _, hunk := range patch.Hunks {
+	pathOwners := make(map[string]int, len(patch.Hunks)*2)
+	for i, hunk := range patch.Hunks {
 		plan, err := t.planHunk(ctx, hunk)
 		if err != nil {
 			return toolresult.Result{}, fmt.Errorf("apply_patch verification failed: %w", err)
+		}
+		// Plans read the same pre-patch state, so sharing a path across plans
+		// could overwrite an earlier edit. These paths are already resolved and
+		// worktree-rebased; an in-place update may own its source and target.
+		for _, path := range []string{plan.SourceAbs, plan.TargetAbs} {
+			if path == "" {
+				continue
+			}
+			key, err := patchPathKey(path)
+			if err != nil {
+				return toolresult.Result{}, fmt.Errorf("apply_patch verification failed: resolve %s: %w", path, err)
+			}
+			if owner, exists := pathOwners[key]; exists && owner != i {
+				return toolresult.Result{}, fmt.Errorf("apply_patch verification failed: multiple operations target %q; use one file section per path", t.env.NormalizeDisplayPathExec(ctx, key))
+			}
+			pathOwners[key] = i
 		}
 		plans = append(plans, plan)
 		files = append(files, plan.Result)
@@ -552,6 +579,25 @@ type patchPathSnapshot struct {
 	Mode    os.FileMode
 }
 
+// Resolve aliases through existing ancestors even when an add or move target's
+// parent directories do not exist yet. This key is only for conflict detection;
+// the plan retains its permission-checked paths for execution.
+func patchPathKey(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolved, nil
+	}
+	parent := filepath.Dir(path)
+	if !os.IsNotExist(err) || parent == path {
+		return "", err
+	}
+	resolved, err = patchPathKey(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolved, filepath.Base(path)), nil
+}
+
 func snapshotPatchPlans(plans []applyPatchHunkPlan) ([]patchPathSnapshot, error) {
 	seen := map[string]bool{}
 	paths := make([]string, 0, len(plans)*2)
@@ -675,6 +721,13 @@ func (t *ApplyPatchTool) notifyFileChanged(absPath string) {
 }
 
 func applyPatchChunks(content string, chunks []applyPatchChunk) (string, error) {
+	// Match uniform CRLF files using the parser's LF representation, then
+	// restore their line endings. Leave mixed-ending files byte-preserving.
+	crlf := strings.Count(content, "\r\n")
+	useCRLF := crlf > 0 && crlf == strings.Count(content, "\n")
+	if useCRLF {
+		content = strings.ReplaceAll(content, "\r\n", "\n")
+	}
 	lines, trailingNewline := splitPatchContentLines(content)
 	cursor := 0
 	for _, chunk := range chunks {
@@ -689,7 +742,11 @@ func applyPatchChunks(content string, chunks []applyPatchChunk) (string, error) 
 		lines = next
 		cursor = idx + len(chunk.NewLines)
 	}
-	return joinContentLines(lines, trailingNewline), nil
+	updated := joinContentLines(lines, trailingNewline)
+	if useCRLF {
+		updated = strings.ReplaceAll(updated, "\n", "\r\n")
+	}
+	return updated, nil
 }
 
 func splitPatchContentLines(content string) ([]string, bool) {
@@ -913,10 +970,10 @@ func formatPatchErrorLines(lines []string, startLine, limit int) string {
 	}
 	for i, line := range lines {
 		if startLine > 0 {
-			fmt.Fprintf(&b, "  %d| %s\n", startLine+i, line)
+			fmt.Fprintf(&b, "  %d|%s\n", startLine+i, line)
 			continue
 		}
-		fmt.Fprintf(&b, "  %s\n", line)
+		fmt.Fprintf(&b, "  |%s\n", line)
 	}
 	if omitted > 0 {
 		fmt.Fprintf(&b, "  ... %d more lines omitted\n", omitted)

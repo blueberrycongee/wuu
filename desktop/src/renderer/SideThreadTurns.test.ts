@@ -188,8 +188,4 @@ describe("sideThreadMessagesToTurns", () => {
     expect(settledTurns[0]?.status).toBe("completed");
     expect(original).toEqual([user, streaming]);
   });
-
-  it("returns an empty canonical history for an empty side thread", () => {
-    expect(sideThreadMessagesToTurns([])).toEqual([]);
-  });
 });

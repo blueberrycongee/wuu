@@ -29,8 +29,8 @@ func ResolveForProvider(providerName string, provider config.ProviderConfig, mod
 	legacyEffort = strings.TrimSpace(legacyEffort)
 	if strings.EqualFold(variant, "none") || (variant == "" && strings.EqualFold(legacyEffort, "none")) {
 		desc := compatDescriptor(providerName, provider, model)
-		if isGLM53(desc.APIID) {
-			// GLM-5.3 cannot disable reasoning. Migrate the retired switch to
+		if isGLM53(desc.APIID) || AnthropicRequiresBoundThinking(desc.APIID) {
+			// These models cannot disable reasoning. Migrate the retired switch to
 			// the least expensive valid tier rather than falling back to max.
 			variant = "low"
 			legacyEffort = ""

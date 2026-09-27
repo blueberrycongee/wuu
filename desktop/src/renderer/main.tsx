@@ -3,12 +3,15 @@ import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
 import { AccountScreen } from "./AccountScreen";
 import { App } from "./App";
 import { startAppearanceSync } from "./AppearancePreferences";
+import { AppBackground } from "./background/AppBackground";
 import { applyMessageFlowFontSize } from "./MessageFlowFontSizeSection";
 import { ENABLE_ACCOUNT } from "./FeatureFlags";
 import { LinuxWindowControls, startLinuxTitlebarMaximizeGesture } from "./LinuxWindowControls";
 import { applyPlatformStamp } from "./platform";
 import { startRendererVisibilitySync } from "./RendererVisibility";
 import { applyMeasuredScrollbarWidth, startScrollbarWidthSync } from "./ScrollbarMetrics";
+import { startFocusModality } from "./FocusModality";
+import { startScrollbarReveal } from "./ScrollbarReveal";
 import { applyThemePreference, startThemePreferenceSync } from "./Theme";
 import "./styles.css";
 import { I18nProvider } from "./i18n";
@@ -38,6 +41,14 @@ applyMeasuredScrollbarWidth();
 // Re-sync on focus for rare mid-session OS scrollbar-mode changes. Not on
 // resize: the gutter is constant during a live resize.
 startScrollbarWidthSync();
+
+// Paint a scroll container's thumb only while it actually scrolls, then let it
+// fade (styles/scrollbars.css). One capture-phase listener covers every surface,
+// including ones mounted later; hover never reveals a scrollbar.
+startScrollbarReveal();
+// Stamp pointer vs keyboard focus so click-selected fields keep the caret
+// without a ring; Tab still paints the shared keyboard outline.
+startFocusModality();
 
 // Pause ambient infinite animations while the native window is hidden or
 // minimized. Finite UI transitions remain untouched so their lifecycle events
@@ -79,6 +90,7 @@ console.error = (...args: unknown[]): void => {
 ReactDOM.createRoot(rendererRoot).render(
   <I18nProvider>
     <WuuUIRoot>
+      <AppBackground />
       <LinuxWindowControls />
       {ENABLE_ACCOUNT && window.wuu?.isAccountWindow && window.wuu.remoteAccount
         ? <AccountScreen standalone driver={window.wuu.remoteAccount} onBack={() => { void window.wuu.closeAccountWindow?.(); }} />

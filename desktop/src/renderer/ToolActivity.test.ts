@@ -5,6 +5,7 @@ import {
   activitySummaryText,
   buildToolActivityProcessSegments,
   buildToolActivitySections,
+  browserActivityOpenURL,
   collectTurnSources,
   summarizeToolActivity,
   readableToolActivityName,
@@ -136,7 +137,7 @@ describe("readableToolActivityCommand", () => {
         arguments: JSON.stringify({ path: "." }),
         display: { kind: "read", text: "（已忽略）" },
       })
-    ).toBe("查看项目目录");
+    ).toBe("查看工作区目录");
   });
 
   it("returns empty string when args are missing for known tools", () => {
@@ -174,7 +175,7 @@ describe("readableToolActivityCommand", () => {
         name: "list_files",
         arguments: JSON.stringify({ path: "." })
       })
-    ).toBe("查看项目目录");
+    ).toBe("查看工作区目录");
 
     expect(
       readableToolActivityCommand({
@@ -225,6 +226,22 @@ describe("readableToolActivityCommand", () => {
         arguments: JSON.stringify({ patch: "*** Begin Patch\n*** End Patch" })
       })
     ).toBe("更新文件");
+  });
+
+  it("renders background starts and process tool actions as background tasks", () => {
+    expect(
+      readableToolActivityCommand({
+        name: "bash",
+        arguments: JSON.stringify({ command: "npm run dev", run_in_background: true }),
+        display: { capability: "command.background" }
+      })
+    ).toBe("启动 npm run dev — command.background");
+    expect(
+      readableToolActivityCommand({
+        name: "process",
+        arguments: JSON.stringify({ action: "read", process_id: "proc-1" })
+      })
+    ).toBe("读取后台输出");
   });
 
   it("renders bash background actions from capability metadata", () => {
@@ -772,6 +789,20 @@ describe("collectTurnSources", () => {
         origin: "web_search",
       },
     ]);
+  });
+
+  it("extracts the first browser navigation URL from process items", () => {
+    expect(
+      browserActivityOpenURL([
+        {
+          id: "browser-1",
+          type: "tool_call",
+          name: "browser",
+          status: "completed",
+          arguments: JSON.stringify({ action: "navigate", url: "http://app.local:3000" }),
+        } satisfies ThreadItem,
+      ]),
+    ).toBe("http://app.local:3000");
   });
 
 });

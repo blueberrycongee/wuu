@@ -348,15 +348,6 @@ func resolveHistorySession(env *Env, toolName, requestedID string, cursor *sessi
 	if id == "" {
 		id = currentID
 	}
-	if env.ChatAgent != nil && id != currentID {
-		metadata, found, err := session.Find(sessDir, id)
-		if err != nil {
-			return "", "", err
-		}
-		if !found || metadata.Visibility == "plugin" || strings.HasPrefix(metadata.Source, "named-agent:") {
-			return "", "", fmt.Errorf("%s: named-agent transcripts are private; use chat_session results or ask the identity to share evidence", toolName)
-		}
-	}
 	if cursor != nil && cursor.SessionID != id {
 		return "", "", fmt.Errorf("%s: cursor session does not match session_id", toolName)
 	}

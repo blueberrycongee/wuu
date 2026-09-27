@@ -19,6 +19,9 @@ import (
 )
 
 func (s *Server) handlePluginDesktopModuleRead(req Request) error {
+	if s.rt.SafeMode {
+		return s.writeResponse(req.ID, nil, errors.New("desktop plugin modules are unavailable in safe mode"))
+	}
 	var params PluginDesktopModuleReadParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -228,7 +231,7 @@ func (s *Server) handlePluginPackageRemove(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	releaseMutation, err := s.beginPluginGenerationMutation("remove", pluginGenerationMutationActivation)
+	releaseMutation, err := s.beginPluginGenerationMutation("remove", pluginGenerationMutationExclusive)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -433,15 +436,15 @@ func cloneExtensionSettings(current *extensions.Settings) extensions.Settings {
 	return clone
 }
 
-// pluginGenerationMutationKind distinguishes catalog-only changes (install,
-// stage, validate) from changes that swap the live generation (grant,
-// enable, disable, remove). Catalog changes never touch active bindings, so
-// they must not be rejected while threads are busy.
+// pluginGenerationMutationKind distinguishes package-file changes that must
+// wait for exclusive ownership from live policy changes that publish a new
+// generation for later conversations.
 type pluginGenerationMutationKind int
 
 const (
 	pluginGenerationMutationCatalog pluginGenerationMutationKind = iota
-	pluginGenerationMutationActivation
+	pluginGenerationMutationLive
+	pluginGenerationMutationExclusive
 )
 
 func (s *Server) beginPluginGenerationMutation(action string, kind pluginGenerationMutationKind) (func(), error) {
@@ -456,7 +459,7 @@ func (s *Server) beginPluginGenerationMutation(action string, kind pluginGenerat
 	}
 	releaseAdmission := func() { s.pluginGenerationMutation.Store(false) }
 
-	if kind == pluginGenerationMutationActivation {
+	if kind == pluginGenerationMutationExclusive {
 		s.mu.Lock()
 		threads := make([]*threadState, 0, len(s.threads))
 		for _, th := range s.threads {
@@ -468,9 +471,7 @@ func (s *Server) beginPluginGenerationMutation(action string, kind pluginGenerat
 				continue
 			}
 			th.mu.Lock()
-			// Only collaboration turns using explicitly opted-in plugin tools hold
-			// a reference to the active extension generation.
-			busy := (th.NamedAgentID == "" || th.pluginExecutionLease != nil) && (th.running || th.executionLease != nil || th.admissionReserved || th.runtimeSelectionMutation ||
+			busy := (th.running || th.executionLease != nil || th.admissionReserved || th.runtimeSelectionMutation ||
 				(th.execRuntime != nil && threadRuntimeHasOutstandingWork(th.ID, th.execRuntime)))
 			th.mu.Unlock()
 			if busy {
@@ -490,11 +491,12 @@ func (s *Server) beginPluginGenerationMutation(action string, kind pluginGenerat
 		releaseAdmission()
 	}
 
-	// Catalog-only mutations use a lease that is compatible with in-flight
-	// executions: installing a package must not block turns. The epoch is
-	// advanced on release, after the caller's disk work, so peers only
-	// revalidate complete state.
-	if kind == pluginGenerationMutationCatalog {
+	// Catalog and live-policy mutations use a lease that is compatible with
+	// in-flight executions: installing a package or enabling a plugin must not
+	// block turns. Running conversations keep their pinned generation. The
+	// epoch is advanced on release, after the caller's disk work, so peers
+	// only revalidate complete state.
+	if kind == pluginGenerationMutationCatalog || kind == pluginGenerationMutationLive {
 		catalogLease, acquired, err := session.TryAcquirePluginCatalogMutationLease(s.rt.WuuHome)
 		if err != nil {
 			releaseLocal()
@@ -550,7 +552,6 @@ func (s *Server) refreshPluginPackages() ([]ExtensionInventoryRecord, []SkillSum
 		return nil, nil, err
 	}
 	s.schedulePluginTurnLifecycleReplay()
-	s.resetThreadRuntimesForGeneralSettings("")
 	return s.currentExtensionInventory(), skillSummaries(s.rt.Skills), nil
 }
 

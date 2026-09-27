@@ -18,9 +18,16 @@ type ResolvedStatusItem = ComposerStatusItem & Readonly<{ key: string }>;
 interface ConversationStatusClusterProps {
   host: PluginHost;
   visible: boolean;
-  /** Measures only the compact row; expanded popovers do not resize the stream. */
+  /**
+   * Measures the compact row while it holds status; expanded popovers do not
+   * resize the stream. Navigation alone is not measured: it shows only away
+   * from the latest content, where reserved trailing space is off-screen, and
+   * releasing that space as the reader arrives would pull the scroll end back.
+   */
   clusterRef?: (node: HTMLDivElement | null) => void;
   navigation?: ReactNode;
+  /** A host-owned capsule that precedes plugin status, such as a project's work. */
+  hostStatus?: ReactNode;
   threadId?: string;
   todoUpdate: TodoUpdate | undefined;
   onOpenSession: (sessionId: string) => void;
@@ -36,6 +43,7 @@ export function ConversationStatusCluster({
   visible,
   clusterRef,
   navigation,
+  hostStatus,
   threadId,
   todoUpdate,
   onOpenSession,
@@ -75,18 +83,20 @@ export function ConversationStatusCluster({
     return () => document.removeEventListener("pointerdown", dismissOverflow);
   }, []);
 
-  if (!visible || (!navigation && !todoVisible && items.length === 0)) return null;
+  const statusVisible = Boolean(hostStatus) || todoVisible || items.length > 0;
+  if (!visible || (!navigation && !statusVisible)) return null;
 
-  const visibleItemLimit = MAX_VISIBLE_ITEMS - (todoVisible ? 1 : 0);
+  const visibleItemLimit = MAX_VISIBLE_ITEMS - (hostStatus ? 1 : 0) - (todoVisible ? 1 : 0);
   const visibleItems = items.slice(0, visibleItemLimit);
   const hiddenItems = items.slice(visibleItemLimit);
   return (
     <div
       className="jump-to-latest-cluster conversation-status-cluster"
-      ref={clusterRef}
-      aria-label={t("channels.status")}
+      ref={statusVisible ? clusterRef : undefined}
+      aria-label={t("common.status")}
     >
       {navigation}
+      {hostStatus}
       {todoVisible && todoUpdate ? <TodoStatusCapsule todoUpdate={todoUpdate} /> : null}
       {visibleItems.map((item) => (
         <ComposerStatusCapsule key={item.key} item={item} onOpenSession={onOpenSession} />
@@ -130,23 +140,14 @@ function TodoStatusCapsule({ todoUpdate }: { todoUpdate: TodoUpdate }) {
           {formatNumber(completed)}/{formatNumber(total)}
         </span>
       </div>
-      <div className="conversation-status-todo-card" role="tooltip">
-        <div className="conversation-status-todo-card-header">
-          <strong>TODO</strong>
-          <span>{formatNumber(completed)}/{formatNumber(total)}</span>
-        </div>
-        {todoUpdate.explanation ? (
-          <p className="conversation-status-todo-explanation">{todoUpdate.explanation}</p>
-        ) : null}
-        <ol className="conversation-status-todo-list">
-          {todoUpdate.todos.map((item, index) => (
-            <li className={`is-${item.status}`} key={`${index}:${item.content}`}>
-              <span aria-hidden="true">{item.status === "completed" ? "✓" : index + 1}</span>
-              <span>{item.content}</span>
-            </li>
-          ))}
-        </ol>
-      </div>
+      <ol className="conversation-status-todo-card" role="tooltip">
+        {todoUpdate.todos.map((item, index) => (
+          <li className={`is-${item.status}`} key={`${index}:${item.content}`}>
+            <span aria-hidden="true">{item.status === "completed" ? "✓" : index + 1}</span>
+            <span>{item.content}</span>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

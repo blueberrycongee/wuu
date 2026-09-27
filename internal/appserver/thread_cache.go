@@ -81,7 +81,7 @@ func (s *Server) pruneCachedThreads(keepIDs ...string) {
 	s.mu.Unlock()
 
 	for _, th := range evicted {
-		releaseThreadRuntime(th)
+		s.releaseThreadRuntime(th)
 	}
 }
 

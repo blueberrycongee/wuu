@@ -5,20 +5,14 @@
   --responsive-secondary-button-text: var(--wuu-color-text, #3c4145);
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .project-add-menu,
   .codex-runtime-menu,
   .composer-project-menu,
   .composer-context-menu,
-  .slash-command-menu,
   .environment-panel,
   .environment-side-menu,
-  .environment-dialog,
-  .view-switch-loading,
-  .thread-list,
-  .thread-list::before,
-  .thread-row,
-  .project-row.active::before {
+  .environment-dialog {
     animation: none;
   }
 }
@@ -105,7 +99,6 @@
 }
 
 @container composer-toolbar (max-width: 680px) {
-  .status-label,
   .composer-context-meter-label,
   .composer-token-gauge-label {
     display: none;
@@ -175,15 +168,13 @@
   color: var(--wuu-color-text, var(--responsive-secondary-button-text));
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .app-shell,
   .sidebar,
-  .sidebar::before,
   .sidebar-content,
-  .side-panel-toggle-pane,
+  .side-panel-toggle-icon > rect:last-child,
   .titlebar,
   .scroll-region,
-  .composer-wrap,
   .dock-composer-wrap,
   .workspace-right-panel,
   .workspace-right-panel-resizer,
@@ -199,14 +190,9 @@
   .thread-list-collapse-inner,
   .thread-row,
   .thread-row::before,
-  .thread-row-actions,
   .thread-row-action,
   .thread-list-more,
   .collapsible-details,
-  .turn-process-chevron,
-  .turn-process-details,
-  .activity-chevron,
-  .activity-details,
   .message-actions,
   .message-copy-button,
   .sidebar-settings-button,
@@ -236,7 +222,8 @@
     transform: none;
   }
 
-  .workspace-browser-loading-dot {
+  .workspace-browser-loading-dot,
+  .workspace-browser-loading-bar[data-active="true"] {
     animation: none;
   }
 
@@ -526,16 +513,8 @@
 }
 
 @media (pointer: coarse) and (max-width: 760px) {
-  .app-shell.compact-navigation .titlebar :is(
-    .sidebar-toggle-button, .environment-toggle-button, .side-panel-toggle-button
-  ),
-  .app-shell.compact-navigation .compact-session-switcher-close {
-    width: 44px;
-    height: 44px;
-  }
-
-  .app-shell.compact-navigation .compact-session-switcher-close {
-    top: env(safe-area-inset-top, 0px);
+  :root[data-host-kind="web"] {
+    --window-titlebar-leading-inset: 10px;
   }
 
   .app-shell.compact-navigation .composer-bar {
@@ -555,29 +534,5 @@
 
   .app-shell.compact-navigation :is(.nav-item, .thread-row, .project-row) {
     min-height: 44px;
-  }
-
-  .workspace-right-panel.compact-navigation .workspace-panel-tabbar {
-    grid-template-columns: 44px minmax(0, 1fr) 44px;
-  }
-
-  .app-shell.right-panel-globalized .workspace-right-panel.compact-navigation .workspace-panel-tabbar {
-    grid-template-columns: 44px 44px minmax(0, 1fr) 44px;
-  }
-
-  .app-shell.compact-navigation .globalized-sidebar-toggle-region {
-    top: calc(env(safe-area-inset-top, 0px) + 4px);
-    width: 44px;
-    height: 44px;
-  }
-
-  .app-shell.compact-navigation .globalized-sidebar-toggle {
-    width: 44px;
-    height: 44px;
-  }
-
-  .workspace-right-panel.compact-navigation :is(.workspace-panel-back, .workspace-panel-close-tab) {
-    width: 44px;
-    height: 44px;
   }
 }

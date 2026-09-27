@@ -8,6 +8,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type ReactNode,
@@ -15,7 +16,13 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { AVATAR_HUES } from "./DefaultAvatar";
+import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
 import { MASCOT_EXIT_MS, useMascotAttention, useMascotPresence } from "./useMascotMotion";
+import {
+  useConversationBecameRenderActive,
+  useConversationRenderActive,
+  useConversationRevealSnap,
+} from "./ConversationRenderActivity";
 import { useMascotCoalescence } from "./useMascotCoalescence";
 import { useMascotMorph, ACTIVITY_MORPHS, type MascotMorph } from "./useMascotMorph";
 import { MascotAccessory, measureAccessoryFit, WUU_MASCOT_ACCESSORIES, type AccessoryFit, type WuuMascotAccessory } from "./WuuMascotAccessories";
@@ -212,7 +219,21 @@ export function WuuMascot({
   style,
   ...svgProps
 }: WuuMascotProps): JSX.Element | null {
-  const present = useMascotPresence(visible ?? true);
+  const renderActive = useConversationRenderActive();
+  const becameRenderActive = useConversationBecameRenderActive();
+  const revealSnap = useConversationRevealSnap();
+  // The reveal frame keeps this false, and the frame that drops the snap
+  // class would otherwise turn it on and replay the entrance. Clear the
+  // suppression after that frame so a later show or hide can still move.
+  const suppressRevealEntrance = useRef(false);
+  if (revealSnap || becameRenderActive) suppressRevealEntrance.current = true;
+  const presenceMotion = renderActive && !suppressRevealEntrance.current;
+  useLayoutEffect(() => {
+    if (renderActive && !revealSnap && !becameRenderActive) {
+      suppressRevealEntrance.current = false;
+    }
+  }, [becameRenderActive, renderActive, revealSnap]);
+  const present = useMascotPresence(visible ?? true, presenceMotion);
   const attention = useMascotAttention(activity, ambient && present && visible !== false);
   const runtime = useContext(WuuMascotRuntimeContext);
   const effectiveProvider = provider ?? runtime.provider;
@@ -273,16 +294,13 @@ export function WuuMascot({
   useEffect(() => {
     if (!svg || !followPointer) return;
 
-    const reducedMotion = typeof window.matchMedia === "function"
-      ? window.matchMedia("(prefers-reduced-motion: reduce)")
-      : null;
     let pointer: { x: number; y: number } | null = null;
     let animationFrame: number | null = null;
 
     const renderGaze = () => {
       animationFrame = null;
       const rect = svg.getBoundingClientRect();
-      if (!pointer || reducedMotion?.matches || rect.width === 0 || rect.height === 0) {
+      if (!pointer || prefersReducedMotion() || rect.width === 0 || rect.height === 0) {
         svg.style.setProperty("--mo-pointer-yaw", "0");
         svg.style.setProperty("--mo-pointer-pitch", "0");
         return;
@@ -325,13 +343,13 @@ export function WuuMascot({
     window.addEventListener("pointermove", handlePointerMove, { passive: true });
     window.addEventListener("blur", resetGaze);
     document.documentElement.addEventListener("mouseleave", resetGaze);
-    reducedMotion?.addEventListener("change", resetGaze);
+    const stopReducedMotion = subscribeReducedMotion(resetGaze);
 
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("blur", resetGaze);
       document.documentElement.removeEventListener("mouseleave", resetGaze);
-      reducedMotion?.removeEventListener("change", resetGaze);
+      stopReducedMotion();
       if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
       svg.style.removeProperty("--mo-pointer-yaw");
       svg.style.removeProperty("--mo-pointer-pitch");
@@ -372,7 +390,13 @@ export function WuuMascot({
         data-wuu-mascot-accessory={selectedAccessory}
         data-wuu-mascot-activity={activity}
         data-wuu-mascot-morph={effectiveMorph}
-        data-wuu-mascot-presence={visible === undefined ? undefined : visible ? "enter" : "exit"}
+        data-wuu-mascot-presence={
+          visible === undefined || !presenceMotion
+            ? undefined
+            : visible
+              ? "enter"
+              : "exit"
+        }
         data-wuu-mascot-follows-pointer={followPointer ? "" : undefined}
       />
       {mascotLayers && selectedAccessory !== "none"

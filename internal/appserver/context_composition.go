@@ -354,6 +354,49 @@ func fallbackTokensForBytes(bytes int) int {
 	return max(1, int(math.Ceil(float64(bytes)/4.0)))
 }
 
+func providerReportedTokenUsage(input, output, cacheCreation, cacheRead int) bool {
+	return input > 0 || output > 0 || cacheCreation > 0 || cacheRead > 0
+}
+
+// latestProviderRetainedContextTokens returns the newest persisted context
+// size that came from provider-reported usage. A context_tokens marker with
+// no input, output, or cache counts is a local estimate. Seeding that value
+// treats a partial total as ground truth and blocks the pre-send reconcile.
+func (s *Server) latestProviderRetainedContextTokens(threadID string) int {
+	if th := s.thread(threadID); th != nil {
+		th.mu.Lock()
+		defer th.mu.Unlock()
+		for i := len(th.Turns) - 1; i >= 0; i-- {
+			turn := th.Turns[i]
+			if turn.ContextTokens <= 0 {
+				continue
+			}
+			if !providerReportedTokenUsage(turn.InputTokens, turn.OutputTokens, turn.CacheCreationTokens, turn.CacheReadTokens) {
+				return 0
+			}
+			return turn.ContextTokens
+		}
+	}
+	if s == nil || s.rt == nil {
+		return 0
+	}
+	metas, err := loadMetaMessages(s.rt.SessionDir, threadID)
+	if err != nil {
+		return 0
+	}
+	for i := len(metas) - 1; i >= 0; i-- {
+		meta := metas[i]
+		if meta.ContextTokens <= 0 {
+			continue
+		}
+		if !providerReportedTokenUsage(meta.InputTokens, meta.OutputTokens, meta.CacheCreationTokens, meta.CacheReadTokens) {
+			return 0
+		}
+		return meta.ContextTokens
+	}
+	return 0
+}
+
 func (s *Server) latestRetainedContextTokens(threadID string) int {
 	if th := s.thread(threadID); th != nil {
 		th.mu.Lock()

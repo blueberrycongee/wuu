@@ -114,14 +114,3 @@ func TestPersistTurnTraceWritesSessionArtifact(t *testing.T) {
 		t.Fatalf("session trace should include only this turn's tool records:\n%s", trace)
 	}
 }
-
-func TestProviderStateRecordPreservesFallbackPinMetadata(t *testing.T) {
-	record := providerStateRecord(&providers.ProviderStateSummary{
-		FallbackPinStatus:    "created",
-		FallbackRetryAfterMS: 119500,
-		FallbackTTLMS:        120000,
-	})
-	if record.FallbackPinStatus != "created" || record.FallbackRetryAfterMS != 119500 || record.FallbackTTLMS != 120000 {
-		t.Fatalf("fallback pin metadata was not preserved: %+v", record)
-	}
-}

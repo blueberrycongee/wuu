@@ -2,9 +2,11 @@ import {
   createContext,
   type ReactNode,
   useContext,
+  useEffect,
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { startFocusModality } from "../../FocusModality";
 
 const UILayerHostContext = createContext<HTMLElement | null>(null);
 
@@ -19,6 +21,7 @@ export interface WuuUIRootProps {
  */
 export function WuuUIRoot({ children }: WuuUIRootProps): JSX.Element {
   const [layerHost, setLayerHost] = useState<HTMLDivElement | null>(null);
+  useEffect(() => startFocusModality(), []);
 
   return (
     <UILayerHostContext.Provider value={layerHost}>

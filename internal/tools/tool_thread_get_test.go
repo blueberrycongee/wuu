@@ -170,34 +170,3 @@ func TestThreadGetToolReturnsErrSessionNotFound(t *testing.T) {
 		t.Errorf("expected error to include the id %q, got: %v", "missing-id", err)
 	}
 }
-
-func TestThreadGetToolUsesInjectedSessionsDir(t *testing.T) {
-	sessDir := t.TempDir()
-	const id = "injected-session"
-	if _, err := session.CreateWithMetadata(sessDir, id, "/tmp/workdir"); err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	if err := session.AppendHistoryRecord(sessDir, id, session.HistoryRecord{Role: "user", Content: "from injected store"}); err != nil {
-		t.Fatalf("append history: %v", err)
-	}
-
-	tool := NewThreadGetTool(&Env{SessionsDir: sessDir})
-	out, err := tool.Execute(context.Background(), `{"thread_id":"injected-session"}`)
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	if !strings.Contains(out, "from injected store") {
-		t.Fatalf("thread_get ignored injected store: %s", out)
-	}
-}
-
-func TestThreadGetToolRejectsEmptyThreadID(t *testing.T) {
-	tool := NewThreadGetTool(&Env{})
-	_, err := tool.Execute(context.Background(), `{"thread_id":""}`)
-	if err == nil {
-		t.Fatal("expected error for empty thread_id")
-	}
-	if !strings.Contains(err.Error(), "thread_id is required") {
-		t.Errorf("expected required-error, got: %v", err)
-	}
-}

@@ -112,7 +112,7 @@ describe("file selections in message history", () => {
 
   it("reveals a pasted block without revealing or dropping the file selection", () => {
     const { onSubmit } = render(true);
-    click(".composer-collapsed-prompt-main");
+    click(".composer-collapsed-prompt-card .composer-document-card-main");
     expect(document.querySelector<HTMLTextAreaElement>(".user-message-edit-input")?.value).toBe(`Please review.${paste.text}`);
     click(".composer-send-button");
     expect(onSubmit.mock.calls[0][5]).toEqual([selection, { type: "text", text: `Please review.${paste.text}` }]);

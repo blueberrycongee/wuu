@@ -80,7 +80,11 @@ func (s *Server) prepareHandoffSeed(ctx context.Context, params pluginhost.Sessi
 	}
 	params.Seed.Body = body
 	if strings.TrimSpace(params.Seed.Provenance.Producer) == "" {
-		params.Seed.Provenance.Producer = "plugin:" + strings.TrimSpace(provider.CompactionKey())
+		if _, builtin := provider.(agent.DefaultContextWindowProvider); builtin {
+			params.Seed.Provenance.Producer = provider.CompactionKey()
+		} else {
+			params.Seed.Provenance.Producer = "plugin:" + strings.TrimSpace(provider.CompactionKey())
+		}
 	}
 	if strings.TrimSpace(params.Seed.Provenance.SourceModel) == "" {
 		params.Seed.Provenance.SourceModel = strings.TrimSpace(s.rt.Model)

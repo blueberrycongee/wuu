@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useActiveContextMenu } from "./ActiveContextMenu";
 import { placeContextMenu, type ContextMenuLayout } from "./ContextMenuPlacement";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 
@@ -9,8 +10,9 @@ import { UILayerPortal } from "./ui/layers/UILayerHost";
  *
  * The menu is positioned via fixed coordinates so callers can pass raw
  * clientX/clientY from a contextmenu event without computing offsets against
- * any parent container.
+ * any parent container. Opening it dismisses any other context menu.
  */
+
 export type ThreadContextMenuItem =
   | {
       /** Display label. */
@@ -44,26 +46,39 @@ export function ThreadContextMenu({
 }): JSX.Element {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [layout, setLayout] = useState<ContextMenuLayout | null>(null);
+  useActiveContextMenu(onClose);
 
   useLayoutEffect(() => {
     const menuElement = menuRef.current;
     if (!menuElement) {
       return;
     }
-    setLayout(
-      placeContextMenu(
-        x,
-        y,
-        menuElement.offsetWidth,
-        menuElement.offsetHeight,
-        window.innerWidth,
-        window.innerHeight,
-      ),
+    const next = placeContextMenu(
+      x,
+      y,
+      menuElement.offsetWidth,
+      menuElement.offsetHeight,
+      window.innerWidth,
+      window.innerHeight,
+    );
+    setLayout((current) =>
+      current &&
+      current.left === next.left &&
+      current.top === next.top &&
+      current.origin === next.origin
+        ? current
+        : next,
     );
   }, [x, y, items]);
 
   useEffect(() => {
-    function handleMouseDown(event: MouseEvent): void {
+    function handlePointerDown(event: PointerEvent): void {
+      // Right-click is the opening gesture (and the leftover pointer burst
+      // after contextmenu). Dismissing on it races the opener. A new
+      // context menu dismisses this one via useActiveContextMenu instead.
+      if (event.button !== 0) {
+        return;
+      }
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         onClose();
       }
@@ -73,10 +88,21 @@ export function ThreadContextMenu({
         onClose();
       }
     }
-    document.addEventListener("mousedown", handleMouseDown);
     document.addEventListener("keydown", handleKeyDown);
+    // Defer pointer listeners so the opening contextmenu's pointer burst
+    // cannot dismiss the menu on the same gesture. Same rule as
+    // ComposerContextMenu and WorkspaceTreeContextMenu.
+    let active = true;
+    const id = window.setTimeout(() => {
+      if (!active) {
+        return;
+      }
+      document.addEventListener("pointerdown", handlePointerDown);
+    }, 0);
     return () => {
-      document.removeEventListener("mousedown", handleMouseDown);
+      active = false;
+      window.clearTimeout(id);
+      document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [onClose]);
@@ -91,12 +117,14 @@ export function ThreadContextMenu({
         data-wuu-layer="menu"
         data-wuu-state="open"
         data-origin={layout?.origin ?? "top-left"}
+        data-placed={layout ? "true" : undefined}
         style={
           layout
             ? { left: layout.left, top: layout.top }
             : { left: x, top: y, visibility: "hidden" }
         }
         data-testid="thread-row-context-menu"
+        onContextMenu={(event) => event.preventDefault()}
       >
         {items.map((item, idx) => {
           if ("separator" in item) {

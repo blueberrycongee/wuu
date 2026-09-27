@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/config"
@@ -218,6 +219,7 @@ func (s *Server) currentGeneralSettingsSummary() GeneralSettingsSummary {
 	}
 	if cfg, _, err := s.rt.LoadEffectiveConfig(); err == nil {
 		summary.GitAttributionEnabled = cfg.Agent.GitAttributionEnabledValue()
+		summary.PTC = cfg.PTC
 		activePluginServers := make(map[string]bool)
 		for _, item := range s.rt.Plugins {
 			for name := range item.MCPServers {
@@ -852,7 +854,7 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
-	releaseMutation, err := s.beginPluginGenerationMutation("change", pluginGenerationMutationActivation)
+	releaseMutation, err := s.beginPluginGenerationMutation("change", pluginGenerationMutationLive)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -911,7 +913,6 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 	}
 	s.rt.SetExtensionSettings(&persistedSettings)
 	s.schedulePluginTurnLifecycleReplay()
-	s.resetThreadRuntimesForGeneralSettings("")
 	return s.writeResponse(req.ID, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, nil)
 }
 
@@ -953,7 +954,7 @@ func (s *Server) handleExtensionCatalogRefresh(req Request) error {
 	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
-	releaseMutation, err := s.beginPluginGenerationMutation("refresh", pluginGenerationMutationActivation)
+	releaseMutation, err := s.beginPluginGenerationMutation("refresh", pluginGenerationMutationLive)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -961,7 +962,6 @@ func (s *Server) handleExtensionCatalogRefresh(req Request) error {
 	if err := s.rt.RefreshExtensions(s.currentExtensionConfig()); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	s.resetThreadRuntimesForGeneralSettings("")
 	return s.writeResponse(req.ID, ExtensionCatalogRefreshResult{
 		ExtensionInventory: s.currentExtensionInventory(),
 		Skills:             skillSummaries(s.rt.Skills),
@@ -1115,13 +1115,16 @@ func (s *Server) handleConfigGeneralUpdate(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if s.hasRunningThread() {
-		return s.writeResponse(req.ID, nil, errors.New("cannot change general settings while a turn is running"))
+	// Attribution changes are persisted now and applied to active threads only
+	// when their deferred runtime reset is safe. MCP and PTC changes require idle turns.
+	if (len(params.MCPEnabledToggles) > 0 || params.PTC != nil) && s.hasRunningThread() {
+		return s.writeResponse(req.ID, nil, errors.New("cannot change MCP or PTC settings while a turn is running"))
 	}
 	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
 	if err := config.UpdateGeneralSettings(s.rt.ConfigPath, config.GeneralSettingsUpdate{
+		PTC:                   params.PTC,
 		GitAttributionEnabled: params.GitAttributionEnabled,
 		MCPEnabledToggles:     params.MCPEnabledToggles,
 	}); err != nil {
@@ -1152,6 +1155,9 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 	}
 	if threadID != "" && (providerName != "" || model != "" || params.Variant != nil || params.Effort != nil || params.PermissionMode != nil || params.ApproveForMe != nil) {
 		return s.writeResponse(req.ID, nil, errors.New("save provider configuration separately from conversation selection"))
+	}
+	if params.Speed != nil {
+		return s.writeResponse(req.ID, nil, errors.New("speed is a conversation setting; provide thread_id without provider configuration changes"))
 	}
 	explicitSelection := providerName != "" || model != "" ||
 		params.Effort != nil || params.Variant != nil || params.PermissionMode != nil
@@ -1622,6 +1628,25 @@ func (s *Server) currentConfigModelUpdateResult() ConfigModelUpdateResult {
 	}
 }
 
+func (s *Server) handleConfigCodexCredentials(req Request) error {
+	var params ConfigCodexModelsParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := config.UseCodexCredentials(s.rt.ConfigPath, strings.TrimSpace(params.Provider)); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.refreshConfigIfChanged(); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	// Explicitly discard idle snapshots even when reuse was already enabled.
+	// In-flight turns retain their admitted configuration until completion.
+	s.resetThreadRuntimesForGeneralSettings("")
+	return s.writeResponse(req.ID, struct {
+		Providers []ProviderSummary `json:"providers"`
+	}{s.providerSummaries()}, nil)
+}
+
 func (s *Server) handleConfigCodexModels(ctx context.Context, req Request) error {
 	var params ConfigCodexModelsParams
 	if err := decodeParams(req.Params, &params); err != nil {
@@ -1821,6 +1846,8 @@ func skillSummaries(items []skills.Skill) []SkillSummary {
 	return out
 }
 
+var errThreadRuntimeSelectionBusy = errors.New("cannot change model or permission mode")
+
 func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadState, func(), error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
@@ -1835,7 +1862,7 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 		(th.execRuntime != nil && threadRuntimeHasOutstandingWork(th.ID, th.execRuntime))
 	if busy {
 		th.mu.Unlock()
-		return nil, func() {}, fmt.Errorf("cannot change model or permission mode while thread %q is running", threadID)
+		return nil, func() {}, fmt.Errorf("%w while thread %q is running", errThreadRuntimeSelectionBusy, threadID)
 	}
 	th.runtimeSelectionMutation = true
 	persist := th.PersistHistory
@@ -1849,7 +1876,7 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 			th.runtimeSelectionMutation = false
 			th.mu.Unlock()
 			if errors.Is(err, errThreadExecutionBusy) {
-				return nil, func() {}, fmt.Errorf("cannot change model or permission mode while thread %q is running", threadID)
+				return nil, func() {}, fmt.Errorf("%w while thread %q is running", errThreadRuntimeSelectionBusy, threadID)
 			}
 			return nil, func() {}, err
 		}
@@ -1866,18 +1893,42 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdateParams) error {
 	th, release, err := s.beginThreadRuntimeSelectionMutation(params.ThreadID)
 	if err != nil {
+		if errors.Is(err, errThreadRuntimeSelectionBusy) {
+			return s.writeRunError(req.ID, "thread_busy", err)
+		}
 		return s.writeResponse(req.ID, nil, err)
 	}
 	defer release()
 	th.mu.Lock()
-	if th.NamedAgentID != "" {
-		th.mu.Unlock()
-		return s.writeResponse(req.ID, nil, errors.New("collaboration model selection is pinned; create another session with the desired model"))
-	}
 
 	provider, model := th.ModelProvider, th.Model
 	variant, effort, permission := th.ModelVariant, th.ModelEffort, th.PermissionMode
+	speed, engineID, approveForMe := th.Speed, th.EngineID, th.ApproveForMe
 	th.mu.Unlock()
+	if params.Speed != nil {
+		speed = strings.TrimSpace(*params.Speed)
+		if err := validateSpeed(speed); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+	}
+	if agentengine.NormalizeEngineID(engineID) != agentengine.EngineWuu {
+		if params.Provider != "" && params.Provider != provider {
+			return s.writeResponse(req.ID, nil, errors.New("an external engine owns its provider selection"))
+		}
+		if params.Model != "" {
+			model = params.Model
+		}
+		if params.Effort != nil {
+			effort = *params.Effort
+		}
+		if params.PermissionMode != nil {
+			permission = config.NormalizePermissionMode(*params.PermissionMode)
+		}
+		if err := s.updateThreadRuntimeForModelUpdate(th, provider, model, "", effort, speed, permission, false); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		return s.writeThreadModelSelectionResponse(req, th)
+	}
 	if provider == "" {
 		provider = s.rt.ProviderName
 	}
@@ -1930,6 +1981,14 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 		}
 	}
 	selection := modelvariant.ResolveForProvider(ruleName, ruleCfg, model, variant, effort)
+	if (provider != previousProvider || model != previousModel) && params.Speed == nil {
+		if supported, _ := modelvariant.SpeedSupport(ruleCfg, model); !supported {
+			speed = ""
+		}
+	}
+	if err := modelvariant.ApplySpeed(ruleCfg, model, speed, &selection); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	if permission == "" {
 		permission = config.NormalizePermissionMode(s.rt.Permissions.Mode)
 	}
@@ -1937,16 +1996,20 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 		permission = config.NormalizePermissionMode(*params.PermissionMode)
 	}
 	th.mu.Lock()
-	approveForMe := th.ApproveForMe
+	approveForMe = th.ApproveForMe
 	th.mu.Unlock()
 	if params.ApproveForMe != nil {
 		approveForMe = *params.ApproveForMe && approvefor.EnabledForMode(permission)
 	} else if !approvefor.EnabledForMode(permission) {
 		approveForMe = false
 	}
-	if err := s.updateThreadRuntimeForModelUpdate(th, resolvedName, model, selection.Variant, selection.LegacyEffort, permission, approveForMe); err != nil {
+	if err := s.updateThreadRuntimeForModelUpdate(th, resolvedName, model, selection.Variant, selection.LegacyEffort, speed, permission, approveForMe); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	return s.writeThreadModelSelectionResponse(req, th)
+}
+
+func (s *Server) writeThreadModelSelectionResponse(req Request, th *threadState) error {
 	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
 	return s.writeResponse(req.ID, ConfigModelUpdateResult{
 		Provider: s.rt.ProviderName, Model: s.rt.Model,
@@ -1958,7 +2021,7 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	}, nil)
 }
 
-func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName, model, variant, effort, permissionMode string, approveForMe bool) error {
+func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName, model, variant, effort, speed, permissionMode string, approveForMe bool) error {
 	if th == nil {
 		return nil
 	}
@@ -1967,6 +2030,7 @@ func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName
 		Model:          model,
 		Variant:        variant,
 		Effort:         effort,
+		Speed:          speed,
 		PermissionMode: permissionMode,
 		ApproveForMe:   approveForMe,
 	}
@@ -1980,7 +2044,7 @@ func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName
 	modelSelectionChanged := th.ModelProvider != strings.TrimSpace(selection.Provider) ||
 		th.Model != strings.TrimSpace(selection.Model) ||
 		th.ModelVariant != strings.TrimSpace(selection.Variant) ||
-		th.ModelEffort != strings.TrimSpace(selection.Effort)
+		th.ModelEffort != strings.TrimSpace(selection.Effort) || th.Speed != selection.Speed
 	applyThreadRuntimeSelection(th, selection)
 	if modelSelectionChanged && th.execRuntime != nil {
 		detached = detachThreadRuntimeLocked(th)
@@ -1988,7 +2052,7 @@ func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName
 	thread := th.snapshotLocked()
 	th.mu.Unlock()
 	if detached.runtime != nil || detached.subscription != nil {
-		releaseDetachedThreadRuntime(detached)
+		s.releaseDetachedThreadRuntime(detached)
 	}
 	return s.notifyThreadUpdated(thread)
 }
@@ -2001,12 +2065,8 @@ func (s *Server) resetThreadRuntimesForGeneralSettings(systemPrompt string) {
 	s.mu.Lock()
 	for _, th := range s.threads {
 		th.mu.Lock()
-		if th.NamedAgentID != "" {
-			th.mu.Unlock()
-			continue
-		}
 		if strings.TrimSpace(systemPrompt) != "" {
-			th.History = replaceBaseSystemPrompt(th.History, systemPrompt)
+			th.History = replaceBaseSystemPrompt(th.History, sessionSystemPrompt(systemPrompt, th.Instructions))
 			if th.PersistHistory {
 				if err := rewriteChatHistory(s.rt.SessionDir, th.ID, th.History); err != nil {
 					providers.DebugLogf("rewrite thread %q system prompt after general settings update: %v", th.ID, err)
@@ -2031,7 +2091,7 @@ func (s *Server) resetThreadRuntimesForGeneralSettings(systemPrompt string) {
 	}
 	s.mu.Unlock()
 	for _, detached := range releases {
-		releaseDetachedThreadRuntime(detached)
+		s.releaseDetachedThreadRuntime(detached)
 	}
 }
 
@@ -2056,10 +2116,6 @@ func (s *Server) updateIdleThreadAdvancedRuntime(cfg config.Config) {
 	defer s.mu.Unlock()
 	for _, th := range s.threads {
 		th.mu.Lock()
-		if th.NamedAgentID != "" {
-			th.mu.Unlock()
-			continue
-		}
 		if th.running || th.execRuntime == nil {
 			th.mu.Unlock()
 			continue
@@ -2285,9 +2341,12 @@ func selectionConfigPointers(selection modelvariant.Selection, touched bool, pre
 }
 
 func (s *Server) providerSummaries() []ProviderSummary {
+	s.providerSummariesMu.Lock()
+	defer s.providerSummariesMu.Unlock()
 	cfg, _, err := s.rt.LoadEffectiveConfig()
 	if err != nil {
-		return nil
+		// Presentation only: execution and mutations still load and validate config.
+		return s.lastProviderSummaries
 	}
 	home := os.Getenv("HOME")
 	autoDiscovered := false
@@ -2316,7 +2375,46 @@ func (s *Server) providerSummaries() []ProviderSummary {
 			}
 		}
 	}
+	s.attachLatestProviderRequests(summaries)
+	s.lastProviderSummaries = summaries
 	return summaries
+}
+
+// attachLatestProviderRequests records the newest settled request for
+// built-in subscription providers only. Ordinary API-key providers stay out
+// of this read; their credentials are not the subscription dashboard.
+func (s *Server) attachLatestProviderRequests(summaries []ProviderSummary) {
+	if s == nil || s.rt == nil || strings.TrimSpace(s.rt.SessionDir) == "" {
+		return
+	}
+	keys := make([]session.SubscriptionActivityKey, 0, len(summaries))
+	for _, summary := range summaries {
+		if !builtInSubscriptionProvider(summary) {
+			continue
+		}
+		keys = append(keys, session.SubscriptionActivityKey{Provider: summary.Name})
+	}
+	if len(keys) == 0 {
+		return
+	}
+	activity, err := session.LatestSubscriptionActivity(s.rt.SessionDir, keys)
+	if err != nil {
+		return
+	}
+	for index := range summaries {
+		record, ok := activity[session.SubscriptionActivityKey{Provider: summaries[index].Name}]
+		if !ok {
+			continue
+		}
+		summaries[index].LatestRequest = engineLatestRequest(record)
+		summaries[index].LocalUsage = &record.LocalUsage
+	}
+}
+
+func builtInSubscriptionProvider(summary ProviderSummary) bool {
+	return summary.ReuseCodexCredentials ||
+		config.IsXAISubscriptionProvider(summary.Type) ||
+		config.IsGrokBuildProvider(summary.Type)
 }
 
 // A conversation can select the same discovered connections shown in the
@@ -2373,7 +2471,9 @@ func providerSummariesFromConfig(cfg config.Config, home string) []ProviderSumma
 		}
 		if isCodexProviderType(provider.Type) {
 			summary.ReuseCodexCredentials = provider.ReuseCodexCredentials
-			if source, err := codex.LocalOAuthStatus(home); err == nil {
+			if explicitProviderAPIKey(provider) != "" {
+				summary.CodexCredentialSource = "explicit"
+			} else if source, err := codex.LocalOAuthStatus(home, provider.ReuseCodexCredentials); err == nil {
 				summary.CodexCredentialSource = source
 			}
 		}
@@ -2387,7 +2487,7 @@ func providerHasAuth(name string, provider config.ProviderConfig, home string) b
 		if strings.TrimSpace(provider.APIKey) != "" || configuredEnvValue(provider.APIKeyEnv) != "" {
 			return true
 		}
-		source, err := codex.LocalOAuthStatus(home)
+		source, err := codex.LocalOAuthStatus(home, provider.ReuseCodexCredentials)
 		return err == nil && (source == "wuu-auth-store" || provider.ReuseCodexCredentials)
 	}
 	if config.IsXAISubscriptionProvider(provider.Type) {
@@ -2567,6 +2667,7 @@ func providerModelSummaries(providerName string, provider config.ProviderConfig)
 		if model.DefaultVariant == "" {
 			model.DefaultVariant = modelvariant.DefaultVariantForProvider(modelRuleProviderName, modelRuleProvider, model.ID)
 		}
+		model.FastMode, model.DefaultSpeed = modelvariant.SpeedSupport(modelRuleProvider, model.ID)
 		out = append(out, model)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -2915,4 +3016,12 @@ func explicitProviderAPIKey(provider config.ProviderConfig) string {
 		return strings.TrimSpace(os.Getenv(envKey))
 	}
 	return ""
+}
+
+func validateSpeed(speed string) error {
+	switch speed {
+	case "", "standard", "fast":
+		return nil
+	}
+	return fmt.Errorf("unsupported speed %q", speed)
 }

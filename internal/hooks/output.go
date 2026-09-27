@@ -27,14 +27,14 @@ func (o *Output) IsBlocked() bool {
 }
 
 // ParseOutput interprets hook stdout. If stdout is valid JSON, it is decoded
-// into Output. Otherwise, the exit code is used as the sole signal:
-// 0 means continue, 2 means block. All other exit codes are treated as
-// execution failures by the caller, not handled here.
+// into Output. Exit code 2 always blocks, even when JSON says to continue.
+// All other nonzero exit codes are execution failures handled by the caller.
 func ParseOutput(stdout []byte, exitCode int) (*Output, error) {
 	out := &Output{}
-	if len(stdout) > 0 && json.Valid(stdout) {
-		if err := json.Unmarshal(stdout, out); err == nil {
-			return out, nil
+	if len(stdout) > 0 {
+		var parsed Output
+		if err := json.Unmarshal(stdout, &parsed); err == nil {
+			out = &parsed
 		}
 	}
 	if exitCode == 2 {

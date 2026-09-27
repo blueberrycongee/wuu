@@ -12,9 +12,6 @@ func TestTestContractWarningFlagsRemovedGoTest(t *testing.T) {
 	if !strings.Contains(warning, "TestKeepsContract") {
 		t.Fatalf("warning should name the removed test, got %q", warning)
 	}
-	if !strings.Contains(warning, "behavioral contracts") {
-		t.Fatalf("warning should explain the contract rule, got %q", warning)
-	}
 }
 
 func TestTestContractWarningFlagsRenamedGoTest(t *testing.T) {

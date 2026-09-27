@@ -72,6 +72,9 @@ type Options struct {
 
 	// NoTools disables local tool execution.
 	NoTools bool
+	// NonInteractive rejects human question services and declines interactive
+	// engine approvals. It applies to every connection sharing this runtime.
+	NonInteractive bool
 	// SafeMode discovers plugin manifests for management but activates no plugin
 	// contributions.
 	SafeMode bool
@@ -155,6 +158,7 @@ func New(opts Options) (*Runtime, error) {
 		ModelOverride:          strings.TrimSpace(opts.Model),
 		PermissionModeExplicit: strings.TrimSpace(opts.PermissionMode) != "",
 		NoTools:                opts.NoTools,
+		NonInteractive:         opts.NonInteractive,
 		SafeMode:               opts.SafeMode,
 	})
 	if err != nil {

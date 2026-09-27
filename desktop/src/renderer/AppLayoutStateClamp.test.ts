@@ -42,18 +42,6 @@ describe("workspacePanelNeedsFocus", () => {
 // that clamp's [min, max] range collapses to a single value the drag handle
 // grabs but nothing moves. This asserts the clamp always keeps a usable range.
 
-// The exact ceiling the OLD (buggy) formula produced, inlined here so the test
-// proves — not just asserts — that the previous logic pinned min === max on a
-// tight window. Old body was:
-//   maxWidth = Math.max(MIN, Math.min(MAX, innerWidth - sidebar - MAIN_MIN))
-function oldMaxWidth(innerWidth: number, sidebarWidth: number): number {
-  const maxForWindow = innerWidth - sidebarWidth - WORKSPACE_RIGHT_PANEL_MAIN_MIN_WIDTH;
-  return Math.max(
-    WORKSPACE_RIGHT_PANEL_MIN_WIDTH,
-    Math.min(WORKSPACE_RIGHT_PANEL_MAX_WIDTH, maxForWindow)
-  );
-}
-
 // Probe the effective [min, max] the current clamp exposes by clamping an
 // absurdly large and an absurdly small target width. Whatever comes back is the
 // real ceiling / floor the resizer can reach.
@@ -82,9 +70,6 @@ describe("clampWorkspaceRightPanelWidth", () => {
     const sidebar = 326;
 
     // maxForWindow = 900 - 326 - 360 = 214 (well below MIN=300).
-    // OLD formula: Math.max(300, Math.min(860, 214)) = 300 === MIN  -> ZERO range.
-    expect(oldMaxWidth(900, sidebar)).toBe(WORKSPACE_RIGHT_PANEL_MIN_WIDTH);
-    expect(oldMaxWidth(900, sidebar)).toBe(300);
 
     // Under the old logic the clamp pinned every width to a single value:
     // clamping a huge and a tiny target would return the SAME number. The fix
@@ -118,9 +103,8 @@ describe("clampWorkspaceRightPanelWidth", () => {
     // main pane to keep >= MAIN_MIN (360) at the ceiling.
     expect(max).toBeLessThanOrEqual(1600 - sidebar - WORKSPACE_RIGHT_PANEL_MAIN_MIN_WIDTH); // <= 914
 
-    // On a wide window the new formula produces the exact same ceiling as the
-    // old one (maxForWindow >= MIN+range already), so behavior is unchanged.
-    expect(max).toBe(oldMaxWidth(1600, sidebar));
+    // On a wide window maxForWindow already exceeds MIN+range, so the ceiling
+    // is the absolute max.
     expect(max).toBe(WORKSPACE_RIGHT_PANEL_MAX_WIDTH); // 860
   });
 
@@ -130,9 +114,7 @@ describe("clampWorkspaceRightPanelWidth", () => {
     setInnerWidth(600);
     const collapsed = 0;
 
-    // maxForWindow = 600 - 0 - 360 = 240 -> OLD max = 300 === MIN -> zero range.
-    expect(oldMaxWidth(600, collapsed)).toBe(WORKSPACE_RIGHT_PANEL_MIN_WIDTH);
-
+    // maxForWindow = 600 - 0 - 360 = 240, below MIN.
     const tight = effectiveRange(collapsed);
     expect(tight.min).toBe(WORKSPACE_RIGHT_PANEL_MIN_WIDTH);
     expect(tight.max - tight.min).toBeGreaterThanOrEqual(WORKSPACE_RIGHT_PANEL_MIN_DRAG_RANGE);

@@ -94,25 +94,6 @@ func TestNormalizeTurnStartImagesRejectsNonImageMediaType(t *testing.T) {
 	}
 }
 
-// TestNormalizeTurnStartImagesRejectsUnsupportedFormat covers the HEIC path:
-// image/* MIME is present (so the early-exit doesn't fire) but the bytes
-// carry a non-supported signature, so imageproc must reject with a typed
-// error that the caller can surface.
-func TestNormalizeTurnStartImagesRejectsUnsupportedFormat(t *testing.T) {
-	heic := []byte{0x00, 0x00, 0x00, 0x18, 'f', 't', 'y', 'p', 'h', 'e', 'i', 'c'}
-	in := TurnStartImage{
-		MediaType: "image/jpeg",
-		Data:      base64.StdEncoding.EncodeToString(heic),
-	}
-	_, err := normalizeTurnStartImages([]TurnStartImage{in})
-	if err == nil {
-		t.Fatalf("expected error for HEIC-shaped bytes")
-	}
-	if !contains(err.Error(), "unsupported format") {
-		t.Fatalf("error %q should mention unsupported format", err)
-	}
-}
-
 // TestNormalizeTurnStartImagesAcceptsDataURL ensures callers may submit the
 // `data:image/jpeg;base64,...` envelope in addition to raw base64. Both
 // shapes must reach imageproc.

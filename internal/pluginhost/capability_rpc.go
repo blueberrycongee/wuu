@@ -237,6 +237,7 @@ type SessionToolPolicy struct {
 }
 
 type SessionCreateParams struct {
+	Speed           string               `json:"speed,omitempty"`
 	RequestID       string               `json:"request_id"`
 	Name            string               `json:"name,omitempty"`
 	Visibility      string               `json:"visibility"`
@@ -413,8 +414,10 @@ type SessionInspectResult struct {
 }
 
 type SessionTurnInspection struct {
-	RequestID    string     `json:"request_id,omitempty"`
-	State        string     `json:"state"`
+	RequestID string `json:"request_id,omitempty"`
+	State     string `json:"state"`
+	// Retryable is true only when a queued input was discarded by host shutdown.
+	Retryable    bool       `json:"retryable,omitempty"`
 	TurnID       string     `json:"turn_id,omitempty"`
 	QueueID      string     `json:"queue_id,omitempty"`
 	Error        string     `json:"error,omitempty"`
@@ -479,8 +482,11 @@ const (
 // correlated turn. Initial running/queued state is returned synchronously by
 // host.session.send; this event reports later transitions and terminal state.
 type AgentTurnLifecycleInput struct {
-	RequestID    string     `json:"request_id"`
-	State        string     `json:"state"`
+	RequestID string `json:"request_id"`
+	State     string `json:"state"`
+	// Retryable permits resubmitting the same request ID after a shutdown discard.
+	// User cancellation and inputs that have started are never retryable.
+	Retryable    bool       `json:"retryable,omitempty"`
 	ThreadID     string     `json:"thread_id"`
 	TurnID       string     `json:"turn_id,omitempty"`
 	QueueID      string     `json:"queue_id,omitempty"`

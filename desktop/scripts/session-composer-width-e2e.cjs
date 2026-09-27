@@ -194,16 +194,23 @@ async function settledGeometry(win, width, paneSelector = ".conversation-pane") 
       const flowStyle = getComputedStyle(flow);
       const scrollRect = scroll.getBoundingClientRect();
       const scrollStyle = getComputedStyle(scroll);
-      const availableRight = scrollRect.left + scroll.clientWidth - parseFloat(scrollStyle.paddingRight);
+      const scrollbarWidth = scroll.offsetWidth - scroll.clientWidth;
+      // .scroll-region reserves its stable gutter on both edges, so the
+      // content box sits half a gutter inside each edge of the padding box.
+      // That box is what the message flow centers in, and the input has to
+      // share its centerline — measure the composer against it, not against
+      // the pane box, so a pane whose two margins differ fails here.
+      const contentLeft = scrollRect.left + scrollbarWidth / 2 + parseFloat(scrollStyle.paddingLeft);
+      const contentRight = scrollRect.right - scrollbarWidth / 2 - parseFloat(scrollStyle.paddingRight);
       return {
         windowWidth: innerWidth,
         compact: document.querySelector(".app-shell").classList.contains("compact-navigation"),
         composerWidth: rect.width,
         composerLeft: rect.left,
         composerRight: rect.right,
-        leftGap: rect.left - scrollRect.left,
-        rightGap: availableRight - rect.right,
-        scrollbarWidth: scroll.offsetWidth - scroll.clientWidth,
+        leftGap: rect.left - contentLeft,
+        rightGap: contentRight - rect.right,
+        scrollbarWidth,
         scrollbarMode: scrollStyle.scrollbarWidth,
         scrollbarGutter: scrollStyle.scrollbarGutter,
         flowLeft: flowRect.left + parseFloat(flowStyle.paddingLeft),

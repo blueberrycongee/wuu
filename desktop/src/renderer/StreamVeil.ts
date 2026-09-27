@@ -1,6 +1,7 @@
 // Cadence and range tracking adapted from Zeron (MIT), Copyright (c) 2026 Wing.
 // The complete upstream notice is retained in desktop/vendor/zeron/LICENSE.
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
@@ -61,7 +62,7 @@ type HighlightRegistry = Map<string, Set<Range>>;
 type HighlightConstructor = new (...ranges: Range[]) => Set<Range>;
 type TextEntry = { node: Text; start: number; end: number; color: string };
 type PaintGroup = { name: string; highlight: Set<Range>; rule: CSSStyleRule; color: string };
-type PaintedSpan = { end: number; entries: TextEntry[]; groups: Map<string, PaintGroup> };
+type PaintedSpan = { end: number; entries: TextEntry[]; groups: Map<string, PaintGroup>; step: number };
 let nextPainter = 0;
 
 /**
@@ -72,7 +73,7 @@ let nextPainter = 0;
  */
 export function useStreamVeil(
   root: RefObject<HTMLDivElement | null>, text: string, live: boolean,
-  identity: string, stableBlocks = 0,
+  identity: string, stableBlocks = 0, active = true,
 ): void {
   const painter = useRef<{ update: () => void } | null>(null);
   const [painting, setPainting] = useState(live);
@@ -84,12 +85,13 @@ export function useStreamVeil(
   const latestStableBlocks = useRef(stableBlocks);
   useLayoutEffect(() => { latestStableBlocks.current = stableBlocks; }, [stableBlocks]);
   useLayoutEffect(() => {
-    if (!painting) return;
+    // Hiding is not provider completion: discard pending paint immediately.
+    // A revealed pane starts with a full-opacity baseline, not a catch-up fade.
+    if (!painting || !active) return;
     const element = root.current;
     const registry = (globalThis.CSS as unknown as { highlights?: HighlightRegistry } | undefined)?.highlights;
     const HighlightClass = (globalThis as unknown as { Highlight?: HighlightConstructor }).Highlight;
     if (!element || !registry || !HighlightClass) return;
-    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
     const style = document.createElement("style");
     document.head.appendChild(style);
     const sheet = style.sheet!;
@@ -102,13 +104,23 @@ export function useStreamVeil(
     let offset = 0;
     let veil = new StreamVeil();
     let needsBaseline = true;
-    const disabled = (): boolean => motion.matches ||
-      document.documentElement.dataset.appearanceMotion === "reduce" || document.hidden;
+    // Computed color changes with the theme, not with each streamed token.
+    // Keep it until that attribute changes so a live tail does not force
+    // style resolution on every chunk.
+    let colorEpoch = 0;
+    const colorCache = new WeakMap<Element, { epoch: number; color: string }>();
+    const colorFor = (parent: Element): string => {
+      const hit = colorCache.get(parent);
+      if (hit !== undefined && hit.epoch === colorEpoch) return hit.color;
+      const color = getComputedStyle(parent).color;
+      colorCache.set(parent, { epoch: colorEpoch, color });
+      return color;
+    };
+    const disabled = (): boolean => prefersReducedMotion() || document.hidden;
     const read = (): { nodes: TextEntry[]; flat: string; committed: number } => {
       const nodes: TextEntry[] = [];
       let flat = "";
       let committed = 0;
-      const colors = new Map<Element, string>();
       let index = knownStableBlocks;
       for (let child = element.children.item(index); child; child = child.nextElementSibling, index++) {
         const walker = document.createTreeWalker(child, NodeFilter.SHOW_TEXT);
@@ -117,8 +129,7 @@ export function useStreamVeil(
           const parent = node.parentElement!;
           if (!parent.closest("p, li, td, th, code, blockquote") ||
               parent.closest('button, svg, [aria-hidden="true"], .rich-mermaid')) continue;
-          const color = colors.get(parent) ?? getComputedStyle(parent).color;
-          colors.set(parent, color);
+          const color = colorFor(parent);
           nodes.push({ node, start: offset + flat.length, end: offset + flat.length + node.length, color });
           flat += node.data;
         }
@@ -153,9 +164,15 @@ export function useStreamVeil(
         active.add(key);
         const state = painted.get(key);
         if (!state) continue;
+        // Eight opacity steps keep the fade, but a live highlight does not
+        // invalidate style on every animation frame.
+        const step = span.opacity >= 1 ? 8 : Math.round(span.opacity * 8);
+        if (state.step === step) continue;
+        state.step = step;
+        const mixed = step / 8;
         for (const group of state.groups.values()) {
           // Mutate the existing declaration, not the stylesheet or its rules.
-          group.rule.style.color = `color-mix(in srgb, ${group.color} ${span.opacity * 100}%, transparent)`;
+          group.rule.style.color = `color-mix(in srgb, ${group.color} ${mixed * 100}%, transparent)`;
         }
       }
       for (const [key, state] of painted) {
@@ -186,6 +203,17 @@ export function useStreamVeil(
     const update = (): void => {
       if (disabled()) { clear(); needsBaseline = true; finishIfIdle(); return; }
       if (knownStableBlocks > latestStableBlocks.current) needsBaseline = true;
+      // Promoted ranges are retained on the assumption that stable blocks never
+      // change. A final snapshot that rewrites the streamed text changes those
+      // nodes in place, and their old offsets would throw in Range.setStart;
+      // restart from the rewritten text instead.
+      for (const state of painted.values()) {
+        if (state.entries.some(entry => entry.end <= offset &&
+          (!entry.node.isConnected || entry.node.length !== entry.end - entry.start))) {
+          needsBaseline = true;
+          break;
+        }
+      }
       if (needsBaseline) {
         clear();
         knownStableBlocks = latestStableBlocks.current;
@@ -203,7 +231,7 @@ export function useStreamVeil(
         const key = String(span.start);
         let state = painted.get(key);
         if (state && state.end === span.end && span.end <= offset) continue;
-        if (!state) { state = { end: span.end, entries: [], groups: new Map() }; painted.set(key, state); }
+        if (!state) { state = { end: span.end, entries: [], groups: new Map(), step: -1 }; painted.set(key, state); }
         state.end = span.end;
         // React can replace text nodes or reset Range offsets while updating
         // characterData. Rebind the live part, retaining promoted stable ranges.
@@ -237,6 +265,9 @@ export function useStreamVeil(
           removeGroup(group);
           state.groups.delete(color);
         }
+        // New ranges start transparent. The next paint must write the
+        // current step even when opacity has not crossed another eighth.
+        state.step = -1;
       }
       veil.discardPrefix(committed);
       offset += committed;
@@ -244,19 +275,19 @@ export function useStreamVeil(
       paint(now);
     };
     painter.current = { update };
-    const reset = (): void => { needsBaseline = true; update(); };
-    const preferenceObserver = new MutationObserver(reset);
-    preferenceObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-appearance-motion", "data-theme"] });
-    motion.addEventListener("change", reset);
+    const reset = (): void => { colorEpoch += 1; needsBaseline = true; update(); };
+    const themeObserver = new MutationObserver(reset);
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    const stopReducedMotion = subscribeReducedMotion(reset);
     document.addEventListener("visibilitychange", reset);
     return () => {
       clear();
       painter.current = null;
       style.remove();
-      preferenceObserver.disconnect();
-      motion.removeEventListener("change", reset);
+      themeObserver.disconnect();
+      stopReducedMotion();
       document.removeEventListener("visibilitychange", reset);
     };
-  }, [root, identity, painting]);
-  useLayoutEffect(() => { painter.current?.update(); }, [text, live, stableBlocks, identity, painting]);
+  }, [root, identity, painting, active]);
+  useLayoutEffect(() => { painter.current?.update(); }, [text, live, stableBlocks, identity, painting, active]);
 }

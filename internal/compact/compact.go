@@ -674,6 +674,10 @@ func validateCompactResponse(resp providers.ChatResponse) error {
 	if resp.Truncated || finish == providers.FinishReasonLength {
 		return errCompactSummaryOutputLimit
 	}
+	if finish == providers.FinishReasonContinue {
+		// A one-shot summary cannot replace history with an intermediate response.
+		return errors.New("compact summary did not finish: provider requested continuation")
+	}
 	if strings.TrimSpace(resp.Content) == "" {
 		return errors.New("compact summary was empty")
 	}
@@ -1076,6 +1080,37 @@ func lastUserMessageIndex(messages []providers.ChatMessage) int {
 	return -1
 }
 
+// ForceTrimOverflowHistory drops older conversation after a provider overflow
+// when compact/fresh-context could not shrink the request. It keeps leading
+// non-summary system messages and the newest user turn, then repairs the
+// tool-call boundary so the replacement remains a valid provider transcript.
+func ForceTrimOverflowHistory(messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
+	if len(messages) == 0 {
+		return nil, errors.New("overflow trim requires conversation history")
+	}
+	systemPrefix, _, _, conversation := splitLeadingSystemMessages(messages)
+	if len(conversation) == 0 {
+		return nil, errors.New("overflow trim found no conversation messages")
+	}
+	keepStart := lastUserMessageIndex(conversation)
+	if keepStart < 0 {
+		keepStart = compactFallbackTailStart(conversation, compactDefaultKeepRecentTokens)
+	}
+	keepStart = adjustToolBoundary(conversation, keepStart)
+	if keepStart <= 0 || keepStart >= len(conversation) {
+		return nil, errors.New("overflow trim could not drop older conversation")
+	}
+	trimmed := append(providers.CloneChatMessages(systemPrefix), providers.CloneChatMessages(conversation[keepStart:])...)
+	repaired, err := providers.RepairAndValidateToolCallHistory(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	if len(repaired) >= len(messages) {
+		return nil, errors.New("overflow trim did not shrink conversation history")
+	}
+	return repaired, nil
+}
+
 func adjustToolBoundary(messages []providers.ChatMessage, start int) int {
 	if start <= 0 || start >= len(messages) || !strings.EqualFold(messages[start].Role, "tool") {
 		return start
@@ -1130,7 +1165,7 @@ func appendAttachmentOmissionNote(content string, images []providers.InputImage,
 		if mediaType == "" {
 			mediaType = "image"
 		}
-		fmt.Fprintf(&b, "[Image attachment omitted from compacted history: %s, %s.]", mediaType, compactMediaEvidence(image.Data, true))
+		fmt.Fprintf(&b, "[Image attachment omitted from compacted history: %s, %s%s.]", mediaType, compactMediaEvidence(image.Data, true), compactImagePathEvidence(image.LocalPath))
 	}
 	for i, file := range files {
 		if len(images) > 0 || i > 0 {
@@ -1280,7 +1315,7 @@ func writeSummaryPromptMessageWithLimits(b *strings.Builder, msg providers.ChatM
 		if mediaType == "" {
 			mediaType = "image"
 		}
-		fmt.Fprintf(b, "  [image omitted: %s, %s]\n", mediaType, compactMediaEvidence(image.Data, true))
+		fmt.Fprintf(b, "  [image omitted: %s, %s%s]\n", mediaType, compactMediaEvidence(image.Data, true), compactImagePathEvidence(image.LocalPath))
 	}
 	for _, file := range msg.Files {
 		mediaType := strings.TrimSpace(file.MediaType)

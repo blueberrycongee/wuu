@@ -5,7 +5,7 @@ import { WorkbenchConnectionContext } from "../../../desktop/src/renderer/Workbe
 import { webCredStore } from "./lib/credStore";
 import { RemoteDesktopBridge } from "./lib/desktopBridge";
 import { pairingURI, pairingExpired, pairingMatchesHost } from "./lib/pairing";
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft } from '../../../desktop/src/renderer/WuuIcons';
 import { ViewSwitchLoading } from '../../../desktop/src/renderer/LoadingViews';
 import { isNative } from './lib/native';
 
@@ -254,7 +254,7 @@ function StatusCard({
   return (
     <main className="web-gate">
       <section className="web-gate-card web-gate-status">
-        {title.startsWith('正在') && <ViewSwitchLoading inline />}
+        {title.startsWith('正在') && <ViewSwitchLoading placement="inline" />}
         <h1 role="status">{title}</h1>
         {detail ? <p className="web-gate-detail">{detail}</p> : null}
         {children}

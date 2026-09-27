@@ -36,7 +36,7 @@ export type RuntimeSettingsActionsDeps = {
   setBranchMenuOpen: (open: boolean) => void;
   setCodexRuntimeMenu: (update: SetStateAction<CodexRuntimeMenu>) => void;
   clearThreadPendingComposerMessages: (threadID: string) => void;
-  markOptimisticTurnInterrupted?: (threadID: string) => void;
+  requestThreadStop?: (thread: Thread) => Promise<void>;
   variantByModel: Map<string, string>;
 };
 
@@ -68,6 +68,7 @@ export type RuntimeSettingsActions = {
     variant?: string,
   ) => Promise<boolean>;
   selectRuntimeEffort: (nextVariant: string) => Promise<boolean>;
+  selectRuntimeSpeed: (speed: string) => Promise<boolean>;
   selectPermissionMode: (mode: PermissionMode, approveForMe?: boolean) => Promise<void>;
   setApproveForMe: (enabled: boolean) => Promise<void>;
   interrupt: () => Promise<void>;
@@ -75,6 +76,7 @@ export type RuntimeSettingsActions = {
 };
 
 type RuntimeSelectionUpdate = {
+  speed?: string;
   provider?: string;
   model?: string;
   effort?: string;
@@ -115,13 +117,15 @@ export function createRuntimeSettingsActions(
         ?? state.initialized.variant
         ?? state.initialized.effort
         ?? "";
-      rememberDraftRuntime(nextProvider, nextModel, nextEffort);
+      const nextSpeed = update.speed ?? ((nextProvider !== state.initialized.provider || nextModel !== state.initialized.model) ? "" : state.initialized.speed);
+      rememberDraftRuntime(nextProvider, nextModel, nextEffort, nextSpeed);
       deps.setAppState((current) => ({
         ...current,
         initialized: current.initialized ? {
           ...current.initialized,
           provider: nextProvider,
           model: nextModel,
+          speed: nextSpeed,
           variant: nextEffort,
           effort: nextEffort,
           permissions: {
@@ -220,7 +224,7 @@ export function createRuntimeSettingsActions(
       !variantChanged &&
       !connectionChanged &&
       !permissionModeChanged &&
-      !approveForMeChanged
+      !approveForMeChanged && update.speed === undefined
     ) {
       return;
     }
@@ -237,7 +241,20 @@ export function createRuntimeSettingsActions(
         nextVariant,
         nextPermissionMode,
         targetThread?.id,
+        update.speed,
       );
+      if (scope === "workspace") {
+        // Settings writes the workspace default, which is the same "last pick"
+        // the composer memory tracks. Recording it keeps the next new
+        // conversation on the model just chosen in Settings instead of an older
+        // composer pick for that provider. The server's effective variant belongs
+        // to this provider/model pair because the workspace holds one selection.
+        rememberDraftRuntime(
+          updated.provider,
+          updated.model,
+          updated.variant ?? updated.effort ?? "",
+        );
+      }
       deps.setAppState((current) => {
         // The result is workspace-effective, so initialized takes it
         // wholesale.
@@ -258,14 +275,15 @@ export function createRuntimeSettingsActions(
                 current.initialized.advanced_settings,
             }
           : current.initialized;
-        // Optimistic thread patch limited to the fields this call explicitly
-        // changed; the server's thread/updated snapshot stays the authority
-        // for resolved values.
+        // The response describes workspace defaults, not the target thread.
+        // Only the requested values may be used for a local thread patch;
+        // thread/updated carries the server's resolved selection.
         const threadPatch: Partial<Thread> = {
+          ...(update.speed === undefined ? {} : { speed: update.speed }),
           ...(nextProvider === undefined
             ? {}
-            : { model_provider: updated.provider }),
-          ...(nextModel === undefined ? {} : { model: updated.model }),
+            : { model_provider: nextProvider }),
+          ...(nextModel === undefined ? {} : { model: nextModel }),
           ...(nextVariant === undefined && nextEffort === undefined
             ? {}
             : {
@@ -279,24 +297,16 @@ export function createRuntimeSettingsActions(
             ? {}
             : { approve_for_me: update.approveForMe }),
         };
-        const next = updateThreadByID(
+        return updateThreadByID(
           { ...current, initialized },
           targetThread?.id,
           (thread) => ({ ...thread, ...threadPatch }),
         );
-        return {
-          ...next,
-          status: scope === "workspace" ? current.status : "ready",
-        };
       });
     } catch (error) {
-      if (scope === "session") deps.setAppState((current) => ({
-        ...current,
-        status:
-          error instanceof Error
-            ? error.message
-            : translateCurrent("runtime.settingsUpdateFailed"),
-      }));
+      if (scope === "session") {
+        showErrorToast(error, translateCurrent("runtime.settingsUpdateFailed"));
+      }
       throw error;
     }
   }
@@ -343,37 +353,24 @@ export function createRuntimeSettingsActions(
     if (!deps.getAppState().initialized || deps.getViewContextSwitchPending()) {
       return;
     }
-    try {
-      const updated = await window.wuu.updateAdvancedSettings(settings);
-      deps.setAppState((current) => {
-        const initialized = current.initialized
-          ? {
-              ...current.initialized,
-              advanced_settings: updated.advanced_settings,
-              model_aliases:
-                updated.model_aliases ??
-                settings.model_aliases ??
-                current.initialized.model_aliases,
-              model_roles: updated.model_roles ?? current.initialized.model_roles,
-              providers: updated.providers ?? current.initialized.providers,
-            }
-          : current.initialized;
-        return {
-          ...current,
-          initialized,
-          status: current.status === "ready" ? current.status : "ready",
-        };
-      });
-    } catch (error) {
-      deps.setAppState((current) => ({
-        ...current,
-        status:
-          error instanceof Error
-            ? error.message
-            : translateCurrent("runtime.advancedUpdateFailed"),
-      }));
-      throw error;
-    }
+    // Settings owns save feedback; neither success nor failure changes the
+    // conversation status consumed by the composer.
+    const updated = await window.wuu.updateAdvancedSettings(settings);
+    deps.setAppState((current) => ({
+      ...current,
+      initialized: current.initialized
+        ? {
+            ...current.initialized,
+            advanced_settings: updated.advanced_settings,
+            model_aliases:
+              updated.model_aliases ??
+              settings.model_aliases ??
+              current.initialized.model_aliases,
+            model_roles: updated.model_roles ?? current.initialized.model_roles,
+            providers: updated.providers ?? current.initialized.providers,
+          }
+        : current.initialized,
+    }));
   }
 
   async function updateGeneralSettings(
@@ -382,31 +379,16 @@ export function createRuntimeSettingsActions(
     if (!deps.getAppState().initialized || deps.getViewContextSwitchPending()) {
       return;
     }
-    try {
-      const updated = await window.wuu.updateGeneralSettings(settings);
-      deps.setAppState((current) => {
-        const initialized = current.initialized
-          ? {
-              ...current.initialized,
-              general_settings: updated.general_settings,
-            }
-          : current.initialized;
-        return {
-          ...current,
-          initialized,
-          status: current.status === "ready" ? current.status : "ready",
-        };
-      });
-    } catch (error) {
-      deps.setAppState((current) => ({
-        ...current,
-        status:
-          error instanceof Error
-            ? error.message
-            : translateCurrent("runtime.generalUpdateFailed"),
-      }));
-      throw error;
-    }
+    const updated = await window.wuu.updateGeneralSettings(settings);
+    deps.setAppState((current) => ({
+      ...current,
+      initialized: current.initialized
+        ? {
+            ...current.initialized,
+            general_settings: updated.general_settings,
+          }
+        : current.initialized,
+    }));
   }
 
   async function removeProvider(
@@ -421,43 +403,28 @@ export function createRuntimeSettingsActions(
     if (!target) {
       return;
     }
-    try {
-      const updated = await window.wuu.removeProvider(target, options);
-      deps.setAppState((current) => {
-        const initialized = current.initialized
-          ? {
-              ...current.initialized,
-              provider: updated.provider ?? current.initialized.provider,
-              model: updated.model ?? current.initialized.model,
-              effort: updated.effort ?? current.initialized.effort,
-              variant: updated.variant ?? current.initialized.variant,
-              permissions:
-                updated.permissions ?? current.initialized.permissions,
-              extension_trust:
-                updated.extension_trust ?? current.initialized.extension_trust,
-              providers: updated.providers ?? current.initialized.providers,
-              advanced_settings:
-                updated.advanced_settings ??
-                current.initialized.advanced_settings,
-            }
-          : current.initialized;
-        return {
-          ...current,
-          initialized,
-          status: current.status === "ready" ? current.status : "ready",
-        };
-      });
-      if (state.initialized) {
-        void loadCodexModelsForProvider(updated.provider);
-      }
-    } catch (error) {
-      deps.setAppState((current) => ({
-        ...current,
-        status:
-          error instanceof Error ? error.message : translateCurrent("runtime.providerRemoveFailed"),
-      }));
-      throw error;
-    }
+    const updated = await window.wuu.removeProvider(target, options);
+    deps.setAppState((current) => ({
+      ...current,
+      initialized: current.initialized
+        ? {
+            ...current.initialized,
+            provider: updated.provider ?? current.initialized.provider,
+            model: updated.model ?? current.initialized.model,
+            effort: updated.effort ?? current.initialized.effort,
+            variant: updated.variant ?? current.initialized.variant,
+            permissions:
+              updated.permissions ?? current.initialized.permissions,
+            extension_trust:
+              updated.extension_trust ?? current.initialized.extension_trust,
+            providers: updated.providers ?? current.initialized.providers,
+            advanced_settings:
+              updated.advanced_settings ??
+              current.initialized.advanced_settings,
+          }
+        : current.initialized,
+    }));
+    void loadCodexModelsForProvider(updated.provider);
   }
 
   function toggleCodexRuntimeMenu(
@@ -561,8 +528,7 @@ export function createRuntimeSettingsActions(
       await sendRuntimeSelection({ provider, model, variant: nextVariant });
       rememberDraftRuntime(provider, model, nextVariant);
       return true;
-    } catch (error) {
-      showErrorToast(error, translateCurrent("runtime.settingsUpdateFailed"));
+    } catch {
       return false;
     }
   }
@@ -581,11 +547,18 @@ export function createRuntimeSettingsActions(
         nextVariant,
       );
       return true;
-    } catch (error) {
-      showErrorToast(error, translateCurrent("runtime.settingsUpdateFailed"));
+    } catch {
       return false;
     }
     // Keep the panel open — see selectRuntimeModel.
+  }
+
+  async function selectRuntimeSpeed(speed: string): Promise<boolean> {
+    if (!deps.getAppState().initialized || deps.getViewContextSwitchPending()) return false;
+    try {
+      await sendRuntimeSelection({ speed });
+      return true;
+    } catch { return false; }
   }
 
   async function selectPermissionMode(mode: PermissionMode, approveForMe?: boolean): Promise<void> {
@@ -604,7 +577,7 @@ export function createRuntimeSettingsActions(
         writeDraftApproveForMeMemory(approveForMe);
       }
     } catch {
-      // Failure already surfaced through the status line.
+      // sendRuntimeSelection reports the failure through the shared toast.
     }
     deps.setAccessMenuOpen(false);
   }
@@ -617,7 +590,7 @@ export function createRuntimeSettingsActions(
       await sendRuntimeSelection({ approveForMe: enabled });
       writeDraftApproveForMeMemory(enabled);
     } catch {
-      // Failure already surfaced through the status line.
+      // sendRuntimeSelection reports the failure through the shared toast.
     }
   }
 
@@ -626,8 +599,8 @@ export function createRuntimeSettingsActions(
     if (!thread) {
       return;
     }
-    deps.markOptimisticTurnInterrupted?.(thread.id);
-    await window.wuu.interruptTurn(thread.id);
+    if (deps.requestThreadStop) await deps.requestThreadStop(thread);
+    else await window.wuu.interruptTurn(thread.id);
   }
 
   async function interruptPane(pane: ConversationPaneID): Promise<void> {
@@ -635,13 +608,17 @@ export function createRuntimeSettingsActions(
     if (!thread) {
       return;
     }
-    deps.markOptimisticTurnInterrupted?.(thread.id);
-    await window.wuu.interruptTurn(thread.id);
+    if (deps.requestThreadStop) await deps.requestThreadStop(thread);
+    else await window.wuu.interruptTurn(thread.id);
   }
 
-  function rememberDraftRuntime(provider: string, model: string, effort: string): void {
-    writeDraftRuntimeMemory({ provider, model, effort });
+  function rememberDraftRuntime(provider: string, model: string, effort: string, speed?: string): void {
     const state = deps.getAppState();
+    const active = activeThreadForState(state);
+    const currentProvider = active?.model_provider ?? state.initialized?.provider;
+    const currentModel = active?.model ?? state.initialized?.model;
+    const rememberedSpeed = speed ?? (provider === currentProvider && model === currentModel ? active?.speed ?? state.initialized?.speed : undefined);
+    writeDraftRuntimeMemory({ provider, model, effort, ...(rememberedSpeed === undefined ? {} : { speed: rememberedSpeed }) });
     const scope = activeThreadForState(state)?.id ?? "workspace";
     deps.variantByModel.set(modelSelectionKey(scope, provider, model), effort);
   }
@@ -656,6 +633,7 @@ export function createRuntimeSettingsActions(
     loadCodexModelsForProvider,
     selectRuntimeModel,
     selectRuntimeEffort,
+    selectRuntimeSpeed,
     selectPermissionMode,
     setApproveForMe,
     interrupt,

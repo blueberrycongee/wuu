@@ -3,6 +3,7 @@ package automation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -12,11 +13,12 @@ import (
 )
 
 type testHost struct {
-	mu      sync.Mutex
-	state   string
-	methods []string
-	creates []pluginapi.SessionCreateParams
-	sends   []pluginapi.SessionSendParams
+	mu        sync.Mutex
+	state     string
+	sendState string
+	methods   []string
+	creates   []pluginapi.SessionCreateParams
+	sends     []pluginapi.SessionSendParams
 }
 
 func (h *testHost) InitializeParams() pluginapi.InitializeParams { return pluginapi.InitializeParams{} }
@@ -50,7 +52,11 @@ func (h *testHost) CallHost(_ context.Context, method string, params, result any
 		var input pluginapi.SessionSendParams
 		_ = json.Unmarshal(encoded, &input)
 		h.sends = append(h.sends, input)
-		response = pluginapi.SessionSendResult{State: "running", SessionID: input.SessionID, TurnID: "turn-one"}
+		state := h.sendState
+		if state == "" {
+			state = "running"
+		}
+		response = pluginapi.SessionSendResult{State: state, SessionID: input.SessionID, TurnID: "turn-one", QueueID: "queue-1"}
 	}
 	encoded, _ := json.Marshal(response)
 	return json.Unmarshal(encoded, result)
@@ -224,6 +230,66 @@ func TestAutomationPartialUpdatePreservesBooleanFields(t *testing.T) {
 	}
 }
 
+// unavailableHost models the startup window: the plugin is already activated,
+// but the host has not bound the session service yet.
+type unavailableHost struct{ testHost }
+
+func (h *unavailableHost) CallHost(ctx context.Context, method string, params, result any) error {
+	if method == pluginapi.HostServiceSessionCreate || method == pluginapi.HostServiceSessionSend {
+		return errors.New("session service is unavailable")
+	}
+	return h.testHost.CallHost(ctx, method, params, result)
+}
+
+func TestAutomationFireDueKeepsOverdueTaskWhenSessionServiceUnavailable(t *testing.T) {
+	now := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	host := &unavailableHost{}
+	c := &controller{host: host, workspaceID: "workspace-one", workspaceRoot: "/workspace/one", tasks: map[string]Task{}, now: func() time.Time { return now }}
+	task := Task{ID: "task-once", Title: "Once", Prompt: "Review", Mode: "new_thread", Recurring: false, Durable: true, WorkspaceID: "workspace-one", WorkspaceRoot: "/workspace/one", NextRunAt: now.Add(-time.Minute)}
+	c.tasks[task.ID] = task
+
+	c.fireDue(context.Background())
+
+	c.mu.Lock()
+	_, present := c.tasks[task.ID]
+	c.mu.Unlock()
+	if !present {
+		t.Fatal("one-shot task left the schedule without ever being dispatched")
+	}
+	if runs := c.snapshotRuns(); len(runs) != 0 {
+		t.Fatalf("placeholder run retained for an unavailable session service: %+v", runs)
+	}
+}
+
+func TestAutomationFireDueCatchesUpOnceSessionServiceBinds(t *testing.T) {
+	now := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	host := &unavailableHost{}
+	c := &controller{host: host, workspaceID: "workspace-one", workspaceRoot: "/workspace/one", tasks: map[string]Task{}, now: func() time.Time { return now }}
+	task := Task{ID: "task-daily", Title: "Daily", Prompt: "Review", Cron: "1 9 * * *", Timezone: "UTC", Mode: "new_thread", Recurring: true, Durable: true, WorkspaceID: "workspace-one", WorkspaceRoot: "/workspace/one", NextRunAt: now.Add(-time.Minute)}
+	c.tasks[task.ID] = task
+
+	c.fireDue(context.Background())
+	c.mu.Lock()
+	pending := c.tasks[task.ID]
+	c.mu.Unlock()
+	if !pending.NextRunAt.Equal(task.NextRunAt) {
+		t.Fatalf("recurring task advanced while the session service was unavailable: %s", pending.NextRunAt)
+	}
+
+	c.host = &testHost{}
+	c.fireDue(context.Background())
+	c.mu.Lock()
+	advanced := c.tasks[task.ID]
+	c.mu.Unlock()
+	if !advanced.NextRunAt.After(now) {
+		t.Fatalf("recurring task did not advance after dispatch: %s", advanced.NextRunAt)
+	}
+	runs := c.snapshotRuns()
+	if len(runs) != 1 || runs[0].Status != "running" || runs[0].TurnID != "turn-one" {
+		t.Fatalf("catch-up run = %+v", runs)
+	}
+}
+
 func boolPointer(value bool) *bool { return &value }
 
 type blockingSendHost struct {
@@ -321,5 +387,79 @@ func TestAutomationRunRequestsAreStableForOneScheduledOccurrence(t *testing.T) {
 	}
 	if len(host.sends) != 2 || host.sends[0].RequestID != host.sends[1].RequestID {
 		t.Fatalf("send requests = %+v", host.sends)
+	}
+}
+
+func TestAutomationSettleRunningMarksQueuedRunRunning(t *testing.T) {
+	now := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	host := &testHost{}
+	c := &controller{host: host, tasks: map[string]Task{}, now: func() time.Time { return now }}
+	run := Run{ID: "run-queued", TaskID: "task-queued", RequestID: "automation-run-queued", Status: "queued", QueueID: "queue-1", TriggeredAt: now}
+	c.mu.Lock()
+	c.runs = []Run{run}
+	c.mu.Unlock()
+
+	if err := c.settle(context.Background(), pluginapi.TurnLifecycleInput{RequestID: run.RequestID, State: "running", ThreadID: "session-1", TurnID: "turn-1", QueueID: "queue-1"}); err != nil {
+		t.Fatal(err)
+	}
+	runs := c.snapshotRuns()
+	if len(runs) != 1 || runs[0].Status != "running" || runs[0].SessionID != "session-1" || runs[0].TurnID != "turn-1" || runs[0].QueueID != "queue-1" || runs[0].CompletedAt != nil {
+		t.Fatalf("running run = %+v", runs)
+	}
+}
+
+func TestAutomationSettleRunningDoesNotRevertTerminalRun(t *testing.T) {
+	now := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	host := &testHost{}
+	c := &controller{host: host, tasks: map[string]Task{}, now: func() time.Time { return now }}
+	finished := now.Add(5 * time.Minute)
+	run := Run{ID: "run-done", TaskID: "task-done", RequestID: "automation-run-done", Status: "completed", SessionID: "session-1", TurnID: "turn-done", QueueID: "queue-1", TriggeredAt: now, CompletedAt: &finished}
+	c.mu.Lock()
+	c.runs = []Run{run}
+	c.mu.Unlock()
+
+	if err := c.settle(context.Background(), pluginapi.TurnLifecycleInput{RequestID: run.RequestID, State: "running", ThreadID: "session-1", TurnID: "turn-late", QueueID: "queue-1"}); err != nil {
+		t.Fatal(err)
+	}
+	runs := c.snapshotRuns()
+	if len(runs) != 1 || runs[0].Status != "completed" || runs[0].TurnID != "turn-done" || runs[0].CompletedAt == nil || *runs[0].CompletedAt != finished {
+		t.Fatalf("terminal run = %+v", runs)
+	}
+}
+
+func TestAutomationFireDoesNotDowngradeRunningRun(t *testing.T) {
+	now := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	host := &blockingSendHost{started: started, release: release}
+	host.sendState = "queued"
+	c := &controller{host: host, workspaceID: "workspace-one", workspaceRoot: "/workspace/one", tasks: map[string]Task{}, now: func() time.Time { return now }}
+	task := Task{ID: "task-late-queued", Title: "Daily review", Prompt: "Review open work", Mode: "new_thread", WorkspaceID: "workspace-one", WorkspaceRoot: "/workspace/one", NextRunAt: now}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.fire(context.Background(), task, now)
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for in-flight session send")
+	}
+
+	requestID := fmt.Sprintf("automation-run-%s-%d", task.ID, now.Unix())
+	if err := c.settle(context.Background(), pluginapi.TurnLifecycleInput{RequestID: requestID, State: "running", ThreadID: "generated-session", TurnID: "turn-early", QueueID: "queue-1"}); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for late fire to finish")
+	}
+
+	runs := c.snapshotRuns()
+	if len(runs) != 1 || runs[0].Status != "running" || runs[0].TurnID != "turn-early" || runs[0].SessionID != "generated-session" || runs[0].QueueID != "queue-1" {
+		t.Fatalf("run after late queued response = %+v", runs)
 	}
 }

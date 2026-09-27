@@ -10,11 +10,11 @@ import {
   emptyRuntimeState,
   loadRuntime,
   loadRuntimeRestore,
+  loadThreadListRefresh,
   applyRuntimeRestore,
-  selectRuntimeContext,
 } from "./RuntimeLoadState";
 
-import { initialState, createThreadSessionTab } from "./AppState";
+import { initialState, createThreadSessionTab, reconcileListedThreadState } from "./AppState";
 import { writeDraftRuntimeMemory } from "./DraftRuntimeMemory";
 import { streamTextStore, streamTextKey } from "./StreamText";
 
@@ -50,7 +50,7 @@ function thread(id: string, overrides: Partial<Thread> = {}): Thread {
   } as Thread;
 }
 
-function projectList(activeContext?: RuntimeContext): ProjectListResult {
+function workspaceList(activeContext?: RuntimeContext): ProjectListResult {
   return {
     projects: [],
     active_context: activeContext,
@@ -75,7 +75,7 @@ describe("runtime load helpers", () => {
     const listArchivedThreads = vi.fn().mockResolvedValue({ threads: [] });
     installWuuStub({ initialize, listThreads, listArchivedThreads });
 
-    const loading = loadRuntime(projectList(activeContext));
+    const loading = loadRuntime(workspaceList(activeContext));
 
     expect(initialize).toHaveBeenCalledOnce();
     expect(listThreads).toHaveBeenCalledOnce();
@@ -130,7 +130,7 @@ describe("runtime load helpers", () => {
       listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
     });
 
-    const state = await loadRuntime(projectList(activeContext));
+    const state = await loadRuntime(workspaceList(activeContext));
 
     expect(state.initialized).toMatchObject({
       provider: "tokenhub",
@@ -144,9 +144,9 @@ describe("runtime load helpers", () => {
     const initialize = vi.fn();
     installWuuStub({ initialize });
 
-    const state = await loadRuntime(projectList(undefined));
+    const state = await loadRuntime(workspaceList(undefined));
 
-    expect(state).toEqual(emptyRuntimeState(projectList(undefined)));
+    expect(state).toEqual(emptyRuntimeState(workspaceList(undefined)));
     expect(initialize).not.toHaveBeenCalled();
   });
 
@@ -158,7 +158,7 @@ describe("runtime load helpers", () => {
     };
     const message =
       "工作区目录当前不可用：/tmp/offline-project。请恢复该目录，或从工作区菜单选择“重新定位…”。";
-    const projectState: ProjectListResult = {
+    const workspaceState: ProjectListResult = {
       projects: [
         {
           id: "project-1",
@@ -183,9 +183,9 @@ describe("runtime load helpers", () => {
     const listArchivedThreads = vi.fn();
     installWuuStub({ initialize, listThreads, listArchivedThreads });
 
-    const state = await loadRuntime(projectState);
+    const state = await loadRuntime(workspaceState);
 
-    expect(state.projects).toEqual(projectState.projects);
+    expect(state.projects).toEqual(workspaceState.projects);
     expect(state.activeContext).toEqual(activeContext);
     expect(state.activeProjectId).toBe("project-1");
     expect(state.initialized).toBeUndefined();
@@ -194,31 +194,6 @@ describe("runtime load helpers", () => {
     expect(initialize).not.toHaveBeenCalled();
     expect(listThreads).not.toHaveBeenCalled();
     expect(listArchivedThreads).not.toHaveBeenCalled();
-  });
-
-  it("selects project and no-project contexts through the desktop API", async () => {
-    const projectContext: RuntimeContext = {
-      kind: "project",
-      project_id: "project-1",
-      cwd: "/tmp/wuu",
-    };
-    const noProjectContext: RuntimeContext = {
-      kind: "no_project",
-      cwd: "/tmp/scratch",
-    };
-    const selectProject = vi
-      .fn()
-      .mockResolvedValue(projectList(projectContext));
-    const selectNoProject = vi
-      .fn()
-      .mockResolvedValue(projectList(noProjectContext));
-    installWuuStub({ selectProject, selectNoProject });
-
-    await selectRuntimeContext(projectContext);
-    await selectRuntimeContext(noProjectContext);
-
-    expect(selectProject).toHaveBeenCalledWith("project-1");
-    expect(selectNoProject).toHaveBeenCalledWith(false, "/tmp/scratch");
   });
 
   it("resumes the latest non-pinned thread when loading an active runtime", async () => {
@@ -251,7 +226,7 @@ describe("runtime load helpers", () => {
       resumeThread: vi.fn().mockResolvedValue({ thread: resumed }),
     });
 
-    const state = await loadRuntime(projectList(activeContext));
+    const state = await loadRuntime(workspaceList(activeContext));
 
     expect(state.thread?.id).toBe("latest");
     expect(state.initialized?.model).toBe("gpt-test");
@@ -280,7 +255,7 @@ describe("runtime load helpers", () => {
       resumeThread,
     });
 
-    const state = await loadRuntime(projectList(activeContext));
+    const state = await loadRuntime(workspaceList(activeContext));
 
     expect(resumeThread).toHaveBeenCalledWith("live");
     expect(state.thread?.id).toBe("live");
@@ -301,7 +276,7 @@ describe("runtime load helpers", () => {
       resumeThread,
     });
 
-    const state = await loadRuntime(projectList(activeContext));
+    const state = await loadRuntime(workspaceList(activeContext));
 
     expect(resumeThread).not.toHaveBeenCalled();
     expect(state.thread).toBeUndefined();
@@ -324,7 +299,7 @@ describe("runtime load helpers", () => {
       listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
     });
 
-    const state = await loadRuntime(projectList(activeContext));
+    const state = await loadRuntime(workspaceList(activeContext));
 
     expect(state.status).toBe("请配置模型凭据");
     expect(state.activeContext).toEqual(activeContext);
@@ -351,7 +326,7 @@ describe("runtime load helpers", () => {
         .mockResolvedValue({ threads: [archivedFromPriorCwd] }),
     });
 
-    const state = await loadRuntime(projectList(activeContext), {
+    const state = await loadRuntime(workspaceList(activeContext), {
       resumeLatestThread: false,
     });
 
@@ -368,6 +343,74 @@ describe("runtime load helpers", () => {
   });
 });
 
+
+describe("summary list refresh", () => {
+  function running(id: string): Thread {
+    return thread(id, { status: "in_progress", turns: [{
+      id: `${id}-turn`, status: "in_progress", items_view: "full", items: [],
+    }] });
+  }
+
+  it("repairs both panes and cached running histories without hydrating the catalog", async () => {
+    const primary = running("primary");
+    const secondary = running("secondary");
+    const cached = running("cached");
+    const live = running("live");
+    const completed = thread(primary.id, { turns: [{
+      ...primary.turns[0], status: "completed",
+      items: [{ id: "answer", type: "agent_message", text: "Final answer", terminal: true }],
+    }] });
+    const failed = thread(secondary.id, { turns: [{
+      ...secondary.turns[0], status: "failed", error: { message: "Provider unavailable" },
+    }] });
+    const interrupted = thread(cached.id, { turns: [{ ...cached.turns[0], status: "interrupted" }] });
+    const summaries = [completed, failed, interrupted, live, thread("unopened")]
+      .map(item => ({ ...item, turns: [] }));
+    const resumeThread = vi.fn(async (id?: string) => ({
+      thread: [completed, failed, interrupted].find(item => item.id === id)!,
+    }));
+    installWuuStub({ listThreads: vi.fn().mockResolvedValue({ threads: summaries }), resumeThread });
+    const state = { ...initialState, thread: primary, secondaryThread: secondary,
+      threads: [primary, secondary, cached, live], activePane: "secondary" as const, running: true };
+
+    const refreshed = reconcileListedThreadState(state, await loadThreadListRefresh(state));
+
+    expect(resumeThread.mock.calls.map(([id]) => id).sort()).toEqual(["cached", "primary", "secondary"]);
+    expect(refreshed.thread?.turns).toEqual(completed.turns);
+    expect(refreshed.secondaryThread?.turns).toEqual(failed.turns);
+    expect(refreshed.threads.find(item => item.id === cached.id)?.turns).toEqual(interrupted.turns);
+    expect(refreshed.threads.find(item => item.id === live.id)?.turns).toEqual(live.turns);
+    expect(refreshed.threads.find(item => item.id === "unopened")?.turns).toEqual([]);
+    expect(refreshed.running).toBe(false);
+    expect(refreshed.activePane).toBe("secondary");
+  });
+
+  it("keeps failed repairs retryable without blocking other repairs or discovery", async () => {
+    const one = running("one");
+    const two = running("two");
+    const finished = [one, two].map(item => thread(item.id, {
+      turns: [{ ...item.turns[0], status: "completed" }],
+    }));
+    const resumeThread = vi.fn(async (id?: string) => ({ thread: finished.find(item => item.id === id)! }))
+      .mockRejectedValueOnce(new Error("Temporary disconnect"));
+    installWuuStub({
+      listThreads: vi.fn().mockResolvedValue({ threads: [thread("one"), thread("two"), thread("new")] }),
+      resumeThread,
+    });
+    const state = { ...initialState, thread: one, threads: [one, two], running: true };
+    const first = reconcileListedThreadState(state, await loadThreadListRefresh(state));
+    expect(first.thread?.turns).toEqual(one.turns);
+    expect(first.threads.find(item => item.id === "two")?.turns).toEqual(finished[1].turns);
+    expect(first.threads.some(item => item.id === "new")).toBe(true);
+    expect(first.running).toBe(true);
+
+    resumeThread.mockClear();
+    const retried = reconcileListedThreadState(first, await loadThreadListRefresh(first));
+    expect(resumeThread).toHaveBeenCalledExactlyOnceWith("one");
+    expect(retried.thread?.turns).toEqual(finished[0].turns);
+    expect(retried.running).toBe(false);
+  });
+});
 
 describe("runtime restoration", () => {
   const context: RuntimeContext = { kind: "no_project", cwd: "/tmp/wuu" };

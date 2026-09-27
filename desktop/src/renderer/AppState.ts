@@ -1,7 +1,6 @@
 import type {
   Agent,
   AppServerNotification,
-  ChannelRoom,
   ConfigChangedNotification,
   DesktopProject,
   ExtensionInventoryRecord,
@@ -10,6 +9,7 @@ import type {
   TodoUpdate,
   PluginInventoryChangedNotification,
   RuntimeContext,
+  ResponseSelection,
   ServerEvent,
   Thread,
   ThreadItem,
@@ -17,14 +17,17 @@ import type {
 } from "../shared/protocol";
 import {
   OPTIMISTIC_TURN_ID_PREFIX,
+  reconcileOptimisticTurns,
   type ComposerFile,
   type ComposerImage,
 } from "./ComposerMessages";
 import { parseRequestedHandoffIntent } from "./HandoffDraft";
+import { localTurnTiming } from "./LocalTurnTiming";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
 import { threadDisplayTitle } from "./ThreadTitles";
 import { sortChildAgents } from "./ThreadAgents";
 import {
+  hasAuthoritativeTurnItems,
   mergeTurnItemsInOrder,
   orderedTurnItems,
   upsertTurnItemInOrder,
@@ -56,6 +59,7 @@ type ComposerDraftState = {
   prompt: string;
   images: ComposerImage[];
   files: ComposerFile[];
+  selections?: ResponseSelection[];
 };
 
 export type TurnStreamStatus = {
@@ -82,6 +86,12 @@ function cloneComposerDraft(draft: ComposerDraftState): ComposerDraftState {
     prompt: draft.prompt,
     images: draft.images.map((image) => ({ ...image })),
     files: draft.files.map((file) => ({ ...file })),
+    ...(draft.selections?.length ? {
+      selections: draft.selections.map((selection) => ({
+        ...selection,
+        source: { ...selection.source },
+      })),
+    } : {}),
   };
 }
 
@@ -95,6 +105,10 @@ type SessionTab =
       images: ComposerImage[];
       files: ComposerFile[];
       createdAt: number;
+      selections?: ResponseSelection[];
+      // The draft starts a project: its first message names the project and
+      // becomes the coordinator's first instruction.
+      project?: true;
     }
   | {
       id: string;
@@ -105,37 +119,17 @@ type SessionTab =
       prompt: string;
       images: ComposerImage[];
       files: ComposerFile[];
+      selections?: ResponseSelection[];
     }
   | {
       id: string;
       kind: "skills";
       context: RuntimeContext;
       title: string;
-    }
-  | {
-      id: string;
-      kind: "channel-room";
-      context: RuntimeContext;
-      roomID: string;
-      title: string;
-      prompt: string;
-      images: ComposerImage[];
-      files: ComposerFile[];
-    }
-  | {
-      id: string;
-      kind: "agents";
-      context: RuntimeContext;
-      title: string;
-    }
-  | {
-      id: string;
-      kind: "tasks";
-      context: RuntimeContext;
-      title: string;
     };
 
 type AppState = {
+  configError?: string;
   initialized?: InitializeResult;
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
@@ -371,6 +365,17 @@ function handleStreamingNotification(
   const notification = event.message;
   const params = notification.params as Record<string, unknown> | undefined;
   switch (notification.method) {
+    case "thread/resumed": {
+      const thread = threadFromRecord(recordValue(params, "thread"));
+      if (thread) {
+        // React may apply the snapshot later; live deltas already use this cache.
+        ingestStreamOnce(event, () => {
+          syncRunningThreadStreamItems(thread);
+          return false;
+        });
+      }
+      return "state";
+    }
     case "item/agentMessage/delta": {
       const active = notificationTargetsActiveThread(params, state);
       if (!active && !notificationTargetsKnownThread(params, state)) {
@@ -439,6 +444,25 @@ function handleStreamingNotification(
     default:
       return "state";
   }
+}
+
+const COALESCED_BACKGROUND_THREAD_METHODS = new Set([
+  "item/started",
+  "item/completed",
+  "item/removed",
+]);
+
+/** Tool rows for a session the user is not looking at. The visible tree does not need each one immediately. */
+export function isCoalescedBackgroundThreadEvent(event: ServerEvent, state: AppState): boolean {
+  if (event.kind !== "notification" || !COALESCED_BACKGROUND_THREAD_METHODS.has(event.message.method)) {
+    return false;
+  }
+  const params = event.message.params as Record<string, unknown> | undefined;
+  const threadID = threadIDFromParams(params);
+  if (!threadID || threadID === state.thread?.id || threadID === state.secondaryThread?.id) {
+    return false;
+  }
+  return state.threads.some((thread) => thread.id === threadID);
 }
 
 function streamHandlingForThread(
@@ -636,12 +660,18 @@ function reduceNotification(
 ): AppState {
   const params = notification.params as Record<string, unknown> | undefined;
   switch (notification.method) {
+    case "config/error": {
+      if (typeof params?.message !== "string") return state;
+      return { ...state, configError: params.message, status: params.message };
+    }
     case "config/changed": {
       if (!state.initialized || !isConfigChangedNotification(params)) {
         return state;
       }
       return {
         ...state,
+        configError: undefined,
+        status: state.configError && state.status === state.configError ? "ready" : state.status,
         initialized: {
           ...state.initialized,
           provider: params.provider,
@@ -681,16 +711,11 @@ function reduceNotification(
           : state.secondaryThread?.id === thread.id
             ? state.secondaryThread
             : state.threads.find((item) => item.id === thread.id);
-      // thread/start emits its notification before the matching RPC response.
-      // If the renderer has already inserted an optimistic first turn, the
-      // notification's empty snapshot must not erase it and briefly restore
-      // the empty-conversation hero.
+      // Creation and resume snapshots can arrive after a newer local send.
+      // Preserve that input and its sidebar label through the same merge used
+      // by background lists.
       const mergedThread = currentThread
-        ? {
-            ...thread,
-            turns: thread.turns.length > 0 ? thread.turns : currentThread.turns,
-            child_agents: thread.child_agents ?? currentThread.child_agents,
-          }
+        ? mergeListedThread(currentThread, thread)
         : thread;
       const knownThread = state.threads.some((item) => item.id === thread.id);
       const updatesVisibleThread =
@@ -772,12 +797,8 @@ function reduceNotification(
       }
       const threadID = threadIDFromParams(params);
       const threadIsActive = threadID === activeThreadIDForState(state);
-      return updateThreadByID(
-        state,
-        threadID,
-        (thread) => upsertTurn(thread, turn),
-        threadIsActive ? { running: true } : {},
-      );
+      const next = updateThreadByID(state, threadID, (thread) => upsertTurn(thread, turn));
+      return threadIsActive ? { ...next, running: isThreadRunning(activeThreadForState(next)) } : next;
     }
     case "item/started":
     case "item/completed": {
@@ -1279,24 +1300,22 @@ function updateThreadByID(
       sessionTabs: syncThreadSessionTabTitle(state.sessionTabs, thread),
     };
   }
-  let updated = false;
-  const threads = state.threads.map((thread) => {
-    if (thread.id !== threadID) {
-      return thread;
-    }
-    updated = true;
-    return update(thread);
-  });
-  if (!updated) {
+  const index = state.threads.findIndex((thread) => thread.id === threadID);
+  if (index < 0) {
     return state;
   }
-  const updatedThread = threads.find((thread) => thread.id === threadID);
+  const updatedThread = update(state.threads[index]);
+  if (updatedThread === state.threads[index]) {
+    return state;
+  }
+  const preserved = replaceThreadPreservingOrder(state.threads, updatedThread);
+  const threads = preserved ?? sortThreads(
+    state.threads.map((thread, threadIndex) => threadIndex === index ? updatedThread : thread),
+  );
   return {
     ...state,
-    threads: sortThreads(threads),
-    sessionTabs: updatedThread
-      ? syncThreadSessionTabTitle(state.sessionTabs, updatedThread)
-      : state.sessionTabs,
+    threads,
+    sessionTabs: syncThreadSessionTabTitle(state.sessionTabs, updatedThread),
   };
 }
 
@@ -1330,13 +1349,21 @@ function updateThread(
  * that is genuinely ahead of the client) breaks the prefix match, and we defer
  * to the resumed snapshot as authoritative. The overlapping prefix always uses
  * the server's (fresher) turn/item objects; only the client's extra tail
- * carries over.
+ * carries over. Full terminal turns are authoritative even when their items
+ * are a prefix: missing items there are obsolete, not newer local work.
  */
 export function reconcileResumedThreadTurns(
   resumed: Thread,
   local: Thread | undefined,
 ): Thread {
-  const localTurns = local?.turns;
+  const localTurns = local ? reconcileOptimisticTurns(local.turns, resumed.turns) : undefined;
+  if (localTurns) {
+    const turns = resumed.turns.map((turn) => {
+      const previous = localTurns.find((candidate) => candidate.id === turn.id);
+      return previous && previous.status !== "in_progress" && turn.status === "in_progress" ? previous : turn;
+    });
+    if (turns.some((turn, index) => turn !== resumed.turns[index])) resumed = { ...resumed, turns };
+  }
   if (!localTurns || localTurns.length < resumed.turns.length) {
     return resumed;
   }
@@ -1351,7 +1378,7 @@ export function reconcileResumedThreadTurns(
   let changed = false;
   const mergedTurns = resumed.turns.map((turn, index) => {
     const localTurn = localTurns[index];
-    if (localTurn.items.length <= turn.items.length) {
+    if (hasAuthoritativeTurnItems(turn) || localTurn.items.length <= turn.items.length) {
       return turn;
     }
     changed = true;
@@ -1375,6 +1402,11 @@ export function reconcileResumedThreadTurns(
 // started after the previous answer is ready is the same shape: keep an
 // in-progress tail when a stale snapshot still omits it.
 function mergeThreadUpdatedTurns(incoming: Turn[], current: Turn[]): Turn[] {
+  current = reconcileOptimisticTurns(current, incoming);
+  incoming = incoming.map((turn) => {
+    const previous = current.find((candidate) => candidate.id === turn.id);
+    return previous && previous.status !== "in_progress" && turn.status === "in_progress" ? previous : turn;
+  });
   if (incoming.length === 0) {
     return current;
   }
@@ -1408,7 +1440,40 @@ function turnItemsArePrefix(resumed: Turn, local: Turn): boolean {
   return true;
 }
 
+function sameSidebarOrder(left: Thread, right: Thread): boolean {
+  const leftRunning = isThreadRunning(left);
+  const rightRunning = isThreadRunning(right);
+  return leftRunning === rightRunning
+    && sidebarThreadSortTime(left, leftRunning) === sidebarThreadSortTime(right, rightRunning);
+}
+
+// Tool events rewrite one session without moving its sidebar row. Re-sorting
+// the whole list on each of those events is what makes a background ACP
+// session expensive once the workspace has a long session list.
+function replaceThreadPreservingOrder(threads: Thread[], thread: Thread): Thread[] | undefined {
+  const index = threads.findIndex((item) => item.id === thread.id);
+  if (index < 0) {
+    return undefined;
+  }
+  const current = threads[index];
+  if (!sameSidebarOrder(current, thread)) {
+    return undefined;
+  }
+  if (current === thread) {
+    return threads;
+  }
+  const next = threads.slice();
+  next[index] = thread;
+  return next;
+}
+
 function upsertThread(threads: Thread[], thread: Thread | undefined): Thread[] {
+  if (thread && isThread(thread)) {
+    const preserved = replaceThreadPreservingOrder(threads, thread);
+    if (preserved) {
+      return preserved;
+    }
+  }
   const validThreads = sortThreads(threads);
   if (!isThread(thread)) {
     return validThreads;
@@ -1418,7 +1483,7 @@ function upsertThread(threads: Thread[], thread: Thread | undefined): Thread[] {
   // action stays reversible from there. Read-only threads are still real
   // conversations that need to render — they only differ in mutation rights.
   // Filtering archived out of sidebar surfaces is the job of pinnedThreads /
-  // projectThreads / scratchThreads, not of this generic upsert.
+  // workspaceThreads / scratchThreads, not of this generic upsert.
   const index = validThreads.findIndex((item) => item.id === thread.id);
   if (index < 0) {
     return sortThreads([thread, ...validThreads]);
@@ -1447,10 +1512,9 @@ function conversationPaneThreadsByID(
 }
 
 function sortThreads(threads: Thread[]): Thread[] {
-  // Two-section sort. Running threads use `created_at` as the key so that
-  // streaming updates (which bump `updated_at`) do not reshuffle them —
-  // clicking or switching between two running threads must leave the sidebar
-  // order alone. Settled threads keep the recency-first behavior, so the most
+  // Two-section sort: running threads first, then settled ones. Keys come from
+  // `sidebarThreadSortTime`, so a running thread keeps one position for as long
+  // as it runs. Settled threads keep the recency-first behavior, so the most
   // recently completed conversation bubbles to the top of the settled group.
   // Archived threads stay in the list so the Settings → Archive page can show
   // them; sidebar surfaces must filter them out themselves.
@@ -1502,6 +1566,10 @@ function summarizeThreadForSidebar(
     agent_path: thread.agent_path,
     preview: thread.preview,
     title: thread.title,
+    source: thread.source,
+    project_id: thread.project_id,
+    project_exists: thread.project_exists,
+    project_role: thread.project_role,
     model_provider: thread.model_provider,
     model: thread.model,
     cwd: thread.cwd,
@@ -1514,6 +1582,7 @@ function summarizeThreadForSidebar(
     pinned: thread.pinned,
     folder_id: thread.folder_id,
     archived: thread.archived,
+    archive_reason: thread.archive_reason,
     forked_from_id: thread.forked_from_id,
     forked_from_turn_id: thread.forked_from_turn_id,
     forked_from_item_id: thread.forked_from_item_id,
@@ -1543,8 +1612,8 @@ function summarizeThreadsForSidebar(
   );
 }
 
-function summarizeProjectThreadsForSidebar(
-  projectThreadsByProjectID: Record<string, Thread[]>,
+function summarizeWorkspaceThreadsForSidebar(
+  workspaceThreadsByWorkspaceID: Record<string, Thread[]>,
   liveThreads: readonly Thread[],
   runningThreadIDs?: ReadonlySet<string>,
 ): Record<string, ThreadSummary[]> {
@@ -1564,8 +1633,8 @@ function summarizeProjectThreadsForSidebar(
     liveByID.set(thread.id, thread);
   }
   const next: Record<string, ThreadSummary[]> = {};
-  for (const [projectID, threads] of Object.entries(projectThreadsByProjectID)) {
-    next[projectID] = summarizeThreadsForSidebar(
+  for (const [workspaceID, threads] of Object.entries(workspaceThreadsByWorkspaceID)) {
+    next[workspaceID] = summarizeThreadsForSidebar(
       threads.map((thread) => liveByID.get(thread.id) ?? thread),
       runningThreadIDs,
     );
@@ -1607,9 +1676,7 @@ function sortThreadCandidates<T extends ThreadSortCandidate>(threads: T[]): T[] 
     const threadRunning = isThreadRunning(thread);
     const entry = {
       thread,
-      time: threadRunning
-        ? threadCreatedTime(thread)
-        : threadTime(thread),
+      time: sidebarThreadSortTime(thread, threadRunning),
     };
     (threadRunning ? running : settled).push(entry);
   }
@@ -1626,6 +1693,22 @@ function sortThreadCandidates<T extends ThreadSortCandidate>(threads: T[]): T[] 
 function threadCreatedTime(thread: Pick<Thread, "created_at" | "updated_at">): number {
   const createdAt = Date.parse(thread.created_at);
   return Number.isFinite(createdAt) ? createdAt : 0;
+}
+
+/**
+ * Ordering key for a sidebar session row.
+ *
+ * `updated_at` advances every time the host projects an item, so it only orders
+ * a row that has settled. A row that is still running keeps a creation-time key
+ * instead: the list must hold still while the sessions in it stream. The
+ * workspace sections and the attention view share this key so the same session
+ * cannot be ordered differently in each.
+ */
+export function sidebarThreadSortTime(
+  thread: Pick<Thread, "created_at" | "updated_at">,
+  running: boolean,
+): number {
+  return running ? threadCreatedTime(thread) : threadTime(thread);
 }
 
 function mergeListedThreads(current: Thread[], listed: Thread[]): Thread[] {
@@ -1659,6 +1742,10 @@ function mergeListedThread(existing: Thread, listed: Thread): Thread {
     !turns.some((turn) => turn.status === "in_progress");
   return {
     ...listed,
+    project_exists: listed.project_exists ?? (
+      listed.source === existing.source && listed.project_id === existing.project_id
+        ? existing.project_exists : undefined
+    ),
     title: listed.title?.trim() ? listed.title : existing.title,
     preview: listed.preview?.trim() ? listed.preview : existing.preview,
     status: listedStatusRegresses ? existing.status : listed.status,
@@ -1671,6 +1758,7 @@ function mergeListedThread(existing: Thread, listed: Thread): Thread {
 }
 
 function mergeListedThreadTurns(existing: Turn[], listed: Turn[]): Turn[] {
+  existing = reconcileOptimisticTurns(existing, listed);
   if (listed.length === 0) {
     return existing.length === 0 ? listed : existing;
   }
@@ -1686,7 +1774,7 @@ function mergeListedThreadTurns(existing: Turn[], listed: Turn[]): Turn[] {
     let needsMerge = existing.length > listed.length;
     const listedTurns = listed.map((turn, index) => {
       const local = existing[index];
-      if (local.items.length <= turn.items.length) {
+      if (hasAuthoritativeTurnItems(turn) || local.items.length <= turn.items.length) {
         return turn;
       }
       needsMerge = true;
@@ -1847,20 +1935,20 @@ function formatHourMinute(date: Date): string {
   });
 }
 
-// R4: threads that don't belong to any registered project are almost
+// R4: threads that don't belong to any registered workspace are almost
 // always no-project scratch conversations, whose cwd is an internal
 // ~/.wuu/scratch/<date> directory (see allocateNoProjectCwd in
 // src/main/projects.ts). Falling back to that directory's basename used to
 // surface the raw date-stamped folder name in the search result's context
-// label — a wuu implementation detail nobody asked to see. "无项目" reads
+// label — a wuu implementation detail nobody asked to see. "无工作区" reads
 // the same way the sidebar's scratch group already does.
 function conversationSearchContextLabel(
   thread: Thread,
   projects: DesktopProject[],
 ): string {
-  const projectPath = threadProjectPath(thread);
+  const projectPath = threadWorkspacePath(thread);
   const project = projects.find((candidate) => candidate.path === projectPath);
-  return project?.name ?? t("appState.noProject");
+  return project?.name ?? t("appState.noWorkspace");
 }
 
 function pinnedThreads(threads: Thread[]): Thread[] {
@@ -1871,35 +1959,35 @@ function pinnedThreadSummaries(threads: ThreadSummary[]): ThreadSummary[] {
   return sortThreadSummaries(threads).filter((thread) => thread.pinned);
 }
 
-function projectThreads(threads: Thread[]): Thread[] {
+function workspaceThreads(threads: Thread[]): Thread[] {
   return sortThreads(threads).filter((thread) => !thread.pinned && !thread.archived);
 }
 
-function projectThreadSummaries(threads: ThreadSummary[]): ThreadSummary[] {
+function workspaceThreadSummaries(threads: ThreadSummary[]): ThreadSummary[] {
   return sortThreadSummaries(threads).filter((thread) => !thread.pinned);
 }
 
-export function threadProjectPath(
+export function threadWorkspacePath(
   thread: Pick<Thread, "cwd" | "worktree">,
 ): string {
   return thread.worktree?.base_repo?.trim() || thread.cwd;
 }
 
-export function threadBelongsToProject(
+export function threadBelongsToWorkspace(
   thread: Pick<Thread, "cwd" | "workspace_id" | "worktree">,
   project: Pick<DesktopProject, "id" | "path">,
 ): boolean {
   if (thread.workspace_id?.trim()) {
     return thread.workspace_id === project.id;
   }
-  return sameDesktopPath(threadProjectPath(thread), project.path);
+  return sameDesktopPath(threadWorkspacePath(thread), project.path);
 }
 
-function threadBelongsToAnyProject(
+function threadBelongsToAnyWorkspace(
   thread: Pick<Thread, "cwd" | "workspace_id" | "worktree">,
   projects: Pick<DesktopProject, "id" | "path">[],
 ): boolean {
-  return projects.some((project) => threadBelongsToProject(thread, project));
+  return projects.some((project) => threadBelongsToWorkspace(thread, project));
 }
 
 function sameDesktopPath(left: string, right: string): boolean {
@@ -1916,7 +2004,7 @@ function cleanDesktopPath(path: string): string {
 // scratch (no-project) conversation group inside the unified sidebar tree.
 // Threads whose cwd does not belong to a registered DesktopProject (i.e.
 // isScratchThread returns true) are bucketed under this id so the sidebar
-// can render them through the same ProjectList code path as real projects.
+// can render them through the same WorkspaceList code path as real projects.
 // The DesktopProject entry carrying this id is built in App.tsx and never
 // sent from the app-server — it lives only on the renderer side.
 export const SCRATCH_PSEUDO_PROJECT_ID = "__wuu_scratch__";
@@ -1925,7 +2013,7 @@ export function isScratchThread(
   thread: Pick<Thread, "workspace_kind" | "cwd" | "worktree">,
   projects: DesktopProject[],
 ): boolean {
-  if (threadBelongsToAnyProject(thread, projects)) {
+  if (threadBelongsToAnyWorkspace(thread, projects)) {
     return false;
   }
   if (thread.workspace_kind === "scratch") {
@@ -1934,7 +2022,7 @@ export function isScratchThread(
   if (thread.workspace_kind === "project") {
     return false;
   }
-  const projectPath = threadProjectPath(thread);
+  const projectPath = threadWorkspacePath(thread);
   return !projects.some((project) => project.path === projectPath);
 }
 
@@ -1955,7 +2043,7 @@ export function resolveThreadRuntimeContext(
   projects: DesktopProject[],
 ): RuntimeContext {
   const project = projects.find((candidate) =>
-    threadBelongsToProject(thread, candidate),
+    threadBelongsToWorkspace(thread, candidate),
   );
   if (project) {
     return { kind: "project", project_id: project.id, cwd: project.path };
@@ -1968,7 +2056,7 @@ export function resolveThreadRuntimeContext(
  * and terminal should root at. This is ordinarily just the active
  * RuntimeContext, but a worktree-fork thread's own cwd (Thread.cwd) points
  * at a git worktree directory distinct from the project root that
- * resolveThreadRuntimeContext resolves the thread to (threadProjectPath
+ * resolveThreadRuntimeContext resolves the thread to (threadWorkspacePath
  * prefers worktree.base_repo, so the *context* stays pinned to the base
  * project while the *thread* itself runs out of the worktree). When the
  * active thread's cwd differs from the active context's cwd, the panel
@@ -2027,9 +2115,7 @@ function createDraftSessionTab(
     kind: "draft",
     context,
     title: t("tabs.newConversation"),
-    prompt: draft.prompt,
-    images: draft.images.map((image) => ({ ...image })),
-    files: draft.files.map((file) => ({ ...file })),
+    ...cloneComposerDraft(draft),
     createdAt: Date.now(),
   };
 }
@@ -2045,9 +2131,7 @@ function createThreadSessionTab(
     context,
     threadID: thread.id,
     title: threadDisplayTitle(thread),
-    prompt: draft.prompt,
-    images: draft.images.map((image) => ({ ...image })),
-    files: draft.files.map((file) => ({ ...file })),
+    ...cloneComposerDraft(draft),
   };
 }
 
@@ -2079,110 +2163,6 @@ function createSkillsSessionTab(context: RuntimeContext): SessionTab {
     kind: "skills",
     context,
     title: "skills",
-  };
-}
-
-function createChannelRoomSessionTab(
-  roomID: string,
-  title: string,
-  context: RuntimeContext,
-): Extract<SessionTab, { kind: "channel-room" }> {
-  return {
-    id: channelRoomSessionTabID(roomID),
-    kind: "channel-room",
-    context,
-    roomID,
-    title,
-    prompt: "",
-    images: [],
-    files: [],
-  };
-}
-
-function createAgentsSessionTab(
-  context: RuntimeContext,
-): Extract<SessionTab, { kind: "agents" }> {
-  return {
-    id: "agents",
-    kind: "agents",
-    context,
-    title: "agents",
-  };
-}
-
-function createTasksSessionTab(
-  context: RuntimeContext,
-): Extract<SessionTab, { kind: "tasks" }> {
-  return {
-    id: "tasks",
-    kind: "tasks",
-    context,
-    title: "tasks",
-  };
-}
-
-function channelRoomSessionTabID(roomID: string): string {
-  return `channel-room:${roomID}`;
-}
-
-function reconcileChannelRoomSessionTabs(
-  state: AppState,
-  rooms: ChannelRoom[],
-): AppState {
-  const roomsByID = new Map(rooms.map((room) => [room.id, room]));
-  let changed = false;
-  let sessionTabs = state.sessionTabs.reduce<SessionTab[]>((nextTabs, tab) => {
-    if (tab.kind !== "channel-room") {
-      nextTabs.push(tab);
-      return nextTabs;
-    }
-    const room = roomsByID.get(tab.roomID);
-    if (!room) {
-      changed = true;
-      return nextTabs;
-    }
-    if (tab.title === room.name) {
-      nextTabs.push(tab);
-      return nextTabs;
-    }
-    changed = true;
-    nextTabs.push({ ...tab, title: room.name });
-    return nextTabs;
-  }, []);
-  if (!changed) {
-    return state;
-  }
-  if (
-    !state.activeSessionTabID ||
-    sessionTabs.some((tab) => tab.id === state.activeSessionTabID)
-  ) {
-    return { ...state, sessionTabs };
-  }
-
-  const removedIndex = state.sessionTabs.findIndex(
-    (tab) => tab.id === state.activeSessionTabID,
-  );
-  if (sessionTabs.length === 0 && state.activeContext) {
-    sessionTabs = [
-      createDraftSessionTab(
-        draftSessionTabIDForContext(state.activeContext),
-        state.activeContext,
-      ),
-    ];
-  }
-  const fallbackTab =
-    sessionTabs[Math.min(Math.max(removedIndex, 0), sessionTabs.length - 1)];
-  return {
-    ...state,
-    sessionTabs,
-    activeSessionTabID: fallbackTab?.id,
-    secondaryThread: undefined,
-    activePane: "primary",
-    allowThreadAutoActivation: fallbackTab?.kind === "thread",
-    running:
-      fallbackTab?.kind === "thread"
-        ? isThreadRunning(threadForTab(state, fallbackTab.threadID))
-        : false,
   };
 }
 
@@ -2350,9 +2330,8 @@ function persistActiveSessionTabDraft(
       tab.id === activeTabID && (tab.kind === "draft" || tab.kind === "thread")
         ? {
             ...tab,
-            prompt: draft.prompt,
-            images: draft.images.map((image) => ({ ...image })),
-            files: draft.files.map((file) => ({ ...file })),
+            selections: undefined,
+            ...cloneComposerDraft(draft),
           }
         : tab,
     ),
@@ -2366,7 +2345,8 @@ function composerDraftHasContent(draft: ComposerDraftState): boolean {
   return (
     draft.prompt.trim().length > 0 ||
     draft.images.length > 0 ||
-    draft.files.length > 0
+    draft.files.length > 0 ||
+    (draft.selections?.length ?? 0) > 0
   );
 }
 
@@ -2375,7 +2355,7 @@ function composerDraftHasContent(draft: ComposerDraftState): boolean {
  * draft along with the user instead of stranding it in the tab they're
  * leaving.
  *
- * The hero-project-pill / ProjectPickerMenu let the user retarget a *draft*
+ * The hero-project-pill / WorkspacePickerMenu let the user retarget a *draft*
  * conversation at a different project (or at no project) before ever
  * sending anything. If they had already typed a prompt (or attached images
  * / files), silently persisting that text back into the old context's
@@ -2413,9 +2393,8 @@ function applyLoadedRuntimeWithDraftCarry(
       tab.id === targetTabID && (tab.kind === "draft" || tab.kind === "thread")
         ? {
             ...tab,
-            prompt: outgoingDraft.prompt,
-            images: outgoingDraft.images.map((image) => ({ ...image })),
-            files: outgoingDraft.files.map((file) => ({ ...file })),
+            selections: undefined,
+            ...cloneComposerDraft(outgoingDraft),
           }
         : tab,
     ),
@@ -2459,11 +2438,7 @@ function cloneSessionTabDraft(tab: SessionTab): ComposerDraftState {
   if (tab.kind !== "draft" && tab.kind !== "thread") {
     return emptyComposerDraft();
   }
-  return {
-    prompt: tab.prompt,
-    images: tab.images.map((image) => ({ ...image })),
-    files: tab.files.map((file) => ({ ...file })),
-  };
+  return cloneComposerDraft(tab);
 }
 
 function threadForTab(state: AppState, threadID: string): Thread | undefined {
@@ -2493,7 +2468,7 @@ function workspaceNameForContext(context: RuntimeContext, state: AppState): stri
   const project = state.projects.find(
     (candidate) => candidate.id === context.project_id,
   );
-  return project?.name || fileNameFromPath(context.cwd) || t("sidebar.project");
+  return project?.name || fileNameFromPath(context.cwd) || t("sidebar.workspace");
 }
 
 function sessionTabLabel(tab: SessionTab, state: AppState): string {
@@ -2506,15 +2481,6 @@ function sessionTabLabel(tab: SessionTab, state: AppState): string {
   }
   if (tab.kind === "skills") {
     return t("skills.title");
-  }
-  if (tab.kind === "agents") {
-    return t("channels.agents");
-  }
-  if (tab.kind === "tasks") {
-    return t("channels.tasks");
-  }
-  if (tab.kind === "channel-room") {
-    return tab.title || t("channels.rooms");
   }
   return threadDisplayTitle(
     threadForTab(state, tab.threadID),
@@ -2714,7 +2680,7 @@ function setThreadForPane(
   return { ...state, thread };
 }
 
-function activeProjectID(
+function activeWorkspaceID(
   context: RuntimeContext | undefined,
 ): string | undefined {
   return context?.kind === "project" ? context.project_id : undefined;
@@ -2754,7 +2720,7 @@ function threadMatchesActiveContext(
   thread: Thread,
   context: RuntimeContext | undefined,
 ): boolean {
-  return Boolean(context && threadProjectPath(thread) === context.cwd);
+  return Boolean(context && threadWorkspacePath(thread) === context.cwd);
 }
 
 function isThread(value: unknown): value is Thread {
@@ -2867,12 +2833,13 @@ function latestCompletedTurnID(thread: {
 
 function isThreadUnread(
   thread: (ThreadRunningCandidate & {
+    archived?: boolean;
     latest_completed_turn_id?: string;
     turns: Array<Pick<Turn, "id" | "status" | "answer_ready_at">>;
   }) | undefined,
   lastViewedTurnID: string | undefined,
 ): boolean {
-  if (!thread) return false;
+  if (!thread || thread.archived) return false;
   const lastTurnID = latestCompletedTurnID(thread);
   if (!lastTurnID) return false;
   if (!lastViewedTurnID) return true;
@@ -2981,20 +2948,14 @@ function isAnyThreadRunning(state: AppState): boolean {
 }
 
 function upsertTurn(thread: Thread, turn: Turn): Thread {
+  const reconciled = reconcileOptimisticTurns(thread.turns, [turn]);
+  if (reconciled !== thread.turns) thread = { ...thread, turns: reconciled };
   const index = thread.turns.findIndex((item) => item.id === turn.id);
-  const status = turn.status === "in_progress" ? "in_progress" : "idle";
-  if (index < 0) {
-    return threadWithTurnSummary(
-      {
-        ...thread,
-        turns: [...thread.turns, { ...turn, items: orderedTurnItems(turn.items) }],
-        status,
-      },
-      turn,
-    );
-  }
+  if (index >= 0 && thread.turns[index].status !== "in_progress" && turn.status === "in_progress") return thread;
   const turns = thread.turns.slice();
-  turns[index] = { ...turn, items: mergeTurnItemsInOrder(turns[index], turn) };
+  if (index < 0) turns.push({ ...turn, items: orderedTurnItems(turn.items) });
+  else turns[index] = { ...turn, items: mergeTurnItemsInOrder(turns[index], turn) };
+  const status = turns.some((item) => item.status === "in_progress") ? "in_progress" : "idle";
   return threadWithTurnSummary({ ...thread, turns, status }, turn);
 }
 
@@ -3109,11 +3070,13 @@ function markTurnAnswerReady(
 ): Thread {
   return {
     ...thread,
-    turns: thread.turns.map((turn) =>
-      turn.id === turnID && !turn.answer_ready_at
-        ? { ...turn, answer_ready_at: answerReadyAt }
-        : turn,
-    ),
+    turns: thread.turns.map((turn) => {
+      if (turn.id !== turnID || turn.answer_ready_at) return turn;
+      const ready = { ...turn, answer_ready_at: answerReadyAt };
+      // Background conversations may not render before provider cleanup ends.
+      localTurnTiming(ready);
+      return ready;
+    }),
   };
 }
 
@@ -3625,7 +3588,7 @@ function normalizeModelID(model: string | undefined): string {
 
 export {
   activeTodoUpdateForThread,
-  activeProjectID,
+  activeWorkspaceID,
   activeSessionTab,
   activeThreadForState,
   activeThreadIDForState,
@@ -3649,12 +3612,8 @@ export {
   conversationPaneThreadsByID,
   conversationSearchContextLabel,
   conversationSearchThreadMeta,
-  channelRoomSessionTabID,
-  createAgentsSessionTab,
-  createChannelRoomSessionTab,
   createDraftSessionTab,
   createSkillsSessionTab,
-  createTasksSessionTab,
   createThreadSessionTab,
   draftSessionTabForContext,
   draftSessionTabIDForContext,
@@ -3684,12 +3643,11 @@ export {
   pinnedThreads,
   pinnedThreadSummaries,
   presentationRunningThreadIDs,
-  projectThreads,
-  projectThreadSummaries,
+  workspaceThreads,
+  workspaceThreadSummaries,
   queryTextForUserItem,
   queryTextsForThread,
   requestedHandoffIntentForThread,
-  reconcileChannelRoomSessionTabs,
   reduceNotification,
   reduceServerEvent,
   activeTurnAcceptsSteering,
@@ -3710,7 +3668,7 @@ export {
   setThreadForPane,
   skillsSessionTabID,
   sortThreads,
-  summarizeProjectThreadsForSidebar,
+  summarizeWorkspaceThreadsForSidebar,
   summarizeThreadsForSidebar,
   threadItemFromRecord,
   threadForPane,

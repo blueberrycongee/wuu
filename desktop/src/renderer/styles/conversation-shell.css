@@ -1,7 +1,7 @@
 /* Component color tokens for conversation-shell.css.
    Light-theme values; the dark theme overrides these in base.css theme blocks. */
 :root {
-  --shell-process-control-color: var(--wuu-color-text-muted, #BCBCBD);
+  --shell-process-control-color: var(--ink-tertiary);
   --shell-session-tab-active-bg: var(--surface-3);
   --shell-session-tab-main-focus-shadow: var(--focus-ring);
   --shell-session-tab-status-default: rgba(17, 19, 21, 0.22);
@@ -58,7 +58,8 @@
   /* Answer actions already reserve their own row inside the preceding turn. */
   --conversation-turn-boundary-gap: 16px;
   --conversation-turn-item-gap: 8px;
-  --conversation-composer-clearance: 20px;
+  --conversation-image-gap: max(var(--space-6), calc(var(--conversation-message-font-size) * 1.2));
+  --conversation-composer-clearance: 12px;
 }
 
 .conversation-pane {
@@ -78,7 +79,8 @@
       var(--session-composer-width) + var(--environment-panel-width) +
         var(--environment-panel-width) + var(--environment-panel-edge-gap) +
         var(--environment-panel-edge-gap) + var(--environment-panel-flow-gap) +
-        var(--environment-panel-flow-gap) - 100vw + var(--sidebar-width, 0px)
+        var(--environment-panel-flow-gap) - 100vw + var(--sidebar-width, 0px) +
+        var(--workspace-right-panel-reserved-width, 0px)
     ),
     var(--environment-panel-reserved-width)
   );
@@ -99,22 +101,26 @@
   /* Reading rhythm follows the user's text size. Keep related blocks
    * closer than sections, with headings attached to the text below.
    * Prose, previews and composer share the same column measure. */
-  --conversation-reading-line-height: 1.75;
+  /* A relaxed body line makes mixed CJK, Latin and inline code read as one
+     continuous answer instead of a stack of dense rows. */
+  --conversation-reading-line-height: round(nearest, calc(var(--conversation-message-font-size) * 1.8), 2px);
   /* Providers may confirm an answer only after streaming finishes. Its
      provisional process placement must use the final reading rhythm. */
   --conversation-commentary-line-height: var(--conversation-reading-line-height);
-  --conversation-prose-block-gap: calc(var(--conversation-message-font-size) * 1.15);
-  --conversation-prose-heading-before: calc(var(--conversation-message-font-size) * 2);
-  --conversation-prose-heading-after: calc(var(--conversation-message-font-size) * 0.5);
-  --conversation-prose-list-gap: calc(var(--conversation-message-font-size) * 0.5);
-  --conversation-prose-indent: 1.4em;
+  --conversation-prose-block-gap: calc(var(--conversation-message-font-size) * 1.1);
+  --conversation-prose-heading-before: calc(var(--conversation-message-font-size) * 1.7);
+  --conversation-prose-heading-after: calc(var(--conversation-message-font-size) * 0.55);
+  --conversation-prose-list-gap: calc(var(--conversation-message-font-size) * 0.4);
+  --conversation-prose-indent: 1.45em;
   --conversation-prose-max-width: 100%;
   --conversation-message-element-gap: max(12px, var(--conversation-message-font-size));
   /* Process rows share the message size and weight; color and spacing,
      not a smaller/heavier type style, make them read as secondary. */
   --conversation-process-font-size: var(--conversation-message-font-size);
   --conversation-process-font-weight: var(--conversation-message-font-weight);
-  --conversation-process-line-height: 1.6;
+  /* Reading and process leading are whole-pixel lengths (their text is always
+     the message size), so stacked rows and cards land on shared edges. */
+  --conversation-process-line-height: round(nearest, calc(var(--conversation-process-font-size) * 1.6), 2px);
   /* Expanded process folds (tool trail, reasoning) stay compact: bounded
      by an absolute ceiling and a viewport share, whichever is smaller. */
   --conversation-process-fold-max-height: min(320px, 40vh);
@@ -145,7 +151,7 @@
   --conversation-process-answer-gap: max(12px, calc(var(--conversation-message-font-size) * 0.75));
   /* Public message-action rhythm. Themes may tune these without depending on
    * the private action-bar DOM or taking over its interaction semantics. */
-  --conversation-answer-hover-action-gap: var(--wuu-message-actions-overlay-gap, 16px);
+  --conversation-answer-hover-action-gap: var(--wuu-message-actions-overlay-gap, 12px);
   --conversation-message-action-icon-size: calc(var(--conversation-message-font-size) * 15 / 14);
   --conversation-message-action-size: var(--wuu-message-action-size, max(24px, calc(var(--conversation-message-action-icon-size) + 9px)));
   --conversation-user-action-size: max(20px, calc(var(--conversation-message-action-icon-size) + 5px));
@@ -166,7 +172,7 @@
   min-height: 0;
   /* The second column hosts the generic side-thread panel when open. */
   grid-template-columns: minmax(0, 1fr) 0;
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
   overflow: hidden;
   background: var(--paper);
   margin-right: 0;
@@ -187,14 +193,17 @@
   overflow: clip;
 }
 
-/* Keep inactive panes out of layout. Use visibility:hidden instead of
- * content-visibility:hidden to avoid triggering thousands of warnings when
- * React components update in background tabs (timers, WebSocket, async state). */
+/* visibility:hidden alone still lays the pane out, and the pane is stretched
+ * over the open conversation, so every width change would wrap every cached
+ * session. content-visibility:hidden skips its style, layout and paint while
+ * keeping that rendering state for the next reveal. Geometry inside a hidden
+ * pane must not be read: a read forces the skipped subtree to lay out. */
 .cached-conversation-pane[data-active="false"] {
   position: absolute;
   inset: 0;
   visibility: hidden;
   pointer-events: none;
+  content-visibility: hidden;
 }
 
 .cached-conversation-pane[data-active="true"] {
@@ -222,14 +231,14 @@
   transition: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .conversation-pane {
     transition: none;
   }
 }
 
 .conversation-pane.session-tabs-visible {
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
 }
 
 .conversation-pane.environment-panel-reserved {
@@ -238,15 +247,19 @@
 
 .titlebar {
   display: grid;
+  height: var(--window-titlebar-height);
+  min-height: var(--window-titlebar-height);
   min-width: 0;
   grid-template-columns: minmax(0, 1fr) max-content;
   align-items: center;
   column-gap: var(--control-toolbar-gap);
   overflow: hidden;
-  box-shadow: inset 0 -1px 0 var(--surface-3);
   /* Right side clears the Windows controls overlay; a no-op elsewhere
-   * (the inset is 0 and max() collapses to the neutral padding). */
-  padding: 0 max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0 24px;
+   * (the inset is 0 and max() collapses to the neutral padding). The row
+   * always starts with an icon button (new conversation or back), so its
+   * glyph, not its box, sits on the pane inset. */
+  padding: 0 max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0
+    calc(var(--window-titlebar-padding-inline) - var(--control-toolbar-glyph-offset));
   transition: padding-left var(--sidebar-motion-duration) var(--sidebar-motion-ease);
   -webkit-app-region: drag;
 }
@@ -271,6 +284,7 @@
 }
 
 .conversation-title-heading {
+  --conversation-title-field-inset: calc(var(--space-1) * 1.5);
   display: flex;
   min-width: 0;
   align-items: center;
@@ -278,21 +292,80 @@
 }
 
 .conversation-title-heading h1 {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
-  max-width: none;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.conversation-title-heading .session-tab-new {
+/* The title button and its editor share one box that hugs the text. Only
+ * the background changes between idle, hover, and editing, so the text never
+ * moves. The heading pulls back by the box inset so the idle text keeps its
+ * position beside the leading icon button. */
+.conversation-title-heading h1:is(.is-editable, .is-editing) {
+  margin-inline-start: calc(-1 * var(--conversation-title-field-inset));
+}
+
+.conversation-title-rename,
+.conversation-title-edit {
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 2px var(--conversation-title-field-inset);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: start;
+  transition: background-color var(--motion-fast) var(--ease-out);
+  -webkit-app-region: no-drag;
+}
+
+.conversation-title-rename {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+}
+
+.conversation-title-rename:hover,
+.conversation-title-edit {
+  background: var(--surface-2);
+}
+
+.conversation-title-edit {
+  display: block;
+  field-sizing: content;
+  outline: none;
+}
+
+@container style(--motion-reduced: 1) {
+  .conversation-title-rename,
+  .conversation-title-edit {
+    transition: none;
+  }
+}
+
+.conversation-title-heading .icon-button {
   flex: 0 0 auto;
 }
 
 .title-actions {
   flex: 0 0 auto;
   min-width: max-content;
+}
+
+.session-control-label {
+  max-width: min(12em, 24vw);
+  overflow: hidden;
+  color: var(--ink-soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Linux frameless caption: fixed to the window's top-right so min/max/close
@@ -317,7 +390,7 @@
   z-index: 10000;
   align-items: stretch;
   width: var(--linux-caption-width);
-  height: 48px;
+  height: var(--window-titlebar-height);
   margin: 0;
   padding: 0;
   border: 0;
@@ -329,8 +402,7 @@
 :root[data-platform="linux"] .titlebar,
 :root[data-platform="linux"] .settings-titlebar,
 :root[data-platform="linux"] .account-screen-titlebar,
-:root[data-platform="linux"] .onboarding-chrome,
-:root[data-platform="linux"] .channel-room-header {
+:root[data-platform="linux"] .onboarding-chrome {
   padding-right: var(--linux-caption-width);
 }
 
@@ -342,17 +414,6 @@
 
 :root[data-platform="linux"] .app-shell.right-panel-open .workspace-panel-tabbar {
   padding-right: var(--linux-caption-width);
-}
-
-.channel-room-header-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: stretch;
-  align-self: stretch;
-  gap: 4px;
-  height: 100%;
-  margin-left: auto;
-  -webkit-app-region: no-drag;
 }
 
 .linux-window-control {
@@ -395,7 +456,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--font-body);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-medium);
   margin: 0;
 }
 
@@ -409,7 +470,7 @@
 }
 
 /* Keep the tab rail's available width stable when the active surface does
- * not support creating a conversation (for example, a channel room). */
+ * not support creating a conversation. */
 .session-tab-new-slot {
   display: grid;
   place-items: center;
@@ -715,7 +776,7 @@
  * The session model remains intact; only the titlebar projection changes. */
 .app-shell.compact-navigation .conversation-pane {
   grid-template-rows:
-    calc(48px + env(safe-area-inset-top, 0px))
+    calc(var(--window-titlebar-height) + env(safe-area-inset-top, 0px))
     minmax(0, 1fr);
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
@@ -725,15 +786,15 @@
 }
 
 .app-shell.compact-navigation .titlebar {
+  height: calc(var(--window-titlebar-height) + env(safe-area-inset-top, 0px));
   column-gap: 6px;
-  /* Compact navigation also collapses the sidebar, moving this control into
-   * the window's top-left corner. Keep the macOS traffic-light exclusion
-   * zone while preserving the compact 10px gutter on other platforms. */
+  /* Compact navigation moves this control to the window corner. Share the
+   * collapsed leading slot with settings and the globalized workspace. */
   padding:
     env(safe-area-inset-top, 0px)
-    10px
+    max(10px, var(--window-controls-inset-right))
     0;
-  padding-left: max(10px, calc(var(--window-controls-inset-left) + 10px));
+  padding-left: var(--window-titlebar-leading-inset);
 }
 
 .app-shell.compact-navigation .title-block {
@@ -755,15 +816,6 @@
   display: none;
 }
 
-.app-shell.compact-navigation .titlebar .sidebar-toggle-button,
-.app-shell.compact-navigation .compact-conversation-actions > .icon-button {
-  flex: 0 0 44px;
-  width: 44px;
-  height: 44px;
-  padding: 6px;
-  background-clip: content-box;
-}
-
 /* The compact titlebar is still a native Electron drag region. Keep the
  * sidebar control explicitly above that region: at narrow desktop widths the
  * titlebar's grid can otherwise leave the button looking clickable while the
@@ -774,6 +826,14 @@
   position: relative;
   z-index: 150;
   -webkit-app-region: no-drag;
+}
+
+.app-shell.compact-navigation.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
+  .titlebar .sidebar-toggle-button,
+.app-shell.compact-navigation.sidebar-drawer-docking .titlebar .sidebar-toggle-button {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + (var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
+  left: var(--window-titlebar-leading-inset);
 }
 
 .compact-conversation-actions > .icon-button:disabled {
@@ -817,28 +877,6 @@
   flex-shrink: 0;
 }
 
-.app-shell.compact-navigation .titlebar .environment-toggle-button,
-.app-shell.compact-navigation .titlebar .side-panel-toggle-button {
-  width: 36px;
-  height: 36px;
-}
-
-/* Main and tool-panel headers share the toolbar control geometry. */
-:where(.titlebar, .settings-titlebar, .workspace-panel-tabbar) .icon-button,
-.globalized-sidebar-toggle-region .globalized-sidebar-toggle {
-  width: var(--control-size-toolbar);
-  height: var(--control-size-toolbar);
-  padding: 0;
-  background-clip: border-box;
-}
-
-.titlebar .task-board-button:disabled {
-  background: transparent;
-  color: var(--ink-tertiary);
-  cursor: default;
-  opacity: 0.38;
-}
-
 .side-panel-toggle-button[aria-pressed="true"] {
   background: transparent;
   color: var(--ink);
@@ -850,25 +888,20 @@
 
 .side-panel-toggle-icon {
   display: block;
+  width: var(--icon-size);
+  height: var(--icon-size);
 }
 
-.side-panel-toggle-frame,
-.side-panel-toggle-divider {
+/* The rail stays visible when closed; its fill marks the open state. */
+.side-panel-toggle-icon > rect:last-child {
   fill: none;
   stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: var(--icon-stroke);
+  transition: fill var(--motion-base) var(--ease-out);
 }
 
-.side-panel-toggle-pane {
+.side-panel-toggle-icon[data-open="true"] > rect:last-child {
   fill: currentColor;
-  opacity: 0;
-  transition: opacity var(--motion-base) var(--ease-out);
-}
-
-.side-panel-toggle-icon[data-open="true"] .side-panel-toggle-pane {
-  opacity: 1;
+  stroke: none;
 }
 
 .launch-preview-button {
@@ -1188,13 +1221,11 @@
   position: absolute;
   bottom: calc(var(--dock-composer-height, 0px) + var(--conversation-status-gap));
   left: var(--conversation-visible-inset-left);
-  /* The pill is positioned in the pane box, but the message flow centers
-     inside .scroll-region's content box, which excludes the scrollbar
-     gutter. Add the measured gutter (0 on overlay-scrollbar platforms) so
-     the pill shares the flow's centerline everywhere. */
-  right: calc(
-    var(--conversation-visible-inset-right) + var(--scrollbar-width)
-  );
+  /* The message flow centers inside .scroll-region's content box, which
+     reserves the stable scrollbar gutter on both edges (see .scroll-region),
+     so the flow's centerline is the pane's own centerline. The pill shares it
+     by centering in the same inset box, with no gutter term. */
+  right: var(--conversation-visible-inset-right);
   --jump-to-latest-max-width: min(
     var(--session-composer-width),
     calc(
@@ -1211,7 +1242,8 @@
   margin-inline: auto;
   transform: translateY(0);
   z-index: 20;
-  animation: jump-to-latest-enter var(--motion-base) var(--ease-out) both;
+  --enter-y: 8px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
   pointer-events: none;
   -webkit-app-region: no-drag;
 }
@@ -1223,8 +1255,7 @@
   padding-block: 4px 8px;
   animation: none;
 }
-.jump-to-latest-cluster-inline > .jump-to-latest-pill,
-.jump-to-latest-cluster-inline .managed-agent-work-pill {
+.jump-to-latest-cluster-inline > .jump-to-latest-pill {
   flex: 0 1 auto;
   min-width: 0;
 }
@@ -1242,17 +1273,18 @@
   isolation: isolate;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 34px;
+  gap: var(--space-2);
+  min-height: max(34px, calc(var(--font-ui) * var(--line-ui) + var(--space-3)));
   border-radius: var(--radius-pill);
   border: 1px solid var(--shell-jump-pill-border);
   background: var(--shell-jump-pill-bg);
-  box-shadow: var(--shadow-card);
+  /* These controls float over reading content at the same elevation as menus. */
+  box-shadow: var(--shadow-pop);
 
   color: var(--ink);
-  font-size: 12px;
-  font-weight: var(--weight-semibold);
-  line-height: 1;
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
 
   pointer-events: auto;
   -webkit-app-region: no-drag;
@@ -1266,8 +1298,7 @@
 
 .jump-to-latest-pill {
   flex: 0 0 auto;
-  height: 34px;
-  padding: 0 12px;
+  padding: var(--space-1) var(--space-3);
   cursor: pointer;
 }
 
@@ -1365,13 +1396,16 @@ button.conversation-status-capsule,
   max-width: 100%;
 }
 
-.conversation-status-todo-card,
-.conversation-status-preview-card {
+.conversation-status-todo-card {
   display: flex;
-  width: min(360px, calc(100vw - 48px));
-  max-height: min(360px, 50vh);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  width: min(280px, calc(100vw - 48px));
+  max-height: min(320px, 50vh);
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-1);
+  margin: 0;
   padding: var(--menu-inset);
   overflow: auto;
   border: 1px solid var(--shell-todo-card-border);
@@ -1379,12 +1413,7 @@ button.conversation-status-capsule,
   border-radius: var(--menu-shell-radius);
   background: var(--shell-todo-card-bg);
   box-shadow: var(--shadow-pop);
-}
-
-.conversation-status-todo-card {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
+  list-style: none;
   opacity: 0;
   visibility: hidden;
   transform: translate(-50%, 4px);
@@ -1405,122 +1434,35 @@ button.conversation-status-capsule,
   pointer-events: auto;
 }
 
-.conversation-status-todo-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 8px 2px;
-  color: var(--shell-todo-card-ink);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.conversation-status-todo-card-header strong {
-  font-weight: var(--weight-semibold);
-}
-
-.conversation-status-preview-card {
-  max-height: min(360px, var(--floating-menu-available-height, 50vh));
-  color: var(--shell-todo-card-ink);
-  font-size: var(--font-ui);
-  pointer-events: auto;
-}
-
-/* Preview rows keep one text column: the running spinner trails the title
- * where the old "running" label sat, so rows never repeat that status as text. */
-.managed-session-preview-list { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
-.managed-session-preview-list li { min-width: 0; }
-.managed-session-preview-item {
+.conversation-status-todo-card li {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--icon-size);
-  align-items: center;
+  grid-template-columns: var(--icon-size-xs) minmax(0, 1fr);
+  align-items: start;
   gap: var(--menu-item-gap);
-  width: 100%;
-  min-width: 0;
-  min-height: var(--control-row-height);
-  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: start;
-}
-.managed-session-preview-item:hover { background: var(--ink-overlay-6); }
-.managed-session-preview-item:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
-.managed-session-preview-status { display: grid; place-items: center; color: var(--shell-todo-card-muted); }
-.managed-session-preview-status > svg { width: var(--icon-size); height: var(--icon-size); }
-.managed-session-preview-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.managed-session-preview-empty { margin: 0; padding: var(--menu-inset) var(--menu-item-padding-inline); color: var(--shell-todo-card-muted); }
-
-/* Quiet footer action: separated from the rows, secondary until hovered, and
- * trailing a chevron so it reads as navigation rather than another session. */
-.managed-session-preview-separator { height: 1px; background: var(--shell-todo-card-border); }
-.managed-session-preview-all {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--menu-item-gap);
-  width: 100%;
-  min-height: var(--control-row-height);
-  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--shell-todo-card-muted);
-  font: inherit;
-  text-align: start;
-}
-.managed-session-preview-all:hover { background: var(--ink-overlay-6); color: var(--shell-todo-card-ink); }
-.managed-session-preview-all:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
-
-.conversation-status-todo-card-header span,
-.conversation-status-todo-explanation {
-  color: var(--shell-todo-card-muted);
-}
-
-.conversation-status-todo-explanation {
-  margin: 0;
-  padding: 0 8px 4px;
-  font-size: 12px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.conversation-status-todo-list {
-  display: grid;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.conversation-status-todo-list li {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  gap: 7px;
-  padding: 6px 8px;
+  padding: var(--space-2);
   border-radius: var(--radius-xs);
   color: var(--shell-todo-card-soft);
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: var(--font-ui);
+  line-height: var(--line-body);
   overflow-wrap: anywhere;
 }
 
-.conversation-status-todo-list li > span:first-child {
+.conversation-status-todo-card li > span:last-child {
+  white-space: pre-wrap;
+}
+
+.conversation-status-todo-card li > span:first-child {
   color: var(--shell-todo-card-muted);
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
 
-.conversation-status-todo-list li.is-in_progress {
+.conversation-status-todo-card li.is-in_progress {
   background: var(--menu-hover);
   color: var(--shell-todo-card-ink);
-  font-weight: var(--weight-medium);
 }
 
-.conversation-status-todo-list li.is-completed {
+.conversation-status-todo-card li.is-completed {
   color: var(--shell-todo-card-muted);
 }
 
@@ -1564,7 +1506,7 @@ button.conversation-status-capsule,
 .conversation-status-capsule:hover {
   background: var(--shell-jump-pill-hover-bg);
   border-color: var(--shell-jump-pill-hover-border);
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-pop);
 }
 
 .jump-to-latest-pill:focus-visible,
@@ -1572,7 +1514,7 @@ button.conversation-status-capsule,
   /* Keep focus visible even when a theme sets panel elevation to none. */
   outline: 2px solid var(--shell-jump-pill-focus-shadow-1);
   outline-offset: 0;
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-pop);
 }
 
 .jump-to-latest-pill svg {
@@ -1591,6 +1533,7 @@ button.conversation-status-capsule,
   opacity: 0;
   overflow: hidden;
   transition:
+    margin-left var(--motion-base) var(--ease-out),
     max-height var(--motion-base) var(--ease-out),
     max-width var(--motion-base) var(--ease-out),
     opacity var(--motion-fast) var(--ease-out);
@@ -1625,17 +1568,6 @@ button.conversation-status-capsule,
   /* Keep the in_progress step a solid darker badge inside the outer pill. */
 }
 
-@keyframes jump-to-latest-enter {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 /*
  * Conversation turn rail on the left edge of the message stream.
  *
@@ -1646,7 +1578,7 @@ button.conversation-status-capsule,
  * macOS Dock-style motion: smooth spring with slight overshoot
  * (cubic-bezier(0.34, 1.56, 0.64, 1) ≈ easeOutBack) so the magnified bar
  * settles with a natural "spring then rest" feel rather than a linear
- * slide. prefers-reduced-motion collapses the easing to a 1ms step.
+ * slide. Reduced motion zeroes the ladder, so the bar snaps instead.
  */
 .conversation-pane {
   position: relative;
@@ -1795,10 +1727,9 @@ button.conversation-status-capsule,
   pointer-events: auto;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .conversation-turn-rail-bar,
   .conversation-turn-rail-preview {
-    transition: opacity 1ms linear;
     transform: none;
   }
 }

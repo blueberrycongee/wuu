@@ -76,6 +76,22 @@ func TestRewriteChatHistoryKeepsCompactSummary(t *testing.T) {
 	}
 }
 
+func TestReplaceBaseSystemPromptPreservesDurableContext(t *testing.T) {
+	for _, boundary := range []providers.ChatMessage{
+		{Role: "system", Content: compact.BuildSummaryContent("saved state"), Hidden: true},
+		{Role: "system", Content: "synthetic recovery address", Hidden: true, Origin: "internal", Cause: "fresh_context", Seq: 42},
+	} {
+		history := []providers.ChatMessage{boundary, {Role: "user", Content: "continue"}}
+		original := cloneHistory(history)
+		withBase := replaceBaseSystemPrompt(history, "old runtime prompt")
+		updated := replaceBaseSystemPrompt(withBase, "current runtime prompt")
+		want := append([]providers.ChatMessage{{Role: "system", Content: "current runtime prompt"}}, original...)
+		if !reflect.DeepEqual(updated, want) || !reflect.DeepEqual(history, original) {
+			t.Fatalf("runtime prompt replacement altered durable context: got %+v, original %+v", updated, history)
+		}
+	}
+}
+
 func TestPersistFreshContextKeepsReleasedOriginalsAddressable(t *testing.T) {
 	sessDir := t.TempDir()
 	sess, err := sessionstore.CreateWithMetadata(sessDir, "fresh-context-history", t.TempDir())

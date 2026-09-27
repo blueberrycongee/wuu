@@ -1,273 +1,178 @@
-# `wuu exec`
+# Run tasks with `wuu exec`
 
-Use `wuu exec` to run tasks from scripts, CI, or another Agent. It shares sessions,
-tools, and permissions with the desktop and returns text or JSONL without opening a UI.
-First [configure a model](../getting-started/model-services.md).
+`wuu exec` runs an agent task without opening the desktop. Use it from a shell,
+CI job, system scheduler, or another agent. It uses Wuu's session and execution
+services; first [configure a model service](../getting-started/model-services.md).
 
-## Basic Usage
-
-```bash
-wuu exec "fix the failing test and verify it"
-wuu exec --json "review this PR"
-wuu exec --file report.pdf "summarize and update the code"
-wuu exec --image screenshot.png "find the UI problem"
-wuu exec --timeout 20m --output-last-message result.md "summarize this repo"
-```
-
-`wuu exec` supports prompt text as positional arguments:
+## Supply a task
 
 ```bash
-wuu exec "describe this repo"
-```
-
-It supports stdin as the prompt:
-
-```bash
+wuu exec --workdir /path/to/repo "fix the failing test and verify it"
 wuu exec - < task.md
-printf "describe this repo" | wuu exec
+wuu exec "investigate this failure" < error.log
 ```
 
-When both positional text and piped stdin are present, stdin is passed as
-additional context:
+Put flags before the prompt or session ID: argument parsing stops at the first
+positional argument. With no positional prompt, piped stdin supplies the task.
+With both, stdin is appended inside a `<stdin>` block. A task needs text or an
+attachment; a bare `-` explicitly requires nonempty stdin.
+
+Attach local images with repeated `--image` flags and PDFs with repeated `--file`
+flags. Other document formats are not accepted by `--file`. Relative attachment
+paths resolve from `--workdir`, or the current directory when it is omitted.
 
 ```bash
-wuu exec "use this log to fix the bug" < error.log
+wuu exec --image screenshot.png "find the layout problem"
+wuu exec --file report.pdf "summarize the findings"
 ```
 
-The prompt delivered to the agent is:
+`--image-original` disables resizing for the supplied images. Whether the model
+can use an attachment still depends on its provider and input capabilities.
 
-```text
-use this log to fix the bug
+## Continue, fork, or review
 
-<stdin>
-...
-</stdin>
+```bash
+wuu exec resume --last "continue from the failure"
+wuu exec resume --json THREAD_ID "continue this task"
+wuu exec fork THREAD_ID "try another approach"
+wuu exec review --uncommitted
+wuu exec review --base main
+wuu exec review --commit COMMIT_SHA
 ```
 
-Empty input fails before a turn is started.
+`resume --last` selects the latest visible session in the workspace. `--continue`
+or `-c` in the first position after `exec` is its shortcut. `--resume` or `-r` in
+that position is a shortcut for `resume`; without further arguments it lists
+available sessions. `fork` creates a separate conversation from the source history.
 
-`--input-json` reads a machine input object from stdin:
+On resume or fork, explicit `--provider`, `--model`, `--effort`, and `--variant`
+selections apply to the acquired session before execution. Without these flags,
+the saved session selection is retained. A resume saves changes to that session;
+a fork saves them only to the new session. Neither changes workspace defaults or
+the configuration file.
+
+`review` creates a review prompt for the chosen scope and uses the normal tools
+to inspect it. It is not a separate static analyzer. Choose `--permission-mode
+read_only` when the task should not edit files.
+
+## Control a run
+
+| Flags | Effect |
+| --- | --- |
+| `--provider`, `--model`, `--effort`, `--variant` | Select the model route and supported reasoning settings |
+| `--profile` | Select an agent profile |
+| `--permission-mode` | Use `standard`, `read_only`, or `unconfined` |
+| `--workdir` | Set the workspace directory |
+| `--config` | Explicitly trust one configuration file |
+| `--ignore-user-config` | Explicitly trust project configuration instead of user configuration |
+| `--env KEY=VALUE` | Set a run environment variable; repeatable |
+| `--no-tools` | Disable local tools |
+| `--max-turns N` | Set the model/tool loop limit; zero uses the configured default |
+| `--timeout 20m` | Set a deadline including stdin collection; zero sets no CLI deadline |
+| `--ephemeral` | Create an in-memory session instead of a resumable saved session |
+| `--json` | Write a JSONL event stream |
+| `--output-last-message FILE` | Write the final answer to a file after successful execution |
+| `--output-schema FILE` | Validate the final answer against a JSON Schema |
+| `--input-json` | Read the task and options as one JSON object from stdin |
+
+Normal startup uses user configuration plus permitted project overrides. The two
+explicit trust flags change that boundary; review the supplied configuration before
+using them in automation. See [configuration](../reference/configuration.md) for
+layering and [permissions](../reference/permissions.md) for command confinement.
+`exec` is noninteractive: human question services fail immediately with
+`service_unavailable`, and interactive external-engine approvals are declined.
+This includes nonblocking question offers, which would otherwise have no reader.
+Plugins may recover from that service error; it does not itself determine the
+run's exit code. For a client that can answer questions, use the
+[app-server protocol](../integrations/app-server-protocol.md).
+
+## Deadlines and cancellation
+
+`--timeout` starts before stdin is read and keeps the same deadline through
+execution. A `timeout` supplied only inside `--input-json` starts after input is
+decoded; use the CLI flag when the producer might never close stdin. Even a
+positional prompt consumes piped stdin, so use `</dev/null` when no input is
+intended. SIGINT and SIGTERM cancel input collection or the active execution and
+return exit code `5`; expiration of the deadline returns `4`.
+
+Cancellation attempts to settle the active Run and performs bounded cleanup, so
+process exit can follow the deadline by a short cleanup interval. Keep draining
+stdout and stderr until exit. If stdout stops accepting data, cancellation does
+not wait indefinitely for it: the final JSONL result is best effort and may be
+missing or incomplete. A disconnected output pipe cancels execution and returns
+`6`. SIGKILL cannot perform cleanup or emit a result.
+
+## Capture output
+
+In text mode stdout contains the final answer after successful execution. Progress,
+session identifiers, and diagnostics go to stderr. In JSONL mode stdout contains
+one event object per line; consume the terminal `result` and the process exit code,
+not the first `turn_completed`. A run can contain automatic continuation or
+structured-output correction turns.
+
+Pending events are bounded. A consumer that falls too far behind can lose its
+subscription with an explicit overflow error (exit `6`), rather than silently
+losing events or retaining an unlimited backlog. Always set a timeout for an
+unattended pipeline; a connected reader that stops draining is not a broken pipe.
+
+```bash
+wuu exec --json --timeout 20m "review the current changes" > events.jsonl
+wuu exec --output-last-message report.md "summarize this repository"
+wuu exec --json --output-schema schema.json "return the requested report"
+```
+
+The schema path resolves from the workspace. The last-message output path instead
+resolves from the invoking process's current directory; an existing file is
+overwritten. Successful schema validation adds `structured_result` to the JSONL
+result. See [JSONL events](jsonl-events.md) for fields and failure handling.
+
+## Machine input
 
 ```bash
 wuu exec --input-json <<'JSON'
 {
-  "prompt": "use this log to fix the bug",
-  "stdin": "panic: boom",
-  "files": ["report.pdf"],
-  "images": ["screenshot.png"],
-  "workdir": "/repo",
+  "prompt": "investigate this failure",
+  "stdin": "panic: example failure",
+  "workdir": "/path/to/repo",
+  "permission_mode": "read_only",
   "json": true,
-  "ephemeral": true
+  "timeout": "10m"
 }
 JSON
 ```
 
-`prompt` and `stdin` are combined the same way as positional prompt plus piped
-stdin. `files` and `images` behave like repeated `--file` and `--image` flags.
-The object can also set `provider`, `model`, `effort`, `variant`,
-`permission_mode`, `config`, `profile`, `ignore_user_config`,
-`env`, `max_turns`, `output_schema`, `no_tools`, `timeout`, and
-`output_last_message`.
+The object accepts `prompt`, `stdin`, `files`, `images`, `file_attachments`,
+`image_attachments`, `workdir`, `provider`, `model`, `effort`, `variant`,
+`permission_mode`, `config`, `profile`, `ignore_user_config`, `env`, `max_turns`,
+`no_tools`, `json`, `ephemeral`, `timeout`, `output_last_message`, and
+`output_schema`. Path arrays use the same rules as the attachment flags; structured
+attachment arrays use the [app-server shapes](../integrations/app-server-protocol.md).
+`env` is an array of `KEY=VALUE` strings. Unknown fields and multiple JSON values
+are rejected, and a positional prompt cannot accompany `--input-json`.
 
-## Resume
+Prefer supplying an option in one place. Nonempty CLI selections take precedence;
+attachment and environment arrays are combined. Boolean `true` and nonzero CLI
+values take precedence over the corresponding input values, so an explicitly
+passed `false` or zero is not a reliable way to override JSON input. The `review`
+subcommand does not accept `--input-json`.
 
-```bash
-wuu exec resume --last "continue from the failure"
-wuu exec resume <thread-id> "continue this session"
-wuu exec --resume <thread-id> "continue this session"
-wuu exec -r <thread-id> "continue this session"
-wuu exec fork <thread-id> "try a different direction"
-wuu exec review --uncommitted
-wuu exec review --base main
-wuu exec review --commit <sha>
-```
+## Exit codes
 
-`resume --last` asks app-server to resume the latest visible session for the
-current workspace. `resume <thread-id>` resumes a specific session. `--resume`
-and `-r` are implemented aliases for `resume <thread-id>` and can also be used
-directly after `wuu` as shortcuts to `wuu exec`.
+| Code | Meaning |
+| --- | --- |
+| `0` | Completed successfully |
+| `1` | Run failed without a more specific classification |
+| `2` | Invalid arguments, configuration, or input |
+| `3` | Permission denied |
+| `4` | Timed out |
+| `5` | Interrupted or cancelled |
+| `6` | Protocol or output-stream error |
+| `7` | Provider, model, authentication, or network failure |
+| `8` | Unrecovered local/tool failure |
+| `9` | Target session already has an active execution |
 
-`fork <thread-id>` creates a new session through app-server `thread/fork`, then
-starts the requested turn in that fork.
-
-`review` builds a scoped review task and runs it through the same exec path.
-The agent inspects the requested diff or commit with normal repository tools.
-
-## Attachments
-
-Local PDF files are attached with `--file`:
-
-```bash
-wuu exec --file report.pdf "summarize this PDF and update the code"
-```
-
-Local images are attached with `--image`:
-
-```bash
-wuu exec --image screenshot.png "find the UI issue"
-```
-
-Both flags are repeatable. `--file` currently accepts PDF files only. Relative
-attachment paths are resolved from `--workdir` when it is set, otherwise from
-the current directory. Attachments
-are sent as structured app-server `run/start` input fields, not pasted into the
-prompt.
-
-## Output Modes
-
-Default mode is automation-safe:
-
-- stdout contains only the final agent message.
-- stderr contains run metadata such as provider, model, workspace, thread id,
-  turn id, tool progress, and trace path. JSONL events also carry the execution
-  `run_id` when they are associated with a Run.
-- stdout does not contain banners, progress lines, terminal control codes, or
-  debug logs.
-
-JSONL mode is enabled with `--json`:
-
-```bash
-wuu exec --json "review this change"
-```
-
-In JSONL mode:
-
-- stdout is JSONL.
-- every stdout line is one JSON object.
-- diagnostics and debug logs must not pollute stdout.
-- the final event is `result`.
-
-See [JSONL events](jsonl-events.md) for the event contract.
-
-## Exit Codes
-
-`wuu exec` uses stable exit codes:
-
-- `0`: completed successfully.
-- `1`: agent turn failed.
-- `2`: CLI arguments, config, or input validation failed.
-- `3`: permission denied by the workspace boundary or tool policy.
-- `4`: timeout.
-- `5`: interrupted.
-- `6`: app-server protocol error.
-- `7`: provider or model error.
-- `8`: tool execution failed and the agent did not recover.
-- `9`: the target thread already has a running turn (try again later, or use another thread).
-
-Scripts should use exit codes instead of parsing natural-language error text.
-
-## Supported Flags
-
-Current implemented flags:
-
-```bash
---provider <name>
---model <model>
---effort <level>
---variant <name>
---permission-mode <mode>
---workdir <dir>
---config <path>
---profile <name>
---ignore-user-config
---env KEY=VALUE
---file <path>
---image <path>
---image-original
---no-tools
---json
---ephemeral
---input-json
---max-turns <n>
---output-schema <schema.json>
---timeout <duration>
---output-last-message <file>
-```
-
-`--image-original` sends `--image` attachments without resizing them. `--config`
-loads and explicitly trusts one config file. Relative paths are
-resolved from `--workdir` when it is set, otherwise from the current directory.
-`--ignore-user-config` skips the user config and explicitly trusts the first
-project config (`.wuu.json`, then `wuu.json`) plus its project settings layers.
-Both options are intended for controlled automation: a trusted file may choose
-provider endpoints, credential environment variables, instruction paths, hooks, and
-MCP servers. `--env KEY=VALUE` is repeatable and applies only to the current
-run. `--max-turns` caps the
-model/tool loop for the current user turn.
-`--output-schema` reads a JSON Schema file, instructs the agent to return only
-JSON, and validates the final answer as part of the app-server execution Run.
-Correction turns are created by the app-server inside that same Run, so a
-structured-output invocation never starts a second lifecycle. JSONL `result`
-events include `structured_result` after successful validation.
-
-With neither option, `wuu exec` uses the user config at
-`~/.wuu/config.json` (or `WUU_HOME/config.json`) as the trusted base. It then
-deep-merges project sources in this order: `.wuu.json` (or `wuu.json`),
-`.wuu/settings.json`, and `.wuu/settings.local.json`. Objects merge recursively;
-scalars and arrays replace.
-
-Normal startup ignores `default_provider`, `providers`, `instructions` (and the
-legacy `memory` alias for instruction discovery),
-`agent.model_roles`, `agent.model_aliases`, and `agent.permission_mode` from
-every project source, with a stderr warning. Those settings stay user-owned
-because they control where credentials and model context are sent, which stable
-model routes agents can select, which files outside the workspace become model
-context, and how much local authority the agent receives. Memory is supplied by
-the Memory plugin and is not loaded from core configuration. Set `WUU_DEBUG` to
-log which safe project layers were applied.
-
-After layering, `wuu exec` also reads a Claude Code project-level
-`<workdir>/.mcp.json` if present and merges its **approved** servers into
-`mcp_servers`. Parsing is intentionally loose (unknown fields ignored). Servers
-are not loaded until approved via the `mcp_json` section (`enable_all`,
-`enabled`, `disabled`) — recommended in `.wuu/settings.local.json`, mirroring
-Claude Code's `enableAllProjectMcpServers` / `enabledMcpjsonServers` /
-`disabledMcpjsonServers`. Remote entries map `type: "http"` to the streamable
-HTTP transport and `type: "sse"` to legacy SSE, same as Claude Code.
-`${VAR}` / `${VAR:-default}` references are expanded.
-On a native `mcp_servers` name clash the native entry wins; `disabled` wins over
-`enabled`/`enable_all`. Unapproved servers print one aggregated stderr hint
-(de-duplicated across reloads); a missing `.mcp.json` changes nothing.
-
-## Permission modes
-
-`wuu exec` makes allow-or-deny decisions without an interactive approval step:
-
-- `standard` (default) confines file reach to the current runtime root,
-  registered workspaces, the system temporary directory, and explicit extra
-  roots, and permits mutations inside those reachable roots;
-- `read_only` keeps the same file reach and denies mutations;
-- `unconfined` removes Wuu's path confinement and permits mutations.
-
-In `standard` and `read_only`, Agent commands also use a filesystem-write sandbox.
-Without an available sandbox backend, commands fail rather than silently running
-unrestricted. This does not isolate the inherited environment or network access.
-See [permission modes](../reference/permissions.md) for the full boundaries.
-
-## Session Inspection
-
-Agent-facing session inspection lives under `wuu session`:
-
-```bash
-wuu session list --json
-wuu session show --json --last
-wuu session show --json <thread-id>
-wuu session trace --json --last
-wuu session trace --json <thread-id>
-wuu session search --json <query>
-wuu session archive --json <thread-id>
-wuu session delete --json <thread-id>
-```
-
-`list`, `show`, `trace`, and `search` are read-only and expose session
-metadata, persisted history, trace replay data, and search results for
-automation. `archive` hides a session from default lists without deleting its
-persisted data. `delete` removes the session, its durable history, and any
-workspace-scoped artifacts Wuu can locate for that thread.
-
-## Safety
-
-Use read-only mode for unattended inspection and review the task's configuration
-before allowing edits. Common credential patterns are redacted from tool output in
-every mode, but redaction is best effort. Read the
-[security model](../reference/security-model.md) before running untrusted repositories.
+Argument parsing and cancellation during stdin collection can end before any
+JSONL event is written. Treat a missing
+`result`, a failed result, or a nonzero exit code as failure. Do not infer success
+from a partial answer. Inspect saved sessions and execution records through
+[`wuu session` and `wuu runs`](../reference/cli-commands.md).

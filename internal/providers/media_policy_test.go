@@ -86,6 +86,31 @@ func TestProjectMediaForPolicyUnknownKindsPassThrough(t *testing.T) {
 	}
 }
 
+func TestRequiredMediaFailsInsteadOfOmittingEvidence(t *testing.T) {
+	image, file := testImage(), testFile()
+	image.Required, file.Required = true, true
+	for name, input := range map[string]ChatMessage{
+		"image": {Role: "user", Images: []InputImage{image}},
+		"pdf":   {Role: "user", Files: []InputFile{file}},
+		"video": {Role: "user", Files: []InputFile{{Required: true, MediaType: "video/mp4", Data: "dmlkZW8="}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// The request boundary also protects restored history, not just the
+			// latest input, when a later turn chooses an incompatible model.
+			msgs := []ChatMessage{input, {Role: "assistant", Content: "Seen"}, {Role: "user", Content: "Continue"}}
+			if out, err := PrepareMessagesForProviderRequestWithPolicy("p", "m", msgs, MediaInputPolicy{ImageKnown: true, FileKnown: true, VideoKnown: true}); err == nil || out != nil {
+				t.Fatal("required evidence degraded to a text-only request")
+			}
+			for _, policy := range []MediaInputPolicy{{}, {ImageKnown: true, Image: true, FileKnown: true, File: true, VideoKnown: true, Video: true}} {
+				out, err := PrepareMessagesForProviderRequestWithPolicy("p", "m", msgs, policy)
+				if err != nil || len(out[0].Images) != len(input.Images) || len(out[0].Files) != len(input.Files) {
+					t.Fatalf("supported/unknown input lost media: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestPrepareMessagesForProviderRequestWithPolicyStripsBeforeValidation(t *testing.T) {
 	t.Parallel()
 	msgs := []ChatMessage{

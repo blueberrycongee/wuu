@@ -1,6 +1,10 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { WorkspaceFileService } from "../main/workspaceFiles";
 import type {
   RuntimeContext,
   WorkspaceDirectoryListResult,
@@ -8,6 +12,7 @@ import type {
 } from "../shared/protocol";
 import { WORKSPACE_FILE_DRAG_MIME } from "./ComposerMessages";
 import { WorkspaceFilePreview, WorkspaceFileTree } from "./WorkspaceFiles";
+import { workspaceFileViewTab, type WorkspaceFileViewTab } from "./WorkspaceViewTabs";
 
 vi.mock("./WorkspaceMonacoEditor", () => ({
   WorkspaceMonacoEditor: ({
@@ -222,6 +227,57 @@ async function clickMenuItem(text: string): Promise<void> {
 }
 
 describe("WorkspaceFileTree", () => {
+  it.skipIf(process.platform === "win32").each([
+    [" note.txt", "note.txt"],
+    ["note.txt ", "note.txt"],
+    [" ", "note.txt"],
+    ["folder\\note.txt", "folder/note.txt"],
+  ])("previews the exact listed file %j through a file tab", async (name, otherName) => {
+    const parent = mkdtempSync(join(tmpdir(), "wuu-file-preview-"));
+    const cwd = join(parent, " workspace\\root ");
+    const context: RuntimeContext = { kind: "no_project", cwd };
+    try {
+      mkdirSync(dirname(join(cwd, otherName)), { recursive: true });
+      writeFileSync(join(cwd, name), "selected contents\n");
+      writeFileSync(join(cwd, otherName), "other contents\n");
+      const files = new WorkspaceFileService(() => context);
+      listWorkspaceDirectory.mockImplementation(async (path, root) => files.directoryList(path, root));
+      readWorkspaceFile.mockImplementation(async (path, root) => files.readFile(path, root));
+      let selected: WorkspaceFileViewTab | undefined;
+      await render(<WorkspaceFileTree activeContext={context} open onOpenFile={(path) => {
+        selected = workspaceFileViewTab({ context, path });
+      }} />);
+      await settleDirectoryLoads();
+      await act(async () => { rowButtonByTitle(name).click(); });
+
+      expect(selected).toBeDefined();
+      expect(selected!.path).toBe(name);
+      expect(selected!.id).not.toBe(workspaceFileViewTab({ context, path: otherName }).id);
+      await render(<WorkspaceFilePreview activeContext={context} selectedFilePath={selected!.path} onOpenRightPanel={() => {}} />);
+      await settleDirectoryLoads();
+      expect(readWorkspaceFile).toHaveBeenLastCalledWith(name, cwd);
+      expect(container.textContent).toContain("selected contents");
+      expect(container.textContent).not.toContain("other contents");
+
+      const absoluteTab = workspaceFileViewTab({ context, path: join(cwd, name) });
+      expect(absoluteTab.id).toBe(selected!.id);
+      await render(<WorkspaceFilePreview activeContext={context} selectedFilePath={join(cwd, name)} onOpenRightPanel={() => {}} />);
+      await settleDirectoryLoads();
+      expect(container.textContent).toContain("selected contents");
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["C:\\repo", "\\\\server\\share\\repo"])("preserves Windows workspace paths under %j", async (cwd) => {
+    const context: RuntimeContext = { kind: "no_project", cwd };
+    const tab = workspaceFileViewTab({ context, path: `${cwd}\\src\\ note.txt` });
+    await render(<WorkspaceFilePreview activeContext={context} selectedFilePath={tab.path} onOpenRightPanel={() => {}} />);
+    await settleDirectoryLoads();
+    expect(readWorkspaceFile).toHaveBeenCalledWith("src/ note.txt", cwd);
+    expect(container.textContent).toContain("button code");
+  });
+
   it("reserves room beside the search field for the file-tree drag handle", async () => {
     await render(
       <WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />,
@@ -232,13 +288,13 @@ describe("WorkspaceFileTree", () => {
       "style[data-file-tree-unsafe-css]",
     );
     expect(unsafeStyle?.textContent).toMatch(
-      /\[data-file-tree-search-container\]\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*100%;[^}]*margin-inline:\s*0;[^}]*padding-inline:\s*8px;/s,
+      /\[data-file-tree-search-container\]\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*100%;[^}]*margin-inline:\s*0;[^}]*padding-inline:\s*var\(--trees-item-margin-x\);/s,
     );
     expect(unsafeStyle?.textContent).toMatch(
       /\[data-file-tree-search-input\]\s*\{[^}]*min-width:\s*0;[^}]*margin-inline-end:\s*40px;[^}]*border:\s*var\(--wuu-workspace-file-tree-search-border,\s*1px solid var\(--hairline-strong\)\);[^}]*border-radius:\s*var\(--wuu-workspace-file-tree-search-radius,\s*var\(--radius-sm\)\);/s,
     );
     expect(unsafeStyle?.textContent).toMatch(
-      /\[data-file-tree-search-input\]:focus-visible,[\s\S]*\[data-file-tree-search-input\]\[data-file-tree-search-input-fake-focus="true"\]\s*\{[^}]*outline:\s*none;/,
+      /:host-context\(html\[data-focus-modality="pointer"\]\) \[data-file-tree-search-input\]:focus-visible,[\s\S]*:host-context\(html\[data-focus-modality="pointer"\]\) \[data-file-tree-search-input\]\[data-file-tree-search-input-fake-focus="true"\]\s*\{[^}]*outline:\s*none;/,
     );
     const search = treeShadowRoot().querySelector<HTMLInputElement>(
       "[data-file-tree-search-input]",

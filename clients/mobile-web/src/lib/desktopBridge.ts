@@ -13,7 +13,6 @@ import {
   type ServerRequestResult,
 } from "@wuu/remote-core";
 import type {
-  ChannelRoomPreferences,
   DesktopPlatform,
   DesktopProject,
   InitializeResult,
@@ -51,7 +50,6 @@ type PreferenceListener<T> = (value: T) => void;
 
 const THEME_KEY = "wuu.web.theme";
 const MESSAGE_SIZE_KEY = "wuu.web.message-size";
-const CHANNEL_ROOM_PREFERENCES_KEY = "wuu.channels.roomPreferences";
 const PLUGIN_CONFLICT_PREFERENCES_KEY = "wuu.web.plugin-conflict-preferences";
 const DEFAULT_MESSAGE_SIZE = 16;
 /** How long a brief link drop may last before the reconnect strip appears.
@@ -89,20 +87,6 @@ function storedLanguage(): LanguagePreference {
 function storedMessageSize(): MessageFlowFontSize {
   const value = Number(localStorage.getItem(MESSAGE_SIZE_KEY));
   return (Number.isFinite(value) ? value : DEFAULT_MESSAGE_SIZE) as MessageFlowFontSize;
-}
-
-function storedChannelRoomPreferences(): ChannelRoomPreferences {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(CHANNEL_ROOM_PREFERENCES_KEY) ?? "null") as
-      | Partial<ChannelRoomPreferences>
-      | null;
-    return {
-      pinnedRoomIDs: Array.isArray(parsed?.pinnedRoomIDs) ? parsed.pinnedRoomIDs : [],
-      archivedRoomIDs: Array.isArray(parsed?.archivedRoomIDs) ? parsed.archivedRoomIDs : [],
-    };
-  } catch {
-    return { pinnedRoomIDs: [], archivedRoomIDs: [] };
-  }
 }
 
 function storedPluginConflictPreferences(): PluginConflictPreferences {
@@ -450,23 +434,36 @@ export class RemoteDesktopBridge {
     }
   }
 
-  private async call<T>(method: string, params?: unknown): Promise<T> {
+  private async call<T>(method: string, params?: unknown, targetWorkdir?: string, onResult?: (result: T, workdir: string) => void): Promise<T> {
     const snapshotRead = SNAPSHOT_READ_METHODS.has(method);
     this.assertAvailable(snapshotRead);
     const revision = this.connection.revision;
-    const workdir = this.requestWorkdir(params);
+    const workdir = targetWorkdir ?? this.requestWorkdir(params);
     const key = snapshotRead ? JSON.stringify([revision, workdir, method, params]) : undefined;
     if (key) {
       const pending = this.snapshotReads.get(key);
       if (pending) return pending as Promise<T>;
     }
     const request = (async () => {
-      const result = await this.client.call<T>(method, params, snapshotRead ? SNAPSHOT_READ_TIMEOUT_MS : 30_000, workdir);
+      // Browser login runs on the host and can outlive an ordinary RPC. Keep
+      // its deadline beyond the host's five-minute bound so errors arrive intact.
+      const timeout = method === "engine/authenticate" ? 310_000 : snapshotRead ? SNAPSHOT_READ_TIMEOUT_MS : 30_000;
+      const install = onResult ? (result: T) => {
+        if (this.stopped || this.connection.revision !== revision) {
+          throw new Error("Remote connection changed while the request was in flight");
+        }
+        this.recordThreadLocations(result);
+        this.recordQuestionLocations(result, workdir);
+        onResult(result, workdir);
+      } : undefined;
+      const result = await this.client.call<T>(method, params, timeout, workdir, ...(install ? [install] : []));
       if (this.stopped || this.connection.revision !== revision) {
         throw new Error("Remote connection changed while the request was in flight");
       }
-      this.recordThreadLocations(result);
-      this.recordQuestionLocations(result, workdir);
+      if (!install) {
+        this.recordThreadLocations(result);
+        this.recordQuestionLocations(result, workdir);
+      }
       return result;
     })();
     if (key) this.snapshotReads.set(key, request);
@@ -623,7 +620,6 @@ export class RemoteDesktopBridge {
       initialThemePreference: storedTheme(),
       initialLanguagePreference: storedLanguage(),
       initialSystemLocale: navigator.language,
-      initialChannelRoomPreferences: storedChannelRoomPreferences(),
       initialMessageFlowFontSize: storedMessageSize(),
       popOutInit: () => ({ kind: null, threadID: null, context: null }),
 
@@ -699,20 +695,20 @@ export class RemoteDesktopBridge {
         const data = await this.readAttachment(ref);
         return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(data), char => char.charCodeAt(0))));
       },
-      resumeThread: async (sessionId?: string) => {
+      resumeThread: (sessionId?: string) => {
         const params = { session_id: sessionId ?? "", response_only: true };
-        const result = await this.call<ThreadResumeResult>("thread/resume", params);
-        // Preserve renderer and pending-message synchronization at the response boundary.
-        this.emitServerEvent({ workdir: this.requestWorkdir(params), kind: "notification", message: { method: "thread/resumed", params: result } });
-        return result;
+        return this.call<ThreadResumeResult>("thread/resume", params, undefined, (result, workdir) => {
+          // Install once per wire response, before queued deltas can be published.
+          this.emitServerEvent({ workdir, kind: "notification", message: { method: "thread/resumed", params: result } });
+        });
       },
-      startThread: (params = {}) => this.call("thread/start", {
+      startThread: (params = {}, targetContext = this.activeContext) => this.call("thread/start", {
         ...params,
-        cwd: params.cwd || this.workdir(),
+        cwd: params.cwd || targetContext?.cwd || this.workdir(),
         workspace_id: params.workspace_id && this.remoteWorkspaceIDs.has(params.workspace_id)
-          ? params.workspace_id : this.activeContext?.kind === "project" && this.remoteWorkspaceIDs.has(this.activeContext.project_id)
-            ? this.activeContext.project_id : undefined,
-      }),
+          ? params.workspace_id : targetContext?.kind === "project" && this.remoteWorkspaceIDs.has(targetContext.project_id)
+            ? targetContext.project_id : undefined,
+      }, targetContext?.cwd),
       searchThreads: (query: string, limit?: number) =>
         this.call("thread/search", { query, limit }),
       getThreadPreview: (threadId: string, limit?: number) =>
@@ -726,19 +722,14 @@ export class RemoteDesktopBridge {
       deleteThread: (threadId: string) => this.call("thread/delete", { thread_id: threadId }),
       compactThread: (threadId: string) => this.call("thread/compact/start", { thread_id: threadId }),
 
-      listChannelRooms: () => this.call("channel/room/list"),
-      channelContinuity: (params) => this.call("channel/continuity", params),
-      listChannelSessions: (params) => this.call("channel/session/list", params),
-      createChannelSession: (params) => this.call("channel/session/create", params),
-      readChannelSession: (params) => this.call("channel/session/read", params),
-      sendChannelSession: (params) => this.call("channel/session/send", params),
-      stopChannelSession: (params) => this.call("channel/session/stop", params),
-      resumeChannelSession: (params) => this.call("channel/session/resume", params),
-      listNamedAgents: () => this.call("channel/agent/list"),
+      returnManagedSession: (params) => this.call("thread/control/return", params),
+      takeOverManagedSession: (params) => this.call("thread/control/take", params),
+      projectSession: (params) => this.call("project/session", params),
 
-      startTurn: (threadId, prompt, images, files, permissionMode, activeDocument, contentParts) =>
+      startTurn: (threadId, prompt, images, files, permissionMode, activeDocument, contentParts, _targetContext, clientId) =>
         this.call("turn/start", {
           thread_id: threadId,
+          ...(clientId === undefined ? {} : { client_id: clientId }),
           prompt,
           images: images ?? [],
           files: files ?? [],
@@ -746,9 +737,10 @@ export class RemoteDesktopBridge {
           ...(activeDocument === undefined ? {} : { active_document: activeDocument }),
           ...(contentParts === undefined ? {} : { content_parts: contentParts }),
         }),
-      queueTurn: (threadId, prompt, images, clientId, files, permissionMode, activeDocument, contentParts) =>
+      queueTurn: (threadId, prompt, images, clientId, files, permissionMode, activeDocument, contentParts, _targetContext, hold) =>
         this.call("turn/queue", {
           thread_id: threadId,
+          ...(hold ? { hold: true } : {}),
           prompt,
           images: images ?? [],
           files: files ?? [],
@@ -821,16 +813,16 @@ export class RemoteDesktopBridge {
       readSkillContent: (params) => this.call("desktop/skill/content",params),
       listSkills: () => this.call("skill/list"),
       listInstructionFiles: () => this.call("instructions/list"),
-      getNamedAgentInsights: () => this.call("channel/agent/insights"),
-      bootstrapChannels: () => this.call("channel/bootstrap"),
-      getChannelHumanMentionStatus: () => this.call("channel/human-mention/status"),
-      ackChannelHumanMentions: () => this.call("channel/human-mention/ack"),
       getSessionOrganization: () => this.call("sessionOrganization/list"),
       getSettingsUsage: () => this.call("settings/usage"),
+      getUsageOverview: (params) => this.call("usage/overview", params),
       refreshExtensionCatalog: () => this.call("extension/catalog/refresh"),
       updateAdvancedSettings: (params) => this.call("config/advanced/update", params),
       updateGeneralSettings: (params) => this.call("config/general/update", params),
       updateEngines: (params) => this.call("engine/update", params),
+      listEngineAuthMethods: (engineID) => this.call("engine/auth/methods", { engine_id: engineID }),
+      authenticateEngine: (engineID, methodID) => this.call("engine/authenticate", { engine_id: engineID, method_id: methodID }),
+      cancelEngineAuth: (engineID) => this.call("engine/auth/cancel", { engine_id: engineID }),
       updateExtensionPackage: (params) => this.call("extension/package/update", params),
       loadPluginDesktopModule: async (params) => this.pluginAssets.module(await this.call("plugin/desktop-module/read",params)),
       loadPluginIcon: async (params) => this.pluginAssets.icon(await this.call("plugin/icon/read",params)),
@@ -840,23 +832,9 @@ export class RemoteDesktopBridge {
       getPluginStorage: (params) => this.call("plugin/storage/get", params),
       setPluginStorage: (params) => this.call("plugin/storage/set", params),
       requestPluginRuntime: (params) => this.call("plugin/client/request", params),
-      createNamedAgent: (params) => this.call("channel/agent/create", params),
-      updateNamedAgent: (params) => this.call("channel/agent/update", params),
-      deleteNamedAgent: (params) => this.call("channel/agent/delete", params),
-      startNamedAgent: (params) => this.call("channel/agent/start", params),
-      resetNamedAgent: (params) => this.call("channel/agent/reset", params),
-      resolveChannelAgentCreation: (params) => this.call("channel/agent-creation/resolve", params),
-      createChannelRoom: (params) => this.call("channel/room/create", params),
-      openChannelDirectMessage: (params) => this.call("channel/direct-message/open", params),
-      updateChannelRoom: (params) => this.call("channel/room/update", params),
-      deleteChannelRoom: (params) => this.call("channel/room/delete", params),
-      markChannelRoomRead: (params) => this.call("channel/room/read", params),
-      listChannelMessages: (params) => this.call("channel/message/list", params),
-      sendChannelMessage: (params) => this.call("channel/message/send", params),
-      createChannelTask: (params) => this.call("channel/task/create", params),
-      updateChannelTask: (params) => this.call("channel/task/update", params),
       readManagedProcess: (params) => this.call("process/read", params),
       holdUserQuestion: (request_id) => this.call("user-question/hold", { request_id }),
+      useCodexCredentials: (provider) => this.call("config/codex/credentials", { provider }),
       loadCodexModels: (provider) => this.call("config/codex/models", { provider }),
       installPluginPackage: async () => {
         const path = await pickComputerFolder((method,params) => this.call(method,params),false,true);
@@ -881,7 +859,7 @@ export class RemoteDesktopBridge {
       takeoverActivity: (thread_id, activity_id) => this.call("activity/takeover", { thread_id, activity_id }),
       releaseActivity: (thread_id, activity_id) => this.call("activity/release", { thread_id, activity_id }),
       stopActivity: (thread_id, activity_id) => this.call("activity/stop", { thread_id, activity_id }),
-      updateRuntimeSettings: (provider, model, effort, connection, variant, permissionMode, threadId) =>
+      updateRuntimeSettings: (provider, model, effort, connection, variant, permissionMode, threadId, speed) =>
         this.call("config/model/update", {
           ...(provider ? { provider } : {}),
           ...(model ? { model } : {}),
@@ -889,6 +867,7 @@ export class RemoteDesktopBridge {
           ...connection,
           ...(effort === undefined ? {} : { effort }),
           ...(variant === undefined ? {} : { variant }),
+          ...(speed === undefined ? {} : { speed }),
           ...(permissionMode === undefined ? {} : { permission_mode: permissionMode }),
         }),
       removeProvider: (provider, options) => this.call("config/provider/remove", {
@@ -940,10 +919,6 @@ export class RemoteDesktopBridge {
       setMessageFlowFontSize: async (fontSize: MessageFlowFontSize) => {
         localStorage.setItem(MESSAGE_SIZE_KEY, String(fontSize));
         return { ok: true, fontSize };
-      },
-      updateChannelRoomPreferences: async (preferences: ChannelRoomPreferences) => {
-        localStorage.setItem(CHANNEL_ROOM_PREFERENCES_KEY, JSON.stringify(preferences));
-        return preferences;
       },
       getPluginConflictPreferences: async () => storedPluginConflictPreferences(),
       setPluginConflictPreference: async (key: string, pluginId: string) => {

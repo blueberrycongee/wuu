@@ -29,6 +29,7 @@ type localAppServerController struct {
 	sdkRuntime    *wuusdk.Runtime
 	sdkClient     *wuusdk.Client
 	sdkInit       wuusdk.Initialization
+	selection     wuusdk.ModelSelection
 	sdkSessions   map[string]*wuusdk.Session
 	sdkRuns       map[string]*wuusdk.Run
 	sdkEvents     *wuusdk.Subscription
@@ -52,6 +53,7 @@ func NewLocalAppServerController(ctx context.Context, opts Options) (Controller,
 		Variant:          opts.Variant,
 		PermissionMode:   opts.PermissionMode,
 		NoTools:          opts.NoTools,
+		NonInteractive:   true,
 	})
 	if err != nil {
 		return nil, err
@@ -62,14 +64,23 @@ func NewLocalAppServerController(ctx context.Context, opts Options) (Controller,
 		return nil, err
 	}
 	controller := &localAppServerController{
-		sdkRuntime:    embedded,
-		sdkClient:     client,
-		sdkInit:       client.Initialization(),
-		sdkSessions:   map[string]*wuusdk.Session{},
-		sdkRuns:       map[string]*wuusdk.Run{},
-		notifications: make(chan Notification, 256),
+		sdkRuntime:  embedded,
+		sdkClient:   client,
+		sdkInit:     client.Initialization(),
+		selection:   wuusdk.ModelSelection{Provider: opts.Provider, Model: opts.Model},
+		sdkSessions: map[string]*wuusdk.Session{},
+		sdkRuns:     map[string]*wuusdk.Run{},
+		// The SDK owns the bounded pending queue. Avoid a second count-only
+		// buffer here, which could retain hundreds of multi-megabyte deltas.
+		notifications: make(chan Notification),
 	}
-	controller.sdkEvents = client.Subscribe(ctx, wuusdk.SubscriptionOptions{Buffer: 256})
+	if value := strings.TrimSpace(opts.Variant); value != "" {
+		controller.selection.Variant = &value
+	}
+	if value := strings.TrimSpace(opts.Effort); value != "" {
+		controller.selection.Effort = &value
+	}
+	controller.sdkEvents = client.Subscribe(ctx, wuusdk.SubscriptionOptions{})
 	go controller.bridgeSDKEvents()
 	return controller, nil
 }
@@ -132,6 +143,9 @@ func (c *localAppServerController) StartThread(ctx context.Context, ephemeral bo
 func (c *localAppServerController) ResumeThread(ctx context.Context, threadID string) (appserver.Thread, error) {
 	if c.sdkClient != nil {
 		session, err := c.sdkClient.ResumeSession(ctx, threadID)
+		if err == nil {
+			err = session.SelectModel(ctx, c.selection)
+		}
 		return c.rememberSDKSession(session, err)
 	}
 	var result appserver.ThreadResumeResult
@@ -143,6 +157,9 @@ func (c *localAppServerController) ResumeThread(ctx context.Context, threadID st
 func (c *localAppServerController) ForkThread(ctx context.Context, threadID string) (appserver.Thread, error) {
 	if c.sdkClient != nil {
 		session, err := c.sdkClient.ForkSession(ctx, threadID)
+		if err == nil {
+			err = session.SelectModel(ctx, c.selection)
+		}
 		return c.rememberSDKSession(session, err)
 	}
 	var result appserver.ThreadForkResult
@@ -352,6 +369,9 @@ func (c *localAppServerController) bridgeSDKEvents() {
 	defer close(c.notifications)
 	for event := range c.sdkEvents.Events {
 		c.notifications <- Notification{Method: event.Method, Params: append(json.RawMessage(nil), event.Params...)}
+	}
+	if err := c.sdkEvents.Err(); err != nil {
+		c.notifications <- Notification{Err: err}
 	}
 }
 

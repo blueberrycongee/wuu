@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"sort"
 	"strings"
 	"time"
 
@@ -17,6 +16,10 @@ import (
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolerrors"
 )
+
+// Bound provider-requested tool-free continuations even when MaxSteps is unset.
+// A broken compatible endpoint must not create an unlimited billing loop.
+const maxConsecutiveContinuations = 8
 
 // EmptyAnswerError is returned when the model completes a turn without
 // producing any text content or tool calls. StopReason carries the
@@ -60,12 +63,28 @@ type ToolSurfaceFreezer interface {
 //
 // Behavior:
 //   - Loops up to cfg.MaxSteps rounds (0 = unlimited).
+//   - Allows at most eight consecutive tool-free continuation requests before
+//     returning an error, even with an unlimited step budget.
 //   - On context-overflow errors from the step, calls cfg.Compact
-//     once and re-issues the step. Consecutive overflows propagate;
-//     fresh context windows allow recovery again after a successful step.
+//     once and re-issues the step. An allocated but unused tool runtime
+//     is not treated as partial output, so ledger-backed streams can still
+//     recover before the first token. If that compact does not shrink
+//     history, the loop force-trims older turns onto a valid tool-call
+//     boundary and retries once more only when the replacement is
+//     smaller. Consecutive overflows after that recovery propagate;
+//     fresh context windows allow recovery again after a successful
+//     step. A failed or no-op recovery never retries the same overflowing
+//     payload.
 //   - Output truncation is treated as a completed model response with
 //     FinishReason=length. The caller/UI can surface that reason without
 //     classifying the turn as a user interruption or transport failure.
+//     The next model request still reconciles local usage first, so a length
+//     finish is not the last chance to shrink history that has reached the
+//     compact threshold.
+//   - When the provider has not reported usage, the running total is raised
+//     to the outbound estimate before the send. That count includes assistant
+//     text, tool-call arguments, and tool schemas that the tracked length
+//     would otherwise skip. A provider-reported total is not replaced.
 //   - Executes any tool calls the model requested, recording results
 //     as tool messages and (if configured) emitting them through
 //     OnToolResult so callers can render them live.
@@ -156,15 +175,18 @@ func RunToolLoop(
 		totalIn, totalOut, totalCacheCreation, totalCacheRead int
 		// Reactive auto-compact (overflow recovery) runs at most once
 		// between successful steps for fresh windows (once per Run for
-		// legacy compaction); if a single compaction isn't enough, surfacing the
-		// error is more honest than silently looping. Proactive compact
+		// legacy compaction). If that compact does not shrink history, a
+		// local force-trim retries once more only when it actually shrinks
+		// the request. Proactive compact
 		// runs before provider requests, including mid-turn continuation
 		// requests after completed tool results. A failed or no-op
 		// proactive attempt suppresses further proactive attempts for
 		// this Run so the loop cannot spin on an unhelpful compactor.
-		overflowCompacted   bool
-		proactiveSuppressed bool
-		historyRewritten    bool
+		overflowCompacted     bool
+		overflowTrimmed       bool
+		overflowTrimRequested bool
+		proactiveSuppressed   bool
+		historyRewritten      bool
 		// Tracks current context fill so we can decide whether to
 		// proactively compact before the next round. Uses
 		// response.usage as ground truth + delta estimation for
@@ -187,11 +209,10 @@ func RunToolLoop(
 		prevCacheFingerprint string
 		// Compaction is a nested inference flow. Its final operation becomes the
 		// parent of the first agent round that consumes the rewritten history.
-		lastAgentOperationID         string
-		nextOperationParentID        string
-		newContextRequested          bool
-		lowBudgetReminderSent        bool
-		emptyAnswerRecoveryAttempted bool
+		lastAgentOperationID  string
+		nextOperationParentID string
+		newContextRequested   bool
+		lowBudgetReminderSent bool
 	)
 	if usage == nil {
 		usage = NewUsageTracker()
@@ -371,6 +392,7 @@ func RunToolLoop(
 		}, nil
 	}
 
+	consecutiveContinuations := 0
 	for stepIdx := 0; cfg.MaxSteps == 0 || stepIdx < cfg.MaxSteps; stepIdx++ {
 		if cfg.BeforeStep != nil {
 			injected := cfg.BeforeStep()
@@ -390,6 +412,12 @@ func RunToolLoop(
 				appendMessage(msg)
 			}
 			usage.RecordPendingMessages(injected)
+		}
+		// No provider baseline means earlier assistant and tool-call tokens may
+		// be missing from the running total. Raise it to the outbound estimate
+		// before this send so compact or a fresh window can run first.
+		if !usage.HasGroundTruth() {
+			usage.RaiseLocalEstimate(localRequestEstimate(messages, cfg))
 		}
 		hardContextRollover := freshContextEnabled && threshold > 0 && usage.EstimateCurrent() >= threshold
 		attemptFreshContext := newContextRequested || hardContextRollover
@@ -422,6 +450,8 @@ func RunToolLoop(
 		var freshRollbackProviderMessages []providers.ChatMessage
 		freshRollbackHistoryRewritten := historyRewritten
 		if attemptFreshContext {
+			forceOverflowTrim := overflowTrimRequested
+			overflowTrimRequested = false
 			targetTokens := cfg.FreshContextTokens
 			if targetTokens <= 0 {
 				targetTokens = FreshContextTargetTokens
@@ -447,7 +477,15 @@ func RunToolLoop(
 			var replacement []providers.ChatMessage
 			freshErr := archiveErr
 			if freshErr == nil {
-				replacement, freshErr = cfg.FreshContext(ctx, providers.CloneChatMessages(messages), historyArchiveHeadSeq, fixedTokens, targetTokens)
+				if forceOverflowTrim {
+					var smaller bool
+					replacement, smaller = forceTrimOverflowHistory(messages)
+					if !smaller {
+						freshErr = ErrFreshContextNotSmaller
+					}
+				} else {
+					replacement, freshErr = cfg.FreshContext(ctx, providers.CloneChatMessages(messages), historyArchiveHeadSeq, fixedTokens, targetTokens)
+				}
 			}
 			if freshErr == nil && compactChanged(messages, replacement) {
 				freshRollbackMessages = providers.CloneChatMessages(messages)
@@ -495,7 +533,7 @@ func RunToolLoop(
 					Reason: CompactReasonNewContext, Status: CompactAttemptFailed,
 					TokensBefore: beforeTokens, MessagesBefore: beforeMessages, Error: freshContextFailure,
 				})
-				if cfg.CompactOnly {
+				if cfg.CompactOnly || forceOverflowTrim {
 					return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), freshErr
 				}
 			}
@@ -732,6 +770,7 @@ func RunToolLoop(
 			// request would erase that partial answer from durable history (and can
 			// duplicate what the user already saw). Preserve it through the normal
 			// error path below; reactive compaction is safe only before output.
+			// A ledger-allocated runtime with no tool starts is not output.
 			if freshContextEnabled && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
 				overflowCompacted = true
 				cfg.FreshContextTokens = reactiveFreshContextTarget(cfg.FreshContextTokens,
@@ -740,7 +779,20 @@ func RunToolLoop(
 				newContextRequested = true
 				continue
 			}
-			if effectiveCompact != nil && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
+			if freshContextEnabled && providers.IsContextOverflow(err) && overflowCompacted && !overflowTrimmed && stepResultHasNoPartialOutput(result) {
+				if _, ok := forceTrimOverflowHistory(messages); ok {
+					// Use the normal window transaction so archival, request
+					// validation, checkpoint commit, and rollback still apply.
+					overflowTrimmed = true
+					overflowTrimRequested = true
+					newContextRequested = true
+					postToolContextSegments = consumedPostToolSegments
+					continue
+				}
+				// Fresh-context already consumed the one overflow retry.
+				// If trim cannot shrink the request, surface the overflow
+				// instead of sending the same overflowing payload again.
+			} else if effectiveCompact != nil && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
 				overflowCompacted = true // gate first; never retry twice
 				usageBefore := usage.Breakdown()
 				before := usageBefore.Total()
@@ -826,15 +878,21 @@ func RunToolLoop(
 						OutputLimit:    compact.IsSummaryOutputLimit(cerr),
 					}, usageBefore))
 				}
+				if trimmed, ok := forceTrimOverflowHistory(messages); ok {
+					resetTranscript(trimmed)
+					postToolContextSegments = consumedPostToolSegments
+					continue
+				}
 			}
 			// A streaming step can fail after content deltas were already shown to
 			// the user. Keep that visible text in durable history, but deliberately
 			// drop provider-native identity, reasoning, and tool calls because the
 			// failed stream may have left those structures incomplete.
-			if strings.TrimSpace(result.Content) != "" {
+			if strings.TrimSpace(result.Content) != "" || len(result.Images) > 0 {
 				appendMessage(providers.ChatMessage{
 					Role:    "assistant",
 					Content: result.Content,
+					Images:  result.Images,
 					Phase:   result.Phase,
 				})
 			}
@@ -851,6 +909,7 @@ func RunToolLoop(
 		if freshContextEnabled {
 			// Successful progress ends the previous overflow recovery attempt.
 			overflowCompacted = false
+			overflowTrimmed = false
 		}
 
 		if result.Usage != nil {
@@ -888,6 +947,7 @@ func RunToolLoop(
 
 		assistant := providers.ChatMessage{
 			Role:                 "assistant",
+			Images:               result.Images,
 			Content:              result.Content,
 			Phase:                result.Phase,
 			ProviderItemID:       result.ProviderItemID,
@@ -902,28 +962,34 @@ func RunToolLoop(
 		}
 		if shouldPersistAssistantMessage(assistant) {
 			appendMessage(assistant)
+			// Provider usage already includes this assistant message. Without
+			// it, the next request would omit the message from the running total
+			// once the tracked history length moves past it.
+			if result.Usage == nil {
+				usage.RecordPendingMessages([]providers.ChatMessage{assistant})
+			}
 		}
 
-		// Anthropic's pause_turn pauses a long-running turn (server-side tool
-		// use such as web search) and expects the conversation — including
-		// the paused assistant content just appended — to be resent so the
-		// model can continue. Treating it as a terminal stop silently
-		// truncated those turns. The step cap still bounds repeated pauses.
-		if len(result.ToolCalls) == 0 && strings.EqualFold(strings.TrimSpace(result.StopReason), "pause_turn") {
+		// Only an explicit, normalized continuation signal admits another
+		// tool-free round. Empty text and commentary are not such signals.
+		if len(result.ToolCalls) == 0 && finishReason == providers.FinishReasonContinue && !result.Truncated {
+			if consecutiveContinuations >= maxConsecutiveContinuations {
+				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead),
+					fmt.Errorf("provider continuation limit exceeded (%d consecutive tool-free continuations)", maxConsecutiveContinuations)
+			}
+			consecutiveContinuations++
 			continue
 		}
+		consecutiveContinuations = 0
 
 		// No tool calls → model is done. Return content plus finish metadata.
 		if len(result.ToolCalls) == 0 {
 			finalContent := result.Content
-			if strings.TrimSpace(finalContent) == "" {
-				canYield := requestHasTool(req.Tools, yieldTurnToolName)
-				if canYield && finishReason == providers.FinishReasonStop && !emptyAnswerRecoveryAttempted && (cfg.MaxSteps == 0 || stepIdx+1 < cfg.MaxSteps) {
-					emptyAnswerRecoveryAttempted = true
-					postToolContextSegments = append(postToolContextSegments, emptyAnswerRecoveryContext())
-					continue
-				}
-				if isLegitimateEmptyCompletion(finishReason, result.StopReason) && (!canYield || finishReason == providers.FinishReasonLength) {
+			if strings.TrimSpace(finalContent) == "" && len(result.Images) == 0 {
+				// A normal provider stop ends this turn even without outward text.
+				// It does not prove that the user's task is complete. Preserve length
+				// metadata separately so callers can still surface truncation.
+				if finishReason == providers.FinishReasonStop || finishReason == providers.FinishReasonLength {
 					return LoopResult{
 						Content:             "",
 						NewMessages:         newMessagesForReturn(messages, startLen, historyRewritten),
@@ -1000,20 +1066,13 @@ func RunToolLoop(
 		}
 		postToolContextSegments = append(postToolContextSegments, toolRuntime.TakeRequestContextSegments()...)
 		acceptedContextRequest := freshContextEnabled && acceptedNewContextRequest(orderedToolMessages)
-		enforceAggregateResultBudget(orderedToolMessages)
+		// Each result was settled before the invocation ledger. Keep those
+		// pages intact; total context pressure belongs to compaction, never
+		// to a second text cut that can erase status or recovery cursors.
 		for _, toolMsg := range orderedToolMessages {
 			appendMessage(toolMsg)
 		}
 		usage.RecordPendingMessages(orderedToolMessages)
-		if requestHasTool(req.Tools, yieldTurnToolName) && acceptedTurnYield(orderedToolMessages) {
-			return LoopResult{
-				NewMessages:      newMessagesForReturn(messages, startLen, historyRewritten),
-				HistoryRewritten: historyRewritten,
-				InputTokens:      totalIn, OutputTokens: totalOut,
-				CacheCreationTokens: totalCacheCreation, CacheReadTokens: totalCacheRead,
-				FinishReason: providers.FinishReasonStop, StopReason: "stop",
-			}, nil
-		}
 		if acceptedContextRequest {
 			if deferRepeatedContextTransition(messages, usage.EstimateCurrent(), cfg.FreshContextTokens) {
 				postToolContextSegments = append(postToolContextSegments, RequestOnlyContextMessages([]providers.ChatMessage{
@@ -1280,12 +1339,21 @@ func resolveEffectiveCompaction(cfg LoopConfig) CompactFn {
 }
 
 func stepResultHasNoPartialOutput(result StepResult) bool {
-	return strings.TrimSpace(result.Content) == "" &&
+	return strings.TrimSpace(result.Content) == "" && len(result.Images) == 0 &&
 		strings.TrimSpace(result.ReasoningContent) == "" &&
 		strings.TrimSpace(result.ProviderItemID) == "" &&
 		len(result.ReasoningBlocks) == 0 &&
 		len(result.ToolCalls) == 0 &&
-		result.ToolRuntime == nil
+		!toolRuntimeHasStartedWork(result.ToolRuntime)
+}
+
+func toolRuntimeHasStartedWork(runtime *TurnToolRuntime) bool {
+	if runtime == nil {
+		return false
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	return len(runtime.runs) > 0
 }
 
 func compactChanged(before, after []providers.ChatMessage) bool {
@@ -1293,6 +1361,22 @@ func compactChanged(before, after []providers.ChatMessage) bool {
 		return true
 	}
 	return !reflect.DeepEqual(before, after)
+}
+
+// forceTrimOverflowHistory is the last local recovery after a classified
+// overflow whose compact/fresh-context pass did not shrink the request. It
+// keeps leading system scaffolding and the newest user turn, dropping older
+// conversation on a valid tool-call boundary so the retry is smaller without
+// waiting for another provider round.
+func forceTrimOverflowHistory(messages []providers.ChatMessage) ([]providers.ChatMessage, bool) {
+	trimmed, err := compact.ForceTrimOverflowHistory(messages)
+	if err != nil || !compactChanged(messages, trimmed) {
+		return nil, false
+	}
+	if estimateFreshContextMessages(trimmed) >= estimateFreshContextMessages(messages) {
+		return nil, false
+	}
+	return trimmed, true
 }
 
 // compactNoticeMessageCount reports the model-visible conversation units a
@@ -1408,6 +1492,9 @@ func cloneReasoningBlocks(blocks []providers.ReasoningBlock) []providers.Reasoni
 }
 
 func shouldPersistAssistantMessage(msg providers.ChatMessage) bool {
+	if len(msg.Images) > 0 {
+		return true
+	}
 	if strings.TrimSpace(msg.Content) != "" {
 		return true
 	}
@@ -1418,19 +1505,6 @@ func shouldPersistAssistantMessage(msg providers.ChatMessage) bool {
 		return true
 	}
 	return len(msg.ToolCalls) > 0
-}
-
-func isLegitimateEmptyCompletion(finishReason providers.FinishReason, stopReason string) bool {
-	switch finishReason {
-	case providers.FinishReasonLength:
-		return true
-	}
-	switch strings.TrimSpace(strings.ToLower(stopReason)) {
-	case "end_turn":
-		return true
-	default:
-		return false
-	}
 }
 
 // errorJSON marshals an error into the JSON payload tool callers see
@@ -1591,66 +1665,6 @@ func partitionToolCalls(executor ToolExecutor, calls []providers.ToolCall) []too
 	})
 
 	return batches
-}
-
-// maxAggregateResultChars caps the total content of all tool-role messages in
-// a single batch. Prevents N parallel tools x 50K each from bloating the prompt.
-const maxAggregateResultChars = 200_000
-
-// enforceAggregateResultBudget trims tool messages in-place so their total
-// content stays within the aggregate budget. It trims the largest results
-// first and assigns each replacement its final byte length up front. The
-// marker must count against that length; repeatedly appending an unbudgeted
-// marker can otherwise leave total unchanged and spin forever.
-func enforceAggregateResultBudget(msgs []providers.ChatMessage) {
-	total := 0
-	type toolResult struct {
-		index  int
-		length int
-	}
-	results := make([]toolResult, 0, len(msgs))
-	for i, m := range msgs {
-		if m.Role == "tool" {
-			total += len(m.Content)
-			results = append(results, toolResult{index: i, length: len(m.Content)})
-		}
-	}
-	if total <= maxAggregateResultChars {
-		return
-	}
-	sort.SliceStable(results, func(i, j int) bool {
-		return results[i].length > results[j].length
-	})
-	for _, result := range results {
-		if total <= maxAggregateResultChars {
-			break
-		}
-		original := msgs[result.index].Content
-		excess := total - maxAggregateResultChars
-		targetLen := len(original) - excess
-		if targetLen < 0 {
-			targetLen = 0
-		}
-		marker := fmt.Sprintf(
-			"\n[trimmed: original %d chars, aggregate budget %d]",
-			len(original),
-			maxAggregateResultChars,
-		)
-		var replacement string
-		switch {
-		case targetLen == 0:
-			replacement = ""
-		case targetLen <= len(marker):
-			// An unusually large batch can leave less room than the marker itself.
-			// A bounded partial marker is preferable to exceeding the hard budget.
-			replacement = marker[:targetLen]
-		default:
-			prefixLen := targetLen - len(marker)
-			replacement = original[:prefixLen] + marker
-		}
-		msgs[result.index].Content = replacement
-		total = total - len(original) + len(replacement)
-	}
 }
 
 func systemReminderBlockKinds(content string) []string {

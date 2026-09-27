@@ -1,7 +1,13 @@
 import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useAutoFollowScrollContainer } from "./AutoFollowScroll";
+import {
+  atLatestScrollView,
+  latestFollowScrollTop,
+  scrollTopForDistanceFromLatest,
+  sessionTailSpacePx,
+  useAutoFollowScrollContainer,
+} from "./AutoFollowScroll";
 import { WINDOW_RESIZING_CLASS } from "./WindowResizeState";
 
 interface StubbedLayout {
@@ -62,6 +68,11 @@ describe("useAutoFollowScrollContainer", () => {
     act(() => pending.forEach((callback) => callback(now)));
   }
 
+  /** Run pending frames until the arrival scroll stops scheduling them. */
+  function settle(from: number): void {
+    for (let time = from; frames.size > 0 && time <= from + 4000; time += 20) paint(time);
+  }
+
   beforeEach(() => {
     frames = new Map();
     let nextFrame = 0;
@@ -106,11 +117,28 @@ describe("useAutoFollowScrollContainer", () => {
         window.dispatchEvent(new Event("resize"));
         notifyResize();
       });
+      expect(layout.scrollTop).toBe(contentHeight - height);
       paint();
       expect(layout.scrollTop).toBe(contentHeight - height);
       act(() => scrollNode!.dispatchEvent(new Event("scroll")));
       expect(handle?.autoFollowRef.current).toBe(true);
     }
+  });
+
+  it("restores a paused conversation before paint and cancels the outgoing arrival", () => {
+    layout!.scrollHeight += 400;
+    act(() => handle!.scrollToBottom({ animate: true }));
+    paint(0); paint(180);
+    expect(layout!.scrollTop).toBeGreaterThan(800);
+    act(() => handle!.restoreScrollPosition(320, false));
+    expect(layout!.scrollTop).toBe(320);
+    expect(handle!.autoFollowRef.current).toBe(false);
+    settle(200);
+    act(() => { notifyResize(); scrollNode!.dispatchEvent(new Event("scroll")); });
+    expect(layout!.scrollTop).toBe(320);
+    act(() => handle!.restoreScrollPosition(0, true));
+    expect(layout!.scrollTop).toBe(1200);
+    expect(handle!.autoFollowRef.current).toBe(true);
   });
 
   it("uses one continuous arrival scroll across resize and reconciliation writes", () => {
@@ -126,7 +154,11 @@ describe("useAutoFollowScrollContainer", () => {
     expect(layout!.scrollTop).toBe(middle);
     paint(180);
     expect(layout!.scrollTop).toBe(middle);
-    paint(360);
+    // The new bottom extends the same trajectory: it advances without either
+    // restarting or stepping backwards.
+    paint(200);
+    expect(layout!.scrollTop).toBeGreaterThan(middle);
+    settle(220);
     expect(layout!.scrollTop).toBe(1300);
     expect(frames.size).toBe(0);
   });
@@ -155,7 +187,9 @@ describe("useAutoFollowScrollContainer", () => {
     expect(layout!.scrollTop).toBe(800);
     act(() => handle!.scrollToBottom({ force: true, animate: true }));
     expect(layout!.scrollTop).toBe(800);
-    paint(600); paint(1000);
+    paint(600);
+    expect(layout!.scrollTop).toBeGreaterThan(800);
+    settle(620);
     expect(layout!.scrollTop).toBe(1200);
   });
 
@@ -229,6 +263,86 @@ describe("useAutoFollowScrollContainer", () => {
     expect(layout.scrollTop).toBe(800);
   });
 
+  it.each(["keyboard", "touch", "scrollbar"])(
+    "yields streaming follow to %s before native scroll delivery",
+    (input) => {
+      act(() => {
+        handle!.scrollToBottom();
+        handle!.scheduleScrollToBottom();
+        if (input === "keyboard") {
+          scrollNode!.dispatchEvent(new KeyboardEvent("keydown", { key: "PageUp" }));
+        } else if (input === "touch") {
+          scrollNode!.dispatchEvent(new TouchEvent("touchstart", { touches: [{ clientY: 100 } as Touch] }));
+          scrollNode!.dispatchEvent(new TouchEvent("touchmove", { touches: [{ clientY: 120 } as Touch] }));
+        } else {
+          scrollNode!.dispatchEvent(new Event("pointerdown"));
+        }
+        layout!.scrollHeight += 24;
+        notifyResize();
+      });
+      paint();
+      expect(layout!.scrollTop).toBe(800);
+
+      act(() => {
+        layout!.scrollTop = 792;
+        handle!.scrollToBottom();
+        scrollNode!.dispatchEvent(new Event("scroll"));
+        layout!.scrollHeight += 80;
+        notifyResize();
+      });
+      paint();
+      expect(layout!.scrollTop).toBe(792);
+
+      act(() => {
+        scrollNode!.dispatchEvent(new KeyboardEvent("keydown", { key: "End" }));
+        layout!.scrollTop = layout!.scrollHeight - layout!.clientHeight;
+        scrollNode!.dispatchEvent(new Event("scroll"));
+        window.dispatchEvent(new Event("pointerup"));
+        layout!.scrollHeight += 40;
+        notifyResize();
+      });
+      paint();
+      expect(layout!.scrollTop).toBe(layout!.scrollHeight - layout!.clientHeight);
+    },
+  );
+
+  it.each([400, 1200])("resumes after a scroll-surface click without movement (height %i)", (height) => {
+    layout!.scrollHeight = height;
+    act(() => {
+      handle!.scrollToBottom();
+      scrollNode!.dispatchEvent(new Event("pointerdown"));
+      layout!.scrollHeight += 600;
+      notifyResize();
+    });
+    paint();
+    expect(layout!.scrollTop).toBe(height - 400);
+    act(() => window.dispatchEvent(new Event("pointerup")));
+    paint();
+    expect(layout!.scrollTop).toBe(layout!.scrollHeight - layout!.clientHeight);
+    act(() => {
+      layout!.scrollHeight += 40;
+      notifyResize();
+    });
+    paint();
+    expect(layout!.scrollTop).toBe(layout!.scrollHeight - layout!.clientHeight);
+  });
+
+  it.each(["paused", "drag", "wheel", "cancel"])("does not resume a scroll-surface gesture after %s", (reason) => {
+    act(() => {
+      handle!.scrollToBottom();
+      if (reason === "paused") handle!.pauseAutoFollow();
+      scrollNode!.dispatchEvent(new Event("pointerdown"));
+      if (reason === "drag") layout!.scrollTop -= 8;
+      if (reason === "wheel") scrollNode!.dispatchEvent(new WheelEvent("wheel", { deltaY: -20 }));
+      // A drag's native scroll event may still be pending on pointer release.
+      window.dispatchEvent(new Event(reason === "cancel" ? "pointercancel" : "pointerup"));
+      layout!.scrollHeight += 40;
+      notifyResize();
+    });
+    paint();
+    expect(layout!.scrollTop).toBe(reason === "drag" ? 792 : 800);
+  });
+
   it("keeps automatic viewport following quiet and still reveals user scrolling", () => {
     if (!layout || !handle || !scrollNode) throw new Error("probe not mounted");
     scrollNode.classList.remove("scrollbar-visible");
@@ -293,5 +407,60 @@ describe("useAutoFollowScrollContainer", () => {
 
     expect(handle.autoFollowRef.current).toBe(false);
     expect(layout.scrollTop).toBe(800);
+  });
+});
+
+describe("latest follow position", () => {
+  it("excludes unconsumed submission tail from the follow target", () => {
+    const node = document.createElement("div");
+    const content = document.createElement("div");
+    content.className = "scroll-region-content";
+    content.style.paddingBottom = "480px";
+    node.append(content);
+    Object.defineProperties(node, {
+      scrollHeight: { configurable: true, get: () => 2000 },
+      clientHeight: { configurable: true, get: () => 600 },
+      scrollTop: { configurable: true, get: () => 920, set: () => undefined },
+    });
+
+    expect(sessionTailSpacePx(node)).toBe(480);
+    expect(latestFollowScrollTop(node)).toBe(920);
+    expect(atLatestScrollView(node, 16)).toBe(true);
+
+    Object.defineProperty(node, "scrollTop", {
+      configurable: true,
+      get: () => 1400,
+    });
+    expect(atLatestScrollView(node, 16)).toBe(true);
+
+    Object.defineProperty(node, "scrollTop", {
+      configurable: true,
+      get: () => 400,
+    });
+    expect(atLatestScrollView(node, 16)).toBe(false);
+  });
+
+  it("maps a distance from latest content back to the same reading point after height growth", () => {
+    const node = document.createElement("div");
+    const layout = {
+      scrollHeight: 2000,
+      clientHeight: 600,
+      scrollTop: 800,
+    };
+    Object.defineProperties(node, {
+      scrollHeight: { configurable: true, get: () => layout.scrollHeight },
+      clientHeight: { configurable: true, get: () => layout.clientHeight },
+      scrollTop: {
+        configurable: true,
+        get: () => layout.scrollTop,
+        set: (value: number) => {
+          layout.scrollTop = value;
+        },
+      },
+    });
+
+    const distance = latestFollowScrollTop(node) - layout.scrollTop;
+    layout.scrollHeight = 2600;
+    expect(scrollTopForDistanceFromLatest(node, distance)).toBe(1400);
   });
 });

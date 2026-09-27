@@ -10,6 +10,7 @@ import {
   useSettingsRuntimeState,
   type SettingsRuntimeState,
 } from "./SettingsRuntimeState";
+import { translateCurrent } from "./i18n";
 
 let mountedRoots: Root[] = [];
 
@@ -170,7 +171,7 @@ describe("useSettingsRuntimeState", () => {
 
     expect(hook.get().settingsUsage).toBeUndefined();
     expect(hook.get().settingsUsageLoading).toBe(false);
-    expect(hook.get().settingsUsageError).toBe("当前桌面进程无法加载用量信息，请重启应用完成更新。");
+    expect(hook.get().settingsUsageError).toBe(translateCurrent("settings.usageUnsupported"));
     expect(hook.get().codexPetsLoading).toBe(false);
   });
 
@@ -180,9 +181,7 @@ describe("useSettingsRuntimeState", () => {
     const hook = await renderSettingsRuntimeState(false);
 
     expect(hook.get().codexPetsLoading).toBe(false);
-    expect(hook.get().codexPetsError).toBe(
-      "当前桌面进程不支持 Codex Pets，请重启应用",
-    );
+    expect(hook.get().codexPetsError).toBe(translateCurrent("settings.pets.unsupported"));
 
     let refreshError: unknown;
     await act(async () => {
@@ -193,8 +192,6 @@ describe("useSettingsRuntimeState", () => {
       }
     });
     expect(refreshError).toBeInstanceOf(Error);
-    expect((refreshError as Error).message).toBe(
-      "当前桌面进程不支持 Codex Pets，请重启应用",
-    );
+    expect((refreshError as Error).message).toBe(translateCurrent("settings.pets.unsupported"));
   });
 });

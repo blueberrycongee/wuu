@@ -7,34 +7,61 @@
   --tracking-prose: normal;
   letter-spacing: var(--tracking-ui);
   --font-ui: var(--conversation-message-font-size, 14.5px);
-  --font-xs: max(12px, calc(var(--font-ui) * 12 / 14));
-  --font-sm: calc(var(--font-ui) * 13 / 14);
+  /* Derived roles snap to whole pixels: the saved UI size may be a half step,
+   * and fractional derived sizes put every line box and 1px edge between
+   * device pixels. Icons snap to even sizes so they center in even boxes. */
+  --font-xs: max(12px, round(nearest, calc(var(--font-ui) * 12 / 14), 1px));
+  --font-sm: round(nearest, calc(var(--font-ui) * 13 / 14), 1px);
+  --font-menu: var(--font-sm);
   --font-body: var(--font-ui);
   --font-content: var(--font-ui);
-  --font-title: calc(var(--font-ui) * 16 / 14);
-  --font-heading: calc(var(--font-ui) * 20 / 14);
-  --font-display: calc(var(--font-ui) * 24 / 14);
-  --font-hero: calc(var(--font-ui) * 32 / 14);
+  --font-title: round(nearest, calc(var(--font-ui) * 16 / 14), 1px);
+  --font-heading: round(nearest, calc(var(--font-ui) * 20 / 14), 1px);
+  --font-display: round(nearest, calc(var(--font-ui) * 24 / 14), 1px);
+  --font-hero: round(nearest, calc(var(--font-ui) * 32 / 14), 1px);
   --font-mono: var(--appearance-code-font, ui-monospace, monospace);
   --conversation-message-font-family: var(--appearance-ui-font, system-ui, sans-serif);
   --appearance-code-size: 11px;
-  --icon-size: clamp(16px, calc(var(--font-ui) * 16 / 14), 20px);
-  --icon-size-sm: clamp(14px, calc(var(--font-ui) * 14 / 14), 18px);
-  --icon-size-xs: clamp(12px, calc(var(--font-ui) * 12 / 14), 16px);
-  --icon-size-lg: clamp(18px, calc(var(--font-ui) * 18 / 14), 22px);
-  --icon-size-xl: clamp(20px, calc(var(--font-ui) * 20 / 14), 24px);
+  --icon-size: round(nearest, clamp(16px, calc(var(--font-ui) * 16 / 14), 20px), 2px);
+  --icon-size-sm: round(nearest, clamp(14px, calc(var(--font-ui) * 14 / 14), 18px), 2px);
+  --icon-size-xs: round(nearest, clamp(12px, calc(var(--font-ui) * 12 / 14), 16px), 2px);
+  --icon-size-lg: round(nearest, clamp(18px, calc(var(--font-ui) * 18 / 14), 22px), 2px);
+  --icon-size-xl: round(nearest, clamp(20px, calc(var(--font-ui) * 20 / 14), 24px), 2px);
+}
+/* Click-open overlay cards sit one step below reading text: short labels
+ * in a small panel, not body copy. Composer chips use the same step, so
+ * a closed trigger and its open card match. Question cards above the
+ * composer stay on --font-ui; they are reading surfaces. */
+[data-wuu-layer="menu"],
+.project-add-menu,
+.environment-side-menu,
+.sidebar-account-menu,
+.composer-context-menu,
+.composer-project-menu,
+.composer-textarea-context-menu,
+.thread-row-context-menu,
+.workspace-tree-context-menu,
+.select-menu-panel,
+.codex-runtime-menu,
+.turn-source-overflow-list {
+  font-size: var(--font-menu);
+  font-weight: var(--weight-medium);
+}
+[data-wuu-layer="menu"] :where(button, [role="menuitem"]) > :is(svg.lucide, svg[data-icon]) {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
 }
 .sidebar, .settings-sidebar, .sidebar-content {
-  --sidebar-primary-icon-size: calc(var(--font-ui) * 16 / 14);
-  --sidebar-nav-icon-col: calc(var(--font-ui) * 18 / 14);
-  --sidebar-tree-icon-col: calc(var(--font-ui) * 16 / 14);
-  --sidebar-row-action-size: max(28px, calc(var(--font-ui) * 1.4 + 8px));
+  --sidebar-primary-icon-size: round(nearest, calc(var(--font-ui) * 16 / 14), 2px);
+  --sidebar-nav-icon-col: round(nearest, calc(var(--font-ui) * 18 / 14), 2px);
+  --sidebar-tree-icon-col: round(nearest, calc(var(--font-ui) * 16 / 14), 2px);
+  --sidebar-row-action-size: max(28px, round(nearest, calc(var(--font-ui) * 1.4 + 8px), 2px));
   font-size: var(--font-ui);
 }
 /* Reading labels and chrome share the UI size.
  * Limit icon growth so large reading text does not turn the rail into a toolbar. */
 .sidebar-content {
-  --sidebar-primary-icon-size: clamp(16px, calc(var(--sidebar-label-size) + 2px), 20px);
+  --sidebar-primary-icon-size: round(nearest, clamp(16px, calc(var(--sidebar-label-size) + 2px), 20px), 2px);
   --sidebar-nav-icon-col: var(--sidebar-primary-icon-size);
   --sidebar-tree-icon-col: var(--sidebar-primary-icon-size);
 }
@@ -43,14 +70,16 @@
   height: auto;
   padding-block: 0.35em;
 }
-:where(button, a, label) > svg.lucide {
+:where(button, a, label) > :is(svg.wuu-icon, svg.lucide) {
   width: var(--icon-size);
   height: var(--icon-size);
   flex-shrink: 0;
 }
-.sidebar :where(button, a) > svg.lucide, .settings-sidebar :where(button, a) > svg.lucide {
+.sidebar :where(button:not(.sidebar-functional-action), a) > :is(svg.lucide, svg[data-icon], .plugin-icon-themed, .plugin-icon-asset),
+.settings-sidebar :where(button:not(.sidebar-functional-action), a) > :is(svg.lucide, svg[data-icon], .plugin-icon-themed, .plugin-icon-asset) {
   width: var(--sidebar-primary-icon-size);
   height: var(--sidebar-primary-icon-size);
+  flex-shrink: 0;
 }
 pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
 .workspace-markdown-reading .rich-content pre.rich-code,
@@ -70,14 +99,6 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
 }
 .appearance-font-picker { width: clamp(160px, 22vw, 240px); min-width: 0; }
 .appearance-font-picker .select-menu, .appearance-font-picker .settings-select-trigger { width: 100%; }
-.settings-theme-options {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  width: 100%;
-  gap: 16px;
-}
-.settings-theme-card { gap: 8px; }
-.settings-theme-preview { border-radius: var(--radius-lg); }
 .composer textarea, .workspace-markdown-reading {
   font-family: var(--appearance-ui-font, system-ui, sans-serif);
   font-size: var(--font-ui);
@@ -105,11 +126,3 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
 .workspace-markdown-reading .rich-heading--h2 { font-size: 1.25em; }
 .workspace-markdown-reading .rich-heading--h3 { font-size: 1.125em; }
 .workspace-markdown-reading :is(.rich-heading--h4, .rich-heading--h5, .rich-heading--h6) { font-size: 1em; }
-:root[data-appearance-motion="reduce"] *,
-:root[data-appearance-motion="reduce"] *::before,
-:root[data-appearance-motion="reduce"] *::after {
-  animation-duration: 0.01ms !important;
-  animation-iteration-count: 1 !important;
-  transition-duration: 0.01ms !important;
-  scroll-behavior: auto !important;
-}

@@ -112,51 +112,25 @@ type Config struct {
 	// Engines configures external agent engines (codex, claude) in the
 	// desktop settings. Nil means auto-detection from the CLI binaries.
 	Engines *EnginesConfig `json:"engines,omitempty"`
-	// CodeMode configures the isolated code-mode runtime. The default
-	// invocation mode is CodeModeDirect. The runtime resolves an empty Host
-	// from WUU_CODE_MODE_HOST or the binary next to the core executable.
-	CodeMode CodeModeConfig `json:"code_mode,omitempty"`
+	// PTC is optional programmatic tool calling through a fresh Node process.
+	PTC PTCConfig `json:"ptc,omitempty"`
+	// Accept retired settings without activating a runtime with broader authority. Remove after saved configurations have dropped code_mode.
+	LegacyCodeMode json.RawMessage `json:"code_mode,omitempty"`
 }
 
-// CodeModeInvocationMode selects how a session invokes tools.
-type CodeModeInvocationMode string
-
-const (
-	// CodeModeDirect runs the classic model tool loop only. The code-mode
-	// runtime is not offered to the model.
-	CodeModeDirect CodeModeInvocationMode = "direct"
-	// CodeModeEnabled offers the code-mode exec/wait entry tools alongside
-	// the ordinary tool surface.
-	CodeModeEnabled CodeModeInvocationMode = "code"
-	// CodeModeOnly hides the ordinary top-level tools from the model while
-	// keeping them executable for nested calls from live code-mode cells.
-	CodeModeOnly CodeModeInvocationMode = "code_only"
-)
-
-// CodeModeConfig configures the isolated code-mode runtime.
-type CodeModeConfig struct {
-	// Host is the absolute path to the wuu-code-mode-host executable. The
-	// launcher rejects relative paths and never searches for a model CLI.
-	Host string `json:"host,omitempty"`
-	// Mode selects the invocation mode: "direct" (default), "code", or "code_only".
-	Mode string `json:"mode,omitempty"`
-	// DefaultYieldMS is applied to exec calls that leave yield_time_ms unset.
-	DefaultYieldMS uint64 `json:"default_yield_ms,omitempty"`
-	// MaxHeapSizeBytes caps one cell's V8 heap. Zero leaves the host default.
-	MaxHeapSizeBytes uint64 `json:"max_heap_size_bytes,omitempty"`
+// PTCConfig controls the optional Node runtime. A family override takes
+// precedence over Enabled; omitted families inherit the global switch.
+type PTCConfig struct {
+	Enabled        bool            `json:"enabled"`
+	Families       map[string]bool `json:"families,omitempty"`
+	NodeExecutable string          `json:"node_executable,omitempty"`
 }
 
-// InvocationMode normalizes Mode. Unknown values fall back to direct mode,
-// which is the product default.
-func (c CodeModeConfig) InvocationMode() CodeModeInvocationMode {
-	switch strings.ToLower(strings.TrimSpace(c.Mode)) {
-	case "code_only":
-		return CodeModeOnly
-	case "code":
-		return CodeModeEnabled
-	default:
-		return CodeModeDirect
+func (c PTCConfig) EnabledFor(family string) bool {
+	if enabled, ok := c.Families[family]; ok {
+		return enabled
 	}
+	return c.Enabled
 }
 
 // InstructionFilesConfig overrides project and user instruction discovery.
@@ -190,7 +164,7 @@ type ProviderConfig struct {
 	Headers      map[string]string              `json:"headers,omitempty"`
 	// ReuseCodexCredentials lets Codex subscription providers read the local
 	// Codex CLI auth store (CODEX_HOME/auth.json or ~/.codex/auth.json) as a
-	// read-only fallback when wuu does not have its own OAuth session.
+	// selected source, taking precedence over Wuu's saved OAuth session.
 	ReuseCodexCredentials bool `json:"reuse_codex_credentials,omitempty"`
 	// ReuseGrokCredentials lets Grok Build providers read GROK_HOME/auth.json
 	// (or ~/.grok/auth.json) without taking ownership of the CLI login.
@@ -267,6 +241,8 @@ type ProviderModelLimitConfig struct {
 // metadata fields are intentionally accepted so wuu can derive the same
 // model-specific variants when a config was copied from OpenCode/models.dev.
 type ProviderModelConfig struct {
+	// FastMode overrides inferred acceleration support for this model.
+	FastMode         *bool                          `json:"fast_mode,omitempty"`
 	ID               string                         `json:"id,omitempty"`
 	Name             string                         `json:"name,omitempty"`
 	Family           string                         `json:"family,omitempty"`
@@ -427,6 +403,7 @@ type AdvancedRuntimeUpdate struct {
 }
 
 type GeneralSettingsUpdate struct {
+	PTC                   *PTCConfig
 	GitAttributionEnabled *bool
 	MCPEnabledToggles     map[string]*bool // server name → enabled; nil = skip
 }
@@ -713,19 +690,8 @@ func (c Config) Validate() error {
 	if _, ok := c.Providers[c.DefaultProvider]; !ok {
 		return fmt.Errorf("default_provider %q not found in providers", c.DefaultProvider)
 	}
-	if c.Engines != nil {
-		defaultEngine := strings.TrimSpace(c.Engines.DefaultEngine)
-		switch defaultEngine {
-		case "", "wuu", "codex", "claude":
-		default:
-			return fmt.Errorf("engines.default_engine %q is not supported", defaultEngine)
-		}
-		if defaultEngine == "codex" && engineExplicitlyDisabled(c.Engines.Codex) {
-			return errors.New("engines.default_engine cannot be codex while engines.codex is disabled")
-		}
-		if defaultEngine == "claude" && engineExplicitlyDisabled(c.Engines.Claude) {
-			return errors.New("engines.default_engine cannot be claude while engines.claude is disabled")
-		}
+	if err := c.Engines.validate(); err != nil {
+		return err
 	}
 
 	for name, provider := range c.Providers {
@@ -961,13 +927,15 @@ func Default() Config {
 				Type:      "openai-compatible",
 				BaseURL:   "https://api.openai.com/v1",
 				APIKeyEnv: "OPENAI_API_KEY",
-				Model:     "gpt-4.1",
+				Model:     "gpt-6-sol",
+				WireAPI:   "responses",
 			},
 			"codex": {
 				Type:      "codex",
 				BaseURL:   "https://api.openai.com/v1",
 				APIKeyEnv: "OPENAI_API_KEY",
-				Model:     "gpt-5-codex",
+				Model:     "gpt-6-sol",
+				WireAPI:   "responses",
 			},
 			"openai-codex": {
 				Type:                  "openai-codex",
@@ -981,14 +949,14 @@ func Default() Config {
 				Type:    "xai-subscription",
 				BaseURL: "https://api.x.ai/v1",
 				WireAPI: "responses",
-				Model:   "grok-4.6",
+				Model:   "grok-4.7",
 			},
 			"grok-build": grokBuild,
 			"anthropic": {
 				Type:      "anthropic",
 				BaseURL:   "https://api.anthropic.com",
 				APIKeyEnv: "ANTHROPIC_API_KEY",
-				Model:     "claude-3-5-sonnet-latest",
+				Model:     "claude-opus-5-5",
 			},
 			"openrouter": {
 				Type:      "openai-compatible",
@@ -1280,6 +1248,51 @@ func AddProviderIfMissing(configPath, providerName string, provider ProviderConf
 	return securefs.WriteFileAtomic(configPath, append(out, '\n'))
 }
 
+// UseCodexCredentials selects the local Codex login without changing model
+// selections or deleting either application's saved OAuth session.
+func UseCodexCredentials(configPath, providerName string) error {
+	lock, err := storelock.Acquire(filepath.Dir(configPath))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Release() }()
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	var providers map[string]map[string]json.RawMessage
+	if err := json.Unmarshal(raw["providers"], &providers); err != nil {
+		return err
+	}
+	provider, exists := providers[providerName]
+	if !exists {
+		return fmt.Errorf("provider %q not found", providerName)
+	}
+	var providerType string
+	if err := json.Unmarshal(provider["type"], &providerType); err != nil {
+		return err
+	}
+	if !isCodexSubscriptionProvider(providerType) {
+		return errors.New("local Codex login requires a Codex subscription provider")
+	}
+	provider["reuse_codex_credentials"] = json.RawMessage("true")
+	delete(provider, "api_key")
+	delete(provider, "api_key_env")
+	raw["providers"], err = json.Marshal(providers)
+	if err != nil {
+		return err
+	}
+	data, err = json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	return securefs.WriteFileAtomic(configPath, append(data, '\n'))
+}
+
 // RemoveProvider deletes a configured provider from the config file and,
 // when the removed provider was the active default, atomically promotes
 // fallbackName to default_provider with fallbackModel. fallbackName must
@@ -1522,6 +1535,17 @@ func UpdateGeneralSettings(configPath string, update GeneralSettingsUpdate) erro
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
+	}
+
+	if update.PTC != nil {
+		delete(raw, "code_mode")
+		ptc, _ := raw["ptc"].(map[string]any)
+		if ptc == nil {
+			ptc = make(map[string]any)
+			raw["ptc"] = ptc
+		}
+		ptc["enabled"] = update.PTC.Enabled
+		ptc["families"] = update.PTC.Families
 	}
 
 	if update.GitAttributionEnabled != nil {

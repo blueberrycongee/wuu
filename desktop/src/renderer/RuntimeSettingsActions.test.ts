@@ -3,7 +3,10 @@ import type { InitializeResult, Thread } from "../shared/protocol";
 import { initialState, type AppState } from "./AppState";
 import type { CodexModelLoadState, CodexRuntimeMenu } from "./ComposerTypes";
 import { readDraftApproveForMeMemory, readDraftPermissionMemory, readDraftRuntimeMemory } from "./DraftRuntimeMemory";
-import { createRuntimeSettingsActions } from "./RuntimeSettingsActions";
+import { createRuntimeSettingsActions, type RuntimeSettingsActions } from "./RuntimeSettingsActions";
+
+const toastMocks = vi.hoisted(() => ({ showErrorToast: vi.fn() }));
+vi.mock("./Toast", () => ({ showErrorToast: toastMocks.showErrorToast }));
 
 const originalWuu = (window as unknown as { wuu?: unknown }).wuu;
 
@@ -20,6 +23,7 @@ function restoreWuu(): void {
 
 beforeEach(() => {
   window.localStorage.clear();
+  toastMocks.showErrorToast.mockClear();
 });
 
 afterEach(() => {
@@ -209,6 +213,73 @@ function buildActions({
 }
 
 describe("createRuntimeSettingsActions", () => {
+  const settingsOperations = [
+    {
+      name: "provider defaults",
+      api: "updateRuntimeSettings",
+      save: (actions: RuntimeSettingsActions) => actions.updateProviderSettings("codex", "gpt-5.1"),
+    },
+    {
+      name: "advanced settings",
+      api: "updateAdvancedSettings",
+      save: (actions: RuntimeSettingsActions) => actions.updateAdvancedSettings({ max_steps: 20 }),
+    },
+    {
+      name: "general settings",
+      api: "updateGeneralSettings",
+      save: (actions: RuntimeSettingsActions) => actions.updateGeneralSettings({ git_attribution_enabled: false }),
+    },
+    {
+      name: "provider removal",
+      api: "removeProvider",
+      save: (actions: RuntimeSettingsActions) => actions.removeProvider("unused-provider"),
+    },
+  ] as const;
+
+  it.each(settingsOperations)("keeps $name failures out of running conversations", async ({ api: method, save }) => {
+    const api = installWuuApi();
+    const failure = new Error("settings write rejected");
+    api[method].mockRejectedValue(failure);
+    const initial: AppState = {
+      ...initialState,
+      initialized: initialized(),
+      thread: thread(),
+      secondaryThread: thread("thread-2"),
+      running: true,
+      status: "running",
+    };
+    const harness = buildActions({ initial });
+
+    await expect(save(harness.actions)).rejects.toBe(failure);
+
+    expect(harness.getAppState()).toBe(initial);
+    expect(harness.clearThreadPendingComposerMessages).not.toHaveBeenCalled();
+  });
+
+  it.each(settingsOperations)("preserves conversation progress and errors after saving $name", async ({ save }) => {
+    installWuuApi();
+    for (const status of ["running", "conversation request failed"]) {
+      const initial: AppState = {
+        ...initialState,
+        initialized: initialized(),
+        thread: thread(),
+        secondaryThread: thread("thread-2"),
+        running: status === "running",
+        status,
+      };
+      const harness = buildActions({ initial });
+
+      await save(harness.actions);
+
+      const { initialized: updated, ...conversation } = harness.getAppState();
+      const { initialized: previous, ...originalConversation } = initial;
+      expect(updated).not.toBe(previous);
+      expect(conversation).toEqual(originalConversation);
+      expect(harness.getAppState().thread).toBe(initial.thread);
+      expect(harness.getAppState().secondaryThread).toBe(initial.secondaryThread);
+    }
+  });
+
   it("saves provider defaults without targeting or patching running sessions", async () => {
     const api = installWuuApi();
     const primary = thread();
@@ -218,23 +289,12 @@ describe("createRuntimeSettingsActions", () => {
       secondaryThread: secondary, threads: [primary, secondary], running: true, status: "running",
     } });
     await harness.actions.updateProviderSettings("codex", "gpt-5.1");
-    expect(api.updateRuntimeSettings).toHaveBeenCalledWith("codex", "gpt-5.1", undefined, undefined, undefined, undefined, undefined);
+    expect(api.updateRuntimeSettings).toHaveBeenCalledWith("codex", "gpt-5.1", undefined, undefined, undefined, undefined, undefined, undefined);
     expect(harness.getAppState().thread).toBe(primary);
     expect(harness.getAppState().secondaryThread).toBe(secondary);
     expect(harness.getAppState().running).toBe(true);
     expect(harness.getAppState().status).toBe("running");
     expect(harness.getAppState().initialized?.model).toBe("gpt-5.1");
-  });
-
-  it("leaves session status alone when saving provider settings fails", async () => {
-    const api = installWuuApi();
-    api.updateRuntimeSettings.mockRejectedValue(new Error("save failed"));
-    const harness = buildActions({ initial: {
-      ...initialState, initialized: initialized(), thread: thread(), running: true, status: "running",
-    } });
-    await expect(harness.actions.updateProviderSettings("codex", "gpt-5.1")).rejects.toThrow("save failed");
-    expect(harness.getAppState().status).toBe("running");
-    expect(harness.getAppState().running).toBe(true);
   });
 
   it("saves trimmed runtime settings and patches initialized runtime state", async () => {
@@ -281,6 +341,7 @@ describe("createRuntimeSettingsActions", () => {
       "high",
       "read_only",
       "thread-1",
+      undefined,
     );
     expect(harness.getAppState().initialized?.model).toBe("gpt-5.1");
     expect(harness.getAppState().thread?.model).toBe("gpt-5.1");
@@ -293,7 +354,7 @@ describe("createRuntimeSettingsActions", () => {
     expect(harness.getAppState().initialized?.permissions?.mode).toBe(
       "read_only",
     );
-    expect(harness.getAppState().status).toBe("ready");
+    expect(harness.getAppState().status).toBe("loading");
   });
 
   it("skips a runtime save when nothing changed", async () => {
@@ -348,6 +409,7 @@ describe("createRuntimeSettingsActions", () => {
       "medium",
       "standard",
       "thread-1",
+      undefined,
     );
   });
 
@@ -434,6 +496,7 @@ describe("createRuntimeSettingsActions", () => {
       "high",
       undefined,
       "thread-2",
+      undefined,
     );
     // Only the effort click is stamped on the thread; the workspace-effective
     // result must not overwrite the thread's pinned provider/model.
@@ -449,19 +512,14 @@ describe("createRuntimeSettingsActions", () => {
 
   it("restores each model's own effort after switching away and back", async () => {
     const api = installWuuApi();
-    api.updateRuntimeSettings
-      .mockResolvedValueOnce({
-        provider: "codex",
-        model: "model-a",
-        effort: "max",
-        variant: "max",
-      })
-      .mockResolvedValueOnce({
-        provider: "codex",
-        model: "model-b",
-        effort: "medium",
-        variant: "medium",
-      });
+    // A conversation update returns workspace defaults, even when the
+    // conversation has selected another provider and model.
+    api.updateRuntimeSettings.mockResolvedValue({
+      provider: "deepseek",
+      model: "deepseek-chat",
+      effort: "",
+      variant: "",
+    });
     const primary = {
       ...thread("thread-1"),
       model: "model-b",
@@ -484,6 +542,12 @@ describe("createRuntimeSettingsActions", () => {
     });
 
     await harness.actions.selectRuntimeModel("codex", "model-a", "max");
+    expect(harness.getAppState().thread).toMatchObject({
+      model_provider: "codex", model: "model-a", model_variant: "max",
+    });
+    expect(harness.getAppState().initialized).toMatchObject({
+      provider: "deepseek", model: "deepseek-chat",
+    });
     await harness.actions.selectRuntimeModel("codex", "model-b", "max");
 
     expect(api.updateRuntimeSettings).toHaveBeenNthCalledWith(
@@ -495,6 +559,7 @@ describe("createRuntimeSettingsActions", () => {
       "max",
       undefined,
       "thread-1",
+      undefined,
     );
     expect(api.updateRuntimeSettings).toHaveBeenNthCalledWith(
       2,
@@ -505,9 +570,20 @@ describe("createRuntimeSettingsActions", () => {
       "medium",
       undefined,
       "thread-1",
+      undefined,
     );
     expect(harness.getAppState().thread?.model).toBe("model-b");
     expect(harness.getAppState().thread?.model_variant).toBe("medium");
+    for (const variant of ["max", "medium", "max"]) {
+      expect(await harness.actions.selectRuntimeEffort(variant)).toBe(true);
+      expect(harness.getAppState().thread).toMatchObject({
+        model_provider: "codex", model: "model-b", model_variant: variant,
+      });
+      expect(readDraftRuntimeMemory()).toMatchObject({
+        provider: "codex", model: "model-b", effort: variant,
+      });
+    }
+    expect(toastMocks.showErrorToast).not.toHaveBeenCalled();
   });
 
   it("sends an explicit empty variant when resetting effort to the model default", async () => {
@@ -545,6 +621,7 @@ describe("createRuntimeSettingsActions", () => {
       "",
       undefined,
       "thread-1",
+      undefined,
     );
     expect(harness.getAppState().thread?.model_variant).toBe("");
     expect(harness.getAppState().thread?.model_effort).toBe("");
@@ -652,6 +729,22 @@ describe("createRuntimeSettingsActions", () => {
     });
   });
 
+  it("starts the next conversation from the provider default saved in Settings", async () => {
+    const api = installWuuApi();
+    const harness = buildActions();
+
+    await harness.actions.updateProviderSettings("codex", "gpt-5.1", undefined, {
+      base_url: "https://new.example.test",
+    });
+
+    expect(api.updateRuntimeSettings).toHaveBeenCalled();
+    expect(readDraftRuntimeMemory()).toEqual({
+      provider: "codex",
+      model: "gpt-5.1",
+      effort: "high",
+    });
+  });
+
   it("toggles the Codex runtime menu and closes sibling menus", () => {
     const api = installWuuApi();
     const harness = buildActions();
@@ -738,6 +831,7 @@ describe("createRuntimeSettingsActions", () => {
       undefined,
       "read_only",
       "thread-1",
+      undefined,
     );
     expect(harness.getAppState().thread?.permission_mode).toBe("read_only");
     expect(harness.getRuntimeMenus().accessMenuOpen).toBe(false);
@@ -784,6 +878,7 @@ describe("createRuntimeSettingsActions", () => {
       undefined,
       "read_only",
       "thread-1",
+      undefined,
     );
     expect(harness.getAppState().thread?.model_provider).toBe("anthropic");
     expect(harness.getAppState().thread?.model).toBe("claude-sonnet-4-6");
@@ -822,26 +917,32 @@ describe("createRuntimeSettingsActions", () => {
       undefined,
       "standard",
       "thread-1",
+      undefined,
     );
   });
 
-  it("surfaces permission update failures via status without rejecting", async () => {
+  it.each([
+    { name: "model", select: (actions: RuntimeSettingsActions) => actions.selectRuntimeModel("codex", "gpt-5.1"), result: false },
+    { name: "effort", select: (actions: RuntimeSettingsActions) => actions.selectRuntimeEffort("high"), result: false },
+    { name: "permission", select: (actions: RuntimeSettingsActions) => actions.selectPermissionMode("read_only"), result: undefined },
+    { name: "approval", select: (actions: RuntimeSettingsActions) => actions.setApproveForMe(true), result: undefined },
+  ])("reports $name failures once through the shared toast without changing the composer", async ({ select, result }) => {
     const api = installWuuApi();
-    api.updateRuntimeSettings.mockRejectedValueOnce(
-      new Error("cannot change the model while a turn is running"),
+    const error = new Error(
+      "Error invoking remote method 'wuu:config-model-update': Error: cannot change the model while a turn is running",
     );
+    api.updateRuntimeSettings.mockRejectedValueOnce(error);
     const harness = buildActions();
+    const before = harness.getAppState();
 
-    await expect(
-      harness.actions.selectPermissionMode("read_only"),
-    ).resolves.toBeUndefined();
+    await expect(select(harness.actions)).resolves.toBe(result);
 
-    expect(harness.getAppState().status).toBe(
-      "cannot change the model while a turn is running",
-    );
-    expect(harness.getRuntimeMenus().accessMenuOpen).toBe(false);
+    expect(harness.getAppState()).toBe(before);
+    expect(toastMocks.showErrorToast).toHaveBeenCalledExactlyOnceWith(error, expect.any(String));
     // A rejected change must not become the default for future conversations.
     expect(readDraftPermissionMemory()).toBeUndefined();
+    expect(readDraftApproveForMeMemory()).toBeUndefined();
+    expect(readDraftRuntimeMemory()).toBeUndefined();
   });
 
   it("remembers a draft permission pick before the first thread starts", async () => {
@@ -915,6 +1016,7 @@ describe("createRuntimeSettingsActions", () => {
       undefined,
       "standard",
       "thread-1",
+      undefined,
     );
     expect(harness.getAppState().thread?.permission_mode).toBe("standard");
     expect(harness.getAppState().thread?.approve_for_me).toBe(true);
@@ -953,6 +1055,7 @@ describe("createRuntimeSettingsActions", () => {
       undefined,
       undefined,
       "thread-1",
+      undefined,
     );
     expect(harness.getAppState().thread?.approve_for_me).toBe(true);
     expect(harness.getRuntimeMenus().accessMenuOpen).toBe(true);

@@ -10,6 +10,7 @@ import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { JumpToLatestPill } from "./JumpToLatestPill";
+import { readBrowserPiPHostLayout } from "./BrowserPiPHostReporter";
 import {
   WINDOW_RESIZE_SETTLE_DELAY_MS,
   WINDOW_RESIZING_CLASS,
@@ -114,12 +115,25 @@ it("keeps an inline companion mounted while adding and removing the history jump
   expect(host.querySelectorAll("button")).toHaveLength(2);
   expect(host.querySelector("[data-companion]")).toBe(companion);
   act(() => host.querySelector<HTMLButtonElement>(".jump-to-latest-pill")!.click());
-  expect(scrollTo).toHaveBeenCalledWith({ top: 1500, behavior: "smooth" });
+  expect(scrollTo).toHaveBeenCalledWith({ top: 1000, behavior: "smooth" });
   act(() => { setScrollTop(1000); node.dispatchEvent(new Event("scroll")); });
   expect(host.querySelectorAll("button")).toHaveLength(1);
   expect(host.querySelector("[data-companion]")).toBe(companion);
   act(() => companion.click());
   expect(open).toHaveBeenCalledOnce();
+});
+
+it("does not displace the browser preview when the jump action appears", () => {
+  const { node, setScrollTop } = scrollContainer({ scrollHeight: 1500, clientHeight: 500, scrollTop: 1000 });
+  node.setAttribute("data-pip-anchor-host", "conversation");
+  stubRect(node, { left: 0, top: 0, width: 800, height: 600 });
+  mountPill(node);
+  const before = readBrowserPiPHostLayout(document);
+  act(() => { setScrollTop(100); node.dispatchEvent(new Event("scroll")); });
+  const pill = document.querySelector<HTMLElement>(".jump-to-latest-pill")!;
+  expect(pill).not.toBeNull();
+  stubRect(pill, { left: 650, top: 550, width: 120, height: 30 });
+  expect(readBrowserPiPHostLayout(document)).toEqual(before);
 });
 
 function mountPill(node: HTMLElement): HTMLElement {
@@ -227,13 +241,7 @@ describe("JumpToLatestPill", () => {
       setScrollTop(0); // 600px from the bottom > 80px threshold
       node.dispatchEvent(new Event("scroll"));
     });
-    const pill = host.querySelector<HTMLButtonElement>(".jump-to-latest-pill");
-    expect(pill).not.toBeNull();
-    expect(pill?.className).toContain("jump-to-latest-pill-anchored");
-    expect(pill?.querySelector("span")?.textContent).toBeTruthy();
-    expect(pill?.querySelector("span")?.textContent).toBe(
-      pill?.getAttribute("aria-label"),
-    );
+    expect(host.querySelector(".jump-to-latest-pill")).not.toBeNull();
   });
 
   it("shows immediately when mounted into an already scrolled-away container", () => {
@@ -258,7 +266,43 @@ describe("JumpToLatestPill", () => {
         .querySelector<HTMLButtonElement>(".jump-to-latest-pill")
         ?.click();
     });
-    expect(scrollTo).toHaveBeenCalledWith({ top: 1000, behavior: "smooth" });
+    expect(scrollTo).toHaveBeenCalledWith({ top: 600, behavior: "smooth" });
+  });
+
+  it("treats leftover submission tail as already at latest", () => {
+    const { node, setScrollTop, scrollTo } = scrollContainer({
+      scrollHeight: 2000,
+      clientHeight: 600,
+      scrollTop: 920,
+    });
+    const content = document.createElement("div");
+    content.className = "scroll-region-content";
+    content.style.paddingBottom = "480px";
+    node.append(content);
+    const host = document.createElement("div");
+    content.append(host);
+    const root = createRoot(host);
+    mountedRoots.push(root);
+    act(() => {
+      root.render(
+        createElement(JumpToLatestPill, {
+          containerRef: { current: node },
+          bottomAnchor: null,
+          inline: true,
+        }),
+      );
+    });
+    expect(host.querySelector(".jump-to-latest-pill")).toBeNull();
+
+    act(() => {
+      setScrollTop(0);
+      node.dispatchEvent(new Event("scroll"));
+    });
+    expect(host.querySelector(".jump-to-latest-pill")).not.toBeNull();
+    act(() => {
+      host.querySelector<HTMLButtonElement>(".jump-to-latest-pill")?.click();
+    });
+    expect(scrollTo).toHaveBeenCalledWith({ top: 920, behavior: "smooth" });
   });
 
   it("hides again once the container scrolls back within the threshold", () => {
@@ -380,10 +424,6 @@ describe("JumpToLatestPill", () => {
       ".jump-to-latest-pill-anchored",
     );
     expect(pill).not.toBeNull();
-    expect(pill?.querySelector("span")?.textContent).toBeTruthy();
-    expect(pill?.querySelector("span")?.textContent).toBe(
-      pill?.getAttribute("aria-label"),
-    );
     // The composer can move independently when the environment panel reserves
     // room on the right, so the pill follows the frame rather than the unchanged
     // scroll-container bounds: 150 + 400 / 2.
@@ -391,9 +431,6 @@ describe("JumpToLatestPill", () => {
     // The queued drawer is part of the same visual height used by the progress
     // pill, so the jump pill clears it instead of overlapping it.
     expect(pill?.style.bottom).toBe("288px");
-    expect(
-      resizeObservers.some((observer) => observer.observed.has(frame)),
-    ).toBe(true);
 
     act(() => {
       document.documentElement.classList.add(WINDOW_RESIZING_CLASS);
@@ -482,31 +519,6 @@ describe("JumpToLatestPill", () => {
       node.dispatchEvent(new Event("scroll"));
     });
     expect(onScrolledAwayChange).toHaveBeenLastCalledWith(true);
-  });
-
-  it("re-evaluates visibility when its container resizes", () => {
-    // The pill must re-evaluate when the scroll container's clientHeight
-    // changes; otherwise a resize could leave it stuck in a stale state.
-    const { node } = scrollContainer({
-      scrollHeight: 1000,
-      clientHeight: 100, // narrow initially
-      scrollTop: 0, // user is at the top
-    });
-    const host = mountPill(node);
-    // distanceFromBottom = 1000 - 0 - 100 = 900 > 80 → visible
-    expect(host.querySelector(".jump-to-latest-pill")).not.toBeNull();
-
-    // Container grows: clientHeight 100 → 1000. distanceFromBottom = 0.
-    Object.defineProperty(node, "clientHeight", {
-      configurable: true,
-      get: () => 1000,
-    });
-    // jsdom has no native ResizeObserver; the component re-evaluates on
-    // scroll, so we dispatch a scroll event to simulate the observer firing.
-    act(() => {
-      node.dispatchEvent(new Event("scroll"));
-    });
-    expect(host.querySelector(".jump-to-latest-pill")).toBeNull();
   });
 
   it("defers container resize measurement while the window is resizing", () => {

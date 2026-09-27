@@ -1,6 +1,4 @@
 import {
-  lazy,
-  Suspense,
   type CSSProperties,
   type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -28,6 +26,11 @@ import {
 import { restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useDropAnimation, useSortableTransition } from "./SortableMotion";
+import {
+  createWindowResizeSettleScheduler,
+  isWindowResizing,
+} from "./WindowResizeState";
 import {
   ArrowLeft,
   FileDiff,
@@ -42,15 +45,17 @@ import {
   Plus,
   ShieldCheck,
   Terminal,
+  Project,
   X,
-} from "lucide-react";
-import type { ActivitySession, GitStatusResult, RuntimeContext, Thread } from "../shared/protocol";
+} from "./WuuIcons";
+import type { ActivitySession, BrowserDockTarget, GitStatusResult, RuntimeContext, Thread } from "../shared/protocol";
 import {
   formatWorkspaceFileTarget,
   parseWorkspaceFileTarget,
   resolveWorkspaceFileTarget,
 } from "./LinkTargets";
 import { TurnFileDiffPanel } from "./TurnFileDiffPanel";
+import { ArtifactPreview } from "./ArtifactOutputs";
 import { WorkspaceBrowserPanel } from "./WorkspaceBrowserPanel";
 import {
   WorkspaceFilePreview,
@@ -59,7 +64,8 @@ import {
   type WorkspaceFileDirtyState,
 } from "./WorkspaceFiles";
 import { WorkspaceReviewPanel } from "./WorkspaceReviewPanels";
-import { ViewSwitchLoading } from "./LoadingViews";
+import { ProjectPanel } from "./ProjectPanels";
+import { WorkspacePanelLoading } from "./LoadingViews";
 import type { WorkspaceFileViewTab, WorkspaceViewTab } from "./WorkspaceViewTabs";
 import { handleTabListKeyDown, useTabCloseFocusRestoration } from "./TabKeyboardNavigation";
 import { useStripEnterReady, useTabExitRetention } from "./TabMotion";
@@ -73,11 +79,30 @@ import { PluginIcon } from "./PublicIcon";
 import { PluginSlot } from "./plugins/PluginSlot";
 import type { WorkbenchController } from "./plugins/Workbench";
 import { PluginViewContent } from "./plugins/Workbench";
-import { ENABLE_EMBEDDED_BROWSER } from "./FeatureFlags";
+import { useWorkspaceBrowserNavigationRequest } from "./WorkspaceBrowserNavigation";
 
-const WorkspaceTerminalPanel = lazy(() => import("./WorkspaceTerminalPanel").then((module) => ({
-  default: module.WorkspaceTerminalPanel,
-})));
+type WorkspaceTerminalPanelComponent = typeof import("./WorkspaceTerminalPanel").WorkspaceTerminalPanel;
+
+let cachedWorkspaceTerminalPanel: WorkspaceTerminalPanelComponent | undefined;
+let workspaceTerminalPanelPromise: Promise<WorkspaceTerminalPanelComponent> | undefined;
+
+function loadWorkspaceTerminalPanel(): Promise<WorkspaceTerminalPanelComponent> {
+  if (cachedWorkspaceTerminalPanel) {
+    return Promise.resolve(cachedWorkspaceTerminalPanel);
+  }
+  workspaceTerminalPanelPromise ??= import("./WorkspaceTerminalPanel").then(
+    (module) => {
+      cachedWorkspaceTerminalPanel = module.WorkspaceTerminalPanel;
+      module.preloadWorkspaceTerminalRuntime();
+      return module.WorkspaceTerminalPanel;
+    },
+    (error: unknown) => {
+      workspaceTerminalPanelPromise = undefined;
+      throw error;
+    },
+  );
+  return workspaceTerminalPanelPromise;
+}
 
 export type WorkspacePanelView = "files" | "review" | "terminal" | "browser";
 
@@ -89,9 +114,7 @@ const WORKSPACE_TOOL_ITEMS: Array<{
   { id: "files", titleKey: "workspace.tool.files", subtitleKey: "workspace.tool.filesDescription" },
   { id: "review", titleKey: "workspace.tool.review", subtitleKey: "workspace.tool.reviewDescription" },
   { id: "terminal", titleKey: "workspace.tool.terminal", subtitleKey: "workspace.tool.terminalDescription" },
-  ...(ENABLE_EMBEDDED_BROWSER
-    ? [{ id: "browser" as const, titleKey: "workspace.tool.browser" as const, subtitleKey: "workspace.tool.browserDescription" as const }]
-    : []),
+  { id: "browser", titleKey: "workspace.tool.browser", subtitleKey: "workspace.tool.browserDescription" },
 ];
 
 export const WORKSPACE_FILE_TREE_DEFAULT_WIDTH = 320;
@@ -186,9 +209,9 @@ export function WorkspaceRightPanel({
   onToggleGlobalize,
   canExitGlobalized = true,
   browserActivity,
-  onBrowserActivityTakeover,
-  onBrowserActivityRelease,
-  onBrowserActivityStop,
+  browserDockTarget,
+  browserOverlaySuppressed = false,
+  onBrowserUserInteraction,
   focusedComposer,
   fileRefreshKey,
   pluginHost,
@@ -227,15 +250,16 @@ export function WorkspaceRightPanel({
   onToggleGlobalize: () => void;
   canExitGlobalized?: boolean;
   browserActivity?: ActivitySession;
-  onBrowserActivityTakeover?: () => void;
-  onBrowserActivityRelease?: () => void;
-  onBrowserActivityStop?: () => void;
+  browserDockTarget?: BrowserDockTarget;
+  browserOverlaySuppressed?: boolean;
+  onBrowserUserInteraction?: () => void | Promise<void>;
   focusedComposer?: ReactNode;
   fileRefreshKey?: string;
   pluginHost?: PluginHost;
   workbenchController?: WorkbenchController;
 }): JSX.Element {
   const { t } = useI18n();
+  const browserNavigation = useWorkspaceBrowserNavigationRequest();
   const effectivePluginHost = pluginHost ?? desktopPluginHost;
   const pluginTools = useSyncExternalStore(
     (listener) => effectivePluginHost.subscribe(listener),
@@ -243,6 +267,15 @@ export function WorkspaceRightPanel({
     () => effectivePluginHost.getWorkspaceTools(),
   );
   const activeTab = activeTabID ? tabs.find((tab) => tab.id === activeTabID) : undefined;
+  const terminalTabOpen = tabs.some((tab) => tab.kind === "terminal");
+  // Latch after the terminal has been shown so a later tool tab does not
+  // tear the pty down. Closing the terminal tab releases it.
+  const [terminalMounted, setTerminalMounted] = useState(false);
+  if (activeTab?.kind === "terminal" && !terminalMounted) {
+    setTerminalMounted(true);
+  } else if (!terminalTabOpen && terminalMounted) {
+    setTerminalMounted(false);
+  }
   const fileTabs = tabs.filter((tab): tab is WorkspaceFileViewTab => tab.kind === "file");
   const visibleTabs = tabs;
   const showingPicker = !activeTab;
@@ -268,6 +301,7 @@ export function WorkspaceRightPanel({
   const fileTreeDragPreviewRef = useRef<HTMLDivElement>(null);
   const fileSplitResizeRef = useRef<{ startX: number; startTreeWidth: number } | null>(null);
   const tabSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const dropAnimation = useDropAnimation();
   const draggingTab = draggingTabID ? tabs.find((tab) => tab.id === draggingTabID) : undefined;
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const { requestFocusRestoration, tabListRef } = useTabCloseFocusRestoration(
@@ -295,6 +329,15 @@ export function WorkspaceRightPanel({
   }, [Boolean(focusedComposer), activeTab?.kind, open, present]);
 
   useEffect(() => {
+    if (!prewarm && !open) {
+      return undefined;
+    }
+    return scheduleIdleTask(() => {
+      void loadWorkspaceTerminalPanel().catch(() => undefined);
+    }, WORKSPACE_PANEL_PREWARM_TIMEOUT_MS);
+  }, [open, prewarm]);
+
+  useEffect(() => {
     if (!prewarm || bodyPrewarmed || open) {
       return undefined;
     }
@@ -311,6 +354,10 @@ export function WorkspaceRightPanel({
       String(fileTreePreferredWidthRef.current),
     );
   }, []);
+
+  // The split only exists once the body mounts; a panel that starts closed must
+  // attach the fit observer when it opens, not keep the stored width forever.
+  const bodyMounted = present || bodyPrewarmed || fileTabs.length > 0;
 
   useEffect(() => {
     const split = fileSplitRef.current;
@@ -333,11 +380,21 @@ export function WorkspaceRightPanel({
       });
     }
 
-    const observer = new ResizeObserver(fitFileTreeToPanel);
+    const settle = createWindowResizeSettleScheduler(fitFileTreeToPanel);
+    const observer = new ResizeObserver(() => {
+      if (isWindowResizing()) {
+        settle.schedule();
+        return;
+      }
+      fitFileTreeToPanel();
+    });
     observer.observe(splitElement);
     fitFileTreeToPanel();
-    return () => observer.disconnect();
-  }, []);
+    return () => {
+      settle.cancel();
+      observer.disconnect();
+    };
+  }, [bodyMounted]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -562,12 +619,18 @@ export function WorkspaceRightPanel({
       dirty: (tab.kind === "file" && dirtyFileTabIDs.has(tab.id)) || undefined,
     };
   });
+  const navigateBack = compactNavigation && open ? () => {
+    if (!activeTab) onClose();
+    else if (activeTab.kind === "file") onOpenTool("files");
+    else onShowTools();
+  } : undefined;
   const headerSnapshot = immutableHeaderSnapshot({
     scope: "workspace",
     title: activeTab ? workspaceViewTabLabel(activeTab) : t("workspace.artifactsAndTools"),
     subtitle: activeTab?.kind === "file" || activeTab?.kind === "diff" ? activeTab.path : undefined,
     tabs: compactNavigation ? undefined : headerTabs,
     activeTabId: compactNavigation ? undefined : activeTabID,
+    canNavigateBack: navigateBack ? true : undefined,
     busy: headerTabs.some((tab) => tab.busy) || undefined,
     dirty: headerTabs.some((tab) => tab.dirty) || undefined,
   });
@@ -602,8 +665,9 @@ export function WorkspaceRightPanel({
           snapshot={headerSnapshot}
           host={pluginHost}
           controller={workbenchController}
-          onSelectTab={onSelectTab}
-          onCloseTab={(tabId) => {
+          onNavigateBack={navigateBack}
+          onSelectTab={compactNavigation ? undefined : onSelectTab}
+          onCloseTab={compactNavigation ? undefined : (tabId) => {
             const tab = tabs.find((candidate) => candidate.id === tabId);
             if (tab) requestCloseTab(tab);
           }}
@@ -615,17 +679,7 @@ export function WorkspaceRightPanel({
                 type="button"
                 aria-label={t("common.back")}
                 disabled={!open}
-                onClick={() => {
-                  if (!activeTab) {
-                    onClose();
-                    return;
-                  }
-                  if (activeTab.kind === "file") {
-                    onOpenTool("files");
-                    return;
-                  }
-                  onShowTools();
-                }}
+                onClick={navigateBack}
               >
                 <ArrowLeft className="icon" />
               </button>
@@ -637,21 +691,6 @@ export function WorkspaceRightPanel({
                   <span>{activeTab.path}</span>
                 ) : null}
               </div>
-              {activeTab ? (
-                <button
-                  className="icon-button workspace-panel-close-tab"
-                  type="button"
-                  aria-label={t("workspace.closeTab", {
-                    label: workspaceViewTabLabel(activeTab),
-                  })}
-                  disabled={!open}
-                  onClick={() => requestCloseTab(activeTab)}
-                >
-                  <X className="icon" />
-                </button>
-              ) : (
-                <span className="workspace-panel-compact-action-slot" aria-hidden="true" />
-              )}
             </>
           ) : (
             <>
@@ -721,7 +760,7 @@ export function WorkspaceRightPanel({
             * no ancestor of it is transformed. React portals keep context,
             * so DndContext still drives the overlay. */}
           {createPortal(
-            <DragOverlay dropAnimation={{ duration: 150, easing: "cubic-bezier(0.16, 1, 0.3, 1)" }}>
+            <DragOverlay dropAnimation={dropAnimation}>
               {draggingTab ? (
                 <WorkspaceViewTabPreview
                   tab={draggingTab}
@@ -744,7 +783,7 @@ export function WorkspaceRightPanel({
           disabled={!open}
           onClick={onShowTools}
         >
-          <Plus className="icon-lg" />
+          <Plus />
         </button>
         <button
           className={`icon-button workspace-panel-globalize${globalized ? " active" : ""}`}
@@ -781,8 +820,21 @@ export function WorkspaceRightPanel({
             </>
           )}
         />
+        {compactNavigation ? activeTab ? (
+          <button
+            className="icon-button workspace-panel-close-tab"
+            type="button"
+            aria-label={t("workspace.closeTab", { label: workspaceViewTabLabel(activeTab) })}
+            disabled={!open}
+            onClick={() => requestCloseTab(activeTab)}
+          >
+            <X className="icon" />
+          </button>
+        ) : (
+          <span className="workspace-panel-compact-action-slot" aria-hidden="true" />
+        ) : null}
       </div>
-      {present || bodyPrewarmed || fileTabs.length > 0 ? (
+      {bodyMounted ? (
         <>
           <div className={`workspace-panel-body${activeTab ? "" : " picker"}`}>
             <div
@@ -906,7 +958,38 @@ export function WorkspaceRightPanel({
               </div>,
               document.body,
             )}
-            {activeTab?.kind === "files" || activeTab?.kind === "file" ? null : (
+            {tabs.some((tab) => tab.kind === "browser") ? (
+              <div
+                className="workspace-panel-content-swap"
+                hidden={activeTab?.kind !== "browser"}
+                aria-hidden={activeTab?.kind !== "browser"}
+              >
+                <WorkspaceBrowserPanel
+                  visible={open && activeTab?.kind === "browser"}
+                  threadID={terminalThread?.id}
+                  activeContext={activeContext}
+                  activity={browserActivity}
+                  dockTarget={browserDockTarget}
+                  requestedURL={browserNavigation}
+                  overlaySuppressed={browserOverlaySuppressed}
+                  onUserInteraction={onBrowserUserInteraction}
+                />
+              </div>
+            ) : null}
+            {terminalMounted && terminalTabOpen ? (
+              <div
+                className="workspace-panel-content-swap"
+                hidden={activeTab?.kind !== "terminal"}
+                aria-hidden={activeTab?.kind !== "terminal"}
+              >
+                <WorkspaceTerminalHost
+                  active={activeTab?.kind === "terminal"}
+                  activeContext={workspaceContext}
+                  thread={terminalThread}
+                />
+              </div>
+            ) : null}
+            {activeTab?.kind === "files" || activeTab?.kind === "file" || activeTab?.kind === "browser" || activeTab?.kind === "terminal" ? null : (
               <div
                 className="workspace-panel-content-swap"
                 key={activeTab?.id ?? "picker"}
@@ -923,27 +1006,21 @@ export function WorkspaceRightPanel({
                     selection={activeTab.selection}
                     onClose={() => onCloseTab(activeTab.id)}
                   />
+                ) : activeTab.kind === "artifact" ? (
+                  <ArtifactPreview
+                    active={open}
+                    artifact={activeTab.artifact}
+                    cwd={activeTab.cwd}
+                    mode="panel"
+                    onClose={() => onCloseTab(activeTab.id)}
+                  />
                 ) : activeTab.kind === "review" ? (
                   <WorkspaceReviewPanel
                     gitStatus={gitStatus}
                     workspaceRoot={workspaceContext?.cwd}
                   />
-                ) : activeTab.kind === "terminal" ? (
-                  <Suspense fallback={<ViewSwitchLoading />}>
-                    <WorkspaceTerminalPanel
-                      activeContext={workspaceContext}
-                      thread={terminalThread}
-                    />
-                  </Suspense>
-                ) : activeTab.kind === "browser" ? (
-                  <WorkspaceBrowserPanel
-                    open={open}
-                    activeContext={activeContext}
-                    activity={browserActivity}
-                    onActivityTakeover={onBrowserActivityTakeover}
-                    onActivityRelease={onBrowserActivityRelease}
-                    onActivityStop={onBrowserActivityStop}
-                  />
+                ) : activeTab.kind === "project" ? (
+                  <ProjectPanel projectID={activeTab.projectID} />
                 ) : activeTab.kind === "plugin" && workbenchController ? (
                   <PluginViewContent
                     controller={workbenchController}
@@ -959,6 +1036,41 @@ export function WorkspaceRightPanel({
       ) : null}
     </aside>
   );
+}
+
+function WorkspaceTerminalHost({
+  active,
+  activeContext,
+  thread,
+}: {
+  active: boolean;
+  activeContext?: RuntimeContext;
+  thread?: Thread;
+}): JSX.Element {
+  const [Panel, setPanel] = useState<WorkspaceTerminalPanelComponent | undefined>(
+    () => cachedWorkspaceTerminalPanel,
+  );
+  useEffect(() => {
+    if (Panel) {
+      return undefined;
+    }
+    let cancelled = false;
+    void loadWorkspaceTerminalPanel().then(
+      (loaded) => {
+        if (!cancelled) {
+          setPanel(() => loaded);
+        }
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [Panel]);
+  if (!Panel) {
+    return <WorkspacePanelLoading />;
+  }
+  return <Panel active={active} activeContext={activeContext} thread={thread} />;
 }
 
 function WorkspaceFileResource({
@@ -1033,7 +1145,8 @@ function SortableWorkspaceViewTab({
   const { t } = useI18n();
   const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tab.id,
-    disabled: !reorderable
+    disabled: !reorderable,
+    transition: useSortableTransition(),
   });
   const { role: _dragRole, ...dragAttributes } = attributes;
   const style: CSSProperties = {
@@ -1142,43 +1255,45 @@ function WorkspaceToolPicker({
       aria-label={t("workspace.tools")}
       data-wuu-component="workspace-tool-picker"
     >
-      {WORKSPACE_TOOL_ITEMS.filter((item) => item.id !== "browser" || typeof window.wuu?.reportBrowserBounds === "function").map((item) => (
-        <button
-          key={item.id}
-          className={`workspace-tool-menu-item${tabs.some((tab) => tab.kind === item.id) ? " active" : ""}`}
-          data-wuu-component="workspace-tool"
-          type="button"
-          onClick={() => onSelectTool(item.id)}
-        >
-          <span className="workspace-tool-menu-icon" aria-hidden="true">
-            <WorkspaceToolIcon view={item.id} className="icon-xl" />
-          </span>
-          <span className="workspace-tool-menu-copy">
-            <strong>{t(item.titleKey)}</strong>
-          </span>
-        </button>
-      ))}
-      {pluginTools.map((item) => {
-        const tabID = `plugin:${item.pluginId}:${item.id}`;
-        return (
+      <div className="workspace-tool-menu-list">
+        {WORKSPACE_TOOL_ITEMS.map((item) => (
           <button
-            key={tabID}
-            className={`workspace-tool-menu-item${tabs.some((tab) => tab.id === tabID) ? " active" : ""}`}
+            key={item.id}
+            className={`workspace-tool-menu-item${tabs.some((tab) => tab.kind === item.id) ? " active" : ""}`}
             data-wuu-component="workspace-tool"
-            data-wuu-plugin={item.pluginId}
             type="button"
-            onClick={() => onSelectPluginTool(item)}
+            onClick={() => onSelectTool(item.id)}
           >
             <span className="workspace-tool-menu-icon" aria-hidden="true">
-              <PluginIcon icon={item.icon} pluginId={item.pluginId} fingerprint={item.generation} className="icon-xl" />
+              <WorkspaceToolIcon view={item.id} className="icon" />
             </span>
             <span className="workspace-tool-menu-copy">
-              <strong>{item.title}</strong>
-              {item.description ? <span>{item.description}</span> : null}
+              <strong>{t(item.titleKey)}</strong>
             </span>
           </button>
-        );
-      })}
+        ))}
+        {pluginTools.map((item) => {
+          const tabID = `plugin:${item.pluginId}:${item.id}`;
+          return (
+            <button
+              key={tabID}
+              className={`workspace-tool-menu-item${tabs.some((tab) => tab.id === tabID) ? " active" : ""}`}
+              data-wuu-component="workspace-tool"
+              data-wuu-plugin={item.pluginId}
+              type="button"
+              onClick={() => onSelectPluginTool(item)}
+            >
+              <span className="workspace-tool-menu-icon" aria-hidden="true">
+                <PluginIcon icon={item.icon} pluginId={item.pluginId} fingerprint={item.generation} className="icon" />
+              </span>
+              <span className="workspace-tool-menu-copy">
+                <strong>{item.title}</strong>
+                {item.description ? <span>{item.description}</span> : null}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1214,7 +1329,7 @@ export function WorkspaceBottomPanel({
           className="workspace-tool-grid"
           aria-label={t("workspace.tools")}
         >
-          {WORKSPACE_TOOL_ITEMS.filter((item) => item.id !== "browser" || typeof window.wuu?.reportBrowserBounds === "function").map((item) => (
+          {WORKSPACE_TOOL_ITEMS.map((item) => (
             <button
               key={item.id}
               className={`workspace-tool-card${item.id === selectedView ? " active" : ""}`}
@@ -1251,13 +1366,13 @@ function workspaceToolFor(view: WorkspacePanelView): (typeof WORKSPACE_TOOL_ITEM
 }
 
 function workspaceViewTabLabel(tab: WorkspaceViewTab): string {
-  return tab.kind === "diff" || tab.kind === "file" || tab.kind === "plugin"
+  return tab.kind === "diff" || tab.kind === "file" || tab.kind === "plugin" || tab.kind === "artifact" || tab.kind === "project"
     ? tab.title
     : translateCurrent(workspaceToolFor(tab.kind).titleKey);
 }
 
 function workspaceViewTabTooltip(tab: WorkspaceViewTab): string {
-  if (tab.kind === "plugin") return tab.title;
+  if (tab.kind === "plugin" || tab.kind === "artifact" || tab.kind === "project") return tab.title;
   return tab.kind === "diff" || tab.kind === "file"
     ? tab.path
     : translateCurrent(workspaceToolFor(tab.kind).titleKey);
@@ -1267,7 +1382,10 @@ function WorkspaceViewTabIcon({ tab, className }: { tab: WorkspaceViewTab; class
   if (tab.kind === "diff") {
     return <FileDiff className={className} />;
   }
-  if (tab.kind === "file") {
+  if (tab.kind === "project") {
+    return <Project className={className} />;
+  }
+  if (tab.kind === "file" || tab.kind === "artifact") {
     return <FileText className={className} />;
   }
   if (tab.kind === "plugin") {

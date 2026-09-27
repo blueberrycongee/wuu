@@ -1,69 +1,32 @@
 # Skills
 
-A Skill is a reusable task brief with steps, tool guidance, and delivery requirements.
-Use it for recurring work such as release checks, documentation, and code review.
-Review the result as usual; loading a Skill does not guarantee a correct outcome.
+A skill is a reusable workflow written in Markdown. Use one for recurring work such as reviewing a change, diagnosing a desktop issue, or checking a release. It gives the agent a task-specific procedure; it does not guarantee a correct result or grant extra permissions.
 
-## View and use Skills
+## Find and use a skill
 
-Type `/skills` in the desktop input box to open the Skills directory. You can:
-
-- search the Skills discovered by the current runtime;
-- distinguish built-in and personal Skills;
-- preview the Skill source;
-- choose **Try now** to bring the corresponding workflow into the current
-  conversation.
-
-Discovered Skills also appear in the `/` menu. You can invoke one directly with a
-name and arguments, for example:
+In the desktop composer, enter `/skills` to open the catalog. Search the discovered skills, inspect their source, and use **Try now** for a user-invocable skill. Skills also appear in the slash menu, where you can pass arguments after the name:
 
 ```text
-/browser inspect the current page
+/release-check 2026.9.1
 ```
 
-The agent also sees a directory of available Skills with names and descriptions, and
-loads the full text on demand through `load_skill` when a task matches.
-`disable-model-invocation: true` stops the model from choosing a Skill on its own, but
-does not affect invocation by name when `user-invocable: true`; a Skill without a
-`description` does not appear in the model directory either.
+The Wuu engine gives the model a catalog of skill names and descriptions. When a task matches, it can use `load_skill` to read the full workflow. A missing description or `disable-model-invocation: true` keeps a skill out of that automatic-selection catalog. `user-invocable` controls whether it is offered for direct user invocation.
 
-Whether a Skill is available depends on the current workspace and the current tool
-surface. When it declares tools the current session does not have, Wuu may hide the
-Skill. Refreshing the directory re-runs discovery.
+Availability depends on the workspace, discovered sources, and current tool surface. A skill that requires unavailable tools may be filtered out. Refresh the catalog after installing or editing one, and inspect the source path if the wrong version appears.
 
-## Skill trust boundary
+## Trust the workflow before using it
 
-Skill content enters the agent context and may influence which tools it chooses and
-how it handles files. Read the source before using a Skill from a repository or a
-third party.
+Read a third-party skill and its supporting scripts before enabling its workflow. The normal `load_skill` path substitutes arguments and loads instructions; it does not run inline shell expressions or code fences at load time. The instructions can still ask the agent to run commands or access the network afterward, subject to the session's tool and permission boundaries.
 
-The current `load_skill` path only loads instructions and resources; it does not
-execute inline code starting with `!` or fenced code blocks at load time. A Skill can
-still ask the agent to call command, network, or file tools later in its body; those
-actual tool calls are constrained by the current permission mode and workspace
-boundary.
+Project instructions such as `AGENTS.md` apply continuously within their scope. A skill is loaded for a particular workflow, while [memory](memory.md) stores information worth keeping across tasks.
 
-## Write or install
+## Create or install one
 
-Project Skills suit sharing with the repository; personal Skills suit reuse across
-projects. See [writing and installing Skills](skill-authoring.md) for the directory
-layout, file format, override order, and compatible fields.
-
-## Check after writing
-
-The CLI provides a check that matches the actual discovery rules:
+Place a skill in a project to share it with contributors, or in a user skills directory to reuse it across projects. The [authoring guide](skill-authoring.md) covers discovery order, supported metadata, arguments, and validation.
 
 ```bash
 wuu skills lint path/to/skill
 wuu skills lint --json path/to/skills-root
 ```
 
-The checker verifies the file structure and metadata. Workflow content and task
-results still need human review.
-
-## Difference from project instructions
-
-- Project instructions such as `AGENTS.md` continuously affect tasks in that
-  workspace;
-- a Skill represents a workflow used on demand;
-- [memory](memory.md) keeps long-term, user-controlled information across sessions.
+Lint checks whether the structure and metadata can be loaded. Review the workflow's behavior with a low-risk task as well.

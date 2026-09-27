@@ -5,7 +5,6 @@ import "testing"
 func TestCodeModeExposesContextSwitchAtTopLevel(t *testing.T) {
 	kit := newCodeModeTestToolkit(t)
 	kit.SetContextWindowToolsEnabled(true)
-	kit.SetCodeModeOnly(true)
 	if !contains(newContextToolName, kit.Definitions()) {
 		t.Fatal("context switch unavailable in code-mode")
 	}

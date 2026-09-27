@@ -22,6 +22,95 @@ import (
 
 func immediateStreamRetryWait(context.Context, time.Duration) error { return nil }
 
+func TestResponsesWebSocketEventSizeBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		extra      int
+		afterEvent bool
+	}{
+		{name: "at-limit"},
+		{name: "oversized-first-event", extra: 1},
+		{name: "oversized-after-event", extra: 1024, afterEvent: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const prefix = `{"type":"response.output_text.delta","delta":"`
+			const suffix = `"}`
+			payload := strings.Repeat("x", providers.MaxStreamEventBytes+tc.extra-len(prefix)-len(suffix))
+			var requests, sseRequests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.Header.Get("Upgrade") == "" {
+					sseRequests.Add(1)
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprint(w, "data: [DONE]\n\n")
+					return
+				}
+				conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer conn.CloseNow()
+				ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+				defer cancel()
+				if _, _, err := conn.Read(ctx); err != nil {
+					t.Error(err)
+					return
+				}
+				if tc.afterEvent {
+					writeWSEvent(t, ctx, conn, `{"type":"response.created","response":{"id":"resp_large"}}`)
+				}
+				// Oversized messages may be rejected before the write finishes.
+				if err := conn.Write(ctx, websocket.MessageText, []byte(prefix+payload+suffix)); err != nil && tc.extra == 0 {
+					t.Error(err)
+				}
+				if tc.extra == 0 {
+					writeWSEvent(t, ctx, conn, `{"type":"response.completed","response":{"id":"resp_large","status":"completed","output":[]}}`)
+				}
+			}))
+			defer server.Close()
+			store := false
+			client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test", WireAPI: "responses", ResponsesStore: &store, ResponsesTransport: providers.StreamTransportAuto, ResponsesWebSocketCache: NewResponsesWebSocketCache()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			reliable := providers.NewReliableStreamClient(client, nil, providers.WithStreamRetryWait(immediateStreamRetryWait))
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			events, err := reliable.StreamChat(ctx, providers.ChatRequest{Model: "test", Messages: []providers.ChatMessage{{Role: "user", Content: "hello"}}, CacheHint: &providers.CacheHint{PromptCacheKey: tc.name}, Operation: providers.NewInferenceOperation(providers.InferenceOperationAgentRound, providers.InferenceProfileInteractive)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var content strings.Builder
+			var terminal error
+			done := 0
+			for event := range events {
+				switch event.Type {
+				case providers.EventContentDelta:
+					content.WriteString(event.Content)
+				case providers.EventError:
+					terminal = event.Error
+				case providers.EventDone:
+					done++
+				}
+			}
+			if requests.Load() != 1 || sseRequests.Load() != 0 {
+				t.Fatalf("size limit triggered replay/fallback: requests=%d SSE=%d", requests.Load(), sseRequests.Load())
+			}
+			if tc.extra == 0 {
+				if terminal != nil || done != 1 || content.String() != payload {
+					t.Fatalf("boundary event: done=%d content bytes=%d err=%v", done, content.Len(), terminal)
+				}
+				return
+			}
+			var limitErr *providers.StreamEventTooLargeError
+			if done != 0 || content.Len() != 0 || !errors.As(terminal, &limitErr) || providers.NormalizeFailure(terminal).Category != providers.FailureResponseTooLarge {
+				t.Fatalf("oversized event: done=%d content bytes=%d err=%v", done, content.Len(), terminal)
+			}
+		})
+	}
+}
+
 func TestResolveCodexWebSocketURL(t *testing.T) {
 	cases := []struct {
 		in   string
@@ -121,104 +210,6 @@ func TestDialCodexWebSocket_HappyPath(t *testing.T) {
 	}
 	if string(data) != "hello" {
 		t.Errorf("echoed message = %q, want hello", string(data))
-	}
-}
-
-func TestDialCodexWebSocket_AllowsResponsesMessagesAboveDefaultReadLimit(t *testing.T) {
-	largeMessage := strings.Repeat("x", 64*1024)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-			InsecureSkipVerify: true,
-		})
-		if err != nil {
-			t.Errorf("server-side accept: %v", err)
-			return
-		}
-		defer conn.Close(websocket.StatusNormalClosure, "")
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-		if err := conn.Write(ctx, websocket.MessageText, []byte(largeMessage)); err != nil {
-			t.Errorf("server-side write: %v", err)
-			return
-		}
-		<-r.Context().Done()
-	}))
-	defer server.Close()
-
-	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
-	conn, err := (CodexWebSocketDialer{}).dialCodexWebSocket(context.Background(), wsURL, http.Header{})
-	if err != nil {
-		t.Fatalf("dialCodexWebSocket: %v", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	typ, data, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("client read: %v", err)
-	}
-	if typ != websocket.MessageText {
-		t.Errorf("message type = %v, want MessageText", typ)
-	}
-	if string(data) != largeMessage {
-		t.Fatalf("large message length = %d, want %d", len(data), len(largeMessage))
-	}
-}
-
-func TestDialCodexWebSocket_InjectsBetaTagWhenAbsent(t *testing.T) {
-	var seenBeta string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seenBeta = r.Header.Get("OpenAI-Beta")
-		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
-		if err != nil {
-			return
-		}
-		_ = conn.Close(websocket.StatusNormalClosure, "")
-	}))
-	defer server.Close()
-
-	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
-	conn, err := (CodexWebSocketDialer{}).dialCodexWebSocket(context.Background(), wsURL, http.Header{})
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-
-	if seenBeta != CodexWebSocketBetaTag {
-		t.Errorf("OpenAI-Beta = %q, want %q", seenBeta, CodexWebSocketBetaTag)
-	}
-}
-
-func TestDialCodexWebSocket_PreservesCallerBetaTag(t *testing.T) {
-	var seenBeta string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seenBeta = r.Header.Get("OpenAI-Beta")
-		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
-		if err != nil {
-			return
-		}
-		_ = conn.Close(websocket.StatusNormalClosure, "")
-	}))
-	defer server.Close()
-
-	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
-	headers := http.Header{}
-	headers.Set("OpenAI-Beta", "responses=experimental")
-	conn, err := (CodexWebSocketDialer{}).dialCodexWebSocket(context.Background(), wsURL, headers)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-
-	if seenBeta != "responses=experimental" {
-		t.Errorf("OpenAI-Beta = %q, want %q (caller override)", seenBeta, "responses=experimental")
-	}
-}
-
-func TestDialCodexWebSocket_RejectsEmptyURL(t *testing.T) {
-	if _, err := (CodexWebSocketDialer{}).dialCodexWebSocket(context.Background(), "", http.Header{}); err == nil {
-		t.Fatal("expected error for empty URL")
 	}
 }
 
@@ -872,7 +863,7 @@ func TestResponsesStreamChatWebSocket_RunnerKeepsDeltaAcrossTurnsWithChangingCon
 			writeWSEvent(t, ctx, conn, `{"type":"response.created","response":{"id":"resp_`+id+`","status":"in_progress"}}`)
 			writeWSEvent(t, ctx, conn, `{"type":"response.output_item.added","item":{"id":"msg_`+id+`","type":"message","role":"assistant","phase":"final_answer","status":"in_progress"},"output_index":0}`)
 			writeWSEvent(t, ctx, conn, `{"type":"response.output_text.delta","delta":"answer-`+id+`","item_id":"msg_`+id+`","output_index":0}`)
-			writeWSEvent(t, ctx, conn, `{"type":"response.output_item.done","item":{"id":"msg_`+id+`","type":"message","role":"assistant","phase":"final_answer","status":"completed","content":[{"type":"output_text","text":"answer-`+id+`"}]},"output_index":0}`)
+			writeWSEvent(t, ctx, conn, `{"type":"response.output_item.done","item":{"id":"msg_`+id+`","type":"message","role":"assistant","phase":"final_answer","status":"completed","content":[{"type":"output_text","text":"answer-"},{"type":"output_text","text":"`+id+`"}]},"output_index":0}`)
 			writeWSEvent(t, ctx, conn, `{"type":"response.completed","response":{"id":"resp_`+id+`","status":"completed","output":[],"usage":{"input_tokens":10,"output_tokens":2}}}`)
 		}
 	}))

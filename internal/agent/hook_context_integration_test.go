@@ -46,7 +46,7 @@ func (concurrentHookTools) Execute(_ context.Context, call providers.ToolCall) (
 
 func TestRunToolLoopPreservesPostToolContextForConcurrentCalls(t *testing.T) {
 	registry := hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{
-		hooks.PostToolUse: {{
+		hooks.PostToolUse: {{Command: `printf '%s' '{"additional_context":"shared check"}'`}, {
 			Matcher: "read_file",
 			Command: `input=$(cat); case "$input" in *one.txt*) printf '%s' '{"additional_context":"context for one"}';; *) printf '%s' '{"additional_context":"context for two"}';; esac`,
 		}},
@@ -73,6 +73,12 @@ func TestRunToolLoopPreservesPostToolContextForConcurrentCalls(t *testing.T) {
 		t.Fatalf("model requests = %d, want 2", len(step.requests))
 	}
 	secondRequest := step.requests[1].Messages
+	if got := countMessageContent(secondRequest, "shared check"); got != 2 {
+		t.Fatalf("first hook context must survive for both calls, got %d", got)
+	}
+	if got := countMessageContent(result.NewMessages, "shared check"); got != 0 {
+		t.Fatalf("shared check must stay out of durable history, got %d", got)
+	}
 	for _, want := range []string{"context for one", "context for two"} {
 		if countMessageContent(secondRequest, want) != 1 {
 			t.Fatalf("second request should contain %q exactly once: %+v", want, secondRequest)

@@ -5,18 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
-	"github.com/blueberrycongee/wuu/internal/channels"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/statepath"
-	"github.com/blueberrycongee/wuu/internal/worktree"
+	worktreepkg "github.com/blueberrycongee/wuu/internal/worktree"
 )
 
 type pluginTurnReference struct {
@@ -36,13 +33,18 @@ func clonePluginTurnReference(reference *pluginTurnReference) *pluginTurnReferen
 }
 
 func (s *Server) notifyPluginTurnDiscarded(threadID string, entry queuedTurn, reason string) {
+	s.notifyPluginTurnDiscardedWithRetry(threadID, entry, reason, false)
+}
+
+func (s *Server) notifyPluginTurnDiscardedWithRetry(threadID string, entry queuedTurn, reason string, retryable bool) {
 	reference := entry.snapshot.PluginTurn
 	if reference == nil {
 		return
 	}
 	s.notifyPluginTurnLifecycleAsync(reference.PluginID, pluginhost.AgentTurnLifecycleInput{
 		RequestID: reference.RequestID, State: pluginhost.TurnLifecycleDiscarded,
-		ThreadID: strings.TrimSpace(threadID), QueueID: reference.QueueID,
+		Retryable: retryable,
+		ThreadID:  strings.TrimSpace(threadID), QueueID: reference.QueueID,
 		Error: strings.TrimSpace(reason),
 	})
 }
@@ -61,6 +63,10 @@ func (s *Server) createPluginSession(ctx context.Context, pluginID string, param
 	params.WorkspaceID = strings.TrimSpace(params.WorkspaceID)
 	params.WorkspaceRoot = strings.TrimSpace(params.WorkspaceRoot)
 	params.ModelAlias = strings.TrimSpace(params.ModelAlias)
+	params.Speed = strings.TrimSpace(params.Speed)
+	if err := validateSpeed(params.Speed); err != nil {
+		return pluginhost.SessionCreateResult{}, err
+	}
 	params.Instructions = strings.TrimSpace(params.Instructions)
 	if pluginID == "" {
 		return pluginhost.SessionCreateResult{}, errors.New("plugin owner is required")
@@ -119,7 +125,7 @@ func (s *Server) createPluginSession(ctx context.Context, pluginID string, param
 		return pluginhost.SessionCreateResult{}, err
 	} else if ok {
 		if th, loadErr := s.ensureThreadLoaded(existing.ID); loadErr == nil && params.ContextSource == pluginhost.SessionContextSourceSeed {
-			if err := s.dispatchHandoffLaunchTurn(th, params); err != nil {
+			if err := s.dispatchHandoffLaunchTurn(th, hostSessionCreateParamsFromPlugin(params)); err != nil {
 				providers.DebugLogf("dispatch existing handoff first turn for %q: %v", existing.ID, err)
 			}
 		}
@@ -132,7 +138,7 @@ func (s *Server) createPluginSession(ctx context.Context, pluginID string, param
 		if th, loadErr := s.ensureThreadLoaded(launch.TargetSession); loadErr == nil {
 			workspaceRoot = th.CWD
 			if params.ContextSource == pluginhost.SessionContextSourceSeed {
-				if err := s.dispatchHandoffLaunchTurn(th, params); err != nil {
+				if err := s.dispatchHandoffLaunchTurn(th, hostSessionCreateParamsFromPlugin(params)); err != nil {
 					providers.DebugLogf("dispatch existing handoff first turn for %q: %v", launch.TargetSession, err)
 				}
 			}
@@ -315,7 +321,7 @@ func (s *Server) inspectPluginSessionOnce(pluginID string, params pluginhost.Ses
 	if metadata.WorktreePath != "" {
 		summary := &pluginhost.SessionWorkspaceSummary{Kind: "worktree"}
 		if manager, managerErr := s.worktreeManager(metadata.WorktreeBaseRepo); managerErr == nil {
-			if status, statusErr := manager.Status(metadata.WorktreePath); statusErr == nil {
+			if status, statusErr := manager.Status(&worktreepkg.Worktree{Path: metadata.WorktreePath, HEAD: metadata.WorktreeBaseHEAD}); statusErr == nil {
 				summary.Dirty = status.Dirty
 				summary.ChangedFiles = status.ChangedFiles
 			}
@@ -333,9 +339,21 @@ func (s *Server) inspectPluginSessionOnce(pluginID string, params pluginhost.Ses
 		if err := json.Unmarshal(entry.Payload, &lifecycle); err != nil {
 			return pluginhost.SessionInspectResult{}, fmt.Errorf("decode plugin lifecycle state: %w", err)
 		}
+		// A retry can be queued/running while its older shutdown discard is
+		// still retained. Do not report that stale discard over the live retry.
+		if lifecycle.Retryable && lifecycle.State == pluginhost.TurnLifecycleDiscarded {
+			if live, ok := s.findSessionInput(th, pluginSessionRequestClientID(pluginID, requestID)); ok {
+				if params.TurnID == "" || live.TurnID == params.TurnID {
+					result.Turn = &pluginhost.SessionTurnInspection{RequestID: requestID, State: live.State, TurnID: live.TurnID, QueueID: live.QueueID}
+					result.Session.State = live.State
+					return result, nil
+				}
+			}
+		}
 		result.Turn = &pluginhost.SessionTurnInspection{
 			RequestID: lifecycle.RequestID, State: lifecycle.State, TurnID: lifecycle.TurnID, QueueID: lifecycle.QueueID,
-			Error: lifecycle.Error, StartedAt: lifecycle.StartedAt, CompletedAt: lifecycle.CompletedAt,
+			Retryable: lifecycle.Retryable,
+			Error:     lifecycle.Error, StartedAt: lifecycle.StartedAt, CompletedAt: lifecycle.CompletedAt,
 			InputTokens: lifecycle.InputTokens, OutputTokens: lifecycle.OutputTokens, FinalOutput: lifecycle.FinalOutput,
 		}
 		result.Session.State = lifecycle.State
@@ -450,7 +468,7 @@ func (s *Server) discardPluginWorkspace(_ context.Context, pluginID string, para
 	return pluginhost.WorkspaceDiscardResult{SessionID: metadata.ID, Discarded: true}, nil
 }
 
-func (s *Server) pluginWorkspaceTarget(pluginID, sessionID string) (session.Session, *worktree.Manager, *worktree.Worktree, error) {
+func (s *Server) pluginWorkspaceTarget(pluginID, sessionID string) (session.Session, *worktreepkg.Manager, *worktreepkg.Worktree, error) {
 	pluginID = strings.TrimSpace(pluginID)
 	sessionID = strings.TrimSpace(sessionID)
 	if pluginID == "" || sessionID == "" {
@@ -473,7 +491,7 @@ func (s *Server) pluginWorkspaceTarget(pluginID, sessionID string) (session.Sess
 	if err != nil {
 		return session.Session{}, nil, nil, err
 	}
-	target := &worktree.Worktree{
+	target := &worktreepkg.Worktree{
 		Path: metadata.WorktreePath, SessionID: metadata.ID, WorkerID: "plugin",
 		HEAD: metadata.WorktreeBaseHEAD, BaseRepo: metadata.WorktreeBaseRepo,
 	}
@@ -618,7 +636,23 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	}
 	clientID := pluginSessionRequestClientID(pluginID, params.RequestID)
 	if existing, ok := s.findSessionInput(th, clientID); ok {
-		return existing, nil
+		return pluginhost.SessionSendResult(existing), nil
+	}
+	// A removed queued input has no history item. Retained terminal receipts
+	// still fence retries, especially after an acknowledgement was lost. Only
+	// host-shutdown discards authorize admission again with the same identity.
+	terminalEntry, found, err := session.FindPluginTurnLifecycle(s.rt.SessionDir, pluginID, params.RequestID, params.SessionID, "")
+	if err != nil {
+		return pluginhost.SessionSendResult{}, err
+	}
+	if found {
+		var lifecycle pluginhost.AgentTurnLifecycleInput
+		if err := json.Unmarshal(terminalEntry.Payload, &lifecycle); err != nil {
+			return pluginhost.SessionSendResult{}, err
+		}
+		if pluginTurnLifecycleTerminal(lifecycle.State) && !(lifecycle.State == pluginhost.TurnLifecycleDiscarded && lifecycle.Retryable) {
+			return pluginhost.SessionSendResult{State: lifecycle.State, SessionID: params.SessionID, TurnID: lifecycle.TurnID, QueueID: lifecycle.QueueID}, nil
+		}
 	}
 	control, err := s.pluginSessionControl(pluginID, params.SessionID, params.ControlRevision)
 	if err != nil {
@@ -674,39 +708,6 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 			}
 		}
 	}
-	if s.channelService != nil {
-		binding, err := s.channelService.LookupCollaborationSession(ctx, params.SessionID)
-		if err == nil && binding.Primary {
-			if strings.TrimSpace(params.ReplyToTurnID) == "" || msg.RelatedSessionID == "" {
-				return pluginhost.SessionSendResult{}, errors.New("a collaboration result requires reply_to_turn_id and its related child session")
-			}
-			child, found, err := session.Find(s.rt.SessionDir, msg.RelatedSessionID)
-			if err != nil {
-				return pluginhost.SessionSendResult{}, err
-			}
-			if !found || child.Owner != owner || child.ParentID != params.SessionID {
-				return pluginhost.SessionSendResult{}, errors.New("result source must be the plugin's child of this conversation")
-			}
-			body := params.Input.Prompt
-			for _, block := range params.Input.ContextBlocks {
-				body += "\n\n" + block.Content
-			}
-			delivery, err := s.channelService.EnqueueSessionResult(ctx, channels.SessionResultEnqueueParams{
-				ParentSessionRef: params.SessionID, ParentTurnID: params.ReplyToTurnID, SourceSessionRef: child.ID,
-				RequestID: clientID, Body: body,
-			})
-			if err != nil {
-				return pluginhost.SessionSendResult{}, err
-			}
-			if delivery.Discarded {
-				return pluginhost.SessionSendResult{State: pluginhost.TurnLifecycleDiscarded, SessionID: params.SessionID}, nil
-			}
-			return pluginhost.SessionSendResult{State: pluginhost.TurnLifecycleQueued, SessionID: params.SessionID, QueueID: delivery.Message.ID}, nil
-		}
-		if err != nil && !errors.Is(err, channels.ErrNotFound) {
-			return pluginhost.SessionSendResult{}, err
-		}
-	}
 	permissions, err := s.resolveThreadTurnPermissions(th, nil)
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
@@ -721,7 +722,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 		return pluginhost.SessionSendResult{}, err
 	}
 	if ok {
-		return result, nil
+		return pluginhost.SessionSendResult(result), nil
 	}
 
 	queueID := session.NewID()
@@ -751,222 +752,33 @@ func pluginSessionRequestFromClientID(clientID string) (string, string, bool) {
 }
 
 func (s *Server) createPluginSessionThread(owner string, params pluginhost.SessionCreateParams) (*threadState, error) {
-	return s.createHostSessionThread(owner, pluginSessionSource(owner, params), "", params)
+	return s.createHostSessionThread(owner, pluginSessionSource(owner, params), "", hostSessionCreateParamsFromPlugin(params))
 }
 
-func (s *Server) createHostSessionThread(owner, source, id string, params pluginhost.SessionCreateParams) (*threadState, error) {
-	if s.rt == nil || s.rt.StreamRunner == nil {
-		return nil, errors.New("runtime session is required")
+// hostSessionCreateParamsFromPlugin converts the extension contract at the host boundary.
+func hostSessionCreateParamsFromPlugin(params pluginhost.SessionCreateParams) hostSessionCreateParams {
+	converted := hostSessionCreateParams{
+		Speed: params.Speed, RequestID: params.RequestID, Name: params.Name,
+		Visibility: params.Visibility, ParentSessionID: params.ParentSessionID, ContextSource: params.ContextSource,
+		Workspace: params.Workspace, WorkspaceID: params.WorkspaceID, WorkspaceRoot: params.WorkspaceRoot,
+		ModelAlias: params.ModelAlias, Provider: params.Provider, Model: params.Model,
+		Variant: params.Variant, Effort: params.Effort, PermissionMode: params.PermissionMode,
+		Instructions: params.Instructions,
 	}
-	if id == "" {
-		id = session.NewID()
-	}
-	threadCWD := s.rt.RootDir
-	managed := session.ManagedMetadata{Owner: owner, Visibility: params.Visibility, ParentID: params.ParentSessionID, ContextSource: params.ContextSource, CreationRequestID: params.RequestID}
-	var history []providers.ChatMessage
-	var createdWorktreePath string
-	cleanupWorktree := false
-	fork := session.ForkMetadata{}
-	if params.ContextSource == pluginhost.SessionContextFork {
-		parent, loadErr := s.loadPersistedThreadSnapshot(params.ParentSessionID)
-		if loadErr != nil {
-			return nil, loadErr
-		}
-		threadCWD = firstNonEmpty(parent.metadata.CWD, threadCWD)
-		history = cloneForkHistory(parent.history)
-		fork = session.ForkMetadata{ForkedFromID: params.ParentSessionID}
-	}
-	if params.ContextSource == pluginhost.SessionContextSourceSeed && params.ParentSessionID != "" {
-		parent, loadErr := s.loadPersistedThreadSnapshot(params.ParentSessionID)
-		if loadErr != nil {
-			return nil, loadErr
-		}
-		threadCWD = firstNonEmpty(parent.metadata.CWD, threadCWD)
-	}
-	selection := s.currentSessionRuntimeSelection()
-	if params.ParentSessionID != "" {
-		parent, found, err := session.Find(s.rt.SessionDir, params.ParentSessionID)
-		if err != nil {
-			return nil, err
-		}
-		if !found {
-			return nil, session.ErrSessionNotFound
-		}
-		selection = runtimeSelectionFromSession(parent)
-		threadCWD = firstNonEmpty(parent.CWD, threadCWD)
-	}
-	if params.Provider != "" || params.Model != "" {
-		selection.Provider = params.Provider
-		selection.Model = params.Model
-		selection.Variant = params.Variant
-		selection.Effort = params.Effort
-		if params.PermissionMode != "" {
-			selection.PermissionMode = params.PermissionMode
-		}
-	}
-	if params.ModelAlias != "" {
-		resolved := s.resolveSubagentModelAlias(params.ModelAlias)
-		if resolved.Err != nil {
-			return nil, resolved.Err
-		}
-		if !resolved.Found {
-			return nil, fmt.Errorf("unknown model alias %q (available: %s)", params.ModelAlias, strings.Join(resolved.ValidAliases, ", "))
-		}
-		selection.Provider = resolved.Runtime.Provider
-		selection.Model = resolved.Runtime.Model
-		selection.Variant = resolved.Runtime.Variant
-		selection.Effort = resolved.Runtime.Effort
-	}
-	workspaceID := strings.TrimSpace(s.rt.WorkspaceID)
-	if params.WorkspaceID != "" || params.WorkspaceRoot != "" {
-		root, resolvedID, err := s.resolveSessionWorkspace(params.WorkspaceID, params.WorkspaceRoot)
-		if err != nil {
-			return nil, err
-		}
-		threadCWD, workspaceID = root, resolvedID
-	}
-	if len(history) == 0 {
-		history = make([]providers.ChatMessage, 0, 1)
-	}
-	if params.ContextSource != pluginhost.SessionContextSourceSeed {
-		if prompt := strings.TrimSpace(s.rt.StreamRunner.SystemPrompt); prompt != "" && len(history) == 0 {
-			history = append(history, providers.ChatMessage{Role: "system", Content: prompt})
-		}
-		if params.Instructions != "" {
-			history = applyPluginSessionInstructions(history, params.Instructions)
-		}
-	}
-	toolPolicyJSON := ""
 	if params.ToolPolicy != nil {
-		encoded, err := json.Marshal(params.ToolPolicy)
-		if err != nil {
-			return nil, fmt.Errorf("encode tool_policy: %w", err)
-		}
-		toolPolicyJSON = string(encoded)
+		converted.ToolPolicy = &hostSessionToolPolicy{Allow: params.ToolPolicy.Allow, Deny: params.ToolPolicy.Deny}
 	}
-
-	worktree := session.WorktreeInfo{}
-	if params.Workspace == "worktree" {
-		baseRepo := threadCWD
-		manager, err := s.worktreeManager(baseRepo)
-		if err != nil {
-			return nil, err
-		}
-		createdWorktree, err := manager.Create(id, "plugin", "")
-		if err != nil {
-			return nil, err
-		}
-		createdWorktreePath = createdWorktree.Path
-		cleanupWorktree = true
-		threadCWD = createdWorktree.Path
-		worktree = session.WorktreeInfo{Path: createdWorktree.Path, BaseHEAD: createdWorktree.HEAD, BaseRepo: baseRepo}
-		defer func() {
-			if cleanupWorktree {
-				_ = manager.Cleanup(createdWorktree)
-			}
-		}()
+	if params.Seed != nil {
+		seed := contextSeedFromParams(*params.Seed)
+		converted.Seed = &seed
 	}
-	initial := session.Session{
-		ID: id, Title: params.Name, CWD: threadCWD,
-		WorkspaceID: workspaceID, Source: source,
-		Owner: managed.Owner, Visibility: managed.Visibility, ParentID: managed.ParentID,
-		ContextSource: managed.ContextSource, CreationRequestID: managed.CreationRequestID,
-		ForkedFromID: fork.ForkedFromID,
-		WorktreePath: worktree.Path, WorktreeBaseHEAD: worktree.BaseHEAD, WorktreeBaseRepo: worktree.BaseRepo,
-		Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant,
-		Effort: selection.Effort, PermissionMode: selection.PermissionMode, ApproveForMe: selection.ApproveForMe,
-		Instructions: params.Instructions, ToolPolicyJSON: toolPolicyJSON,
-	}
-	var records []session.HistoryRecord
-	artifactStateDir := ""
-	if params.ContextSource == pluginhost.SessionContextFork {
-		stateDir, stateErr := s.workspaceStateDir()
-		if stateErr != nil {
-			return nil, stateErr
-		}
-		artifactStateDir = stateDir
-		if err := preserveForkArtifacts(artifactStateDir, params.ParentSessionID, id, history); err != nil {
-			_ = os.RemoveAll(statepath.SessionArtifactDir(artifactStateDir, id))
-			return nil, err
-		}
-		records = historyRecordsFromChatMessages(history)
-	}
-	var seed session.ContextSeed
-	var launch session.SessionLaunchRecord
-	if params.ContextSource == pluginhost.SessionContextSourceSeed {
-		seed = contextSeedFromParams(*params.Seed)
-		launch = session.SessionLaunchRecord{
-			RequestID: params.RequestID, Revision: 1, Kind: session.SessionLaunchKindHandoff,
-			SourceSession: seed.Source.SessionID, SourceCutoff: seed.Source.ThroughSeq,
-			Owner: owner, Producer: seed.Provenance.Producer,
-			Runtime: session.SessionRuntimeSelection{Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant, Effort: selection.Effort, PermissionMode: selection.PermissionMode},
-		}
-		if params.Launch != nil {
-			if params.Launch.Revision > 0 {
-				launch.Revision = params.Launch.Revision
-			}
-			if params.Launch.Kind != "" {
-				launch.Kind = params.Launch.Kind
-			}
-			launch.Input.Intent = params.Launch.Intent
-			launch.Input.Prompt = strings.TrimSpace(params.Launch.Prompt)
-		}
-		if launch.Input.Prompt == "" {
-			launch.Input.Prompt = strings.TrimSpace(launch.Input.Intent)
-		}
-		if launch.Input.Prompt != "" {
-			records = append(records, historyRecordFromPersistedMessage(persistedMessageFromChatMessage(handoffLaunchUserMessage(params.RequestID, launch.Input.Prompt))))
+	if params.Launch != nil {
+		converted.Launch = &hostSessionLaunchParams{
+			Revision: params.Launch.Revision, Kind: params.Launch.Kind,
+			Intent: params.Launch.Intent, Prompt: params.Launch.Prompt,
 		}
 	}
-	created, err := session.CreateInitializedWithLaunch(s.rt.SessionDir, initial, records, seed, launch)
-	if err != nil {
-		if artifactStateDir != "" {
-			_ = os.RemoveAll(statepath.SessionArtifactDir(artifactStateDir, id))
-		}
-		return nil, err
-	}
-	cleanupWorktree = false
-	if params.ContextSource == pluginhost.SessionContextSourceSeed {
-		if loaded, err := loadChatMessages(s.rt.SessionDir, id); err == nil {
-			history = loaded
-		}
-	}
-	th := newThreadState(id, history, s.rt.ProviderName, s.rt.Model, threadCWD, true, time.Now().UTC())
-	applyThreadRuntimeSelection(th, selection)
-	th.Source = source
-	th.Title = params.Name
-	th.Owner = owner
-	th.Visibility = params.Visibility
-	// Session lineage stays in persisted metadata for management and cancellation.
-	// Thread.ParentID identifies internal agent workers, not ordinary sessions
-	// created from another session; keep this consistent with applySessionMetadata.
-	th.WorktreePath = createdWorktreePath
-	if created != nil {
-		th.WorktreeBaseHEAD = created.WorktreeBaseHEAD
-		th.WorktreeBaseRepo = created.WorktreeBaseRepo
-	}
-	th.WorkspaceKind = workspaceKindForCWD(s.rt.WuuHome, threadCWD)
-	if workspaceID != "" {
-		th.WorkspaceKind = WorkspaceKindProject
-	}
-	s.mu.Lock()
-	s.threads[id] = th
-	s.mu.Unlock()
-	if params.ContextSource == pluginhost.SessionContextSourceSeed {
-		if err := s.dispatchHandoffLaunchTurn(th, params); err != nil {
-			return nil, err
-		}
-	}
-	th.mu.Lock()
-	thread := th.snapshotLocked()
-	th.mu.Unlock()
-	if params.Visibility == pluginhost.SessionVisibilityUser && params.ContextSource != pluginhost.SessionContextSourceSeed {
-		if err := s.notifyThreadStarted(thread); err != nil {
-			providers.DebugLogf("notify plugin-created thread %q: %v", id, err)
-		}
-	}
-	s.pruneCachedThreads(id)
-	return th, nil
+	return converted
 }
 
 func pluginSessionOwner(pluginID string, params pluginhost.SessionCreateParams) string {
@@ -983,65 +795,6 @@ func pluginSessionSource(owner string, params pluginhost.SessionCreateParams) st
 		}
 	}
 	return owner
-}
-
-func handoffLaunchUserMessage(requestID, prompt string) providers.ChatMessage {
-	return providers.ChatMessage{
-		Role:     "user",
-		Content:  strings.TrimSpace(prompt),
-		ClientID: pluginSessionRequestClientID("handoff", requestID),
-		Origin:   "user",
-		Cause:    session.SessionLaunchKindHandoff,
-	}
-}
-
-func handoffLaunchTurnAlreadyStarted(th *threadState, clientID string) bool {
-	if th == nil {
-		return false
-	}
-	clientID = strings.TrimSpace(clientID)
-	if clientID == "" {
-		return false
-	}
-	th.mu.Lock()
-	defer th.mu.Unlock()
-	if th.running {
-		return true
-	}
-	sawUser := false
-	for _, existing := range th.History {
-		if strings.TrimSpace(existing.ClientID) == clientID {
-			sawUser = true
-			continue
-		}
-		if sawUser && strings.EqualFold(strings.TrimSpace(existing.Role), "assistant") && !existing.Hidden {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *Server) dispatchHandoffLaunchTurn(th *threadState, params pluginhost.SessionCreateParams) error {
-	if th == nil || params.Launch == nil {
-		return nil
-	}
-	prompt := strings.TrimSpace(params.Launch.Prompt)
-	if prompt == "" {
-		prompt = strings.TrimSpace(params.Launch.Intent)
-	}
-	if prompt == "" {
-		return nil
-	}
-	msg := handoffLaunchUserMessage(params.RequestID, prompt)
-	if handoffLaunchTurnAlreadyStarted(th, msg.ClientID) {
-		return nil
-	}
-	permissions, err := s.resolveThreadTurnPermissions(th, nil)
-	if err != nil {
-		return err
-	}
-	_, _, err = s.startSubmittedSessionTurn(context.Background(), th, msg, turnRuntimeSnapshot{}.withPermissions(permissions))
-	return err
 }
 
 func normalizeSessionToolPolicy(policy pluginhost.SessionToolPolicy) (pluginhost.SessionToolPolicy, error) {
@@ -1073,20 +826,6 @@ func normalizeSessionToolPolicy(policy pluginhost.SessionToolPolicy) (pluginhost
 		return pluginhost.SessionToolPolicy{}, err
 	}
 	return pluginhost.SessionToolPolicy{Allow: allow, Deny: deny}, nil
-}
-
-func applyPluginSessionInstructions(history []providers.ChatMessage, instructions string) []providers.ChatMessage {
-	instructions = strings.TrimSpace(instructions)
-	if instructions == "" {
-		return history
-	}
-	for index := range history {
-		if strings.EqualFold(strings.TrimSpace(history[index].Role), "system") {
-			history[index].Content = strings.TrimSpace(history[index].Content) + "\n\n# Session instructions\n\n" + instructions
-			return history
-		}
-	}
-	return append([]providers.ChatMessage{{Role: "system", Content: "# Session instructions\n\n" + instructions}}, history...)
 }
 
 func pluginTurnRequestContext(input []pluginhost.SessionContextBlock) ([]agent.ContextSegment, error) {

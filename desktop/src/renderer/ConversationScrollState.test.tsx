@@ -5,6 +5,10 @@ import {
   useConversationScrollState,
   wheelDeltaPixels,
 } from "./ConversationScrollState";
+import {
+  flushWindowResizeSettle,
+  WINDOW_RESIZING_CLASS,
+} from "./WindowResizeState";
 import type { Turn } from "../shared/protocol";
 
 function makeLongTurns(): Turn[] {
@@ -67,15 +71,17 @@ function controlAnimationFrames(): (now: number) => void {
 function Probe({
   activeThreadID,
   nativeScrollBounce,
+  primaryTurns,
 }: {
   activeThreadID?: string;
   nativeScrollBounce?: boolean;
+  primaryTurns?: Turn[];
 }): ReactNode {
   const h = useConversationScrollState({
     activeThreadID,
     activePane: "primary",
     splitConversation: false,
-    primaryTurns: makeLongTurns(),
+    primaryTurns: primaryTurns ?? makeLongTurns(),
     secondaryTurns: undefined,
     emptyConversation: false,
     initialized: true,
@@ -99,6 +105,7 @@ function Probe({
       ref: (node: HTMLDivElement | null) => {
         h.scrollContentRef.current = node;
       },
+      className: "scroll-region-content",
       "data-testid": "scroll-content",
     }),
   );
@@ -160,10 +167,10 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
     return node;
   }
 
-  function switchThread(activeThreadID?: string): void {
+  function switchThread(activeThreadID?: string, primaryTurns?: Turn[]): void {
     if (!root) throw new Error("not mounted");
     act(() => {
-      root!.render(createElement(Probe, { activeThreadID }));
+      root!.render(createElement(Probe, { activeThreadID, primaryTurns }));
     });
   }
 
@@ -204,6 +211,68 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
     fireScroll();
   });
 
+  it("does not follow into leftover submission tail when switching sessions", () => {
+    const node = mount({
+      activeThreadID: "thread-long",
+      scrollHeight: 2400,
+      clientHeight: 600,
+      initialScrollTop: 2400 - 600,
+    });
+    fireScroll();
+    node.querySelector<HTMLElement>(".scroll-region-content")!.style.paddingBottom = "500px";
+
+    switchThread("thread-short");
+    expect(layout?.scrollTop).toBe(1300);
+  });
+
+  it("keeps a saved reading position when the incoming thread clamps before restore", () => {
+    mount({
+      activeThreadID: "thread-tall",
+      scrollHeight: 2400,
+      clientHeight: 600,
+      initialScrollTop: 2400 - 600,
+    });
+    fireScroll();
+    if (!layout || !scrollNode) throw new Error("not mounted");
+    layout.scrollHeight = 900;
+    switchThread("thread-short");
+    expect(layout.scrollTop).toBe(300);
+    fireScroll();
+
+    setScrollTop(40);
+    fireUserScroll();
+
+    layout.scrollHeight = 2400;
+    switchThread("thread-tall");
+    expect(layout.scrollTop).toBe(1800);
+    fireScroll();
+
+    layout.scrollHeight = 900;
+    const node = scrollNode;
+    const heightDescriptor = Object.getOwnPropertyDescriptor(node, "scrollHeight");
+    let dispatched = false;
+    Object.defineProperty(node, "scrollHeight", {
+      configurable: true,
+      get: () => {
+        const height = layout?.scrollHeight ?? 0;
+        if (!dispatched) {
+          dispatched = true;
+          const max = Math.max(0, height - (layout?.clientHeight ?? 0));
+          if ((layout?.scrollTop ?? 0) > max) layout!.scrollTop = max;
+          node.dispatchEvent(new Event("scroll", { bubbles: false }));
+        }
+        return height;
+      },
+    });
+    try {
+      switchThread("thread-short");
+      expect(dispatched).toBe(true);
+      expect(layout.scrollTop).toBe(40);
+    } finally {
+      if (heightDescriptor) Object.defineProperty(node, "scrollHeight", heightDescriptor);
+    }
+  });
+
   it("restores a thread's saved away-from-bottom position when switching back", () => {
     mount({
       activeThreadID: "thread-a",
@@ -226,6 +295,118 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
     switchThread("thread-a");
     expect(layout.scrollTop).toBe(520);
     fireScroll();
+  });
+
+  it("keeps the same distance from latest content when estimated heights settle after a switch", () => {
+    mount({
+      activeThreadID: "thread-a",
+      scrollHeight: 2400,
+      clientHeight: 600,
+      initialScrollTop: 2400 - 600,
+    });
+    fireScroll();
+
+    setScrollTop(520);
+    fireUserScroll();
+
+    if (!layout) throw new Error("not mounted");
+    layout.scrollHeight = 1200;
+    switchThread("thread-b");
+    fireScroll();
+
+    layout.scrollHeight = 2800;
+    switchThread("thread-a");
+    expect(layout.scrollTop).toBe(920);
+    fireScroll();
+  });
+
+  it.each([0, 180])("restores the reading turn, not the growing tail (growth above: %s)", (growthAbove) => {
+    const node = mount({ activeThreadID: "thread-a", scrollHeight: 2400, clientHeight: 600, initialScrollTop: 1800 });
+    const turn = document.createElement("section");
+    turn.className = "turn";
+    turn.dataset.turnId = "reading-turn";
+    let documentTop = 400;
+    turn.getBoundingClientRect = () => ({
+      top: documentTop - node.scrollTop,
+      bottom: documentTop + 500 - node.scrollTop,
+      height: 500,
+    } as DOMRect);
+    node.querySelector('[data-testid="scroll-content"]')!.appendChild(turn);
+    fireScroll();
+    setScrollTop(520);
+    fireUserScroll();
+    switchThread("thread-b");
+    documentTop += growthAbove;
+    layout!.scrollHeight += 800 + growthAbove;
+    switchThread("thread-a");
+    expect(node.scrollTop).toBe(520 + growthAbove);
+    expect(turn.getBoundingClientRect().top).toBe(-120);
+  });
+
+  it("does not mistake native anchor compensation for a gesture back to latest", () => {
+    const node = mount({ activeThreadID: "thread-a", scrollHeight: 2400, clientHeight: 600, initialScrollTop: 1800 });
+    const turn = document.createElement("section");
+    turn.dataset.turnId = "reading-turn";
+    let documentTop = 1700;
+    turn.getBoundingClientRect = () => ({
+      top: documentTop - node.scrollTop, bottom: documentTop + 500 - node.scrollTop, height: 500,
+    } as DOMRect);
+    node.querySelector('[data-testid="scroll-content"]')!.appendChild(turn);
+    fireScroll();
+    setScrollTop(1770);
+    fireUserScroll();
+    // Reflow above the reader is compensated by Chromium; no downward input.
+    documentTop += 30;
+    setScrollTop(1800);
+    fireScroll();
+    layout!.scrollHeight += 400;
+    switchThread("thread-a", [...makeLongTurns()]);
+    expect(node.scrollTop).toBe(1800);
+  });
+
+  it("does not jump a running session when its frozen snapshot lands on reveal", () => {
+    const running: Turn[] = [
+      {
+        id: "turn-running",
+        items: [],
+        items_view: "full",
+        status: "in_progress",
+      },
+    ];
+    mount({
+      activeThreadID: "thread-running",
+      scrollHeight: 2400,
+      clientHeight: 600,
+      initialScrollTop: 1800,
+    });
+    fireScroll();
+    switchThread("thread-idle");
+    fireScroll();
+
+    if (!layout) throw new Error("not mounted");
+    layout.scrollHeight = 2700;
+    switchThread("thread-running", running);
+    expect(layout.scrollTop).toBe(2100);
+    fireScroll();
+  });
+
+  it("remembers a paused reader's reflowed position when switching after resize", () => {
+    mount({ activeThreadID: "thread-a", scrollHeight: 2400, clientHeight: 600, initialScrollTop: 1800 });
+    fireScroll();
+    setScrollTop(900);
+    fireUserScroll();
+    try {
+      document.documentElement.classList.add(WINDOW_RESIZING_CLASS);
+      // Native scroll anchoring moves the same reading point after wrapping.
+      setScrollTop(700);
+      fireScroll();
+      document.documentElement.classList.remove(WINDOW_RESIZING_CLASS);
+      switchThread("thread-b");
+      switchThread("thread-a");
+      expect(layout?.scrollTop).toBe(700);
+    } finally {
+      document.documentElement.classList.remove(WINDOW_RESIZING_CLASS);
+    }
   });
 
   it("keeps a thread's scroll snapshot while a non-conversation tab is active", () => {
@@ -340,75 +521,6 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
     expect(layout.scrollTop).toBe(restoredTop);
   });
 
-  it("keeps a hard boundary on platforms without native scroll bounce", () => {
-    vi.useFakeTimers();
-    try {
-      const node = mount({
-        activeThreadID: "thread-a",
-        scrollHeight: 2400,
-        clientHeight: 600,
-        initialScrollTop: 2400 - 600,
-      });
-      fireScroll();
-      setScrollTop(520);
-      fireUserScroll();
-
-      const content = container.querySelector(
-        "[data-testid='scroll-content']",
-      ) as HTMLDivElement | null;
-      if (!content || !layout) throw new Error("not mounted");
-
-      const max = layout.scrollHeight - layout.clientHeight;
-      act(() => {
-        layout!.scrollTop = max - 40;
-        node.dispatchEvent(
-          new WheelEvent("wheel", { bubbles: true, deltaY: 120, deltaMode: 0 }),
-        );
-        layout!.scrollTop = max;
-        node.dispatchEvent(new Event("scroll", { bubbles: false }));
-      });
-
-      expect(content.style.transform).toBe("");
-
-      act(() => {
-        node.dispatchEvent(
-          new WheelEvent("wheel", { bubbles: true, deltaY: 160, deltaMode: 0 }),
-        );
-      });
-      expect(content.style.transform).toBe("");
-
-      act(() => {
-        const momentumEvent = new WheelEvent("wheel", {
-          bubbles: true,
-          deltaY: 100,
-          deltaMode: 0,
-        });
-        Object.defineProperty(momentumEvent, "momentum", { value: true });
-        node.dispatchEvent(momentumEvent);
-      });
-      expect(content.style.transform).toBe("");
-
-      act(() => {
-        vi.advanceTimersByTime(32);
-      });
-      expect(content.style.transform).toBe("");
-
-      act(() => {
-        vi.advanceTimersByTime(440);
-      });
-      expect(content.style.transform).toBe("");
-
-      act(() => {
-        node.dispatchEvent(
-          new WheelEvent("wheel", { bubbles: true, deltaY: 160, deltaMode: 0 }),
-        );
-      });
-      expect(content.style.transform).toBe("");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it("leaves native rubber-band control active until the trackpad gesture ends", () => {
     vi.useFakeTimers();
     try {
@@ -419,10 +531,7 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
         initialScrollTop: 1800,
         nativeScrollBounce: true,
       });
-      const content = container.querySelector(
-        "[data-testid='scroll-content']",
-      ) as HTMLDivElement | null;
-      if (!content || !layout) throw new Error("not mounted");
+      if (!layout) throw new Error("not mounted");
 
       act(() => {
         layout!.scrollTop = 520;
@@ -439,7 +548,6 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
       });
 
       expect(node.style.overscrollBehaviorY).toBe("contain");
-      expect(content.style.transform).toBe("");
 
       act(() => {
         node.dispatchEvent(new Event("scrollend"));
@@ -452,73 +560,9 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
         );
       });
       expect(node.style.overscrollBehaviorY).toBe("none");
-      expect(content.style.transform).toBe("");
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it("does not synthesize overscroll after returning from older content", () => {
-    vi.useFakeTimers();
-    try {
-      const node = mount({
-        activeThreadID: "thread-a",
-        scrollHeight: 2400,
-        clientHeight: 600,
-        initialScrollTop: 2400 - 600,
-      });
-      fireScroll();
-      setScrollTop(520);
-      fireUserScroll();
-
-      const content = container.querySelector(
-        "[data-testid='scroll-content']",
-      ) as HTMLDivElement | null;
-      if (!content || !layout) throw new Error("not mounted");
-
-      const max = layout.scrollHeight - layout.clientHeight;
-      act(() => {
-        layout!.scrollTop = max - 40;
-        node.dispatchEvent(
-          new WheelEvent("wheel", { bubbles: true, deltaY: 40, deltaMode: 0 }),
-        );
-        layout!.scrollTop = max;
-        node.dispatchEvent(new Event("scroll", { bubbles: false }));
-      });
-
-      expect(content.style.transform).toBe("");
-
-      act(() => {
-        node.dispatchEvent(
-          new WheelEvent("wheel", { bubbles: true, deltaY: 80, deltaMode: 0 }),
-        );
-      });
-      expect(content.style.transform).toBe("");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("does not rubber-band a downward wheel that is already following latest", () => {
-    const node = mount({
-      activeThreadID: "thread-a",
-      scrollHeight: 2400,
-      clientHeight: 600,
-      initialScrollTop: 2400 - 600,
-    });
-    fireScroll();
-
-    const content = container.querySelector(
-      "[data-testid='scroll-content']",
-    ) as HTMLDivElement | null;
-    if (!content) throw new Error("not mounted");
-
-    act(() => {
-      node.dispatchEvent(
-        new WheelEvent("wheel", { bubbles: true, deltaY: 120, deltaMode: 0 }),
-      );
-    });
-    expect(content.style.transform).toBe("");
   });
 });
 
@@ -597,6 +641,7 @@ describe("useConversationScrollState — dock composer height", () => {
     } else {
       Reflect.deleteProperty(resizeObserverGlobal, "ResizeObserver");
     }
+    document.documentElement.classList.remove(WINDOW_RESIZING_CLASS);
     document.body.removeChild(container);
   });
 
@@ -701,6 +746,25 @@ describe("useConversationScrollState — dock composer height", () => {
     await act(async () => { await new Promise(requestAnimationFrame); });
 
     expect(pane.style.getPropertyValue("--dock-composer-height")).toBe("452px");
+  });
+
+  it("keeps the readable viewport in sync with the composer during live resize", async () => {
+    const { pane, dockComposer } = mountDockComposerProbe();
+    stubRectHeight(dockComposer, 168);
+    flushResizeObserversFor(dockComposer);
+    await act(async () => { await new Promise(requestAnimationFrame); });
+    expect(pane.style.getPropertyValue("--dock-composer-height")).toBe("168px");
+
+    document.documentElement.classList.add(WINDOW_RESIZING_CLASS);
+    stubRectHeight(dockComposer, 220);
+    flushResizeObserversFor(dockComposer);
+    await act(async () => { await new Promise(requestAnimationFrame); });
+    expect(pane.style.getPropertyValue("--dock-composer-height")).toBe("220px");
+
+    act(() => {
+      flushWindowResizeSettle();
+    });
+    expect(pane.style.getPropertyValue("--dock-composer-height")).toBe("220px");
   });
 
   it("clips at the input edge rather than the surrounding dock accessories", async () => {

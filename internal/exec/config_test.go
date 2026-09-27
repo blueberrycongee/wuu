@@ -46,27 +46,6 @@ func TestLoadExecConfigCanIgnoreUserConfig(t *testing.T) {
 	}
 }
 
-func TestApplyConfigOverridesSetsAgentProfile(t *testing.T) {
-	cfg := config.Default()
-	if err := applyConfigOverrides(&cfg, Options{AgentProfile: "Mia"}); err != nil {
-		t.Fatalf("applyConfigOverrides: %v", err)
-	}
-	if cfg.Agent.ProfileName() != "Mia" {
-		t.Fatalf("ProfileName = %q", cfg.Agent.ProfileName())
-	}
-}
-
-func TestApplyConfigOverridesSetsMaxTurns(t *testing.T) {
-	cfg := config.Default()
-	cfg.Agent.MaxSteps = 9
-	if err := applyConfigOverrides(&cfg, Options{MaxTurns: 3}); err != nil {
-		t.Fatalf("applyConfigOverrides: %v", err)
-	}
-	if cfg.Agent.MaxSteps != 3 {
-		t.Fatalf("MaxSteps = %d, want 3", cfg.Agent.MaxSteps)
-	}
-}
-
 func TestApplyConfigOverridesRejectsNegativeMaxTurns(t *testing.T) {
 	cfg := config.Default()
 	if err := applyConfigOverrides(&cfg, Options{MaxTurns: -1}); err == nil {

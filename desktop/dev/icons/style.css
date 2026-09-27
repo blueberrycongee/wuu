@@ -1,0 +1,20 @@
+html, body, #root { height: auto; min-height: 100%; overflow: auto; }
+body { margin: 0; background: var(--paper); color: var(--ink); }
+.icon-review { padding: 24px; max-width: 1200px; margin: auto; }
+.icon-review h1 { font-size: var(--font-title); font-weight: 500; margin: 0; }
+.icon-review h2 { font-size: var(--font-ui); font-weight: 500; margin: 0 0 16px; }
+.icon-review-colors { margin-bottom: 32px; }
+.icon-review-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-bottom: 24px; }
+.icon-review-controls label { display: flex; gap: 8px; align-items: center; }
+.icon-review-controls select { background: var(--surface-1); color: var(--ink); border: 1px solid var(--hairline); border-radius: var(--radius-sm); padding: 4px 8px; }
+.icon-review-context { display: flex; flex-wrap: wrap; gap: 24px; align-items: center; margin-bottom: 24px; }
+.icon-review-toolbar { position: static; display: flex; gap: 8px; height: auto; padding: 0; }
+.icon-review-inline { display: flex; align-items: center; gap: 16px; }
+.icon-review-inline > svg { width: var(--icon-size); height: var(--icon-size); }
+.icon-review-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 20px 8px; }
+.icon-review-grid figure { margin: 0; min-width: 0; text-align: center; }
+.icon-review-glyph { height: 44px; display: grid; place-items: center; }
+.icon-review-glyph :is(svg, img) { width: var(--review-icon-size); height: var(--review-icon-size); }
+.icon-review-grid figcaption { font-size: var(--font-xs); color: var(--ink-muted); overflow-wrap: anywhere; margin-top: 4px; }
+.icon-review-onboarding { max-width: 560px; margin: 48px auto 0; }
+@media (max-width: 500px) { .icon-review { padding: 16px; } }

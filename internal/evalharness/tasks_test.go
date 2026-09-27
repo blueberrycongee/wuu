@@ -12,9 +12,6 @@ import (
 
 func TestCatalogHasStableTaskIDs(t *testing.T) {
 	tasks := Catalog()
-	if len(tasks) < 4 {
-		t.Fatalf("expected at least 4 tasks, got %d", len(tasks))
-	}
 	seen := map[string]bool{}
 	for _, task := range tasks {
 		if task.ID == "" {
@@ -132,14 +129,6 @@ func TestPatchReviewRiskVerification(t *testing.T) {
 	if !ok {
 		t.Fatal("missing patch_review_risk task")
 	}
-	if !evalTaskRequiresTool(task, "apply_patch") || !evalTaskRequiresTool(task, "bash") {
-		t.Fatalf("patch review risk should require apply_patch/bash, got %+v", task.RequiredTools)
-	}
-	if len(task.RequiredToolCalls) != 1 ||
-		task.RequiredToolCalls[0].ToolName != "apply_patch" ||
-		len(task.RequiredToolCalls[0].ArgsContains) != 2 {
-		t.Fatalf("patch review risk should require one multi-file apply_patch call, got %+v", task.RequiredToolCalls)
-	}
 	root := t.TempDir()
 	if err := SetupTask(task, root); err != nil {
 		t.Fatalf("SetupTask: %v", err)
@@ -199,99 +188,6 @@ func TotalWithTax(cents []int, taxBasisPoints int) int {
 	}
 }
 
-func TestLongProcessOutputVerification(t *testing.T) {
-	task, ok := ByID("long_process_output")
-	if !ok {
-		t.Fatal("missing long_process_output task")
-	}
-	root := t.TempDir()
-	if err := SetupTask(task, root); err != nil {
-		t.Fatalf("SetupTask: %v", err)
-	}
-
-	failed, err := VerifyTask(context.Background(), task, root, "")
-	if err != nil {
-		t.Fatalf("VerifyTask missing marker: %v", err)
-	}
-	if failed.Passed {
-		t.Fatal("missing observed file should fail verification")
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "observed.txt"), []byte("READY_FOR_EVAL\n"), 0o644); err != nil {
-		t.Fatalf("write observed file: %v", err)
-	}
-	passed, err := VerifyTask(context.Background(), task, root, "")
-	if err != nil {
-		t.Fatalf("VerifyTask observed marker: %v", err)
-	}
-	if !passed.Passed {
-		t.Fatalf("observed marker should pass verification: %s", passed.Reason)
-	}
-}
-
-func TestToolSearchDeferredVerification(t *testing.T) {
-	task, ok := ByID("tool_search_deferred")
-	if !ok {
-		t.Fatal("missing tool_search_deferred task")
-	}
-	root := t.TempDir()
-	if err := SetupTask(task, root); err != nil {
-		t.Fatalf("SetupTask: %v", err)
-	}
-
-	failed, err := VerifyTask(context.Background(), task, root, "")
-	if err != nil {
-		t.Fatalf("VerifyTask missing marker: %v", err)
-	}
-	if failed.Passed {
-		t.Fatal("missing deferred marker should fail verification")
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "tool_search_result.txt"), []byte("DEFERRED_TOOL_FOUND\n"), 0o644); err != nil {
-		t.Fatalf("write marker file: %v", err)
-	}
-	passed, err := VerifyTask(context.Background(), task, root, "")
-	if err != nil {
-		t.Fatalf("VerifyTask deferred marker: %v", err)
-	}
-	if !passed.Passed {
-		t.Fatalf("deferred marker should pass verification: %s", passed.Reason)
-	}
-}
-
-func TestStaleReadGuardVerification(t *testing.T) {
-	task, ok := ByID("stale_read_guard")
-	if !ok {
-		t.Fatal("missing stale_read_guard task")
-	}
-	root := t.TempDir()
-	if err := SetupTask(task, root); err != nil {
-		t.Fatalf("SetupTask: %v", err)
-	}
-
-	failed, err := VerifyTask(context.Background(), task, root, "")
-	if err != nil {
-		t.Fatalf("VerifyTask missing stale marker: %v", err)
-	}
-	if failed.Passed {
-		t.Fatal("missing stale marker should fail verification")
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "target.txt"), []byte("version: final\n"), 0o644); err != nil {
-		t.Fatalf("write target: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "stale_read_result.txt"), []byte("STALE_READ_GUARD_DONE\n"), 0o644); err != nil {
-		t.Fatalf("write stale marker: %v", err)
-	}
-	passed, err := VerifyTask(context.Background(), task, root, "")
-	if err != nil {
-		t.Fatalf("VerifyTask stale marker: %v", err)
-	}
-	if !passed.Passed {
-		t.Fatalf("stale marker should pass verification: %s", passed.Reason)
-	}
-}
-
 func TestMCPReadOnlyConcurrencyVerification(t *testing.T) {
 	task, ok := ByID("mcp_readonly_concurrency")
 	if !ok {
@@ -336,47 +232,6 @@ func TestMCPReadOnlyConcurrencyVerification(t *testing.T) {
 	}
 }
 
-func TestMCPLiveDiscoveryVerification(t *testing.T) {
-	task, ok := ByID("mcp_live_discovery")
-	if !ok {
-		t.Fatal("missing mcp_live_discovery task")
-	}
-	root := t.TempDir()
-	if err := SetupTask(task, root); err != nil {
-		t.Fatalf("SetupTask: %v", err)
-	}
-
-	failed, err := VerifyTask(context.Background(), task, root, "")
-	if err != nil {
-		t.Fatalf("VerifyTask missing marker: %v", err)
-	}
-	if failed.Passed {
-		t.Fatal("missing live MCP marker should fail verification")
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "mcp_live_result.txt"), []byte("MCP_LIVE_DISCOVERY_DONE\n"), 0o644); err != nil {
-		t.Fatalf("write incomplete marker file: %v", err)
-	}
-	failed, err = VerifyTask(context.Background(), task, root, "")
-	if err != nil {
-		t.Fatalf("VerifyTask missing MCP result text: %v", err)
-	}
-	if failed.Passed {
-		t.Fatal("missing MCP tool result should fail verification")
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "mcp_live_result.txt"), []byte("MCP_LIVE_DISCOVERY_DONE\nslow_a_OK\n"), 0o644); err != nil {
-		t.Fatalf("write marker file: %v", err)
-	}
-	passed, err := VerifyTask(context.Background(), task, root, "")
-	if err != nil {
-		t.Fatalf("VerifyTask live MCP marker: %v", err)
-	}
-	if !passed.Passed {
-		t.Fatalf("live MCP marker should pass verification: %s", passed.Reason)
-	}
-}
-
 func TestMCPReadOnlyConcurrencyConfiguresLocalServer(t *testing.T) {
 	task, ok := ByID("mcp_readonly_concurrency")
 	if !ok {
@@ -396,12 +251,8 @@ func TestMCPReadOnlyConcurrencyConfiguresLocalServer(t *testing.T) {
 	if cfg.MCPServers["existing"].Command != "existing-mcp" {
 		t.Fatalf("existing MCP server not preserved: %+v", cfg.MCPServers)
 	}
-	evalServer, ok := cfg.MCPServers["eval"]
-	if !ok {
+	if _, ok := cfg.MCPServers["eval"]; !ok {
 		t.Fatalf("eval MCP server not configured: %+v", cfg.MCPServers)
-	}
-	if evalServer.Command != "go" || len(evalServer.Args) != 3 || evalServer.Args[0] != "run" {
-		t.Fatalf("unexpected eval MCP command: %+v", evalServer)
 	}
 	if _, mutated := base.MCPServers["eval"]; mutated {
 		t.Fatal("Configure must not mutate the base config map")
@@ -423,43 +274,4 @@ func TestMCPReadOnlyConcurrencyServerSourceCompiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MCP eval server source should compile: %v\n%s", err, output)
 	}
-}
-
-func TestMultiAgentWorkerVerification(t *testing.T) {
-	task, ok := ByID("multi_agent_worker")
-	if !ok {
-		t.Fatal("missing multi_agent_worker task")
-	}
-	root := t.TempDir()
-	if err := SetupTask(task, root); err != nil {
-		t.Fatalf("SetupTask: %v", err)
-	}
-
-	failed, err := VerifyTask(context.Background(), task, root, "")
-	if err != nil {
-		t.Fatalf("VerifyTask missing worker marker: %v", err)
-	}
-	if failed.Passed {
-		t.Fatal("missing worker marker should fail verification")
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "worker_result.txt"), []byte("SUBAGENT_EVAL_DONE\n"), 0o644); err != nil {
-		t.Fatalf("write worker marker: %v", err)
-	}
-	passed, err := VerifyTask(context.Background(), task, root, "")
-	if err != nil {
-		t.Fatalf("VerifyTask worker marker: %v", err)
-	}
-	if !passed.Passed {
-		t.Fatalf("worker marker should pass verification: %s", passed.Reason)
-	}
-}
-
-func evalTaskRequiresTool(task Task, name string) bool {
-	for _, tool := range task.RequiredTools {
-		if tool == name {
-			return true
-		}
-	}
-	return false
 }

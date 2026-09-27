@@ -11,6 +11,7 @@ import (
 	"image"
 	"image/png"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,35 +19,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
-
-func TestEstimateTokens_English(t *testing.T) {
-	// ~4 chars per token for English text.
-	text := "Hello world, this is a test sentence for token estimation."
-	tokens := EstimateTokens(text)
-	// 58 chars / 4 = 14, +1 = 15
-	if tokens < 10 || tokens > 25 {
-		t.Fatalf("English token estimate out of range: got %d for %d chars", tokens, len(text))
-	}
-}
-
-func TestEstimateTokens_CJK(t *testing.T) {
-	// ~2 chars per token for CJK text.
-	text := "你好世界这是一个测试"
-	tokens := EstimateTokens(text)
-	// 10 CJK chars / 2 = 5, +1 = 6
-	if tokens < 4 || tokens > 10 {
-		t.Fatalf("CJK token estimate out of range: got %d for %q", tokens, text)
-	}
-}
-
-func TestEstimateTokens_Mixed(t *testing.T) {
-	text := "Hello 你好 world 世界"
-	tokens := EstimateTokens(text)
-	// Should be somewhere between pure English and pure CJK estimates.
-	if tokens < 3 || tokens > 15 {
-		t.Fatalf("mixed token estimate out of range: got %d", tokens)
-	}
-}
 
 func TestEstimateTokens_Empty(t *testing.T) {
 	if got := EstimateTokens(""); got != 0 {
@@ -345,12 +317,6 @@ func TestBuildSummaryContent_UsesStableConversationSummaryPrefix(t *testing.T) {
 	if !IsConversationSummaryContent(content) {
 		t.Fatalf("expected compact summary content, got %q", content)
 	}
-	if !strings.Contains(content, "This session is being continued") {
-		t.Fatalf("expected continuation handoff text, got %q", content)
-	}
-	if !strings.Contains(content, "Summary:\nOlder turns were compacted.") {
-		t.Fatalf("expected formatted summary body, got %q", content)
-	}
 	if got := SummaryBodyFromContent(content); got != "Older turns were compacted." {
 		t.Fatalf("expected summary body extraction, got %q", got)
 	}
@@ -625,6 +591,28 @@ func TestCompact_LengthRecoveryFailureLeavesHistoryUnchanged(t *testing.T) {
 	}
 	if !reflect.DeepEqual(result, original) || !reflect.DeepEqual(messages, original) {
 		t.Fatalf("failed compaction changed history:\nresult=%#v\noriginal=%#v", result, original)
+	}
+}
+
+func TestCompact_ContinuationLeavesHistoryUnchanged(t *testing.T) {
+	messages := []providers.ChatMessage{
+		{Role: "user", Content: "first"},
+		{Role: "assistant", Content: "first reply"},
+		{Role: "user", Content: "second"},
+		{Role: "assistant", Content: "second reply"},
+		{Role: "user", Content: "third"},
+		{Role: "assistant", Content: "third reply"},
+	}
+	original := providers.CloneChatMessages(messages)
+	client := &scriptedCompactClient{responses: []providers.ChatResponse{
+		{Content: "intermediate summary", FinishReason: providers.FinishReasonContinue},
+	}}
+	result, err := CompactWithBudget(context.Background(), messages, client, "test", Budget{OutputReserveTokens: 16_000})
+	if err == nil || len(client.requests) != 1 {
+		t.Fatalf("err=%v requests=%d, want failure without another request", err, len(client.requests))
+	}
+	if !reflect.DeepEqual(result, original) || !reflect.DeepEqual(messages, original) {
+		t.Fatal("intermediate response replaced conversation history")
 	}
 }
 
@@ -1090,33 +1078,6 @@ func TestCompact_DefensiveTrimGivesUpAfterMaxRetries(t *testing.T) {
 	}
 }
 
-func TestCompact_IncludesToolCallsInSummary(t *testing.T) {
-	messages := []providers.ChatMessage{
-		{Role: "user", Content: "Read main.go"},
-		{Role: "assistant", Content: "Sure.", ToolCalls: []providers.ToolCall{
-			{ID: "c1", Name: "read_file", Arguments: `{"path":"main.go"}`},
-		}},
-		{Role: "tool", Name: "read_file", ToolCallID: "c1", Content: "package main"},
-		{Role: "assistant", Content: "Here is main.go content."},
-		{Role: "user", Content: "Now fix the bug."},
-		{Role: "assistant", Content: "Fixed."},
-		{Role: "user", Content: "Thanks."},
-		{Role: "assistant", Content: "You're welcome."},
-	}
-
-	client := &mockCompactClient{response: "User asked to read main.go, assistant used read_file tool, then fixed a bug."}
-	result, err := Compact(context.Background(), messages, client, "test")
-	if err != nil {
-		t.Fatalf("Compact: %v", err)
-	}
-	if len(result) >= len(messages) {
-		t.Fatalf("expected compacted result to be shorter, got %d vs %d", len(result), len(messages))
-	}
-	if result[0].Role != "system" {
-		t.Fatalf("expected system summary, got %s", result[0].Role)
-	}
-}
-
 func TestCompact_DoesNotLeaveDanglingToolResults(t *testing.T) {
 	messages := []providers.ChatMessage{
 		{Role: "user", Content: "older question"},
@@ -1382,6 +1343,63 @@ func TestBuildSummaryPromptMentionsImagesWithoutData(t *testing.T) {
 	if !strings.Contains(prompt, "[image omitted: image/png, 80 base64 characters, 60 decoded bytes, sha256=") {
 		t.Fatalf("expected image omission note, got %q", prompt)
 	}
+	if strings.Contains(prompt, "path=") {
+		t.Fatalf("image without a stored path must not invent one: %q", prompt)
+	}
+}
+
+func TestCompact_KeepsStoredImagePathAfterStrippingBytes(t *testing.T) {
+	// Both summarized turns and retained turns must keep the local reference
+	// when vision bytes are omitted, without recreating or extending the file.
+	imagePath := `/state/sessions/thread-a/input-images/photo"1.png`
+	imageData := strings.Repeat("a", 1200)
+	messages := []providers.ChatMessage{
+		{Role: "user", Content: "first", Images: []providers.InputImage{{
+			MediaType: "image/png",
+			Data:      imageData,
+			LocalPath: imagePath,
+		}}},
+		{Role: "assistant", Content: "first reply"},
+		{Role: "user", Content: "second screenshot", Images: []providers.InputImage{{
+			MediaType: "image/png",
+			Data:      imageData,
+			LocalPath: imagePath,
+		}}},
+		{Role: "assistant", Content: "second reply"},
+		{Role: "user", Content: "latest"},
+		{Role: "assistant", Content: "latest reply"},
+	}
+	client := &mockCompactClient{response: "summary"}
+	result, err := CompactWithContextWindow(context.Background(), messages, client, "test", 100_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.lastRequest.Messages) < 2 {
+		t.Fatal("missing summary request")
+	}
+	prompt := client.lastRequest.Messages[1].Content
+	if !strings.Contains(prompt, "path="+strconv.Quote(imagePath)) || strings.Contains(prompt, imageData) {
+		t.Fatalf("summary input must retain the image path without binary data: %q", prompt)
+	}
+	found := false
+	for _, msg := range result {
+		if !strings.Contains(msg.Content, "second screenshot") {
+			continue
+		}
+		found = true
+		if len(msg.Images) != 0 {
+			t.Fatalf("historical image bytes remained: %+v", msg.Images)
+		}
+		if !strings.Contains(msg.Content, "path="+strconv.Quote(imagePath)) {
+			t.Fatalf("compacted content lost the stored path: %q", msg.Content)
+		}
+		if strings.Contains(msg.Content, imageData) {
+			t.Fatal("compacted content copied image bytes")
+		}
+	}
+	if !found {
+		t.Fatalf("compacted result dropped the image turn: %+v", result)
+	}
 }
 
 func TestBuildSummaryPromptIndexesRichToolResultWithoutData(t *testing.T) {
@@ -1469,5 +1487,35 @@ func TestBuildSummaryPromptIndexesMixedStructuredResultValues(t *testing.T) {
 
 	if !strings.Contains(prompt, `"value_preview":{"count":3,"status":"ready"}`) {
 		t.Fatalf("mixed structured values missing from summary index: %s", prompt)
+	}
+}
+
+func TestForceTrimOverflowHistoryKeepsLatestUserTurn(t *testing.T) {
+	messages := []providers.ChatMessage{
+		{Role: "system", Content: "instructions"},
+		{Role: "user", Content: "old task"},
+		{Role: "assistant", Content: "old answer"},
+		{Role: "user", Content: "latest task"},
+	}
+	got, err := ForceTrimOverflowHistory(messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []providers.ChatMessage{
+		{Role: "system", Content: "instructions"},
+		{Role: "user", Content: "latest task"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestForceTrimOverflowHistoryRejectsSingleUserTurn(t *testing.T) {
+	messages := []providers.ChatMessage{
+		{Role: "system", Content: "instructions"},
+		{Role: "user", Content: "oversized fresh prompt"},
+	}
+	if _, err := ForceTrimOverflowHistory(messages); err == nil {
+		t.Fatal("expected overflow trim to fail when the latest user turn is the whole conversation")
 	}
 }

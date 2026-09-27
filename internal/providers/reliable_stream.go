@@ -125,14 +125,18 @@ func (r *ReliableStreamClient) StreamChat(ctx context.Context, req ChatRequest) 
 func (r *ReliableStreamClient) run(ctx context.Context, req ChatRequest, out chan<- StreamEvent) {
 	defer close(out)
 	var err error
+	attemptsStarted := 0
+	reportFailure := func(err error, stopReason string) {
+		r.send(ctx, out, StreamEvent{Type: EventError, Error: streamRecoveryError(err, req, attemptsStarted, stopReason)})
+	}
 	req, err = prepareInferenceRequest(ctx, r.inner, req)
 	if err != nil {
-		r.send(ctx, out, StreamEvent{Type: EventError, Error: err})
+		reportFailure(err, "recovery_failed")
 		return
 	}
 	req, err = EnsureInferenceExecutionContext(ctx, req, InferenceOperationAuxiliary, InferenceProfileInteractive)
 	if err != nil {
-		r.send(ctx, out, StreamEvent{Type: EventError, Error: err})
+		reportFailure(err, "recovery_failed")
 		return
 	}
 	operation := req.Operation
@@ -156,7 +160,7 @@ func (r *ReliableStreamClient) run(ctx context.Context, req ChatRequest, out cha
 			var beginErr error
 			attemptReq, beginErr = BeginInferenceAttemptContext(ctx, req, operation.Kind, operation.WorkloadProfile)
 			if beginErr != nil {
-				r.send(ctx, out, StreamEvent{Type: EventError, Error: beginErr})
+				reportFailure(beginErr, "recovery_failed")
 				return
 			}
 		}
@@ -168,6 +172,7 @@ func (r *ReliableStreamClient) run(ctx context.Context, req ChatRequest, out cha
 		}
 
 		attemptCtx, cancelAttempt := context.WithCancel(ctx)
+		attemptsStarted++
 		ch, err := r.inner.StreamChat(attemptCtx, attemptReq)
 		if err == nil && ch == nil {
 			err = errors.New("stream client returned a nil event channel")
@@ -189,7 +194,7 @@ func (r *ReliableStreamClient) run(ctx context.Context, req ChatRequest, out cha
 			}
 			if sawDone && err == nil {
 				if journalErr := attempt.Complete(InferenceOutcomeSucceeded, NormalizedFailure{}); journalErr != nil {
-					r.send(ctx, out, StreamEvent{Type: EventError, Error: journalErr})
+					reportFailure(journalErr, "recovery_failed")
 				}
 				return
 			}
@@ -220,6 +225,13 @@ func (r *ReliableStreamClient) run(ctx context.Context, req ChatRequest, out cha
 			}
 		}
 		if !canRetry {
+			stopReason := "non_retryable"
+			if plan.Retryable() {
+				stopReason = "recovery_unavailable"
+				if attempt.Ordinal >= maxAttempts {
+					stopReason = "retry_limit"
+				}
+			}
 			failure := NormalizeFailure(err)
 			outcome := InferenceOutcomeFailed
 			if failure.Category == FailureCanceled || failure.Category == FailureDeadline {
@@ -229,11 +241,12 @@ func (r *ReliableStreamClient) run(ctx context.Context, req ChatRequest, out cha
 				err = errors.Join(err, journalErr)
 				failure = NormalizeFailure(journalErr)
 				outcome = InferenceOutcomeFailed
+				stopReason = "recovery_failed"
 			}
 			if !r.sendLifecycle(ctx, out, attemptReq.Execution, operation, StreamPhaseFailed, attempt.ID, attempt.Ordinal, maxAttempts, retriesUsed, maxRetries, err, 0, false, startedAt) {
 				return
 			}
-			r.send(ctx, out, StreamEvent{Type: EventError, Error: err})
+			reportFailure(err, stopReason)
 			return
 		}
 
@@ -242,13 +255,13 @@ func (r *ReliableStreamClient) run(ctx context.Context, req ChatRequest, out cha
 			delay = backoffDelay(retriesUsed, cfg.InitialDelay, cfg.MaxDelay, err)
 		}
 		if journalErr := attempt.Complete(InferenceOutcomeFailed, failure); journalErr != nil {
-			r.send(ctx, out, StreamEvent{Type: EventError, Error: journalErr})
+			reportFailure(errors.Join(journalErr, err), "recovery_failed")
 			return
 		}
 		nextAttempt, journalErr := attempt.PrepareRecoveryAttempt(ctx, plan, time.Now().Add(delay))
 		if journalErr != nil {
 			r.sendLifecycle(ctx, out, attemptReq.Execution, operation, StreamPhaseFailed, attempt.ID, attempt.Ordinal, maxAttempts, retriesUsed, maxRetries, journalErr, 0, false, startedAt)
-			r.send(ctx, out, StreamEvent{Type: EventError, Error: journalErr})
+			reportFailure(errors.Join(journalErr, err), "recovery_failed")
 			return
 		}
 		if ctx.Err() != nil {
@@ -259,7 +272,7 @@ func (r *ReliableStreamClient) run(ctx context.Context, req ChatRequest, out cha
 			applier := r.inner.(InferenceRecoveryApplier)
 			if applyErr := applier.ApplyInferenceRecovery(ctx, plan); applyErr != nil {
 				_ = nextAttempt.Complete(InferenceOutcomeFailed, NormalizeFailure(applyErr))
-				r.send(ctx, out, StreamEvent{Type: EventError, Error: errors.Join(err, applyErr)})
+				reportFailure(errors.Join(applyErr, err), "recovery_failed")
 				return
 			}
 		}
@@ -397,6 +410,9 @@ func (r *ReliableStreamClient) sendLifecycle(
 		failure := NormalizeFailure(reason)
 		lifecycle.FailureCategory = string(failure.Category)
 		lifecycle.RecoveryAction = string(PlanRecovery(failure).Action)
+		if phase == StreamPhaseFailed && failure.Category != FailureReplayUnsafe {
+			lifecycle.RecoveryAction = string(RecoveryStop)
+		}
 		var budgetExceeded *WorkflowBudgetExceededError
 		if errors.As(reason, &budgetExceeded) {
 			lifecycle.BudgetDimension = string(budgetExceeded.Dimension)

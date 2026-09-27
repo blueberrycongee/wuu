@@ -61,16 +61,18 @@ async function renderComposerPendingState({
     threads: [thread()],
   },
   primaryDraft = emptyComposerDraft(),
+  draftsByThread = {},
 }: {
   appState?: AppState;
   primaryDraft?: ComposerDraftState;
+  draftsByThread?: Record<string, ComposerDraftState>;
 } = {}): Promise<{
   get: () => ComposerPendingStateController;
   setStatus: ReturnType<typeof vi.fn>;
   restorePrimaryComposerDraft: ReturnType<typeof vi.fn>;
   restoreComposerDraftForThread: ReturnType<typeof vi.fn>;
+  preserveFailedComposerMessage: ReturnType<typeof vi.fn>;
   sendComposerMessageToThread: ReturnType<typeof vi.fn>;
-  requestDeferredQueryScroll: ReturnType<typeof vi.fn>;
   setPrimaryDraft: (draft: ComposerDraftState) => void;
   setAppState: (state: AppState) => void;
 }> {
@@ -86,16 +88,16 @@ async function renderComposerPendingState({
       restorePrimaryComposerDraft(draft),
   );
   const sendComposerMessageToThread = vi.fn();
-  const requestDeferredQueryScroll = vi.fn();
+  const preserveFailedComposerMessage = vi.fn();
 
   function Probe() {
     latest = useComposerPendingState({
       getAppState: () => currentAppState,
-      getPrimaryComposerDraft: () => currentPrimaryDraft,
+      getComposerDraftForThread: (threadID: string) => draftsByThread[threadID] ?? currentPrimaryDraft,
       restoreComposerDraftForThread,
+      preserveFailedComposerMessage,
       setStatus,
       sendComposerMessageToThread,
-      requestDeferredQueryScroll,
     });
     return null;
   }
@@ -120,8 +122,8 @@ async function renderComposerPendingState({
     setStatus,
     restorePrimaryComposerDraft,
     restoreComposerDraftForThread,
+    preserveFailedComposerMessage,
     sendComposerMessageToThread,
-    requestDeferredQueryScroll,
     setPrimaryDraft: (draft) => {
       currentPrimaryDraft = draft;
     },
@@ -176,6 +178,23 @@ describe("useComposerPendingState", () => {
     await act(async () => hook.get().editQueuedMessage("queue-file"));
     expect(hook.restoreComposerDraftForThread).toHaveBeenCalledWith("thread-a", { prompt, images: [], files: [] });
     expect(readCollapsedPromptParts("thread-a", prompt)).toEqual(contentParts);
+  });
+
+  it("retains unknown held content as text rather than losing the raw input", () => {
+    const resumed = heldComposerMessagesFromResumeResult({ thread: thread(), held_user_messages: [{ id: "unknown", origin: "queue", prompt: "Keep this", content_parts: [{ type: "future_part", text: "Keep this" }] }] } as unknown as ThreadResumeResult);
+    expect(resumed[0].contentParts).toEqual([{ type: "text", text: "Keep this" }]);
+  });
+
+  it("restores held response selections after resume for editing without inserting serialized context into the input", async () => {
+    const selection = { id: "quote-a", text: "原文\n🌊", comment: "Explain", source: { thread_id: "thread-a", turn_id: "turn-a", item_id: "answer-a", start_offset: 4, end_offset: 8, range_text: "原文🌊" } };
+    const parts = [{ type: "response_selection", text: "Quoted response context\n", selection }, { type: "text", text: "My question" }];
+    const resumed = heldComposerMessagesFromResumeResult({ thread: thread(), held_user_messages: [{ id: "held-quote", origin: "queue", prompt: parts.map(part => part.text).join(""), content_parts: parts }] } as unknown as ThreadResumeResult);
+    expect(resumed[0].contentParts).toEqual(parts);
+    installWuuStub({ dequeueTurn: vi.fn().mockResolvedValue({ ok: true }) });
+    const hook = await renderComposerPendingState();
+    act(() => { hook.get().enqueueComposerMessage("thread-a", resumed[0]); });
+    await act(async () => { await hook.get().editQueuedMessage("held-quote"); });
+    expect(hook.restoreComposerDraftForThread).toHaveBeenCalledWith("thread-a", { prompt: "My question", images: [], files: [], selections: [selection] });
   });
 
   it("restores live queue and guide messages from the resume snapshot", () => {
@@ -696,8 +715,9 @@ describe("useComposerPendingState", () => {
     ]);
   });
 
-  it("registers deferred placement when a queued message is steered from the drawer", async () => {
-    const steerTurn = vi.fn().mockResolvedValue({ turn_id: "turn-running" });
+  it.each([false, true])("keeps the pending message in its accepted mode (steer rejected: %s)", async rejected => {
+    const steerTurn = rejected ? vi.fn().mockRejectedValue(new Error("offline"))
+      : vi.fn().mockResolvedValue({ turn_id: "turn-running" });
     installWuuStub({ steerTurn });
     const runningThread = thread("thread-a", true);
     const hook = await renderComposerPendingState({
@@ -717,11 +737,19 @@ describe("useComposerPendingState", () => {
       await hook.get().guideQueuedMessage("queue-1");
     });
 
-    expect(hook.requestDeferredQueryScroll).toHaveBeenCalledWith("queue-1");
     expect(steerTurn).toHaveBeenCalled();
+    if (rejected) {
+      expect(hook.get().pendingComposerMessagesByThread["thread-a"].queued).toEqual([
+        expect.objectContaining({ id: "queue-1", operationState: undefined }),
+      ]);
+    } else {
+      expect(hook.get().pendingComposerMessagesByThread["thread-a"].guides).toEqual([
+        expect.objectContaining({ id: "queue-1", operationState: undefined }),
+      ]);
+    }
   });
 
-  it("registers deferred placement when a guide is requeued from the drawer", async () => {
+  it("returns a guide to the queue from the drawer", async () => {
     const requeueTurn = vi.fn().mockResolvedValue({
       ok: true,
       state: "queued",
@@ -751,19 +779,26 @@ describe("useComposerPendingState", () => {
       await hook.get().guideQueuedMessage("guide-1");
     });
 
-    expect(hook.requestDeferredQueryScroll).toHaveBeenCalledWith("guide-1");
     expect(requeueTurn).toHaveBeenCalledWith("thread-a", "guide-1");
+    expect(hook.get().pendingComposerMessagesByThread["thread-a"].queued).toEqual([
+      expect.objectContaining({ id: "guide-1", operationState: undefined }),
+    ]);
   });
 
   it("restores a queued message into the primary composer for editing", async () => {
     const dequeueTurn = vi.fn().mockResolvedValue({ ok: true });
     installWuuStub({ dequeueTurn });
     const hook = await renderComposerPendingState();
+    const queued: QueuedComposerMessage = {
+      ...message("queue-1", "Edit me"),
+      images: [{ id: "image-1", media_type: "image/png", data: "aA==" }],
+      files: [{ id: "file-1", filename: "notes.pdf", media_type: "application/pdf", data: "aA==" }],
+    };
 
     act(() => {
       hook
         .get()
-        .enqueueComposerMessage("thread-a", message("queue-1", "Edit me"));
+        .enqueueComposerMessage("thread-a", queued);
     });
     await act(async () => {
       await hook.get().editQueuedMessage("queue-1");
@@ -771,16 +806,14 @@ describe("useComposerPendingState", () => {
 
     expect(hook.restorePrimaryComposerDraft).toHaveBeenCalledWith({
       prompt: "Edit me",
-      images: [],
-      files: [],
+      images: queued.images,
+      files: queued.files,
     });
     expect(dequeueTurn).toHaveBeenCalledWith("thread-a", "queue-1");
     expect(
       hook.get().pendingComposerMessagesByThread["thread-a"],
     ).toBeUndefined();
-    expect(resolveLocalizedText(hook.setStatus.mock.calls[0][0] as string)).toBe(
-      "已撤回排队消息，可编辑后重新发送",
-    );
+    expect(hook.setStatus).toHaveBeenCalledWith("ready");
   });
 
   it("refuses to edit pending messages while the primary composer has content", async () => {
@@ -801,6 +834,34 @@ describe("useComposerPendingState", () => {
     expect(resolveLocalizedText(hook.setStatus.mock.calls[0][0] as string)).toBe(
       "先发送或清空当前输入，再编辑排队消息",
     );
+  });
+
+  it.each(["queue", "guide"] as const)("preserves removed %s input when a newer draft arrives before cancellation acknowledgement", async (kind) => {
+    let acknowledge!: (result: { ok: boolean }) => void;
+    const acknowledgement = new Promise<{ ok: boolean }>(resolve => { acknowledge = resolve; });
+    installWuuStub({ dequeueTurn: vi.fn(() => acknowledgement), unsteerTurn: vi.fn(() => acknowledgement) });
+    const hook = await renderComposerPendingState();
+    const queued = message("pending-race", "Recover this");
+    act(() => hook.get().setPendingComposerMessagesByThreadNow({ "thread-a": { queued: kind === "queue" ? [queued] : [], guides: kind === "guide" ? [queued] : [] } }));
+    let editing!: Promise<void>;
+    act(() => { editing = kind === "queue" ? hook.get().editQueuedMessage(queued.id) : hook.get().editGuideMessage(queued.id); });
+    hook.setPrimaryDraft({ prompt: "New question", images: [], files: [] });
+    await act(async () => { acknowledge({ ok: true }); await editing; });
+    expect(hook.restoreComposerDraftForThread).not.toHaveBeenCalled();
+    expect(hook.preserveFailedComposerMessage).toHaveBeenCalledWith("thread-a", queued);
+  });
+
+  it("does not overwrite a selection-only draft belonging to the queued message thread", async () => {
+    const dequeueTurn = vi.fn().mockResolvedValue({ ok: true });
+    installWuuStub({ dequeueTurn });
+    const hook = await renderComposerPendingState({ draftsByThread: { "thread-b": {
+      prompt: "", images: [], files: [], selections: [{ id: "quote", text: "Answer", source: { thread_id: "a", turn_id: "t", item_id: "i", start_offset: 0, end_offset: 6 } }],
+    } } });
+    act(() => hook.get().enqueueComposerMessage("thread-b", message("queue-b", "Edit me")));
+    await act(async () => hook.get().editQueuedMessage("queue-b"));
+    expect(dequeueTurn).not.toHaveBeenCalled();
+    expect(hook.restoreComposerDraftForThread).not.toHaveBeenCalled();
+    expect(hook.get().pendingComposerMessagesByThread["thread-b"].queued).toHaveLength(1);
   });
 
   it("restores a queued message when dequeue misses it before turn/started", async () => {

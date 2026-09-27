@@ -14,7 +14,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/capability"
-	"github.com/blueberrycongee/wuu/internal/channels"
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/processsandbox"
 	"github.com/blueberrycongee/wuu/internal/skills"
@@ -229,6 +228,8 @@ type Env struct {
 	// tools that read conversations by ID. Empty keeps the canonical WUU_HOME
 	// lookup used by ordinary runtimes.
 	SessionsDir string
+	// WorkingNotesHome binds working memory to the runtime's resolved Wuu home.
+	WorkingNotesHome string
 	// ToolResultProjectionMode selects stable tool-result projection behavior
 	// ("off"/"shadow"/"active"); empty resolves to active (on by default). The
 	// WUU_TOOL_RESULT_PROJECTION environment variable overrides it.
@@ -258,7 +259,9 @@ type Env struct {
 	ProcessMgr             *proc.Manager
 	ProcessSandboxProvider processsandbox.Provider
 	AgentControl           *agentcontrol.AgentControl
-	ChatAgent              *channels.AgentClient
+	// ProjectSessions is set only for a project coordinator conversation;
+	// it exposes the session tool and the coordinator's tool surface.
+	ProjectSessions ProjectSessionHandler
 	// BrowserBridge routes the browser tool's actions to the desktop host that
 	// owns the hidden WebContentsView + CDP session. Nil means no embedded
 	// browser backend is attached (for example the CLI/headless runtime), and
@@ -372,7 +375,15 @@ type BrowserBridge interface {
 	OpenTab(ctx context.Context, tabID, url string) error
 	CloseTab(ctx context.Context, tabID string) error
 	SetVisibility(ctx context.Context, tabID string, visible bool) error
-	ListTabs(ctx context.Context) ([]string, error)
+	ListTabs(ctx context.Context) ([]BrowserLiveTab, error)
+}
+
+// BrowserLiveTab is one view the desktop host currently has open for this
+// workspace. URL and Title are empty when the host only reports ids.
+type BrowserLiveTab struct {
+	ID    string
+	URL   string
+	Title string
 }
 
 // BrowserTabRecord is the durable per-tab state the tool persists between turns

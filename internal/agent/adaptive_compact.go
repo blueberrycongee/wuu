@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/compact"
+	"github.com/blueberrycongee/wuu/internal/contextbudget"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -114,6 +115,17 @@ func reactiveCompactTarget(threshold, lastSuccessful int) int {
 	return target
 }
 
+// localRequestEstimate is the pre-send size used when the provider has not
+// reported usage. It counts durable messages and the tool schema surface the
+// provider will see with them.
+func localRequestEstimate(messages []providers.ChatMessage, cfg LoopConfig) int {
+	req := providers.ChatRequest{Messages: messages}
+	if cfg.Tools != nil {
+		req.Tools = cfg.Tools.Definitions()
+	}
+	return estimateOutboundRequestTokens(req)
+}
+
 func estimateOutboundRequestTokens(req providers.ChatRequest) int {
 	tokens := estimateMessages(req.Messages)
 	for _, message := range req.Messages {
@@ -121,14 +133,13 @@ func estimateOutboundRequestTokens(req providers.ChatRequest) int {
 			continue
 		}
 		if encoded, err := json.Marshal(message.DiscoveredTools); err == nil {
-			tokens += len(encoded)/3 + 1
+			tokens += contextbudget.EstimateJSONTokens(string(encoded))
 		}
 	}
-	// Tool schemas are JSON-heavy. Match contextbudget's conservative JSON
-	// estimate without serializing the definitions a second time.
-	toolBytes := toolSchemaBytesForRequestShape(req.Tools)
-	if toolBytes > 0 {
-		tokens += toolBytes/3 + 1
+	// Tool schemas are JSON-heavy. Match contextbudget's JSON estimator
+	// without serializing the definitions a second time.
+	if toolBytes := toolSchemaBytesForRequestShape(req.Tools); toolBytes > 0 {
+		tokens += toolBytes*contextbudget.JSONNonCJKTokenNumerator/contextbudget.JSONNonCJKTokenDenominator + 1
 	}
 	return tokens
 }

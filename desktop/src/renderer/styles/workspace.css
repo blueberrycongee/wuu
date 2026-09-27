@@ -30,12 +30,7 @@
   --browser-retry-hover-bg: #93190f;
   --browser-loading-dot-bg: var(--wuu-color-info, #2f98ff);
   --skills-section-border: var(--wuu-color-border-subtle, var(--hairline-soft));
-  --skill-row-chevron: var(--wuu-color-text-muted, #a3a7aa);
-  --skill-artwork-border: var(--wuu-color-border-subtle, var(--hairline-soft));
   --skill-artwork-neutral-bg: var(--wuu-color-surface-muted, #f4f4f1);
-  --skill-artwork-neutral-fg: var(--wuu-color-text-muted, #696e72);
-  --skill-artwork-official-bg: var(--wuu-color-surface-elevated, #ffffff);
-  --skill-artwork-official-fg: var(--wuu-color-on-accent, #ffffff);
   --skill-mark-highlight: rgba(255, 255, 255, 0.54);
   /* Skill artwork mark palettes. --wuu-skill-mark-* are the public
      skin-overridable tokens; --skill-mark-* stay as component-local
@@ -110,8 +105,6 @@
   --review-overlay-bg: rgba(251, 251, 250, 0.92);
   --provider-pill-bg: var(--wuu-color-surface-muted, #f2f2ef);
   --provider-pill-text: var(--wuu-color-text-muted, #555a5f);
-  --skill-tag-bundled-bg: rgba(255, 90, 38, 0.12);
-  --skill-tag-bundled-fg: #c14a13;
   --codex-runtime-effort-text: var(--wuu-color-text-muted, #74797d);
   --codex-effort-sheen: rgba(255, 255, 255, 0.22);
   --codex-effort-sheen-soft: rgba(255, 255, 255, 0.1);
@@ -139,7 +132,7 @@
   width: auto;
   contain: strict;
   container-type: inline-size;
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
   overflow: hidden;
   border-left: 1px solid transparent;
   background: var(--paper);
@@ -152,10 +145,6 @@
     opacity var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease),
     transform var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
   pointer-events: none;
-}
-
-.workspace-right-panel.detail {
-  grid-template-rows: 48px minmax(0, 1fr);
 }
 
 .bottom-panel-open .workspace-right-panel {
@@ -177,7 +166,7 @@
 .workspace-panel-tabbar {
   display: flex;
   min-width: 0;
-  height: 48px;
+  height: var(--window-titlebar-height);
   align-items: center;
   gap: 4px;
   box-shadow: inset 0 -1px 0 var(--surface-3);
@@ -199,7 +188,7 @@
 
 .workspace-right-panel.compact-navigation {
   grid-template-rows:
-    calc(52px + env(safe-area-inset-top, 0px))
+    calc(var(--window-titlebar-height) + env(safe-area-inset-top, 0px))
     minmax(0, 1fr);
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
@@ -207,16 +196,16 @@
 .workspace-right-panel.compact-navigation .workspace-panel-tabbar {
   display: grid;
   height: auto;
-  grid-template-columns: 36px minmax(0, 1fr) 36px;
+  grid-template-columns: var(--control-size-toolbar) minmax(0, 1fr) var(--control-size-toolbar);
   gap: 8px;
   padding:
     env(safe-area-inset-top, 0px)
-    10px
+    max(10px, var(--window-controls-inset-right))
     0;
 }
 
 .app-shell.right-panel-globalized .workspace-right-panel.compact-navigation .workspace-panel-tabbar {
-  grid-template-columns: 36px 36px minmax(0, 1fr) 36px;
+  grid-template-columns: var(--control-size-toolbar) var(--control-size-toolbar) minmax(0, 1fr) var(--control-size-toolbar);
 }
 
 .workspace-panel-compact-heading {
@@ -249,14 +238,12 @@
   .workspace-panel-back,
   .workspace-panel-close-tab
 ) {
-  width: 36px;
-  height: 36px;
   margin: 0;
 }
 
 .workspace-panel-compact-action-slot {
-  width: 36px;
-  height: 36px;
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
 }
 
 .turn-file-diff-panel {
@@ -591,12 +578,12 @@
   }
 }
 
-/* Two-stage entrance, same as the session strip: shell width leads, label
- * joins late and lands on the shell's beat (60 + 120 = 180ms), which is also
- * the panel body's content-swap rhythm — chrome and content arrive as one
- * gesture. */
+/* Two-stage entrance: shell width leads, label joins late and lands on the
+ * shell's beat (base - fast + fast = base), which is also the panel body's
+ * content-swap rhythm — chrome and content arrive as one gesture. Deriving
+ * the delay from the ladder lets reduced motion collapse it too. */
 .workspace-tool-tab .workspace-tool-tab-main {
-  transition: opacity var(--motion-fast) var(--ease-out) 60ms;
+  transition: opacity var(--motion-fast) var(--ease-out) calc(var(--motion-base) - var(--motion-fast));
 }
 
 .workspace-tool-tab.closing .workspace-tool-tab-main {
@@ -778,9 +765,65 @@
   animation: content-swap-enter var(--content-swap-duration) var(--content-swap-easing) both;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .workspace-panel-content-swap,
   .workspace-file-resource.active {
+    animation: none;
+  }
+}
+
+.workspace-panel-content-swap[hidden],
+.workspace-terminal-panel[hidden] {
+  display: none;
+}
+
+.workspace-panel-loading {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  pointer-events: none;
+}
+
+.workspace-terminal-panel > .workspace-panel-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.workspace-panel-loading-rail {
+  position: relative;
+  width: 96px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+}
+
+.workspace-panel-loading-rail::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 36px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--success) 48%, var(--ink));
+  content: "";
+  animation: workspace-panel-loading-scan 1200ms cubic-bezier(0.2, 0, 0, 1) infinite;
+}
+
+@keyframes workspace-panel-loading-scan {
+  from {
+    transform: translateX(-40px);
+  }
+  to {
+    transform: translateX(100px);
+  }
+}
+
+@container style(--motion-reduced: 1) {
+  .workspace-panel-loading-rail::after {
     animation: none;
   }
 }
@@ -1134,10 +1177,9 @@ html.resizing-workspace-file-split * {
   box-shadow: var(--shadow-tray);
   pointer-events: auto;
   transition:
-    max-height 180ms var(--ease-out),
+    max-height var(--motion-base) var(--ease-out),
     transform var(--motion-fast) var(--ease-out),
     translate var(--motion-fast) var(--ease-out),
-    border-radius 180ms var(--ease-out),
     border-color var(--motion-fast) var(--ease-out),
     box-shadow var(--motion-fast) var(--ease-out);
 }
@@ -1210,7 +1252,7 @@ html.resizing-workspace-file-split * {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .workspace-document-turn-waiting-query {
     background: none;
     color: var(--ink-muted);
@@ -1278,29 +1320,45 @@ html.resizing-workspace-file-split * {
   padding-bottom: 180px;
 }
 
+/* Tool picker: the right panel with no open tab. Rows are a left-aligned
+ * icon+label list, vertically centered as a group. There is no shortcut
+ * column — these tools have no keybindings — so the list hugs content
+ * instead of reserving a trailing gutter. Fill still marks hover, active,
+ * and keyboard focus only. */
 .workspace-tool-menu {
   display: grid;
   height: 100%;
   min-width: 0;
+  justify-items: center;
   align-content: safe center;
-  gap: 12px;
   overflow-y: auto;
-  padding: 28px 24px;
+  padding: var(--panel-padding);
+}
+
+.workspace-tool-menu-list {
+  display: grid;
+  width: max-content;
+  max-width: 100%;
+  justify-items: stretch;
+  gap: var(--space-2);
 }
 
 .workspace-tool-menu-item {
   display: grid;
+  grid-template-columns: var(--icon-size) minmax(0, 1fr);
   width: 100%;
   min-width: 0;
-  min-height: 64px;
-  align-content: center;
-  justify-items: center;
-  gap: 8px;
+  min-height: var(--control-row-height);
+  align-items: center;
+  column-gap: var(--space-3);
   border-radius: var(--radius-sm);
-  background: var(--surface-2);
+  background: transparent;
   color: var(--ink);
-  padding: 10px 14px;
-  text-align: center;
+  padding: var(--space-2) var(--space-3);
+  text-align: start;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
 }
 
 .workspace-tool-menu-item:hover,
@@ -1308,19 +1366,36 @@ html.resizing-workspace-file-split * {
   background: var(--workspace-menu-item-hover-bg);
 }
 
+.workspace-tool-menu-item:focus-visible {
+  background: var(--workspace-menu-item-hover-bg);
+  outline: 2px solid var(--workspace-tab-focus-ring);
+  outline-offset: -2px;
+}
+
+.workspace-tool-menu-item:active {
+  background: var(--surface-3);
+}
+
 .workspace-tool-menu-icon {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: var(--icon-size);
+  height: var(--icon-size);
   place-items: center;
   color: var(--ink-tertiary);
+  transition: color var(--motion-fast) var(--ease-out);
+}
+
+.workspace-tool-menu-item:hover .workspace-tool-menu-icon,
+.workspace-tool-menu-item.active .workspace-tool-menu-icon,
+.workspace-tool-menu-item:focus-visible .workspace-tool-menu-icon {
+  color: var(--ink);
 }
 
 .workspace-tool-menu-copy {
   display: grid;
   min-width: 0;
-  justify-items: center;
-  gap: 5px;
+  justify-items: start;
+  gap: 2px;
 }
 
 .workspace-tool-menu-copy strong,
@@ -1333,13 +1408,13 @@ html.resizing-workspace-file-split * {
 
 .workspace-tool-menu-copy strong {
   color: var(--ink);
-  font-size: var(--font-heading);
-  font-weight: var(--weight-semibold);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
 }
 
 .workspace-tool-menu-copy span {
   color: var(--ink-tertiary);
-  font-size: var(--font-title);
+  font-size: var(--font-sm);
   font-weight: var(--weight-medium);
 }
 
@@ -1482,44 +1557,37 @@ html.resizing-workspace-file-split * {
   position: fixed;
   z-index: 1000;
   min-width: 168px;
-  padding: 4px;
+  padding: var(--menu-inset);
   background: var(--menu-bg);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-shell-radius);
   box-shadow: var(--menu-shadow);
-  font-family: var(--font-ui, var(--font-body));
-  animation: workspace-tree-context-menu-in var(--motion-fast) var(--ease-out);
+  --enter-y: -2px;
+  animation: wuu-enter var(--motion-fast) var(--ease-out) both;
 }
 
 .workspace-tree-context-menu-item {
-  display: block;
+  display: flex;
   width: 100%;
+  height: auto;
+  min-height: var(--control-row-height);
+  align-items: center;
   text-align: left;
-  padding: 7px 12px;
-  font-family: inherit;
-  font-size: var(--font-sm);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
+  font-size: var(--font-menu);
   font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
   color: var(--ink);
   background: transparent;
   border: 0;
+  border-radius: var(--radius-xs);
   cursor: default;
 }
 
 .workspace-tree-context-menu-item:hover,
 .workspace-tree-context-menu-item:focus-visible {
-  background: var(--ink-overlay-4);
+  background: var(--menu-hover);
   outline: none;
-}
-
-@keyframes workspace-tree-context-menu-in {
-  from {
-    opacity: 0;
-    transform: translateY(-2px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
 }
 
 .workspace-panel-empty {
@@ -1578,27 +1646,7 @@ html.resizing-workspace-file-split * {
   height: 100%;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.workspace-terminal-pathbar {
-  display: flex;
-  min-width: 0;
-  min-height: 36px;
-  align-items: center;
-  border-bottom: 1px solid var(--hairline-soft);
-  background: var(--surface-1);
-  padding: 7px 12px;
-}
-
-.workspace-terminal-path {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ink-soft);
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: var(--font-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .workspace-agent-terminal {
@@ -1716,35 +1764,13 @@ html.resizing-workspace-file-split * {
   background: transparent !important;
 }
 
-/* xterm viewport gets a deliberately narrower scrollbar than the rest of
- * the renderer (terminal scrollbar lives next to dense code), but it still
- * uses the global three-tier thumb fade-in. */
+/* The xterm viewport keeps a permanently visible thumb: a terminal is a dense
+ * inspection surface where the scroll position is part of the content, not a
+ * reading surface that should stay clear (Monaco's own scrollbars follow the
+ * same rule). The reveal class deliberately does not apply here. */
 .workspace-terminal-host .xterm-viewport {
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thin-thumb) transparent;
-}
-
-.workspace-terminal-host .xterm-viewport::-webkit-scrollbar {
-  width: var(--scrollbar-thin-width);
-  background: transparent;
-}
-
-.workspace-terminal-host .xterm-viewport::-webkit-scrollbar-track,
-.workspace-terminal-host .xterm-viewport::-webkit-scrollbar-track-piece {
-  background: transparent;
-}
-
-.workspace-terminal-host .xterm-viewport::-webkit-scrollbar-thumb {
-  border-radius: var(--radius-pill);
-  background-color: var(--scrollbar-thin-thumb);
-}
-
-.workspace-terminal-host .xterm-viewport::-webkit-scrollbar-thumb:hover {
-  background-color: var(--scrollbar-thumb-hover);
-}
-
-.workspace-terminal-host .xterm-viewport::-webkit-scrollbar-thumb:active {
-  background-color: var(--scrollbar-thumb-active);
 }
 
 .workspace-terminal-restart {
@@ -1768,17 +1794,25 @@ html.resizing-workspace-file-split * {
   height: 100%;
   min-height: 0;
   min-width: 0;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
   background: var(--paper);
 }
 
 .workspace-browser-toolbar {
-  display: flex;
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: 4px;
-  padding: 8px 10px;
+  column-gap: 8px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--hairline-soft);
   background: transparent;
+}
+
+.workspace-browser-nav-cluster {
+  display: flex;
+  align-items: center;
+  gap: 1px;
 }
 
 .workspace-browser-nav {
@@ -1799,39 +1833,33 @@ html.resizing-workspace-file-split * {
 }
 
 .workspace-browser-url-form {
-  flex: 1 1 auto;
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-self: center;
+  gap: 4px;
+  width: min(100%, 770px);
   min-width: 0;
-  padding: 0 8px;
+  padding: 0 10px 0 12px;
   height: 28px;
-  border-radius: var(--radius-pill);
-  background: var(--paper);
-  border: 1px solid var(--browser-url-border);
+  border-radius: 10px;
+  background: transparent;
+  border: 0;
   color: var(--ink-soft);
-  transition: border-color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
+  transition: background-color var(--motion-fast) var(--ease-out);
 }
 
+.workspace-browser-url-form:hover,
 .workspace-browser-url-form:focus-within {
-  border-color: var(--browser-url-focus-border);
-  box-shadow: 0 0 0 3px var(--browser-url-focus-ring);
+  background: var(--surface-3);
+}
+
+html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .workspace-browser-url-form:has(.workspace-browser-url-input.has-error) {
-  border-color: var(--danger-border);
-  box-shadow: 0 0 0 3px var(--browser-url-error-ring);
-}
-
-.workspace-browser-url-icon {
-  display: grid;
-  place-items: center;
-  color: var(--browser-url-icon);
-  flex: 0 0 auto;
-}
-
-.workspace-browser-url-form:has(.workspace-browser-url-input.has-error) .workspace-browser-url-icon {
-  color: var(--browser-url-error-icon);
+  box-shadow: inset 0 0 0 1px var(--danger-border);
 }
 
 .workspace-browser-url-input {
@@ -1841,10 +1869,18 @@ html.resizing-workspace-file-split * {
   outline: none;
   background: transparent;
   color: var(--ink);
-  font-size: var(--font-sm, 12.5px);
+  font-size: var(--font-ui);
   font-family: inherit;
   padding: 0;
   line-height: 1.4;
+  /* This is alpha, not a surface color: it works on glass and all themes. */
+  --browser-url-fade-ink: #000;
+  mask-image: linear-gradient(
+    to right,
+    var(--browser-url-fade-ink) 0,
+    var(--browser-url-fade-ink) calc(100% - 16px),
+    transparent
+  );
 }
 
 .workspace-browser-url-input::placeholder {
@@ -1857,18 +1893,14 @@ html.resizing-workspace-file-split * {
 
 .workspace-browser-frame {
   position: relative;
-  display: flex;
   min-width: 0;
   min-height: 0;
   background: var(--paper);
 }
 
 .workspace-browser-host {
-  position: relative;
-  display: flex;
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
+  position: absolute;
+  inset: 0;
   background: var(--paper);
 }
 
@@ -1883,10 +1915,63 @@ html.resizing-workspace-file-split * {
   min-height: 0;
 }
 
+.workspace-browser-open-external {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  opacity: 0;
+  color: var(--ink-tertiary);
+}
+
+.workspace-browser-url-form:hover .workspace-browser-open-external,
+.workspace-browser-url-form:focus-within .workspace-browser-open-external {
+  opacity: 1;
+}
+
+.workspace-browser-open-external:disabled {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.workspace-browser-loading-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--browser-loading-dot-bg);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.workspace-browser-loading-bar[data-active="true"] {
+  opacity: 1;
+  animation: workspace-browser-pulse 1s ease-in-out infinite;
+}
+
 .workspace-browser-home {
-  flex: 1 1 auto;
-  background: var(--browser-home-bg);
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: var(--paper);
   padding: 24px 12px;
+}
+
+.workspace-browser-home .workspace-panel-empty-icon {
+  width: auto;
+  height: auto;
+  background: transparent;
+  color: var(--ink-muted);
+}
+
+.workspace-browser-home strong {
+  font-size: var(--font-ui);
+  font-weight: var(--weight-semibold);
+}
+
+.workspace-browser-home span {
+  max-width: none;
+  font-size: var(--font-ui);
 }
 
 .workspace-browser-status {
@@ -1940,73 +2025,6 @@ html.resizing-workspace-file-split * {
 
 .workspace-browser-retry:hover {
   background: var(--browser-retry-hover-bg);
-}
-
-.workspace-browser-statusbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 12px;
-  border-top: 1px solid var(--hairline-soft);
-  background: transparent;
-  color: var(--ink-muted);
-  font-size: 11.5px;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  min-width: 0;
-}
-
-.workspace-browser-host-hint {
-  flex: 0 0 auto;
-  max-width: 50%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--ink-soft);
-}
-
-.workspace-browser-title-hint {
-  flex: 1 1 auto;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--ink-muted);
-}
-
-.workspace-browser-activity {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex: 0 0 auto;
-}
-
-.workspace-browser-activity-state {
-  color: var(--ink-muted);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-semibold);
-  white-space: nowrap;
-}
-
-.workspace-browser-activity-state.user {
-  color: var(--warning);
-}
-
-.workspace-browser-activity-state.agent {
-  color: var(--success);
-}
-
-.workspace-browser-activity-button {
-  width: 24px;
-  height: 24px;
-}
-
-.workspace-browser-loading-dot {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-pill);
-  background: var(--browser-loading-dot-bg);
-  animation: workspace-browser-pulse 1s ease-in-out infinite;
 }
 
 @keyframes workspace-browser-pulse {
@@ -2087,70 +2105,28 @@ html.resizing-workspace-file-split * {
   background: var(--paper);
 }
 
-.skills-catalog {
-  display: grid;
-  grid-template-columns: minmax(0, 1080px);
-  justify-content: center;
-  min-height: 100%;
-  align-content: start;
-  padding: 42px clamp(32px, 6vw, 88px) 64px;
-}
-
-.catalog-page-header {
-  display: grid;
-  min-width: 0;
-  gap: 26px;
-  padding-bottom: 2px;
-}
-
-.catalog-page-title {
-  display: grid;
-  min-width: 0;
-  gap: 8px;
-  color: var(--ink);
-}
-
-.catalog-page-title strong {
-  font-size: 32px;
-  font-weight: var(--weight-medium);
-  letter-spacing: -0.035em;
-  line-height: 1.15;
-}
-
-.catalog-page-title span {
-  color: var(--ink-tertiary);
-  font-size: 17px;
-  font-weight: var(--weight-regular);
-  letter-spacing: -0.015em;
-  line-height: 1.4;
-}
-
-.catalog-page-controls {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  align-items: center;
-  gap: 10px;
-}
+/* The extensions catalog is a .settings-page: the same UI-text column, page
+ * header, and section rhythm as Settings, so a plugin's status reads the
+ * same here as a model service's does there. */
 
 .catalog-search {
   display: flex;
   min-width: 0;
-  height: 44px;
-  flex: 1 1 auto;
+  min-height: var(--control-search-height);
   align-items: center;
-  gap: 11px;
+  gap: var(--space-2);
   border: 1px solid var(--field-border);
   border-radius: var(--radius-sm);
   background: var(--field-bg);
   color: var(--ink-muted);
-  padding: 0 14px;
-  transition: background var(--motion-fast);
+  padding: 0 var(--control-padding-inline);
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
 .catalog-search svg {
-  width: 18px;
-  height: 18px;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  flex: 0 0 auto;
 }
 
 .catalog-search input {
@@ -2160,33 +2136,8 @@ html.resizing-workspace-file-split * {
   outline: 0;
   background: transparent;
   color: var(--ink);
-  font-size: 15px;
-  font-weight: var(--weight-regular);
-}
-
-.catalog-search input::placeholder {
-  color: var(--ink-muted);
-}
-
-.catalog-refresh {
-  width: 44px;
-  height: 44px;
-  flex: 0 0 auto;
-  border-radius: var(--radius-sm);
-}
-
-.catalog-install {
-  display: inline-flex;
-  min-height: 44px;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 7px;
-  white-space: nowrap;
-}
-
-.catalog-install .icon {
-  width: 17px;
-  height: 17px;
+  font: inherit;
+  font-size: var(--font-ui);
 }
 
 .skills-catalog-error {
@@ -2195,125 +2146,116 @@ html.resizing-workspace-file-split * {
   color: var(--danger);
   font-size: var(--font-ui);
   line-height: 1.45;
-  padding: 10px 12px;
-  margin-top: 20px;
+  padding: var(--compact-padding-block) var(--compact-padding-inline);
 }
 
-.skills-section {
+/* One row anatomy for plugins and skills, matching the settings service
+ * rows: mark, name over a one-line description, trailing status or source,
+ * and a disclosure chevron. The chevron owns the last column, so trailing
+ * labels end on one axis whether or not a row has one. */
+.catalog-row {
   display: grid;
-  min-width: 0;
-  gap: 0;
-  margin-top: 42px;
-}
-
-.skills-section + .skills-section {
-  margin-top: 36px;
-}
-
-.skills-section-heading {
-  display: flex;
   width: 100%;
   min-width: 0;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 14px;
-  border-bottom: 1px solid var(--skills-section-border);
-  padding: 0 0 13px;
-}
-
-.skills-section-heading strong {
+  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  border: 0;
+  padding: var(--space-3) 0;
+  background: transparent;
   color: var(--ink);
-  font-size: 16px;
-  font-weight: var(--weight-semibold);
-  letter-spacing: -0.015em;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
 }
 
-.skills-list {
-  display: grid;
-  width: 100%;
-  min-width: 0;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 38px;
-  row-gap: 0;
-  padding-top: 4px;
+.catalog-row + .catalog-row {
+  border-top: 1px solid var(--hairline-soft);
 }
 
-/* Keep plugins on the same two-column catalog grid as the skill sections.
- * Each plugin row owns its internal tracks for artwork, copy, status, and
- * chevron. */
-.extension-package-list {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 38px;
+.catalog-row > .settings-disclosure-chevron {
+  grid-column: 4;
 }
 
-.skill-row.extension-package-row {
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) max-content 16px;
-  min-height: 72px;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 8px;
+.catalog-row:hover .settings-disclosure-chevron {
+  color: var(--ink);
 }
 
-.extension-package-actions {
+.catalog-row-copy {
   display: grid;
   min-width: 0;
-  grid-template-columns: 96px 32px;
-  align-items: center;
-  gap: 6px;
+  gap: 2px;
 }
 
-.extension-package-actions button {
-  min-height: 32px;
+.catalog-row-title,
+.catalog-row-description {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.extension-package-primary-action,
-.extension-package-primary-placeholder {
-  display: block;
-  width: 96px;
-}
-
-.extension-package-primary-placeholder {
-  height: 32px;
-}
-
-.extension-package-more,
-.extension-package-more-placeholder {
-  display: block;
-  width: 32px;
-  height: 32px;
-}
-
-.extension-package-more {
-  border-radius: var(--radius-sm);
-}
-
-.extension-package-meta,
-.extension-package-permissions {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 5px 9px;
-  color: var(--ink-tertiary);
-  font-size: 11px;
+.catalog-row-title {
+  color: var(--ink);
+  font-size: var(--font-ui);
   line-height: 1.4;
 }
 
-.extension-package-permissions strong {
-  color: var(--ink-secondary);
-  font-weight: var(--weight-medium);
+.catalog-row-description {
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: 1.5;
 }
 
-.extension-package-permissions code {
-  border: 1px solid var(--wuu-color-border-subtle, var(--skills-section-border));
-  border-radius: var(--radius-pill);
-  padding: 1px 7px;
-  background: var(--wuu-badge-neutral-background, var(--skill-artwork-neutral-bg));
-  color: var(--wuu-color-text-muted, var(--ink-secondary));
-  font-family: var(--font-mono);
-  font-size: 10px;
+.catalog-row-meta {
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+/* The mark tile takes the settings row mark footprint, so plugin glyphs,
+ * skill marks, and package artwork sit in one column at any size. */
+.skill-artwork {
+  display: grid;
+  width: var(--settings-mark-size);
+  height: var(--settings-mark-size);
+  flex: 0 0 auto;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.skill-artwork svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.skill-artwork-plugin-brand .plugin-icon-asset {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* In a narrow column the trailing label moves under the description, so
+ * the name keeps the width it needs. */
+@container settings-page (max-width: 32em) {
+  .catalog-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    row-gap: var(--space-1);
+  }
+
+  .catalog-row > :is(.settings-status, .catalog-row-meta) {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+  }
+
+  .catalog-row > .settings-disclosure-chevron {
+    grid-column: 3;
+  }
 }
 
 .plugin-settings-editor {
@@ -2343,36 +2285,19 @@ html.resizing-workspace-file-split * {
 }
 
 .plugin-detail-dialog .environment-dialog-icon .skill-artwork {
-  width: 44px;
-  height: 44px;
-  border-radius: var(--radius-xs);
+  width: round(up, calc(var(--font-ui) * 3), 2px);
+  height: round(up, calc(var(--font-ui) * 3), 2px);
   box-shadow: var(--shadow-soft);
 }
 
 .plugin-detail-dialog .environment-dialog-icon .skill-artwork svg {
-  width: 22px;
-  height: 22px;
+  width: var(--icon-size-xl);
+  height: var(--icon-size-xl);
 }
 
 .plugin-detail-dialog h2 {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 10px;
-}
-
-.plugin-detail-name {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-
-.plugin-detail-version {
-  flex: none;
-  color: var(--ink-muted);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 400;
-  letter-spacing: 0;
 }
 
 .skill-preview-dialog.plugin-detail-dialog .environment-dialog-footer {
@@ -2383,20 +2308,20 @@ html.resizing-workspace-file-split * {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-4);
   border-top: 1px solid var(--hairline);
-  padding: 16px 0 0;
+  padding: var(--space-4) 0 0;
 }
 
-/* One quiet status line: the state pill first, then source identity and
- * grant scope as plain text separated by dots. */
+/* One quiet status line, the same status label as the catalog row, then
+ * source identity and grant scope as plain text separated by dots. */
 .plugin-detail-meta {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
   align-items: center;
-  column-gap: 12px;
-  row-gap: 4px;
+  column-gap: var(--space-2);
+  row-gap: var(--space-1);
 }
 
 .plugin-detail-meta-item {
@@ -2405,39 +2330,10 @@ html.resizing-workspace-file-split * {
   line-height: 1.4;
 }
 
-.plugin-detail-meta-item + .plugin-detail-meta-item::before {
+.plugin-detail-meta-item::before {
   content: "·";
-  margin-right: 12px;
+  margin-right: var(--space-2);
   color: var(--ink-muted);
-}
-
-.plugin-detail-status {
-  gap: 6px;
-}
-
-.plugin-detail-status-dot {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: var(--radius-circle);
-  background: currentColor;
-}
-
-/* The base .skill-row-tag paints a bundled orange regardless of tone; the
- * detail badge borrows its pill chrome but must carry the status tone. */
-.plugin-detail-status.extension-status-good {
-  background: var(--success-soft);
-  color: var(--success);
-}
-
-.plugin-detail-status.extension-status-warning {
-  background: var(--warning-soft);
-  color: var(--warning);
-}
-
-.plugin-detail-status.extension-status-danger {
-  background: var(--danger-soft);
-  color: var(--danger);
 }
 
 /* Alerts are the one boxed element in this panel: they carry a state, not a
@@ -2505,19 +2401,19 @@ html.resizing-workspace-file-split * {
 }
 
 /* Permissions are grouped by capability and rendered as readable chips;
- * the raw manifest code stays available as a tooltip. */
+ * the raw manifest code stays available as a tooltip. Groups share one
+ * label column sized by the longest label, so chips start on one edge in
+ * every language and font size. */
 .plugin-permission-groups {
   display: grid;
   min-width: 0;
-  gap: 8px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
 }
 
 .plugin-permission-group {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: 44px minmax(0, 1fr);
-  align-items: baseline;
-  gap: 12px;
+  display: contents;
 }
 
 .plugin-permission-group-label {
@@ -2537,7 +2433,7 @@ html.resizing-workspace-file-split * {
   border: 1px solid var(--skills-section-border);
   border-radius: var(--radius-pill);
   padding: 1px 10px;
-  background: var(--skill-artwork-neutral-bg);
+  background: var(--wuu-badge-neutral-background, var(--skill-artwork-neutral-bg));
   color: var(--ink-secondary);
   font-size: var(--font-sm);
   line-height: 1.7;
@@ -2603,7 +2499,7 @@ html.resizing-workspace-file-split * {
 
 .plugin-detail-provenance code {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--appearance-code-size);
 }
 
 .plugin-detail-dialog .plugin-settings-editor {
@@ -2656,7 +2552,7 @@ html.resizing-workspace-file-split * {
   column-gap: 24px;
 }
 
-.plugin-settings-editor-page .plugin-setting:last-child {
+.plugin-settings-editor .plugin-setting:last-child {
   border-bottom: 0;
 }
 
@@ -2706,7 +2602,7 @@ html.resizing-workspace-file-split * {
   padding: 10px;
   background: var(--warning-soft);
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--font-sm);
 }
 
 .plugin-contribution-conflict > div,
@@ -2809,160 +2705,6 @@ html.resizing-workspace-file-split * {
   padding: 0;
 }
 
-.extension-status-good {
-  background: var(--success-soft);
-  color: var(--success);
-}
-
-.extension-status-warning {
-  background: var(--warning-soft);
-  color: var(--warning);
-}
-
-.extension-status-danger {
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-
-.skill-row {
-  display: grid;
-  min-width: 0;
-  min-height: 72px;
-  grid-template-columns: 36px minmax(0, 1fr) 16px;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 8px;
-}
-
-.skill-artwork {
-  display: grid;
-  width: 36px;
-  height: 36px;
-  place-items: center;
-  overflow: hidden;
-  border-radius: var(--radius-xs);
-  color: var(--ink);
-}
-
-.skill-artwork svg {
-  width: 28px;
-  height: 28px;
-}
-
-.skill-artwork-plugin-brand .plugin-icon-asset {
-  width: 26px;
-  height: 26px;
-}
-
-.skill-row-copy {
-  display: grid;
-  min-width: 0;
-  gap: 5px;
-}
-
-.skill-row-titlebar {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 7px;
-}
-
-.skill-row h2 {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ink);
-  font-size: 15px;
-  font-weight: var(--weight-medium);
-  letter-spacing: -0.015em;
-  line-height: 1.3;
-  margin: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The pill chrome below stays reserved for the detail dialog badge and
- * plugin-sourced skill source tags. Plugin rows keep the typographic rhythm of
- * skill rows; runtime state is a right-aligned dot + label in its own column. */
-.skill-row-tag {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  border-radius: var(--radius-pill);
-  padding: 2px 8px;
-  font-size: 11px;
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.01em;
-  line-height: 1.4;
-  background: var(--skill-tag-bundled-bg);
-  color: var(--skill-tag-bundled-fg);
-}
-
-.skill-row-tag-neutral {
-  background: var(--wuu-badge-neutral-background, var(--skill-artwork-neutral-bg));
-  color: var(--wuu-color-text-muted, var(--skill-artwork-neutral-fg));
-}
-
-.skill-row-status {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: transparent;
-  color: var(--ink-secondary);
-  font-size: 11px;
-  font-weight: var(--weight-medium);
-  letter-spacing: 0.01em;
-  line-height: 1.4;
-  white-space: nowrap;
-}
-
-.skill-row-status-dot {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: var(--radius-circle);
-  background: var(--ink-tertiary);
-}
-
-.skill-row-status.extension-status-good .skill-row-status-dot {
-  background: var(--success);
-}
-
-.skill-row-status.extension-status-warning .skill-row-status-dot {
-  background: var(--warning);
-}
-
-.skill-row-status.extension-status-danger .skill-row-status-dot {
-  background: var(--danger);
-}
-
-.skill-row-status.extension-status-danger {
-  color: var(--danger);
-}
-
-.skill-row p {
-  overflow: hidden;
-  color: var(--ink-tertiary);
-  font-size: 13px;
-  font-weight: var(--weight-regular);
-  letter-spacing: -0.01em;
-  line-height: 1.4;
-  margin: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.skill-row-chevron {
-  width: 16px;
-  height: 16px;
-  color: var(--skill-row-chevron);
-  opacity: 0;
-  transform: translateX(-3px);
-  transition:
-    opacity 120ms ease,
-    transform 120ms ease;
-}
-
 .skills-empty {
   display: grid;
   min-height: 260px;
@@ -2985,112 +2727,6 @@ html.resizing-workspace-file-split * {
 .skills-empty span {
   color: var(--ink-muted);
   font-size: var(--font-body);
-}
-
-@media (max-width: 720px) {
-  .skills-catalog {
-    padding: 28px 20px 40px;
-  }
-
-  .skills-catalog-header {
-    gap: 20px;
-  }
-
-  .skills-catalog-title strong {
-    font-size: 28px;
-  }
-
-  .skills-catalog-title span {
-    font-size: 15px;
-  }
-
-  .skills-catalog-controls {
-    width: 100%;
-  }
-
-  .skills-section {
-    margin-top: 34px;
-  }
-
-  .skills-section + .skills-section {
-    margin-top: 30px;
-  }
-
-  .skills-list {
-    width: 100%;
-    grid-template-columns: 1fr;
-  }
-
-  .skill-row {
-    min-height: 72px;
-    grid-template-columns: 36px minmax(0, 1fr) 16px;
-    gap: 11px;
-    padding: 9px 6px;
-  }
-
-  .extension-package-list {
-    grid-template-columns: 1fr;
-  }
-
-  .skill-row.extension-package-row {
-    grid-template-columns: 36px minmax(0, 1fr) max-content 16px;
-    min-height: 72px;
-    align-items: center;
-    gap: 12px;
-    padding: 9px 6px;
-  }
-
-  .extension-package-actions {
-    grid-column: 2;
-    width: auto;
-    min-width: 0;
-    justify-self: start;
-  }
-
-  .skill-artwork {
-    width: 36px;
-    height: 36px;
-    border-radius: var(--radius-xs);
-  }
-
-  .skill-artwork svg {
-    width: 18px;
-    height: 18px;
-  }
-
-  .skill-artwork[class*="skill-artwork-official-"] svg,
-  .skill-artwork-custom-skill svg,
-  .skill-artwork-custom-plugin svg {
-    width: 26px;
-    height: 26px;
-  }
-
-}
-
-.skill-row-button {
-  width: 100%;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.skill-row-button:hover {
-  background: var(--wuu-control-secondary-background, var(--ink-overlay-6));
-}
-
-.skill-row-button:hover .skill-row-chevron,
-.skill-row-button:focus-visible .skill-row-chevron {
-  opacity: 1;
-  transform: translateX(0);
-}
-
-.skill-row-button:focus-visible {
-  outline: 0;
-  box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
 .environment-modal-backdrop:has(.skill-preview-dialog) {
@@ -4306,7 +3942,9 @@ html.resizing-workspace-file-split * {
   position: relative;
   display: inline-flex;
   min-width: 0;
-  max-width: 280px;
+  /* Grows with UI text like the panel it opens; narrow toolbars cap it in
+   * responsive-design.css. */
+  max-width: max(280px, calc(var(--font-ui) * 280 / 14.5));
   flex: 0 1 auto;
   align-items: center;
   gap: 2px;
@@ -4325,6 +3963,28 @@ html.resizing-workspace-file-split * {
   font-size: var(--font-sm);
   font-weight: var(--weight-semibold);
   padding: 0 9px;
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.codex-runtime-trigger:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.codex-runtime-label {
+  display: inline-flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: inherit;
+}
+
+/* A committed choice swaps the label with the shared content-swap motion. */
+.codex-runtime-label.is-changed {
+  animation: content-swap-enter var(--content-swap-duration) var(--content-swap-easing) both;
+}
+
+.codex-runtime-model {
+  flex: 1 1 auto;
 }
 
 .codex-runtime-effort {
@@ -4351,13 +4011,33 @@ html.resizing-workspace-file-split * {
   white-space: nowrap;
 }
 
-.codex-runtime-trigger > span:first-child {
-  flex: 1 1 auto;
+/* The brand mark identifies the engine without outweighing the model name:
+ * solid marks such as Wuu's disk read darker than text at the same ink. */
+.codex-runtime-trigger .engine-icon {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  color: var(--ink-soft);
+  transition: color var(--motion-base) var(--ease-out);
 }
 
-.codex-runtime-trigger svg {
+.codex-runtime-trigger:hover:not(:disabled) .engine-icon,
+.codex-runtime-trigger[aria-expanded="true"] .engine-icon {
+  color: var(--ink);
+}
+
+/* The chevron is a secondary affordance; it turns over while the panel is
+ * open so the trigger also reads as the way to close it. */
+.codex-runtime-trigger > svg.icon {
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
   flex: 0 0 auto;
   color: var(--codex-runtime-trigger-icon);
+  transition: transform var(--motion-base) var(--ease-out), color var(--motion-base) var(--ease-out);
+}
+
+.codex-runtime-trigger[aria-expanded="true"] > svg.icon {
+  color: var(--ink-soft);
+  transform: rotate(180deg);
 }
 
 .codex-runtime-menu {
@@ -4441,14 +4121,18 @@ html.resizing-workspace-file-split * {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: inherit;
-  font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
+  font-size: var(--font-menu);
+  font-weight: var(--weight-medium);
 }
 
 .runtime-engine-option > svg {
   width: 14px;
   height: 14px;
   flex: 0 0 auto;
+}
+
+.runtime-engine-option > svg.engine-icon {
+  color: inherit;
 }
 
 .codex-model-groups {
@@ -4535,7 +4219,12 @@ html.resizing-workspace-file-split * {
   background: var(--slider-thumb-bg);
   box-shadow: var(--shadow-soft);
   pointer-events: none;
-  transition: left var(--motion-base) var(--ease-bounce);
+  transition: left var(--motion-base) var(--ease-bounce), transform var(--motion-fast) var(--ease-out);
+}
+
+/* The knob gives under the pointer while a level is being chosen. */
+.codex-effort-slider:not(.is-disabled):active .codex-effort-knob {
+  transform: translateX(-50%) scale(0.92);
 }
 
 .codex-effort-slider input[type="range"] {
@@ -4548,9 +4237,13 @@ html.resizing-workspace-file-split * {
   margin: 0;
 }
 
-.codex-effort-slider:has(input:focus-visible) .codex-effort-knob {
+html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visible) .codex-effort-knob {
   border-color: var(--focus-ring);
   box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--focus-ring);
+}
+
+html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visible) input {
+  outline: none;
 }
 
 .codex-effort-slider.is-disabled {
@@ -4585,7 +4278,7 @@ html.resizing-workspace-file-split * {
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
-  font-size: var(--font-ui);
+  font-size: var(--font-menu);
   font-weight: var(--weight-medium);
   padding: 0 9px;
   text-align: left;
@@ -4610,47 +4303,59 @@ html.resizing-workspace-file-split * {
 }
 
 /* Runtime choice is a compact overview with drill-in pages, not a settings
-   form. Heights must match the summary stack so leftover space cannot collect
+   form. Heights must match each page's stack so leftover space cannot collect
    at the bottom; the popover still morphs in place as pages change.
-   Summary stack: 8px inset, 2px gap, 22px context, 36px model.
+   Row metrics are drawn for the default 14.5px UI size and grow with larger
+   UI text, the same proportion the panel width follows in
+   ComposerRuntimeMenus.tsx. --runtime-rows is the row count of the current
+   page, set on the panel.
+   Summary stack: 1px border, --menu-inset, 2px gap, context row, model row.
    With slider: +6px group gap (2px row gap + 4px slider margin) and 30px control. */
 .codex-model-menu.runtime-panel {
+  --runtime-row: max(36px, calc(var(--font-ui) * 36 / 14.5));
+  --runtime-context-row: max(22px, calc(var(--font-ui) * 22 / 14.5));
+  --runtime-header: max(40px, calc(var(--font-ui) * 40 / 14.5));
+  --runtime-list: calc(var(--runtime-rows, 1) * (var(--runtime-row) + 1px) - 1px);
+  --runtime-summary: calc(2px + var(--menu-inset) * 2 + var(--runtime-context-row) + 2px + var(--runtime-row));
   position: relative;
   display: block;
-  width: min(224px, calc(100vw - 16px));
-  height: 76px;
+  width: min(var(--runtime-panel-width, 224px), calc(100vw - 16px));
+  height: var(--runtime-summary);
   max-height: min(
     var(--floating-menu-available-height, 999px),
-    320px,
+    max(320px, calc(var(--runtime-row) * 8.5)),
     calc(100vh - 180px)
   );
   overflow: hidden;
   padding: 0;
   border-color: var(--hairline-soft);
   box-shadow: var(--menu-shadow);
-  transition: height 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: height var(--motion-base) var(--ease-out);
 }
 
 .codex-model-menu.runtime-panel.is-summary:has(.codex-effort-slider) {
-  height: 112px;
+  height: calc(var(--runtime-summary) + 36px);
 }
 
-.codex-model-menu.runtime-panel.is-engines,
+.codex-model-menu.runtime-panel.is-engines {
+  height: calc(2px + var(--runtime-header) + var(--runtime-list) + var(--menu-inset));
+}
+
+/* Provider rows already return to the summary, so that page has no back
+ * header and takes the inset on both sides. */
 .codex-model-menu.runtime-panel.is-providers {
-  height: min(
-    var(--runtime-chooser-height, 194px),
-    var(--floating-menu-available-height, 320px),
-    calc(100vh - 180px)
-  );
+  height: calc(2px + var(--runtime-list) + var(--menu-inset) * 2);
 }
 
 .codex-model-menu.runtime-panel.is-models {
-  height: min(
-    var(--runtime-models-height, 320px),
-    var(--floating-menu-available-height, 999px),
-    320px,
-    calc(100vh - 180px)
-  );
+  --runtime-models-search-row: var(--control-field-height);
+  height: calc(2px + var(--runtime-models-search-row) + var(--runtime-list) + var(--menu-inset));
+}
+
+/* Without a search field the rows reach the top of the page, so the shell adds
+ * nothing above them. */
+.codex-model-menu.runtime-panel.is-models:not(:has(.select-menu-search)) {
+  --runtime-models-search-row: 0px;
 }
 
 .runtime-panel-page {
@@ -4661,25 +4366,17 @@ html.resizing-workspace-file-split * {
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  will-change: opacity, transform;
+  will-change: opacity, translate;
 }
 
 .runtime-panel-page.is-forward {
-  animation: runtime-panel-forward 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  --enter-x: 18px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
 }
 
 .runtime-panel-page.is-back {
-  animation: runtime-panel-back 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-@keyframes runtime-panel-forward {
-  from { opacity: 0; transform: translateX(18px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
-@keyframes runtime-panel-back {
-  from { opacity: 0; transform: translateX(-18px); }
-  to { opacity: 1; transform: translateX(0); }
+  --enter-x: -18px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
 }
 
 .runtime-panel-summary {
@@ -4689,13 +4386,13 @@ html.resizing-workspace-file-split * {
   flex-direction: column;
   justify-content: flex-start;
   gap: 2px;
-  padding: 8px;
+  padding: var(--menu-inset);
 }
 
 .runtime-panel-context {
   display: flex;
   min-width: 0;
-  height: 22px;
+  height: var(--runtime-context-row);
   flex: 0 0 auto;
   align-items: center;
   gap: 4px;
@@ -4704,19 +4401,28 @@ html.resizing-workspace-file-split * {
 
 .codex-runtime-menu .runtime-panel-context button {
   width: auto;
-  height: 22px;
+  height: var(--runtime-context-row);
   flex: 0 1 auto;
   gap: 4px;
   padding: 0 4px;
   color: var(--ink-tertiary);
-  font-size: 11px;
+  font-size: var(--font-xs);
   font-weight: var(--weight-medium);
+  transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
 }
 
-.runtime-panel-context button > svg {
-  width: 11px;
-  height: 11px;
+.codex-runtime-menu .runtime-panel-context button:hover {
+  color: var(--ink);
+}
+
+.codex-runtime-menu .runtime-panel-context button > svg {
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
   color: var(--ink-tertiary);
+}
+
+.runtime-panel-context button > svg.engine-icon {
+  color: inherit;
 }
 
 .runtime-panel-context-separator {
@@ -4726,12 +4432,12 @@ html.resizing-workspace-file-split * {
 }
 
 .codex-runtime-menu .runtime-panel-model {
-  height: 36px;
+  height: var(--runtime-row);
   flex: 0 0 auto;
   gap: 8px;
   padding: 0 4px;
   border-radius: var(--radius-xs);
-  font-size: 14px;
+  font-size: var(--font-menu);
   font-weight: var(--weight-medium);
 }
 
@@ -4742,8 +4448,11 @@ html.resizing-workspace-file-split * {
 .runtime-panel-effort-value {
   flex: 0 0 auto !important;
   color: var(--ink-soft);
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: var(--weight-medium);
+  --enter-opacity: 0.4;
+  --enter-y: 3px;
+  animation: wuu-enter var(--motion-base) var(--ease-out);
 }
 
 .runtime-panel-model > svg:last-child {
@@ -4763,18 +4472,18 @@ html.resizing-workspace-file-split * {
 .runtime-panel-header {
   position: relative;
   display: flex;
-  height: 40px;
+  height: var(--runtime-header);
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   padding: 0 40px;
-  font-size: 13px;
+  font-size: var(--font-menu);
   font-weight: var(--weight-medium);
 }
 
 .codex-runtime-menu .runtime-panel-back {
   position: absolute;
-  top: 4px;
+  top: calc((var(--runtime-header) - 32px) / 2);
   left: 8px;
   width: 32px;
   height: 32px;
@@ -4784,7 +4493,7 @@ html.resizing-workspace-file-split * {
 }
 
 .runtime-panel.is-models:not(:has(.select-menu-search)) .codex-model-groups {
-  padding-top: 8px;
+  padding-top: var(--menu-inset);
 }
 
 .runtime-panel-list,
@@ -4793,18 +4502,18 @@ html.resizing-workspace-file-split * {
   flex: 1 1 auto;
   align-content: start;
   overflow-y: auto;
-  padding: 0 8px 8px;
+  padding: 0 var(--menu-inset) var(--menu-inset);
 }
 
 .runtime-panel-list.runtime-provider-options {
-  padding-top: 8px;
+  padding-top: var(--menu-inset);
 }
 
 .runtime-panel .runtime-engine-options,
 .runtime-provider-options {
   display: grid;
   align-content: start;
-  grid-auto-rows: 36px;
+  grid-auto-rows: var(--runtime-row);
   gap: 1px;
 }
 
@@ -4812,11 +4521,11 @@ html.resizing-workspace-file-split * {
 .codex-runtime-menu .runtime-provider-option,
 .runtime-panel .codex-model-item {
   width: 100%;
-  height: 36px;
+  height: var(--runtime-row);
   flex: 0 0 auto;
   padding: 0 10px;
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--font-menu);
   font-weight: var(--weight-medium);
 }
 
@@ -4826,7 +4535,7 @@ html.resizing-workspace-file-split * {
   background: var(--selection-surface);
 }
 
-.runtime-panel .runtime-engine-option[aria-checked="true"] > svg,
+.runtime-panel .runtime-engine-option[aria-checked="true"] > svg:not(.engine-icon),
 .runtime-panel .runtime-provider-option[aria-checked="true"] > svg,
 .runtime-panel .codex-model-item[aria-checked="true"] > svg {
   color: var(--ink-secondary);
@@ -4835,7 +4544,7 @@ html.resizing-workspace-file-split * {
 .runtime-panel .codex-model-group {
   display: grid;
   align-content: start;
-  grid-auto-rows: 36px;
+  grid-auto-rows: var(--runtime-row);
   gap: 1px;
 }
 
@@ -4844,14 +4553,22 @@ html.resizing-workspace-file-split * {
   margin: 4px 4px 0;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .codex-model-menu.runtime-panel {
     transition: none;
   }
 
   .runtime-panel-page.is-forward,
-  .runtime-panel-page.is-back {
+  .runtime-panel-page.is-back,
+  .runtime-panel-effort-value,
+  .codex-runtime-label.is-changed {
     animation: none;
+  }
+
+  .codex-runtime-trigger,
+  .codex-runtime-trigger > svg.icon,
+  .codex-effort-knob {
+    transition: none;
   }
 }
 
@@ -4862,7 +4579,11 @@ html.resizing-workspace-file-split * {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: none;
-  scrollbar-gutter: stable;
+  /* Reserve the classic scrollbar gutter on BOTH edges. A right-only gutter
+     would move the content box half a gutter left of the pane's centerline,
+     dragging the message flow — and the dock composer that mirrors this box —
+     with it. */
+  scrollbar-gutter: stable both-edges;
   transition: padding-right var(--environment-flow-motion-duration) var(--environment-panel-motion-easing);
   transition-delay: 0ms;
 }
@@ -4909,10 +4630,13 @@ html.resizing-workspace-file-split * {
   /* At the latest position, leave room for the controls. Unlike a viewport
      cutoff, this trailing space scrolls away when reading earlier messages. */
   --conversation-flow-bottom-space: calc(
-    var(--conversation-composer-clearance) + var(--session-tail-space, 0px) +
-    var(--conversation-status-space, 0px) + var(--dock-composer-height) -
-    var(--conversation-input-inset, var(--dock-composer-height))
+    var(--conversation-composer-clearance) + var(--conversation-status-space, 0px) +
+    var(--dock-composer-height) - var(--conversation-input-inset, var(--dock-composer-height))
   );
+  /* The first-send lead and a submission's reading reservation are padding on
+     the outer content wrapper, so their per-frame changes do not restyle the
+     conversation through an inherited variable. */
+  padding-top: var(--conversation-flow-top-gap);
   padding-bottom: var(--conversation-flow-bottom-space);
 }
 
@@ -5011,7 +4735,8 @@ html.resizing-workspace-file-split * {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: none;
-  scrollbar-gutter: stable;
+  /* Both edges, so a split pane's history keeps the pane's centerline. */
+  scrollbar-gutter: stable both-edges;
 }
 
 @media (pointer: coarse) {
@@ -5044,41 +4769,30 @@ html.resizing-workspace-file-split * {
   box-shadow: inset 0 0 0 1px var(--ink-overlay-18);
 }
 
-.split-composer .composer-collapsed-prompt-list {
-  margin: 0;
-  max-height: min(120px, 18vh);
-}
-
-.split-composer-bar {
-  container: split-composer-toolbar / inline-size;
-}
-
-.split-composer-status {
-  display: flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  align-items: center;
-  overflow: hidden;
-  padding: 0;
-  background: transparent;
-  color: var(--ink-tertiary);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-medium);
-  line-height: var(--line-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-@container split-composer-toolbar (max-width: 300px) {
-  .split-composer-status {
-    display: none;
-  }
-}
-
 /* Global scrollbar styling lives in styles/scrollbars.css. The conversation
  * panes opt into a stable gutter so the layout never shifts when the
- * thumb fades in or out. */
+ * thumb fades in or out, and reserve it on both edges so the flow stays on
+ * the pane's centerline (see .scroll-region above). */
 .scroll-region:not(.empty-scroll-region):not(.workspace-scroll-region),
 .conversation-split-body {
-  scrollbar-gutter: stable;
+  scrollbar-gutter: stable both-edges;
+}
+
+/* Speed is independent of the model and reasoning slider. */
+.codex-runtime-menu .runtime-panel-context .runtime-panel-fast,
+.codex-runtime-menu .runtime-panel-context .runtime-panel-speed-reset {
+  flex: 0 0 auto;
+  width: var(--runtime-context-row);
+  padding: 0;
+  justify-content: center;
+}
+.codex-runtime-menu .runtime-panel-context .runtime-panel-speed-reset {
+  margin-left: auto;
+}
+.codex-runtime-menu .runtime-panel-fast[aria-pressed="true"],
+.codex-runtime-menu .runtime-panel-fast[aria-pressed="true"] > svg {
+  color: var(--interaction-accent);
+}
+.codex-runtime-menu .runtime-panel-fast[aria-pressed="true"] > svg {
+  fill: currentColor;
 }

@@ -3,12 +3,14 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
+	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -305,4 +307,68 @@ func TestServerThreadStartMirrorsExplicitEffortIntoVariant(t *testing.T) {
 		t.Fatalf("thread/start dropped the explicit level: variant=%q effort=%q",
 			started.ModelVariant, started.ModelEffort)
 	}
+}
+
+func TestServerThreadStartDoesNotInheritWuuRuntimeForProtocolEngines(t *testing.T) {
+	client := &fakeClient{responses: []providers.ChatResponse{{Content: "answer"}}}
+	rt := newTestRuntime(t, client)
+	rt.StreamRunner.Effort = "high"
+	rt.StreamRunner.Variant = "max"
+	reg := agentengine.NewRegistry()
+	if err := reg.Register(stubProtocolEngine{id: "wuu"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Register(stubProtocolEngine{id: "cursor"}); err != nil {
+		t.Fatal(err)
+	}
+	// newTestRuntime leaves the registry nil; attach one so cursor is available.
+	rt.SetEnginesForTest(reg)
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+
+	payload, _ := json.Marshal(map[string]any{
+		"id": "1", "method": MethodThreadStart,
+		"params": ThreadStartParams{Engine: "cursor"},
+	})
+	if err := srv.handleLine(context.Background(), payload); err != nil {
+		t.Fatalf("thread/start: %v", err)
+	}
+	resp := responseByID(t, parseOutput(t, out.String()), "1")
+	if resp["error"] != nil {
+		t.Fatalf("thread/start error: %+v", resp["error"])
+	}
+	started := remarshal[ThreadStartResult](t, resp["result"]).Thread
+	if started.EngineID != "cursor" {
+		t.Fatalf("engine = %q provider=%q, want cursor", started.EngineID, started.ModelProvider)
+	}
+	if started.Model != "" || started.ModelEffort != "" || started.ModelVariant != "" {
+		t.Fatalf("protocol engine inherited Wuu runtime: model=%q effort=%q variant=%q",
+			started.Model, started.ModelEffort, started.ModelVariant)
+	}
+
+	payload, _ = json.Marshal(map[string]any{
+		"id": "2", "method": MethodThreadStart,
+		"params": ThreadStartParams{Engine: "cursor", Model: "native-model", Effort: "low"},
+	})
+	if err := srv.handleLine(context.Background(), payload); err != nil {
+		t.Fatalf("thread/start with native options: %v", err)
+	}
+	started = remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "2")["result"]).Thread
+	if started.Model != "native-model" || started.ModelEffort != "low" || started.ModelVariant != "" {
+		t.Fatalf("explicit protocol options not stored: model=%q effort=%q variant=%q",
+			started.Model, started.ModelEffort, started.ModelVariant)
+	}
+}
+
+type stubProtocolEngine struct{ id agentengine.EngineID }
+
+func (e stubProtocolEngine) Descriptor(context.Context) (agentengine.Descriptor, error) {
+	return agentengine.Descriptor{ID: e.id, Version: "1"}, nil
+}
+func (stubProtocolEngine) Open(context.Context, agentengine.OpenRequest) (agentengine.Session, error) {
+	return nil, errors.New("unused")
+}
+func (stubProtocolEngine) Resume(context.Context, agentengine.ResumeRequest) (agentengine.Session, error) {
+	return nil, errors.New("unused")
 }

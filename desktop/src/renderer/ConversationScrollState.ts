@@ -11,36 +11,44 @@ import type { Turn } from "../shared/protocol";
 import type { ConversationPaneID } from "./AppState";
 import {
   AUTO_FOLLOW_BOTTOM_THRESHOLD_PX,
-  AUTO_FOLLOW_SCROLLBAR_HIDE_DELAY_MS,
   SCROLL_AWAY_KEYS,
   SCROLL_TOWARD_LATEST_KEYS,
   USER_SCROLL_AWAY_INTENT_WINDOW_MS,
   atLatestScrollView,
   clampScrollTop,
+  distanceFromLatestContent,
   eventTargetsNestedAutoFollowScroll,
+  latestFollowScrollTop,
   maxScrollTop,
   observeAutoFollowResizeTargets,
+  scrollTopForDistanceFromLatest,
   selectionIntersectsNode,
   setAutoFollowOverflowAnchor,
+  setSubmitGlideActive,
 } from "./AutoFollowScroll";
-import {
-  createWindowResizeSettleScheduler,
-  isWindowResizing,
-} from "./WindowResizeState";
+import { markScrollbarRevealSelfManaged, revealScrollbar } from "./ScrollbarReveal";
+import { isWindowResizing } from "./WindowResizeState";
 import { markSessionSwitch } from "./SessionSwitchPerformance";
-import { motionDurationMs, prefersReducedMotion } from "./motion";
-import { createMessageScrollMotion, messageMotionTime } from "./MessageScrollMotion";
+import { messageMotionTime, motionDurationMs, motionEasing, prefersReducedMotion, subscribeReducedMotion, cubicBezier } from "./motion";
+import { createScrollGlide, GLIDE_FOLLOW_HANDOFF_VIEWPORTS } from "./ScrollGlide";
 import { useSessionTailSpace } from "./SessionTailSpace";
+import { conversationDisclosureHeight, eventTargetsConversationDisclosure } from "./ConversationDisclosure";
 import { useMessageArrivalMotion } from "./useMessageArrivalMotion";
+import { captureReadingAnchor, readingAnchorScrollTop, type ConversationReadingAnchor } from "./ConversationReadingAnchor";
+import { syncConversationRenderWindow } from "./ConversationRenderWindow";
 
 // Tight threshold so the conversation only re-engages auto-follow when the
 // user is effectively parked at the bottom. The previous 48px band let one
 // mouse-wheel notch land inside the band and silently re-arm auto-follow,
 // which made slow scroll-up get yanked back to the bottom mid-gesture.
 const CONVERSATION_AUTO_SCROLL_THRESHOLD_PX = AUTO_FOLLOW_BOTTOM_THRESHOLD_PX;
-const CONVERSATION_SCROLLBAR_HIDE_DELAY_MS = AUTO_FOLLOW_SCROLLBAR_HIDE_DELAY_MS;
-const CONVERSATION_USER_SCROLL_AWAY_INTENT_WINDOW_MS =
+const CONVERSATION_USER_SCROLL_INTENT_WINDOW_MS =
   USER_SCROLL_AWAY_INTENT_WINDOW_MS;
+// Wider band for a reader moving back down toward latest. Output streamed
+// while a wheel or scrollbar motion settles moves the bottom after that
+// motion's destination was fixed, so an explicit return could land a few lines
+// short and stay paused under a growing reply. Upward movement never re-arms.
+const CONVERSATION_RETURN_TO_LATEST_PX = 96;
 export function wheelDeltaPixels(
   event: WheelEvent,
   viewportHeight: number,
@@ -59,9 +67,40 @@ const SUBMITTED_CONTEXT_MIN_FRACTION = 0.16;
 const SUBMITTED_CONTEXT_MAX_FRACTION = 0.24;
 const SUBMITTED_MESSAGE_MIN_FRACTION = 0.25;
 const SUBMITTED_MESSAGE_MAX_FRACTION = 0.35;
+/** Hides the submitted turn's status on the content wrapper while its bubble
+ * is being placed. The status is not part of what the user sent, so it enters
+ * once the bubble arrives instead of travelling with it. */
+const SUBMIT_PLACING_ATTR = "data-submit-placing";
+/** Remaining placement distance at which the status enters. Below this the
+ * glide only creeps, so the entrance overlaps the bubble settling. */
+const SUBMIT_STATUS_REVEAL_PX = 8;
 
 function clampFraction(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+function restoredScrollTop(
+  node: HTMLElement,
+  snapshot: { scrollTop: number; distanceFromLatest?: number; submittedMessageID?: string; readingAnchor?: ConversationReadingAnchor },
+  submissionOffset = 0,
+): number {
+  if (snapshot.readingAnchor) {
+    // A paused reader's place is content-relative. A hidden stream may grow
+    // below the reader, history may grow above it, and a settled answer may
+    // rewrite what lies between the reader and an older submission; only the
+    // anchor's actual movement changes the restored offset.
+    const anchored = readingAnchorScrollTop(node, snapshot.readingAnchor);
+    if (anchored !== undefined) return anchored;
+  }
+  // A placed submission owns the reading frame: its tail reservation is rebased
+  // to the incoming history window by the message's movement, so the saved
+  // offset lives in that coordinate system. Distance-from-latest only serves
+  // frozen snapshots.
+  if (snapshot.submittedMessageID !== undefined) return snapshot.scrollTop + submissionOffset;
+  if (snapshot.readingAnchor) return snapshot.scrollTop;
+  return snapshot.distanceFromLatest === undefined
+    ? snapshot.scrollTop
+    : scrollTopForDistanceFromLatest(node, snapshot.distanceFromLatest);
 }
 
 /**
@@ -109,6 +148,63 @@ function submittedMessagePlacement(viewport: HTMLElement, message: HTMLElement) 
   };
 }
 
+type SubmitGlideAnchor = {
+  documentTop: number;
+  /** Screen position the glide approaches: documentTop minus the destination scroll. */
+  targetScreen: number;
+  viewportHeight: number;
+  /** Latest-content scroll captured with this anchor, so later frames do not remeasure. */
+  followTop: number;
+};
+
+function submitGlideAnchor(viewport: HTMLElement, message: HTMLElement): SubmitGlideAnchor {
+  const live = submittedMessagePlacement(viewport, message);
+  return {
+    documentTop: live.documentTop,
+    targetScreen: live.documentTop - live.targetTop,
+    viewportHeight: viewport.clientHeight,
+    followTop: latestFollowScrollTop(viewport),
+  };
+}
+
+function submittedGroupHeight(message: HTMLElement): number {
+  const messageRect = message.getBoundingClientRect();
+  let bottom = messageRect.bottom;
+  const turn = message.closest(".turn") ?? message.parentElement;
+  if (turn) {
+    for (const child of Array.from(turn.children)) {
+      if (!(child instanceof HTMLElement) || child === message || message.contains(child)) continue;
+      if (child.classList.contains("assistant-turn-shell") || child.hasAttribute("data-submitted-motion")) {
+        const rect = child.getBoundingClientRect();
+        if (Number.isFinite(rect.bottom)) bottom = Math.max(bottom, rect.bottom);
+      }
+    }
+  }
+  return Math.max(0, bottom - messageRect.top);
+}
+
+/**
+ * Where a newly submitted turn would sit if it were still parked on the
+ * composer. The first turn has no scroll range, so a lead spacer parks the
+ * whole turn — bubble and in-progress timer — there, then the same glide
+ * consumes that spacer. Do not add a second transform on the bubble.
+ */
+function submittedComposerScreenTop(
+  viewport: HTMLElement,
+  message: HTMLElement,
+  composer: HTMLElement | null,
+): number {
+  const groupHeight = submittedGroupHeight(message);
+  if (composer) {
+    const viewportTop = viewport.getBoundingClientRect().top;
+    const composerTop = composer.getBoundingClientRect().top;
+    if (Number.isFinite(viewportTop) && Number.isFinite(composerTop)) {
+      return composerTop - viewportTop - groupHeight;
+    }
+  }
+  return viewport.clientHeight - groupHeight;
+}
+
 function cssPixelValue(value: string): number {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
@@ -137,10 +233,14 @@ type ConversationScrollMode = "following" | "paused" | SubmissionScrollPhase;
 
 export type ConversationScrollSnapshot = {
   scrollTop: number;
+  distanceFromLatest: number;
   autoFollow: boolean;
   submissionPhase?: SubmissionScrollPhase;
   submittedMessageID?: string;
+  readingAnchor?: ConversationReadingAnchor;
 };
+
+type ThreadScrollSnapshot = ConversationScrollSnapshot & { submittedMessageTop?: number };
 
 export function useConversationScrollState({
   activeThreadID,
@@ -151,7 +251,6 @@ export function useConversationScrollState({
   emptyConversation,
   initialized,
   running = false,
-  statusClusterNode = null,
   nativeScrollBounce = window.wuu?.platform === "darwin" && window.wuu?.hostKind !== "web",
 }: {
   activeThreadID?: string;
@@ -162,7 +261,6 @@ export function useConversationScrollState({
   emptyConversation: boolean;
   initialized: boolean;
   running?: boolean;
-  statusClusterNode?: HTMLElement | null;
   /** Use the macOS/AppKit rubber band instead of synthesizing wheel motion. */
   nativeScrollBounce?: boolean;
 }): {
@@ -178,13 +276,14 @@ export function useConversationScrollState({
    * measurement — see JumpToLatestPill's anchored mode.
    */
   dockComposerNode: HTMLElement | null;
+  statusClusterRef: (node: HTMLDivElement | null) => void;
   scheduleStreamScroll: () => void;
   handleConversationScroll: (scrolledNode?: HTMLElement) => void;
   enableConversationAutoFollow: () => void;
+  /** Glide to the latest content and keep following it. */
+  jumpToLatest: () => void;
   /** Position this submission once its optimistic bubble has mounted. */
   requestSubmittedQueryScroll: (messageID: string) => void;
-  /** Queue/steer inputs are positioned only when their exact source materializes. */
-  requestDeferredQueryScroll: (sourceID: string) => void;
   acknowledgeSubmittedMessage: (pendingID: string, messageID: string) => void;
   discardSubmittedMessage: (messageID: string) => void;
   /**
@@ -209,11 +308,53 @@ export function useConversationScrollState({
     secondary: null
   });
   const conversationPaneRef = useRef<HTMLElement | null>(null);
-  const submissionRef = useRef<{ messageID: string; threadID?: string; animate: boolean } | undefined>(undefined);
-  const deferredSubmissionRef = useRef(new Set<string>());
+  const submissionRef = useRef<{
+    messageID: string;
+    threadID?: string;
+    animate: boolean;
+    documentTop?: number;
+    /** The thread's turns have contained this message ID since it was assigned. */
+    inThread?: boolean;
+  } | undefined>(undefined);
   // Exactly one owner can write scrollTop. Geometry alone cannot transfer
   // ownership: a submission's padded bottom is not the bottom of its output.
   const scrollModeRef = useRef<ConversationScrollMode>("following");
+  const runningRef = useRef(running);
+  runningRef.current = running;
+  const [statusClusterNode, setStatusClusterNode] = useState<HTMLDivElement | null>(null);
+  const statusClusterNodeRef = useRef<HTMLDivElement | null>(null);
+  const statusClusterRef = useCallback((node: HTMLDivElement | null) => {
+    // Ref attachment precedes layout effects; state alone still describes the
+    // outgoing row when the incoming conversation restores its reading position.
+    statusClusterNodeRef.current = node;
+    setStatusClusterNode(node);
+  }, []);
+  function syncStreamFollowing(): void {
+    // Scroll-linked fades and the live text wave repaint on every chunk
+    // while the viewport is pinned to a running turn. The attribute lets
+    // CSS drop those layers without a React render.
+    const degrade = runningRef.current && scrollModeRef.current !== "paused";
+    const root = document.documentElement;
+    if (root.hasAttribute("data-stream-following") === degrade) return;
+    if (degrade) root.setAttribute("data-stream-following", "");
+    else root.removeAttribute("data-stream-following");
+  }
+  function writeScrollMode(mode: ConversationScrollMode): void {
+    scrollModeRef.current = mode;
+    syncStreamFollowing();
+    // Any exit from placing (landing, cancellation, a missing pane) must
+    // leave the status visible.
+    scrollContentRef.current?.toggleAttribute(SUBMIT_PLACING_ATTR, mode === "placing");
+    // Readers of the conversation scrollport skip geometry work for the
+    // duration and catch up when this clears.
+    setSubmitGlideActive(mode === "placing");
+  }
+  useEffect(() => {
+    syncStreamFollowing();
+    return () => {
+      document.documentElement.removeAttribute("data-stream-following");
+    };
+  }, [running]);
   function isFollowing(): boolean { return scrollModeRef.current === "following"; }
   function submissionPhase(): SubmissionScrollPhase | undefined {
     const mode = scrollModeRef.current;
@@ -221,38 +362,87 @@ export function useConversationScrollState({
   }
   const { reconcile: reconcileArrivals, acknowledge: acknowledgeArrival, cancel: cancelArrivals } = useMessageArrivalMotion();
   const previousThreadRef = useRef(activeThreadID);
+  // Layout from the pane swap clamps scrollTop and fires scroll before this
+  // hook can restore the incoming snapshot. Handling that event would save
+  // the clamp as the thread's reading position.
+  const restoreScrollLockRef = useRef(false);
+  if (previousThreadRef.current !== activeThreadID) {
+    restoreScrollLockRef.current = true;
+  }
   const [dockComposerNode, setDockComposerNode] = useState<HTMLElement | null>(null);
   const dockComposerRef = useCallback((node: HTMLElement | null) => {
     setDockComposerNode(node);
   }, []);
   const dockComposerHeightRef = useRef(0);
+  const syncDockComposerGeometry = useCallback((): void => {
+    const pane = conversationPaneRef.current;
+    const nextHeight = dockComposerNode ? dockComposerVisualHeight(dockComposerNode) : 0;
+    const input = dockComposerNode?.querySelector<HTMLElement>(".composer-frame");
+    const inputInset = input && dockComposerNode
+      ? Math.max(0, Math.ceil(dockComposerNode.getBoundingClientRect().bottom - input.getBoundingClientRect().top))
+      : nextHeight;
+    const heightValue = `${nextHeight}px`;
+    const insetValue = `${inputInset}px`;
+    if (dockComposerHeightRef.current === nextHeight &&
+      pane?.style.getPropertyValue("--dock-composer-height") === heightValue &&
+      pane?.style.getPropertyValue("--conversation-input-inset") === insetValue) return;
+    dockComposerHeightRef.current = nextHeight;
+    pane?.style.setProperty("--dock-composer-height", heightValue);
+    pane?.style.setProperty("--conversation-input-inset", insetValue);
+  }, [dockComposerNode]);
+  /** Returns whether the reserved status-row space changed. */
+  const syncConversationStatusSpace = useCallback((): boolean => {
+    const pane = conversationPaneRef.current;
+    const cluster = statusClusterNodeRef.current;
+    if (!pane) return false;
+    const height = cluster?.getBoundingClientRect().height ?? 0;
+    const gap = cluster
+      ? cssPixelValue(window.getComputedStyle(cluster).getPropertyValue("--conversation-status-gap"))
+      : 0;
+    const value = `${height > 0 ? Math.ceil(height + gap) : 0}px`;
+    if (pane.style.getPropertyValue("--conversation-status-space") === value) return false;
+    pane.style.setProperty("--conversation-status-space", value);
+    return true;
+  }, []);
   const setAutoFollow = useCallback((next: boolean): void => {
-    scrollModeRef.current = next ? "following" : "paused";
+    // A later ownership change supersedes a pending gesture's restoration.
+    if (pointerScrollGestureRef.current) {
+      pointerScrollGestureRef.current.resumeScrollTop = undefined;
+      pointerScrollGestureRef.current.followOnRelease = false;
+    }
+    writeScrollMode(next ? "following" : "paused");
   }, []);
   const lastConversationScrollTopRef = useRef(0);
+  const lastDisclosureHeightRef = useRef(0);
   const programmaticScrollTopRef = useRef<number | undefined>(undefined);
   const suppressAutoFollowRearmRef = useRef(false);
-  const smoothAutoFollowRef = useRef(false);
-  const submittedScrollFrameRef = useRef<number | undefined>(undefined);
+  // A follow that animates toward the live bottom (jump to latest, the split
+  // submit) re-reads its target each frame, so instant follow writes defer
+  // to it until it lands.
+  const followMotionRef = useRef(false);
+  /** Frame of whichever programmatic motion owns the viewport; input cancels it. */
+  const motionFrameRef = useRef<number | undefined>(undefined);
   const reflowSubmittedMotionRef = useRef<(() => void) | undefined>(undefined);
+  const leadSpaceRef = useRef(0);
   const positionSubmittedMessageRef = useRef<((animate: boolean) => boolean) | undefined>(undefined);
   const selectionPausedAutoFollowRef = useRef(false);
   const pointerScrollGestureRef = useRef<
-    { node: HTMLElement; scrollTop: number; scrollHeight: number } | undefined
+    {
+      node: HTMLElement;
+      scrollTop: number;
+      scrollHeight: number;
+      resumeScrollTop?: number;
+      followOnRelease?: boolean;
+    } | undefined
   >(undefined);
-  const userScrollAwayIntentRef = useRef(false);
-  const userScrollAwayIntentTimerRef = useRef<number | undefined>(undefined);
+  const userScrollIntentRef = useRef<"away" | "latest" | undefined>(undefined);
+  const userScrollIntentTimerRef = useRef<number | undefined>(undefined);
   const userScrollAwayStartTopRef = useRef<number | undefined>(undefined);
   const touchLastYRef = useRef<number | undefined>(undefined);
   const threadScrollSnapshotsRef = useRef(
-    new Map<string, ConversationScrollSnapshot>()
+    new Map<string, ThreadScrollSnapshot>()
   );
   const streamScrollFrameRef = useRef<number | undefined>(undefined);
-  const liveResizeScrollFrameRef = useRef<number | undefined>(undefined);
-  const resizeSettleStreamScrollRef = useRef<ReturnType<
-    typeof createWindowResizeSettleScheduler
-  > | null>(null);
-  const conversationScrollbarHideTimerRef = useRef<number | undefined>(undefined);
   const scrollContentRef = useRef<HTMLDivElement | null>(null);
   const bottomOverscrollFromAwayRef = useRef(false);
 
@@ -266,10 +456,16 @@ export function useConversationScrollState({
   }, []);
 
   function conversationViewport(): HTMLElement | undefined {
-    if (splitConversation) {
-      return splitPaneRefs.current[activePane] ?? undefined;
+    const node = splitConversation
+      ? splitPaneRefs.current[activePane] ?? undefined
+      : conversationScrollRef.current ?? undefined;
+    if (node) {
+      // The controller owns this node's reveal — it can tell a layout clamp
+      // from content movement, which the global scroll listener cannot — so
+      // the listener must leave the node alone.
+      markScrollbarRevealSelfManaged(node);
     }
-    return conversationScrollRef.current ?? undefined;
+    return node;
   }
 
   function setNativeBottomOverscrollEnabled(
@@ -290,84 +486,105 @@ export function useConversationScrollState({
   }
 
   function showConversationScrollbar(node: HTMLElement): void {
+    // Empty and workspace panes have no conversation to scroll; their gutter is
+    // layout compensation, not overflow.
     if (
       node.classList.contains("empty-scroll-region") ||
-      node.classList.contains("workspace-scroll-region") ||
-      node.scrollHeight <= node.clientHeight
+      node.classList.contains("workspace-scroll-region")
     ) {
       return;
     }
-    node.classList.add("scrollbar-visible");
-    if (conversationScrollbarHideTimerRef.current !== undefined) {
-      window.clearTimeout(conversationScrollbarHideTimerRef.current);
-    }
-    conversationScrollbarHideTimerRef.current = window.setTimeout(() => {
-      conversationScrollbarHideTimerRef.current = undefined;
-      node.classList.remove("scrollbar-visible");
-    }, CONVERSATION_SCROLLBAR_HIDE_DELAY_MS);
+    revealScrollbar(node);
   }
 
   function rememberThreadScrollSnapshot(
     threadID: string,
     node: HTMLElement,
-    autoFollow: boolean
+    autoFollow: boolean,
+    scrollTop?: number,
+    distanceFromLatest?: number,
   ): void {
+    const submission = submissionRef.current;
+    // Animation frames already measured the anchor while placing the bubble.
+    // Refresh it for ordinary scrolling without adding geometry reads per frame.
+    if (submission && !autoFollow && scrollTop === undefined) {
+      const message = submittedMessage();
+      if (message) submission.documentTop = submittedMessagePlacement(node, message).documentTop;
+    }
+    const nextTop = scrollTop ?? clampScrollTop(node, node.scrollTop);
     threadScrollSnapshotsRef.current.set(threadID, {
-      scrollTop: clampScrollTop(node, node.scrollTop),
+      // Callers already scrolling inside a frame pass the offset they reached,
+      // so this never re-measures the scroller while motion is in flight.
+      scrollTop: nextTop,
+      distanceFromLatest: distanceFromLatest ?? Math.max(0, latestFollowScrollTop(node) - nextTop),
+      readingAnchor: !autoFollow && !submissionPhase() ? captureReadingAnchor(node) : undefined,
       autoFollow,
       submissionPhase: submissionPhase(),
       submittedMessageID: submissionRef.current?.messageID,
+      submittedMessageTop: submission?.documentTop,
     });
   }
 
   function rememberActiveThreadScrollSnapshot(
     node: HTMLElement,
-    autoFollow: boolean
+    autoFollow: boolean,
+    scrollTop?: number,
+    distanceFromLatest?: number,
   ): void {
     if (!activeThreadID) {
       return;
     }
-    rememberThreadScrollSnapshot(activeThreadID, node, autoFollow);
+    rememberThreadScrollSnapshot(activeThreadID, node, autoFollow, scrollTop, distanceFromLatest);
   }
 
-  const clearUserScrollAwayIntent = useCallback((): void => {
-    userScrollAwayIntentRef.current = false;
+  const clearUserScrollIntent = useCallback((): void => {
+    userScrollIntentRef.current = undefined;
     userScrollAwayStartTopRef.current = undefined;
     touchLastYRef.current = undefined;
-    if (userScrollAwayIntentTimerRef.current !== undefined) {
-      window.clearTimeout(userScrollAwayIntentTimerRef.current);
-      userScrollAwayIntentTimerRef.current = undefined;
+    if (userScrollIntentTimerRef.current !== undefined) {
+      window.clearTimeout(userScrollIntentTimerRef.current);
+      userScrollIntentTimerRef.current = undefined;
     }
   }, []);
 
-  const cancelSubmittedQueryScroll = useCallback((): void => {
+  const applyLeadSpace = useCallback((px: number): void => {
+    const next = px <= 1 ? 0 : px;
+    leadSpaceRef.current = next;
+    const content = scrollContentRef.current;
+    if (!content) return;
+    // This changes every animation frame. An inherited variable on the pane
+    // invalidates the composer and every cached turn as well as the spacer.
+    // Keep the lead in flow, but change only the content wrapper's box.
+    const value = next === 0 ? "" : `${next}px`;
+    if (content.style.paddingTop !== value) content.style.paddingTop = value;
+  }, []);
+
+  const cancelScrollMotion = useCallback((): void => {
     reflowSubmittedMotionRef.current = undefined;
-    if (smoothAutoFollowRef.current) suppressAutoFollowRearmRef.current = false;
-    smoothAutoFollowRef.current = false;
-    if (submittedScrollFrameRef.current !== undefined) {
-      window.cancelAnimationFrame(submittedScrollFrameRef.current);
-      submittedScrollFrameRef.current = undefined;
+    applyLeadSpace(0);
+    if (followMotionRef.current) suppressAutoFollowRearmRef.current = false;
+    followMotionRef.current = false;
+    if (motionFrameRef.current !== undefined) {
+      window.cancelAnimationFrame(motionFrameRef.current);
+      motionFrameRef.current = undefined;
     }
-    if (scrollModeRef.current === "placing") scrollModeRef.current = "holding";
-  }, []);
+    if (scrollModeRef.current === "placing") writeScrollMode("holding");
+  }, [applyLeadSpace]);
 
-  const markUserScrollAwayIntent = useCallback((startTop?: number): void => {
-    deferredSubmissionRef.current.clear();
-    cancelSubmittedQueryScroll();
+  const markUserScrollIntent = useCallback((direction: "away" | "latest", startTop?: number): void => {
+    cancelScrollMotion();
     if (submissionPhase()) setAutoFollow(false);
-    userScrollAwayIntentRef.current = true;
-    if (startTop !== undefined) {
-      userScrollAwayStartTopRef.current = startTop;
+    userScrollIntentRef.current = direction;
+    userScrollAwayStartTopRef.current = direction === "away" ? startTop : undefined;
+    if (userScrollIntentTimerRef.current !== undefined) {
+      window.clearTimeout(userScrollIntentTimerRef.current);
     }
-    if (userScrollAwayIntentTimerRef.current !== undefined) {
-      window.clearTimeout(userScrollAwayIntentTimerRef.current);
-    }
-    userScrollAwayIntentTimerRef.current = window.setTimeout(() => {
-      userScrollAwayIntentRef.current = false;
+    userScrollIntentTimerRef.current = window.setTimeout(() => {
+      userScrollIntentRef.current = undefined;
       userScrollAwayStartTopRef.current = undefined;
-      userScrollAwayIntentTimerRef.current = undefined;
-    }, CONVERSATION_USER_SCROLL_AWAY_INTENT_WINDOW_MS);
-  }, [cancelSubmittedQueryScroll]);
+      userScrollIntentTimerRef.current = undefined;
+    }, CONVERSATION_USER_SCROLL_INTENT_WINDOW_MS);
+  }, [cancelScrollMotion]);
 
   function applyProgrammaticScroll(
     node: HTMLElement,
@@ -375,8 +592,9 @@ export function useConversationScrollState({
     autoFollow: boolean,
     options: { revealScrollbar?: boolean } = {}
   ): void {
-    cancelSubmittedQueryScroll();
-    clearUserScrollAwayIntent();
+    pointerScrollGestureRef.current = undefined;
+    cancelScrollMotion();
+    clearUserScrollIntent();
     cancelBottomOverscroll(node);
     suppressAutoFollowRearmRef.current = false;
     selectionPausedAutoFollowRef.current = false;
@@ -387,8 +605,11 @@ export function useConversationScrollState({
     if (Math.abs(node.scrollTop - actualTop) > 1) {
       node.scrollTop = actualTop;
     }
+    // Callers run inside frames that paint before this write's scroll event.
+    if (moved) syncConversationRenderWindow(node);
     programmaticScrollTopRef.current = actualTop;
     lastConversationScrollTopRef.current = actualTop;
+    lastDisclosureHeightRef.current = conversationDisclosureHeight(node);
     const nextAutoFollow = autoFollow;
     if (!submissionPhase()) setAutoFollow(nextAutoFollow);
     setAutoFollowOverflowAnchor(node, nextAutoFollow || Boolean(submissionPhase()));
@@ -400,29 +621,49 @@ export function useConversationScrollState({
 
   const adoptingSubmission = Boolean(submissionRef.current && !submissionRef.current.threadID && activeThreadID &&
     primaryTurns?.some(turn => turn.items.some(item => item.id === submissionRef.current?.messageID)));
-  const submittedMessage = useCallback(() => {
+  const submittedMessage = useCallback((messageID = submissionRef.current?.messageID) => {
     const viewport = conversationViewport();
     return Array.from(viewport?.querySelectorAll<HTMLElement>("[data-user-message-id]") ?? [])
-      .find(node => node.dataset.userMessageId === submissionRef.current?.messageID && !node.closest('[aria-hidden="true"]'));
+      .find(node => node.dataset.userMessageId === messageID && !node.closest('[aria-hidden="true"]'));
   }, [activePane, splitConversation]);
   const reconcileSubmittedArrival = useCallback(() => {
     const message = splitConversation ? undefined : submittedMessage();
     const element = message?.querySelector<HTMLElement>("[data-message-arrival]");
     reconcileArrivals(element && submissionRef.current
-      ? [{ id: submissionRef.current.messageID, element, own: true, fresh: submissionRef.current.animate }]
+      ? [{
+        id: submissionRef.current.messageID,
+        element,
+        own: true,
+        // A first-turn lead spacer is the entrance. An opacity fade on the
+        // same bubble is a second motion and reads as the two fighting.
+        fresh: submissionRef.current.animate && leadSpaceRef.current <= 1,
+      }]
       : []);
   }, [reconcileArrivals, splitConversation, submittedMessage]);
-  const { reserve: reserveTailSpace, ensureRange: ensureTailRange, filled: tailFilled, consume: consumeTailSpace, syncLayout: syncTailLayout, discard: discardTailSpace } = useSessionTailSpace({
+  const getRestorationOffset = useCallback(() => {
+    const snapshot = activeThreadID ? threadScrollSnapshotsRef.current.get(activeThreadID) : undefined;
+    const node = conversationViewport();
+    const message = snapshot?.submittedMessageID ? submittedMessage(snapshot.submittedMessageID) : undefined;
+    if (!node || !message || snapshot?.submittedMessageTop === undefined) return 0;
+    return submittedMessagePlacement(node, message).documentTop - snapshot.submittedMessageTop;
+  }, [activeThreadID, activePane, splitConversation, submittedMessage]);
+  const { reserve: reserveTailSpace, ensureRange: ensureTailRange, filled: tailFilled, consume: consumeTailSpace, syncLayout: syncTailLayout, discard: discardTailSpace, restoredOffset } = useSessionTailSpace({
     threadID: activeThreadID,
     enabled: initialized && !emptyConversation && !splitConversation,
     preserveOnThreadChange: adoptingSubmission,
-    paneRef: conversationPaneRef,
     viewportRef: conversationScrollRef,
     contentRef: scrollContentRef,
+    getRestorationOffset,
   });
 
   const scrollConversationToBottom = useCallback((): void => {
     if (previousThreadRef.current !== activeThreadID) return;
+    const node = conversationViewport();
+    const previousMax = node ? maxScrollTop(node) : 0;
+    const restorePausedTop = node && scrollModeRef.current === "paused" &&
+      !userScrollIntentRef.current && !pointerScrollGestureRef.current && !selectionPausedAutoFollowRef.current &&
+      lastConversationScrollTopRef.current > previousMax && node.scrollTop >= previousMax - 1
+      ? lastConversationScrollTopRef.current : undefined;
     // Active placement owns the screen-space trajectory. Once it has settled,
     // preserve the held scroll position if a larger viewport clamps its range.
     if (scrollModeRef.current === "placing") {
@@ -441,10 +682,15 @@ export function useConversationScrollState({
     // later parent render after the bubble has already painted at full opacity.
     reconcileSubmittedArrival();
     syncTailLayout();
+    if (node && restorePausedTop !== undefined && maxScrollTop(node) > previousMax) {
+      // A closing disclosure can clamp against the zero-gap layout before the
+      // reservation is restored. Repair it whether scroll or resize arrives first.
+      node.scrollTop = clampScrollTop(node, restorePausedTop);
+      programmaticScrollTopRef.current = node.scrollTop;
+    }
     // Cached/windowed turns can mount in a child-only commit. The parent
     // layout effect is not guaranteed to run when the exact bubble appears.
     if (scrollModeRef.current === "pending") positionSubmittedMessageRef.current?.(true);
-    const node = conversationViewport();
     if (node && scrollModeRef.current === "holding" &&
       tailFilled(submittedMessage()?.getBoundingClientRect().height ?? 0)) {
       setAutoFollow(true);
@@ -454,14 +700,18 @@ export function useConversationScrollState({
     }
     // The submit animation reads the live bottom itself. A native smooth
     // scroll restarted on every collapsing-card resize never gets up to speed.
-    if (smoothAutoFollowRef.current) return;
+    if (followMotionRef.current) return;
     // Content/layout following is not a user scroll. In particular, keyboard
     // animation must not repeatedly reveal the scrollbar as the viewport shrinks.
-    applyProgrammaticScroll(node, node.scrollHeight, true);
+    applyProgrammaticScroll(
+      node,
+      latestFollowScrollTop(node),
+      true,
+    );
   }, [
     activePane,
     activeThreadID,
-    clearUserScrollAwayIntent,
+    clearUserScrollIntent,
     setAutoFollow,
     splitConversation,
     syncTailLayout,
@@ -470,6 +720,34 @@ export function useConversationScrollState({
     ensureTailRange,
     reconcileSubmittedArrival,
   ]);
+
+  const pinConversationDuringWindowResize = useCallback((): void => {
+    if (previousThreadRef.current !== activeThreadID) {
+      return;
+    }
+    // Placement and the submit glide still own the viewport. A plain follow
+    // only needs the new bottom; measuring every disclosure forces layout
+    // again on each live resize frame.
+    if (
+      scrollModeRef.current === "placing" ||
+      scrollModeRef.current === "holding" ||
+      followMotionRef.current
+    ) {
+      scrollConversationToBottom();
+      return;
+    }
+    const node = conversationViewport();
+    if (!node || !isFollowing()) {
+      return;
+    }
+    const top = latestFollowScrollTop(node);
+    if (node.scrollTop !== top) {
+      node.scrollTop = top;
+    }
+    programmaticScrollTopRef.current = node.scrollTop;
+    lastConversationScrollTopRef.current = node.scrollTop;
+    rememberActiveThreadScrollSnapshot(node, true, node.scrollTop, 0);
+  }, [activePane, activeThreadID, scrollConversationToBottom, splitConversation]);
 
   // A draft can be remounted into a real thread during the same animation.
   // Frame callbacks keep their deadline but must use the current scope's
@@ -486,10 +764,10 @@ export function useConversationScrollState({
     if (submissionRef.current?.messageID !== pendingID) return;
     acknowledgeArrival(pendingID, messageID);
     submissionRef.current.messageID = messageID;
+    submissionRef.current.inThread = false;
   }, [acknowledgeArrival]);
 
   const discardSubmittedMessage = useCallback((messageID: string) => {
-    deferredSubmissionRef.current.delete(messageID);
     for (const [threadID, snapshot] of threadScrollSnapshotsRef.current) {
       if (snapshot.submittedMessageID !== messageID) continue;
       snapshot.submissionPhase = undefined;
@@ -498,7 +776,7 @@ export function useConversationScrollState({
     }
     if (submissionRef.current?.messageID !== messageID) return;
     discardTailSpace(submissionRef.current.threadID);
-    cancelSubmittedQueryScroll();
+    cancelScrollMotion();
     cancelArrivals();
     submissionRef.current = undefined;
     setAutoFollow(false);
@@ -507,96 +785,224 @@ export function useConversationScrollState({
       setAutoFollowOverflowAnchor(node, false);
       rememberActiveThreadScrollSnapshot(node, false);
     }
-  }, [activePane, activeThreadID, splitConversation, discardTailSpace, cancelSubmittedQueryScroll, cancelArrivals, setAutoFollow]);
+  }, [activePane, activeThreadID, splitConversation, discardTailSpace, cancelScrollMotion, cancelArrivals, setAutoFollow]);
 
   const positionSubmittedMessage = useCallback((animate = false): boolean => {
     if (splitConversation || scrollModeRef.current !== "pending") return false;
-    let viewport = conversationViewport();
+    const viewport = conversationViewport();
     if (!viewport) return false;
     const message = submittedMessage();
     if (!message) return false;
-    scrollModeRef.current = "placing";
+    writeScrollMode("placing");
     setAutoFollowOverflowAnchor(viewport, true);
     const placement = submittedMessagePlacement(viewport, message);
+    if (submissionRef.current) submissionRef.current.documentTop = placement.documentTop;
     const targetTop = placement.targetTop;
     reserveTailSpace(targetTop, placement.messageHeight);
     const startTop = clampScrollTop(viewport, viewport.scrollTop);
-    if (!animate || !submissionRef.current?.animate || prefersReducedMotion() || Math.abs(targetTop - startTop) <= 1) {
+    const composerStart = submittedComposerScreenTop(viewport, message, dockComposerNode);
+    const canScroll = Math.abs(targetTop - startTop) > 1;
+    const lift = composerStart - placement.screenTop;
+    const canLift = !canScroll && lift > 1;
+    if (!animate || !submissionRef.current?.animate || prefersReducedMotion() || (!canScroll && !canLift)) {
+      applyLeadSpace(0);
       viewport.scrollTop = targetTop;
       programmaticScrollTopRef.current = clampScrollTop(viewport, viewport.scrollTop);
       lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
-      scrollModeRef.current = "holding";
+      writeScrollMode("holding");
       rememberActiveThreadScrollSnapshot(viewport, false);
       return true;
     }
 
-    const duration = motionDurationMs("--query-scroll-duration", 360);
-    const screenStart = placement.documentTop - startTop;
-    const sample = createMessageScrollMotion(screenStart, placement.documentTop - targetTop, duration);
+    const glide = createScrollGlide();
     let lastFrameTime: number | undefined;
+    const finishHold = (viewport: HTMLElement, placed: number): void => {
+      writeScrollMode("holding");
+      reflowSubmittedMotionRef.current = undefined;
+      submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(viewport, false, placed);
+    };
+    const revealStatusNear = (remaining: number): void => {
+      const content = scrollContentRef.current;
+      if (remaining > SUBMIT_STATUS_REVEAL_PX || !content?.hasAttribute(SUBMIT_PLACING_ATTR)) return;
+      // Start the entrance in the same task that unhides the status, so it
+      // never paints a frame at full opacity. Plain ease-out, not the
+      // front-loaded --ease-out: this should surface, not pop.
+      const landed = submittedMessage();
+      const turn = landed?.closest(".turn") ?? landed?.parentElement;
+      turn?.querySelector<HTMLElement>(":scope > .assistant-turn-shell")?.animate?.([
+        { opacity: 0, transform: "translateY(4px)" },
+        { opacity: 1, transform: "none" },
+      ], {
+        duration: motionDurationMs("--motion-slow", 280),
+        easing: "ease-out",
+        fill: "backwards",
+      });
+      content.removeAttribute(SUBMIT_PLACING_ATTR);
+    };
+    const armFrames = (
+      paint: (now: number | undefined) => void,
+      syncStart: boolean,
+      markDirty: () => void,
+    ): void => {
+      // A React commit or resize retargets the same glide. Steady frames do
+      // not: re-reading geometry there forces a layout of the whole thread.
+      reflowSubmittedMotionRef.current = () => {
+        markDirty();
+        paint(messageMotionTime() ?? lastFrameTime);
+      };
+      if (syncStart) paint(undefined);
+      const step = (now: number): void => {
+        motionFrameRef.current = undefined;
+        lastFrameTime = now;
+        paint(now);
+        if (scrollModeRef.current === "placing") {
+          motionFrameRef.current = window.requestAnimationFrame(step);
+        } else if (scrollModeRef.current === "holding") {
+          submissionFrameCallbacks.current.scrollConversationToBottom();
+        }
+      };
+      motionFrameRef.current = window.requestAnimationFrame(step);
+    };
+
+    if (canLift) {
+      // One writer: consume a lead spacer. The bubble and in-progress timer
+      // stay in document flow, so they cannot drift apart or fight a scroll.
+      glide.start(lift);
+      applyLeadSpace(lift);
+      let liftViewportHeight = viewport.clientHeight;
+      let liftFollowTop = latestFollowScrollTop(viewport);
+      let liftDirty = false;
+      const paint = (now: number | undefined): void => {
+        if (scrollModeRef.current !== "placing") return;
+        const viewport = conversationViewport();
+        if (!viewport) {
+          writeScrollMode("pending");
+          applyLeadSpace(0);
+          return;
+        }
+        if (liftDirty) {
+          liftViewportHeight = viewport.clientHeight;
+          liftFollowTop = latestFollowScrollTop(viewport);
+          liftDirty = false;
+        }
+        const { position, done } = now === undefined
+          ? { position: lift, done: false }
+          : glide.step(now, 0, liftViewportHeight);
+        // Padding is the motion. Do not read it back: the commanded spacer
+        // is the position, and a geometry read would lay the thread out twice.
+        revealStatusNear(position);
+        applyLeadSpace(position);
+        viewport.scrollTop = targetTop;
+        programmaticScrollTopRef.current = targetTop;
+        lastConversationScrollTopRef.current = targetTop;
+        if (done) {
+          applyLeadSpace(0);
+          finishHold(viewport, targetTop);
+          return;
+        }
+        submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(
+          viewport,
+          false,
+          targetTop,
+          Math.max(0, liftFollowTop - targetTop),
+        );
+      };
+      armFrames(paint, true, () => { liftDirty = true; });
+      return true;
+    }
+
+    applyLeadSpace(0);
+    const screenStart = placement.documentTop - startTop;
+    glide.start(screenStart);
     let animatedMessage = message;
+    let anchor: SubmitGlideAnchor = {
+      documentTop: placement.documentTop,
+      targetScreen: placement.documentTop - placement.targetTop,
+      viewportHeight: viewport.clientHeight,
+      followTop: latestFollowScrollTop(viewport),
+    };
+    let anchorDirty = false;
+    let reservedRange: { target: number; clientHeight: number } | undefined;
     const paint = (now: number | undefined): void => {
       if (scrollModeRef.current !== "placing") return;
-      viewport = conversationViewport();
+      const viewport = conversationViewport();
       if (!viewport) {
-        scrollModeRef.current = "pending";
+        writeScrollMode("pending");
         return;
       }
-      // Animate the bubble's position in the reading viewport, not scrollTop.
-      // Reflow moves its document anchor; compensate that displacement directly
-      // so it cannot become a second visible movement or a delayed correction.
+      // A remount keeps the trajectory. Geometry is refreshed only when the
+      // anchor is dirty, so a steady frame does not walk the thread.
       if (animatedMessage.dataset.userMessageId !== submissionRef.current?.messageID || !viewport.contains(animatedMessage)) {
         const replacement = submittedMessage();
         if (!replacement) {
-          scrollModeRef.current = "pending";
+          writeScrollMode("pending");
           return;
         }
         animatedMessage = replacement;
+        anchorDirty = true;
       }
-      const live = submittedMessagePlacement(viewport, animatedMessage);
+      if (anchorDirty) {
+        anchor = submitGlideAnchor(viewport, animatedMessage);
+        if (submissionRef.current) submissionRef.current.documentTop = anchor.documentTop;
+        anchorDirty = false;
+      }
       const { position, done } = now === undefined
         ? { position: screenStart, done: false }
-        : sample(now, live.documentTop - live.targetTop);
-      const top = live.documentTop - position;
-      submissionFrameCallbacks.current.ensureTailRange(Math.max(top, live.targetTop));
+        : glide.step(now, anchor.targetScreen, anchor.viewportHeight);
+      const top = anchor.documentTop - position;
+      // Command the full range first: the reservation is what makes the target
+      // reachable, and the browser clamps against it in the same write. The
+      // reservation only needs re-syncing when its inputs move, and re-syncing
+      // it walks every disclosure in the thread — do that on change, not on
+      // every frame of a glide.
+      const destinationTop = anchor.documentTop - anchor.targetScreen;
+      const range = Math.max(top, destinationTop);
+      if (
+        !reservedRange ||
+        reservedRange.clientHeight !== anchor.viewportHeight ||
+        range > reservedRange.target + 0.5 ||
+        done
+      ) {
+        reservedRange = { target: range, clientHeight: anchor.viewportHeight };
+        submissionFrameCallbacks.current.ensureTailRange(range);
+        anchor.followTop = latestFollowScrollTop(viewport);
+      }
       viewport.scrollTop = top;
-      programmaticScrollTopRef.current = clampScrollTop(viewport, viewport.scrollTop);
-      lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
+      syncConversationRenderWindow(viewport);
+      // The reservation makes this offset reachable, so the commanded value
+      // is the achieved one. Reading scrollTop back would force a second layout.
+      programmaticScrollTopRef.current = top;
+      lastConversationScrollTopRef.current = top;
+      revealStatusNear(Math.abs(anchor.targetScreen - position));
       if (done) {
-        scrollModeRef.current = "holding";
-        reflowSubmittedMotionRef.current = undefined;
+        finishHold(viewport, top);
+        return;
       }
-      submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(viewport, false);
+      submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(
+        viewport,
+        false,
+        top,
+        Math.max(0, anchor.followTop - top),
+      );
     };
-    reflowSubmittedMotionRef.current = () => paint(messageMotionTime() ?? lastFrameTime);
-    const step = (now: number): void => {
-      submittedScrollFrameRef.current = undefined;
-      lastFrameTime = now;
-      paint(now);
-      if (scrollModeRef.current === "placing") {
-        submittedScrollFrameRef.current = window.requestAnimationFrame(step);
-      } else if (scrollModeRef.current === "holding") {
-        submissionFrameCallbacks.current.scrollConversationToBottom();
-      }
-    };
-    submittedScrollFrameRef.current = window.requestAnimationFrame(step);
+    armFrames(paint, false, () => { anchorDirty = true; });
     return true;
-  }, [activePane, activeThreadID, ensureTailRange, reserveTailSpace, scrollConversationToBottom, splitConversation, submittedMessage]);
+  }, [activePane, activeThreadID, applyLeadSpace, dockComposerNode, ensureTailRange, reserveTailSpace, scrollConversationToBottom, splitConversation, submittedMessage]);
 
   useLayoutEffect(() => { positionSubmittedMessageRef.current = positionSubmittedMessage; });
 
-  const requestSubmittedQueryScroll = useCallback((messageID: string, fromQueue = false): void => {
-    if (!fromQueue) deferredSubmissionRef.current.clear();
-    // Collaboration keeps its existing bottom-follow behavior. Ordinary
+  const requestSubmittedQueryScroll = useCallback((messageID: string): void => {
+    // Split panes keep their existing bottom-follow behavior. Ordinary
     // sessions have a different lifecycle: the submitted message is the
     // reading anchor, even when the user had previously browsed history.
     if (splitConversation && !isFollowing()) return;
-    cancelSubmittedQueryScroll();
+    pointerScrollGestureRef.current = undefined;
+    cancelScrollMotion();
     submissionRef.current = { messageID, threadID: activeThreadID, animate: true };
-    clearUserScrollAwayIntent();
+    clearUserScrollIntent();
     cancelBottomOverscroll(conversationViewport());
     selectionPausedAutoFollowRef.current = false;
-    scrollModeRef.current = splitConversation ? "following" : "pending";
+    writeScrollMode(splitConversation ? "following" : "pending");
     const node = conversationViewport();
     if (!node) {
       return;
@@ -611,7 +1017,7 @@ export function useConversationScrollState({
       return;
     }
     const smooth = !prefersReducedMotion();
-    smoothAutoFollowRef.current = smooth;
+    followMotionRef.current = smooth;
     suppressAutoFollowRearmRef.current = smooth;
     setAutoFollowOverflowAnchor(node, true);
     rememberActiveThreadScrollSnapshot(node, true);
@@ -621,83 +1027,54 @@ export function useConversationScrollState({
     }
     const startTop = clampScrollTop(node, node.scrollTop);
     const duration = motionDurationMs("--query-submit-duration", 220);
+    // The same curve the CSS transition on the optimistic turn rides, so the
+    // scroll and the height/opacity change it shares a deadline with agree.
+    const easing = motionEasing("--query-submit-easing", cubicBezier(1 / 3, 1, 2 / 3, 1));
     let startedAt: number | undefined;
     const step = (now: number): void => {
-      submittedScrollFrameRef.current = undefined;
-      if (!smoothAutoFollowRef.current || !isFollowing()) return;
+      motionFrameRef.current = undefined;
+      if (!followMotionRef.current || !isFollowing()) return;
       startedAt ??= now;
       const progress = duration > 0 ? Math.min(1, (now - startedAt) / duration) : 1;
-      // CSS uses cubic-bezier(1/3, 1, 2/3, 1): linear time, cubic ease-out.
-      const eased = 1 - (1 - progress) ** 3;
+      const eased = easing(progress);
       // Share one deadline with the diff receipt's exit, even while its height
       // and the optimistic turn change. Layout signals must not restart easing.
-      node.scrollTop = startTop + (maxScrollTop(node) - startTop) * eased;
-      programmaticScrollTopRef.current = clampScrollTop(node, node.scrollTop);
-      lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
-      rememberActiveThreadScrollSnapshot(node, true);
+      const targetTop = latestFollowScrollTop(node);
+      node.scrollTop = startTop + (targetTop - startTop) * eased;
+      // The browser already clamped the write above; reading it back once and
+      // reusing it avoids two more extent measurements per frame.
+      const placed = node.scrollTop;
+      programmaticScrollTopRef.current = placed;
+      lastConversationScrollTopRef.current = placed;
+      rememberActiveThreadScrollSnapshot(node, true, placed);
       if (progress < 1) {
-        submittedScrollFrameRef.current = window.requestAnimationFrame(step);
+        motionFrameRef.current = window.requestAnimationFrame(step);
       } else {
-        applyProgrammaticScroll(node, node.scrollHeight, true, { revealScrollbar: true });
+        applyProgrammaticScroll(node, targetTop, true, { revealScrollbar: true });
       }
     };
-    submittedScrollFrameRef.current = window.requestAnimationFrame(step);
+    motionFrameRef.current = window.requestAnimationFrame(step);
   }, [
     activePane,
     activeThreadID,
-    clearUserScrollAwayIntent,
+    clearUserScrollIntent,
     scrollConversationToBottom,
-    cancelSubmittedQueryScroll,
+    cancelScrollMotion,
     setAutoFollow,
     splitConversation,
   ]);
 
-  const requestDeferredQueryScroll = useCallback((sourceID: string): void => {
-    if (!activeThreadID || splitConversation) return;
-    // Pending composer entries are not conversation bubbles. Keep the current
-    // reading policy until the server publishes the matching user message.
-    deferredSubmissionRef.current.add(sourceID);
-  }, [activeThreadID, splitConversation]);
-
   useLayoutEffect(() => {
-    deferredSubmissionRef.current.clear();
-    if (!adoptingSubmission) cancelSubmittedQueryScroll();
-  }, [activeThreadID, activePane, splitConversation, cancelSubmittedQueryScroll]);
-  useLayoutEffect(() => cancelSubmittedQueryScroll, [cancelSubmittedQueryScroll]);
+    if (!adoptingSubmission) cancelScrollMotion();
+  }, [activeThreadID, activePane, splitConversation, cancelScrollMotion]);
+  useLayoutEffect(() => cancelScrollMotion, [cancelScrollMotion]);
 
   useEffect(() => {
-    const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-    const reduce = () => { if (media?.matches) cancelSubmittedQueryScroll(); };
-    const hide = () => { if (document.hidden) cancelSubmittedQueryScroll(); };
-    media?.addEventListener("change", reduce);
+    const stopReducedMotion = subscribeReducedMotion((reduced) => { if (reduced) cancelScrollMotion(); });
+    const hide = () => { if (document.hidden) cancelScrollMotion(); };
     document.addEventListener("visibilitychange", hide);
-    return () => { media?.removeEventListener("change", reduce); document.removeEventListener("visibilitychange", hide); };
-  }, [cancelSubmittedQueryScroll]);
-
-  const scheduleLiveResizeScroll = useCallback((): void => {
-    if (
-      liveResizeScrollFrameRef.current !== undefined ||
-      !isFollowing()
-    ) {
-      return;
-    }
-    liveResizeScrollFrameRef.current = window.requestAnimationFrame(() => {
-      liveResizeScrollFrameRef.current = undefined;
-      const node = conversationViewport();
-      if (
-        !node ||
-        !isWindowResizing() ||
-        !isFollowing()
-      ) {
-        return;
-      }
-      // Chromium clamps oversized scroll targets to the real bottom. Using a
-      // sentinel avoids reading scrollHeight/clientHeight during live resize,
-      // and rAF coalescing caps the work at one scroll write per paint.
-      node.scrollTop = Number.MAX_SAFE_INTEGER;
-      lastConversationScrollTopRef.current = node.scrollTop;
-    });
-  }, [activePane, splitConversation]);
+    return () => { stopReducedMotion(); document.removeEventListener("visibilitychange", hide); };
+  }, [cancelScrollMotion]);
 
   const scheduleStreamScroll = useCallback((): void => {
     if (previousThreadRef.current !== activeThreadID) return;
@@ -706,15 +1083,6 @@ export function useConversationScrollState({
       return;
     }
     if (!isFollowing() && !submissionPhase()) {
-      return;
-    }
-    if (isWindowResizing()) {
-      scheduleLiveResizeScroll();
-      if (!resizeSettleStreamScrollRef.current) {
-        resizeSettleStreamScrollRef.current =
-          createWindowResizeSettleScheduler(scrollConversationToBottom);
-      }
-      resizeSettleStreamScrollRef.current.schedule();
       return;
     }
     if (streamScrollFrameRef.current !== undefined) {
@@ -727,16 +1095,10 @@ export function useConversationScrollState({
         scrollConversationToBottom();
       });
     });
-  }, [activeThreadID, scheduleLiveResizeScroll, scrollConversationToBottom, syncTailLayout]);
-
-  useEffect(() => {
-    resizeSettleStreamScrollRef.current?.cancel();
-    resizeSettleStreamScrollRef.current = null;
-  }, [scrollConversationToBottom]);
+  }, [activeThreadID, scrollConversationToBottom, syncTailLayout]);
 
   const enableConversationAutoFollow = useCallback((): void => {
-    deferredSubmissionRef.current.clear();
-    cancelSubmittedQueryScroll();
+    cancelScrollMotion();
     suppressAutoFollowRearmRef.current = false;
     selectionPausedAutoFollowRef.current = false;
     cancelBottomOverscroll(conversationViewport());
@@ -746,11 +1108,44 @@ export function useConversationScrollState({
       setAutoFollowOverflowAnchor(node, true);
       rememberActiveThreadScrollSnapshot(node, true);
     }
-  }, [activePane, activeThreadID, cancelSubmittedQueryScroll, setAutoFollow, splitConversation]);
+  }, [activePane, activeThreadID, cancelScrollMotion, setAutoFollow, splitConversation]);
+
+  const jumpToLatest = useCallback((): void => {
+    const node = conversationViewport();
+    if (!node) return;
+    // Following starts now, not when the motion lands: output streamed
+    // meanwhile moves the target, and a fixed destination would stop short of
+    // it and leave the reader paused above the reply.
+    enableConversationAutoFollow();
+    if (prefersReducedMotion() || document.hidden) {
+      scrollConversationToBottom();
+      return;
+    }
+    const glide = createScrollGlide();
+    glide.start(clampScrollTop(node, node.scrollTop));
+    followMotionRef.current = true;
+    const step = (now: number): void => {
+      motionFrameRef.current = undefined;
+      if (!followMotionRef.current || !isFollowing()) return;
+      const target = latestFollowScrollTop(node);
+      const { position, done } = glide.step(now, target, node.clientHeight);
+      node.scrollTop = position;
+      syncConversationRenderWindow(node);
+      // The glide never passes its target, so the commanded offset is reached.
+      programmaticScrollTopRef.current = position;
+      lastConversationScrollTopRef.current = position;
+      if (!done && target - position > node.clientHeight * GLIDE_FOLLOW_HANDOFF_VIEWPORTS) {
+        motionFrameRef.current = window.requestAnimationFrame(step);
+        return;
+      }
+      followMotionRef.current = false;
+      applyProgrammaticScroll(node, target, true, { revealScrollbar: true });
+    };
+    motionFrameRef.current = window.requestAnimationFrame(step);
+  }, [activePane, activeThreadID, enableConversationAutoFollow, scrollConversationToBottom, splitConversation]);
 
   const disableConversationAutoFollow = useCallback((): void => {
-    deferredSubmissionRef.current.clear();
-    cancelSubmittedQueryScroll();
+    cancelScrollMotion();
     suppressAutoFollowRearmRef.current = true;
     setAutoFollow(false);
     const node = conversationViewport();
@@ -758,7 +1153,7 @@ export function useConversationScrollState({
       setAutoFollowOverflowAnchor(node, false);
       rememberActiveThreadScrollSnapshot(node, false);
     }
-  }, [activePane, activeThreadID, cancelSubmittedQueryScroll, setAutoFollow, splitConversation]);
+  }, [activePane, activeThreadID, cancelScrollMotion, setAutoFollow, splitConversation]);
 
   // Snapshot the user's current scroll state so a later call to
   // restoreConversationScrollPosition can return the viewport to exactly
@@ -772,8 +1167,11 @@ export function useConversationScrollState({
       if (!node) {
         return undefined;
       }
+      const scrollTop = clampScrollTop(node, node.scrollTop);
       return {
-        scrollTop: clampScrollTop(node, node.scrollTop),
+        scrollTop,
+        distanceFromLatest: Math.max(0, latestFollowScrollTop(node) - scrollTop),
+        readingAnchor: !isFollowing() && !submissionPhase() ? captureReadingAnchor(node) : undefined,
         autoFollow: isFollowing(),
         submissionPhase: submissionPhase(),
         submittedMessageID: submissionRef.current?.messageID,
@@ -788,24 +1186,40 @@ export function useConversationScrollState({
       if (!node) {
         return;
       }
-      cancelSubmittedQueryScroll();
-      scrollModeRef.current = snapshot.submissionPhase === "placing" ? "pending" :
-        snapshot.submissionPhase ?? (snapshot.autoFollow ? "following" : "paused");
+      cancelScrollMotion();
+      writeScrollMode(snapshot.submissionPhase === "placing" ? "pending" :
+        snapshot.submissionPhase ?? (snapshot.autoFollow ? "following" : "paused"));
       submissionRef.current = snapshot.submittedMessageID
         ? { messageID: snapshot.submittedMessageID, threadID: activeThreadID, animate: false }
         : undefined;
-      applyProgrammaticScroll(node, snapshot.scrollTop, snapshot.autoFollow, {
-        revealScrollbar: true,
-      });
+      applyProgrammaticScroll(
+        node,
+        restoredScrollTop(node, snapshot),
+        snapshot.autoFollow,
+        {
+          revealScrollbar: true,
+        },
+      );
     },
     [activePane, activeThreadID, setAutoFollow, splitConversation],
   );
 
   function handleConversationScroll(scrolledNode?: HTMLElement): void {
     const node = scrolledNode ?? conversationViewport();
-    if (!node) {
+    if (!node) return;
+    syncConversationRenderWindow(node);
+    if (restoreScrollLockRef.current) {
       return;
     }
+    // The glide's own scrollTop writes fire this. Input cancels the glide
+    // before the event, so measuring disclosures here laid the thread out
+    // again on every frame of the send.
+    if (scrollModeRef.current === "placing") return;
+    const disclosureHeight = followMotionRef.current
+      ? lastDisclosureHeightRef.current
+      : conversationDisclosureHeight(node);
+    const disclosureResized = Math.abs(disclosureHeight - lastDisclosureHeightRef.current) > 0.5;
+    lastDisclosureHeightRef.current = disclosureHeight;
     if (submissionPhase()) {
       // Wheel/key/touch/scrollbar and content actions release ownership before
       // their scroll event. Native anchoring, clamping and coalesced rAF events
@@ -817,9 +1231,32 @@ export function useConversationScrollState({
       rememberActiveThreadScrollSnapshot(node, false);
       return;
     }
+    if (disclosureResized && !userScrollIntentRef.current &&
+      !pointerScrollGestureRef.current && !selectionPausedAutoFollowRef.current) {
+      // Native anchoring can report a disclosure's layout scroll before the
+      // resize observer. Preserve the owner and do not spend browsing space.
+      // Paused readers keep the browser's anchor; followers track the new end.
+      // Resizing may emit no scroll at all, so explicit input in either
+      // direction must win over a stale disclosure-height baseline.
+      programmaticScrollTopRef.current = undefined;
+      scrollConversationToBottom();
+      lastConversationScrollTopRef.current = clampScrollTop(node, node.scrollTop);
+      rememberActiveThreadScrollSnapshot(node, isFollowing());
+      return;
+    }
     if (isWindowResizing()) {
       if (isFollowing()) {
         scheduleStreamScroll();
+      } else {
+        // Native anchoring may move a paused reader during reflow. Retain that
+        // new offset without re-arming follow or consuming submission space;
+        // otherwise a later session switch restores the pre-resize position.
+        // The snapshot re-measures the submitted message with it: restore
+        // corrects the offset by that message's movement, and a reflowed
+        // offset against its pre-reflow position is off by the whole rewrap.
+        programmaticScrollTopRef.current = undefined;
+        lastConversationScrollTopRef.current = clampScrollTop(node, node.scrollTop);
+        rememberActiveThreadScrollSnapshot(node, false);
       }
       return;
     }
@@ -833,7 +1270,7 @@ export function useConversationScrollState({
         );
         if (
           isFollowing() &&
-          !userScrollAwayIntentRef.current &&
+          userScrollIntentRef.current !== "away" &&
           !atLatestScrollView(node, CONVERSATION_AUTO_SCROLL_THRESHOLD_PX)
         ) {
           scrollConversationToBottom();
@@ -843,6 +1280,20 @@ export function useConversationScrollState({
           node,
           isFollowing()
         );
+        return;
+      }
+    }
+
+    const readingSnapshot = activeThreadID ? threadScrollSnapshotsRef.current.get(activeThreadID) : undefined;
+    if (!isFollowing() && readingSnapshot?.readingAnchor &&
+      Math.abs(node.scrollTop - readingSnapshot.scrollTop) > 1) {
+      const anchoredTop = readingAnchorScrollTop(node, readingSnapshot.readingAnchor);
+      if (anchoredTop !== undefined && Math.abs(anchoredTop - node.scrollTop) <= 0.5) {
+        // Native anchoring (or a history prepend) moved scrollTop but left the
+        // content stationary. It is not a gesture toward latest, and must not
+        // re-arm following or consume the reader's reserved space.
+        lastConversationScrollTopRef.current = clampScrollTop(node, node.scrollTop);
+        rememberActiveThreadScrollSnapshot(node, false);
         return;
       }
     }
@@ -888,7 +1339,7 @@ export function useConversationScrollState({
     const previousScrollTop = lastConversationScrollTopRef.current;
     const scrolledUp = node.scrollTop < previousScrollTop;
     const scrolledDown = node.scrollTop > previousScrollTop;
-    const userScrollAwayIntent = userScrollAwayIntentRef.current;
+    const userScrollAwayIntent = userScrollIntentRef.current === "away";
     lastConversationScrollTopRef.current = clampScrollTop(node, node.scrollTop);
 
     // Native clamping can emit scroll before ResizeObserver gets a chance to
@@ -903,6 +1354,9 @@ export function useConversationScrollState({
       node,
       CONVERSATION_AUTO_SCROLL_THRESHOLD_PX
     );
+    const nearLatest = scrolledDown &&
+      distanceFromLatestContent(node) <= CONVERSATION_RETURN_TO_LATEST_PX;
+    const returnedToLatest = atLatestView || (nearLatest && userScrollIntentRef.current === "latest");
     const scrollAwayStartTop = userScrollAwayStartTopRef.current;
     const movedAboveUserIntentStart =
       userScrollAwayIntent &&
@@ -910,7 +1364,16 @@ export function useConversationScrollState({
       node.scrollTop < scrollAwayStartTop - 1;
     const movedAbovePreviousScroll = userScrollAwayIntent && scrolledUp;
     let nextAutoFollow = isFollowing();
-    if (
+    if (pointerGesture?.node === node) {
+      // Returning to the bottom band does not release a held scrollbar.
+      // Defer follow until pointerup so stream frames cannot fight the drag.
+      if (scrolledUp || scrolledDown) {
+        setAutoFollow(false);
+        pointerGesture.followOnRelease = (atLatestView || nearLatest) && scrolledDown && !selectionPausedAutoFollowRef.current;
+      }
+      nextAutoFollow = false;
+      setAutoFollowOverflowAnchor(node, false);
+    } else if (
       (movedAboveUserIntentStart || movedAbovePreviousScroll) &&
       node.scrollTop < maxScrollTop(node) - 1
     ) {
@@ -932,14 +1395,14 @@ export function useConversationScrollState({
       nextAutoFollow = false;
       setAutoFollow(false);
       setAutoFollowOverflowAnchor(node, false);
-    } else if (atLatestView && suppressAutoFollowRearmRef.current) {
+    } else if (returnedToLatest && suppressAutoFollowRearmRef.current) {
       // Query-history / turn-rail jumps are programmatic smooth scrolls.
       // The browser can emit an unchanged or tiny upward scroll event while
       // the viewport is still inside the bottom band. If that re-arms
       // auto-follow, the next scroll/layout signal yanks the viewport back to
       // the bottom before the jump reaches its target. Only an actual downward
       // move back to the latest content should clear this jump guard.
-      if (smoothAutoFollowRef.current) {
+      if (followMotionRef.current) {
         // Reaching the old bottom must not finish the submit animation before
         // React inserts the optimistic turn or the diff receipt finishes exiting.
         nextAutoFollow = true;
@@ -958,7 +1421,7 @@ export function useConversationScrollState({
     } else if (suppressAutoFollowRearmRef.current) {
       // A programmatic jump is in flight, and the viewport has not yet
       // reached the bottom band. The previous branch already handled the
-      // atLatestView case; this branch covers the in-between frames.
+      // returned-to-latest case; this branch covers the in-between frames.
       //
       // The smooth animation produces a stream of `scrolledDown` scroll
       // events as the viewport glides to the bottom. If we let branch 4
@@ -971,7 +1434,7 @@ export function useConversationScrollState({
       //
       // Keep the existing auto-follow value until the animation lands.
       nextAutoFollow = isFollowing();
-    } else if (atLatestView) {
+    } else if (returnedToLatest) {
       suppressAutoFollowRearmRef.current = false;
       if (
         isFollowing() ||
@@ -1014,73 +1477,95 @@ export function useConversationScrollState({
       setNativeBottomOverscrollEnabled(node, true);
     }
     if ((scrolledUp || scrolledDown) && !layoutClamp && !nextAutoFollow && !splitConversation) {
-      deferredSubmissionRef.current.clear();
       consumeTailSpace(Math.abs(previousScrollTop - node.scrollTop));
     }
     rememberActiveThreadScrollSnapshot(node, nextAutoFollow);
   }
 
   useLayoutEffect(() => {
-    const node = conversationViewport();
-    const threadChanged = previousThreadRef.current !== activeThreadID;
-    previousThreadRef.current = activeThreadID;
-    if (threadChanged && !adoptingSubmission) {
-      submissionRef.current = undefined;
-      setAutoFollow(true);
-    }
-    if (!activeThreadID || !node) {
-      programmaticScrollTopRef.current = undefined;
-      lastConversationScrollTopRef.current = 0;
-      if (!submissionPhase()) setAutoFollow(true);
-      return undefined;
-    }
-
-    if (adoptingSubmission && submissionRef.current) {
-      submissionRef.current.threadID = activeThreadID;
-      // The draft bubble moves into the thread pane without a bottom jump,
-      // even if this short first turn has no scroll range yet.
-      setAutoFollowOverflowAnchor(node, Boolean(submissionPhase()));
-      programmaticScrollTopRef.current = clampScrollTop(node, node.scrollTop);
-      lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
-      rememberActiveThreadScrollSnapshot(node, isFollowing());
-      return;
-    }
-    markSessionSwitch(activeThreadID, "scroll-restore-start");
-    const snapshot = threadScrollSnapshotsRef.current.get(activeThreadID);
-    scrollModeRef.current = snapshot?.submissionPhase === "placing" ? "pending" :
-      snapshot?.submissionPhase ?? (snapshot?.autoFollow === false ? "paused" : "following");
-    if (snapshot?.submittedMessageID) {
-      submissionRef.current = { messageID: snapshot.submittedMessageID, threadID: activeThreadID, animate: false };
-    }
-    if (snapshot && !snapshot.autoFollow) {
-      applyProgrammaticScroll(node, snapshot.scrollTop, false);
-      bottomOverscrollFromAwayRef.current = true;
-      setNativeBottomOverscrollEnabled(node, true);
-    } else {
-      applyProgrammaticScroll(node, node.scrollHeight, true);
-      setNativeBottomOverscrollEnabled(node, false);
-    }
-    markSessionSwitch(activeThreadID, "scroll-restore-end");
-    return undefined;
-  }, [activePane, activeThreadID, setAutoFollow, splitConversation]);
-
-  // Runs after restoration and every commit, including deferred queue/steer
-  // materialization. Never infer ownership from an arbitrary arriving message.
-  useLayoutEffect(() => {
-    const deferred = deferredSubmissionRef.current;
-    let latestMessageID: string | undefined;
-    if (deferred.size) {
-      for (const turn of primaryTurns ?? []) {
-        for (const item of turn.items) {
-          if (item.type === "user_message" && item.source_id && deferred.delete(item.source_id)) {
-            latestMessageID = item.id;
-          }
-        }
+    try {
+      const node = conversationViewport();
+      const threadChanged = previousThreadRef.current !== activeThreadID;
+      // Read the saved position before any layout. The pane swap clamps
+      // scrollTop, and that scroll event would otherwise replace this snapshot.
+      const savedSnapshot = activeThreadID
+        ? threadScrollSnapshotsRef.current.get(activeThreadID)
+        : undefined;
+      // Restore against the incoming viewport, not the outgoing draft's height.
+      // Clamping first loses a paused reader's offset even if an observer later
+      // repairs the composer inset.
+      syncDockComposerGeometry();
+      pointerScrollGestureRef.current = undefined;
+      previousThreadRef.current = activeThreadID;
+      if (threadChanged && !adoptingSubmission) {
+        submissionRef.current = undefined;
+        setAutoFollow(true);
       }
+      if (!activeThreadID || !node) {
+        programmaticScrollTopRef.current = undefined;
+        lastConversationScrollTopRef.current = 0;
+        if (!submissionPhase()) setAutoFollow(true);
+        return undefined;
+      }
+
+      if (adoptingSubmission && submissionRef.current) {
+        submissionRef.current.threadID = activeThreadID;
+        // The draft bubble moves into the thread pane without a bottom jump,
+        // even if this short first turn has no scroll range yet.
+        setAutoFollowOverflowAnchor(node, Boolean(submissionPhase()));
+        programmaticScrollTopRef.current = clampScrollTop(node, node.scrollTop);
+        lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
+        rememberActiveThreadScrollSnapshot(node, isFollowing());
+        return;
+      }
+      markSessionSwitch(activeThreadID, "scroll-restore-start");
+      // The status row already shows the incoming session's items. Its observer
+      // reports a frame late, so placing against the outgoing reservation would
+      // move the whole session once the stale gap is released.
+      syncConversationStatusSpace();
+      let snapshot = savedSnapshot;
+      const restorationOffset = restoredOffset.current;
+      restoredOffset.current = 0;
+      if (snapshot?.submittedMessageTop !== undefined && !submittedMessage(snapshot.submittedMessageID)) {
+        // The saved anchor itself may have left the history window. Its absolute
+        // extent cannot describe this layout; open at the latest content instead.
+        discardTailSpace(activeThreadID);
+        submissionRef.current = undefined;
+        snapshot = undefined;
+      }
+      writeScrollMode(snapshot?.submissionPhase === "placing" ? "pending" :
+        snapshot?.submissionPhase ?? (snapshot?.autoFollow === false ? "paused" : "following"));
+      if (snapshot?.submittedMessageID) {
+        submissionRef.current = { messageID: snapshot.submittedMessageID, threadID: activeThreadID, animate: false };
+      }
+      if (snapshot && !snapshot.autoFollow) {
+        // Prefer the content anchor; submission reservations retain their own
+        // coordinate system and fallback snapshots still support empty layouts.
+        applyProgrammaticScroll(
+          node,
+          restoredScrollTop(node, snapshot, restorationOffset),
+          false,
+        );
+        bottomOverscrollFromAwayRef.current = true;
+        setNativeBottomOverscrollEnabled(node, true);
+      } else {
+        applyProgrammaticScroll(
+          node,
+          latestFollowScrollTop(node),
+          true,
+        );
+        setNativeBottomOverscrollEnabled(node, false);
+      }
+      markSessionSwitch(activeThreadID, "scroll-restore-end");
+      return undefined;
+    } finally {
+      restoreScrollLockRef.current = false;
     }
-    // A batched server update has one visible destination; later queued inputs
-    // retain their own intent until they materialize or the reader takes over.
-    if (latestMessageID) requestSubmittedQueryScroll(latestMessageID, true);
+  }, [activePane, activeThreadID, setAutoFollow, splitConversation, syncConversationStatusSpace, syncDockComposerGeometry, restoredOffset, submittedMessage, discardTailSpace]);
+
+  // Only a direct submission owns placement. Queue/steer materialization is
+  // incoming content and must preserve the current following/reading policy.
+  useLayoutEffect(() => {
     positionSubmittedMessage(true);
   });
 
@@ -1090,19 +1575,31 @@ export function useConversationScrollState({
     if (!activeThreadID) {
       return;
     }
+    const submission = submissionRef.current;
+    if (submission?.threadID === activeThreadID && submissionPhase()) {
+      if (primaryTurns?.some(turn => turn.items.some(item => item.id === submission.messageID))) {
+        submission.inThread = true;
+      } else if (submission.inThread) {
+        // A snapshot that drops the submitted message (a resync that replaced
+        // the thread) leaves nothing to place or hold. Keeping its reading
+        // frame would stop the conversation following what replaced it.
+        cancelScrollMotion();
+        submissionRef.current = undefined;
+        discardTailSpace(activeThreadID);
+        setAutoFollow(true);
+      }
+    }
     // Turn snapshots can add non-token content (for example a gray process
     // row). Re-anchor before paint so the bottom never flashes at old scrollTop.
-    if (isWindowResizing()) {
-      scheduleStreamScroll();
-      return;
-    }
     scrollConversationToBottom();
   }, [
     activeThreadID,
+    cancelScrollMotion,
+    discardTailSpace,
     primaryTurns,
-    scheduleStreamScroll,
     scrollConversationToBottom,
     secondaryTurns,
+    setAutoFollow,
   ]);
 
   useLayoutEffect(() => {
@@ -1115,11 +1612,10 @@ export function useConversationScrollState({
       bottomOverscrollFromAwayRef.current,
     );
     const handleWheel = (event: WheelEvent): void => {
-      if (event.deltaY !== 0) deferredSubmissionRef.current.clear();
-      if (event.deltaY !== 0 && (submittedScrollFrameRef.current !== undefined || submissionPhase())) disableConversationAutoFollow();
+      if (event.deltaY !== 0 && (motionFrameRef.current !== undefined || submissionPhase())) disableConversationAutoFollow();
       if (eventTargetsNestedAutoFollowScroll(event.target, node)) {
         if (event.deltaY < 0) {
-          markUserScrollAwayIntent(clampScrollTop(node, node.scrollTop));
+          markUserScrollIntent("away", clampScrollTop(node, node.scrollTop));
         }
         return;
       }
@@ -1130,13 +1626,14 @@ export function useConversationScrollState({
           bottomOverscrollFromAwayRef.current = true;
           setNativeBottomOverscrollEnabled(node, true);
         }
-        markUserScrollAwayIntent(clampScrollTop(node, node.scrollTop));
+        markUserScrollIntent("away", clampScrollTop(node, node.scrollTop));
         // Take user control before the browser's later `scroll` event. During
         // streaming, an already queued auto-follow frame can otherwise run in
         // the wheel-to-scroll gap and write the viewport back to the bottom,
         // making trackpad and mouse-wheel movement feel sticky or resistant.
         disableConversationAutoFollow();
       } else if (deltaPx > 0) {
+        markUserScrollIntent("latest");
         selectionPausedAutoFollowRef.current = false;
       }
     };
@@ -1151,22 +1648,40 @@ export function useConversationScrollState({
       }
     };
     const handlePointerDown = (event: PointerEvent): void => {
-      if (submittedScrollFrameRef.current !== undefined || submissionPhase()) disableConversationAutoFollow();
+      if (eventTargetsConversationDisclosure(event.target)) {
+        clearUserScrollIntent();
+        return;
+      }
+      if (motionFrameRef.current !== undefined || submissionPhase()) disableConversationAutoFollow();
       cancelArrivals();
       if (eventTargetsNestedAutoFollowScroll(event.target, node)) {
         return;
       }
       if (event.target === node) {
+        const resumeScrollTop = isFollowing() ? clampScrollTop(node, node.scrollTop) : undefined;
         pointerScrollGestureRef.current = {
           node,
           scrollTop: clampScrollTop(node, node.scrollTop),
           scrollHeight: node.scrollHeight,
         };
-        markUserScrollAwayIntent(clampScrollTop(node, node.scrollTop));
+        markUserScrollIntent("away", clampScrollTop(node, node.scrollTop));
+        // A scrollbar gesture owns the viewport before native scroll delivery.
+        disableConversationAutoFollow();
+        pointerScrollGestureRef.current.resumeScrollTop = resumeScrollTop;
       }
     };
-    const handlePointerEnd = (): void => {
+    const handlePointerEnd = (event: PointerEvent): void => {
+      const gesture = pointerScrollGestureRef.current;
       pointerScrollGestureRef.current = undefined;
+      // A press on empty surface is not necessarily a scroll. Do not leave
+      // following disabled when it ends without movement or another owner.
+      if (event.type === "pointerup" && gesture?.node === node &&
+        ((gesture.resumeScrollTop !== undefined &&
+          Math.abs(clampScrollTop(node, node.scrollTop) - gesture.resumeScrollTop) <= 1) ||
+          (gesture.followOnRelease && distanceFromLatestContent(node) <= CONVERSATION_RETURN_TO_LATEST_PX))) {
+        enableConversationAutoFollow();
+        scrollConversationToBottom();
+      }
     };
     const handleSelectionChange = (): void => {
       if (selectionIntersectsNode(document.getSelection(), node)) {
@@ -1175,10 +1690,13 @@ export function useConversationScrollState({
       }
     };
     const handleKeyDown = (event: KeyboardEvent): void => {
-      if (SCROLL_TOWARD_LATEST_KEYS.has(event.key)) deferredSubmissionRef.current.clear();
+      if ((event.key === "Enter" || event.key === " ") && eventTargetsConversationDisclosure(event.target)) {
+        clearUserScrollIntent();
+        return;
+      }
       if (SCROLL_TOWARD_LATEST_KEYS.has(event.key) || ((event.key === "Enter" || event.key === " ") &&
         event.target instanceof Element && event.target.closest('button, [role="button"], summary'))) {
-        if (submittedScrollFrameRef.current !== undefined || submissionPhase()) disableConversationAutoFollow();
+        if (motionFrameRef.current !== undefined || submissionPhase()) disableConversationAutoFollow();
       }
       if (eventTargetsNestedAutoFollowScroll(event.target, node)) {
         return;
@@ -1188,14 +1706,20 @@ export function useConversationScrollState({
           bottomOverscrollFromAwayRef.current = true;
           setNativeBottomOverscrollEnabled(node, true);
         }
-        markUserScrollAwayIntent(clampScrollTop(node, node.scrollTop));
+        markUserScrollIntent("away", clampScrollTop(node, node.scrollTop));
+        disableConversationAutoFollow();
       } else if (SCROLL_TOWARD_LATEST_KEYS.has(event.key)) {
+        markUserScrollIntent("latest");
         selectionPausedAutoFollowRef.current = false;
       }
     };
     const handleTouchStart = (event: TouchEvent): void => {
-      deferredSubmissionRef.current.clear();
-      if (submittedScrollFrameRef.current !== undefined || submissionPhase()) disableConversationAutoFollow();
+      if (eventTargetsConversationDisclosure(event.target)) {
+        clearUserScrollIntent();
+        touchLastYRef.current = event.touches[0]?.clientY;
+        return;
+      }
+      if (motionFrameRef.current !== undefined || submissionPhase()) disableConversationAutoFollow();
       if (eventTargetsNestedAutoFollowScroll(event.target, node)) {
         touchLastYRef.current = event.touches[0]?.clientY;
         return;
@@ -1211,13 +1735,16 @@ export function useConversationScrollState({
           previousY !== undefined &&
           currentY > previousY
         ) {
-          markUserScrollAwayIntent(clampScrollTop(node, node.scrollTop));
+          markUserScrollIntent("away", clampScrollTop(node, node.scrollTop));
         }
         touchLastYRef.current = currentY;
         return;
       }
       const currentY = event.touches[0]?.clientY;
       const previousY = touchLastYRef.current;
+      if (currentY !== undefined && previousY !== undefined && currentY !== previousY && submissionPhase()) {
+        disableConversationAutoFollow();
+      }
       if (
         currentY !== undefined &&
         previousY !== undefined &&
@@ -1227,12 +1754,14 @@ export function useConversationScrollState({
           bottomOverscrollFromAwayRef.current = true;
           setNativeBottomOverscrollEnabled(node, true);
         }
-        markUserScrollAwayIntent(clampScrollTop(node, node.scrollTop));
+        markUserScrollIntent("away", clampScrollTop(node, node.scrollTop));
+        disableConversationAutoFollow();
       } else if (
         currentY !== undefined &&
         previousY !== undefined &&
         currentY < previousY
       ) {
+        markUserScrollIntent("latest");
         selectionPausedAutoFollowRef.current = false;
       }
       touchLastYRef.current = currentY;
@@ -1244,9 +1773,12 @@ export function useConversationScrollState({
     // content actions do not change reading ownership: a fold expanded at
     // the bottom must keep following, while an away viewport stays paused.
     const handleContentAction = (event: MouseEvent): void => {
+      if (eventTargetsConversationDisclosure(event.target)) {
+        clearUserScrollIntent();
+        return;
+      }
       if (!(event.target instanceof Element) || !event.target.closest('button, [role="button"], summary, a, input, textarea, select, video, audio')) return;
-      deferredSubmissionRef.current.clear();
-      if (submittedScrollFrameRef.current !== undefined || submissionPhase()) disableConversationAutoFollow();
+      if (motionFrameRef.current !== undefined || submissionPhase()) disableConversationAutoFollow();
       cancelArrivals();
     };
     node.addEventListener("wheel", handleWheel, { passive: true });
@@ -1283,28 +1815,19 @@ export function useConversationScrollState({
     if (!node || typeof ResizeObserver === "undefined") {
       return undefined;
     }
-    const windowResizeScroll = createWindowResizeSettleScheduler(() => {
-      // The resize has settled. Commit the real scrollTop so the scrollbar
-      // position, the "jump to latest" pill, and the turn-rail anchor line
-      // up with the new viewport without moving text during the live drag.
-      scrollConversationToBottom();
-    });
     const resizeObserver = new ResizeObserver(() => {
-      refreshPointerScrollGestureLayout(node);
       if (isWindowResizing()) {
-        cancelBottomOverscroll(node);
-        scheduleLiveResizeScroll();
-        windowResizeScroll.schedule();
+        pinConversationDuringWindowResize();
         return;
       }
+      refreshPointerScrollGestureLayout(node);
+      // Observer delivery is already after layout and before paint. Deferring
+      // to rAF here paints the new line wrapping with the previous scrollTop.
       scrollConversationToBottom();
     });
     observeAutoFollowResizeTargets(node, resizeObserver);
-    window.addEventListener("resize", scheduleLiveResizeScroll);
     return () => {
-      windowResizeScroll.cancel();
       resizeObserver.disconnect();
-      window.removeEventListener("resize", scheduleLiveResizeScroll);
     };
   }, [
     activePane,
@@ -1312,25 +1835,22 @@ export function useConversationScrollState({
     emptyConversation,
     initialized,
     primaryTurns,
+    pinConversationDuringWindowResize,
     refreshPointerScrollGestureLayout,
     secondaryTurns,
     scrollConversationToBottom,
-    scheduleLiveResizeScroll,
     splitConversation
   ]);
 
   useLayoutEffect(() => {
-    const pane = conversationPaneRef.current;
-    if (!pane) return;
+    if (!conversationPaneRef.current) return;
     let frame = 0;
     const update = (): void => {
-      const height = statusClusterNode?.getBoundingClientRect().height ?? 0;
-      const gap = statusClusterNode
-        ? cssPixelValue(window.getComputedStyle(statusClusterNode).getPropertyValue("--conversation-status-gap"))
-        : 0;
-      const value = `${height > 0 ? Math.ceil(height + gap) : 0}px`;
-      if (pane.style.getPropertyValue("--conversation-status-space") === value) return;
-      pane.style.setProperty("--conversation-status-space", value);
+      if (!syncConversationStatusSpace()) return;
+      if (isWindowResizing()) {
+        pinConversationDuringWindowResize();
+        return;
+      }
       scrollConversationToBottom();
     };
     update();
@@ -1344,53 +1864,20 @@ export function useConversationScrollState({
       observer.disconnect();
       window.cancelAnimationFrame(frame);
     };
-  }, [statusClusterNode, scrollConversationToBottom]);
+  }, [pinConversationDuringWindowResize, statusClusterNode, syncConversationStatusSpace, scrollConversationToBottom]);
 
   useLayoutEffect(() => {
     const node = dockComposerNode;
-    const pane = conversationPaneRef.current;
-    let windowResizeHeight: ReturnType<
-      typeof createWindowResizeSettleScheduler
-    > | undefined;
-    const applyHeight = (nextHeight: number, inputInset = nextHeight): void => {
-      const nextValue = `${nextHeight}px`;
-      const insetValue = `${inputInset}px`;
-      if (
-        dockComposerHeightRef.current === nextHeight &&
-        pane?.style.getPropertyValue("--dock-composer-height") === nextValue &&
-        pane?.style.getPropertyValue("--conversation-input-inset") === insetValue
-      ) {
+    const updateHeight = (): void => {
+      syncDockComposerGeometry();
+      if (isWindowResizing()) {
+        pinConversationDuringWindowResize();
         return;
       }
-      dockComposerHeightRef.current = nextHeight;
-      pane?.style.setProperty("--dock-composer-height", nextValue);
-      pane?.style.setProperty("--conversation-input-inset", insetValue);
-      // The input edge changes the readable viewport. Settle its owned range
-      // in the same frame, before queue removal can clamp a held submission.
-      // The scroll policy leaves deliberate reading pauses untouched.
       scrollConversationToBottom();
     };
-
-    if (!node) {
-      applyHeight(0);
-      return;
-    }
-
-    const updateHeight = (): void => {
-      if (isWindowResizing()) {
-        windowResizeHeight?.schedule();
-        return;
-      }
-      const nextHeight = dockComposerVisualHeight(node);
-      const input = node.querySelector<HTMLElement>(".composer-frame");
-      const inputInset = input
-        ? Math.max(0, Math.ceil(node.getBoundingClientRect().bottom - input.getBoundingClientRect().top))
-        : nextHeight;
-      applyHeight(nextHeight, inputInset);
-    };
-
-    windowResizeHeight = createWindowResizeSettleScheduler(updateHeight);
     updateHeight();
+    if (!node) return;
     // The height token changes ancestor layout. Applying it inside observer
     // delivery can invalidate the growing composer's own resize notifications.
     let heightFrame = 0;
@@ -1404,7 +1891,6 @@ export function useConversationScrollState({
       resizeObserver.observe(frame);
     }
     return () => {
-      windowResizeHeight?.cancel();
       window.cancelAnimationFrame(heightFrame);
       resizeObserver.disconnect();
     };
@@ -1412,7 +1898,9 @@ export function useConversationScrollState({
     dockComposerNode,
     emptyConversation,
     initialized,
-    scrollConversationToBottom
+    pinConversationDuringWindowResize,
+    scrollConversationToBottom,
+    syncDockComposerGeometry
   ]);
 
   useEffect(() => {
@@ -1421,19 +1909,10 @@ export function useConversationScrollState({
         window.cancelAnimationFrame(streamScrollFrameRef.current);
         streamScrollFrameRef.current = undefined;
       }
-      if (liveResizeScrollFrameRef.current !== undefined) {
-        window.cancelAnimationFrame(liveResizeScrollFrameRef.current);
-        liveResizeScrollFrameRef.current = undefined;
-      }
-      resizeSettleStreamScrollRef.current?.cancel();
-      resizeSettleStreamScrollRef.current = null;
-      if (conversationScrollbarHideTimerRef.current !== undefined) {
-        window.clearTimeout(conversationScrollbarHideTimerRef.current);
-      }
       cancelBottomOverscroll();
-      clearUserScrollAwayIntent();
+      clearUserScrollIntent();
     };
-  }, [clearUserScrollAwayIntent]);
+  }, [clearUserScrollIntent]);
 
   return {
     conversationScrollRef,
@@ -1442,14 +1921,15 @@ export function useConversationScrollState({
     conversationPaneRef,
     dockComposerRef,
     dockComposerNode,
+    statusClusterRef,
     scheduleStreamScroll,
     handleConversationScroll,
     enableConversationAutoFollow,
+    jumpToLatest,
     disableConversationAutoFollow,
     captureConversationScrollPosition,
     restoreConversationScrollPosition,
     requestSubmittedQueryScroll,
-    requestDeferredQueryScroll,
     acknowledgeSubmittedMessage,
     discardSubmittedMessage,
   };

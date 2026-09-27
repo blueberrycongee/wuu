@@ -1,6 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ThreadItem } from "../shared/protocol";
 import type { AssistantTurnDisplay, TurnEntry } from "./AssistantTurnDisplay";
+import {
+  useConversationBecameRenderActive,
+  useConversationRenderActive,
+  useConversationRevealSnap,
+} from "./ConversationRenderActivity";
 
 export const ASSISTANT_TURN_PRESENTATION_STABILIZE_MS = 120;
 
@@ -8,6 +13,9 @@ export function useAssistantTurnPresentation(
   turnID: string,
   display: AssistantTurnDisplay | undefined,
 ): AssistantTurnDisplay | undefined {
+  const renderActive = useConversationRenderActive();
+  const becameRenderActive = useConversationBecameRenderActive();
+  const revealSnap = useConversationRevealSnap();
   const [presented, setPresented] = useState(display);
   const turnIDRef = useRef(turnID);
   const presentedStructureRef = useRef(displayStructureSignature(display));
@@ -35,6 +43,27 @@ export function useAssistantTurnPresentation(
     setPresented(nextDisplay);
   };
 
+  // Publish during render so the scroll restore that follows this commit
+  // measures the live structure. A layout-effect publish lands one flush
+  // later, and the viewport has already anchored to the frozen height.
+  if (renderActive && (revealSnap || becameRenderActive) && display) {
+    const nextStructure = displayStructureSignature(display);
+    const nextContent = displayContentSignature(display);
+    if (
+      nextStructure !== presentedStructureRef.current ||
+      nextContent !== presentedContentRef.current
+    ) {
+      clearPending();
+      presentedStructureRef.current = nextStructure;
+      presentedContentRef.current = nextContent;
+      presentedStreamingRef.current = displayHasStreamingEntry(display);
+      pendingDisplayRef.current = display;
+      pendingStructureRef.current = nextStructure;
+      pendingContentRef.current = nextContent;
+      setPresented(display);
+    }
+  }
+
   useLayoutEffect(() => {
     const nextStructure = displayStructureSignature(display);
     const nextContent = displayContentSignature(display);
@@ -43,6 +72,27 @@ export function useAssistantTurnPresentation(
       turnIDRef.current = turnID;
       clearPending();
       publish(display);
+      return;
+    }
+
+    // Hidden cached panes must freeze without publishing. Parent turns rebuild
+    // `display` every render; publishing that object setStates TurnContent in
+    // a loop and whitescreens the app with "Maximum update depth exceeded".
+    if (!renderActive) {
+      clearPending();
+      return;
+    }
+    // The first visible commit after a session switch must publish the live
+    // structure immediately, or the 120ms buffer paints a stale process row
+    // and then jumps when the aggregated toolcall / mascot layout finally lands.
+    if (becameRenderActive) {
+      clearPending();
+      if (
+        nextStructure !== presentedStructureRef.current ||
+        nextContent !== presentedContentRef.current
+      ) {
+        publish(display);
+      }
       return;
     }
 
@@ -96,7 +146,7 @@ export function useAssistantTurnPresentation(
       );
       setPresented(pendingDisplayRef.current);
     }, ASSISTANT_TURN_PRESENTATION_STABILIZE_MS);
-  }, [display, turnID]);
+  }, [becameRenderActive, display, renderActive, turnID]);
 
   useEffect(() => {
     return () => clearPending();

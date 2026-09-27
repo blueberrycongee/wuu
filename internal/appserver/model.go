@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -47,6 +48,15 @@ func (th *threadState) snapshotLocked() Thread {
 	return th.snapshotTurnsLocked(th.Turns)
 }
 
+func (th *threadState) listSnapshotLocked(summaryOnly bool) Thread {
+	if summaryOnly {
+		// Project before cloning: list callers need metadata, not a temporary
+		// copy of every loaded conversation's history under the server lock.
+		return th.snapshotTurnsLocked(nil)
+	}
+	return th.snapshotLocked()
+}
+
 func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 	status := ThreadStatusIdle
 	if th.running {
@@ -56,6 +66,8 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		SessionControl:  th.SessionControl,
 		ID:              th.ID,
 		Source:          th.Source,
+		ProjectID:       th.ProjectID,
+		ProjectRole:     th.ProjectRole,
 		ParentID:        th.ParentID,
 		AgentPath:       th.AgentPath,
 		Preview:         firstNonEmpty(th.Title, threadPreview(th.History)),
@@ -64,6 +76,7 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		Model:           th.Model,
 		ModelVariant:    th.ModelVariant,
 		ModelEffort:     th.ModelEffort,
+		Speed:           th.Speed,
 		PermissionMode:  th.PermissionMode,
 		ApproveForMe:    th.ApproveForMe,
 		EngineID:        string(agentengine.NormalizeEngineID(th.EngineID)),
@@ -79,6 +92,7 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		Pinned:                th.PinnedAt != nil,
 		FolderID:              th.FolderID,
 		Archived:              th.ArchivedAt != nil,
+		ArchiveReason:         th.ArchiveReason,
 		ForkedFromID:          th.ForkedFromID,
 		ForkedFromTurnID:      th.ForkedFromTurnID,
 		ForkedFromItemID:      th.ForkedFromItemID,
@@ -112,6 +126,7 @@ func threadWorktreeInfo(path, baseHEAD, baseRepo string) *WorktreeInfo {
 }
 
 func (th *threadState) startTurnLocked(turnID string, userMsg providers.ChatMessage, now time.Time) Turn {
+	th.agentStream = nil
 	th.currentTurn = turnID
 	th.currentTurnKind = TurnKindUser
 	th.currentTurnResumed = false
@@ -179,6 +194,7 @@ func (th *threadState) resumePersistedUserTurnLocked(clientID string, now time.T
 		th.pendingSteers = nil
 		th.nextItemIndex = maxTurnItemIndex(turn)
 		th.activeAgentItemID = ""
+		th.agentStream = nil
 		th.activeReasoningItemID = ""
 		th.toolItems = make(map[string]string)
 		return turn, true
@@ -187,6 +203,7 @@ func (th *threadState) resumePersistedUserTurnLocked(clientID string, now time.T
 }
 
 func (th *threadState) appendUserMessageTurnLocked(turnID string, userMsg providers.ChatMessage, now time.Time) Turn {
+	th.agentStream = nil
 	th.currentTurn = turnID
 	th.currentTurnResumed = false
 	th.UpdatedAt = now
@@ -230,6 +247,7 @@ func (th *threadState) startCompactTurnLocked(turnID string, displayMsg provider
 }
 
 func (th *threadState) startInternalTurnWithKindLocked(turnID string, kind TurnKind, now time.Time) Turn {
+	th.agentStream = nil
 	th.currentTurn = turnID
 	th.currentTurnKind = kind
 	th.currentTurnResumed = false
@@ -350,6 +368,7 @@ func (th *threadState) finishTurnLocked(turnID string, status TurnStatus, err er
 		}
 		th.activeAgentItemID = ""
 	}
+	th.agentStream = nil
 	th.activeReasoningItemID = ""
 	th.toolItems = make(map[string]string)
 
@@ -593,6 +612,13 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 			return nil
 		}
 		switch ev.Lifecycle.Phase {
+		case providers.StreamPhaseConnecting:
+			operationID := ev.Lifecycle.OperationID
+			if operationID != "" && (th.agentStream == nil || th.agentStream.operationID != operationID) {
+				out = append(out, th.completeActiveAgentItemLocked(turnID, now, false)...)
+				th.agentStream = &agentMessageStream{operationID: operationID}
+			}
+			return out
 		case providers.StreamPhaseReconnecting:
 			out = append(out, th.upsertStreamReconnectItemLocked(turnID, ev.Lifecycle, now)...)
 			if !ev.Lifecycle.ResetPartial {
@@ -654,8 +680,9 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 			},
 		})
 	case providers.EventContentReplace:
+		out = append(out, th.reconcileAgentStreamItemsLocked(turnID, true, now)...)
 		if th.activeAgentItemID == "" && ev.Content == "" {
-			return nil
+			return out
 		}
 		item, started := th.ensureActiveAgentItemLocked(turnID, now)
 		if started {
@@ -947,10 +974,11 @@ func isCompactFailureNoticeContent(content string) bool {
 func (th *threadState) applyMessageItemLocked(turnID string, msg providers.ChatMessage, now time.Time) []outboundNotification {
 	switch msg.Role {
 	case "assistant":
-		if strings.TrimSpace(msg.Content) == "" && strings.TrimSpace(msg.ReasoningContent) == "" {
-			return nil
+		defer func() { th.agentStream = nil }()
+		out := th.reconcileAgentStreamItemsLocked(turnID, strings.TrimSpace(msg.Content) != "" || len(msg.Images) > 0, now)
+		if strings.TrimSpace(msg.Content) == "" && len(msg.Images) == 0 && strings.TrimSpace(msg.ReasoningContent) == "" {
+			return out
 		}
-		var out []outboundNotification
 		if strings.TrimSpace(msg.ReasoningContent) != "" && th.activeReasoningItemID == "" && !th.hasReasoningTextLocked(turnID, msg.ReasoningContent) {
 			item := ThreadItem{
 				ID:       th.nextItemIDLocked(turnID),
@@ -963,10 +991,10 @@ func (th *threadState) applyMessageItemLocked(turnID string, msg providers.ChatM
 			th.upsertItemLocked(turnID, item, now)
 			out = append(out, itemStarted(th.ID, turnID, item, now), itemCompleted(th.ID, turnID, item, now))
 		}
-		if strings.TrimSpace(msg.Content) == "" {
+		if strings.TrimSpace(msg.Content) == "" && len(msg.Images) == 0 {
 			return out
 		}
-		if th.activeAgentItemID == "" && th.hasAgentTextLocked(turnID, msg.Content) {
+		if th.activeAgentItemID == "" && len(msg.Images) == 0 && th.hasAgentTextLocked(turnID, msg.Content) {
 			return out
 		}
 		terminal := assistantMessageTerminal(msg)
@@ -975,6 +1003,7 @@ func (th *threadState) applyMessageItemLocked(turnID string, msg providers.ChatM
 			out = append(out, itemStarted(th.ID, turnID, item, now))
 		}
 		item.Text = msg.Content
+		item.Images = threadItemImages(msg.Images)
 		item.Seq = msg.Seq
 		item.SourceID = msg.ProviderItemID
 		item.Terminal = terminal
@@ -1045,8 +1074,45 @@ func (th *threadState) ensureActiveAgentItemLocked(turnID string, now time.Time)
 		Role:   "assistant",
 	}
 	th.activeAgentItemID = item.ID
+	if th.agentStream != nil {
+		th.agentStream.itemIDs = append(th.agentStream.itemIDs, item.ID)
+	}
 	th.upsertItemLocked(turnID, item, now)
 	return item, true
+}
+
+// A provider operation can close several display rows at tool boundaries while
+// still producing one aggregate ChatMessage. Its replacements and final message
+// must supersede all those rows, without touching earlier model operations.
+type agentMessageStream struct {
+	operationID string
+	itemIDs     []string
+}
+
+func (th *threadState) reconcileAgentStreamItemsLocked(turnID string, keepFirst bool, now time.Time) []outboundNotification {
+	if th.agentStream == nil || len(th.agentStream.itemIDs) == 0 {
+		return nil
+	}
+	var out []outboundNotification
+	var retained string
+	for _, id := range th.agentStream.itemIDs {
+		if _, ok := th.itemLocked(turnID, id); !ok {
+			continue
+		}
+		if keepFirst && retained == "" {
+			retained = id
+			continue
+		}
+		if th.removeItemLocked(turnID, id, now) {
+			out = append(out, itemRemoved(th.ID, turnID, id, now))
+		}
+	}
+	th.activeAgentItemID = retained
+	th.agentStream.itemIDs = nil
+	if retained != "" {
+		th.agentStream.itemIDs = []string{retained}
+	}
+	return out
 }
 
 func (th *threadState) completeActiveAgentItemLocked(turnID string, now time.Time, terminal bool) []outboundNotification {
@@ -1418,6 +1484,10 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 					message = "turn start aborted"
 				}
 				current.Error = &TurnError{Message: message}
+				var diagnostic TurnError
+				if json.Unmarshal([]byte(rec.Cause), &diagnostic) == nil && diagnostic.Message == message {
+					current.Error = &diagnostic
+				}
 				appendItem(ThreadItem{
 					ID:       nextItemID(current.ID),
 					SourceID: sourceID,
@@ -1507,7 +1577,7 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 					Text:     msg.ReasoningContent,
 				}, historyIndex, true)
 			}
-			if strings.TrimSpace(msg.Content) != "" {
+			if strings.TrimSpace(msg.Content) != "" || len(msg.Images) > 0 {
 				appendItem(ThreadItem{
 					ID:           nextItemID(current.ID),
 					Seq:          msg.Seq,
@@ -1517,6 +1587,7 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 					Terminal:     assistantMessageTerminal(msg),
 					Role:         "assistant",
 					Text:         msg.Content,
+					Images:       threadItemImages(msg.Images),
 					FinishReason: string(msg.FinishReason),
 					StopReason:   msg.StopReason,
 					Truncated:    msg.Truncated,
@@ -1639,7 +1710,7 @@ func chatMessageItem(id string, msg providers.ChatMessage) ThreadItem {
 			Status:           ThreadItemStatusCompleted,
 			Role:             "user",
 			Text:             chatMessageDisplayContent(msg),
-			ContentParts:     append([]providers.MessageContentPart(nil), msg.ContentParts...),
+			ContentParts:     providers.CloneMessageContentParts(msg.ContentParts),
 			InputText:        chatMessageInputText(msg),
 			Images:           threadItemImages(msg.Images),
 			Files:            threadItemFiles(msg.Files),
@@ -1652,7 +1723,7 @@ func chatMessageItem(id string, msg providers.ChatMessage) ThreadItem {
 			RelatedSessionID: strings.TrimSpace(msg.RelatedSessionID),
 		}
 	case "assistant":
-		if strings.TrimSpace(msg.Content) != "" {
+		if strings.TrimSpace(msg.Content) != "" || len(msg.Images) > 0 {
 			return ThreadItem{
 				ID:           id,
 				Seq:          msg.Seq,
@@ -1662,6 +1733,7 @@ func chatMessageItem(id string, msg providers.ChatMessage) ThreadItem {
 				Terminal:     assistantMessageTerminal(msg),
 				Role:         "assistant",
 				Text:         msg.Content,
+				Images:       threadItemImages(msg.Images),
 				FinishReason: string(msg.FinishReason),
 				StopReason:   msg.StopReason,
 				Truncated:    msg.Truncated,
@@ -1713,7 +1785,7 @@ func chatMessageFromPersistedMessage(rec persistedMessage) providers.ChatMessage
 		Steered:              rec.Steered,
 		ReasoningContent:     rec.ReasoningContent,
 		ReasoningBlocks:      append([]providers.ReasoningBlock(nil), rec.ReasoningBlocks...),
-		ContentParts:         append([]providers.MessageContentPart(nil), rec.ContentParts...),
+		ContentParts:         providers.CloneMessageContentParts(rec.ContentParts),
 		ToolCallID:           rec.ToolCallID,
 		ToolInvocationID:     rec.ToolInvocationID,
 		ToolResultKind:       providers.NormalizeToolCallKind(rec.ToolResultKind),
@@ -1728,10 +1800,12 @@ func chatMessageFromPersistedMessage(rec persistedMessage) providers.ChatMessage
 			continue
 		}
 		msg.Images = append(msg.Images, providers.InputImage{
-			MediaType: image.MediaType,
-			Data:      image.Data,
-			Width:     image.Width,
-			Height:    image.Height,
+			LocalPath:      image.LocalPath,
+			ProviderItemID: image.ProviderItemID,
+			MediaType:      image.MediaType,
+			Data:           image.Data,
+			Width:          image.Width,
+			Height:         image.Height,
 		})
 	}
 	for _, file := range rec.Files {
@@ -1808,6 +1882,13 @@ func isThreadTitleUserMessage(msg providers.ChatMessage) bool {
 }
 
 func chatMessageDisplayContent(msg providers.ChatMessage) string {
+	for _, image := range msg.Images {
+		if image.LocalPath != "" {
+			// Image-only messages have a genuinely empty display prompt even
+			// though Content also contains model-facing working-copy paths.
+			return msg.DisplayContent
+		}
+	}
 	if strings.TrimSpace(msg.DisplayContent) != "" {
 		return msg.DisplayContent
 	}
@@ -1819,11 +1900,13 @@ func chatMessageDisplayContent(msg providers.ChatMessage) string {
 // ordinary user messages while letting plugin-generated wake messages reveal
 // the prompt they actually delivered.
 func chatMessageInputText(msg providers.ChatMessage) string {
-	content := strings.TrimSpace(msg.Content)
-	if content == "" || content == strings.TrimSpace(chatMessageDisplayContent(msg)) {
+	// Keep the expanded slash-command prompt, but exclude working-copy paths
+	// from public input that callers may submit again when retrying a turn.
+	content := strings.TrimSuffix(msg.Content, inputImagePathReference(msg.Images))
+	if strings.TrimSpace(content) == "" || strings.TrimSpace(content) == strings.TrimSpace(chatMessageDisplayContent(msg)) {
 		return ""
 	}
-	return msg.Content
+	return content
 }
 
 func threadItemImages(images []providers.InputImage) []ThreadItemImage {
@@ -1898,7 +1981,7 @@ func filePreview(file providers.InputFile, index int) string {
 func cloneThreadItem(item ThreadItem) ThreadItem {
 	item.Images = append([]ThreadItemImage(nil), item.Images...)
 	item.Files = append([]ThreadItemFile(nil), item.Files...)
-	item.ContentParts = append([]providers.MessageContentPart(nil), item.ContentParts...)
+	item.ContentParts = providers.CloneMessageContentParts(item.ContentParts)
 	item.Display = cloneToolCallDisplay(item.Display)
 	item.ResultDetail = cloneToolResult(item.ResultDetail)
 	return item

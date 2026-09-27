@@ -57,3 +57,8 @@ stream and confirms it as the final answer when the stream toggle is cleared.
 `scripts/stream-settlement-layout-e2e.cjs` compares paragraph positions, dimensions
 and total turn height across this handoff at default/large sizes and wide/narrow
 windows in both themes. Run it with the current checkout's Wuu Dev executable.
+
+The image surface (`?surface=images`) includes a user attachment, a tool image,
+and landscape, portrait, and panoramic Markdown images. Inspect the preview
+sizes, text-to-image gaps, narrow-window fit, and click/keyboard enlargement
+in both themes and at default and large font sizes.

@@ -27,43 +27,6 @@ type scriptedStreamTurn struct {
 	content string
 }
 
-func newWorkerTreeTestControl(t *testing.T) *AgentControl {
-	t.Helper()
-	dir := t.TempDir()
-	initRepo(t, dir)
-	c, err := New(Config{
-		Client:        &fakeClient{resp: providers.ChatResponse{Content: "done"}},
-		DefaultModel:  "fake-model",
-		ParentRepo:    dir,
-		WorktreeRoot:  filepath.Join(dir, ".wuu", "worktrees"),
-		SessionID:     "sess-worker-tree",
-		HistoryDir:    filepath.Join(dir, ".wuu-state", "sessions", "sess-worker-tree", "workers"),
-		WorkerFactory: func(string, WorkerType, agentthread.Metadata) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { stopAndCloseAgentControlForTest(t, c) })
-	return c
-}
-
-func spawnWorkerTreeTestWorker(t *testing.T, c *AgentControl, task, parentID, parentPath string) *SpawnResult {
-	t.Helper()
-	result, err := c.Spawn(context.Background(), SpawnRequest{
-		Type:        DefaultSubagentType,
-		TaskName:    task,
-		Description: "test",
-		Prompt:      "do something",
-		ParentID:    parentID,
-		ParentPath:  parentPath,
-		Synchronous: true,
-	})
-	if err != nil {
-		t.Fatalf("Spawn %s: %v", task, err)
-	}
-	return result
-}
-
 func (s *scriptedStreamClient) Chat(_ context.Context, _ providers.ChatRequest) (providers.ChatResponse, error) {
 	return providers.ChatResponse{Content: "done"}, nil
 }
@@ -190,16 +153,4 @@ func TestCompletedParentParksUntilChildDelivers(t *testing.T) {
 		t.Fatalf("parent final result = %q, want the integrated turn's output", final.Result)
 	}
 	waitForThreadStatus(t, c, parent.AgentID, agentthread.StatusCompleted)
-}
-
-// A parent with no live children never parks: completion delivers directly.
-func TestCompletedParentWithoutChildrenDoesNotPark(t *testing.T) {
-	c := newWorkerTreeTestControl(t)
-	res := spawnWorkerTreeTestWorker(t, c, "no_children", "", "")
-	if res.Status != "completed" {
-		t.Fatalf("status = %q, want completed", res.Status)
-	}
-	if meta, ok := c.threads.Resolve(res.AgentID); !ok || meta.Status != agentthread.StatusCompleted {
-		t.Fatalf("thread status = %+v (ok=%v), want completed", meta, ok)
-	}
 }

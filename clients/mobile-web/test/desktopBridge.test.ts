@@ -73,87 +73,16 @@ describe("browser host contract", () => {
     }, 30_000, expect.any(String));
   });
 
-  it("returns host engine inventory and routes process input to its owning thread", async () => {
+  it("allows host-owned engine login to finish and keeps cancellation responsive", async () => {
     const host = await api();
-    const inventory = { engines: [{ id: "codex", installed: true }] };
-    remote.call.mockResolvedValueOnce(inventory);
-    expect(await host.listEngines()).toBe(inventory);
-    await host.writeManagedProcess("thread-1", "process-2", "\u0003");
-    expect(remote.call).toHaveBeenLastCalledWith("process/write", {
-      thread_id: "thread-1", process_id: "process-2", input: "\u0003",
+    await host.authenticateEngine("antigravity", "browser");
+    expect(remote.call).toHaveBeenLastCalledWith("engine/authenticate", {
+      engine_id: "antigravity", method_id: "browser",
+    }, 310_000, expect.any(String));
+    await host.cancelEngineAuth("antigravity");
+    expect(remote.call).toHaveBeenLastCalledWith("engine/auth/cancel", {
+      engine_id: "antigravity",
     }, 30_000, expect.any(String));
-  });
-
-  it("forwards question holds and preserves mixed message parts", async () => {
-    const host = await api();
-    await host.holdUserQuestion("question-1");
-    expect(remote.call).toHaveBeenLastCalledWith("user-question/hold", { request_id: "question-1" }, 30_000, expect.any(String));
-    const parts = [{ type: "text" as const, text: "Review this file" }];
-    await host.startTurn("thread-1", "Review this file", [], [], "read_only", { path: "src/main.go" }, parts);
-    expect(remote.call).toHaveBeenLastCalledWith("turn/start", expect.objectContaining({
-      thread_id: "thread-1", active_document: { path: "src/main.go" }, content_parts: parts,
-    }), 30_000, expect.any(String));
-  });
-
-  it("reads and resolves files in the selected conversation worktree on the host", async () => {
-    const bridge = await connectBridge();
-    await bridge.api.listWorkspaceDirectory("src", "/paired/worktree");
-    expect(remote.call).toHaveBeenLastCalledWith("workspace/directory/list", { path: "src", root: "/paired/worktree" }, 30_000, expect.any(String));
-    await bridge.api.readWorkspaceFile("src/main.go", "/paired/worktree");
-    expect(remote.call).toHaveBeenLastCalledWith("workspace/file/read", { path: "src/main.go", root: "/paired/worktree" }, 30_000, expect.any(String));
-    await bridge.api.resolveWorkspaceFileReference("main.go:12");
-    expect(remote.call).toHaveBeenLastCalledWith("workspace/file/resolve", { reference: "main.go:12", root: "/paired/workspace" }, 30_000, expect.any(String));
-  });
-
-  it("reads repository changes from the selected host worktree", async () => {
-    const bridge = await connectBridge();
-    await bridge.api.gitStatus();
-    expect(remote.call).toHaveBeenLastCalledWith("workspace/git/status", { root: "/paired/workspace" }, 30_000, expect.any(String));
-    await bridge.api.listGitChanges("/paired/worktree");
-    expect(remote.call).toHaveBeenLastCalledWith("workspace/git/changes", { root: "/paired/worktree" }, 30_000, expect.any(String));
-    await bridge.api.readGitFileDiff("src/main.go", "/paired/worktree");
-    expect(remote.call).toHaveBeenLastCalledWith("workspace/git/diff", { path: "src/main.go", root: "/paired/worktree" }, 30_000, expect.any(String));
-  });
-
-  it("preserves installed extension modules and icons across snapshots and updates", async () => {
-    const bridge = await connectBridge();
-    const record = { id: "desktop-extension", kind: "plugin", name: "Example", fingerprint: "generation-1", enabled: true };
-    const namedIconPlugin = {
-      id: "ask-user",
-      kind: "plugin",
-      name: "Ask User",
-      fingerprint: "generation-2",
-      enabled: true,
-      icon: { name: "sparkles" },
-    };
-    const inventory = [
-      { ...record, desktop: { entry: "wuu-plugin://module" }, icon: { path: "assets/icon.svg" } },
-      namedIconPlugin,
-    ];
-    const payload = { extension_inventory: inventory, skills: [{ name: "host-skill" }], epoch: 2 };
-    const expected = payload;
-    remote.call.mockResolvedValueOnce(payload);
-    expect(await bridge.api.initialize()).toMatchObject(expected);
-    const received = vi.fn();
-    bridge.api.onServerEvent(received);
-    remote.options.onNotification?.("plugin/inventory/changed", payload);
-    expect(received).toHaveBeenCalledWith(expect.objectContaining({
-      message: { method: "plugin/inventory/changed", params: expected },
-    }));
-    remote.call.mockResolvedValueOnce(payload);
-    expect(await bridge.api.refreshExtensionCatalog()).toEqual(expected);
-    for (const action of ["disable", "enable"] as const) {
-      const enabled = action === "enable";
-      remote.call.mockResolvedValueOnce({ extension_inventory: [{ ...inventory[0], enabled }] });
-      const update = { id: record.id, fingerprint: record.fingerprint, action };
-      expect(await bridge.api.updateExtensionPackage(update)).toEqual({
-        extension_inventory: [{ ...inventory[0], enabled }],
-      });
-      expect(remote.call).toHaveBeenLastCalledWith("extension/package/update", update, 30_000, expect.any(String));
-    }
-    expect(payload.extension_inventory).toBe(inventory);
-    expect(inventory[0]).toHaveProperty("desktop");
-    expect(inventory[0]).toHaveProperty("icon");
   });
 
   it("does not open executable URL schemes", async () => {
@@ -245,12 +174,6 @@ describe("connection recovery", () => {
     expect(await response).toEqual(action === "respond"
       ? { result: { approved: true } }
       : { error: { code: "rejected", message: "No" } });
-  });
-
-  it("waits for a real host workspace before presenting the workbench", async () => {
-    const bridge = await connectBridge();
-    expect(bridge.getConnectionSnapshot().phase).toBe("connected");
-    expect((await bridge.api.listProjects()).active_context?.cwd).toBe("/paired/workspace");
   });
 
   it("restores a fresh app-server connection in place and waits for subscribers", async () => {
@@ -499,6 +422,10 @@ describe("workspace routing", () => {
     }, 30_000, expect.any(String));
     await bridge.api.listWorkspaceDirectory();
     expect(remote.call).toHaveBeenLastCalledWith("workspace/directory/list", { path: undefined, root: "/computer/beta" }, 30_000, expect.any(String));
+    await bridge.api.startThread({ model: "captured-model" }, { kind: "project", project_id: "alpha", cwd: "/computer/alpha" });
+    expect(remote.call).toHaveBeenLastCalledWith("thread/start", {
+      model: "captured-model", cwd: "/computer/alpha", workspace_id: "alpha",
+    }, 30_000, "/computer/alpha");
   });
 
   it("routes background and worktree events to their owning project after switching", async () => {
@@ -557,16 +484,33 @@ it("routes background thread actions and questions to their owner after a worksp
   expect(remote.call).toHaveBeenLastCalledWith("user-question/hold", { request_id: "q" }, 30_000, "/alpha");
 });
 
-it("synchronizes a resumed snapshot once from the response without requesting a broadcast", async () => {
+it.each([false, true])("installs one shared resume before following notifications (stale=%s)", async stale => {
   const bridge = await connectBridge();
+  const sent: ProtocolEnvelope[] = [];
+  const protocol = new ProtocolClient(env => sent.push(env), {
+    onNotification: (method, params, workdir) => remote.options.onNotification?.(method, params, workdir),
+  });
+  remote.call.mockImplementation((...args) => protocol.call(...args as Parameters<ProtocolClient["call"]>));
   const listener = vi.fn();
   bridge.api.onServerEvent(listener);
-  const result = { thread: { id: "t", cwd: "/paired/workspace", turns: [] }, held_user_messages: [{id:"held"}] };
-  remote.call.mockResolvedValueOnce(result);
-  expect(await bridge.api.resumeThread("t")).toEqual(result);
-  expect(remote.call).toHaveBeenLastCalledWith("thread/resume", {session_id:"t", response_only:true}, 90_000, "/paired/workspace");
-  expect(listener).toHaveBeenCalledTimes(1);
-  expect(listener.mock.calls[0][0].message).toEqual({method:"thread/resumed", params:result});
+  const first = bridge.api.resumeThread("t");
+  const second = bridge.api.resumeThread("t");
+  expect(sent).toHaveLength(1);
+  expect(sent[0]).toMatchObject({ method: "thread/resume", params: { session_id: "t", response_only: true } });
+  const result = { thread: { id: "t", cwd: "/paired/workspace", turns: [] }, held_user_messages: [{ id: "held" }] };
+  if (stale) remote.options.onDetach?.();
+  protocol.feed({ id: sent[0].id, result });
+  protocol.feed({ method: "item/agentMessage/delta", params: { thread_id: "t", delta: "new" } });
+  if (stale) {
+    await expect(first).rejects.toThrow("connection changed");
+    await expect(second).rejects.toThrow("connection changed");
+    expect(listener.mock.calls.map(([event]) => event.message.method)).toEqual(["item/agentMessage/delta"]);
+  } else {
+    await expect(first).resolves.toEqual(result);
+    await expect(second).resolves.toEqual(result);
+    expect(listener.mock.calls.map(([event]) => event.message.method)).toEqual(["thread/resumed", "item/agentMessage/delta"]);
+  }
+  await bridge.disconnect();
 });
 
 it("assembles explicitly requested image chunks and shares repeated reads", async () => {

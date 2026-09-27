@@ -306,7 +306,9 @@ export class AppServerClientPool {
       this.clients.set(workdir, client);
     }
     client.touch();
-    this.evictIdleClients();
+    // The caller registers its request synchronously after this returns. Keep
+    // its target alive until pending/running state can protect it from eviction.
+    this.evictIdleClients(client);
     this.maybeBroadcastRunningThreads();
     return client;
   }
@@ -355,7 +357,7 @@ export class AppServerClientPool {
     };
   }
 
-  private evictIdleClients(): void {
+  private evictIdleClients(admittingClient?: AppServerClient): void {
     if (this.clients.size <= MAX_APP_SERVER_CLIENTS) {
       return;
     }
@@ -363,6 +365,7 @@ export class AppServerClientPool {
     const idleClients = [...this.clients.values()]
       .filter(
         (client) =>
+          client !== admittingClient &&
           client.workdir !== activeWorkdir &&
           !client.isBusy() &&
           !this.isWorkdirPinned?.(client.workdir),
@@ -402,7 +405,7 @@ export class AppServerClient {
   private runningThreadIDs = new Set<string>();
   private queuedTurnKeys = new Set<string>();
   private nextRequestID = 1;
-  private stdoutBuffer = "";
+  private stdoutChunks: string[] = [];
   private disposing = false;
   private lastUsedAt = Date.now();
   private lastStderr = "";
@@ -578,8 +581,8 @@ export class AppServerClient {
       resourcesPath,
       process.platform,
     );
+    helperEnv.WUU_NODE_EXECUTABLE = process.execPath;
     if (app.isPackaged) {
-      delete helperEnv.WUU_ENABLE_BROWSER;
       configurePackagedCUA(helperEnv, resourcesPath, process.platform);
     }
     this.shutdownPromise = undefined;
@@ -589,7 +592,7 @@ export class AppServerClient {
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.child = child;
-    this.stdoutBuffer = "";
+    this.stdoutChunks = [];
     this.lastStderr = "";
 
     child.stdout.setEncoding("utf8");
@@ -709,7 +712,7 @@ export class AppServerClient {
     // renderer event may immediately start a replacement process; late
     // error/exit/close events from this child must not touch that new child.
     this.child = null;
-    this.stdoutBuffer = "";
+    this.stdoutChunks = [];
     this.lastStderr = "";
     this.pending.clear();
     this.threadCwdsByID.clear();
@@ -735,16 +738,29 @@ export class AppServerClient {
   }
 
   private readStdout(chunk: string): void {
-    this.stdoutBuffer += chunk;
+    // A history response can span hundreds of pipe reads. Scan each new chunk
+    // once and join only at a line boundary, rather than repeatedly flattening
+    // and searching the entire growing response.
+    const child = this.child;
+    let start = 0;
     for (;;) {
-      const index = this.stdoutBuffer.indexOf("\n");
+      const index = chunk.indexOf("\n", start);
       if (index < 0) {
+        if (start < chunk.length) this.stdoutChunks.push(chunk.slice(start));
         return;
       }
-      const line = this.stdoutBuffer.slice(0, index).trim();
-      this.stdoutBuffer = this.stdoutBuffer.slice(index + 1);
+      const tail = chunk.slice(start, index);
+      let line = tail;
+      if (this.stdoutChunks.length > 0) {
+        this.stdoutChunks.push(tail);
+        line = this.stdoutChunks.join("");
+        this.stdoutChunks = [];
+      }
+      line = line.trim();
+      start = index + 1;
       if (line) {
         this.handleLine(line);
+        if (this.child !== child) return;
       }
     }
   }
@@ -951,7 +967,6 @@ const APP_SERVER_HELPERS: readonly AppServerHelper[] = [
   { environment: "WUU_DREAM_PLUGIN_HELPER", executable: "wuu-dream-plugin" },
   { environment: "WUU_TODO_PLUGIN_HELPER", executable: "wuu-todo-plugin" },
   { environment: "WUU_ASK_USER_PLUGIN_HELPER", executable: "wuu-ask-user-plugin" },
-  { environment: "WUU_NOTE_COMPACTION_PLUGIN_HELPER", executable: "wuu-note-compaction-plugin" },
   { environment: "WUU_CUA_MAC_HELPER", executable: "wuu-cua-mac", platform: "darwin" },
 ];
 

@@ -48,8 +48,10 @@ func newProtocolClient(in io.Reader, out io.Writer) *protocolClient {
 		in:      in,
 		out:     out,
 		pending: make(map[string]chan protocolResponse),
-		events:  make(chan Event, 256),
-		done:    make(chan struct{}),
+		// forwardEvents never waits for consumers: it dispatches to their
+		// bounded queues. Keep payload buffering in that one layer.
+		events: make(chan Event),
+		done:   make(chan struct{}),
 	}
 	go c.readLoop()
 	return c

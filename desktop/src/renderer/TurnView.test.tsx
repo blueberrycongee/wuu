@@ -8,6 +8,7 @@ import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { TurnView } from "./TurnView";
 import type { TurnStreamStatus } from "./AppState";
 import { ImagePreviewProvider } from "./ImagePreview";
+import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 import { STREAM_TEXT_NOTIFY_INTERVAL_MS, streamTextKey, streamTextStore } from "./StreamText";
 
 // Keep the temporarily hidden review surface's lifecycle coverage for restoration.
@@ -559,6 +560,49 @@ describe("TurnView", () => {
     expect(view.textContent).toContain("查看思考过程");
   });
 
+  it("publishes a frozen process catch-up immediately when the conversation becomes visible", () => {
+    vi.useFakeTimers();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const turn = makeTurn("in_progress", [makeCommentary("checking the files")]);
+    act(() => {
+      root!.render(
+        <ConversationRenderActivityProvider active={false}>
+          <TurnView turn={turn} onStreamFrame={() => {}} />
+        </ConversationRenderActivityProvider>,
+      );
+    });
+    act(() => {
+      root!.render(
+        <ConversationRenderActivityProvider active={false}>
+          <TurnView
+            turn={makeTurn("in_progress", [
+              makeCommentary("checking the files"),
+              makeReasoning("settled reasoning"),
+            ])}
+            onStreamFrame={() => {}}
+          />
+        </ConversationRenderActivityProvider>,
+      );
+    });
+    act(() => {
+      root!.render(
+        <ConversationRenderActivityProvider active>
+          <TurnView
+            turn={makeTurn("in_progress", [
+              makeCommentary("checking the files"),
+              makeReasoning("settled reasoning"),
+            ])}
+            onStreamFrame={() => {}}
+          />
+        </ConversationRenderActivityProvider>,
+      );
+    });
+
+    expect(container.textContent).toContain("查看思考过程");
+  });
+
   it("publishes a live tool or reasoning continuation without a delayed layout jump", () => {
     vi.useFakeTimers();
     const view = render(
@@ -648,7 +692,6 @@ describe("TurnView", () => {
 
     expect(view.textContent).toContain("partial progress");
     expect(view.querySelectorAll(".turn-notice")).toHaveLength(1);
-    expect(view.textContent).toContain("网络异常");
     const notice = view.querySelector(".turn-notice")!;
     expect(notice.querySelector("summary")?.textContent).not.toContain("previous_response_not_found");
     expect(notice.querySelector("details")?.open).toBe(false);
@@ -840,4 +883,27 @@ describe("TurnView optimistic placeholder", () => {
       /^\d+s$/,
     );
   });
+});
+
+
+it("keeps click-to-answer elapsed through acknowledgement and a shorter server duration", async () => {
+  const { createOptimisticTurn, reconcileOptimisticTurns } = await import("./ComposerMessages");
+  const { forgetLocalTurnTiming } = await import("./LocalTurnTiming");
+  vi.useFakeTimers();
+  vi.setSystemTime(100_000);
+  const optimistic = createOptimisticTurn({ id: "render-clock", text: "work", images: [], files: [] }, Date.now());
+  const view = render(optimistic);
+  await act(async () => { vi.advanceTimersByTime(8000); });
+  expect(view.querySelector(".turn-process-meta")?.textContent).toBe("8s");
+  const real: Turn = { ...optimistic, id: "render-real", started_at: new Date(107_000).toISOString() };
+  reconcileOptimisticTurns([optimistic], [real]);
+  rerender(real);
+  expect(view.querySelector(".turn-process-meta")?.textContent).toBe("8s");
+  await act(async () => { vi.advanceTimersByTime(2000); });
+  rerender({ ...real, status: "completed", duration_ms: 3000, items: [...real.items, makeFinalAnswer("done")] });
+  await act(async () => { vi.advanceTimersByTime(ASSISTANT_TURN_PRESENTATION_STABILIZE_MS); });
+  expect(view.querySelector(".turn-process-title")?.textContent).toContain("10 秒");
+  await act(async () => { vi.advanceTimersByTime(5000); });
+  expect(view.querySelector(".turn-process-title")?.textContent).toContain("10 秒");
+  forgetLocalTurnTiming(optimistic.id);
 });

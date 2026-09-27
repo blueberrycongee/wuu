@@ -1,122 +1,77 @@
-# Desktop 插件快速上手
+# 桌面插件快速上手
 
-本教程带你用 10 分钟给 Wuu 的 Composer 加一个可交互按钮，并跑通创建、构建、热重载、
-打包和安装。Desktop 插件在 Wuu Renderer 中运行受信任的 React 代码，不需要 fork Wuu。
+本教程在输入框工具栏中添加一个小开关，演示组件本地状态和宿主 UI 注册。它不会改变模型行为，也不会保存设置。需要 Wuu Desktop、`wuu` CLI、Node.js 22 或更高版本，以及匹配的 Wuu 源码检出目录，用于获取 SDK 类型。
 
-## 前置条件
+## 创建插件包
 
-- 已安装 `wuu` CLI，并确认 `wuu plugin --help` 可用；
-- Node.js 22+；
-- Wuu Desktop 正在运行。
-
-## 第 1 步：生成 Desktop 骨架
+修改 SDK 源码路径，然后在准备存放插件项目的目录中执行：
 
 ```bash
-wuu plugin create --type desktop focus-mode
-cd focus-mode
+WUU_SOURCE=/absolute/path/to/wuu
+npm ci --prefix "$WUU_SOURCE/packages/plugin-sdk"
+npm run build --prefix "$WUU_SOURCE/packages/plugin-sdk"
+wuu plugin create --type desktop toolbar-demo
+cd toolbar-demo
+npm pkg set "devDependencies.@wuu/plugin-sdk=file:$WUU_SOURCE/packages/plugin-sdk"
 npm install
 ```
 
-生成的包包含 `plugin.json`、TypeScript 配置和 `src/index.ts`。manifest 的 Desktop 入口指向
-构建后的 `dist/index.js`：
+生成的 `plugin.json` 将 `desktop.entry` 指向 `dist/index.js`。桌面模块导出 `activate(api)`，宿主启动对应 generation 时调用它。本例只导入 SDK 类型，因此 TypeScript 会生成没有运行时 import 的独立 ESM 入口。
 
-```json
-{
-  "schema_version": 1,
-  "id": "focus-mode",
-  "name": "focus-mode",
-  "version": "0.1.0",
-  "desktop": {
-    "entry": "dist/index.js"
-  }
-}
-```
+## 添加开关
 
-Desktop 入口导出 `activate(api)`。`api` 属于当前插件 generation；插件禁用、升级或卸载时，
-通过它注册的 UI、样式和清理函数会一起回收。
-
-## 第 2 步：在 Composer 加一个按钮
-
-把 `src/index.ts` 替换为：
+将 `src/index.ts` 替换为：
 
 ```ts
 import type { PluginGenerationApi } from "@wuu/plugin-sdk";
 
 export function activate(api: PluginGenerationApi): void {
   const React = api.react;
-  const ToolbarToggle = api.ui.ToolbarToggle as unknown as (
-    props: Readonly<Record<string, unknown>>,
-  ) => unknown;
+  const Toggle = api.ui.ToolbarToggle as unknown as
+    (props: Readonly<Record<string, unknown>>) => unknown;
 
-  function FocusToggle() {
+  function DemoToggle() {
     const [enabled, setEnabled] = React.useState(false);
-    return React.createElement(
-      ToolbarToggle,
-      {
-        pressed: enabled,
-        "aria-label": "切换专注模式",
-        onClick: () => setEnabled((value) => !value),
-      },
-      enabled ? "专注中" : "专注",
-    );
+    return React.createElement(Toggle, {
+      pressed: enabled,
+      "aria-label": "Toggle demo state",
+      onClick: () => setEnabled(value => !value),
+    }, enabled ? "Demo on" : "Demo off");
   }
 
   api.registerSlot("composer.toolbar", {
-    id: "focus-toggle",
+    id: "demo-toggle",
     order: 20,
-    render() {
-      return React.createElement(FocusToggle, null);
-    },
+    render: () => React.createElement(DemoToggle, null),
   });
 }
 ```
 
-这里使用了三个关键能力：
+`api.react` 是宿主的 React 实例，`api.ui.ToolbarToggle` 提供共享控件，`composer.toolbar` 负责放置，不依赖输入框内部 DOM。通过 API 注册组件，不要额外打包一份 React 运行时。
 
-- `api.react`：使用 Wuu 自己的 React，不要把另一份 React 打进插件；
-- `api.ui`：使用会自动继承主题、密度和无障碍行为的宿主 UI Kit；
-- `composer.toolbar`：把控件加入宿主拥有的 Composer 工具栏，而不是查找私有 DOM。
-
-## 第 3 步：构建和检查
+## 构建和加载
 
 ```bash
 npm run build
 wuu plugin validate .
 wuu plugin test .
-```
-
-对于只有 Desktop 入口的包，`wuu plugin test` 会校验插件包并报告跳过 runtime 测试；它不会
-导入或渲染 Desktop 入口。下一步需要在真实 App 中验证 Renderer 行为。
-
-Desktop 入口必须是包内的自包含 ESM 文件。类型导入会在编译时移除；不要在构建结果中保留
-指向插件源码的相对 import，也不要打包另一份 React。
-
-## 第 4 步：在真实 App 中热重载
-
-```bash
 wuu plugin dev .
 ```
 
-`wuu plugin dev .` 会授权命令参数指定的路径（这里是 `.`）。保存后 Wuu 构建并激活新的原子 generation；候选构建或激活失败时，
-上一代继续工作。在 Wuu Desktop 的 Composer 工具栏中点击“专注”，确认状态可以切换。
+对于纯桌面插件，`test` 检查包结构，并报告跳过运行时初始化；它不会导入或渲染桌面模块。宿主要求入口自包含；后续添加运行时 import 时，应将依赖打包，而不是让这个文件引用未解析的其他模块。
 
-主进程或宿主源码没有变化时不需要 fork 或重编 Wuu。插件只通过公开入口加载。
+`dev` 授权传入的目录，并在文件变化时重新构建、发布开发 generation。构建或包检查失败时，保留最后发布的 generation；仍有活动执行时，发布可能等待。激活错误需查看桌面插件状态。
 
-## 第 5 步：打包和安装
+在 Wuu Desktop 中点击开关，确认标签和按下状态变化，再检查键盘焦点、两种主题、窄窗口和较大 UI 字号。禁用插件后，控件应消失。React 状态属于当前挂载的组件，不是持久化的插件存储。
+
+## 打包
 
 ```bash
 wuu plugin pack .
-wuu plugin install ./focus-mode-0.1.0.zip
-wuu plugin approve focus-mode
+wuu plugin install ./toolbar-demo-0.1.0.zip
+wuu plugin approve toolbar-demo
 ```
 
-批准就是信任决定：插件以你的用户权限执行。Desktop 插件目录把同一操作呈现为一次
-**批准并启用**确认。开发目录授权不会随 zip 一起转移。
+当前 CLI 将暂存包与启用执行的信任决定分开。开发授权保留在本机，不随 zip 分发。桌面插件是受信任的 renderer 代码，不是沙箱中的网页内容。
 
-## 下一步
-
-- 查看[Desktop UI 扩展地图](desktop-plugins.md)，选择 View、Slot、Presenter 或 Surface；
-- 跟着[插件场景教程](plugin-recipes.md)实现选区浮层、草稿写入和独立面板；
-- 在[插件开发参考](plugin-authoring.md)中查 manifest、设置、Storage 和完整 API；
-- 如果还需要 Agent 工具，创建 `--type full` 插件或阅读
-  [Agent 插件快速上手](plugin-quickstart.md)。
+较大的扩展边界见 [UI 扩展地图](desktop-plugins.md)，动作和视图示例见[插件配方](plugin-recipes.md)，包和生命周期契约见[编写插件](plugin-authoring.md)。

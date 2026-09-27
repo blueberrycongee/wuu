@@ -22,15 +22,12 @@
   user-select: none;
   line-height: 1;
   cursor: default;
-  outline: none;
   transition:
-    color 420ms var(--ease-out),
+    color var(--motion-slower) var(--ease-out),
     opacity var(--motion-slow) var(--ease-out);
 }
 
 .composer-token-gauge:focus-visible {
-  outline: 2px solid var(--composer-token-gauge-focus-outline);
-  outline-offset: 2px;
   border-radius: var(--radius-pill);
 }
 
@@ -66,7 +63,7 @@
   stroke-width: 2;
   transition:
     stroke-dashoffset 620ms var(--ease-out),
-    stroke 420ms var(--ease-out);
+    stroke var(--motion-slower) var(--ease-out);
   will-change: stroke-dashoffset;
 }
 
@@ -77,7 +74,7 @@
 
 .composer-token-gauge-needle-shape {
   stroke-width: 2.2;
-  transition: stroke 420ms var(--ease-out);
+  transition: stroke var(--motion-slower) var(--ease-out);
 }
 
 .composer-token-gauge-hub {
@@ -115,7 +112,7 @@
   pointer-events: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .composer-token-gauge,
   .composer-token-gauge-progress,
   .composer-token-gauge-needle,

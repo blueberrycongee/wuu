@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Search } from "lucide-react";
+import { Check, ChevronDown, Search } from "./WuuIcons";
 import {
   useEffect,
   useLayoutEffect,
@@ -76,10 +76,8 @@ export function SelectMenu({
   emptyMessage = "没有可选项",
   // When true, the floating menu flips to the opposite side of the
   // trigger if the requested placement doesn't have enough viewport
-  // room (e.g. the model picker in the new-participant dialog, where
-  // the list of providers × models can easily exceed the space below
-  // the trigger inside a centered modal). See FloatingMenuPortal for
-  // the actual flip heuristic.
+  // room (e.g. a long provider × model list inside a centered modal).
+  // See FloatingMenuPortal for the actual flip heuristic.
   flip = false
 }: {
   value: string;
@@ -328,7 +326,7 @@ export function SelectMenu({
           >
             {searchable ? (
               <label className="menu-search select-menu-search">
-                <Search className="select-menu-search-icon icon" aria-hidden="true" />
+                <Search className="select-menu-search-icon icon-sm" aria-hidden="true" />
                 <input
                   ref={searchInputRef}
                   type="search"

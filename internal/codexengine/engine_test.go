@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,64 @@ func buildFakeCodex(t *testing.T) string {
 		t.Fatalf("build fake codex: %v\n%s", err, out)
 	}
 	return binary
+}
+
+func TestEngineSpeedSurvivesNativeResume(t *testing.T) {
+	binary := buildFakeCodex(t)
+	logPath := filepath.Join(t.TempDir(), "requests.jsonl")
+	t.Setenv("WUU_TEST_CODEX_REQUESTS", logPath)
+	t.Setenv("WUU_TEST_CODEX_DEFAULT_TIER", "fast")
+	host := NewHost(binary, t.TempDir())
+	defer host.Release()
+	engine := NewEngine(host)
+	ref := ""
+	for _, speed := range []string{"fast", "standard", ""} {
+		sess, err := engine.SessionForThread(context.Background(), agentengine.ThreadBinding{
+			ThreadID: "speed-thread", RootDir: t.TempDir(), Model: "gpt-6-astra",
+			Effort: "high", Speed: speed, ExternalRef: ref,
+			PersistRef: func(value string) error { ref = value; return nil },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, err = sess.RunTurn(ctx, agentengine.TurnInput{History: []providers.ChatMessage{{Role: "user", Content: "hello"}}}, nil)
+		cancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var methods []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var request struct {
+			Method string
+			Params map[string]any
+		}
+		if err := json.Unmarshal([]byte(line), &request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Method != "thread/start" && request.Method != "thread/resume" && request.Method != "turn/start" {
+			continue
+		}
+		want := "fast"
+		if len(methods) >= 2 && len(methods) < 4 {
+			want = "default"
+		}
+		if request.Params["serviceTier"] != want {
+			t.Fatalf("%s tier = %v, want %s", request.Method, request.Params["serviceTier"], want)
+		}
+		if request.Method == "turn/start" && request.Params["reasoningEffort"] != "high" {
+			t.Fatalf("speed changed effort: %v", request.Params)
+		}
+		methods = append(methods, request.Method)
+	}
+	if strings.Join(methods, ",") != "thread/start,turn/start,thread/resume,turn/start,thread/resume,turn/start" {
+		t.Fatalf("requests = %v", methods)
+	}
 }
 
 func TestEngineEndToEndFakeCodex(t *testing.T) {
@@ -212,6 +271,37 @@ func TestSessionDeclinesApprovalWithoutHostHandler(t *testing.T) {
 	}
 }
 
+func TestResolveBinaryFindsUserInstallOutsidePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("NVM_DIR", filepath.Join(home, ".nvm"))
+	t.Setenv("WUU_CODEX_BINARY", "")
+	t.Setenv("PATH", t.TempDir())
+	name := "codex"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	binary := filepath.Join(home, ".local", "bin", name)
+	if err := os.MkdirAll(filepath.Dir(binary), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("#!/bin/sh\nexit 0\n")
+	if runtime.GOOS == "windows" {
+		content = []byte("placeholder")
+	}
+	if err := os.WriteFile(binary, content, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ResolveBinary()
+	if err != nil {
+		t.Fatalf("ResolveBinary: %v", err)
+	}
+	if filepath.Clean(got) != filepath.Clean(binary) {
+		t.Fatalf("ResolveBinary = %q, want %q", got, binary)
+	}
+}
+
 func TestResolveBinaryEnvOverride(t *testing.T) {
 	t.Setenv("WUU_CODEX_BINARY", "/nonexistent/codex")
 	path, err := ResolveBinary()
@@ -220,12 +310,6 @@ func TestResolveBinaryEnvOverride(t *testing.T) {
 	}
 	if path != "/nonexistent/codex" {
 		t.Fatalf("ResolveBinary = %q, want env value", path)
-	}
-	t.Setenv("WUU_CODEX_BINARY", "")
-	if _, err := ResolveBinary(); err == nil {
-		// Machine may or may not have codex on PATH; both are acceptable,
-		// but the error path must exist when lookup fails.
-		_ = err
 	}
 }
 

@@ -6,6 +6,7 @@ import { I18nProvider } from '../../../desktop/src/renderer/i18n';
 import { languagePreferenceStore } from './lib/language';
 import { startPhoneAppearance } from './lib/appearance';
 import { startWebViewportSync } from './lib/viewport';
+import { startFocusModality } from "../../../desktop/src/renderer/FocusModality";
 import "../../../desktop/src/renderer/styles.css";
 import "./styles.css";
 import "./workbench.css";
@@ -15,6 +16,7 @@ if (!root) throw new Error("missing #root");
 root.dataset.wuuUiRoot = "true";
 root.dataset.wuuComponent = "ui-root";
 document.documentElement.dataset.hostKind = 'web';
+startFocusModality();
 startPhoneAppearance();
 startWebViewportSync();
 

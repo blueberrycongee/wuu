@@ -70,12 +70,34 @@
   --ink-overlay-8: rgba(220, 228, 235, 0.09);
   --ink-overlay-12: rgba(220, 228, 235, 0.13);
   --ink-overlay-18: rgba(220, 228, 235, 0.2);
-  /* Use the same geometry as light mode. Existing borders carry the edge;
-     only black ambient opacity changes, avoiding stacked bright keylines. */
-  --shadow-color-subtle: rgba(0, 0, 0, 0.16);
+  /* Fine inset highlights give dark surfaces depth without an outer glow.
+     Overlays retain black ambient shadows to separate overlapping content.
+     Keep the complete recipe inside the public override, including `none`. */
+  --shadow-inset-color: rgba(255, 255, 255, 0.06);
+  --shadow-inset: inset 0 0 0 1px var(--shadow-inset-color);
   --shadow-color-medium: rgba(0, 0, 0, 0.2);
   --shadow-color-strong: rgba(0, 0, 0, 0.24);
   --shadow-color-heavy: rgba(0, 0, 0, 0.3);
+  --shadow-soft: var(--wuu-elevation-panel, inset 0 0 0 0.5px var(--shadow-inset-color));
+  --shadow-card: var(--wuu-elevation-panel, var(--shadow-inset));
+  --shadow-composer: var(--wuu-elevation-panel, var(--shadow-inset));
+  --shadow-tray: var(--wuu-elevation-panel, var(--shadow-inset));
+  --shadow-pop: var(
+    --wuu-elevation-overlay,
+    var(--shadow-inset), 0 8px 24px -6px var(--shadow-color-strong), 0 2px 6px -2px var(--shadow-color-medium)
+  );
+  --shadow-modal: var(
+    --wuu-elevation-overlay,
+    var(--shadow-inset), 0 16px 48px -12px var(--shadow-color-heavy), 0 4px 12px -4px var(--shadow-color-medium)
+  );
+  --shadow-drawer-left: var(
+    --wuu-elevation-overlay,
+    var(--shadow-inset), -6px 0 20px -8px var(--shadow-color-strong)
+  );
+  --shadow-drawer-right: var(
+    --wuu-elevation-overlay,
+    var(--shadow-inset), 6px 0 20px -8px var(--shadow-color-strong)
+  );
   --modal-backdrop-bg: var(--wuu-color-overlay-backdrop, rgba(0, 0, 0, 0.5));
 
   /* --- Status colors: brighter hues, deep soft backgrounds --- */
@@ -144,12 +166,7 @@
   --browser-retry-hover-bg: #c0392b;
   --browser-loading-dot-bg: var(--wuu-color-info, #58a6ff);
   --skills-section-border: var(--wuu-color-border-subtle, var(--hairline-soft));
-  --skill-row-chevron: var(--wuu-color-text-muted, #686f75);
-  --skill-artwork-border: var(--wuu-color-border-subtle, var(--hairline-soft));
   --skill-artwork-neutral-bg: var(--wuu-color-surface-muted, #24282c);
-  --skill-artwork-neutral-fg: var(--wuu-color-text-muted, #a5abb0);
-  --skill-artwork-official-bg: var(--wuu-color-surface-elevated, #292d31);
-  --skill-artwork-official-fg: var(--wuu-color-on-accent, #ffffff);
   /* Skill artwork marks: the token light values live in workspace.css.
      Dark keeps the same hue families but steps saturation and luminance
      down a notch so the marks read as calm identity colors instead of
@@ -204,8 +221,6 @@
   --review-overlay-bg: rgba(18, 20, 22, 0.92);
   --provider-pill-bg: var(--wuu-color-surface-muted, #24282c);
   --provider-pill-text: var(--wuu-color-text-muted, #aab0b5);
-  --skill-tag-bundled-bg: rgba(255, 90, 38, 0.16);
-  --skill-tag-bundled-fg: #ff9166;
   --codex-runtime-effort-text: var(--wuu-color-text-muted, #8f959a);
   --codex-effort-sheen: rgba(16, 19, 22, 0.2);
   --codex-effort-sheen-soft: rgba(16, 19, 22, 0.09);
@@ -218,8 +233,7 @@
 
   /* composer.css / composer-context-meter.css / chat.css */
   --composer-frame-shadow: var(--shadow-composer);
-  --composer-image-attachment-button-shadow: var(--shadow-card);
-  --composer-file-attachment-button-hover-bg: #2b2f34;
+  --composer-surface-bg: var(--surface-1);
   --composer-textarea-placeholder: var(--ink-tertiary);
   --composer-textarea-disabled: var(--wuu-color-text-muted, #757b78);
   --composer-send-button-disabled-text: var(--ink-muted);
@@ -288,12 +302,10 @@
   --responsive-secondary-button-bg: var(--wuu-control-secondary-background, #2b2f34);
   --responsive-secondary-button-text: var(--wuu-color-text, #ccd1d5);
 
-  /* workbench.css / task-cards.css — host primitives still resolve through
-     public theme tokens, so extension themes remain authoritative. */
+  /* workbench.css — host primitives still resolve through public theme
+     tokens, so extension themes remain authoritative. */
   --plugin-ui-panel-bg: var(--wuu-color-surface, var(--surface-1));
   --plugin-ui-card-bg: var(--wuu-color-surface-elevated, var(--surface-3));
-  --task-card-bg: var(--wuu-color-surface-elevated, var(--surface-3));
-  --task-card-border: var(--wuu-color-border-subtle, var(--hairline));
 
   /* sidebar.css */
   /* Match the light theme's flat navigation plane. Opaque fill prevents
@@ -390,7 +402,6 @@
   --diff-insert-text-color: var(--wuu-color-success, #4cc38a);
   --diff-delete-bg: rgba(239, 106, 94, 0.12);
   --diff-delete-text-color: var(--wuu-color-danger, #f0857a);
-  --turn-source-icon-color-fallback: rgba(255, 255, 255, 0.85);
   /* conversation-shell.css */
   --shell-process-control-color: var(--ink-tertiary);
   --shell-session-tab-active-bg: var(--surface-3);

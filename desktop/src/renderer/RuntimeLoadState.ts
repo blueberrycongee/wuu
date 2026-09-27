@@ -7,7 +7,7 @@ import type {
   Thread,
 } from "../shared/protocol";
 import {
-  activeProjectID,
+  activeWorkspaceID,
   reconcileListedThreadState,
   createDraftSessionTab,
   createThreadSessionTab,
@@ -27,29 +27,84 @@ export type LoadedRuntimeState = Partial<AppState> & {
   heldComposerMessages?: QueuedComposerMessage[];
 };
 
+function runtimeConfiguration(
+  workspaceState: ProjectListResult,
+  initialized: InitializeResult,
+): Partial<AppState> {
+  return {
+    initialized,
+    projects: workspaceState.projects,
+    activeContext: workspaceState.active_context,
+    activeProjectId: activeWorkspaceID(workspaceState.active_context),
+    gitStatus: undefined,
+    status:
+      initialized.status === "needs_setup"
+        ? (initialized.issues?.[0]?.message ?? translateCurrent("runtime.configureCredentials"))
+        : "ready",
+  };
+}
+
+export async function loadRuntimeConfiguration(
+  workspaceState: ProjectListResult,
+): Promise<Partial<AppState>> {
+  if (!workspaceState.active_context) {
+    return emptyRuntimeState(workspaceState);
+  }
+  if (workspaceState.runtime_issue?.code === "active_project_unavailable") {
+    return unavailableWorkspaceRuntimeState(workspaceState);
+  }
+  return runtimeConfiguration(workspaceState, await window.wuu.initialize());
+}
+
+export async function loadRuntimeThreadList(cwd?: string): Promise<Thread[]> {
+  const [listed, archived] = await Promise.all([
+    window.wuu.listThreads(cwd),
+    window.wuu.listArchivedThreads(),
+  ]);
+  // Settings → Archive reads this same catalog, including other workspaces.
+  return sortThreads([...listed.threads, ...archived.threads]);
+}
+
+export async function loadThreadListRefresh(state: AppState): Promise<Thread[]> {
+  const listed = await window.wuu.listThreads(state.activeContext?.cwd);
+  const runningHistoryIDs = new Set(
+    [state.thread, state.secondaryThread, ...state.threads]
+      .filter((thread): thread is Thread => Boolean(thread?.turns.some(turn => turn.status === "in_progress")))
+      .map(thread => thread.id),
+  );
+  return Promise.all(listed.threads.map(async thread => {
+    if (thread.turns.length > 0 || isThreadRunning(thread) || !runningHistoryIDs.has(thread.id)) {
+      return thread;
+    }
+    // An idle summary cannot settle cached turns or recover terminal items and
+    // errors. Fetch only histories that need repair, not the whole catalog.
+    try {
+      return (await window.wuu.resumeThread(thread.id)).thread ?? thread;
+    } catch {
+      // Keep the cached history; the next refresh retries this thread without
+      // blocking discovery or successful repairs for other conversations.
+      return thread;
+    }
+  }));
+}
+
 export async function loadRuntime(
-  projectState: ProjectListResult,
+  workspaceState: ProjectListResult,
   options: {
     resumeLatestThread?: boolean;
   } = {},
 ): Promise<LoadedRuntimeState> {
-  if (!projectState.active_context) {
-    return emptyRuntimeState(projectState);
+  if (!workspaceState.active_context) {
+    return emptyRuntimeState(workspaceState);
   }
-  if (projectState.runtime_issue?.code === "active_project_unavailable") {
-    return unavailableProjectRuntimeState(projectState);
+  if (workspaceState.runtime_issue?.code === "active_project_unavailable") {
+    return unavailableWorkspaceRuntimeState(workspaceState);
   }
   const resumeLatestThread = options.resumeLatestThread ?? true;
-  const [initialized, listed, archived] = await Promise.all([
+  const [initialized, listedThreads] = await Promise.all([
     window.wuu.initialize(),
-    window.wuu.listThreads(),
-    window.wuu.listArchivedThreads(),
+    loadRuntimeThreadList(),
   ]);
-  // The archive page (Settings → Archive) reads from state.threads, so we
-  // merge the cross-cwd archived list into the same sorted array. The
-  // archives are never re-fetched on context switch — RuntimeLoadState is
-  // the single rebuild path.
-  const listedThreads = sortThreads([...listed.threads, ...archived.threads]);
   // Archived conversations ride along in listedThreads for the Settings →
   // Archive page, but they are put away — a context switch must never
   // resurrect one into the composer. Resume the most recent live thread:
@@ -66,11 +121,8 @@ export async function loadRuntime(
     ? requireThread(resumed, translateCurrent("thread.resumeMissing"))
     : undefined;
   return {
+    ...runtimeConfiguration(workspaceState, initialized),
     initialized: thread ? initialized : applyDraftRuntimeMemory(initialized),
-    projects: projectState.projects,
-    activeContext: projectState.active_context,
-    activeProjectId: activeProjectID(projectState.active_context),
-    gitStatus: undefined,
     thread,
     secondaryThread: undefined,
     activePane: "primary",
@@ -82,10 +134,6 @@ export async function loadRuntime(
     // `thread/resumed` notification is emitted before the app finishes
     // booting, when the active-context gate still drops every server event.
     heldComposerMessages: heldComposerMessagesFromResumeResult(resumed),
-    status:
-      initialized.status === "needs_setup"
-        ? (initialized.issues?.[0]?.message ?? translateCurrent("runtime.configureCredentials"))
-        : "ready",
   };
 }
 
@@ -96,7 +144,7 @@ export async function loadPopOutRuntime(
     return { status: "no-runtime" };
   }
   if (init.kind === "draft") {
-    const [listedProjects, initialized, listed, archived] = await Promise.all([
+    const [listedWorkspaces, initialized, listed, archived] = await Promise.all([
       window.wuu.listProjects(),
       window.wuu.initialize(),
       window.wuu.listThreads(),
@@ -106,9 +154,9 @@ export async function loadPopOutRuntime(
     const tab = createDraftSessionTab("draft:pop-out", init.context);
     return {
       initialized: applyDraftRuntimeMemory(initialized),
-      projects: listedProjects.projects,
+      projects: listedWorkspaces.projects,
       activeContext: init.context,
-      activeProjectId: activeProjectID(init.context),
+      activeProjectId: activeWorkspaceID(init.context),
       gitStatus: undefined,
       thread: undefined,
       secondaryThread: undefined,
@@ -124,7 +172,7 @@ export async function loadPopOutRuntime(
   if (!init.threadID) {
     return { status: "no-runtime" };
   }
-  const [listedProjects, initialized, listed, archived, resumed] =
+  const [listedWorkspaces, initialized, listed, archived, resumed] =
     await Promise.all([
       window.wuu.listProjects(),
       window.wuu.initialize(),
@@ -140,9 +188,9 @@ export async function loadPopOutRuntime(
   const tab = createThreadSessionTab(thread, init.context);
   return {
     initialized,
-    projects: listedProjects.projects,
+    projects: listedWorkspaces.projects,
     activeContext: init.context,
-    activeProjectId: activeProjectID(init.context),
+    activeProjectId: activeWorkspaceID(init.context),
     gitStatus: undefined,
     thread,
     secondaryThread: undefined,
@@ -160,11 +208,11 @@ export async function loadPopOutRuntime(
 }
 
 export function emptyRuntimeState(
-  projectState: ProjectListResult,
+  workspaceState: ProjectListResult,
 ): Partial<AppState> {
   return {
     initialized: undefined,
-    projects: projectState.projects,
+    projects: workspaceState.projects,
     activeContext: undefined,
     activeProjectId: undefined,
     gitStatus: undefined,
@@ -178,15 +226,15 @@ export function emptyRuntimeState(
   };
 }
 
-function unavailableProjectRuntimeState(
-  projectState: ProjectListResult,
+function unavailableWorkspaceRuntimeState(
+  workspaceState: ProjectListResult,
 ): Partial<AppState> {
   return {
-    ...emptyRuntimeState(projectState),
-    activeContext: projectState.active_context,
-    activeProjectId: activeProjectID(projectState.active_context),
+    ...emptyRuntimeState(workspaceState),
+    activeContext: workspaceState.active_context,
+    activeProjectId: activeWorkspaceID(workspaceState.active_context),
     status:
-      projectState.runtime_issue?.message ?? translateCurrent("runtime.workspaceUnavailable"),
+      workspaceState.runtime_issue?.message ?? translateCurrent("runtime.workspaceUnavailable"),
   };
 }
 

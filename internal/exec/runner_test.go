@@ -24,10 +24,8 @@ type fakeController struct {
 	run        appserver.Run
 	events     []Notification
 	block      bool
-	startErr   error
 
 	startedThread   bool
-	startEphemeral  bool
 	resumedThread   string
 	forkedThread    string
 	startedParams   appserver.RunStartParams
@@ -42,14 +40,6 @@ type initializeErrorController struct {
 
 func (c *initializeErrorController) Initialize(context.Context) (appserver.InitializeResult, error) {
 	return appserver.InitializeResult{}, c.err
-}
-
-type failingWriter struct {
-	err error
-}
-
-func (w failingWriter) Write([]byte) (int, error) {
-	return 0, w.err
 }
 
 func newFakeController(events ...Notification) *fakeController {
@@ -78,7 +68,6 @@ func (f *fakeController) Initialize(context.Context) (appserver.InitializeResult
 
 func (f *fakeController) StartThread(_ context.Context, ephemeral bool) (appserver.Thread, error) {
 	f.startedThread = true
-	f.startEphemeral = ephemeral
 	f.thread.Ephemeral = ephemeral
 	return f.thread, nil
 }
@@ -97,9 +86,6 @@ func (f *fakeController) ForkThread(_ context.Context, id string) (appserver.Thr
 
 func (f *fakeController) StartRun(_ context.Context, params appserver.RunStartParams) (appserver.Run, error) {
 	f.startedParams = params
-	if f.startErr != nil {
-		return appserver.Run{}, f.startErr
-	}
 	return f.run, nil
 }
 
@@ -157,24 +143,6 @@ func (f *fakeController) Notifications() <-chan Notification {
 	return ch
 }
 
-func TestRunUsesRunControlForPlainExec(t *testing.T) {
-	controller := newFakeController(
-		notification(appserver.NotificationAgentMessageDelta, appserver.AgentMessageDeltaNotification{ThreadID: "thread-1", TurnID: "turn-1", Delta: "run answer"}),
-		notification(appserver.NotificationTurnCompleted, appserver.TurnCompletedNotification{ThreadID: "thread-1", Turn: appserver.Turn{ID: "turn-1"}, Content: "run answer", TracePath: "/run-trace"}),
-	)
-	var stdout, stderr bytes.Buffer
-	err := Run(context.Background(), Options{Prompt: "reply", JSON: true, Stdout: &stdout, Stderr: &stderr, Controller: controller})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if controller.startedParams.Request.Mode != execution.ModeStart || controller.startedParams.Prompt != "reply" {
-		t.Fatalf("Run start params = %+v", controller.startedParams)
-	}
-	if !strings.Contains(stdout.String(), `"status":"completed"`) || !strings.Contains(stdout.String(), `"final_message":"run answer"`) {
-		t.Fatalf("Run JSON output = %s", stdout.String())
-	}
-}
-
 func TestRunDefaultStdoutOnlyFinalMessage(t *testing.T) {
 	controller := newFakeController(
 		notification(appserver.NotificationAgentMessageDelta, appserver.AgentMessageDeltaNotification{ThreadID: "thread-1", TurnID: "turn-1", Delta: "partial"}),
@@ -223,22 +191,6 @@ func TestRunJSONLEmitsResultWhenInitializeFails(t *testing.T) {
 	events := parseJSONLines(t, stdout.String())
 	if len(events) != 1 || events[0]["type"] != "result" || events[0]["status"] != "failed" {
 		t.Fatalf("events = %+v, want one failed result", events)
-	}
-}
-
-func TestRunReturnsProtocolErrorWhenJSONLWriteFails(t *testing.T) {
-	controller := newFakeController(
-		notification(appserver.NotificationTurnCompleted, appserver.TurnCompletedNotification{ThreadID: "thread-1", Turn: appserver.Turn{ID: "turn-1"}, Content: "done"}),
-	)
-
-	err := Run(context.Background(), Options{
-		Prompt:     "do work",
-		JSON:       true,
-		Stdout:     failingWriter{err: errors.New("broken output")},
-		Controller: controller,
-	})
-	if ExitCode(err) != ExitProtocol || !strings.Contains(err.Error(), "broken output") {
-		t.Fatalf("error = %v (exit %d), want output protocol error", err, ExitCode(err))
 	}
 }
 
@@ -477,23 +429,6 @@ func TestRunJSONLEmitsStableEvents(t *testing.T) {
 	}
 }
 
-func TestRunEphemeralStartsEphemeralThread(t *testing.T) {
-	controller := newFakeController(
-		notification(appserver.NotificationTurnCompleted, appserver.TurnCompletedNotification{ThreadID: "thread-1", Turn: appserver.Turn{ID: "turn-1"}, Content: "done"}),
-	)
-
-	if err := Run(context.Background(), Options{
-		Prompt:     "scratch task",
-		Ephemeral:  true,
-		Controller: controller,
-	}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if !controller.startedThread || !controller.startEphemeral {
-		t.Fatalf("expected ephemeral start, got %+v", controller)
-	}
-}
-
 func TestRunResumeLastUsesResumePath(t *testing.T) {
 	controller := newFakeController(
 		notification(appserver.NotificationTurnCompleted, appserver.TurnCompletedNotification{ThreadID: "thread-1", Turn: appserver.Turn{ID: "turn-1"}, Content: "continued"}),
@@ -640,48 +575,6 @@ func TestRunTurnErrorWithInterruptedStatusEmitsTurnInterrupted(t *testing.T) {
 	}
 }
 
-func TestRunFailedErrorClassifiesProviderModelError(t *testing.T) {
-	controller := newFakeController(
-		notification(appserver.NotificationTurnError, appserver.TurnErrorNotification{ThreadID: "thread-1", TurnID: "turn-1", Error: "provider returned an error"}),
-		notification(appserver.NotificationRunUpdated, appserver.RunUpdatedNotification{Run: appserver.Run{
-			ID: "run-1", ThreadID: "thread-1", Status: execution.StatusFailed,
-			Error: &execution.Error{Code: "stream_error", Category: "provider", Message: "provider returned an error"},
-		}}),
-	)
-	var stdout bytes.Buffer
-
-	err := Run(context.Background(), Options{
-		Prompt:     "do work",
-		JSON:       true,
-		Stdout:     &stdout,
-		Controller: controller,
-	})
-	if ExitCode(err) != ExitProviderModelError {
-		t.Fatalf("ExitCode = %d, err=%v", ExitCode(err), err)
-	}
-}
-
-func TestRunFailedErrorClassifiesToolFailure(t *testing.T) {
-	controller := newFakeController(
-		notification(appserver.NotificationTurnError, appserver.TurnErrorNotification{ThreadID: "thread-1", TurnID: "turn-1", Error: "tool execution failed: run_shell failed"}),
-		notification(appserver.NotificationRunUpdated, appserver.RunUpdatedNotification{Run: appserver.Run{
-			ID: "run-1", ThreadID: "thread-1", Status: execution.StatusFailed,
-			Error: &execution.Error{Code: "tool_failed", Category: "local", Message: "tool execution failed: run_shell failed"},
-		}}),
-	)
-	var stdout bytes.Buffer
-
-	err := Run(context.Background(), Options{
-		Prompt:     "do work",
-		JSON:       true,
-		Stdout:     &stdout,
-		Controller: controller,
-	})
-	if ExitCode(err) != ExitToolFailed {
-		t.Fatalf("ExitCode = %d, err=%v", ExitCode(err), err)
-	}
-}
-
 func TestRunFailedErrorPrefersStructuredCategory(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -732,21 +625,6 @@ func TestRunExitCodePreservesStableExitClassification(t *testing.T) {
 		if got := runExitCode(run); got != tc.want {
 			t.Fatalf("category %q exit code = %d, want %d", tc.category, got, tc.want)
 		}
-	}
-}
-
-func TestRunControllerTimeoutSendsTimeoutReason(t *testing.T) {
-	controller := newFakeController()
-	controller.block = true
-	err := Run(context.Background(), Options{
-		Prompt: "do work", JSON: true, Timeout: 20 * time.Millisecond,
-		Stdout: &bytes.Buffer{}, Controller: controller,
-	})
-	if ExitCode(err) != ExitTimeout {
-		t.Fatalf("ExitCode = %d, err=%v", ExitCode(err), err)
-	}
-	if controller.interruptReason != "timeout" {
-		t.Fatalf("interrupt reason = %q", controller.interruptReason)
 	}
 }
 

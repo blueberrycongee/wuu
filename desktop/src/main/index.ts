@@ -1,6 +1,6 @@
+import { saveArtifactFile } from "./artifactSave";
 import { readCatalogSkill } from "./remoteSkills";
 import { inheritSystemProxy } from "./systemProxy";
-import { routeHarnessWorkspaceRequest, WORKSPACE_HARNESS_DISPATCH } from "./harnessWorkspaceRouting";
 import { RemoteAppServerBridge } from "./remoteAppServerBridge";
 import { PhoneAccess, phonePairLink } from "./phoneAccess";
 import {
@@ -40,55 +40,14 @@ import type {
   ConfigModelUpdateResult,
   EngineListResult,
   EngineUpdateParams,
+  EngineAuthParams,
+  EngineAuthResult,
   ExtensionCatalogRefreshResult,
   ExtensionPackageUpdateParams,
   ExtensionPackageUpdateResult,
   GitCommitParams,
   GitPullRequestParams,
   BuildInfoResult,
-  ChannelAgentCreateParams,
-  ChannelAgentCreateResult,
-  ChannelAgentUpdateParams,
-  ChannelAgentUpdateResult,
-  ChannelAgentDeleteParams,
-  ChannelAgentDeleteResult,
-  ChannelSessionListParams,
-  ChannelSessionListResult,
-  ChannelSessionCreateParams,
-  ChannelSessionRefParams,
-  ChannelSessionSendParams,
-  ChannelSessionResult,
-  ChannelSessionReadResult,
-  ChannelBootstrapResult,
-  ChannelAgentListResult,
-  ChannelAgentInsightsResult,
-  ChannelAgentStartParams,
-  ChannelAgentStartResult,
-  ChannelAgentResetParams,
-  ChannelAgentResetResult,
-  ChannelAgentCreationResolveParams,
-  ChannelAgentCreationResolveResult,
-  ChannelMessageListParams,
-  ChannelMessageListResult,
-  ChannelMessageSendParams,
-  ChannelMessageSendResult,
-  ChannelRoomCreateParams,
-  ChannelRoomCreateResult,
-  ChannelDirectMessageOpenParams,
-  ChannelDirectMessageOpenResult,
-  ChannelRoomUpdateParams,
-  ChannelRoomUpdateResult,
-  ChannelRoomDeleteParams,
-  ChannelRoomDeleteResult,
-  ChannelRoomReadParams,
-  ChannelRoomReadResult,
-  ChannelRoomListResult,
-  ChannelTaskCreateParams,
-  ChannelTaskCreateResult,
-  ChannelTaskUpdateParams,
-  ChannelTaskUpdateResult,
-  ChannelHumanMentionStatusResult,
-  ChannelHumanMentionAckResult,
   ActivityActionResult,
   ActivityListResult,
   ActivityReleaseResult,
@@ -125,6 +84,8 @@ import type {
   RuntimeGeneralSettingsUpdate,
   GitCommitMessageResult,
   SettingsUsageResponse,
+  UsageOverviewParams,
+  UsageOverviewResponse,
   TerminalSessionStartParams,
   TextPolishResult,
   Thread,
@@ -134,6 +95,8 @@ import type {
   ThreadForkTarget,
   ThreadResumeResult,
   ThreadStartParams,
+  ProjectSessionParams,
+  ProjectSessionResult,
   Turn,
   UserQuestionAnswer,
   UserQuestionListResult,
@@ -166,11 +129,11 @@ import type {
   SideThreadHistoryResult,
   SideThreadSendParams,
   SideThreadSendResult,
-  ChannelRoomPreferences,
 } from "../shared/protocol";
 import { AppServerClientPool, configurePackagedCUA } from "./appServerClients";
 import { RendererServerEventBatcher } from "./rendererServerEventBatcher";
-import { ObservationCoordinator, activityControlMethod } from "./cuaActivityWindows";
+import { ObservationCoordinator, activityControlMethod, observationActivityFromServerEvent } from "./cuaActivityWindows";
+import { browserPiPHostClient } from "./browserPiPPlacement";
 import { createObservationPiPFactory } from "./browserPiPWindow";
 import { removeLegacyDesktopCliLink } from "./legacyCliLink";
 import {
@@ -189,7 +152,6 @@ import {
   getThemePreference,
   getLanguagePreference,
   getPluginConflictPreferences,
-  getChannelRoomPreferences,
   isOnboardingComplete,
   completeOnboarding,
   setCodexPetSettings,
@@ -197,7 +159,6 @@ import {
   setThemePreference,
   setLanguagePreference,
   setPluginConflictPreference,
-  setChannelRoomPreferences,
   type MessageFlowFontSize,
   type ThemePreference,
   type LanguagePreference,
@@ -235,6 +196,7 @@ import {
   productionApplicationMenuTemplate,
 } from "./appShellGuards";
 import { createWindowRegistry, type WindowRegistry } from "./windowRegistry";
+import { installRendererRecovery, sendToWindow } from "./rendererProcessGone";
 import {
   BrowserHostCoordinator,
   BROWSER_PARTITION,
@@ -262,8 +224,7 @@ const DARK_WINDOW_BACKGROUND = "#1d2024";
 // Matches the renderer titlebar row (48px in the tabbed/popped-out states)
 // so the overlay buttons center on the same strip the renderer draws.
 const WINDOWS_TITLEBAR_OVERLAY_HEIGHT = 48;
-const ENABLE_EMBEDDED_BROWSER =
-  !app.isPackaged && process.env.WUU_ENABLE_BROWSER === "1";
+const ENABLE_EMBEDDED_BROWSER = process.env.WUU_ENABLE_BROWSER !== "0";
 if (process.argv.includes("--safe-mode")) {
   process.env.WUU_SAFE_MODE = "1";
 }
@@ -381,7 +342,11 @@ const observationCoordinator = new ObservationCoordinator(
     );
     return result.activities ?? [];
   },
-  createObservationPiPFactory({ browserHost: browserHostCoordinator, isPackaged: app.isPackaged }),
+  createObservationPiPFactory({
+    browserHost: browserHostCoordinator,
+    isPackaged: app.isPackaged,
+    parent: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined),
+  }),
   async (activity, action) => {
     const result = await appServerClientPool.requestForWorkdir<ActivityActionResult>(
       activity.workdir, activityControlMethod(action), { thread_id: activity.thread_id, activity_id: activity.id },
@@ -390,6 +355,27 @@ const observationCoordinator = new ObservationCoordinator(
   },
 );
 observationCoordinator.setAppearance(resolvedThemeIsDark());
+browserHostCoordinator.setRendererSink({
+  surface: (snapshot) => broadcastToAll("wuu:browser-surface", snapshot),
+  userInput: (payload) => broadcastToAll("wuu:browser-user-input", payload),
+  adopted: (payload) => broadcastToAll("wuu:browser-tab-adopted", payload),
+  presented: () => observationCoordinator.refreshBrowserPresentation(),
+});
+observationCoordinator.setBrowserInPanel((activity) =>
+  activity.kind === "browser" &&
+  browserHostCoordinator.isInPanel(activity.workdir, activity.target || activity.id),
+);
+observationCoordinator.setBrowserExpandHandler((activity) => {
+  // The workspace panel belongs to the main window. A broadcast also changes
+  // unrelated popped-out conversations and lets them compete for the tab.
+  const host = windowRegistry.mainWindow();
+  if (!host || host.isDestroyed()) return;
+  host.webContents.send("wuu:browser-dock", {
+    thread_id: activity.thread_id,
+    workdir: activity.workdir,
+    tabID: activity.target || activity.id,
+  });
+});
 // The pet is a standalone always-on-top window owned by the main process, so
 // it stays on the desktop when the main window is hidden or minimized. Its
 // right-click menu disables the setting, which also tears the window down.
@@ -450,8 +436,11 @@ function appServerRequest<T>(
   event: IpcMainInvokeEvent,
   method: string,
   params?: unknown,
+  targetContext?: RuntimeContext,
 ): Promise<T> {
-  const context = windowRegistry.runtimeContextForWindow(event.sender.id);
+  const context = targetContext
+    ? projectManager.resolveSubmissionContext(targetContext)
+    : windowRegistry.runtimeContextForWindow(event.sender.id);
   return context
     ? appServerClientPool.requestInContext<T>(context, method, params)
     : appServerClientPool.request<T>(method, params);
@@ -462,7 +451,7 @@ function desktopInitializeParams() {
     protocol_version: APP_SERVER_PROTOCOL_VERSION,
     client: { name: "wuu-desktop", version: DESKTOP_BUILD_INFO.version },
     capabilities: {
-      reverse_rpc: { methods: [...BROWSER_REVERSE_RPC_METHODS, WORKSPACE_HARNESS_DISPATCH] },
+      reverse_rpc: { methods: [...BROWSER_REVERSE_RPC_METHODS] },
     },
   };
 }
@@ -554,10 +543,6 @@ const rendererServerEventBatcher = new RendererServerEventBatcher((event) => {
 
 function emitServerEvent(event: ServerEvent): void {
   remoteAppServerBridge.publish(event);
-  if (event.kind === "server-request" && event.message.method === WORKSPACE_HARNESS_DISPATCH) {
-    void routeHarnessWorkspaceRequest(event, appServerClientPool, runtimeContextForWorkspaceID, desktopInitializeParams());
-    return;
-  }
   // Intercept core→desktop browser/* requests BEFORE broadcastToAll: the
   // renderer auto-rejects every server-request ("unsupported server request"),
   // and server-request routes are single-shot, so letting the renderer race
@@ -583,6 +568,8 @@ function emitServerEvent(event: ServerEvent): void {
     browserHostCoordinator.onClientTorndown(event.workdir);
     observationCoordinator.dropWorkdir(event.workdir);
   }
+  const browserActivity = observationActivityFromServerEvent(event);
+  if (browserActivity) browserHostCoordinator.updateActivity(browserActivity);
   observationCoordinator.handleServerEvent(event);
   const sideThreadEvent = sideThreadEventFromServerEvent(event);
   if (sideThreadEvent) {
@@ -593,10 +580,7 @@ function emitServerEvent(event: ServerEvent): void {
 
 function broadcastToAll(channel: string, payload: unknown): void {
   for (const window of windowRegistry.allWindows()) {
-    if (window.isDestroyed() || window.webContents.isDestroyed()) {
-      continue;
-    }
-    window.webContents.send(channel, payload);
+    sendToWindow(window, channel, payload);
   }
 }
 
@@ -605,14 +589,10 @@ function emitTerminalEvent(
   event: Parameters<TerminalSessionManager["emit"]>[1],
 ): void {
   const window = windowRegistry.windowForID(windowID);
-  if (
-    !window ||
-    window.isDestroyed() ||
-    window.webContents.isDestroyed()
-  ) {
+  if (!window) {
     return;
   }
-  window.webContents.send("wuu:terminal-event", event);
+  sendToWindow(window, "wuu:terminal-event", event);
 }
 
 function unregisterWindow(windowID: number): void {
@@ -692,6 +672,26 @@ function scheduleWindowResizeEnd(delay = 140): void {
   }, delay);
 }
 
+function handleNativeWindowResizePhase(
+  phase: "live" | "end",
+  win?: BrowserWindow,
+): void {
+  if (phase === "end") {
+    // `resized` means the user released the frame. Do not treat it as another
+    // live tick — that restarted the 140ms freeze after the chrome was still.
+    if (windowResizeEndTimer) {
+      clearTimeout(windowResizeEndTimer);
+      windowResizeEndTimer = undefined;
+    }
+    setWindowResizeState(false);
+    if (win) scheduleMainWindowBoundsSave(win);
+    return;
+  }
+  setWindowResizeState(true);
+  scheduleWindowResizeEnd();
+  if (win) scheduleMainWindowBoundsSave(win);
+}
+
 function scheduleMainWindowBoundsSave(win: BrowserWindow, delay = 200): void {
   if (mainWindowBoundsSaveTimer) {
     clearTimeout(mainWindowBoundsSaveTimer);
@@ -723,10 +723,27 @@ function loadRenderer(window: BrowserWindow): void {
       console.error(`[preload] ${preloadPath}: ${error.message}`);
     });
   }
-
   const devRendererURL = !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined;
   const rendererPath = join(__dirname, "../renderer/index.html");
   const rendererURL = devRendererURL ?? pathToFileURL(rendererPath).toString();
+  installRendererRecovery(window, {
+    app,
+    load: () => devRendererURL ? window.loadURL(devRendererURL) : window.loadFile(rendererPath),
+    stopTerminals: (ownerID) => terminalSessionManager.stopForOwner(ownerID),
+    prompt: async () => {
+      const { response } = await dialog.showMessageBox(window, {
+        type: "error",
+        title: "Wuu",
+        message: mainTranslate("rendererRecoveryFailed"),
+        detail: mainTranslate("rendererRecoveryDetail"),
+        buttons: [mainTranslate("reloadWindow"), mainTranslate("closeWindow")],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+      });
+      return response === 0 ? "reload" : "close";
+    },
+  });
   wireExternalNavigationGuards(window, {
     rendererURL,
     openExternal: openExternalNavigation,
@@ -809,6 +826,33 @@ function usesWindowControlsOverlay(): boolean {
   return process.platform === "win32";
 }
 
+// 14px lights at y=17 sit on the 24px center of the 48px renderer
+// titlebar, matching the CSS-centered toolbar controls beside them.
+const MAC_TRAFFIC_LIGHT_POSITION = { x: 18, y: 17 };
+
+function applyMacTrafficLightPosition(win: BrowserWindow): void {
+  if (process.platform !== "darwin" || win.isDestroyed()) return;
+  // Construction-time trafficLightPosition is a no-op until AppKit has
+  // attached the titlebar container. Packaged launches often paint before
+  // that happens, so the lights stay at hiddenInset's default (12, 11)
+  // until a later redraw. Re-apply after the window is actually shown.
+  win.setWindowButtonPosition(MAC_TRAFFIC_LIGHT_POSITION);
+}
+
+function attachMacTrafficLightPosition(win: BrowserWindow): void {
+  if (process.platform !== "darwin") return;
+  const apply = (): void => applyMacTrafficLightPosition(win);
+  apply();
+  setImmediate(apply);
+  win.on("ready-to-show", apply);
+  win.on("show", apply);
+  win.on("restore", apply);
+  win.on("maximize", apply);
+  win.on("unmaximize", apply);
+  win.on("leave-full-screen", apply);
+  win.webContents.on("did-finish-load", apply);
+}
+
 function windowFrameOptions(): Pick<
   BrowserWindowConstructorOptions,
   | "frame"
@@ -820,9 +864,7 @@ function windowFrameOptions(): Pick<
   if (process.platform === "darwin") {
     return {
       titleBarStyle: "hiddenInset",
-      // 14px lights at y=17 sit on the 24px center of the 48px renderer
-      // titlebar, matching the CSS-centered toolbar controls beside them.
-      trafficLightPosition: { x: 18, y: 17 },
+      trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
     };
   }
   if (usesWindowControlsOverlay()) {
@@ -861,9 +903,10 @@ const themedChromeWindows = new Set<BrowserWindow>();
 
 function registerThemedChromeWindow(win: BrowserWindow): void {
   themedChromeWindows.add(win);
+  attachMacTrafficLightPosition(win);
   const sendMaximized = (): void => {
     if (win.isDestroyed()) return;
-    win.webContents.send("wuu:window-maximized-changed", win.isMaximized());
+    sendToWindow(win, "wuu:window-maximized-changed", win.isMaximized());
   };
   win.on("maximize", sendMaximized);
   win.on("unmaximize", sendMaximized);
@@ -978,9 +1021,8 @@ function createPopOutWindow(params: PopOutWindowParams): BrowserWindow {
     runtimeContext: params.context,
     threadID: params.kind === "thread" ? params.threadID : undefined,
   });
-  windowRegistry.attachResizeHandlers(win, () => {
-    setWindowResizeState(true);
-    scheduleWindowResizeEnd();
+  windowRegistry.attachResizeHandlers(win, (phase) => {
+    handleNativeWindowResizePhase(phase);
   });
   if (params.kind === "thread") {
     windowRegistry.setThreadWindow(params.threadID, windowID);
@@ -1070,10 +1112,8 @@ function createWindow(): void {
   const win = mainWindow;
   const windowID = win.webContents.id;
 
-  windowRegistry.attachResizeHandlers(win, () => {
-    setWindowResizeState(true);
-    scheduleWindowResizeEnd();
-    scheduleMainWindowBoundsSave(win);
+  windowRegistry.attachResizeHandlers(win, (phase) => {
+    handleNativeWindowResizePhase(phase, win);
   });
   win.on("close", () => {
     // Last-write-wins: cancel any pending debounce and persist synchronously
@@ -1578,9 +1618,17 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:text-polish", (event, text: string) =>
     appServerRequest<TextPolishResult>(event, "text/polish", { text }),
   );
+  ipcMain.handle("wuu:artifact-save", async (event, name: string, source: string) => {
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    if (!parent) throw new Error("Artifact window is no longer available");
+    await saveArtifactFile(parent, event.sender.session, name, source);
+  });
   ipcMain.handle("wuu:open-external", async (_event, url: string) => {
     await openExternalNavigation(url);
   });
+  ipcMain.handle("wuu:config-codex-credentials", (event, provider: string) =>
+    appServerRequest(event, "config/codex/credentials", { provider }),
+  );
   ipcMain.handle("wuu:config-codex-models", (event, provider?: string) =>
     appServerRequest<ConfigCodexModelsResult>(event, "config/codex/models", {
       provider: provider ?? "",
@@ -1612,6 +1660,7 @@ app.whenReady().then(async () => {
       variant?: string,
       permissionMode?: string,
       threadID?: string,
+      speed?: string,
     ) =>
       appServerRequest<ConfigModelUpdateResult>(event, "config/model/update", {
         // Omitted provider/model are inherited from the target thread, so
@@ -1639,6 +1688,7 @@ app.whenReady().then(async () => {
           : { reuse_codex_credentials: connection.reuse_codex_credentials }),
         ...(effort === undefined ? {} : { effort }),
         ...(variant === undefined ? {} : { variant }),
+        ...(speed === undefined ? {} : { speed }),
         ...(permissionMode === undefined
           ? {}
           : { permission_mode: permissionMode }),
@@ -1665,11 +1715,20 @@ app.whenReady().then(async () => {
         settings ?? {},
       ),
   );
-  ipcMain.handle("wuu:engines-list", (event) =>
-    appServerRequest<EngineListResult>(event, "engine/list"),
+  ipcMain.handle("wuu:engines-list", (event, options?: { include_quota?: boolean }) =>
+    appServerRequest<EngineListResult>(event, "engine/list", { include_quota: options?.include_quota === true }),
   );
   ipcMain.handle("wuu:engines-update", (event, params: EngineUpdateParams) =>
     appServerRequest<EngineListResult>(event, "engine/update", params ?? {}),
+  );
+  ipcMain.handle("wuu:engine-auth-methods", (event, engineID: string) =>
+    appServerRequest<EngineAuthResult>(event, "engine/auth/methods", { engine_id: engineID }),
+  );
+  ipcMain.handle("wuu:engine-authenticate", (event, params: EngineAuthParams) =>
+    appServerRequest<EngineAuthResult>(event, "engine/authenticate", params),
+  );
+  ipcMain.handle("wuu:engine-auth-cancel", (event, engineID: string) =>
+    appServerRequest<{ ok: boolean }>(event, "engine/auth/cancel", { engine_id: engineID }),
   );
   ipcMain.handle(
     "wuu:extension-package-update",
@@ -1772,100 +1831,16 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:skill-content", async (event, params: SkillContentParams): Promise<SkillContentResult> => {
     return readCatalogSkill(await appServerRequest<SkillListResult>(event, "skill/list"),params);
   });
-  ipcMain.handle("wuu:channel-continuity", (event, params) => appServerRequest(event, "channel/continuity", params));
-  ipcMain.handle("wuu:channel-session-list", (event, params: ChannelSessionListParams) =>
-    appServerRequest<ChannelSessionListResult>(event, "channel/session/list", params),
-  );
-  ipcMain.handle("wuu:channel-session-create", (event, params: ChannelSessionCreateParams) =>
-    appServerRequest<ChannelSessionResult>(event, "channel/session/create", params),
-  );
-  ipcMain.handle("wuu:channel-session-read", (event, params: ChannelSessionRefParams & { requestId?: string }) =>
-    appServerClientPool.requestForSession<ChannelSessionReadResult>(
-      runtimeContextForEvent(event), params.sessionRef, "channel/session/read", params,
-      (response, workdir) => {
-        // Put the snapshot on the same ordered channel as subsequent deltas.
-        // The invoke promise can resolve after later stdout notifications.
-        if (params.requestId && !response.error && !event.sender.isDestroyed()) {
-          event.sender.send("wuu:server-event", {
-            kind: "notification", workdir,
-            message: { method: "channel/session/snapshot", params: { request_id: params.requestId, result: response.result } },
-          } satisfies ServerEvent);
-        }
-      },
-    ),
-  );
-  ipcMain.handle("wuu:channel-session-send", (event, params: ChannelSessionSendParams) =>
-    appServerRequest<ChannelSessionResult>(event, "channel/session/send", params),
-  );
-  ipcMain.handle("wuu:channel-session-stop", (event, params: ChannelSessionRefParams) =>
-    appServerRequest<ChannelSessionResult>(event, "channel/session/stop", params),
-  );
-  ipcMain.handle("wuu:channel-session-resume", (event, params: ChannelSessionRefParams) =>
-    appServerRequest<ChannelSessionResult>(event, "channel/session/resume", params),
-  );
-  ipcMain.handle("wuu:channel-agent-list", (event) =>
-    appServerRequest<ChannelAgentListResult>(event, "channel/agent/list"),
-  );
-  ipcMain.handle("wuu:channel-agent-insights", (event) =>
-    appServerRequest<ChannelAgentInsightsResult>(event, "channel/agent/insights"),
-  );
-  ipcMain.handle("wuu:channel-bootstrap", (event) =>
-    appServerRequest<ChannelBootstrapResult>(event, "channel/bootstrap"),
-  );
-  ipcMain.handle("wuu:channel-agent-create", (event, params: ChannelAgentCreateParams) =>
-    appServerRequest<ChannelAgentCreateResult>(event, "channel/agent/create", params),
-  );
-  ipcMain.handle("wuu:channel-agent-update", (event, params: ChannelAgentUpdateParams) =>
-    appServerRequest<ChannelAgentUpdateResult>(event, "channel/agent/update", params),
-  );
-  ipcMain.handle("wuu:channel-agent-delete", (event, params: ChannelAgentDeleteParams) =>
-    appServerRequest<ChannelAgentDeleteResult>(event, "channel/agent/delete", params),
-  );
-  ipcMain.handle("wuu:channel-agent-start", (event, params: ChannelAgentStartParams) =>
-    appServerRequest<ChannelAgentStartResult>(event, "channel/agent/start", params),
-  );
-  ipcMain.handle("wuu:channel-agent-reset", (event, params: ChannelAgentResetParams) =>
-    appServerRequest<ChannelAgentResetResult>(event, "channel/agent/reset", params),
-  );
-  ipcMain.handle("wuu:channel-agent-creation-resolve", (event, params: ChannelAgentCreationResolveParams) =>
-    appServerRequest<ChannelAgentCreationResolveResult>(event, "channel/agent-creation/resolve", params),
-  );
-  ipcMain.handle("wuu:channel-room-list", (event) =>
-    appServerRequest<ChannelRoomListResult>(event, "channel/room/list"),
-  );
-  ipcMain.handle("wuu:channel-room-create", (event, params: ChannelRoomCreateParams) =>
-    appServerRequest<ChannelRoomCreateResult>(event, "channel/room/create", params),
-  );
-  ipcMain.handle("wuu:channel-direct-message-open", (event, params: ChannelDirectMessageOpenParams) =>
-    appServerRequest<ChannelDirectMessageOpenResult>(event, "channel/direct-message/open", params),
-  );
-  ipcMain.handle("wuu:channel-room-update", (event, params: ChannelRoomUpdateParams) =>
-    appServerRequest<ChannelRoomUpdateResult>(event, "channel/room/update", params),
-  );
-  ipcMain.handle("wuu:channel-room-delete", (event, params: ChannelRoomDeleteParams) =>
-    appServerRequest<ChannelRoomDeleteResult>(event, "channel/room/delete", params),
-  );
-  ipcMain.handle("wuu:channel-room-read", (event, params: ChannelRoomReadParams) =>
-    appServerRequest<ChannelRoomReadResult>(event, "channel/room/read", params),
-  );
-  ipcMain.handle("wuu:channel-message-list", (event, params: ChannelMessageListParams) =>
-    appServerRequest<ChannelMessageListResult>(event, "channel/message/list", params),
-  );
-  ipcMain.handle("wuu:channel-message-send", (event, params: ChannelMessageSendParams) =>
-    appServerRequest<ChannelMessageSendResult>(event, "channel/message/send", params),
-  );
-  ipcMain.handle("wuu:channel-task-create", (event, params: ChannelTaskCreateParams) =>
-    appServerRequest<ChannelTaskCreateResult>(event, "channel/task/create", params),
-  );
-  ipcMain.handle("wuu:channel-task-update", (event, params: ChannelTaskUpdateParams) =>
-    appServerRequest<ChannelTaskUpdateResult>(event, "channel/task/update", params),
-  );
-  ipcMain.handle("wuu:channel-human-mention-status", (event) =>
-    appServerRequest<ChannelHumanMentionStatusResult>(event, "channel/human-mention/status"),
-  );
-  ipcMain.handle("wuu:channel-human-mention-ack", (event) =>
-    appServerRequest<ChannelHumanMentionAckResult>(event, "channel/human-mention/ack"),
-  );
+  ipcMain.handle("wuu:session-control-return", (event, params: { thread_id: string; revision: number }) => appServerRequest(event, "thread/control/return", params));
+  ipcMain.handle("wuu:session-control-take", (event, params: { thread_id: string; revision: number }) => appServerRequest(event, "thread/control/take", params));
+  // A project and its managed sessions live in one workspace; route to the
+  // app-server that owns the named project or session.
+  ipcMain.handle("wuu:project-session", (event, params: ProjectSessionParams) => {
+    const context = windowRegistry.runtimeContextForWindow(event.sender.id);
+    return context
+      ? appServerClientPool.requestForSession<ProjectSessionResult>(context, params.project_id, "project/session", params)
+      : appServerRequest<ProjectSessionResult>(event, "project/session", params);
+  });
   ipcMain.handle("wuu:codex-pets-list", () => {
     const snapshot = codexPetsSnapshot();
     // Sync the pet window from the renderer-side list call so a failed
@@ -1895,6 +1870,9 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("wuu:settings-usage", (event) =>
     appServerRequest<SettingsUsageResponse>(event, "settings/usage"),
+  );
+  ipcMain.handle("wuu:usage-overview", (event, params: UsageOverviewParams) =>
+    appServerRequest<UsageOverviewResponse>(event, "usage/overview", params),
   );
   ipcMain.handle("wuu:mcp-list", (event) =>
     appServerRequest<MCPListResult>(event, "mcp/list"),
@@ -1964,14 +1942,26 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle(
     "wuu:thread-start",
-    (event, params?: ThreadStartParams) =>
-      appServerRequest<{ thread: Thread }>(event, "thread/start", params ?? {}),
+    (event, params?: ThreadStartParams, targetContext?: RuntimeContext) =>
+      appServerRequest<{ thread: Thread }>(event, "thread/start", params ?? {}, targetContext),
   );
   ipcMain.handle("wuu:thread-resume", (event, sessionId?: string) =>
     rendererServerEventBatcher.resolveSnapshot(
-      appServerRequest<ThreadResumeResult>(event, "thread/resume", {
-        session_id: sessionId ?? "",
-      }),
+      appServerClientPool.requestForSession<ThreadResumeResult>(
+        runtimeContextForEvent(event), sessionId ?? "", "thread/resume",
+        { session_id: sessionId ?? "", response_only: true },
+        (response, workdir) => {
+          // Reuse the response instead of transferring the entire history twice
+          // from the core. Publish synchronously before the next stdout event,
+          // preserving snapshot/delta order for every connected window.
+          if (!response.error) {
+            emitServerEvent({
+              kind: "notification", workdir,
+              message: { method: "thread/resumed", params: response.result },
+            });
+          }
+        },
+      ),
     ),
   );
   ipcMain.handle(
@@ -2031,9 +2021,7 @@ app.whenReady().then(async () => {
       if (['login','register'].includes(action)) await phoneAccess.setEnabled(workdir, true);
       if (['logout','password'].includes(action)) await phoneAccess.setEnabled(workdir, false);
       if (['login', 'register', 'logout', 'password', 'revoke'].includes(action) || (action === 'github-poll' && result.username)) {
-        for (const win of windowRegistry.allWindows()) {
-          if (!win.isDestroyed()) win.webContents.send("wuu:account-changed");
-        }
+        broadcastToAll("wuu:account-changed", undefined);
       }
       return result;
     });
@@ -2099,14 +2087,6 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:plugin-conflict-preferences-get", () => getPluginConflictPreferences());
   ipcMain.handle("wuu:plugin-conflict-preference-set", (_event, key: string, pluginId: string) =>
     setPluginConflictPreference(String(key), String(pluginId)));
-  ipcMain.on("wuu:channel-room-preferences-get-sync", (event) => {
-    event.returnValue = getChannelRoomPreferences();
-  });
-  ipcMain.handle(
-    "wuu:channel-room-preferences-set",
-    (_event, preferences: ChannelRoomPreferences): ChannelRoomPreferences =>
-      setChannelRoomPreferences(preferences),
-  );
   ipcMain.on("wuu:language-preference-get-sync", (event) => {
     event.returnValue = getLanguagePreference();
   });
@@ -2164,14 +2144,14 @@ app.whenReady().then(async () => {
     appServerRequest<{ threads: Thread[] }>(
       event,
       "thread/list",
-      typeof cwd === "string" && cwd.length > 0 ? { cwd } : undefined,
+      { summary_only: true, ...(typeof cwd === "string" && cwd.length > 0 ? { cwd } : {}) },
     ),
   );
   ipcMain.handle("wuu:thread-list-archived", (event) =>
-    appServerRequest<{ threads: Thread[] }>(event, "thread/listArchived"),
+    appServerRequest<{ threads: Thread[] }>(event, "thread/listArchived", { summary_only: true }),
   );
   ipcMain.handle("wuu:thread-list-all", (event) =>
-    appServerRequest<{ threads: Thread[] }>(event, "thread/listAll"),
+    appServerRequest<{ threads: Thread[] }>(event, "thread/listAll", { summary_only: true }),
   );
   ipcMain.handle("wuu:thread-search", (event, query: string, limit?: number) =>
     appServerRequest(event, "thread/search", {
@@ -2323,16 +2303,19 @@ app.whenReady().then(async () => {
       permissionMode?: string,
       activeDocument?: ActiveDocumentContext,
       contentParts?: import("../shared/protocol").MessageContentPart[],
+      targetContext?: RuntimeContext,
+      clientId?: string,
     ) =>
       appServerRequest<{ turn: Turn }>(event, "turn/start", {
         thread_id: threadId,
+        ...(clientId === undefined ? {} : { client_id: clientId }),
         prompt,
         images: images ?? [],
         files: files ?? [],
         ...(permissionMode === undefined ? {} : { permission_mode: permissionMode }),
         ...(activeDocument === undefined ? {} : { active_document: activeDocument }),
         ...(contentParts === undefined ? {} : { content_parts: contentParts }),
-      }),
+      }, targetContext),
   );
   ipcMain.handle(
     "wuu:turn-queue",
@@ -2346,6 +2329,8 @@ app.whenReady().then(async () => {
       permissionMode?: string,
       activeDocument?: ActiveDocumentContext,
       contentParts?: import("../shared/protocol").MessageContentPart[],
+      targetContext?: RuntimeContext,
+      hold?: boolean,
     ) =>
       appServerRequest(event, "turn/queue", {
         thread_id: threadId,
@@ -2353,10 +2338,11 @@ app.whenReady().then(async () => {
         images: images ?? [],
         files: files ?? [],
         client_id: clientId,
+        ...(hold ? { hold: true } : {}),
         ...(permissionMode === undefined ? {} : { permission_mode: permissionMode }),
         ...(activeDocument === undefined ? {} : { active_document: activeDocument }),
         ...(contentParts === undefined ? {} : { content_parts: contentParts }),
-      }),
+      }, targetContext),
   );
   ipcMain.handle(
     "wuu:turn-update-queued",
@@ -2398,6 +2384,7 @@ app.whenReady().then(async () => {
       files?: InputFile[],
       activeDocument?: ActiveDocumentContext,
       contentParts?: import("../shared/protocol").MessageContentPart[],
+      targetContext?: RuntimeContext,
     ) =>
       appServerRequest(event, "turn/steer", {
         thread_id: threadId,
@@ -2408,7 +2395,7 @@ app.whenReady().then(async () => {
         client_id: clientId,
         ...(activeDocument === undefined ? {} : { active_document: activeDocument }),
         ...(contentParts === undefined ? {} : { content_parts: contentParts }),
-      }),
+      }, targetContext),
   );
   ipcMain.handle("wuu:turn-unsteer", (event, threadId: string, steerId: string) =>
     appServerRequest<{ ok: boolean }>(event, "turn/unsteer", {
@@ -2443,6 +2430,16 @@ app.whenReady().then(async () => {
   // while an agent view is taken over (rAF-polled — pure motion isn't caught by
   // ResizeObserver), so main can position the reparented WebContentsView. The
   // target window is derived from event.sender, not trusted from the payload.
+  ipcMain.handle("wuu:browser-pip-host-layout", (event, payload: unknown) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!senderWindow || senderWindow.isDestroyed()) return { ok: false };
+    observationCoordinator.setBrowserPiPHostLayout(
+      event.sender.id,
+      senderWindow,
+      browserPiPHostClient(payload),
+    );
+    return { ok: true };
+  });
   ipcMain.handle(
     "wuu:browser-report-bounds",
     (
@@ -2450,7 +2447,8 @@ app.whenReady().then(async () => {
       payload: {
         workdir: string;
         tabID: string;
-        rect: { x: number; y: number; width: number; height: number };
+        rect: { x: number; y: number; width: number; height: number } | null;
+        force?: boolean;
       },
     ) => {
       if (!ENABLE_EMBEDDED_BROWSER) return { ok: false };
@@ -2462,8 +2460,32 @@ app.whenReady().then(async () => {
         senderWindow as unknown as BrowserParentWindowHandle,
         payload.rect,
         event.sender.getZoomFactor(),
+        payload.force === true,
       );
       return { ok: true };
+    },
+  );
+  ipcMain.handle(
+    "wuu:browser-command",
+    async (
+      _event,
+      payload: { workdir: string; tabID: string; command: string; url?: string },
+    ) => {
+      if (!ENABLE_EMBEDDED_BROWSER) return null;
+      const snapshot = await browserHostCoordinator.runCommand(
+        payload.workdir,
+        payload.tabID,
+        payload.command,
+        payload.url,
+      );
+      return snapshot ?? null;
+    },
+  );
+  ipcMain.handle(
+    "wuu:browser-surface",
+    (_event, payload: { workdir: string; tabID: string }) => {
+      if (!ENABLE_EMBEDDED_BROWSER) return null;
+      return browserHostCoordinator.surface(payload.workdir, payload.tabID) ?? null;
     },
   );
   // Renderer full-window overlay/modal appeared over the agent view — hide the

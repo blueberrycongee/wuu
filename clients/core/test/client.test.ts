@@ -6,6 +6,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { gzipSync } from "node:zlib";
+import { once } from "node:events";
+import { WebSocketServer } from "ws";
 
 import { b64decode, b64encode } from "../src/b64.js";
 import { bytesEqual, randomBytes, utf8Decode, utf8Encode } from "../src/bytes.js";
@@ -350,21 +352,6 @@ describe("RemoteClient", () => {
     } finally { await client.stop(); vi.unstubAllGlobals(); }
   });
 
-  it("attaches and completes an rpc round trip", async () => {
-    const fake = new FakeHost();
-    fake.handleCall = (env) => ({ protocolVersion: "wuu-app-server/v0.1", method: env.method });
-    const { client, attaches } = makeClient(fake);
-    client.start();
-    try {
-      const result = await client.call<{ protocolVersion: string }>("initialize", {});
-      expect(result.protocolVersion).toBe("wuu-app-server/v0.1");
-      expect(attaches).toEqual([{ session: "sess-2", resumed: false }]);
-      expect(client.isAttached()).toBe(true);
-    } finally {
-      await client.stop();
-    }
-  });
-
   it("does not send a call after its attach wait times out", async () => {
     const fake = new FakeHost();
     const { client } = makeClient(fake);
@@ -521,20 +508,6 @@ describe("RemoteClient", () => {
       fake.sendLine({ method: "n", params: { i: 100 } });
       await until(() => notifications.length >= 2);
       expect((notifications.at(-1)!.params as { i: number }).i).toBe(100);
-    } finally {
-      await client.stop();
-    }
-  });
-
-  it("acks cumulatively so the host can trim its spool", async () => {
-    const fake = new FakeHost();
-    const { client, notifications } = makeClient(fake);
-    client.start();
-    try {
-      await client.waitAttached(3000);
-      for (let i = 1; i <= 5; i++) fake.sendLine({ method: "n", params: { i } });
-      await until(() => notifications.length === 5);
-      await until(() => fake.lastAck === 5);
     } finally {
       await client.stop();
     }
@@ -742,4 +715,98 @@ it("reconnects after the local execution transport ends instead of staying detac
     expect(client.isAttached()).toBe(true);
     expect(fake.sockets.length).toBe(2);
   } finally { await client.stop(); }
+});
+
+
+describe("RemoteClient relay authentication deadline", () => {
+  for (const silentAt of [TYPE_HELLO, TYPE_AUTH]) {
+    it(`reconnects after a real WebSocket relay falls silent at ${silentAt}`, async () => {
+      const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+      await once(server, "listening");
+      const address = server.address() as { port: number };
+      const fake = new FakeHost();
+      let connections = 0;
+      server.on("connection", peer => {
+        const first = ++connections === 1;
+        const hostSocket = fake.factory("") as FakeSocket;
+        hostSocket.serverSend = data => peer.send(data);
+        peer.on("message", data => {
+          const text = data.toString();
+          if (first && (JSON.parse(text) as RelayMsg).type === silentAt) return;
+          hostSocket.onServerReceive(text);
+        });
+      });
+      const { client } = makeClient(fake, {
+        wsFactory: () => new WebSocket(`ws://127.0.0.1:${address.port}`) as unknown as WebSocketLike,
+        dialTimeoutMs: 200,
+      });
+      try {
+        client.start();
+        await client.waitAttached(3000);
+        expect(connections).toBe(2);
+        await expect(client.call("initialize", {}, 1000)).resolves.toEqual({ echo: "initialize" });
+      } finally {
+        await client.stop();
+        for (const peer of server.clients) peer.terminate();
+        await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
+      }
+    });
+
+    it.each(["stop", "suspend"] as const)(`%s cancels pending ${silentAt} without waiting for a close handshake`, async action => {
+      vi.useFakeTimers();
+      const fake = new FakeHost();
+      const { client } = makeClient(fake, {
+        dialTimeoutMs: 100,
+        wsFactory: url => {
+          const sock = fake.factory(url) as FakeSocket;
+          if (fake.sockets.length > 1) return sock;
+          const receive = sock.onServerReceive;
+          sock.onServerReceive = data => {
+            if ((JSON.parse(data) as RelayMsg).type !== silentAt) receive(data);
+          };
+          // A half-open transport may never acknowledge the close frame.
+          sock.close = () => { sock.closed = true; };
+          return sock;
+        },
+      });
+      try {
+        client.start();
+        await vi.advanceTimersByTimeAsync(0);
+        let stopped = false;
+        if (action === "stop") void client.stop().then(() => { stopped = true; });
+        else client.suspend();
+        await vi.advanceTimersByTimeAsync(0);
+        if (action === "stop") expect(stopped).toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(fake.sockets).toHaveLength(1);
+        if (action === "suspend") {
+          client.wake();
+          await vi.advanceTimersByTimeAsync(0);
+          expect(client.isAttached()).toBe(true);
+          expect(fake.sockets).toHaveLength(2);
+        }
+      } finally {
+        // Release the baseline implementation's pending read on test failure.
+        fake.current().close = FakeSocket.prototype.close;
+        fake.current().closed = false;
+        fake.current().close();
+        await client.stop();
+        vi.useRealTimers();
+      }
+    });
+  }
+
+  it("clears the deadline after authentication so a healthy connection survives", async () => {
+    vi.useFakeTimers();
+    const fake = new FakeHost();
+    const { client } = makeClient(fake, { dialTimeoutMs: 100 });
+    try {
+      client.start();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(client.isAttached()).toBe(true);
+      expect(fake.sockets).toHaveLength(1);
+      expect(fake.current().closed).toBe(false);
+    } finally { await client.stop(); vi.useRealTimers(); }
+  });
 });

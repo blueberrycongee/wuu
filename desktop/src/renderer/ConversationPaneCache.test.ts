@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Thread, Turn } from "../shared/protocol";
 import {
-  CACHED_CONVERSATION_RENDER_BUDGET,
   MAX_CACHED_CONVERSATION_PANES,
   conversationPaneRenderWeight,
   retainCachedConversationPaneThreads,
@@ -55,7 +54,6 @@ describe("conversation pane cache", () => {
 
     expect(conversationPaneRenderWeight(threads[0])).toBe(80);
     expect(select(threads)).toEqual(["thread-0", "thread-1", "thread-2"]);
-    expect(80 * 3).toBe(CACHED_CONVERSATION_RENDER_BUDGET);
   });
 
   it("charges collapsed history at a lower weight while keeping running turns full", () => {
@@ -67,6 +65,23 @@ describe("conversation pane cache", () => {
     expect(select([thread("active", 3_000), thread("recent", 1)])).toEqual([
       "active",
     ]);
+  });
+
+  it("keeps the previous pane when the open LRU still includes it", () => {
+    const active = thread("active", 1);
+    const previous = thread("previous", 1);
+
+    expect(
+      selectCachedConversationPaneIDs({
+        activeThreadID: active.id,
+        previousThreadIDs: [previous.id],
+        openThreadIDs: new Set([previous.id, active.id]),
+        threadsByID: new Map([
+          [active.id, active],
+          [previous.id, previous],
+        ]),
+      }),
+    ).toEqual([active.id, previous.id]);
   });
 
   it("drops closed panes from the previous LRU history", () => {

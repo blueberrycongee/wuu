@@ -425,11 +425,44 @@ func resultDeliveryState(events []Event, resultID string) (bool, string) {
 	return ready, consumedBy
 }
 
+// agentIndexCache avoids re-reading every session's thread index on each
+// thread/list. A workspace can hold thousands of these files, and one list
+// used to parse each of them twice.
+var agentIndexCache sync.Map // dir -> agentIndexCacheEntry
+
+type agentIndexCacheEntry struct {
+	modUnixNano int64
+	size        int64
+	threads     []Metadata
+}
+
+func cloneThreadIndex(threads []Metadata) []Metadata {
+	if threads == nil {
+		return nil
+	}
+	out := make([]Metadata, len(threads))
+	copy(out, threads)
+	return out
+}
+
 // loadThreads reads the thread index. It is safe without the store lock
 // because writers replace the index atomically; write transactions call it
 // under lockStore for read-modify-write atomicity.
 func (s *Store) loadThreads() ([]Metadata, error) {
 	path := filepath.Join(s.dir, "threads.json")
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("stat thread index: %w", err)
+	}
+	if cached, ok := agentIndexCache.Load(s.dir); ok {
+		entry := cached.(agentIndexCacheEntry)
+		if entry.modUnixNano == info.ModTime().UnixNano() && entry.size == info.Size() {
+			return cloneThreadIndex(entry.threads), nil
+		}
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -438,16 +471,29 @@ func (s *Store) loadThreads() ([]Metadata, error) {
 		return nil, fmt.Errorf("read thread index: %w", err)
 	}
 	if len(strings.TrimSpace(string(data))) == 0 {
+		agentIndexCache.Store(s.dir, agentIndexCacheEntry{modUnixNano: info.ModTime().UnixNano(), size: info.Size()})
 		return nil, nil
 	}
 	var threads []Metadata
 	if err := json.Unmarshal(data, &threads); err != nil {
 		return nil, fmt.Errorf("decode thread index: %w", err)
 	}
+	// Drop the cache entry when the file changed while it was being read,
+	// so a writer that landed between Stat and ReadFile is not stored under
+	// the earlier timestamp.
+	after, statErr := os.Stat(path)
+	if statErr == nil && after.ModTime().UnixNano() == info.ModTime().UnixNano() && after.Size() == info.Size() {
+		agentIndexCache.Store(s.dir, agentIndexCacheEntry{
+			modUnixNano: info.ModTime().UnixNano(),
+			size:        info.Size(),
+			threads:     cloneThreadIndex(threads),
+		})
+	}
 	return threads, nil
 }
 
 func (s *Store) writeThreadsLocked(threads []Metadata) error {
+	agentIndexCache.Delete(s.dir)
 	data, err := json.MarshalIndent(threads, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode thread index: %w", err)

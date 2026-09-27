@@ -1,9 +1,11 @@
+import { beginLocalTurnTiming, bindLocalTurnTiming, forgetLocalTurnTiming, localTurnTiming } from "./LocalTurnTiming";
 import type { ClipboardEvent as ReactClipboardEvent } from "react";
 import type {
   ActiveDocumentContext,
   InputFile,
   InputImage,
   MessageContentPart,
+  ResponseSelection,
   Turn,
 } from "../shared/protocol";
 import { formatCurrentNumber, translateCurrent } from "./i18n";
@@ -405,17 +407,43 @@ export function createComposerMessage(
   images: ComposerImage[],
   files: ComposerFile[] = [],
   contentParts?: MessageContentPart[],
+  selections: ResponseSelection[] = [],
 ): QueuedComposerMessage | undefined {
   const trimmed = text.trim();
-  if (!trimmed && images.length === 0 && files.length === 0) {
+  if (!trimmed && images.length === 0 && files.length === 0 && selections.length === 0) {
     return undefined;
   }
+  const parts: MessageContentPart[] | undefined = selections.length
+    ? [...selections.map((selection): MessageContentPart => ({
+        type: "response_selection",
+        text: `Quoted assistant response (JSON):\n${JSON.stringify({ text: selection.text, comment: selection.comment ?? "" })}\n`,
+        selection: { ...selection, source: { ...selection.source } },
+      })), ...(contentParts ?? (text ? [{ type: "text" as const, text }] : []))]
+    : contentParts;
   return {
     id: nextComposerMessageID(),
-    text,
+    text: selections.length ? parts!.map((part) => part.text).join("") : text,
     images: images.map((image) => ({ ...image })),
     files: files.map((file) => ({ ...file })),
-    contentParts: contentParts?.map((part) => ({ ...part })),
+    contentParts: parts?.map(cloneMessageContentPart),
+  };
+}
+
+export function cloneMessageContentPart(part: MessageContentPart): MessageContentPart {
+  if (part.type === "response_selection") return { ...part, selection: { ...part.selection, source: { ...part.selection.source } } };
+  if (part.type === "file_selection") return { ...part, source: { ...part.source } };
+  return { ...part };
+}
+
+/** Recover editable input without placing serialized reference context in it. */
+export function composerContextFromMessage(text: string, contentParts?: MessageContentPart[]) {
+  const selections = contentParts?.flatMap((part) => part.type === "response_selection"
+    ? [{ ...part.selection, source: { ...part.selection.source } }] : []) ?? [];
+  const promptParts = contentParts?.filter((part) => part.type !== "response_selection");
+  return {
+    prompt: selections.length ? promptParts!.map((part) => part.text).join("") : text,
+    selections,
+    contentParts: promptParts,
   };
 }
 
@@ -429,20 +457,22 @@ export function inputFilesFromComposer(files: ComposerFile[]): InputFile[] {
 
 export function mergeGuideMessages(messages: QueuedComposerMessage[]): QueuedComposerMessage {
   const latestActiveDocument = messages[messages.length - 1]?.activeDocument;
+  const contentParts = messages.some((message) => message.contentParts?.length)
+    ? messages.flatMap((message, index): MessageContentPart[] => [
+        ...(index > 0 ? [{ type: "text" as const, text: "\n" }] : []),
+        ...(message.contentParts?.map(cloneMessageContentPart) ??
+          (message.text ? [{ type: "text" as const, text: message.text }] : [])),
+      ])
+    : undefined;
   return {
     id: nextComposerMessageID(),
-    text: messages
+    text: contentParts ? contentParts.map((part) => part.text).join("") : messages
       .map((message) => message.text.trim())
       .filter(Boolean)
       .join("\n"),
     images: messages.flatMap((message) => message.images.map((image) => ({ ...image }))),
     files: messages.flatMap((message) => message.files.map((file) => ({ ...file }))),
-    contentParts: messages.some((message) => message.contentParts?.length)
-      ? messages.flatMap((message) =>
-          message.contentParts?.map((part) => ({ ...part })) ??
-          (message.text.trim() ? [{ type: "text" as const, text: message.text.trim() }] : []),
-        )
-      : undefined,
+    contentParts,
     activeDocument: latestActiveDocument ? { ...latestActiveDocument } : undefined,
   };
 }
@@ -509,7 +539,8 @@ export function createOptimisticTurn(
   message: QueuedComposerMessage,
   nowMs: number,
 ): Turn {
-  const id = nextOptimisticTurnID();
+  const id = `${OPTIMISTIC_TURN_ID_PREFIX}${message.id}`;
+  beginLocalTurnTiming(id, nowMs);
   return {
     id,
     status: "in_progress",
@@ -521,6 +552,7 @@ export function createOptimisticTurn(
         type: "user_message",
         status: "completed",
         text: message.text,
+        source_id: message.id,
         content_parts: message.contentParts?.map((part) => ({ ...part })),
         images: optimisticInputImagesFromComposer(message.images),
         files: inputFilesFromComposer(message.files),
@@ -553,7 +585,9 @@ export function interruptOptimisticTurn<T extends { turns: Turn[] }>(
       Number.isFinite(startedAtMs) ? Math.max(0, nowMs - startedAtMs) : 0,
     );
     changed = true;
-    return { ...turn, status: "interrupted" as const };
+    const interrupted = { ...turn, status: "interrupted" as const };
+    localTurnTiming(interrupted, nowMs);
+    return interrupted;
   });
   return changed ? withSettledOptimisticTurns(thread, turns) : thread;
 }
@@ -616,23 +650,26 @@ function userMessageText(turn: Turn | undefined): string {
  */
 export function threadHasAcceptedComposerMessage(
   thread: { turns: Turn[] } | undefined,
-  message: Pick<QueuedComposerMessage, "text">,
+  message: Pick<QueuedComposerMessage, "text"> & { id?: string },
   optimisticTurnID?: string,
+  previousTurnIDs: ReadonlySet<string> = new Set(),
 ): boolean {
   const expected = message.text.trim();
-  if (!thread || !expected) {
+  if (!thread || (!expected && !message.id)) {
     return false;
   }
   return thread.turns.some((turn) => {
-    if (turn.id === optimisticTurnID || turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX)) {
+    if (previousTurnIDs.has(turn.id) || turn.id === optimisticTurnID || turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX)) {
       return false;
     }
-    return userMessageText(turn) === expected;
+    const user = turn.items.find((item) => item.type === "user_message");
+    return (message.id && user?.source_id === message.id) || Boolean(expected && userMessageText(turn) === expected);
   });
 }
 
 export function createOptimisticCompactTurn(nowMs: number): Turn {
   const id = nextOptimisticTurnID();
+  beginLocalTurnTiming(id, nowMs);
   return {
     id,
     kind: "compact",
@@ -676,32 +713,6 @@ export function failOptimisticCompactTurn(
 }
 
 /**
- * Return the earlier of two ISO timestamps. Used to keep the optimistic
- * started_at (which captures the user's click moment) when the real turn
- * arrives with a slightly later server-side timestamp, so the live timer
- * never appears to jump backwards. Accepts null/undefined to match
- * Turn["started_at"] and returns the same shape so callers can assign the
- * result back without coercion.
- */
-export function earlierStartedAt(
-  a?: string | null,
-  b?: string | null,
-): string | null | undefined {
-  const aMs = a ? Date.parse(a) : Number.NaN;
-  const bMs = b ? Date.parse(b) : Number.NaN;
-  if (Number.isFinite(aMs) && Number.isFinite(bMs)) {
-    return aMs <= bMs ? a : b;
-  }
-  if (Number.isFinite(aMs)) {
-    return a;
-  }
-  if (Number.isFinite(bMs)) {
-    return b;
-  }
-  return undefined;
-}
-
-/**
  * Drop an optimistic turn placeholder from a thread by id. Used on send
  * failure so the user doesn't see a stuck "正在回复" turn that never
  * receives a real response. A undefined id is a no-op so the helper is
@@ -717,6 +728,7 @@ export function dropOptimisticTurn<T extends { turns: Turn[] }>(
   // A dropped placeholder never becomes a real turn, so its frozen elapsed
   // (if any) is dead bookkeeping.
   clearPausedTurnElapsed(optimisticTurnID);
+  forgetLocalTurnTiming(optimisticTurnID);
   const turns = thread.turns.filter((turn) => turn.id !== optimisticTurnID);
   return turns.length === thread.turns.length
     ? thread
@@ -739,33 +751,34 @@ export function dropOptimisticTurnInThreads<T extends { turns: Turn[] }>(
   return threads.map((thread) => dropOptimisticTurn(thread, optimisticTurnID));
 }
 
-/**
- * Replace an optimistic turn placeholder with the real turn returned by
- * the Go core, preserving the earlier started_at so the live timer does
- * not jump. If the optimistic placeholder is no longer in the thread
- * (e.g. it was cleared by a concurrent action), the real turn is still
- * inserted via `upsertTurn`.
- */
+/** Reconcile an RPC acknowledgement without replacing server timing facts. */
 export function replaceOptimisticTurn<T extends { turns: Turn[] }>(
   thread: T,
   optimisticTurnID: string,
   realTurn: Turn,
   upsertTurn: (thread: T, turn: Turn) => T,
 ): T {
-  const optimisticStartedAt = thread.turns.find(
-    (turn) => turn.id === optimisticTurnID,
-  )?.started_at;
-  const turnsWithoutOptimistic = thread.turns.filter(
-    (turn) => turn.id !== optimisticTurnID,
-  );
-  const merged: Turn = {
-    ...realTurn,
-    started_at:
-      earlierStartedAt(optimisticStartedAt, realTurn.started_at) ?? null,
-  };
-  // The placeholder carried the live timer under its client-minted id; move
-  // any frozen elapsed to the real server id so a turn that was paused
-  // before this swap keeps showing its elapsed time.
-  transferPausedTurnElapsed(optimisticTurnID, merged.id);
-  return upsertTurn({ ...thread, turns: turnsWithoutOptimistic }, merged);
+  bindLocalTurnTiming(optimisticTurnID, realTurn.id);
+  transferPausedTurnElapsed(optimisticTurnID, realTurn.id);
+  return upsertTurn({ ...thread, turns: thread.turns.filter(
+    (turn) => turn.id !== optimisticTurnID || turn.id === realTurn.id,
+  ) }, realTurn);
+}
+
+/** Events and snapshots can acknowledge a send before its RPC response. */
+export function reconcileOptimisticTurns(current: Turn[], incoming: Turn[]): Turn[] {
+  const accepted = new Set<string>();
+  for (const turn of incoming) {
+    if (turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX)) continue;
+    for (const item of turn.items) {
+      if (item.type !== "user_message" || !item.source_id) continue;
+      const placeholderID = `${OPTIMISTIC_TURN_ID_PREFIX}${item.source_id}`;
+      bindLocalTurnTiming(placeholderID, turn.id);
+      accepted.add(placeholderID);
+    }
+    localTurnTiming(turn);
+  }
+  return accepted.size && current.some((turn) => accepted.has(turn.id))
+    ? current.filter((turn) => !accepted.has(turn.id))
+    : current;
 }

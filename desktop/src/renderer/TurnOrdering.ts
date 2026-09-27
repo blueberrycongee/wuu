@@ -18,6 +18,11 @@ export function orderedTurnItems(items: ThreadItem[]): ThreadItem[] {
     .map((entry) => entry.item);
 }
 
+/** Full terminal snapshots replace cached items, regardless of delivery path. */
+export function hasAuthoritativeTurnItems(turn: Turn): boolean {
+  return turn.status !== "in_progress" && turn.items_view === "full";
+}
+
 export function mergeTurnItemsInOrder(
   previous: Turn,
   next: Turn,
@@ -27,7 +32,7 @@ export function mergeTurnItemsInOrder(
   // its final item, making one response appear twice only after completion.
   // In-progress snapshots still merge below so a lagging snapshot cannot drop
   // newer streamed work. Do not dedupe by text: repeated messages can be valid.
-  if (next.status !== "in_progress" && next.items_view === "full") {
+  if (hasAuthoritativeTurnItems(next)) {
     return orderedTurnItems(next.items);
   }
   const nextByID = new Map(next.items.map((item) => [item.id, item]));

@@ -1,33 +1,28 @@
 [data-wuu-mascot-presence="enter"] {
-  animation: wuu-mascot-enter 240ms var(--ease-out, ease-out) both;
+  animation: wuu-mascot-enter var(--motion-slow) var(--ease-out) both;
 }
 
 [data-wuu-mascot-presence="exit"] {
-  animation: wuu-mascot-exit var(--wuu-mascot-exit) ease-in both;
+  animation: wuu-mascot-exit var(--wuu-mascot-exit) var(--ease-in) both;
 }
 
 @keyframes wuu-mascot-enter {
   from {
-    /* Slide-in distance. Callers whose slot sits against a clip edge (process
-       rows) cap it with --wuu-mascot-slide-shift so the entry cannot paint
-       outside that edge. */
-    margin-inline-start: calc(-1 * var(--wuu-mascot-slide-shift, var(--wuu-mascot-size)));
-    margin-inline-end: 0;
+    /* Keep the layout slot. Sliding with margin shoved process-row text and
+       jumped the conversation after a session switch catch-up. */
     opacity: 0;
-    transform: translateY(2px) scale(0.8);
+    transform: translateX(calc(-1 * var(--wuu-mascot-slide-shift, 0px))) translateY(2px) scale(0.8);
   }
 }
 
 @keyframes wuu-mascot-exit {
   to {
-    margin-inline-start: calc(-1 * var(--wuu-mascot-slide-shift, var(--wuu-mascot-size)));
-    margin-inline-end: 0;
     opacity: 0;
-    transform: translateY(-2px) scale(0.8);
+    transform: translateX(calc(-1 * var(--wuu-mascot-slide-shift, 0px))) translateY(-2px) scale(0.8);
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   [data-wuu-mascot-presence] { animation: none; }
   [data-wuu-mascot-presence="exit"] { opacity: 0; }
 }
@@ -37,7 +32,7 @@
   pointer-events: none;
   transform-box: view-box;
   transform-origin: center;
-  animation: wuu-mascot-accessory-arrive 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: wuu-mascot-accessory-arrive var(--motion-slow) var(--ease-out) both;
 }
 
 .wuu-accessory-line {
@@ -73,7 +68,7 @@
   transform-origin: 0 0;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .wuu-accessory-motion { transform: none; }
 }
 
@@ -87,8 +82,8 @@
 /* Pointer attention is an angular input to the shared face surface. */
 [data-wuu-mascot-follows-pointer] {
   transition:
-    --mo-pointer-yaw 120ms cubic-bezier(0.22, 1, 0.36, 1),
-    --mo-pointer-pitch 120ms cubic-bezier(0.22, 1, 0.36, 1);
+    --mo-pointer-yaw var(--motion-fast) var(--ease-out),
+    --mo-pointer-pitch var(--motion-fast) var(--ease-out);
 }
 
 /* Activity changes tune the shared Blobatar clock rather than starting a
@@ -199,7 +194,7 @@
   pointer-events: none;
   transform-box: view-box;
   transform-origin: center;
-  animation: wuu-mascot-activity-arrive 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: wuu-mascot-activity-arrive var(--motion-slow) var(--ease-out) both;
 }
 
 .wuu-mascot-activity-motion {
@@ -327,7 +322,7 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   [data-wuu-mascot-activity] {
     transition: none;
   }

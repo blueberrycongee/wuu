@@ -1,13 +1,14 @@
 import { PENDING_STREAM_LINK } from "./StreamingMarkdownMend";
 import { hostSupports } from "./HostCapabilities";
 import { Children, cloneElement, isValidElement, memo, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { Github, Globe2, Mail } from "lucide-react";
+import { Github, Globe2, Mail } from "./WuuIcons";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
 import remarkCjkAutolinkBoundary from "./remarkCjkAutolinkBoundary";
 import remarkCjkStrongBoundary from "./remarkCjkStrongBoundary";
 import { useImagePreview } from "./ImagePreview";
+import { useImagePreviewRegistration } from "./ImagePreviewGallery";
 import {
   formatWorkspaceFileTarget,
   parseLinkTarget,
@@ -17,16 +18,28 @@ import { MessageCopyButton } from "./MessageActions";
 import { copyToClipboard, ThreadContextMenu } from "./ThreadContextMenu";
 import { useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
+import {
+  openExternalURL,
+  prefersSystemBrowser,
+  useWorkspaceBrowserOpen,
+  workspaceBrowserClickModifiers,
+} from "./WorkspaceBrowserOpen";
 import { currentAppliedTheme, observeAppliedTheme, type AppliedTheme } from "./Theme";
 import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 import { WorkbenchContentRenderer } from "./plugins/Workbench";
-import { highlightCode } from "./WorkspaceCodeHighlight";
 import { rehypeFileSelectionMapping, type SelectionASTNode } from "./FileSelectionMapping";
+import {
+  CODE_HIGHLIGHT_CHAR_LIMIT,
+  CODE_HIGHLIGHT_HARD_LIMIT,
+  highlightCode,
+  shouldHighlightCode,
+} from "./WorkspaceCodeHighlight";
 
 type RichContentProps = {
   text?: string;
   cwd?: string;
   onOpenFile?: (path: string) => void;
+  onOpenURL?: (url: string, event?: ReactMouseEvent<HTMLElement>) => void;
   /**
    * When true, inline HTML inside the markdown source is rendered as HTML
    * instead of being escaped. Use only for trusted sources the user opened
@@ -118,6 +131,7 @@ export const RichContent = memo(function RichContent({
   text = "",
   cwd,
   onOpenFile,
+  onOpenURL,
   allowRawHtml = false,
   sourceMapping = false,
 }: RichContentProps): JSX.Element {
@@ -131,6 +145,7 @@ export const RichContent = memo(function RichContent({
         text={text}
         cwd={cwd}
         onOpenFile={onOpenFile}
+        onOpenURL={onOpenURL}
         allowRawHtml={allowRawHtml}
         sourceMapping={sourceMapping}
       />
@@ -153,6 +168,7 @@ function MarkdownContentView({
   cwd,
   renderText,
   onOpenFile,
+  onOpenURL,
   renderMermaid = true,
   mermaidStreaming = false,
   allowRawHtml = false,
@@ -162,6 +178,7 @@ function MarkdownContentView({
   cwd?: string;
   renderText?: RichTextRenderer;
   onOpenFile?: (path: string) => void;
+  onOpenURL?: (url: string, event?: ReactMouseEvent<HTMLElement>) => void;
   renderMermaid?: boolean;
   /** The diagram source is still streaming: render offscreen and commit only
    * successful results (see MermaidDiagram). */
@@ -170,8 +187,8 @@ function MarkdownContentView({
   sourceMapping?: boolean;
 }): JSX.Element {
   const components = useMemo(
-    () => markdownComponents(cwd, renderText, renderMermaid, mermaidStreaming, onOpenFile, sourceMapping),
-    [cwd, renderText, renderMermaid, mermaidStreaming, onOpenFile, sourceMapping]
+    () => markdownComponents(cwd, renderText, renderMermaid, mermaidStreaming, onOpenFile, onOpenURL, sourceMapping),
+    [cwd, renderText, renderMermaid, mermaidStreaming, onOpenFile, onOpenURL, sourceMapping]
   );
   return (
     <ReactMarkdown
@@ -200,6 +217,7 @@ function markdownComponents(
   renderMermaid: boolean,
   mermaidStreaming: boolean,
   onOpenFile: ((path: string) => void) | undefined,
+  onOpenURL: ((url: string, event?: ReactMouseEvent<HTMLElement>) => void) | undefined,
   sourceMapping: boolean,
 ): Components {
   const richTextOptions: RichTextRenderOptions = {
@@ -276,7 +294,7 @@ function markdownComponents(
         );
       }
       if (target.kind === "external") {
-        return <RichWebLink href={target.url} title={title}>{inner}</RichWebLink>;
+        return <RichWebLink href={target.url} title={title} onOpenURL={onOpenURL}>{inner}</RichWebLink>;
       }
       if (target.kind === "anchor") {
         return <RichAnchorLink id={target.id} title={title}>{inner}</RichAnchorLink>;
@@ -377,16 +395,35 @@ function RichCodeBlock({
   language: string;
 }): JSX.Element {
   const { t } = useI18n();
+  // Reveal is pinned to one snapshot. A growing stream must not re-run
+  // highlight.js on every token after the reader opts in.
+  const [revealedText, setRevealedText] = useState<string | null>(null);
+  const highlight = shouldHighlightCode(displayedCode, revealedText);
   const highlighted = useMemo(
-    () => highlightCode(language, displayedCode),
-    [displayedCode, language]
+    () => highlight ? highlightCode(language, displayedCode) : null,
+    [displayedCode, highlight, language]
   );
-  const highlightedCode = (
+  const highlightedCode = highlighted ? (
     <code
       className={`hljs language-${highlighted.language}`}
       dangerouslySetInnerHTML={{ __html: highlighted.html }}
     />
+  ) : (
+    <code className="hljs">{displayedCode}</code>
   );
+  const oversized = displayedCode.length > CODE_HIGHLIGHT_CHAR_LIMIT;
+  const canReveal = oversized && displayedCode.length <= CODE_HIGHLIGHT_HARD_LIMIT && !highlight;
+  const highlightControl = canReveal ? (
+    <button
+      type="button"
+      className="rich-code-highlight"
+      onClick={() => setRevealedText(displayedCode)}
+    >
+      {t("rich.highlightCode")}
+    </button>
+  ) : oversized && !highlight ? (
+    <span className="rich-code-plain-note">{t("rich.codePlainOnly")}</span>
+  ) : null;
   // Two layouts:
   //   - With a language tag, the header row carries the language label
   //     and the copy button on the same baseline. Keeps the chrome
@@ -403,6 +440,7 @@ function RichCodeBlock({
       <div className="rich-code-block">
         <div className="rich-code-header">
           <span className="rich-code-language">{language}</span>
+          {highlightControl}
           <MessageCopyButton
             getText={() => code}
             className="rich-code-copy"
@@ -419,18 +457,33 @@ function RichCodeBlock({
     );
   }
   return (
-    <div className="rich-code-block rich-code-block--no-header">
+    <div className={`rich-code-block${highlightControl ? "" : " rich-code-block--no-header"}`}>
+      {highlightControl ? (
+        <div className="rich-code-header">
+          {highlightControl}
+          <MessageCopyButton
+            getText={() => code}
+            className="rich-code-copy"
+            iconSize={13}
+            idleLabel={t("rich.copyCode")}
+            copiedLabel={t("rich.codeCopied")}
+            failedLabel={t("rich.copyFailed")}
+          />
+        </div>
+      ) : null}
       <pre className="rich-code">
         {highlightedCode}
       </pre>
-      <MessageCopyButton
-        getText={() => code}
-        className="rich-code-copy"
-        iconSize={13}
-        idleLabel={t("rich.copyCode")}
-        copiedLabel={t("rich.codeCopied")}
-        failedLabel={t("rich.copyFailed")}
-      />
+      {highlightControl ? null : (
+        <MessageCopyButton
+          getText={() => code}
+          className="rich-code-copy"
+          iconSize={13}
+          idleLabel={t("rich.copyCode")}
+          copiedLabel={t("rich.codeCopied")}
+          failedLabel={t("rich.copyFailed")}
+        />
+      )}
     </div>
   );
 }
@@ -603,36 +656,69 @@ function RichAnchorLink({
 function RichWebLink({
   href,
   title,
-  children
+  children,
+  onOpenURL,
 }: {
   href: string;
   title?: string;
   children: ReactNode;
+  onOpenURL?: (url: string, event?: ReactMouseEvent<HTMLElement>) => void;
 }): JSX.Element {
+  const { t } = useI18n();
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const openWorkspaceURL = useWorkspaceBrowserOpen((url, modifiers) => {
+    if (prefersSystemBrowser(modifiers) || !onOpenURL) {
+      openExternalURL(url);
+      return;
+    }
+    onOpenURL(url);
+  });
   const openLink = (event: ReactMouseEvent<HTMLAnchorElement>): void => {
     if (event.button > 1) {
       return;
     }
     event.preventDefault();
-    void window.wuu?.openExternal?.(href).catch((error) => {
-      console.error(`[rich-link] failed to open ${href}`, error);
-    });
+    const modifiers = workspaceBrowserClickModifiers(event);
+    if (onOpenURL && !prefersSystemBrowser(modifiers)) {
+      onOpenURL(href);
+      return;
+    }
+    openWorkspaceURL(href, modifiers);
   };
+  const closeContextMenu = (): void => setContextMenu(null);
   return (
-    <Tooltip content={title}>
-      <a
-        className="rich-link rich-web-link"
-        href={href}
-        rel="noopener noreferrer"
-        onAuxClick={openLink}
-        onClick={openLink}
-      >
-        <span className="rich-link-content">
-          <RichWebLinkIcon href={href} />
-          <span className="rich-link-label">{children}</span>
-        </span>
-      </a>
-    </Tooltip>
+    <>
+      <Tooltip content={title ?? t("rich.openLink", { url: href })}>
+        <a
+          className="rich-link rich-web-link"
+          href={href}
+          rel="noopener noreferrer"
+          onAuxClick={openLink}
+          onClick={openLink}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setContextMenu({ x: event.clientX, y: event.clientY });
+          }}
+        >
+          <span className="rich-link-content">
+            <RichWebLinkIcon href={href} />
+            <span className="rich-link-label">{children}</span>
+          </span>
+        </a>
+      </Tooltip>
+      {contextMenu ? (
+        <ThreadContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={closeContextMenu}
+          items={[
+            { label: t("rich.openLinkInWorkspace"), onSelect: () => openWorkspaceURL(href) },
+            { label: t("rich.openLinkExternal"), onSelect: () => openExternalURL(href) },
+          ]}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -780,23 +866,25 @@ function RichImage({
   const resolvedSource = resolveImageSource(source, cwd);
   const [failedSource, setFailedSource] = useState<string | null>(null);
   const { openPreview } = useImagePreview();
+  const titleText = imageTarget(source);
+  const register = useImagePreviewRegistration(failedSource === resolvedSource ? null : { src: resolvedSource, alt, title: titleText });
   if (failedSource === resolvedSource) {
     return <></>;
   }
-  const titleText = imageTarget(source);
-  const handleActivate = (): void => {
-    openPreview({ src: resolvedSource, alt, title: titleText });
+  const handleActivate = (origin: HTMLElement): void => {
+    openPreview({ src: resolvedSource, alt, title: titleText }, origin);
   };
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLImageElement>): void => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      handleActivate();
+      handleActivate(event.currentTarget);
     }
   };
   const image = (
     <Tooltip content={titleText}>
       <img
         className="rich-image"
+        ref={register}
         src={resolvedSource}
         alt={alt}
         loading="lazy"
@@ -805,7 +893,7 @@ function RichImage({
         aria-label={
           alt ? t("rich.enlargeNamed", { alt }) : t("rich.enlargeImage")
         }
-        onClick={handleActivate}
+        onClick={event => handleActivate(event.currentTarget)}
         onKeyDown={handleKeyDown}
         onError={() => setFailedSource(resolvedSource)}
       />

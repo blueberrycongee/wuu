@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ActivitySession, ServerEvent } from "../shared/protocol";
 import type { CUANativePiPEvent } from "./cuaFrameStreams";
@@ -5,9 +6,11 @@ import type { WindowRegistry } from "./windowRegistry";
 import {
   ObservationCoordinator,
   activityControlMethod,
+  pipVisibleForActivity,
   activityVisibleForThread,
   frameStreamRetryDelay,
   nativePiPInitialBounds,
+  browserPiPInitialBounds,
   observationActivityFromServerEvent,
   observationKey,
 } from "./cuaActivityWindows";
@@ -48,6 +51,10 @@ describe("CUA native picture-in-picture", () => {
     )).toEqual({ x: 1028, y: 92, width: 260, height: 170 });
     expect(nativePiPInitialBounds(undefined, { x: 1440, y: 0, width: 1200, height: 900 }))
       .toEqual({ x: 2356, y: 24, width: 260, height: 170 });
+    expect(browserPiPInitialBounds(
+      { x: 100, y: 80, width: 1200, height: 800 },
+      { x: 0, y: 0, width: 1440, height: 900 },
+    )).toEqual({ x: 1026, y: 606, width: 250, height: 250 });
   });
 
   it("backs off native capture restarts", () => {
@@ -193,6 +200,7 @@ describe("browser observation surface", () => {
     start: ReturnType<typeof vi.fn>;
     setVisible: ReturnType<typeof vi.fn>;
     setLive: ReturnType<typeof vi.fn>;
+    setTurnCompleted: ReturnType<typeof vi.fn>;
     updateActivity: ReturnType<typeof vi.fn>;
     animateInteraction: ReturnType<typeof vi.fn>;
     stop: (onStopped?: () => void) => void;
@@ -213,6 +221,7 @@ describe("browser observation surface", () => {
           start: vi.fn(),
           setVisible: vi.fn(),
           setLive: vi.fn(),
+          setTurnCompleted: vi.fn(),
           updateActivity: vi.fn(),
           animateInteraction: vi.fn(),
           stop: (onStopped?: () => void) => {
@@ -227,7 +236,107 @@ describe("browser observation surface", () => {
     return { coordinator, surfaces, stops };
   }
 
-  it("starts the surface for a browser activity and hides it while the user watches the real page", () => {
+  it("shows completion only for a successful final turn on the visible owning browser", () => {
+    const { coordinator, surfaces } = makeCoordinator();
+    coordinator.setActiveThread("thread-1");
+    coordinator.update(browserActivity({ state: "foreground_controlled" }));
+    const completed = surfaces[0].setTurnCompleted;
+    const event: ServerEvent = { workdir: "/repo", kind: "notification", message: {
+      method: "turn/completed", params: { thread_id: "thread-1", turn: { id: "turn-1", status: "completed" } },
+    } };
+    coordinator.handleServerEvent({ ...event, workdir: "/other" });
+    coordinator.handleServerEvent({ ...event, message: { ...event.message, params: { thread_id: "other" } } });
+    expect(completed).not.toHaveBeenCalled();
+    coordinator.handleServerEvent(event);
+    expect(completed).toHaveBeenLastCalledWith(true);
+    for (const params of [
+      { turn: { status: "interrupted" } },
+      { turn: { status: "failed" } },
+      { turn: { status: "completed" }, awaiting_auto_continuation: true },
+      { turn: { status: "completed" }, truncated: true },
+    ]) {
+      coordinator.handleServerEvent({ ...event, message: { ...event.message, params: { thread_id: "thread-1", ...params } } });
+      expect(completed).toHaveBeenLastCalledWith(false);
+    }
+    for (const method of ["turn/started", "turn/error"]) {
+      coordinator.handleServerEvent({ ...event, message: { ...event.message, method } });
+      expect(completed).toHaveBeenLastCalledWith(false);
+    }
+    completed.mockClear();
+    coordinator.update(browserActivity({ state: "background_controlled", updated_at: "2026-07-10T10:00:02Z" }));
+    coordinator.handleServerEvent(event);
+    expect(completed).toHaveBeenLastCalledWith(true);
+    completed.mockClear();
+    coordinator.setBrowserInPanel(() => true);
+    coordinator.handleServerEvent(event);
+    expect(completed).not.toHaveBeenCalled();
+    coordinator.setBrowserInPanel(() => false);
+    coordinator.setActiveThread("other");
+    coordinator.handleServerEvent(event);
+    expect(completed).not.toHaveBeenCalled();
+    void coordinator.shutdown();
+  });
+
+  it("passes the owning browser activity when docking its preview", () => {
+    const onExpand = vi.fn();
+    const coordinator = new ObservationCoordinator(
+      { mainWindow: () => undefined } as unknown as WindowRegistry,
+      undefined,
+      () => ({
+        start: vi.fn(),
+        setVisible: vi.fn(),
+        animateInteraction: vi.fn(),
+        stop: vi.fn(),
+      }),
+    );
+    coordinator.setBrowserExpandHandler(onExpand);
+    const current = browserActivity({ thread_id: "thread-2", target: "tab-2" });
+    coordinator.setActiveThread("thread-2");
+    coordinator.update(current);
+
+    const internal = coordinator as unknown as {
+      handlePiPEvent: (key: string, event: CUANativePiPEvent) => void;
+    };
+    internal.handlePiPEvent(observationKey(current), { event: "expand" });
+
+    expect(onExpand).toHaveBeenCalledWith(current);
+  });
+
+  it("follows window moves but waits for fresh column measurements during resize", async () => {
+    const { coordinator, surfaces } = makeCoordinator();
+    coordinator.setActiveThread("thread-1");
+    coordinator.update(browserActivity());
+    const setHostLayout = vi.fn();
+    Object.assign(surfaces[0], { setHostLayout });
+    let content = { x: 100, y: 100, width: 1000, height: 800 };
+    const win = Object.assign(new EventEmitter(), {
+      isDestroyed: () => false,
+      isVisible: () => true,
+      isMinimized: () => false,
+      getContentBounds: () => content,
+      webContents: { getZoomFactor: () => 1 },
+    });
+    const client = { host: { x: 200, y: 40, width: 800, height: 700 }, obstacles: [] };
+    coordinator.setBrowserPiPHostLayout(1, win, client);
+    setHostLayout.mockClear();
+    content = { ...content, x: 80, width: 1020, height: 820 };
+    win.emit("resize");
+    win.emit("move");
+    expect(setHostLayout).not.toHaveBeenCalled();
+    coordinator.setBrowserPiPHostLayout(1, win, {
+      ...client, host: { ...client.host, width: 820, height: 720 },
+    });
+    expect(setHostLayout).toHaveBeenCalledTimes(1);
+    expect(setHostLayout.mock.calls[0][0].host).toEqual({ x: 280, y: 140, width: 820, height: 720 });
+    content = { ...content, x: 60, y: 80 };
+    win.emit("move");
+    expect(setHostLayout).toHaveBeenCalledTimes(2);
+    expect(setHostLayout.mock.calls[1][0].host).toEqual({ x: 260, y: 120, width: 820, height: 720 });
+    await coordinator.shutdown();
+    expect(win.listenerCount("move")).toBe(0);
+  });
+
+  it("previews default browser work across control-state updates until the page is docked", () => {
     const { coordinator, surfaces } = makeCoordinator();
     coordinator.setActiveThread("thread-1");
     coordinator.update(browserActivity());
@@ -235,14 +344,56 @@ describe("browser observation surface", () => {
     expect(surfaces[0].start).toHaveBeenCalledTimes(1);
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
 
-    // Visibility takeover: the real page is on screen full-size — the mirror hides.
-    coordinator.update(browserActivity({ state: "foreground_controlled", controller: "user", updated_at: "2026-07-10T10:00:02Z" }));
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
-    expect(surfaces[0].stop).toBeDefined();
-    expect(surfaces).toHaveLength(1); // same surface, not replaced
-
-    coordinator.update(browserActivity({ state: "background_controlled", controller: "agent", updated_at: "2026-07-10T10:00:03Z" }));
+    // A subsequent ordinary browser action returns to background control.
+    coordinator.update(browserActivity({ state: "foreground_controlled", controller: "agent", updated_at: "2026-07-10T10:00:02Z" }));
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
+    coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:03Z" }));
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
+    coordinator.setBrowserInPanel(() => true);
+    coordinator.refreshBrowserPresentation();
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces).toHaveLength(1);
+
+    coordinator.setBrowserInPanel(() => false);
+    coordinator.refreshBrowserPresentation();
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
+  });
+
+  it("hides the mirror while the same page is in the workspace panel", () => {
+    expect(pipVisibleForActivity(browserActivity(), false)).toBe(true);
+    expect(pipVisibleForActivity(browserActivity({ state: "foreground_controlled" }), false)).toBe(true);
+    expect(pipVisibleForActivity(browserActivity(), true)).toBe(false);
+    const { coordinator, surfaces } = makeCoordinator();
+    coordinator.setActiveThread("thread-1");
+    coordinator.setBrowserInPanel(() => true);
+    coordinator.update(browserActivity());
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    coordinator.setBrowserInPanel(() => false);
+    coordinator.refreshBrowserPresentation();
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
+  });
+
+  it.each(["thread-2", undefined])("keeps an inactive preview hidden during presentation refresh (%s)", async (threadID) => {
+    const { coordinator, surfaces } = makeCoordinator();
+    coordinator.setActiveThread("thread-1");
+    coordinator.update(browserActivity());
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
+
+    coordinator.setActiveThread(threadID);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    coordinator.setBrowserInPanel(() => false);
+    coordinator.refreshBrowserPresentation();
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+
+    coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:02Z" }));
+    coordinator.refreshBrowserPresentation();
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces).toHaveLength(1);
+
+    coordinator.setActiveThread("thread-1");
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
+    expect(surfaces).toHaveLength(1);
+    await coordinator.shutdown();
   });
 
   it("keeps a stopped surface frozen across reconciliation and resumes only a new activity", () => {
@@ -251,6 +402,7 @@ describe("browser observation surface", () => {
     coordinator.update(browserActivity());
     coordinator.update(browserActivity({ state: "stopped", controller: "none", updated_at: "2026-07-10T10:00:02Z" }));
     expect(surfaces[0].setLive).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
     expect(surfaces).toHaveLength(1); // kept, CUA observation semantics
 
     coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:03Z" }));
@@ -261,7 +413,24 @@ describe("browser observation surface", () => {
     expect(surfaces[1].setLive).toHaveBeenLastCalledWith(true);
   });
 
-  it("swaps the surface on tab switch through the serialized replacement", () => {
+  it("reuses a retargetable browser surface across tab activity identities", () => {
+    const { coordinator, surfaces, stops } = makeCoordinator();
+    coordinator.setActiveThread("thread-1");
+    coordinator.update(browserActivity());
+    const retarget = vi.fn();
+    Object.assign(surfaces[0], { retarget });
+    const next = browserActivity({ id: "activity-2", target: "tab-2", updated_at: "2026-07-10T10:00:02Z" });
+    coordinator.update(next);
+    expect(stops).toEqual([]);
+    expect(surfaces).toHaveLength(1);
+    expect(retarget).toHaveBeenCalledWith(next, expect.any(Object));
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
+    // Controls from the reused window must address the new observation key.
+    retarget.mock.calls[0][1].onEvent({ event: "user_close" });
+    expect(stops).toHaveLength(1);
+  });
+
+  it("swaps a non-retargetable surface through the serialized replacement", () => {
     const { coordinator, surfaces, stops } = makeCoordinator();
     coordinator.setActiveThread("thread-1");
     coordinator.update(browserActivity({ target: "tab-1" }));

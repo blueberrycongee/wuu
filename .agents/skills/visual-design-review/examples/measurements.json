@@ -1,0 +1,24 @@
+{
+  "scene": "synthetic-composer",
+  "scene_version": "1",
+  "extractor_version": "synthetic-values-v1",
+  "environment": {
+    "viewport": [1200, 800], "theme": "light", "ui_font": "synthetic-14",
+    "code_font": "synthetic-11", "scale": 1, "platform": "synthetic",
+    "renderer": "synthetic", "locale": "en", "state": "empty",
+    "content_version": "fixture-v1"
+  },
+  "samples": [
+    {
+      "capture_id": "synthetic-1",
+      "metrics": {
+        "alignment_error": {"error": 0.02, "uncertainty": 0.002, "evidence": "synthetic:alignment"},
+        "spacing_error": {"error": 0.04, "uncertainty": 0.004, "evidence": "synthetic:spacing"},
+        "weight_error": {"error": 0.08, "uncertainty": 0.01, "evidence": "synthetic:weight"},
+        "whitespace_error": {"error": 0.06, "uncertainty": 0.01, "evidence": "synthetic:whitespace"},
+        "effects_error": {"error": 0.07, "uncertainty": 0.01, "evidence": "synthetic:effects"}
+      },
+      "guards": {"readable": "unknown", "no_clipping": "unknown", "operable": "unknown"}
+    }
+  ]
+}

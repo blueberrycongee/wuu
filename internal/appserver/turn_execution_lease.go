@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -33,8 +34,7 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState) (bool, er
 	if th == nil {
 		return false, errors.New("thread is required")
 	}
-	usesInteractiveExtensions := strings.TrimSpace(th.NamedAgentID) == "" || (s.rt != nil && s.rt.HasCollaborationTools())
-	if usesInteractiveExtensions && s != nil && s.pluginGenerationMutation.Load() {
+	if s != nil && s.pluginGenerationMutation.Load() {
 		return false, nil
 	}
 	if th.admissionReserved || th.executionLease != nil || th.runtimeSelectionMutation {
@@ -44,7 +44,7 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState) (bool, er
 		return false, nil
 	}
 	newPluginLease := false
-	if usesInteractiveExtensions && th.pluginExecutionLease == nil && s != nil && s.rt != nil && strings.TrimSpace(s.rt.WuuHome) != "" {
+	if th.pluginExecutionLease == nil && s != nil && s.rt != nil && strings.TrimSpace(s.rt.WuuHome) != "" {
 		lease, acquired, err := session.TryAcquirePluginGenerationExecutionLease(s.rt.WuuHome)
 		if err != nil {
 			return false, fmt.Errorf("acquire plugin generation execution lease: %w", err)
@@ -134,6 +134,7 @@ func (s *Server) refreshDurableThreadHistoryLocked(th *threadState) error {
 	th.currentTurnResumed = false
 	th.nextItemIndex = 0
 	th.activeAgentItemID = ""
+	th.agentStream = nil
 	th.activeReasoningItemID = ""
 	th.toolItems = make(map[string]string)
 	return nil
@@ -284,7 +285,7 @@ const turnTerminalHistoryRecord = "turn_terminal"
 // interrupted so the settled row ("网络异常 · 第 n/m 次重试") survives reload.
 const streamReconnectHistoryRecord = "stream_reconnect"
 
-func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKind, status TurnStatus, cause error, at time.Time, reconnect *ThreadItem) error {
+func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKind, status TurnStatus, cause *TurnError, at time.Time, reconnect *ThreadItem, providerName, model string, usage providers.TokenUsage) error {
 	if s == nil || s.rt == nil || th == nil || !th.PersistHistory || strings.TrimSpace(turnID) == "" {
 		return nil
 	}
@@ -308,16 +309,32 @@ func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKi
 		return nil
 	}
 	message := ""
+	structuredCause := ""
 	if cause != nil {
-		message = cause.Error()
+		message = cause.Message
+		// Cause on turn_terminal meta rows holds the structured diagnostic.
+		// DisplayContent stays plain text for older readers. Keeping both in
+		// the same row makes status and recovery facts one durable write.
+		encoded, err := json.Marshal(cause)
+		if err != nil {
+			return err
+		}
+		structuredCause = string(encoded)
 	}
 	if err := session.AppendHistoryRecord(s.rt.SessionDir, th.ID, session.HistoryRecord{
-		Role:           "meta",
-		Content:        turnTerminalHistoryRecord,
-		DisplayContent: message,
-		ClientID:       clientID,
-		StopReason:     string(status),
-		At:             at,
+		Role:                "meta",
+		Content:             turnTerminalHistoryRecord,
+		Provider:            providerName,
+		Model:               model,
+		InputTokens:         usage.InputTokens,
+		OutputTokens:        usage.OutputTokens,
+		CacheCreationTokens: usage.CacheCreationTokens,
+		CacheReadTokens:     usage.CacheReadTokens,
+		DisplayContent:      message,
+		Cause:               structuredCause,
+		ClientID:            clientID,
+		StopReason:          string(status),
+		At:                  at,
 	}); err != nil {
 		return err
 	}
@@ -348,7 +365,8 @@ func (s *Server) abortStartedThreadTurnDurably(th *threadState, started startedT
 	}
 	var persistErr error
 	if started.userMsgSeq > 0 {
-		persistErr = s.persistTurnTerminal(th, started.turnID, TurnKindUser, TurnStatusFailed, cause, time.Now().UTC(), nil)
+		diagnostic := BuildTurnError(cause, "")
+		persistErr = s.persistTurnTerminal(th, started.turnID, TurnKindUser, TurnStatusFailed, &diagnostic, time.Now().UTC(), nil, "", "", providers.TokenUsage{})
 	}
 	abortStartedThreadTurn(th, started, cause)
 	if persistErr != nil {

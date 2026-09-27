@@ -14,6 +14,7 @@ import (
 	"time"
 
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/version"
 )
@@ -291,7 +292,7 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 	if resp.StopReason == "max_tokens" {
 		resp.Truncated = true
 	}
-	resp.FinishReason = providers.NormalizeFinishReason(resp.StopReason, resp.Truncated, len(toolCalls) > 0)
+	resp.FinishReason = anthropicFinishReason(resp.StopReason, resp.Truncated, len(toolCalls) > 0)
 	if parsed.Usage != nil {
 		resp.Usage = &providers.TokenUsage{
 			InputTokens:         parsed.Usage.InputTokens,
@@ -554,6 +555,38 @@ func buildAnthropicRequestWithSupport(req providers.ChatRequest, maxTokens int, 
 	}
 	applyAnthropicProviderOptions(&payload, req.ProviderOptions)
 
+	if modelvariant.AnthropicRequiresBoundThinking(req.Model) {
+		// Wuu can compact history and change system reminders or discovered
+		// tools between requests. Let the API drop only invalidated reasoning
+		// instead of rejecting the whole continuation, while preserving valid
+		// signed blocks unchanged. This also applies to newly created accounts.
+		if payload.Thinking == nil {
+			payload.Thinking = &anthropicThinking{}
+		}
+		payload.Thinking.Type = "adaptive"
+		payload.Thinking.BudgetTokens = 0
+		if payload.Thinking.Display == "" {
+			payload.Thinking.Display = "summarized"
+		}
+		payload.Thinking.BlockBinding = map[string]string{"prefix_mismatch_behavior": "drop_block"}
+		payload.Betas = append(payload.Betas, "thinking-binding-controls-2026-08-01")
+		if payload.OutputConfig != nil && payload.OutputConfig.Effort == "none" {
+			payload.OutputConfig.Effort = "low"
+		}
+		payload.Temperature = nil
+		payload.TopP = nil
+		payload.TopK = nil
+		if payload.ToolChoice != nil {
+			// These models reject forced tool_choice. Keep the closing-turn
+			// requirement explicit in a supported mid-conversation instruction.
+			payload.ToolChoice = map[string]any{"type": "auto"}
+			payload.Messages = append(payload.Messages, anthropicMessage{
+				Role:    "system",
+				Content: []anthropicBlock{{Type: "text", Text: fmt.Sprintf("Call the %q tool for this turn. Begin your response with that tool call.", req.ForceToolName)}},
+			})
+		}
+	}
+
 	// Temperature gating, applied after all option sources:
 	// - models that reject the field (per-model "temperature": false, arriving
 	//   as the temperatureSupported option) never receive it — absolute;
@@ -600,6 +633,9 @@ func applyAnthropicProviderOptions(payload *anthropicRequest, options map[string
 	}
 	if speed, ok := options["speed"].(string); ok && strings.TrimSpace(speed) != "" {
 		payload.Speed = strings.TrimSpace(speed)
+		if payload.Speed == "fast" {
+			payload.Betas = appendUniqueStrings(payload.Betas, "fast-mode-2026-02-01")
+		}
 	}
 	if payload.Temperature == nil {
 		if temperature, ok := providerOptionFloat(options["temperature"]); ok {
@@ -1278,7 +1314,7 @@ func (c *Client) handleSSEEvent(
 			Type:         providers.EventDone,
 			Usage:        terminalUsage,
 			StopReason:   *stopReason,
-			FinishReason: providers.NormalizeFinishReason(*stopReason, truncated, false),
+			FinishReason: anthropicFinishReason(*stopReason, truncated, false),
 			Truncated:    truncated,
 		})
 		return true
@@ -1632,9 +1668,10 @@ type anthropicRequest struct {
 
 // anthropicThinking configures extended thinking.
 type anthropicThinking struct {
-	Type         string `json:"type"`                    // "adaptive" or "enabled"
-	BudgetTokens int    `json:"budget_tokens,omitempty"` // only for type=enabled
-	Display      string `json:"display,omitempty"`
+	Type         string            `json:"type"`                    // "adaptive" or "enabled"
+	BudgetTokens int               `json:"budget_tokens,omitempty"` // only for type=enabled
+	Display      string            `json:"display,omitempty"`
+	BlockBinding map[string]string `json:"block_binding,omitempty"`
 }
 
 // anthropicOutputConfig controls output behavior.
@@ -1686,6 +1723,13 @@ type anthropicTool struct {
 	InputSchema  map[string]any         `json:"input_schema"`
 	DeferLoading bool                   `json:"defer_loading,omitempty"`
 	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+}
+
+func anthropicFinishReason(stopReason string, truncated, hasToolCalls bool) providers.FinishReason {
+	if strings.EqualFold(strings.TrimSpace(stopReason), "pause_turn") && !truncated && !hasToolCalls {
+		return providers.FinishReasonContinue
+	}
+	return providers.NormalizeFinishReason(stopReason, truncated, hasToolCalls)
 }
 
 type anthropicResponse struct {

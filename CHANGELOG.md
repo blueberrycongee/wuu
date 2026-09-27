@@ -9,10 +9,697 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ## [Unreleased]
 
 ### Added
+- Added selection actions to Markdown, code, and text previews: attach selected text as context, add comments, or request an inline edit.
 
-- Added selection actions to Markdown, code, and text previews: attach selected
-  text as hover-preview tags, add editable comments with source locations, or submit an
-  inline edit request while preserving the conversation draft.
+- Select text in completed assistant responses to quote passages or comment beside
+  them. Quotes wait as cards in the composer tray and follow drafts, send/queue/steer, held-message
+  recovery and history; source navigation validates the exact visible passage.
+
+- Image attachments now include local working-file paths for model file operations,
+  with seven-day expiry and automatic cache cleanup. Context compaction includes
+  these paths in image omission notes and the summary input's media index.
+  Retrying an image message keeps internal file references out of the submitted text.
+
+- New conversations can start in an isolated Git worktree from the composer's
+  branch selector. The project keeps its current branch and uncommitted changes;
+  the worktree toggle resets for the next conversation.
+- Projects: a coordinator conversation for a larger piece of work in one
+  workspace. Create one from the workspace menu; a workspace can hold several.
+  The coordinator can work directly or delegate to managed sessions, which open
+  like any conversation. Sessions that change files work in their own Git
+  worktree. When a turn ends, its result reaches the coordinator once, including
+  after a restart. The team delivers worktree changes itself by merging,
+  pushing, or opening a pull request; nothing waits for your approval. Sending a message in
+  a session steers it without changing project membership. Stopping interrupts
+  its current turn; interrupted results and direct-message notices do not wake
+  an idle coordinator. Project members no longer need takeover or return controls. The
+  `project` option on `thread/start` and the `project/session` app-server
+  method expose the same model to clients.
+
+- The model popover has an independent Fast mode toggle and reset for supported
+  provider models and native or ACP engines. Conversation and draft selections
+  preserve speed separately from reasoning effort; `/fast` uses the same setting.
+
+- Click the conversation title in the title bar to rename it. An existing
+  conversation saves immediately. A new conversation keeps the name when the
+  first message creates the session.
+
+- Video output cards and workspace video files open an inline player with
+  playback, seeking, volume, and fullscreen controls. Unsupported codecs show
+  a message while keeping the download action available.
+
+- The empty conversation home shows a usage overview under the greeting:
+  sessions, tokens, and active days recorded in local Wuu history, with a
+  daily activity heatmap for the past year. New installs show zero totals.
+  The new `usage/overview` app-server method reads only token usage records,
+  not conversation content. After 20 seconds without input, the greeting
+  mascot plays short bouncing-ball, snake, and breakout scenes on the heatmap,
+  rotating without consecutive repeats. Each scene ends on the heatmap: the
+  ball settles into today, the snake bites its tail and the days it ate grow
+  back, and the last breakout shot drills through the wall before it rebuilds.
+  Any input stops the scene, and reduced motion turns it off; the underlying
+  activity data is never changed.
+
+### Changed
+
+- The desktop and its documentation call a registered folder a workspace
+  (工作区) instead of a project; "project" now means a project coordinator.
+
+- Optional programmatic tool calling now runs each program in a fresh JavaScript
+  process with the session filesystem sandbox. A default-off global switch and
+  model-family overrides control availability. Nested calls retain normal tool
+  permissions and recording; image/audio results are attached automatically.
+  The previous persistent code runtime and execution/wait tools are retired.
+
+- Workspace conversation lists show five recent entries plus active, running,
+  unread, and up to three recently read conversations. Recently read entries
+  expire after two minutes. Expanding includes all history. Workspace lists use
+  the shared sidebar scroll area, so scrolling over a conversation moves the outer list.
+
+- The Extensions page follows the settings layout: a titled page with its
+  actions beside the title, then plugins, official skills, and your skills as
+  bordered lists in one column. Plugins come first and show their status on a
+  shared axis; each row has a one-line description and opens its details. Text
+  and icons follow the UI font size, a search hides lists without matches, and
+  the plugin detail shows the same status label as its row.
+
+- Desktop motion shares one duration ladder and one reduced-motion signal.
+  The in-app Motion preference and the OS setting both collapse token-driven
+  transitions, entrances, exits, drag movement, and frame-driven motion;
+  spinners keep turning because they report ongoing work. Closing the
+  conversation search overlay and the sidebar rename sheet no longer keeps a
+  full-window click target for the whole exit.
+
+- The macOS DMG installer window has a Retina-ready background with English
+  and Chinese drag-to-install instructions: a slingshot beside the app fires
+  Wuu along a dotted arc into the Applications folder.
+
+- Settings pages are grouped by task: Agents & models, App, Extensions, and
+  Data. Each page uses one column, with its title and page actions on the
+  first line and settings in bordered groups. Model providers and agents open
+  in place under their own row. Page identifiers are unchanged, including
+  `advanced` for the runtime page.
+
+- Pasted or attached images, videos, PDFs, and folded long text now wait in a
+  single-row tray that slides out from behind the top of the composer instead
+  of growing the input box. Cards show a thumbnail, or a title with size or
+  line count; removing one lets the rest slide into place, and the input keeps
+  its size throughout. Overflowing trays scroll horizontally with faded edges.
+  Unsupported attachment types and import failures use the shared capsule
+  notification instead of a persistent composer status line.
+
+- `bash` starts background processes with a single `run_in_background` flag
+  instead of its seven background actions. A new `process` tool reads output
+  from, writes input to, stops, lists, and updates running processes,
+  including switching a long-lived service to `completion_mode=detached`.
+  Older transcripts that used `bash` background actions still render on the
+  desktop.
+
+- Command results reach the model as terminal-style text: the output, plus an
+  exit code, full-log path, timeout hand-off, or sandbox denial only when they
+  apply. Terminal color codes and progress redraws are stripped, and each
+  output stream keeps its head and tail instead of only the tail. `process`
+  results and background completion notifications use the same plain text.
+  Clients and durable records keep the JSON envelope.
+
+- `read_file` and `bash` results are bounded at 8192 estimated tokens instead
+  of 2048, so a typical source file or document is read in one call.
+
+### Removed
+
+- Collaboration is gone: named agents, their direct and group conversations,
+  tasks and Work, candidate review, timers and reminders, agent onboarding, and
+  the Agent archive, on the desktop and in the phone apps. The `channel/*`
+  app-server methods, `session/harness/dispatch`, `wuu debug channel`, and
+  `wuu debug sandbox` are removed, and plugin tools can no longer declare the
+  `collaboration` execution scope. Upgrading deletes named-agent conversations;
+  sessions they managed become ordinary conversations. Wuu no longer reads
+  `~/.wuu/channels`, which can be deleted.
+
+### Fixed
+
+- Project status now shares the conversation capsule row with TODO and plugin
+  status, using consistent sizing and alignment above the composer.
+
+- Keep sidebar conversation titles and fork markers clear of the status dot
+  while a conversation is loading.
+
+- macOS confined commands can read Keychain credentials again, preventing false
+  GitHub CLI authentication failures caused by blocked system cache writes.
+
+- Managed project sessions no longer spill into the desktop sidebar's ordinary
+  conversation list when their coordinator is archived, including after reload.
+  Their ownership and running state are preserved; sessions whose coordinator
+  was deleted or is missing remain accessible in the ordinary list.
+
+- Instructions given when an extension creates a session now reach the model on
+  every turn and after a reload. Built-in runs previously dropped them,
+  including the Subagent plugin's worker instructions.
+
+- Remote requests can open another workspace while four other workspaces run
+  tasks, without the new app-server client being evicted before its request
+  starts. Idle clients remain eligible for normal reclamation.
+
+- Safe mode stops approved desktop plugin modules from loading or activating,
+  while keeping the extension inventory available for recovery and management.
+
+- Remote Web clients reconnect when the relay stops responding during authentication,
+  and cancel pending authentication immediately when stopped or suspended.
+
+- Remote Web conversation restore installs compressed snapshots before subsequent
+  streaming updates, preventing missing text when the local display cache is behind.
+
+- Git status and staging snapshots preserve literal filenames, including spaces,
+  Unicode, quotes, backslashes, and newlines. Returned rename paths identify the
+  destination, and staging or unstaging a backslash path no longer selects other
+  files through Git pathspec escaping. Sensitive-path protections remain in place.
+
+- Startup permission migration skips symbolic links inside the Wuu data directory,
+  preserving external files and executable permissions. Symlink migration markers
+  are replaced without modifying their targets.
+
+- Workspace file reads, saves, and directory expansion preserve leading and
+  trailing whitespace and literal POSIX backslashes in filenames, preventing
+  a selected file from being confused with another file in the workspace.
+
+- Overdue automations keep their scheduled occurrence until the session service
+  is ready. Interrupted dispatches reuse their run record after restart, and
+  completing a dispatch preserves a newly edited schedule.
+
+- Git review compares symbolic link target paths without reading target contents,
+  including untracked and dangling links and file/link type changes.
+
+- Git changes, statistics, and file previews work before the first commit,
+  including staged files and edits made after staging.
+
+- Sidebar scroll fades remain tied to the list's own scroll position while
+  conversations stream, pause, finish, or switch. Streaming paint reduction
+  applies only to nested reasoning and process details.
+
+- Plugin workspace delivery includes committed, staged, and unstaged tracked
+  changes since workspace creation. Status and previews use the same baseline;
+  conflicts and unsupported untracked files preserve the workspace. Automatic
+  cleanup retains committed work and workspaces whose baseline is unavailable.
+
+- Retire runtime plugin processes after refresh or disable once their last
+  owning session releases them. Rebuilt generations no longer retain an extra
+  reference; conversations already using an older generation keep it until
+  they rebuild.
+
+- Sending a message keeps one local waiting timer across admission, events,
+  snapshots, and conversation switches without changing server timestamps.
+  Follow-up messages can queue during new-conversation creation. Stop uses an
+  immediate progress icon until execution ends and retains pending input without
+  automatically dispatching it after cancellation.
+
+- Terminal run details preserve output, exit status, and log links when a
+  command's model-facing output is JSON, rather than treating that output as
+  execution metadata.
+
+- History search finds literal quotes, paths, line breaks, and HTML characters
+  in deduplicated tool results, including model text and multi-part output.
+
+- Keep edited-away conversation branches out of resumed conversations and forks,
+  including subsequent model input, while preserving valid pre-compaction history
+  and the append-only audit transcript.
+
+- Pasted-text cards retain their segments and titles when conversations are
+  restored or forked. Canonical message text and model input remain unchanged.
+
+- Ready Agent Core entries show an external agent's detected executable path in
+  its override field without repeating it in the status or help text.
+
+- Model choices in desktop settings keep a stable order and selected styling.
+  The catalog no longer shows ineffective per-model remove controls or selection
+  animations, and provider remove controls keep their icon centered and color
+  stable on hover.
+
+- Preserve sidebar folder folds when returning from settings, including after
+  switching between light and dark themes.
+
+- OpenAI-compatible Chat Completions requests preserve tool calls, reasoning,
+  and participant names in adjacent messages, preventing orphaned tool results
+  in both ordinary and streaming conversations.
+
+- `apply_patch` accepts LF and CRLF patches for CRLF files while preserving
+  their line endings and whether the file ends with a newline.
+
+- `apply_patch` with `then_run` now shows the model the follow-up command's
+  outcome; the parent result previously kept the patch-only view.
+
+- Link context menus in messages list only their actions instead of repeating
+  the full URL, so the menu no longer spreads across the message. Context menus
+  stay inside the window, truncate long labels, and scroll long lists. Opening
+  one closes any other open context menu, including the composer edit menu, and
+  hides hover tooltips until it closes.
+
+## [2026.9.25] - 2026-09-25
+
+### Changed
+
+- The composer model picker adapts to larger UI text and supports keyboard
+  navigation, focused search, and clearer engine-managed model guidance.
+
+- Desktop titlebars, tab bars, and the sidebar place their first and last
+  icons 20px from the pane edge on both sides. In the message column, tables
+  start on the same edge as paragraphs, while code blocks, the composer, and
+  message bubbles share one 16px inner inset. Derived text, icon, and line
+  sizes land on whole pixels, sidebar group headings keep one height, and
+  message headings step more clearly above body text.
+
+### Fixed
+
+- Reduce long conversation switching stalls by assembling core responses once
+  per message and reusing resume responses instead of transmitting history twice.
+
+- Message table headers no longer render bold, and narrow tables keep words
+  whole instead of breaking them mid-word.
+
+- The workspace file tree now fits a narrow panel when the panel opens after
+  launch, so the file preview keeps a usable width instead of wrapping one
+  character per line.
+
+## [2026.9.24] - 2026-09-24
+
+### Added
+
+- Conversation image previews support previous/next buttons, left/right arrow
+  keys, and a position counter for displayed uploads, tool images, and message
+  images. Navigation stops at the first and last image.
+
+### Changed
+
+- Short bash results omit the duplicate combined output from model context when
+  the complete stdout and stderr reproduce it exactly. Original results and all
+  diagnostic evidence remain intact.
+
+- Text file reads show a line number on the first line of each page and at
+  every tenth file line. Each line retains a separator so source indentation
+  and literal pipes can be copied without display metadata.
+
+- The embedded browser no longer shows a bottom domain and page-title bar,
+  leaving more room for the page. Direct page input or navigation pauses the
+  current task; sending the next instruction in the conversation resumes browser
+  work without separate control-transfer buttons or status labels.
+
+- While a conversation loads, the loading indicator covers only the
+  conversation area. The sidebar, title bar, and environment panel stay
+  visible and usable, and the sidebar marks the conversation being opened.
+
+- Composer project and branch selectors use lightweight, arrow-free pills
+  instead of a full-width background. Their menus have roomier spacing,
+  aligned icon and selection columns, and separate branch status text.
+
+- Sending a message moves only the message bubble into place. The new turn's
+  in-progress status no longer travels with it; it fades in as the bubble lands,
+  for both the first message and follow-ups.
+
+### Fixed
+
+- Composer feedback no longer crowds the send toolbar. Redundant queue-edit,
+  commit, and pull-request confirmations are removed; errors and restrictions
+  remain readable above the input in both main and split conversations.
+
+- Desktop conversation refresh and session resume discard obsolete cached
+  messages when a full completed turn arrives, preventing duplicate replies
+  after a missed completion notification.
+
+- Invalid external configuration edits report an error without erasing the last
+  valid model inventory. Unchanged invalid files no longer trigger repeated
+  parsing and logging, and corrected files recover automatically.
+
+- Desktop development now uses a separate data directory per checkout and forwards
+  explicit `WUU_HOME` overrides on macOS, preventing experimental settings from
+  breaking an installed app.
+
+- Files with Chinese names or filename whitespace now preserve their paths,
+  line counts, and contents in desktop Git previews before and after staging,
+  including modifications, deletions, and renames. Commit message generation
+  also receives the original filenames.
+
+- Named agents can be deleted even when they have task history. Deletion stops
+  their execution and removes their local identity state while retaining shared
+  channel history and completed task attribution.
+
+- Switching conversations no longer shifts messages after they appear. A
+  conversation left mid-history reopens at the same reading position with
+  Jump to latest already shown.
+
+- Scrolling down to the latest message no longer bounces back when Jump to
+  latest disappears.
+
+## [2026.9.23] - 2026-09-23
+
+### Added
+
+- Agents can inspect local PNG, JPEG, static GIF, and WebP images with
+  `read_file`, including generated session artifacts, without a composer
+  attachment. Image results retain the existing file scope and model capability
+  checks. Code Mode forwards emitted images as visual observations.
+
+- Image previews support smooth trackpad pinch zoom, two-finger panning, drag,
+  fit-to-window and actual-size views, rotation, keyboard controls, and a desktop
+  Save As dialog that preserves the original image.
+
+- Browser previews show an animated completion badge when the visible task
+  finishes successfully, and clear it when work resumes. Hover reveals preview
+  controls even while another application is active.
+
+- Model selection now includes GPT-6 Sol/Luna (including Fast mode) and
+  Claude Opus 5.5, with current limits, pricing, and reasoning controls.
+  Claude Fable 5.1 and Opus 5.5 use always-on adaptive thinking, preserve
+  readable progress, and recover from invalidated thinking after context
+  changes. Tool-closing requests use their supported automatic tool choice.
+  New CLI configurations start with GPT-6 Sol and Claude Opus 5.5.
+
+- SuperGrok and xAI API catalogs now include Grok 4.7 (`grok-4.7`), with the
+  documented 500k context window and low/medium/high/xhigh reasoning efforts.
+  New SuperGrok providers default to it; Grok Build lists it alongside 4.5 and
+  4.6.
+
+- Desktop conversations can open the workspace browser from `/browser`, the
+  workspace tool list, message links, turn sources, and compact browser
+  activity rows. Modifier-clicks still use the system browser, and the panel
+  does not steal focus from another workspace tool or a foreground Agent
+  browser.
+
+- Embedded browser automation is available by default. The active conversation
+  previews the Agent's page in a floating card inside the conversation column.
+  Dragging the card snaps it to a corner of that column, clear of the composer.
+  The page keeps its layout size and is zoomed so the whole page fits in
+  the card. Dragging an edge or corner changes the card, and the zoom follows.
+  Pointer events on the card move or resize it; they do not click the page.
+  The workspace panel opens when the user opens the browser or expands the
+  card, and does not open or close on its own. Set `WUU_ENABLE_BROWSER=0` to
+  hide the tool.
+
+### Changed
+
+- The subscription dashboard stays development-only and is not exposed in
+  production Settings or extension-provided settings navigation.
+
+- Folder, conversation, and new-conversation icons use simpler contours and
+  consistent rounded frames, matching the sidebar toggle controls. Single and
+  stacked conversation bubbles share the same visual style.
+
+- Information, add, and expand/restore icons use balanced optical insets beside
+  sidebar toggles and close icons. Sidebar glyphs follow their control's size,
+  including compact titlebar menus.
+
+- Conversation images use compact tool thumbnails and bounded, proportional
+  previews in replies, with consistent space before and after images.
+
+- TODO capsule hover cards use roomier line and task spacing, preserve paragraph
+  breaks, and keep long task descriptions at regular weight for easier reading.
+
+- Dark desktop surfaces use fine inset highlights for depth. Menus, dialogs,
+  and edge drawers retain black shadows to separate overlapping content.
+
+- Desktop and shared Web controls use Wuu's original SVG icon family, with
+  consistent optical sizing across navigation, tools, settings, skills,
+  extension marks, empty states, and browser overlays. A set of twelve
+  muted Morandi SVG variants is available for optional colored surfaces.
+
+- Browser previews and the workspace panel share a clearer animated pointer,
+  with consistent movement and input feedback at every preview size.
+  Taking control clears the pointer and cancels pending input.
+
+- Desktop conversations use quieter titles and branding, tighter sidebar group
+  spacing, and smaller reading/composer gaps. Workspace previews start with five
+  recent sessions while keeping current, running, and unread sessions visible.
+
+- Process summaries have clearer text and keyboard focus, with more space between
+  expanded tool rows. Floating navigation follows the UI font size and shared
+  menu elevation. Environment panels retain normal text and control sizes in
+  narrow windows. Conversations share the standard settings page's content
+  width and insets, with a near-white composer surface in the light theme.
+
+- The embedded browser can read the page it is showing. Observation returns
+  the headings, paragraphs, lists, and tables together with the controls it
+  can click, and a long page continues from the returned offset. Ending a
+  browsing turn keeps the pages named in `keep`. A page the site opens is
+  tracked with the other tabs and closed when it is not kept.
+
+- The browser preview card does not paint page scrollbars. The card can be
+  moved and resized, but not scrolled or taken over. Scrollbars return when
+  the page is docked in the workspace panel.
+
+- The workspace browser and the agent page are the same tab. Opening the
+  browser shows that page, and the address bar, back, forward, and reload
+  drive it. A pointer travels to the target before a click or scroll is
+  sent. Closing the panel keeps the page in the hidden host.
+
+### Fixed
+
+- New Harness conversations appear in the sidebar while creation is pending.
+  Stop remains available through background refreshes, restores the submitted
+  input, and cleans up an unused session if creation finishes after cancellation.
+  Concurrent drafts no longer share a single pending placeholder.
+
+- Inline artifact image previews fit the image's original proportions instead of
+  adding white margins inside a fixed 4:3 frame, without cropping or stretching.
+  Click-to-enlarge still opens the complete original image.
+
+- Conversation model changes no longer replace the selected model with workspace
+  defaults. Model, reasoning-effort, and permission update failures use the shared
+  top notification instead of duplicating errors in the composer status line.
+
+- Composer submissions no longer wait for cached conversation refreshes. Main
+  and split views accept normal follow-ups after a final answer, preserve the
+  original workspace across asynchronous preparation, and retain failed input
+  without overwriting newer drafts.
+
+- Responses image-generation results now appear as assistant image attachments
+  and remain available when reopening the conversation, including replies with
+  no text.
+
+- Managed session reports preserve completed, failed, and interrupted execution
+  outcomes. Control changes and ordinary evidence messages no longer claim a
+  successful completion; rejected session operations report failure.
+
+- Collaboration handles pending human directions before background session
+  reports, including after a restart and when an inbox spans multiple batches.
+  Earlier session results remain queued in their original room and task.
+
+- Conversation spacing accounts for the docked workspace panel as it opens or
+  resizes, keeping the scrollbar next to the message flow.
+
+- Expanding a browser preview opens its exact tab in the owning session. Missing
+  previews report an error instead of displaying a previous session’s page.
+
+- Browser previews stay hidden after switching away from their conversation,
+  including when panel visibility or background activity updates refresh them.
+  Returning to the owning conversation restores its preview.
+- Ordinary background browser actions show a watch-only preview in their active
+  conversation without requiring explicit visibility promotion. Further actions
+  keep it visible; docking the same page in the workspace panel hides the card.
+  A hidden or minimized desktop window stays hidden; its preview returns when
+  the window is shown or restored.
+
+- Switching desktop sessions keeps caught-up process folds stable through the
+  first paint. Collaboration conversations restore the message being read,
+  cancel outgoing scroll motion, and retain recent history when returning from
+  a Harness session, avoiding a blank reload and a jump to the latest message.
+
+- Desktop surfaces share titlebar geometry and sidebar-control alignment, while
+  compact channel headers retain their native safe-area clearance.
+  Sidebar toggles now retain their position and size when switching to Settings
+  or opening a narrow-window drawer. Workspace headers use the same geometry
+  across window widths. Desktop zoom preserves native window-control alignment
+  while controls fit; larger zoom or font sizes expand the row to avoid clipping.
+
+- The desktop app detects external engines installed in the usual user
+  locations, including `~/.local/bin`, Homebrew, and version-manager shims,
+  when it is opened from Finder or the Dock. Those launches do not receive
+  the terminal PATH.
+
+- File tools no longer treat source files such as `credentials.go` as credential
+  stores only because the name contains `credential` or `secret`. Credential
+  stores such as `credentials.json` and `secrets.yaml` stay protected in every
+  permission mode, and refusals no longer suggest chat approval or a mode
+  switch that cannot lift the guard.
+
+- Subscription request details retain their recorded provider after model-service
+  changes and never reuse earlier token usage for a later failed request.
+
+- Searches without ripgrep no longer fail on long generated lines. The fallback
+  respects Git ignore rules when Git is available and counts matching lines
+  consistently across search modes.
+
+- File reads and edit-error snippets separate line numbers from source with a
+  visible delimiter, preserving indentation for exact edits. Failed edits can
+  identify tab/space differences without applying an ambiguous replacement.
+
+- Switching browser tabs keeps the floating preview window, including its
+  chosen corner and size, instead of briefly closing and resetting it.
+
+- The browser preview no longer moves to avoid the jump-to-latest and status
+  row; composer avoidance remains in place.
+
+- Browser preview positioning uses current layout measurements during window
+  resizing without an extra animation-frame delay or stale intermediate moves.
+
+- Conversation switches restore the reading turn instead of following background
+  output. History loading preserves in-flight scrolling without double-applying
+  native anchoring or counting new output below the reader. Cached streams catch
+  up before scroll measurement and no longer replay pending text fades on reveal.
+
+- Browser observations now read link and button text from Chromium's layout
+  snapshot, including nested and repeated text, instead of returning unnamed
+  links. The screenshot tool description clarifies that it saves a UI preview
+  rather than returning image content to the model.
+
+- Moving the pointer onto the workspace browser no longer takes the page
+  from the agent. A press, a context menu, or typing does.
+
+- Browser previews start from a desktop-sized page viewport, preserve its
+  proportions in narrow columns, and keep the resize input layer attached
+  throughout a drag. Page navigation reapplies the preview scale.
+
+- Switching sessions no longer jumps the message stream or replays catch-up
+  motion. A paused reading position stays where it was, and a conversation
+  that changed while hidden appears in its current layout.
+
+- Opening the workspace terminal no longer covers the app with the startup
+  animation. Progress stays inside the right panel, the terminal is prepared
+  while the app is idle, and switching to another workspace tab keeps the
+  session.
+
+- Opening Automations, or another primary plugin page, no longer lets the
+  empty-session wallpaper, greeting, or composer show through that page.
+
+- The conversation titlebar no longer draws a line along its bottom edge.
+
+- Resizing the window no longer remeasures every folded block, turn, and
+  truncated label on each size change. The open conversation still stays
+  pinned to its latest line while the frame moves.
+- Resizing the window reflows the open conversation. Sessions kept behind
+  it no longer wrap again on every size change, and off-screen turns keep
+  the height they already had.
+
+- A background session that keeps calling tools, including an ACP session
+  driving another harness, no longer re-sorts the whole sidebar on every
+  tool event. Those updates are applied together. Dragging the macOS window
+  keeps the vibrancy material instead of swapping in an opaque fill.
+
+- Session lists no longer run `git status` for every worktree. Summary
+  lists, which the desktop sidebar refreshes on a timer, keep the worktree
+  path and skip that checkout scan. Thread indexes are also reused until
+  the file changes, instead of being parsed twice per list.
+- Live tool output is joined once per visual update. Previously each output
+  chunk copied the whole result accumulated so far.
+- A running mascot keeps animating after its morph settles, at about 30
+  frames per second instead of every display frame.
+
+- Sending a message keeps the same glide into the reading position. Steady
+  frames of that motion only move the viewport; the conversation is measured
+  again when layout actually changes, and the turn rail, jump control, and
+  history preload catch up when the glide lands.
+
+- Streaming turns spend less time on decorative paint. While a running
+  conversation stays pinned to the latest line, the live text wave and
+  scroll-edge fades pause, and stream colors are reused until the theme
+  changes. Code blocks over 8,000 characters stay plain text until
+  highlighted, and blocks over 100,000 characters are not highlighted.
+  The collaboration directory slows its refresh when the room list is
+  unchanged or the window is hidden.
+
+- Narrow windows no longer place a close button on the session drawer.
+  Dismiss it from the dimmed backdrop, the titlebar sidebar button, or by
+  moving the pointer off the drawer. While the drawer is open that button
+  stays above the sliding rail, so hovering it does not flicker the drawer
+  shut, and the title keeps its place.
+
+- Long grok-4.6 sessions compact or install a smaller context window after a
+  classified `input_too_large` overflow, instead of surfacing the 400 when
+  local usage still sits under the compact threshold.
+
+- Sessions whose provider omits token usage reconcile assistant text,
+  tool-call arguments, and tool schemas into the local context estimate
+  before the next request. Proactive compact or a fresh context window runs
+  when that estimate reaches the threshold, including after a length
+  truncation. A context size saved without provider usage is not reused as
+  ground truth after a restart.
+
+- Collaboration-created ordinary workspace sessions now keep their project id
+  on `thread/started`, so they stay in the workspace sidebar instead of
+  vanishing until a later list or reload.
+
+- Keep desktop process rows still when switching sessions: publish the
+  frozen aggregated tool-call layout on the first visible frame, and keep
+  the status ball from shoving the summary with its enter/exit motion.
+
+- Restore a desktop conversation from its distance to the latest content
+  after a session switch, instead of a raw scroll offset that jumps when
+  estimated turn heights settle.
+
+- Keep a running desktop conversation from re-anchoring when it becomes
+  visible again. Catch-up stream text lands without firing a new stream
+  frame.
+
+- Ignore stale ACP JSON-RPC results whose id does not match the in-flight
+  request, so a Grok prompt that is already waiting on the model is not
+  aborted as an internal Wuu error.
+
+- Packaged macOS builds re-apply the traffic-light position after the window
+  is shown, so the lights stay aligned with the 48px titlebar instead of
+  remaining at AppKit's default inset.
+
+### Changed
+
+- Queue a running-turn follow-up with Command+Enter (Ctrl+Enter on Windows
+  and Linux). Tab now only moves focus, including while a draft is waiting.
+
+- Room conversations publish only through `chat_send` or a room-targeted
+  `collaboration_send`. Assistant text stays private after the turn ends, so
+  waiting copy no longer becomes a public bubble.
+
+- Plugins can be enabled or disabled while a conversation is running. Later
+  conversations use the new generation; a conversation that already started
+  keeps the generation it pinned until it rebuilds. Removing a plugin still
+  waits until running work finishes.
+
+- Clicking a field or control no longer paints an extra outline. A focus ring
+  appears only when moving focus with the keyboard.
+
+- The desktop sidebar bell keeps recently opened conversations visible while
+  the attention view stays open, instead of dropping them as soon as they are
+  marked read. The bell badge still counts only running and unread sessions.
+
+- The composer access menu maps Standard, Read only, and Unconfined onto ACP
+  agents' advertised permission modes, and hides Read only when the agent
+  does not publish a distinct plan or read-only setting.
+
+## [2026.9.21] - 2026-09-21
+
+### Added
+
+- Added Cursor, Devin, Grok, Hermes, Pi, OpenCode, and Antigravity external
+  engines, with executable detection, per-engine settings, session recovery,
+  native permission handling, and explicit cancellable ACP sign-in.
+
+- Drag the Collaboration sidebar heading to reorder it alongside Pinned,
+  Folders, and Workspace, with the order preserved across restarts.
+
+- Desktop appearance settings can import a device-local background image across
+  the sidebar and workspace, with five image effects and adjustable strength.
+
+- Preview delivered file snapshots in desktop workspace tabs beside the
+  conversation. A single supported delivery can open after successful completion
+  when the panel is available, without taking over manual panel or browser use.
+
+- Named Agents can explicitly attach selected room images, PDFs and supported
+  videos to execution-session create/send handoffs, preserving source evidence
+  and rejecting inaccessible, missing or unsupported media instead of losing it.
+
+- Added optional Action Fusion to `apply_patch`: `then_run` runs a known
+  validation command after the complete patch succeeds, using the normal bash
+  permissions, logs and managed-process lifecycle. Command failures keep the patch.
+
+- Added catalog and transport support for DeepSeek V4.1 Flash (`deepseek-flash`),
+  Qwen3.8 Max/Flash, and Kimi For Coding's current 1M-context coding model,
+  including the `kimi-k2.8-preview` alias used by the latest models.dev snapshot.
+
 - Added **Approve for me** as a Standard-mode permission option. High-risk native
   tool calls are reviewed before they run; the workspace boundary is unchanged,
   and a review timeout or failure is not treated as a denial.
@@ -21,12 +708,118 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Publish the macOS preview from GitHub Actions without a release certificate,
+  retaining ad-hoc integrity signatures and documenting Gatekeeper limitations.
+- Use the UTC release date (`YYYY.M.D`) for product versions.
+
+- Reveal desktop scrollbars only while scrolling, then fade them out; hovering
+  tool and reasoning details no longer reveals their scrollbars.
+
+- Keep the desktop conversation's input box and message column on the pane's
+  centerline with the sidebar open or collapsed, instead of leaving a wider
+  margin on the right where the scrollbar gutter is reserved.
+
+- Animate the Automations editor split open and closed, instead of snapping
+  the form pane in and out.
+
+- Lay out the empty desktop workspace panel as a left-aligned icon-and-label
+  list instead of a centered icon stack.
+
+- Show each engine's existing SVG brand mark on the desktop composer model
+  picker, engine choices, and first-run runtime cards.
+
+- Drop the engine name from the composer model chip, leaving the SVG mark
+  with the model name.
+
+- Keep recently visited desktop conversations mounted when switching sessions,
+  so the incoming thread does not rebuild and flash after the click.
+
+- Keep collaboration rooms still while the desktop window is being resized, so
+  the message stream and inspector do not flicker with the frame.
+
+- Place desktop sidebar group disclosure chevrons immediately after the Pinned,
+  Folders, Workspace, and Collaboration headings instead of in the trailing
+  action column.
+
+- Size click-open desktop overlay cards — sidebar context menus, the composer
+  permission picker, and other dropdowns — one step below reading text, with
+  medium weight, instead of mixing compact and reading sizes.
+
+- Size desktop sidebar row marks — navigation, plugins, collaboration avatars,
+  folders, and heading plus buttons — to one glyph column and the UI type scale.
+
+- Show pasted text in a user message as one attachment row — file icon, the first
+  line of the paste as its title, and the collapse control — instead of repeating
+  a "pasted text" label and a character count under it.
+
+- Hide phone-connection and account entries in all production desktop builds,
+  including local packages, while retaining them in development mode.
+
+- Settle large tool results, including extension results, into recoverable pages
+  before recording them. Preserve original payloads and media, keep search
+  snapshot cursors, and avoid batch-wide text cuts that could erase recovery links.
+
+- Keep desktop tool-call summaries on one line, truncating overflow with an
+  ellipsis while preserving the activity icon and diff counts.
+
+- Show only the current TODO items in the composer status hover card, without
+  repeating the TODO title, progress count, or tool explanation.
+
+- Reuse loaded sidebar history when reopening desktop conversations, even after
+  a workspace refresh has replaced the active conversation catalog with summaries.
+  Cross-workspace activation now displays the resumed conversation without waiting
+  for live and archived conversation lists, while preserving drafts and live updates.
+
+- Refine the Agent editor with opaque surfaces, aligned borderless fields and
+  inset actions that stay visible while scrolling. The expanded avatar picker
+  uses even option grids and one-click colors, with custom hue adjustment retained.
+
+- Fetch lightweight conversation summaries for desktop lists without copying
+  loaded histories, reducing IPC payloads and app-server allocation overhead.
+  Recover missed completion events with targeted snapshots for stale loaded
+  conversations, including both visible panes.
+
+- Keep conversation search results title-only on the left, with matching snippets
+  and conversation details in the right preview pane.
+
+- Drop the blue focus ring from the conversation search field. Typing focus is
+  the caret inside the already-framed dialog.
+
+- Nudge the desktop process mascot's reading shape right for optical alignment
+  with conversation text, without moving the summary text column.
+
+- Use a simpler split-arrow icon for desktop conversation forks, consistently
+  across sidebar markers, message actions, and worktree notices.
+
+- Let desktop environment-panel content use the full width below the close
+  button instead of reserving an empty column beside TODO and Git rows.
+
+- Make working notes and summary-free context windows built-in defaults, preserving
+  existing session notes without the Context Notes extension. Include Peers in
+  first-run extension choices. Recommend only TODO and Automation by default.
+
+- Remove the redundant workspace path row from the terminal panel so terminal
+  content starts directly below the workspace tabs.
+
+- Tighten the base communication contract so process text and answers share one
+  speaking style, prefer short paragraphs over status one-liners, and avoid stock
+  AI phrasing.
+
+- Remember each provider's and engine's last composer model and effort, including
+  Settings workspace defaults, so switching back does not reset to the catalog default.
+
+- Relax conversation reading rhythm, fold code and tables into the same spacing
+  system, and lengthen scroll fades so list and message edges read as a gradient.
+
+- Separate in-menu search from the options below with a hairline and smaller
+  search icons.
+
 - Drop the sidebar `harness` descriptor so the brand lockup shows only `wuu`.
 
 - Unify named-agent and group-chat navigation with the desktop session sidebar,
   nesting managed sessions beneath their named agent instead of their workspace.
 
-- Narrow outgoing desktop conversation bubbles to 560px or 80% of the message
+- Narrow outgoing desktop conversation bubbles to 516px or 80% of the message
   area and use a mist-blue palette in light and dark themes.
 
 - Temporarily hide the Collaboration sidebar's Agent management shortcut while
@@ -83,8 +876,217 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Matched native iOS connection feedback to the desktop bouncing Wuu letters and
   blinking caret, with green branding, typed status text, and reduced-motion support.
 
+- Send and arrival scrolling in desktop conversations settle on one trajectory that
+  keeps a fixed share of the remaining distance per frame, so streaming output, a
+  collapsing composer, and late layout changes extend the same motion instead of
+  restarting it. Programmatic scrolling no longer stops at a fixed deadline.
+
+### Removed
+
+- Removed the `yield_turn` tool. Sessions use normal provider completion to end
+  without an outward reply, including room discussions and peer follow-ups.
+
+- Removed stale message-flow screenshots and the disposable output-card demo from
+  tracked artifacts.
+
 ### Fixed
 
+- Treat Grok ACP prompt-stall as total wire silence after `session/prompt`,
+  matching the Zeron watchdog: session boilerplate does not count as life,
+  but Grok's `_x.ai/session_notification` queue bookkeeping does, so extra-high
+  reasoning after that first frame can stay quiet. A wedged agent now surfaces
+  as an unresponsive-engine error instead of an internal Wuu error.
+
+- Restore desktop sessions against the submitted message's current position
+  when history is remounted or reflowed, instead of reopening in stale blank
+  space below the messages.
+
+- Keep live `steer` inputs in the same reading flow as queued messages, including
+  messages sent from the pending drawer, without replaying the submission glide.
+
+- Keep queued messages in the normal reading flow instead of replaying the send
+  glide when they start. Queue receipt fades locally, and appending turns no
+  longer collapses mounted history or replaces measured heights with estimates.
+
+- Reduce send-animation style recalculation by keeping the first-message spacer
+  local to the content wrapper and ignoring subpixel reservation feedback.
+
+- Keep conversation scrolling aligned with text reflow during window resizing,
+  update composer clearance while dragging, and restore session history against
+  the incoming composer's viewport rather than the previous session's height.
+
+- Apply deferred conversation layout before lifting the window-resize freeze, so
+  dragging the desktop frame does not jump after the chrome is already still.
+
+- Keep Agent editor identity mascots unclipped so hats and other accessories
+  are not cut by the circular preview, and sit the appearance badge outside
+  the face.
+
+- Park a first query and its in-progress timer on the composer with one lead
+  spacer, then consume that spacer on the submit glide, so the bubble and timer
+  rise together in document flow instead of fighting a scroll transform.
+
+- Send ACP image attachments as local file paths in the prompt instead of
+  failing the turn when the agent does not advertise image blocks. Grok and
+  similar agents read those files with their own tools.
+
+- Keep sessions that are still running in one sidebar position while they stream:
+  the running section and the phone list now order running sessions by creation
+  time, with settled sessions following by recency, instead of moving a row every
+  time an item is projected.
+
+- Keep a paused reader's place when earlier conversation history pages in: the
+  manual prepend offset is only applied while the viewport still sits where the
+  page was requested, so native scroll anchoring or a deliberate scroll during
+  the load no longer gets the inserted height added a second time.
+
+- Discover models advertised by ACP engines such as Grok on `session/new`, so
+  the composer lists `grok-4.6` / `grok-4.5` instead of only Agent default.
+  Launch Grok with `--no-auto-update` and `--no-leader` so that probe is not
+  attached to a shared CLI leader. Complete a Grok turn on
+  `x.ai/session/prompt_complete` when the prompt RPC hangs, decline ACP
+  filesystem and terminal host capabilities, and look up Devin, Hermes, and Pi
+  in their native install directories.
+
+- Reveal desktop wallpaper through the Automation plugin and embedded workspace
+  plugin pages, while keeping overlapping plugin views opaque.
+
+- Reveal desktop wallpaper through empty sessions, loading panes, skills,
+  collaboration, and split-conversation canvases, and under the rounded
+  composer, instead of covering them with the conversation paper fill.
+
+- Allow saving Agent commit attribution while conversations run, applying it to
+  active conversations after their work settles. Keep settings-row errors below
+  controls so long messages do not squeeze labels into a narrow column.
+
+- Keep enabled settings switches compact by using the shared switch track instead
+  of painting the taller click target as a second background.
+
+- Keep settings save and provider-removal failures in Settings instead of the
+  conversation composer, and preserve conversation progress and errors after
+  successful settings changes.
+
+- Honor explicit model selections when resuming or forking `wuu exec` sessions.
+  Preserve the busy-session exit code when a resume includes a model selection.
+  Include stdin in CLI deadlines, settle runs on SIGTERM and disconnected output,
+  and allow cancellation when stdout is stalled. Bound pending events and reject
+  human interaction requests in noninteractive execution.
+
+- Preserve conversation following when tool/reasoning details expand or collapse.
+  Restore submission reading space temporarily occupied by details, while actual
+  response growth and deliberate scrolling still consume it.
+
+- Preserve final Responses replies and refusals over SSE and WebSocket when
+  text deltas are missing or incomplete, without duplicating streamed content
+  or issuing extra model requests. Reconcile corrections across tool-call
+  boundaries and keep WebSocket continuation history aligned with final replies.
+
+- Retry provider-reported `request_timeout`, `408`, and `504` stream errors
+  within the existing retry budget and tool replay safety checks, rather than
+  stopping the conversation after the first request.
+
+- Preserve completed tool batches' text budget through provider requests and
+  history replay, while retaining media and structured recovery data (#284).
+
+- Make sidebar groups and nested workspace folders expand and collapse in one
+  continuous motion, without inheriting a parent's temporary height or jumping
+  at the end. Rapid reversals preserve rows, and reduced motion closes immediately.
+
+- Honor explicit Responses turn-continuation signals across HTTP and WebSocket
+  without retrying ordinary empty completions. Bound consecutive tool-free
+  continuations, including Anthropic pauses, and reject unfinished compact summaries.
+
+- Refresh `grep` and `glob` first pages from current files after edits, including
+  external changes and reopened sessions, while keeping continuation pages bound
+  to their exact result snapshot (#277).
+
+- Make hook exit code 2 reliably block even with JSON output, pass rewritten tool
+  arguments to subsequent hooks, retain all post-tool context across later hook
+  failures, and route rich error results to failure hooks without changing the
+  original tool outcome.
+
+- Bound command-hook output and pipe draining, terminate running hook descendants
+  on cancellation, and preserve cancellation and deadline error identities.
+
+- Prevent matching pre-tool hooks from retaining early or concurrent execution
+  privileges derived from tool arguments they can rewrite.
+
+- Avoid a data race between streamed tool execution and final-call metadata
+  updates by keeping each started call's scheduling decision stable.
+
+- Preserve byte-range recovery for archived tool output when escaped text or
+  short lines exceed the line-projection budget, so continuation neither skips
+  remaining output nor switches to unrelated line ranges.
+
+- Bound structured tool-result previews when field names or numeric values are
+  unusually large, retaining complete data and a snapshot-bound recovery cursor.
+
+- Treat Chat Completions stream error payloads and error finish reasons as failed
+  attempts, preserving provider details and recovery limits without executing
+  unfinished tool drafts (#263).
+
+- Accept SSE response events up to 16 MiB across OpenAI-compatible and Anthropic
+  streams, matching the Responses WebSocket limit. Oversized events now retain a
+  local receive-limit diagnostic instead of an internal error, without futile
+  retries or transport fallback.
+
+- Preserve top-level Responses stream errors and recover recognized transient
+  failures within existing retry budgets and tool replay safety checks. Failed
+  streams now retain retry counts and stopping reasons across session reloads,
+  with expandable desktop diagnostics instead of misleading network labels (#279).
+
+- Recover crashed desktop renderers with bounded automatic retries and a native
+  reload/close fallback. Stop orphaned window terminals and avoid sending events
+  to unavailable frames while the window recovers.
+
+- Honor cron weekday `7` as Sunday, including lists and stepped ranges, so
+  Automation creation, updates, and recurring scheduling no longer reject or
+  skip selected Sundays (#272). Previously saved next-run times are preserved;
+  on desktop, edit a field such as the task name, then choose **Save changes**
+  to recalculate immediately. The cron expression can stay unchanged; saving
+  is disabled until the task is edited. Without saving, a one-shot task keeps
+  its old deadline. Paused tasks stay paused, including after saving.
+
+- Keep collaboration-managed sessions out of ordinary sidebar groups after
+  switching projects by preserving their management state in persisted session
+  lists and metadata updates.
+
+- Remove the remaining `request_handoff` model tool after retiring `/handoff`,
+  preventing agents from invoking the removed command through the tool runtime.
+
+- Keep Automation and other primary plugin views in sidebar navigation instead
+  of reviving the removed conversation tab strip. Preserve view switching,
+  closing, return navigation, and durable view recovery across desktop restarts.
+
+- Preserve fresh-context recovery instructions through checkpoints, turn completion
+  and session reloads, preventing unintended system-prefix changes (#265).
+
+- Accept normal provider completion without final text instead of retrying or
+  failing it. Preserve transport failures, abnormal stops, and truncation metadata.
+  Peer results join active work when possible, with late receipts retained for
+  a follow-up rather than one queued turn per result.
+
+- Stop streaming auto-follow from pulling messages back to the bottom when a
+  keyboard, touch, or scrollbar gesture takes control before native scroll delivery.
+  Preserve following after a plain scroll-surface click without scrolling.
+
+- Reject `apply_patch` file sections that reuse a normalized path, including move
+  sources and destinations, before writing any files. This prevents later sections
+  from silently overwriting earlier edits; dry runs reject the same conflicts (#258).
+
+- Preserve peer request correlation after uncertain sends, recover queued replies
+  after host restart without reviving user-cancelled inputs, and retain completed
+  results instead of replacing them with timeout messages. Peer discovery and
+  sends now consistently stay within the current workspace.
+
+- Align expanded tool details and TODO text in one column, center their icons on
+  the first text line at any UI font size, and wrap long TODO content safely.
+
+- Count tool results with a denser JSON token estimator so JSON-heavy history
+  triggers compact before the provider window, and force-trim older history
+  after a context overflow if compact does not shrink the request.
+- Highlight the current running session in the sidebar bell view using the same
+  selection and pending-switch states as the workspace session list.
 - Preserve bottom-follow when expanding or collapsing conversation tool groups,
   without pulling readers away from an explicitly paused reading position.
 - Position locally queued and steered messages when they enter the conversation,
@@ -132,6 +1134,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   original identifiers or numeric precision.
 - Positioned Collaboration message history before paint to avoid a visible scroll
   jump on entry, while preserving the reading position during message updates.
+- Recovered external-engine conversations whose saved agent session can no longer
+  be loaded, instead of failing every later turn: the turn continues in a new
+  agent session and says so in the transcript. Applied to the ACP engines and
+  OpenCode, and the agent's stderr tail now accompanies a failed turn so the
+  cause (an unconfigured provider, a refused sign-in) is visible.
+- Applied the unconfined permission mode to an ACP engine's own no-prompts mode
+  when it advertises one, so an agent such as Devin no longer keeps a default
+  that auto-accepts edits behind Wuu's approval path.
 
 ## [2026.9.2] - 2026-09-15
 

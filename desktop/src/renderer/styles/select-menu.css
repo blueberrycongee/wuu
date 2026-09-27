@@ -37,19 +37,14 @@
   text-align: left;
   cursor: pointer;
   transition:
-    background var(--motion-fast) var(--menu-enter-easing),
-    border-color var(--motion-fast) var(--menu-enter-easing),
-    box-shadow var(--motion-fast) var(--menu-enter-easing);
+    background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
 .select-menu-trigger:hover:not(:disabled) {
   background: var(--field-hover-bg);
   border-color: var(--hairline-strong);
-}
-
-.select-menu-trigger:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
 }
 
 .select-menu-trigger[aria-expanded="true"] {
@@ -76,7 +71,7 @@
 .select-menu-chevron {
   flex: 0 0 auto;
   color: var(--ink-tertiary);
-  transition: transform var(--motion-fast) var(--menu-enter-easing);
+  transition: transform var(--motion-fast) var(--ease-out);
 }
 
 .select-menu-trigger[aria-expanded="true"] .select-menu-chevron {
@@ -113,10 +108,6 @@
   background: var(--surface-2);
   cursor: crosshair;
   touch-action: none;
-}
-
-.minute-clock-face:focus-visible {
-  box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
 .minute-clock-hand {
@@ -310,9 +301,9 @@
   background: transparent;
   color: var(--ink);
   font: inherit;
-  font-size: var(--font-ui);
-  font-weight: var(--weight-regular);
-  line-height: 1.4;
+  font-size: var(--font-menu);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
   text-align: left;
   cursor: pointer;
 }

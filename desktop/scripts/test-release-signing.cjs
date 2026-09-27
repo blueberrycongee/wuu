@@ -6,13 +6,47 @@ const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { releaseSigningIdentity } = require("./check-release-signing.cjs");
 
-test("release rejects missing or ad-hoc signing identity", () => {
+test("certificate-backed signing rejects missing or ad-hoc identity", () => {
   for (const value of [undefined, "-", "Wuu Dev Signing"]) {
     assert.throws(() => releaseSigningIdentity({ WUU_RELEASE_SIGN_ID: value }));
   }
 });
 
-const isolated = process.env.GITHUB_ACTIONS === "true";
+test("certificate-free preview signs, verifies, and rejects tampered resources", { skip: process.platform !== "darwin" }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "wuu-adhoc-signing-test-"));
+  const saved = { id: process.env.WUU_RELEASE_SIGN_ID, keychain: process.env.WUU_RELEASE_KEYCHAIN };
+  try {
+    delete process.env.WUU_RELEASE_SIGN_ID;
+    delete process.env.WUU_RELEASE_KEYCHAIN;
+    const app = join(dir, "wuu.app");
+    const contents = join(app, "Contents");
+    const bin = join(contents, "Resources", "bin");
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(join(contents, "MacOS"));
+    writeFileSync(join(contents, "Info.plist"), `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.blueberrycongee.wuu</string><key>CFBundleExecutable</key><string>wuu</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`);
+    const source = join(dir, "main.c");
+    const executable = join(contents, "MacOS", "wuu");
+    writeFileSync(source, "int main(void) { return 0; }\n");
+    execFileSync("clang", [source, "-o", executable]);
+    copyFileSync(executable, join(bin, "wuu-core"));
+    const resource = join(contents, "Resources", "data.txt");
+    writeFileSync(resource, "original");
+    await require("./sign-mac.cjs")({ app, platform: "darwin", version: "44.1.0" });
+    const verify = () => execFileSync(process.execPath, [join(__dirname, "verify-mac-release.cjs"), app], {
+      env: { ...process.env, WUU_SKIP_CUA_MAC: "1" }, stdio: "pipe",
+    });
+    verify();
+    writeFileSync(resource, "tampered");
+    assert.throws(verify);
+  } finally {
+    if (saved.id === undefined) delete process.env.WUU_RELEASE_SIGN_ID; else process.env.WUU_RELEASE_SIGN_ID = saved.id;
+    if (saved.keychain === undefined) delete process.env.WUU_RELEASE_KEYCHAIN; else process.env.WUU_RELEASE_KEYCHAIN = saved.keychain;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Certificate trust setup is opt-in, including on ephemeral CI runners.
+const isolated = process.env.GITHUB_ACTIONS === "true" && process.env.WUU_TEST_CERTIFICATE_SIGNING === "1";
 test("changed signed builds retain a verifiable designated requirement", { skip: process.platform !== "darwin" || (!isolated && !process.env.WUU_RELEASE_SIGN_ID) }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "wuu-release-signing-test-"));
   const keychain = join(dir, "wuu-release.keychain-db");
@@ -22,7 +56,7 @@ test("changed signed builds retain a verifiable designated requirement", { skip:
   const output = join(dir, "environment");
   const password = "temporary-test-identity";
   const run = (command, args, env = process.env) => {
-    try { return execFileSync(command, args, { env, encoding: "utf8", stdio: "pipe" }); }
+    try { return execFileSync(command, args, { env, encoding: "utf8", stdio: "pipe", timeout: 60_000 }); }
     catch (error) { throw new Error(`${command} failed during isolated signing test: ${error.stderr?.toString() || ""}`); }
   };
   const saved = { id: process.env.WUU_RELEASE_SIGN_ID, keychain: process.env.WUU_RELEASE_KEYCHAIN };

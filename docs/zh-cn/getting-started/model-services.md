@@ -1,66 +1,155 @@
-# 配置模型
+# 连接模型服务
 
-先选择服务商（provider），再选择它提供的模型（model）。服务配置保存连接地址和凭据，
-模型名称填写服务商接受的模型 ID。同一服务可以配置多个模型。
+模型服务（provider）决定 Wuu 向哪里发送请求、使用什么凭据。模型（model）则是该服务接受的模型标识。同一服务可以保存多个模型，无需重复填写连接设置。
 
-提示词、相关文件、附件和工具结果可能发送给你选择的服务商。费用和数据政策由该服务商
-决定；使用网关时，数据会发往配置的网关地址。不要把真实 API Key 写进项目文件或提交到 Git。
+本页设置适用于 **Wuu** 引擎。选择 Codex、Claude Code、Devin 等[外部引擎](external-engines.md)时，运行的是对应程序，使用它自身的认证和配置。在 Wuu 服务中复用订阅凭据，与运行对应的外部引擎，是两种不同的用法。
 
-## 配置桌面应用
+## 在桌面应用中添加服务
 
 1. 打开**设置 → 模型服务 → 新增服务**。
-2. 按服务商的 API 协议选择 **OpenAI 兼容**或 **Anthropic 兼容**。
-3. 填写服务标识、模型名称、API 端点和 API Key，然后选择**添加服务**。
-4. 回到对话，确认选中的服务和模型，发送一个小任务检查是否能正常回复和调用工具。
+2. 按服务支持的 API 选择类型，例如 **OpenAI 兼容**或 **Anthropic 兼容**。
+3. 填写服务标识、账号可用的模型 ID、API 端点和凭据。服务要求 `/v1` 等前缀时，应一并填入端点。
+4. 保存后回到输入框，选择本次对话使用的服务和模型。
+5. 发送一个包含工具调用的小请求，例如读取项目文件，确认它不只是能回复文字。
 
-OpenAI 和 OpenRouter 等服务可使用 OpenAI 兼容类型；Anthropic 使用 Anthropic 兼容类型。
-网关或本地服务按其协议选择，端点须包含服务要求的 API 前缀，例如 `/v1`。
-已有服务可以在设置中添加或切换模型，无需为每个模型重复填写凭据。
+首次设置提供了较简单的连接表单。自定义端点和更多模型选项请在设置中调整。配置里列出的模型不代表你的账号一定有访问权限。
 
-## 使用订阅登录
+输入框中的选择属于当前对话；第一条消息发出前，它属于当前草稿。设置中还可以保存工作区默认值，切换一次对话的模型不会自动替换这些默认值。
 
-- **Codex 订阅：**先在 Codex CLI 登录，再在 Wuu 首次设置中选择复用登录，或在
-  `openai-codex` 服务配置中启用 `reuse_codex_credentials`。桌面端不能直接发起 OpenAI OAuth 登录。
-- **xAI SuperGrok：**新增服务时选择 **xAI SuperGrok**，按提示完成账号登录。
-  CLI 使用 `wuu login xai`，运行任务时选择 `--provider xai-subscription`。
-  此连接使用 xAI 订阅登录，与 Grok CLI 登录和 `XAI_API_KEY` 分开。
-- **Grok Build：**先运行 `grok login`。桌面端检测到可用的本机登录后会显示该服务，
-  可直接选择；CLI 使用 `--provider grok-build`。登录过期后重新运行 `grok login`，
-  Wuu 不会修改或刷新 Grok CLI 的凭据。
+## 当前 OpenAI 和 Anthropic 模型
 
-以上连接使用 Wuu 的 Agent 执行任务。文件编辑、命令执行需要模型和服务端都支持工具调用。
+目录已包含 `gpt-6-sol`、`gpt-6-luna`、`claude-opus-5-5` 和 `claude-fable-5-1`。已有会话和工作区选择保持不变，需要使用时主动切换模型。
+
+GPT-6 Sol 和 Luna 支持 `none` 至 `max` 推理档位，默认 `medium`。Fast 条目使用同一个模型，通过优先处理提供不同速度和价格。对这两个模型，官方 OpenAI 连接未指定协议时，Wuu 默认使用 Responses。如果明确选择了 Chat Completions，使用推理和工具时请切换为 Responses；Chat Completions 仅在 `none` 档位支持它们的工具调用。自定义端点保留原有协议。详见官方 [Sol](https://developers.openai.com/api/docs/models/gpt-6-sol) 和 [Luna](https://developers.openai.com/api/docs/models/gpt-6-luna) 规格。
+
+Claude Opus 5.5 和 Fable 5.1 始终使用自适应思考。Wuu 将已保存的 `none` 选择映射为 `low`，两者默认档位分别为 `medium` 和 `high`。Wuu 请求可读的思考摘要，并允许 API 丢弃因上下文变更而失效的思考块，同时保留有效的签名块。这两个模型不接受强制工具选择，因此 Wuu 通过指令表达收尾工具调用要求，使用自动工具选择；这不保证模型一定调用工具。详见官方 [Opus 5.5](https://platform.claude.com/docs/en/models/opus-5-5/migration-guide) 和 [Fable 5.1](https://platform.claude.com/docs/en/models/fable-5-1/migration-guide) 迁移指南。
+
+## 使用已有订阅
+
+| 连接方式 | 设置方法 |
+|---|---|
+| Codex 订阅 | 先在 Codex CLI 登录，再在首次设置中选择复用检测到的登录。手动配置时，使用 `openai-codex` 服务并启用 `reuse_codex_credentials`。Wuu 桌面端不会自行发起 OpenAI OAuth 登录。 在“设置 → 订阅”中，点击“使用本机 Codex 登录”即可优先使用本机登录，不改变模型选择；“重新检查登录”通过拉取模型列表验证认证。Wuu 每次请求都会读取本机登录，凭据刷新后无需重启。 |
+| xAI SuperGrok | 添加 **xAI SuperGrok** 服务，按提示在浏览器登录。CLI 使用 `wuu login xai`，运行时选择 `--provider xai-subscription`。 |
+| Grok Build | 先运行 `grok login`，再在 Wuu 中选择检测到的服务，或传入 `--provider grok-build`。登录过期后重新在 Grok CLI 登录；Wuu 不刷新或修改这类凭据。 |
+
+SuperGrok 订阅登录、Grok CLI 登录和 `XAI_API_KEY` 是不同的凭据来源，请选择与你的账号对应的连接。文件编辑和命令执行还要求服务及模型支持工具调用。
+
+## 在桌面端查看订阅
+
+**设置 → 订阅**集中显示已安装的外部 Agent 和内置订阅服务，可直接在各行选择模型。需要配置账号的 ACP Agent 提供登录按钮；选择登录方式后才开始认证，可能会打开浏览器。模型读取失败不代表缺少凭据，CLI 的静态模型列表也不能证明登录状态。
+
+Codex 账户额度通过已安装的 CLI 读取，显示剩余百分比和重置时间。额度重置或快照超过五分钟后需要刷新。未接入账户额度查询的来源不显示额度条；ACP 的上下文窗口占用和本地 token 计数都不是订阅额度。此页使用简短的读取或登录失败提示，不展示请求历史和 Agent 原始日志。点击刷新按钮可重新读取模型和额度。
 
 ## 配置 CLI
 
-首次使用先生成用户配置：
+首次使用时创建用户配置：
 
 ```bash
 wuu init
 ```
 
-配置默认写入 `~/.wuu/config.json`；设置 `WUU_HOME` 后写入 `$WUU_HOME/config.json`。
-已有配置时直接编辑，`wuu init --force` 会覆盖文件。
+文件默认位于 `~/.wuu/config.json`；设置 `WUU_HOME` 后为 `$WUU_HOME/config.json`。已有文件时直接编辑，`wuu init --force` 会覆盖它。
 
-在 `providers` 中确认所选服务的 `base_url`、`model` 和 `api_key_env`。
-初始默认服务为 `openai`；请确认示例模型是账号可用的模型，再按 `api_key_env` 设置环境变量：
+在 `providers` 下检查 `base_url`、`model` 和 `api_key_env`。生成的配置初始选择 `openai`，通过 Responses 使用 GPT-6 Sol；Anthropic 条目使用 Claude Opus 5.5。如果账号需要使用其他模型，请替换示例模型。运行前设置指定的环境变量：
 
 ```bash
-export OPENAI_API_KEY="你的 API Key"
-cd /path/to/your/project
+export OPENAI_API_KEY="你的 API key"
+cd /path/to/project
 wuu exec --provider openai --permission-mode read_only "阅读这个项目，告诉我怎样运行测试"
 ```
 
-`--provider` 选择配置中的服务标识，`--model` 可覆盖本次使用的模型。
-正常启动时，项目配置不能替换用户的服务地址、凭据和权限模式；详细规则见
-[配置说明](../reference/configuration.md)。
+`--provider` 选择已配置的服务标识，`--model` 覆盖本次运行的模型。配置优先级和项目级设置的限制见[配置说明](../reference/configuration.md)。
 
-## 排查连接问题
+## 回合结束与额外请求
 
-“凭据已配置”只表示 Wuu 能读到凭据，不保证服务商接受它。提示缺少 API Key 时，
-检查所选服务以及 `api_key_env` 对应的变量是否有值。桌面应用还需要从能读取该变量的
-进程启动；也可以直接在设置中保存 API Key。
+Wuu 按所选 API 的结束信号处理回合。正常停止会结束回合，即使响应没有正文；这不代表任务一定完成。仅有空文本或过程说明，不会触发另一次收费请求。
 
-提示模型不存在时，核对模型 ID 和账号访问权限。能聊天却不能使用工具时，检查模型和
-网关是否支持工具调用及流式响应。
+Anthropic Messages 可通过 `pause_turn` 明确要求继续。Responses 兼容服务可在成功完成的响应中使用可选扩展 `end_turn: false` 请求继续；缺失、null 或 true 都不表示需要继续。标准 OpenAI Responses API 不要求提供此扩展。Chat Completions 使用自身的 `finish_reason`；Wuu 不根据网关原生原因或其他 API 的字段猜测是否继续。输出上限、内容过滤、错误和未知停止原因本身都不会触发续跑。
 
-模型服务连接完成后，继续[完成第一个任务](first-task.md)。
+每次续跑都是新的模型请求，可能产生费用。Wuu 最多连续自动续跑八次而不执行客户端工具；如果服务仍要求继续，则报告错误。执行客户端工具后重新计数，配置的步数上限和取消操作仍然有效。尚未结束的响应不能作为压缩摘要替换对话历史。
+
+## 让 Agent 读取本地图片
+
+直接告诉 Agent 图片路径，例如：“读取 `screenshots/settings.png`，检查对齐。”
+使用 Wuu 内置工具时，`read_file` 会把 PNG、JPEG、静态 GIF 和 WebP 作为视觉输入
+交给支持图片的模型，无需先从输入框附加图片。相对路径以会话工作区为基准；绝对路径
+遵守与普通读取相同的文件范围和敏感路径规则。会话产物目录中的生成图片也可以读取。
+
+文件内容决定格式。大图复用附件处理逻辑，将最长边缩小到 2048 像素，结果会说明原始
+尺寸和实际传给模型的尺寸。单次读取最多接受 20 MiB 源文件和 4000 万源像素，处理后的
+图片还需满足工具结果的 2 MiB 内联限制。超限时请先裁剪或缩小。损坏、动画和不支持的
+图片格式会报错；SVG 仍作为源码文字读取。行范围和续读参数只适用于文本。
+
+明确标记为仅支持文字的模型会收到图片不受支持的提示，而非图片像素；请选择支持图片
+的模型进行查看。切换模型不会删除历史中保存的图片结果。启用可选的 PTC 时，
+成功工具调用返回的图片和音频会自动附加：
+
+```javascript
+await tools.read_file({path: "screenshots/settings.png"});
+```
+
+`present_artifact` 用于向用户展示交付物，不会替模型查看图片。外部 Agent 引擎使用
+各自的文件与读图工具。
+
+## 可选的程序化工具调用
+
+在**设置 → 常规 → 程序化工具调用**中启用 PTC，内置引擎就能通过 JavaScript
+或可擦除类型标注的 TypeScript 程序组合工具调用。默认关闭。每个模型家族可以
+跟随全局开关、开启或关闭；明确的家族设置优先于全局开关，切换模型时重新判断。
+只能在没有运行中回合时修改，下个回合生效。外部引擎仍使用自身的工具。
+
+启用后，模型调用 `run_code`，传入 `code`、简短的 `description` 和可选的
+`timeout_ms`。工具描述列出当前可用绑定及参数 schema。程序通过
+`await tools[name](args)` 调用，得到含 `content` 和可选 `structured_content`
+的 Wuu 工具结果对象。禁用或不可用的工具不会出现在绑定中；各模型家族原有的
+编辑工具仍通过绑定使用。上下文重置在可用时保留为独立的顶层控制。
+不会按家族自动启用，也不预设某一家族的性能收益。
+
+只有打印内容、JSON 返回值及成功调用返回的图片和音频进入程序的模型观察结果。
+中间工具调用仍经过原有权限、调度、事件与记录流水线。绑定失败可通过
+`ToolCallError` 捕获。写入及有依赖的操作应依次等待；独立读取可分批并行。
+
+每次程序使用新的 Node 进程，环境变量初始为空。可通过 `await import(...)`
+使用原生 API。文件写入使用与命令工具相同的会话进程沙箱；该沙箱不隔离网络
+或所有文件读取，详见[安全模型](../reference/security-model.md)。默认总时限
+120 秒，最多 600 秒，包含工具和权限等待时间。没有持久状态或 `yield`/`wait`
+续执行。取消会停止程序及其活动中的嵌套调用；已经完成的副作用不会回滚，程序
+也不会自动重放。打印和返回的文本上限为 1 MiB；媒体还受共享富结果限额约束。
+
+桌面版使用随应用打包的运行时。CLI 需要 `PATH` 上的 Node.js 22.19 或更新版本，
+也可以在用户配置中设置 `ptc.node_executable`。用户配置示例：
+
+```json
+{
+  "ptc": {
+    "enabled": false,
+    "families": { "gpt": true }
+  }
+}
+```
+
+普通项目配置不能修改 PTC 或替换其执行器。旧 `code_mode` 字段仅为迁移保留读取
+能力，不会启用 PTC；保存 PTC 设置时会删除旧字段。旧的持久单元及执行／等待
+工具不再支持。
+
+## 大型工具结果
+
+文本文件读取在首个显示行及文件行号为十的倍数的行使用 `NUMBER|CONTENT`，其余行使用 `|CONTENT`。第一个 `|` 之后均为源码，包括缩进和源码中的竖线。每个续读页面都以带行号的行开头，范围信息仍准确标识所有显示行。
+
+Wuu 保留原始工具结果，并向模型提供稳定、有限的视图。普通大文本先显示连续的第一页，并附带 `read_file` 续读入口；续读读取已保存的结果，不会重新执行原工具。分页优先保留完整行，超长单行可以分段读取而不拆坏 Unicode 字符。内容发生变化时，续读会拒绝请求，避免混用不同版本。图片等受支持的媒体继续通过服务对应的独立表示传递。
+
+内置工具的视图保留有用的结构：搜索分页保留完整记录和快照游标，命令输出优先展示最近的错误证据。工具账本记录结果前就会固定视图，扩展结果和执行错误也走这条路径，因此后续请求和重放看到的视图保持一致。Wuu 不再为了整批文本限额二次切断这些页面；对话容量仍由上下文管理处理。分页可能增加模型请求次数；无法安全保存或分页时，Wuu 保留完整结果。页面更小并不保证总费用更低。
+
+## 检查连接失败的原因
+
+“凭据已配置”只表示本机有可用凭据，不代表服务商已经接受它。请检查所选服务、端点、模型 ID 和账号权限。环境变量必须对启动 Wuu 的进程可见；从程序坞启动的桌面应用不一定继承终端中设置的变量。也可以在设置中保存 API key。
+
+如果能回复文字却不能使用工具，检查服务是否支持工具调用和流式响应。兼容某种 API 格式，不代表所有模型具备相同能力。
+
+提示词、选入上下文的内容、附件和工具结果可能通过配置的端点离开本机。费用与数据政策由服务商决定；使用网关时，请求会经过该网关。不要把真实 API key 写入项目文件或 Git 历史。
+
+## 模型浮层中的 Fast mode
+
+对于支持的 provider/model 组合，闪电按钮只修改处理速度，不切换模型或推理强度。速度按会话保存，也会记住新会话草稿的选择。重置会继承 provider 配置；显式关闭则覆盖配置中已开启的加速。也可以使用 `/fast on`、`/fast off` 和 `/fast status`。
+
+Wuu 会识别目录中共用同一 API 模型且声明了加速参数的别名，已有 `-fast` 模型选择继续有效。自定义服务确认其接口支持对应协议后，可显式设置 `providers.<provider>.models.<model>.fast_mode: true`；设为 `false` 可隐藏推断出的支持能力。OpenAI 兼容请求传递 `service_tier: "priority"` / `"default"`；Anthropic 请求传递 `speed: "fast"` / `"standard"`，仅启用加速时附带必需的 Fast mode beta 头。Anthropic 官方接口按其[文档中的支持模型（英文）](https://platform.claude.com/docs/en/build-with-claude/fast-mode)识别能力，兼容端点需自行声明。此选项不会把推理强度当作速度档位。

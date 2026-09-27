@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -161,7 +163,7 @@ func TestPluginCompactionInvokesHighestPriorityAndGenerationCleanupReachesClones
 	if err := generation.close(); err != nil {
 		t.Fatal(err)
 	}
-	if clone.CompactionRegistry.Count() != 0 || clone.CompactionRegistry.Resolve(nil) != nil {
+	if clone.CompactionRegistry.Count() != 0 || !clone.ContextWindowsAvailable() {
 		t.Fatal("cloned runner retained compaction from closed generation")
 	}
 }
@@ -267,6 +269,168 @@ func TestSuccessfulCandidateSwapsThenClosesOldGeneration(t *testing.T) {
 	}
 	if session.StreamRunner.CompactionRegistry != candidate.compactions || !strings.Contains(session.StreamRunner.SystemPrompt, "candidate section") {
 		t.Fatal("candidate capability state was not installed atomically")
+	}
+}
+
+func TestActivatePluginGenerationKeepsPinnedConversationGeneration(t *testing.T) {
+	oldClient := &generationClient{id: "old"}
+	old := testPluginGeneration("old", oldClient)
+	session := testGenerationSession(old)
+	pinned := session.RetainPluginGeneration()
+	if pinned != old {
+		t.Fatal("session did not pin the current generation")
+	}
+	candidateClient := &generationClient{id: "candidate"}
+	candidate := testPluginGeneration("candidate", candidateClient)
+	if err := session.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	if session.PluginHost != candidate.host {
+		t.Fatal("candidate was not published as the live generation")
+	}
+	if oldClient.closed {
+		t.Fatal("pinned conversation generation was closed during the swap")
+	}
+	if candidateClient.closed {
+		t.Fatal("live candidate was closed")
+	}
+	session.ReleasePluginGeneration(pinned)
+	if !oldClient.closed {
+		t.Fatal("pinned generation survived after the last conversation released it")
+	}
+}
+
+func TestBuiltPluginGenerationsRetireAfterLastOwnerReleases(t *testing.T) {
+	for _, pinnedOwners := range []int{0, 1, 2} {
+		t.Run(fmt.Sprintf("pinned_owners_%d", pinnedOwners), func(t *testing.T) {
+			session := testGenerationSession(testPluginGeneration("initial", &generationClient{id: "initial"}))
+			session.RootDir = t.TempDir()
+			session.WuuHome = t.TempDir()
+			defer session.Cleanup()
+			var previous *generationClient
+			for cycle := 0; cycle < 3; cycle++ {
+				client := &generationClient{id: "plugin"}
+				candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("plugin")}, nil, nil,
+					func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) { return client, nil })
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer candidate.close()
+				var pins []*PluginGeneration
+				if previous != nil {
+					for owner := 0; owner < pinnedOwners; owner++ {
+						pins = append(pins, session.RetainPluginGeneration())
+					}
+				}
+				if err := session.ActivatePluginGeneration(candidate, nil); err != nil {
+					t.Fatal(err)
+				}
+				if client.closed {
+					t.Fatal("new live generation was closed")
+				}
+				if previous != nil {
+					if previous.closed != (pinnedOwners == 0) {
+						t.Fatalf("cycle %d: previous closed=%v with %d pinned owners", cycle, previous.closed, pinnedOwners)
+					}
+					for owner, pin := range pins {
+						session.ReleasePluginGeneration(pin)
+						if previous.closed != (owner == len(pins)-1) {
+							t.Fatalf("cycle %d: previous closed=%v after releasing owner %d", cycle, previous.closed, owner)
+						}
+					}
+				}
+				previous = client
+			}
+			if _, err := session.Cleanup(); err != nil {
+				t.Fatal(err)
+			}
+			if !previous.closed {
+				t.Fatal("current generation survived Session cleanup")
+			}
+		})
+	}
+}
+
+func TestThreadModelRuntimeKeepsGenerationUntilReleased(t *testing.T) {
+	for _, model := range []string{"default", "selected"} {
+		t.Run(model, func(t *testing.T) {
+			client := &generationClient{id: "plugin"}
+			session := testGenerationSession(testPluginGeneration("plugin", client))
+			session.RootDir = t.TempDir()
+			session.WuuHome = t.TempDir()
+			session.StateDir = t.TempDir()
+			session.SessionDir = t.TempDir()
+			session.ProviderName = "fixture"
+			session.Model = "default"
+			session.StreamRunner = &agent.StreamRunner{Client: cloneGuardStreamClient{}, Model: "default"}
+			session.ConfigLoadMode = ConfigLoadFile
+			session.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(session.ConfigPath, []byte(`{"default_provider":"fixture","providers":{"fixture":{"type":"openai-compatible","base_url":"http://127.0.0.1:9/v1","api_key":"fixture","model":"default"}}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			defer session.Cleanup()
+			defer session.pluginGeneration.close()
+			selection := ThreadModelSelection{Provider: "fixture", Model: model}
+
+			// A failed construction must not leave a hidden generation owner.
+			sessionsDir := session.SessionDir
+			session.SessionDir = session.ConfigPath
+			if _, err := session.NewThreadRuntimeForRootModel("failed", session.RootDir, selection); err == nil {
+				t.Fatal("thread construction unexpectedly accepted a file as its session directory")
+			}
+			session.SessionDir = sessionsDir
+
+			var threads []*ThreadRuntime
+			for _, id := range []string{"first", "second"} {
+				thread, err := session.NewThreadRuntimeForRootModel(id, session.RootDir, selection)
+				if err != nil {
+					t.Fatal(err)
+				}
+				threads = append(threads, thread)
+				defer func() { session.ReleasePluginGeneration(thread.PluginGeneration) }()
+			}
+			candidate, err := session.buildPluginGeneration(config.Config{}, nil, nil, nil, startPluginClient)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := session.ActivatePluginGeneration(candidate, nil); err != nil {
+				t.Fatal(err)
+			}
+			if client.closed {
+				t.Fatal("model-selected conversations lost their generation during replacement")
+			}
+			for index, thread := range threads {
+				session.ReleasePluginGeneration(thread.PluginGeneration)
+				thread.PluginGeneration = nil
+				if client.closed != (index == len(threads)-1) {
+					t.Fatalf("plugin closed=%v after releasing conversation %d", client.closed, index)
+				}
+			}
+		})
+	}
+}
+
+func TestThreadModelCloneKeepsGenerationDuringConstruction(t *testing.T) {
+	client := &generationClient{id: "plugin"}
+	session := testGenerationSession(testPluginGeneration("plugin", client))
+	defer session.Cleanup()
+	defer session.pluginGeneration.close()
+	shadow := session.cloneForThreadModel()
+	defer func() { shadow.ReleasePluginGeneration(shadow.pluginGeneration) }()
+	candidate, err := session.buildPluginGeneration(config.Config{}, nil, nil, nil, startPluginClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	if client.closed {
+		t.Fatal("replacement retired a generation while a thread model was still being built")
+	}
+	shadow.ReleasePluginGeneration(shadow.pluginGeneration)
+	shadow.pluginGeneration = nil
+	if !client.closed {
+		t.Fatal("abandoned thread model construction retained its generation")
 	}
 }
 
@@ -430,6 +594,9 @@ func TestNewSessionDoesNotDiscoverPluginsDuringMutation(t *testing.T) {
 }
 
 func testGenerationSession(generation *PluginGeneration) *Session {
+	if generation != nil && generation.refs.Load() == 0 {
+		generation.retain()
+	}
 	return &Session{
 		PluginHost:       generation.host,
 		HookDispatcher:   hooks.NewDispatcher(nil),

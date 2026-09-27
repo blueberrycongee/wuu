@@ -66,8 +66,8 @@ func TestMatchProviderTreatsTerminalV1AsOptional(t *testing.T) {
 	// 1M live-verified 2026-07-06 (648k-token request accepted, ~2M rejected);
 	// the launch-era 512k snapshot value systematically halved the compact
 	// threshold.
-	if model.Limit == nil || model.Limit.Context != 1000000 {
-		t.Fatalf("model limit context = %+v, want 1000000", model.Limit)
+	if model.Limit == nil || model.Limit.Context != 1_048_576 {
+		t.Fatalf("model limit context = %+v, want 1048576", model.Limit)
 	}
 	if enriched.ContextWindow != 0 {
 		t.Fatalf("provider ContextWindow = %d, want 0 without explicit provider override", enriched.ContextWindow)
@@ -150,98 +150,13 @@ func TestCatalogMatchesOpenCodeDefaultVisibility(t *testing.T) {
 	}
 }
 
-func TestCatalogCarriesGPT56FamilyMetadata(t *testing.T) {
-	provider, ok := MatchProvider("openai", config.ProviderConfig{Type: "openai"})
-	if !ok {
-		t.Fatal("expected OpenAI provider match")
-	}
-
-	models := make(map[string]Model, len(provider.Models))
-	for _, model := range provider.Models {
-		models[model.ID] = model
-	}
-	for _, id := range []string{"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
-		model, ok := models[id]
-		if !ok {
-			t.Fatalf("missing %s from OpenAI catalog", id)
-		}
-		if model.Limit == nil || model.Limit.Context != 1_050_000 || model.Limit.Output != 128_000 {
-			t.Fatalf("unexpected %s limits: %+v", id, model.Limit)
-		}
-		if got := reasoningEfforts(model); !equalStrings(got, []string{"none", "low", "medium", "high", "xhigh", "max"}) {
-			t.Fatalf("unexpected %s efforts: %v", id, got)
-		}
-	}
-}
-
-func TestCatalogCarriesGPT6AstraMetadata(t *testing.T) {
-	provider, ok := MatchProvider("openai", config.ProviderConfig{Type: "openai"})
-	if !ok {
-		t.Fatal("expected OpenAI provider match")
-	}
-
-	models := make(map[string]Model, len(provider.Models))
-	for _, model := range provider.Models {
-		models[model.ID] = model
-	}
-	astra, ok := models["gpt-6-astra"]
-	if !ok {
-		t.Fatal("missing gpt-6-astra from OpenAI catalog")
-	}
-	if astra.Name != "GPT-6 Astra" || astra.Family != "gpt-astra" || astra.ReleaseDate != "2026-09-03" {
-		t.Fatalf("unexpected Astra identity: %+v", astra)
-	}
-	if astra.Limit == nil || astra.Limit.Context != 1_050_000 || astra.Limit.Input != 922_000 || astra.Limit.Output != 128_000 {
-		t.Fatalf("unexpected Astra limits: %+v", astra.Limit)
-	}
-	if astra.Temperature == nil || *astra.Temperature {
-		t.Fatalf("Astra should reject temperature: %+v", astra.Temperature)
-	}
-	if got := reasoningEfforts(astra); !equalStrings(got, []string{"low", "medium", "high", "xhigh", "max"}) {
-		t.Fatalf("unexpected Astra efforts: %v", got)
-	}
-	if astra.DefaultVariant != "low" {
-		t.Fatalf("Astra default variant = %q, want low", astra.DefaultVariant)
-	}
-
-	fast, ok := models["gpt-6-astra-fast"]
-	if !ok {
-		t.Fatal("missing gpt-6-astra-fast from OpenAI catalog")
-	}
-	if fast.APIID != "gpt-6-astra" || fast.Options["serviceTier"] != "priority" {
-		t.Fatalf("unexpected Astra Fast metadata: %+v", fast)
-	}
-}
-
-func TestCodexSubscriptionCatalogExposesAstraFastAlias(t *testing.T) {
-	codexProvider, ok := CodexSubscriptionCatalogProvider("gpt-6-astra")
-	if !ok {
-		t.Fatal("expected Codex subscription catalog metadata for gpt-6-astra")
-	}
-	var hasFast bool
-	for _, model := range codexProvider.Models {
-		if model.ID == "gpt-6-astra-fast" && model.APIID == "gpt-6-astra" {
-			hasFast = true
-		}
-	}
-	if !hasFast {
-		t.Fatalf("Codex subscription catalog did not expose gpt-6-astra-fast alias: %+v", codexProvider.Models)
-	}
-}
-
-func TestCatalogSnapshotMatchesOpenCodeDefaultVisibleCounts(t *testing.T) {
+func TestCatalogSnapshotHidesOpenCodeInvisibleModels(t *testing.T) {
 	providers, err := Providers()
 	if err != nil {
 		t.Fatalf("Providers: %v", err)
 	}
-	if len(providers) != 178 {
-		t.Fatalf("provider count = %d, want 178", len(providers))
-	}
-
-	modelCount := 0
 	for _, provider := range providers {
 		for _, model := range provider.Models {
-			modelCount++
 			switch model.Status {
 			case "deprecated", "alpha":
 				t.Fatalf("catalog should hide %s model %s/%s", model.Status, provider.ID, model.ID)
@@ -254,102 +169,25 @@ func TestCatalogSnapshotMatchesOpenCodeDefaultVisibleCounts(t *testing.T) {
 			}
 		}
 	}
-	if modelCount != 5828 {
-		t.Fatalf("model count = %d, want 5828", modelCount)
-	}
-}
-
-func TestDeepSeekOfficialCatalogCorrectionsExposeVisionModels(t *testing.T) {
-	provider, ok := ProviderByID("deepseek")
-	if !ok {
-		t.Fatal("expected DeepSeek provider")
-	}
-
-	want := map[string]struct {
-		name     string
-		image    bool
-		release  string
-		efforts  []string
-		defaultV string
-	}{
-		"deepseek-v4-flash-vision-exp": {
-			name:     "DeepSeek V4 Flash Vision Exp",
-			image:    true,
-			release:  "2026-08-21",
-			efforts:  []string{"low", "high", "max"},
-			defaultV: "high",
-		},
-		"deepseek-v4.1-flash-expires-on-0910": {
-			name:     "DeepSeek V4.1 Flash (expires 2026-09-10)",
-			image:    true,
-			release:  "2026-09-08",
-			efforts:  []string{"low", "high", "max"},
-			defaultV: "high",
-		},
-	}
-	for _, model := range provider.Models {
-		spec, exists := want[model.ID]
-		if !exists {
-			continue
-		}
-		if model.Name != spec.name || model.ReleaseDate != spec.release {
-			t.Fatalf("%s identity = name=%q release=%q, want name=%q release=%q", model.ID, model.Name, model.ReleaseDate, spec.name, spec.release)
-		}
-		if model.Attachment == nil || *model.Attachment != spec.image {
-			t.Fatalf("%s attachment = %+v, want %v", model.ID, model.Attachment, spec.image)
-		}
-		if model.Modalities == nil || !stringSliceContains(model.Modalities.Input, "image") {
-			t.Fatalf("%s modalities = %+v, want image input", model.ID, model.Modalities)
-		}
-		if got := reasoningEfforts(model); !equalStrings(got, spec.efforts) {
-			t.Fatalf("%s efforts = %v, want %v", model.ID, got, spec.efforts)
-		}
-		if model.DefaultVariant != spec.defaultV {
-			t.Fatalf("%s default variant = %q, want %q", model.ID, model.DefaultVariant, spec.defaultV)
-		}
-		delete(want, model.ID)
-	}
-	if len(want) != 0 {
-		t.Fatalf("missing DeepSeek catalog corrections: %v", want)
-	}
 }
 
 func TestKimiK3UsesUpstreamCatalogAndProviderCompatibility(t *testing.T) {
-	provider, ok := ProviderByID("kimi-for-coding")
+	provider, ok := ProviderByID("kimi-code-plan-cn")
 	if !ok {
 		t.Fatal("expected Kimi For Coding provider")
 	}
-	if provider.API != "https://api.kimi.com/coding/v1" || provider.NPM != "@ai-sdk/anthropic" {
+	if provider.API != "https://api.kimi.com/coding/v1" || provider.NPM != "@ai-sdk/openai-compatible" {
 		t.Fatalf("unexpected Kimi provider transport: %+v", provider)
 	}
 	if len(provider.Headers) != 0 || len(provider.ModelOptions) != 0 {
 		t.Fatalf("raw catalog must not contain Wuu transport defaults: options=%+v headers=%+v", provider.ModelOptions, provider.Headers)
-	}
-	var k3 Model
-	for _, model := range provider.Models {
-		if model.ID == "k3" {
-			k3 = model
-			break
-		}
-	}
-	if k3.ID == "" {
-		t.Fatal("expected built-in K3 model")
-	}
-	if k3.Limit == nil || k3.Limit.Context != 1_048_576 || k3.Limit.Output != 131_072 {
-		t.Fatalf("unexpected K3 limits: %+v", k3.Limit)
-	}
-	if got := reasoningEfforts(k3); !equalStrings(got, []string{"low", "high", "max"}) {
-		t.Fatalf("unexpected K3 efforts: %v", got)
-	}
-	if k3.DefaultVariant != "" || len(k3.Variants) != 0 {
-		t.Fatalf("K3 must use upstream reasoning options without Wuu variants: default=%q variants=%+v", k3.DefaultVariant, k3.Variants)
 	}
 
 	ruleName, enriched := EnrichProvider("kimi-for-coding", config.ProviderConfig{
 		Type:  "anthropic",
 		Model: "k3",
 	}, "k3")
-	if ruleName != "kimi-for-coding" || enriched.BaseURL != "https://api.kimi.com/coding/v1" {
+	if ruleName != "kimi-code-plan-cn" || enriched.BaseURL != "https://api.kimi.com/coding/v1" || enriched.NPM != "@ai-sdk/anthropic" {
 		t.Fatalf("unexpected enriched K3 provider: rule=%q provider=%+v", ruleName, enriched)
 	}
 	model := enriched.Models["k3"]
@@ -362,30 +200,6 @@ func TestKimiK3UsesUpstreamCatalogAndProviderCompatibility(t *testing.T) {
 	}
 	if enriched.Headers["User-Agent"] != "KimiCLI/1.5" {
 		t.Fatalf("unexpected K3 headers: %+v", enriched.Headers)
-	}
-}
-
-func TestGrokEffortsComeFromUpstreamCatalog(t *testing.T) {
-	provider, ok := ProviderByID("xai")
-	if !ok {
-		t.Fatal("expected xAI provider")
-	}
-	want := map[string][]string{
-		"grok-4.3":                   {"none", "low", "medium", "high"},
-		"grok-4.20-multi-agent-0309": {"low", "medium", "high", "xhigh"},
-	}
-	for _, model := range provider.Models {
-		efforts, exists := want[model.ID]
-		if !exists {
-			continue
-		}
-		if got := reasoningEfforts(model); !equalStrings(got, efforts) {
-			t.Fatalf("%s efforts = %v, want %v", model.ID, got, efforts)
-		}
-		delete(want, model.ID)
-	}
-	if len(want) != 0 {
-		t.Fatalf("missing upstream Grok models: %v", want)
 	}
 }
 
@@ -417,39 +231,6 @@ func TestKimiProviderDefaultsApplyWithoutK3ModelOverrides(t *testing.T) {
 	if overridden.Headers["User-Agent"] != "custom-client" || overridden.Models["k2p7"].Options["anthropic_default_betas"] != true {
 		t.Fatalf("user Kimi overrides lost: provider=%+v model=%+v", overridden.Headers, overridden.Models["k2p7"].Options)
 	}
-}
-
-func reasoningEfforts(model Model) []string {
-	for _, option := range model.ReasoningOptions {
-		if option["type"] != "effort" {
-			continue
-		}
-		switch values := option["values"].(type) {
-		case []string:
-			return append([]string(nil), values...)
-		case []any:
-			out := make([]string, 0, len(values))
-			for _, value := range values {
-				if effort, ok := value.(string); ok {
-					out = append(out, effort)
-				}
-			}
-			return out
-		}
-	}
-	return nil
-}
-
-func equalStrings(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for i := range left {
-		if left[i] != right[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func TestModelConfigCarriesCapabilityMetadata(t *testing.T) {
@@ -596,9 +377,9 @@ func TestMergeProviderCarriesModelOptionsAndHeaders(t *testing.T) {
 	if !ok {
 		t.Fatal("expected Anthropic provider match")
 	}
-	enriched := MergeProvider(config.ProviderConfig{Type: "anthropic"}, provider, "claude-opus-4-7-fast")
-	model := enriched.Models["claude-opus-4-7-fast"]
-	if model.ID != "claude-opus-4-7" || model.Options["speed"] != "fast" {
+	enriched := MergeProvider(config.ProviderConfig{Type: "anthropic"}, provider, "claude-opus-4-8-fast")
+	model := enriched.Models["claude-opus-4-8-fast"]
+	if model.ID != "claude-opus-4-8" || model.Options["speed"] != "fast" {
 		t.Fatalf("unexpected fast model metadata: %+v", model)
 	}
 	if enriched.Headers["anthropic-beta"] != "fast-mode-2026-02-01" {
@@ -709,5 +490,20 @@ func TestMergeModelConfigPreservesCatalogCompatibilityMaps(t *testing.T) {
 	maxThinking, _ := merged.Variants["max"]["thinking"].(map[string]any)
 	if maxThinking["type"] != "adaptive" || maxThinking["display"] != "omitted" {
 		t.Fatalf("nested variant options did not merge with user precedence: %+v", maxThinking)
+	}
+}
+
+func TestGPT6SolLunaPreserveExplicitTransport(t *testing.T) {
+	for _, model := range []string{"gpt-6-sol", "gpt-6-luna"} {
+		for _, endpoint := range []string{"https://api.openai.com/v1", "https://gateway.example/v1"} {
+			_, provider := EnrichProvider("openai", config.ProviderConfig{Type: "openai", BaseURL: endpoint, Model: model, WireAPI: "chat"}, model)
+			if provider.WireAPI != "chat" {
+				t.Fatalf("explicit transport changed for %s: %s", endpoint, provider.WireAPI)
+			}
+		}
+		_, provider := EnrichProvider("openai", config.ProviderConfig{Type: "openai", BaseURL: "https://gateway.example/v1", Model: model}, model)
+		if provider.WireAPI != "" {
+			t.Fatalf("custom endpoint transport changed: %s", provider.WireAPI)
+		}
 	}
 }

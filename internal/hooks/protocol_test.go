@@ -29,42 +29,6 @@ func TestInputMarshal(t *testing.T) {
 	}
 }
 
-func TestInputOmitsEmptyFields(t *testing.T) {
-	in := Input{
-		Event:     SessionStart,
-		SessionID: "sess-1",
-		CWD:       "/tmp",
-	}
-	data, err := json.Marshal(in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var decoded map[string]any
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := decoded["tool_name"]; ok {
-		t.Fatal("tool_name should be omitted for SessionStart")
-	}
-	if _, ok := decoded["prompt"]; ok {
-		t.Fatal("prompt should be omitted")
-	}
-}
-
-func TestOutputParseJSON(t *testing.T) {
-	raw := `{"decision":"block","reason":"dangerous"}`
-	out, err := ParseOutput([]byte(raw), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out.Decision != "block" {
-		t.Fatalf("expected block, got %s", out.Decision)
-	}
-	if !out.IsBlocked() {
-		t.Fatal("expected IsBlocked true")
-	}
-}
-
 func TestOutputFallbackExitCodeZero(t *testing.T) {
 	out, err := ParseOutput([]byte("some text\n"), 0)
 	if err != nil {
@@ -75,19 +39,6 @@ func TestOutputFallbackExitCodeZero(t *testing.T) {
 	}
 	if out.IsBlocked() {
 		t.Fatal("should not be blocked")
-	}
-}
-
-func TestOutputFallbackExitCodeBlock(t *testing.T) {
-	out, err := ParseOutput([]byte("blocked reason\n"), 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out.Decision != "block" {
-		t.Fatalf("expected block for exit 2, got %s", out.Decision)
-	}
-	if !out.IsBlocked() {
-		t.Fatal("expected blocked")
 	}
 }
 

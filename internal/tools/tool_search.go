@@ -47,7 +47,7 @@ func (t *GrepTool) IsConcurrencySafe() bool { return true }
 func (t *GrepTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        "grep",
-		Description: "Search file contents with a regex. Results are streamed and paged; use page.next with the same arguments for stable continuation. Use read_file to inspect match ranges.",
+		Description: "Search file contents with a regex. Offset 0 searches current files; use page.next with the same arguments for snapshot-bound continuation. If stale, restart at offset 0 without expected_revision. Use read_file to inspect match ranges.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -187,7 +187,7 @@ func (t *GrepTool) Execute(ctx context.Context, argsJSON string) (string, error)
 	case "files_with_matches":
 		key := searchCursorKey("grep:files", execRoot, searchRoot, args.Pattern, args.Include, fmt.Sprintf("%t", opts.ignoreCase), revisionKey)
 		cachePath := searchCursorPath(t.env, key)
-		files, ok := loadSearchCursor[string](cachePath)
+		files, ok := loadSearchCursor[string](cachePath, args.Offset)
 		if !ok {
 			var err error
 			files, err = grepFilesWithMatches(ctx, execRoot, args.Pattern, searchRoot, args.Include, opts, 0)
@@ -221,7 +221,7 @@ func (t *GrepTool) Execute(ctx context.Context, argsJSON string) (string, error)
 	case "count":
 		key := searchCursorKey("grep:count", execRoot, searchRoot, args.Pattern, args.Include, fmt.Sprintf("%t", opts.ignoreCase), revisionKey)
 		cachePath := searchCursorPath(t.env, key)
-		counts, ok := loadSearchCursor[grepCountResult](cachePath)
+		counts, ok := loadSearchCursor[grepCountResult](cachePath, args.Offset)
 		var total int
 		if !ok {
 			var err error
@@ -260,7 +260,7 @@ func (t *GrepTool) Execute(ctx context.Context, argsJSON string) (string, error)
 	default: // "content"
 		key := searchCursorKey("grep:content", execRoot, searchRoot, args.Pattern, args.Include, fmt.Sprintf("%d:%d:%d:%t", opts.context, opts.before, opts.after, opts.ignoreCase), revisionKey)
 		cachePath := searchCursorPath(t.env, key)
-		matches, ok := loadSearchCursor[grepMatch](cachePath)
+		matches, ok := loadSearchCursor[grepMatch](cachePath, args.Offset)
 		if !ok {
 			var err error
 			matches, err = grepWithRipgrep(ctx, t.env, execRoot, args.Pattern, searchRoot, args.Include, opts, 0)
@@ -268,7 +268,7 @@ func (t *GrepTool) Execute(ctx context.Context, argsJSON string) (string, error)
 				if !errors.Is(err, errRipgrepUnavailable) {
 					return "", err
 				}
-				matches, err = grepWithFallback(t.env, execRoot, args.Pattern, searchRoot, args.Include, opts, 0)
+				matches, err = grepWithFallback(ctx, t.env, execRoot, args.Pattern, searchRoot, args.Include, opts, 0)
 				if err != nil {
 					return "", err
 				}
@@ -298,7 +298,7 @@ func (t *GlobTool) IsConcurrencySafe() bool { return true }
 func (t *GlobTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        "glob",
-		Description: "Find files by glob pattern. Results are streamed and paged; use page.next with the same arguments for stable continuation. Use grep for content search.",
+		Description: "Find files by glob pattern. Offset 0 searches current files; use page.next with the same arguments for snapshot-bound continuation. If stale, restart at offset 0 without expected_revision. Use grep for content search.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -377,7 +377,7 @@ func (t *GlobTool) Execute(ctx context.Context, argsJSON string) (string, error)
 	revisionKey := searchWorkspaceRevision(ctx, t.env)
 	key := searchCursorKey("glob", execRoot, searchRoot, args.Pattern, revisionKey)
 	cachePath := searchCursorPath(t.env, key)
-	matches, ok := loadSearchCursor[string](cachePath)
+	matches, ok := loadSearchCursor[string](cachePath, args.Offset)
 	if !ok {
 		var err error
 		matches, err = globWithRipgrep(ctx, execRoot, searchRoot, args.Pattern, 0)
@@ -612,8 +612,13 @@ func saveSearchCursor(path string, records any) error {
 	return os.WriteFile(path, stored, 0o644)
 }
 
-func loadSearchCursor[T any](path string) ([]T, bool) {
-	if path == "" {
+// Only continuation can reuse a materialized result. Workspace revisions are
+// best-effort summaries, not proof that current search results are unchanged.
+// Refreshing offset 0 replaces this cache; the result hash in the continuation
+// token rejects old pages if the refreshed records differ, even at the same
+// workspace revision. Cache misses still rescan and validate that exact token.
+func loadSearchCursor[T any](path string, offset int) ([]T, bool) {
+	if offset <= 0 || path == "" {
 		return nil, false
 	}
 	data, err := os.ReadFile(path)
@@ -799,7 +804,7 @@ func relativeRGPath(rootDir, matchPath string) string {
 	return filepath.ToSlash(rel)
 }
 
-func grepWithFallback(env *Env, rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]grepMatch, error) {
+func grepWithFallback(ctx context.Context, env *Env, rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]grepMatch, error) {
 	compilePattern := pattern
 	if opts.ignoreCase {
 		compilePattern = "(?i)" + pattern
@@ -810,57 +815,23 @@ func grepWithFallback(env *Env, rootDir, pattern, searchRoot, include string, op
 	}
 
 	matches := make([]grepMatch, 0, searchResultCapacity(limit))
-	walkErr := filepath.Walk(searchRoot, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			if isSkippedDir(info.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
+	walkErr := walkFallbackSearchFiles(ctx, rootDir, searchRoot, include, func(path, rel string) error {
 		if limit > 0 && len(matches) >= limit {
 			return filepath.SkipAll
 		}
-
-		rel, err := filepath.Rel(rootDir, path)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
-		if include != "" && !matchGlob(include, rel) {
-			return nil
-		}
-		if isBinaryFile(path) {
-			return nil
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-
-		scanner := bufio.NewScanner(bytes.NewReader(data))
-		lineNum := 0
-		for scanner.Scan() {
-			lineNum++
-			line := scanner.Text()
-			if re.MatchString(line) {
+		return scanFallbackLines(ctx, path, func(lineNum int, line []byte) bool {
+			if re.Match(line) {
 				matches = append(matches, grepMatch{
 					File:    rel,
 					Line:    lineNum,
-					Content: grepMatchContentForPath(env, rel, line),
+					Content: grepMatchContentForPath(env, rel, string(line)),
 				})
 				if limit > 0 && len(matches) >= limit {
-					break
+					return false
 				}
 			}
-		}
-		if err := scanner.Err(); err != nil {
-			return fmt.Errorf("scan %s: %w", rel, err)
-		}
-		return nil
+			return true
+		})
 	})
 	if walkErr != nil {
 		return nil, walkErr
@@ -1005,7 +976,7 @@ func grepFilesWithMatches(ctx context.Context, rootDir, pattern, searchRoot, inc
 		if !errors.Is(err, errRipgrepUnavailable) {
 			return nil, err
 		}
-		return grepFilesWithMatchesFallback(rootDir, pattern, searchRoot, include, opts, limit)
+		return grepFilesWithMatchesFallback(ctx, rootDir, pattern, searchRoot, include, opts, limit)
 	}
 	return files, nil
 }
@@ -1100,7 +1071,7 @@ func grepFilesWithMatchesRG(ctx context.Context, rootDir, pattern, searchRoot, i
 	return files, nil
 }
 
-func grepFilesWithMatchesFallback(rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]string, error) {
+func grepFilesWithMatchesFallback(ctx context.Context, rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]string, error) {
 	compilePattern := pattern
 	if opts.ignoreCase {
 		compilePattern = "(?i)" + pattern
@@ -1111,40 +1082,17 @@ func grepFilesWithMatchesFallback(rootDir, pattern, searchRoot, include string, 
 	}
 
 	files := make([]string, 0, searchResultCapacity(limit))
-	walkErr := filepath.Walk(searchRoot, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			if isSkippedDir(info.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
+	walkErr := walkFallbackSearchFiles(ctx, rootDir, searchRoot, include, func(path, rel string) error {
 		if limit > 0 && len(files) >= limit {
 			return filepath.SkipAll
 		}
-
-		rel, err := filepath.Rel(rootDir, path)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
-		if include != "" && !matchGlob(include, rel) {
-			return nil
-		}
-		if isBinaryFile(path) {
-			return nil
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		if re.Match(data) {
-			files = append(files, rel)
-		}
-		return nil
+		return scanFallbackLines(ctx, path, func(_ int, line []byte) bool {
+			if re.Match(line) {
+				files = append(files, rel)
+				return false
+			}
+			return true
+		})
 	})
 	if walkErr != nil {
 		return nil, walkErr
@@ -1163,7 +1111,7 @@ func grepCountMatches(ctx context.Context, rootDir, pattern, searchRoot, include
 		if !errors.Is(err, errRipgrepUnavailable) {
 			return nil, 0, err
 		}
-		return grepCountMatchesFallback(rootDir, pattern, searchRoot, include, opts, limit)
+		return grepCountMatchesFallback(ctx, rootDir, pattern, searchRoot, include, opts, limit)
 	}
 	return counts, total, nil
 }
@@ -1245,7 +1193,7 @@ func grepCountMatchesRG(ctx context.Context, rootDir, pattern, searchRoot, inclu
 	return counts, total, nil
 }
 
-func grepCountMatchesFallback(rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]grepCountResult, int, error) {
+func grepCountMatchesFallback(ctx context.Context, rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]grepCountResult, int, error) {
 	compilePattern := pattern
 	if opts.ignoreCase {
 		compilePattern = "(?i)" + pattern
@@ -1257,41 +1205,23 @@ func grepCountMatchesFallback(rootDir, pattern, searchRoot, include string, opts
 
 	counts := make([]grepCountResult, 0, searchResultCapacity(limit))
 	total := 0
-	walkErr := filepath.Walk(searchRoot, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			if isSkippedDir(info.Name()) {
-				return filepath.SkipDir
+	walkErr := walkFallbackSearchFiles(ctx, rootDir, searchRoot, include, func(path, rel string) error {
+		count := 0
+		err := scanFallbackLines(ctx, path, func(_ int, line []byte) bool {
+			if re.Match(line) {
+				count++
 			}
-			return nil
-		}
-
-		rel, err := filepath.Rel(rootDir, path)
+			return true
+		})
 		if err != nil {
-			return nil
+			return err
 		}
-		rel = filepath.ToSlash(rel)
-		if include != "" && !matchGlob(include, rel) {
-			return nil
-		}
-		if isBinaryFile(path) {
-			return nil
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-
-		matches := re.FindAll(data, -1)
-		if len(matches) > 0 {
-			total += len(matches)
+		if count > 0 {
+			total += count
 			if limit <= 0 || len(counts) < limit {
 				counts = append(counts, grepCountResult{
 					File:  rel,
-					Count: len(matches),
+					Count: count,
 				})
 			}
 		}

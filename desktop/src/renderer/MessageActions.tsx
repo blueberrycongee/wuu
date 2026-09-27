@@ -6,42 +6,16 @@ import {
   ChevronUp,
   Copy,
   FileText,
-  GitFork,
   PencilLine,
+  Split,
   X,
-} from "lucide-react";
+} from "./WuuIcons";
 import { useEffect, useRef, useState } from "react";
 import type { InputFile, InputImage } from "../shared/protocol";
 import { AttachmentImage } from "./AttachmentImage";
 import { useImagePreview } from "./ImagePreview";
 import { useI18n } from "./i18n";
-
-function fileNameParts(filename: string): { stem: string; extension: string } {
-  const dot = filename.lastIndexOf(".");
-  if (dot <= 0 || dot === filename.length - 1) {
-    return { stem: filename, extension: "" };
-  }
-  return { stem: filename.slice(0, dot), extension: filename.slice(dot) };
-}
-
-function base64ByteLength(data: string): number {
-  const payload = data.includes(",") ? data.slice(data.indexOf(",") + 1) : data;
-  const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
-  return Math.max(0, Math.floor((payload.length * 3) / 4) - padding);
-}
-
-function formatFileSize(data: string): string {
-  const bytes = base64ByteLength(data);
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-  const kilobytes = bytes / 1024;
-  if (kilobytes < 1024) {
-    return `${kilobytes < 10 ? kilobytes.toFixed(1) : Math.round(kilobytes)} KB`;
-  }
-  const megabytes = kilobytes / 1024;
-  return `${megabytes < 10 ? megabytes.toFixed(1) : Math.round(megabytes)} MB`;
-}
+import { fileNameParts, formatFileSize } from "./AttachmentFormat";
 
 export function AgentMessageActions({
   getText,
@@ -80,7 +54,7 @@ export function MessageForkButton({ onFork }: { onFork?: () => void }): JSX.Elem
       disabled={!onFork}
       onClick={onFork}
     >
-      <GitFork size={15} />
+      <Split size={15} />
     </button>
   );
 }
@@ -219,7 +193,7 @@ export function MessageImageGrid({
         return (
           <div className="message-image-frame" key={`${image.media_type}-${index}`}>
             <AttachmentImage image={image} label={label} className="message-image" previewDisabled={overflowPreview}
-              onOpen={src => openPreview({ src, alt: label, title: label })} />
+              onOpen={(src, origin) => openPreview({ src, alt: label, title: label }, origin)} />
             {overflowPreview ? (
               <button
                 type="button"

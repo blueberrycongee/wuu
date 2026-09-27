@@ -15,6 +15,7 @@ import {
   type ComposerDraftState,
 } from "./AppState";
 import {
+  composerContextFromMessage,
   inputFilesFromComposer,
   inputImagesFromComposer,
   type QueuedComposerMessage,
@@ -130,7 +131,26 @@ function heldComposerMessage(
           },
         }];
       }
-      if ((type !== "text" && type !== "pasted_text") || !text) return [];
+      if (type === "response_selection" && isRecord(candidate.selection)) {
+        const selection = candidate.selection;
+        const source = selection.source;
+        if (typeof selection.id === "string" && typeof selection.text === "string" &&
+          (selection.comment === undefined || typeof selection.comment === "string") &&
+          isRecord(source) && typeof source.thread_id === "string" &&
+          typeof source.turn_id === "string" && typeof source.item_id === "string" &&
+          typeof source.start_offset === "number" && Number.isInteger(source.start_offset) && source.start_offset >= 0 &&
+          typeof source.end_offset === "number" && Number.isInteger(source.end_offset) && source.end_offset >= source.start_offset) {
+          return [{ type, text, selection: {
+            id: selection.id, text: selection.text,
+            ...(typeof selection.comment === "string" ? { comment: selection.comment } : {}),
+            source: {
+              thread_id: source.thread_id, turn_id: source.turn_id, item_id: source.item_id,
+              start_offset: source.start_offset, end_offset: source.end_offset,
+              ...(typeof source.range_text === "string" ? { range_text: source.range_text } : {}),
+            },
+          } }];
+        }
+      }
       const title = stringValue(candidate, "title");
       return type === "pasted_text"
         ? [{ type: "pasted_text" as const, text, ...(title ? { title } : {}) }]
@@ -256,30 +276,25 @@ export type ComposerPendingStateController = {
 
 type ComposerPendingStateOptions = {
   getAppState: () => AppState;
-  getPrimaryComposerDraft: () => ComposerDraftState;
+  getComposerDraftForThread: (threadID: string) => ComposerDraftState;
   restoreComposerDraftForThread: (
     threadID: string,
     draft: ComposerDraftState,
   ) => void;
+  preserveFailedComposerMessage: (threadID: string, message: QueuedComposerMessage) => void;
   setStatus: (status: string) => void;
   sendComposerMessageToThread: (
     message: QueuedComposerMessage,
     targetThread: Thread,
   ) => Promise<boolean>;
-  /**
-   * Register placement intent for a pending input whose client id will
-   * materialize as a user message `source_id`. The conversation scrolls to the
-   * message and reserves space for its streamed response once it appears.
-   */
-  requestDeferredQueryScroll: (sourceID: string) => void;
 };
 
 export function useComposerPendingState({
   getAppState,
-  getPrimaryComposerDraft,
+  getComposerDraftForThread,
   restoreComposerDraftForThread,
+  preserveFailedComposerMessage,
   setStatus,
-  requestDeferredQueryScroll,
 }: ComposerPendingStateOptions): ComposerPendingStateController {
   const [pendingComposerMessagesByThread, setPendingComposerMessagesByThread] =
     useState<PendingComposerMessagesByThread>({});
@@ -589,16 +604,24 @@ export function useComposerPendingState({
     threadID: string,
     message: QueuedComposerMessage,
   ): void {
-    rememberCollapsedPromptParts(threadID, message.text, message.contentParts);
+    // Cancellation yields to the user: a new draft must not be replaced by
+    // the now-removed pending message when the server acknowledgement arrives.
+    if (composerDraftHasContent(getComposerDraftForThread(threadID))) {
+      preserveFailedComposerMessage(threadID, message);
+      return;
+    }
+    const context = composerContextFromMessage(message.text, message.contentParts);
+    rememberCollapsedPromptParts(threadID, context.prompt, context.contentParts);
     restoreComposerDraftForThread(threadID, {
-      prompt: message.text,
+      prompt: context.prompt,
+      ...(context.selections.length ? { selections: context.selections } : {}),
       images: message.images.map((image) => ({ ...image })),
       files: message.files.map((file) => ({ ...file })),
     });
   }
 
-  function canRestorePendingComposerMessage(): boolean {
-    if (!composerDraftHasContent(getPrimaryComposerDraft())) {
+  function canRestorePendingComposerMessage(threadID: string): boolean {
+    if (!composerDraftHasContent(getComposerDraftForThread(threadID))) {
       return true;
     }
     setStatus(localizedText("composer.clearBeforeEditingQueue"));
@@ -612,14 +635,14 @@ export function useComposerPendingState({
       "queue",
       activeThreadIDForState(getAppState()),
     );
-    if (!target || !canRestorePendingComposerMessage()) {
+    if (!target || !canRestorePendingComposerMessage(target.threadID)) {
       return;
     }
     if (!(await removeQueuedMessage(id))) {
       return;
     }
     restorePendingComposerMessage(target.threadID, target.message);
-    setStatus(localizedText("composer.queueRestoredForEditing"));
+    setStatus("ready");
   }
 
   async function editGuideMessage(id: string): Promise<void> {
@@ -629,7 +652,7 @@ export function useComposerPendingState({
       "guide",
       activeThreadIDForState(getAppState()),
     );
-    if (!target || !canRestorePendingComposerMessage()) {
+    if (!target || !canRestorePendingComposerMessage(target.threadID)) {
       return;
     }
     if (await removeGuideMessage(id)) {
@@ -670,13 +693,6 @@ export function useComposerPendingState({
     if (!turnID && !target.message.held) {
       setStatus(localizedText("composer.noActiveTurnToGuide"));
       return;
-    }
-    // The steered input materializes under the same client id later. Register
-    // placement intent now so the conversation scrolls to it and reserves
-    // space for the response, matching the composer queue/steer paths. On a
-    // rejected steer the entry stays queued and still materializes.
-    if (activeThreadIDForState(currentState) === target.threadID) {
-      requestDeferredQueryScroll(target.message.id);
     }
     updateThreadPendingComposerMessages(target.threadID, (previous) => ({
       ...previous,
@@ -751,11 +767,6 @@ export function useComposerPendingState({
         }));
         setStatus(localizedText("composer.guideAlreadyHandled"));
         return;
-      }
-      // The requeued input materializes as a queued user message; the
-      // conversation should scroll to it and reserve response space.
-      if (activeThreadIDForState(getAppState()) === target.threadID) {
-        requestDeferredQueryScroll(id);
       }
       updateThreadPendingComposerMessages(target.threadID, (previous) => {
         const withoutGuide = {

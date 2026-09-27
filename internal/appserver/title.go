@@ -104,7 +104,7 @@ func recommendedTitleTemperature(modelID string) (float64, bool) {
 		return 1.0, true
 	}
 	if strings.Contains(id, "kimi-k2") {
-		// kimi-k2-thinking, kimi-k2.5/.6/.7, kimi-k2p5, kimi-k2-5 all want 1.0.
+		// kimi-k2-thinking, kimi-k2.5/.6/.7/.8, kimi-k2p5, kimi-k2-5 all want 1.0.
 		for _, marker := range []string{"thinking", "k2.", "k2p", "k2-5"} {
 			if strings.Contains(id, marker) {
 				return 1.0, true

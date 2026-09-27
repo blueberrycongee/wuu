@@ -1,42 +1,24 @@
 # Desktop plugin quickstart
 
-This tutorial adds an interactive control to the Wuu Composer and walks through
-creation, build, hot reload, packaging, and installation. A Desktop plugin runs trusted
-React code in the Wuu Renderer without requiring a fork.
+This tutorial adds a small toggle to the composer toolbar. It demonstrates local component state and host UI registration; it does not change model behavior or save a setting. You need Wuu Desktop, the `wuu` CLI, Node.js 22 or later, and a matching Wuu source checkout for SDK types.
 
-## Prerequisites
+## Create the package
 
-- The `wuu` CLI (`wuu plugin --help` must work)
-- Node.js 22+
-- A running Wuu Desktop app
-
-## Step 1: generate a Desktop skeleton
+Replace the SDK source path, then run from the directory where you want the plugin project:
 
 ```bash
-wuu plugin create --type desktop focus-mode
-cd focus-mode
+WUU_SOURCE=/absolute/path/to/wuu
+npm ci --prefix "$WUU_SOURCE/packages/plugin-sdk"
+npm run build --prefix "$WUU_SOURCE/packages/plugin-sdk"
+wuu plugin create --type desktop toolbar-demo
+cd toolbar-demo
+npm pkg set "devDependencies.@wuu/plugin-sdk=file:$WUU_SOURCE/packages/plugin-sdk"
 npm install
 ```
 
-The package contains `plugin.json`, TypeScript configuration, and `src/index.ts`. The
-manifest points its Desktop entry at the compiled `dist/index.js`:
+The generated `plugin.json` points `desktop.entry` to `dist/index.js`. The desktop module exports `activate(api)`, called when the host starts its generation. This example imports only SDK types, so TypeScript produces a self-contained ESM entry without runtime imports.
 
-```json
-{
-  "schema_version": 1,
-  "id": "focus-mode",
-  "name": "focus-mode",
-  "version": "0.1.0",
-  "desktop": {
-    "entry": "dist/index.js"
-  }
-}
-```
-
-The Desktop entry exports `activate(api)`. Registrations belong to that plugin
-generation and are reclaimed together on disable, upgrade, or removal.
-
-## Step 2: add a Composer control
+## Add the toggle
 
 Replace `src/index.ts` with:
 
@@ -45,87 +27,51 @@ import type { PluginGenerationApi } from "@wuu/plugin-sdk";
 
 export function activate(api: PluginGenerationApi): void {
   const React = api.react;
-  const ToolbarToggle = api.ui.ToolbarToggle as unknown as (
-    props: Readonly<Record<string, unknown>>,
-  ) => unknown;
+  const Toggle = api.ui.ToolbarToggle as unknown as
+    (props: Readonly<Record<string, unknown>>) => unknown;
 
-  function FocusToggle() {
+  function DemoToggle() {
     const [enabled, setEnabled] = React.useState(false);
-    return React.createElement(
-      ToolbarToggle,
-      {
-        pressed: enabled,
-        "aria-label": "Toggle focus mode",
-        onClick: () => setEnabled((value) => !value),
-      },
-      enabled ? "Focused" : "Focus",
-    );
+    return React.createElement(Toggle, {
+      pressed: enabled,
+      "aria-label": "Toggle demo state",
+      onClick: () => setEnabled(value => !value),
+    }, enabled ? "Demo on" : "Demo off");
   }
 
   api.registerSlot("composer.toolbar", {
-    id: "focus-toggle",
+    id: "demo-toggle",
     order: 20,
-    render() {
-      return React.createElement(FocusToggle, null);
-    },
+    render: () => React.createElement(DemoToggle, null),
   });
 }
 ```
 
-This uses three core capabilities:
+`api.react` is the host's React instance. `api.ui.ToolbarToggle` supplies the shared control, while `composer.toolbar` places it without depending on the composer's private DOM. Register components through the API rather than bundling another React runtime.
 
-- `api.react` uses the host React instance; do not bundle another copy.
-- `api.ui` inherits Wuu themes, density, and accessibility behavior.
-- `composer.toolbar` adds content to the host-owned Composer instead of querying
-  private DOM.
-
-## Step 3: build and check
+## Build and load
 
 ```bash
 npm run build
 wuu plugin validate .
 wuu plugin test .
-```
-
-For a Desktop-only package, `wuu plugin test` validates the package and reports that
-runtime testing was skipped; it does not import or render the Desktop entry. The next
-step verifies Renderer behavior in the real app.
-
-The Desktop entry must be a self-contained ESM file inside the package. Type-only
-imports disappear at compile time. Do not leave relative imports to plugin source or
-bundle another React runtime.
-
-## Step 4: hot reload in the real app
-
-```bash
 wuu plugin dev .
 ```
 
-`wuu plugin dev .` authorizes the supplied path (`.` here). Each save builds and activates an
-atomic candidate generation; a failed candidate leaves the previous generation
-running. Click **Focus** in the Composer toolbar and verify that its state changes.
+For a desktop-only package, `test` checks the package and reports that runtime initialization was skipped. It does not import or render the desktop module. The host requires a self-contained entry: if you later add runtime imports, bundle them rather than shipping unresolved imports beside this file.
 
-No Wuu source rebuild is needed when only plugin code changes.
+`dev` authorizes the supplied directory and publishes rebuilt development generations as files change. A failed build or package check keeps the last published generation; publication can wait for active executions. Check the desktop plugin status for activation errors.
 
-## Step 5: package and install
+In Wuu Desktop, click the toggle and confirm its label and pressed state change. Test keyboard focus, both themes, a narrow window, and a larger UI font. Disabling the plugin should remove the control. React state is local to the mounted component and is not durable plugin storage.
+
+## Package it
 
 ```bash
 wuu plugin pack .
-wuu plugin install ./focus-mode-0.1.0.zip
-wuu plugin approve focus-mode
+wuu plugin install ./toolbar-demo-0.1.0.zip
+wuu plugin approve toolbar-demo
 ```
 
-Approval is the trust decision: the plugin runs with your user authority. The Desktop
-catalog offers the same operation as one **Approve and enable** confirmation.
-Development-directory authorization never transfers with the zip.
+The current CLI separates staging from the trust decision that enables execution. Development authorization stays local and does not travel with the zip. Desktop plugins are trusted renderer code, not sandboxed web content.
 
-## Next steps
-
-- Use the [Desktop UI extension map](desktop-plugins.md) to choose a View, Slot,
-  Presenter, or Surface.
-- Follow the [Desktop plugin recipes](plugin-recipes.md) for selection UI, draft
-  updates, and full panels.
-- Look up manifest, settings, Storage, and complete APIs in the
-  [plugin authoring reference](plugin-authoring.md).
-- Add Agent tools with a `--type full` package or the
-  [Agent plugin quickstart](plugin-quickstart.md).
+Use the [UI extension map](desktop-plugins.md) to choose a larger boundary, the [recipes](plugin-recipes.md) for actions and views, and the [authoring reference](plugin-authoring.md) for package and lifecycle contracts.

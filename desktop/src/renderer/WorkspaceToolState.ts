@@ -1,13 +1,16 @@
 import type { RuntimeContext } from "../shared/protocol";
+import type { ArtifactPreviewRequest } from "./ArtifactPreviewContext";
 import type { WorkspacePanelView } from "./WorkspacePanels";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import type { RegisteredPluginViewEntry } from "./plugins/PluginHost";
 import {
   useWorkspaceViewTabs,
   workspaceDiffViewTab,
+  workspaceArtifactViewTab,
   workspaceFileViewTab,
   workspaceToolViewTab,
   workspacePluginViewTab,
+  workspaceProjectViewTab,
   type WorkspaceViewTab,
 } from "./WorkspaceViewTabs";
 
@@ -29,6 +32,8 @@ export function useWorkspaceToolState({
   openWorkspacePluginTool: (entry: RegisteredPluginViewEntry) => void;
   openWorkspaceDiffTab: (input: { threadID: string; path: string; selection: TurnFileDiffSelection }) => void;
   openWorkspaceFileTab: (input: { context: RuntimeContext; path: string }) => void;
+  openWorkspaceArtifactTab: (input: ArtifactPreviewRequest) => void;
+  openWorkspaceProjectTab: (projectID: string, title: string) => void;
   showWorkspaceToolPicker: () => void;
   focusWorkspaceViewTab: (id: string | undefined) => void;
   closeWorkspaceViewTab: (id: string) => void;
@@ -49,7 +54,7 @@ export function useWorkspaceToolState({
 
   function ensureWorkspaceToolTab(view: WorkspacePanelView): void {
     if (!workspaceViewTabs.some((tab) => tab.id === view)) {
-      openTab(workspaceToolViewTab(view));
+      openTab(workspaceToolViewTab(view), { activate: false });
     }
   }
 
@@ -73,6 +78,16 @@ export function useWorkspaceToolState({
 
   function openWorkspaceFileTab(input: { context: RuntimeContext; path: string }): void {
     openTab(workspaceFileViewTab(input));
+    setRightPanelOpenWithMotion(true);
+  }
+
+  function openWorkspaceArtifactTab(input: ArtifactPreviewRequest): void {
+    openTab(workspaceArtifactViewTab(input));
+    setRightPanelOpenWithMotion(true);
+  }
+
+  function openWorkspaceProjectTab(projectID: string, title: string): void {
+    openTab(workspaceProjectViewTab(projectID, title));
     setRightPanelOpenWithMotion(true);
   }
 
@@ -126,6 +141,8 @@ export function useWorkspaceToolState({
     openWorkspacePluginTool,
     openWorkspaceDiffTab,
     openWorkspaceFileTab,
+    openWorkspaceArtifactTab,
+    openWorkspaceProjectTab,
     showWorkspaceToolPicker,
     focusWorkspaceViewTab: focusTab,
     closeWorkspaceViewTab,

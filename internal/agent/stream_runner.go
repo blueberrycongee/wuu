@@ -839,8 +839,8 @@ func (r *StreamRunner) storeRetainedRequestContext(state *RetainedRequestContext
 	r.retainedRequestContext = state
 }
 
-// ContextWindowsAvailable reports whether the active extension supplies
-// persistent working memory and opts into summary-free context windows.
+// ContextWindowsAvailable reports whether the active compaction policy opts
+// into summary-free context windows.
 func (r *StreamRunner) ContextWindowsAvailable() bool {
 	return r != nil && r.contextWindowProvider() != nil
 }
@@ -1166,14 +1166,15 @@ func (r *StreamRunner) SynchronizeConversationUsage(history []providers.ChatMess
 }
 
 // SeedConversationUsageBaseline primes the cross-turn usage baseline from a
-// persisted retained-context value (the ContextTokens of the thread's last
-// completed turn) when a runtime is rebuilt over existing history — process
-// restart, session resume, thread reopen. That persisted value derives from
-// real provider usage, so it beats re-estimating the whole history with the
-// pessimistic byte heuristic, which over-counts JSON-heavy histories enough
-// to risk an immediate premature compaction on the first resumed turn. No-op
-// when the tracker already holds live state (fresher than the persisted row)
-// or when total is zero.
+// persisted provider-reported context total when a runtime is rebuilt over
+// existing history — process restart, session resume, thread reopen. Callers
+// must pass a total that includes provider input, output, or cache counts.
+// A local context estimate can omit assistant and tool-call tokens; seeding
+// it would block the pre-send reconcile and can keep a full prompt under the
+// compact threshold. A real provider total still beats re-estimating the
+// whole history, which can over-count JSON-heavy transcripts enough to
+// compact on the first resumed turn. No-op when the tracker already holds
+// live state (fresher than the persisted row) or when total is zero.
 func (r *StreamRunner) SeedConversationUsageBaseline(total, historyLen int) {
 	if r == nil || total <= 0 {
 		return
@@ -1328,6 +1329,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 	var (
 		contentBuf        strings.Builder
 		thinkingBuf       strings.Builder
+		images            []providers.InputImage
 		reasoningBlocks   []providers.ReasoningBlock
 		pendingTools      = map[int]*providers.ToolCall{}
 		usage             *providers.TokenUsage
@@ -1399,7 +1401,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		}
 		return nil
 	}
-	if err := s.runReliableStream(ctx, req, &contentBuf, &thinkingBuf, &reasoningBlocks, pendingTools, &messagePhase, &providerItemID, &providerItemModel, &usage, &stopReason, &finishReason, &truncated, resetRuntime, replayGuard, observeEvent); err != nil {
+	if err := s.runReliableStream(ctx, req, &contentBuf, &thinkingBuf, &reasoningBlocks, &images, pendingTools, &messagePhase, &providerItemID, &providerItemModel, &usage, &stopReason, &finishReason, &truncated, resetRuntime, replayGuard, observeEvent); err != nil {
 		if rt := currentToolRuntime(); rt != nil {
 			rt.Cancel()
 		}
@@ -1418,7 +1420,14 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		if partialToolRuntime != nil {
 			partialToolRuntime.Cancel()
 		}
+		if len(partialToolCalls) == 0 {
+			// Ledger-backed runs allocate a runtime before the first token.
+			// An empty runtime is not user-visible output and must not block
+			// overflow compact / fresh-window recovery.
+			partialToolRuntime = nil
+		}
 		partial := StepResult{
+			Images:           images,
 			Content:          contentBuf.String(),
 			Phase:            messagePhase,
 			ProviderItemID:   providerItemID,
@@ -1449,7 +1458,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 	// reason, the stream was likely broken by a proxy or compatibility issue.
 	// A terminal length/max_tokens reason is a completed model response, not a
 	// broken stream, even when the visible text is empty.
-	if strings.TrimSpace(contentBuf.String()) == "" && len(toolCalls) == 0 && strings.TrimSpace(stopReason) == "" && finishReason == "" && !truncated {
+	if strings.TrimSpace(contentBuf.String()) == "" && len(images) == 0 && len(toolCalls) == 0 && strings.TrimSpace(stopReason) == "" && finishReason == "" && !truncated {
 		if rt := currentToolRuntime(); rt != nil {
 			rt.Cancel()
 		}
@@ -1504,6 +1513,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 			fbModel = req.Model
 		}
 		return StepResult{
+			Images:               resp.Images,
 			Content:              resp.Content,
 			Phase:                resp.Phase,
 			ProviderItemID:       resp.ProviderItemID,
@@ -1532,6 +1542,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		providerItemModel = req.Model
 	}
 	return StepResult{
+		Images:               images,
 		Content:              contentBuf.String(),
 		Phase:                messagePhase,
 		ProviderItemID:       providerItemID,
@@ -1645,6 +1656,7 @@ func (s *streamStep) runReliableStream(
 	contentBuf *strings.Builder,
 	thinkingBuf *strings.Builder,
 	reasoningBlocks *[]providers.ReasoningBlock,
+	images *[]providers.InputImage,
 	pendingTools map[int]*providers.ToolCall,
 	messagePhase *providers.MessagePhase,
 	providerItemID *string,
@@ -1662,12 +1674,13 @@ func (s *streamStep) runReliableStream(
 	resetPartialOutput := func() {
 		hadContent := contentBuf.Len() > 0
 		hadThinking := thinkingBuf.Len() > 0
-		if !hadContent && !hadThinking && len(*reasoningBlocks) == 0 {
+		if !hadContent && !hadThinking && len(*reasoningBlocks) == 0 && len(*images) == 0 {
 			return
 		}
 		contentBuf.Reset()
 		thinkingBuf.Reset()
 		*reasoningBlocks = nil
+		*images = nil
 		*messagePhase = ""
 		*providerItemID = ""
 		*providerItemModel = ""
@@ -1745,6 +1758,11 @@ func (s *streamStep) runReliableStream(
 
 		for event := range ch {
 			switch event.Type {
+			case providers.EventImage:
+				if event.Image != nil {
+					*images = append(*images, *event.Image)
+				}
+
 			case providers.EventContentDelta:
 				if event.Phase != "" {
 					*messagePhase = event.Phase

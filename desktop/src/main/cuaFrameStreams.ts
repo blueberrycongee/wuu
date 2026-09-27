@@ -7,7 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import type { Rectangle } from "electron";
 
 export type CUANativePiPEvent = {
-  event: "ready" | "user_close" | "user_input" | "capture_status" | "geometry" | "control" | "gone";
+  event: "ready" | "user_close" | "user_input" | "capture_status" | "geometry" | "control" | "gone" | "expand";
   action?: "takeover" | "release" | "stop";
   x?: number;
   y?: number;

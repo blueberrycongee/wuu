@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -134,13 +133,6 @@ func newPluginStateTestServer(t *testing.T) (*Server, pluginpkg.Plugin, *lockedB
 	}
 	out := &lockedBuffer{}
 	return New(rt, out), item, out
-}
-
-func requireRPCErrorContains(t *testing.T, response map[string]any, text string) {
-	t.Helper()
-	if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), text) {
-		t.Fatalf("response = %+v", response)
-	}
 }
 
 func TestPluginRegistryIntrospectReturnsKernelServices(t *testing.T) {

@@ -30,41 +30,39 @@ type runState struct {
 	structuredResultSet bool
 }
 
-type trackingWriter struct {
-	w   io.Writer
-	err error
-}
-
-func (w *trackingWriter) Write(p []byte) (int, error) {
-	if w.err != nil {
-		return 0, w.err
-	}
-	n, err := w.w.Write(p)
-	if err == nil && n != len(p) {
-		err = io.ErrShortWrite
-	}
-	if err != nil {
-		w.err = err
-	}
-	return n, err
-}
-
 func Run(ctx context.Context, opts Options) (runErr error) {
+	if opts.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
+		defer cancel()
+	}
+	ctx, cancelOutput := context.WithCancel(ctx)
+	defer cancelOutput()
 	if opts.Stdout == nil {
 		opts.Stdout = io.Discard
 	}
 	if opts.Stderr == nil {
 		opts.Stderr = io.Discard
 	}
-	stdout := &trackingWriter{w: opts.Stdout}
+	stdout := &outputWriter{w: opts.Stdout, ctx: ctx, cancel: cancelOutput}
 	opts.Stdout = stdout
 	defer func() {
-		if runErr == nil && stdout.err != nil {
-			runErr = WithExitCode(ExitProtocol, fmt.Errorf("write exec output: %w", stdout.err))
+		if stdout.err != nil {
+			err := fmt.Errorf("write exec output: %w", stdout.err)
+			if errors.Is(stdout.err, context.DeadlineExceeded) || errors.Is(stdout.err, context.Canceled) {
+				runErr = classifyProtocolOrContextError(ctx, err)
+			} else {
+				runErr = WithExitCode(ExitProtocol, err)
+			}
+		} else if runErr == nil && ctx.Err() != nil {
+			runErr = classifyProtocolOrContextError(ctx, ctx.Err())
 		}
 	}()
 
 	state := runState{status: "running"}
+	if ctx.Err() != nil {
+		return finishRunError(opts, &state, classifyProtocolOrContextError(ctx, ctx.Err()))
+	}
 	restoreEnv, err := applyRunEnv(opts.Env)
 	if err != nil {
 		return finishRunError(opts, &state, WithExitCode(ExitInvalidInput, err))
@@ -79,11 +77,6 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 		return finishRunError(opts, &state, WithExitCode(ExitInvalidInput, errors.New("prompt is required")))
 	}
 
-	if opts.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
-		defer cancel()
-	}
 	rootDir, err := resolveWorkdir(opts.Workdir)
 	if err != nil {
 		return finishRunError(opts, &state, WithExitCode(ExitInvalidInput, err))
@@ -97,6 +90,9 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 	if controller == nil {
 		controller, err = NewLocalAppServerController(ctx, opts)
 		if err != nil {
+			if ctx.Err() != nil {
+				return finishRunError(opts, &state, classifyProtocolOrContextError(ctx, err))
+			}
 			return finishRunError(opts, &state, classifySetupError(err))
 		}
 	}
@@ -111,6 +107,9 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 		return finishRunError(opts, &state, classifyProtocolOrContextError(ctx, err))
 	}
 	emitSessionConfigured(opts, initResult)
+	if ctx.Err() != nil {
+		return finishRunError(opts, &state, classifyProtocolOrContextError(ctx, ctx.Err()))
+	}
 
 	thread, err := startOrResumeThread(ctx, controller, opts)
 	if err != nil {
@@ -126,6 +125,9 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 		emitThreadEvent(opts, "thread_started", thread)
 	}
 
+	if ctx.Err() != nil {
+		return finishRunError(opts, &state, classifyProtocolOrContextError(ctx, ctx.Err()))
+	}
 	input := TurnInput{Prompt: opts.Prompt, Images: attachments.Images, Files: attachments.Files}
 	run, err := controller.StartRun(ctx, runStartParams(opts, thread.ID, input, outputSchema))
 	if err != nil {
@@ -148,6 +150,7 @@ func Run(ctx context.Context, opts Options) (runErr error) {
 			emitResult(opts, state, "interrupted", "interrupted")
 			return WithExitCode(ExitInterrupted, err)
 		}
+		_ = interruptRunBestEffort(controller, state.runID, "exec_failed")
 		return finishRunError(opts, &state, err)
 	}
 
@@ -275,6 +278,9 @@ func outputSchemaRaw(schema *outputSchemaValidator) json.RawMessage {
 func waitForRun(ctx context.Context, controller Controller, opts Options, state *runState) error {
 	notifications := controller.Notifications()
 	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -282,7 +288,13 @@ func waitForRun(ctx context.Context, controller Controller, opts Options, state 
 			if !ok {
 				return WithExitCode(ExitProtocol, errors.New("app-server notification stream closed before Run completed"))
 			}
+			if notification.Err != nil {
+				return WithExitCode(ExitProtocol, notification.Err)
+			}
 			done, err := handleNotification(opts, notification, state)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			if err != nil {
 				return err
 			}

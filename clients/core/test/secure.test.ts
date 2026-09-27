@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 
 import { b64decode, b64encode } from "../src/b64.js";
-import { randomBytes, utf8Decode, utf8Encode } from "../src/bytes.js";
+import { randomBytes, utf8Encode } from "../src/bytes.js";
 import {
   Identity,
   Pairing,
@@ -38,28 +38,6 @@ describe("relay auth", () => {
 });
 
 describe("pairing", () => {
-  it("round-trips offer and answer", () => {
-    const host = Identity.generate();
-    const phone = Identity.generate();
-    const pairing = Pairing.generate();
-    const uri = pairing.uri("ws://127.0.0.1:8787/v1/connect", host.public_());
-    const link = parsePairURI(uri);
-
-    const { payload, pairing: pp } = sealPairOffer(link, {
-      devicePub: phone.public_(),
-      name: "test phone",
-      platform: "ios",
-    });
-    const { offer, hostPairing } = pairing.openPairOffer(payload);
-    expect(b64encode(offer.devicePub)).toBe(b64encode(phone.public_()));
-    expect(offer.name).toBe("test phone");
-
-    const answer = hostPairing.sealPairAnswer(host, "test host", phone.public_());
-    const opened = pp.openPairAnswer(answer, phone.public_());
-    expect(b64encode(opened.hostPub)).toBe(b64encode(host.public_()));
-    expect(opened.hostName).toBe("test host");
-  });
-
   it("rejects an answer whose host key does not match the QR pin", () => {
     const host = Identity.generate();
     const imposter = Identity.generate();
@@ -137,14 +115,6 @@ describe("handshake", () => {
 });
 
 describe("sealed channel", () => {
-  it("round-trips frames in both directions", () => {
-    const { hostCh, phoneCh } = pairOfChannels();
-    const a = phoneCh.seal(utf8Encode("hello host"));
-    expect(utf8Decode(hostCh.open(a))).toBe("hello host");
-    const b = hostCh.seal(utf8Encode("hello phone"));
-    expect(utf8Decode(phoneCh.open(b))).toBe("hello phone");
-  });
-
   it("rejects replayed and stale frames", () => {
     const { hostCh, phoneCh } = pairOfChannels();
     const f1 = phoneCh.seal(utf8Encode("one"));

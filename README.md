@@ -4,13 +4,13 @@
 
 wuu is an open-source desktop app for working with AI agents on local projects. Connect a model provider, choose a folder, and ask an agent to read code, make changes, or run commands. Review the files, diffs, and results in the app.
 
-You can return to a conversation to continue the work, or bring several agents into a group chat. Plugins add tools and desktop features; see [Extend Wuu](docs/en/customize/index.md).
+You can return to a conversation to continue the work. Plugins add tools and desktop features; see [Extend Wuu](docs/en/customize/index.md).
 
 ![wuu desktop app](https://github.com/user-attachments/assets/2d9030aa-ca03-42b1-9333-f79cc5aff95b)
 
 ## Get started
 
-The desktop preview supports Apple silicon Macs. Download it from [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest), move `wuu.app` to `/Applications`, and open it. The preview is self-signed, without Apple Developer ID or notarization; if macOS blocks it, follow the [installation guide](docs/en/getting-started/installation.md).
+The desktop preview supports Apple silicon Macs. Download it from [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest), move `wuu.app` to `/Applications`, and open it. This is an unsigned preview (ad-hoc signatures only), without Apple Developer ID or notarization; if macOS blocks it, follow the [installation guide](docs/en/getting-started/installation.md).
 
 Connect your model provider in Settings, then add a local project folder as a workspace. Try a small task and check the changes and test results. The [quick start](docs/en/getting-started/index.md) walks through an example.
 

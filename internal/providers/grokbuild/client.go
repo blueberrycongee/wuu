@@ -2,8 +2,6 @@ package grokbuild
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -142,15 +140,4 @@ func cloneHeaders(input map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
-}
-
-func credentialError(err error) error {
-	if err == nil {
-		return nil
-	}
-	var httpErr *providers.HTTPError
-	if errors.As(err, &httpErr) && (httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden) {
-		return fmt.Errorf("Grok Build login was rejected; run `grok login` and try again: %w", err)
-	}
-	return err
 }

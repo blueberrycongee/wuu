@@ -1,4 +1,5 @@
 import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useActiveContextMenu } from "./ActiveContextMenu";
 import { placeContextMenu, type ContextMenuLayout } from "./ContextMenuPlacement";
 import { useI18n } from "./i18n";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
@@ -34,6 +35,7 @@ export { placeContextMenu } from "./ContextMenuPlacement";
 //   - Listeners are attached via setTimeout(0) so the burst of pointer
 //     events the right-click itself dispatches doesn't immediately
 //     dismiss the menu we just opened.
+//   - Another context menu opening → close (useActiveContextMenu).
 
 export function ComposerContextMenu({
   textareaRef,
@@ -54,6 +56,7 @@ export function ComposerContextMenu({
 }): JSX.Element {
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement | null>(null);
+  useActiveContextMenu(onClose);
   // The menu mounts at the cursor, but until React commits the first
   // paint its own size isn't known — measure on the layout effect that
   // runs just before paint and place relative to the viewport, so the

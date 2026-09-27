@@ -272,6 +272,8 @@ var contextOverflowPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)exceeded model token limit`),                                    // Kimi For Coding (legacy phrasing)
 	regexp.MustCompile(`(?i)message size [\d,]+ exceeds limit`),                             // Kimi For Coding k3: "total message size 2306631 exceeds limit 2097152"
 	regexp.MustCompile(`(?i)prompt too long; exceeded (?:max )?context length`),             // Ollama
+	regexp.MustCompile(`(?i)too long for this model'?s context window`),                     // Grok Build / xAI sampling
+	regexp.MustCompile(`(?i)\[input_too_large\]`),                                           // Grok Build sampling code
 }
 
 // contextNonOverflowPatterns veto overflow classification for transient quota
@@ -305,7 +307,12 @@ func DetectContextOverflow(body string) bool {
 }
 
 func isContextOverflowCode(code string) bool {
-	return strings.EqualFold(strings.TrimSpace(code), "context_length_exceeded")
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "context_length_exceeded", "input_too_large":
+		return true
+	default:
+		return false
+	}
 }
 
 // IsContextOverflow returns true if err is an HTTPError flagged as
@@ -435,9 +442,12 @@ func isTerminalUsageLimit(code, message string) bool {
 }
 
 func isProviderOverloaded(code, message string) bool {
+	if isProviderRateLimited(code, message) {
+		return true
+	}
 	code = strings.ToLower(strings.TrimSpace(code))
 	switch code {
-	case "429", "529", "1305", "rate_limit_error", "overloaded_error":
+	case "529", "overloaded_error":
 		return true
 	}
 	msg := strings.ToLower(strings.TrimSpace(message))
@@ -449,9 +459,22 @@ func isProviderOverloaded(code, message string) bool {
 		strings.Contains(msg, "稍后再试")
 }
 
+func isProviderRateLimited(code, message string) bool {
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "429", "1305", "rate_limit_error", "rate_limit_exceeded":
+		return true
+	}
+	msg := strings.ToLower(message)
+	return strings.Contains(msg, "rate limit") || strings.Contains(msg, "too many requests")
+}
+
 func isTemporaryProviderFailure(code, message string) bool {
 	code = strings.ToLower(strings.TrimSpace(code))
 	switch code {
+	case "408", "504", "request_timeout":
+		// Upstream timeouts can arrive inside an HTTP 200 stream. Recover them
+		// like HTTP timeout responses, without treating them as caller cancellation.
+		return true
 	case "500", "502", "503", "internal_error", "server_error", "api_error", "stream_read_error":
 		return true
 	}
@@ -464,7 +487,7 @@ func isTemporaryProviderFailure(code, message string) bool {
 func isStreamAuthError(code, message string) bool {
 	code = strings.ToLower(strings.TrimSpace(code))
 	switch code {
-	case "401", "403", "authentication_error", "permission_error":
+	case "401", "403", "authentication_error", "permission_error", "invalid_api_key":
 		return true
 	}
 	msg := strings.ToLower(strings.TrimSpace(message))

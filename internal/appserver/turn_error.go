@@ -54,6 +54,12 @@ func BuildTurnError(err error, provider string) TurnError {
 		}
 	}
 
+	var eventTooLarge *providers.StreamEventTooLargeError
+	if errors.As(err, &eventTooLarge) {
+		out.Code = string(providers.FailureResponseTooLarge)
+		out.Category = "local"
+	}
+
 	if isResponseCompletedMissingMessage(lowerMessage) {
 		if out.Code == "" {
 			out.Code = responseCompletedMissingCode
@@ -88,7 +94,34 @@ func BuildTurnError(err error, provider string) TurnError {
 		out.Code = extractCodeFromMessage(message)
 	}
 
+	var recoveryErr *providers.StreamRecoveryError
+	if errors.As(err, &recoveryErr) {
+		info := recoveryErr.Recovery
+		out.Recovery = &info
+		out.Category = categoryFromFailure(providers.NormalizeFailure(err))
+	}
+
 	return out
+}
+
+func categoryFromFailure(failure providers.NormalizedFailure) string {
+	switch failure.Category {
+	case providers.FailureAuthentication:
+		return "auth"
+	case providers.FailureCanceled:
+		return "cancelled"
+	case providers.FailureNetwork, providers.FailureDeadline:
+		return "network"
+	case providers.FailureInvalidRequest:
+		return "invalid_request"
+	case providers.FailureReplayUnsafe, providers.FailureBudgetExceeded, providers.FailureCostIndeterminate, providers.FailureLocalBackpressure, providers.FailureResponseTooLarge:
+		return "local"
+	default:
+		if failure.Origin == providers.FailureOriginProvider {
+			return "provider"
+		}
+		return "internal"
+	}
 }
 
 // asHTTPError unwraps to *providers.HTTPError. Returns nil if not
@@ -162,7 +195,7 @@ func categoryFromStreamError(streamErr *providers.StreamError) string {
 	if streamErr.Retryable {
 		return "provider"
 	}
-	return ""
+	return categoryFromFailure(providers.NormalizeFailure(streamErr))
 }
 
 func categoryFromClassifier(class agentcontrol.ErrorClass) string {
@@ -261,7 +294,8 @@ func isProviderBusinessMessage(lower string) bool {
 		strings.Contains(lower, "model returned") ||
 		strings.Contains(lower, "response failed") ||
 		strings.Contains(lower, "response error") ||
-		strings.Contains(lower, "previous_response_not_found")
+		strings.Contains(lower, "previous_response_not_found") ||
+		strings.Contains(lower, "did not respond to the prompt")
 }
 
 func isLocalOperationMessage(lower string) bool {
@@ -282,8 +316,6 @@ func isLocalOperationMessage(lower string) bool {
 
 func isNetworkOrUpstreamMessage(lower string) bool {
 	return strings.Contains(lower, "network") ||
-		strings.Contains(lower, "stream request failed") ||
-		strings.Contains(lower, "request failed") ||
 		strings.Contains(lower, "connection refused") ||
 		strings.Contains(lower, "connection reset") ||
 		strings.Contains(lower, "connection dropped") ||

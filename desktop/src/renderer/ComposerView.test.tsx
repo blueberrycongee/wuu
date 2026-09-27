@@ -12,6 +12,7 @@ import {
   type PermissionMode,
 } from "./ComposerView";
 import { ImagePreviewProvider } from "./ImagePreview";
+import { ConversationSplitPane } from "./ConversationSplitPane";
 import { translateCurrent } from "./i18n";
 import { WorkbenchConnectionContext } from "./WorkbenchConnectionContext";
 import { ComposerTokenGauge } from "./ComposerTokenGauge";
@@ -22,11 +23,13 @@ import { readCollapsedPromptParts, rememberCollapsedPromptParts } from "./Compos
 import { buildFileSelectionPart } from "./FileSelectionContext";
 import type {
   DesktopProject,
+  EngineInfo,
   InitializeResult,
   MessageContentPart,
   PermissionSummary,
   RuntimeContext,
   SkillSummary,
+  Thread,
   WuuDesktopApi,
 } from "../shared/protocol";
 
@@ -104,8 +107,12 @@ function handoffInitialized(): InitializeResult {
 function renderComposer(props: {
   accessMenuOpen?: boolean;
   activeEngine?: string;
+  engineModel?: string;
+  engineSpeed?: string;
+  onSelectSpeed?: (speed: string) => void | Promise<boolean>;
+  engines?: EngineInfo[];
   variant?: ComposerVariant;
-  canSelectProject?: boolean;
+  canSelectWorkspace?: boolean;
   gitStatus?: Parameters<typeof Composer>[0]["gitStatus"];
   branchPickerDisabled?: boolean;
   onToggleBranchMenu?: () => void;
@@ -113,6 +120,7 @@ function renderComposer(props: {
   mainConversation?: boolean;
   prompt?: string;
   running?: boolean;
+  stopState?: "pending" | "retry";
   queuedMessages?: QueuedComposerMessage[];
   guideMessages?: QueuedComposerMessage[];
   status?: string;
@@ -144,7 +152,7 @@ function renderComposer(props: {
   tokensPerSecond?: number;
   tokenSpeedSampledAt?: number;
   tokenSpeedSource?: "real" | "estimated" | "none";
-  activeProject?: DesktopProject;
+  activeWorkspace?: DesktopProject;
   projects?: DesktopProject[];
 }): { onSelectPermissionMode: (mode: PermissionMode, approveForMe?: boolean) => void } {
   const codexModels: CodexModelLoadState = {
@@ -161,7 +169,7 @@ function renderComposer(props: {
           <WorkbenchConnectionContext.Provider value={props.connectionAvailable ?? true}>
           <Composer
             variant={props.variant}
-            canSelectProject={props.canSelectProject}
+            canSelectWorkspace={props.canSelectWorkspace}
             mainConversation={props.mainConversation}
             prompt={props.prompt ?? ""}
             setPrompt={props.setPrompt ?? (() => {})}
@@ -170,6 +178,7 @@ function renderComposer(props: {
           images={[]}
           queuedMessages={props.queuedMessages ?? []}
           guideMessages={props.guideMessages ?? []}
+          stopState={props.stopState}
           running={props.running ?? false}
           runtimeControlsDisabled={props.runtimeControlsDisabled}
           status={props.status ?? "ready"}
@@ -177,11 +186,15 @@ function renderComposer(props: {
           readOnly={props.readOnly ?? false}
           initialized={props.initialized ?? initialized(props.permissions)}
           activeEngine={props.activeEngine}
+          engineModel={props.engineModel}
+          engineSpeed={props.engineSpeed}
+          onSelectSpeed={props.onSelectSpeed}
+          engines={props.engines}
           gitStatus={props.gitStatus}
           branchPickerDisabled={props.branchPickerDisabled}
           projects={props.projects ?? []}
           activeContext={props.activeContext}
-          activeProject={props.activeProject}
+          activeWorkspace={props.activeWorkspace}
           sideThreadDisabledReason={props.sideThreadDisabledReason}
           codexModels={codexModels}
           codexRuntimeMenu={null}
@@ -191,8 +204,8 @@ function renderComposer(props: {
           branchMenuOpen={false}
           menuRef={createRef<HTMLDivElement>()}
           accessMenuRef={createRef<HTMLDivElement>()}
-          projectFilter=""
-          setProjectFilter={() => {}}
+          workspaceFilter=""
+          setWorkspaceFilter={() => {}}
           onToggleMenu={props.onToggleMenu ?? (() => {})}
           onToggleAccessMenu={() => {}}
           onToggleCodexRuntimeMenu={() => {}}
@@ -202,11 +215,11 @@ function renderComposer(props: {
           onToggleBranchMenu={props.onToggleBranchMenu ?? (() => {})}
           onOpenSettings={() => {}}
           onOpenSkillsCatalog={() => {}}
-          onSelectProject={() => {}}
+          onSelectWorkspace={() => {}}
           onSelectNoProject={() => {}}
           onSelectGitBranch={() => {}}
-          onCreateProject={() => {}}
-          onOpenProject={() => {}}
+          onCreateWorkspace={() => {}}
+          onOpenWorkspace={() => {}}
           onStartNewThread={props.onStartNewThread ?? (() => {})}
           onHandoffSession={props.onHandoffSession}
           onOpenSideThread={props.onOpenSideThread}
@@ -340,8 +353,10 @@ function installSkillList(skills: SkillSummary[]): void {
 
 function renderSplitPaneComposer(props: {
   connectionAvailable?: boolean;
+  selections?: import("../shared/protocol").ResponseSelection[];
   prompt?: string;
   running?: boolean;
+  stopState?: "pending" | "retry";
   status?: string;
   statusLiveProgress?: boolean;
   onSend?: () => void;
@@ -354,9 +369,11 @@ function renderSplitPaneComposer(props: {
         <WorkbenchConnectionContext.Provider value={props.connectionAvailable ?? true}>
         <SplitPaneComposer
           prompt={props.prompt ?? ""}
+          selections={props.selections}
           setPrompt={() => {}}
           files={[]}
           images={[]}
+          stopState={props.stopState}
           running={props.running ?? false}
           readOnly={false}
           status={props.status ?? "ready"}
@@ -514,8 +531,8 @@ function renderStatefulComposer(props: {
           branchMenuOpen={false}
           menuRef={createRef<HTMLDivElement>()}
           accessMenuRef={createRef<HTMLDivElement>()}
-          projectFilter=""
-          setProjectFilter={() => {}}
+          workspaceFilter=""
+          setWorkspaceFilter={() => {}}
           onToggleMenu={() => {}}
           onToggleAccessMenu={() => {}}
           onToggleCodexRuntimeMenu={(menu) => {
@@ -527,11 +544,11 @@ function renderStatefulComposer(props: {
           onToggleBranchMenu={() => {}}
           onOpenSettings={() => {}}
           onOpenSkillsCatalog={() => {}}
-          onSelectProject={() => {}}
+          onSelectWorkspace={() => {}}
           onSelectNoProject={() => {}}
           onSelectGitBranch={() => {}}
-          onCreateProject={() => {}}
-          onOpenProject={() => {}}
+          onCreateWorkspace={() => {}}
+          onOpenWorkspace={() => {}}
           onStartNewThread={() => {}}
           onHandoffSession={props.onHandoffSession}
           onOpenWorkspaceTool={() => {}}
@@ -1021,6 +1038,33 @@ describe("Composer send control", () => {
     expect(textarea.value).toBe("");
   });
 
+  it("retains a rejected draft and permits another submission attempt", () => {
+    const onSend = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+    renderComposer({ prompt: "keep until accepted", onSend });
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(textarea.value).toBe("keep until accepted");
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(onSend).toHaveBeenCalledTimes(2);
+    expect(onSend).toHaveBeenLastCalledWith("keep until accepted");
+    expect(textarea.value).toBe("");
+  });
+
+  it("submits a quote-only split draft once when duplicate gestures race its clear", () => {
+    const onSend = vi.fn();
+    renderSplitPaneComposer({ onSend, selections: [{ id: "quote", text: "Alpha", source: { thread_id: "thread", turn_id: "turn", item_id: "answer", start_offset: 0, end_offset: 5 } }] });
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
   it("submits one copy when duplicate gestures race the draft clear", () => {
     const onSteer = vi.fn();
     renderComposer({
@@ -1163,7 +1207,7 @@ describe("Composer send control", () => {
     expect(onSend).toHaveBeenCalledOnce();
   });
 
-  it("steers with Enter and queues with Tab while a turn is running", () => {
+  it("steers with Enter and queues with Cmd/Ctrl+Enter while a turn is running", () => {
     const onSend = vi.fn();
     const onSteer = vi.fn();
     const onQueue = vi.fn();
@@ -1189,18 +1233,80 @@ describe("Composer send control", () => {
       }
     });
     act(() => {
-      textarea?.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+      textarea?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true, cancelable: true }));
     });
     expect(onQueue).toHaveBeenCalledTimes(1);
     expect(onSend).not.toHaveBeenCalled();
+
+    act(() => {
+      if (textarea) {
+        setTextareaValue(textarea, "queue with ctrl");
+      }
+    });
+    act(() => {
+      textarea?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(onQueue).toHaveBeenCalledTimes(2);
+    expect(onSteer).toHaveBeenCalledTimes(1);
+    expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("keeps Tab available for focus navigation when there is no running draft", () => {
+  it("queues with Cmd/Ctrl+Enter even while slash suggestions are open", () => {
+    const onSend = vi.fn();
+    const onSteer = vi.fn();
+    const onQueue = vi.fn();
+    renderComposer({
+      prompt: "/debug later",
+      running: true,
+      onSend,
+      onSteer,
+      onQueue,
+      activeContext: { kind: "project", project_id: "repo", cwd: "/repo" },
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
+    expect(document.body.querySelector('[data-floating-menu-owner="composer-slash"]')).not.toBeNull();
+
+    act(() => {
+      textarea?.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Enter",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+
+    expect(onQueue).toHaveBeenCalledTimes(1);
+    expect(onSteer).not.toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("keeps Tab available for focus navigation while a turn is running", () => {
+    const onQueue = vi.fn();
+    const onSteer = vi.fn();
+    renderComposer({ prompt: "keep this follow-up", running: true, onQueue, onSteer });
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
+    const event = new KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    });
+
+    act(() => {
+      textarea?.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(onQueue).not.toHaveBeenCalled();
+    expect(onSteer).not.toHaveBeenCalled();
+  });
+
+  it("does not queue with Cmd/Ctrl+Enter when there is no running draft", () => {
     const onQueue = vi.fn();
     renderComposer({ prompt: "", running: true, onQueue });
     const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
     const event = new KeyboardEvent("keydown", {
-      key: "Tab",
+      key: "Enter",
+      metaKey: true,
       bubbles: true,
       cancelable: true,
     });
@@ -1351,6 +1457,19 @@ describe("Composer send control", () => {
     expect(onInterrupt).not.toHaveBeenCalled();
   });
 
+  it.each([["main", "pending"], ["main", "retry"], ["split", "pending"], ["split", "retry"]] as const)("keeps the %s stop action visible with a draft while %s", (surface, stopState) => {
+    const onInterrupt = vi.fn();
+    const onSend = vi.fn();
+    (surface === "main" ? renderComposer : renderSplitPaneComposer)({ running: true, prompt: "keep this draft", stopState, onInterrupt, onSend });
+    const button = container.querySelector<HTMLButtonElement>(".composer-stop-button")!;
+    expect(button).not.toBeNull();
+    expect(button.disabled).toBe(stopState === "pending");
+    act(() => button.click());
+    expect(onSend).not.toHaveBeenCalled();
+    expect(onInterrupt).toHaveBeenCalledTimes(stopState === "retry" ? 1 : 0);
+    expect(container.querySelector("textarea")?.value).toBe("keep this draft");
+  });
+
   it("shows a stop button while running only when the input is empty", () => {
     const onInterrupt = vi.fn();
     const onSend = vi.fn();
@@ -1470,71 +1589,58 @@ describe("Composer send control", () => {
     expect(stopButton.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }))).toBe(true);
   });
 
-  it("hides the transient sending status from the composer bar", () => {
-    renderComposer({
-      prompt: "queued follow-up",
-      running: true,
-      status: "正在发送请求",
+  describe.each([
+    ["main", renderComposer],
+    ["split", renderSplitPaneComposer],
+  ] as const)("%s composer feedback", (_name, render) => {
+    it.each(["ready", "正在发送请求", "Sending request"])("does not announce transient status %s", (status) => {
+      render({ prompt: "queued follow-up", running: true, status });
+
+      expect(container.querySelector("[role='status']")).toBeNull();
     });
 
-    expect(container.querySelector(".status-label")).toBeNull();
-    expect(container.textContent).not.toContain("正在发送请求");
+    it.each(["Attachment rejected: unsupported media", "附件无法读取，请重新选择文件"])("keeps actionable feedback outside the send toolbar: %s", (status) => {
+      render({ prompt: "retry later", running: true, status });
+
+      const feedback = container.querySelector("[role='status']");
+      expect(feedback?.textContent).toBe(status);
+      expect(container.querySelector(".composer-bar")?.contains(feedback)).toBe(false);
+      expect(container.querySelector("textarea")?.value).toBe("retry later");
+    });
   });
 
-  it("keeps non-transient composer status visible", () => {
-    renderComposer({
-      prompt: "retry later",
-      status: "发送失败",
+  it.each([true, false])("only shows app feedback in the active split pane while running (active=%s)", (active) => {
+    const status = "Attachment upload rejected";
+    act(() => {
+      root = createRoot(container);
+      root.render(
+        <ImagePreviewProvider>
+          <ConversationSplitPane
+            pane="primary"
+            thread={{ id: "running-thread", status: "in_progress", turns: [] } as unknown as Thread}
+            active={active}
+            appStatus={status}
+            draft={{ prompt: "follow-up", files: [], images: [] }}
+            viewSwitchPending={false}
+            queryHistory={[]}
+            onActivate={() => {}}
+            onClose={() => {}}
+            onBodyRef={() => {}}
+            onScroll={() => {}}
+            onSetPrompt={() => {}}
+            onPasteAttachmentFiles={() => {}}
+            onRemoveFile={() => {}}
+            onRemoveImage={() => {}}
+            onSend={() => {}}
+            onInterrupt={() => {}}
+            onForkMessage={() => {}}
+            onStreamFrame={() => {}}
+          />
+        </ImagePreviewProvider>,
+      );
     });
 
-    expect(container.querySelector(".status-label")?.textContent).toBe("发送失败");
-  });
-
-  it("renders reconnect status with the shared live progress chip", () => {
-    renderComposer({
-      prompt: "retry later",
-      running: true,
-      status: "消息流重连中 1/3",
-      statusLiveProgress: true,
-    });
-
-    expect(container.querySelector(".status-label")?.textContent).toBe("消息流重连中 1/3");
-    expect(container.querySelector(".status-label-text")?.classList.contains("live-progress-chip")).toBe(true);
-  });
-
-  it("renders static fallback status without the live progress chip", () => {
-    renderComposer({
-      prompt: "retry later",
-      running: true,
-      status: "WebSocket 不可用，已切到 HTTP",
-      statusLiveProgress: false,
-    });
-
-    expect(container.querySelector(".status-label")?.textContent).toBe("WebSocket 不可用，已切到 HTTP");
-    expect(container.querySelector(".status-label-text")?.classList.contains("live-progress-chip")).toBe(false);
-  });
-
-  it("hides the transient sending status from the split-pane composer bar", () => {
-    renderSplitPaneComposer({
-      prompt: "continue this branch",
-      running: true,
-      status: "正在发送请求",
-    });
-
-    expect(container.querySelector(".split-composer-status")).toBeNull();
-    expect(container.textContent).not.toContain("正在发送请求");
-  });
-
-  it("renders split-pane reconnect status with the shared live progress chip", () => {
-    renderSplitPaneComposer({
-      prompt: "continue this branch",
-      running: true,
-      status: "HTTP 消息流重连中 2/3",
-      statusLiveProgress: true,
-    });
-
-    expect(container.querySelector(".split-composer-status")?.textContent).toBe("HTTP 消息流重连中 2/3");
-    expect(container.querySelector(".split-composer-status-text")?.classList.contains("live-progress-chip")).toBe(true);
+    expect(container.querySelector("[role='status']")?.textContent ?? "").toBe(active ? status : "");
   });
 
   it("hides session context chips in the dock composer", () => {
@@ -1770,7 +1876,7 @@ describe("Composer send control", () => {
   });
 
   it.each(["hero", "dock"] as const)("anchors %s slash suggestions to the input, over the content above it", (variant) => {
-    renderComposer({ variant, canSelectProject: true });
+    renderComposer({ variant, canSelectWorkspace: true });
     const frame = container.querySelector<HTMLElement>(".composer-frame")!;
     const shell = container.querySelector<HTMLElement>(".composer-shell")!;
     vi.spyOn(frame, "getBoundingClientRect").mockReturnValue(new DOMRect(80, 400, 640, 120));
@@ -1802,14 +1908,14 @@ describe("Composer send control", () => {
     expect(container.querySelector(".context-project-button")).toBeNull();
     expect(container.querySelector(".composer-workspace-bar > .hero-project-pill-anchor")).not.toBeNull();
     expect(container.querySelector(".hero-project-pill")).not.toBeNull();
-    expect(container.querySelector(".hero-project-pill")?.textContent).toContain("选择项目");
-    expect(container.querySelector<HTMLButtonElement>("button[aria-label=\"打开项目\"]")).toBeNull();
+    expect(container.querySelector(".hero-project-pill")?.textContent).toContain("选择工作区");
+    expect(container.querySelector<HTMLButtonElement>("button[aria-label=\"打开工作区\"]")).toBeNull();
   });
 
   it("opens branch selection independently of the draft project picker", () => {
     const onToggleMenu = vi.fn();
     const onToggleBranchMenu = vi.fn();
-    renderComposer({ variant: "dock", canSelectProject: true,
+    renderComposer({ variant: "dock", canSelectWorkspace: true,
       gitStatus: { is_repo: true, branch: "main", dirty_count: 0 },
       onToggleMenu, onToggleBranchMenu });
     const branch = container.querySelector<HTMLButtonElement>('button[aria-label="切换分支：main"]');
@@ -1821,7 +1927,7 @@ describe("Composer send control", () => {
 
   it.each(["hero", "dock"] as const)("keeps the %s branch picker accessible while tasks run", (variant) => {
     const onToggleBranchMenu = vi.fn();
-    renderComposer({ variant, canSelectProject: true, running: true,
+    renderComposer({ variant, canSelectWorkspace: true, running: true,
       gitStatus: { is_repo: true, branch: "main", dirty_count: 0 }, onToggleBranchMenu });
     const branch = container.querySelector<HTMLButtonElement>('button[aria-label="切换分支：main"]')!;
     expect(branch.disabled).toBe(false);
@@ -1831,7 +1937,7 @@ describe("Composer send control", () => {
 
   it.each([{ readOnly: true }, { branchPickerDisabled: true }])("blocks the branch picker for a read-only or switching context: %j", (props) => {
     const onToggleBranchMenu = vi.fn();
-    renderComposer({ variant: "hero", canSelectProject: true,
+    renderComposer({ variant: "hero", canSelectWorkspace: true,
       gitStatus: { is_repo: true, branch: "main", dirty_count: 0 }, onToggleBranchMenu, ...props });
     const branch = container.querySelector<HTMLButtonElement>('button[aria-label="切换分支：main"]')!;
     expect(branch.disabled).toBe(true);
@@ -1841,7 +1947,7 @@ describe("Composer send control", () => {
 
   it("opens project selection from a new session's bottom composer", () => {
     const onToggleMenu = vi.fn();
-    renderComposer({ variant: "dock", canSelectProject: true, onToggleMenu });
+    renderComposer({ variant: "dock", canSelectWorkspace: true, onToggleMenu });
 
     const selector = container.querySelector<HTMLButtonElement>(".hero-project-pill");
     expect(selector).not.toBeNull();
@@ -1860,7 +1966,7 @@ describe("Composer send control", () => {
     // so neither the hero pill nor the old dock "+" project control renders.
     expect(container.querySelector(".composer-project-control")).toBeNull();
     expect(
-      container.querySelector<HTMLButtonElement>("button[aria-label=\"打开项目\"]"),
+      container.querySelector<HTMLButtonElement>("button[aria-label=\"打开工作区\"]"),
     ).toBeNull();
     // The composer itself still renders — only the workspace/cwd control is gone.
     expect(container.querySelector(".composer-plus-button")).not.toBeNull();
@@ -1870,7 +1976,7 @@ describe("Composer send control", () => {
     renderComposer({
       variant: "hero",
       activeContext: { kind: "project", project_id: "project-1", cwd: "/repo/wuu" },
-      activeProject: {
+      activeWorkspace: {
         id: "project-1",
         name: "wuu",
         path: "/repo/wuu",
@@ -2173,6 +2279,24 @@ describe("Composer send control", () => {
     expect(reviewRow?.querySelector(".slash-command-label")).toBeNull();
   });
 
+  it.each([
+    { speed: "", defaultSpeed: "fast", next: "standard" },
+    { speed: "", defaultSpeed: "standard", next: "fast" },
+    { speed: "standard", defaultSpeed: "fast", next: "fast" },
+  ])("/fast toggles the effective engine speed for $speed / $defaultSpeed", async ({ speed, defaultSpeed, next }) => {
+    const onSelectSpeed = vi.fn().mockResolvedValue(true);
+    const onSend = vi.fn();
+    renderComposer({
+      prompt: "/fast", activeEngine: "codex", engineModel: "gpt-6-astra", engineSpeed: speed,
+      engines: [{ id: "codex", enabled: true, binary_ok: true, models: [{ id: "gpt-6-astra", fast_mode: true, default_speed: defaultSpeed }] }],
+      onSelectSpeed, onSend,
+      activeContext: { kind: "project", project_id: "repo", cwd: "/repo" },
+    });
+    await act(async () => { container.querySelector("textarea")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); });
+    expect(onSelectSpeed).toHaveBeenCalledWith(next);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   it("sends an exact slash command with arguments on Enter", () => {
     const onSend = vi.fn();
     renderComposer({
@@ -2330,7 +2454,7 @@ describe("Composer long text folding", () => {
     });
 
     expect(container.querySelector(".composer-collapsed-prompt-card")).not.toBeNull();
-    expect(container.querySelector(".composer-collapsed-prompt-title")?.textContent).toBe("# 交接提示词(直接粘贴)");
+    expect(container.querySelector(".composer-collapsed-prompt-card .composer-document-card-title")?.textContent).toBe("# 交接提示词(直接粘贴)");
     expect((textarea as HTMLTextAreaElement).value).toBe("");
     expect((textarea as HTMLTextAreaElement).placeholder).toBe("要求后续变更");
 
@@ -2360,7 +2484,7 @@ describe("Composer long text folding", () => {
       pastePlainText(textarea as HTMLTextAreaElement, longText);
     });
 
-    const revealButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-main");
+    const revealButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main");
     expect(revealButton).not.toBeNull();
 
     act(() => {
@@ -2477,7 +2601,7 @@ describe("Composer long text folding", () => {
       setTextareaValue(textarea as HTMLTextAreaElement, "要求后续变更");
     });
 
-    const removeButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-remove");
+    const removeButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-attachment-card-remove");
     expect(removeButton).not.toBeNull();
 
     act(() => {
@@ -2527,7 +2651,7 @@ describe("Composer long text folding", () => {
     });
     act(() => {
       container
-        .querySelector<HTMLButtonElement>(".composer-collapsed-prompt-main")
+        .querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main")
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
     expect(container.querySelector(".composer-collapsed-prompt-card")).toBeNull();
@@ -2541,7 +2665,7 @@ describe("Composer long text folding", () => {
 });
 
 function foldedPromptButton(title: string): HTMLButtonElement | undefined {
-  return Array.from(container.querySelectorAll<HTMLButtonElement>(".composer-collapsed-prompt-main")).find((button) =>
+  return Array.from(container.querySelectorAll<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main")).find((button) =>
     button.textContent?.includes(title),
   );
 }
@@ -2887,6 +3011,51 @@ describe("Composer permission menu", () => {
     });
 
     expect(onSelectPermissionMode).toHaveBeenCalledWith("unconfined", false);
+  });
+
+  it("hides Read only for ACP engines until they advertise a distinct mode", () => {
+    renderComposer({
+      accessMenuOpen: true,
+      activeEngine: "grok",
+      permissions: { mode: "unconfined" },
+    });
+    const labels = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>(".access-menu button strong"),
+    ).map((label) => label.textContent?.trim());
+    expect(labels).toEqual(["工作区内完全信任", "无边界"]);
+  });
+
+  it("shows advertised ACP permission labels in the unified access menu", () => {
+    const onSelectPermissionMode = vi.fn();
+    renderComposer({
+      accessMenuOpen: true,
+      activeEngine: "devin",
+      permissions: { mode: "standard" },
+      onSelectPermissionMode,
+      engines: [
+        {
+          id: "devin",
+          enabled: true,
+          binary_ok: true,
+          permission_modes: [
+            { mode: "standard", id: "ask", label: "Ask" },
+            { mode: "read_only", id: "plan", label: "Plan" },
+            { mode: "unconfined", id: "bypass", label: "Bypass Permissions" },
+          ],
+        },
+      ],
+    });
+    const labels = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>(".access-menu button strong"),
+    ).map((label) => label.textContent?.trim());
+    expect(labels).toEqual(["Ask", "Plan", "Bypass Permissions"]);
+    const plan = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
+    ).find((button) => button.textContent?.includes("Plan"));
+    act(() => {
+      plan?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(onSelectPermissionMode).toHaveBeenCalledWith("read_only", undefined);
   });
 
   it("turns Approve for me off when Standard is selected", () => {
@@ -3414,7 +3583,7 @@ describe("composer drag and drop", () => {
     });
 
     expect(container.querySelector(".composer-collapsed-prompt-card")).not.toBeNull();
-    expect(container.querySelector(".composer-collapsed-prompt-title")?.textContent).toBe("# 交接提示词(直接粘贴)");
+    expect(container.querySelector(".composer-collapsed-prompt-card .composer-document-card-title")?.textContent).toBe("# 交接提示词(直接粘贴)");
     expect((textarea as HTMLTextAreaElement).value).toBe("");
     expect((textarea as HTMLTextAreaElement).placeholder).toBe("要求后续变更");
 
@@ -3441,7 +3610,7 @@ describe("composer drag and drop", () => {
       pastePlainText(textarea as HTMLTextAreaElement, longText);
     });
 
-    const revealButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-main");
+    const revealButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main");
     expect(revealButton).not.toBeNull();
 
     act(() => {

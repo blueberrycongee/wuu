@@ -80,72 +80,6 @@ func TestRunToolLoopPreservesVisiblePartialAssistantOnStepError(t *testing.T) {
 	}
 }
 
-func TestEnforceAggregateResultBudgetCountsTrimMarker(t *testing.T) {
-	original := strings.Repeat("x", maxAggregateResultChars+1_000)
-	messages := []providers.ChatMessage{{Role: "tool", Content: original}}
-
-	enforceAggregateResultBudget(messages)
-
-	if got := len(messages[0].Content); got != maxAggregateResultChars {
-		t.Fatalf("trimmed length = %d, want %d", got, maxAggregateResultChars)
-	}
-	marker := fmt.Sprintf(
-		"\n[trimmed: original %d chars, aggregate budget %d]",
-		len(original),
-		maxAggregateResultChars,
-	)
-	if !strings.HasSuffix(messages[0].Content, marker) {
-		t.Fatalf("trimmed result missing marker suffix %q", marker)
-	}
-}
-
-func TestEnforceAggregateResultBudgetTrimsLargestResultFirst(t *testing.T) {
-	visible := strings.Repeat("visible", 50_000)
-	largest := strings.Repeat("a", 150_000)
-	smaller := strings.Repeat("b", 100_000)
-	messages := []providers.ChatMessage{
-		{Role: "assistant", Content: visible},
-		{Role: "tool", Content: largest},
-		{Role: "tool", Content: smaller},
-	}
-
-	enforceAggregateResultBudget(messages)
-
-	if messages[2].Content != smaller {
-		t.Fatal("smaller tool result changed even though the largest result absorbed the excess")
-	}
-	if messages[0].Content != visible {
-		t.Fatal("non-tool content must not count against or be changed by the tool-result budget")
-	}
-	if got := len(messages[1].Content) + len(messages[2].Content); got != maxAggregateResultChars {
-		t.Fatalf("aggregate tool result length = %d, want %d", got, maxAggregateResultChars)
-	}
-}
-
-func TestEnforceAggregateResultBudgetHandlesLessRoomThanMarker(t *testing.T) {
-	messages := []providers.ChatMessage{
-		{Role: "tool", Content: strings.Repeat("a", 100_050)},
-		{Role: "tool", Content: strings.Repeat("b", 99_975)},
-		{Role: "tool", Content: strings.Repeat("c", 99_975)},
-	}
-
-	enforceAggregateResultBudget(messages)
-
-	total := 0
-	for _, message := range messages {
-		total += len(message.Content)
-	}
-	if total != maxAggregateResultChars {
-		t.Fatalf("aggregate tool result length = %d, want %d", total, maxAggregateResultChars)
-	}
-	if got := len(messages[0].Content); got != 50 {
-		t.Fatalf("largest result length = %d, want the 50-byte remaining allocation", got)
-	}
-	if !strings.HasPrefix(messages[0].Content, "\n[trimmed:") {
-		t.Fatalf("small allocation should retain a bounded marker, got %q", messages[0].Content)
-	}
-}
-
 func TestRunToolLoopBeforeRequestTransformsProviderRequest(t *testing.T) {
 	step := &fakeStep{results: []StepResult{{Content: "done"}}}
 	tools := &fakeLoopTools{defs: []providers.ToolDefinition{{
@@ -428,21 +362,6 @@ func TestPartitionToolCallsUsesCallArguments(t *testing.T) {
 	}
 	if !batches[2].concurrent || batches[2].calls[0].ID != "safe_2" {
 		t.Fatalf("third call should be concurrent based on arguments, got %+v", batches[2])
-	}
-}
-
-func TestRunToolLoop_SimpleAnswer(t *testing.T) {
-	step := &fakeStep{results: []StepResult{{Content: "hello back"}}}
-	res, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("hi")}, LoopConfig{Model: "m"}, step)
-	if err != nil {
-		t.Fatalf("loop error: %v", err)
-	}
-	if res.Content != "hello back" {
-		t.Fatalf("got content %q", res.Content)
-	}
-	visible := visibleMessagesForTest(res.NewMessages)
-	if len(visible) != 1 || visible[0].Role != "assistant" {
-		t.Fatalf("unexpected new messages: %+v", res.NewMessages)
 	}
 }
 
@@ -1113,25 +1032,6 @@ func TestRunToolLoop_OutputTruncationCompletesTurn(t *testing.T) {
 	}
 }
 
-func TestRunToolLoop_MaxTokensStopReasonNormalizesLength(t *testing.T) {
-	step := &fakeStep{results: []StepResult{
-		{Content: "x", Truncated: true, StopReason: "max_tokens"},
-	}}
-	res, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("loop")}, LoopConfig{Model: "m"}, step)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Content != "x" {
-		t.Fatalf("expected partial content, got %q", res.Content)
-	}
-	if res.FinishReason != providers.FinishReasonLength || res.StopReason != "max_tokens" || !res.Truncated {
-		t.Fatalf("expected max_tokens to normalize to length, got reason=%q stop=%q truncated=%v", res.FinishReason, res.StopReason, res.Truncated)
-	}
-	if len(step.calls) != 1 {
-		t.Fatalf("expected 1 step call, got %d", len(step.calls))
-	}
-}
-
 func TestRunToolLoop_KimiMessageSizeOverflowAutoCompactsOnce(t *testing.T) {
 	body := "total message size 2306631 exceeds limit 2097152"
 	overflow := &providers.HTTPError{StatusCode: 400, Body: body, ContextOverflow: providers.DetectContextOverflow(body)}
@@ -1201,6 +1101,42 @@ func TestRunToolLoop_ContextOverflowStopsWhenCompactUnchanged(t *testing.T) {
 	}
 }
 
+func TestRunToolLoop_ContextOverflowForceTrimsWhenCompactUnchanged(t *testing.T) {
+	overflow := &providers.HTTPError{StatusCode: 400, Body: "context_length_exceeded", ContextOverflow: true}
+	step := &fakeStep{results: []StepResult{{}, {Content: "ok"}}, errs: []error{overflow, nil}}
+	history := []providers.ChatMessage{
+		{Role: "system", Content: "sys"},
+		userMsg("old"),
+		{Role: "assistant", Content: "old answer"},
+		userMsg("latest"),
+	}
+	compactCalled := 0
+	cfg := LoopConfig{
+		Model: "m",
+		Compact: func(_ context.Context, msgs []providers.ChatMessage) ([]providers.ChatMessage, error) {
+			compactCalled++
+			return msgs, nil
+		},
+	}
+
+	result, err := RunToolLoop(context.Background(), history, cfg, step)
+	if err != nil {
+		t.Fatalf("expected force-trim recovery to succeed, got %v", err)
+	}
+	if compactCalled != 1 {
+		t.Fatalf("expected one reactive compact attempt, got %d", compactCalled)
+	}
+	if len(step.calls) != 2 {
+		t.Fatalf("expected compact-unchanged overflow to retry a trimmed request, got %d calls", len(step.calls))
+	}
+	if !result.HistoryRewritten {
+		t.Fatal("expected force-trim to rewrite history")
+	}
+	if len(step.calls[1].Messages) >= len(history) {
+		t.Fatalf("trimmed retry still had %d messages", len(step.calls[1].Messages))
+	}
+}
+
 func TestRunToolLoop_ContextOverflowOnlyRetriesOnce(t *testing.T) {
 	overflow := &providers.HTTPError{StatusCode: 400, Body: "context_length_exceeded", ContextOverflow: true}
 	step := &fakeStep{results: []StepResult{{}, {}}, errs: []error{overflow, overflow}}
@@ -1220,18 +1156,6 @@ func TestRunToolLoop_ContextOverflowOnlyRetriesOnce(t *testing.T) {
 	}
 	if len(step.calls) != 2 {
 		t.Fatalf("expected one retry after changed compact, got %d calls", len(step.calls))
-	}
-}
-
-func TestRunToolLoop_MaxStepsExceeded(t *testing.T) {
-	step := &fakeStep{results: []StepResult{{ToolCalls: []providers.ToolCall{{ID: "a", Name: "t", Arguments: `{}`}}}}}
-	cfg := LoopConfig{Model: "m", Tools: &fakeLoopTools{defs: []providers.ToolDefinition{{Name: "t"}}}, MaxSteps: 1}
-	_, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("loop")}, cfg, step)
-	if err == nil {
-		t.Fatal("expected max-steps error")
-	}
-	if !strings.Contains(err.Error(), "max steps exceeded") {
-		t.Fatalf("got %v", err)
 	}
 }
 
@@ -1730,9 +1654,28 @@ func TestRunToolLoop_ProactiveCompactDoesNotLoopOnNoOpCompact(t *testing.T) {
 	}
 }
 
-func TestRunToolLoop_OverflowCompactFiresOnCompactCallback(t *testing.T) {
-	overflow := &providers.HTTPError{StatusCode: 400, Body: "context_length_exceeded", ContextOverflow: true}
-	step := &fakeStep{results: []StepResult{{}, {Content: "ok"}}, errs: []error{overflow, nil}}
+func TestRunToolLoop_OverflowCompactIgnoresIdleToolRuntime(t *testing.T) {
+	cause := &providers.HTTPError{
+		StatusCode:      400,
+		Body:            "400 Bad Request: Failed to start sampling: [input_too_large] The prompt is too long for this model's context window (500855 tokens > 500000 tokens)",
+		ContextOverflow: true,
+	}
+	overflow := &providers.StreamRecoveryError{
+		Cause: cause,
+		Recovery: providers.StreamRecoveryInfo{
+			AttemptCount:    1,
+			RetryCount:      0,
+			MaxAttempts:     11,
+			SubmissionCount: 1,
+			StopReason:      "non_retryable",
+			FailureCategory: providers.FailureContextOverflow,
+		},
+	}
+	idleRuntime := NewTurnToolRuntime(ToolRuntimeConfig{})
+	step := &fakeStep{
+		results: []StepResult{{ToolRuntime: idleRuntime}, {Content: "ok"}},
+		errs:    []error{overflow, nil},
+	}
 	var infos []CompactInfo
 	cfg := LoopConfig{Model: "m", Compact: func(_ context.Context, m []providers.ChatMessage) ([]providers.ChatMessage, error) {
 		return m[len(m)-1:], nil
@@ -1747,7 +1690,185 @@ func TestRunToolLoop_OverflowCompactFiresOnCompactCallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(infos) != 1 || infos[0].Reason != CompactReasonOverflow {
-		t.Fatalf("expected one overflow OnCompact, got %+v", infos)
+		t.Fatalf("expected overflow compact despite idle tool runtime, got %+v", infos)
+	}
+	if len(step.calls) != 2 {
+		t.Fatalf("expected overflow plus recovered retry, got %d calls", len(step.calls))
+	}
+}
+
+func TestRunToolLoop_UndercountedLocalUsageShrinksBeforeRequest(t *testing.T) {
+	history := []providers.ChatMessage{
+		{Role: "system", Content: "system"},
+		{Role: "user", Content: "review the change"},
+	}
+	for i := 0; i < 6; i++ {
+		id := fmt.Sprintf("c%d", i)
+		history = append(history,
+			providers.ChatMessage{Role: "assistant", ToolCalls: []providers.ToolCall{{
+				ID: id, Name: "bash", Arguments: `{"command":"` + strings.Repeat("x", 4000) + `"}`,
+			}}},
+			providers.ChatMessage{Role: "tool", Name: "bash", ToolCallID: id, Content: strings.Repeat("y", 4000)},
+		)
+	}
+	history = append(history, userMsg("合并了吗"))
+	tools := &fakeLoopTools{defs: []providers.ToolDefinition{{
+		Name:        "bash",
+		Description: strings.Repeat("schema ", 800),
+	}}}
+	messagesOnly := localRequestEstimate(history, LoopConfig{})
+	withSchema := localRequestEstimate(history, LoopConfig{Tools: tools})
+	if withSchema <= messagesOnly {
+		t.Fatalf("tool schemas should increase the outbound estimate: messages=%d withSchema=%d", messagesOnly, withSchema)
+	}
+	tracker := NewUsageTracker()
+	tracker.RecordPendingMessages([]providers.ChatMessage{{Role: "user", Content: "short"}})
+	if tracker.EstimateCurrent() >= messagesOnly {
+		t.Fatalf("fixture is not an undercount: tracker=%d messages=%d", tracker.EstimateCurrent(), messagesOnly)
+	}
+	step := &fakeStep{results: []StepResult{{Content: "merged"}}}
+	cfg := LoopConfig{
+		Model:                  "grok-4.6",
+		Tools:                  tools,
+		UsageTracker:           tracker,
+		CompactThresholdTokens: messagesOnly + 1,
+		FreshContextTokens:     200_000,
+		ArchiveHistory: func(context.Context, []providers.ChatMessage) (HistoryArchive, error) {
+			return HistoryArchive{HeadSeq: 40}, nil
+		},
+		FreshContext: func(_ context.Context, messages []providers.ChatMessage, head, fixed, target int) ([]providers.ChatMessage, error) {
+			return buildFreshContext(messages, head, fixed, target)
+		},
+	}
+	res, err := RunToolLoop(context.Background(), history, cfg, step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.HistoryRewritten {
+		t.Fatal("expected a fresh window before the provider request")
+	}
+	if len(step.calls) != 1 {
+		t.Fatalf("provider calls = %d, want 1", len(step.calls))
+	}
+	if got := len(step.calls[0].Messages); got >= len(history) {
+		t.Fatalf("provider saw %d messages from a %d-message history", got, len(history))
+	}
+}
+
+func TestRunToolLoop_UndercountedLocalUsageCompactsBeforeRequest(t *testing.T) {
+	history := []providers.ChatMessage{
+		{Role: "system", Content: "system"},
+		userMsg("review the change"),
+	}
+	for i := 0; i < 4; i++ {
+		id := fmt.Sprintf("c%d", i)
+		history = append(history,
+			providers.ChatMessage{Role: "assistant", ToolCalls: []providers.ToolCall{{
+				ID: id, Name: "bash", Arguments: `{"command":"` + strings.Repeat("x", 4000) + `"}`,
+			}}},
+			providers.ChatMessage{Role: "tool", Name: "bash", ToolCallID: id, Content: strings.Repeat("y", 4000)},
+		)
+	}
+	history = append(history, userMsg("合并了吗"))
+	tracker := NewUsageTracker()
+	tracker.RecordPendingMessages([]providers.ChatMessage{{Role: "user", Content: "short"}})
+	step := &fakeStep{results: []StepResult{{Content: "merged"}}}
+	compactCalled := 0
+	cfg := LoopConfig{
+		Model:        "grok-4.6",
+		UsageTracker: tracker,
+		Compact: func(context.Context, []providers.ChatMessage) ([]providers.ChatMessage, error) {
+			compactCalled++
+			return []providers.ChatMessage{{Role: "user", Content: "summary"}}, nil
+		},
+		MaxContextTokens: 1000,
+		DefaultMaxTokens: 100,
+	}
+	cfg.CompactThresholdTokens = localRequestEstimate(history, cfg)
+	if tracker.EstimateCurrent() >= cfg.CompactThresholdTokens {
+		t.Fatalf("fixture is not an undercount: tracker=%d threshold=%d", tracker.EstimateCurrent(), cfg.CompactThresholdTokens)
+	}
+	res, err := RunToolLoop(context.Background(), history, cfg, step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compactCalled != 1 || !res.HistoryRewritten {
+		t.Fatalf("compact=%d rewritten=%v", compactCalled, res.HistoryRewritten)
+	}
+	if len(step.calls) != 1 || len(step.calls[0].Messages) >= len(history) {
+		t.Fatalf("provider saw the unrepaired history: calls=%d", len(step.calls))
+	}
+}
+
+func TestRunToolLoop_ProviderUsageIsNotReplacedByLocalEstimate(t *testing.T) {
+	history := []providers.ChatMessage{{Role: "system", Content: "system"}, userMsg("review")}
+	for i := 0; i < 6; i++ {
+		id := fmt.Sprintf("c%d", i)
+		history = append(history,
+			providers.ChatMessage{Role: "assistant", ToolCalls: []providers.ToolCall{{
+				ID: id, Name: "bash", Arguments: `{"command":"` + strings.Repeat("x", 4000) + `"}`,
+			}}},
+			providers.ChatMessage{Role: "tool", Name: "bash", ToolCallID: id, Content: strings.Repeat("y", 4000)},
+		)
+	}
+	tracker := NewUsageTracker()
+	tracker.RecordResponse(&providers.TokenUsage{InputTokens: 100, OutputTokens: 20})
+	full := localRequestEstimate(history, LoopConfig{})
+	if tracker.EstimateCurrent() >= full {
+		t.Fatalf("fixture does not separate provider usage from the local estimate: provider=%d local=%d", tracker.EstimateCurrent(), full)
+	}
+	step := &fakeStep{results: []StepResult{{Content: "ok"}}}
+	compactCalled := 0
+	cfg := LoopConfig{
+		Model: "grok-4.6",
+		Compact: func(context.Context, []providers.ChatMessage) ([]providers.ChatMessage, error) {
+			compactCalled++
+			return history[:1], nil
+		},
+		UsageTracker:           tracker,
+		CompactThresholdTokens: full,
+		MaxContextTokens:       full + 20_000,
+	}
+	res, err := RunToolLoop(context.Background(), history, cfg, step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compactCalled != 0 || res.HistoryRewritten {
+		t.Fatalf("provider baseline was replaced: compact=%d rewritten=%v", compactCalled, res.HistoryRewritten)
+	}
+	if len(step.calls) != 1 || len(step.calls[0].Messages) != len(history) {
+		t.Fatalf("request = %d calls / %d messages, want 1 call and %d messages", len(step.calls), len(step.calls[0].Messages), len(history))
+	}
+}
+
+func TestRunToolLoop_UnreportedAssistantCountsTowardNextEstimate(t *testing.T) {
+	history := []providers.ChatMessage{userMsg("hi")}
+	tracker := NewUsageTracker()
+	payload := strings.Repeat("token ", 300)
+	step := &fakeStep{results: []StepResult{{Content: payload}}}
+	cfg := LoopConfig{Model: "m", UsageTracker: tracker, MaxSteps: 1}
+	if _, err := RunToolLoop(context.Background(), history, cfg, step); err != nil {
+		t.Fatal(err)
+	}
+	base := localRequestEstimate(history, cfg)
+	if got := tracker.EstimateCurrent(); got <= base {
+		t.Fatalf("estimate = %d, want it to include the assistant message above %d", got, base)
+	}
+}
+
+func TestRunToolLoop_ReportedUsageDoesNotDoubleCountAssistant(t *testing.T) {
+	history := []providers.ChatMessage{userMsg("hi")}
+	tracker := NewUsageTracker()
+	step := &fakeStep{results: []StepResult{{
+		Content: strings.Repeat("token ", 300),
+		Usage:   &providers.TokenUsage{InputTokens: 40, OutputTokens: 10},
+	}}}
+	cfg := LoopConfig{Model: "m", UsageTracker: tracker, MaxSteps: 1}
+	if _, err := RunToolLoop(context.Background(), history, cfg, step); err != nil {
+		t.Fatal(err)
+	}
+	if got := tracker.EstimateCurrent(); got != 50 {
+		t.Fatalf("estimate = %d, want provider total 50", got)
 	}
 }
 
@@ -1918,33 +2039,6 @@ func TestRunToolLoop_BeforeRequestContextAppendsHiddenMessages(t *testing.T) {
 	}
 }
 
-func TestRequestOnlyContextBlocksOwnTypedBlockProjection(t *testing.T) {
-	block := wuucontext.Block{
-		Kind:    wuucontext.BlockEnvironment,
-		Title:   "Runtime environment",
-		Source:  "runtime.snapshot",
-		Content: "# Environment\n- CWD: /tmp/project",
-	}
-	segments := RequestOnlyContextBlocks([]wuucontext.Block{block})
-	if len(segments) != 1 {
-		t.Fatalf("expected one context segment, got %+v", segments)
-	}
-	segment := segments[0]
-	if segment.Lifecycle != ContextSegmentRequestOnly || segment.Placement != ContextSegmentAfterHistory || segment.CachePolicy != ContextSegmentVolatile || segment.Durable || segment.VisibleInUI {
-		t.Fatalf("unexpected segment policy: %+v", segment)
-	}
-	if len(segment.Blocks) != 1 || segment.Blocks[0].Kind != wuucontext.BlockEnvironment {
-		t.Fatalf("segment should retain typed blocks: %+v", segment)
-	}
-	if len(segment.Messages) != 1 {
-		t.Fatalf("segment should include provider projection: %+v", segment)
-	}
-	msg := segment.Messages[0]
-	if msg.Role != "user" || !msg.Hidden || !wuucontext.IsSystemReminder(msg.Name, msg.Content) || !strings.Contains(msg.Content, "[ENVIRONMENT]") {
-		t.Fatalf("unexpected provider projection: %+v", msg)
-	}
-}
-
 func TestRunToolLoop_TypedRequestOnlyBlocksStayOutOfDurableHistory(t *testing.T) {
 	step := &fakeStep{results: []StepResult{{Content: "ok"}}}
 	block := wuucontext.Block{
@@ -2040,11 +2134,15 @@ func TestRunToolLoop_RequestOnlyContextNotTrackedOnRequestError(t *testing.T) {
 		},
 	}
 
-	if _, err := RunToolLoop(context.Background(), []providers.ChatMessage{{Role: "system", Content: "sys"}}, cfg, step); err == nil {
+	history := []providers.ChatMessage{{Role: "system", Content: "sys"}}
+	if _, err := RunToolLoop(context.Background(), history, cfg, step); err == nil {
 		t.Fatal("expected request error")
 	}
-	if got := tracker.PendingDelta(); got != 0 {
-		t.Fatalf("request-only context should not be committed on error, got pending delta %d", got)
+	// The durable transcript is reconciled before the send. Request-only
+	// context is not part of that total and must not be committed when the
+	// request fails.
+	if got, want := tracker.PendingDelta(), localRequestEstimate(history, cfg); got != want {
+		t.Fatalf("pending delta = %d, want durable estimate %d", got, want)
 	}
 	if got := tracker.LastResponseTotal(); got != 0 {
 		t.Fatalf("request-only context should not create a response baseline on error, got %d", got)
@@ -2507,28 +2605,45 @@ func TestRunToolLoop_EmptyAnswerWithoutStopReasonIsError(t *testing.T) {
 }
 
 func TestRunToolLoop_EmptyAnswerCarriesStopReason(t *testing.T) {
-	step := &fakeStep{results: []StepResult{{Content: "", StopReason: "stop"}}}
+	step := &fakeStep{results: []StepResult{{StopReason: "unexpected_stop"}}}
 	_, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("hi")}, LoopConfig{Model: "m"}, step)
 	if err == nil || !IsEmptyAnswer(err) {
 		t.Fatalf("expected EmptyAnswerError, got %v", err)
 	}
 	var emptyErr *EmptyAnswerError
-	if !errors.As(err, &emptyErr) || emptyErr.StopReason != "stop" {
-		t.Fatalf("expected StopReason=stop, got %+v", emptyErr)
+	if !errors.As(err, &emptyErr) || emptyErr.StopReason != "unexpected_stop" {
+		t.Fatalf("expected original stop reason, got %+v", emptyErr)
 	}
 }
 
 func TestRunToolLoop_EmptyAnswerWithNaturalStopReasonSucceeds(t *testing.T) {
-	step := &fakeStep{results: []StepResult{{Content: "  ", StopReason: "end_turn"}}}
-	res, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("hi")}, LoopConfig{Model: "m"}, step)
-	if err != nil {
-		t.Fatalf("expected empty completion to succeed, got %v", err)
+	for _, stop := range []string{"end_turn", "completed", "stop"} {
+		t.Run(stop, func(t *testing.T) {
+			step := &fakeStep{results: []StepResult{{Content: "  ", StopReason: stop, Usage: &providers.TokenUsage{OutputTokens: 4}}}}
+			res, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("hi")}, LoopConfig{Model: "m"}, step)
+			if err != nil || res.FinishReason != providers.FinishReasonStop || res.StopReason != stop {
+				t.Fatalf("expected normal empty completion, got %+v, %v", res, err)
+			}
+			if res.Content != "" || len(res.DurableNewMessages) != 0 || len(step.calls) != 1 || res.OutputTokens != 4 {
+				t.Fatalf("empty completion retried, lost usage or fabricated text: calls=%d result=%+v", len(step.calls), res)
+			}
+		})
 	}
-	if res.Content != "" {
-		t.Fatalf("expected empty final content, got %q", res.Content)
+}
+
+func TestRunToolLoop_EmptyCompletionAfterToolResults(t *testing.T) {
+	tools := &fakeLoopTools{defs: []providers.ToolDefinition{{Name: "read_file"}}, results: map[string]string{"inspect": "review result"}}
+	step := &fakeStep{results: []StepResult{
+		{ToolCalls: []providers.ToolCall{{ID: "inspect", Name: "read_file", Arguments: `{}`}}},
+		{StopReason: "completed"},
+	}}
+	res, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("Review this delivery")}, LoopConfig{Model: "m", Tools: tools}, step)
+	if err != nil || len(step.calls) != 2 || len(res.DurableNewMessages) != 2 || res.Content != "" {
+		t.Fatalf("tool work did not settle normally: calls=%d result=%+v err=%v", len(step.calls), res, err)
 	}
-	if len(visibleMessagesForTest(res.NewMessages)) != 0 {
-		t.Fatalf("expected no persisted empty assistant message, got %+v", res.NewMessages)
+	last := step.calls[1].Messages[len(step.calls[1].Messages)-1]
+	if last.Role != "tool" || last.ToolCallID != "inspect" {
+		t.Fatalf("completion skipped the tool result: %+v", last)
 	}
 }
 

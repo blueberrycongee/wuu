@@ -1,15 +1,13 @@
-# Desktop plugin API entry
+# Desktop plugin API
 
-The Desktop plugin documentation now starts with a reader-first UI extension map:
+Desktop modules export `activate(api)` and use the generation-scoped `PluginGenerationApi`. Obtain types from the matching Wuu checkout's `packages/plugin-sdk`; use the host's `api.react` and `api.ui` at runtime.
 
-- [Desktop UI plugins](../customize/desktop-plugins.md) — choose a View, Slot,
-  Presenter, or Surface;
-- [Desktop plugin quickstart](../customize/desktop-plugin-quickstart.md) — build and
-  hot reload a first UI contribution;
-- [Desktop plugin recipes](../customize/plugin-recipes.md) — implement selection UI,
-  Composer actions, Views, and message presentation;
-- [Wuu Plugin authoring reference](../customize/plugin-authoring.md) — exact manifest,
-  lifecycle, API, packaging, and trust details.
+| Contract | Guide |
+| --- | --- |
+| Slots, surfaces, presenters, views, cards, and status sources | [Desktop UI plugins](../customize/desktop-plugins.md) |
+| A complete local package and build commands | [Desktop quickstart](../customize/desktop-plugin-quickstart.md) |
+| Draft actions, workspace pages, and runtime calls | [Desktop recipes](../customize/plugin-recipes.md) |
+| Manifest, runtime lifecycle, storage, and distribution | [Plugin authoring](../customize/plugin-authoring.md) |
+| Public theme tokens and semantic anchors | [Theme surface matrix](../customize/theme-surface-matrix.md) |
 
-This page also keeps existing reference links working. Use the pages above for current
-contracts and examples.
+Registration methods return disposable handles and belong to the active generation. Actions advertised by a presentation host are specific to that render, not a global command permission. Private renderer modules, DOM nesting, and React internals are outside the public API.

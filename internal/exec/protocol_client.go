@@ -16,6 +16,8 @@ import (
 type Notification struct {
 	Method string
 	Params json.RawMessage
+	// Err terminates delivery when the local event subscription fails.
+	Err error
 }
 
 type protocolResponse struct {

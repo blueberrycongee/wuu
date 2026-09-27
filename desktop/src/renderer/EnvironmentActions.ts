@@ -2,7 +2,7 @@ import type { MutableRefObject, SetStateAction } from "react";
 import type { GitCommitResult, GitPullRequestResult } from "../shared/protocol";
 import { sameRuntimeContext, type AppState } from "./AppState";
 import type { EnvironmentPanelMenu } from "./EnvironmentPanel";
-import { localizedText, translateCurrent } from "./i18n";
+import { translateCurrent } from "./i18n";
 import { showErrorToast, toastErrorMessage } from "./Toast";
 
 type SetAppState = (update: SetStateAction<AppState>) => void;
@@ -11,7 +11,7 @@ export type EnvironmentActionsDeps = {
   getAppState: () => AppState;
   getEnvironmentRoot: () => string | undefined;
   setAppState: SetAppState;
-  closeProjectMenus: () => void;
+  closeWorkspaceMenus: () => void;
   setEnvironmentPanelOpen: (open: boolean) => void;
   setEnvironmentPanelDismissed: (dismissed: boolean) => void;
   setEnvironmentPanelMenu: (menu: EnvironmentPanelMenu) => void;
@@ -80,7 +80,7 @@ export function createEnvironmentActions(
         gitStatus,
         status: current.status === "ready" ? "ready" : current.status,
       }));
-      deps.closeProjectMenus();
+      deps.closeWorkspaceMenus();
     } catch (error) {
       if (!environmentRootIsCurrent(root)) {
         return;
@@ -190,7 +190,7 @@ export function createEnvironmentActions(
       deps.setAppState((current) => ({
         ...current,
         gitStatus: result.status,
-        status: localizedText("git.commit.completed", { commit: result.commit }),
+        status: "ready",
       }));
     }
     return result;
@@ -231,9 +231,7 @@ export function createEnvironmentActions(
       deps.setAppState((current) => ({
         ...current,
         gitStatus: result.status,
-        status: result.already_exists
-          ? translateCurrent("git.pr.exists")
-          : translateCurrent("git.pr.created"),
+        status: "ready",
       }));
     }
     return result;

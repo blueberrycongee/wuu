@@ -3,10 +3,8 @@ import type { InitializeResult } from "../shared/protocol";
 import { initialState } from "./AppState";
 import {
   applyDraftRuntimeMemory,
-  clearDraftApproveForMeMemory,
-  clearDraftPermissionMemory,
-  clearDraftRuntimeMemory,
   lastEffortForRuntimeModel,
+  lastModelForProvider,
   readDraftApproveForMeMemory,
   readDraftPermissionMemory,
   readDraftRuntimeMemory,
@@ -184,27 +182,38 @@ describe("draft runtime memory", () => {
     expect(readDraftRuntimeMemory()).toBeUndefined();
   });
 
-  it("clears the memory so the workspace default takes over again", () => {
-    writeDraftRuntimeMemory({
-      provider: "tokenhub",
-      model: "gpt-5.6-sol",
-      effort: "high",
-    });
-    clearDraftRuntimeMemory();
+  it("keeps each provider's model and effort while the other one is in use", () => {
+    writeDraftRuntimeMemory({ provider: "work", model: "claude-sonnet", effort: "low" });
+    writeDraftRuntimeMemory({ provider: "tokenhub", model: "gpt-5.6-sol", effort: "high" });
+    writeDraftRuntimeMemory({ provider: "work", model: "claude-opus", effort: "medium" });
 
-    expect(readDraftRuntimeMemory()).toBeUndefined();
-    expect(resolveDraftRuntimeMemory(initialized())).toBeUndefined();
+    expect(lastModelForProvider("tokenhub")).toBe("gpt-5.6-sol");
+    expect(lastEffortForRuntimeModel("tokenhub", "gpt-5.6-sol")).toBe("high");
+    expect(lastModelForProvider("work")).toBe("claude-opus");
+    // A provider's earlier model keeps its own effort instead of inheriting the
+    // one picked for its sibling.
+    expect(lastEffortForRuntimeModel("work", "claude-sonnet")).toBe("low");
+    expect(lastModelForProvider("unused-provider")).toBeUndefined();
+    expect(readDraftRuntimeMemory()).toEqual({
+      provider: "work",
+      model: "claude-opus",
+      effort: "medium",
+    });
   });
 
-  it("returns the last effort for a previously chosen model", () => {
-    writeDraftRuntimeMemory({
+  it("reads the single-selection payload written by an older build", () => {
+    window.localStorage.setItem(
+      MEMORY_KEY,
+      JSON.stringify({ provider: "tokenhub", model: "gpt-5.6-sol", effort: "high" }),
+    );
+
+    expect(readDraftRuntimeMemory()).toEqual({
       provider: "tokenhub",
       model: "gpt-5.6-sol",
       effort: "high",
     });
-
+    expect(lastModelForProvider("tokenhub")).toBe("gpt-5.6-sol");
     expect(lastEffortForRuntimeModel("tokenhub", "gpt-5.6-sol")).toBe("high");
-    expect(lastEffortForRuntimeModel("tokenhub", "gpt-5.6-terra")).toBeUndefined();
   });
 
   it("seeds a draft conversation without rewriting an open thread", () => {
@@ -323,12 +332,6 @@ describe("draft permission memory", () => {
     writeDraftPermissionMemory("");
     expect(window.localStorage.getItem(PERMISSION_KEY)).toBeNull();
   });
-
-  it("clears the memory so the workspace default takes over again", () => {
-    writeDraftPermissionMemory("unconfined");
-    clearDraftPermissionMemory();
-    expect(readDraftPermissionMemory()).toBeUndefined();
-  });
 });
 
 describe("draft Approve for me memory", () => {
@@ -353,11 +356,5 @@ describe("draft Approve for me memory", () => {
     expect(
       applyDraftRuntimeMemory(initialized({ permissions: { mode: "standard" } })).permissions,
     ).toEqual({ mode: "standard", approve_for_me: true });
-  });
-
-  it("clears the Approve for me memory so the workspace default takes over again", () => {
-    writeDraftApproveForMeMemory(true);
-    clearDraftApproveForMeMemory();
-    expect(readDraftApproveForMeMemory()).toBeUndefined();
   });
 });

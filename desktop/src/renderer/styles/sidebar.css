@@ -97,6 +97,9 @@
 }
 
 .app-shell.right-panel-open {
+  /* Environment panels measure against the conversation column. Subtract the
+   * docked workspace track from their viewport-based inset calculation. */
+  --workspace-right-panel-reserved-width: var(--workspace-right-panel-width, 360px);
   grid-template-columns: var(--sidebar-width, 296px) minmax(0, 1fr) var(--workspace-right-panel-width, 360px);
 }
 
@@ -111,11 +114,11 @@
    * so the title text vertically centers with the macOS traffic lights at
    * trafficLightPosition (18, 17). The default 56px row pushes the text 6px
    * below the lights. */
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
 }
 
 .app-shell.popped-out-shell .titlebar {
-  padding-left: max(24px, calc(var(--window-controls-inset-left) + 10px));
+  padding-left: var(--window-titlebar-leading-inset);
 }
 
 /* Right-panel "globalized" focus mode: the panel takes over the main stage
@@ -182,24 +185,19 @@
 
 .globalized-sidebar-toggle-region {
   position: fixed;
-  /* Match the normal 30px toggle's center inside the 48px titlebar content
-   * box. The divider is an inset shadow, so the full 48px remains available
-   * and both this control and the native traffic lights center at 24px. */
-  top: calc((48px - 30px) / 2);
+  /* Match the shared toolbar center, including when zoomed controls require
+   * a taller row than the native traffic lights. */
+  top: calc(env(safe-area-inset-top, 0px) + (var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
   /* The OS inset is a hard exclusion zone. Wuu owns an additional fixed
    * gutter so decorated theme controls never visually merge with it. */
-  left: max(8px, calc(var(--window-controls-inset-left) + 10px));
+  left: var(--window-titlebar-leading-inset);
   z-index: 150;
-  width: 34px;
-  height: 34px;
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
   -webkit-app-region: drag;
 }
 
 .globalized-sidebar-toggle-region .globalized-sidebar-toggle {
-  width: 30px;
-  height: 30px;
-  padding: 2px;
-  background-clip: content-box;
   -webkit-app-region: no-drag;
 }
 
@@ -218,14 +216,14 @@
  * the tabbar's buttons opt out via the `.workspace-panel-tabbar button`
  * rule in workspace.css. */
 .app-shell.right-panel-globalized.sidebar-collapsed .workspace-panel-tabbar {
-  padding-left: max(8px, calc(var(--window-controls-inset-left) + 10px));
+  padding-left: var(--window-titlebar-leading-inset);
   -webkit-app-region: drag;
 }
 
 .workspace-panel-sidebar-hit-hole {
-  width: 38px;
+  width: var(--control-size-toolbar);
   height: 100%;
-  flex: 0 0 38px;
+  flex: 0 0 var(--control-size-toolbar);
   pointer-events: none;
   -webkit-app-region: no-drag;
 }
@@ -331,13 +329,17 @@
 }
 
 .sidebar-content {
-  --sidebar-row-pad-x: var(--control-padding-inline);
+  /* Rows are inset from the rail so their selection surface floats; the row
+   * padding takes up the rest, putting the leading glyph on the pane inset. */
+  --sidebar-content-pad-x: var(--space-2);
+  --sidebar-row-pad-x: calc(var(--pane-inset) - var(--sidebar-content-pad-x));
   --sidebar-label-weight: 400;
   --sidebar-selected-weight: 500;
-  --sidebar-label-size: var(--conversation-message-font-size, 13px);
-  --sidebar-heading-size: max(12px, calc(var(--sidebar-label-size) - 2px));
-  --sidebar-row-height: max(32px, calc(var(--sidebar-label-size) * 2.25));
-  /* One icon and text axis for navigation, projects, and account controls. */
+  --sidebar-label-size: var(--font-ui);
+  --sidebar-heading-size: max(12px, round(nearest, calc(var(--sidebar-label-size) - 2px), 1px));
+  --sidebar-row-height: max(32px, round(nearest, calc(var(--sidebar-label-size) * 2.25), 4px));
+  /* One icon and text axis for navigation, plugins, projects, and account
+   * controls. Avatars occupy this same glyph slot. */
   --sidebar-primary-icon-size: 16px;
   --sidebar-nav-icon-col: 18px;
   --sidebar-nav-column-gap: 10px;
@@ -352,11 +354,11 @@
   --sidebar-thread-actions-width: calc(var(--sidebar-row-action-size) * 2 + var(--sidebar-action-gap));
   --sidebar-row-control-pad-x: 8px;
   --sidebar-project-unread-size: var(--sidebar-session-status-dot-size);
-  /* Semantic spacing stays on a 2/4/8/16px scale. Larger text grows the
+  /* Semantic spacing follows the shared spacing scale. Larger text grows the
    * row itself instead of stretching the space between related items. */
   --sidebar-functional-row-gap: var(--sidebar-row-gap);
   --sidebar-functional-heading-gap: var(--space-1);
-  --sidebar-functional-group-gap: var(--space-4);
+  --sidebar-functional-group-gap: var(--space-3);
   /* Parent and child rows belong to one tree: use the same separation as
    * sibling rows. The collapse body owns this gap; lists add no outer inset. */
   --sidebar-section-body-gap: var(--sidebar-row-gap);
@@ -377,7 +379,7 @@
   min-height: 0;
   height: 100%;
   flex-direction: column;
-  padding: 0 8px 8px;
+  padding: 0 var(--sidebar-content-pad-x) var(--space-2);
   transform: translate3d(0, 0, 0) scale(1);
   transform-origin: left center;
   opacity: 1;
@@ -411,7 +413,12 @@
    The drawer slides underneath this stationary control island instead of
    replacing its hit target, so the pointer can remain on the toggle and click
    it to pin the sidebar open after the preview has appeared. This applies to
-   both the conversation and settings titlebars. */
+   both the conversation and settings titlebars.
+   Titlebars live under conversation/settings overflow and a z-index:2
+   stacking context, so a relative 150 cannot escape those ancestors. While
+   the drawer is showing, pin the toggle to the window like the globalized
+   sidebar control so it stays above the 140 drawer without lifting the
+   whole titlebar over the rail. */
 .sidebar-collapsed :is(.titlebar, .settings-titlebar) .sidebar-toggle-button {
   position: relative;
   z-index: 150;
@@ -419,6 +426,26 @@
     background-color var(--sidebar-drawer-enter-duration) var(--sidebar-drawer-enter-easing),
     box-shadow var(--sidebar-drawer-enter-duration) var(--sidebar-drawer-enter-easing),
     color var(--sidebar-drawer-enter-duration) var(--sidebar-drawer-enter-easing);
+}
+
+.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
+  :is(.titlebar, .settings-titlebar)
+  .sidebar-toggle-button,
+.sidebar-drawer-docking :is(.titlebar, .settings-titlebar) .sidebar-toggle-button {
+  position: fixed;
+  top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
+  left: var(--window-titlebar-leading-inset);
+  z-index: 150;
+}
+
+/* Reserve the lifted toggle's space only while that slot still contains
+ * the control. */
+:is(.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing), .sidebar-drawer-docking)
+  :is(.title-block, .settings-titlebar):has(> .sidebar-toggle-button)::before {
+  content: "";
+  flex: 0 0 var(--control-size-toolbar);
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
 }
 
 .sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
@@ -605,8 +632,7 @@
   min-width: 0;
 }
 
-.compact-session-switcher-backdrop,
-.compact-session-switcher-close {
+.compact-session-switcher-backdrop {
   display: none;
 }
 
@@ -620,19 +646,7 @@
   background: var(--modal-backdrop-bg);
 }
 
-.app-shell.compact-navigation.sidebar-drawer-open .compact-session-switcher-close {
-  display: grid;
-  position: absolute;
-  z-index: 142;
-  top: calc(env(safe-area-inset-top, 0px) + 9px);
-  left: calc(var(--compact-session-switcher-width) - 46px);
-  width: 36px;
-  height: 36px;
-  color: var(--ink);
-}
-
-.sidebar-resizer,
-.channel-inspector-resizer {
+.sidebar-resizer {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -647,8 +661,7 @@
   z-index: 10;
 }
 
-.sidebar-resizer::before,
-.channel-inspector-resizer::before {
+.sidebar-resizer::before {
   /* Spans the full sidebar height so the hover/drag feedback lights the
    * entire right edge of the left sidebar, not just a short indicator
    * segment that leaves the top and bottom 12px dark. */
@@ -669,10 +682,7 @@
 
 .sidebar-resizer:hover::before,
 .sidebar-resizer:focus-visible::before,
-.resizing-sidebar .sidebar-resizer::before,
-.channel-inspector-resizer:hover::before,
-.channel-inspector-resizer:focus-visible::before,
-.channel-inspector-resizer[data-resizing]::before {
+.resizing-sidebar .sidebar-resizer::before {
   background: var(--sidebar-resizer-hover-bg);
   box-shadow: 0 0 0 1px var(--sidebar-resizer-hover-ring);
 }
@@ -776,49 +786,35 @@
   /* Keep a product-owned visual gutter after the macOS traffic-light
    * exclusion zone. Themes may decorate the first control, but they cannot
    * shrink this window-chrome boundary. */
-  padding-left: max(24px, calc(var(--window-controls-inset-left) + 10px));
+  padding-left: var(--window-titlebar-leading-inset);
 }
 
 .traffic-spacer {
-  /* Keep window controls and sidebar navigation in the first chrome row.
-   * 48px matches the conversation/settings titlebar so the collapse
-   * toggle shares the traffic-light center at 24px. */
+  /* Match the conversation/settings row, including its zoom-aware minimum
+   * height, so sidebar controls never outgrow their reserved chrome. */
   position: relative;
   display: flex;
-  height: 48px;
+  height: var(--window-titlebar-height);
   flex-shrink: 0;
   align-items: center;
   justify-content: flex-end;
-  padding-right: var(--sidebar-row-pad-x);
+  /* Preserve the sidebar accessory center while using the top-row hit size. */
+  padding-right: calc(var(--sidebar-row-pad-x) + (var(--sidebar-row-action-size) - var(--control-size-toolbar)) / 2);
   -webkit-app-region: drag;
 }
 
 .traffic-spacer .sidebar-collapse-toggle {
   position: relative;
   z-index: 1;
-  /* Hold the header toggle to the sidebar's trailing accessory column (bell,
-   * section actions, row actions, account chevron) instead of a local 30px
-   * box: the shared control size keeps the glyph, hit target, and hover pill
-   * centered on that one column at every appearance scale. */
-  width: var(--sidebar-row-action-size);
-  height: var(--sidebar-row-action-size);
-  padding: 0;
   -webkit-app-region: no-drag;
 }
 
-:root[data-platform="linux"] .traffic-spacer,
-:root[data-platform="win32"] .traffic-spacer,
-:root[data-host-kind="web"] .traffic-spacer {
+:root[data-platform="linux"] .traffic-spacer:empty,
+:root[data-platform="win32"] .traffic-spacer:empty,
+:root[data-host-kind="web"] .traffic-spacer:empty {
   height: 12px;
 }
 
-/* Match the close target to the reserved slot in the compact web header. */
-:root[data-host-kind="web"] .app-shell.compact-navigation.sidebar-drawer-open .compact-session-switcher-close {
-  top: calc(env(safe-area-inset-top, 0px) + 8px);
-  left: calc(var(--compact-session-switcher-width) - 56px);
-  width: 44px;
-  height: 44px;
-}
 
 .sidebar-brand {
   /* Two tracks so the wordmark stays put when the bell mounts or unmounts.
@@ -836,10 +832,12 @@
 .sidebar-brand-wordmark {
   grid-column: 1;
   font-family: var(--empty-home-title-font);
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 650;
   letter-spacing: 0.4px;
   line-height: 1;
+  /* Lift the serif x-height toward the adjacent bell's visible center. */
+  transform: translateY(-0.107em);
 }
 
 .sidebar-notifications-button {
@@ -860,7 +858,7 @@
   line-height: 0;
   -webkit-app-region: no-drag;
   transform: none;
-  /* keep in sync with CLEAR_UNREAD_HOLD_MS in AppModeSwitch.tsx */
+  /* keep in sync with CLEAR_UNREAD_HOLD_MS in SidebarBrand.tsx */
   --hold-duration: 600ms;
   transition:
     background-color var(--motion-fast) var(--ease-out),
@@ -892,8 +890,8 @@
 .sidebar-notifications-button svg {
   position: relative;
   z-index: 1;
-  width: 19px;
-  height: 19px;
+  width: var(--sidebar-primary-icon-size);
+  height: var(--sidebar-primary-icon-size);
   stroke-width: var(--icon-stroke);
   transform-origin: 50% 15%;
 }
@@ -1104,7 +1102,8 @@
   box-shadow: var(--shadow-card);
   color: var(--ink-soft);
   pointer-events: auto;
-  animation: sidebar-clear-unread-hint-in 140ms ease-out;
+  --enter-y: 2px;
+  animation: wuu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
 }
 
 .sidebar-clear-unread-hint::before {
@@ -1155,320 +1154,6 @@
   width: 12px;
   height: 12px;
   stroke-width: 2;
-}
-
-@keyframes sidebar-clear-unread-hint-in {
-  from {
-    opacity: 0;
-    transform: translateY(2px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sidebar-clear-unread-hint {
-    animation: none;
-  }
-}
-
-.collaboration-sidebar .sidebar-content {
-  padding: 0 8px 8px;
-}
-
-.collaboration-sidebar-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex: 0 0 auto;
-  min-height: 48px;
-  padding: 0 4px 0 max(4px, var(--window-controls-inset-left));
-  -webkit-app-region: drag;
-}
-
-.collaboration-sidebar-topbar button { -webkit-app-region: no-drag; }
-
-.select-menu-panel.collaboration-new-menu {
-  padding: 4px;
-  border-radius: var(--radius-sm);
-}
-
-.collaboration-new-menu .select-menu-item {
-  justify-content: flex-start;
-  gap: 8px;
-  font-weight: var(--weight-regular);
-}
-
-.collaboration-new-menu .select-menu-item svg {
-  flex: 0 0 auto;
-  color: var(--ink-muted);
-}
-
-.collaboration-sidebar-tools {
-  padding: 2px 0 12px;
-}
-
-.collaboration-sidebar-search {
-  display: grid;
-  height: 36px;
-  grid-template-columns: 18px minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  padding: 0 10px;
-  background: var(--surface-1);
-  color: var(--ink-muted);
-}
-
-.collaboration-sidebar-search:focus-within { border-color: var(--ink-muted); }
-
-.collaboration-sidebar-search svg {
-  width: 16px;
-  height: 16px;
-}
-
-.collaboration-sidebar-search input {
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-}
-
-.collaboration-sidebar-main {
-  display: flex;
-  min-height: 0;
-  flex: 1 1 0;
-  flex-direction: column;
-  gap: var(--sidebar-row-gap);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-bottom: 12px;
-}
-
-/* The shared sidebar owns scrolling and the account footer. */
-.collaboration-sidebar-section .collaboration-sidebar-main {
-  overflow: visible;
-  padding-bottom: 0;
-}
-
-.collaboration-sidebar-section .collaboration-sidebar-main[hidden] {
-  display: none;
-}
-
-.collaboration-sidebar-section,
-.sidebar-functional-group[data-functional-group-id="pinned"] {
-  --collaboration-contact-avatar-size: 24px;
-}
-
-.collaboration-sidebar-section .collaboration-contact-row,
-.sidebar-functional-group[data-functional-group-id="pinned"] .collaboration-contact-row {
-  width: 100%;
-  min-height: var(--sidebar-row-height);
-  column-gap: var(--sidebar-nav-column-gap);
-  padding: 4px var(--sidebar-row-pad-x);
-}
-
-/* Shared rows keep a 24px slot so names stay put. Round mascots only
- * paint 78 of their 100-unit canvas, so the silhouette sat right of the
- * 16px nav glyphs. Hang that painted edge from the glyph's left edge. */
-.collaboration-sidebar-section .collaboration-contact-avatar,
-.sidebar-functional-group[data-functional-group-id="pinned"] .collaboration-contact-avatar {
-  justify-self: start;
-  margin-inline-start: calc(var(--collaboration-contact-avatar-size) * ((78 / 100) - 1) / 2);
-}
-
-.collaboration-contact-row {
-  display: grid;
-  flex: 0 0 auto;
-  min-width: 0;
-  min-height: max(40px, var(--sidebar-row-height));
-  grid-template-columns: var(--collaboration-contact-avatar-size, 28px) minmax(0, 1fr);
-  align-items: center;
-  column-gap: 12px;
-  border-radius: var(--radius-xs);
-  padding: 6px 8px;
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
-}
-
-.collaboration-contact-row:hover,
-.collaboration-contact-row:focus-visible {
-  outline: 0;
-  background: var(--ink-overlay-4);
-}
-
-.collaboration-contact-row.active {
-  background: var(--selection-surface);
-}
-
-.collaboration-contact-row:focus-visible { box-shadow: inset 0 0 0 2px var(--ink-muted); }
-
-.collaboration-contact-avatar {
-  display: block;
-  width: var(--collaboration-contact-avatar-size, 28px);
-  height: var(--collaboration-contact-avatar-size, 28px);
-  overflow: visible;
-  border-radius: var(--radius-xs);
-}
-
-.collaboration-contact-avatar > * {
-  width: 100%;
-  height: 100%;
-}
-
-.collaboration-contact-copy {
-  display: block;
-  min-width: 0;
-}
-
-.collaboration-contact-heading {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  gap: 8px;
-}
-
-.collaboration-contact-heading strong {
-  display: block;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.collaboration-contact-heading strong {
-  font-size: var(--sidebar-label-size);
-  line-height: 1.45;
-  font-weight: var(--weight-regular);
-}
-
-.collaboration-contact-row.has-unread strong { font-weight: var(--weight-semibold); }
-.collaboration-contact-pin { width: 12px; height: 12px; color: var(--ink-muted); flex-shrink: 0; }
-
-.collaboration-contact-unread {
-  flex-shrink: 0;
-  /* Same compact box as the collapsed-rail counter: a 16px pill keeps the
-   * digit visually centered next to a 14px label, while a 18px pill plus
-   * inherited leading read as a blob twice the label's weight. Line-height
-   * is pinned so a row label's multiplier cannot resize the badge and so
-   * the digit sits on the pill's optical center. */
-  min-width: 16px;
-  height: 16px;
-  line-height: 16px;
-  border-radius: var(--radius-pill);
-  padding: 0 4px;
-  background: var(--info);
-  color: var(--sidebar-session-status-unread-fg);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  font-weight: var(--weight-semibold);
-  text-align: center;
-}
-
-.collaboration-contact-empty {
-  padding: 20px 12px;
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  text-align: center;
-}
-
-.collaboration-sidebar-footer { flex: 0 0 auto; padding-top: 4px; }
-.collaboration-sidebar-footer-action {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 34px;
-  padding: 6px 10px;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--ink-soft);
-  text-align: left;
-  cursor: pointer;
-}
-.collaboration-sidebar-footer-action svg { width: 18px; height: 18px; flex-shrink: 0; }
-.collaboration-sidebar-footer-action:hover,
-.collaboration-sidebar-footer-action:focus-visible { background: var(--ink-overlay-4); color: var(--ink); }
-
-.collaboration-sidebar-rail .sidebar-content {
-  width: 88px;
-  min-width: 88px;
-  padding: 0 12px 12px;
-}
-
-.collaboration-sidebar-rail .collaboration-sidebar-topbar { padding: 0; min-height: 52px; }
-.collaboration-sidebar-rail .collaboration-sidebar-main { gap: 4px; overflow-x: hidden; }
-.collaboration-sidebar-rail .collaboration-contact-row {
-  --collaboration-contact-avatar-size: 36px;
-  position: relative;
-  display: flex;
-  justify-content: center;
-  min-height: 60px;
-  border-radius: 14px;
-  padding: 10px;
-}
-.collaboration-sidebar-rail .collaboration-contact-copy { display: none; }
-.collaboration-sidebar-rail .collaboration-contact-row.pinned + .collaboration-contact-row:not(.pinned) {
-  margin-top: 18px;
-}
-.collaboration-sidebar-rail .collaboration-contact-row.pinned + .collaboration-contact-row:not(.pinned)::before {
-  content: "";
-  position: absolute;
-  top: -11px;
-  left: 4px;
-  right: 4px;
-  border-top: 1px solid var(--hairline);
-}
-.collaboration-rail-unread {
-  position: absolute;
-  top: 3px;
-  right: 2px;
-  min-width: 16px;
-  padding: 1px 4px;
-  border-radius: 9px;
-  background: var(--info);
-  color: var(--ink-on-info);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  line-height: 14px;
-}
-.collaboration-sidebar-rail .collaboration-sidebar-footer {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-}
-.collaboration-sidebar-rail .collaboration-sidebar-footer > button {
-  display: flex;
-  justify-content: center;
-  width: 40px;
-  min-height: 36px;
-  padding: 8px;
-}
-.collaboration-sidebar-rail .collaboration-sidebar-footer-action > span,
-.collaboration-sidebar-rail .sidebar-account-name,
-.collaboration-sidebar-rail .sidebar-account-trigger > svg { display: none; }
-.collaboration-sidebar-rail .sidebar-account-trigger {
-  display: flex;
-  justify-content: center;
-  padding: 8px;
-}
-.collaboration-sidebar-rail .sidebar-account-trigger .sidebar-account-avatar { width: 32px; height: 32px; font-size: 12px; }
-.collaboration-sidebar-rail .sidebar-account-menu { width: min(260px, calc(100vw - 24px)); right: auto; }
-
-@media (max-width: 760px) {
-  .collaboration-sidebar-topbar { padding-top: env(safe-area-inset-top, 0px); }
-  .collaboration-sidebar-footer-action { min-height: 40px; }
 }
 
 .primary-nav,
@@ -1531,9 +1216,12 @@
   grid-template-columns: var(--sidebar-nav-icon-col) minmax(0, 1fr);
 }
 
-.nav-item > svg {
+.nav-item > :is(svg, .plugin-icon-themed, .plugin-icon-asset) {
   grid-column: 1;
   justify-self: center;
+  width: var(--sidebar-primary-icon-size);
+  height: var(--sidebar-primary-icon-size);
+  flex-shrink: 0;
 }
 
 .nav-item > span {
@@ -1564,40 +1252,6 @@
   .thread-list-collapse-btn
 ) {
   color: var(--ink-muted);
-}
-
-/* 协作 section rows reuse the full session-row anatomy
- * (.sidebar-session-row + .thread-row-main + .thread-row-title: 30px height,
- * vertical centering, hover/active states all inherited). Second-level items
- * carry no icon: the status column keeps their text on the session title axis. */
-.sidebar-collab-list {
-  display: grid;
-  gap: 1px;
-}
-
-.sidebar-room-row.has-unread::before {
-  content: none;
-}
-
-.sidebar-room-row .channel-room-unread {
-  box-sizing: border-box;
-  grid-column: 1;
-  grid-row: 1;
-  min-width: 13px;
-  height: 13px;
-  display: inline-grid;
-  place-items: center;
-  justify-self: center;
-  padding: 0 2px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: var(--sidebar-session-status-unread-bg);
-  color: var(--sidebar-session-status-unread-fg);
-  font-size: 9px;
-  font-variant-numeric: tabular-nums;
-  font-weight: var(--weight-semibold);
-  line-height: 1;
-  pointer-events: none;
 }
 
 .nav-item:hover,
@@ -1635,10 +1289,12 @@
   transform: none;
 }
 
-.nav-item:focus-visible,
-.project-row:focus-visible,
-.thread-row:focus-visible {
-  outline: 0;
+html[data-focus-modality="keyboard"] :is(
+  .nav-item,
+  .project-row,
+  .thread-row
+):focus-visible {
+  outline: none;
   box-shadow: inset 0 0 0 2px var(--sidebar-nav-item-focus-shadow);
 }
 
@@ -1663,17 +1319,14 @@
   flex-direction: column;
 }
 
-.sidebar-functional-group-collapse {
-  margin-top: var(--sidebar-functional-heading-gap);
-}
-
-.sidebar-functional-group-collapse.thread-list-collapse,
-.sidebar-functional-group-collapse.thread-list-collapse[data-state="opening"] {
+.sidebar-functional-group-collapse:not(.thread-list-collapse),
+.sidebar-functional-group-collapse.thread-list-collapse[data-state="open"] {
   margin-top: var(--sidebar-functional-heading-gap);
 }
 
 .sidebar-functional-group + .sidebar-functional-group {
   margin-top: var(--sidebar-functional-group-gap);
+  transition: margin-top var(--section-fold-ms) var(--section-fold-ease);
 }
 
 .sidebar-functional-group-body {
@@ -1687,14 +1340,16 @@
   display: flex;
   column-gap: var(--sidebar-action-gap);
   min-width: 0;
-  min-height: 24px;
+  /* Reserve the heading accessory's footprint whether or not the section has
+   * one, so group spacing does not depend on which headings offer "+". */
+  min-height: var(--sidebar-row-action-size);
   align-items: center;
   padding: 0 var(--sidebar-row-pad-x);
 }
 
 .sidebar-functional-heading-label {
   min-width: 0;
-  flex: 1;
+  flex: 0 1 auto;
   overflow: hidden;
   color: var(--ink-muted);
   font-size: var(--sidebar-heading-size, var(--font-sm));
@@ -1711,6 +1366,7 @@
   min-height: 24px;
   flex: 1;
   align-items: center;
+  gap: var(--sidebar-tree-column-gap);
   border: 0;
   border-radius: var(--radius-xs);
   padding: 0;
@@ -1731,16 +1387,13 @@
 }
 
 .sidebar-content .sidebar-functional-heading-toggle > .sidebar-functional-heading-chevron {
-  order: 2;
-  /* Center the disclosure glyph in the same slot as the adjacent actions. */
   box-sizing: border-box;
-  width: var(--sidebar-row-action-size);
-  height: var(--sidebar-row-action-size);
-  padding: calc((var(--sidebar-row-action-size) - var(--icon-size-xs)) / 2);
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
   margin: 0;
   flex: 0 0 auto;
   color: var(--ink-muted);
-  transition: transform var(--motion-fast) var(--ease-out);
+  transition: transform var(--section-fold-ms) var(--section-fold-ease);
 }
 
 .sidebar-functional-heading-chevron[data-expanded="true"] {
@@ -1858,23 +1511,20 @@
 
 /* A standalone pinned session is a peer of a pinned folder: its text starts
  * on the folder glyph's left edge, not on the folder's child-session axis. */
-.pinned-sortable-thread .thread-row-main {
-  padding-left: calc((var(--sidebar-nav-icon-col) - var(--sidebar-primary-icon-size)) / 2);
+.pinned-sortable-thread {
+  --sidebar-session-indent: calc((var(--sidebar-nav-icon-col) - var(--sidebar-primary-icon-size)) / 2);
 }
 
-.pinned-sortable-thread:has(.collaboration-contact-row) {
-  display: flex;
-  min-width: 0;
+.pinned-sortable-thread .thread-row-main {
+  padding-left: var(--sidebar-session-indent);
 }
 
 .pinned-sortable-thread .thread-row-main,
-.pinned-sortable-thread .collaboration-contact-row,
 .sidebar-functional-group[data-functional-group-id="pinned"] .sidebar-section-row.can-reorder {
   cursor: grab;
 }
 
 .pinned-sortable-thread[data-dragging="true"] .thread-row-main,
-.pinned-sortable-thread[data-dragging="true"] .collaboration-contact-row,
 .sidebar-functional-group[data-functional-group-id="pinned"] .sidebar-section-row.dragging {
   cursor: grabbing;
 }
@@ -1928,8 +1578,9 @@
   margin-top: 0;
 }
 
-/* The append target occupies the group break instead of adding a blank row. */
-.sidebar-functional-group:has(.pinned-append-drop-zone) + .sidebar-functional-group {
+/* The open append target owns the group break. Restore the following margin
+ * during the fold, not when retained rows (and the target) are unmounted. */
+.sidebar-functional-group:has(> .sidebar-functional-group-collapse[data-state="open"] .pinned-append-drop-zone) + .sidebar-functional-group {
   margin-top: 0;
 }
 
@@ -1989,8 +1640,8 @@
 }
 
 .sidebar-functional-action > svg {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
 }
 
 .project-list {
@@ -2065,8 +1716,9 @@
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
-  font-size: var(--font-ui);
+  font-size: var(--font-menu);
   font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
 }
@@ -2187,12 +1839,6 @@
     opacity var(--section-fold-fade-ms) var(--ease-out),
     transform var(--section-fold-ms) var(--section-fold-ease);
   transform-origin: center;
-}
-
-.project-row.expanded .project-row-icon-state {
-  transition:
-    opacity var(--section-fold-fade-ms) var(--ease-out),
-    transform var(--section-fold-ms) var(--section-fold-ease);
 }
 
 .project-row-icon-state.collapsed {
@@ -2353,52 +1999,29 @@
 /* `.sidebar-section-empty-note` (the shared empty-state placeholder) is
  * styled at the bottom of the file. */
 
-/* Section expand/collapse motion.
- *
- * SidebarSection measures the body and writes
- * --sidebar-section-body-height. The outer layer animates between 0px and
- * that measured height, then releases back to auto height once open so live
- * thread rows can keep growing naturally. The inner layer only translates
- * and fades, which keeps row text crisp while the clipped body unfurls. */
+/* One intrinsic-height transition owns the reveal and its heading gap. Avoid
+ * inherited measured heights and descendant phase rules: a functional group
+ * contains independently expanded project/folder folds. Text stays in place
+ * while the outer clip moves, without a second fade or translate phase. */
 .thread-list-collapse {
-  height: var(--sidebar-section-body-height, auto);
-  margin-top: var(--sidebar-section-body-gap);
+  interpolate-size: allow-keywords;
+  height: 0;
+  margin-top: 0;
   min-height: 0;
   overflow: clip;
   transition:
     height var(--section-fold-ms) var(--section-fold-ease),
     margin-top var(--section-fold-ms) var(--section-fold-ease);
-  will-change: height, margin-top;
   contain: layout paint;
+}
+
+.thread-list-collapse[data-state="open"] {
+  height: auto;
+  margin-top: var(--sidebar-section-body-gap);
 }
 
 .thread-list-collapse-inner {
   min-height: 0;
-  opacity: 1;
-  transform: translate3d(0, 0, 0);
-  transition:
-    opacity var(--section-fold-fade-ms) var(--ease-out),
-    transform var(--section-fold-ms) var(--section-fold-ease);
-  will-change: opacity, transform;
-}
-
-.thread-list-collapse[data-state="opening"] {
-  height: var(--sidebar-section-body-height, 0);
-}
-
-.thread-list-collapse[data-state="closing"] {
-  height: 0;
-  margin-top: 0;
-}
-
-.thread-list-collapse[data-state="opening"] .thread-list-collapse-inner {
-  opacity: 1;
-  transform: translate3d(0, 0, 0);
-}
-
-.thread-list-collapse[data-state="closing"] .thread-list-collapse-inner {
-  opacity: 0;
-  transform: translate3d(0, -8px, 0) scale(0.992);
 }
 
 /* Lists own only sibling spacing. Their parent owns heading/group spacing,
@@ -2737,8 +2360,45 @@
 /* Sessions inside a folder/workspace remain one level below their container.
  * With status indicators no longer occupying a leading column, this explicit
  * indent preserves the hierarchy instead of coupling depth to status layout. */
+.project-section .thread-list-collapse {
+  --sidebar-session-indent: calc(var(--sidebar-nav-icon-col) + var(--sidebar-nav-column-gap));
+}
+
 .project-section .thread-list-collapse .thread-row-main {
-  padding-left: calc(var(--sidebar-nav-icon-col) + var(--sidebar-nav-column-gap));
+  padding-left: var(--sidebar-session-indent);
+}
+
+/* A project row carries its glyph in the icon column and starts its title
+ * after it, like a folder row, wherever the project is listed. */
+.sidebar-session-row.project-thread-row > .thread-row-main {
+  padding-left: calc(
+    var(--sidebar-session-indent, 0px) + var(--sidebar-nav-icon-col) + var(--sidebar-nav-column-gap)
+  );
+}
+
+.project-thread-glyph {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--sidebar-row-pad-x) + var(--sidebar-session-indent, 0px));
+  z-index: 1;
+  display: grid;
+  width: var(--sidebar-nav-icon-col);
+  height: var(--sidebar-nav-icon-col);
+  place-items: center;
+  color: var(--ink-soft);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.project-thread-glyph > svg {
+  width: var(--sidebar-primary-icon-size);
+  height: var(--sidebar-primary-icon-size);
+}
+
+/* Dropping a conversation on a project row adds it to the project. */
+.thread-row.project-thread-row.drop-active {
+  background: color-mix(in srgb, var(--sidebar-accent) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sidebar-accent) 42%, transparent);
 }
 
 .thread-row-main > .thread-row-title {
@@ -2750,16 +2410,17 @@
   transition: padding-right var(--motion-base) var(--ease-out);
 }
 
-/* Reserve the actual accessory footprint plus a reading gap at every size. */
+/* Reserve the actual accessory footprint plus a reading gap at every size,
+ * including the delayed switching indicator. */
 .thread-row:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-row-action-size) + var(--sidebar-accessory-gap));
 }
 
-.thread-row:is(.running, .has-unread) .thread-row-main > .thread-row-title {
+.thread-row:is(.running, .has-unread, .pending-switch) .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-row-action-size) + var(--sidebar-accessory-gap));
 }
 
-.thread-row:is(.running, .has-unread):has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
+.thread-row:is(.running, .has-unread, .pending-switch):has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-row-action-size) * 2 + var(--sidebar-action-gap) + var(--sidebar-accessory-gap));
 }
 
@@ -2774,18 +2435,8 @@
 }
 
 .thread-row-main > .thread-row-title[data-title-swap] {
-  animation: thread-row-title-settle 220ms ease both;
-}
-
-@keyframes thread-row-title-settle {
-  from {
-    opacity: 0;
-    transform: translateY(-1px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  --enter-y: -1px;
+  animation: wuu-enter var(--content-swap-duration) var(--content-swap-easing) both;
 }
 
 /* The fork marker stays between the title and right-edge accessories. */
@@ -2806,8 +2457,8 @@
 }
 
 /* Keep the persistent fork marker beside, rather than underneath, a right-edge
- * running/unread indicator. */
-.thread-row:is(.running, .has-unread):has(.thread-row-fork-icon) .thread-row-fork-icon {
+ * running/unread/switching indicator. */
+.thread-row:is(.running, .has-unread, .pending-switch):has(.thread-row-fork-icon) .thread-row-fork-icon {
   right: calc(var(--sidebar-row-pad-x) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
 }
 
@@ -2816,7 +2467,7 @@
   right: calc(var(--sidebar-row-pad-x) + var(--sidebar-thread-actions-width) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .sidebar-notifications-button[data-holding="true"]::after,
   .sidebar-notifications-button[data-holding="true"] svg {
     animation: none;
@@ -2830,8 +2481,7 @@
 
   .project-row-chevron,
   .project-row-icon-state,
-  .thread-list-collapse,
-  .thread-list-collapse-inner {
+  .thread-list-collapse {
     transition: none;
   }
 
@@ -2895,7 +2545,7 @@
   transition-delay: 0s;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .thread-row-main > .thread-row-title {
     transition: none;
   }
@@ -2983,15 +2633,30 @@
   transform: none;
 }
 
+/* The menu sizes to its actions, not to the data an action names: a long
+ * label ellipsizes (see the item span) rather than stretching the menu
+ * across the reading column, and a long item list scrolls inside the
+ * viewport margin placeContextMenu keeps. The width cap follows the
+ * menu type size. */
 .thread-row-context-menu {
   position: fixed;
   z-index: 2147482000;
   min-width: 180px;
+  max-width: min(24em, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
   border: 1px solid var(--menu-border);
   border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
   padding: var(--menu-inset);
+}
+
+/* Enter only after viewport placement. Starting menu-enter while the
+ * first layout is still `visibility: hidden` lets Chromium finish or
+ * skip the animation off-screen, then replay it on the first visible
+ * frame — a full-opacity flash, then a fade. */
+.thread-row-context-menu[data-placed="true"] {
   animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
 }
 
@@ -3030,8 +2695,9 @@
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
-  font-size: var(--font-ui);
+  font-size: var(--font-menu);
   font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
   cursor: pointer;

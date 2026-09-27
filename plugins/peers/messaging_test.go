@@ -5,26 +5,47 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	pluginapi "github.com/blueberrycongee/wuu/packages/plugin-go"
 )
 
 type messagingHost struct {
-	stored *string
-	sends  []pluginapi.SessionSendParams
+	mu           sync.Mutex
+	stored       *string
+	sends        []pluginapi.SessionSendParams
+	turns        map[string]pluginapi.SessionTurnInspection
+	workspaceID  string
+	sessions     []pluginapi.SessionSummary
+	steerReplies bool
 }
 
 func (h *messagingHost) InitializeParams() pluginapi.InitializeParams {
-	return pluginapi.InitializeParams{}
+	return pluginapi.InitializeParams{WorkspaceID: h.workspaceID}
 }
-func (h *messagingHost) CallHost(_ context.Context, method string, params, out any) error {
+func (h *messagingHost) CallHost(ctx context.Context, method string, params, out any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	var result any
 	switch method {
 	case pluginapi.HostServiceSessionList:
 		result = pluginapi.SessionListResult{Sessions: []pluginapi.SessionSummary{
 			{SessionID: "source", Name: "Source"}, {SessionID: "target", Name: "Target"},
 		}}
+		if h.sessions != nil {
+			result = pluginapi.SessionListResult{Sessions: h.sessions}
+		}
+	case pluginapi.HostServiceSessionInspect:
+		p := params.(pluginapi.SessionInspectParams)
+		inspected := pluginapi.SessionInspectResult{Session: pluginapi.SessionSummary{SessionID: p.SessionID, WorkspaceID: h.workspaceID}}
+		if turn, ok := h.turns[p.RequestID]; ok {
+			inspected.Turn = &turn
+		}
+		result = inspected
 	case pluginapi.HostServiceStorageGet:
 		result = pluginapi.StorageGetResult{Value: h.stored}
 	case pluginapi.HostServiceStorageCompareExchange:
@@ -36,8 +57,22 @@ func (h *messagingHost) CallHost(_ context.Context, method string, params, out a
 		result = pluginapi.StorageCompareExchangeResult{Swapped: swapped}
 	case pluginapi.HostServiceSessionSend:
 		p := params.(pluginapi.SessionSendParams)
-		h.sends = append(h.sends, p)
-		result = pluginapi.SessionSendResult{SessionID: p.SessionID, State: "queued", QueueID: "queued-1"}
+		if h.turns == nil {
+			h.turns = make(map[string]pluginapi.SessionTurnInspection)
+		}
+		turn, exists := h.turns[p.RequestID]
+		if !exists || turn.State == "discarded" && turn.Retryable {
+			h.sends = append(h.sends, p)
+			turn = pluginapi.SessionTurnInspection{RequestID: p.RequestID, State: "queued", QueueID: fmt.Sprintf("queued-%d", len(h.sends))}
+			if h.steerReplies && strings.HasPrefix(p.RequestID, responsePrefix) {
+				turn.State, turn.TurnID, turn.QueueID = "running", "active-turn", ""
+			}
+			h.turns[p.RequestID] = turn
+		}
+		result = pluginapi.SessionSendResult{
+			SessionID: p.SessionID, State: turn.State, QueueID: turn.QueueID, TurnID: turn.TurnID,
+			Steered: h.steerReplies && strings.HasPrefix(p.RequestID, responsePrefix) && turn.State == "running",
+		}
 	default:
 		return fmt.Errorf("unexpected host method %s", method)
 	}
@@ -85,6 +120,9 @@ func TestMessagingRoundTripPreservesBodyAndSourceWithoutReplyLoop(t *testing.T) 
 		t.Fatalf("reply must be delivered once: %d sends", len(h.sends))
 	}
 	response := h.sends[1]
+	if response.IfRunning != pluginapi.SessionIfRunningSteer {
+		t.Fatalf("receipt must join active work without requiring another response: %+v", response)
+	}
 	if response.SessionID != "source" || response.Presentation.Text != reply || response.Presentation.RelatedSessionID != "target" || response.Presentation.Kind != "session_message" {
 		t.Fatalf("reply = %+v", response)
 	}

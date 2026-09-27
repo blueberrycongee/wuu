@@ -6,6 +6,7 @@ const {
   pipHelperPathForApp,
   prepareDevElectronApp,
 } = require("./prepare-dev-electron-app.cjs");
+const { devHome } = require("./dev-home.cjs");
 const { ensureDevSigningIdentity } = require("./dev-signing.cjs");
 
 const desktopRoot = resolve(__dirname, "..");
@@ -40,6 +41,7 @@ if (coreBuild.status !== 0) {
 }
 
 const env = { ...process.env };
+env.WUU_HOME = devHome(env, resolve(desktopRoot, ".."));
 env.WUU_DESKTOP_CORE = join(
   desktopRoot,
   "build",

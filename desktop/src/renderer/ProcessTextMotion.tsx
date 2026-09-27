@@ -5,10 +5,16 @@ import {
   type JSX,
   type Ref,
 } from "react";
-import { motionDurationMs } from "./motion";
+import { motionDurationMs, prefersReducedMotion } from "./motion";
+import {
+  useConversationBecameRenderActive,
+  useConversationRenderActive,
+} from "./ConversationRenderActivity";
 
-// Mirrors the process-text-rise-out duration in turns.css.
-const PROCESS_TEXT_EXIT_MS = motionDurationMs("--motion-base", 180);
+// The exit copy's duration in turns.css (.process-text-motion-exit). Read
+// when the text changes, so reduced motion turned on mid-session applies.
+const processTextExitMs = (): number =>
+  prefersReducedMotion() ? 0 : motionDurationMs("--motion-base", 180);
 const WIDTH_CLEANUP_BUFFER_MS = 32;
 
 export function AnimatedProcessText({
@@ -22,6 +28,8 @@ export function AnimatedProcessText({
 }): JSX.Element {
   const previousText = useRef(text);
   const [exitingText, setExitingText] = useState<string | undefined>();
+  const renderActive = useConversationRenderActive();
+  const becameRenderActive = useConversationBecameRenderActive();
   const motionRef = useRef<HTMLSpanElement | null>(null);
   const exitRef = useRef<HTMLSpanElement | null>(null);
   const currentRef = useRef<HTMLSpanElement | null>(null);
@@ -38,12 +46,20 @@ export function AnimatedProcessText({
     }
     const previous = previousText.current;
     previousText.current = text;
+    // Session-switch catch-up is a restore, not a live phase change. Keep the
+    // new copy in place so the aggregated summary does not tween width after
+    // the incoming conversation is already on screen.
+    const exitMs = processTextExitMs();
+    if (!renderActive || becameRenderActive || exitMs <= 0) {
+      setExitingText(undefined);
+      return undefined;
+    }
     setExitingText(previous);
     const timeoutID = window.setTimeout(() => {
       setExitingText(undefined);
-    }, PROCESS_TEXT_EXIT_MS);
+    }, exitMs);
     return () => window.clearTimeout(timeoutID);
-  }, [text]);
+  }, [becameRenderActive, renderActive, text]);
 
   // The crossfade stacks old and new copy in the same grid cell, so the
   // container's intrinsic width stays at the wider text while both copies
@@ -52,7 +68,8 @@ export function AnimatedProcessText({
   // short one (for example "查看、编辑、搜索" into "查看") does not reflow in
   // a single frame.
   useLayoutEffect(() => {
-    if (!exitingText || PROCESS_TEXT_EXIT_MS <= 0) {
+    const exitMs = processTextExitMs();
+    if (!exitingText || exitMs <= 0) {
       return undefined;
     }
     const containerEl = motionRef.current;
@@ -75,7 +92,7 @@ export function AnimatedProcessText({
     containerEl.style.transition = "none";
     containerEl.style.width = `${exitWidth}px`;
     void containerEl.offsetWidth;
-    containerEl.style.transition = `width ${PROCESS_TEXT_EXIT_MS}ms var(--ease-out)`;
+    containerEl.style.transition = `width ${exitMs}ms var(--ease-out)`;
     containerEl.style.width = `${currentWidth}px`;
 
     const cleanup = (): void => {
@@ -84,7 +101,7 @@ export function AnimatedProcessText({
     };
     const cleanupTimeout = window.setTimeout(
       cleanup,
-      PROCESS_TEXT_EXIT_MS + WIDTH_CLEANUP_BUFFER_MS,
+      exitMs + WIDTH_CLEANUP_BUFFER_MS,
     );
     return () => {
       window.clearTimeout(cleanupTimeout);

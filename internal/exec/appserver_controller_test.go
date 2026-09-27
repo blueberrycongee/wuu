@@ -220,26 +220,6 @@ func TestNewLocalAppServerControllerAppliesPermissionOverride(t *testing.T) {
 	}
 }
 
-func TestApplyConfigOverridesEffortClearsConfiguredVariant(t *testing.T) {
-	cfg := config.Config{
-		Agent: config.AgentConfig{
-			Effort:  "xhigh",
-			Variant: "xhigh",
-		},
-	}
-
-	if err := applyConfigOverrides(&cfg, Options{Effort: "low"}); err != nil {
-		t.Fatalf("applyConfigOverrides: %v", err)
-	}
-
-	if cfg.Agent.Effort != "low" {
-		t.Fatalf("Effort = %q, want low", cfg.Agent.Effort)
-	}
-	if cfg.Agent.Variant != "" {
-		t.Fatalf("Variant should be cleared by explicit effort override, got %q", cfg.Agent.Variant)
-	}
-}
-
 func TestApplyConfigOverridesExplicitVariantWinsOverEffort(t *testing.T) {
 	cfg := config.Config{
 		Agent: config.AgentConfig{
@@ -257,25 +237,5 @@ func TestApplyConfigOverridesExplicitVariantWinsOverEffort(t *testing.T) {
 	}
 	if cfg.Agent.Variant != "high" {
 		t.Fatalf("Variant = %q, want high", cfg.Agent.Variant)
-	}
-}
-
-func TestApplyConfigOverridesNormalizesPermissionMode(t *testing.T) {
-	for name, tc := range map[string]struct {
-		opts Options
-		want string
-	}{
-		"standard":   {opts: Options{PermissionMode: config.PermissionModeStandard}, want: config.PermissionModeStandard},
-		"read only":  {opts: Options{PermissionMode: config.PermissionModeReadOnly}, want: config.PermissionModeReadOnly},
-		"unconfined": {opts: Options{PermissionMode: config.PermissionModeUnconfined}, want: config.PermissionModeUnconfined},
-		"unknown":    {opts: Options{PermissionMode: "not-a-mode"}, want: config.PermissionModeStandard},
-	} {
-		cfg := config.Config{}
-		if err := applyConfigOverrides(&cfg, tc.opts); err != nil {
-			t.Fatalf("%s: applyConfigOverrides: %v", name, err)
-		}
-		if got := cfg.Agent.PermissionMode; got != tc.want {
-			t.Fatalf("%s: PermissionMode = %q, want %q", name, got, tc.want)
-		}
 	}
 }

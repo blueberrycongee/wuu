@@ -367,31 +367,3 @@ func TestResolveAliasInvalidVariant(t *testing.T) {
 		t.Fatalf("expected error for invalid variant")
 	}
 }
-
-func TestResolveAliasColonContainingModelID(t *testing.T) {
-	cfg := config.Config{
-		DefaultProvider: "local",
-		Providers: map[string]config.ProviderConfig{
-			"local": {
-				Type:    "openai-compatible",
-				BaseURL: "http://127.0.0.1:11434/v1",
-				Model:   "llama3.2",
-			},
-		},
-		Agent: config.AgentConfig{
-			ModelAliases: map[string]config.ModelRoleConfig{
-				"ollama": {Provider: "local", Model: "llama3.2:latest"},
-			},
-		},
-	}
-	selection, err := ResolveAlias(cfg, "ollama")
-	if err != nil {
-		t.Fatalf("ResolveAlias: %v", err)
-	}
-	if selection.Model != "llama3.2:latest" {
-		t.Fatalf("colon-containing model ID lost: %q", selection.Model)
-	}
-	if selection.Role != RoleWorker {
-		t.Fatalf("role = %q, want worker", selection.Role)
-	}
-}

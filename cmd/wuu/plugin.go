@@ -418,18 +418,34 @@ func runPluginPolicy(action string, args []string) error {
 }
 
 func beginPluginCLIMutation(wuuHome, action string) (func(), error) {
-	lease, acquired, err := session.TryAcquirePluginGenerationMutationLease(wuuHome)
+	if action == "remove" {
+		lease, acquired, err := session.TryAcquirePluginGenerationMutationLease(wuuHome)
+		if err != nil {
+			return nil, fmt.Errorf("begin plugin %s mutation: %w", action, err)
+		}
+		if !acquired {
+			return nil, fmt.Errorf("plugin %s refused because executions currently own the active generation", action)
+		}
+		if _, err := lease.Advance(); err != nil {
+			_ = lease.Release()
+			return nil, fmt.Errorf("advance plugin %s generation: %w", action, err)
+		}
+		return func() { _ = lease.Release() }, nil
+	}
+	lease, acquired, err := session.TryAcquirePluginCatalogMutationLease(wuuHome)
 	if err != nil {
 		return nil, fmt.Errorf("begin plugin %s mutation: %w", action, err)
 	}
 	if !acquired {
-		return nil, fmt.Errorf("plugin %s refused because executions currently own the active generation", action)
+		return nil, fmt.Errorf("cannot %s plugin packages while another app-server is changing the plugin catalog", action)
 	}
-	if _, err := lease.Advance(); err != nil {
+	return func() {
+		if _, err := lease.Advance(); err != nil {
+			_ = lease.Release()
+			return
+		}
 		_ = lease.Release()
-		return nil, fmt.Errorf("advance plugin %s generation: %w", action, err)
-	}
-	return func() { _ = lease.Release() }, nil
+	}, nil
 }
 
 func discoverPluginForPolicy(id, workdir string) (pluginpkg.Plugin, error) {

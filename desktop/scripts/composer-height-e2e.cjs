@@ -95,10 +95,10 @@ async function run() {
           input.files = transfer.files;
           input.dispatchEvent(new Event("change", { bubbles: true }));
         });
-        await waitFor(win, () => !!document.querySelector('[data-main-conversation-composer] .composer-file-attachment'));
+        await waitFor(win, () => !!document.querySelector('[data-main-conversation-composer] .composer-file-card'));
         await geometry(win);
         await checkEndClearance(win, `${label}: attachment`);
-        await evaluate(win, () => document.querySelector('[data-main-conversation-composer] .composer-attachment-remove').click());
+        await evaluate(win, () => document.querySelector('[data-main-conversation-composer] .composer-attachment-card-remove').click());
         await geometry(win);
       }
       console.log(`PASS ${label}`);
@@ -159,7 +159,10 @@ async function checkEndClearance(win, label) {
     const frame = dock.querySelector(".composer-frame");
     const expected = Math.ceil(dock.getBoundingClientRect().height)
       + (parseFloat(getComputedStyle(frame).getPropertyValue("--composer-expanded-offset")) || 0);
+    // The attachment tray lifts the stack while the frame holds still, so the
+    // frame's own settling says nothing about the tray's final position.
     return !document.documentElement.matches(".window-resizing, .layout-motion-active")
+      && dock.querySelector(".composer-stack").getAnimations().length === 0
       && Math.abs(parseFloat(getComputedStyle(pane).getPropertyValue("--dock-composer-height")) - expected) < 1;
   });
   await evaluate(win, () => {
@@ -169,11 +172,13 @@ async function checkEndClearance(win, label) {
   await geometry(win);
   const measured = await evaluate(win, () => {
     const input = document.querySelector('[data-main-conversation-composer] .composer-frame');
+    // Attachments wait in a tray above the input; the gap ends at its edge.
+    const edge = document.querySelector('[data-main-conversation-composer] .composer-attachment-tray') ?? input;
     const turn = document.querySelector('.cached-conversation-pane[data-active="true"] .turn[data-latest-turn="true"]');
     const pane = document.querySelector(".conversation-pane");
     const scroll = pane.querySelector(".scroll-region");
     return {
-      gap: input.getBoundingClientRect().top - turn.getBoundingClientRect().bottom,
+      gap: edge.getBoundingClientRect().top - turn.getBoundingClientRect().bottom,
       dockHeight: getComputedStyle(pane).getPropertyValue("--dock-composer-height"),
       expandedOffset: getComputedStyle(input).getPropertyValue("--composer-expanded-offset"),
       flowPadding: getComputedStyle(turn.closest(".conversation-width")).paddingBottom,

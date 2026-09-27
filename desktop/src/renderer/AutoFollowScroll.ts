@@ -7,15 +7,12 @@ import {
   useMemo,
   useRef,
 } from "react";
-import {
-  createWindowResizeSettleScheduler,
-  isWindowResizing,
-} from "./WindowResizeState";
-import { createMessageScrollMotion } from "./MessageScrollMotion";
-import { motionDurationMs, prefersReducedMotion } from "./motion";
+import { isWindowResizing } from "./WindowResizeState";
+import { createScrollGlide, GLIDE_FOLLOW_HANDOFF_VIEWPORTS } from "./ScrollGlide";
+import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
+import { markScrollbarRevealSelfManaged, revealScrollbar } from "./ScrollbarReveal";
 
 export const AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 16;
-export const AUTO_FOLLOW_SCROLLBAR_HIDE_DELAY_MS = 700;
 export const USER_SCROLL_AWAY_INTENT_WINDOW_MS = 300;
 export const AUTO_FOLLOW_NESTED_SCROLL_ATTR = "data-wuu-nested-scroll";
 export const AUTO_FOLLOW_NESTED_SCROLL_SELECTOR = `[${AUTO_FOLLOW_NESTED_SCROLL_ATTR}]`;
@@ -34,14 +31,52 @@ export function distanceFromBottom(node: HTMLElement): number {
   return Math.max(0, node.scrollHeight - node.scrollTop - node.clientHeight);
 }
 
+/**
+ * Unconsumed submission reservation: the bottom padding SessionTailSpace
+ * writes on the viewport's content wrapper.
+ */
+export function sessionTailSpacePx(viewport?: HTMLElement | null): number {
+  const content = viewport?.querySelector<HTMLElement>(":scope > .scroll-region-content");
+  const parsed = Number.parseFloat(content?.style.paddingBottom ?? "");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+/**
+ * Bottom of the latest *content*, excluding unconsumed submission tail.
+ * Following `scrollHeight` would park the viewport in that empty reservation.
+ */
+export function latestFollowScrollTop(
+  node: HTMLElement,
+  tailSpace = sessionTailSpacePx(node),
+): number {
+  return clampScrollTop(node, maxScrollTop(node) - Math.max(0, tailSpace));
+}
+
 export function atLatestScrollView(
   node: HTMLElement,
   threshold = AUTO_FOLLOW_BOTTOM_THRESHOLD_PX,
+  tailSpace = sessionTailSpacePx(node),
 ): boolean {
   return (
     node.scrollHeight <= node.clientHeight ||
-    distanceFromBottom(node) <= threshold
+    node.scrollTop >= latestFollowScrollTop(node, tailSpace) - threshold
   );
+}
+
+/** Distance from the latest content, excluding unconsumed submission tail. */
+export function distanceFromLatestContent(
+  node: HTMLElement,
+  tailSpace = sessionTailSpacePx(node),
+): number {
+  return Math.max(0, latestFollowScrollTop(node, tailSpace) - node.scrollTop);
+}
+
+export function scrollTopForDistanceFromLatest(
+  node: HTMLElement,
+  distance: number,
+  tailSpace = sessionTailSpacePx(node),
+): number {
+  return clampScrollTop(node, latestFollowScrollTop(node, tailSpace) - Math.max(0, distance));
 }
 
 export function eventTargetsNestedAutoFollowScroll(
@@ -81,6 +116,37 @@ export function setAutoFollowOverflowAnchor(
   node.style.overflowAnchor = autoFollow ? "none" : "auto";
 }
 
+const SUBMIT_GLIDE_ATTR = "data-submit-glide";
+const SUBMIT_GLIDE_EVENT = "wuu-submit-glide";
+
+/** True while a submitted query is gliding into its reading position. */
+export function submitGlideActive(): boolean {
+  return document.documentElement.hasAttribute(SUBMIT_GLIDE_ATTR);
+}
+
+/**
+ * The glide writes scrollTop on every frame. Scroll-linked readers (the turn
+ * rail, the jump pill, history preload) must not measure the thread on those
+ * frames; they catch up from the event fired when the glide ends.
+ */
+export function setSubmitGlideActive(active: boolean): void {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  if (root.hasAttribute(SUBMIT_GLIDE_ATTR) === active) return;
+  if (active) root.setAttribute(SUBMIT_GLIDE_ATTR, "");
+  else root.removeAttribute(SUBMIT_GLIDE_ATTR);
+  document.dispatchEvent(new CustomEvent(SUBMIT_GLIDE_EVENT, { detail: active }));
+}
+
+export function subscribeSubmitGlide(onSettle: () => void): () => void {
+  const handle = (event: Event): void => {
+    if (!(event instanceof CustomEvent) || event.detail === true) return;
+    onSettle();
+  };
+  document.addEventListener(SUBMIT_GLIDE_EVENT, handle);
+  return () => document.removeEventListener(SUBMIT_GLIDE_EVENT, handle);
+}
+
 export function observeAutoFollowResizeTargets(
   node: HTMLElement,
   observer: ResizeObserver,
@@ -111,6 +177,7 @@ export function useAutoFollowScrollContainer({
     revealScrollbar?: boolean;
     animate?: boolean;
   }) => void;
+  restoreScrollPosition: (scrollTop: number, autoFollow: boolean) => void;
   pauseAutoFollow: () => void;
   scheduleScrollToBottom: () => void;
   handleScrollFrame: () => void;
@@ -119,7 +186,7 @@ export function useAutoFollowScrollContainer({
   const autoFollowRef = useRef(true);
   const selectionPausedAutoFollowRef = useRef(false);
   const pointerScrollGestureRef = useRef<
-    { node: HTMLElement; scrollTop: number; scrollHeight: number } | undefined
+    { node: HTMLElement; scrollTop: number; scrollHeight: number; resumeScrollTop?: number } | undefined
   >(undefined);
   const lastScrollTopRef = useRef(0);
   const programmaticScrollTopRef = useRef<number | undefined>(undefined);
@@ -127,7 +194,6 @@ export function useAutoFollowScrollContainer({
   const userScrollAwayIntentTimerRef = useRef<number | undefined>(undefined);
   const touchLastYRef = useRef<number | undefined>(undefined);
   const rafRef = useRef<number | undefined>(undefined);
-  const scrollbarHideTimerRef = useRef<number | undefined>(undefined);
   const motionFrameRef = useRef<number | undefined>(undefined);
   const cancelMotion = useCallback(() => {
     if (motionFrameRef.current !== undefined) window.cancelAnimationFrame(motionFrameRef.current);
@@ -135,6 +201,8 @@ export function useAutoFollowScrollContainer({
   }, []);
 
   const setAutoFollow = useCallback((next: boolean): void => {
+    // A later ownership change supersedes a pending click's restoration.
+    if (pointerScrollGestureRef.current) pointerScrollGestureRef.current.resumeScrollTop = undefined;
     if (!next) cancelMotion();
     autoFollowRef.current = next;
     const node = scrollRef.current;
@@ -176,20 +244,6 @@ export function useAutoFollowScrollContainer({
     }, USER_SCROLL_AWAY_INTENT_WINDOW_MS);
   }, []);
 
-  const showScrollbar = useCallback((node: HTMLElement): void => {
-    if (node.scrollHeight <= node.clientHeight) {
-      return;
-    }
-    node.classList.add("scrollbar-visible");
-    if (scrollbarHideTimerRef.current !== undefined) {
-      window.clearTimeout(scrollbarHideTimerRef.current);
-    }
-    scrollbarHideTimerRef.current = window.setTimeout(() => {
-      scrollbarHideTimerRef.current = undefined;
-      node.classList.remove("scrollbar-visible");
-    }, AUTO_FOLLOW_SCROLLBAR_HIDE_DELAY_MS);
-  }, []);
-
   const scrollToBottom = useCallback(
     (options: { force?: boolean; revealScrollbar?: boolean; animate?: boolean } = {}): void => {
       const node = scrollRef.current;
@@ -209,15 +263,27 @@ export function useAutoFollowScrollContainer({
       }
       const targetTop = maxScrollTop(node);
       if (options.animate && !document.hidden && !prefersReducedMotion() && Math.abs(node.scrollTop - targetTop) > 1) {
-        const sample = createMessageScrollMotion(node.scrollTop, targetTop, motionDurationMs("--query-scroll-duration", 360));
+        const glide = createScrollGlide();
+        glide.start(node.scrollTop);
         const step = (now: number): void => {
           motionFrameRef.current = undefined;
           if (scrollRef.current !== node || !autoFollowRef.current) return;
-          const { position, done } = sample(now, maxScrollTop(node));
+          // The target is re-read every frame, so content that arrives during
+          // the arrival extends the same trajectory instead of restarting it.
+          const target = maxScrollTop(node);
+          const { position, done } = glide.step(now, target, node.clientHeight);
+          if (done || target - position <= node.clientHeight * GLIDE_FOLLOW_HANDOFF_VIEWPORTS) {
+            node.scrollTop = target;
+            programmaticScrollTopRef.current = node.scrollTop;
+            lastScrollTopRef.current = node.scrollTop;
+            return;
+          }
           node.scrollTop = position;
-          programmaticScrollTopRef.current = node.scrollTop;
-          lastScrollTopRef.current = node.scrollTop;
-          if (!done) motionFrameRef.current = window.requestAnimationFrame(step);
+          // The glide never passes its target, so the commanded offset is the
+          // achieved one — no read-back to pay for on every frame.
+          programmaticScrollTopRef.current = position;
+          lastScrollTopRef.current = position;
+          motionFrameRef.current = window.requestAnimationFrame(step);
         };
         motionFrameRef.current = window.requestAnimationFrame(step);
         return;
@@ -227,11 +293,24 @@ export function useAutoFollowScrollContainer({
       programmaticScrollTopRef.current = node.scrollTop;
       lastScrollTopRef.current = node.scrollTop;
       if (moved && options.revealScrollbar) {
-        showScrollbar(node);
+        revealScrollbar(node);
       }
     },
-    [cancelMotion, clearUserScrollAwayIntent, setAutoFollow, showScrollbar],
+    [cancelMotion, clearUserScrollAwayIntent, setAutoFollow],
   );
+
+  const restoreScrollPosition = useCallback((top: number, autoFollow: boolean): void => {
+    cancelMotion();
+    clearUserScrollAwayIntent();
+    pointerScrollGestureRef.current = undefined;
+    selectionPausedAutoFollowRef.current = false;
+    setAutoFollow(autoFollow);
+    const node = scrollRef.current;
+    if (!node) return;
+    node.scrollTop = autoFollow ? maxScrollTop(node) : clampScrollTop(node, top);
+    programmaticScrollTopRef.current = node.scrollTop;
+    lastScrollTopRef.current = node.scrollTop;
+  }, [cancelMotion, clearUserScrollAwayIntent, setAutoFollow]);
 
   const scheduleScrollToBottom = useCallback((): void => {
     const node = scrollRef.current;
@@ -277,7 +356,7 @@ export function useAutoFollowScrollContainer({
     const layoutClamp = scrolledUp && !userScrollAwayIntent &&
       node.scrollTop >= maxScrollTop(node) - 1;
     if ((scrolledUp || scrolledDown) && !layoutClamp) {
-      showScrollbar(node);
+      revealScrollbar(node);
     }
 
     if (scrolledUp && userScrollAwayIntent) {
@@ -312,7 +391,6 @@ export function useAutoFollowScrollContainer({
     bottomThreshold,
     scheduleScrollToBottom,
     setAutoFollow,
-    showScrollbar,
   ]);
 
   useLayoutEffect(() => {
@@ -320,6 +398,10 @@ export function useAutoFollowScrollContainer({
     if (!node) {
       return undefined;
     }
+    // This controller decides for itself when a reveal is warranted: it can
+    // tell a layout clamp from content movement, which the global listener
+    // cannot.
+    markScrollbarRevealSelfManaged(node);
     setAutoFollowOverflowAnchor(node, autoFollowRef.current);
     const interruptMotion = (): void => {
       if (motionFrameRef.current !== undefined) setAutoFollow(false);
@@ -344,16 +426,29 @@ export function useAutoFollowScrollContainer({
       event.stopPropagation();
       interruptMotion();
       if (event.target === node) {
+        const resumeScrollTop = autoFollowRef.current ? clampScrollTop(node, node.scrollTop) : undefined;
         pointerScrollGestureRef.current = {
           node,
           scrollTop: clampScrollTop(node, node.scrollTop),
           scrollHeight: node.scrollHeight,
         };
         markUserScrollAwayIntent();
+        // Yield before a queued follow or resize can overwrite native scrolling.
+        setAutoFollow(false);
+        pointerScrollGestureRef.current.resumeScrollTop = resumeScrollTop;
       }
     };
-    const handlePointerEnd = (): void => {
+    const handlePointerEnd = (event: PointerEvent): void => {
+      const gesture = pointerScrollGestureRef.current;
       pointerScrollGestureRef.current = undefined;
+      // The surface also receives plain clicks. Restore only the following
+      // state this press suspended, never history reading or a cancelled drag.
+      if (event.type === "pointerup" && gesture?.node === node &&
+        gesture.resumeScrollTop !== undefined &&
+        Math.abs(clampScrollTop(node, node.scrollTop) - gesture.resumeScrollTop) <= 1) {
+        setAutoFollow(true);
+        scrollToBottom();
+      }
     };
     const handleSelectionChange = (): void => {
       if (selectionIntersectsNode(document.getSelection(), node)) {
@@ -366,6 +461,7 @@ export function useAutoFollowScrollContainer({
       if (SCROLL_AWAY_KEYS.has(event.key) || SCROLL_TOWARD_LATEST_KEYS.has(event.key) || event.key === " ") interruptMotion();
       if (SCROLL_AWAY_KEYS.has(event.key)) {
         markUserScrollAwayIntent();
+        setAutoFollow(false);
       } else if (SCROLL_TOWARD_LATEST_KEYS.has(event.key)) {
         selectionPausedAutoFollowRef.current = false;
       }
@@ -385,6 +481,7 @@ export function useAutoFollowScrollContainer({
         currentY > previousY
       ) {
         markUserScrollAwayIntent();
+        setAutoFollow(false);
       } else if (
         currentY !== undefined &&
         previousY !== undefined &&
@@ -423,44 +520,22 @@ export function useAutoFollowScrollContainer({
       node.removeEventListener("touchcancel", handleTouchEnd);
       node.removeEventListener("keydown", handleKeyDown);
     };
-  }, [handleScrollFrame, markUserScrollAwayIntent, observeKey, open, setAutoFollow]);
+  }, [handleScrollFrame, markUserScrollAwayIntent, observeKey, open, scrollToBottom, setAutoFollow]);
 
   useLayoutEffect(() => {
     const node = scrollRef.current;
     if (!node || typeof ResizeObserver === "undefined") {
       return undefined;
     }
-    const windowResizeScroll = createWindowResizeSettleScheduler(scrollToBottom);
-    let liveResizeFrame: number | undefined;
-    const scheduleLiveResizeScroll = (): void => {
-      if (!autoFollowRef.current || liveResizeFrame !== undefined) return;
-      liveResizeFrame = window.requestAnimationFrame(() => {
-        liveResizeFrame = undefined;
-        if (!isWindowResizing() || !autoFollowRef.current) return;
-        cancelMotion();
-        // Match the main conversation: keep the bottom anchored during the
-        // drag, not only after it settles. Chromium clamps this target without
-        // needing scrollHeight/clientHeight reads on every resize frame.
-        node.scrollTop = Number.MAX_SAFE_INTEGER;
-        programmaticScrollTopRef.current = node.scrollTop;
-        lastScrollTopRef.current = node.scrollTop;
-      });
-    };
     const resizeObserver = new ResizeObserver(() => {
       refreshPointerScrollGestureLayout(node);
-      if (isWindowResizing()) {
-        scheduleLiveResizeScroll();
-        windowResizeScroll.schedule();
-        return;
-      }
+      if (isWindowResizing()) cancelMotion();
+      // Layout has already resolved. Correct before this paint rather than
+      // scheduling a second frame that leaves the text trailing the viewport.
       scrollToBottom();
     });
     observeAutoFollowResizeTargets(node, resizeObserver);
-    window.addEventListener("resize", scheduleLiveResizeScroll);
     return () => {
-      window.removeEventListener("resize", scheduleLiveResizeScroll);
-      if (liveResizeFrame !== undefined) window.cancelAnimationFrame(liveResizeFrame);
-      windowResizeScroll.cancel();
       resizeObserver.disconnect();
     };
   }, [cancelMotion, observeKey, open, refreshPointerScrollGestureLayout, scrollToBottom]);
@@ -468,27 +543,32 @@ export function useAutoFollowScrollContainer({
   useLayoutEffect(() => cancelMotion, [cancelMotion, observeKey, open]);
 
   useEffect(() => {
-    const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const settle = () => {
-      if (motionFrameRef.current === undefined || (!document.hidden && !media?.matches)) return;
+      if (motionFrameRef.current === undefined || (!document.hidden && !prefersReducedMotion())) return;
       cancelMotion();
       scrollToBottom();
     };
-    media?.addEventListener("change", settle);
+    const stopReducedMotion = subscribeReducedMotion(settle);
     document.addEventListener("visibilitychange", settle);
     return () => {
-      media?.removeEventListener("change", settle);
+      stopReducedMotion();
       document.removeEventListener("visibilitychange", settle);
     };
   }, [cancelMotion, scrollToBottom]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) {
       return undefined;
     }
     selectionPausedAutoFollowRef.current = false;
     setAutoFollow(true);
     lastScrollTopRef.current = 0;
+    // Opening is a restore, not a later arrival. A zero-delay timer would
+    // overwrite a caller's saved reading position after the first paint.
+    if (openScrollDelayMs === 0) {
+      scrollToBottom({ force: true, revealScrollbar: true });
+      return;
+    }
     const timer = window.setTimeout(() => {
       scrollToBottom({ force: true, revealScrollbar: true });
     }, openScrollDelayMs);
@@ -502,9 +582,6 @@ export function useAutoFollowScrollContainer({
       if (rafRef.current !== undefined) {
         window.cancelAnimationFrame(rafRef.current);
       }
-      if (scrollbarHideTimerRef.current !== undefined) {
-        window.clearTimeout(scrollbarHideTimerRef.current);
-      }
       clearUserScrollAwayIntent();
     };
   }, [clearUserScrollAwayIntent]);
@@ -515,9 +592,10 @@ export function useAutoFollowScrollContainer({
       autoFollowRef,
       scrollToBottom,
       pauseAutoFollow,
+      restoreScrollPosition,
       scheduleScrollToBottom,
       handleScrollFrame,
     }),
-    [handleScrollFrame, pauseAutoFollow, scheduleScrollToBottom, scrollToBottom],
+    [handleScrollFrame, pauseAutoFollow, restoreScrollPosition, scheduleScrollToBottom, scrollToBottom],
   );
 }

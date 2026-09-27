@@ -3,11 +3,11 @@
  *
  * The conversation composer and the message flow are centered in different
  * containing blocks: the flow lives inside .scroll-region, whose content box
- * already excludes the real scrollbar gutter (scrollbar-gutter: stable),
- * while the dock composer overlays the full grid cell and compensates with
- * padding-right: var(--scrollbar-width). For those two boxes to share one
- * centerline, --scrollbar-width must equal the platform's ACTUAL gutter
- * width, not a static design value:
+ * already excludes the real scrollbar gutter (scrollbar-gutter: stable
+ * both-edges), while the dock composer overlays the full grid cell and mirrors
+ * that box with padding-inline: var(--scrollbar-width). For those two boxes to
+ * share one centerline, --scrollbar-width must equal the platform's ACTUAL
+ * gutter width, not a static design value:
  *
  *   - macOS overlay scrollbars occupy 0px of layout, so any fixed value
  *     shifts the composer off the flow.
@@ -18,9 +18,8 @@
  * width once scrollbar-width is set, so the static token is not even the
  * rendered scrollbar width. Measure the real width before first paint with
  * a probe that inherits the same global scrollbar cascade, then stamp the
- * token on the document root. Every consumer (composer gutter compensation,
- * the jump-to-latest cluster, Monaco sizing) then reads the same
- * platform-true value on every machine.
+ * token on the document root. Every consumer (the composer's gutter mirror,
+ * Monaco sizing) then reads the same platform-true value on every machine.
  */
 
 export function measureScrollbarGutterWidth(): number {

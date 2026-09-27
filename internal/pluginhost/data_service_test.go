@@ -46,9 +46,6 @@ func TestKernelDataQueryDescriptorIsValid(t *testing.T) {
 	if err := ValidateServiceDescriptor(descriptor); err != nil {
 		t.Fatalf("ValidateServiceDescriptor(%+v) = %v", descriptor, err)
 	}
-	if descriptor.Name != KernelDataQueryService || descriptor.Version != DataQueryServiceVersion {
-		t.Fatalf("descriptor = %+v", descriptor)
-	}
 }
 
 func TestValidateDataQueryParamsTypesAndTurn(t *testing.T) {

@@ -1,56 +1,39 @@
-# Use plugin themes and settings
+# Themes and settings
 
-Enabled plugins may contribute themes and settings. This page explains
-how users select, reset, and manage those contributions. Authors can find declaration
-fields in the [plugin authoring reference](plugin-authoring.md#declarative-contributions).
+Use **Settings → Appearance** to choose a theme and adjust reading preferences. Enabled plugins can add themes and their own settings without replacing the built-in settings interface.
 
-## Select or reset a theme
+## Choose a theme
 
-Open **Settings → Appearance**. Enabled plugin themes appear alongside
-**System**, **Light**, and **Dark**. A choice applies immediately without a restart.
+**System** follows the operating system; **Light** and **Dark** keep a fixed appearance. Plugin themes appear alongside these choices and apply immediately. Choose a built-in option to remove the plugin's theme overrides.
 
-To stop using a plugin theme, choose any built-in option:
+Disabling or removing a plugin also removes its contributed themes. If a theme makes the interface difficult to use, return to a built-in theme or disable the plugin through plugin management.
 
-- **System** follows the operating-system appearance;
-- **Light** or **Dark** pins the corresponding built-in theme.
+## Use a background image
 
-Returning to a built-in theme removes plugin token overrides. Disabling or removing
-the plugin also removes its theme contribution. Appearance plugins cannot hide
-Settings, plugin management, or recovery entries.
+On desktop, choose **Background image → Choose image** in Appearance. Import a local PNG, JPEG or WebP up to 20 MB and 64 megapixels. Wuu stores a resized copy (up to 2048 pixels on its longest edge) in this desktop profile; the original file can be moved or deleted. Images are not uploaded or synced to other devices. Animated images use a still frame.
 
-## Adjust reading size and interface scale
+The picture covers the sidebar, conversation, settings and workspace canvas as one centered, cropped background. Menus, inputs, editors and previews keep their own surfaces for readability. Choose Original, Dither, Halftone, ASCII or Scanlines, and adjust image strength from 5% to 30%. Changes apply to open desktop windows. **Remove** deletes the saved copy; a failed import or save preserves the previous image.
 
-Desktop starts with a 14.5px UI font and one Zoom Out step. Existing saved font
-sizes are preserved. Adjust the UI font in settings independently of the code
-font. Use the View menu's Zoom In, Zoom Out, or Actual Size controls to change
-the whole interface scale; the desktop remembers this choice across reloads.
-These defaults are a starting point, not a required combination.
+## Adjust text and motion
 
-## Manage plugin settings
+The UI font-size preference controls the interface and conversation prose together. Code size is separate, so you can make messages easier to read without enlarging code blocks and editors by the same amount. Valid saved preferences are preserved across upgrades.
 
-Wuu renders declared boolean, text, number, and enum fields, so the plugin does not
-need to build its own form. After install, settings are available from:
+Appearance settings also let you choose UI and code fonts and reduce motion. A font must be available on the machine to render as intended; otherwise the interface uses its fallback fonts.
 
-- the plugin-contributed page in the **Settings** sidebar;
-- the plugin details in **Skills & Plugins**.
+## Control commit attribution
 
-Boolean and enum changes save immediately. Text and number fields normally save when
-the field loses focus. Each field shows its default, scope, and whether it applies live
-or after restart. Use the inline retry action when saving fails.
+In **Settings → Runtime → Git**, **Agent commit attribution** controls whether Wuu adds `wuu-agent[bot]` as a co-author to commits it creates. Existing authors and other co-authors are preserved. You can save this setting while a conversation is running; that conversation keeps its current setting until its turn and background work finish, then adopts the new setting when it next runs.
 
-Settings may be user-scoped or workspace-scoped. Workspace values affect only the
-current workspace. Wuu preserves settings and Storage by default across disable,
-upgrade, and removal so they can be restored later; data is not automatically erased.
+## Change a plugin setting
 
-## Theme or settings are missing
+Open the plugin's settings page or its details in **Skills & Plugins**. Wuu can render declared boolean, text, number, and enum fields; plugins can also provide custom settings content.
 
-Check the following in order:
+Boolean and enum fields save when changed. Text and number fields save when focus leaves the field. Check the save result before navigating away, and use the retry action if saving fails.
 
-1. the plugin is installed and enabled;
-2. its source identity is unchanged;
-3. the manifest actually declares a theme or setting;
-4. the setting does not require a restart;
-5. plugin diagnostics in **Skills & Plugins** do not report a manifest or activation error.
+Each declared field identifies its user or workspace scope and whether it applies live or after restart. A workspace value affects only that workspace. Settings and plugin storage are preserved by default across disable, update, and removal; removing a package is not a data-erasure operation.
 
-For disable, inspection, and removal steps, see
-[Wuu Plugin recovery](plugins.md#recovery-and-troubleshooting).
+## Missing contributions
+
+Check that the plugin is enabled, that it declares the theme or setting you expect, and that its detail page shows no trust, compatibility, or activation problem. Follow any restart requirement shown for the setting. Recovery commands are in [Wuu plugins](plugins.md#recovery-and-troubleshooting).
+
+For theme and settings declarations, see the [authoring reference](plugin-authoring.md#declarative-contributions). The generated [theme surface matrix](theme-surface-matrix.md) maps theme tokens to interface surfaces.

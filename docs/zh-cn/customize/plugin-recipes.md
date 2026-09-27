@@ -1,189 +1,90 @@
-# Desktop 插件场景教程
+# 桌面插件配方
 
-本页按用户需求组织常见组合方式。先阅读[Desktop UI 扩展地图](desktop-plugins.md)，并从
-[Desktop 插件快速上手](desktop-plugin-quickstart.md)生成一个可运行的包。
+这些示例基于[桌面插件快速上手](desktop-plugin-quickstart.md)。每个 TypeScript 代码块都是完整桌面入口，可作为包中的 `src/index.ts`，并让 `desktop.entry` 指向 `dist/index.js`。
 
-## 给输入框添加按钮
+## 向草稿添加审查提示
 
-使用 `composer.toolbar` Slot 和 `api.ui.ToolbarToggle` 或 `api.ui.Button`。宿主负责工具栏
-布局、主题和可访问性，插件只负责自己的状态和点击行为。
+输入框 Presenter 可以读取公开的草稿快照并调用宿主动作。本例使用包装模式保留原生输入框，让用户检查新增文本后自行发送。
 
 ```ts
-api.registerSlot("composer.toolbar", {
-  id: "my-action",
-  render() {
-    return api.react.createElement(
-      api.ui.Button,
-      { onClick: () => console.log("clicked") },
-      "运行",
-    );
-  },
-});
-```
-
-如果按钮需要读取或修改草稿，不要查找 textarea；改用 `conversation.composer` Presenter。
-
-## 选中文字后添加到输入框
-
-这个功能由三块组成：
-
-1. 标准 Selection API 读取用户选中的文本和坐标；
-2. 公开 `data-wuu-component="message"` 锚点确认选区来自消息流；
-3. Composer Presenter 调用宿主 `set-draft` Action。
-
-它不需要替换消息渲染，也不需要修改私有 React state。下面是核心实现：
-
-```ts
-import type {
-  ComposerSnapshotV1,
-  PluginGenerationApi,
-  PresenterProps,
-} from "@wuu/plugin-sdk";
-
-const SET_DRAFT = "conversation.composer.set-draft";
+import type { ComposerSnapshotV1, PluginGenerationApi, PresenterProps } from "@wuu/plugin-sdk";
 
 export function activate(api: PluginGenerationApi): void {
   const React = api.react;
+  const Button = api.ui.Button as unknown as
+    (props: Readonly<Record<string, unknown>>) => unknown;
+  const action = "conversation.composer.set-draft";
 
-  function SelectionToolbar(input: Readonly<Record<string, unknown>>) {
+  function ReviewPrompt(input: Readonly<Record<string, unknown>>) {
     const props = input.presenter as PresenterProps;
     const snapshot = props.snapshot as ComposerSnapshotV1;
-    const [selection, setSelection] = React.useState<null | {
-      text: string;
-      left: number;
-      top: number;
-    }>(null);
-
-    React.useEffect(() => {
-      const update = () => {
-        const current = window.getSelection();
-        if (!current || current.isCollapsed || current.rangeCount === 0) {
-          setSelection(null);
-          return;
-        }
-
-        const node = current.anchorNode;
-        const element = node instanceof Element ? node : node?.parentElement;
-        const text = current.toString().trim();
-        if (!text || !element?.closest('[data-wuu-component="message"]')) {
-          setSelection(null);
-          return;
-        }
-
-        const rect = current.getRangeAt(0).getBoundingClientRect();
-        setSelection({ text, left: rect.left, top: rect.top - 40 });
-      };
-
-      document.addEventListener("selectionchange", update);
-      return () => document.removeEventListener("selectionchange", update);
-    }, []);
-
-    const append = async () => {
-      if (!selection || !props.host.actions.includes(SET_DRAFT)) return;
-      const current = snapshot.draftText?.trimEnd() ?? "";
-      const quote = `> ${selection.text.replaceAll("\n", "\n> ")}`;
-      await props.host.invoke(SET_DRAFT, current ? `${current}\n\n${quote}\n\n` : `${quote}\n\n`);
-      setSelection(null);
-    };
-
-    return React.createElement(
-      "div",
-      { style: { display: "contents" } },
+    const [error, setError] = React.useState("");
+    const disabled = snapshot.readOnly || !props.host.actions.includes(action);
+    async function append() {
+      try {
+        const draft = snapshot.draftText?.trimEnd() ?? "";
+        await props.host.invoke(action,
+          `${draft}${draft ? "\n\n" : ""}Review the current changes for concrete bugs.`);
+        setError("");
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    }
+    return React.createElement("div", null,
       props.fallback,
-      selection && React.createElement(
-        "div",
-        {
-          style: {
-            position: "fixed",
-            left: selection.left,
-            top: selection.top,
-            zIndex: 1000,
-          },
-          onMouseDown: (event: { preventDefault(): void }) => event.preventDefault(),
-        },
-        React.createElement(api.ui.Button, { onClick: append }, "添加到输入框"),
-      ),
-    );
+      React.createElement(Button, { disabled, onClick: append }, "Add review prompt"),
+      error ? React.createElement("p", { role: "alert" }, error) : null);
   }
 
   api.registerPresenter({
-    id: "selection-toolbar",
-    target: "conversation.composer",
-    mode: "wrap",
-    render: (props) => React.createElement(SelectionToolbar, { presenter: props }),
+    id: "review-prompt", target: "conversation.composer", mode: "wrap",
+    render: props => React.createElement(ReviewPrompt, { presenter: props }),
   });
 }
 ```
 
-`onMouseDown.preventDefault()` 用于避免点击按钮前浏览器先清除选区。插件保存的是普通文本和
-坐标，不保存宿主节点或 React 对象。生产实现还应处理窗口边缘、滚动、超长选区和本地化。
+动作接受字符串，不接受 DOM 事件或 textarea 引用，宿主仍会检查只读状态。实现“将选区加入草稿”时，可通过浏览器 Selection API 获取纯文本，确认选区属于公开的消息锚点，再通过相同动作传入文本。卸载时移除选区监听器，点击时保留用户选区，并处理滚动和视口边缘。
 
-“翻译”“总结”“解释”等按钮可以复用同一选区，只需把不同模板和选中文字一起写入草稿。
-默认让用户检查并补充 query 后再发送；如果确实要自动发送，先检查 `submit` 是否出现在
-`host.actions`，再调用 `conversation.composer.submit`。
+## 添加工作区页面
 
-## 增加完整工作区工具
-
-长列表、编辑器、图表或管理界面应使用 View，而不是塞进 Slot：
+注册 View，再通过 manifest 入口开放。页面的打开操作和周围导航由宿主管理。
 
 ```ts
-api.registerViewType({
-  id: "my-plugin.dashboard",
-  title: "Dashboard",
-  persistence: "durable",
-  render: Dashboard,
-});
+import type { PluginGenerationApi } from "@wuu/plugin-sdk";
 
-api.registerViewPlacement({
-  id: "dashboard-default",
-  view: "my-plugin.dashboard",
-  region: "auxiliary",
-});
+export function activate(api: PluginGenerationApi): void {
+  api.registerViewType({
+    id: "dashboard",
+    title: "Dashboard",
+    defaultRegion: "auxiliary",
+    persistence: "durable",
+    render: () => api.react.createElement("p", null, "Workspace dashboard"),
+  });
+}
 ```
 
-再在 `plugin.json` 的 `contributes.workspaceTools`、`navigation` 或 `settingsPages` 中声明
-面向用户的入口。宿主负责打开、关闭、Tab 和持久化。
-
-## 改造消息或工具活动卡片
-
-- 只在消息前后增加内容：使用 `conversation.message.before/after` Slot；
-- 包装一条消息：使用 `conversation.item` Presenter 的 `wrap` 模式；
-- 包装整个消息边界：使用 `conversation.message` Surface；
-- 按工具 capability 改造活动卡片：使用 `conversation.tool-activity` Presenter。
-
-Presenter 应读取公开 snapshot，并始终保留合理 fallback。不要解析私有 ThreadItem、猜测
-工具内部状态或依赖宿主 class 名。
-
-## 添加无需代码的主题
-
-只改颜色、圆角或语法高亮时，在 manifest 中声明主题，不要加载 Desktop 代码：
+将下面的贡献合并到包的 `plugin.json`：
 
 ```json
 {
   "contributes": {
-    "themes": [
-      {
-        "id": "calm-night",
-        "name": "Calm Night",
-        "base": "dark",
-        "tokens": {
-          "--wuu-color-canvas": "#151820",
-          "--wuu-color-accent": "#8fa7ff"
-        }
-      }
+    "workspaceTools": [
+      { "id": "dashboard-entry", "view": "dashboard", "title": "Dashboard" }
     ]
   }
 }
 ```
 
-运行 `wuu plugin validate .` 后，在 Desktop 插件目录中添加本地目录并选择**批准并启用**。
-主题会出现在**设置 → 外观**；
-切回内置主题即可移除覆盖。完整 Token 见[主题 Token 参考](theme-surface-matrix.md)，用户操作见
-[插件主题与设置](themes-settings.md)。
+`view` 必须匹配同一插件注册的 ID。设置页使用 `settingsPages`，导航入口使用 `navigation`。只有确实需要初始打开位置时才添加 `registerViewPlacement`，不要把每个可选工具都强制打开在工作台上。
 
-## 后台工作完成后显示结果
+## 连接页面和运行时
 
-Desktop 模块可以注册 Command，也可以在后台事件或异步任务完成时调用
-`showConversationCard`。Card 适合短生命周期交互；需要跨会话持久化和复杂导航时改用 View。
+`api.invokeRuntime(method, input, { workspaceId })` 调用同一插件当前活动的运行时 generation。运行时需要实现 `plugin.client.request` 能力；方法名是插件自己的分派键，不是任意 app-server 方法。通过 `listWorkspaces` 检查工作区可用性，在 UI 中处理请求失败；需要随变化刷新视图时，使用 `onHostEvent`。
 
-完整字段、设置、Storage、Runtime 通信和打包规则见[插件开发参考](plugin-authoring.md)。
+持久业务状态应放在运行时存储中，不要在 renderer 和运行时维护两份独立副本。订阅和定时器需要注册清理。临时进度可以使用 `showConversationCard`，但它的 `update`、`dismiss`、`dispose` 方法不会让卡片成为保存的会话历史。
+
+## 改变外观，保留行为
+
+颜色和语法高亮可通过 `contributes.themes` 声明主题，见[主题与设置](themes-settings.md)和[主题契约](theme-surface-matrix.md)。工具结果样式应区分正文 renderer 与执行摘要 presenter，不要重复输出宿主已经放置的结果正文。
+
+分发前应构建并验证包，再在 Wuu Desktop 中检查动作、错误状态、键盘焦点、窄布局、两种主题、较大字号、禁用和重载。`wuu plugin test` 不执行这些渲染验收。

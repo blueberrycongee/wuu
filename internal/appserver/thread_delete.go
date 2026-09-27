@@ -102,7 +102,28 @@ func (s *Server) handleThreadDelete(req Request) error {
 	removed := s.threads[id]
 	delete(s.threads, id)
 	s.mu.Unlock()
-	releaseThreadRuntime(removed)
+	s.releaseThreadRuntime(removed)
+
+	if deleted.Source == projectSource {
+		// Deleting the coordinator does not delete or release its sessions. Send
+		// fresh grouping metadata so open sidebars can expose the surviving rows.
+		members, err := session.List(s.rt.SessionDir, 0)
+		if err != nil {
+			providers.DebugLogf("list surviving project sessions of %q: %v", id, err)
+		}
+		for _, member := range members {
+			if member.Source != projectSessionSource || member.ParentID != id {
+				continue
+			}
+			thread, err := s.threadAfterMetadataUpdate(member)
+			if err == nil {
+				err = s.notifyThreadUpdated(thread)
+			}
+			if err != nil {
+				providers.DebugLogf("refresh surviving project session %q: %v", member.ID, err)
+			}
+		}
+	}
 
 	// Everything past this point is best-effort cleanup: the session row
 	// (and its cascaded history) is already gone, so a failing worktree or
@@ -115,7 +136,7 @@ func (s *Server) handleThreadDelete(req Request) error {
 		// must never turn into an os.RemoveAll of arbitrary directories.
 		if pathWithinRoot(info.Path, statepath.WorktreeRoot(stateDir)) {
 			if manager, mgrErr := s.worktreeManager(firstNonEmpty(info.BaseRepo, s.rt.RootDir)); mgrErr == nil {
-				_, _ = manager.CleanupIfClean(&worktree.Worktree{Path: info.Path, SessionID: id})
+				_, _ = manager.CleanupIfClean(&worktree.Worktree{Path: info.Path, SessionID: id, HEAD: info.BaseHEAD, BaseRepo: info.BaseRepo})
 			}
 		}
 	}

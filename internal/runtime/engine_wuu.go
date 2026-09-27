@@ -10,6 +10,9 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/claudeengine"
 	"github.com/blueberrycongee/wuu/internal/codexengine"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
+	"github.com/blueberrycongee/wuu/internal/externalengine"
 )
 
 // WuuEngine is the built-in agent engine: the native StreamRunner loop that
@@ -104,6 +107,14 @@ func (s *Session) Engines() *agentengine.Registry {
 	return s.engines
 }
 
+// SetEnginesForTest installs a registry on runtimes constructed without NewSession.
+func (s *Session) SetEnginesForTest(reg *agentengine.Registry) {
+	if s == nil {
+		return
+	}
+	s.engines = reg
+}
+
 // RebuildCodexEngine re-registers the codex engine after a settings change
 // (binary path override or enable/disable). The host instance is preserved
 // so a running app-server keeps its process; only future acquisitions use
@@ -136,6 +147,33 @@ func (s *Session) RebuildClaudeEngine(enabled bool, binaryPath string) {
 	}
 	if err := s.engines.Register(claudeengine.NewEngine(binaryPath, s.RootDir)); err != nil {
 		return
+	}
+}
+
+// RebuildProtocolEngines applies settings to ACP and HTTP engines without
+// starting agents. Running sessions retain their binding until the turn ends.
+func (s *Session) RebuildProtocolEngines(cfg *config.EnginesConfig) {
+	if s == nil || s.engines == nil {
+		return
+	}
+	for _, entry := range enginecatalog.Entries() {
+		if entry.Protocol != "acp" && entry.Protocol != "opencode" {
+			continue
+		}
+		s.engines.Unregister(agentengine.EngineID(entry.ID))
+		setting := cfg.Binary(entry.ID)
+		if enabled, _ := setting.EngineEnabled(); !enabled {
+			continue
+		}
+		override := ""
+		if setting != nil {
+			override = setting.BinaryPath
+		}
+		binary, err := entry.Resolve(override)
+		if err != nil {
+			continue
+		}
+		_ = s.engines.Register(externalengine.New(entry, binary, s.RootDir))
 	}
 }
 

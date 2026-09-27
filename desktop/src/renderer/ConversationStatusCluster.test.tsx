@@ -3,6 +3,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationStatusCluster } from "./ConversationStatusCluster";
+import { readBrowserPiPHostLayout } from "./BrowserPiPHostReporter";
+import { I18nProvider } from "./i18n";
 import { PluginHost } from "./plugins/PluginHost";
 
 describe("ConversationStatusCluster", () => {
@@ -18,6 +20,26 @@ describe("ConversationStatusCluster", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+  });
+
+  it("keeps preview placement independent of the navigation and status row", () => {
+    container.setAttribute("data-pip-anchor-host", "conversation");
+    container.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600 }) as DOMRect;
+    const before = readBrowserPiPHostLayout(document);
+    act(() => root.render(
+      <ConversationStatusCluster
+        host={new PluginHost({ react: React })}
+        visible
+        navigation={<button>Jump</button>}
+        todoUpdate={undefined}
+        onOpenSession={vi.fn()}
+        clusterRef={(node) => {
+          if (node) node.getBoundingClientRect = () => ({ left: 500, top: 550, width: 250, height: 30 }) as DOMRect;
+        }}
+      />,
+    ));
+    expect(container.querySelector("button")).not.toBeNull();
+    expect(readBrowserPiPHostLayout(document)).toEqual(before);
   });
 
   it("closes the overflow menu when the user clicks outside", async () => {
@@ -61,5 +83,37 @@ describe("ConversationStatusCluster", () => {
       document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
     });
     expect(overflow?.open).toBe(false);
+  });
+
+  it("shows only the TODO items in the hover card", async () => {
+    const host = new PluginHost({ react: React });
+
+    act(() => root.render(
+      <I18nProvider>
+        <ConversationStatusCluster
+          host={host}
+          visible
+          threadId="parent-session"
+          todoUpdate={{
+            explanation: "Why the list changed.",
+            todos: [
+              { content: "Inspect the current task", status: "completed" },
+              { content: "Keep the current task in view", status: "in_progress" },
+              { content: "Write the follow-up", status: "pending" },
+            ],
+          }}
+          onOpenSession={vi.fn()}
+        />
+      </I18nProvider>,
+    ));
+
+    const trigger = container.querySelector(".conversation-status-todo-trigger");
+    const card = container.querySelector(".conversation-status-todo-card");
+    expect(trigger?.textContent).toBe("TODO1/3");
+    expect([...card?.querySelectorAll("li") ?? []].map((item) => item.textContent)).toEqual([
+      "✓Inspect the current task",
+      "2Keep the current task in view",
+      "3Write the follow-up",
+    ]);
   });
 });

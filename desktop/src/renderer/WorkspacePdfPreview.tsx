@@ -1,4 +1,4 @@
-import { Minus, Plus } from "lucide-react";
+import { Minus, Plus } from "./WuuIcons";
 import {
   type ReactNode,
   useEffect,

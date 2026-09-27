@@ -10,6 +10,7 @@ import {
   openViewTab,
   reorderViewTabs,
   workspaceDiffViewTab,
+  workspaceArtifactViewTab,
   workspaceDiffViewTabID,
   workspaceFileViewTab,
   workspaceFileViewTabID,
@@ -23,6 +24,27 @@ const projectContext: RuntimeContext = {
   project_id: "project-1",
   cwd: "/repo/project",
 };
+
+it("keeps delivered snapshots separate from editable files, deduplicates repeats, and retains new versions", () => {
+  const artifact = {
+    id: "delivery", itemId: "tool", index: 0, type: "file" as const,
+    name: "report.html", mimeType: "text/html", placement: "turn_end" as const,
+    sha256: "first", uri: "wuu-artifact://workspace/thread/first/report.html",
+  };
+  const input = { threadID: "thread", cwd: projectContext.cwd, artifact };
+  const editable = workspaceFileViewTab({ context: projectContext, path: "report.html" });
+  const first = workspaceArtifactViewTab(input);
+  let state = openViewTab(openViewTab(initialWorkspaceViewTabsState, editable), first);
+  state = openViewTab(state, workspaceArtifactViewTab({ ...input, artifact: { ...artifact, id: "repeat" } }));
+  expect(state.tabs).toHaveLength(2);
+  expect(state.activeTabID).toBe(first.id);
+  const revision = workspaceArtifactViewTab({ ...input, artifact: { ...artifact, sha256: "second" } });
+  state = openViewTab(state, revision);
+  expect(state.tabs).toHaveLength(3);
+  expect(closeViewTab(state, revision.id).activeTabID).toBe(first.id);
+  state = openViewTab(state, workspaceArtifactViewTab({ ...input, threadID: "other-thread" }));
+  expect(state.tabs).toHaveLength(4);
+});
 
 function makeDiff(path: string): ToolDiffPreviewFileDiff {
   return {
@@ -300,6 +322,13 @@ describe("closeViewTab", () => {
 
     expect(state.tabs).toHaveLength(0);
     expect(state.activeTabID).toBeUndefined();
+  });
+
+  it("can open a background tab without stealing the active tool", () => {
+    let state = openViewTab(initialWorkspaceViewTabsState, workspaceToolViewTab("files"));
+    state = openViewTab(state, workspaceToolViewTab("browser"), { activate: false });
+    expect(state.tabs.map((tab) => tab.id)).toEqual(["files", "browser"]);
+    expect(state.activeTabID).toBe("files");
   });
 
   it("closing an inactive tab leaves the active tab untouched", () => {

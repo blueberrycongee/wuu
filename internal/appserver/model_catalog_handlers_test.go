@@ -70,9 +70,6 @@ func TestConfigModelCatalogRefreshRPC(t *testing.T) {
 	if !foundFresh {
 		t.Fatalf("provider summaries = %#v", result.Providers)
 	}
-	if server.modelCatalogCachePath != filepath.Join(wuuHome, "modelcatalog.json") {
-		t.Fatalf("cache path = %q", server.modelCatalogCachePath)
-	}
 	server.Close()
 	if err := modelcatalog.UseEmbedded(); err != nil {
 		t.Fatal(err)

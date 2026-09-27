@@ -1,30 +1,19 @@
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "./WuuIcons";
 import {
   createContext,
-  type CSSProperties,
   type HTMLAttributes,
   type ReactNode,
   useContext,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
 } from "react";
 import { SectionRowIcon } from "./ThreadSidebar";
-import { motionDurationMs } from "./motion";
-
-// Mirrors --section-fold-ms in sidebar.css (= var(--motion-slow)). The body
-// stays mounted while collapsing so the exit motion can finish before React
-// removes the rows.
-export const SECTION_COLLAPSE_MS = motionDurationMs("--motion-slow", 280);
-
-type CollapsePhase = "open" | "opening" | "closing";
+import { motionDurationMs, prefersReducedMotion } from "./motion";
+import { useExitPresence } from "./useExitPresence";
 
 /**
- * Shared measured-height unfurl used by workspace rows and the functional
- * group headings (插件 / 置顶 / 工作区 / 文件夹). Opening writes 0px →
- * content height, then releases to auto; closing snapshots height and
- * animates to 0 before unmount.
+ * Sidebar folds share a native 0/auto height transition. Keep the empty shell
+ * between toggles so opening has a starting style, but release hidden rows
+ * after closing. Nested folds mount at their own intrinsic height, rather than
+ * inheriting a parent's temporary measurement.
  */
 export function SidebarCollapseBody({
   expanded,
@@ -35,89 +24,27 @@ export function SidebarCollapseBody({
   children?: ReactNode;
   className?: string;
 }): JSX.Element | null {
-  const [mounted, setMounted] = useState(expanded);
-  const [phase, setPhase] = useState<CollapsePhase>(expanded ? "open" : "closing");
-  const collapseRef = useRef<HTMLDivElement | null>(null);
-  const [bodyHeight, setBodyHeight] = useState<number | null>(expanded ? null : 0);
-  const prevExpandedRef = useRef(expanded);
-  useEffect(() => {
-    const wasExpanded = prevExpandedRef.current;
-    prevExpandedRef.current = expanded;
-    if (expanded) {
-      if (!wasExpanded) {
-        setBodyHeight(0);
-        setPhase("opening");
-        setMounted(true);
-      }
-      return;
-    }
-    if (!wasExpanded) {
-      return;
-    }
-    const currentHeight = collapseRef.current?.scrollHeight ?? 0;
-    setBodyHeight(currentHeight);
-    setPhase("closing");
-    const frame = window.requestAnimationFrame(() => {
-      setBodyHeight(0);
-    });
-    const timer = window.setTimeout(() => {
-      setMounted(false);
-    }, SECTION_COLLAPSE_MS);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-    };
-  }, [expanded]);
+  // transitionend normally releases the rows; the timer is the bounded
+  // fallback. The fold rides .sidebar's --section-fold-ms, an alias scoped
+  // below the root that motionDurationMs cannot read; it names this rung.
+  const [present, release] = useExitPresence(expanded, () =>
+    prefersReducedMotion() ? 0 : motionDurationMs("--motion-slow", 280) + 32);
 
-  useLayoutEffect(() => {
-    if (!expanded || !mounted) return;
-    if (phase !== "opening") return;
-    const element = collapseRef.current;
-    if (!element) return;
-    const measuredHeight = element.scrollHeight;
-    setBodyHeight(measuredHeight);
-    const frame = window.requestAnimationFrame(() => {
-      setBodyHeight(measuredHeight);
-    });
-    const timer = window.setTimeout(() => {
-      setPhase("open");
-      setBodyHeight(null);
-    }, SECTION_COLLAPSE_MS);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-    };
-  }, [expanded, mounted, phase]);
-
-  useEffect(() => {
-    if (!expanded || phase !== "open") return;
-    const element = collapseRef.current;
-    if (!element || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => {
-      setBodyHeight(null);
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [expanded, phase]);
-
-  if (!mounted || !children) return null;
-
-  const collapseStyle =
-    bodyHeight === null
-      ? undefined
-      : ({
-          "--sidebar-section-body-height": `${Math.max(0, bodyHeight)}px`,
-        } as CSSProperties);
+  if (!children) return null;
   const collapseClassName = ["thread-list-collapse", className].filter(Boolean).join(" ");
   return (
     <div
-      ref={collapseRef}
       className={collapseClassName}
-      data-state={phase}
-      style={collapseStyle}
-      aria-hidden={phase === "closing" || undefined}
+      data-state={expanded ? "open" : present ? "closing" : "closed"}
+      aria-hidden={!expanded || undefined}
+      inert={!expanded}
+      onTransitionEnd={(event) => {
+        if (!expanded && event.target === event.currentTarget && event.propertyName === "height") {
+          release();
+        }
+      }}
     >
-      <div className="thread-list-collapse-inner">{children}</div>
+      <div className="thread-list-collapse-inner">{present ? children : null}</div>
     </div>
   );
 }
@@ -177,9 +104,8 @@ export function useSidebarSectionDragHandle(): SidebarSectionDragHandle | null {
  *     so the height collapse animation has real content.
  *
  * The close animation is self-contained: SidebarCollapseBody keeps the
- * rows mounted in `data-state="closing"` for SECTION_COLLAPSE_MS after
- * `expanded` flips false, so all four sections share the identical
- * collapse motion.
+ * rows mounted until the height transition finishes after `expanded` flips
+ * false, so all four sections share the identical collapse motion.
  */
 export function SidebarSection({
   expanded,

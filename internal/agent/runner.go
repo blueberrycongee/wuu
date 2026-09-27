@@ -27,6 +27,13 @@ type RichToolExecutor interface {
 	ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error)
 }
 
+// ToolResultFinalizer settles recoverable model text before persistence and
+// callbacks, including for plugin results and normalized execution errors.
+// Executors without artifact storage can omit it; their evidence stays intact.
+type ToolResultFinalizer interface {
+	FinalizeToolResult(call providers.ToolCall, result toolresult.Result) toolresult.Result
+}
+
 // ToolSupportProvider lets an executor report whether a tool belongs to the
 // current model surface, even when its schema is deferred and must be loaded
 // through discovery before execution.

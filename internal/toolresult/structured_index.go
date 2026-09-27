@@ -131,7 +131,16 @@ func (b *structuredPreviewBudget) project(value any, depth int) any {
 			b.truncated = true
 		}
 		return truncateStructuredIndexString(typed, structuredPreviewMaxStringRunes)
-	case json.Number, bool, nil:
+	case json.Number:
+		// UseNumber preserves precision but also accepts arbitrarily long
+		// numeric literals. Never let one scalar bypass the preview budget or
+		// clip its digits into a different numeric value.
+		if len(typed) > structuredPreviewMaxStringRunes {
+			b.truncated = true
+			return "[number omitted]"
+		}
+		return typed
+	case bool, nil:
 		return typed
 	default:
 		b.truncated = true

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from "react";
+import type { RefObject } from "react";
 import type { TodoUpdate } from "../shared/protocol";
 import type { InspectorSnapshotV1 } from "../shared/workbench";
 import type { AppState } from "./AppState";
@@ -7,44 +7,8 @@ import {
   type EnvironmentPanelMenu,
   type EnvironmentPanelMotionState,
 } from "./EnvironmentPanel";
-import { environmentPanelScaleForWidth } from "./EnvironmentPanelScale";
 import { desktopPluginHost, desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 import { PluginInspectorSections } from "./plugins/PluginInspector";
-
-function useEnvironmentPanelScale(
-  stackRef: RefObject<HTMLDivElement | null>,
-  enabled: boolean,
-): void {
-  useEffect(() => {
-    const stack = stackRef.current;
-    const container = stack?.parentElement;
-    if (!enabled || !stack || !container) {
-      return;
-    }
-
-    const applyScale = (width: number): void => {
-      const scale = environmentPanelScaleForWidth(width);
-      stack.style.setProperty(
-        "--environment-panel-scale",
-        String(scale),
-      );
-    };
-    applyScale(container.clientWidth);
-
-    if (typeof ResizeObserver === "undefined") {
-      const handleResize = (): void => applyScale(container.clientWidth);
-      window.addEventListener("resize", handleResize);
-      return () => window.removeEventListener("resize", handleResize);
-    }
-
-    const observer = new ResizeObserver((entries) => {
-      applyScale(entries[0]?.contentRect.width ?? container.clientWidth);
-    });
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [enabled, stackRef]);
-}
-
 export function EnvironmentSideStack({
   visible,
   mounted,
@@ -91,9 +55,7 @@ export function EnvironmentSideStack({
   onOpenCommit: () => void;
   onOpenPullRequest: () => void;
 }): JSX.Element | null {
-  const stackRef = useRef<HTMLDivElement>(null);
   const shouldRender = (visible || mounted) && Boolean(state.initialized);
-  useEnvironmentPanelScale(stackRef, shouldRender);
 
   if (!shouldRender || !state.initialized) {
     return null;
@@ -104,7 +66,7 @@ export function EnvironmentSideStack({
   return (
     <div
       className="environment-side-stack environment-info-side-stack"
-      ref={stackRef}
+      data-pip-obstacle="environment"
     >
       <EnvironmentPanel
         panelRef={panelRef}
@@ -144,7 +106,7 @@ function buildInspectorSnapshot(state: AppState, todoUpdate?: TodoUpdate): Inspe
     turnId: latestTurn?.id,
     turnStatus: latestTurn?.status,
   });
-  const activeProject = activeContext?.kind === "project"
+  const activeWorkspace = activeContext?.kind === "project"
     ? state.projects.find((project) => project.id === activeContext.project_id)
     : undefined;
   const workspace = activeContext === undefined
@@ -153,7 +115,7 @@ function buildInspectorSnapshot(state: AppState, todoUpdate?: TodoUpdate): Inspe
         kind: activeContext.kind,
         cwd: activeContext.cwd,
         projectId: activeContext.kind === "project" ? activeContext.project_id : undefined,
-        projectName: activeProject?.name,
+        projectName: activeWorkspace?.name,
         branch: state.gitStatus?.branch,
         dirtyFileCount: state.gitStatus?.dirty_count,
       });

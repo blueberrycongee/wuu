@@ -1,8 +1,9 @@
-import { X } from "lucide-react";
+import { X } from "./WuuIcons";
 import type {
   InputFile,
   InputImage,
   MessageContentPart,
+  ResponseSelection,
   Thread,
   ThreadItem,
   UserQuestionAnswer,
@@ -10,6 +11,7 @@ import type {
 } from "../shared/protocol";
 import { SplitPaneComposer } from "./ComposerView";
 import {
+  activeTurnIsAnswerReady,
   isThreadRunning,
   type ComposerDraftState,
   type ConversationPaneID,
@@ -30,6 +32,7 @@ export function ConversationSplitPane({
   streamStatus,
   draft,
   viewSwitchPending,
+  stopState,
   queryHistory,
   requestedHandoffIntent,
   editingMessage,
@@ -41,10 +44,13 @@ export function ConversationSplitPane({
   onPasteAttachmentFiles,
   onRemoveFile,
   onRemoveImage,
+  onChangeSelection,
+  onRemoveSelection,
   onSend,
   onInterrupt,
   onForkMessage,
   onOpenFile,
+  onOpenURL,
   onOpenAgent,
   onEditMessage,
   onCancelEditMessage,
@@ -63,6 +69,7 @@ export function ConversationSplitPane({
   streamStatus?: TurnStreamStatus;
   draft: ComposerDraftState;
   viewSwitchPending: boolean;
+  stopState?: "pending" | "retry";
   queryHistory: string[];
   requestedHandoffIntent?: string;
   editingMessage?: { turnID: string; itemID: string; submitting: boolean };
@@ -74,10 +81,13 @@ export function ConversationSplitPane({
   onPasteAttachmentFiles: (files: File[]) => void;
   onRemoveFile: (id: string) => void;
   onRemoveImage: (id: string) => void;
-  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => void;
+  onChangeSelection?: (selection: ResponseSelection) => void;
+  onRemoveSelection?: (id: string) => void;
+  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
   onInterrupt: () => void;
   onForkMessage: (turnID: string, itemID: string) => void;
   onOpenFile?: (path: string) => void;
+  onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
   onOpenAgent?: (agentID: string) => void;
   onEditMessage?: (turnID: string, item: ThreadItem) => void;
   onCancelEditMessage?: () => void;
@@ -127,15 +137,12 @@ export function ConversationSplitPane({
   };
   const paneRunning = isThreadRunning(thread);
   const paneReadOnly = Boolean(thread.read_only);
-  const paneStatus = paneRunning
-    ? t("messageFlow.stillGenerating")
-    : active && appStatus !== "ready"
-      ? appStatus
-      : "";
+  const paneStatus = active ? appStatus : "";
 
   return (
     <section
       className={`conversation-split-pane${active ? " active" : ""}`}
+      data-thread-id={thread.id}
       aria-label={t(
         pane === "secondary" ? "split.forkConversation" : "split.sourceConversation",
       )}
@@ -184,6 +191,7 @@ export function ConversationSplitPane({
                   turn={turn}
                   cwd={thread.cwd ?? activeContextCwd}
                   onOpenFile={onOpenFile}
+                  onOpenURL={onOpenURL}
                   onOpenAgent={onOpenAgent}
                   latestAgentMessageID={paneLatestAgentMessageID}
                   isLatestTurn={
@@ -220,9 +228,13 @@ export function ConversationSplitPane({
           prompt={draft.prompt}
           setPrompt={onSetPrompt}
           files={draft.files}
+          selections={draft.selections}
+          onChangeSelection={onChangeSelection}
+          onRemoveSelection={onRemoveSelection}
           images={draft.images}
-          running={paneRunning || viewSwitchPending}
+          running={(paneRunning && !activeTurnIsAnswerReady(thread)) || viewSwitchPending}
           sendDisabled={viewSwitchPending}
+          stopState={stopState}
           readOnly={false}
           status={paneStatus}
           statusLiveProgress={false}

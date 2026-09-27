@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 func TestEstimateImageTokensUsesVisualPatchBudget(t *testing.T) {
@@ -82,10 +83,9 @@ func encodeBudgetTestPNG(t *testing.T, w, h int) []byte {
 }
 
 // TestEstimateTokensCalibratedCoefficients locks the 2026-07-06 calibration:
-// CJK at 0.7 tokens/char (real ~0.61, slight overcount by convention) and
-// JSON at chars/3 (real ~3.0 chars/token). The former CJK /2 under-estimated
-// Chinese by ~20% (delays compaction); the former JSON /2 over-estimated
-// tool arguments 1.5-2x (premature compaction).
+// CJK at 0.7 tokens/char (real ~0.61, slight overcount by convention) for
+// prose and assistant text. The former CJK /2 under-estimated Chinese by ~20%
+// (delays compaction).
 func TestEstimateTokensCalibratedCoefficients(t *testing.T) {
 	cjk := strings.Repeat("上下文压缩阈值标定", 10) // 90 CJK runes
 	if got := EstimateTokens(cjk); got != (90*7)/10+1 {
@@ -95,8 +95,73 @@ func TestEstimateTokensCalibratedCoefficients(t *testing.T) {
 	if got := EstimateTokens(ascii); got != 100/4+1 {
 		t.Fatalf("ASCII estimate = %d, want %d", got, 100/4+1)
 	}
-	jsonPayload := strings.Repeat(`{"k":1}`, 30) // 210 runes
-	if got := EstimateJSONTokens(jsonPayload); got != 210/3+1 {
-		t.Fatalf("JSON estimate = %d, want %d", got, 210/3+1)
+	if got := EstimateAssistantTokens(cjk); got != (90*7)/10+1 {
+		t.Fatalf("assistant CJK estimate = %d, want %d", got, (90*7)/10+1)
+	}
+}
+
+func TestEstimateMessagesTokensCountsAssistantTextDenserThanProse(t *testing.T) {
+	payload := strings.Repeat("The helper keeps the conversation still after the window frame settles. ", 80)
+	prose := EstimateTokens(payload)
+	assistant := EstimateAssistantTokens(payload)
+	if assistant <= prose {
+		t.Fatalf("assistant estimator should be denser than prose, assistant=%d prose=%d", assistant, prose)
+	}
+
+	got := EstimateMessagesTokens([]providers.ChatMessage{{
+		Role:             "assistant",
+		Content:          payload,
+		ReasoningContent: payload,
+	}})
+	if got != assistant*2+4 {
+		t.Fatalf("assistant message estimate = %d, want denser estimator %d plus overhead", got, assistant*2)
+	}
+
+	user := EstimateMessagesTokens([]providers.ChatMessage{{
+		Role:    "user",
+		Content: payload,
+	}})
+	if user != prose+4 {
+		t.Fatalf("user message estimate = %d, want prose estimator %d", user, prose+4)
+	}
+}
+
+func TestEstimateMessagesTokensCountsToolResultsAsJSON(t *testing.T) {
+	payload := "[" + strings.TrimSuffix(strings.Repeat(`{"id":"msg-1","body":"ok"},`, 40), ",") + "]"
+	prose := EstimateTokens(payload)
+	jsonTokens := EstimateJSONTokens(payload)
+	if jsonTokens <= prose {
+		t.Fatalf("JSON estimator should be denser than prose, json=%d prose=%d", jsonTokens, prose)
+	}
+
+	got := EstimateMessagesTokens([]providers.ChatMessage{{
+		Role:    "tool",
+		Name:    "chat_read",
+		Content: payload,
+		ToolResult: &toolresult.Result{
+			Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: payload}},
+		},
+	}})
+	if got != jsonTokens+4 {
+		t.Fatalf("tool result estimate = %d, want JSON estimator %d plus message overhead", got, jsonTokens)
+	}
+
+	logPayload := "bash: command not found\n" + strings.Repeat("ok ", 80)
+	logTokens := EstimateJSONTokens(logPayload)
+	gotLog := EstimateMessagesTokens([]providers.ChatMessage{{
+		Role:    "tool",
+		Name:    "bash",
+		Content: logPayload,
+	}})
+	if gotLog != logTokens+4 {
+		t.Fatalf("non-JSON tool result estimate = %d, want JSON estimator %d plus message overhead", gotLog, logTokens)
+	}
+
+	userJSON := EstimateMessagesTokens([]providers.ChatMessage{{
+		Role:    "user",
+		Content: payload,
+	}})
+	if userJSON != prose+4 {
+		t.Fatalf("user message estimate = %d, want prose estimator %d", userJSON, prose+4)
 	}
 }

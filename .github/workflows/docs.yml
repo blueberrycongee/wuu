@@ -8,12 +8,16 @@ on:
       - "docs/**"
       - "docs-site/**"
       - "landing/**"
+      - "scripts/check-docs.mjs"
+      - "Makefile"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "docs/**"
       - "docs-site/**"
       - "landing/**"
+      - "scripts/check-docs.mjs"
+      - "Makefile"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -34,6 +38,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
+
+      - name: Check documentation policy
+        run: make docs-policy-check
 
       - name: Install dependencies
         run: npm ci --prefix docs-site --no-audit --no-fund

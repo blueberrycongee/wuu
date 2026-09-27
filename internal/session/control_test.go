@@ -42,7 +42,7 @@ func TestControlFencesTakeoverAndDoesNotTransferOwnership(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("find: %v", err)
 	}
-	if metadata.Owner != "" || metadata.ParentID != "" || metadata.CWD != "/project" {
+	if metadata.Owner != "" || metadata.ParentID != "" || metadata.CWD != "/project" || metadata.ArchivedAt != nil {
 		t.Fatalf("management changed resources: %+v", metadata)
 	}
 }

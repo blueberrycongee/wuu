@@ -46,8 +46,12 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 }));
 
 import { App, SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./App";
-import { SIDEBAR_MOTION_MS } from "./AppLayoutState";
-import { WINDOW_RESIZING_CLASS } from "./WindowResizeState";
+import { sidebarMotionMs } from "./AppLayoutState";
+import {
+  createWindowResizeSettleScheduler,
+  WINDOW_RESIZE_SETTLE_DELAY_MS,
+  WINDOW_RESIZING_CLASS,
+} from "./WindowResizeState";
 import { PhoneNavigationContext } from "./PhoneNavigationContext";
 
 let container: HTMLDivElement;
@@ -127,7 +131,7 @@ function installWindowStubs(): void {
 }
 
 function installWuuApi(threads: Thread[] = []): void {
-  const projectState = (): {
+  const workspaceState = (): {
     projects: never[];
     active_context: { kind: "no_project"; cwd: string };
   } => ({
@@ -137,10 +141,10 @@ function installWuuApi(threads: Thread[] = []): void {
   const api = {
     listProjects: vi
       .fn()
-      .mockImplementation(() => Promise.resolve(projectState())),
+      .mockImplementation(() => Promise.resolve(workspaceState())),
     selectNoProject: vi
       .fn()
-      .mockImplementation(() => Promise.resolve(projectState())),
+      .mockImplementation(() => Promise.resolve(workspaceState())),
     initialize: vi.fn().mockResolvedValue(initialized()),
     listThreads: vi.fn().mockResolvedValue({ threads }),
     listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
@@ -328,10 +332,6 @@ describe("collapsed sidebar hover drawer", () => {
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
   });
 
-  it("uses a 240ms edge hover intent delay", () => {
-    expect(SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS).toBe(240);
-  });
-
   it.each([
     ["web", true, 390, true],
     ["web", true, 820, false],
@@ -347,7 +347,7 @@ describe("collapsed sidebar hover drawer", () => {
     }));
     await renderCollapsedApp();
     expect(Boolean(container.querySelector('[data-wuu-component="conversation-titlebar"]'))).toBe(!inComposer);
-    expect(Boolean(container.querySelector(`aside button[aria-label="${translateCurrent("sidebar.switchProject")}"]`))).toBe(host === "web" && coarse && width < 700);
+    expect(Boolean(container.querySelector(`aside button[aria-label="${translateCurrent("sidebar.switchWorkspace")}"]`))).toBe(host === "web" && coarse && width < 700);
     expect(container.querySelector('.composer-bar .compact-conversation-actions')).toBeNull();
     await act(async () => {
       window.innerWidth = 820;
@@ -590,6 +590,60 @@ describe("collapsed sidebar hover drawer", () => {
     expect(appShell()?.dataset.wuuSidebarMode).toBe("drawer");
   });
 
+  it("keeps the drawer open when the titlebar toggle is covered by the sliding rail", async () => {
+    window.innerWidth = 820;
+    await renderCollapsedApp();
+    const toggle = container.querySelector<HTMLElement>(".sidebar-toggle-button");
+    const sidebar = container.querySelector<HTMLElement>(".sidebar");
+    expect(toggle).not.toBeNull();
+    expect(sidebar).not.toBeNull();
+    vi.spyOn(toggle!, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(96, 9, 30, 30),
+    );
+    vi.spyOn(sidebar!, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 296, 820),
+    );
+
+    elementFromPointTarget = toggle;
+    await act(async () => {
+      toggle?.dispatchEvent(
+        new MouseEvent("pointerover", {
+          bubbles: true,
+          clientX: 110,
+          clientY: 24,
+          relatedTarget: null,
+        }),
+      );
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS);
+    });
+    expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(true);
+
+    elementFromPointTarget = sidebar;
+    await act(async () => {
+      window.dispatchEvent(
+        new MouseEvent("pointermove", {
+          bubbles: true,
+          clientX: 110,
+          clientY: 24,
+        }),
+      );
+      toggle?.dispatchEvent(
+        new MouseEvent("pointerout", {
+          bubbles: true,
+          clientX: 110,
+          clientY: 24,
+          relatedTarget: sidebar,
+        }),
+      );
+      vi.advanceTimersByTime(1);
+    });
+
+    expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(true);
+    expect(appShell()?.classList.contains("sidebar-drawer-closing")).toBe(false);
+  });
+
   it("pins the collapsed sidebar open when its toggle is clicked after hover preview", async () => {
     await renderCollapsedApp();
     await openDrawerViaSidebarToggle();
@@ -607,7 +661,7 @@ describe("collapsed sidebar hover drawer", () => {
     expect(appShell()?.dataset.wuuSidebarMode).toBe("docked");
 
     await act(async () => {
-      vi.advanceTimersByTime(SIDEBAR_MOTION_MS);
+      vi.advanceTimersByTime(sidebarMotionMs());
     });
     expect(appShell()?.classList.contains("sidebar-drawer-docking")).toBe(false);
   });
@@ -750,6 +804,31 @@ describe("collapsed sidebar hover drawer", () => {
     }
   });
 
+  it("applies deferred window-resize layout when the freeze lifts, not after an extra settle delay", async () => {
+    await renderCollapsedApp();
+    const callback = vi.fn();
+    const scheduler = createWindowResizeSettleScheduler(callback);
+
+    await act(async () => {
+      window.dispatchEvent(new Event("resize"));
+    });
+    expect(document.documentElement.classList.contains(WINDOW_RESIZING_CLASS)).toBe(true);
+    scheduler.schedule();
+    expect(callback).not.toHaveBeenCalled();
+
+    await act(async () => {
+      vi.advanceTimersByTime(140);
+    });
+    expect(document.documentElement.classList.contains(WINDOW_RESIZING_CLASS)).toBe(false);
+    expect(callback).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(WINDOW_RESIZE_SETTLE_DELAY_MS + 1);
+    });
+    expect(callback).toHaveBeenCalledTimes(1);
+    scheduler.cancel();
+  });
+
   it("still marks the touch web shell as window-resizing when the viewport width changes", async () => {
     document.documentElement.dataset.hostKind = "web";
     window.innerWidth = 390;
@@ -811,7 +890,7 @@ describe("collapsed sidebar hover drawer", () => {
           relatedTarget: document.body,
         }),
       );
-      vi.advanceTimersByTime(SIDEBAR_MOTION_MS);
+      vi.advanceTimersByTime(sidebarMotionMs());
     });
 
     expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(false);
@@ -984,7 +1063,7 @@ describe("collapsed sidebar hover drawer", () => {
 
     await movePointerOver(document.body);
     await act(async () => {
-      vi.advanceTimersByTime(SIDEBAR_MOTION_MS);
+      vi.advanceTimersByTime(sidebarMotionMs());
     });
 
     expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(false);

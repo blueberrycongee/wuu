@@ -2,19 +2,21 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export const VIEW_SWITCH_LOADING_DELAY_MS = 180;
 
-export type PendingViewSwitchKind = "thread" | "project" | "runtime";
+export type PendingViewSwitchKind = "thread" | "workspace" | "runtime";
 
 export type PendingViewSwitch = {
   kind: PendingViewSwitchKind;
   targetID: string;
   visible: boolean;
+  background?: boolean;
 };
 
 export type ViewSwitchStateController = {
   pendingViewSwitch: PendingViewSwitch | undefined;
   visiblePendingThreadID: string | undefined;
-  visiblePendingProjectID: string | undefined;
+  visiblePendingWorkspaceID: string | undefined;
   viewSwitchPending: boolean;
+  submissionTargetPending: boolean;
   viewContextSwitchPending: boolean;
   beginViewSwitch: (
     kind: PendingViewSwitchKind,
@@ -78,9 +80,9 @@ export function useViewSwitchState({
       const requestID = viewSwitchRequestRef.current + 1;
       viewSwitchRequestRef.current = requestID;
       clearViewSwitchDelay();
-      // Cached content is already visible. Background resume/runtime selection
-      // must still block sends, but must never cover that content with loading UI.
-      setPendingViewSwitch({ kind: "thread", targetID, visible: false });
+      // Submissions carry their own destination; cached history hydration is
+      // not a prerequisite for accepting the next message.
+      setPendingViewSwitch({ kind: "thread", targetID, visible: false, background: true });
       return requestID;
     },
     [clearViewSwitchDelay],
@@ -92,6 +94,8 @@ export function useViewSwitchState({
         return false;
       }
       clearViewSwitchDelay();
+      // Content readiness wins over animation: never impose a minimum display
+      // time or wait for an exit animation before releasing the conversation.
       setPendingViewSwitch(undefined);
       return true;
     },
@@ -109,26 +113,27 @@ export function useViewSwitchState({
     [],
   );
 
-  // Background resume still blocks sends, but must not mark cached tabs,
-  // sidebar rows, or extension headers busy when no loading UI is needed.
+  // Background resume must not mark cached tabs, sidebar rows, or extension
+  // headers busy when no loading UI is needed.
   const visiblePendingThreadID =
     pendingViewSwitch?.kind === "thread" && pendingViewSwitch.visible
       ? pendingViewSwitch.targetID
       : undefined;
-  const visiblePendingProjectID =
-    pendingViewSwitch?.kind === "project"
+  const visiblePendingWorkspaceID =
+    pendingViewSwitch?.kind === "workspace"
       ? pendingViewSwitch.targetID
       : undefined;
   const viewSwitchPending = pendingViewSwitch !== undefined;
   const viewContextSwitchPending =
-    pendingViewSwitch?.kind === "project" ||
+    pendingViewSwitch?.kind === "workspace" ||
     (pendingViewSwitch?.kind === "runtime" && pendingViewSwitch.visible);
 
   return {
     pendingViewSwitch,
     visiblePendingThreadID,
-    visiblePendingProjectID,
+    visiblePendingWorkspaceID,
     viewSwitchPending,
+    submissionTargetPending: viewSwitchPending && !pendingViewSwitch?.background,
     viewContextSwitchPending,
     beginViewSwitch,
     beginInstantThreadSwitch,

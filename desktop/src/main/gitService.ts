@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { lstatSync, readlinkSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import type {
   GitChangeFile,
@@ -114,7 +114,7 @@ export class GitService {
     const normalizedRoot = resolve(requestedRoot);
     const allowedRoots = [context.cwd, ...this.getKnownThreadCwds()].map((cwd) => resolve(cwd));
     if (!allowedRoots.includes(normalizedRoot)) {
-      throw new Error("Git working directory is not associated with the current project");
+      throw new Error("Git working directory is not associated with the current workspace");
     }
     return { ...context, cwd: normalizedRoot };
   }
@@ -278,13 +278,15 @@ function gitChangesResult(context: RuntimeContext): GitChangesResult {
     return { is_repo: false, files: [] };
   }
 
+  const base = gitDiffBase(root);
   const filesByPath = new Map<string, GitChangeFile>();
   for (const file of parseGitNameStatus(
-    gitOutput(root, [
+    gitRawOutput(root, [
       "diff",
       "--name-status",
+      "-z",
       "--find-renames",
-      "HEAD",
+      base,
       "--",
     ]) ?? "",
   )) {
@@ -292,7 +294,7 @@ function gitChangesResult(context: RuntimeContext): GitChangesResult {
   }
 
   for (const file of parseGitNumstatFiles(
-    gitOutput(root, ["diff", "--numstat", "--find-renames", "HEAD", "--"]) ??
+    gitRawOutput(root, ["diff", "--numstat", "-z", "--find-renames", base, "--"]) ??
       "",
   )) {
     const existing = filesByPath.get(file.path);
@@ -361,7 +363,12 @@ function gitFileDiffResult(
     });
   }
 
-  const rawPatch = gitDiffOutput(root, relativePath);
+  const base = gitDiffBase(root);
+  const rawPatch = gitDiffOutput(
+    root,
+    base,
+    change.old_path ? [change.old_path, relativePath] : [relativePath],
+  );
   const truncatedPatch = truncateTextBytes(
     rawPatch,
     GIT_DIFF_PREVIEW_MAX_BYTES,
@@ -372,7 +379,7 @@ function gitFileDiffResult(
     rawPatch.includes("GIT binary patch");
   const originalText = binary
     ? undefined
-    : gitRevisionFileText(root, "HEAD", change.old_path ?? change.path);
+    : gitRevisionFileText(root, base, change.old_path ?? change.path);
   const modifiedText = binary
     ? undefined
     : readWorkingTreeFileText(absolutePath);
@@ -497,10 +504,9 @@ async function generateAICommitMessage(
     throw new Error("AI commit message generation is not available");
   }
   const files = (
-    gitOutput(context.cwd, ["diff", "--cached", "--name-only", "--"]) ?? ""
+    gitRawOutput(context.cwd, ["diff", "--cached", "--name-only", "-z", "--"]) ?? ""
   )
-    .split("\n")
-    .map((item) => item.trim())
+    .split("\0")
     .filter(Boolean);
   const diff = gitStagedDiffForPrompt(context.cwd);
   let generated: string;
@@ -642,6 +648,10 @@ function gitRun(cwd: string, args: string[]): string {
 }
 
 function gitOutput(cwd: string, args: string[]): string | undefined {
+  return gitRawOutput(cwd, args)?.trim() || undefined;
+}
+
+function gitRawOutput(cwd: string, args: string[]): string | undefined {
   const result = spawnSync("git", ["-C", cwd, ...args], {
     cwd,
     encoding: "utf8",
@@ -650,29 +660,29 @@ function gitOutput(cwd: string, args: string[]): string | undefined {
   if (result.status !== 0) {
     return undefined;
   }
-  return result.stdout.trim() || undefined;
+  return result.stdout;
 }
 
 function emptyGitDiffStats(): GitDiffStats {
   return { files: 0, additions: 0, deletions: 0 };
 }
 
+function gitDiffBase(cwd: string): string {
+  // Before the first commit, compare with the empty tree in this repository's
+  // object format. Hashing empty stdin does not write an object or change the index.
+  return gitOutput(cwd, ["rev-parse", "--verify", "HEAD"]) ??
+    gitRun(cwd, ["hash-object", "-t", "tree", "--stdin"]);
+}
+
 function gitDiffStats(cwd: string, includeUntracked: boolean): GitDiffStats {
   const stats = parseGitNumstat(
-    gitOutput(cwd, ["diff", "--numstat", "HEAD", "--"]) ?? "",
+    gitRawOutput(cwd, ["diff", "--numstat", "-z", gitDiffBase(cwd), "--"]) ?? "",
   );
   if (!includeUntracked) {
     return stats;
   }
-  const untracked = gitOutput(cwd, [
-    "ls-files",
-    "--others",
-    "--exclude-standard",
-  ])
-    ?.split("\n")
-    .map((item) => item.trim())
-    .filter(Boolean);
-  if (!untracked?.length) {
+  const untracked = listUntrackedGitFiles(cwd);
+  if (!untracked.length) {
     return stats;
   }
   let additions = 0;
@@ -688,23 +698,24 @@ function gitDiffStats(cwd: string, includeUntracked: boolean): GitDiffStats {
 
 function gitStagedDiffStats(cwd: string): GitDiffStats {
   return parseGitNumstat(
-    gitOutput(cwd, ["diff", "--cached", "--numstat", "--"]) ?? "",
+    gitRawOutput(cwd, ["diff", "--cached", "--numstat", "-z", "--"]) ?? "",
   );
 }
 
-function gitDiffOutput(cwd: string, relativePath: string): string {
+function gitDiffOutput(cwd: string, base: string, relativePaths: string[]): string {
   const result = spawnSync(
     "git",
     [
+      "--literal-pathspecs",
       "-C",
       cwd,
       "diff",
       "--no-ext-diff",
       "--find-renames",
       "--unified=3",
-      "HEAD",
+      base,
       "--",
-      relativePath,
+      ...relativePaths,
     ],
     {
       cwd,
@@ -715,7 +726,7 @@ function gitDiffOutput(cwd: string, relativePath: string): string {
   );
   if (result.status !== 0 && !result.stdout) {
     throw new Error(
-      result.stderr.trim() || `git diff failed for ${relativePath}`,
+      result.stderr.trim() || `git diff failed for ${relativePaths.join(", ")}`,
     );
   }
   return result.stdout;
@@ -723,40 +734,23 @@ function gitDiffOutput(cwd: string, relativePath: string): string {
 
 function parseGitNumstat(output: string): GitDiffStats {
   const stats = emptyGitDiffStats();
-  for (const line of output.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      continue;
-    }
-    const [additions, deletions] = trimmed.split(/\s+/, 3);
+  for (const file of parseGitNumstatFiles(output)) {
     stats.files += 1;
-    if (additions !== "-") {
-      stats.additions += Number(additions) || 0;
-    }
-    if (deletions !== "-") {
-      stats.deletions += Number(deletions) || 0;
-    }
+    stats.additions += file.additions;
+    stats.deletions += file.deletions;
   }
   return stats;
 }
 
 function parseGitNameStatus(output: string): GitChangeFile[] {
   const files: GitChangeFile[] = [];
-  for (const line of output.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      continue;
-    }
-    const columns = trimmed.split("\t");
-    const statusCode = columns[0] ?? "";
-    const status = gitChangeStatus(statusCode);
+  const fields = output.split("\0");
+  for (let index = 0; index < fields.length - 1;) {
+    const status = gitChangeStatus(fields[index++]);
+    const firstPath = fields[index++];
     const oldPath =
-      status === "renamed" || status === "copied" ? columns[1] : undefined;
-    const path =
-      status === "renamed" || status === "copied" ? columns[2] : columns[1];
-    if (!path) {
-      continue;
-    }
+      status === "renamed" || status === "copied" ? firstPath : undefined;
+    const path = oldPath === undefined ? firstPath : fields[index++];
     files.push({
       path,
       old_path: oldPath,
@@ -770,20 +764,19 @@ function parseGitNameStatus(output: string): GitChangeFile[] {
 
 function parseGitNumstatFiles(output: string): GitChangeFile[] {
   const files: GitChangeFile[] = [];
-  for (const line of output.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      continue;
-    }
-    const columns = trimmed.split("\t");
-    if (columns.length < 3) {
-      continue;
-    }
-    const additions = columns[0];
-    const deletions = columns[1];
-    const path = columns.at(-1);
+  const fields = output.split("\0");
+  for (let index = 0; index < fields.length - 1; index++) {
+    const record = fields[index];
+    // Only the first two tabs are separators; filenames may contain tabs.
+    const firstTab = record.indexOf("\t");
+    const secondTab = record.indexOf("\t", firstTab + 1);
+    const additions = record.slice(0, firstTab);
+    const deletions = record.slice(firstTab + 1, secondTab);
+    let path = record.slice(secondTab + 1);
     if (!path) {
-      continue;
+      // A rename/copy has an empty path field followed by old and new paths.
+      index += 2;
+      path = fields[index];
     }
     files.push({
       path,
@@ -815,11 +808,8 @@ function gitChangeStatus(statusCode: string): GitChangeFile["status"] {
 
 function listUntrackedGitFiles(cwd: string): string[] {
   return (
-    gitOutput(cwd, ["ls-files", "--others", "--exclude-standard"])
-      ?.split("\n")
-      .map((item) => item.trim())
-      .filter(Boolean) ?? []
-  );
+    gitRawOutput(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]) ?? ""
+  ).split("\0").filter(Boolean);
 }
 
 function untrackedGitFileStats(
@@ -828,14 +818,11 @@ function untrackedGitFileStats(
 ): { additions: number; binary: boolean } {
   const { absolutePath } = resolveGitRelativePath(root, path);
   try {
-    const stats = statSync(absolutePath);
-    if (!stats.isFile()) {
+    const preview = readGitFilePreview(absolutePath, FILE_PREVIEW_MAX_BYTES);
+    if (!preview) {
       return { additions: 0, binary: false };
     }
-    const previewBuffer = readFilePreviewBuffer(
-      absolutePath,
-      Math.min(stats.size, FILE_PREVIEW_MAX_BYTES),
-    );
+    const previewBuffer = preview.buffer;
     const binary = previewBuffer.includes(0);
     return {
       additions: binary ? 0 : countTextFileLines(absolutePath),
@@ -851,13 +838,12 @@ function gitNewFileDiffResult(
   change: GitChangeFile,
 ): GitFileDiffResult {
   try {
-    const stats = statSync(absolutePath);
-    if (!stats.isFile()) {
+    const preview = readGitFilePreview(absolutePath, GIT_DIFF_PREVIEW_MAX_BYTES + 1);
+    if (!preview) {
       return emptyGitFileDiffResult(change.path, true);
     }
-    const readLimit = Math.min(stats.size, GIT_DIFF_PREVIEW_MAX_BYTES + 1);
-    const buffer = readFilePreviewBuffer(absolutePath, readLimit);
-    const truncated = stats.size > GIT_DIFF_PREVIEW_MAX_BYTES;
+    const { buffer } = preview;
+    const truncated = preview.size > GIT_DIFF_PREVIEW_MAX_BYTES;
     const previewBuffer = buffer.subarray(
       0,
       truncated ? GIT_DIFF_PREVIEW_MAX_BYTES : buffer.length,
@@ -869,6 +855,7 @@ function gitNewFileDiffResult(
           change.path,
           previewBuffer.toString("utf8"),
           truncated,
+          preview.symlink,
         );
     return {
       is_repo: true,
@@ -909,16 +896,28 @@ function gitRevisionFileText(
   return truncateTextBytes(result.stdout, GIT_DIFF_PREVIEW_MAX_BYTES).text;
 }
 
+// Git stores a symlink's target path as its blob, never the target's contents.
+function readGitFilePreview(absolutePath: string, maxBytes: number): {
+  buffer: Buffer;
+  size: number;
+  symlink: boolean;
+} | undefined {
+  const stats = lstatSync(absolutePath);
+  if (stats.isSymbolicLink()) {
+    const buffer = readlinkSync(absolutePath, { encoding: "buffer" });
+    return { buffer: buffer.subarray(0, maxBytes), size: buffer.length, symlink: true };
+  }
+  if (!stats.isFile()) return undefined;
+  return {
+    buffer: readFilePreviewBuffer(absolutePath, Math.min(stats.size, maxBytes)),
+    size: stats.size,
+    symlink: false,
+  };
+}
+
 function readWorkingTreeFileText(absolutePath: string): string {
   try {
-    const stats = statSync(absolutePath);
-    if (!stats.isFile()) {
-      return "";
-    }
-    return readFilePreviewBuffer(
-      absolutePath,
-      Math.min(stats.size, GIT_DIFF_PREVIEW_MAX_BYTES),
-    ).toString("utf8");
+    return readGitFilePreview(absolutePath, GIT_DIFF_PREVIEW_MAX_BYTES)?.buffer.toString("utf8") ?? "";
   } catch {
     return "";
   }
@@ -941,11 +940,12 @@ function buildUntrackedPatch(
   path: string,
   text: string,
   truncated: boolean,
+  symlink: boolean,
 ): string {
   const lines = splitPatchTextLines(text);
   const patchLines = [
     `diff --git a/${path} b/${path}`,
-    "new file mode 100644",
+    `new file mode ${symlink ? "120000" : "100644"}`,
     "--- /dev/null",
     `+++ b/${path}`,
     `@@ -0,0 +1,${lines.length} @@`,
@@ -967,7 +967,9 @@ function splitPatchTextLines(text: string): string[] {
 }
 
 function normalizeGitRelativePath(path: string): string {
-  const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
+  // Backslashes are literal filename characters on POSIX, not separators.
+  const portablePath = process.platform === "win32" ? path.replace(/\\/g, "/") : path;
+  const normalized = portablePath.replace(/^\/+/, "");
   if (!normalized || normalized.split("/").some((part) => part === ".." || part === "")) {
     throw new Error("invalid workspace file path");
   }
@@ -1009,11 +1011,14 @@ function emptyGitFileDiffResult(
 
 function countTextFileLines(filePath: string): number {
   try {
-    const stats = statSync(filePath);
-    if (!stats.isFile() || stats.size > 1024 * 1024) {
+    if (lstatSync(filePath).size > 1024 * 1024) {
       return 0;
     }
-    const content = readFileSync(filePath);
+    const preview = readGitFilePreview(filePath, 1024 * 1024);
+    if (!preview) {
+      return 0;
+    }
+    const content = preview.buffer;
     if (content.includes(0)) {
       return 0;
     }

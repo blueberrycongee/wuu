@@ -185,26 +185,8 @@ func (t *Toolkit) executeKnownToolResultWithRepeatPolicy(ctx context.Context, ca
 	resultBudgeted := false
 	var projectionDiag *ProjectionDiagnostics
 	if err == nil {
-		// Tool-specific stable projection runs once here, before the result is
-		// stored. Results without an applicable projector still cross the generic
-		// settlement boundary, which now preserves rich media and metadata.
-		mode := t.env.toolResultProjectionMode()
-		applied := false
-		if result.IsTextOnly() && mode != projectionModeOff && builtInProjectionAllowlist[call.Name] {
-			stable, diag := finalizeBuiltInToolResult(t.env.SessionDir, call.Name, call.ID, result, defaultProjectionTokenBudget)
-			projectionDiag = &diag
-			if mode == projectionModeActive && diag.Applied {
-				returned = stable
-				returnedProjection = stable.TextProjection()
-				resultRef = diag.ArtifactRef
-				resultBudgeted = true
-				applied = true
-			}
-		}
-		if !applied {
-			returned, resultRef, resultBudgeted = finalizeGenericToolResult(t.env.SessionDir, call.ID, result, defaultResultBudget)
-			returnedProjection = returned.TextProjection()
-		}
+		returned, resultRef, resultBudgeted, projectionDiag = t.finalizeToolResult(call, result)
+		returnedProjection = returned.TextProjection()
 	}
 
 	revisionAfter := revisionBefore
@@ -293,12 +275,6 @@ func (t *Toolkit) repeatedToolInputCount(call providers.ToolCall, revision strin
 
 func isRepeatablePollingTool(call providers.ToolCall) bool {
 	name := strings.TrimSpace(call.Name)
-	// Channel inbox and room contents can change independently of the file
-	// workspace revision used by the repeated-input guard. Identical reads are
-	// therefore normal polling, while chat mutation tools remain protected.
-	if name == "chat_check" || name == "chat_read" {
-		return true
-	}
 	if strings.HasPrefix(name, "mcp_plugin_cua_mac_computer_computer_") {
 		var args struct {
 			Action string `json:"action"`
@@ -324,11 +300,15 @@ func isRepeatablePollingTool(call providers.ToolCall) bool {
 	if name == "bash" {
 		var args bashArgs
 		if err := decodeArgs(call.Arguments, &args); err == nil {
-			switch normalizeBashAction(args) {
-			case bashActionListBackground, bashActionReadBackground:
+			return bashCommandLooksLikeVerification(args.Command)
+		}
+	}
+	if name == "process" {
+		var args processArgs
+		if err := decodeArgs(call.Arguments, &args); err == nil {
+			switch strings.TrimSpace(args.Action) {
+			case processActionList, processActionRead:
 				return true
-			case bashActionRun:
-				return bashCommandLooksLikeVerification(args.Command)
 			}
 		}
 	}

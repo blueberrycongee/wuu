@@ -13,12 +13,14 @@ import { useAssistantTurnPresentation } from "./AssistantTurnPresentation";
 import { AssistantTurnShell } from "./AssistantTurnShell";
 import { ThreadItemView } from "./ThreadItemView";
 import { TurnArtifactSummaryPresentation } from "./ArtifactOutputs";
+import { ArtifactThreadContext } from "./ArtifactPreviewContext";
 import { TurnEditSummaryPresentation } from "./TurnEditSummaryPresentation";
 import { ENABLE_TURN_ARTIFACT_SUMMARY, ENABLE_TURN_EDIT_SUMMARY } from "./FeatureFlags";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import { TurnEventNotice, StreamStatusNotice, StreamReconnectNotice } from "./TurnNotice";
 import { turnEventForTurn } from "./TurnEvents";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
+import { groupProjectEvents, ProjectEventGroup } from "./ProjectViews";
 import { turnIsAnswerReady, type TurnStreamStatus } from "./AppState";
 import {
   latestAgentMessageItemID,
@@ -36,6 +38,7 @@ export type TurnViewProps = {
   threadID?: string;
   cwd?: string;
   onOpenFile?: (path: string) => void;
+  onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
   onOpenAgent?: (agentID: string) => void;
   latestAgentMessageID?: string;
   onStreamFrame: () => void;
@@ -58,12 +61,13 @@ export type TurnViewProps = {
 };
 
 export function TurnView(props: TurnViewProps): JSX.Element | null {
-  const projectedTurn = projectTurnForPresentation(props.turn);
+  const projectedTurn = workspaceTurnForPresentation(props.turn);
   if (props.turn.items.length > 0 && projectedTurn.items.length === 0) {
     return null;
   }
   const threadId = props.threadID ?? desktopPluginHost.getActiveConversationThreadId();
   return (
+    <ArtifactThreadContext.Provider value={threadId}>
     <PluginSurface
       host={desktopPluginHost}
       id="conversation.timeline"
@@ -83,10 +87,11 @@ export function TurnView(props: TurnViewProps): JSX.Element | null {
       }}
       fallback={<TurnContent {...props} turn={projectedTurn} />}
     />
+    </ArtifactThreadContext.Provider>
   );
 }
 
-function projectTurnForPresentation(turn: Turn): Turn {
+function workspaceTurnForPresentation(turn: Turn): Turn {
   const items = turn.items.filter(
     (item) =>
       item.type !== "user_message" || !isInternalUserNotificationItem(item),
@@ -98,6 +103,7 @@ function TurnContent({
   turn,
   cwd,
   onOpenFile,
+  onOpenURL,
   onOpenAgent,
   latestAgentMessageID,
   onStreamFrame,
@@ -111,6 +117,24 @@ function TurnContent({
   streamStatus,
   isLatestTurn,
 }: TurnViewProps): JSX.Element {
+  const turnElementRef = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    const node = turnElementRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    // Render once before content-visibility may skip this turn, so a skipped
+    // turn keeps its real height instead of the placeholder. Chromium records
+    // that height during this delivery; skipping may start the frame after.
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      observer.disconnect();
+      frame = window.requestAnimationFrame(() => node.setAttribute("data-sized", ""));
+    });
+    observer.observe(node);
+    return () => {
+      observer.disconnect();
+      window.cancelAnimationFrame(frame);
+    };
+  }, []);
   // Remember live submissions so completion actions can animate without
   // replaying their entrance when a finished conversation is opened.
   const startedAsLiveSubmissionRef = useRef(
@@ -235,19 +259,23 @@ function TurnContent({
   return (
     <section
       className="turn"
+      ref={turnElementRef}
       data-wuu-component="turn"
       id={turnAnchorID(turn.id)}
       data-turn-id={turn.id}
       data-turn-status={turn.status}
       data-latest-turn={isLatestTurn || undefined}
     >
-      {userItems.map((item) => renderThreadItem(item, false))}
+      {groupProjectEvents(userItems).map((entry) => Array.isArray(entry)
+        ? <ProjectEventGroup key={entry[0].id} items={entry} />
+        : renderThreadItem(entry, false))}
       {assistantDisplay ? (
         <AssistantTurnShell
           turn={turn}
           display={assistantDisplay}
           cwd={cwd}
           onOpenFile={onOpenFile}
+          onOpenURL={onOpenURL}
           actionableAgentMessageID={actionableAgentMessageID}
           latestAgentMessageID={latestAgentMessageID}
           animateCompletionActions={animateCompletionActions}
@@ -267,6 +295,7 @@ function TurnContent({
         <StreamReconnectNotice
           key={item.id}
           item={item}
+          error={turn.error}
           onRetry={isLatestTurn && turn.status === "failed" && retryMessage && onEditMessage && onSubmitEditMessage
             ? () => onSubmitEditMessage(
                 turn.id, retryMessage, retryMessage.input_text ?? retryMessage.text ?? "",

@@ -2,11 +2,14 @@ package appserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/activity"
+	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 func TestServerActivityLifecycleRequestsAndNotifications(t *testing.T) {
@@ -15,6 +18,8 @@ func TestServerActivityLifecycleRequestsAndNotifications(t *testing.T) {
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 
+	defer srv.Close()
+	srv.threads["thread-1"] = newThreadState("thread-1", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
 	started, _, err := rt.ActivityRegistry.Start(activity.StartOptions{
 		ID:       "activity-1",
 		Kind:     activity.KindBrowser,
@@ -78,6 +83,77 @@ func TestServerActivityLifecycleRequestsAndNotifications(t *testing.T) {
 		if method == NotificationActivityUpdated && (payload.Interaction == nil || payload.Interaction.Kind != "click") {
 			t.Fatalf("%s interaction = %+v", method, payload.Interaction)
 		}
+	}
+}
+
+func TestServerBrowserInputPausesUntilUserContinuation(t *testing.T) {
+	for _, method := range []string{MethodTurnStart, MethodTurnQueue, MethodTurnSteer} {
+		t.Run(method, func(t *testing.T) {
+			client := newBlockingStreamClient("done")
+			rt := newTestRuntime(t, &fakeClient{})
+			rt.StreamRunner.Client = client
+			rt.ActivityRegistry = activity.NewRegistry()
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			defer srv.Close()
+			if err := srv.handleLine(context.Background(), []byte(`{"id":"thread","method":"thread/start"}`)); err != nil {
+				t.Fatal(err)
+			}
+			threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "thread")["result"]).Thread.ID
+			request := func(id, method, fields string) {
+				t.Helper()
+				raw := fmt.Sprintf(`{"id":%q,"method":%q,"params":{"thread_id":%q,%s}}`, id, method, threadID, fields)
+				if err := srv.handleLine(context.Background(), []byte(raw)); err != nil {
+					t.Fatal(err)
+				}
+				if response := responseByID(t, parseOutput(t, out.String()), id); response["error"] != nil {
+					t.Fatalf("%s: %+v", method, response)
+				}
+			}
+			request("start", MethodTurnStart, `"prompt":"browse"`)
+			select {
+			case <-client.started:
+			case <-time.After(3 * time.Second):
+				t.Fatal("turn did not start")
+			}
+			options := activity.StartOptions{ThreadID: threadID, Workdir: rt.RootDir, PluginID: "browser", Kind: activity.KindBrowser, Target: "tab-live"}
+			current, oldLease, err := rt.ActivityRegistry.Acquire(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if method == MethodTurnSteer {
+				request("queue", MethodTurnQueue, `"prompt":"continue","client_id":"held"`)
+			}
+			request("input", MethodActivityTakeover, fmt.Sprintf(`"activity_id":%q`, current.ID))
+			waitForMethod(t, out, NotificationTurnError)
+			if _, _, err := rt.ActivityRegistry.Acquire(options); !errors.Is(err, activity.ErrControlRevoked) {
+				t.Fatalf("browser after input = %v", err)
+			}
+			close(client.release)
+			// A queued extension turn can run, but must not regain browser input.
+			if _, err := srv.startQueuedTurn(context.Background(), threadID, queuedTurn{
+				id: "background", msg: providers.ChatMessage{Role: "user", Content: "background update", Origin: "plugin"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			waitForTurnCompletedCountForThread(t, out, threadID, 1)
+			if _, _, err := rt.ActivityRegistry.Acquire(options); !errors.Is(err, activity.ErrControlRevoked) {
+				t.Fatalf("background turn resumed browser: %v", err)
+			}
+			fields := `"prompt":"continue"`
+			if method != MethodTurnStart {
+				fields += `,"client_id":"held"`
+			}
+			request("continue", method, fields)
+			waitForTurnCompletedCountForThread(t, out, threadID, 2)
+			resumed, nextLease, err := rt.ActivityRegistry.Acquire(options)
+			if err != nil || resumed.ID != current.ID || nextLease.Token == oldLease.Token {
+				t.Fatalf("browser after continuation = %+v / %+v, %v", resumed, nextLease, err)
+			}
+			if err := rt.ActivityRegistry.CheckControl(threadID, current.ID, oldLease.Token); !errors.Is(err, activity.ErrControlRevoked) {
+				t.Fatalf("old browser action regained control: %v", err)
+			}
+		})
 	}
 }
 

@@ -14,6 +14,7 @@ let api: ReturnType<typeof useConversationScrollState>;
 let root: Root;
 let host: HTMLDivElement;
 let naturalHeight: number;
+let disclosureHeight: number;
 let viewportHeight: number;
 let statusHeight: number;
 let composerHeight: number;
@@ -38,15 +39,16 @@ type Props = {
   processItems?: ThreadItem[];
   todoComplete?: boolean;
   composer?: boolean;
+  processRow?: boolean;
+  navigation?: boolean;
 };
 function LayoutSignal() {
   React.useLayoutEffect(() => { api.scheduleStreamScroll(); });
   return null;
 }
-function Probe({ id = "a", running = false, split = false, messageID, pluginHost, onOpenSession = () => undefined, signalLayout = false, item, mountKey, processItems, todoComplete, composer }: Props) {
-  const [statusClusterNode, setStatusClusterNode] = React.useState<HTMLDivElement | null>(null);
+function Probe({ id = "a", running = false, split = false, messageID, pluginHost, onOpenSession = () => undefined, signalLayout = false, item, mountKey, processItems, todoComplete, composer, processRow, navigation }: Props) {
   const primaryTurns: Turn[] = messageID ? [{ id: "turn", items_view: "full", status: running ? "in_progress" : "completed", items: [{ ...item, id: messageID, type: "user_message" }] }] : [];
-  api = useConversationScrollState({ activeThreadID: id ?? undefined, activePane: "primary", splitConversation: split, primaryTurns, emptyConversation: !messageID, initialized: true, running, nativeScrollBounce: false, statusClusterNode });
+  api = useConversationScrollState({ activeThreadID: id ?? undefined, activePane: "primary", splitConversation: split, primaryTurns, emptyConversation: !messageID, initialized: true, running, nativeScrollBounce: false });
   return <main ref={api.conversationPaneRef}>
     <div data-viewport ref={node => {
       api.conversationScrollRef.current = node;
@@ -57,9 +59,12 @@ function Probe({ id = "a", running = false, split = false, messageID, pluginHost
         scrollTop: { configurable: true, get: () => { top = Math.max(0, Math.min(top, node.scrollHeight - node.clientHeight)); return top; }, set: value => { top = Math.max(0, Math.min(value, node.scrollHeight - node.clientHeight)); } },
       });
     }} onScroll={() => api.handleConversationScroll()}>
-      <div ref={api.scrollContentRef} data-content>
+      <div ref={api.scrollContentRef} className="scroll-region-content" data-content>
         {messageID ? item ? <ImagePreviewProvider><TurnView key={mountKey ?? messageID} turn={primaryTurns[0]} onStreamFrame={api.scheduleStreamScroll} /></ImagePreviewProvider>
-          : <div key={mountKey ?? messageID} data-user-message-id={messageID}><div data-message-arrival /></div> : null}
+          : <>
+            <div key={mountKey ?? messageID} data-user-message-id={messageID}><div data-message-arrival /></div>
+            {processRow ? <div className="assistant-turn-shell" data-process-row /> : null}
+          </> : null}
         <div aria-hidden="true"><div data-user-message-id="hidden" /></div>
         {processItems ? <ProcessSurface processItems={processItems} streaming={running} /> : null}
         {signalLayout ? <LayoutSignal /> : null}
@@ -67,7 +72,8 @@ function Probe({ id = "a", running = false, split = false, messageID, pluginHost
     </div>
     {composer ? <div data-dock ref={api.dockComposerRef} /> : null}
     {pluginHost ? <ConversationStatusCluster host={pluginHost} visible threadId={id ?? undefined}
-      clusterRef={setStatusClusterNode}
+      clusterRef={api.statusClusterRef}
+      navigation={navigation ? <button>Jump</button> : undefined}
       onOpenSession={onOpenSession}
       todoUpdate={{ todos: [{ content: "Keep history controls accessible", status: todoComplete ? "completed" : "in_progress" }] }}
     /> : null}
@@ -77,12 +83,19 @@ function Probe({ id = "a", running = false, split = false, messageID, pluginHost
 // Model content height separately from scrollHeight's viewport floor. Reading
 // scrollTop models Chromium's clamp, including after a layout-only shrink.
 function tailSpace() {
-  return Number.parseFloat(host.querySelector("main")?.style.getPropertyValue("--session-tail-space") || "0");
+  return Number.parseFloat(host.querySelector<HTMLElement>("[data-content]")?.style.paddingBottom || "0");
+}
+function leadSpace() {
+  return Number.parseFloat(host.querySelector<HTMLElement>("[data-content]")?.style.paddingTop || "0");
 }
 function statusSpace() {
   return Number.parseFloat(host.querySelector("main")?.style.getPropertyValue("--conversation-status-space") || "0");
 }
 function scrollTop() { return api.conversationScrollRef.current!.scrollTop; }
+function motionY(node = host.querySelector<HTMLElement>("[data-message-arrival]")) {
+  const match = node?.style.transform.match(/translateY\(([-\d.]+)px\)/);
+  return match ? Number(match[1]) : 0;
+}
 function render(props: Props = {}) { act(() => root.render(<Probe {...props} />)); }
 function tick(now: number) {
   act(() => {
@@ -90,6 +103,10 @@ function tick(now: number) {
     pending.clear();
     callbacks.forEach(callback => callback(now));
   });
+}
+/** Paint frames until the placement stops scheduling them, then stop. */
+function settle(from: number) {
+  for (let time = from; pending.size > 0 && time <= from + 4000; time += 20) tick(time);
 }
 function scrollUp(amount: number) {
   const node = api.conversationScrollRef.current!;
@@ -102,7 +119,7 @@ function scrollUp(amount: number) {
 function submit(props: Props = {}) {
   act(() => api.requestSubmittedQueryScroll(props.messageID ?? "submitted"));
   render({ running: true, messageID: "submitted", ...props });
-  tick(0); tick(360);
+  tick(0); settle(360);
 }
 function grow(amount: number) {
   naturalHeight += amount;
@@ -110,8 +127,41 @@ function grow(amount: number) {
   tick(1000);
 }
 
+const processItems: ThreadItem[] = [
+  { id: "read-1", type: "tool_call", name: "read_file", status: "completed", arguments: '{"path":"one.ts"}' },
+  { id: "read-2", type: "tool_call", name: "read_file", status: "completed", arguments: '{"path":"two.ts"}' },
+];
+
+function toggleTools(input = "pointer") {
+  const fold = host.querySelector<HTMLDetailsElement>(".process-surface-fold")!;
+  const summary = fold.querySelector<HTMLElement>("summary")!;
+  const wasOpen = fold.open;
+  act(() => {
+    if (input === "pointer") summary.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    if (input === "keyboard") summary.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    if (input === "touch") summary.dispatchEvent(new TouchEvent("touchstart", { touches: [], bubbles: true }));
+    summary.click();
+    fold.dispatchEvent(new Event("toggle", { bubbles: true }));
+  });
+  expect(fold.open).toBe(!wasOpen);
+}
+
+function resizeDisclosure(height: number, nativeScroll = 0, resizeFirst = false) {
+  naturalHeight += height - disclosureHeight;
+  disclosureHeight = height;
+  act(() => {
+    // A layout/anchoring scroll can precede ResizeObserver and differ from
+    // the last programmatic write during the native details transition.
+    api.conversationScrollRef.current!.scrollTop += nativeScroll;
+    if (resizeFirst) for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver);
+    api.handleConversationScroll();
+    if (!resizeFirst) for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver);
+  });
+}
+
 beforeEach(() => {
   naturalHeight = 2000;
+  disclosureHeight = 0;
   viewportHeight = 600;
   statusHeight = 34;
   composerHeight = 100;
@@ -136,11 +186,16 @@ beforeEach(() => {
     unobserve() {}
   });
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-    if (this.hasAttribute("data-content")) return { height: naturalHeight + statusSpace() + tailSpace() } as DOMRect;
+    if (this.matches("details")) return { height: 34 + disclosureHeight } as DOMRect;
+    if (this.hasAttribute("data-content")) return { height: naturalHeight + statusSpace() + tailSpace() + leadSpace() } as DOMRect;
     if (this.hasAttribute("data-viewport")) return { top: 100, height: this.clientHeight } as DOMRect;
     if (this.classList.contains("conversation-status-cluster")) return { height: statusHeight } as DOMRect;
     if (this.hasAttribute("data-dock")) return { height: composerHeight } as DOMRect;
     if (this.hasAttribute("data-user-message-id")) return { top: 100 + messageBottom - messageHeight - top, bottom: 100 + messageBottom - top, height: messageHeight } as DOMRect;
+    if (this.hasAttribute("data-process-row")) {
+      const processTop = 100 + messageBottom - top;
+      return { top: processTop, bottom: processTop + 26, height: 26 } as DOMRect;
+    }
     return { height: 34 } as DOMRect;
   });
   host = document.createElement("div");
@@ -155,6 +210,23 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("restores history against the incoming composer's viewport before clamping", () => {
+  naturalHeight = 2000;
+  composerHeight = 300;
+  render({ id: "a", messageID: "a-message", composer: true });
+  scrollUp(100);
+  const savedTop = scrollTop();
+  expect(savedTop).toBe(1600);
+
+  composerHeight = 100;
+  render({ id: "b", messageID: "b-message", composer: true });
+  composerHeight = 300;
+  render({ id: "a", messageID: "a-message", composer: true });
+  expect(scrollTop()).toBe(savedTop);
+  settle(0);
+  expect(scrollTop()).toBe(savedTop);
+});
+
 it("does not invent submission space when opening a running thread", () => {
   render({ messageID: "old", running: true });
   expect(tailSpace()).toBe(0);
@@ -163,30 +235,161 @@ it("does not invent submission space when opening a running thread", () => {
 });
 
 it.each([false, true])("preserves reading ownership when toggling grouped tools (away: %s)", away => {
-  render({ messageID: "old", processItems: [
-    { id: "read-1", type: "tool_call", name: "read_file", status: "completed", arguments: '{"path":"one.ts"}' },
-    { id: "read-2", type: "tool_call", name: "read_file", status: "completed", arguments: '{"path":"two.ts"}' },
-  ] });
+  render({ messageID: "old", processItems });
   if (away) scrollUp(200);
   const readingTop = scrollTop();
-  const fold = host.querySelector<HTMLDetailsElement>(".process-surface-fold")!;
-  const summary = fold.querySelector<HTMLElement>("summary")!;
   for (const open of [true, false]) {
-    act(() => {
-      summary.dispatchEvent(new Event("pointerdown", { bubbles: true }));
-      summary.click();
-      fold.dispatchEvent(new Event("toggle", { bubbles: true }));
-    });
-    expect(fold.open).toBe(open);
-    naturalHeight += open ? 300 : -300;
-    act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
+    toggleTools();
+    resizeDisclosure(open ? 300 : 0, away ? 0 : -2);
     expect(scrollTop()).toBe(away ? readingTop : naturalHeight - viewportHeight);
   }
   grow(100);
   expect(scrollTop()).toBe(away ? readingTop : naturalHeight - viewportHeight);
 });
 
-it.each(["following", "holding", "paused"])("reserves trailing status space without shortening the reading viewport while %s", mode => {
+it.each(["pointer", "keyboard", "touch"])("restores submission clearance after inspecting tools with %s while output grows", input => {
+  render({ messageID: "old", processItems });
+  submit({ processItems });
+  const anchored = scrollTop();
+  const initial = tailSpace();
+  expect(initial).toBeGreaterThan(80);
+  for (let cycle = 0; cycle < 2; cycle++) {
+    toggleTools(input);
+    resizeDisclosure(initial + 100);
+    expect(tailSpace()).toBe(0);
+    expect(scrollTop()).toBe(anchored);
+    expect(api.captureConversationScrollPosition()?.submissionPhase).toBe("holding");
+    grow(40);
+    toggleTools(input);
+    resizeDisclosure(80);
+    resizeDisclosure(0);
+    expect(tailSpace()).toBeCloseTo(initial - (cycle + 1) * 40);
+    expect(scrollTop()).toBe(anchored);
+  }
+  grow(initial);
+  expect(tailSpace()).toBe(0);
+  expect(api.captureConversationScrollPosition()?.autoFollow).toBe(true);
+  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
+});
+
+it.each([false, true])("does not let layout scrolling consume a paused reservation or resume following (resize first: %s)", resizeFirst => {
+  render({ messageID: "old", processItems });
+  submit({ processItems });
+  scrollUp(80);
+  const remaining = tailSpace();
+  const readingTop = scrollTop();
+  toggleTools();
+  resizeDisclosure(300, 0, resizeFirst);
+  toggleTools();
+  resizeDisclosure(0, 0, resizeFirst);
+  expect(scrollTop()).toBe(readingTop);
+  expect(tailSpace()).toBe(remaining);
+  grow(1000);
+  expect(scrollTop()).toBe(readingTop);
+  expect(api.captureConversationScrollPosition()?.autoFollow).toBe(false);
+});
+
+it("yields following to an outer scroll during the disclosure transition", () => {
+  render({ messageID: "old", processItems, running: true });
+  toggleTools();
+  resizeDisclosure(150);
+  scrollUp(100);
+  const readingTop = scrollTop();
+  resizeDisclosure(300);
+  grow(100);
+  expect(scrollTop()).toBe(readingTop);
+  expect(api.captureConversationScrollPosition()?.autoFollow).toBe(false);
+});
+
+it.each(["wheel", "keyboard", "touch"].flatMap(input =>
+  [false, true].map(resizing => ({ input, resizing })),
+))("resumes following after a disclosure resize without scrolling ($input, resizing: $resizing)", ({ input, resizing }) => {
+  render({ messageID: "old", processItems, running: true });
+  scrollUp(200);
+  toggleTools();
+  naturalHeight += 300;
+  disclosureHeight = 300;
+  // Expanding below the browser's anchor need not move the outer viewport.
+  act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
+  const node = api.conversationScrollRef.current!;
+  act(() => {
+    if (input === "wheel") node.dispatchEvent(new WheelEvent("wheel", { deltaY: 500, bubbles: true }));
+    if (input === "keyboard") node.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    if (input === "touch") {
+      node.dispatchEvent(new TouchEvent("touchstart", { touches: [{ clientY: 500 } as Touch], bubbles: true }));
+      node.dispatchEvent(new TouchEvent("touchmove", { touches: [{ clientY: 0 } as Touch], bubbles: true }));
+    }
+    // A transition can advance between input and the browser's scroll event.
+    if (resizing) {
+      naturalHeight += 40;
+      disclosureHeight += 40;
+    }
+    node.scrollTop = node.scrollHeight - node.clientHeight;
+    node.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  expect(api.captureConversationScrollPosition()?.autoFollow).toBe(true);
+  grow(100);
+  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
+});
+
+it.each([false, true])("keeps a layout-only disclosure scroll paused at the bottom (resize first: %s)", resizeFirst => {
+  render({ messageID: "old", processItems, running: true });
+  act(() => api.disableConversationAutoFollow());
+  toggleTools();
+  resizeDisclosure(300, 300, resizeFirst);
+  const readingTop = scrollTop();
+  expect(readingTop).toBe(naturalHeight - viewportHeight);
+  expect(api.captureConversationScrollPosition()?.autoFollow).toBe(false);
+  grow(100);
+  expect(scrollTop()).toBe(readingTop);
+});
+
+it("keeps a temporarily occupied reservation across thread switches", () => {
+  render({ messageID: "old", processItems });
+  submit({ processItems });
+  const initial = tailSpace();
+  toggleTools();
+  resizeDisclosure(initial + 100);
+  render({ id: "b", messageID: "other", processItems });
+  render({ id: "a", messageID: "submitted", processItems });
+  grow(40);
+  toggleTools();
+  resizeDisclosure(0);
+  expect(tailSpace()).toBeCloseTo(initial - 40);
+  expect(api.captureConversationScrollPosition()?.submissionPhase).toBe("holding");
+});
+
+it("does not replenish clearance after real output fills it while tools are open", () => {
+  render({ messageID: "old", processItems });
+  submit({ processItems });
+  const initial = tailSpace();
+  toggleTools();
+  resizeDisclosure(initial + 100);
+  grow(initial + 50);
+  expect(api.captureConversationScrollPosition()?.autoFollow).toBe(true);
+  toggleTools();
+  resizeDisclosure(0);
+  expect(tailSpace()).toBe(0);
+  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
+});
+
+it("yields a held submission when a tap on the summary becomes a swipe", () => {
+  render({ messageID: "old", processItems });
+  submit({ processItems });
+  const summary = host.querySelector<HTMLElement>(".process-surface-fold > summary")!;
+  act(() => {
+    summary.dispatchEvent(new TouchEvent("touchstart", { touches: [{ clientY: 100 } as Touch], bubbles: true }));
+    summary.dispatchEvent(new TouchEvent("touchmove", { touches: [{ clientY: 130 } as Touch], bubbles: true }));
+    api.conversationScrollRef.current!.scrollTop -= 30;
+    api.handleConversationScroll();
+  });
+  const readingTop = scrollTop();
+  grow(1000);
+  expect(scrollTop()).toBe(readingTop);
+  expect(api.captureConversationScrollPosition()?.autoFollow).toBe(false);
+});
+
+it.each(["following", "holding", "paused"])("reserves trailing status space, not a lone jump action, without shortening the reading viewport while %s", mode => {
   const pluginHost = new PluginHost({ react: React });
   render({ messageID: "old" });
   if (mode === "holding") submit();
@@ -194,7 +397,7 @@ it.each(["following", "holding", "paused"])("reserves trailing status space with
   const messageID = mode === "holding" ? "submitted" : "old";
   const readingTop = scrollTop();
   const viewport = api.conversationScrollRef.current!;
-  render({ messageID, pluginHost });
+  render({ messageID, pluginHost, navigation: true });
   expect(viewport.clientHeight).toBe(viewportHeight);
   expect(scrollTop()).toBe(mode === "following" ? naturalHeight + statusHeight - viewport.clientHeight : readingTop);
   statusHeight = 48;
@@ -202,71 +405,52 @@ it.each(["following", "holding", "paused"])("reserves trailing status space with
   tick(800);
   expect(viewport.clientHeight).toBe(viewportHeight);
   expect(scrollTop()).toBe(mode === "following" ? naturalHeight + statusHeight - viewport.clientHeight : readingTop);
-  render({ messageID, pluginHost, todoComplete: true });
+  // The jump action stays mounted; it shows only away from latest content.
+  render({ messageID, pluginHost, navigation: true, todoComplete: true });
+  expect(statusSpace()).toBe(0);
   expect(viewport.clientHeight).toBe(viewportHeight);
   expect(scrollTop()).toBe(mode === "following" ? naturalHeight - viewport.clientHeight : readingTop);
   grow(1000);
   expect(scrollTop()).toBe(mode === "paused" ? readingTop : naturalHeight - viewportHeight);
 });
 
-it("positions a materialized running input without freezing the preceding output", () => {
+it.each([false, true])("keeps materialized pending inputs in the current reading flow (paused: %s)", paused => {
   render({ messageID: "old", running: true });
-  act(() => api.requestDeferredQueryScroll("local-input"));
+  if (paused) scrollUp(200);
+  const readingTop = scrollTop();
   grow(100);
-  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
-  expect(tailSpace()).toBe(0);
   messageBottom += 100;
   render({ messageID: "accepted", item: { text: "Follow up", source_id: "local-input" } });
-  tick(0); tick(360);
-  const placed = scrollTop();
-  expect(placed).toBeCloseTo(messageBottom - 200);
-  expect(tailSpace()).toBeGreaterThan(0);
-  grow(50);
-  expect(scrollTop()).toBe(placed);
-  grow(1000);
-  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
+  tick(0); settle(360);
+  expect(tailSpace()).toBe(0);
+  expect(leadSpace()).toBe(0);
+  expect(animations).toHaveLength(0);
+  expect(scrollTop()).toBe(paused ? readingTop : naturalHeight - viewportHeight);
+  grow(100);
+  expect(scrollTop()).toBe(paused ? readingTop : naturalHeight - viewportHeight);
 });
 
-it.each([false, true])("preserves earlier queued placement when another input is queued (later fails: %s)", fails => {
-  render({ messageID: "old", running: true });
-  act(() => {
-    api.requestDeferredQueryScroll("first-input");
-    api.requestDeferredQueryScroll("second-input");
-    if (fails) api.discardSubmittedMessage("second-input");
-  });
-  render({ messageID: "first", item: { text: "First", source_id: "first-input" } });
-  tick(0); tick(360);
-  expect(scrollTop()).toBeCloseTo(messageBottom - 200);
-  expect(tailSpace()).toBeGreaterThan(0);
-  grow(600);
-  messageBottom += 600;
-  render({ messageID: "second", item: { text: "Second", source_id: "second-input" } });
-  tick(1000); tick(1360);
-  expect(tailSpace() > 0).toBe(!fails);
+it("restores paused history when the incoming status row mounts during the switch", () => {
+  const pluginHost = new PluginHost({ react: React });
+  render({ messageID: "old", pluginHost });
+  scrollUp(400);
+  const savedTop = scrollTop();
+  render({ id: "b", messageID: "other" });
+  render({ messageID: "old", pluginHost });
+  expect(statusSpace()).toBe(statusHeight);
+  expect(scrollTop()).toBe(savedTop);
 });
 
 it.each(["scroll", "switch", "failure"])("does not reposition a delayed input after %s", reason => {
   render({ messageID: "old", running: true });
-  act(() => api.requestDeferredQueryScroll("local-input"));
   if (reason === "scroll") scrollUp(200);
   if (reason === "switch") { render({ id: "b", messageID: "other" }); render({ messageID: "old" }); }
   if (reason === "failure") act(() => api.discardSubmittedMessage("local-input"));
   const before = scrollTop();
   render({ messageID: "accepted", item: { text: "Follow up", source_id: "local-input" } });
-  tick(0); tick(360);
+  tick(0); settle(360);
   expect(scrollTop()).toBe(before);
   expect(tailSpace()).toBe(0);
-});
-
-it("does not mistake another client's message for a local queued input", () => {
-  render({ messageID: "old", running: true });
-  act(() => api.requestDeferredQueryScroll("local-input"));
-  render({ messageID: "remote", item: { text: "Other client", source_id: "remote-input" } });
-  tick(0); tick(360);
-  expect(tailSpace()).toBe(0);
-  render({ messageID: "accepted", item: { text: "Follow up", source_id: "local-input" } });
-  tick(400); tick(760);
-  expect(tailSpace()).toBeGreaterThan(0);
 });
 
 it("starts placement and entrance together for a delayed child-only mount", () => {
@@ -281,7 +465,7 @@ it("starts placement and entrance together for a delayed child-only mount", () =
   act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
   expect(animations).toHaveLength(1);
   expect(animations[0].element).toBe(bubble);
-  tick(0); tick(360);
+  tick(0); settle(360);
   expect(scrollTop()).toBeCloseTo(messageBottom - 200);
   expect(tailSpace()).toBeGreaterThan(0);
   animations[0].playState = "finished";
@@ -308,7 +492,7 @@ it.each(["following", "placing", "holding", "paused"] as const)("settles queue d
   // The next observer delivery must not produce a second correction.
   act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
   if (mode === "placing") {
-    tick(196); tick(360);
+    tick(196); settle(360);
     const message = host.querySelector<HTMLElement>('[data-user-message-id="submitted"]')!;
     expect(scrollTop()).toBeCloseTo(submittedMessageScrollTop(node, message, false));
     return;
@@ -361,7 +545,7 @@ it("waits for the exact submitted bubble, not the old or hidden cached message",
   expect(scrollTop()).toBe(before);
   expect(tailSpace()).toBe(0);
   render({ messageID: "submitted", running: true });
-  tick(0); tick(360);
+  tick(0); settle(360);
   expect(scrollTop()).toBeCloseTo(messageBottom - 200);
   expect(tailSpace()).toBeGreaterThan(0);
 });
@@ -414,7 +598,7 @@ it("does not let a native scroll at the old bottom hand pending placement to fol
     for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver);
   });
   expect(api.captureConversationScrollPosition()?.autoFollow).toBe(false);
-  tick(360);
+  settle(360);
   const anchored = scrollTop();
   grow(100);
   expect(scrollTop()).toBe(anchored);
@@ -490,6 +674,73 @@ it("restores a thread's remaining space before restoring its reading position", 
   expect(scrollTop()).toBe(anchored);
 });
 
+it.each([
+  { paused: false, offset: -1500 },
+  { paused: true, offset: -1500 },
+  { paused: false, offset: 1500 },
+  { paused: true, offset: 1500 },
+])("restores the submitted message after history reflow (paused: $paused, offset: $offset)", ({ paused, offset }) => {
+  render({ messageID: "old" });
+  submit();
+  if (paused) scrollUp(80);
+  const message = host.querySelector<HTMLElement>('[data-user-message-id="submitted"]')!;
+  const readingTop = message.getBoundingClientRect().top;
+  const remaining = tailSpace();
+  render({ id: "b", messageID: "other" });
+
+  // Eviction can remove earlier rows; reflow or restored history can add them.
+  // Neither change is response growth or extra submission clearance.
+  naturalHeight += offset;
+  messageBottom += offset;
+  render({ id: "a", messageID: "submitted" });
+  settle(0);
+
+  expect(messageBottom - scrollTop()).toBeGreaterThan(0);
+  expect(host.querySelector<HTMLElement>('[data-user-message-id="submitted"]')!.getBoundingClientRect().top).toBeCloseTo(readingTop);
+  expect(tailSpace()).toBeCloseTo(remaining);
+});
+
+it("opens at latest content when the saved submission is outside the new history window", () => {
+  render({ messageID: "old" });
+  submit();
+  render({ id: "b", messageID: "other" });
+  naturalHeight -= 1500;
+  messageBottom -= 1500;
+  render({ id: "a", messageID: "newer" });
+  settle(0);
+  expect(tailSpace()).toBe(0);
+  expect(scrollTop()).toBe(Math.max(0, naturalHeight - viewportHeight));
+  grow(1000);
+  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
+});
+
+it("consumes background output without moving the saved submission anchor", () => {
+  render({ messageID: "old" });
+  submit();
+  const anchored = scrollTop();
+  const remaining = tailSpace();
+  render({ id: "b", messageID: "other" });
+  naturalHeight += 50;
+  render({ id: "a", messageID: "submitted" });
+  expect(scrollTop()).toBe(anchored);
+  expect(tailSpace()).toBeCloseTo(remaining - 50);
+});
+
+it("follows leftover submission space to the content bottom, not the empty reservation", () => {
+  render({ messageID: "old" });
+  submit();
+  const remaining = tailSpace();
+  expect(remaining).toBeGreaterThan(80);
+  act(() => api.enableConversationAutoFollow());
+  render({ messageID: "submitted", running: true });
+  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
+  expect(scrollTop()).toBeLessThan(naturalHeight + remaining - viewportHeight);
+  render({ id: "b", messageID: "other" });
+  render({ id: "a", messageID: "submitted" });
+  expect(tailSpace()).toBe(remaining);
+  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
+});
+
 it("keeps a short draft bubble in place when it is adopted by the new thread", () => {
   naturalHeight = 220;
   messageBottom = 100;
@@ -504,6 +755,141 @@ it("keeps a short draft bubble in place when it is adopted by the new thread", (
   grow(100);
   expect(tailSpace()).toBeCloseTo(remaining - 100);
   expect(scrollTop()).toBe(0);
+});
+
+it("lifts a short first bubble from the composer when the viewport cannot scroll", () => {
+  naturalHeight = 220;
+  messageBottom = 100;
+  render({ id: null });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ id: null, messageID: "submitted", running: true });
+  expect(leadSpace()).toBeGreaterThan(100);
+  expect(motionY()).toBe(0);
+  expect(scrollTop()).toBe(0);
+  tick(0);
+  const start = leadSpace();
+  tick(60);
+  const first = start - leadSpace();
+  tick(120);
+  expect(first).toBeGreaterThan(0);
+  expect(start - leadSpace() - first).toBeLessThan(first);
+  settle(360);
+  expect(leadSpace()).toBe(0);
+  expect(scrollTop()).toBe(0);
+});
+
+it("does not feed fractional layout noise back into the submission reservation", () => {
+  naturalHeight = 220;
+  messageBottom = 100;
+  render({ id: null });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ id: null, messageID: "submitted", running: true });
+  const reserved = tailSpace();
+  const content = api.scrollContentRef.current!;
+  // The browser quantizes box geometry, not the animation's fractional input.
+  content.getBoundingClientRect = () => ({
+    height: Math.round((naturalHeight + tailSpace() + leadSpace()) * 64) / 64,
+  }) as DOMRect;
+  for (let time = 0; time < 700; time += 16) {
+    tick(time);
+    act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
+    expect(tailSpace()).toBe(reserved);
+  }
+  grow(50);
+  expect(tailSpace()).toBeCloseTo(reserved - 50, 1);
+  grow(1000);
+  expect(tailSpace()).toBe(0);
+});
+
+it("keeps a short first-bubble lift through thread adoption", () => {
+  naturalHeight = 220;
+  messageBottom = 100;
+  render({ id: null });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ id: null, messageID: "submitted", running: true });
+  tick(0); tick(80);
+  const before = leadSpace();
+  expect(before).toBeGreaterThan(0);
+  render({ id: "created", messageID: "submitted", running: true });
+  expect(leadSpace()).toBeCloseTo(before);
+  expect(scrollTop()).toBe(0);
+  settle(360);
+  expect(leadSpace()).toBe(0);
+});
+
+it("places a short first bubble without a composer lift with reduced motion", () => {
+  vi.spyOn(window, "matchMedia").mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() } as unknown as MediaQueryList);
+  naturalHeight = 220;
+  messageBottom = 100;
+  render({ id: null });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ id: null, messageID: "submitted", running: true });
+  expect(leadSpace()).toBe(0);
+  expect(scrollTop()).toBe(0);
+  expect(animations).toHaveLength(0);
+});
+
+it("clears an in-flight first-bubble lift when the user scrolls", () => {
+  naturalHeight = 220;
+  messageBottom = 100;
+  render({ id: null });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ id: null, messageID: "submitted", running: true });
+  tick(0);
+  expect(leadSpace()).toBeGreaterThan(0);
+  scrollUp(100);
+  expect(leadSpace()).toBe(0);
+  expect(api.scrollContentRef.current!.hasAttribute("data-submit-placing")).toBe(false);
+});
+
+it("clears an in-flight first-bubble lift when switching sessions", () => {
+  naturalHeight = 220;
+  messageBottom = 100;
+  render({ id: null });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ id: null, messageID: "submitted", running: true });
+  tick(0);
+  expect(leadSpace()).toBeGreaterThan(0);
+  render({ id: "b", messageID: "other" });
+  expect(leadSpace()).toBe(0);
+});
+
+it("lifts the in-progress timer with a short first bubble instead of a second transform", () => {
+  naturalHeight = 220;
+  messageBottom = 100;
+  render({ id: null });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ id: null, messageID: "submitted", running: true, processRow: true });
+  const process = host.querySelector<HTMLElement>("[data-process-row]");
+  expect(leadSpace()).toBeGreaterThan(100);
+  expect(motionY()).toBe(0);
+  expect(motionY(process)).toBe(0);
+  tick(0); tick(80);
+  expect(leadSpace()).toBeGreaterThan(0);
+  expect(motionY()).toBe(0);
+  expect(motionY(process)).toBe(0);
+  // The timer rides in flow but stays hidden; it enters only after landing.
+  const content = api.scrollContentRef.current!;
+  expect(content.hasAttribute("data-submit-placing")).toBe(true);
+  expect(animations.filter(animation => animation.element === process)).toHaveLength(0);
+  settle(360);
+  expect(leadSpace()).toBe(0);
+  expect(content.hasAttribute("data-submit-placing")).toBe(false);
+  expect(animations.filter(animation => animation.element === process)).toHaveLength(1);
+});
+
+it("does not lift a follow-up bubble that can scroll into place", () => {
+  render({ messageID: "old" });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ messageID: "submitted", running: true });
+  expect(leadSpace()).toBe(0);
+  expect(motionY()).toBe(0);
+  tick(0);
+  expect(leadSpace()).toBe(0);
+  expect(motionY()).toBe(0);
+  settle(360);
+  expect(leadSpace()).toBe(0);
+  expect(scrollTop()).toBeCloseTo(messageBottom - 200);
 });
 
 it("creates a fresh consumable reserve for the next submission", () => {
@@ -556,7 +942,7 @@ it("keeps the bubble on its screen trajectory when earlier content collapses dur
   expect(messageBottom - messageHeight - scrollTop()).toBeCloseTo(screenTop);
   tick(80);
   expect(messageBottom - messageHeight - scrollTop()).toBeCloseTo(screenTop);
-  tick(360);
+  settle(360);
   expect(scrollTop()).toBeCloseTo(messageBottom - 200);
 });
 
@@ -600,7 +986,7 @@ it("places the bubble without animation with reduced motion", () => {
   expect(animations).toHaveLength(0);
 });
 
-it("does not add ordinary-session space to collaboration panes", () => {
+it("does not add ordinary-session space to split panes", () => {
   render({ split: true, messageID: "old" });
   submit({ split: true });
   expect(tailSpace()).toBe(0);
@@ -645,10 +1031,55 @@ it.each([400, 900])("keeps the beginning of a %ipx message visible instead of cl
   expect(scrollTop()).toBeLessThan(messageBottom - messageHeight);
 });
 
+it("glides a submitted query without remeasuring the thread on later frames", () => {
+  render({ messageID: "old" });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ messageID: "submitted", running: true });
+  tick(0);
+  const rect = HTMLElement.prototype.getBoundingClientRect as ReturnType<typeof vi.fn>;
+  const query = vi.spyOn(Element.prototype, "querySelectorAll");
+  rect.mockClear();
+  query.mockClear();
+  const before = scrollTop();
+  tick(60);
+  act(() => api.handleConversationScroll());
+  expect(scrollTop()).toBeGreaterThan(before);
+  expect(document.documentElement.hasAttribute("data-submit-glide")).toBe(true);
+  expect(rect).not.toHaveBeenCalled();
+  expect(query.mock.calls.some(([selector]) => selector === "details")).toBe(false);
+  query.mockRestore();
+  settle(360);
+  expect(document.documentElement.hasAttribute("data-submit-glide")).toBe(false);
+  expect(scrollTop()).toBeCloseTo(submittedMessageScrollTop(
+    api.conversationScrollRef.current!,
+    host.querySelector('[data-user-message-id="submitted"]')!,
+  ));
+});
+
+it("lifts a short first query without remeasuring on later frames", () => {
+  naturalHeight = 220;
+  messageBottom = 100;
+  render({ id: null });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ id: null, messageID: "submitted", running: true });
+  tick(0);
+  const rect = HTMLElement.prototype.getBoundingClientRect as ReturnType<typeof vi.fn>;
+  rect.mockClear();
+  const start = leadSpace();
+  tick(60);
+  expect(start - leadSpace()).toBeGreaterThan(0);
+  expect(rect).not.toHaveBeenCalled();
+  settle(360);
+  expect(leadSpace()).toBe(0);
+  expect(document.documentElement.hasAttribute("data-submit-glide")).toBe(false);
+});
+
 it("moves immediately and decelerates into the reading position", () => {
   render({ messageID: "old" });
   act(() => api.requestSubmittedQueryScroll("submitted"));
-  render({ messageID: "submitted" });
+  render({ messageID: "submitted", processRow: true });
+  const process = host.querySelector<HTMLElement>("[data-process-row]");
+  const content = api.scrollContentRef.current!;
   tick(0);
   const start = scrollTop();
   tick(60);
@@ -656,7 +1087,12 @@ it("moves immediately and decelerates into the reading position", () => {
   tick(120);
   expect(first).toBeGreaterThan(0);
   expect(scrollTop() - start - first).toBeLessThan(first);
-  tick(360);
+  // The status does not scroll in with the bubble; it enters as the bubble lands.
+  expect(content.hasAttribute("data-submit-placing")).toBe(true);
+  expect(animations.filter(animation => animation.element === process)).toHaveLength(0);
+  settle(360);
+  expect(content.hasAttribute("data-submit-placing")).toBe(false);
+  expect(animations.filter(animation => animation.element === process)).toHaveLength(1);
   expect(scrollTop()).toBeCloseTo(submittedMessageScrollTop(api.conversationScrollRef.current!, host.querySelector('[data-user-message-id="submitted"]')!));
 });
 
@@ -674,7 +1110,7 @@ it("hands off optimistic motion and positioning without restarting at acknowledg
   expect(animations).toHaveLength(2);
   expect(animations[1].currentTime).toBe(80);
   expect(animations[0].cancel).toHaveBeenCalled();
-  tick(96); tick(360);
+  tick(96); settle(360);
   expect(scrollTop()).toBeCloseTo(messageBottom - 200);
   render({ messageID: "accepted" });
   expect(animations).toHaveLength(2);
@@ -687,7 +1123,7 @@ it("handles acknowledgements before the optimistic bubble mounts", () => {
     api.acknowledgeSubmittedMessage("submitted", "accepted");
   });
   render({ messageID: "accepted" });
-  tick(0); tick(360);
+  tick(0); settle(360);
   expect(animations).toHaveLength(1);
   expect(scrollTop()).toBeCloseTo(messageBottom - 200);
 });
@@ -697,12 +1133,13 @@ it("does not replay a completed entrance on acknowledgement or draft promotion",
   messageBottom = 100;
   render({ id: null });
   submit({ id: null });
-  animations[0].playState = "finished";
+  expect(leadSpace()).toBe(0);
+  expect(animations).toHaveLength(0);
   render({ id: "created", messageID: "submitted", mountKey: "promoted" });
-  expect(animations).toHaveLength(1);
+  expect(animations).toHaveLength(0);
   act(() => api.acknowledgeSubmittedMessage("submitted", "accepted"));
   render({ id: "created", messageID: "accepted" });
-  expect(animations).toHaveLength(1);
+  expect(animations).toHaveLength(0);
   expect(scrollTop()).toBe(0);
 });
 
@@ -767,7 +1204,7 @@ it.each([
   messageHeight += 300;
   messageBottom += 300;
   grow(1000);
-  tick(360);
+  settle(360);
   expect(scrollTop()).toBe(before);
   expect(animations).toHaveLength(1);
   act(() => anchor.querySelector<HTMLButtonElement>('button[aria-expanded="true"]')!.click());
@@ -784,7 +1221,7 @@ it("adapts to asynchronous attachment sizing during placement without replaying 
   messageBottom += 240;
   naturalHeight += 240;
   act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
-  tick(96); tick(360);
+  tick(96); settle(360);
   expect(scrollTop()).toBeLessThan(messageTop);
   expect(animations).toHaveLength(1);
   const anchored = scrollTop();
@@ -816,7 +1253,7 @@ it("continues an in-flight draft placement through a pane remount and viewport r
   animations[0].currentTime = 80;
   viewportHeight = 900;
   render({ id: "created", messageID: "submitted", mountKey: "promoted" });
-  tick(96); tick(360);
+  tick(96); settle(360);
   const viewport = api.conversationScrollRef.current!;
   const message = host.querySelector<HTMLElement>('[data-user-message-id="submitted"]')!;
   expect(scrollTop()).toBeCloseTo(submittedMessageScrollTop(viewport, message, false));
@@ -851,7 +1288,7 @@ it.each(["wheel", "pointer", "touch", "keyboard"])("yields an in-flight placemen
     if (input === "touch") viewport.dispatchEvent(new TouchEvent("touchstart", { touches: [] }));
     if (input === "keyboard") viewport.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown" }));
   });
-  tick(360);
+  settle(360);
   grow(1200);
   expect(scrollTop()).toBe(before);
 });
@@ -874,7 +1311,7 @@ it.each(["hidden", "reduced motion"])("stops live motion when the document chang
       media.dispatchEvent(new Event("change"));
     }
   });
-  tick(360);
+  settle(360);
   expect(scrollTop()).toBe(before);
   expect(animations[0].cancel).toHaveBeenCalled();
 });

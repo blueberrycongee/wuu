@@ -17,7 +17,10 @@ import {
 } from "./StreamText";
 import { useStreamVeil } from "./StreamVeil";
 import { mendStreamingMarkdown } from "./StreamingMarkdownMend";
-import { useConversationRenderActive } from "./ConversationRenderActivity";
+import {
+  useConversationBecameRenderActive,
+  useConversationRenderActive,
+} from "./ConversationRenderActivity";
 
 /**
  * Progressive Markdown renderer used while assistant text is arriving.
@@ -74,6 +77,7 @@ export function StreamingMarkdown({
 }: StreamingMarkdownProps): JSX.Element {
   /* ------------------------- External store wiring ------------------------ */
   const renderActive = useConversationRenderActive();
+  const becameRenderActive = useConversationBecameRenderActive();
   const hasStreamValue = useStreamedTextHasValue(streamKey, renderActive);
   const targetText = useStreamedText(streamKey, initialText, renderActive);
 
@@ -88,27 +92,17 @@ export function StreamingMarkdown({
     streamTextStore.replacementVersion(streamKey),
   );
   const acceptedStreamValueRef = useRef(hasStreamValue);
-  useLayoutEffect(() => {
-    const replacementVersion = streamTextStore.replacementVersion(streamKey);
-    if (hasStreamValue) {
-      acceptedStreamValueRef.current = true;
-    }
-    if (targetText !== renderedText) {
-      if (
-        acceptedStreamValueRef.current &&
-        !hasStreamValue &&
-        targetText.length < renderedText.length
-      ) {
-        return;
-      }
-      renderedReplacementVersionRef.current = replacementVersion;
-      setRenderedText(targetText);
-      return;
-    }
-    if (hasStreamValue) {
-      renderedReplacementVersionRef.current = replacementVersion;
-    }
-  }, [hasStreamValue, renderedText, streamKey, targetText]);
+  // Resolve the sticky snapshot before committing DOM. Publishing in a layout
+  // effect lets the parent's scroll restore measure the previous text first.
+  if (hasStreamValue) {
+    acceptedStreamValueRef.current = true;
+    renderedReplacementVersionRef.current = streamTextStore.replacementVersion(streamKey);
+  }
+  if (targetText !== renderedText && !(acceptedStreamValueRef.current &&
+    !hasStreamValue && targetText.length < renderedText.length)) {
+    renderedReplacementVersionRef.current = streamTextStore.replacementVersion(streamKey);
+    setRenderedText(targetText);
+  }
 
   /* ------------------------------ Phase ----------------------------------- */
   // Single internal phase: streaming while upstream is live, settled once
@@ -119,6 +113,10 @@ export function StreamingMarkdown({
   const onFrameRef = useRef(onFrame);
   const onSettledRef = useRef(onSettled);
   const settledNotifiedRef = useRef(false);
+  const skipRevealFrameRef = useRef(false);
+  if (becameRenderActive) {
+    skipRevealFrameRef.current = true;
+  }
 
   /* ----------------------- Refs always track props ------------------------ */
   useLayoutEffect(() => {
@@ -141,10 +139,20 @@ export function StreamingMarkdown({
   // second client-side character chase that used to keep React and Markdown
   // busy for seconds after the provider had already delivered the text.
   useLayoutEffect(() => {
+    // Revealing a cached running conversation is not a new visual frame.
+    // Catch-up text may commit one render later; keep skipping until that
+    // snapshot has landed, or the jump from onFrame re-anchors the pane.
+    if (skipRevealFrameRef.current) {
+      if (renderedText !== targetText) {
+        return;
+      }
+      skipRevealFrameRef.current = false;
+      return;
+    }
     if (renderActive) {
       onFrameRef.current?.();
     }
-  }, [renderActive, renderedText]);
+  }, [renderActive, renderedText, targetText]);
 
   useEffect(() => {
     if (isLive) {
@@ -218,8 +226,8 @@ export function StreamingMarkdown({
     [split.blocks],
   );
   useStreamVeil(
-    surfaceRef, renderedText, isLive && renderActive,
-    `${streamKey}:${renderedReplacementVersionRef.current}`, visibleBlocks.length,
+    surfaceRef, renderedText, isLive,
+    `${streamKey}:${renderedReplacementVersionRef.current}`, visibleBlocks.length, renderActive,
   );
   const lastStableBlockIndex = visibleBlocks.length - 1;
   const lastStableBlock = visibleBlocks[lastStableBlockIndex] ?? "";

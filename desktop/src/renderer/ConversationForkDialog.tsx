@@ -1,5 +1,5 @@
 import { isTouchWebShell } from "./ComposerFocus";
-import { GitBranch, Laptop } from "lucide-react";
+import { GitBranch, Laptop } from "./WuuIcons";
 import { useState } from "react";
 import { Modal } from "./Modal";
 import { desktopApiErrorMessage } from "./WorkspaceReviewHelpers";
