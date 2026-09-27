@@ -249,7 +249,7 @@
   --line-ui: 1.35;
   --line-body: var(--wuu-line-height-body, 1.55);
   --line-meta: 1.6;
-  --menu-bg: var(--wuu-color-surface-elevated, rgba(255, 255, 255, 0.98));
+  --menu-bg: var(--wuu-color-surface-elevated, #fff);
   --menu-border: var(--hairline);
   --menu-hover: var(--wuu-color-surface-muted, #f2f3f0);
   --menu-shadow: var(--shadow-pop);

@@ -150,6 +150,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Menus, popovers, and sidebar hover cards use an opaque surface, so text
+  underneath no longer shows through them.
+
 - Isolated workers started from a worktree conversation now write in their own
   worktree. Previously their file and shell tools could resolve into the parent
   conversation's worktree. Workers started after an agent moves its conversation

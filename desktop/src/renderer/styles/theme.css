@@ -117,7 +117,7 @@
   --wuu-accent: var(--wuu-color-accent, #ff5a26);
   --wuu-accent-press: var(--wuu-color-accent-pressed, #ff6d3f);
 
-  --menu-bg: var(--wuu-color-surface-elevated, rgba(30, 33, 37, 0.98));
+  --menu-bg: var(--wuu-color-surface-elevated, rgb(30, 33, 37));
   --menu-hover: var(--wuu-color-surface-muted, #2b2f34);
 
   --sidebar-glass-bg: linear-gradient(180deg, rgba(26, 29, 32, 0.94), rgba(20, 22, 24, 0.9));

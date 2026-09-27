@@ -64,15 +64,21 @@ app.whenReady().then(async () => {
   }, selector);
   const measure = (selector) => evaluate(async (selector) => {
     await new Promise(requestAnimationFrame);
-    document.getAnimations().filter((a) => a.effect.getComputedTiming().iterations !== Infinity).forEach((a) => a.finish());
     const card = document.querySelector(".sidebar-hover-card");
+    // Let the entrance run out rather than finish() it: an animation
+    // finished on the main thread can still be mid-flight in the next
+    // captured frame, which records the card half transparent.
+    await Promise.all(card.getAnimations().map((a) => a.finished.catch(() => undefined)));
+    await new Promise(requestAnimationFrame);
     const anchor = document.querySelector(selector);
     const rect = card.getBoundingClientRect();
     const row = anchor.getBoundingClientRect();
     const title = card.querySelector(".sidebar-hover-card-title");
     return {
       card: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width },
-      row: { top: row.top, right: row.right },
+      row: { top: row.top, right: row.right, center: row.top + row.height / 2 },
+      sidebarRight: anchor.closest(".sidebar").getBoundingClientRect().right,
+      titleCenter: title.getBoundingClientRect().top + parseFloat(getComputedStyle(title).lineHeight) / 2,
       viewport: { width: innerWidth, height: innerHeight },
       horizontalOverflow: card.scrollWidth - card.clientWidth,
       titleLines: Math.round(title.getBoundingClientRect().height / parseFloat(getComputedStyle(title).lineHeight)),
@@ -91,12 +97,13 @@ app.whenReady().then(async () => {
     };
   }, selector);
   const assertPlacement = (label, m) => {
-    // Aligned with the row unless that would push the card off the bottom.
-    const expectedTop = Math.min(m.row.top, m.viewport.height - (m.card.bottom - m.card.top) - 8);
-    assert.ok(m.card.left >= m.row.right, `${label}: card sits beside the row, not over it`);
+    assert.ok(m.card.left >= m.sidebarRight + 8, `${label}: card clears the sidebar edge`);
     assert.ok(m.card.left >= 0 && m.card.right <= m.viewport.width, `${label}: card fits horizontally`);
     assert.ok(m.card.top >= 0 && m.card.bottom <= m.viewport.height, `${label}: card fits vertically`);
-    assert.ok(Math.abs(m.card.top - expectedTop) <= 1, `${label}: card aligns with the row`);
+    // The title's first line centers on the row unless that would push the
+    // card off the bottom.
+    const atBottom = Math.abs(m.card.bottom - (m.viewport.height - 8)) <= 1;
+    assert.ok(atBottom || Math.abs(m.titleCenter - m.row.center) <= 1, `${label}: card aligns with the row`);
     assert.ok(m.horizontalOverflow <= 0, `${label}: nothing overflows the card`);
     assert.equal(m.pointerEvents, "none", `${label}: card never takes the pointer`);
     assert.equal(m.countSplit, false, `${label}: a count never breaks across lines`);

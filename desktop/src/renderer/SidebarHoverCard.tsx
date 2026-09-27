@@ -11,7 +11,7 @@
  * could offer already lives on the row and its context menu. Timing and
  * dismissal come from useHoverReveal.
  */
-import { Children, createContext, type ReactNode, useContext, useLayoutEffect, useRef } from "react";
+import { Children, createContext, Fragment, type ReactNode, useContext, useLayoutEffect, useRef } from "react";
 import type { DesktopProject } from "../shared/protocol";
 import {
   isThreadExecuting,
@@ -66,11 +66,22 @@ export function SidebarHoverCardLayer({
     if (!layer) return;
     const row = anchor.getBoundingClientRect();
     const card = layer.getBoundingClientRect();
+    // Clear of the sidebar edge rather than the row, whose inset would put
+    // the card on the divider; and with the title's first line centered on
+    // the row, so the card reads as a continuation of that line.
+    const sidebarRight = anchor.closest(".sidebar")?.getBoundingClientRect().right ?? row.right;
+    const title = layer.querySelector(".sidebar-hover-card-title");
+    const titleCenter = title
+      ? title.getBoundingClientRect().top - card.top + parseFloat(getComputedStyle(title).lineHeight) / 2
+      : 0;
     const maxLeft = Math.max(VIEWPORT_MARGIN, window.innerWidth - card.width - VIEWPORT_MARGIN);
     const maxTop = Math.max(VIEWPORT_MARGIN, window.innerHeight - card.height - VIEWPORT_MARGIN);
-    layer.style.left = `${Math.min(row.right + ANCHOR_GAP, maxLeft)}px`;
-    layer.style.top = `${Math.min(Math.max(row.top, VIEWPORT_MARGIN), maxTop)}px`;
+    const top = row.top + row.height / 2 - titleCenter;
+    layer.style.left = `${Math.min(Math.max(row.right, sidebarRight) + ANCHOR_GAP, maxLeft)}px`;
+    layer.style.top = `${Math.min(Math.max(top, VIEWPORT_MARGIN), maxTop)}px`;
     layer.style.visibility = "visible";
+    // The entrance starts only once placed; see .sidebar-hover-card.
+    layer.dataset.placed = "true";
   });
 
   return (
@@ -111,6 +122,13 @@ function HoverCardFact({
       <span className="sidebar-hover-card-fact-text">{children}</span>
     </li>
   );
+}
+
+// A long path wraps after a separator, not inside a folder name.
+function PathText({ path }: { path: string }): JSX.Element {
+  return <>{path.split(/(?<=[/\\])/).map((part, index) => (
+    <Fragment key={index}>{index > 0 ? <wbr /> : null}{part}</Fragment>
+  ))}</>;
 }
 
 function SessionCounts({ sessions, facts }: {
@@ -184,13 +202,15 @@ export function ThreadHoverCardContent({
 
   return (
     <>
-      <div className="sidebar-hover-card-header">
-        <span className="sidebar-hover-card-title">{title}</span>
-        {lastActivity ? (
-          <span className="sidebar-hover-card-time">{formatRelativeTime(lastActivity)}</span>
-        ) : null}
+      <div className="sidebar-hover-card-heading">
+        <div className="sidebar-hover-card-header">
+          <span className="sidebar-hover-card-title">{title}</span>
+          {lastActivity ? (
+            <span className="sidebar-hover-card-time">{formatRelativeTime(lastActivity)}</span>
+          ) : null}
+        </div>
+        {status}
       </div>
-      {status}
       <HoverCardFacts>
         {workspace ? <HoverCardFact icon={<Folder />}>{workspace.name}</HoverCardFact> : null}
         {thread.worktree?.path ? (
@@ -238,7 +258,7 @@ export function WorkspaceHoverCardContent({
         ) : null}
         {!scratch ? (
           <HoverCardFact icon={<Folder />}>
-            {workspace.path}
+            <PathText path={workspace.path} />
           </HoverCardFact>
         ) : null}
         {!scratch && workspace.missing ? (

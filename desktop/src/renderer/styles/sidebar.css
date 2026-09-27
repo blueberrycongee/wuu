@@ -2851,8 +2851,9 @@ html[data-focus-modality="keyboard"] :is(
 }
 
 /* Sidebar hover card: a visual-only description of a sidebar row, placed
- * beside the sidebar. It shares the compact menu shell so it reads as the
- * same floating family, and never takes the pointer. */
+ * beside the sidebar. It is a richer tooltip, not a menu: one type step
+ * below reading text throughout, with the title set apart by weight and
+ * ink. It never takes the pointer. */
 .sidebar-hover-card {
   position: fixed;
   /* Below context menus, which dismiss it anyway. */
@@ -2860,22 +2861,34 @@ html[data-focus-modality="keyboard"] :is(
   display: flex;
   width: max-content;
   /* In em so the card widens with the UI font size instead of wrapping more. */
-  min-width: 16em;
-  max-width: min(24em, calc(100vw - 16px));
+  min-width: 14em;
+  max-width: min(22em, calc(100vw - 16px));
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--menu-border);
-  border-radius: var(--menu-shell-radius);
+  border-radius: var(--radius-sm);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
-  color: var(--ink);
-  font-size: var(--font-ui);
-  line-height: var(--line-body);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: var(--line-ui);
   overflow-wrap: anywhere;
   pointer-events: none;
   --enter-x: -2px;
+}
+
+/* Starting the entrance while the first layout is still hidden lets
+ * Chromium replay it on the first visible frame: a full-opacity flash,
+ * then a fade. */
+.sidebar-hover-card[data-placed="true"] {
   animation: wuu-enter var(--motion-fast) var(--ease-out) both;
+}
+
+.sidebar-hover-card-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .sidebar-hover-card-header {
@@ -2889,6 +2902,8 @@ html[data-focus-modality="keyboard"] :is(
   min-width: 0;
   flex: 1;
   overflow: hidden;
+  color: var(--ink);
+  font-weight: var(--weight-medium);
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
 }
@@ -2896,15 +2911,15 @@ html[data-focus-modality="keyboard"] :is(
 .sidebar-hover-card-time {
   flex: 0 0 auto;
   color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .sidebar-hover-card-status {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
   margin: 0;
-  color: var(--ink-soft);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2935,15 +2950,15 @@ html[data-focus-modality="keyboard"] :is(
   grid-template-columns: var(--icon-size-sm) minmax(0, 1fr);
   align-items: start;
   gap: var(--space-2);
-  color: var(--ink-soft);
 }
 
 .sidebar-hover-card-fact-icon {
   display: grid;
   /* One text line tall, so the icon centers on the first line of a
    * wrapped path. */
-  height: calc(1em * var(--line-body));
+  height: calc(1em * var(--line-ui));
   place-items: center;
+  color: var(--ink-muted);
 }
 
 .sidebar-hover-card-fact-icon > svg {
@@ -2955,6 +2970,7 @@ html[data-focus-modality="keyboard"] :is(
   white-space: nowrap;
 }
 
-.sidebar-hover-card-fact[data-tone="warning"] {
+.sidebar-hover-card-fact[data-tone="warning"],
+.sidebar-hover-card-fact[data-tone="warning"] .sidebar-hover-card-fact-icon {
   color: var(--warning);
 }
