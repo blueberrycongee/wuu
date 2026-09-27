@@ -71,7 +71,7 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 	if validator != nil {
 		prompt = validator.InitialPrompt(prompt)
 	}
-	userMsg, err := userMessageFromPrompt(prompt, images, files)
+	userMsg, err := s.userMessageWithInputImages(params.ThreadID, prompt, images, files, params.Images)
 	if err != nil {
 		return s.writeRunError(req.ID, "invalid_params", err)
 	}

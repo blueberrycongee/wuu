@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Image attachments now include local working-file paths for model file operations,
+  with seven-day expiry and automatic cache cleanup.
+
 - New conversations can start in an isolated Git worktree from the composer's
   branch selector. The project keeps its current branch and uncommitted changes;
   the worktree toggle resets for the next conversation.

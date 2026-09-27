@@ -151,6 +151,8 @@ type ToolCall struct {
 
 // InputImage carries a user-provided or generated image in base64 form.
 type InputImage struct {
+	// LocalPath identifies an expiring input working copy, not provider wire data.
+	LocalPath string `json:"local_path,omitempty"`
 	// ProviderItemID identifies a generated image for native output replay.
 	ProviderItemID string `json:"provider_item_id,omitempty"`
 	// Required evidence must cause an error instead of an unsupported-media omission.
