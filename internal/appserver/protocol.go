@@ -2200,8 +2200,11 @@ type Thread struct {
 	ID             string                `json:"id"`
 	Source         string                `json:"source,omitempty"`
 	// ProjectID is the coordinator conversation that manages this session.
-	ProjectID      string `json:"project_id,omitempty"`
-	ProjectRole    string `json:"project_role,omitempty"`
+	ProjectID   string `json:"project_id,omitempty"`
+	ProjectRole string `json:"project_role,omitempty"`
+	// ProjectExists resolves grouping independently of coordinator visibility.
+	// Lists, resumes and metadata responses include it; incremental events may omit it.
+	ProjectExists  *bool  `json:"project_exists,omitempty"`
 	ParentID       string `json:"parent_id,omitempty"`
 	AgentPath      string `json:"agent_path,omitempty"`
 	Preview        string `json:"preview"`

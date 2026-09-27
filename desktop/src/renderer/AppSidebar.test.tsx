@@ -330,7 +330,7 @@ describe("AppSidebar layout", () => {
   });
 
   // The failure cases these guard: a project or its sessions also crowd the
-  // workspace list, a session of an archived project disappears, and the
+  // workspace list, a missing project's sessions become inaccessible, and the
   // Projects entries do nothing.
   function sidebarThread(id: string, title: string, overrides: Partial<ThreadSummary> = {}): ThreadSummary {
     return {
@@ -353,7 +353,7 @@ describe("AppSidebar layout", () => {
         "project-1": [
           sidebarThread("coordinator", "Search overhaul", { source: "project" }),
           sidebarThread("session", "Paginate results", { source: "project-session", project_id: "coordinator", status: "in_progress" }),
-          sidebarThread("orphan", "Orphaned session", { source: "project-session", project_id: "archived-project" }),
+          sidebarThread("orphan", "Orphaned session", { source: "project-session", project_id: "missing-project" }),
           sidebarThread("chat", "Ordinary conversation"),
         ],
       },
@@ -365,6 +365,53 @@ describe("AppSidebar layout", () => {
     const workspace = container.querySelector<HTMLElement>('section[data-section-id="project-1"]');
     const workspaceTitles = [...workspace!.querySelectorAll(".thread-row-title")].map((title) => title.textContent);
     expect(workspaceTitles.sort()).toEqual(["Ordinary conversation", "Orphaned session"]);
+  });
+
+  it("keeps managed sessions out of ordinary rows after archive and a fresh sidebar mount", () => {
+    const coordinator = sidebarThread("coordinator", "Search overhaul", { source: "project" });
+    const members = [
+      sidebarThread("worker", "Paginate results", { source: "project-session", project_id: coordinator.id, project_exists: true, status: "in_progress" }),
+      sidebarThread("side", "Review results", { source: "project-session", project_id: coordinator.id, project_exists: true }),
+    ];
+    const chat = sidebarThread("chat", "Ordinary conversation");
+    const renderThreads = (threads: ThreadSummary[]) => renderSidebar({
+      expandedSidebarSectionIDs: new Set(["project-1"]),
+      workspaceThreadsByWorkspaceID: { "project-1": threads },
+    });
+    const ordinaryTitles = () => [...container.querySelectorAll('section[data-section-id="project-1"] .thread-row-title')]
+      .map((title) => title.textContent);
+
+    renderThreads([coordinator, ...members, chat]);
+    expect(projectsGroup().querySelector(".project-thread-row")?.textContent).toContain(coordinator.title);
+    expect(ordinaryTitles()).toEqual([chat.title]);
+
+    // Archiving removes the coordinator from the sidebar cache, not its members.
+    renderThreads([...members, chat]);
+    expect(projectsGroup().querySelector(".project-thread-row")).toBeNull();
+    expect(ordinaryTitles()).toEqual([chat.title]);
+
+    // Active thread lists omit archived coordinators; no remembered parent is required.
+    act(() => root?.unmount());
+    root = null;
+    renderThreads([...members, chat]);
+    expect(ordinaryTitles()).toEqual([chat.title]);
+
+    // Deleted coordinators and old orphan records must not strand surviving sessions.
+    const orphans = members.map((member) => ({ ...member, project_exists: false }));
+    renderThreads([...orphans, chat]);
+    expect(ordinaryTitles().sort()).toEqual([chat.title, ...members.map((member) => member.title)].sort());
+    act(() => root?.unmount());
+    root = null;
+    renderThreads([...orphans, chat]);
+    expect(ordinaryTitles().sort()).toEqual([chat.title, ...members.map((member) => member.title)].sort());
+
+    renderThreads([coordinator, ...members, chat]);
+    expect(projectsGroup().querySelector(".project-thread-row")?.classList.contains("running")).toBe(true);
+    expect(ordinaryTitles()).toEqual([chat.title]);
+
+    // Only explicit release restores ordinary visibility.
+    renderThreads([coordinator, { ...members[0], source: undefined, project_id: undefined }, members[1], chat]);
+    expect(ordinaryTitles().sort()).toEqual([chat.title, members[0].title].sort());
   });
 
   it("clears a viewed project's unread dot without marking its hidden sessions read", () => {

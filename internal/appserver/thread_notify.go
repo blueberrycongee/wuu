@@ -3,11 +3,21 @@ package appserver
 import "github.com/blueberrycongee/wuu/internal/session"
 
 func (s *Server) notifyThreadStarted(thread Thread) error {
+	var err error
+	thread, err = s.withProjectGrouping(thread, nil)
+	if err != nil {
+		return err
+	}
 	thread = s.threadWithPersistedOrganizationIdentity(thread)
 	return s.writeNotification(NotificationThreadStarted, ThreadStartedNotification{Thread: thread})
 }
 
 func (s *Server) notifyThreadUpdated(thread Thread) error {
+	var err error
+	thread, err = s.withProjectGrouping(thread, nil)
+	if err != nil {
+		return err
+	}
 	thread = s.threadWithPersistedOrganizationIdentity(thread)
 	return s.writeNotification(NotificationThreadUpdated, ThreadUpdatedNotification{Thread: thread})
 }

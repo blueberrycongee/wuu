@@ -20,13 +20,14 @@ export type ProjectDirectory = {
   projects: ThreadSummary[];
   sessionsByProjectID: ReadonlyMap<string, ThreadSummary[]>;
   summaries: ReadonlyMap<string, ProjectRowSummary>;
-  // Sessions shown under their project instead of their workspace.
+  // Sessions with an existing coordinator, including archived/unloaded projects.
   managedSessionIDs: ReadonlySet<string>;
 };
 
 /**
- * Groups the loaded conversations into projects. A session whose project is
- * archived, deleted or not loaded is an ordinary conversation.
+ * Groups loaded conversations into live projects. An archived or unloaded
+ * coordinator keeps its sessions grouped; a missing coordinator does not
+ * strand surviving sessions outside the ordinary conversation list.
  */
 export function projectDirectory(
   threads: readonly ThreadSummary[],
@@ -39,8 +40,9 @@ export function projectDirectory(
   const managedSessionIDs = new Set<string>();
   for (const thread of threads) {
     const projectID = thread.source === PROJECT_SESSION_SOURCE ? thread.project_id : undefined;
-    if (!projectID || !projectIDs.has(projectID) || thread.archived) continue;
+    if (!projectID || thread.archived || (!projectIDs.has(projectID) && !thread.project_exists)) continue;
     managedSessionIDs.add(thread.id);
+    if (!projectIDs.has(projectID)) continue;
     const sessions = sessionsByProjectID.get(projectID);
     if (sessions) sessions.push(thread);
     else sessionsByProjectID.set(projectID, [thread]);

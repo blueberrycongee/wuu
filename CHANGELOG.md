@@ -137,6 +137,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - macOS confined commands can read Keychain credentials again, preventing false
   GitHub CLI authentication failures caused by blocked system cache writes.
 
+- Managed project sessions no longer spill into the desktop sidebar's ordinary
+  conversation list when their coordinator is archived, including after reload.
+  Their ownership and running state are preserved; sessions whose coordinator
+  was deleted or is missing remain accessible in the ordinary list.
+
 - Instructions given when an extension creates a session now reach the model on
   every turn and after a reload. Built-in runs previously dropped them,
   including the Subagent plugin's worker instructions.

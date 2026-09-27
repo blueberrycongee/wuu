@@ -908,6 +908,18 @@ describe("summarizeThreadsForSidebar", () => {
 });
 
 describe("mergeSidebarThread", () => {
+  it("retains resolved coordinator availability across turn events but accepts deletion and release", () => {
+    const existing = { ...threadWithUserTexts(["hello"]), source: "project-session", project_id: "coordinator", project_exists: true };
+    const event = { ...existing, project_exists: undefined };
+    const merged = mergeSidebarThread(existing, event);
+    expect(summarizeThreadsForSidebar([merged])[0].project_exists).toBe(true);
+    const orphan = mergeSidebarThread(merged, { ...event, project_exists: false });
+    expect(summarizeThreadsForSidebar([orphan])[0].project_exists).toBe(false);
+    expect(mergeSidebarThread(orphan, event).project_exists).toBe(false);
+    expect(mergeSidebarThread(merged, { ...event, source: undefined, project_id: undefined }).project_exists).toBeUndefined();
+    expect(mergeSidebarThread(merged, { ...event, project_id: "other" }).project_exists).toBeUndefined();
+  });
+
   it("preserves a known title and preview when an incoming snapshot omits them", () => {
     const existing = threadWithUserTexts(["今天我在这里面提交的内容"]);
     existing.title = "已经生成的标题";
