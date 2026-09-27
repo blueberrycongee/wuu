@@ -235,6 +235,10 @@ describe("workspace file tabs", () => {
   });
 
   it("keeps the project overview on the selected coordinator or managed session", async () => {
+    vi.mocked(window.wuu.initialize).mockResolvedValue({
+      ...initialized(),
+      features: { project_agent: true },
+    });
     const first = { ...completedThread(), id: "project-a", source: "project", preview: "Project Alpha" };
     const second = { ...completedThread(), id: "project-b", source: "project", preview: "Project Beta" };
     const workerA = { ...completedThread(), id: "worker-a", source: "project-session", project_id: first.id, preview: "Alpha worker" };
