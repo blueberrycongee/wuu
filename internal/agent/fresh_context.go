@@ -142,7 +142,7 @@ func withContextWindowGuidance(base func() []ContextSegment) func() []ContextSeg
 			segments = append(segments, base()...)
 		}
 		segments = append(segments, RequestOnlyContextMessages([]providers.ChatMessage{
-			contextWindowReminder(`Maintain persistent working notes with notes. Record objectives, constraints, decisions, completed work, verification and next steps as work progresses. Include useful History Seq addresses for exact recovery. Before calling new_context, save anything needed to continue. The host releases the old transcript after the full tool batch without generating a summary. Files and running processes are unchanged. After a switch, read your notes and recover missing facts with history_read or history_search before acting.`),
+			contextWindowReminder(`For work spanning context windows or a requested handoff, keep a concise notes checkpoint: goal, constraints, key decisions, verified progress, remaining work and file or History Seq references. Update it for meaningful changes and before new_context; routine activity or a final reply alone does not require an update. After a reset, read the checkpoint and recover missing evidence before acting. Use history_read for known Seq addresses, otherwise history_search.`),
 		})...)
 		return segments
 	}

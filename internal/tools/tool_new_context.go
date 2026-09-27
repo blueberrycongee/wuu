@@ -24,8 +24,8 @@ func (*NewContextTool) Execute(context.Context, string) (string, error) {
 func (*NewContextTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name: newContextToolName,
-		Description: "Start a fresh context window at the next safe tool-loop boundary. This releases old active model context but does not clear or reset files, processes, permissions, or other environment state. " +
-			"Save your working notes with the note tools before requesting this transition. The host does not generate a summary. Read your notes and archived history after the switch.",
+		Description: "Request a fresh context window after this tool batch. Save a recovery checkpoint with notes first: the host releases the active transcript without summarizing it. " +
+			"Files, processes and permissions remain unchanged. Read the checkpoint and recover missing history after the switch.",
 		InputSchema: map[string]any{
 			"type":                 "object",
 			"additionalProperties": false,
