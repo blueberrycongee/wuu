@@ -9,6 +9,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"strconv"
 	"strings"
 
 	_ "golang.org/x/image/webp"
@@ -41,6 +42,18 @@ func compactMediaEvidence(data string, inspectImage bool) string {
 		evidence += fmt.Sprintf(", dimensions=%dx%d", width, height)
 	}
 	return evidence
+}
+
+// compactImagePathEvidence keeps an accepted image's local file readable after
+// its bytes are removed from compacted history. The path is already absolute
+// and conversation-scoped; empty paths stay omitted so older transcripts and
+// provider-generated images do not invent a location.
+func compactImagePathEvidence(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	return ", path=" + strconv.Quote(path)
 }
 
 type compactByteCounter struct {

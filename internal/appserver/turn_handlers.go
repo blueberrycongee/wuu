@@ -2,11 +2,14 @@ package appserver
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -165,6 +168,9 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	}
 	if params.Prompt == "" && len(images) == 0 && len(files) == 0 {
 		return s.writeResponse(req.ID, nil, errors.New("prompt or attachment is required"))
+	}
+	if err := attachConversationImagePaths(params.ThreadID, images); err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
 	th, err := s.ensureThreadLoaded(params.ThreadID)
 	if err != nil {
@@ -531,6 +537,9 @@ func (s *Server) handleTurnQueue(req Request) error {
 	if params.Prompt == "" && len(images) == 0 && len(files) == 0 {
 		return s.writeResponse(req.ID, nil, errors.New("prompt or attachment is required"))
 	}
+	if err := attachConversationImagePaths(params.ThreadID, images); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	if isManualCompactPrompt(params.Prompt) {
 		if len(images) > 0 || len(files) > 0 {
 			return s.writeResponse(req.ID, nil, errors.New("compact does not accept attachments"))
@@ -649,6 +658,9 @@ func (s *Server) handleTurnUpdateQueued(req Request) error {
 	if params.Prompt == "" && len(images) == 0 && len(files) == 0 {
 		return s.writeResponse(req.ID, nil, errors.New("prompt or attachment is required"))
 	}
+	if err := attachConversationImagePaths(params.ThreadID, images); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	th, err := s.ensureThreadLoaded(params.ThreadID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -747,6 +759,9 @@ func (s *Server) handleTurnSteer(req Request) error {
 	}
 	if params.Prompt == "" && len(images) == 0 && len(files) == 0 {
 		return s.writeResponse(req.ID, nil, errors.New("prompt or attachment is required"))
+	}
+	if err := attachConversationImagePaths(params.ThreadID, images); err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
 	th, err := s.ensureThreadLoaded(params.ThreadID)
 	if err != nil {
@@ -1706,7 +1721,22 @@ func userMessageFromPrompt(prompt string, images []providers.InputImage, files [
 	if err != nil {
 		return providers.ChatMessage{}, err
 	}
-	if ok {
+	// The image path note is model context. Keep the authored prompt as the
+	// bubble text whenever that note would otherwise become the displayed
+	// message. Image-only turns use the existing preview marker because an
+	// empty display field cannot survive session storage separately from an
+	// unset one.
+	if reference := conversationImagePathReference(images); reference != "" {
+		msg.Content = appendConversationImageReference(msg.Content, reference)
+		switch {
+		case ok:
+			msg.DisplayContent = display
+		case strings.TrimSpace(prompt) == "":
+			msg.DisplayContent = imageOnlyDisplayContent(images)
+		default:
+			msg.DisplayContent = prompt
+		}
+	} else if ok {
 		msg.DisplayContent = display
 	}
 	if len(contentPartSets) > 0 {
@@ -1750,6 +1780,185 @@ func literalUserMessageFromPrompt(prompt string, images []providers.InputImage, 
 		Files:   files,
 	}
 	return msg, nil
+}
+
+// attachConversationImagePaths writes each accepted image to a unique
+// owner-readable file under the process temp root. The absolute path is
+// stored on the image so history, compaction, and later model requests can
+// refer to the same file. A write failure returns before the turn is
+// admitted, so the image is not dropped and no message is persisted.
+//
+// The file name is the content hash, so admission retries and replays of the
+// same normalized bytes reuse the existing file instead of writing another
+// copy. Files are retained for the life of the temp root: deleting one while
+// a compacted transcript still names it would make the reference unreadable.
+func attachConversationImagePaths(conversationID string, images []providers.InputImage) error {
+	if len(images) == 0 {
+		return nil
+	}
+	dir, err := conversationImageDir(conversationID)
+	if err != nil {
+		return err
+	}
+	root := filepath.Dir(dir)
+	if err := os.Mkdir(root, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("store conversation images: %w", err)
+	}
+	// The root has a predictable name below the shared system temp directory.
+	// Reject a pre-existing symlink or public directory before writing private
+	// user images into it.
+	info, err := os.Lstat(root)
+	if err != nil {
+		return fmt.Errorf("store conversation images: %w", err)
+	}
+	if !info.IsDir() || info.Mode().Perm() != 0o700 {
+		return errors.New("conversation image directory is not private")
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("store conversation images: %w", err)
+	}
+	info, err = os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("store conversation images: %w", err)
+	}
+	if !info.IsDir() || info.Mode().Perm() != 0o700 {
+		return errors.New("conversation image directory is not private")
+	}
+	for index := range images {
+		path, err := writeConversationImage(dir, images[index])
+		if err != nil {
+			return fmt.Errorf("image %d: %w", index+1, err)
+		}
+		images[index].Path = path
+	}
+	return nil
+}
+
+func conversationImageDir(conversationID string) (string, error) {
+	key := strings.TrimSpace(conversationID)
+	if key == "" {
+		return "", errors.New("conversation id is required to store images")
+	}
+	if strings.ContainsRune(key, os.PathSeparator) || strings.Contains(key, "/") || strings.Contains(key, "..") {
+		sum := sha256.Sum256([]byte(key))
+		key = hex.EncodeToString(sum[:8])
+	}
+	root := strings.TrimSpace(os.TempDir())
+	if root == "" {
+		return "", errors.New("temporary directory is unavailable")
+	}
+	dir := filepath.Join(root, "wuu-conversation-images", key)
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("store conversation images: %w", err)
+	}
+	return abs, nil
+}
+
+func writeConversationImage(dir string, image providers.InputImage) (string, error) {
+	data := strings.TrimSpace(image.Data)
+	raw, err := base64.StdEncoding.DecodeString(data)
+	if err != nil {
+		return "", fmt.Errorf("decode image: %w", err)
+	}
+	if len(raw) == 0 {
+		return "", errors.New("image is empty")
+	}
+	sum := sha256.Sum256(raw)
+	name := hex.EncodeToString(sum[:]) + conversationImageExt(image.MediaType)
+	path := filepath.Join(dir, name)
+	if info, statErr := os.Stat(path); statErr == nil && info.Mode().IsRegular() && info.Size() == int64(len(raw)) {
+		return path, nil
+	}
+	// A same-directory temporary name keeps the publish atomic on one
+	// filesystem. O_EXCL prevents two admissions from truncating one file.
+	tmp, err := os.CreateTemp(dir, ".writing-"+hex.EncodeToString(sum[:4])+"-*")
+	if err != nil {
+		return "", fmt.Errorf("store conversation images: %w", err)
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("store conversation images: %w", err)
+	}
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("store conversation images: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("store conversation images: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		if info, statErr := os.Stat(path); statErr == nil && info.Mode().IsRegular() && info.Size() == int64(len(raw)) {
+			return path, nil
+		}
+		return "", fmt.Errorf("store conversation images: %w", err)
+	}
+	cleanup = false
+	return path, nil
+}
+
+func conversationImageExt(mediaType string) string {
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	mediaType, _, _ = strings.Cut(mediaType, ";")
+	switch mediaType {
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	default:
+		return ".png"
+	}
+}
+
+func imageOnlyDisplayContent(images []providers.InputImage) string {
+	switch len(images) {
+	case 0:
+		return ""
+	case 1:
+		return "[Image #1]"
+	default:
+		return fmt.Sprintf("[%d images]", len(images))
+	}
+}
+
+func conversationImagePathReference(images []providers.InputImage) string {
+	if len(images) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	label := 0
+	for _, image := range images {
+		path := strings.TrimSpace(image.Path)
+		if path == "" {
+			continue
+		}
+		label++
+		if label > 1 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "<image name=[Image #%d] path=%q>", label, path)
+	}
+	return b.String()
+}
+
+func appendConversationImageReference(content, reference string) string {
+	reference = strings.TrimSpace(reference)
+	if reference == "" || strings.Contains(content, reference) {
+		return content
+	}
+	if strings.TrimSpace(content) == "" {
+		return reference
+	}
+	return content + "\n\n" + reference
 }
 
 func normalizeImagePayload(mediaType, data string) (string, string, error) {

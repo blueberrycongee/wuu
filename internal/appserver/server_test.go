@@ -6685,11 +6685,17 @@ func TestServerTurnStartAcceptsImageOnlyPrompt(t *testing.T) {
 	if requestCount != 1 {
 		t.Fatalf("expected one provider request, got %d", requestCount)
 	}
-	if len(messages) < 2 || messages[1].Role != "user" || messages[1].Content != "" || len(messages[1].Images) != 1 {
+	if len(messages) < 2 || messages[1].Role != "user" || len(messages[1].Images) != 1 {
 		t.Fatalf("unexpected provider messages: %+v", messages)
 	}
 	if messages[1].Images[0].MediaType != "image/jpeg" || messages[1].Images[0].Data != tinyImageOnlyB64 {
 		t.Fatalf("unexpected provider image: %+v", messages[1].Images[0])
+	}
+	if messages[1].Content == "" || !strings.Contains(messages[1].Content, messages[1].Images[0].Path) {
+		t.Fatalf("provider request lost the local image path: %+v", messages[1])
+	}
+	if messages[1].DisplayContent != "[Image #1]" {
+		t.Fatalf("image-only display text = %q, want [Image #1]", messages[1].DisplayContent)
 	}
 
 	persisted, err := loadChatMessages(rt.SessionDir, threadID)

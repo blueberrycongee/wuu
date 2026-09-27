@@ -11,6 +11,7 @@ import (
 	"image"
 	"image/png"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1341,6 +1342,48 @@ func TestBuildSummaryPromptMentionsImagesWithoutData(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "[image omitted: image/png, 80 base64 characters, 60 decoded bytes, sha256=") {
 		t.Fatalf("expected image omission note, got %q", prompt)
+	}
+	if strings.Contains(prompt, "path=") {
+		t.Fatalf("image without a stored path must not invent one: %q", prompt)
+	}
+}
+
+func TestCompact_KeepsStoredImagePathAfterStrippingBytes(t *testing.T) {
+	imagePath := `/tmp/wuu-conversation-images/thread-a/photo"1.png`
+	messages := []providers.ChatMessage{
+		{Role: "user", Content: "first"},
+		{Role: "assistant", Content: "first reply"},
+		{Role: "user", Content: "second screenshot", Images: []providers.InputImage{{
+			MediaType: "image/png",
+			Data:      strings.Repeat("a", 1200),
+			Path:      imagePath,
+		}}},
+		{Role: "assistant", Content: "second reply"},
+		{Role: "user", Content: "latest"},
+		{Role: "assistant", Content: "latest reply"},
+	}
+	result, err := CompactWithContextWindow(context.Background(), messages, &mockCompactClient{response: "summary"}, "test", 100_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, msg := range result {
+		if !strings.Contains(msg.Content, "second screenshot") {
+			continue
+		}
+		found = true
+		if len(msg.Images) != 0 {
+			t.Fatalf("historical image bytes remained: %+v", msg.Images)
+		}
+		if !strings.Contains(msg.Content, "path="+strconv.Quote(imagePath)) {
+			t.Fatalf("compacted content lost the stored path: %q", msg.Content)
+		}
+		if strings.Contains(msg.Content, strings.Repeat("a", 1200)) {
+			t.Fatal("compacted content copied image bytes")
+		}
+	}
+	if !found {
+		t.Fatalf("compacted result dropped the image turn: %+v", result)
 	}
 }
 

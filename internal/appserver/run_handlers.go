@@ -52,6 +52,9 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 	if params.Prompt == "" && len(images) == 0 && len(files) == 0 {
 		return s.writeRunError(req.ID, "invalid_params", errors.New("prompt or attachment is required"))
 	}
+	if err := attachConversationImagePaths(params.ThreadID, images); err != nil {
+		return s.writeRunError(req.ID, "invalid_params", err)
+	}
 	if isManualCompactPrompt(params.Prompt) {
 		return s.writeRunError(req.ID, "invalid_params", errors.New("execution runs do not accept compact commands"))
 	}

@@ -1799,6 +1799,7 @@ func chatMessageFromPersistedMessage(rec persistedMessage) providers.ChatMessage
 		}
 		msg.Images = append(msg.Images, providers.InputImage{
 			ProviderItemID: image.ProviderItemID,
+			Path:           image.Path,
 			MediaType:      image.MediaType,
 			Data:           image.Data,
 			Width:          image.Width,
@@ -1893,6 +1894,14 @@ func chatMessageInputText(msg providers.ChatMessage) string {
 	content := strings.TrimSpace(msg.Content)
 	if content == "" || content == strings.TrimSpace(chatMessageDisplayContent(msg)) {
 		return ""
+	}
+	// A local image path is server-added model context, not authored input.
+	// Leave it out of the public input field so the bubble stays the prompt.
+	if reference := conversationImagePathReference(msg.Images); reference != "" {
+		withoutReference := strings.TrimSpace(strings.TrimSuffix(content, reference))
+		if withoutReference == strings.TrimSpace(chatMessageDisplayContent(msg)) || withoutReference == "" {
+			return ""
+		}
 	}
 	return msg.Content
 }

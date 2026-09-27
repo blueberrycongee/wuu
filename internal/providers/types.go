@@ -155,7 +155,10 @@ type InputImage struct {
 	ProviderItemID string `json:"provider_item_id,omitempty"`
 	// Required evidence must cause an error instead of an unsupported-media omission.
 	// This is local admission metadata, never a provider wire field.
-	Required  bool
+	Required bool
+	// Path is the absolute local file written for an accepted user image.
+	// It is server-local recovery context, not a provider wire field.
+	Path      string `json:"path,omitempty"`
 	MediaType string
 	Data      string
 	Width     uint32
