@@ -23,6 +23,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   switching, new drafts, and workspace tools, with prefix hints and a keyboard
   shortcut reference in Settings. Text inputs and embedded tools retain their keys.
 
+- Hover over sidebar conversations and workspace headers to see status, model,
+  workspace, and session details in a card beside the row.
+
 - Select text in completed assistant responses to quote passages or comment beside
   them. Quotes wait as cards in the composer tray and follow drafts, send/queue/steer, held-message
   recovery and history; source navigation validates the exact visible passage.

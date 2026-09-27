@@ -47,6 +47,7 @@
     "test:e2e:sidebar-touch": "npm run build && electron scripts/sidebar-touch-e2e.cjs",
     "test:e2e:vim-navigation": "electron-vite build && electron scripts/vim-navigation-e2e.cjs",
     "test:e2e:sidebar-status": "electron scripts/sidebar-status-e2e.cjs",
+    "test:e2e:sidebar-hover-card": "npm run build && electron scripts/sidebar-hover-card-e2e.cjs",
     "test:e2e:sidebar-collapse": "electron scripts/sidebar-collapse-e2e.cjs",
     "test:e2e:sidebar-scroll-fade": "npm run build && electron scripts/sidebar-scroll-fade-e2e.cjs",
     "test:e2e:background-image": "electron-vite build && electron scripts/background-image-e2e.cjs",

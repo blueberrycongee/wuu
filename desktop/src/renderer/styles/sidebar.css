@@ -2849,3 +2849,112 @@ html[data-focus-modality="keyboard"] :is(
   transform: scale(1.025);
   box-shadow: inset 0 0 0 1px var(--sidebar-glass-overlay-bright), var(--shadow-pop);
 }
+
+/* Sidebar hover card: a visual-only description of a sidebar row, placed
+ * beside the sidebar. It shares the compact menu shell so it reads as the
+ * same floating family, and never takes the pointer. */
+.sidebar-hover-card {
+  position: fixed;
+  /* Below context menus, which dismiss it anyway. */
+  z-index: 2147481900;
+  display: flex;
+  width: max-content;
+  /* In em so the card widens with the UI font size instead of wrapping more. */
+  min-width: 16em;
+  max-width: min(24em, calc(100vw - 16px));
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-shell-radius);
+  background: var(--menu-bg);
+  box-shadow: var(--menu-shadow);
+  color: var(--ink);
+  font-size: var(--font-ui);
+  line-height: var(--line-body);
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  --enter-x: -2px;
+  animation: wuu-enter var(--motion-fast) var(--ease-out) both;
+}
+
+.sidebar-hover-card-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.sidebar-hover-card-title {
+  display: -webkit-box;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.sidebar-hover-card-time {
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+.sidebar-hover-card-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebar-hover-card-status[data-tone="unread"]::before {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-circle);
+  background: var(--info);
+  content: "";
+}
+
+.sidebar-hover-card-status[data-tone="failed"] {
+  color: var(--danger);
+}
+
+.sidebar-hover-card-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sidebar-hover-card-fact {
+  display: grid;
+  grid-template-columns: var(--icon-size-sm) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-2);
+  color: var(--ink-soft);
+}
+
+.sidebar-hover-card-fact-icon {
+  display: grid;
+  /* One text line tall, so the icon centers on the first line of a
+   * wrapped path. */
+  height: calc(1em * var(--line-body));
+  place-items: center;
+}
+
+.sidebar-hover-card-fact-icon > svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+}
+
+.sidebar-hover-card-count {
+  white-space: nowrap;
+}
+
+.sidebar-hover-card-fact[data-tone="warning"] {
+  color: var(--warning);
+}
