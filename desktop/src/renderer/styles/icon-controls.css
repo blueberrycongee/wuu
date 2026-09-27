@@ -1,5 +1,17 @@
 /* Shared icon-button optics. Load after appearance.css so utility sizes do not
  * override these role-based sizes. Business colors and activation stay local. */
+.control-busy-icon {
+  animation: control-busy-spin 1s linear infinite;
+}
+
+@keyframes control-busy-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .control-busy-icon { animation: none; }
+}
+
 :root {
   --control-size-inline: max(28px, round(nearest, calc(var(--font-ui) * 1.4 + 8px), 2px));
   --control-size-toolbar: max(32px, var(--control-field-height, calc(var(--font-ui) * 1.4 + 12px)));
@@ -58,8 +70,7 @@
 /* All top-row controls share geometry, including narrow windows and the
  * fixed toggle above a hover drawer. Size the placeholder from this token too. */
 :is(.titlebar, .settings-titlebar, .traffic-spacer, .workspace-panel-tabbar,
-    .session-inspector-header, .side-thread-panel__header,
-    .globalized-sidebar-toggle-region) .icon-button {
+    .side-thread-panel__header, .globalized-sidebar-toggle-region) .icon-button {
   flex: 0 0 auto;
   width: var(--control-size-toolbar);
   height: var(--control-size-toolbar);

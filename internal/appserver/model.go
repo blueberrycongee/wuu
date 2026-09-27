@@ -66,6 +66,8 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		SessionControl:  th.SessionControl,
 		ID:              th.ID,
 		Source:          th.Source,
+		ProjectID:       th.ProjectID,
+		ProjectRole:     th.ProjectRole,
 		ParentID:        th.ParentID,
 		AgentPath:       th.AgentPath,
 		Preview:         firstNonEmpty(th.Title, threadPreview(th.History)),
@@ -74,6 +76,7 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		Model:           th.Model,
 		ModelVariant:    th.ModelVariant,
 		ModelEffort:     th.ModelEffort,
+		Speed:           th.Speed,
 		PermissionMode:  th.PermissionMode,
 		ApproveForMe:    th.ApproveForMe,
 		EngineID:        string(agentengine.NormalizeEngineID(th.EngineID)),
@@ -84,7 +87,7 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		TreeInterrupted: th.workerTreeFrozen,
 		// Plugin-visible sessions remain writable by their owning plugin, but the
 		// user-facing conversation is an inspector and must not expose a composer.
-		ReadOnly:              th.ReadOnly || th.Visibility == pluginhost.SessionVisibilityPlugin,
+		ReadOnly:              th.ReadOnly || th.Visibility == pluginhost.SessionVisibilityPlugin || projectExecutionDisabled(th.Source),
 		Ephemeral:             th.Ephemeral,
 		Pinned:                th.PinnedAt != nil,
 		FolderID:              th.FolderID,
@@ -136,6 +139,7 @@ func (th *threadState) startTurnLocked(turnID string, userMsg providers.ChatMess
 	th.activeAgentItemID = ""
 	th.activeReasoningItemID = ""
 	th.toolItems = make(map[string]string)
+	th.streamText = nil
 
 	userItem := chatMessageItem(th.nextItemIDLocked(turnID), userMsg)
 	turn := Turn{
@@ -194,6 +198,7 @@ func (th *threadState) resumePersistedUserTurnLocked(clientID string, now time.T
 		th.agentStream = nil
 		th.activeReasoningItemID = ""
 		th.toolItems = make(map[string]string)
+		th.streamText = nil
 		return turn, true
 	}
 	return Turn{}, false
@@ -208,6 +213,7 @@ func (th *threadState) appendUserMessageTurnLocked(turnID string, userMsg provid
 	th.activeAgentItemID = ""
 	th.activeReasoningItemID = ""
 	th.toolItems = make(map[string]string)
+	th.streamText = nil
 
 	userItem := chatMessageItem(th.nextItemIDLocked(turnID), userMsg)
 	turn := Turn{
@@ -257,6 +263,7 @@ func (th *threadState) startInternalTurnWithKindLocked(turnID string, kind TurnK
 	th.activeAgentItemID = ""
 	th.activeReasoningItemID = ""
 	th.toolItems = make(map[string]string)
+	th.streamText = nil
 
 	turn := Turn{
 		ID:            turnID,
@@ -368,6 +375,7 @@ func (th *threadState) finishTurnLocked(turnID string, status TurnStatus, err er
 	th.agentStream = nil
 	th.activeReasoningItemID = ""
 	th.toolItems = make(map[string]string)
+	th.streamText = nil
 
 	turn := th.ensureTurnLocked(turnID, now)
 	if turn.Kind == TurnKindCompact && status == TurnStatusFailed {
@@ -665,7 +673,7 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 		if started {
 			out = append(out, itemStarted(th.ID, turnID, item, now))
 		}
-		item.Text += ev.Content
+		item.Text = th.appendStreamTextLocked(item.ID, item.Text, ev.Content)
 		th.upsertItemLocked(turnID, item, now)
 		out = append(out, outboundNotification{
 			method: NotificationAgentMessageDelta,
@@ -686,6 +694,7 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 			out = append(out, itemStarted(th.ID, turnID, item, now))
 		}
 		item.Text = ev.Content
+		delete(th.streamText, item.ID)
 		th.upsertItemLocked(turnID, item, now)
 		out = append(out, outboundNotification{
 			method: NotificationAgentMessageReplace,
@@ -704,7 +713,7 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 		if started {
 			out = append(out, itemStarted(th.ID, turnID, item, now))
 		}
-		item.Text += ev.Content
+		item.Text = th.appendStreamTextLocked(item.ID, item.Text, ev.Content)
 		th.upsertItemLocked(turnID, item, now)
 		out = append(out, outboundNotification{
 			method: NotificationReasoningDelta,
@@ -724,6 +733,7 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 			out = append(out, itemStarted(th.ID, turnID, item, now))
 		}
 		item.Text = ev.Content
+		delete(th.streamText, item.ID)
 		th.upsertItemLocked(turnID, item, now)
 		out = append(out, outboundNotification{
 			method: NotificationReasoningReplace,
@@ -761,7 +771,7 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 		if !ok {
 			return nil
 		}
-		item.Arguments += ev.Content
+		item.Arguments = th.appendStreamTextLocked(item.ID, item.Arguments, ev.Content)
 		th.upsertItemLocked(turnID, item, now)
 		out = append(out, outboundNotification{
 			method: NotificationToolCallDelta,
@@ -1158,6 +1168,7 @@ func (th *threadState) toolItemFromCallLocked(turnID string, call providers.Tool
 			}
 			if call.Arguments != "" {
 				item.Arguments = call.Arguments
+				delete(th.streamText, item.ID)
 			}
 			if call.Display != nil {
 				item.Display = cloneToolCallDisplay(call.Display)
@@ -1210,11 +1221,23 @@ func (th *threadState) hasAgentTextLocked(turnID, text string) bool {
 	return false
 }
 
-func (th *threadState) ensureTurnLocked(turnID string, now time.Time) Turn {
-	for _, turn := range th.Turns {
-		if turn.ID == turnID {
-			return turn
+func (th *threadState) turnIndexLocked(turnID string) int {
+	// Streaming usually updates the tail. Check its ID on each lookup so history
+	// edits and reloads cannot leave a cached position pointing at another turn.
+	if index := len(th.Turns) - 1; index >= 0 && th.Turns[index].ID == turnID {
+		return index
+	}
+	for index := range th.Turns {
+		if th.Turns[index].ID == turnID {
+			return index
 		}
+	}
+	return -1
+}
+
+func (th *threadState) ensureTurnLocked(turnID string, now time.Time) Turn {
+	if index := th.turnIndexLocked(turnID); index >= 0 {
+		return th.Turns[index]
 	}
 	turn := Turn{
 		ID:            turnID,
@@ -1230,11 +1253,9 @@ func (th *threadState) ensureTurnLocked(turnID string, now time.Time) Turn {
 }
 
 func (th *threadState) replaceTurnLocked(turn Turn) {
-	for i := range th.Turns {
-		if th.Turns[i].ID == turn.ID {
-			th.Turns[i] = turn
-			return
-		}
+	if index := th.turnIndexLocked(turn.ID); index >= 0 {
+		th.Turns[index] = turn
+		return
 	}
 	th.Turns = append(th.Turns, turn)
 }
@@ -1253,6 +1274,9 @@ func (th *threadState) itemLocked(turnID, itemID string) (ThreadItem, bool) {
 }
 
 func (th *threadState) upsertItemLocked(turnID string, item ThreadItem, now time.Time) {
+	if item.Status != ThreadItemStatusInProgress {
+		delete(th.streamText, item.ID)
+	}
 	turn := th.ensureTurnLocked(turnID, now)
 	for i := range turn.Items {
 		if turn.Items[i].ID == item.ID {
@@ -1274,11 +1298,32 @@ func (th *threadState) removeItemLocked(turnID, itemID string, now time.Time) bo
 			continue
 		}
 		turn.Items = append(turn.Items[:i], turn.Items[i+1:]...)
+		delete(th.streamText, itemID)
 		th.replaceTurnLocked(turn)
 		th.UpdatedAt = now
 		return true
 	}
 	return false
+}
+
+// Keep builders out of copyable turn/item snapshots. String exposes the complete
+// text without copying it on every delta; append and Reset preserve older strings.
+func (th *threadState) appendStreamTextLocked(itemID, current, delta string) string {
+	if th.streamText == nil {
+		th.streamText = make(map[string]*strings.Builder)
+	}
+	buffer := th.streamText[itemID]
+	if buffer == nil {
+		buffer = &strings.Builder{}
+		th.streamText[itemID] = buffer
+	}
+	// Authoritative messages and tool updates can replace the accumulated text.
+	if buffer.String() != current {
+		buffer.Reset()
+		buffer.WriteString(current)
+	}
+	buffer.WriteString(delta)
+	return buffer.String()
 }
 
 func (th *threadState) nextItemIDLocked(turnID string) string {
@@ -1707,7 +1752,7 @@ func chatMessageItem(id string, msg providers.ChatMessage) ThreadItem {
 			Status:           ThreadItemStatusCompleted,
 			Role:             "user",
 			Text:             chatMessageDisplayContent(msg),
-			ContentParts:     append([]providers.MessageContentPart(nil), msg.ContentParts...),
+			ContentParts:     providers.CloneMessageContentParts(msg.ContentParts),
 			InputText:        chatMessageInputText(msg),
 			Images:           threadItemImages(msg.Images),
 			Files:            threadItemFiles(msg.Files),
@@ -1782,7 +1827,7 @@ func chatMessageFromPersistedMessage(rec persistedMessage) providers.ChatMessage
 		Steered:              rec.Steered,
 		ReasoningContent:     rec.ReasoningContent,
 		ReasoningBlocks:      append([]providers.ReasoningBlock(nil), rec.ReasoningBlocks...),
-		ContentParts:         append([]providers.MessageContentPart(nil), rec.ContentParts...),
+		ContentParts:         providers.CloneMessageContentParts(rec.ContentParts),
 		ToolCallID:           rec.ToolCallID,
 		ToolInvocationID:     rec.ToolInvocationID,
 		ToolResultKind:       providers.NormalizeToolCallKind(rec.ToolResultKind),
@@ -1797,6 +1842,7 @@ func chatMessageFromPersistedMessage(rec persistedMessage) providers.ChatMessage
 			continue
 		}
 		msg.Images = append(msg.Images, providers.InputImage{
+			LocalPath:      image.LocalPath,
 			ProviderItemID: image.ProviderItemID,
 			MediaType:      image.MediaType,
 			Data:           image.Data,
@@ -1878,6 +1924,13 @@ func isThreadTitleUserMessage(msg providers.ChatMessage) bool {
 }
 
 func chatMessageDisplayContent(msg providers.ChatMessage) string {
+	for _, image := range msg.Images {
+		if image.LocalPath != "" {
+			// Image-only messages have a genuinely empty display prompt even
+			// though Content also contains model-facing working-copy paths.
+			return msg.DisplayContent
+		}
+	}
 	if strings.TrimSpace(msg.DisplayContent) != "" {
 		return msg.DisplayContent
 	}
@@ -1889,11 +1942,13 @@ func chatMessageDisplayContent(msg providers.ChatMessage) string {
 // ordinary user messages while letting plugin-generated wake messages reveal
 // the prompt they actually delivered.
 func chatMessageInputText(msg providers.ChatMessage) string {
-	content := strings.TrimSpace(msg.Content)
-	if content == "" || content == strings.TrimSpace(chatMessageDisplayContent(msg)) {
+	// Keep the expanded slash-command prompt, but exclude working-copy paths
+	// from public input that callers may submit again when retrying a turn.
+	content := strings.TrimSuffix(msg.Content, inputImagePathReference(msg.Images))
+	if strings.TrimSpace(content) == "" || strings.TrimSpace(content) == strings.TrimSpace(chatMessageDisplayContent(msg)) {
 		return ""
 	}
-	return msg.Content
+	return content
 }
 
 func threadItemImages(images []providers.InputImage) []ThreadItemImage {
@@ -1968,7 +2023,7 @@ func filePreview(file providers.InputFile, index int) string {
 func cloneThreadItem(item ThreadItem) ThreadItem {
 	item.Images = append([]ThreadItemImage(nil), item.Images...)
 	item.Files = append([]ThreadItemFile(nil), item.Files...)
-	item.ContentParts = append([]providers.MessageContentPart(nil), item.ContentParts...)
+	item.ContentParts = providers.CloneMessageContentParts(item.ContentParts)
 	item.Display = cloneToolCallDisplay(item.Display)
 	item.ResultDetail = cloneToolResult(item.ResultDetail)
 	return item

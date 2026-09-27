@@ -10,11 +10,13 @@ import {
   useRef,
   useState
 } from "react";
-import { ChevronDown, ChevronUp, FileText, Info, MessagesSquare, Plus, Send } from "./WuuIcons";
+import { ArrowUp, ChevronDown, ChevronUp, FileText, Info, LoaderCircle, MessagesSquare, Plus } from "./WuuIcons";
 import type { InputFile, InputImage, MessageContentPart, ThreadItem, Turn } from "../shared/protocol";
 import { CollapsedComposerPromptCard, collapsedComposerPromptTitle } from "./ComposerCollapsedPrompt";
 import {
   clipboardAttachmentFiles,
+  composerContextFromMessage,
+  createComposerMessage,
   composerFileFromFile,
   composerImageFromFile,
   isSupportedComposerAttachment
@@ -29,6 +31,7 @@ import {
   useLongTextCollapse,
 } from "./LongTextCollapse";
 import { RichContent } from "./RichContent";
+import { AssistantResponseArticle, ResponseSelectionReference } from "./ResponseSelection";
 import {
   AgentMessageActions,
   MessageCopyButton,
@@ -48,6 +51,7 @@ import {
 } from "./TurnNotice";
 import { userMessageAnchorID } from "./TurnViewHelpers";
 import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
+import { isProjectEvent, ProjectEventRow } from "./ProjectViews";
 import {
   userFacingErrorForMessage,
 } from "./UserFacingErrors";
@@ -253,6 +257,9 @@ function BuiltInThreadItemView({
       if (isInternalUserNotificationItem(item)) {
         return null;
       }
+      if (isProjectEvent(item)) {
+        return <ProjectEventRow item={item} />;
+      }
       const copyable = displayText.trim() !== "";
       const editable = Boolean(
         !item.read_only &&
@@ -260,12 +267,12 @@ function BuiltInThreadItemView({
           (copyable || (item.images?.length ?? 0) > 0 || (item.files?.length ?? 0) > 0),
       );
       const editActionVisible = editable;
-      // Some plugin messages point to a durable related session. Keep that
+      // Some host and plugin messages point to a durable related session. Keep that
       // navigation on the message itself rather than coupling it to a
       // separate inspector plugin.
       const deliveryText = item.input_text?.trim() ?? "";
       const relatedSessionID = item.related_session_id?.trim() || undefined;
-      const sessionMessage = item.origin === "plugin" && item.presentation_kind === "session_message";
+      const sessionMessage = (item.origin === "host" || item.origin === "plugin") && item.presentation_kind === "session_message";
       const sourceLabel = t("message.fromSession", { name: item.name?.trim() || relatedSessionID || t("message.anotherSession") });
       // input_text equals the bubble for ordinary messages (or would, if a
       // stale server projection ever leaks it); only hidden messages with a
@@ -398,7 +405,10 @@ function BuiltInThreadItemView({
       const reserveActionSlot = !isProcessText &&
         (copyable || item.status === "in_progress");
       return (
-        <article
+        <AssistantResponseArticle
+          turnID={turnID}
+          itemID={item.id}
+          settled={item.status === "completed" && turnStatus === "completed" && !streaming}
           data-wuu-component="message"
           data-wuu-variant="agent"
           className={`agent-block${
@@ -433,7 +443,7 @@ function BuiltInThreadItemView({
           ) : reserveActionSlot ? (
             <div className="message-actions agent-message-actions" aria-hidden="true" />
           ) : null}
-        </article>
+        </AssistantResponseArticle>
       );
     }
     case "reasoning":
@@ -491,9 +501,8 @@ function UserMessageContent({
     (part): part is Extract<MessageContentPart, { type: "pasted_text" }> =>
       part.type === "pasted_text",
   );
-  const textParts = (contentParts ?? []).filter(
-    (part): part is Extract<MessageContentPart, { type: "text" }> => part.type === "text",
-  );
+  const selectionParts = (contentParts ?? []).filter(part => part.type === "response_selection");
+  const textParts = (contentParts ?? []).filter(part => part.type !== "pasted_text" && part.type !== "response_selection");
   const hasAttachments = images.length > 0 || files.length > 0 || pastedParts.length > 0;
   const hasTextBubble = structured
     ? textParts.some((part) => part.text.length > 0)
@@ -510,6 +519,7 @@ function UserMessageContent({
 
   return (
     <>
+      {selectionParts.map((part, index) => <ResponseSelectionReference key={`${part.selection.id}-${index}`} selection={part.selection} />)}
       {hasAttachments ? (
         <div className="user-message-attachments" data-wuu-component="message-attachments">
           {images.length ? <MessageImageGrid images={images} collapsedLimit={4} /> : null}
@@ -615,13 +625,13 @@ function UserMessageInlineEditor({
     (part): part is Extract<MessageContentPart, { type: "pasted_text" }> =>
       part.type === "pasted_text",
   );
-  const initialTextParts = (item.content_parts ?? []).filter(
-    (part): part is Extract<MessageContentPart, { type: "text" }> => part.type === "text",
-  );
+  const initialContext = composerContextFromMessage(initialText, item.content_parts);
+  const initialTextParts = (initialContext.contentParts ?? []).filter(part => part.type !== "pasted_text");
   const [text, setText] = useState(
     item.content_parts?.length ? initialTextParts.map((part) => part.text).join("") : initialText,
   );
   const [pastedParts, setPastedParts] = useState(initialPastedParts);
+  const [selections, setSelections] = useState(initialContext.selections);
   const [images, setImages] = useState<InputImage[]>(item.images ?? []);
   const [files, setFiles] = useState<InputFile[]>(item.files ?? []);
   const [dragOver, setDragOver] = useState(false);
@@ -629,22 +639,22 @@ function UserMessageInlineEditor({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const hasAttachments = images.length > 0 || files.length > 0 || pastedParts.length > 0;
-  const canSubmit = text.trim().length > 0 || hasAttachments;
+  const canSubmit = text.trim().length > 0 || hasAttachments || selections.length > 0;
 
   // Re-seed local state when the editor is reopened on a different user
   // message, or when the upstream item swaps its attachment arrays (e.g.
   // after a stream update). Without this, editing message B and then
   // cancelling back to message A would show B's draft in A.
   useEffect(() => {
-    const nextParts = item.content_parts ?? [];
+    const context = composerContextFromMessage(initialText, item.content_parts);
+    const nextParts = context.contentParts ?? [];
     const nextPastedParts = nextParts.filter(
       (part): part is Extract<MessageContentPart, { type: "pasted_text" }> =>
         part.type === "pasted_text",
     );
-    const nextTextParts = nextParts.filter(
-      (part): part is Extract<MessageContentPart, { type: "text" }> => part.type === "text",
-    );
-    setText(nextParts.length ? nextTextParts.map((part) => part.text).join("") : initialText);
+    const nextTextParts = nextParts.filter(part => part.type !== "pasted_text");
+    setText(item.content_parts?.length ? nextTextParts.map((part) => part.text).join("") : context.prompt);
+    setSelections(context.selections);
     setPastedParts(nextPastedParts);
     setImages(item.images ?? []);
     setFiles(item.files ?? []);
@@ -679,7 +689,8 @@ function UserMessageInlineEditor({
     const fullText = contentParts.length
       ? contentParts.map((part) => part.text).join("")
       : text;
-    onSubmit?.(fullText, images, files, contentParts.length ? contentParts : undefined);
+    const message = createComposerMessage(fullText, [], [], contentParts.length ? contentParts : undefined, selections);
+    onSubmit?.(message?.text ?? fullText, images, files, message?.contentParts);
   }
 
   function revealPastedPart(index: number): void {
@@ -837,6 +848,7 @@ function UserMessageInlineEditor({
           ))}
         </div>
       ) : null}
+      {selections.map(selection => <ResponseSelectionReference key={selection.id} selection={selection} />)}
       <textarea
         ref={textareaRef}
         className="user-message-edit-input"
@@ -874,9 +886,10 @@ function UserMessageInlineEditor({
             aria-label={t("composer.send")}
             title={t("composer.send")}
             disabled={!canSubmit || submitting}
+            aria-busy={submitting}
             onClick={submit}
           >
-            <Send aria-hidden="true" />
+            {submitting ? <LoaderCircle className="control-busy-icon" aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
           </button>
         </div>
       </div>

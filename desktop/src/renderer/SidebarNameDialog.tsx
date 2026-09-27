@@ -1,18 +1,13 @@
 import { type IconComponent } from "./WuuIcons";
 import {
-  type AnimationEvent,
   type ChangeEvent,
-  useCallback,
   useEffect,
   type MouseEvent,
   type ReactElement,
-  type ReactNode,
-  useRef,
-  useState,
 } from "react";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 
-export interface SidebarNameDialogProps {
+interface SidebarNameDialogProps {
   open: boolean;
   title: string;
   onTitleChange: (title: string) => void;
@@ -26,23 +21,7 @@ export interface SidebarNameDialogProps {
   icon: IconComponent;
   submitLabel: string;
   cancelLabel: string;
-  content?: ReactNode;
   submitDisabled?: boolean;
-  destructiveAction?: {
-    label: string;
-    onClick: () => void;
-    disabled?: boolean;
-  };
-  secondaryAction?: {
-    label: string;
-    onClick: () => void;
-    disabled?: boolean;
-  };
-  variant?: "default" | "drawer";
-  hideActions?: boolean;
-  closeOnEscape?: boolean;
-  backgrounded?: boolean;
-  dialogClassName?: string;
 }
 
 // Shared floating name dialog for the sidebar flows that need a single text
@@ -62,44 +41,10 @@ export function SidebarNameDialog({
   icon: Icon,
   submitLabel,
   cancelLabel,
-  content,
   submitDisabled,
-  destructiveAction,
-  secondaryAction,
-  variant = "default",
-  hideActions = false,
-  closeOnEscape = true,
-  backgrounded = false,
-  dialogClassName = "",
 }: SidebarNameDialogProps): ReactElement | null {
-  const [closing, setClosing] = useState(false);
-  const closeTimerRef = useRef<number | null>(null);
-
-  const finishClose = useCallback((): void => {
-    if (closeTimerRef.current !== null) {
-      window.clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-    onClose();
-    setClosing(false);
-  }, [onClose]);
-
-  const requestClose = useCallback((): void => {
-    if (closing) return;
-    if (variant !== "drawer") {
-      onClose();
-      return;
-    }
-    setClosing(true);
-    closeTimerRef.current = window.setTimeout(finishClose, 220);
-  }, [closing, finishClose, onClose, variant]);
-
-  useEffect(() => () => {
-    if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
-  }, []);
-
   useEffect(() => {
-    if (!open || !closeOnEscape) {
+    if (!open) {
       return;
     }
     function handleKeyDown(event: KeyboardEvent): void {
@@ -107,11 +52,11 @@ export function SidebarNameDialog({
         return;
       }
       event.preventDefault();
-      requestClose();
+      onClose();
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [closeOnEscape, open, requestClose]);
+  }, [onClose, open]);
 
   if (!open) {
     return null;
@@ -119,12 +64,8 @@ export function SidebarNameDialog({
 
   function handleOverlayPointerDown(event: MouseEvent<HTMLDivElement>): void {
     if (event.target === event.currentTarget) {
-      requestClose();
+      onClose();
     }
-  }
-
-  function handleDrawerAnimationEnd(event: AnimationEvent<HTMLFormElement>): void {
-    if (closing && event.target === event.currentTarget) finishClose();
   }
 
   function handleInputChange(event: ChangeEvent<HTMLInputElement>): void {
@@ -134,21 +75,19 @@ export function SidebarNameDialog({
   return (
     <UILayerPortal layer="dialog">
       <div
-        className={`app-modal-backdrop conversation-search-overlay sidebar-name-dialog-overlay${variant === "drawer" ? " sidebar-name-dialog-overlay-drawer" : ""}${closing ? " closing" : ""}${backgrounded ? " backgrounded" : ""}`}
+        className="app-modal-backdrop conversation-search-overlay sidebar-name-dialog-overlay"
         data-wuu-component="modal-backdrop"
         data-wuu-layer="dialog"
-        data-wuu-state={closing ? "closing" : "open"}
+        data-wuu-state="open"
         onPointerDown={handleOverlayPointerDown}
       >
         <form
-          className={`conversation-search-dialog sidebar-name-dialog${variant === "drawer" ? " sidebar-name-dialog-drawer" : ""}${closing ? " closing" : ""}${backgrounded ? " backgrounded" : ""}${dialogClassName ? ` ${dialogClassName}` : ""}`}
+          className="conversation-search-dialog sidebar-name-dialog"
           data-wuu-component="dialog"
-          data-wuu-state={closing ? "closing" : "open"}
+          data-wuu-state="open"
           role="dialog"
-          aria-modal={backgrounded ? undefined : "true"}
-          aria-hidden={backgrounded || undefined}
+          aria-modal="true"
           aria-labelledby={dialogTitleId}
-          onAnimationEnd={handleDrawerAnimationEnd}
           onSubmit={(event) => {
             event.preventDefault();
             onSubmit();
@@ -162,7 +101,7 @@ export function SidebarNameDialog({
               {dialogTitle}
             </h2>
           </div>
-          {content ?? <label className="sidebar-name-dialog-field">
+          <label className="sidebar-name-dialog-field">
             <span className="sidebar-name-dialog-label">{fieldLabel}</span>
             <input
               className="sidebar-name-dialog-input"
@@ -173,26 +112,15 @@ export function SidebarNameDialog({
               onChange={handleInputChange}
               onFocus={(event) => event.currentTarget.select()}
             />
-          </label>}
-          {!hideActions ? <div className="sidebar-name-dialog-actions">
-            {destructiveAction ? (
-              <button className="sidebar-name-dialog-destructive" type="button" disabled={destructiveAction.disabled} onClick={destructiveAction.onClick}>
-                {destructiveAction.label}
-              </button>
-            ) : null}
-            {secondaryAction ? (
-              <button className="sidebar-name-dialog-secondary" type="button" disabled={secondaryAction.disabled} onClick={secondaryAction.onClick}>
-                {secondaryAction.label}
-              </button>
-            ) : null}
-            {destructiveAction || secondaryAction ? <span className="sidebar-name-dialog-action-spacer" aria-hidden="true" /> : null}
-            <button type="button" onClick={requestClose}>
+          </label>
+          <div className="sidebar-name-dialog-actions">
+            <button type="button" onClick={onClose}>
               {cancelLabel}
             </button>
             <button type="submit" disabled={submitDisabled ?? title.trim().length === 0}>
               {submitLabel}
             </button>
-          </div> : null}
+          </div>
         </form>
       </div>
     </UILayerPortal>

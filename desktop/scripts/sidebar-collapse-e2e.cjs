@@ -200,7 +200,7 @@ app.whenReady().then(async () => {
     });
     assert.deepEqual(reduced, { closed: true, open: true, animations: 0 });
     // Drive the production project list with synthetic session updates. Measure
-    // actual row rectangles so fixed-pixel caps or shrinking rows cannot pass.
+    // actual row rectangles and the shared sidebar scroll viewport.
     const historyResults = [];
     for (const theme of ["light", "dark"]) {
       for (const size of ["14", "20"]) {
@@ -210,16 +210,16 @@ app.whenReady().then(async () => {
           const history = await evaluate(async () => {
             const commit = async () => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); };
             const click = async selector => { document.querySelector(selector).click(); await commit(); };
-            const scroller = () => document.querySelector(".project-thread-scroll");
-            const rows = () => [...scroller().querySelectorAll(".thread-row")];
+            const projectList = () => document.querySelector(".project-thread-list");
+            const outer = () => document.querySelector(".sidebar-main");
+            const rows = () => [...projectList().querySelectorAll(".thread-row")];
             const measure = () => {
-              const list = scroller();
+              const list = projectList();
               const rects = rows().map(row => row.getBoundingClientRect());
-              const gap = rects[1].top - rects[0].bottom;
               return {
                 count: rects.length, height: list.getBoundingClientRect().height,
-                eightRows: rects.slice(0, 8).reduce((sum, rect) => sum + rect.height, 0) + gap * 7,
-                rowHeight: rects[0].height, following: document.querySelector('[data-testid="following"]').getBoundingClientRect().top,
+                content: rects.at(-1).bottom - rects[0].top,
+                rowHeight: rects[0].height, following: document.querySelector('[data-testid="following"]').getBoundingClientRect().top + outer().scrollTop,
                 horizontalOverflow: list.scrollWidth > list.clientWidth,
                 fitsSidebar: list.getBoundingClientRect().right <= document.querySelector(".sidebar").getBoundingClientRect().right,
               };
@@ -233,43 +233,43 @@ app.whenReady().then(async () => {
             const readRetained = rows().includes(read) && !read.classList.contains("has-unread");
             await click(".thread-list-more");
             const expanded = measure();
-            scroller().scrollTop = scroller().scrollHeight;
+            rows().at(-1).scrollIntoView({ block: "nearest" });
             await commit();
             const last = rows().at(-1).getBoundingClientRect();
-            const viewport = scroller().getBoundingClientRect();
+            const viewport = outer().getBoundingClientRect();
             const oldestVisible = last.top >= viewport.top && last.bottom <= viewport.bottom + 1;
             const footer = document.querySelector(".thread-list-collapse-btn");
-            const footerOutside = !scroller().contains(footer) && footer.getBoundingClientRect().top >= viewport.bottom;
+            const footerOutside = !projectList().contains(footer) && footer.getBoundingClientRect().top >= last.bottom;
             await click(".thread-list-collapse-btn");
             const collapsed = measure();
             await click('[data-testid="grow"]');
             const growing = measure();
             await click('[data-testid="select-old"]');
-            const active = scroller().querySelector(".active").getBoundingClientRect();
-            const bounds = scroller().getBoundingClientRect();
+            const active = projectList().querySelector(".active").getBoundingClientRect();
+            const bounds = outer().getBoundingClientRect();
             const selectedVisible = active.top >= bounds.top && active.bottom <= bounds.bottom + 1;
-            // Context menus portal outside the bounded viewport.
-            scroller().querySelector(".active").dispatchEvent(new MouseEvent("contextmenu", {
+            // Context menus remain outside the project list.
+            projectList().querySelector(".active").dispatchEvent(new MouseEvent("contextmenu", {
               bubbles: true, cancelable: true, clientX: active.left + 60, clientY: active.top + 15,
             }));
             await commit();
             const menu = document.querySelector(".thread-row-context-menu");
-            const menuOutside = Boolean(menu && !scroller().contains(menu) && menu.getBoundingClientRect().height > 0);
+            const menuOutside = Boolean(menu && !projectList().contains(menu) && menu.getBoundingClientRect().height > 0);
             document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
             await commit();
-            scroller().scrollTop = 0;
+            outer().scrollTop = 0;
             return { initial, expanded, collapsed, growing, readRetained, oldestVisible, footerOutside, selectedVisible, menuOutside };
           });
           assert.equal(history.initial.count, 16, "five recent, five unread, four running, and two creating rows are candidates");
           assert.equal(history.expanded.count, 32, "one expansion includes every historical and creating row");
           assert.equal(history.collapsed.count, 16, "collapsing restores the recent range plus retained states");
-          assert.equal(history.growing.count, 36, "running candidates remain reachable beyond the height cap");
+          assert.equal(history.growing.count, 36, "running candidates remain reachable in the outer sidebar");
           for (const state of ["initial", "expanded", "collapsed", "growing"]) {
-            assert.ok(Math.abs(history[state].height - history[state].eightRows) < 1, `${state}: viewport is exactly eight actual rows`);
-            assert.ok(Math.abs(history[state].following - history.initial.following) < 1, `${state}: following workspace does not move`);
+            assert.ok(Math.abs(history[state].height - history[state].content) < 1, `${state}: all candidate rows occupy their full height`);
             assert.equal(history[state].horizontalOverflow, false, `${state}: long titles fit without horizontal scrolling`);
             assert.equal(history[state].fitsSidebar, true, `${state}: list remains inside the sidebar`);
           }
+          assert.ok(history.expanded.following > history.initial.following, "expanding moves the following workspace down");
           for (const check of ["readRetained", "oldestVisible", "footerOutside", "selectedVisible", "menuOutside"]) {
             assert.equal(history[check], true, check);
           }
@@ -279,23 +279,33 @@ app.whenReady().then(async () => {
       }
     }
     await load({ mode: "history", theme: "dark", size: "20", width: "240" });
+    // Wheel routing needs an overflowing rail; size the window for that
+    // instead of relying on how many rows happen to fit at the row height.
+    win.setContentSize(1050, 560);
+    await evaluate(async () => {
+      await new Promise(requestAnimationFrame);
+      const outer = document.querySelector(".sidebar-main");
+      if (outer.scrollHeight <= outer.clientHeight) throw new Error("History fixture does not overflow the sidebar");
+    });
     const wheelTarget = await evaluate(() => {
-      const rect = document.querySelector(".project-thread-scroll").getBoundingClientRect();
+      const rect = document.querySelector(".project-thread-list .thread-row").getBoundingClientRect();
       return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
     });
     win.focus();
     await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", ...wheelTarget });
     await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseWheel", ...wheelTarget, deltaY: 180, deltaX: 0 });
     const interaction = await evaluate(async () => {
-      const list = document.querySelector(".project-thread-scroll");
+      const list = document.querySelector(".project-thread-list");
       const waitFor = async (condition, message) => {
         for (let frame = 0; !condition(); frame++) {
           if (frame > 120) throw new Error(message);
           await new Promise(requestAnimationFrame);
         }
       };
-      await waitFor(() => list.scrollTop > 0, "Native wheel did not scroll the project list");
-      const afterWheel = list.scrollTop;
+      const outer = document.querySelector(".sidebar-main");
+      await waitFor(() => outer.scrollTop > 0, "Native wheel did not scroll the outer sidebar");
+      const afterWheel = outer.scrollTop;
+      if (list.scrollTop !== 0) throw new Error("Project list consumed native wheel scrolling");
       const rows = [...list.querySelectorAll('[data-sortable="true"]')];
       const source = rows.at(-1);
       const target = rows[0];
@@ -314,7 +324,7 @@ app.whenReady().then(async () => {
       lastRow.querySelector(".thread-row-action.archive").focus();
       return { afterWheel, reordered };
     });
-    assert.ok(interaction.afterWheel > 0 && interaction.reordered, "native wheel and row reordering work inside the viewport");
+    assert.ok(interaction.afterWheel > 0 && interaction.reordered, "native wheel scrolls the outer sidebar and row reordering still works");
     win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab" });
     win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab" });
     const keyboard = await evaluate(async () => {
@@ -322,34 +332,35 @@ app.whenReady().then(async () => {
       const button = document.querySelector(".thread-list-more");
       return { reachedFooter: document.activeElement === button, outline: getComputedStyle(button).outlineWidth };
     });
-    assert.ok(keyboard.reachedFooter && parseFloat(keyboard.outline) > 0, `keyboard navigation reaches the fixed footer with a visible focus ring: ${JSON.stringify(keyboard)}`);
+    assert.ok(keyboard.reachedFooter && parseFloat(keyboard.outline) > 0, `keyboard navigation reaches the history footer with a visible focus ring: ${JSON.stringify(keyboard)}`);
     fs.writeFileSync(path.join(temp, "history-keyboard.png"), (await win.webContents.capturePage()).toPNG());
+    win.setContentSize(1050, 850);
     await load({ mode: "history", busy: "false", count: "3", size: "14" });
     const shortHistory = await evaluate(async () => {
       const commit = async () => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); };
       const measure = () => {
-        const list = document.querySelector(".project-thread-scroll");
+        const list = document.querySelector(".project-thread-list");
         const rows = [...list.querySelectorAll(".thread-row")].map(row => row.getBoundingClientRect());
         return { height: list.getBoundingClientRect().height, content: rows.at(-1).bottom - rows[0].top };
       };
       const short = measure();
       document.querySelector('[data-testid="pending-only"]').click();
       await commit();
-      const list = document.querySelector(".project-thread-scroll");
+      const list = document.querySelector(".project-thread-list");
       const pending = { ...measure(), count: list.querySelectorAll(".thread-row").length };
       document.querySelector('[data-testid="font"]').click();
       await commit();
       const large = measure();
       document.querySelector('[data-testid="clear"]').click();
       await commit();
-      return { short, pending, large, empty: !document.querySelector(".project-thread-scroll") };
+      return { short, pending, large, empty: !document.querySelector(".project-thread-list") };
     });
     assert.ok(Math.abs(shortHistory.short.height - shortHistory.short.content) < 1, "few rows use only their content height");
-    assert.ok(shortHistory.pending.count === 12 && shortHistory.pending.height < shortHistory.pending.content, "creating-only lists share the scroll cap");
-    assert.ok(shortHistory.large.height > shortHistory.pending.height, "changing the UI font resizes the live cap");
+    assert.ok(shortHistory.pending.count === 12 && Math.abs(shortHistory.pending.height - shortHistory.pending.content) < 1, "creating-only lists use their full content height");
+    assert.ok(shortHistory.large.height > shortHistory.pending.height, "changing the UI font resizes the rows");
     assert.ok(shortHistory.empty, "empty projects reserve no list height");
     fs.writeFileSync(path.join(temp, "history-results.json"), JSON.stringify({ historyResults, shortHistory, interaction, keyboard }, null, 2));
-    console.log("Project history E2E passed: eight-row cap, full history, read transitions, nested scrolling, creating rows, live font resize, menus, and short/empty lists.");
+    console.log("Project history E2E passed: outer sidebar scrolling, full history, read transitions, creating rows, live font resize, menus, and short/empty lists.");
     console.log("Sidebar collapse E2E passed: light/dark, 14/20px, wide/narrow, nested folds, reversal, live/empty rows, scrolling, keyboard focus, reduced motion.");
     fs.writeFileSync(path.join(temp, "results.json"), JSON.stringify(results, null, 2));
     console.log(`Geometry results: ${path.join(temp, "results.json")}`);

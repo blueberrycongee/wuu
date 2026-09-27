@@ -25,7 +25,7 @@ func textSnapshot(thread Thread) conversations.Thread {
 				text := item.Text
 				// Account copies have a text-only schema also read by older servers.
 				// Preserve visible attribution without adding hidden input or new wire fields.
-				if item.Origin == "plugin" && item.PresentationKind == "session_message" {
+				if isGeneratedSessionInput(item.Origin) && item.PresentationKind == sessionPresentationMessage {
 					text = fmt.Sprintf("[Sent by Wuu from %q (%s)]\n\n%s", item.Name, item.RelatedSessionID, text)
 				}
 				out.Messages = append(out.Messages, conversations.Message{ID: item.ID, TurnID: turn.ID, Role: role, Text: text})
@@ -52,7 +52,7 @@ func (s *Server) handleThreadTextSnapshot(req Request) error {
 	th.mu.Lock()
 	thread := th.snapshotLocked()
 	th.mu.Unlock()
-	if thread.ReadOnly || thread.Ephemeral || isNamedAgentSessionSource(thread.Source) || thread.ParentID != "" {
+	if thread.ReadOnly || thread.Ephemeral || thread.ParentID != "" {
 		return s.writeResponse(req.ID, nil, errors.New("conversation is not eligible for text sync"))
 	}
 	out := textSnapshot(thread)

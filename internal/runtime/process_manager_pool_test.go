@@ -2,80 +2,33 @@ package runtime
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/process"
+	"github.com/blueberrycongee/wuu/internal/statepath"
+	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
-func TestCollaborationSessionsShareProcessManagerAndKeepExecutionIndependent(t *testing.T) {
-	s, _ := collaborationTestSession(t)
-	manager, err := process.NewManager(s.RootDir, filepath.Join(t.TempDir(), "runtime"))
+func processTestSession(t *testing.T) *Session {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("WUU_HOME", home)
+	root := t.TempDir()
+	kit, err := tools.New(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.ProcessManager = manager
-	root := t.TempDir()
-	type result struct {
-		thread *ThreadRuntime
-		err    error
-	}
-	const count = 8
-	ready := make(chan result, count)
-	start := make(chan struct{})
-	for i := 0; i < count; i++ {
-		go func(index int) {
-			<-start
-			thread, err := s.NewNamedAgentThreadRuntime(fmt.Sprintf("same-identity-%d", index), root, filepath.Join(root, "memory"), "shared identity", ThreadModelSelection{})
-			ready <- result{thread: thread, err: err}
-		}(i)
-	}
-	close(start)
-	var threads []*ThreadRuntime
-	for i := 0; i < count; i++ {
-		created := <-ready
-		if created.err != nil {
-			t.Error(created.err)
-			continue
-		}
-		threads = append(threads, created.thread)
-		t.Cleanup(func() { created.thread.AgentControl.Close() })
-	}
-	if len(threads) != count {
-		t.Fatal("some collaboration sessions failed to initialize")
-	}
-	for _, thread := range threads[1:] {
-		if thread.ProcessManager != threads[0].ProcessManager {
-			t.Fatal("same-identity sessions created competing process registry managers")
-		}
-		if thread.StreamRunner == threads[0].StreamRunner || thread.Toolkit == threads[0].Toolkit || thread.AgentControl == threads[0].AgentControl {
-			t.Fatal("process sharing also shared mutable agent execution state")
-		}
-		if thread.Toolkit.SessionID() == threads[0].Toolkit.SessionID() {
-			t.Fatal("same-identity sessions lost distinct process ownership")
-		}
-	}
-	if threads[0].ProcessManager == s.ProcessManager {
-		t.Fatal("identity process registry was merged with the ordinary workspace registry")
-	}
-	other := collaborationTestThread(t, s, "other-identity", ThreadModelSelection{})
-	if other.ProcessManager == threads[0].ProcessManager {
-		t.Fatal("different identity roots shared a process manager")
-	}
-	threads[0].StreamRunner.UpdateSystemPrompt("session-local change")
-	threads[0].Toolkit.SetRootDir(t.TempDir())
-	threads[0].AgentControl.Close()
-	if threads[1].StreamRunner.SystemPrompt == "session-local change" || !sameRuntimeRoot(threads[1].Toolkit.RootDir(), root) {
-		t.Fatal("changing or closing one session changed another session's context")
-	}
-	if _, err := threads[1].ProcessManager.List(); err != nil {
-		t.Fatalf("closing one session closed the shared process manager: %v", err)
+	return &Session{
+		ProviderName: "primary", Model: "gpt-test", RootDir: root,
+		WuuHome: home, SessionDir: statepath.SessionsDir(home), Toolkit: kit,
+		StreamRunner: &agent.StreamRunner{Client: &sessionRecordingClient{}, ProviderName: "primary", Model: "gpt-test"},
 	}
 }
 
 func TestSessionCleanupOwnsCachedProcessManagers(t *testing.T) {
-	s, _ := collaborationTestSession(t)
+	s := processTestSession(t)
 	manager, err := process.NewManager(s.RootDir, filepath.Join(t.TempDir(), "runtime"))
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +60,7 @@ func TestSessionCleanupOwnsCachedProcessManagers(t *testing.T) {
 }
 
 func TestThreadModelClonesReuseProcessManagerPool(t *testing.T) {
-	s, _ := collaborationTestSession(t)
+	s := processTestSession(t)
 	manager, err := process.NewManager(s.RootDir, filepath.Join(t.TempDir(), "runtime"))
 	if err != nil {
 		t.Fatal(err)

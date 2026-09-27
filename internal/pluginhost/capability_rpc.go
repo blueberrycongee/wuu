@@ -237,6 +237,7 @@ type SessionToolPolicy struct {
 }
 
 type SessionCreateParams struct {
+	Speed           string               `json:"speed,omitempty"`
 	RequestID       string               `json:"request_id"`
 	Name            string               `json:"name,omitempty"`
 	Visibility      string               `json:"visibility"`

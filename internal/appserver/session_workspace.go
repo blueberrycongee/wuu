@@ -49,7 +49,11 @@ func (s *Server) rebindThreadWorkspace(threadID, requestedRoot string) error {
 	if targetCommonDir != baseCommonDir {
 		return errors.New("session workspace must be a linked worktree of the current project")
 	}
-	if targetRoot != baseRoot {
+	if canonicalGitPath(targetRoot) == canonicalGitPath(baseRoot) {
+		// Moving back to the project, possibly named through a symlink: keep
+		// the path the project is registered with.
+		targetRoot = baseRoot
+	} else {
 		worktreeBaseHEAD, err = gitText(targetRoot, "rev-parse", "HEAD")
 		if err != nil {
 			return fmt.Errorf("resolve session worktree HEAD: %w", err)

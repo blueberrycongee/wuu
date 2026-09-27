@@ -306,7 +306,9 @@ export class AppServerClientPool {
       this.clients.set(workdir, client);
     }
     client.touch();
-    this.evictIdleClients();
+    // The caller registers its request synchronously after this returns. Keep
+    // its target alive until pending/running state can protect it from eviction.
+    this.evictIdleClients(client);
     this.maybeBroadcastRunningThreads();
     return client;
   }
@@ -355,7 +357,7 @@ export class AppServerClientPool {
     };
   }
 
-  private evictIdleClients(): void {
+  private evictIdleClients(admittingClient?: AppServerClient): void {
     if (this.clients.size <= MAX_APP_SERVER_CLIENTS) {
       return;
     }
@@ -363,6 +365,7 @@ export class AppServerClientPool {
     const idleClients = [...this.clients.values()]
       .filter(
         (client) =>
+          client !== admittingClient &&
           client.workdir !== activeWorkdir &&
           !client.isBusy() &&
           !this.isWorkdirPinned?.(client.workdir),
@@ -578,6 +581,7 @@ export class AppServerClient {
       resourcesPath,
       process.platform,
     );
+    helperEnv.WUU_NODE_EXECUTABLE = process.execPath;
     if (app.isPackaged) {
       configurePackagedCUA(helperEnv, resourcesPath, process.platform);
     }

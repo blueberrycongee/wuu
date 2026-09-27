@@ -17,22 +17,6 @@ const (
 	participantSummaryAvatarMaxBytes int64 = 64 * 1024
 )
 
-func (s *Server) participantWorkspace(id string) (string, error) {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return "", errors.New("participant id is required")
-	}
-	root := strings.TrimSpace(s.rt.WuuHome)
-	if root == "" {
-		stateDir, err := s.workspaceStateDir()
-		if err != nil {
-			return "", err
-		}
-		root = stateDir
-	}
-	return filepath.Join(root, "participants", id), nil
-}
-
 func participantAvatarImagePath(workspace string) string {
 	workspace = strings.TrimSpace(workspace)
 	if workspace == "" {

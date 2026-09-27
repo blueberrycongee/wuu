@@ -1,6 +1,10 @@
 import type { CodexModelSummary, GitStatusResult, InitializeResult, ProviderModelSummary, ProviderSummary } from "../shared/protocol";
 import { translateCurrent as t } from "./i18n";
 
+export function effectiveModelSpeed(speed?: string, defaultSpeed?: string): string | undefined {
+  return speed || defaultSpeed;
+}
+
 export function providerIsCodex(initialized: InitializeResult, providerName: string): boolean {
   const summary = initialized.providers?.find((provider) => provider.name === providerName);
   const type = (summary?.type ?? providerName).trim().toLowerCase().replaceAll("_", "-");

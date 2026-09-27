@@ -22,6 +22,18 @@ The override is also forwarded through the macOS LaunchServices launcher.
 
 `make dev` runs the desktop launcher. It builds the shared Web assets, native helper where applicable, and current Go core and plugin helpers before starting Electron. The app uses that checkout's private `wuu-core`, not a separately installed `wuu` on `PATH`. Renderer changes use Vite updates; restart the launcher after changing Go, native helpers, or process-startup code so the running processes use the new build.
 
+Project Agent is experimental and disabled in default and release builds. It
+has no user setting to enable it. Existing project conversations remain readable,
+but cannot run or recover queued work in these builds. To develop the feature,
+run `npm --prefix desktop run dev -- --project-agent`, or build the CLI with
+`go build -tags project_agent -o bin/wuu ./cmd/wuu`. Run its behavioral suite with
+`go test -tags project_agent ./internal/appserver`; ordinary Go tests cover the
+disabled release behavior. Packaged releases must omit this build tag.
+
+`npm --prefix desktop run test:e2e:project-agent` checks the renderer against
+absent, disabled and enabled backend capabilities, saving screenshots and results
+under `desktop/out/e2e/project-agent-gate/`.
+
 For CLI-only development:
 
 ```bash
@@ -54,6 +66,41 @@ It uses a temporary profile and synthetic content, not your Wuu data. Run it in
 a graphical desktop session; it does not validate native dialog appearance or
 packaged-app behavior.
 
+### Session switch performance guard
+
+After installing dependencies, build the core and desktop, then run the real
+Electron/main/preload/Go fixture in a graphical session:
+
+```sh
+mkdir -p .tmp/performance
+go build -o "$PWD/.tmp/performance/wuu-core" ./cmd/wuu
+(cd desktop && ./node_modules/.bin/electron-vite build)
+WUU_DESKTOP_CORE="$PWD/.tmp/performance/wuu-core" WUU_SWITCH_CHECK_BUDGET=1 desktop/node_modules/.bin/electron desktop/scripts/session-switch-e2e.cjs
+```
+
+The fixture opens disposable synthetic conversations without inference. It
+records native-click-to-content and draft/send-readiness frame timings, then
+counts work through background resume completion and two more animation frames.
+Frame opportunities do not prove physical presentation; readiness includes the
+input probe's IPC overhead. Initial visits, repeats, pool churn, and archive
+blocking remain separate. Wall-clock P50/P75 are diagnostic, never CI gates.
+
+CI checks repeated large-fixture switches against the resume-call, layout, and
+style-recalculation ceilings in
+[`session-switch-budget.json`](../../../desktop/scripts/session-switch-budget.json).
+These counters include the observer and input probe. The ratchet rejects higher
+ceilings, removed counters, or a changed workload. It uploads raw results, a
+report, logs, and a final synthetic screenshot as `session-switch-evidence`.
+
+For diagnostics, omit `WUU_SWITCH_CHECK_BUDGET` and set `WUU_SWITCH_TURNS=3000`,
+`WUU_SWITCH_ROUNDS`, or `WUU_SWITCH_INIT_DELAY_MS=600`. `WUU_SWITCH_TRACE=1`
+records a Chromium trace with action/content/interactive marks; do not pool
+traced runs with timing baselines. `WUU_SWITCH_OUTPUT` selects the evidence
+directory, excluding the temporary profile and database. `WUU_SWITCH_MAIN`
+selects another built main bundle and its adjacent preload/renderer for A/B
+checks. Results record the loaded artifact hashes; the checkout commit alone
+does not identify an externally selected build.
+
 ## Native phones and remote services
 
 The active phone implementations are SwiftUI on iOS and Jetpack Compose on Android in [`clients/native`](../../../clients/native/README.md) (Chinese). Their dedicated verification command is:
@@ -64,7 +111,7 @@ bash clients/native/verify.sh all
 
 Use `ios` or `android` to select one platform. The script starts an isolated PostgreSQL-backed test environment, builds test hosts, and runs platform tests and builds. Follow the native README for PostgreSQL, Xcode, Java, and Android SDK prerequisites. Passing these checks is not real-device or release acceptance.
 
-Native builds package the committed avatar and process-summary resource snapshots. They do not require those snapshots to match the latest desktop sources. Adopting desktop presentation changes is an explicit native update; the [shared renderer README](../../../clients/native/shared-ui/README.md) describes regeneration, checking, and visual acceptance.
+The iOS build packages the committed mascot and process-summary resource snapshots. It does not require those snapshots to match the latest desktop sources. Adopting desktop presentation changes is an explicit iOS update; the [shared renderer README](../../../clients/native/shared-ui/README.md) describes regeneration, checking, and visual acceptance.
 
 The older `clients/mobile`, `clients/mobile-web`, and `clients/mobile-app` phone implementations are retired. Some remain in shared Web builds and repository checks; passing those gates does not validate the native apps. Account and relay deployment is separate from local desktop setup; see [remote access](../automation/remote.md).
 

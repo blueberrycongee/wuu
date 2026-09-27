@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export const VIEW_SWITCH_LOADING_DELAY_MS = 180;
 
-export type PendingViewSwitchKind = "thread" | "project" | "runtime";
+export type PendingViewSwitchKind = "thread" | "workspace" | "runtime";
 
 export type PendingViewSwitch = {
   kind: PendingViewSwitchKind;
@@ -14,7 +14,7 @@ export type PendingViewSwitch = {
 export type ViewSwitchStateController = {
   pendingViewSwitch: PendingViewSwitch | undefined;
   visiblePendingThreadID: string | undefined;
-  visiblePendingProjectID: string | undefined;
+  visiblePendingWorkspaceID: string | undefined;
   viewSwitchPending: boolean;
   submissionTargetPending: boolean;
   viewContextSwitchPending: boolean;
@@ -119,19 +119,19 @@ export function useViewSwitchState({
     pendingViewSwitch?.kind === "thread" && pendingViewSwitch.visible
       ? pendingViewSwitch.targetID
       : undefined;
-  const visiblePendingProjectID =
-    pendingViewSwitch?.kind === "project"
+  const visiblePendingWorkspaceID =
+    pendingViewSwitch?.kind === "workspace"
       ? pendingViewSwitch.targetID
       : undefined;
   const viewSwitchPending = pendingViewSwitch !== undefined;
   const viewContextSwitchPending =
-    pendingViewSwitch?.kind === "project" ||
+    pendingViewSwitch?.kind === "workspace" ||
     (pendingViewSwitch?.kind === "runtime" && pendingViewSwitch.visible);
 
   return {
     pendingViewSwitch,
     visiblePendingThreadID,
-    visiblePendingProjectID,
+    visiblePendingWorkspaceID,
     viewSwitchPending,
     submissionTargetPending: viewSwitchPending && !pendingViewSwitch?.background,
     viewContextSwitchPending,

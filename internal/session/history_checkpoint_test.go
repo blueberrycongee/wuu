@@ -336,3 +336,86 @@ func waitForHistoryCheckpointTestPath(t *testing.T, path string) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// Editing is a branch mutation, unlike a provider-only context reset. Its
+// retraction must commit with the checkpoint and survive subsequent resets.
+func TestHistoryEditKeepsAuditAndCompactedPrefix(t *testing.T) {
+	dir := t.TempDir()
+	const id = "edited-history"
+	if _, err := CreateWithMetadata(dir, id, "/tmp/project"); err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"kept prompt", "kept answer", "obsolete prompt", "obsolete answer", "concurrent tail"} {
+		if err := AppendHistoryRecord(dir, id, HistoryRecord{Role: "user", Content: text}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err := LoadHistoryRecords(dir, id, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RewriteHistoryRecordsForEdit(dir, id, nil, 4, 6); err == nil {
+		t.Fatal("invalid baseline succeeded")
+	}
+	active, err := LoadActiveHistoryRecords(dir, id, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(active, raw) {
+		t.Fatal("failed edit changed active branch")
+	}
+	if err := RewriteHistoryRecordsForEdit(dir, id, nil, 3, 4); err != nil {
+		t.Fatal(err)
+	}
+	if err := RewriteHistoryRecordsAtBaseline(dir, id, raw[4:], 5); err != nil {
+		t.Fatal(err)
+	}
+	active, err = LoadActiveHistoryRecords(dir, id, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append(append([]HistoryRecord(nil), raw[:2]...), raw[4:]...)
+	if !reflect.DeepEqual(active, want) {
+		t.Fatalf("active branch = %+v, want %+v", active, want)
+	}
+	snapshot, err := LoadProviderHistorySnapshot(dir, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(snapshot.Records, raw[4:]) {
+		t.Fatalf("provider tail = %+v", snapshot.Records)
+	}
+	audit, err := LoadHistoryRecords(dir, id, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(audit, raw) {
+		t.Fatal("edit changed audit transcript")
+	}
+}
+
+// Legacy replacement rewrites physical sequence addresses. Retraction ranges
+// from the previous transcript must not hide unrelated replacement records.
+func TestHistoryReplacementClearsPreviousBranchRetractions(t *testing.T) {
+	dir := t.TempDir()
+	const id = "replaced-history"
+	if _, err := CreateWithMetadata(dir, id, "/tmp/project"); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendHistoryRecord(dir, id, HistoryRecord{Role: "user", Content: "old"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RewriteHistoryRecordsForEdit(dir, id, nil, 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := RewriteHistoryRecords(dir, id, []HistoryRecord{{Role: "user", Content: "replacement"}}); err != nil {
+		t.Fatal(err)
+	}
+	active, err := LoadActiveHistoryRecords(dir, id, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 1 || active[0].Content != "replacement" {
+		t.Fatalf("replacement hidden by old branch: %+v", active)
+	}
+}

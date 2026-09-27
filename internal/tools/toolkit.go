@@ -17,8 +17,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/capability"
-	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/codemode"
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	proc "github.com/blueberrycongee/wuu/internal/process"
@@ -27,6 +27,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/stringutil"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -68,7 +69,8 @@ type Toolkit struct {
 	approveForMe            bool
 	codeModeMu              sync.RWMutex
 	codeMode                *codemode.Service
-	codeModeOnly            bool
+	ptcConfig               config.PTCConfig
+	ptcFamily               string
 	codeModeAdditionalTools func() []providers.ToolDefinition
 	// mcpManager, when set, exposes MCP server tools alongside built-in
 	// tools. MCP tools are appended after built-ins to preserve prompt
@@ -302,12 +304,12 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 	clone.toolSearchEnabled = t.toolSearchEnabled
 	clone.nativeDeferredDiscovery = t.nativeDeferredDiscovery
 	t.exposureMu.RUnlock()
-	// The code-mode service owns one host connection per Wuu session. Thread
-	// clones share the pointer so every conversation in the workspace keeps
-	// using the same runtime; per-thread mutable state stays independent.
+	// Thread clones share the PTC lifecycle owner; programs and model-family
+	// selections remain independent.
 	t.codeModeMu.RLock()
 	clone.codeMode = t.codeMode
-	clone.codeModeOnly = t.codeModeOnly
+	clone.ptcConfig = t.ptcConfig
+	clone.ptcFamily = t.ptcFamily
 	t.codeModeMu.RUnlock()
 	t.activeProfileMu.RLock()
 	clone.activeProfile = t.activeProfile
@@ -377,24 +379,21 @@ func (t *Toolkit) rebuildRegistry() {
 	if e.ArtifactPublisher != nil {
 		registered = append(registered, NewPresentArtifactTool(e))
 	}
-	if e.ChatAgent != nil {
-		registered = append(registered, NewChatCheckTool(e), NewChatReadTool(e), NewWorkGetTool(e), NewChatSessionTool(e), NewHarnessSessionTool(e), NewCollaborationSendTool(e), NewChatDraftTool(e), NewChatTaskTool(e), NewChatWorkTool(e), NewChatRemindTool(e), NewChatWakeTool(e), NewChatMemoryTool(e))
-		registered = append(registered, NewChatSendTool(e), NewChatVerifyTool(e), NewChatRosterTool(e))
+	if e.ProjectSessions != nil {
+		registered = append(registered, NewProjectSessionTool(e))
 	}
-	// Code-mode entry tools appear only when a host service is attached to the
-	// session. They stay out of the registry otherwise, so Direct mode never
-	// advertises a runtime it cannot reach.
+	// Register the PTC entry only with a session runtime; model exposure is
+	// separately controlled by the optional global and family settings.
 	t.codeModeMu.RLock()
 	hasCodeMode := t.codeMode != nil
 	t.codeModeMu.RUnlock()
 	if hasCodeMode {
-		registered = append(registered, NewCodeModeExecTool(t), NewCodeModeWaitTool(t))
+		registered = append(registered, NewCodeModeExecTool(t))
 	}
 	t.registry = NewRegistry(registered...)
 }
 
-// SetCodeModeService attaches the session-scoped code-mode runtime and makes
-// its exec/wait entry tools visible to the model. Setting nil removes them.
+// SetCodeModeService attaches the session runtime. Setting nil removes its entry.
 func (t *Toolkit) SetCodeModeService(service *codemode.Service) {
 	t.codeModeMu.Lock()
 	t.codeMode = service
@@ -412,21 +411,19 @@ func (t *Toolkit) CodeModeService() *codemode.Service {
 	return t.codeMode
 }
 
-// SetCodeModeOnly switches the model-visible surface between the full tool
-// list and only the code-mode exec/wait entries. Underlying tools are hidden,
-// not disabled: they stay executable because live cells invoke them through
-// the nested execution pipeline.
-func (t *Toolkit) SetCodeModeOnly(only bool) {
+// ConfigurePTC updates optional tool presentation. Call only between turns.
+func (t *Toolkit) ConfigurePTC(service *codemode.Service, cfg config.PTCConfig) {
 	t.codeModeMu.Lock()
-	t.codeModeOnly = only
+	t.ptcConfig = cfg
 	t.codeModeMu.Unlock()
+	t.SetCodeModeService(service)
 }
 
-// CodeModeOnly reports whether only the code-mode entry tools are visible.
+// CodeModeOnly reports whether this model uses programmatic tool calling.
 func (t *Toolkit) CodeModeOnly() bool {
 	t.codeModeMu.RLock()
 	defer t.codeModeMu.RUnlock()
-	return t.codeModeOnly
+	return t.codeMode != nil && t.ptcConfig.EnabledFor(t.ptcFamily)
 }
 
 // ── Dependency setters ─────────────────────────────────────────────
@@ -434,22 +431,6 @@ func (t *Toolkit) CodeModeOnly() bool {
 // SetAgentControl attaches the shared agent control runtime.
 func (t *Toolkit) SetAgentControl(c *agentcontrol.AgentControl) {
 	t.env.AgentControl = c
-}
-
-func (t *Toolkit) SetChatAgent(client *channels.AgentClient) {
-	if t == nil || t.env == nil {
-		return
-	}
-	t.env.ChatAgent = client
-	t.rebuildRegistry()
-	kind := modelprofile.SurfaceNamedAgent
-	if client == nil {
-		kind = modelprofile.SurfaceMain
-	}
-	if client != nil && client.IsRoomRuntime() {
-		kind = modelprofile.SurfaceRoomAgent
-	}
-	t.setActiveProfileForSurface(t.ActiveProfile(), kind)
 }
 
 // SetImageInputSupported installs the active model's resolved image-input
@@ -734,9 +715,6 @@ func (t *Toolkit) GitAttributionEnabled() bool {
 }
 
 func (t *Toolkit) isToolDisabled(name string) bool {
-	if !t.collaborationToolAllowed(name) {
-		return true
-	}
 	if len(t.disabledTools) == 0 {
 		return false
 	}
@@ -852,7 +830,7 @@ func (t *Toolkit) UnfreezeToolSurface() {
 
 func (t *Toolkit) SupportsTool(name string) bool {
 	name = strings.TrimSpace(name)
-	if t == nil || name == "" || t.isToolDisabled(name) {
+	if t == nil || name == "" || t.isToolDisabled(name) || (name == codeModeExecToolName && !t.CodeModeOnly()) {
 		return false
 	}
 	if t.LookupTool(name) == nil {
@@ -971,15 +949,26 @@ func (t *Toolkit) SurfaceToolNames() []string {
 // same boundary is enforced at runtime by worker tool filtering and
 // tool-specific path checks.
 func (t *Toolkit) SetActiveProfile(p modelprofile.Profile, forMainAgent bool) {
-	if t.IsRoomAgent() {
-		t.setActiveProfileForSurface(p, modelprofile.SurfaceRoomAgent)
-		return
-	}
 	kind := modelprofile.SurfaceWorker
-	if forMainAgent {
+	if t.env != nil && t.env.ProjectSessions != nil {
+		kind = modelprofile.SurfaceProjectSession
+	} else if forMainAgent {
 		kind = modelprofile.SurfaceMain
 	}
 	t.setActiveProfileForSurface(p, kind)
+}
+
+// SetProjectSessions adds project operations to the ordinary session toolkit.
+func (t *Toolkit) SetProjectSessions(handler ProjectSessionHandler) {
+	if t == nil || t.env == nil {
+		return
+	}
+	if t.env.ProjectSessions == nil && handler == nil {
+		return
+	}
+	t.env.ProjectSessions = handler
+	t.rebuildRegistry()
+	t.SetActiveProfile(t.ActiveProfile(), true)
 }
 
 func (t *Toolkit) setActiveProfileForSurface(p modelprofile.Profile, kind modelprofile.SurfaceKind) {
@@ -995,16 +984,16 @@ func (t *Toolkit) setActiveProfileForSurface(p modelprofile.Profile, kind modelp
 	t.activeProfileMu.Lock()
 	defer t.activeProfileMu.Unlock()
 	t.activeProfile = p
-	if (p == modelprofile.Profile{}) && kind != modelprofile.SurfaceNamedAgent && kind != modelprofile.SurfaceRoomAgent {
+	t.codeModeMu.Lock()
+	t.ptcFamily = string(p.Family)
+	t.codeModeMu.Unlock()
+	// A project surface includes its session tool even without a model profile.
+	if (p == modelprofile.Profile{}) && kind != modelprofile.SurfaceProjectSession {
 		t.activeSurface = capability.Surface{}
 		t.publishActiveSurfaceLocked()
 		return
 	}
-	compiledProfile := p
-	if (compiledProfile == modelprofile.Profile{}) {
-		compiledProfile = modelprofile.Resolve("wuu", "named-agent-chat")
-	}
-	t.activeSurface = modelprofile.DefaultCompiler{}.Compile(compiledProfile, kind)
+	t.activeSurface = modelprofile.DefaultCompiler{}.Compile(p, kind)
 	t.publishActiveSurfaceLocked()
 }
 
@@ -1035,7 +1024,25 @@ func (t *Toolkit) ActiveSurface() capability.Surface {
 // tool-loading mode with disabled tools removed. Callers must hold
 // activeProfileMu (read or write).
 func (t *Toolkit) exposedSurfaceLocked() capability.Surface {
-	return t.withDisabledToolsRemoved(t.withCodeModeSurface(cloneSurface(t.surfaceForToolLoadingMode(t.activeSurface))))
+	surface := t.withDisabledToolsRemoved(t.withCodeModeSurface(cloneSurface(t.surfaceForToolLoadingMode(t.activeSurface))))
+	if t.CodeModeOnly() {
+		_, hasContextControl := surface.Tools[newContextToolName]
+		// Retain reachable bindings for skill filtering while projecting the
+		// separate top-level entry points used by the model and frontend.
+		surface.NestedTools = surface.Tools
+		for name, capability := range surface.DeferredTools {
+			surface.NestedTools[name] = capability
+		}
+		delete(surface.NestedTools, codeModeExecToolName)
+		delete(surface.NestedTools, newContextToolName)
+		surface.Tools = map[string]capability.Capability{codeModeExecToolName: capability.CapabilityCodeMode}
+		if hasContextControl {
+			surface.Tools[newContextToolName] = capability.CapabilityContextWindow
+		}
+		surface.DeferredTools = nil
+		surface.SystemFragment += "\nPTC mode is enabled. Invoke the capabilities described above through tools bindings inside run_code. Only run_code and separately advertised context controls are callable directly."
+	}
+	return surface
 }
 
 // publishActiveSurfaceLocked is the single write path for env.ActiveSurface.
@@ -1071,6 +1078,7 @@ func (t *Toolkit) withDisabledToolsRemoved(surface capability.Surface) capabilit
 	for name := range t.disabledTools {
 		delete(out.Tools, name)
 		delete(out.DeferredTools, name)
+		delete(out.NestedTools, name)
 		delete(out.HiddenTools, name)
 	}
 	return out
@@ -1133,6 +1141,12 @@ func cloneSurface(surface capability.Surface) capability.Surface {
 			out.HiddenTools[name] = cap
 		}
 	}
+	if len(surface.NestedTools) > 0 {
+		out.NestedTools = make(map[string]capability.Capability, len(surface.NestedTools))
+		for name, cap := range surface.NestedTools {
+			out.NestedTools[name] = cap
+		}
+	}
 	out.Capabilities = append([]capability.Capability(nil), surface.Capabilities...)
 	out.DeferredCapabilities = append([]capability.Capability(nil), surface.DeferredCapabilities...)
 	out.HiddenCapabilities = append([]capability.Capability(nil), surface.HiddenCapabilities...)
@@ -1154,13 +1168,14 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 // content, metadata, or Activity references. Legacy tools are wrapped as one
 // text content part until they migrate to RichTool.
 func (t *Toolkit) ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+	if t.CodeModeOnly() && call.Name != codeModeExecToolName && call.Name != newContextToolName && !toolctx.IsNestedCall(ctx) {
+		return toolresult.Result{}, errors.New("PTC mode requires calling tools inside run_code")
+	}
+
 	if t.isToolDisabled(call.Name) {
 		return toolresult.Result{}, fmt.Errorf("tool %q is disabled in this session", call.Name)
 	}
-	if call.Name == "git" && t.env.CollaborationPurpose != "" && t.env.CollaborationPurpose != channels.CollaborationSessionWork && !NewGitTool(t.env).Classify(call.Arguments).ReadOnly {
-		return toolresult.Result{}, errors.New("this collaboration role permits only read-only git operations")
-	}
-	if err := t.ensureToolAvailableForExecution(call.Name); err != nil {
+	if err := t.ensureToolAvailableForExecution(ctx, call.Name); err != nil {
 		return toolresult.Result{}, err
 	}
 	tool := t.registry.Lookup(call.Name)
@@ -1180,18 +1195,18 @@ func (t *Toolkit) ExecuteResult(ctx context.Context, call providers.ToolCall) (t
 	return t.executeKnownToolResult(ctx, call, tool)
 }
 
-func (t *Toolkit) ensureToolAvailableForExecution(name string) error {
+func (t *Toolkit) ensureToolAvailableForExecution(ctx context.Context, name string) error {
 	surface := t.activeCompiledSurface()
 	if surface.ProfileName != "" {
 		if !activeSurfaceAllowsKnownTool(surface, t.LookupTool(name)) {
 			return fmt.Errorf("tool %q is not available in the active model surface", name)
 		}
-		if activeSurfaceToolExposure(surface, name) == ToolExposureDeferred && !t.isDeferredToolLoaded(name) {
+		if activeSurfaceToolExposure(surface, name) == ToolExposureDeferred && !t.isDeferredToolLoaded(name) && !toolctx.IsNestedCall(ctx) {
 			return fmt.Errorf("tool %q is deferred; call tool_search first to load it", name)
 		}
 		return nil
 	}
-	if t.toolExposure(name) == ToolExposureDeferred && !t.isDeferredToolLoaded(name) {
+	if t.toolExposure(name) == ToolExposureDeferred && !t.isDeferredToolLoaded(name) && !toolctx.IsNestedCall(ctx) {
 		return fmt.Errorf("tool %q is deferred; call tool_search first to load it", name)
 	}
 	return nil
@@ -1715,8 +1730,4 @@ func buildRGGrepCommand(ctx context.Context, pattern, searchRoot, include string
 		args = append(args, ".")
 	}
 	return rgCommand(ctx, name, args...)
-}
-
-func (t *Toolkit) IsRoomAgent() bool {
-	return t != nil && t.env != nil && t.env.ChatAgent != nil && t.env.ChatAgent.IsRoomRuntime()
 }

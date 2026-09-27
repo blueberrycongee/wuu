@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/process"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
 )
 
 func TestSetSessionWorkspaceUpdatesSubsequentToolRoot(t *testing.T) {
@@ -36,7 +37,10 @@ func TestSetSessionWorkspaceUpdatesSubsequentToolRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	want := filepath.Clean(root)
+	want, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if reboundRoot != want {
 		t.Fatalf("callback root = %q, want %q", reboundRoot, want)
 	}
@@ -55,6 +59,66 @@ func TestSetSessionWorkspaceUpdatesSubsequentToolRoot(t *testing.T) {
 	}
 	if result != `{"root":`+quoteJSONForTest(want)+`}` {
 		t.Fatalf("result = %s", result)
+	}
+}
+
+// A turn binds the thread's worktree into its tool context once, at turn
+// start. An explicit rebind later in the same turn must win over that
+// snapshot, as it does for every later turn.
+func newMidTurnRebindKit(t *testing.T, checkout string) (*Toolkit, context.Context) {
+	t.Helper()
+	kit, err := New(checkout)
+	if err != nil {
+		t.Fatalf("tools.New: %v", err)
+	}
+	kit.SetOnSessionWorkspaceChanged(func(string) error { return nil })
+	return kit, toolctx.WithWorktreeBinding(context.Background(), kit.RootDir(), checkout)
+}
+
+func TestSetSessionWorkspaceMidTurnLeavesDeletedWorktree(t *testing.T) {
+	base := t.TempDir()
+	project := filepath.Join(base, "project")
+	checkout := filepath.Join(base, "worktrees", "session", "thread")
+	for _, dir := range []string{project, checkout} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	kit, ctx := newMidTurnRebindKit(t, checkout)
+	if err := os.RemoveAll(checkout); err != nil {
+		t.Fatal(err)
+	}
+
+	executeToolForWorktreeTest(t, kit, ctx, "set_session_workspace", `{"root":`+quoteJSONForTest(project)+`}`)
+	executeToolForWorktreeTest(t, kit, ctx, "write_file", `{"path":"after.txt","content":"project\n"}`)
+
+	if _, err := os.Stat(filepath.Join(project, "after.txt")); err != nil {
+		t.Fatalf("write after rebind must land in the project: %v", err)
+	}
+	if _, err := os.Stat(checkout); !os.IsNotExist(err) {
+		t.Fatalf("deleted worktree must not be recreated, stat err=%v", err)
+	}
+}
+
+func TestSetSessionWorkspaceMidTurnMovesToAnotherWorktree(t *testing.T) {
+	base := t.TempDir()
+	first := filepath.Join(base, "first")
+	second := filepath.Join(base, "second")
+	for _, dir := range []string{first, second} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	kit, ctx := newMidTurnRebindKit(t, first)
+
+	executeToolForWorktreeTest(t, kit, ctx, "set_session_workspace", `{"root":`+quoteJSONForTest(second)+`}`)
+	executeToolForWorktreeTest(t, kit, ctx, "write_file", `{"path":"after.txt","content":"second\n"}`)
+
+	if _, err := os.Stat(filepath.Join(second, "after.txt")); err != nil {
+		t.Fatalf("write after rebind must land in the new worktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(first, "after.txt")); !os.IsNotExist(err) {
+		t.Fatalf("write after rebind must not land in the old worktree, stat err=%v", err)
 	}
 }
 

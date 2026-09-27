@@ -845,6 +845,202 @@ func TestChat_SendsSupportedPromptCacheKey(t *testing.T) {
 	}
 }
 
+func TestChat_AdjacentMessageWireHistory(t *testing.T) {
+	cases := []struct {
+		name     string
+		model    string
+		messages []providers.ChatMessage
+		want     string
+	}{
+		{
+			name: "text before tool call",
+			messages: []providers.ChatMessage{
+				{Role: "user", Content: "Read the file"},
+				{Role: "assistant", Content: "I will read it."},
+				{Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "call_read", Name: "read_file", Arguments: `{"path":"README.md"}`}}},
+				{Role: "tool", ToolCallID: "call_read", Name: "read_file", Content: "file contents"},
+			},
+			want: `[
+				{"role":"user","content":"Read the file"},
+				{"role":"assistant","content":"I will read it."},
+				{"role":"assistant","content":"","tool_calls":[{"id":"call_read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\"}"}}]},
+				{"role":"tool","tool_call_id":"call_read","name":"read_file","content":"file contents"}
+			]`,
+		},
+		{
+			name: "reasoning and multiple tool results",
+			messages: []providers.ChatMessage{
+				{Role: "user", Content: "Compare files"},
+				{Role: "assistant", Content: "Planning", ReasoningContent: "Need both files"},
+				{Role: "assistant", Content: "Reading", ReasoningContent: "Read them together", ToolCalls: []providers.ToolCall{
+					{ID: "call_a", Name: "read_file", Arguments: `{"path":"a.txt"}`},
+					{ID: "call_b", Name: "read_file", Arguments: `{"path":"b.txt"}`},
+				}},
+				{Role: "tool", ToolCallID: "call_a", Name: "read_file", Content: "contents A"},
+				{Role: "tool", ToolCallID: "call_b", Name: "read_file", Content: "contents B"},
+			},
+			want: `[
+				{"role":"user","content":"Compare files"},
+				{"role":"assistant","content":"Planning","reasoning_content":"Need both files"},
+				{"role":"assistant","content":"Reading","reasoning_content":"Read them together","tool_calls":[
+					{"id":"call_a","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"a.txt\"}"}},
+					{"id":"call_b","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"b.txt\"}"}}
+				]},
+				{"role":"tool","tool_call_id":"call_a","name":"read_file","content":"contents A"},
+				{"role":"tool","tool_call_id":"call_b","name":"read_file","content":"contents B"}
+			]`,
+		},
+		{
+			name: "reasoning around plain assistant text",
+			messages: []providers.ChatMessage{
+				{Role: "user", Content: "Continue"},
+				{Role: "assistant", Content: "First", ReasoningContent: "First reasoning"},
+				{Role: "assistant", Content: "Middle"},
+				{Role: "assistant", Content: "Last", ReasoningContent: "Last reasoning"},
+			},
+			want: `[
+				{"role":"user","content":"Continue"},
+				{"role":"assistant","content":"First","reasoning_content":"First reasoning"},
+				{"role":"assistant","content":"Middle"},
+				{"role":"assistant","content":"Last","reasoning_content":"Last reasoning"}
+			]`,
+		},
+		{
+			name:  "deepseek empty reasoning",
+			model: "deepseek-reasoner",
+			messages: []providers.ChatMessage{
+				{Role: "user", Content: "Continue"},
+				{Role: "assistant", Content: "First", ReasoningContent: "First reasoning"},
+				{Role: "assistant", Content: "Last"},
+			},
+			want: `[
+				{"role":"user","content":"Continue"},
+				{"role":"assistant","content":"First","reasoning_content":"First reasoning"},
+				{"role":"assistant","content":"Last","reasoning_content":""}
+			]`,
+		},
+		{
+			name: "named participants",
+			messages: []providers.ChatMessage{
+				{Role: "user", Name: "alice", Content: "First"},
+				{Role: "user", Name: "bob", Content: "Second"},
+			},
+			want: `[
+				{"role":"user","name":"alice","content":"First"},
+				{"role":"user","name":"bob","content":"Second"}
+			]`,
+		},
+		{
+			name: "safe text and media merges",
+			messages: []providers.ChatMessage{
+				{Role: "system", Content: "First instruction"},
+				{Role: "system", Content: "Second instruction"},
+				{Role: "user", Content: "Inspect", Images: []providers.InputImage{{MediaType: "image/png", Data: "AAAA"}}},
+				{Role: "user", Files: []providers.InputFile{
+					{MediaType: "application/pdf", Filename: "brief.pdf", Data: "BBBB"},
+					{MediaType: "video/mp4", Data: "CCCC"},
+				}},
+				{Role: "user", Hidden: true, Content: "Runtime context"},
+				{Role: "assistant", Content: "First reply"},
+				{Role: "assistant", Content: "Second reply"},
+			},
+			want: `[
+				{"role":"system","content":"First instruction\nSecond instruction"},
+				{"role":"user","content":[
+					{"type":"text","text":"Inspect"},
+					{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}},
+					{"type":"file","file":{"filename":"brief.pdf","file_data":"data:application/pdf;base64,BBBB"}},
+					{"type":"video_url","video_url":{"url":"data:video/mp4;base64,CCCC"}},
+					{"type":"text","text":"Runtime context"}
+				]},
+				{"role":"assistant","content":"First reply\nSecond reply"}
+			]`,
+		},
+	}
+	for _, tc := range cases {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%v", tc.name, stream), func(t *testing.T) {
+				if err := providers.ValidateToolCallHistory(tc.messages); err != nil {
+					t.Fatalf("invalid input history: %v", err)
+				}
+				original := providers.CloneChatMessages(tc.messages)
+				wire := make(chan []byte, 1)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					body, err := io.ReadAll(r.Body)
+					if err != nil {
+						t.Errorf("read request: %v", err)
+						http.Error(w, "read request failed", http.StatusBadRequest)
+						return
+					}
+					wire <- body
+					if stream {
+						w.Header().Set("Content-Type", "text/event-stream")
+						_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+					} else {
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}`)
+					}
+				}))
+				defer server.Close()
+				client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				model := tc.model
+				if model == "" {
+					model = "gpt-test"
+				}
+				req := providers.ChatRequest{
+					Model: model, Messages: tc.messages,
+					ProviderOptions: map[string]any{"video_input": "video_url"},
+				}
+				if stream {
+					events, err := client.StreamChat(context.Background(), req)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for event := range events {
+						if event.Error != nil {
+							t.Fatal(event.Error)
+						}
+					}
+				} else if _, err := client.Chat(context.Background(), req); err != nil {
+					t.Fatal(err)
+				}
+				body := <-wire
+				t.Logf("wire=%s", body)
+				var request struct {
+					Messages []chatMessage `json:"messages"`
+				}
+				if err := json.Unmarshal(body, &request); err != nil {
+					t.Fatal(err)
+				}
+				var history []providers.ChatMessage
+				for _, msg := range request.Messages {
+					decoded := providers.ChatMessage{Role: msg.Role, ToolCallID: msg.ToolCallID}
+					for _, call := range msg.ToolCalls {
+						decoded.ToolCalls = append(decoded.ToolCalls, providers.ToolCall{ID: call.ID, Name: call.Function.Name, Arguments: call.Function.Arguments})
+					}
+					history = append(history, decoded)
+				}
+				if err := providers.ValidateToolCallHistory(history); err != nil {
+					t.Errorf("valid input became invalid wire history: %v", err)
+				}
+				var want []chatMessage
+				if err := json.Unmarshal([]byte(tc.want), &want); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(request.Messages, want) {
+					t.Errorf("wire messages lost content or metadata; want %s", tc.want)
+				}
+				if !reflect.DeepEqual(tc.messages, original) {
+					t.Error("request mapping mutated caller history")
+				}
+			})
+		}
+	}
+}
+
 func TestChat_SendsReasoningContentInAssistantToolCallMessage(t *testing.T) {
 	t.Helper()
 

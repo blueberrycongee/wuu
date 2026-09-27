@@ -83,3 +83,52 @@ func TestSeatbeltWorkspaceWriteDeniesSymlinkEscape(t *testing.T) {
 		t.Fatalf("symlink escape wrote outside or stat failed unexpectedly: %v", err)
 	}
 }
+
+// System root certificates exercise Keychain's MDS dependency without reading
+// user credentials or changing the user's keychain search list.
+func TestSeatbeltAllowsSystemKeychainRead(t *testing.T) {
+	const keychain = "/System/Library/Keychains/SystemRootCertificates.keychain"
+	args := []string{"find-certificate", "-c", "Apple Root CA", keychain}
+	if output, err := exec.Command("/usr/bin/security", args...).CombinedOutput(); err != nil {
+		t.Fatalf("system keychain baseline: %v: %s", err, output)
+	}
+	for _, mode := range []Mode{ModeReadOnly, ModeWorkspaceWrite} {
+		t.Run(string(mode), func(t *testing.T) {
+			cmd := exec.Command("/usr/bin/security", args...)
+			if err := Apply(cmd, Policy{Mode: mode, WritableRoots: []string{t.TempDir()}}); err != nil {
+				t.Fatal(err)
+			}
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("confined system keychain read: %v: %s", err, output)
+			}
+		})
+	}
+}
+
+func TestSeatbeltDeniesWritesToOtherUserCaches(t *testing.T) {
+	output, err := exec.Command("/usr/bin/getconf", "DARWIN_USER_CACHE_DIR").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside, err := os.MkdirTemp(strings.TrimSpace(string(output)), "wuu-sandbox-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(outside) })
+	for _, mode := range []Mode{ModeReadOnly, ModeWorkspaceWrite} {
+		t.Run(string(mode), func(t *testing.T) {
+			target := filepath.Join(outside, string(mode))
+			cmd := exec.Command("/bin/sh", "-c", `printf blocked > "$1"`, "_", target)
+			if err := Apply(cmd, Policy{Mode: mode, WritableRoots: []string{t.TempDir()}}); err != nil {
+				t.Fatal(err)
+			}
+			output, err := cmd.CombinedOutput()
+			if err == nil || !IsDenied(cmd.ProcessState.ExitCode(), string(output)) {
+				t.Fatalf("cache write result err=%v output=%s", err, output)
+			}
+			if _, err := os.Stat(target); !os.IsNotExist(err) {
+				t.Fatalf("cache target exists or stat failed: %v", err)
+			}
+		})
+	}
+}

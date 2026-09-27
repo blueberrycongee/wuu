@@ -2,6 +2,7 @@ const { contextBridge } = require("electron");
 
 const cwd = process.env.WUU_RESIZE_E2E_CWD || process.cwd();
 const runtimeContext = { kind: "no_project", cwd };
+let generalSettings = { git_attribution_enabled: true, ptc: { enabled: false } };
 const now = new Date().toISOString();
 const terminalListeners = new Set();
 let terminalSessionCounter = 1;
@@ -240,11 +241,19 @@ contextBridge.exposeInMainWorld("wuu", {
   },
   initialize: async () => ({
     protocol_version: "e2e",
+    features: process.argv.includes("--project-agent-e2e-enabled")
+      ? { project_agent: true }
+      : process.argv.includes("--project-agent-e2e-disabled") ? { project_agent: false } : undefined,
+    general_settings: generalSettings,
     provider: "e2e",
     model: "mock-resize",
     workspace_root: cwd,
     providers: [{ name: "e2e", type: "mock", model: "mock-resize" }]
   }),
+  updateGeneralSettings: async settings => {
+    generalSettings = { ...generalSettings, ...settings };
+    return { general_settings: generalSettings };
+  },
   getBuildInfo: async () => ({
     core: undefined,
     desktop: { version: "resize-e2e", date: "1970-01-01T00:00:00Z" }

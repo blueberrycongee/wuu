@@ -74,7 +74,7 @@ describe("InstructionFilesCard", () => {
 
     // Both scope groups render.
     expect(container.textContent).toContain("全局");
-    expect(container.textContent).toContain("项目");
+    expect(container.textContent).toContain("工作区");
     const toggles = Array.from(container.querySelectorAll(".instruction-file-toggle"));
     expect(await hoverTooltipText(toggles[0])).toBe("/home/u/.config/wuu/AGENTS.md");
     expect(await hoverTooltipText(toggles[1])).toBe("/repo/AGENTS.md");

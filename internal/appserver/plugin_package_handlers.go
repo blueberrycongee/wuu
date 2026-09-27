@@ -19,6 +19,9 @@ import (
 )
 
 func (s *Server) handlePluginDesktopModuleRead(req Request) error {
+	if s.rt.SafeMode {
+		return s.writeResponse(req.ID, nil, errors.New("desktop plugin modules are unavailable in safe mode"))
+	}
 	var params PluginDesktopModuleReadParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -468,9 +471,7 @@ func (s *Server) beginPluginGenerationMutation(action string, kind pluginGenerat
 				continue
 			}
 			th.mu.Lock()
-			// Only collaboration turns using explicitly opted-in plugin tools hold
-			// a reference to the active extension generation.
-			busy := (th.NamedAgentID == "" || th.pluginExecutionLease != nil) && (th.running || th.executionLease != nil || th.admissionReserved || th.runtimeSelectionMutation ||
+			busy := (th.running || th.executionLease != nil || th.admissionReserved || th.runtimeSelectionMutation ||
 				(th.execRuntime != nil && threadRuntimeHasOutstandingWork(th.ID, th.execRuntime)))
 			th.mu.Unlock()
 			if busy {

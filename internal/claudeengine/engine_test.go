@@ -2,6 +2,7 @@ package claudeengine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -29,6 +30,8 @@ func buildFakeClaude(t *testing.T) string {
 }
 
 func TestEngineEndToEndFakeClaude(t *testing.T) {
+	argsPath := filepath.Join(t.TempDir(), "args.jsonl")
+	t.Setenv("WUU_TEST_CLAUDE_ARGS", argsPath)
 	binary := buildFakeClaude(t)
 	engine := NewEngine(binary, t.TempDir())
 
@@ -46,7 +49,8 @@ func TestEngineEndToEndFakeClaude(t *testing.T) {
 	persisted := ""
 	sess, err := engine.SessionForThread(context.Background(), agentengine.ThreadBinding{
 		ThreadID: "wuu-thread-1",
-		RootDir:  t.TempDir(),
+		Model:    "opus", Effort: "high", Speed: "fast",
+		RootDir: t.TempDir(),
 		PersistRef: func(ref string) error {
 			persisted = ref
 			return nil
@@ -92,7 +96,8 @@ func TestEngineEndToEndFakeClaude(t *testing.T) {
 
 	// Second turn on the same session resumes with the persisted id.
 	sess2, err := engine.SessionForThread(context.Background(), agentengine.ThreadBinding{
-		ThreadID:    "wuu-thread-1",
+		ThreadID: "wuu-thread-1",
+		Model:    "opus", Effort: "high", Speed: "standard",
 		RootDir:     t.TempDir(),
 		ExternalRef: "fake-session-1",
 		PersistRef:  func(string) error { return nil },
@@ -119,6 +124,39 @@ func TestEngineEndToEndFakeClaude(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatalf("resumed RunTurn: %v", err)
 	}
+	data, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("native launches = %d, want 3", len(lines))
+	}
+	for i, line := range lines {
+		var args []string
+		if err := json.Unmarshal([]byte(line), &args); err != nil {
+			t.Fatal(err)
+		}
+		flags := map[string]string{}
+		for index := 0; index+1 < len(args); index++ {
+			flags[args[index]] = args[index+1]
+		}
+		if i == 2 {
+			if _, ok := flags["--settings"]; ok {
+				t.Fatal("inherited speed sent an override")
+			}
+			continue
+		}
+		var settings map[string]bool
+		if err := json.Unmarshal([]byte(flags["--settings"]), &settings); err != nil {
+			t.Fatal(err)
+		}
+		enabled, present := settings["fastMode"]
+		if !present || enabled != (i == 0) || flags["--model"] != "opus" || flags["--effort"] != "high" {
+			t.Fatalf("launch %d changed the native selection: %v", i, args)
+		}
+	}
+
 }
 
 func TestEngineMissingBinaryFailsClearly(t *testing.T) {

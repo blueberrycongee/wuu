@@ -14,7 +14,6 @@ import {
   isLanguagePreference,
   type CodexPetSettings,
   type CodexPetSize,
-  type ChannelRoomPreferences,
   type MessageFlowFontSize,
   type LanguagePreference,
   type PluginConflictPreferences,
@@ -47,7 +46,6 @@ export type DesktopSettings = {
   // renderer resolves it to a concrete data-theme on <html>.
   theme?: ThemePreference;
   language?: LanguagePreference;
-  channel_room_preferences?: ChannelRoomPreferences;
   phone_access_enabled?: boolean;
   // User-facing reading size for the message stream, in pixels. The
   // renderer clamps incoming values to MESSAGE_FLOW_FONT_SIZE_RANGE
@@ -99,23 +97,6 @@ export function readDesktopSettings(filePath: string = desktopSettingsPath()): D
       isMessageFlowFontSize(record.message_flow_font_size)
     ) {
       settings.message_flow_font_size = record.message_flow_font_size;
-    }
-    if (
-      typeof record.channel_room_preferences === "object" &&
-      record.channel_room_preferences !== null &&
-      !Array.isArray(record.channel_room_preferences)
-    ) {
-      const preferences = record.channel_room_preferences as Record<string, unknown>;
-      const archivedRoomIDs = normalizedStringIDs(preferences.archivedRoomIDs);
-      const archived = new Set(archivedRoomIDs);
-      settings.channel_room_preferences = {
-        pinnedRoomIDs: normalizedStringIDs(preferences.pinnedRoomIDs).filter(
-          (id) => !archived.has(id),
-        ),
-        archivedRoomIDs,
-        ...(typeof preferences.selectedRoomID === "string" && preferences.selectedRoomID.trim() && !archived.has(preferences.selectedRoomID.trim())
-          ? { selectedRoomID: preferences.selectedRoomID.trim() } : {}),
-      };
     }
     if (typeof record.codex_pet === "object" && record.codex_pet !== null && !Array.isArray(record.codex_pet)) {
       const codexPet = record.codex_pet as Record<string, unknown>;
@@ -256,38 +237,6 @@ export function setPluginConflictPreference(
   };
   writeDesktopSettings({ ...settings, plugin_conflict_preferences: preferences }, filePath);
   return preferences;
-}
-
-export function getChannelRoomPreferences(
-  filePath?: string,
-): ChannelRoomPreferences | undefined {
-  return readDesktopSettings(filePath).channel_room_preferences;
-}
-
-export function setChannelRoomPreferences(
-  preferences: ChannelRoomPreferences,
-  filePath?: string,
-): ChannelRoomPreferences {
-  const archivedRoomIDs = normalizedStringIDs(preferences.archivedRoomIDs);
-  const archived = new Set(archivedRoomIDs);
-  const next = {
-    pinnedRoomIDs: normalizedStringIDs(preferences.pinnedRoomIDs).filter(
-      (id) => !archived.has(id),
-    ),
-    archivedRoomIDs,
-    ...(typeof preferences.selectedRoomID === "string" && preferences.selectedRoomID.trim() && !archived.has(preferences.selectedRoomID.trim())
-      ? { selectedRoomID: preferences.selectedRoomID.trim() } : {}),
-  };
-  const settings = readDesktopSettings(filePath);
-  writeDesktopSettings({ ...settings, channel_room_preferences: next }, filePath);
-  return next;
-}
-
-function normalizedStringIDs(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return Array.from(
-    new Set(value.filter((id): id is string => typeof id === "string" && id.length > 0)),
-  );
 }
 
 export function getMessageFlowFontSize(

@@ -87,6 +87,50 @@ func TestRebindThreadWorkspacePersistsLinkedWorktreeAndNotifies(t *testing.T) {
 	}
 }
 
+// The model sees symlink-resolved paths, while the project may be registered
+// through a symlink. Moving back to the project by its resolved path must
+// leave the worktree, not bind the project as a linked worktree.
+func TestRebindThreadWorkspaceBackToProjectThroughSymlink(t *testing.T) {
+	repo := initSessionWorkspaceRepo(t)
+	resolvedRepo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectLink := filepath.Join(t.TempDir(), "project-link")
+	if err := os.Symlink(resolvedRepo, projectLink); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(t.TempDir(), "linked")
+	runSessionWorkspaceGit(t, repo, "worktree", "add", "-b", "session-workspace-back", linked)
+
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.RootDir = projectLink
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
+		t.Fatalf("thread/start: %v", err)
+	}
+	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread.ID
+	if err := srv.rebindThreadWorkspace(threadID, linked); err != nil {
+		t.Fatalf("rebind to linked worktree: %v", err)
+	}
+	if err := srv.rebindThreadWorkspace(threadID, resolvedRepo); err != nil {
+		t.Fatalf("rebind back to project: %v", err)
+	}
+
+	stored, found, err := session.Find(rt.SessionDir, threadID)
+	if err != nil || !found {
+		t.Fatalf("Find: found=%v err=%v", found, err)
+	}
+	if stored.WorktreePath != "" || stored.WorktreeBaseRepo != "" || stored.WorktreeBaseHEAD != "" {
+		t.Fatalf("moving back to the project kept a worktree binding: path %q, base repo %q, base HEAD %q",
+			stored.WorktreePath, stored.WorktreeBaseRepo, stored.WorktreeBaseHEAD)
+	}
+	if stored.CWD != projectLink {
+		t.Fatalf("stored cwd = %q, want the project path %q", stored.CWD, projectLink)
+	}
+}
+
 func TestRebindThreadWorkspaceRejectsUnrelatedRepositoryAndSubdirectory(t *testing.T) {
 	repo := initSessionWorkspaceRepo(t)
 	rt := newTestRuntime(t, &fakeClient{})

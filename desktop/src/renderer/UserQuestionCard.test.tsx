@@ -36,6 +36,34 @@ function offerRequest(overrides: Partial<UserQuestionRequest> = {}): UserQuestio
 }
 
 describe("UserQuestionCard", () => {
+  it.each(["answer", "cancel"] as const)("keeps pending %s feedback on its action and recovers after failure", async (action) => {
+    let reject!: (error: Error) => void;
+    const pending = new Promise<void>((_resolve, fail) => { reject = fail; });
+    const onAnswer = vi.fn(() => pending);
+    const onCancel = vi.fn(() => pending);
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(<I18nProvider><UserQuestionCard request={offerRequest({ mode: undefined })} onAnswer={onAnswer} onCancel={onCancel} /></I18nProvider>);
+    });
+    const option = container.querySelector<HTMLButtonElement>('[role="radio"]')!;
+    await act(async () => option.click());
+    const submit = container.querySelector<HTMLButtonElement>(".user-question-submit")!;
+    const cancel = container.querySelector<HTMLButtonElement>(".user-question-cancel")!;
+    const owner = action === "answer" ? submit : cancel;
+    const other = action === "answer" ? cancel : submit;
+    await act(async () => owner.click());
+    expect(owner.getAttribute("aria-busy")).toBe("true");
+    expect(other.getAttribute("aria-busy")).not.toBe("true");
+    expect(option.disabled).toBe(true);
+    await act(async () => reject(new Error("Connection lost")));
+    expect(owner.getAttribute("aria-busy")).not.toBe("true");
+    expect(owner.disabled).toBe(false);
+    expect(option.getAttribute("aria-checked")).toBe("true");
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Connection lost");
+  });
+
   it("collects an option and custom answer before continuing", async () => {
     const onAnswer = vi.fn(async () => undefined);
     const request: UserQuestionRequest = {

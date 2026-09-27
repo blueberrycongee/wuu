@@ -1,10 +1,9 @@
 import { forgetLocalTurnTiming } from "./LocalTurnTiming";
-import type { ChannelRoomOnboarding } from "../shared/protocol";
 import { subscribeServerEvents } from "./ServerEvents";
 import { PhoneNavigationContext } from "./PhoneNavigationContext";
 import { AccountScreen } from "./AccountScreen";
 import { hostSupports } from "./HostCapabilities";
-import { isTouchWebShell } from "./ComposerFocus";
+import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { useSidebarTouchGesture } from "./SidebarTouchGesture";
 import { readThreadReadState, writeThreadReadState } from "./ThreadReadState";
 /// <reference path="../shared/jsx-compat.d.ts" />
@@ -24,17 +23,17 @@ import type {
   ActivitySession,
   BrowserDockTarget,
   Agent,
-  ChannelRoom,
   DesktopProject,
   EngineInfo,
   EngineListResult,
   EngineUpdateParams,
   ExtensionPackageUpdateParams,
+  GitStatusResult,
   InitializeResult,
   InputFile,
   InputImage,
   MessageContentPart,
-  NamedAgent,
+  ResponseSelection,
   PopOutInitResult,
   PluginPackageInstallResult,
   PluginPackageRemoveResult,
@@ -53,6 +52,7 @@ import {
   OPTIMISTIC_TURN_ID_PREFIX,
   awaitComposerImages,
   createComposerMessage,
+  composerContextFromMessage,
   createOptimisticCompactTurn,
   createOptimisticTurn,
   dropOptimisticTurn,
@@ -101,16 +101,7 @@ import { SideThreadComposer } from "./SideThreadComposer";
 import { ConversationForkDialog } from "./ConversationForkDialog";
 import { firstUserMessageText } from "./TurnViewHelpers";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
-import {
-  AppSidebar,
-  SIDEBAR_SECTION_COLLAB,
-} from "./AppSidebar";
-import { ChannelView, type ChannelConversationSnapshot, type ChannelSection } from "./ChannelView";
-import type { ChannelComposerProject } from "./ChannelComposer";
-import { collaborationConversations, managedSidebarThreads, orderedPinnedCollaborationConversations, type CollaborationConversation } from "./CollaborationConversations";
-import { CollaborationSidebar } from "./CollaborationSidebar";
-import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft } from "./AgentOnboarding";
-import type { AppMode } from "./AppModeSwitch";
+import { AppSidebar } from "./AppSidebar";
 import {
   type EnvironmentPanelMenu,
   type EnvironmentPanelMotionState,
@@ -129,6 +120,7 @@ import {
   activeTurnIDForThread,
   bindActiveSessionTabToThread,
   cloneSessionTabDraft,
+  sessionTabDraftForThread,
   composerDraftHasContent,
   conversationPaneThreadsByID,
   createDraftSessionTab,
@@ -165,9 +157,9 @@ import {
   sessionTabForLoadedRuntime,
   setThreadForPane,
   sortThreads,
-  summarizeProjectThreadsForSidebar,
+  summarizeWorkspaceThreadsForSidebar,
   summarizeThreadsForSidebar,
-  threadBelongsToProject,
+  threadBelongsToWorkspace,
   threadForTab,
   threadForPane,
   threadSessionTabID,
@@ -184,17 +176,6 @@ import {
   type SessionTab,
   type ThreadSummary,
 } from "./AppState";
-import {
-  archiveChannelRoomPreference,
-  readChannelRoomPreferences,
-  togglePinnedChannelRoom,
-  unarchiveChannelRoomPreference,
-  visibleChannelRooms,
-  writeChannelRoomPreferences,
-  type ChannelRoomPreferences,
-} from "./ChannelRoomPreferences";
-import { DIRECTORY_POLL_BASE_MS, nextDirectoryPollDelay } from "./ChannelDirectoryPoll";
-import { sameChannelRooms, sameNamedAgents } from "./ChannelRoomState";
 import {
   rightPanelMotionMs,
   sidebarDrawerExitMs,
@@ -233,8 +214,6 @@ import type { SettingsPage } from "./SettingsView";
 import {
   ENABLE_CONVERSATION_TURN_RAIL,
   ENABLE_EMBEDDED_BROWSER,
-  ENABLE_GROUP_CHAT,
-  ENABLE_COLLABORATION_CHANNELS,
   ENABLE_ACCOUNT,
 } from "./FeatureFlags";
 import { ArchiveTip } from "./ArchiveTip";
@@ -289,7 +268,7 @@ import { releaseWindowResizeClass, WINDOW_RESIZING_CLASS } from "./WindowResizeS
 import { useComposerDraftState } from "./ComposerDraftState";
 import { useComposerPendingState } from "./ComposerPendingState";
 import { useSidebarDrawerState } from "./SidebarDrawerState";
-import { useSidebarProjectState } from "./SidebarProjectState";
+import { useSidebarWorkspaceState } from "./SidebarWorkspaceState";
 import { useViewSwitchState } from "./ViewSwitchState";
 import { turnTelemetryStore } from "./TurnTelemetryStore";
 import {
@@ -308,15 +287,19 @@ import {
   applyRuntimeRestore,
   selectRuntimeContext,
 } from "./RuntimeLoadState";
-import { createProjectRuntimeActions } from "./ProjectRuntimeActions";
+import { createWorkspaceRuntimeActions } from "./WorkspaceRuntimeActions";
 import { createWorkspaceActions } from "./WorkspaceActions";
 import { createSessionTabActions } from "./SessionTabActions";
 import { createThreadActivationActions } from "./ThreadActivationActions";
 import { createThreadMutationActions } from "./ThreadMutationActions";
 import {
+  baseThreadTitle,
   conversationHeadingTitle,
   customDraftConversationTitle,
 } from "./ThreadTitles";
+import { ProjectActionsProvider, type ProjectActions, type ProjectThread } from "./ProjectActions";
+import { isProjectCoordinator, PROJECT_SESSION_SOURCE, projectSessionsOf } from "./ProjectSessions";
+import { ProjectStatusCapsule } from "./ProjectViews";
 import { createRuntimeSettingsActions } from "./RuntimeSettingsActions";
 import { createConversationPaneActions } from "./ConversationPaneActions";
 import {
@@ -375,7 +358,7 @@ function isNoModelConfiguredError(message: string): boolean {
   );
 }
 
-type EngineRuntimeSelection = { model: string; effort: string };
+type EngineRuntimeSelection = { model: string; effort: string; speed?: string };
 
 function defaultEngineRuntimeSelection(engine?: EngineInfo): EngineRuntimeSelection {
   const model = engine?.models?.find((item) => item.is_default) ?? engine?.models?.[0];
@@ -427,6 +410,13 @@ function formatUserQuestionSteerPrompt(
   }).join("\n\n");
 }
 
+// A project's name until the user renames it: its goal's first line, short
+// enough for the sidebar.
+function projectNameFromGoal(goal: string): string {
+  const line = goal.split("\n").find((part) => part.trim())?.trim().replace(/\s+/g, " ") ?? "";
+  return line.length > 48 ? `${line.slice(0, 47)}…` : line;
+}
+
 export function App(): JSX.Element {
   const phoneNavigation = useContext(PhoneNavigationContext);
   const { locale, t } = useI18n();
@@ -445,7 +435,11 @@ export function App(): JSX.Element {
     typeof window.wuu.listUserQuestions === "function" &&
     typeof window.wuu.answerUserQuestion === "function" &&
     typeof window.wuu.cancelUserQuestion === "function";
-  useDesktopPluginRuntime(state.initialized?.extension_inventory);
+  useDesktopPluginRuntime(
+    state.initialized?.extension_inventory,
+    state.initialized?.features?.safe_mode,
+  );
+  const projectAgentEnabled = state.initialized?.features?.project_agent === true;
   const {
     prompt,
     promptRevision,
@@ -455,6 +449,8 @@ export function App(): JSX.Element {
     setComposerImages,
     composerFiles,
     setComposerFiles,
+    composerSelections,
+    setComposerSelections,
     splitComposerDrafts,
     setSplitComposerDrafts,
     attachComposerAttachmentFiles,
@@ -468,13 +464,37 @@ export function App(): JSX.Element {
     currentPrimaryComposerDraft,
     restorePrimaryComposerDraft,
   } = useComposerDraftState();
+  useEffect(() => {
+    const addSelection = (event: Event) => {
+      const selection = (event as CustomEvent<ResponseSelection>).detail;
+      const current = appStateRef.current;
+      const pane = current.thread?.id === selection.source.thread_id ? "primary"
+        : current.secondaryThread?.id === selection.source.thread_id ? "secondary" : undefined;
+      // A toolbar belongs to its response, not to whichever composer is active.
+      if (!pane || threadForPane(current, pane)?.read_only) return;
+      const copy = { ...selection, source: { ...selection.source } };
+      if (current.thread && current.secondaryThread) {
+        setSplitComposerDrafts((drafts) => ({ ...drafts, [pane]: {
+          ...drafts[pane], selections: [...(drafts[pane].selections ?? []), copy],
+        } }));
+      } else {
+        setComposerSelections((selections) => [...selections, copy]);
+      }
+      const owner = current.secondaryThread
+        ? [...document.querySelectorAll<HTMLElement>(".conversation-split-pane[data-thread-id]")].find((element) => element.dataset.threadId === selection.source.thread_id)
+        : document.querySelector<HTMLElement>("[data-main-conversation-composer]");
+      focusComposerTextarea(owner?.querySelector<HTMLTextAreaElement>("textarea") ?? null);
+    };
+    window.addEventListener("wuu:add-response-selection", addSelection);
+    return () => window.removeEventListener("wuu:add-response-selection", addSelection);
+  }, [setComposerSelections, setSplitComposerDrafts]);
   const [historyMessageEdit, setHistoryMessageEdit] =
     useState<HistoryMessageEditState | undefined>(undefined);
   const composerDraftsRef = useRef({ primary: currentPrimaryComposerDraft, split: splitComposerDrafts });
   composerDraftsRef.current = { primary: currentPrimaryComposerDraft, split: splitComposerDrafts };
   const [activitySessions, setActivitySessions] = useState(emptyActivitySessions);
-  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
-  const closeProjectMenu = useCallback(() => setProjectMenuOpen(false), []);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const closeWorkspaceMenu = useCallback(() => setWorkspaceMenuOpen(false), []);
   const appShellRef = useRef<HTMLDivElement>(null);
   const settingsShellRef = useRef<HTMLDivElement>(null);
   const [mainComposerFocusRequest, setMainComposerFocusRequest] =
@@ -510,7 +530,7 @@ export function App(): JSX.Element {
   } = useAppLayoutState({
     layoutRootRef: appShellRef,
     settingsLayoutRootRef: settingsShellRef,
-    onCloseProjectMenu: closeProjectMenu,
+    onCloseWorkspaceMenu: closeWorkspaceMenu,
   });
   const [rightPanelManualGlobalized, setRightPanelManualGlobalized] =
     useState(false);
@@ -563,15 +583,14 @@ export function App(): JSX.Element {
     });
     return () => cancelAnimationFrame(raf);
   }, [workspaceSheetPhase]);
-  // A manually expanded workspace owns the main stage, not the navigation
-  // rail. Keep a docked sidebar docked; only an already-collapsed or compact
-  // sidebar remains a drawer while the workspace is expanded.
-  const [appMode, setAppMode] = useState<AppMode>("harness");
   // The bell view is a sidebar-level navigation mode rather than sidebar-local
   // state: settings and account replace the whole workbench tree, so the flag
   // has to live above it for the user to come back to the view they left.
   const [unreadViewOpen, setUnreadViewOpen] = useState(false);
   const [attentionStickyIDs, setAttentionStickyIDs] = useState<Set<string>>(() => new Set());
+  // A manually expanded workspace owns the main stage, not the navigation
+  // rail. Keep a docked sidebar docked; only an already-collapsed or compact
+  // sidebar remains a drawer while the workspace is expanded.
   const sidebarDrawerMode = compactNavigation || sidebarCollapsed;
   const {
     sidebarDrawerPhase,
@@ -615,8 +634,8 @@ export function App(): JSX.Element {
   const {
     collapsedSidebarSectionIDs,
     expandedSidebarSectionIDs,
-    loadingProjectThreadIDs,
-    projectThreadsByProjectID,
+    loadingWorkspaceThreadIDs,
+    workspaceThreadsByWorkspaceID,
     cachedScratchThreads,
     sidebarSectionOrder,
     setSidebarSectionOrder,
@@ -626,14 +645,14 @@ export function App(): JSX.Element {
     removeCachedSidebarThread,
     syncSidebarServerEvent,
     toggleSidebarSectionCollapsed,
-  } = useSidebarProjectState({
+  } = useSidebarWorkspaceState({
     // Let the visible workspace finish booting before background catalogs
     // compete for the same remote connection.
     backgroundLoadingEnabled: Boolean(state.initialized) || state.status !== "connecting",
     projects: state.projects,
     threads: state.threads,
     activeContext: state.activeContext,
-    activeProjectID: state.activeProjectId,
+    activeWorkspaceID: state.activeProjectId,
     setStatus: (status) =>
       setState((current) => ({
         ...current,
@@ -666,49 +685,6 @@ export function App(): JSX.Element {
     () => window.wuu?.initialOnboardingComplete ?? true,
   );
 
-  const [collaborationSection, setCollaborationSection] = useState<ChannelSection>("rooms");
-  const [newRoomRequest, setNewRoomRequest] = useState(0);
-  const [editChannelAgentRequestID, setEditChannelAgentRequestID] = useState("");
-  const [editChannelRoomRequestID, setEditChannelRoomRequestID] = useState("");
-  const [agentOnboardingActive, setAgentOnboardingActive] = useState(false);
-  const [agentOnboardingDraft, setAgentOnboardingDraft] = useState<AgentOnboardingDraft | null>(null);
-  // New direct conversations and new agents open in one registered project.
-  // Default to the runtime's project, as the host does without a workspace.
-  const [collaborationProjectID, setCollaborationProjectID] = useState("");
-  const collaborationProjects = useMemo(() => state.projects.filter((project) => !project.missing), [state.projects]);
-  const collaborationProject = collaborationProjects.find((project) => project.id === collaborationProjectID)
-    ?? collaborationProjects.find((project) => project.path === state.initialized?.workspace_root)
-    ?? collaborationProjects.find((project) => project.id === state.activeProjectId);
-  const collaborationProjectPicker: ChannelComposerProject | undefined = collaborationProjects.length
-    ? { projects: collaborationProjects, selectedID: collaborationProject?.id ?? "", onSelect: setCollaborationProjectID }
-    : undefined;
-  const [allNamedAgents, setNamedAgents] = useState<NamedAgent[]>([]);
-  const [deletedAgentIDs, setDeletedAgentIDs] = useState<ReadonlySet<string>>(new Set());
-  const deletedAgentIDsRef = useRef(new Set<string>());
-  const namedAgents = useMemo(() => allNamedAgents.filter((agent) => !deletedAgentIDs.has(agent.id)), [allNamedAgents, deletedAgentIDs]);
-  const directoryRefreshInFlightRef = useRef(false);
-  const channelDirectoryGenerationRef = useRef(0);
-  const [channelDirectoryLoaded, setChannelDirectoryLoaded] = useState(false);
-  const [selectedCollaborationAgentID, setSelectedCollaborationAgentID] = useState("");
-  const selectedCollaborationAgentRequestRef = useRef("");
-  const directMessageRequestGenerationRef = useRef(0);
-  const [selectedChannelRoomIDState, setSelectedChannelRoomIDState] = useState(() => readChannelRoomPreferences().selectedRoomID ?? "");
-  const [channelComposerDrafts, setChannelComposerDrafts] = useState<Record<string, ComposerDraftState>>({});
-  // Rooms (with per-room unread counts) live at the App level so the unified
-  // sidebar and the channel canvas share one source of truth; selection is
-  // controlled here and passed into ChannelView.
-  const [allChannelRooms, setChannelRooms] = useState<ChannelRoom[]>([]);
-  const channelRooms = useMemo(() => allChannelRooms.filter((room) => room.kind !== "dm" || !room.members.some((member) => member.member_type === "agent" && deletedAgentIDs.has(member.member_id))), [allChannelRooms, deletedAgentIDs]);
-  const [channelRoomPreferences, setChannelRoomPreferences] =
-    useState<ChannelRoomPreferences>(readChannelRoomPreferences);
-  useEffect(() => {
-    // Migrate preferences saved by older builds from origin-bound
-    // localStorage into desktop-settings.json on the first launch.
-    writeChannelRoomPreferences(channelRoomPreferences);
-    // Only the initial snapshot is migrated here; user changes persist in
-    // updateChannelRoomPreferences below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   const [settingsInitialPage, setSettingsInitialPage] =
     useState<SettingsPage>("providers");
   const {
@@ -722,86 +698,7 @@ export function App(): JSX.Element {
     updateCodexPets,
   } = useSettingsRuntimeState({ settingsOpen });
 
-  // Poll the room list so the sidebar 协作 section always shows current
-  // unread counts, independent of whether the channel canvas is open.
-  useEffect(() => {
-    if (
-      !ENABLE_GROUP_CHAT ||
-      !window.wuu ||
-      typeof window.wuu.listChannelRooms !== "function" ||
-      !state.initialized
-    ) {
-      setChannelRooms([]);
-      setNamedAgents([]);
-      setChannelDirectoryLoaded(false);
-      return;
-    }
-    let active = true;
-    let delay = DIRECTORY_POLL_BASE_MS;
-    let timer = 0;
-    const refresh = async (): Promise<boolean | undefined> => {
-      if (directoryRefreshInFlightRef.current) return undefined;
-      directoryRefreshInFlightRef.current = true;
-      const generation = ++channelDirectoryGenerationRef.current;
-      let changed = false;
-      try {
-        const result = await window.wuu!.listChannelRooms();
-        if (active && generation === channelDirectoryGenerationRef.current) {
-          const rooms = result.rooms ?? [];
-          setChannelRooms((current) => {
-            if (sameChannelRooms(current, rooms)) return current;
-            changed = true;
-            return rooms;
-          });
-          setChannelDirectoryLoaded(true);
-        }
-        if (typeof window.wuu!.listNamedAgents === "function") {
-          const agentResult = await window.wuu!.listNamedAgents();
-          if (active && generation === channelDirectoryGenerationRef.current) {
-            const agents = agentResult.agents ?? [];
-            setNamedAgents((current) => {
-              if (sameNamedAgents(current, agents)) return current;
-              changed = true;
-              return agents;
-            });
-          }
-        }
-      } catch (reason) {
-        console.warn("collaboration directory refresh failed", reason);
-      } finally {
-        directoryRefreshInFlightRef.current = false;
-      }
-      return changed;
-    };
-    const schedule = (ms: number): void => {
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => { void tick(); }, ms);
-    };
-    const tick = async (): Promise<void> => {
-      if (!active || document.visibilityState !== "visible") return;
-      const changed = await refresh();
-      if (!active || document.visibilityState !== "visible") return;
-      if (changed !== undefined) delay = nextDirectoryPollDelay(delay, changed);
-      schedule(delay);
-    };
-    const onVisibility = (): void => {
-      if (!active) return;
-      if (document.visibilityState !== "visible") {
-        window.clearTimeout(timer);
-        return;
-      }
-      delay = DIRECTORY_POLL_BASE_MS;
-      void tick();
-    };
-    void tick();
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [state.initialized]);
-  const [projectFilter, setProjectFilter] = useState("");
+  const [workspaceFilter, setWorkspaceFilter] = useState("");
   const {
     workspaceViewTabs,
     workspaceActiveViewTabID,
@@ -812,6 +709,8 @@ export function App(): JSX.Element {
     openWorkspaceDiffTab,
     openWorkspaceFileTab,
     openWorkspaceArtifactTab,
+    openWorkspaceProjectTab,
+    syncWorkspaceProjectTab,
     showWorkspaceToolPicker,
     focusWorkspaceViewTab,
     closeWorkspaceViewTab,
@@ -905,11 +804,6 @@ export function App(): JSX.Element {
     toggleSidebar,
     workspaceRightPanelDockableWithoutSidebar,
   ]);
-  const clearChannelRoomUnread = useCallback((roomID: string): void => {
-    setChannelRooms((current) =>
-      current.map((room) => (room.id === roomID ? { ...room, unread_count: 0 } : room)),
-    );
-  }, []);
   const [environmentDialog, setEnvironmentDialog] =
     useState<EnvironmentDialog | null>(null);
   const [contextCompositionEntries, setContextCompositionEntries] = useState<
@@ -1072,7 +966,7 @@ export function App(): JSX.Element {
   const {
     pendingViewSwitch,
     visiblePendingThreadID,
-    visiblePendingProjectID,
+    visiblePendingWorkspaceID,
     viewSwitchPending,
     submissionTargetPending,
     viewContextSwitchPending,
@@ -1093,7 +987,7 @@ export function App(): JSX.Element {
   const gitRefreshTimerRef = useRef<number | undefined>(undefined);
   const gitRefreshInFlightRef = useRef(false);
   const gitRefreshQueuedRef = useRef(false);
-  const projectMenuRef = useRef<HTMLDivElement>(null);
+  const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const runtimeMenuRef = useRef<HTMLDivElement>(null);
   const accessMenuRef = useRef<HTMLDivElement>(null);
   const codexRuntimeRef = useRef<HTMLDivElement>(null);
@@ -1126,8 +1020,25 @@ export function App(): JSX.Element {
     threadHasPendingComposerMessages,
   } = useComposerPendingState({
     getAppState: () => appStateRef.current,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftForThread: (threadID) => {
+      const current = appStateRef.current;
+      if (current.thread && current.secondaryThread) {
+        if (current.thread.id === threadID) return composerDraftsRef.current.split.primary;
+        if (current.secondaryThread.id === threadID) return composerDraftsRef.current.split.secondary;
+      }
+      return activeThreadIDForState(current) === threadID || current.activeSessionTabID === threadID
+        ? composerDraftsRef.current.primary() : sessionTabDraftForThread(current, threadID);
+    },
     restoreComposerDraftForThread: (threadID, draft) => {
+      const currentState = appStateRef.current;
+      if (currentState.thread && currentState.secondaryThread) {
+        const pane = currentState.thread.id === threadID ? "primary"
+          : currentState.secondaryThread.id === threadID ? "secondary" : undefined;
+        if (pane) {
+          setSplitComposerDrafts((current) => ({ ...current, [pane]: draft }));
+          return;
+        }
+      }
       if ((activeThreadIDForState(appStateRef.current) === threadID || appStateRef.current.activeSessionTabID === threadID)) {
         restorePrimaryComposerDraft(draft);
         return;
@@ -1141,6 +1052,7 @@ export function App(): JSX.Element {
                 prompt: draft.prompt,
                 images: draft.images.map((image) => ({ ...image })),
                 files: draft.files.map((file) => ({ ...file })),
+                selections: draft.selections?.map((selection) => ({ ...selection, source: { ...selection.source } })),
               }
             : tab,
         ),
@@ -1152,47 +1064,13 @@ export function App(): JSX.Element {
         status,
       })),
     sendComposerMessageToThread,
+    preserveFailedComposerMessage,
   });
   const runtimeVariantByModelRef = useRef(new Map<string, string>());
   const cachedThreadPaneHistoryRef = useRef<string[]>([]);
   const cachedConversationPaneThreadsRef = useRef(new Map<string, Thread>());
-  const channelConversationCacheRef = useRef(new Map<string, ChannelConversationSnapshot>());
   const draftSessionTabCounterRef = useRef(0);
   const currentSessionTab = activeSessionTab(state);
-  const activeChannelRooms = useMemo(
-    () => visibleChannelRooms(channelRooms, channelRoomPreferences),
-    [channelRoomPreferences, channelRooms],
-  );
-  const archivedChannelRooms = useMemo(
-    () => channelRooms.filter((room) => (ENABLE_COLLABORATION_CHANNELS || room.kind === "dm") && channelRoomPreferences.archivedRoomIDs.includes(room.id)),
-    [channelRoomPreferences.archivedRoomIDs, channelRooms],
-  );
-  const selectedChannelRoomID = selectedCollaborationAgentID
-    ? activeChannelRooms.find((room) => room.kind === "dm" && room.members.some(
-      (member) => member.member_type === "agent" && member.member_id === selectedCollaborationAgentID,
-    ))?.id ?? ""
-    : (activeChannelRooms.some((room) => room.id === selectedChannelRoomIDState)
-      ? selectedChannelRoomIDState
-      : channelDirectoryLoaded ? activeChannelRooms[0]?.id ?? "" : "");
-  useEffect(() => {
-    if (appMode !== "collaboration" || !selectedChannelRoomID) return;
-    setSelectedChannelRoomIDState(selectedChannelRoomID);
-    if (channelRoomPreferences.selectedRoomID === selectedChannelRoomID) return;
-    updateChannelRoomPreferences((current) => ({ ...current, selectedRoomID: selectedChannelRoomID }));
-  }, [appMode, selectedChannelRoomID, channelRoomPreferences.selectedRoomID]);
-  const selectedCollaborationAgent =
-    namedAgents.find((agent) => agent.id === selectedCollaborationAgentID);
-  const activeChannelComposerDraft = useMemo(
-    () => channelComposerDrafts[selectedChannelRoomID] ?? emptyComposerDraft(),
-    [channelComposerDrafts, selectedChannelRoomID],
-  );
-  const channelUnreadByRoomID = useMemo(
-    () =>
-      Object.fromEntries(
-        activeChannelRooms.map((room) => [room.id, room.unread_count ?? 0]),
-      ),
-    [activeChannelRooms],
-  );
 
   const currentSkillsTabID =
     currentSessionTab?.kind === "skills" ? currentSessionTab.id : undefined;
@@ -1270,7 +1148,7 @@ export function App(): JSX.Element {
   const activeWorkspaceViewTab = workspaceActiveViewTabID
     ? workspaceViewTabs.find((tab) => tab.id === workspaceActiveViewTabID)
     : undefined;
-  const workspaceProjectSelectionEnabled =
+  const workspaceSelectionEnabled =
     rightPanelGlobalized &&
     (activeWorkspaceViewTab?.kind === "files" ||
       activeWorkspaceViewTab?.kind === "file");
@@ -1288,6 +1166,7 @@ export function App(): JSX.Element {
       : undefined;
   const activeThread = activeThreadForState(state);
   const activeThreadID = activeThread?.id;
+  const activeProjectDraft = projectAgentEnabled && !activeThread && currentSessionTab?.kind === "draft" && currentSessionTab.project === true;
   const activeThreadRunning = isThreadRunning(activeThread);
   const activeThreadHasRunningTurn = activeThread?.turns.some(turn => turn.status === "in_progress") ?? false;
   useEffect(() => {
@@ -1365,6 +1244,12 @@ export function App(): JSX.Element {
   // child model/effort choice when the user switches back within the draft.
   const draftEngineRuntimeByID = useRef<Record<string, EngineRuntimeSelection>>({});
   const [draftPermissionMode, setDraftPermissionMode] = useState<PermissionMode | "">("");
+  // Present while the next conversation starts in its own worktree. It belongs
+  // to one project root, so switching projects never carries one repository's
+  // start branch into another. An empty start branch means the project's HEAD.
+  const [draftWorktree, setDraftWorktree] = useState<{ cwd: string; startBranch: string }>();
+  const draftWorktreeFor = (context: RuntimeContext | undefined, gitStatus: GitStatusResult | undefined) =>
+    draftWorktree && gitStatus?.is_repo && draftWorktree.cwd === context?.cwd ? draftWorktree : undefined;
   const draftEngineSeed = useRef<{ threadID?: string; done: boolean }>({
     threadID: activeThreadID,
     done: false,
@@ -1375,6 +1260,7 @@ export function App(): JSX.Element {
       setDraftEngine("");
       setDraftEngineRuntime({ model: "", effort: "" });
       setDraftPermissionMode("");
+      setDraftWorktree(undefined);
     }
     // Only a brand-new conversation seeds from memory. An open thread is
     // already bound to its engine, and a seeded draft would otherwise win the
@@ -1390,10 +1276,11 @@ export function App(): JSX.Element {
     }
     draftEngineSeed.current.done = true;
     setDraftEngine(remembered.engine);
-    setDraftEngineRuntime({ model: remembered.model, effort: remembered.effort });
+    setDraftEngineRuntime({ model: remembered.model, effort: remembered.effort, speed: remembered.speed });
     draftEngineRuntimeByID.current[remembered.engine] = {
       model: remembered.model,
       effort: remembered.effort,
+      speed: remembered.speed,
     };
     setDraftPermissionMode(remembered.engine === "wuu" ? "" : "unconfined");
   }, [activeThreadID, engineInventory]);
@@ -1629,7 +1516,7 @@ export function App(): JSX.Element {
     getAppState: () => appStateRef.current,
     cacheThreads: cacheSidebarThreads,
     onOpen: () => {
-      setProjectMenuOpen(false);
+      setWorkspaceMenuOpen(false);
       setRuntimeMenuOpen(false);
       setAccessMenuOpen(false);
       setBranchMenuOpen(false);
@@ -2012,9 +1899,9 @@ export function App(): JSX.Element {
           }
           return;
         }
-        const listedProjects = await window.wuu.listProjects();
-        const runtimeState = listedProjects.active_context
-          ? listedProjects
+        const listedWorkspaces = await window.wuu.listProjects();
+        const runtimeState = listedWorkspaces.active_context
+          ? listedWorkspaces
           : await window.wuu.selectNoProject(false);
         const loadedState = await loadRuntime(runtimeState);
         if (!mounted) {
@@ -2143,8 +2030,8 @@ export function App(): JSX.Element {
       if (!(target instanceof Node)) {
         return;
       }
-      if (projectMenuOpen && !projectMenuRef.current?.contains(target)) {
-        setProjectMenuOpen(false);
+      if (workspaceMenuOpen && !workspaceMenuRef.current?.contains(target)) {
+        setWorkspaceMenuOpen(false);
       }
       if (
         (runtimeMenuOpen || branchMenuOpen) &&
@@ -2191,7 +2078,7 @@ export function App(): JSX.Element {
     environmentPanelHasRoom,
     environmentPanelMenu,
     environmentPanelOpen,
-    projectMenuOpen,
+    workspaceMenuOpen,
     runtimeMenuOpen,
   ]);
 
@@ -2213,7 +2100,7 @@ export function App(): JSX.Element {
     return () => window.removeEventListener("focus", handleFocus);
   }, []);
 
-  const activeProject = useMemo(
+  const activeWorkspace = useMemo(
     () =>
       state.projects.find((project) => project.id === state.activeProjectId),
     [state.activeProjectId, state.projects],
@@ -2225,17 +2112,11 @@ export function App(): JSX.Element {
   const showingManagementCatalog = showingSkillsCatalog;
   const activeTitle = showingSkillsCatalog
     ? t("skills.title")
-    : currentSessionTab?.kind === "channel-room"
-      ? currentSessionTab.title
-      : currentSessionTab?.kind === "agents"
-        ? t("channels.agents")
-        : currentSessionTab?.kind === "tasks"
-          ? t("channels.tasks")
-          : conversationHeadingTitle(
-            activeThread,
-            currentSessionTab?.kind === "draft" ? currentSessionTab.title : undefined,
-            t("tabs.newConversation"),
-          );
+    : conversationHeadingTitle(
+      activeThread,
+      currentSessionTab?.kind === "draft" ? currentSessionTab.title : undefined,
+      t("tabs.newConversation"),
+    );
   const popOutWindowTitle =
     popOutInit?.kind === "thread"
       ? activeThread?.title?.trim() ||
@@ -2252,12 +2133,14 @@ export function App(): JSX.Element {
   const greetingContext: GreetingContext =
     state.activeContext?.kind === "project"
       ? {
-          kind: "project",
-          projectName: activeProject?.name ?? t("greeting.projectFallback"),
+          kind: "workspace",
+          workspaceName: activeWorkspace?.name ?? t("greeting.workspaceFallback"),
         }
       : { kind: "wuu" };
   const emptyThreadTitle = greetingFor(currentHour, greetingContext);
   type TurnAdmission = {
+    message: QueuedComposerMessage;
+    previousTurnIDs: ReadonlySet<string>;
     thread?: Thread;
     ready: Promise<Thread | undefined>;
     resolve: (thread: Thread | undefined) => void;
@@ -2267,6 +2150,19 @@ export function App(): JSX.Element {
     cancelPreparation: () => void;
   };
   const turnAdmissionsRef = useRef(new Map<string, TurnAdmission>());
+  const [turnAdmissions, setTurnAdmissions] = useState(turnAdmissionsRef.current);
+  const submittingThreadIDs = new Set<string>();
+  for (const [key, admission] of turnAdmissions) {
+    // A server event can acknowledge the message before the RPC returns.
+    if (!threadHasAcceptedComposerMessage(threadForTab(state, key), admission.message, undefined, admission.previousTurnIDs)) {
+      submittingThreadIDs.add(key);
+    }
+  }
+  for (const [key, pending] of Object.entries(pendingComposerMessagesByThread)) {
+    if ([...pending.queued, ...pending.guides].some((message) => message.operationState)) {
+      submittingThreadIDs.add(key);
+    }
+  }
   const queueLanesRef = useRef(new Map<string, { tail: Promise<void>; stopVersion: number }>());
   const stopDeliveredRef = useRef(new Map<string, symbol>());
   const stopTargetsRef = useRef(new Map<string, string>());
@@ -2374,7 +2270,7 @@ export function App(): JSX.Element {
 
   useArtifactAutoPreview({
     thread: activeThread,
-    enabled: Boolean(state.initialized) && appMode === "harness"
+    enabled: Boolean(state.initialized)
       && !poppedOutMode && !isTouchWebShell() && !activeThread?.read_only
       && !showingManagementCatalog && !emptyConversation && !browserOverlaySuppressed
       && !workspaceRightPanelAutoGlobalized
@@ -2412,7 +2308,7 @@ export function App(): JSX.Element {
 
   // The account-based phone app keeps visible session navigation alongside swipes.
   const composerNavigation = !phoneNavigation && compactNavigation && isTouchWebShell() &&
-    mainConversationDockVisible && appMode === "harness" && !poppedOutMode;
+    mainConversationDockVisible && !poppedOutMode;
 
   useEffect(() => {
     // Delivered snapshots may belong to either visible conversation pane.
@@ -2728,11 +2624,6 @@ export function App(): JSX.Element {
     }
     openWorkspaceFileTab({ context, path });
   });
-  const openAgentMemoryDirectory = useStableCallback((path: string): void => {
-    setFocusedWorkspaceContext({ kind: "no_project", cwd: path });
-    setRightPanelManualGlobalized(false);
-    openWorkspaceTool("files");
-  });
   const openWorkspaceFileForThread = useStableCallback((thread: Thread, path: string): void => {
     const context = workspacePanelContext(appStateRef.current.activeContext, thread);
     if (!context) {
@@ -2743,13 +2634,13 @@ export function App(): JSX.Element {
   const rememberWorkspaceDirtyFiles = useStableCallback((dirty: boolean): void => {
     workspaceHasDirtyFilesRef.current = dirty;
   });
-  const sidebarProjectThreadsByProjectID = projectThreadsByProjectID;
+  const sidebarWorkspaceThreadsByWorkspaceID = workspaceThreadsByWorkspaceID;
   const sidebarThreads = useMemo(() => {
     const byID = new Map<string, Thread>();
     for (const thread of cachedScratchThreads) {
       byID.set(thread.id, thread);
     }
-    for (const threads of Object.values(sidebarProjectThreadsByProjectID)) {
+    for (const threads of Object.values(sidebarWorkspaceThreadsByWorkspaceID)) {
       for (const thread of threads) {
         byID.set(thread.id, thread);
       }
@@ -2760,7 +2651,7 @@ export function App(): JSX.Element {
     return sortThreads([...byID.values()]);
   }, [
     cachedScratchThreads,
-    sidebarProjectThreadsByProjectID,
+    sidebarWorkspaceThreadsByWorkspaceID,
     state.threads,
   ]);
   const visibleRunningThreadIDs = useMemo(
@@ -2770,14 +2661,14 @@ export function App(): JSX.Element {
     ),
     [crossWorkdirRunningThreadIDs, sidebarThreads, state.secondaryThread, state.thread],
   );
-  const sidebarProjectThreadSummariesByProjectID = useMemo(
-    () => summarizeProjectThreadsForSidebar(
-      sidebarProjectThreadsByProjectID,
+  const sidebarWorkspaceThreadSummariesByWorkspaceID = useMemo(
+    () => summarizeWorkspaceThreadsForSidebar(
+      sidebarWorkspaceThreadsByWorkspaceID,
       state.threads,
       visibleRunningThreadIDs,
     ),
     [
-      sidebarProjectThreadsByProjectID,
+      sidebarWorkspaceThreadsByWorkspaceID,
       state.threads,
       visibleRunningThreadIDs,
     ],
@@ -2790,15 +2681,6 @@ export function App(): JSX.Element {
     () => pinnedThreadSummaries(sidebarThreadSummaries),
     [sidebarThreadSummaries],
   );
-  const sidebarConversations = useMemo(() => ENABLE_GROUP_CHAT
-    ? collaborationConversations(namedAgents, channelRooms, channelRoomPreferences.pinnedRoomIDs, "", channelRoomPreferences.archivedRoomIDs)
-    : [], [namedAgents, channelRooms, channelRoomPreferences]);
-  const pinnedSidebarConversations = useMemo(
-    () => orderedPinnedCollaborationConversations(sidebarConversations, channelRoomPreferences.pinnedRoomIDs),
-    [sidebarConversations, channelRoomPreferences.pinnedRoomIDs],
-  );
-  const managedSidebar = useMemo(() => managedSidebarThreads(sidebarThreadSummaries, sidebarConversations, deletedAgentIDs),
-    [sidebarThreadSummaries, sidebarConversations, deletedAgentIDs]);
   const sidebarScratchThreads = useMemo(
     () => scratchThreadSummaries(sidebarThreadSummaries, state.projects),
     [sidebarThreadSummaries, state.projects],
@@ -2808,7 +2690,7 @@ export function App(): JSX.Element {
   // threads are the scratch conversations pulled out of
   // sidebarThreadSummaries above. path is intentionally "" — ThreadSidebar
   // special-cases the scratch pseudo id and skips its cwd-path filter.
-  const scratchPseudoProject = useMemo<DesktopProject>(
+  const scratchPseudoWorkspace = useMemo<DesktopProject>(
     () => ({
       id: SCRATCH_PSEUDO_PROJECT_ID,
       name: t("sidebar.conversations"),
@@ -2818,16 +2700,16 @@ export function App(): JSX.Element {
     }),
     [t],
   );
-  const sidebarProjects = useMemo<DesktopProject[]>(
-    () => [scratchPseudoProject, ...state.projects],
-    [scratchPseudoProject, state.projects],
+  const sidebarWorkspaces = useMemo<DesktopProject[]>(
+    () => [scratchPseudoWorkspace, ...state.projects],
+    [scratchPseudoWorkspace, state.projects],
   );
-  const sidebarThreadsByProjectID = useMemo(
-    () => Object.fromEntries(Object.entries({
+  const sidebarThreadsByWorkspaceID = useMemo(
+    () => ({
       [SCRATCH_PSEUDO_PROJECT_ID]: sidebarScratchThreads,
-      ...sidebarProjectThreadSummariesByProjectID,
-    }).map(([id, threads]) => [id, threads.filter(thread => !managedSidebar.threadIDs.has(thread.id))])),
-    [sidebarScratchThreads, sidebarProjectThreadSummariesByProjectID, managedSidebar],
+      ...sidebarWorkspaceThreadSummariesByWorkspaceID,
+    }),
+    [sidebarScratchThreads, sidebarWorkspaceThreadSummariesByWorkspaceID],
   );
   const activeThreadReadOnly = Boolean(activeThread?.read_only);
   const activeThreadIsRunning = isStateActiveThreadRunning(state);
@@ -2934,7 +2816,7 @@ export function App(): JSX.Element {
     }
     return Array.from(names);
   }, [state.thread, state.secondaryThread, state.threads]);
-  const sideThreadPanelVisible = Boolean(appMode === "harness" && activeThreadID && sideThread.entry?.open);
+  const sideThreadPanelVisible = Boolean(activeThreadID && sideThread.entry?.open);
   useEffect(() => {
     if (!sideThreadPanelVisible || isTouchWebShell()) {
       return undefined;
@@ -2949,7 +2831,6 @@ export function App(): JSX.Element {
   // (full-window sheet) right panel blocks it, because that mode makes the
   // entire conversation pane inert.
   const environmentPanelCanShow = Boolean(
-    appMode === "harness" &&
     state.initialized &&
     !poppedOutMode &&
     !rightPanelGlobalized &&
@@ -3150,8 +3031,10 @@ export function App(): JSX.Element {
         : rawContextUsage;
     const streamStatus = activeThreadStreamStatus;
     const defaultEngine = engineInventory?.settings?.default_engine ?? "";
-    const effectiveEngine =
-      (activeThread?.engine_id ?? "") || draftEngine || defaultEngine || "wuu";
+    // A project coordinator runs on the Wuu engine.
+    const effectiveEngine = activeProjectDraft
+      ? "wuu"
+      : (activeThread?.engine_id ?? "") || draftEngine || defaultEngine || "wuu";
     const effectiveEngineInfo = engineInventory?.engines.find(
       (engine) => engine.id === effectiveEngine,
     );
@@ -3160,16 +3043,21 @@ export function App(): JSX.Element {
       ? {
           model: activeThread.model,
           effort: activeThread.model_effort ?? activeThread.model_variant ?? "",
+          speed: activeThread.speed ?? "",
         }
       : {
           model: draftEngineRuntime.model || defaultEngineRuntime.model,
           effort: draftEngineRuntime.effort || defaultEngineRuntime.effort,
+          speed: draftEngineRuntime.speed ?? "",
         };
-    const composerPermissionMode =
-      activeThread?.permission_mode
+    const projectComposer = activeProjectDraft || (activeThread !== undefined && isProjectCoordinator(activeThread));
+    const composerPermissionMode = activeProjectDraft
+      ? "read_only"
+      : activeThread?.permission_mode
       || (!activeThread && effectiveEngine !== "wuu"
         ? draftPermissionMode || "unconfined"
         : conversationRuntime?.permissions?.mode);
+    const composerWorktree = draftWorktreeFor(state.activeContext, state.gitStatus);
     const composerRuntime = conversationRuntime && composerPermissionMode
       ? {
           ...conversationRuntime,
@@ -3179,7 +3067,7 @@ export function App(): JSX.Element {
     return (
       <>
       <Composer
-        canSelectProject={!composerNavigation && !activeThread && !activePendingNewThreadTurn}
+        canSelectWorkspace={!composerNavigation && !activeThread && !activePendingNewThreadTurn}
         hideExpandButton={composerNavigation}
         topAccessory={pendingUserQuestionOffer ? (
           <UserQuestionCard
@@ -3202,17 +3090,23 @@ export function App(): JSX.Element {
         ) : undefined}
         variant={variant}
         mainConversation
+        permissionLocked={projectComposer}
+        placeholder={activeProjectDraft ? t("projects.draftPlaceholder") : undefined}
         containerRef={variant === "dock" ? dockComposerRef : undefined}
         prompt={prompt}
         promptRevision={promptRevision}
         setPrompt={setPromptFromInput}
         files={composerFiles}
+        selections={composerSelections}
+        onChangeSelection={(selection) => setComposerSelections((current) => current.map((entry) => entry.id === selection.id ? selection : entry))}
+        onRemoveSelection={(id) => setComposerSelections((current) => current.filter((entry) => entry.id !== id))}
         images={composerImages}
         queuedMessages={activePendingThreadCreation
           ? pendingComposerMessagesForActiveThread(activePendingThreadCreation.sessionTabID).queued
           : queuedMessages}
         guideMessages={guideMessages}
         sendDisabled={submissionTargetPending || Boolean(activeThread && stopRequests[activeThread.id])}
+        submitting={submittingThreadIDs.has(activeThread?.id ?? state.activeSessionTabID)}
         stopState={activeThread ? stopRequests[activeThread.id] : undefined}
         running={
           Boolean(activePendingThreadCreation) ||
@@ -3240,9 +3134,18 @@ export function App(): JSX.Element {
         initialized={composerRuntime}
         engines={engineInventory?.engines}
         activeEngine={effectiveEngine !== "wuu" ? effectiveEngine : ""}
-        engineLocked={Boolean(activeThread)}
+        engineLocked={Boolean(activeThread) || activeProjectDraft}
         engineModel={effectiveEngineRuntime.model}
         engineEffort={effectiveEngineRuntime.effort}
+        engineSpeed={effectiveEngineRuntime.speed}
+        onSelectSpeed={async (speed) => {
+          if (effectiveEngine === "wuu" || activeThread) return selectRuntimeSpeed(speed);
+          const runtime = { ...effectiveEngineRuntime, speed };
+          setDraftEngineRuntime(runtime);
+          draftEngineRuntimeByID.current[effectiveEngine] = runtime;
+          writeDraftEngineMemory({ engine: effectiveEngine, ...runtime });
+          return true;
+        }}
         onSelectEngine={selectDraftEngine}
         onSelectEngineModel={(model, effort) => {
           const runtime = { model, effort };
@@ -3264,15 +3167,29 @@ export function App(): JSX.Element {
             writeDraftEngineMemory({
               engine: effectiveEngine,
               model: effectiveEngineRuntime.model,
+              speed: effectiveEngineRuntime.speed,
               effort,
             });
           }
         }}
         gitStatus={state.gitStatus}
         branchPickerDisabled={viewContextSwitchPending}
+        worktree={activeProjectDraft ? undefined : {
+          enabled: Boolean(composerWorktree),
+          startBranch: composerWorktree?.startBranch ?? "",
+          onToggle: () => {
+            const cwd = state.activeContext?.cwd;
+            setDraftWorktree(composerWorktree || !cwd ? undefined : { cwd, startBranch: "" });
+          },
+          onSelectStartBranch: (startBranch) => {
+            const cwd = state.activeContext?.cwd;
+            if (cwd) setDraftWorktree({ cwd, startBranch });
+            setBranchMenuOpen(false);
+          },
+        }}
         projects={state.projects}
         activeContext={state.activeContext}
-        activeProject={activeProject}
+        activeWorkspace={activeWorkspace}
         compactDisabledReason={
           !activeThread
             ? t("app.openConversationFirst")
@@ -3298,8 +3215,8 @@ export function App(): JSX.Element {
         branchMenuOpen={branchMenuOpen}
         menuRef={runtimeMenuRef}
         accessMenuRef={accessMenuRef}
-        projectFilter={projectFilter}
-        setProjectFilter={setProjectFilter}
+        workspaceFilter={workspaceFilter}
+        setWorkspaceFilter={setWorkspaceFilter}
         onToggleMenu={() => {
           setAccessMenuOpen(false);
           setBranchMenuOpen(false);
@@ -3347,20 +3264,20 @@ export function App(): JSX.Element {
           void selectPermissionMode(mode, approveForMe);
         }}
         onOpenSettings={() => {
-          closeProjectMenus();
+          closeWorkspaceMenus();
           setSettingsInitialPage("providers");
           setSettingsOpen(true);
         }}
         onOpenSkillsCatalog={openSkillsTab}
-        onSelectProject={(id) => void selectProjectForNewThread(id)}
+        onSelectWorkspace={(id) => void selectWorkspaceForNewThread(id)}
         onSelectNoProject={() => void useNoProject(false)}
         onSelectGitBranch={checkoutBranch}
         onCreateGitBranch={async (branch) => {
           await createAndCheckoutBranch(branch);
           setBranchMenuOpen(false);
         }}
-        onCreateProject={() => void createBlankProject()}
-        onOpenProject={() => void chooseProjectFolder()}
+        onCreateWorkspace={() => void createBlankProject()}
+        onOpenWorkspace={() => void chooseProjectFolder()}
         onStartNewThread={startNewThreadWithComposerFocus}
         onHandoffSession={handoffActiveThread}
         onOpenSideThread={openSideThreadPanel}
@@ -3402,7 +3319,7 @@ export function App(): JSX.Element {
   }
 
   function openProviderSettings(): void {
-    closeProjectMenus();
+    closeWorkspaceMenus();
     setSettingsInitialPage("providers");
     setSettingsOpen(true);
   }
@@ -3423,7 +3340,7 @@ export function App(): JSX.Element {
     // Used by both the sidebar entry (when one is added later) and the
     // archive-tip toast: always jump the Settings shell to the Archive page,
     // even if Settings was already open on a different tab.
-    setProjectMenuOpen(false);
+    setWorkspaceMenuOpen(false);
     setRuntimeMenuOpen(false);
     setCodexRuntimeMenu(null);
     setSettingsInitialPage("archive");
@@ -3459,15 +3376,15 @@ export function App(): JSX.Element {
     }
   }
 
-  function closeProjectMenus(): void {
-    setProjectMenuOpen(false);
+  function closeWorkspaceMenus(): void {
+    setWorkspaceMenuOpen(false);
     setRuntimeMenuOpen(false);
     setAccessMenuOpen(false);
     setCodexRuntimeMenu(null);
     setBranchMenuOpen(false);
     setEnvironmentPanelMenu(null);
     setSettingsOpen(false);
-    setProjectFilter("");
+    setWorkspaceFilter("");
   }
 
   const {
@@ -3488,7 +3405,7 @@ export function App(): JSX.Element {
         activeThreadForState(appStateRef.current),
       )?.cwd,
     setAppState: setState,
-    closeProjectMenus,
+    closeWorkspaceMenus,
     setEnvironmentPanelOpen,
     setEnvironmentPanelDismissed,
     setEnvironmentPanelMenu,
@@ -3561,14 +3478,14 @@ export function App(): JSX.Element {
   }
 
   const {
-    selectProjectForNewThread,
-    startNewThreadForProject,
+    selectWorkspaceForNewThread,
+    startNewThreadInWorkspace,
     createBlankProject,
     chooseProjectFolder,
     removeProject,
     relocateProject,
     useNoProject,
-  } = createProjectRuntimeActions({
+  } = createWorkspaceRuntimeActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
     getPrimaryComposerDraft: currentPrimaryComposerDraft,
@@ -3578,7 +3495,7 @@ export function App(): JSX.Element {
     restoreLoadedRuntimeComposerDraft,
     nextDraftSessionTab,
     isDraftPending: (tabID) => pendingThreadCreationsRef.current.has(tabID),
-    closeProjectMenus,
+    closeWorkspaceMenus,
     
     beginViewSwitch,
     finishViewSwitch,
@@ -3588,7 +3505,7 @@ export function App(): JSX.Element {
 
   const {
     selectThread,
-    selectProjectThread,
+    selectWorkspaceThread,
     activateThread,
     selectChildAgent,
   } = createThreadActivationActions({
@@ -3601,8 +3518,8 @@ export function App(): JSX.Element {
     resetSplitComposerDrafts: () =>
       setSplitComposerDrafts(initialSplitComposerDrafts()),
     getSidebarThreads: () => sidebarThreads,
-    getSidebarProjectThreadsByProjectID: () =>
-      sidebarProjectThreadsByProjectID,
+    getSidebarWorkspaceThreadsByWorkspaceID: () =>
+      sidebarWorkspaceThreadsByWorkspaceID,
     getRunningThreadIDs: () => crossWorkdirRunningThreadIDs,
     
     beginViewSwitch,
@@ -3620,7 +3537,6 @@ export function App(): JSX.Element {
       if (!payload || [payload.thread_id, payload.workdir, payload.tabID]
         .some((value) => typeof value !== "string" || !value.trim())) return;
       setPendingBrowserDock({ target: payload, ready: false });
-      setAppMode("harness");
       revealConversationFromFocusedWorkspace();
       void activateThread(payload.thread_id).then(() => {
         setPendingBrowserDock((current) => current?.target === payload
@@ -3647,17 +3563,10 @@ export function App(): JSX.Element {
     const api = window.wuu as Partial<typeof window.wuu>;
     if (typeof api.onCodexPetJumpRequest !== "function") return;
     return api.onCodexPetJumpRequest((event) => {
-      setAppMode("harness");
       revealConversationFromFocusedWorkspace();
       void activateThread(event.thread_id);
     });
   }, [activateThread, revealConversationFromFocusedWorkspace]);
-
-  const openCollaborationHarnessSession = useStableCallback((id: string) => {
-    openHarnessView();
-    revealConversationFromFocusedWorkspace();
-    void activateThread(id);
-  });
 
   const {
     startNewThread,
@@ -3684,147 +3593,95 @@ export function App(): JSX.Element {
     selectRuntimeContext,
   });
 
-  function prepareChannelTab(): void {
+  function closePrimaryPluginView(): void {
     desktopWorkbenchController.deactivateRegion("primary");
-    setProjectMenuOpen(false);
-    setRuntimeMenuOpen(false);
-    setCodexRuntimeMenu(null);
-    setEnvironmentPanelMenu(null);
-    setRightPanelOpenWithMotion(false);
   }
 
-  function selectChannelRoom(roomID: string): void {
-    if (channelRoomPreferences.archivedRoomIDs.includes(roomID)) unarchiveChannelRoom({ id: roomID });
-    setAgentOnboardingActive(false);
-    // A newly opened room can arrive before the directory update renders.
-    setSelectedChannelRoomIDState(roomID);
-    selectedCollaborationAgentRequestRef.current = "";
-    setSelectedCollaborationAgentID("");
-    setCollaborationSection("rooms");
-    setAppMode("collaboration");
-    clearChannelRoomUnread(roomID);
-    prepareChannelTab();
+  // The active draft starts a project or an ordinary conversation; the entry
+  // the user chose decides which.
+  function setDraftProjectMode(project: boolean): void {
+    setState((current) => ({
+      ...current,
+      sessionTabs: current.sessionTabs.map((tab) => {
+        if (tab.id !== current.activeSessionTabID || tab.kind !== "draft" || Boolean(tab.project) === project) return tab;
+        const { project: _wasProject, ...conversation } = tab;
+        return project
+          ? { ...tab, project: true, title: t("projects.newProject") }
+          : { ...conversation, title: tab.title === t("projects.newProject") ? t("tabs.newConversation") : tab.title };
+      }),
+    }));
   }
 
-  const updateChannelRoomDraft = useCallback((
-    roomID: string,
-    draft: ComposerDraftState,
-  ): void => {
-    if (!roomID) return;
-    setChannelComposerDrafts((current) => {
-      const existing = current[roomID];
-      if (
-        existing?.prompt === draft.prompt
-        && existing.images === draft.images
-        && existing.files === draft.files
-      ) {
-        return current;
-      }
-      return { ...current, [roomID]: draft };
-    });
-  }, []);
-
-  const updateSelectedChannelRoomDraft = useCallback((draft: ComposerDraftState): void => {
-    updateChannelRoomDraft(selectedChannelRoomID, draft);
-  }, [selectedChannelRoomID, updateChannelRoomDraft]);
-
-  function openCollaborationView(): void {
-    setAppMode("collaboration");
-    prepareChannelTab();
-  }
-
-  function openHarnessView(): void {
-    desktopWorkbenchController.deactivateRegion("primary");
-    setAppMode("harness");
-    selectedCollaborationAgentRequestRef.current = "";
-    setSelectedCollaborationAgentID("");
-  }
-
-  function openChannelsView(): void {
-    selectedCollaborationAgentRequestRef.current = "";
-    setSelectedCollaborationAgentID("");
-    setCollaborationSection("rooms");
-    openCollaborationView();
-  }
-
-  async function selectCollaborationAgent(agentID: string, workspaceRoot?: string): Promise<void> {
-    setAgentOnboardingActive(false);
-    if (!namedAgents.some((agent) => agent.id === agentID)) return;
-    try {
-      await openCollaborationAgentConversation(agentID, undefined, workspaceRoot);
-    } catch (error) {
-      if (selectedCollaborationAgentRequestRef.current === agentID) showErrorToast(error);
+  // A project starts as a draft like a conversation: its first message names
+  // the project and becomes the coordinator's first instruction.
+  function startNewProject(workspaceID?: string): void {
+    if (!projectAgentEnabled) return;
+    const current = appStateRef.current;
+    const targetID = workspaceID
+      ?? (current.activeContext?.kind === "project" ? current.activeContext.project_id : undefined)
+      ?? current.projects.find((workspace) => !workspace.missing)?.id;
+    const workspace = current.projects.find((candidate) => candidate.id === targetID);
+    if (!workspace || workspace.missing) {
+      showErrorToast(t("projects.needsWorkspace"));
+      return;
     }
-  }
-
-  async function openCollaborationAgentConversation(agentID: string, onboarding?: ChannelRoomOnboarding, workspaceRoot?: string): Promise<void> {
-    const requestGeneration = ++directMessageRequestGenerationRef.current;
-    selectedCollaborationAgentRequestRef.current = agentID;
-    setSelectedCollaborationAgentID(agentID);
-    setCollaborationSection("rooms");
-    setAppMode("collaboration");
-    prepareChannelTab();
-    const existingDirectMessage = activeChannelRooms.find(
-      (room) => room.kind === "dm" && (!workspaceRoot || room.workspace_root === workspaceRoot) && room.members.some(
-        (member) => member.member_type === "agent" && member.member_id === agentID,
-      ),
-    );
-    if (existingDirectMessage) {
-      setSelectedChannelRoomIDState(existingDirectMessage.id);
-      clearChannelRoomUnread(existingDirectMessage.id);
-    }
-    const isCurrentRequest = () => selectedCollaborationAgentRequestRef.current === agentID
-      && requestGeneration === directMessageRequestGenerationRef.current;
-    const result = await window.wuu.openChannelDirectMessage({
-      agent_id: agentID, ...(onboarding ? { onboarding } : {}), ...(workspaceRoot ? { workspace_root: workspaceRoot } : {}),
-    }).catch((reason: unknown) => {
-      if (!isCurrentRequest()) return null;
-      setSelectedCollaborationAgentID("");
-      throw reason;
-    });
-    if (!result || !isCurrentRequest()) return;
-    // An older directory poll must not erase the DM that was just opened.
-    channelDirectoryGenerationRef.current += 1;
-    setChannelRooms((current) => {
-      const existing = current.findIndex((room) => room.id === result.room.id);
-      if (existing < 0) return [...current, result.room];
-      const next = [...current];
-      next[existing] = result.room;
-      return next;
-    });
-    if (channelRoomPreferences.archivedRoomIDs.includes(result.room.id)) unarchiveChannelRoom(result.room);
-    setSelectedChannelRoomIDState(result.room.id);
-    setSelectedCollaborationAgentID("");
-    clearChannelRoomUnread(result.room.id);
-  }
-
-  function openNewNamedAgent(): void {
+    closePrimaryPluginView();
+    revealConversationFromFocusedWorkspace();
     closeCompactSessionSwitcher();
-    openCollaborationView();
-    setCollaborationSection("rooms");
-    setAgentOnboardingActive(true);
-    setAgentOnboardingDraft((current) => current ?? createAgentOnboardingDraft(state.initialized));
+    const origin = document.activeElement;
+    focusHeroAfter(
+      startNewThreadInWorkspace(workspace.id).then((started) => {
+        if (started) setDraftProjectMode(true);
+        return started;
+      }),
+      origin,
+      (next) => next.activeContext?.kind === "project" && next.activeProjectId === workspace.id,
+    );
   }
 
-  function openAgentProviderSettings(): void {
-    setSettingsInitialPage("providers");
-    setSettingsOpen(true);
+  async function adoptIntoProject(projectID: string, threadID: string): Promise<void> {
+    if (!projectAgentEnabled || !window.wuu.projectSession) return;
+    try {
+      const { thread } = await window.wuu.projectSession({ action: "adopt", project_id: projectID, session_id: threadID });
+      updateCachedSidebarThread(thread);
+    } catch (error) {
+      showErrorToast(error);
+    }
   }
 
-  function openNewChannelRoom(): void {
-    setAgentOnboardingActive(false);
-    openChannelsView();
-    setNewRoomRequest((count) => count + 1);
-  }
-
-  function openAgentManagement(): void {
-    setAgentOnboardingActive(false);
-    selectedCollaborationAgentRequestRef.current = "";
-    setSelectedCollaborationAgentID("");
-    setCollaborationSection("agents");
-    setAppMode("collaboration");
-    prepareChannelTab();
-  }
+  const openProjectThread = useStableCallback((threadID: string) => {
+    closePrimaryPluginView();
+    void activateThread(threadID);
+  });
+  const openProjectPanel = useStableCallback((project: ProjectThread) => {
+    openWorkspaceProjectTab(project.id, baseThreadTitle(project));
+  });
+  const releaseProjectSession = useStableCallback((session: ProjectThread) => {
+    if (!projectAgentEnabled || !session.project_id || !window.wuu.projectSession) return;
+    void window.wuu.projectSession({ action: "release", project_id: session.project_id, session_id: session.id })
+      .then(({ thread }) => updateCachedSidebarThread(thread))
+      .catch(showErrorToast);
+  });
+  const projectActions = useMemo<ProjectActions>(() => ({
+    threads: sidebarThreads,
+    openThread: openProjectThread,
+    openProjectPanel,
+    release: releaseProjectSession,
+  }), [openProjectPanel, openProjectThread, releaseProjectSession, sidebarThreads]);
+  const selectedProjectID = activeThread && isProjectCoordinator(activeThread)
+    ? activeThread.id
+    : activeThread?.source === PROJECT_SESSION_SOURCE ? activeThread.project_id : undefined;
+  const selectedProject = sidebarThreads.find((thread) => thread.id === selectedProjectID);
+  const selectedProjectTitle = selectedProject ? baseThreadTitle(selectedProject) : selectedProjectID;
+  useEffect(() => {
+    syncWorkspaceProjectTab(selectedProjectID && selectedProjectTitle
+      ? { id: selectedProjectID, title: selectedProjectTitle }
+      : undefined);
+  }, [selectedProjectID, selectedProjectTitle, syncWorkspaceProjectTab]);
+  const activeProjectSessions = useMemo(
+    () => activeThread && isProjectCoordinator(activeThread) ? projectSessionsOf(activeThread.id, sidebarThreads) : [],
+    [activeThread, sidebarThreads],
+  );
 
   function focusHeroAfter(
     action: Promise<void | boolean>,
@@ -3853,7 +3710,7 @@ export function App(): JSX.Element {
     const origin = document.activeElement;
     const context = appStateRef.current.activeContext;
     focusHeroAfter(
-      startNewThread(),
+      startNewThread().then(() => setDraftProjectMode(false)),
       origin,
       (current) => sameRuntimeContext(current.activeContext, context),
     );
@@ -3923,6 +3780,7 @@ export function App(): JSX.Element {
     void startNewThread().then(() => {
       setComposerImages([]);
       setComposerFiles([]);
+      setComposerSelections([]);
       setPrompt(`/${skill.name} `);
       requestMainComposerFocus("hero", origin);
     });
@@ -3972,12 +3830,15 @@ export function App(): JSX.Element {
     return result;
   }
 
-  function startNewThreadForProjectWithComposerFocus(id: string): void {
+  function startNewThreadInWorkspaceWithComposerFocus(id: string): void {
     const origin = document.activeElement;
     focusHeroAfter(
-      id === SCRATCH_PSEUDO_PROJECT_ID
+      (id === SCRATCH_PSEUDO_PROJECT_ID
         ? useNoProject(true)
-        : startNewThreadForProject(id),
+        : startNewThreadInWorkspace(id)).then((started) => {
+        setDraftProjectMode(false);
+        return started;
+      }),
       origin,
       (current) =>
         id === SCRATCH_PSEUDO_PROJECT_ID
@@ -4031,88 +3892,6 @@ export function App(): JSX.Element {
     });
   }
 
-  function updateChannelRoomPreferences(
-    update: (current: ChannelRoomPreferences) => ChannelRoomPreferences,
-  ): void {
-    setChannelRoomPreferences((current) => {
-      const next = update(current);
-      writeChannelRoomPreferences(next);
-      return next;
-    });
-  }
-
-  function unarchiveChannelRoom(room: Pick<ChannelRoom, "id">): void {
-    updateChannelRoomPreferences((current) => unarchiveChannelRoomPreference(current, room.id));
-  }
-
-  async function updateCollaborationConversationPreference(conversation: CollaborationConversation, action: "pin" | "hide"): Promise<void> {
-    try {
-      // Agents without a DM need a persisted conversation ID, but managing it
-      // must not navigate away from the user's current chat.
-      const room = conversation.room ?? (await window.wuu.openChannelDirectMessage({ agent_id: conversation.agent!.id })).room;
-      if (!conversation.room) setChannelRooms((current) => [...current.filter((entry) => entry.id !== room.id), room]);
-      updateChannelRoomPreferences((current) => action === "pin"
-        ? togglePinnedChannelRoom(current, room.id)
-        : archiveChannelRoomPreference(current, room.id));
-    } catch (reason) {
-      showErrorToast(reason);
-    }
-  }
-
-  async function deleteCollaborationAgent(agentID: string): Promise<void> {
-    if (deletedAgentIDsRef.current.has(agentID)) return;
-    deletedAgentIDsRef.current.add(agentID);
-    setDeletedAgentIDs(new Set(deletedAgentIDsRef.current));
-    ++channelDirectoryGenerationRef.current;
-    try {
-      await window.wuu.deleteNamedAgent({ agent_id: agentID });
-      setNamedAgents((agents) => agents.filter((agent) => agent.id !== agentID));
-      setChannelRooms((rooms) => rooms
-        .filter((room) => room.kind !== "dm" || !room.members.some((member) => member.member_type === "agent" && member.member_id === agentID))
-        .map((room) => ({ ...room, members: room.members.filter((member) => member.member_type !== "agent" || member.member_id !== agentID) })));
-    } catch (reason) {
-      // Deletion can commit before execution cleanup fails. Reconcile that
-      // outcome before deciding whether to restore the optimistic entry.
-      let deleted = false;
-      try {
-        const [agents, rooms] = await Promise.all([window.wuu.listNamedAgents(), window.wuu.listChannelRooms()]);
-        setNamedAgents(agents.agents);
-        setChannelRooms(rooms.rooms);
-        deleted = !agents.agents.some((agent) => agent.id === agentID);
-      } catch {
-        // Restore the previous directory when the authoritative read fails.
-      }
-      if (!deleted) {
-        deletedAgentIDsRef.current.delete(agentID);
-        setDeletedAgentIDs(new Set(deletedAgentIDsRef.current));
-      }
-      throw reason;
-    } finally {
-      // Invalidate reads started before or during the mutation. Keep successful
-      // tombstones for this renderer so other in-flight directory reads cannot
-      // briefly resurrect the deleted identity.
-      ++channelDirectoryGenerationRef.current;
-    }
-  }
-
-  async function deleteCollaborationConversation(conversation: CollaborationConversation): Promise<void> {
-    const { agent, room, name } = conversation;
-    if (!agent && !room) return;
-    if (!window.confirm(t(room?.kind === "dm" ? "channels.deleteConversationConfirm" : room ? "channels.deleteRoomConfirm" : "channels.deleteAgentConfirm", { name }))) return;
-    try {
-      if (!room) {
-        await deleteCollaborationAgent(agent!.id);
-        return;
-      }
-      await window.wuu.deleteChannelRoom({ room_id: room.id });
-      const [agentResult, roomResult] = await Promise.all([window.wuu.listNamedAgents(), window.wuu.listChannelRooms()]);
-      setNamedAgents(agentResult.agents);
-      setChannelRooms(roomResult.rooms);
-    } catch (reason) {
-      showErrorToast(reason);
-    }
-  }
-
   const {
     updateRuntimeSettings,
     updateProviderSettings,
@@ -4123,6 +3902,7 @@ export function App(): JSX.Element {
     loadCodexModelsForProvider,
     selectRuntimeModel,
     selectRuntimeEffort,
+    selectRuntimeSpeed,
     selectPermissionMode,
     interrupt,
     interruptPane,
@@ -4153,15 +3933,13 @@ export function App(): JSX.Element {
     getActiveTitle: () => activeTitle,
     getPrimaryComposerDraft: currentPrimaryComposerDraft,
     setSplitComposerDrafts,
-    setPrompt,
-    setComposerImages,
-    setComposerFiles,
+    restorePrimaryComposerDraft,
     
     cancelViewSwitch,
     setContextCompositionEntries,
     setInstructionFilesEntries,
     scheduleStreamScroll,
-    closeProjectMenus,
+    closeWorkspaceMenus,
     setSettingsInitialPage,
     setSettingsOpen,
   });
@@ -4184,13 +3962,15 @@ export function App(): JSX.Element {
     setPendingFork,
     setHistoryMessageEdit,
     
-    getPrompt: () => currentPrimaryComposerDraft().prompt,
-    getComposerImages: () => composerImages,
-    getComposerFiles: () => composerFiles,
-    getSplitComposerDrafts: () => splitComposerDrafts,
+    getPrompt: () => composerDraftsRef.current.primary().prompt,
+    getComposerImages: () => composerDraftsRef.current.primary().images,
+    getComposerFiles: () => composerDraftsRef.current.primary().files,
+    getComposerSelections: () => composerDraftsRef.current.primary().selections ?? [],
+    getSplitComposerDrafts: () => composerDraftsRef.current.split,
     setPrompt,
     setComposerImages,
     setComposerFiles,
+    setComposerSelections,
     setSplitComposerDrafts,
     restorePrimaryComposerDraft,
     closeConversationSearch,
@@ -4204,6 +3984,17 @@ export function App(): JSX.Element {
     sendComposerMessageToThread,
     worktreeForkNonGitReason: t("app.worktreeRequiresGit"),
   });
+
+  function preserveFailedComposerMessage(threadID: string, message: QueuedComposerMessage): void {
+    const failedTurn: Turn = {
+      ...createOptimisticTurn(message, Date.now()),
+      status: "failed",
+      error: { message: t("composer.sendFailed") },
+    };
+    const preserve = (state: AppState) => updateThreadByID(state, threadID, (thread) => upsertTurn(thread, failedTurn));
+    appStateRef.current = preserve(appStateRef.current);
+    setState(preserve);
+  }
 
   function sendPrompt(
     runningAction: "queue" | "steer" = "queue",
@@ -4221,6 +4012,7 @@ export function App(): JSX.Element {
       draft.images,
       draft.files,
       contentParts,
+      draft.selections,
     );
     const activeDocumentPath = pane ? undefined : activeWorkspaceFile;
     const message =
@@ -4283,10 +4075,13 @@ export function App(): JSX.Element {
       if (sent) return;
       submittedThread ??= admission?.thread;
       const latest = appStateRef.current;
-      const recoveryDraft = { prompt: message.text, images: message.images, files: message.files };
+      const recoveryDraft = { ...composerContextFromMessage(message.text, message.contentParts), images: message.images, files: message.files };
+      const latestTab = activeSessionTab(latest);
       const stillTarget = submittedThread
-        ? threadForPane(latest, targetPane)?.id === submittedThread.id
-        : latest.activeSessionTabID === sessionTabID;
+        ? latestTab?.kind === "thread" &&
+          (pane ? Boolean(latest.secondaryThread) : !latest.secondaryThread) &&
+          threadForPane(latest, targetPane)?.id === submittedThread.id
+        : latestTab?.kind === "draft" && latest.activeSessionTabID === sessionTabID;
       const latestDraft = pane ? composerDraftsRef.current.split[pane] : composerDraftsRef.current.primary();
       if (stillTarget && !composerDraftHasContent(latestDraft)) {
         if (pane) {
@@ -4296,15 +4091,7 @@ export function App(): JSX.Element {
         }
       } else if (submittedThread) {
         // Keep failed input in its conversation without replacing a newer draft.
-        const failedTurn: Turn = {
-          ...createOptimisticTurn(message, Date.now()),
-          status: "failed",
-          error: { message: t("composer.sendFailed") },
-        };
-        const threadID = submittedThread.id;
-        const preserve = (state: AppState) => updateThreadByID(state, threadID, (thread) => upsertTurn(thread, failedTurn));
-        appStateRef.current = preserve(appStateRef.current);
-        setState(preserve);
+        preserveFailedComposerMessage(submittedThread.id, message);
       } else {
         // Thread creation failed before there was a conversation to retain the
         // input. A separate draft must not replace newer work in the source tab.
@@ -4659,6 +4446,7 @@ export function App(): JSX.Element {
     targetThread = activeThreadForState(appStateRef.current),
     targetPane = appStateRef.current.activePane,
     onThreadCreated?: (thread: Thread) => void,
+    prepareThread?: () => Promise<Thread>,
   ): Promise<boolean> {
     // Captured before any await: on a brand-new conversation the thread
     // itself is created over IPC first, and the optimistic turn's live
@@ -4675,6 +4463,7 @@ export function App(): JSX.Element {
       !currentState.initialized ||
       targetThread?.read_only ||
       submissionTargetPending ||
+      turnAdmissionsRef.current.has(targetThread?.id ?? currentState.activeSessionTabID) ||
       (targetThread && isThreadRunning(targetThread) &&
         !activeTurnIsAnswerReady(targetThread))
     ) {
@@ -4683,8 +4472,14 @@ export function App(): JSX.Element {
     const activeContext = targetThread
       ? resolveThreadRuntimeContext(targetThread, currentState.projects)
       : currentState.activeContext;
-    const newThreadEngine =
-      (targetThread?.engine_id ?? "")
+    const sendingDraftTab = targetThread
+      ? undefined
+      : currentState.sessionTabs.find((tab) => tab.id === currentState.activeSessionTabID);
+    const projectDraft = currentState.initialized?.features?.project_agent === true && sendingDraftTab?.kind === "draft" && sendingDraftTab.project === true &&
+      activeContext.kind === "project" ? sendingDraftTab : undefined;
+    const newThreadEngine = projectDraft
+      ? "wuu"
+      : (targetThread?.engine_id ?? "")
       || draftEngine
       || engineInventory?.settings?.default_engine
       || "wuu";
@@ -4698,10 +4493,14 @@ export function App(): JSX.Element {
     const newThreadEngineRuntime = {
       model: draftEngineRuntime.model || defaultExternalRuntime.model,
       effort: draftEngineRuntime.effort || defaultExternalRuntime.effort,
+      speed: draftEngineRuntime.speed,
     };
+    const newThreadWorktree = targetThread ? undefined : draftWorktreeFor(activeContext, currentState.gitStatus);
     let resolveAdmission!: TurnAdmission["resolve"];
     let cancelPreparation!: () => void;
     const admission: TurnAdmission = {
+      message,
+      previousTurnIDs: new Set(targetThread?.turns.map((turn) => turn.id)),
       thread: targetThread,
       ready: new Promise((resolve) => { resolveAdmission = resolve; }),
       resolve: (thread) => resolveAdmission(thread),
@@ -4712,12 +4511,13 @@ export function App(): JSX.Element {
     };
     const admissionKey = targetThread?.id ?? currentState.activeSessionTabID;
     turnAdmissionsRef.current.set(admissionKey, admission);
+    setTurnAdmissions(new Map(turnAdmissionsRef.current));
     const optimisticTurn = createOptimisticTurn(message, sendClickedAtMs);
-    const previousTurnIDs = new Set(targetThread?.turns.map((turn) => turn.id));
+    const previousTurnIDs = admission.previousTurnIDs;
     if (!targetThread || activeThreadIDForState(currentState) === targetThread.id) {
-      requestSubmittedQueryScroll(optimisticTurn.items[0].id);
-      appStateRef.current = { ...currentState, running: true, status: localizedText("app.sendingRequest") };
-      setState((current) => ({ ...current, running: true, status: localizedText("app.sendingRequest") }));
+      if (!prepareThread) requestSubmittedQueryScroll(optimisticTurn.items[0].id);
+      appStateRef.current = { ...currentState, running: true, status: "" };
+      setState((current) => ({ ...current, running: true, status: "" }));
     }
     let optimisticTurnID: string | undefined;
     let optimisticThreadID: string | undefined;
@@ -4738,10 +4538,26 @@ export function App(): JSX.Element {
     }) : undefined;
     try {
       let thread =
-        targetThread ??
+        (prepareThread ? await prepareThread() : targetThread) ??
         requireThread(
-          await Promise.race([window.wuu.startThread({
+          await Promise.race([window.wuu.startThread(projectDraft && activeContext.kind === "project" ? {
+            // A renamed draft names the project; otherwise its goal does.
+            project: { name: customDraftConversationTitle(projectDraft.title, t("projects.newProject")) || projectNameFromGoal(text) },
+            workspace_id: activeContext.project_id,
+            cwd: activeContext.cwd,
+            engine: "wuu",
+            provider: currentState.initialized?.provider,
+            model: currentState.initialized?.model,
+            effort: currentState.initialized?.variant || currentState.initialized?.effort,
+            speed: currentState.initialized?.speed,
+          } satisfies ThreadStartParams : {
             ...(draftEngine ? { engine: draftEngine } : {}),
+            ...(newThreadWorktree
+              ? {
+                  workspace: "worktree",
+                  ...(newThreadWorktree.startBranch ? { base_revision: newThreadWorktree.startBranch } : {}),
+                } satisfies ThreadStartParams
+              : {}),
             ...(newThreadEngine !== "wuu"
               ? {
                   ...newThreadEngineRuntime,
@@ -4751,6 +4567,7 @@ export function App(): JSX.Element {
                   provider: currentState.initialized?.provider,
                   model: currentState.initialized?.model,
                   effort: currentState.initialized?.variant || currentState.initialized?.effort,
+                  speed: currentState.initialized?.speed,
                   permission_mode: currentState.initialized?.permissions?.mode,
                   approve_for_me: currentState.initialized?.permissions?.approve_for_me,
                 } satisfies ThreadStartParams),
@@ -4774,7 +4591,7 @@ export function App(): JSX.Element {
           }), cancelledCreation!]),
           "thread/start did not return a thread",
         );
-      if (!targetThread && !creationCancelled) {
+      if (!targetThread && !creationCancelled && !projectDraft) {
         const draftTab = currentState.sessionTabs.find(
           (tab) => tab.id === currentState.activeSessionTabID,
         );
@@ -4800,6 +4617,7 @@ export function App(): JSX.Element {
       if (!targetThread) {
         turnAdmissionsRef.current.set(thread.id, admission);
         turnAdmissionsRef.current.delete(admissionKey);
+        setTurnAdmissions(new Map(turnAdmissionsRef.current));
         const lane = queueLanesRef.current.get(admissionKey);
         if (lane) {
           queueLanesRef.current.set(thread.id, lane);
@@ -4825,6 +4643,9 @@ export function App(): JSX.Element {
         };
         appStateRef.current = adoptThread(appStateRef.current);
         setState(adoptThread);
+      }
+      if (prepareThread && activeThreadIDForState(appStateRef.current) === thread.id) {
+        requestSubmittedQueryScroll(optimisticTurn.items[0].id);
       }
       optimisticTurnID = optimisticTurn.id;
       optimisticThreadID = thread.id;
@@ -4936,6 +4757,7 @@ export function App(): JSX.Element {
         // Re-evaluate a locally cancelled preparation with no server event.
         setStopRequests({ ...stopRequestsRef.current });
       }
+      setTurnAdmissions(new Map(turnAdmissionsRef.current));
     }
     return true;
   }
@@ -4943,8 +4765,9 @@ export function App(): JSX.Element {
   async function sendComposerMessageToThread(
     message: QueuedComposerMessage,
     targetThread: Thread,
+    prepareThread?: () => Promise<Thread>,
   ): Promise<boolean> {
-    return sendComposerMessage(message, targetThread);
+    return sendComposerMessage(message, targetThread, appStateRef.current.activePane, undefined, prepareThread);
   }
 
   const failedDraftTabID = failedDraftTabIDs[0];
@@ -5045,9 +4868,9 @@ export function App(): JSX.Element {
     if (["down", "up", "halfDown", "halfUp", "top", "bottom"].includes(action)) {
       const scroll = settingsOpen
         ? settingsShellRef.current?.querySelector<HTMLElement>(".settings-main")
-        : appMode === "harness" ? conversationRailScrollContainer() : null;
+        : conversationRailScrollContainer();
       if (!scroll || scroll.closest("[inert]")) return;
-      if (!settingsOpen && appMode === "harness") disableConversationAutoFollow();
+      if (!settingsOpen) disableConversationAutoFollow();
       if (action === "top" || action === "bottom") {
         scroll.scrollTo({ top: action === "top" ? 0 : scroll.scrollHeight, behavior: "instant" });
       } else {
@@ -5066,11 +4889,6 @@ export function App(): JSX.Element {
       openWorkspaceTool(action);
       return;
     }
-    if (action === "compose" && appMode === "collaboration") {
-      conversationPaneRef.current?.querySelector<HTMLTextAreaElement>(".channel-composer textarea:not(:disabled)")?.focus();
-      return;
-    }
-    openHarnessView();
     revealConversationFromFocusedWorkspace();
     closeCompactSessionSwitcher();
     if (action === "new") { startNewThreadWithComposerFocus(); return; }
@@ -5137,17 +4955,15 @@ export function App(): JSX.Element {
             .filter((thread) => thread.archived)
             .map((thread) => {
               const project = state.projects.find((candidate) =>
-                threadBelongsToProject(thread, candidate),
+                threadBelongsToWorkspace(thread, candidate),
               );
               return {
                 ...thread,
                 archive_project_id: project?.id ?? "",
-                archive_project_name: project?.name ?? t("appState.noProject"),
+                archive_project_name: project?.name ?? t("appState.noWorkspace"),
               };
             })}
-          archivedRooms={archivedChannelRooms}
           onUnarchiveThread={(thread) => void unarchiveThread(thread)}
-          onUnarchiveRoom={unarchiveChannelRoom}
         />
       </>
     );
@@ -5177,33 +4993,9 @@ export function App(): JSX.Element {
     );
   }
 
-  const collaborationNavigation = sidebarToggleVisible && sidebarDrawerMode && !rightPanelGlobalized ? (
-    <button
-      className="icon-button side-panel-toggle-button sidebar-toggle-button sidebar-collapse-toggle"
-      data-wuu-component="sidebar-toggle"
-      type="button"
-      aria-label={t(
-        sidebarDrawerVisible
-          ? "app.collapseLeftSidebar"
-          : "app.expandLeftSidebar",
-      )}
-      aria-pressed={sidebarDrawerVisible}
-      onClick={toggleSessionSwitcher}
-      onPointerEnter={scheduleSidebarDrawerOpen}
-      onPointerLeave={(event) =>
-        scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
-      }
-    >
-      <SidePanelToggleIcon side="left" open={sidebarDrawerVisible} />
-    </button>
-  ) : null;
-
   const conversationTitleEditable =
     !showingSkillsCatalog &&
     !showingPrimaryPluginView &&
-    currentSessionTab?.kind !== "channel-room" &&
-    currentSessionTab?.kind !== "agents" &&
-    currentSessionTab?.kind !== "tasks" &&
     ((activeThread !== undefined && !activeThread.read_only && !activeThread.ephemeral) ||
       currentSessionTab?.kind === "draft");
 
@@ -5217,6 +5009,7 @@ export function App(): JSX.Element {
       {modelCatalogTipNode}
       {!archiveTip && !modelCatalogTip && failedDraftNotice}
       <ImagePreviewProvider>
+      <ProjectActionsProvider value={projectAgentEnabled ? projectActions : null}>
       <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
       <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceArtifactTab}>
         <div
@@ -5261,170 +5054,51 @@ export function App(): JSX.Element {
           <AppSidebar
             onToggleSidebar={sidebarDrawerMode ? undefined : toggleSessionSwitcher}
             sidebarCollapsed={sidebarCollapsed}
-            collaborationNavigationNodes={ENABLE_GROUP_CHAT ? [
-              { id: "section:collaboration", kind: "section", label: t("sidebar.collaboration") },
-              { id: "command:new-channel", kind: "command", parentId: "section:collaboration", depth: 1,
-                label: t("channels.newConversation"), disabled: !state.initialized,
-                onActivate: () => { closeCompactSessionSwitcher(); openNewChannelRoom(); } },
-              ...sidebarConversations.filter((conversation) => !conversation.pinned).flatMap((conversation) => [{
-                  id: `collaboration:${conversation.id}`, kind: "room" as const,
-                  parentId: "section:collaboration", depth: 1, label: conversation.name,
-                  active: appMode === "collaboration" && collaborationSection === "rooms" && !agentOnboardingActive && (conversation.room
-                    ? conversation.room.id === selectedChannelRoomID : conversation.agent?.id === selectedCollaborationAgent?.id),
-                  pinned: false, unread: Boolean(conversation.room?.unread_count),
-                  running: conversation.room?.activity_status === "thinking" || conversation.agent?.activity_status === "thinking",
-                  disabled: !state.initialized,
-                  onActivate: () => {
-                    closeCompactSessionSwitcher();
-                    if (conversation.room) selectChannelRoom(conversation.room.id);
-                    else if (conversation.agent) void selectCollaborationAgent(conversation.agent.id);
-                  },
-                  onTogglePinned: () => { void updateCollaborationConversationPreference(conversation, "pin"); },
-                }]),
-            ] : undefined}
-            pinnedCollaborationConversations={ENABLE_GROUP_CHAT ? pinnedSidebarConversations : []}
-            collaborationAgents={namedAgents}
-            selectedCollaborationAgentID={appMode === "collaboration" && collaborationSection === "rooms" ? selectedCollaborationAgent?.id : undefined}
-            selectedCollaborationRoomID={appMode === "collaboration" && collaborationSection === "rooms" ? selectedChannelRoomID : undefined}
-            collaborationDraftSelected={appMode === "collaboration" && agentOnboardingActive}
-            onSelectCollaborationConversation={(conversation) => {
-              closeCompactSessionSwitcher();
-              if (conversation.room) selectChannelRoom(conversation.room.id);
-              else if (conversation.agent) void selectCollaborationAgent(conversation.agent.id);
-            }}
-            onToggleCollaborationPinned={(conversation) => void updateCollaborationConversationPreference(conversation, "pin")}
-            onHideCollaborationConversation={(conversation) => void updateCollaborationConversationPreference(conversation, "hide")}
-            onDeleteCollaborationConversation={(conversation) => void deleteCollaborationConversation(conversation)}
-            onEditCollaborationAgent={(agentID) => {
-              closeCompactSessionSwitcher();
-              openChannelsView();
-              setAgentOnboardingActive(false);
-              setNewRoomRequest(0);
-              setEditChannelRoomRequestID("");
-              setEditChannelAgentRequestID(agentID);
-            }}
-            onEditCollaborationRoom={(roomID) => {
-              closeCompactSessionSwitcher();
-              openChannelsView();
-              setAgentOnboardingActive(false);
-              setNewRoomRequest(0);
-              setEditChannelAgentRequestID("");
-              setEditChannelRoomRequestID(roomID);
-            }}
-            collaborationNavigation={ENABLE_GROUP_CHAT ? (
-            <CollaborationSidebar
-              embedded
-              sectionCollapsed={collapsedSidebarSectionIDs.has(SIDEBAR_SECTION_COLLAB)}
-              onToggleSectionCollapsed={() => toggleSidebarSectionCollapsed(SIDEBAR_SECTION_COLLAB)}
-              initialized={Boolean(state.initialized)}
-              agents={namedAgents}
-              rooms={channelRooms}
-              pinnedRoomIDs={channelRoomPreferences.pinnedRoomIDs}
-              archivedRoomIDs={channelRoomPreferences.archivedRoomIDs}
-              onTogglePinned={(conversation) => void updateCollaborationConversationPreference(conversation, "pin")}
-              onHideConversation={(conversation) => void updateCollaborationConversationPreference(conversation, "hide")}
-              onDeleteConversation={(conversation) => void deleteCollaborationConversation(conversation)}
-              selectedAgentID={appMode === "collaboration" && collaborationSection === "rooms" ? selectedCollaborationAgent?.id : undefined}
-              selectedRoomID={appMode === "collaboration" && collaborationSection === "rooms" ? selectedChannelRoomID : undefined}
-              onSelectAgent={(agent) => {
-                closeCompactSessionSwitcher();
-                selectCollaborationAgent(agent);
-              }}
-              onSelectRoom={(roomID) => {
-                closeCompactSessionSwitcher();
-                selectChannelRoom(roomID);
-              }}
-              onManageAgents={() => {
-                closeCompactSessionSwitcher();
-                openAgentManagement();
-              }}
-              onEditAgent={(agentID) => {
-                closeCompactSessionSwitcher();
-                openChannelsView();
-                setAgentOnboardingActive(false);
-                setNewRoomRequest(0);
-                setEditChannelRoomRequestID("");
-                setEditChannelAgentRequestID(agentID);
-              }}
-              onEditRoom={(roomID) => {
-                closeCompactSessionSwitcher();
-                openChannelsView();
-                setAgentOnboardingActive(false);
-                setNewRoomRequest(0);
-                setEditChannelAgentRequestID("");
-                setEditChannelRoomRequestID(roomID);
-              }}
-              draftAgent={agentOnboardingDraft?.createdAgent ? undefined : agentOnboardingDraft ?? undefined}
-              draftSelected={appMode === "collaboration" && agentOnboardingActive}
-              onSelectDraft={openNewNamedAgent}
-              onCreateRoom={() => {
-                closeCompactSessionSwitcher();
-                openNewChannelRoom();
-              }}
-              onSwitchToHarness={() => {
-                closeCompactSessionSwitcher();
-                openHarnessView();
-              }}
-              onOpenAccount={ENABLE_ACCOUNT ? () => {
-                if (window.wuu.openAccountWindow) void window.wuu.openAccountWindow().catch(error => showErrorToast(error));
-                else setAccountOpen(true);
-              } : undefined}
-              onOpenSettings={(page = "providers") => {
-                setSettingsInitialPage(page);
-                setSettingsOpen(true);
-              }}
-            />
-          ) : undefined}
             sidebarVisible={!sidebarDrawerMode || sidebarDrawerVisible}
             mobileNavigation={compactNavigation && isTouchWebShell()}
             drawerVisible={sidebarDrawerVisible}
             onNavigateAway={closeCompactSessionSwitcher}
             state={state}
-            sidebarProjects={sidebarProjects}
+            sidebarWorkspaces={sidebarWorkspaces}
             pendingConversations={pendingThreadCreations.map((pending) => ({
               id: pending.sessionTabID,
               context: pending.context,
               title: pending.turn.items[0].text || t("tabs.newConversation"),
             }))}
             onSelectPendingConversation={(tabID) => {
-              openHarnessView();
+              closePrimaryPluginView();
               closeCompactSessionSwitcher();
               void selectSessionTab(tabID);
             }}
-            activeProjectID={
-              workspaceProjectSelectionEnabled && workspaceContext?.kind === "project"
+            activeWorkspaceID={
+              workspaceSelectionEnabled && workspaceContext?.kind === "project"
                 ? workspaceContext.project_id
                 : undefined
             }
-            pinnedThreads={sidebarPinnedThreads.filter(thread => !managedSidebar.threadIDs.has(thread.id))}
-            activeThreadID={appMode === "harness" ? activeThreadID : undefined}
+            pinnedThreads={sidebarPinnedThreads}
+            activeThreadID={activeThreadID}
             pendingThreadID={visiblePendingThreadID}
-            pendingProjectID={visiblePendingProjectID}
+            pendingWorkspaceID={visiblePendingWorkspaceID}
             collapsedSidebarSectionIDs={collapsedSidebarSectionIDs}
             collapsedFolderIDs={collapsedFolderIDs}
             setCollapsedFolderIDs={setCollapsedFolderIDs}
             expandedSidebarSectionIDs={expandedSidebarSectionIDs}
-            loadingProjectThreadIDs={loadingProjectThreadIDs}
-            projectThreadsByProjectID={sidebarThreadsByProjectID}
-            projectMenuOpen={projectMenuOpen}
-            projectMenuRef={projectMenuRef}
+            loadingWorkspaceThreadIDs={loadingWorkspaceThreadIDs}
+            workspaceThreadsByWorkspaceID={sidebarThreadsByWorkspaceID}
+            workspaceMenuOpen={workspaceMenuOpen}
+            workspaceMenuRef={workspaceMenuRef}
             searchOpen={conversationSearch.open}
             sectionOrder={sidebarSectionOrder}
             onStartNewThread={() => {
-              openHarnessView();
+              closePrimaryPluginView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
               startNewThreadWithComposerFocus();
             }}
             onOpenSkillsTab={() => {
-              openHarnessView();
+              closePrimaryPluginView();
               closeCompactSessionSwitcher();
               openSkillsTab();
-            }}
-            groupChatEnabled={ENABLE_GROUP_CHAT}
-            onSwitchToCollaboration={() => {
-              closeCompactSessionSwitcher();
-              openCollaborationView();
             }}
             onMarkThreadsViewed={(threads) => {
               setState((current) => markThreadSummariesViewed(current, threads));
@@ -5435,7 +5109,7 @@ export function App(): JSX.Element {
             onAttentionStickyIDsChange={setAttentionStickyIDs}
             onToggleConversationSearch={toggleConversationSearch}
             onSelectThread={(id) => {
-              openHarnessView();
+              closePrimaryPluginView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
               void activateThread(id);
@@ -5456,18 +5130,18 @@ export function App(): JSX.Element {
             }}
             onDeleteThread={(thread) => void deleteThread(thread)}
             onRenameThread={(thread, title) => void renameThread(thread, title)}
-            onToggleProjectMenu={() => setProjectMenuOpen((open) => !open)}
-            onCreateProject={() => void createBlankProject()}
-            onOpenProjectFolder={() => void chooseProjectFolder()}
+            onToggleWorkspaceMenu={() => setWorkspaceMenuOpen((open) => !open)}
+            onCreateWorkspace={() => void createBlankProject()}
+            onOpenWorkspaceFolder={() => void chooseProjectFolder()}
             onToggleSidebarSectionCollapsed={toggleSidebarSectionCollapsed}
-            onSelectProjectWorkspace={
-              workspaceProjectSelectionEnabled
+            onFocusWorkspace={
+              workspaceSelectionEnabled
                 ? (id) => {
                     const project = state.projects.find((item) => item.id === id);
                     if (!project || project.missing) {
                       return;
                     }
-                    openHarnessView();
+                    closePrimaryPluginView();
                     setFocusedWorkspaceContext({
                       kind: "project",
                       project_id: project.id,
@@ -5478,20 +5152,22 @@ export function App(): JSX.Element {
                   }
                 : undefined
             }
-            onStartNewThreadForProject={(id) => {
-              openHarnessView();
+            onStartNewThreadInWorkspace={(id) => {
+              closePrimaryPluginView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
-              startNewThreadForProjectWithComposerFocus(id);
+              startNewThreadInWorkspaceWithComposerFocus(id);
             }}
-            onSelectProjectThread={(projectID, threadID) => {
-              openHarnessView();
+            onSelectWorkspaceThread={(workspaceID, threadID) => {
+              closePrimaryPluginView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
-              void selectProjectThread(projectID, threadID);
+              void selectWorkspaceThread(workspaceID, threadID);
             }}
-            onRemoveProject={(id) => void removeProject(id)}
-            onRelocateProject={(id) => void relocateProject(id)}
+            onRemoveWorkspace={(id) => void removeProject(id)}
+            onRelocateWorkspace={(id) => void relocateProject(id)}
+            onCreateProject={projectAgentEnabled ? startNewProject : undefined}
+            onAdoptIntoProject={projectAgentEnabled ? (projectID, threadID) => void adoptIntoProject(projectID, threadID) : undefined}
             onReorderSections={setSidebarSectionOrder}
             onPointerEnter={openSidebarDrawer}
             onPointerLeave={(event) =>
@@ -5502,7 +5178,7 @@ export function App(): JSX.Element {
                 else setAccountOpen(true);
               } : undefined}
             onOpenSettings={(page = "providers") => {
-              setProjectMenuOpen(false);
+              setWorkspaceMenuOpen(false);
               setRuntimeMenuOpen(false);
               setCodexRuntimeMenu(null);
               setSettingsInitialPage(page);
@@ -5552,7 +5228,7 @@ export function App(): JSX.Element {
         onKeyDown={handleConversationSearchKeyDown}
         onSelectIndex={setConversationSearchSelectedIndex}
         onSelectResult={(result) => {
-          openHarnessView();
+          closePrimaryPluginView();
           return selectConversationSearchResult(result);
         }}
       />
@@ -5564,79 +5240,13 @@ export function App(): JSX.Element {
         data-wuu-component="conversation-pane"
         data-primary-plugin-view={showingPrimaryPluginView ? "" : undefined}
         data-composer-navigation={composerNavigation || undefined}
-        className={`conversation-pane${ENABLE_GROUP_CHAT && appMode === "collaboration" && collaborationSection === "rooms" ? " collaboration-room-pane" : ""}${environmentPanelVisible ? " environment-panel-visible" : ""}${
-          appMode === "harness" && environmentPanelReserved ? " environment-panel-reserved" : ""
+        className={`conversation-pane${environmentPanelVisible ? " environment-panel-visible" : ""}${
+          environmentPanelReserved ? " environment-panel-reserved" : ""
         }${
           sideThreadPanelVisible ? " side-thread-panel-visible" : ""
         }`}
         ref={conversationPaneRef}
       >
-        {ENABLE_GROUP_CHAT && appMode === "collaboration" ? (
-          <>
-            {collaborationSection !== "rooms" ? <header className="titlebar" data-wuu-component="conversation-titlebar">
-              <div className="title-block channel-title-block">
-                {collaborationNavigation}
-                <span className="collaboration-titlebar-label">
-                  {t(collaborationSection === "agents" ? "channels.manageAgents" : "sidebar.collaboration")}
-                </span>
-              </div>
-              <div
-                className="title-actions channel-title-actions-placeholder"
-                aria-hidden="true"
-              />
-            </header> : null}
-            {agentOnboardingActive && agentOnboardingDraft ? (
-              <AgentOnboarding
-                navigation={collaborationNavigation}
-                draft={agentOnboardingDraft}
-                onDraftChange={setAgentOnboardingDraft}
-                initialized={state.initialized}
-                onCreate={async (params) => {
-                  const { agent } = await window.wuu.createNamedAgent(params);
-                  setNamedAgents((current) => current.some((item) => item.id === agent.id)
-                    ? current.map((item) => item.id === agent.id ? agent : item)
-                    : [...current, agent]);
-                  return agent;
-                }}
-                onOpenConversation={(agent, onboarding) => openCollaborationAgentConversation(agent.id, onboarding, collaborationProject?.path)}
-                onManageProviders={openAgentProviderSettings}
-                onClose={() => { setAgentOnboardingDraft(null); setAgentOnboardingActive(false); }}
-              />
-            ) : <ChannelView
-              conversationCache={channelConversationCacheRef.current}
-              navigation={collaborationNavigation}
-              initialized={sessionRuntime ?? state.initialized}
-              engines={engineInventory?.engines}
-              section={collaborationSection}
-              archivedRoomIDs={channelRoomPreferences.archivedRoomIDs}
-              selectedRoomID={selectedChannelRoomID}
-              onSelectRoom={selectChannelRoom}
-              onRoomRead={clearChannelRoomUnread}
-              onOpenMemoryDirectory={openAgentMemoryDirectory}
-              onOpenSession={openCollaborationHarnessSession}
-              managedThreadsByAgentID={managedSidebar.byAgentID}
-              lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
-              onOpenAgentConversation={selectCollaborationAgent}
-              conversationProject={collaborationProjectPicker}
-              composerDraft={activeChannelComposerDraft}
-              onComposerDraftChange={updateSelectedChannelRoomDraft}
-              directoryAgents={namedAgents}
-              directoryRooms={channelRooms}
-              onDirectoryAgentsChange={setNamedAgents}
-              onDirectoryRoomsChange={setChannelRooms}
-              onDeleteAgent={deleteCollaborationAgent}
-              newRoomRequest={newRoomRequest}
-              onNewRoomRequestHandled={() => setNewRoomRequest(0)}
-              editAgentRequestID={editChannelAgentRequestID}
-              onEditAgentRequestHandled={() => setEditChannelAgentRequestID("")}
-              editRoomRequestID={editChannelRoomRequestID}
-              onEditRoomRequestHandled={() => setEditChannelRoomRequestID("")}
-              onCreateAgent={openNewNamedAgent}
-              onManageProviders={openAgentProviderSettings}
-            />}
-          </>
-        ) : (
-          <>
         {composerNavigation ? <div aria-hidden="true" /> : (
         <header className="titlebar" data-wuu-component="conversation-titlebar">
           <div className="title-block">
@@ -5806,6 +5416,7 @@ export function App(): JSX.Element {
                     splitLeftPercent={splitLeftPercent}
                     splitComposerDrafts={splitComposerDrafts}
                     splitPaneRefs={splitPaneRefs}
+                    submittingThreadIDs={submittingThreadIDs}
                     stopRequests={stopRequests}
                     viewSwitchPending={submissionTargetPending}
                     historyMessageEdit={historyMessageEdit}
@@ -5821,6 +5432,8 @@ export function App(): JSX.Element {
                     }
                     onRemoveFile={removeSplitComposerFile}
                     onRemoveImage={removeSplitComposerImage}
+                    onChangeSelection={(pane, selection) => setSplitComposerDrafts((current) => ({ ...current, [pane]: { ...current[pane], selections: current[pane].selections?.map((entry) => entry.id === selection.id ? selection : entry) } }))}
+                    onRemoveSelection={(pane, id) => setSplitComposerDrafts((current) => ({ ...current, [pane]: { ...current[pane], selections: current[pane].selections?.filter((entry) => entry.id !== id) } }))}
                     onSend={(pane, promptOverride, contentParts) =>
                       sendPrompt("queue", promptOverride, contentParts, undefined, pane)
                     }
@@ -5873,15 +5486,15 @@ export function App(): JSX.Element {
                 ) : emptyConversation ? (
               showingPrimaryPluginView ? null : (
               <EmptyConversationHome
-                title={emptyThreadTitle}
+                title={activeProjectDraft ? t("projects.newProject") : emptyThreadTitle}
                 // A draft lowers the greeting mascot’s gaze toward the composer.
                 activity={
-                  prompt.trim().length > 0 || composerImages.length > 0 || composerFiles.length > 0
+                  prompt.trim().length > 0 || composerImages.length > 0 || composerFiles.length > 0 || composerSelections.length > 0
                     ? "compose"
                     : "idle"
                 }
               >
-                <EmptyHomeOverview />
+                {activeProjectDraft ? null : <EmptyHomeOverview />}
               </EmptyConversationHome>
               )
             ) : (
@@ -5951,12 +5564,13 @@ export function App(): JSX.Element {
               inline
             />
           ) : null}
+          hostStatus={projectAgentEnabled && activeProjectSessions.length > 0 && activeThread ? (
+            <ProjectStatusCapsule project={activeThread} sessions={activeProjectSessions} />
+          ) : undefined}
           threadId={activeThreadID}
           todoUpdate={activeTodoUpdateForThread(activeThread)}
           onOpenSession={handleOpenThreadInSplit}
         />
-          </>
-        )}
       </main>
 
       <>
@@ -6119,10 +5733,7 @@ export function App(): JSX.Element {
             console.error(`Plugin view ${pluginId}@${generation} failed to render`, error);
           },
           requestRegionVisible: (region) => {
-            if (region === "primary") {
-              setAppMode("harness");
-              if (rightPanelGlobalized) setRightPanelOpenWithMotion(false);
-            }
+            if (region === "primary" && rightPanelGlobalized) setRightPanelOpenWithMotion(false);
             if (region === "auxiliary") setRightPanelOpenWithMotion(true);
           },
         }}
@@ -6130,6 +5741,7 @@ export function App(): JSX.Element {
       </div>
     </ArtifactPreviewContext.Provider>
     </WorkspaceBrowserOpenContext.Provider>
+    </ProjectActionsProvider>
     </ImagePreviewProvider>
     </WuuMascotRuntimeProvider>
   );

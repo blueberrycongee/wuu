@@ -39,7 +39,7 @@ import { ComposerAttachMenuButton, ComposerCameraPanel } from "./ComposerCamera"
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
 import { Tooltip } from "./Tooltip";
 import { ComposerFeedback } from "./ComposerFeedback";
-import type { MessageContentPart } from "../shared/protocol";
+import type { MessageContentPart, ResponseSelection } from "../shared/protocol";
 
 const ComposerDrawer = createComposerDrawer(React);
 
@@ -79,9 +79,10 @@ export function ComposerAttachmentStrip({
   );
 }
 
-export function ComposerStopIcon({ state }: { state?: "pending" | "retry" }): JSX.Element {
+export function ComposerStopIcon({ state, submitting = false }: { state?: "pending" | "retry"; submitting?: boolean }): JSX.Element {
   if (state === "pending") return <LoaderCircle className="composer-stop-progress is-spinning" aria-hidden="true" />;
   if (state === "retry") return <RotateCw className="composer-stop-progress" aria-hidden="true" />;
+  if (submitting) return <LoaderCircle className="composer-stop-progress control-busy-icon" aria-hidden="true" />;
   return <Square aria-hidden="true" />;
 }
 
@@ -90,10 +91,14 @@ export function SplitPaneComposer({
   setPrompt,
   files,
   images,
+  selections = [],
+  onChangeSelection,
+  onRemoveSelection,
   running,
   readOnly,
   sendDisabled: requestedSendDisabled = false,
   stopState,
+  submitting = false,
   status,
   statusLiveProgress,
   queryHistorySessionID,
@@ -109,12 +114,16 @@ export function SplitPaneComposer({
   setPrompt: (value: string) => void;
   files: ComposerFile[];
   images: ComposerImage[];
+  selections?: ResponseSelection[];
+  onChangeSelection?: (selection: ResponseSelection) => void;
+  onRemoveSelection?: (id: string) => void;
   running: boolean;
   readOnly: boolean;
   /** Instant view switches keep `running` on for the spinner but must not
    * allow a send/stop against the previous pane's thread. */
   sendDisabled?: boolean;
   stopState?: "pending" | "retry";
+  submitting?: boolean;
   status: string;
   statusLiveProgress?: boolean;
   queryHistorySessionID?: string;
@@ -123,7 +132,7 @@ export function SplitPaneComposer({
   onPasteAttachmentFiles: (files: File[]) => void;
   onRemoveFile: (id: string) => void;
   onRemoveImage: (id: string) => void;
-  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => void;
+  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
   onInterrupt: () => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -140,12 +149,15 @@ export function SplitPaneComposer({
   useEffect(() => {
     setCameraOpen(false);
   }, [readOnly, queryHistorySessionID]);
-  const hasAttachments = images.length > 0 || files.length > 0;
+  const hasAttachments = images.length > 0 || files.length > 0 || selections.length > 0;
   const hasDraft = prompt.trim().length > 0 || hasAttachments;
+  const draftSignature = JSON.stringify([prompt, images.map(image => image.id), files.map(file => file.id), selections]);
+  const submittedDraftRef = useRef<string | undefined>(undefined);
+  useEffect(() => { submittedDraftRef.current = undefined; }, [draftSignature, queryHistorySessionID]);
   // Match the dock composer: the button is a stop control only while running
   // with an empty input. Once there is a draft, it flips to send (queuing
   // mid-turn) so a typed follow-up is never blocked by the stop state.
-  const showStop = Boolean(stopState) || (running && !sendDisabled && !hasDraft);
+  const showStop = Boolean(stopState) || ((running || submitting) && !sendDisabled && !hasDraft);
   const sendLabel = running ? t("composer.queueSend") : t("composer.send");
   const statusText = composerStatusText(status);
   const statusIsLiveProgress = composerStatusIsLiveProgress(statusLiveProgress);
@@ -252,14 +264,12 @@ export function SplitPaneComposer({
   }
 
   function submitComposer(): void {
-    if (readOnly || sendDisabled) return;
+    if (readOnly || sendDisabled || submittedDraftRef.current === draftSignature) return;
     resetQueryHistoryNavigation();
     const contentParts = collapsedContentPartsForPrompt(prompt);
-    if (contentParts) {
-      onSend(prompt, contentParts);
-    } else {
-      onSend();
-    }
+    const accepted = contentParts ? onSend(prompt, contentParts) : onSend();
+    if (accepted === false) return;
+    submittedDraftRef.current = draftSignature;
     // Keep focus restoration in the user action, without viewport scrolling.
     const textarea = textareaRef.current;
     if (textarea && document.activeElement !== textarea) {
@@ -300,10 +310,13 @@ export function SplitPaneComposer({
             <ComposerAttachmentTray
               images={images}
               files={files}
+              selections={selections}
               pastedTexts={collapsedPromptBlocks}
               resetKey={queryHistorySessionID}
               onRemoveImage={onRemoveImage}
               onRemoveFile={onRemoveFile}
+              onChangeSelection={readOnly ? undefined : onChangeSelection}
+              onRemoveSelection={onRemoveSelection}
               onRevealText={revealCollapsedPromptBlock}
               onRemoveText={removeCollapsedPromptBlock}
             />
@@ -400,11 +413,12 @@ export function SplitPaneComposer({
                         type="button"
                         onClick={onInterrupt}
                         disabled={stopState === "pending" || !connected}
-                        aria-busy={stopState === "pending" || undefined}
+                        data-wuu-state={stopState ?? (submitting ? "submitting" : "stop")}
+                        aria-busy={stopState === "pending" || submitting || undefined}
                         aria-label={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pause")}
                         title={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pauseShortcut")}
                       >
-                        <ComposerStopIcon state={stopState} />
+                        <ComposerStopIcon state={stopState} submitting={submitting} />
                       </button>
                     ) : (
                       <button

@@ -8,11 +8,50 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Changed
+
+- Desktop navigation uses denser rows, clearer group spacing, and quieter labels.
+  Settings navigation and workspace tool lists share the updated spacing while
+  preserving saved UI font preferences.
+- The new-conversation composer shows its project, branch, and worktree choice
+  as a quiet project / branch line aligned with the input, replacing the outlined
+  pill groups.
+
 ### Added
 
 - Optional Vim-style desktop navigation covers reading, conversation search and
   switching, new drafts, and workspace tools, with prefix hints and a keyboard
   shortcut reference in Settings. Text inputs and embedded tools retain their keys.
+
+- Select text in completed assistant responses to quote passages or comment beside
+  them. Quotes wait as cards in the composer tray and follow drafts, send/queue/steer, held-message
+  recovery and history; source navigation validates the exact visible passage.
+
+- Image attachments now include local working-file paths for model file operations,
+  with seven-day expiry and automatic cache cleanup. Context compaction includes
+  these paths in image omission notes and the summary input's media index.
+  Retrying an image message keeps internal file references out of the submitted text.
+
+- New conversations can start in an isolated Git worktree from the composer's
+  branch selector. The project keeps its current branch and uncommitted changes;
+  the worktree toggle resets for the next conversation.
+- Experimental Projects (build-time opt-in only; disabled in release builds):
+  a coordinator conversation for a larger piece of work in one
+  workspace. Create one from the workspace menu; a workspace can hold several.
+  The coordinator can work directly or delegate to managed sessions, which open
+  like any conversation. Sessions that change files work in their own Git
+  worktree. When a turn ends, its result reaches the coordinator once, including
+  after a restart. The team delivers worktree changes itself by merging,
+  pushing, or opening a pull request; nothing waits for your approval. Sending a message in
+  a session steers it without changing project membership. Stopping interrupts
+  its current turn; interrupted results and direct-message notices do not wake
+  an idle coordinator. Project members no longer need takeover or return controls. The
+  `project` option on `thread/start` and the `project/session` app-server
+  method expose the same model to clients.
+
+- The model popover has an independent Fast mode toggle and reset for supported
+  provider models and native or ACP engines. Conversation and draft selections
+  preserve speed separately from reasoning effort; `/fast` uses the same setting.
 
 - Click the conversation title in the title bar to rename it. An existing
   conversation saves immediately. A new conversation keeps the name when the
@@ -36,16 +75,19 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
-- Project conversation lists show five recent entries plus active, running,
-  unread, and up to three recently read conversations. Recently read entries
-  expire after two minutes. Expanding includes all history inside an eight-row,
-  font-responsive scroll area, keeping other projects in place.
+- The desktop and its documentation call a registered folder a workspace
+  (工作区) instead of a project; "project" now means a project coordinator.
 
-- Creating an agent asks only for its model and name. The name step no longer
-  shows switch-model and project controls above the input, and the random-name
-  action sits inside the name input. The first conversation opens in the
-  project chosen for the new conversation, shown in its header; the model stays
-  editable in the agent's settings.
+- Optional programmatic tool calling now runs each program in a fresh JavaScript
+  process with the session filesystem sandbox. A default-off global switch and
+  model-family overrides control availability. Nested calls retain normal tool
+  permissions and recording; image/audio results are attached automatically.
+  The previous persistent code runtime and execution/wait tools are retired.
+
+- Workspace conversation lists show five recent entries plus active, running,
+  unread, and up to three recently read conversations. Recently read entries
+  expire after two minutes. Expanding includes all history. Workspace lists use
+  the shared sidebar scroll area, so scrolling over a conversation moves the outer list.
 
 - The Extensions page follows the settings layout: a titled page with its
   actions beside the title, then plugins, official skills, and your skills as
@@ -64,22 +106,6 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - The macOS DMG installer window has a Retina-ready background with English
   and Chinese drag-to-install instructions: a slingshot beside the app fires
   Wuu along a dotted arc into the Applications folder.
-
-- Collaboration now centers on project-bound DMs, with visible task controls,
-  managed-session takeover and return, project and identity memory editing, and
-  persistent conversation timers. The composer's project control chooses where a
-  new conversation or a new agent's first conversation opens, and the
-  conversation header shows the project. Memory and timers open from the header
-  in a side panel. Group navigation is hidden while data remains.
-- Work execution uses isolated Git worktrees, versioned shared decisions and
-  structured reports. Host-managed candidates and independent verification expose
-  reviewable diffs with apply, optional Git-extension PR, and discard actions.
-  Progress deadlines, revision checks and private-history boundaries protect
-  continuing work from stale updates and silent stalls.
-
-- Collaboration tools follow each admitted session role: conversations read and
-  coordinate, execution sessions can write, and verification sessions only read.
-  Continuing identities refresh their role instructions on every turn.
 
 - Settings pages are grouped by task: Agents & models, App, Extensions, and
   Data. Each page uses one column, with its title and page actions on the
@@ -112,10 +138,88 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - `read_file` and `bash` results are bounded at 8192 estimated tokens instead
   of 2048, so a typical source file or document is read in one call.
 
+### Removed
+
+- Collaboration is gone: named agents, their direct and group conversations,
+  tasks and Work, candidate review, timers and reminders, agent onboarding, and
+  the Agent archive, on the desktop and in the phone apps. The `channel/*`
+  app-server methods, `session/harness/dispatch`, `wuu debug channel`, and
+  `wuu debug sandbox` are removed, and plugin tools can no longer declare the
+  `collaboration` execution scope. Upgrading deletes named-agent conversations;
+  sessions they managed become ordinary conversations. Wuu no longer reads
+  `~/.wuu/channels`, which can be deleted.
+
 ### Fixed
 
 - Starting a new conversation preserves the unfinished draft in the source
   conversation when switching back to it.
+
+- Isolated workers started from a worktree conversation now write in their own
+  worktree. Previously their file and shell tools could resolve into the parent
+  conversation's worktree. Workers started after an agent moves its conversation
+  to another workspace mid-turn also run in the new workspace.
+
+- Moving a conversation back to its project is recognized when the project path
+  goes through a symlink, instead of recording the project as a linked worktree.
+
+- When an agent moves its conversation to another workspace mid-turn, the rest
+  of that turn now runs there. Previously, tool calls after the move failed if
+  the old worktree had been deleted, or kept running in the old worktree.
+
+- Image preview controls share a compact bottom toolbar, clear of macOS window
+  buttons. Clicking empty preview space, including toolbar margins, dismisses
+  the preview without interrupting image clicks or drag gestures.
+
+- The project overview in the right panel follows the selected project or its
+  managed session, and clears when switching to an ordinary conversation.
+
+- Project status now shares the conversation capsule row with TODO and plugin
+  status, using consistent sizing and alignment above the composer.
+
+- History-message edits now share the composer submission lifecycle, including
+  pending feedback, Stop, and failure recovery without a stuck sending notice.
+  Sending feedback stays on the input's action button, including question
+  responses, instead of redundant status text; actionable errors remain visible.
+  Main and split composers keep one pending indicator from preparation through
+  server acceptance, then show the running control; early server acknowledgements
+  end pending feedback without waiting for the submission RPC.
+
+- Keep sidebar conversation titles and fork markers clear of the status dot
+  while a conversation is loading.
+
+- macOS confined commands can read Keychain credentials again, preventing false
+  GitHub CLI authentication failures caused by blocked system cache writes.
+
+- Managed project sessions no longer spill into the desktop sidebar's ordinary
+  conversation list when their coordinator is archived, including after reload.
+  Their ownership and running state are preserved; sessions whose coordinator
+  was deleted or is missing remain accessible in the ordinary list.
+
+- Instructions given when an extension creates a session now reach the model on
+  every turn and after a reload. Built-in runs previously dropped them,
+  including the Subagent plugin's worker instructions.
+
+- Remote requests can open another workspace while four other workspaces run
+  tasks, without the new app-server client being evicted before its request
+  starts. Idle clients remain eligible for normal reclamation.
+
+- Safe mode stops approved desktop plugin modules from loading or activating,
+  while keeping the extension inventory available for recovery and management.
+
+- Remote Web clients reconnect when the relay stops responding during authentication,
+  and cancel pending authentication immediately when stopped or suspended.
+
+- Remote Web conversation restore installs compressed snapshots before subsequent
+  streaming updates, preventing missing text when the local display cache is behind.
+
+- Git status and staging snapshots preserve literal filenames, including spaces,
+  Unicode, quotes, backslashes, and newlines. Returned rename paths identify the
+  destination, and staging or unstaging a backslash path no longer selects other
+  files through Git pathspec escaping. Sensitive-path protections remain in place.
+
+- Startup permission migration skips symbolic links inside the Wuu data directory,
+  preserving external files and executable permissions. Symlink migration markers
+  are replaced without modifying their targets.
 
 - Workspace file reads, saves, and directory expansion preserve leading and
   trailing whitespace and literal POSIX backslashes in filenames, preventing
@@ -125,22 +229,25 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   is ready. Interrupted dispatches reuse their run record after restart, and
   completing a dispatch preserves a newly edited schedule.
 
+- Git review compares symbolic link target paths without reading target contents,
+  including untracked and dangling links and file/link type changes.
+
+- Git changes, statistics, and file previews work before the first commit,
+  including staged files and edits made after staging.
+
 - Sidebar scroll fades remain tied to the list's own scroll position while
   conversations stream, pause, finish, or switch. Streaming paint reduction
   applies only to nested reasoning and process details.
 
-- The new-agent setup header drags the window across its full width again, and
-  its height follows the window title bar after page zoom and at large UI font
-  sizes.
+- Plugin workspace delivery includes committed, staged, and unstaged tracked
+  changes since workspace creation. Status and previews use the same baseline;
+  conflicts and unsupported untracked files preserve the workspace. Automatic
+  cleanup retains committed work and workspaces whose baseline is unavailable.
 
-- Work delivery reads structured reports from the final answer, so commentary
-  before tool calls no longer causes completed executions to fail validation.
-
-- Collaboration conversations can receive due room reminders, include them in
-  unread counts, and clear their wake state after consumption.
-
-- Collaboration replies no longer become held drafts just because a thread
-  reply is newer than the conversation's main timeline.
+- Retire runtime plugin processes after refresh or disable once their last
+  owning session releases them. Rebuilt generations no longer retain an extra
+  reference; conversations already using an older generation keep it until
+  they rebuild.
 
 - Sending a message keeps one local waiting timer across admission, events,
   snapshots, and conversation switches without changing server timestamps.
@@ -152,6 +259,16 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   command's model-facing output is JSON, rather than treating that output as
   execution metadata.
 
+- History search finds literal quotes, paths, line breaks, and HTML characters
+  in deduplicated tool results, including model text and multi-part output.
+
+- Keep edited-away conversation branches out of resumed conversations and forks,
+  including subsequent model input, while preserving valid pre-compaction history
+  and the append-only audit transcript.
+
+- Pasted-text cards retain their segments and titles when conversations are
+  restored or forked. Canonical message text and model input remain unchanged.
+
 - Ready Agent Core entries show an external agent's detected executable path in
   its override field without repeating it in the status or help text.
 
@@ -160,13 +277,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   animations, and provider remove controls keep their icon centered and color
   stable on hover.
 
-- Deleting an agent archives sessions still under its management in a separate
-  Agent archive, keeping them out of workspace and unread lists. Previously
-  orphaned sessions are reconciled, and user-taken-over sessions stay available.
-  Agent deletion updates navigation immediately and reconciles cleanup errors.
+- Preserve sidebar folder folds when returning from settings, including after
+  switching between light and dark themes.
 
-- Preserve sidebar folder and collaboration folds when returning from settings,
-  including after switching between light and dark themes.
+- OpenAI-compatible Chat Completions requests preserve tool calls, reasoning,
+  and participant names in adjacent messages, preventing orphaned tool results
+  in both ordinary and streaming conversations.
+
+- `apply_patch` accepts LF and CRLF patches for CRLF files while preserving
+  their line endings and whether the file ends with a newline.
 
 - `apply_patch` with `then_run` now shows the model the follow-up command's
   outcome; the parent result previously kept the patch-only view.
@@ -176,6 +295,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   stay inside the window, truncate long labels, and scroll long lists. Opening
   one closes any other open context menu, including the composer edit menu, and
   hides hover tooltips until it closes.
+
+- Long conversations reconcile restored turns without quadratic ID matching.
+  Streaming text, reasoning, and tool arguments accumulate without repeatedly
+  copying earlier content or scanning every historical turn. Workspace session
+  lists filter in SQLite while preserving project moves, worktree membership,
+  pinned ordering, and activity ordering.
 
 ## [2026.9.25] - 2026-09-25
 

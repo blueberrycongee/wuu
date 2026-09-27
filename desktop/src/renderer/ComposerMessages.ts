@@ -5,6 +5,7 @@ import type {
   InputFile,
   InputImage,
   MessageContentPart,
+  ResponseSelection,
   Turn,
 } from "../shared/protocol";
 import { formatCurrentNumber, translateCurrent } from "./i18n";
@@ -406,17 +407,43 @@ export function createComposerMessage(
   images: ComposerImage[],
   files: ComposerFile[] = [],
   contentParts?: MessageContentPart[],
+  selections: ResponseSelection[] = [],
 ): QueuedComposerMessage | undefined {
   const trimmed = text.trim();
-  if (!trimmed && images.length === 0 && files.length === 0) {
+  if (!trimmed && images.length === 0 && files.length === 0 && selections.length === 0) {
     return undefined;
   }
+  const parts: MessageContentPart[] | undefined = selections.length
+    ? [...selections.map((selection): MessageContentPart => ({
+        type: "response_selection",
+        text: `Quoted assistant response (JSON):\n${JSON.stringify({ text: selection.text, comment: selection.comment ?? "" })}\n`,
+        selection: { ...selection, source: { ...selection.source } },
+      })), ...(contentParts ?? (text ? [{ type: "text" as const, text }] : []))]
+    : contentParts;
   return {
     id: nextComposerMessageID(),
-    text,
+    text: selections.length ? parts!.map((part) => part.text).join("") : text,
     images: images.map((image) => ({ ...image })),
     files: files.map((file) => ({ ...file })),
-    contentParts: contentParts?.map((part) => ({ ...part })),
+    contentParts: parts?.map(cloneMessageContentPart),
+  };
+}
+
+export function cloneMessageContentPart(part: MessageContentPart): MessageContentPart {
+  return part.type === "response_selection"
+    ? { ...part, selection: { ...part.selection, source: { ...part.selection.source } } }
+    : { ...part };
+}
+
+/** Recover editable input without placing serialized reference context in it. */
+export function composerContextFromMessage(text: string, contentParts?: MessageContentPart[]) {
+  const selections = contentParts?.flatMap((part) => part.type === "response_selection"
+    ? [{ ...part.selection, source: { ...part.selection.source } }] : []) ?? [];
+  const promptParts = contentParts?.filter((part) => part.type !== "response_selection");
+  return {
+    prompt: selections.length ? promptParts!.map((part) => part.text).join("") : text,
+    selections,
+    contentParts: promptParts,
   };
 }
 
@@ -430,20 +457,22 @@ export function inputFilesFromComposer(files: ComposerFile[]): InputFile[] {
 
 export function mergeGuideMessages(messages: QueuedComposerMessage[]): QueuedComposerMessage {
   const latestActiveDocument = messages[messages.length - 1]?.activeDocument;
+  const contentParts = messages.some((message) => message.contentParts?.length)
+    ? messages.flatMap((message, index): MessageContentPart[] => [
+        ...(index > 0 ? [{ type: "text" as const, text: "\n" }] : []),
+        ...(message.contentParts?.map(cloneMessageContentPart) ??
+          (message.text ? [{ type: "text" as const, text: message.text }] : [])),
+      ])
+    : undefined;
   return {
     id: nextComposerMessageID(),
-    text: messages
+    text: contentParts ? contentParts.map((part) => part.text).join("") : messages
       .map((message) => message.text.trim())
       .filter(Boolean)
       .join("\n"),
     images: messages.flatMap((message) => message.images.map((image) => ({ ...image }))),
     files: messages.flatMap((message) => message.files.map((file) => ({ ...file }))),
-    contentParts: messages.some((message) => message.contentParts?.length)
-      ? messages.flatMap((message) =>
-          message.contentParts?.map((part) => ({ ...part })) ??
-          (message.text.trim() ? [{ type: "text" as const, text: message.text.trim() }] : []),
-        )
-      : undefined,
+    contentParts,
     activeDocument: latestActiveDocument ? { ...latestActiveDocument } : undefined,
   };
 }

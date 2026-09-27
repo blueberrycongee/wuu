@@ -85,6 +85,8 @@ func builtInToolDisplay(call providers.ToolCall) providers.ToolCallDisplay {
 	name := strings.TrimSpace(call.Name)
 
 	switch name {
+	case codeModeExecToolName:
+		return providers.ToolCallDisplay{Kind: "command", Label: "Run program", LabelTranslations: map[string]string{"zh-CN": "运行程序"}, Text: displayTruncate(displayString(args, "description"), 120)}
 	case "notes":
 		return providers.ToolCallDisplay{Kind: "read", Label: "Working notes", LabelTranslations: map[string]string{"zh-CN": "工作笔记"}, Text: "Working notes"}
 	case "read_file":

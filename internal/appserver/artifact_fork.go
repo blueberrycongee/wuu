@@ -17,6 +17,9 @@ import (
 // artifact retained in its copied history. The source thread can then be
 // deleted without breaking the fork's previews.
 func preserveForkArtifacts(stateDir, sourceThreadID, forkThreadID string, history []providers.ChatMessage) error {
+	if err := preserveForkInputImages(stateDir, sourceThreadID, forkThreadID, history); err != nil {
+		return err
+	}
 	artifactIDs := make(map[string]struct{})
 	for index := range history {
 		result := history[index].ToolResult

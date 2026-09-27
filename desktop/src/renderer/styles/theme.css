@@ -302,12 +302,10 @@
   --responsive-secondary-button-bg: var(--wuu-control-secondary-background, #2b2f34);
   --responsive-secondary-button-text: var(--wuu-color-text, #ccd1d5);
 
-  /* workbench.css / task-cards.css — host primitives still resolve through
-     public theme tokens, so extension themes remain authoritative. */
+  /* workbench.css — host primitives still resolve through public theme
+     tokens, so extension themes remain authoritative. */
   --plugin-ui-panel-bg: var(--wuu-color-surface, var(--surface-1));
   --plugin-ui-card-bg: var(--wuu-color-surface-elevated, var(--surface-3));
-  --task-card-bg: var(--wuu-color-surface-elevated, var(--surface-3));
-  --task-card-border: var(--wuu-color-border-subtle, var(--hairline));
 
   /* sidebar.css */
   /* Match the light theme's flat navigation plane. Opaque fill prevents

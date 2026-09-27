@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/blueberrycongee/wuu/internal/channels"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -348,18 +347,6 @@ func resolveHistorySession(env *Env, toolName, requestedID string, cursor *sessi
 	}
 	if id == "" {
 		id = currentID
-	}
-	if (env.CollaborationPurpose == channels.CollaborationSessionWork || env.CollaborationPurpose == channels.CollaborationSessionVerification) && id != currentID {
-		return "", "", fmt.Errorf("%s: execution history is limited to this session; use chat_read for the original room messages", toolName)
-	}
-	if env.ChatAgent != nil && id != currentID {
-		metadata, found, err := session.Find(sessDir, id)
-		if err != nil {
-			return "", "", err
-		}
-		if !found || metadata.Visibility == "plugin" || strings.HasPrefix(metadata.Source, "named-agent:") {
-			return "", "", fmt.Errorf("%s: named-agent transcripts are private; use chat_session results or ask the identity to share evidence", toolName)
-		}
 	}
 	if cursor != nil && cursor.SessionID != id {
 		return "", "", fmt.Errorf("%s: cursor session does not match session_id", toolName)

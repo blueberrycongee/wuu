@@ -9,7 +9,6 @@ import {
   ChevronRight,
   Folder,
   Gauge,
-  Hash,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -75,12 +74,6 @@ export type ArchivedSessionView = {
   updated_at: string;
   archive_project_id?: string;
   archive_project_name?: string;
-  archive_reason?: string;
-};
-export type ArchivedRoomView = {
-  id: string;
-  name: string;
-  created_at: string;
 };
 import { normalizedVariantForProviderModel, providerModelReasoningMode, providerModelVariantOptions, variantLabel } from "./RuntimeHelpers";
 import { ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
@@ -217,9 +210,7 @@ export function SettingsView({
   onSidebarResizeStart,
   onSidebarSeparatorKey,
   archivedThreads,
-  archivedRooms,
   onUnarchiveThread,
-  onUnarchiveRoom,
   // The settings rail shares the main sidebar's state and handlers wholesale:
   // same persisted width + collapse flag, same drag-to-collapse resize
   // session, same toggle motion.
@@ -260,9 +251,7 @@ export function SettingsView({
   onSidebarSeparatorKey: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
   // 归档页只读侧边栏归档清单 + 恢复回调。列表为空时渲染空态卡片。
   archivedThreads?: readonly ArchivedSessionView[];
-  archivedRooms?: readonly ArchivedRoomView[];
   onUnarchiveThread: (thread: ArchivedSessionView) => void;
-  onUnarchiveRoom?: (room: ArchivedRoomView) => void;
   sidebarCollapsed: boolean;
   sidebarAnimating: boolean;
   onToggleSidebar: () => void;
@@ -1193,6 +1182,9 @@ export function SettingsView({
               />
             ) : activePage === "general" ? (
               <SettingsGeneralPage
+                initialized={initialized}
+                running={running}
+                onGeneralSave={onGeneralSave}
                 desktopBuild={desktopBuild}
                 codexPets={codexPets}
                 codexPetsLoading={codexPetsLoading}
@@ -1228,9 +1220,7 @@ export function SettingsView({
             ) : activePage === "archive" ? (
               <SettingsArchivePage
                 archivedThreads={archivedThreads ?? []}
-                archivedRooms={archivedRooms ?? []}
                 onUnarchiveThread={onUnarchiveThread}
-                onUnarchiveRoom={onUnarchiveRoom ?? (() => {})}
               />
             ) : (
               <SettingsUsagePage
@@ -1911,6 +1901,9 @@ function SettingsRuntimePage({
 /* -------------------------------------------------------------------------- */
 
 function SettingsGeneralPage({
+  initialized,
+  running,
+  onGeneralSave,
   desktopBuild,
   codexPets,
   codexPetsLoading,
@@ -1920,6 +1913,9 @@ function SettingsGeneralPage({
   copyState,
   onCopyVersion
 }: {
+  initialized: InitializeResult | undefined;
+  running: boolean;
+  onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
   desktopBuild: DesktopBuildInfo | undefined;
   codexPets: CodexPetsSnapshot | undefined;
   codexPetsLoading: boolean;
@@ -1930,6 +1926,18 @@ function SettingsGeneralPage({
   onCopyVersion: () => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
+  const ptc = initialized?.general_settings?.ptc ?? { enabled: false };
+  const [ptcBusy, setPTCBusy] = useState(false);
+  const [ptcError, setPTCError] = useState("");
+  const [ptcFamily, setPTCFamily] = useState("gpt");
+  const ptcFamilyValue = ptc.families?.[ptcFamily];
+  async function savePTC(next: NonNullable<RuntimeGeneralSettingsUpdate["ptc"]>): Promise<void> {
+    setPTCBusy(true);
+    setPTCError("");
+    try { await onGeneralSave({ ptc: next }); }
+    catch (error) { setPTCError(error instanceof Error ? error.message : t("settings.saveFailed")); }
+    finally { setPTCBusy(false); }
+  }
   const [codexPetBusy, setCodexPetBusy] = useState(false);
   const [codexPetLocalError, setCodexPetLocalError] = useState("");
   const codexPetOptions = codexPets?.pets ?? [];
@@ -2034,6 +2042,44 @@ function SettingsGeneralPage({
             </div>
           ) : null}
           </> : null}
+        </SettingsGroup>
+      </SettingsSection>
+
+      <SettingsSection title={t("settings.ptcTitle")} testID="settings-ptc">
+        <SettingsGroup>
+          <SettingsRow title={t("settings.ptcEnabled")} description={t("settings.ptcDescription")}>
+            <button className="settings-switch" type="button" role="switch"
+              aria-label={t("settings.ptcEnabled")} aria-checked={ptc.enabled}
+              data-testid="settings-ptc-enabled" disabled={!initialized || running || ptcBusy}
+              onClick={() => void savePTC({ ...ptc, enabled: !ptc.enabled })}>
+              <span className="settings-switch-thumb" aria-hidden="true" />
+            </button>
+          </SettingsRow>
+          <SettingsRow title={t("settings.ptcFamily")} description={t("settings.ptcFamilyHint")}>
+            <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={t("settings.ptcFamily")}
+              value={ptcFamily} onChange={setPTCFamily}
+              options={[
+                ["gpt", "GPT"], ["codex", "Codex"], ["claude", "Claude"], ["gemini", "Gemini"],
+                ["deepseek", "DeepSeek"], ["kimi", "Kimi"], ["qwen", "Qwen"],
+                ["local", t("settings.ptcLocal")], ["portable", t("settings.ptcOther")],
+              ].map(([value, label]) => ({ value, label }))} />
+            <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={t("settings.ptcFamilyMode")}
+              dataTestid="settings-ptc-family-mode"
+              value={ptcFamilyValue === undefined ? "inherit" : ptcFamilyValue ? "on" : "off"}
+              disabled={!initialized || running || ptcBusy}
+              onChange={(value) => {
+                const families = { ...ptc.families };
+                if (value === "inherit") delete families[ptcFamily];
+                else families[ptcFamily] = value === "on";
+                void savePTC({ ...ptc, families });
+              }}
+              options={[
+                { value: "inherit", label: t("settings.ptcInherit") },
+                { value: "on", label: t("settings.ptcOn") },
+                { value: "off", label: t("settings.ptcOff") },
+              ]} />
+          </SettingsRow>
+          {ptcError ? <p className="settings-error" role="alert">{ptcError}</p> : null}
         </SettingsGroup>
       </SettingsSection>
 
@@ -2313,38 +2359,27 @@ function SettingsMCPPage({
 
 function SettingsArchivePage({
   archivedThreads,
-  archivedRooms,
   onUnarchiveThread,
-  onUnarchiveRoom,
 }: {
   archivedThreads: readonly ArchivedSessionView[];
-  archivedRooms: readonly ArchivedRoomView[];
   onUnarchiveThread: (thread: ArchivedSessionView) => void;
-  onUnarchiveRoom: (room: ArchivedRoomView) => void;
 }): JSX.Element {
   const { t, formatDate } = useI18n();
   const [query, setQuery] = useState("");
-  const [projectFilter, setProjectFilter] = useState("all");
-  const [archiveSection, setArchiveSection] = useState("ordinary");
+  const [workspaceFilter, setWorkspaceFilter] = useState("all");
   const sortedThreads = useMemo(
-    () => archivedThreads
-      .filter((thread) => (thread.archive_reason === "agent_deleted") === (archiveSection === "agents"))
-      .sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
-    [archivedThreads, archiveSection],
+    () => [...archivedThreads].sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+    [archivedThreads],
   );
-  const sortedRooms = useMemo(
-    () => [...archivedRooms].sort((a, b) => b.created_at.localeCompare(a.created_at)),
-    [archivedRooms],
-  );
-  const projectOptions = useMemo(() => {
+  const workspaceOptions = useMemo(() => {
     const seen = new Set<string>();
     return sortedThreads.flatMap((thread) => {
-      const projectID = archiveProjectID(thread);
-      if (seen.has(projectID)) {
+      const workspaceID = archiveWorkspaceID(thread);
+      if (seen.has(workspaceID)) {
         return [];
       }
-      seen.add(projectID);
-      return [{ value: projectID, label: archiveProjectName(thread, t("settings.noProject")) }];
+      seen.add(workspaceID);
+      return [{ value: workspaceID, label: archiveWorkspaceName(thread, t("settings.noWorkspace")) }];
     });
   }, [sortedThreads, t]);
   const groups = useMemo(() => {
@@ -2354,54 +2389,30 @@ function SettingsArchivePage({
       { projectName: string; threads: ArchivedSessionView[] }
     >();
     for (const thread of sortedThreads) {
-      const projectID = archiveProjectID(thread);
+      const workspaceID = archiveWorkspaceID(thread);
       const title = archiveThreadTitle(thread, t("settings.untitledConversation"));
-      if (projectFilter !== "all" && projectID !== projectFilter) {
+      if (workspaceFilter !== "all" && workspaceID !== workspaceFilter) {
         continue;
       }
       if (normalizedQuery && !title.toLocaleLowerCase().includes(normalizedQuery)) {
         continue;
       }
-      const group = grouped.get(projectID) ?? {
-        projectName: archiveProjectName(thread, t("settings.noProject")),
+      const group = grouped.get(workspaceID) ?? {
+        projectName: archiveWorkspaceName(thread, t("settings.noWorkspace")),
         threads: [],
       };
       group.threads.push(thread);
-      grouped.set(projectID, group);
+      grouped.set(workspaceID, group);
     }
-    return Array.from(grouped, ([projectID, group]) => ({ projectID, ...group }));
-  }, [projectFilter, query, sortedThreads, t]);
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  const filteredRooms = sortedRooms.filter(
-    (room) =>
-      archiveSection === "ordinary" && projectFilter === "all" &&
-      (!normalizedQuery || room.name.toLocaleLowerCase().includes(normalizedQuery)),
-  );
-  const archivedItemCount = sortedThreads.length + (archiveSection === "ordinary" ? sortedRooms.length : 0);
-  const noMatches = archivedItemCount > 0 && groups.length === 0 && filteredRooms.length === 0;
-
-  const archiveSections = [
-    { value: "ordinary", label: t("settings.ordinaryArchive") },
-    { value: "agents", label: t("settings.agentArchive") },
-  ];
+    return Array.from(grouped, ([workspaceID, group]) => ({ workspaceID, ...group }));
+  }, [workspaceFilter, query, sortedThreads, t]);
+  const noMatches = sortedThreads.length > 0 && groups.length === 0;
 
   return (
     <>
       <SettingsPageHeader title={t("settings.archive")} />
       <div className="settings-archive-page">
         <div className="settings-archive-toolbar" role="search" aria-label={t("settings.archiveFilter")}>
-          <div className="theme-segmented" role="group" aria-label={t("settings.archiveSection")}>
-            {archiveSections.map((section) => (
-              <button
-                key={section.value}
-                type="button"
-                aria-pressed={archiveSection === section.value}
-                onClick={() => { setArchiveSection(section.value); setProjectFilter("all"); }}
-              >
-                {section.label}
-              </button>
-            ))}
-          </div>
           <label className="settings-archive-search">
             <Search className="icon" aria-hidden="true" />
             <span className="sr-only">{t("settings.archiveSearch")}</span>
@@ -2415,20 +2426,20 @@ function SettingsArchivePage({
           <SelectMenu
             className="settings-archive-project-filter"
             triggerClassName="settings-select-trigger"
-            value={projectFilter}
-            onChange={setProjectFilter}
-            ariaLabel={t("settings.archiveProjectFilter")}
-            options={[{ value: "all", label: t("settings.allProjects") }, ...projectOptions]}
+            value={workspaceFilter}
+            onChange={setWorkspaceFilter}
+            ariaLabel={t("settings.archiveWorkspaceFilter")}
+            options={[{ value: "all", label: t("settings.allWorkspaces") }, ...workspaceOptions]}
             flip
           />
         </div>
-        {archivedItemCount === 0 || noMatches ? (
+        {sortedThreads.length === 0 || noMatches ? (
           <div className="settings-archive-empty" role="status">
             <Archive className="settings-archive-empty-icon" aria-hidden="true" />
             <p className="settings-archive-empty-title">
               {noMatches ? t("settings.noArchiveMatches") : t("settings.noArchivedItems")}
             </p>
-            {noMatches || archiveSection === "agents" || isTouchWebShell() ? null : (
+            {noMatches || isTouchWebShell() ? null : (
               <p className="settings-archive-empty-hint">
                 {t("settings.archiveHint")}
               </p>
@@ -2436,41 +2447,8 @@ function SettingsArchivePage({
           </div>
         ) : (
           <div className="settings-archive-groups" aria-label={t("settings.archivedList")}>
-            {filteredRooms.length > 0 ? (
-              <section className="settings-archive-group" data-archive-kind="rooms">
-                <header className="settings-archive-group-header">
-                  <div className="settings-archive-group-name">
-                    <Hash className="icon" aria-hidden="true" />
-                    <span>{t("settings.archivedRooms")}</span>
-                  </div>
-                  <span className="settings-archive-group-count">
-                    {t("settings.roomCount", { count: filteredRooms.length })}
-                  </span>
-                </header>
-                <div className="settings-group settings-archive-list">
-                  {filteredRooms.map((room) => (
-                    <div className="settings-archive-row" key={room.id}>
-                      <div className="settings-archive-row-copy">
-                        <TruncatedText className="settings-archive-title" text={room.name} />
-                        <time className="settings-archive-time" dateTime={room.created_at}>
-                          {formatArchiveTime(room.created_at, formatDate)}
-                        </time>
-                      </div>
-                      <button
-                        type="button"
-                        className="settings-button settings-archive-restore"
-                        aria-label={t("settings.restoreRoom", { title: room.name })}
-                        onClick={() => onUnarchiveRoom(room)}
-                      >
-                        {t("settings.restore")}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            ) : null}
             {groups.map((group) => (
-              <section className="settings-archive-group" key={group.projectID}>
+              <section className="settings-archive-group" key={group.workspaceID}>
                 <header className="settings-archive-group-header">
                   <div className="settings-archive-group-name">
                     <Folder className="icon" aria-hidden="true" />
@@ -2516,11 +2494,11 @@ function archiveThreadTitle(thread: ArchivedSessionView, fallback: string): stri
   return (thread.title ?? "").trim() || fallback;
 }
 
-function archiveProjectID(thread: ArchivedSessionView): string {
+function archiveWorkspaceID(thread: ArchivedSessionView): string {
   return thread.archive_project_id?.trim() || "no-project";
 }
 
-function archiveProjectName(thread: ArchivedSessionView, fallback: string): string {
+function archiveWorkspaceName(thread: ArchivedSessionView, fallback: string): string {
   return thread.archive_project_name?.trim() || fallback;
 }
 

@@ -11,6 +11,7 @@ import (
 	"image"
 	"image/png"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1341,6 +1342,63 @@ func TestBuildSummaryPromptMentionsImagesWithoutData(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "[image omitted: image/png, 80 base64 characters, 60 decoded bytes, sha256=") {
 		t.Fatalf("expected image omission note, got %q", prompt)
+	}
+	if strings.Contains(prompt, "path=") {
+		t.Fatalf("image without a stored path must not invent one: %q", prompt)
+	}
+}
+
+func TestCompact_KeepsStoredImagePathAfterStrippingBytes(t *testing.T) {
+	// Both summarized turns and retained turns must keep the local reference
+	// when vision bytes are omitted, without recreating or extending the file.
+	imagePath := `/state/sessions/thread-a/input-images/photo"1.png`
+	imageData := strings.Repeat("a", 1200)
+	messages := []providers.ChatMessage{
+		{Role: "user", Content: "first", Images: []providers.InputImage{{
+			MediaType: "image/png",
+			Data:      imageData,
+			LocalPath: imagePath,
+		}}},
+		{Role: "assistant", Content: "first reply"},
+		{Role: "user", Content: "second screenshot", Images: []providers.InputImage{{
+			MediaType: "image/png",
+			Data:      imageData,
+			LocalPath: imagePath,
+		}}},
+		{Role: "assistant", Content: "second reply"},
+		{Role: "user", Content: "latest"},
+		{Role: "assistant", Content: "latest reply"},
+	}
+	client := &mockCompactClient{response: "summary"}
+	result, err := CompactWithContextWindow(context.Background(), messages, client, "test", 100_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.lastRequest.Messages) < 2 {
+		t.Fatal("missing summary request")
+	}
+	prompt := client.lastRequest.Messages[1].Content
+	if !strings.Contains(prompt, "path="+strconv.Quote(imagePath)) || strings.Contains(prompt, imageData) {
+		t.Fatalf("summary input must retain the image path without binary data: %q", prompt)
+	}
+	found := false
+	for _, msg := range result {
+		if !strings.Contains(msg.Content, "second screenshot") {
+			continue
+		}
+		found = true
+		if len(msg.Images) != 0 {
+			t.Fatalf("historical image bytes remained: %+v", msg.Images)
+		}
+		if !strings.Contains(msg.Content, "path="+strconv.Quote(imagePath)) {
+			t.Fatalf("compacted content lost the stored path: %q", msg.Content)
+		}
+		if strings.Contains(msg.Content, imageData) {
+			t.Fatal("compacted content copied image bytes")
+		}
+	}
+	if !found {
+		t.Fatalf("compacted result dropped the image turn: %+v", result)
 	}
 }
 

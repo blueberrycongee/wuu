@@ -3,6 +3,7 @@ import type {
   InputFile,
   InputImage,
   MessageContentPart,
+  ResponseSelection,
   Thread,
   ThreadItem,
   UserQuestionAnswer,
@@ -32,6 +33,7 @@ export function ConversationSplitPane({
   draft,
   viewSwitchPending,
   stopState,
+  submitting,
   queryHistory,
   requestedHandoffIntent,
   editingMessage,
@@ -43,6 +45,8 @@ export function ConversationSplitPane({
   onPasteAttachmentFiles,
   onRemoveFile,
   onRemoveImage,
+  onChangeSelection,
+  onRemoveSelection,
   onSend,
   onInterrupt,
   onForkMessage,
@@ -67,6 +71,7 @@ export function ConversationSplitPane({
   draft: ComposerDraftState;
   viewSwitchPending: boolean;
   stopState?: "pending" | "retry";
+  submitting?: boolean;
   queryHistory: string[];
   requestedHandoffIntent?: string;
   editingMessage?: { turnID: string; itemID: string; submitting: boolean };
@@ -78,6 +83,8 @@ export function ConversationSplitPane({
   onPasteAttachmentFiles: (files: File[]) => void;
   onRemoveFile: (id: string) => void;
   onRemoveImage: (id: string) => void;
+  onChangeSelection?: (selection: ResponseSelection) => void;
+  onRemoveSelection?: (id: string) => void;
   onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
   onInterrupt: () => void;
   onForkMessage: (turnID: string, itemID: string) => void;
@@ -137,6 +144,7 @@ export function ConversationSplitPane({
   return (
     <section
       className={`conversation-split-pane${active ? " active" : ""}`}
+      data-thread-id={thread.id}
       aria-label={t(
         pane === "secondary" ? "split.forkConversation" : "split.sourceConversation",
       )}
@@ -222,9 +230,13 @@ export function ConversationSplitPane({
           prompt={draft.prompt}
           setPrompt={onSetPrompt}
           files={draft.files}
+          selections={draft.selections}
+          onChangeSelection={onChangeSelection}
+          onRemoveSelection={onRemoveSelection}
           images={draft.images}
           running={(paneRunning && !activeTurnIsAnswerReady(thread)) || viewSwitchPending}
           sendDisabled={viewSwitchPending}
+          submitting={submitting}
           stopState={stopState}
           readOnly={false}
           status={paneStatus}

@@ -37,6 +37,58 @@ describe("DesktopPluginRuntime", () => {
     expect(document.head.querySelector("style[data-wuu-plugin-id='user:demo']")).toBeNull();
   });
 
+  it("suppresses desktop execution in safe mode and unloads prior contributions", async () => {
+    const cleanup = vi.fn();
+    const activate = vi.fn((api: { registerCleanup(fn: () => void): void }) => {
+      api.registerCleanup(cleanup);
+    });
+    const load = vi.fn(async () => ({ activate }));
+    const read = vi.fn<WuuDesktopApi["loadPluginDesktopModule"]>(async ({ id, fingerprint }) => ({
+      id, fingerprint, digest: "a".repeat(64), url: "wuu-plugin://module/demo.js",
+    }));
+    installDesktopModuleLoader(read);
+    const runtime = new DesktopPluginRuntime(new PluginHost({ react: React }), load);
+    const plugin = { ...inventoryPlugin(), runtime_state: "inactive" as const };
+
+    expect(await runtime.sync([plugin], true)).toEqual([]);
+    expect(read).not.toHaveBeenCalled();
+    expect(activate).not.toHaveBeenCalled();
+
+    // A desktop-only plugin does not need a running backend to activate.
+    expect(await runtime.sync([plugin], false)).toEqual([]);
+    expect(activate).toHaveBeenCalledTimes(1);
+    expect(await runtime.sync([plugin], true)).toEqual([]);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(await runtime.sync([plugin], false)).toEqual([]);
+    expect(activate).toHaveBeenCalledTimes(2);
+    await runtime.sync([]);
+  });
+
+  it("does not activate an in-flight module after entering safe mode", async () => {
+    let finishRead!: (value: Awaited<ReturnType<WuuDesktopApi["loadPluginDesktopModule"]>>) => void;
+    let started!: () => void;
+    const reading = new Promise<void>((resolve) => { started = resolve; });
+    installDesktopModuleLoader(vi.fn<WuuDesktopApi["loadPluginDesktopModule"]>()
+      .mockImplementationOnce(() => {
+        started();
+        return new Promise((resolve) => { finishRead = resolve; });
+      })
+      .mockImplementation(async ({ id, fingerprint }) => ({
+        id, fingerprint, digest: "a".repeat(64), url: "wuu-plugin://module/demo.js",
+      })));
+
+    const activate = vi.fn();
+    const runtime = new DesktopPluginRuntime(new PluginHost({ react: React }), async () => ({ activate }));
+    const plugin = inventoryPlugin();
+    const pending = runtime.sync([plugin]);
+    await reading;
+    expect(await runtime.sync([plugin], true)).toEqual([]);
+    finishRead({ id: plugin.id, fingerprint: plugin.fingerprint!, digest: "a".repeat(64), url: "wuu-plugin://module/demo.js" });
+    expect(await pending).toEqual([]);
+    expect(activate).not.toHaveBeenCalled();
+  });
+
   it("keeps activation failures isolated", async () => {
     installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => ({
         id,

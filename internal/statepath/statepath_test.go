@@ -204,18 +204,6 @@ func TestAgentHomeDirLivesUnderWuuHome(t *testing.T) {
 	}
 }
 
-func TestChannelsDirIsSeparateFromSessions(t *testing.T) {
-	home := filepath.Join(t.TempDir(), ".wuu")
-	got := ChannelsDir(home)
-	want := filepath.Join(home, "channels")
-	if got != want {
-		t.Fatalf("ChannelsDir = %q, want %q", got, want)
-	}
-	if got == SessionsDir(home) {
-		t.Fatal("ChannelsDir unexpectedly shares the sessions directory")
-	}
-}
-
 func TestAgentHomeDirStableAcrossCalls(t *testing.T) {
 	home := filepath.Join(t.TempDir(), ".wuu")
 	first := AgentHomeDir(home, "prt-bea")

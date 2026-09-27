@@ -104,7 +104,7 @@ export function useVimNavigation(onAction: (action: VimAction) => void): {
         // Only an unconsumed Escape leaves the composer; terminal/editor Escape
         // remains entirely owned by those tools.
         if (event.key === "Escape" && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey &&
-            target instanceof HTMLTextAreaElement && target.closest('[data-wuu-component="composer"], .split-composer-shell, .channel-composer')) {
+            target instanceof HTMLTextAreaElement && target.closest('[data-wuu-component="composer"], .split-composer-shell')) {
           event.preventDefault();
           target.blur();
           setEditing(false);
