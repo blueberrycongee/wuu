@@ -138,6 +138,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Image preview controls share a compact bottom toolbar, clear of macOS window
+  buttons. Clicking empty preview space, including toolbar margins, dismisses
+  the preview without interrupting image clicks or drag gestures.
+
 - The project overview in the right panel follows the selected project or its
   managed session, and clears when switching to an ordinary conversation.
 

@@ -89,7 +89,8 @@ async function complete(win, index) {
 
 app.whenReady().then(async () => {
   registerRenderableFileProtocol(profile);
-  const win = new BrowserWindow({ width: 1440, height: 900, show: false, webPreferences: {
+  const win = new BrowserWindow({ width: 1440, height: 900, show: false,
+    titleBarStyle: 'hiddenInset', webPreferences: {
     preload: path.join(__dirname, "streaming-e2e-preload.cjs"),
     contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false,
   } });
@@ -213,7 +214,10 @@ app.whenReady().then(async () => {
         await settle(win);
         const contained = await evaluate(win, () => [...document.querySelectorAll('.image-preview-toolbar button, .image-preview-position')].every(node => {
           const rect = node.getBoundingClientRect();
-          return rect.left >= 0 && rect.right <= innerWidth && rect.bottom <= document.querySelector('.image-preview-stage').getBoundingClientRect().top;
+          const stage = document.querySelector('.image-preview-stage').getBoundingClientRect();
+          const outsideStage = rect.bottom <= stage.top || rect.top >= stage.bottom;
+          const outsideWindowControls = rect.left >= 80 || rect.top >= 40;
+          return rect.left >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight && outsideStage && outsideWindowControls;
         }));
         assert.equal(contained, true, 'Preview navigation and actions must fit without overlapping the image stage');
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' });
@@ -231,6 +235,27 @@ app.whenReady().then(async () => {
   await evaluate(win, () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
   await waitFor(win, () => !document.querySelector('.image-preview-overlay'));
   assert.equal(await evaluate(win, () => document.activeElement === document.querySelectorAll('.turn-artifact-inline-image button')[1]), true);
+
+  // Real pointer input protects hit testing, including the toolbar's blank margin.
+  for (const target of ['stage', 'toolbar']) {
+    await evaluate(win, () => document.querySelectorAll('.turn-artifact-inline-image button')[1].click());
+    await waitFor(win, () => Boolean(document.querySelector('.image-preview-image.loaded')));
+    const imagePoint = await evaluate(win, () => {
+      const rect = document.querySelector('.image-preview-image').getBoundingClientRect();
+      return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+    });
+    win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...imagePoint });
+    win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...imagePoint });
+    await settle(win);
+    assert.equal(await evaluate(win, () => Boolean(document.querySelector('.image-preview-overlay'))), true, 'Clicking the image must not dismiss it');
+    const point = await win.webContents.executeJavaScript(`(() => {
+      const rect = document.querySelector('.image-preview-${target}').getBoundingClientRect();
+      return { x: Math.round(rect.left + 2), y: Math.round(rect.top + rect.height / 2) };
+    })()`);
+    win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
+    win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
+    await waitFor(win, () => !document.querySelector('.image-preview-overlay'));
+  }
 
   // Record synthetic frames in Chromium so this test needs no binary fixture,
   // external encoder, network media, or access to the user's files.
