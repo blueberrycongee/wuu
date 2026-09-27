@@ -147,6 +147,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- When an agent moves its conversation to another workspace mid-turn, the rest
+  of that turn now runs there. Previously, tool calls after the move failed if
+  the old worktree had been deleted, or kept running in the old worktree.
+
 - Image preview controls share a compact bottom toolbar, clear of macOS window
   buttons. Clicking empty preview space, including toolbar margins, dismisses
   the preview without interrupting image clicks or drag gestures.

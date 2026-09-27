@@ -293,6 +293,11 @@ type Env struct {
 	// OnSessionWorkspaceChanged persists and broadcasts an explicit main-agent
 	// workspace move before subsequent tools start resolving paths there.
 	OnSessionWorkspaceChanged func(root string) error
+	// reboundRoot is the root an explicit set_session_workspace moved this
+	// runtime to. The running turn bound its worktree from session metadata
+	// before that move, so the move supersedes the binding while RootDir
+	// still equals it. Later turns bind from the updated metadata.
+	reboundRoot string
 
 	readState *readFileState
 	testState testRunState
@@ -317,6 +322,7 @@ func (e *Env) prepareSessionWorkspaceChange(root string) (func(), error) {
 	}
 	return func() {
 		e.RootDir = root
+		e.reboundRoot = root
 		e.FileScopeRoots = fileScopeRoots
 		commitAgentControl()
 	}, nil
@@ -712,7 +718,7 @@ func (e *Env) NormalizeDisplayPath(absPath string) string {
 // the parent repo the user believes is isolated.
 func (e *Env) worktreeExecRoot(ctx context.Context) (string, bool, error) {
 	path, ok := toolctx.WorktreePath(ctx)
-	if !ok {
+	if !ok || (e.reboundRoot != "" && e.reboundRoot == e.RootDir) {
 		return "", false, nil
 	}
 	abs, err := filepath.Abs(path)

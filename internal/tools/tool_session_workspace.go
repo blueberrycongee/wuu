@@ -67,7 +67,12 @@ func (t *SetSessionWorkspaceTool) Execute(_ context.Context, argsJSON string) (s
 	if !info.IsDir() {
 		return "", errors.New("workspace root must be a directory")
 	}
-	root = filepath.Clean(root)
+	// Match the symlink-resolved roots New and CloneForRoot use, so paths
+	// under the new root pass the same containment checks.
+	root, err = filepath.EvalSymlinks(filepath.Clean(root))
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace root: %w", err)
+	}
 	commitRuntime, err := t.env.prepareSessionWorkspaceChange(root)
 	if err != nil {
 		return "", err
