@@ -104,6 +104,28 @@ jobs:
       - name: Build
         run: make build-desktop
 
+      - name: Guard image layout stability
+        shell: bash
+        env:
+          WUU_E2E_HIDDEN: "true"
+          WUU_IMAGE_LAYOUT_OUTPUT: ${{ runner.temp }}/wuu-image-layout-evidence
+        run: |
+          mkdir -p "$WUU_IMAGE_LAYOUT_OUTPUT"
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/image-layout-e2e.cjs 2>&1 | tee "$WUU_IMAGE_LAYOUT_OUTPUT/run.log"
+
+      - name: Upload image layout evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-layout-evidence
+          path: |
+            ${{ runner.temp }}/wuu-image-layout-evidence/*.json
+            ${{ runner.temp }}/wuu-image-layout-evidence/*.png
+            ${{ runner.temp }}/wuu-image-layout-evidence/*.log
+            ${{ runner.temp }}/wuu-image-layout-evidence/*.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod

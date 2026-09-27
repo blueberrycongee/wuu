@@ -168,16 +168,14 @@ app.whenReady().then(async () => {
         const frame = image.closest('figure').getBoundingClientRect();
         return {
           source: image.src, width: rect.width, height: rect.height,
-          ratio: image.naturalWidth / image.naturalHeight,
           buttonWidth: button.width, buttonHeight: button.height,
           frameWidth: frame.width, frameHeight: frame.height,
         };
       }));
       for (const image of geometry) {
         assert.ok(image.width > 0 && image.height > 0, "Delivered images must remain visible");
-        assert.ok(Math.abs(image.width - image.height * image.ratio) < 1, "The image box must follow its original ratio without letterboxing");
-        assert.ok(Math.abs(image.buttonWidth - image.width) < 1 && Math.abs(image.buttonHeight - image.height) < 1, "The preview target must hug the image rather than an empty frame");
-        assert.ok(Math.abs(image.frameWidth - image.width) < 1 && Math.abs(image.frameHeight - image.height) < 1, "The message layout must not reserve white margins around the image");
+        assert.ok(Math.abs(image.buttonWidth - image.width) < 1 && Math.abs(image.buttonHeight - image.height) < 1, "The preview target must cover the entire reserved image frame");
+        assert.ok(Math.abs(image.frameWidth - image.width) < 1 && Math.abs(image.frameHeight - image.height) < 1, "The image must stay inside its reserved message frame");
       }
       const source = geometry[geometry.length - 1].source;
       await evaluate(win, () => {

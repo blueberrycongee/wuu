@@ -20,13 +20,32 @@
   margin-block-start: var(--conversation-prose-block-gap, 1em);
 }
 
-/* Images share a bounded preview size and one gap on each side, including
- * when settled streaming blocks wrap the surrounding paragraphs. */
+/* Markdown URLs and tool images need a footprint before their dimensions are
+ * known. Keep it through loading/failure so a restored conversation cannot
+ * move its reading content. Workspace document images retain their own sizing. */
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-image-block,
+.turn-artifact-image-preview {
+  position: relative;
+  width: min(100%, 400px);
+  aspect-ratio: 4 / 3;
+}
+
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-image {
-  width: auto;
-  height: auto;
-  max-width: min(100%, 400px);
-  max-height: 360px;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: scale-down;
+}
+
+.rich-image-unavailable {
+  display: grid;
+  place-items: center;
+  padding: var(--space-3);
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
 }
 
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble)

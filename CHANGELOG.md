@@ -152,6 +152,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Message images reserve their preview space while loading or unavailable, keeping
+  conversation reading positions stable when switching sessions.
+
 - Menus, popovers, and sidebar hover cards use an opaque surface, so text
   underneath no longer shows through them.
 

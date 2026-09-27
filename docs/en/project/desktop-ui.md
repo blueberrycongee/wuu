@@ -27,6 +27,17 @@ The [mascot lab](../../../desktop/dev/mascot/README.md) uses `npm --prefix deskt
 
 ## Conversation image previews
 
+Message and inline tool images reserve a responsive 4:3 preview area before
+loading. The complete image fits inside without cropping or upscaling; portrait
+and panoramic images may leave space around them. Loading failures keep the same
+area, so switching conversations does not shift text when an image finishes.
+Opening a preview still shows the original image. Workspace document images keep
+their natural proportions.
+
+Run `npm --prefix desktop run test:e2e:image-layout` to check cold loads, failed
+loads, cached session switches, and bottom following in Electron. It saves
+geometry logs and screenshots under `desktop/out/image-layout-e2e/`.
+
 Image previews group the current conversation's displayed uploads, tool-result
 images, and message images in display order. Previous/next buttons and the left
 and right arrow keys move through the group; the counter shows the position.

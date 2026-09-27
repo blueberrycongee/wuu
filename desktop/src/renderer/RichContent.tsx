@@ -843,9 +843,6 @@ function RichImage({
   const { openPreview } = useImagePreview();
   const titleText = imageTarget(source);
   const register = useImagePreviewRegistration(failedSource === resolvedSource ? null : { src: resolvedSource, alt, title: titleText });
-  if (failedSource === resolvedSource) {
-    return <></>;
-  }
   const handleActivate = (origin: HTMLElement): void => {
     openPreview({ src: resolvedSource, alt, title: titleText }, origin);
   };
@@ -855,7 +852,11 @@ function RichImage({
       handleActivate(event.currentTarget);
     }
   };
-  const image = (
+  const image = failedSource === resolvedSource ? (
+    <span className="rich-image rich-image-unavailable" role="img" aria-label={t("imagePreview.loadFailed")}>
+      {t("imagePreview.loadFailed")}
+    </span>
+  ) : (
     <Tooltip content={titleText}>
       <img
         className="rich-image"
