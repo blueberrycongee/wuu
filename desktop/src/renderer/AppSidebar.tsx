@@ -72,6 +72,7 @@ import {
   type PendingConversation,
 } from "./ThreadSidebar";
 import { SidebarCollapseBody, SidebarSection } from "./SidebarSection";
+import { SidebarHoverFactsContext, type SidebarHoverFacts } from "./SidebarHoverCard";
 import { SidebarNameDialog } from "./SidebarNameDialog";
 import { ThreadContextMenu } from "./ThreadContextMenu";
 import {
@@ -1100,6 +1101,27 @@ export function AppSidebar({
     }
     return next;
   }, [allSidebarThreads, organization.folderByThreadID, projectIndex, workspaceThreadsByWorkspaceID, sidebarWorkspaces]);
+  const hoverFacts = useMemo<SidebarHoverFacts>(() => {
+    const byID = new Map(allSidebarThreads.map((thread) => [thread.id, thread]));
+    const threadsByWorkspaceID: Record<string, ThreadSummary[]> = {};
+    for (const [workspaceID, threads] of Object.entries(workspaceThreadsByWorkspaceID)) {
+      threadsByWorkspaceID[workspaceID] = threads.map((thread) => byID.get(thread.id) ?? thread);
+    }
+    return {
+      workspaces: sidebarWorkspaces.filter((project) => project.id !== SCRATCH_PSEUDO_PROJECT_ID),
+      threadsByWorkspaceID,
+      sessionsByProjectID: projectIndex.sessionsByProjectID,
+      activeThreadID,
+      lastViewedTurnByThreadID: state.lastViewedTurnByThreadID,
+    };
+  }, [
+    activeThreadID,
+    allSidebarThreads,
+    projectIndex,
+    sidebarWorkspaces,
+    state.lastViewedTurnByThreadID,
+    workspaceThreadsByWorkspaceID,
+  ]);
   const folderThreadsByID = useMemo(() => {
     const next: Record<string, ThreadSummary[]> = {};
     for (const folder of organization.folders) next[folder.id] = [];
@@ -2288,7 +2310,9 @@ export function AppSidebar({
         onCreateWorkspace={onCreateWorkspace}
         onOpenWorkspaceFolder={onOpenWorkspaceFolder}
         commands={[...primaryNavigationNodes, ...pluginNavigationNodes, ...navigationNodes]}
-      /> : nativeSidebar}
+      /> : (
+        <SidebarHoverFactsContext.Provider value={hoverFacts}>{nativeSidebar}</SidebarHoverFactsContext.Provider>
+      )}
     </SessionOrganizationProvider>
   );
   return (

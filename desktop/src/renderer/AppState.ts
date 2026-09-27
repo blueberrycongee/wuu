@@ -1574,6 +1574,7 @@ function summarizeThreadForSidebar(
     project_role: thread.project_role,
     model_provider: thread.model_provider,
     model: thread.model,
+    engine_id: thread.engine_id,
     cwd: thread.cwd,
     workspace_id: thread.workspace_id,
     workspace_kind: thread.workspace_kind,

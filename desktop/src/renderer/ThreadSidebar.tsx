@@ -28,6 +28,12 @@ import {
 } from "./AppState";
 import { isProjectCoordinator, type ProjectRowSummary } from "./ProjectSessions";
 import { resolveLocalizedText, useI18n } from "./i18n";
+import { useHoverReveal } from "./HoverReveal";
+import {
+  SidebarHoverCardLayer,
+  ThreadHoverCardContent,
+  WorkspaceHoverCardContent,
+} from "./SidebarHoverCard";
 
 function unpinnedThreads(threads: ThreadSummary[]): ThreadSummary[] {
   return threads.filter((thread) => !thread.pinned);
@@ -401,6 +407,9 @@ export function WorkspaceGroup({
             ? t("threadSidebar.loadingConversations")
             : undefined
         }
+        hoverCard={() => (
+          <WorkspaceHoverCardContent workspace={project} scratch={isScratchPseudo} />
+        )}
       >
         {pendingConversations.length > 0 || workspaceThreads.length > 0 ? (
           <ThreadList
@@ -758,6 +767,10 @@ function ThreadRows({
     id: string;
     position: ThreadDropPosition;
   }>();
+  const hoverCard = useHoverReveal<string>({
+    focus: "keyboard",
+    disabled: draggingThreadID !== undefined,
+  });
 
   function handleContextMenu(
     targetThread: ThreadSummary,
@@ -910,25 +923,40 @@ function ThreadRows({
     closeRenameDialog();
   }
 
+  function rowState(thread: ThreadSummary) {
+    const pendingSwitch = pendingThreadID === thread.id;
+    const project = isProjectCoordinator(thread);
+    const summary = project ? projectSummaries?.get(thread.id) : undefined;
+    const running = summary?.running ?? isThreadExecuting(thread);
+    const unread =
+      !running &&
+      !pendingSwitch &&
+      (summary
+        ? summary.unread
+        : thread.id !== activeID &&
+          isThreadUnread(
+            thread,
+            lastViewedTurnByThreadID[thread.id],
+          ));
+    return {
+      pendingSwitch,
+      project,
+      running,
+      title: baseThreadTitle(thread, threads),
+      forkMarker: threadShowsForkMarker(thread, threads),
+      unread,
+    };
+  }
+
+  const revealedThread = hoverCard.revealed
+    ? threads.find((thread) => thread.id === hoverCard.revealed!.key)
+    : undefined;
+  const revealedRowState = revealedThread ? rowState(revealedThread) : undefined;
+
   return (
     <>
       {threads.map((thread) => {
-        const pendingSwitch = pendingThreadID === thread.id;
-        const project = isProjectCoordinator(thread);
-        const summary = project ? projectSummaries?.get(thread.id) : undefined;
-        const running = summary?.running ?? isThreadExecuting(thread);
-        const title = baseThreadTitle(thread, threads);
-        const forkMarker = threadShowsForkMarker(thread, threads);
-        const unread =
-          !running &&
-          !pendingSwitch &&
-          (summary
-            ? summary.unread
-            : thread.id !== activeID &&
-              isThreadUnread(
-                thread,
-                lastViewedTurnByThreadID[thread.id],
-              ));
+        const { pendingSwitch, project, running, title, forkMarker, unread } = rowState(thread);
         return (
           <div
             key={thread.id}
@@ -951,6 +979,7 @@ function ThreadRows({
             onDragLeave={(event) => leaveThreadDropTarget(thread.id, event)}
             onDrop={(event) => dropThread(thread, event)}
             onDragEnd={endThreadDrag}
+            {...hoverCard.anchorHandlers(thread.id)}
           >
               {running ? (
                 <span className="thread-row-spinner" aria-hidden="true" />
@@ -1008,6 +1037,16 @@ function ThreadRows({
           </div>
         );
       })}
+      {revealedThread && revealedRowState && hoverCard.revealed ? (
+        <SidebarHoverCardLayer anchor={hoverCard.revealed.anchor}>
+          <ThreadHoverCardContent
+            thread={revealedThread}
+            title={revealedRowState.title}
+            running={revealedRowState.running}
+            unread={revealedRowState.unread}
+          />
+        </SidebarHoverCardLayer>
+      ) : null}
       {contextMenu ? (
         <ThreadContextMenu
           x={contextMenu.x}

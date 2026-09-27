@@ -6,6 +6,8 @@ import {
   useContext,
 } from "react";
 import { SectionRowIcon } from "./ThreadSidebar";
+import { useHoverReveal } from "./HoverReveal";
+import { SidebarHoverCardLayer } from "./SidebarHoverCard";
 import { motionDurationMs, prefersReducedMotion } from "./motion";
 import { useExitPresence } from "./useExitPresence";
 
@@ -102,6 +104,8 @@ export function useSidebarSectionDragHandle(): SidebarSectionDragHandle | null {
  *     state in the label.
  *   - `emptyNote`: shown in the body when no `children` are mounted
  *     so the height collapse animation has real content.
+ *   - Optional `hoverCard`: workspace headers describe themselves in a
+ *     sidebar hover card, which replaces the native `title` hint.
  *
  * The close animation is self-contained: SidebarCollapseBody keeps the
  * rows mounted until the height transition finishes after `expanded` flips
@@ -123,6 +127,7 @@ export function SidebarSection({
   actions,
   newItemButton,
   emptyNote,
+  hoverCard,
   children,
   onToggle,
   onContextMenu,
@@ -150,6 +155,8 @@ export function SidebarSection({
   // mounted while expanded so the height-collapse animation has content
   // to animate (a 0→0 grid transition would otherwise vanish).
   emptyNote?: ReactNode;
+  // Rendered only while the header is hovered or keyboard-focused.
+  hoverCard?: () => ReactNode;
   onToggle: () => void;
   // Optional right-click handler for the header row. Project rows use it to
   // open the "移除工作区" context menu; sections without it (置顶 / Agents /
@@ -164,6 +171,7 @@ export function SidebarSection({
   const dragHandle = useSidebarSectionDragHandle();
   const dragHandleProps = dragHandle?.dragHandleProps;
   const isDragging = dragHandle?.isDragging ?? false;
+  const hover = useHoverReveal<true>({ disabled: !hoverCard || isDragging, focus: "keyboard" });
   const headerClassName = [
     "project-row",
     "sidebar-section-row",
@@ -179,7 +187,11 @@ export function SidebarSection({
     .join(" ");
   return (
     <>
-      <div className="sidebar-section-header-group" onContextMenu={onContextMenu}>
+      <div
+        className="sidebar-section-header-group"
+        onContextMenu={onContextMenu}
+        {...(hoverCard ? hover.anchorHandlers(true) : undefined)}
+      >
         <button
           className={headerClassName}
           type="button"
@@ -187,7 +199,7 @@ export function SidebarSection({
           aria-label={ariaLabel}
           aria-busy={pending || running || undefined}
           aria-current={active ? "page" : undefined}
-          title={title}
+          title={hoverCard ? undefined : title}
           onClick={onToggle}
           {...dragHandleProps}
         >
@@ -214,6 +226,9 @@ export function SidebarSection({
         {newItemButton}
         {actions ? <div className="sidebar-section-actions">{actions}</div> : null}
       </div>
+      {hoverCard && hover.revealed ? (
+        <SidebarHoverCardLayer anchor={hover.revealed.anchor}>{hoverCard()}</SidebarHoverCardLayer>
+      ) : null}
       <SidebarCollapseBody expanded={expanded}>
         {children ?? (emptyNote ? (
           <div className="sidebar-section-empty-note">{emptyNote}</div>
