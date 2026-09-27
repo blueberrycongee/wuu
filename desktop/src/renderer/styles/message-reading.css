@@ -26,7 +26,9 @@
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-image-block,
 .turn-artifact-image-preview {
   position: relative;
-  width: min(100%, 400px);
+  /* A definite preferred width participates in table intrinsic sizing. */
+  width: 400px;
+  max-width: 100%;
   aspect-ratio: 4 / 3;
 }
 

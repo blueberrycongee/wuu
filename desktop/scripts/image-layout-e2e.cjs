@@ -87,7 +87,9 @@ function threads(url, kind, count) {
           })) : []),
           { id: `${id}-answer-${index}`, type: "agent_message", status: "completed", text:
             `Answer ${index + 1}.\n\n` +
-            (pictures && kind === "markdown" ? images.map(uri => `![Fixture](${uri})\n\n`).join("") : "") +
+            (pictures && kind === "markdown-table"
+              ? "| | Description |\n| --- | --- |\n" + images.map(uri => `| ![Fixture](${uri}) | This is a description of the image included in a comparison table. |`).join("\n") + "\n\n"
+              : pictures && kind === "markdown" ? images.map(uri => `![Fixture](${uri})\n\n`).join("") : "") +
             (pictures ? `${marker}: keep this paragraph in the same place.\n\n` : "") +
             Array.from({ length: 4 }, (_, paragraph) => `Paragraph ${paragraph + 1}. Stable content for reading while an image finishes loading in the same conversation.`).join("\n\n") },
         ],
@@ -109,7 +111,7 @@ app.whenReady().then(async () => {
     return nativeImage.createFromBitmap(pixels, { width, height }).toPNG();
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  for (const kind of ["markdown", "artifact"]) {
+  for (const kind of ["markdown-table", "markdown", "artifact"]) {
     for (const [mode, count, broken, width] of [
       ["history", 1, false, 1180], ["history", 3, false, 1180], ["bottom", 1, false, 1180], ["history", 1, true, 1180],
       ["history", 3, false, 420], ["bottom", 1, false, 420], ["history", 1, true, 420],
@@ -153,6 +155,10 @@ app.whenReady().then(async () => {
       assert.ok(before.images.every(image => !image.complete), "Image responses must still be gated");
       assert.ok(before.images.every(image => image.width > 0 && image.height > 0), "Pending images must have visible preview space");
       await capture(`${name}-before`);
+      if (kind === "markdown-table") {
+        assert.ok(before.images.every(image => image.width >= 100),
+          `Table previews must remain readable before loading, got widths: ${before.images.map(image => image.width).join(", ")}`);
+      }
       await win.webContents.executeJavaScript(`window.imageLayoutGeometry = ${geometry}; void 0;`);
       await evaluate(() => {
         window.imageLayoutFrames = []; window.imageLayoutSampling = true;
@@ -173,6 +179,9 @@ app.whenReady().then(async () => {
       }, activeSelector, broken, count);
       await frames(8);
       const after = await evaluate(geometry);
+      if (kind === "markdown-table" && !broken) {
+        assert.ok(after.images.every(image => image.width >= 100), "Loaded table previews must remain readable");
+      }
       if (mode === "bottom") assert.ok(Math.abs(after.height - after.client - after.top) <= 1, "Image completion must retain bottom following");
       const samples = await evaluate(() => { window.imageLayoutSampling = false; return window.imageLayoutFrames; });
       await capture(`${name}-after`);
@@ -203,6 +212,20 @@ app.whenReady().then(async () => {
             const bounds = pane.getBoundingClientRect();
             return [...pane.querySelectorAll("img.rich-image, .turn-artifact-inline-image img")].every(image => {
               const rect = image.getBoundingClientRect();
+              const table = image.closest(".rich-table-wrap");
+              if (table) {
+                // Wide tables scroll within the message; both edges of a preview
+                // must remain reachable without overflowing the conversation.
+                const tableBounds = table.getBoundingClientRect();
+                const initialScroll = table.scrollLeft;
+                table.scrollLeft = 0;
+                const left = image.getBoundingClientRect().left;
+                table.scrollLeft = table.scrollWidth;
+                const right = image.getBoundingClientRect().right;
+                table.scrollLeft = initialScroll;
+                return rect.width >= 100 && rect.height > 0 && tableBounds.left >= bounds.left && tableBounds.right <= bounds.right
+                  && left >= tableBounds.left - 1 && right <= tableBounds.right + 1;
+              }
               return rect.width > 0 && rect.height > 0 && rect.left >= bounds.left && rect.right <= bounds.right;
             });
           }, activeSelector);
