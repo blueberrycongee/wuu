@@ -2,6 +2,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ComposerDraftState } from "./AppState";
+import { cloneSessionTabDraft, createDraftSessionTab, initialState, type AppState } from "./AppState";
+import { createWorkspaceActions } from "./WorkspaceActions";
 import type { ComposerFile, ComposerImage } from "./ComposerMessages";
 import {
   COMPOSER_PROMPT_IDLE_COMMIT_MS,
@@ -120,6 +122,45 @@ function stubFileReader(result: string): void {
 }
 
 describe("useComposerDraftState", () => {
+  it("persists the complete draft before opening skills and clears the primary composer", async () => {
+    const hook = await renderComposerDraftState();
+    const draft = { prompt: "Question", images: [], files: [], selections: [{ id: "quote", text: "Answer", source: { thread_id: "a", turn_id: "t", item_id: "i", start_offset: 0, end_offset: 6 } }] };
+    await act(async () => hook.get().restorePrimaryComposerDraft(draft));
+    const context = { kind: "no_project" as const, cwd: "/tmp" };
+    let state: AppState = { ...initialState, activeContext: context, activeSessionTabID: "draft", sessionTabs: [createDraftSessionTab("draft", context)] };
+    const actions = createWorkspaceActions({
+      getAppState: () => state,
+      setAppState: (update) => { state = typeof update === "function" ? update(state) : update; },
+      getActiveTitle: () => "Draft",
+      getPrimaryComposerDraft: () => hook.get().currentPrimaryComposerDraft(),
+      restorePrimaryComposerDraft: (value) => hook.get().restorePrimaryComposerDraft(value),
+      setSplitComposerDrafts: (value) => hook.get().setSplitComposerDrafts(value),
+      cancelViewSwitch: vi.fn(), setContextCompositionEntries: vi.fn(), setInstructionFilesEntries: vi.fn(),
+      scheduleStreamScroll: vi.fn(), closeWorkspaceMenus: vi.fn(), setSettingsInitialPage: vi.fn(), setSettingsOpen: vi.fn(),
+    });
+    await act(async () => actions.openSkillsTab());
+    expect(cloneSessionTabDraft(state.sessionTabs.find(tab => tab.id === "draft")!)).toEqual(draft);
+    expect(hook.get().currentPrimaryComposerDraft()).toEqual({ prompt: "", images: [], files: [] });
+    expect(hook.get().composerSelections).toEqual([]);
+  });
+
+  it("keeps response selections independent across restored and split drafts", async () => {
+    const hook = await renderComposerDraftState();
+    const selection = { id: "quote-a", text: "同一段 🌊", comment: "Why?", source: { thread_id: "a", turn_id: "turn", item_id: "answer", start_offset: 8, end_offset: 14 } };
+    const original = { prompt: "Compare", images: [], files: [], selections: [selection] };
+    await act(async () => { hook.get().restorePrimaryComposerDraft(original); });
+    const saved = hook.get().currentPrimaryComposerDraft();
+    await act(async () => { hook.get().restorePrimaryComposerDraft({ prompt: "Other thread", images: [], files: [] }); });
+    expect(hook.get().currentPrimaryComposerDraft().selections ?? []).toEqual([]);
+    await act(async () => {
+      hook.get().setSplitComposerDrafts({ primary: { prompt: "Other", images: [], files: [] }, secondary: saved });
+    });
+    await act(async () => { hook.get().moveSplitDraftToGlobalComposer("secondary"); });
+    expect(hook.get().currentPrimaryComposerDraft()).toEqual(original);
+    expect(hook.get().splitComposerDrafts.secondary.selections ?? []).toEqual([]);
+    expect(hook.get().currentPrimaryComposerDraft().selections?.[0]).not.toBe(selection);
+  });
+
   it.each(["global", "primary", "secondary"] as const)("rejects unsupported %s attachments with a toast without changing the draft", async (pane) => {
     const hook = await renderComposerDraftState();
     const unsupported = new File(["hello"], "notes.txt", { type: "text/plain" });

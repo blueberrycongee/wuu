@@ -9,6 +9,7 @@ import type {
   TodoUpdate,
   PluginInventoryChangedNotification,
   RuntimeContext,
+  ResponseSelection,
   ServerEvent,
   Thread,
   ThreadItem,
@@ -58,6 +59,7 @@ type ComposerDraftState = {
   prompt: string;
   images: ComposerImage[];
   files: ComposerFile[];
+  selections?: ResponseSelection[];
 };
 
 export type TurnStreamStatus = {
@@ -84,6 +86,12 @@ function cloneComposerDraft(draft: ComposerDraftState): ComposerDraftState {
     prompt: draft.prompt,
     images: draft.images.map((image) => ({ ...image })),
     files: draft.files.map((file) => ({ ...file })),
+    ...(draft.selections?.length ? {
+      selections: draft.selections.map((selection) => ({
+        ...selection,
+        source: { ...selection.source },
+      })),
+    } : {}),
   };
 }
 
@@ -97,6 +105,7 @@ type SessionTab =
       images: ComposerImage[];
       files: ComposerFile[];
       createdAt: number;
+      selections?: ResponseSelection[];
       // The draft starts a project: its first message names the project and
       // becomes the coordinator's first instruction.
       project?: true;
@@ -110,6 +119,7 @@ type SessionTab =
       prompt: string;
       images: ComposerImage[];
       files: ComposerFile[];
+      selections?: ResponseSelection[];
     }
   | {
       id: string;
@@ -2105,9 +2115,7 @@ function createDraftSessionTab(
     kind: "draft",
     context,
     title: t("tabs.newConversation"),
-    prompt: draft.prompt,
-    images: draft.images.map((image) => ({ ...image })),
-    files: draft.files.map((file) => ({ ...file })),
+    ...cloneComposerDraft(draft),
     createdAt: Date.now(),
   };
 }
@@ -2123,9 +2131,7 @@ function createThreadSessionTab(
     context,
     threadID: thread.id,
     title: threadDisplayTitle(thread),
-    prompt: draft.prompt,
-    images: draft.images.map((image) => ({ ...image })),
-    files: draft.files.map((file) => ({ ...file })),
+    ...cloneComposerDraft(draft),
   };
 }
 
@@ -2324,9 +2330,8 @@ function persistActiveSessionTabDraft(
       tab.id === activeTabID && (tab.kind === "draft" || tab.kind === "thread")
         ? {
             ...tab,
-            prompt: draft.prompt,
-            images: draft.images.map((image) => ({ ...image })),
-            files: draft.files.map((file) => ({ ...file })),
+            selections: undefined,
+            ...cloneComposerDraft(draft),
           }
         : tab,
     ),
@@ -2340,7 +2345,8 @@ function composerDraftHasContent(draft: ComposerDraftState): boolean {
   return (
     draft.prompt.trim().length > 0 ||
     draft.images.length > 0 ||
-    draft.files.length > 0
+    draft.files.length > 0 ||
+    (draft.selections?.length ?? 0) > 0
   );
 }
 
@@ -2387,9 +2393,8 @@ function applyLoadedRuntimeWithDraftCarry(
       tab.id === targetTabID && (tab.kind === "draft" || tab.kind === "thread")
         ? {
             ...tab,
-            prompt: outgoingDraft.prompt,
-            images: outgoingDraft.images.map((image) => ({ ...image })),
-            files: outgoingDraft.files.map((file) => ({ ...file })),
+            selections: undefined,
+            ...cloneComposerDraft(outgoingDraft),
           }
         : tab,
     ),
@@ -2433,11 +2438,7 @@ function cloneSessionTabDraft(tab: SessionTab): ComposerDraftState {
   if (tab.kind !== "draft" && tab.kind !== "thread") {
     return emptyComposerDraft();
   }
-  return {
-    prompt: tab.prompt,
-    images: tab.images.map((image) => ({ ...image })),
-    files: tab.files.map((file) => ({ ...file })),
-  };
+  return cloneComposerDraft(tab);
 }
 
 function threadForTab(state: AppState, threadID: string): Thread | undefined {

@@ -33,6 +33,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/process"
+	"github.com/blueberrycongee/wuu/internal/processsandbox"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -6809,6 +6810,11 @@ func TestServerTurnStartAcceptsImageOnlyPrompt(t *testing.T) {
 		response: providers.ChatResponse{Content: "saw it"},
 	}
 	rt := newTestRuntime(t, client)
+	kit, err := tools.New(rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.Toolkit = kit
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 
@@ -6856,13 +6862,49 @@ func TestServerTurnStartAcceptsImageOnlyPrompt(t *testing.T) {
 	if requestCount != 1 {
 		t.Fatalf("expected one provider request, got %d", requestCount)
 	}
-	if len(messages) < 2 || messages[1].Role != "user" || messages[1].Content != "" || len(messages[1].Images) != 1 {
+	if len(messages) < 2 || messages[1].Role != "user" || len(messages[1].Images) != 1 {
 		t.Fatalf("unexpected provider messages: %+v", messages)
 	}
 	if messages[1].Images[0].MediaType != "image/jpeg" || messages[1].Images[0].Data != tinyImageOnlyB64 {
 		t.Fatalf("unexpected provider image: %+v", messages[1].Images[0])
 	}
+	stateDir, err := srv.workspaceStateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := filepath.Glob(filepath.Join(statepath.SessionArtifactDir(stateDir, threadID), "input-images", "*"))
+	if err != nil || len(paths) != 1 || !strings.Contains(messages[1].Content, paths[0]) {
+		t.Fatalf("model must receive an existing input image path: paths=%v err=%v content=%q", paths, err, messages[1].Content)
+	}
+	threadKit := srv.thread(threadID).execRuntime.Toolkit
+	if result, err := threadKit.Execute(context.Background(), providers.ToolCall{Name: "read_file", Arguments: fmt.Sprintf(`{"path":%q}`, paths[0])}); err != nil {
+		t.Fatalf("read submitted image through toolkit: %v (%s)", err, result)
+	}
+	t.Run("SandboxedCopyAndMove", func(t *testing.T) {
+		copied := filepath.Join(rt.RootDir, "copied.jpg")
+		moved := filepath.Join(rt.RootDir, "moved.jpg")
+		command := fmt.Sprintf("cp %q %q && mv %q %q", paths[0], copied, paths[0], moved)
+		args, _ := json.Marshal(map[string]any{"command": command})
+		if result, err := threadKit.Execute(context.Background(), providers.ToolCall{Name: "bash", Arguments: string(args)}); err != nil {
+			if errors.Is(err, processsandbox.ErrUnavailable) {
+				t.Skipf("host cannot run the filesystem sandbox: %v", err)
+			}
+			t.Fatalf("copy/move submitted image through toolkit: %v (%s)", err, result)
+		}
+		if err := maintainInputImageStorage(stateDir, time.Now().Add(8*24*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range []string{copied, moved} {
+			data, err := os.ReadFile(path)
+			if err != nil || base64.StdEncoding.EncodeToString(data) != tinyImageOnlyB64 {
+				t.Fatalf("destination survives cleanup with original bytes: %s: %v", path, err)
+			}
+		}
+	})
 
+	if err := os.Remove(paths[0]); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
 	persisted, err := loadChatMessages(rt.SessionDir, threadID)
 	if err != nil {
 		t.Fatalf("load persisted history: %v", err)
@@ -6870,6 +6912,15 @@ func TestServerTurnStartAcceptsImageOnlyPrompt(t *testing.T) {
 	visiblePersisted := visibleMessagesForTest(persisted)
 	if len(visiblePersisted) != 2 || len(visiblePersisted[0].Images) != 1 {
 		t.Fatalf("unexpected persisted history: %+v", persisted)
+	}
+	if visiblePersisted[0].Images[0].LocalPath != paths[0] || visiblePersisted[0].Images[0].Data != tinyImageOnlyB64 {
+		t.Fatal("reloaded history lost image metadata or vision bytes")
+	}
+	if _, err := os.Stat(paths[0]); !os.IsNotExist(err) {
+		t.Fatalf("loading history recreated a removed input file: %v", err)
+	}
+	if chatMessageDisplayContent(visiblePersisted[0]) != "" {
+		t.Fatalf("image-only restored prompt contains synthetic text: %q", chatMessageDisplayContent(visiblePersisted[0]))
 	}
 	sessions, err := session.List(rt.SessionDir, 1)
 	if err != nil {

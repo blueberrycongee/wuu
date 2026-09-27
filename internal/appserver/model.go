@@ -3,12 +3,12 @@ package appserver
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/blueberrycongee/wuu/internal/config"
 	"strings"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/compact"
+	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/participant"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -1719,7 +1719,7 @@ func chatMessageItem(id string, msg providers.ChatMessage) ThreadItem {
 			Status:           ThreadItemStatusCompleted,
 			Role:             "user",
 			Text:             chatMessageDisplayContent(msg),
-			ContentParts:     append([]providers.MessageContentPart(nil), msg.ContentParts...),
+			ContentParts:     providers.CloneMessageContentParts(msg.ContentParts),
 			InputText:        chatMessageInputText(msg),
 			Images:           threadItemImages(msg.Images),
 			Files:            threadItemFiles(msg.Files),
@@ -1794,7 +1794,7 @@ func chatMessageFromPersistedMessage(rec persistedMessage) providers.ChatMessage
 		Steered:              rec.Steered,
 		ReasoningContent:     rec.ReasoningContent,
 		ReasoningBlocks:      append([]providers.ReasoningBlock(nil), rec.ReasoningBlocks...),
-		ContentParts:         append([]providers.MessageContentPart(nil), rec.ContentParts...),
+		ContentParts:         providers.CloneMessageContentParts(rec.ContentParts),
 		ToolCallID:           rec.ToolCallID,
 		ToolInvocationID:     rec.ToolInvocationID,
 		ToolResultKind:       providers.NormalizeToolCallKind(rec.ToolResultKind),
@@ -1809,6 +1809,7 @@ func chatMessageFromPersistedMessage(rec persistedMessage) providers.ChatMessage
 			continue
 		}
 		msg.Images = append(msg.Images, providers.InputImage{
+			LocalPath:      image.LocalPath,
 			ProviderItemID: image.ProviderItemID,
 			MediaType:      image.MediaType,
 			Data:           image.Data,
@@ -1890,6 +1891,13 @@ func isThreadTitleUserMessage(msg providers.ChatMessage) bool {
 }
 
 func chatMessageDisplayContent(msg providers.ChatMessage) string {
+	for _, image := range msg.Images {
+		if image.LocalPath != "" {
+			// Image-only messages have a genuinely empty display prompt even
+			// though Content also contains model-facing working-copy paths.
+			return msg.DisplayContent
+		}
+	}
 	if strings.TrimSpace(msg.DisplayContent) != "" {
 		return msg.DisplayContent
 	}
@@ -1901,11 +1909,13 @@ func chatMessageDisplayContent(msg providers.ChatMessage) string {
 // ordinary user messages while letting plugin-generated wake messages reveal
 // the prompt they actually delivered.
 func chatMessageInputText(msg providers.ChatMessage) string {
-	content := strings.TrimSpace(msg.Content)
-	if content == "" || content == strings.TrimSpace(chatMessageDisplayContent(msg)) {
+	// Keep the expanded slash-command prompt, but exclude working-copy paths
+	// from public input that callers may submit again when retrying a turn.
+	content := strings.TrimSuffix(msg.Content, inputImagePathReference(msg.Images))
+	if strings.TrimSpace(content) == "" || strings.TrimSpace(content) == strings.TrimSpace(chatMessageDisplayContent(msg)) {
 		return ""
 	}
-	return msg.Content
+	return content
 }
 
 func threadItemImages(images []providers.InputImage) []ThreadItemImage {
@@ -1980,7 +1990,7 @@ func filePreview(file providers.InputFile, index int) string {
 func cloneThreadItem(item ThreadItem) ThreadItem {
 	item.Images = append([]ThreadItemImage(nil), item.Images...)
 	item.Files = append([]ThreadItemFile(nil), item.Files...)
-	item.ContentParts = append([]providers.MessageContentPart(nil), item.ContentParts...)
+	item.ContentParts = providers.CloneMessageContentParts(item.ContentParts)
 	item.Display = cloneToolCallDisplay(item.Display)
 	item.ResultDetail = cloneToolResult(item.ResultDetail)
 	return item

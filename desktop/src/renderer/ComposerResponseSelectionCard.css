@@ -1,0 +1,139 @@
+/* Quoted passages in the attachment tray share the document card; only the
+   editing panel is specific to quotes. It uses the composer menu language
+   (surface, radius, inset, entrance) so it reads as one more composer menu. */
+
+.composer-response-selection-card .composer-document-card-title {
+  font-weight: var(--weight-regular);
+}
+
+.composer-response-selection-popover {
+  display: grid;
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 16px));
+  max-height: min(420px, var(--floating-menu-available-height, 60dvh));
+  gap: var(--space-2);
+  overflow: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-shell-radius);
+  /* Keep the theme's elevated tint without letting source prose bleed through. */
+  background: linear-gradient(var(--menu-bg), var(--menu-bg)), var(--paper);
+  color: var(--ink);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
+  line-height: var(--line-body);
+  box-shadow: var(--menu-shadow);
+  transform-origin: bottom left;
+  --menu-enter-y: 4px;
+  animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
+}
+
+.floating-menu-below > .composer-response-selection-popover {
+  transform-origin: top left;
+  --menu-enter-y: -4px;
+}
+
+.composer-response-selection-quote {
+  max-height: calc(var(--font-ui) * var(--line-body) * 6);
+  margin: 0;
+  padding: 2px 0 2px var(--space-3);
+  overflow: auto;
+  border-inline-start: 2px solid var(--hairline-strong);
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The comment reads as prose under the quote; the field only shows its edge
+   while it has focus. */
+.composer-response-selection-comment {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: calc(var(--font-ui) * var(--line-body) + var(--space-2) * 2);
+  max-height: calc(var(--font-ui) * var(--line-body) * 5 + var(--space-2) * 2);
+  padding: var(--space-2);
+  resize: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  line-height: inherit;
+  field-sizing: content;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+.composer-response-selection-comment::placeholder {
+  color: var(--ink-tertiary);
+}
+
+.composer-response-selection-comment:hover:not(:read-only) {
+  background: var(--surface-1);
+}
+
+.composer-response-selection-comment:focus-visible {
+  outline: 0;
+  border-color: var(--hairline);
+  background: var(--field-bg);
+}
+
+.composer-response-selection-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.composer-response-selection-source,
+.composer-response-selection-remove {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  line-height: var(--line-ui);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.composer-response-selection-source .icon {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+}
+
+.composer-response-selection-source:hover {
+  background: var(--menu-hover);
+  color: var(--ink);
+}
+
+.composer-response-selection-remove:hover {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+}
+
+.composer-response-selection-source:focus-visible,
+.composer-response-selection-remove:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@container style(--motion-reduced: 1) {
+  .composer-response-selection-popover {
+    animation: none;
+  }
+
+  .composer-response-selection-comment,
+  .composer-response-selection-source,
+  .composer-response-selection-remove {
+    transition: none;
+  }
+}

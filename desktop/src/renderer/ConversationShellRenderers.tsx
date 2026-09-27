@@ -23,6 +23,7 @@ import type {
   InputFile,
   InputImage,
   MessageContentPart,
+  ResponseSelection,
   Thread,
   ThreadItem,
   UserQuestionAnswer,
@@ -88,6 +89,8 @@ export type ConversationSplitPaneRendererProps = {
   ) => void;
   onRemoveFile: (pane: ConversationPaneID, id: string) => void;
   onRemoveImage: (pane: ConversationPaneID, id: string) => void;
+  onChangeSelection?: (pane: ConversationPaneID, selection: ResponseSelection) => void;
+  onRemoveSelection?: (pane: ConversationPaneID, id: string) => void;
   onSend: (
     pane: ConversationPaneID,
     promptOverride?: string,
@@ -139,6 +142,8 @@ export function ConversationSplitPaneRenderer({
   onPasteAttachmentFiles,
   onRemoveFile,
   onRemoveImage,
+  onChangeSelection,
+  onRemoveSelection,
   onSend,
   onInterrupt,
   onForkMessage,
@@ -183,6 +188,8 @@ export function ConversationSplitPaneRenderer({
       onPasteAttachmentFiles={(files) => onPasteAttachmentFiles(pane, files)}
       onRemoveFile={(id) => onRemoveFile(pane, id)}
       onRemoveImage={(id) => onRemoveImage(pane, id)}
+      onChangeSelection={(selection) => onChangeSelection?.(pane, selection)}
+      onRemoveSelection={(id) => onRemoveSelection?.(pane, id)}
       onSend={(promptOverride, contentParts) => onSend(pane, promptOverride, contentParts)}
       onInterrupt={() => onInterrupt(pane)}
       onForkMessage={(turnID, itemID) => onForkMessage(thread, turnID, itemID)}

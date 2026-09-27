@@ -1451,9 +1451,26 @@ export type ThreadItemStatus = "in_progress" | "completed" | "failed";
 // Ordered user-authored content carried by one message bubble. Binary
 // attachments remain in `images` / `files`; these parts preserve the
 // distinction between instructions and pasted reference text.
+export type ResponseSelection = {
+  id: string;
+  text: string;
+  comment?: string;
+  source: {
+    thread_id: string;
+    turn_id: string;
+    item_id: string;
+    // Exact DOM text slice when native selection text adds visual separators.
+    range_text?: string;
+    // UTF-16 offsets in the settled rendered response, not Markdown source.
+    start_offset: number;
+    end_offset: number;
+  };
+};
+
 export type MessageContentPart =
   | { type: "text"; text: string }
-  | { type: "pasted_text"; text: string; title?: string };
+  | { type: "pasted_text"; text: string; title?: string }
+  | { type: "response_selection"; text: string; selection: ResponseSelection };
 
 export type ToolCallDisplay = {
   kind?: string;

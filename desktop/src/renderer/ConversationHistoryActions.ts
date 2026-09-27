@@ -1,8 +1,9 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import type { InputFile, InputImage, MessageContentPart, Thread, ThreadItem } from "../shared/protocol";
+import type { InputFile, InputImage, MessageContentPart, ResponseSelection, Thread, ThreadItem } from "../shared/protocol";
 import type { ForkMode } from "./ConversationForkDialog";
 import {
   cloneComposerDraft,
+  composerDraftHasContent,
   emptyComposerDraft,
   initialSplitComposerDrafts,
   isThreadRunning,
@@ -10,12 +11,15 @@ import {
   requireThread,
   sameRuntimeContext,
   updateThreadByID,
+  upsertTurn,
   type AppState,
   type ComposerDraftState,
   type ConversationPaneID,
 } from "./AppState";
 import {
+  composerContextFromMessage,
   createComposerMessage,
+  createOptimisticTurn,
   type ComposerFile,
   type ComposerImage,
   type QueuedComposerMessage,
@@ -23,6 +27,7 @@ import {
 import { lastUserMessageAnchor, scrollToUserMessage } from "./TurnViewHelpers";
 import { localizedText, translateCurrent as t } from "./i18n";
 import { showErrorToast } from "./Toast";
+import { rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
 
 type SetAppState = (update: SetStateAction<AppState>) => void;
 
@@ -52,6 +57,8 @@ export type ConversationHistoryActionsDeps = {
   getPrompt: () => string;
   getComposerImages: () => ComposerImage[];
   getComposerFiles: () => ComposerFile[];
+  getComposerSelections: () => ResponseSelection[];
+  setComposerSelections: Dispatch<SetStateAction<ResponseSelection[]>>;
   getSplitComposerDrafts: () => Record<ConversationPaneID, ComposerDraftState>;
   setPrompt: Dispatch<SetStateAction<string>>;
   setComposerImages: Dispatch<SetStateAction<ComposerImage[]>>;
@@ -201,14 +208,16 @@ export function createConversationHistoryActions(
         : undefined;
       const sourceDraft = currentSplitConversation
         ? cloneComposerDraft(splitDrafts?.[sourcePane] ?? emptyComposerDraft())
-        : {
+        : cloneComposerDraft({
             prompt: deps.getPrompt(),
-            images: deps.getComposerImages().map((image) => ({ ...image })),
-            files: deps.getComposerFiles().map((file) => ({ ...file })),
-          };
+            images: deps.getComposerImages(),
+            files: deps.getComposerFiles(),
+            selections: deps.getComposerSelections(),
+          });
       deps.setPrompt("");
       deps.setComposerImages([]);
       deps.setComposerFiles([]);
+      deps.setComposerSelections([]);
       deps.setSplitComposerDrafts(initialSplitComposerDrafts());
       deps.setAppState((current) =>
         openForkThreadAsPrimary(current, {
@@ -335,6 +344,7 @@ deps.rememberConversationScrollForEdit();
       return;
     }
     const idSalt = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const sessionTabID = deps.appStateRef.current.activeSessionTabID;
     const composerImages: ComposerImage[] = images.map((image, index) => ({
       id: `edit-attach-${index}-${idSalt}`,
       media_type: image.media_type,
@@ -394,10 +404,9 @@ deps.rememberConversationScrollForEdit();
       );
       // The sender owns placement of the new user message. Enabling follow
       // here lets the history truncation jump to bottom before it mounts.
-      const targetPane = pane ?? deps.appStateRef.current.activePane;
       deps.setHistoryMessageEdit(undefined);
       deps.appStateRef.current = updateThreadByID(
-        { ...deps.appStateRef.current, activePane: targetPane },
+        deps.appStateRef.current,
         thread.id,
         (currentThread) => ({
           ...thread,
@@ -407,7 +416,7 @@ deps.rememberConversationScrollForEdit();
       );
       deps.setAppState((current) =>
         updateThreadByID(
-          { ...current, activePane: targetPane },
+          current,
           thread.id,
           (currentThread) => ({
             ...thread,
@@ -428,14 +437,14 @@ deps.rememberConversationScrollForEdit();
           return { ...latest, turns };
         };
         deps.appStateRef.current = updateThreadByID(
-          { ...deps.appStateRef.current, activePane: targetPane },
+          deps.appStateRef.current,
           thread.id,
           reordered,
           {},
         );
         deps.setAppState((current) =>
           updateThreadByID(
-            { ...current, activePane: targetPane },
+            current,
             thread.id,
             reordered,
             {},
@@ -443,20 +452,39 @@ deps.rememberConversationScrollForEdit();
         );
       }
       if (!sent) {
+        const latest = deps.appStateRef.current;
+        const stillOwner = pane === undefined
+          ? latest.activeSessionTabID === sessionTabID && !latest.secondaryThread && latest.thread?.id === thread.id
+          : Boolean(latest.secondaryThread) && (pane === "primary" ? latest.thread : latest.secondaryThread)?.id === thread.id;
+        const latestDraft = pane === undefined ? {
+          prompt: deps.getPrompt(), images: deps.getComposerImages(),
+          files: deps.getComposerFiles(), selections: deps.getComposerSelections(),
+        } : deps.getSplitComposerDrafts()[pane];
+        if (!stillOwner || composerDraftHasContent(latestDraft)) {
+          const failedTurn = {
+            ...createOptimisticTurn(message, Date.now()),
+            status: "failed" as const,
+            error: { message: t("composer.sendFailed") },
+          };
+          const preserve = (state: AppState) => updateThreadByID(state, thread.id, (current) => upsertTurn(current, failedTurn));
+          deps.appStateRef.current = preserve(deps.appStateRef.current);
+          deps.setAppState(preserve);
+          return;
+        }
+        const context = composerContextFromMessage(message.text, message.contentParts);
+        rememberCollapsedPromptParts(thread.id, context.prompt, context.contentParts);
+        const draft = cloneComposerDraft({
+          prompt: context.prompt,
+          images: message.images,
+          files: message.files,
+          selections: context.selections,
+        });
         if (pane === undefined) {
-          deps.restorePrimaryComposerDraft({
-            prompt: message.text,
-            images: message.images.map((image) => ({ ...image })),
-            files: message.files.map((file) => ({ ...file })),
-          });
+          deps.restorePrimaryComposerDraft(draft);
         } else {
           deps.setSplitComposerDrafts((current) => ({
             ...current,
-            [pane]: {
-              prompt: message.text,
-              images: message.images.map((image) => ({ ...image })),
-              files: message.files.map((file) => ({ ...file })),
-            },
+            [pane]: draft,
           }));
         }
       }

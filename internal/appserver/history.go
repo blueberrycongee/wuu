@@ -26,6 +26,7 @@ type persistedToolCall struct {
 }
 
 type persistedImage struct {
+	LocalPath      string `json:"local_path,omitempty"`
 	ProviderItemID string `json:"provider_item_id,omitempty"`
 	Required       bool   `json:"required,omitempty"`
 	MediaType      string `json:"media_type"`
@@ -151,7 +152,7 @@ func chatMessagesFromPersistedMessages(records []persistedMessage) []providers.C
 			ReasoningContent:     rec.ReasoningContent,
 			ReasoningBlocks:      append([]providers.ReasoningBlock(nil), rec.ReasoningBlocks...),
 			ProviderItems:        append([]providers.ProviderItem(nil), rec.ProviderItems...),
-			ContentParts:         append([]providers.MessageContentPart(nil), rec.ContentParts...),
+			ContentParts:         providers.CloneMessageContentParts(rec.ContentParts),
 			ToolCallID:           rec.ToolCallID,
 			ToolInvocationID:     rec.ToolInvocationID,
 			ToolResultKind:       providers.NormalizeToolCallKind(rec.ToolResultKind),
@@ -166,6 +167,7 @@ func chatMessagesFromPersistedMessages(records []persistedMessage) []providers.C
 				continue
 			}
 			msg.Images = append(msg.Images, providers.InputImage{
+				LocalPath:      image.LocalPath,
 				Required:       image.Required,
 				ProviderItemID: image.ProviderItemID,
 				MediaType:      image.MediaType,
@@ -360,7 +362,7 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 		ReasoningContent:  msg.ReasoningContent,
 		ReasoningBlocks:   append([]providers.ReasoningBlock(nil), msg.ReasoningBlocks...),
 		ProviderItems:     append([]providers.ProviderItem(nil), msg.ProviderItems...),
-		ContentParts:      append([]providers.MessageContentPart(nil), msg.ContentParts...),
+		ContentParts:      providers.CloneMessageContentParts(msg.ContentParts),
 		DiscoveredTools:   providers.CloneLoadableToolDefinitions(msg.DiscoveredTools),
 		ToolCallID:        msg.ToolCallID,
 		ToolInvocationID:  msg.ToolInvocationID,
@@ -378,6 +380,7 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 			continue
 		}
 		out.Images = append(out.Images, persistedImage{
+			LocalPath:      image.LocalPath,
 			Required:       image.Required,
 			ProviderItemID: image.ProviderItemID,
 			MediaType:      image.MediaType,

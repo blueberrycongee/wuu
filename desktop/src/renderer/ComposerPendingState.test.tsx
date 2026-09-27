@@ -1,7 +1,7 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ServerEvent, Thread, WuuDesktopApi } from "../shared/protocol";
+import type { ServerEvent, Thread, ThreadResumeResult, WuuDesktopApi } from "../shared/protocol";
 import {
   emptyComposerDraft,
   initialState,
@@ -60,14 +60,17 @@ async function renderComposerPendingState({
     threads: [thread()],
   },
   primaryDraft = emptyComposerDraft(),
+  draftsByThread = {},
 }: {
   appState?: AppState;
   primaryDraft?: ComposerDraftState;
+  draftsByThread?: Record<string, ComposerDraftState>;
 } = {}): Promise<{
   get: () => ComposerPendingStateController;
   setStatus: ReturnType<typeof vi.fn>;
   restorePrimaryComposerDraft: ReturnType<typeof vi.fn>;
   restoreComposerDraftForThread: ReturnType<typeof vi.fn>;
+  preserveFailedComposerMessage: ReturnType<typeof vi.fn>;
   sendComposerMessageToThread: ReturnType<typeof vi.fn>;
   setPrimaryDraft: (draft: ComposerDraftState) => void;
   setAppState: (state: AppState) => void;
@@ -84,12 +87,14 @@ async function renderComposerPendingState({
       restorePrimaryComposerDraft(draft),
   );
   const sendComposerMessageToThread = vi.fn();
+  const preserveFailedComposerMessage = vi.fn();
 
   function Probe() {
     latest = useComposerPendingState({
       getAppState: () => currentAppState,
-      getPrimaryComposerDraft: () => currentPrimaryDraft,
+      getComposerDraftForThread: (threadID: string) => draftsByThread[threadID] ?? currentPrimaryDraft,
       restoreComposerDraftForThread,
+      preserveFailedComposerMessage,
       setStatus,
       sendComposerMessageToThread,
     });
@@ -116,6 +121,7 @@ async function renderComposerPendingState({
     setStatus,
     restorePrimaryComposerDraft,
     restoreComposerDraftForThread,
+    preserveFailedComposerMessage,
     sendComposerMessageToThread,
     setPrimaryDraft: (draft) => {
       currentPrimaryDraft = draft;
@@ -127,6 +133,23 @@ async function renderComposerPendingState({
 }
 
 describe("useComposerPendingState", () => {
+  it("retains unknown held content as text rather than losing the raw input", () => {
+    const resumed = heldComposerMessagesFromResumeResult({ thread: thread(), held_user_messages: [{ id: "unknown", origin: "queue", prompt: "Keep this", content_parts: [{ type: "future_part", text: "Keep this" }] }] } as unknown as ThreadResumeResult);
+    expect(resumed[0].contentParts).toEqual([{ type: "text", text: "Keep this" }]);
+  });
+
+  it("restores held response selections after resume for editing without inserting serialized context into the input", async () => {
+    const selection = { id: "quote-a", text: "原文\n🌊", comment: "Explain", source: { thread_id: "thread-a", turn_id: "turn-a", item_id: "answer-a", start_offset: 4, end_offset: 8, range_text: "原文🌊" } };
+    const parts = [{ type: "response_selection", text: "Quoted response context\n", selection }, { type: "text", text: "My question" }];
+    const resumed = heldComposerMessagesFromResumeResult({ thread: thread(), held_user_messages: [{ id: "held-quote", origin: "queue", prompt: parts.map(part => part.text).join(""), content_parts: parts }] } as unknown as ThreadResumeResult);
+    expect(resumed[0].contentParts).toEqual(parts);
+    installWuuStub({ dequeueTurn: vi.fn().mockResolvedValue({ ok: true }) });
+    const hook = await renderComposerPendingState();
+    act(() => { hook.get().enqueueComposerMessage("thread-a", resumed[0]); });
+    await act(async () => { await hook.get().editQueuedMessage("held-quote"); });
+    expect(hook.restoreComposerDraftForThread).toHaveBeenCalledWith("thread-a", { prompt: "My question", images: [], files: [], selections: [selection] });
+  });
+
   it("restores live queue and guide messages from the resume snapshot", () => {
     const restored = heldComposerMessagesFromResumeResult({
       thread: thread("thread-a", true),
@@ -764,6 +787,34 @@ describe("useComposerPendingState", () => {
     expect(resolveLocalizedText(hook.setStatus.mock.calls[0][0] as string)).toBe(
       "先发送或清空当前输入，再编辑排队消息",
     );
+  });
+
+  it.each(["queue", "guide"] as const)("preserves removed %s input when a newer draft arrives before cancellation acknowledgement", async (kind) => {
+    let acknowledge!: (result: { ok: boolean }) => void;
+    const acknowledgement = new Promise<{ ok: boolean }>(resolve => { acknowledge = resolve; });
+    installWuuStub({ dequeueTurn: vi.fn(() => acknowledgement), unsteerTurn: vi.fn(() => acknowledgement) });
+    const hook = await renderComposerPendingState();
+    const queued = message("pending-race", "Recover this");
+    act(() => hook.get().setPendingComposerMessagesByThreadNow({ "thread-a": { queued: kind === "queue" ? [queued] : [], guides: kind === "guide" ? [queued] : [] } }));
+    let editing!: Promise<void>;
+    act(() => { editing = kind === "queue" ? hook.get().editQueuedMessage(queued.id) : hook.get().editGuideMessage(queued.id); });
+    hook.setPrimaryDraft({ prompt: "New question", images: [], files: [] });
+    await act(async () => { acknowledge({ ok: true }); await editing; });
+    expect(hook.restoreComposerDraftForThread).not.toHaveBeenCalled();
+    expect(hook.preserveFailedComposerMessage).toHaveBeenCalledWith("thread-a", queued);
+  });
+
+  it("does not overwrite a selection-only draft belonging to the queued message thread", async () => {
+    const dequeueTurn = vi.fn().mockResolvedValue({ ok: true });
+    installWuuStub({ dequeueTurn });
+    const hook = await renderComposerPendingState({ draftsByThread: { "thread-b": {
+      prompt: "", images: [], files: [], selections: [{ id: "quote", text: "Answer", source: { thread_id: "a", turn_id: "t", item_id: "i", start_offset: 0, end_offset: 6 } }],
+    } } });
+    act(() => hook.get().enqueueComposerMessage("thread-b", message("queue-b", "Edit me")));
+    await act(async () => hook.get().editQueuedMessage("queue-b"));
+    expect(dequeueTurn).not.toHaveBeenCalled();
+    expect(hook.restoreComposerDraftForThread).not.toHaveBeenCalled();
+    expect(hook.get().pendingComposerMessagesByThread["thread-b"].queued).toHaveLength(1);
   });
 
   it("restores a queued message when dequeue misses it before turn/started", async () => {

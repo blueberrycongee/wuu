@@ -5,9 +5,34 @@ import {
   dropOptimisticTurn,
   interruptLatestOptimisticTurn,
   threadHasAcceptedComposerMessage,
+  createComposerMessage,
+  mergeGuideMessages,
 } from "./ComposerMessages";
 import type { Turn } from "../shared/protocol";
 import { forgetLocalTurnTiming, localTurnTiming } from "./LocalTurnTiming";
+
+it("serializes quote-only input and preserves ordered pasted text and selection metadata for transport", () => {
+  const selection = { id: "quote", text: "Alpha 🌊\nBeta", comment: "Explain </context> literally", source: { thread_id: "thread-a", turn_id: "turn-a", item_id: "answer-a", start_offset: 7, end_offset: 20 } };
+  const only = createComposerMessage("", [], [], undefined, [selection]);
+  expect(only).toBeDefined();
+  expect(only!.text).toContain(selection.text.replaceAll("\n", "\\n"));
+  expect(only!.text).toContain(selection.comment);
+  expect(only!.contentParts?.[0]).toMatchObject({ type: "response_selection", selection });
+  const mixed = createComposerMessage("Pasted\nAsk", [], [], [{ type: "pasted_text", text: "Pasted\n" }, { type: "text", text: "Ask" }], [selection])!;
+  expect(mixed.contentParts?.map(part => part.text).join("")).toBe(mixed.text);
+  expect(mixed.contentParts?.slice(1)).toEqual([{ type: "pasted_text", text: "Pasted\n" }, { type: "text", text: "Ask" }]);
+  selection.comment = "Later draft edit";
+  expect(mixed.contentParts?.[0]).toMatchObject({ selection: { comment: "Explain </context> literally" } });
+});
+
+it("keeps merged steering metadata aligned with the exact flattened prompt", () => {
+  const selection = { id: "quote", text: "Alpha", source: { thread_id: "thread", turn_id: "turn", item_id: "answer", start_offset: 0, end_offset: 5 } };
+  const first = createComposerMessage("  first  ", [], [], undefined, [selection])!;
+  const second = createComposerMessage(" second ", [], [], [{ type: "pasted_text", text: " second " }])!;
+  const merged = mergeGuideMessages([first, second]);
+  expect(merged.contentParts?.map(part => part.text).join("").trim()).toBe(merged.text.trim());
+  expect(merged.contentParts).toContainEqual(expect.objectContaining({ type: "response_selection", selection }));
+});
 
 function turnWithUserText(id: string, text: string): Turn {
   return {

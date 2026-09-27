@@ -40,6 +40,22 @@ If sending fails, Wuu restores the input when that composer is still empty. If y
 
 Use Stop to interrupt a task. Stopping does not undo commands or file edits, and separately managed background work may need its own stop action. Review the [current diff and command results](workspace-tools.md#review) before continuing.
 
+## Quote part of a response
+
+Select text in a completed assistant response, then choose **Add to conversation**. Choose **Comment** to add an optional comment beside the selected passage first. Each quote waits as a card in that conversation's input tray, including in split view. Open a card to read the full quote, edit its comment, or view the source; remove a quote from its card or from the open panel. You can send a quote without typing another message. Sending, queuing, and steering include both the quoted text and your comment in the model's input.
+
+Selected passages stay with their draft when switching tabs or leaving split view. Failed sends and editing held messages restore the quotes separately from the editable prompt. **View source** highlights the exact selected passage when the original response is loaded and visible. If it is hidden, unloaded, or changed, Wuu reports that the source is unavailable rather than highlighting another occurrence. Open the source conversation and load its response before trying again.
+
+Older hosts can discard quote metadata while retaining the transmitted text; older desktop clients may not display structured quotes. Use matching current host and desktop versions to retain structured quotes through editing and history recovery. Native clients show the flattened quote and comment as text.
+
+## Work with pasted images
+
+Paste an image or select an image file, then send the message. Wuu saves a local working file and gives the model its absolute path alongside the image for vision. You can ask the model to copy, move, or process that file using its normal file and command tools. The working file preserves the bytes received by the backend; desktop image compression still applies before sending.
+
+When context compaction omits image data, the image notes and the summary input's media index retain the working-file path. Compaction does not recreate missing files or extend their expiry.
+
+Working files live in `sessions/<thread-id>/input-images/` under the workspace's Wuu state directory. They expire after seven days. Wuu checks for expired files when the app-server starts and every six hours while it runs, so deletion may happen after the expiry time. This cleanup does not remove the image from conversation history or delete files copied or moved outside the cache. To keep an image, ask the model to save it in the workspace. If its working file has expired, send the image again.
+
 ## Fork from an earlier message
 
 Choose **Fork** on a historical message, then select where the new conversation should work:

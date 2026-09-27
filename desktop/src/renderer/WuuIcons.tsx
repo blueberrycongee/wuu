@@ -141,6 +141,7 @@ export const PinOff = createIcon("PinOff");
 export const Plug = createIcon("Plug");
 export const PlugZap = createIcon("PlugZap");
 export const Plus = createIcon("Plus");
+export const Quote = createIcon("Quote");
 export const Project = createIcon("Project", 1.9);
 export const Presentation = createIcon("Presentation");
 export const Puzzle = createIcon("Puzzle");

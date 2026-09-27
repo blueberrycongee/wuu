@@ -24,6 +24,7 @@ import {
   type ComposerImage,
 } from "./ComposerMessages";
 import { translateCurrent } from "./i18n";
+import type { ResponseSelection } from "../shared/protocol";
 import { showErrorToast } from "./Toast";
 
 // The textarea owns the input-critical value. Publishing its draft to App
@@ -44,6 +45,8 @@ export type ComposerDraftStateController = {
   composerImages: ComposerImage[];
   setComposerImages: Dispatch<SetStateAction<ComposerImage[]>>;
   composerFiles: ComposerFile[];
+  composerSelections: ResponseSelection[];
+  setComposerSelections: Dispatch<SetStateAction<ResponseSelection[]>>;
   setComposerFiles: Dispatch<SetStateAction<ComposerFile[]>>;
   splitComposerDrafts: Record<ConversationPaneID, ComposerDraftState>;
   setSplitComposerDrafts: Dispatch<
@@ -166,6 +169,7 @@ export function useComposerDraftState(): ComposerDraftStateController {
   useEffect(() => cancelPromptCommit, [cancelPromptCommit]);
   const [composerImages, setComposerImages] = useState<ComposerImage[]>([]);
   const [composerFiles, setComposerFiles] = useState<ComposerFile[]>([]);
+  const [composerSelections, setComposerSelections] = useState<ResponseSelection[]>([]);
   const [splitComposerDrafts, setSplitComposerDrafts] = useState<
     Record<ConversationPaneID, ComposerDraftState>
   >(initialSplitComposerDrafts);
@@ -272,6 +276,7 @@ export function useComposerDraftState(): ComposerDraftStateController {
       prompt: promptRef.current,
       images: composerImages,
       files: composerFiles,
+      selections: composerSelections,
     });
   }
 
@@ -280,6 +285,7 @@ export function useComposerDraftState(): ComposerDraftStateController {
     setPrompt(nextDraft.prompt);
     setComposerImages(nextDraft.images);
     setComposerFiles(nextDraft.files);
+    setComposerSelections(nextDraft.selections ?? []);
   }
 
   return {
@@ -291,6 +297,8 @@ export function useComposerDraftState(): ComposerDraftStateController {
     setComposerImages,
     composerFiles,
     setComposerFiles,
+    composerSelections,
+    setComposerSelections,
     splitComposerDrafts,
     setSplitComposerDrafts,
     attachComposerAttachmentFiles,

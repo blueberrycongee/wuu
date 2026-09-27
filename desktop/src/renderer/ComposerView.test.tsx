@@ -351,6 +351,7 @@ function installSkillList(skills: SkillSummary[]): void {
 
 function renderSplitPaneComposer(props: {
   connectionAvailable?: boolean;
+  selections?: import("../shared/protocol").ResponseSelection[];
   prompt?: string;
   running?: boolean;
   stopState?: "pending" | "retry";
@@ -366,6 +367,7 @@ function renderSplitPaneComposer(props: {
         <WorkbenchConnectionContext.Provider value={props.connectionAvailable ?? true}>
         <SplitPaneComposer
           prompt={props.prompt ?? ""}
+          selections={props.selections}
           setPrompt={() => {}}
           files={[]}
           images={[]}
@@ -911,6 +913,17 @@ describe("Composer send control", () => {
     expect(onSend).toHaveBeenCalledTimes(2);
     expect(onSend).toHaveBeenLastCalledWith("keep until accepted");
     expect(textarea.value).toBe("");
+  });
+
+  it("submits a quote-only split draft once when duplicate gestures race its clear", () => {
+    const onSend = vi.fn();
+    renderSplitPaneComposer({ onSend, selections: [{ id: "quote", text: "Alpha", source: { thread_id: "thread", turn_id: "turn", item_id: "answer", start_offset: 0, end_offset: 5 } }] });
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    expect(onSend).toHaveBeenCalledTimes(1);
   });
 
   it("submits one copy when duplicate gestures race the draft clear", () => {

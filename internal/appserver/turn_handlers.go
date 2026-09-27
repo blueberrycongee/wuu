@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
@@ -197,7 +198,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 		}
 		return nil
 	}
-	userMsg, err := userMessageFromPrompt(params.Prompt, images, files, params.ContentParts)
+	userMsg, err := s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -524,7 +525,7 @@ func (s *Server) handleTurnQueue(req Request) error {
 	if queueID == "" {
 		queueID = session.NewID()
 	}
-	msg, err := userMessageFromPrompt(params.Prompt, images, files, params.ContentParts)
+	msg, err := s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -629,7 +630,7 @@ func (s *Server) handleTurnUpdateQueued(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("thread is read-only"))
 	}
 
-	msg, err := userMessageFromPrompt(params.Prompt, images, files, params.ContentParts)
+	msg, err := s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -807,7 +808,7 @@ func (s *Server) handleTurnSteer(req Request) error {
 		}
 		steerMsg = removedTurn.msg
 	} else {
-		steerMsg, err = userMessageFromPrompt(params.Prompt, images, files, params.ContentParts)
+		steerMsg, err = s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 		if err != nil {
 			th.mu.Unlock()
 			return s.writeResponse(req.ID, nil, err)
@@ -1706,8 +1707,39 @@ func normalizeMessageContentParts(parts []providers.MessageContentPart) []provid
 	out := make([]providers.MessageContentPart, 0, len(parts))
 	for _, part := range parts {
 		part.Type = strings.TrimSpace(part.Type)
-		if (part.Type != "text" && part.Type != "pasted_text") || part.Text == "" {
+		if (part.Type != "text" && part.Type != "pasted_text" && part.Type != "response_selection") || part.Text == "" {
 			continue
+		}
+		selection := part.Selection
+		part.Selection = nil
+		if part.Type == "response_selection" {
+			// Invalid rich metadata must never hide or replace the provider text.
+			part.Type = "text"
+			part.Title = ""
+			const prefix = "Quoted assistant response (JSON):\n"
+			if selection != nil && strings.TrimSpace(selection.ID) != "" && strings.TrimSpace(selection.Text) != "" &&
+				strings.TrimSpace(selection.Source.ThreadID) != "" && strings.TrimSpace(selection.Source.TurnID) != "" && strings.TrimSpace(selection.Source.ItemID) != "" &&
+				selection.Source.StartOffset >= 0 && selection.Source.EndOffset > selection.Source.StartOffset &&
+				strings.HasPrefix(part.Text, prefix) && strings.HasSuffix(part.Text, "\n") {
+				rangeText := selection.Source.RangeText
+				if rangeText == "" {
+					rangeText = selection.Text
+				}
+				span := 0
+				for _, r := range rangeText {
+					span += utf16.RuneLen(r)
+				}
+				var payload map[string]*string
+				body := strings.TrimSuffix(strings.TrimPrefix(part.Text, prefix), "\n")
+				if selection.Source.EndOffset-selection.Source.StartOffset == span &&
+					json.Unmarshal([]byte(body), &payload) == nil && len(payload) == 2 &&
+					payload["text"] != nil && *payload["text"] == selection.Text &&
+					payload["comment"] != nil && *payload["comment"] == selection.Comment {
+					copied := *selection
+					part.Selection = &copied
+					part.Type = "response_selection"
+				}
+			}
 		}
 		part.Title = strings.TrimSpace(part.Title)
 		out = append(out, part)
