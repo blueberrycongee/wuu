@@ -54,8 +54,15 @@ async function run() {
     }, text);
     await evaluate(() => document.querySelector(".composer textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
   }
+  assert(await evaluate(() => document.querySelector('[data-wuu-state="send"]')?.getAttribute("aria-busy") !== "true"));
   await submit("Review the request lifecycle");
   const creation = await until(() => gates.get("thread/start"), "thread creation gate");
+  await until(() => evaluate(() => document.querySelector('[data-wuu-state="submitting"]')?.getAttribute("aria-busy") === "true"), "creation submission feedback");
+  for (const [theme, width, font] of [["light", 1100, 14], ["dark", 760, 20]]) {
+    win.setSize(width, 820);
+    await evaluate(setVisualTheme, theme, font);
+    fs.writeFileSync(path.join(evidence, `submitting-${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG());
+  }
   await submit("Then verify the queue order");
   await submit("Keep these messages after Stop");
   assert.equal(queued.length, 0);
@@ -64,8 +71,9 @@ async function run() {
   await until(() => evaluate(() => parseInt(document.querySelector(".turn-process-meta")?.textContent) >= 2), "local waiting timer");
   creation.resolve();
   const admission = await until(() => gates.get("turn/start"), "turn admission gate");
-  const { threadId, text, clientId } = admission.params;
-  const turn = { id: `turn-${threadId}`, status: "in_progress", items_view: "full", started_at: new Date().toISOString(), items: [
+  assert(await evaluate(() => Boolean(document.querySelector('[data-wuu-state="submitting"]'))), "submission feedback survives thread creation");
+  const { threadId, turnId, text, clientId } = admission.params;
+  const turn = { id: turnId, status: "in_progress", items_view: "full", started_at: new Date().toISOString(), items: [
     { id: `user-${threadId}`, type: "user_message", status: "completed", text, source_id: clientId },
   ] };
   notify("turn/started", { thread_id: threadId, turn });
@@ -121,12 +129,14 @@ async function verifyHistoryEdits() {
     await evaluate(() => document.querySelector(".composer textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
     (await until(() => gates.get("thread/start"), "fixture creation")).resolve();
     const admission = await until(() => gates.get("turn/start"), "fixture admission");
+    assert(await evaluate(() => Boolean(document.querySelector('[data-wuu-state="submitting"]'))), "normal admission feedback");
     admission.resolve();
+    await until(() => evaluate(() => Boolean(document.querySelector('[data-wuu-state="stop"]'))), "RPC acceptance ends submission");
     await until(() => evaluate(() => Boolean(document.querySelector('[data-user-message-id^="user-"]'))), "fixture acknowledgement");
     const threadID = admission.params.threadId;
     win.webContents.send("test:server-event", { kind: "notification", workdir: repoRoot, message: {
       method: "turn/completed", params: { thread_id: threadID, turn: {
-        id: `turn-${threadID}`, status: "interrupted", items_view: "full",
+        id: admission.params.turnId, status: "interrupted", items_view: "full",
         items: [{ id: `user-${threadID}`, type: "user_message", text: "Original question" }],
       } },
     } });
@@ -142,7 +152,7 @@ async function verifyHistoryEdits() {
     await evaluate(() => document.querySelector("[data-user-message-id] textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
     const edit = await until(() => gates.get("thread/edit-message"), "edit preparation");
     await until(() => evaluate(() => document.querySelector("[data-user-message-id] textarea")?.disabled &&
-      Boolean(document.querySelector(".composer-stop-button"))), "shared preparation feedback");
+      document.querySelector('[data-wuu-state="submitting"]')?.getAttribute("aria-busy") === "true"), "shared preparation feedback");
     assert.equal(gates.has("turn/start"), false);
     if (outcome === "success") {
       for (const [theme, width, font] of [["light", 1100, 14], ["dark", 760, 20]]) {
@@ -157,6 +167,19 @@ async function verifyHistoryEdits() {
     if (outcome === "success" || outcome === "send-failure") {
       const sending = await until(() => gates.get("turn/start"), "replacement admission");
       assert.equal(sending.params.text, "Replacement question: preserve this draft if the network fails.");
+      assert(await evaluate(() => !document.querySelector("[data-user-message-id] textarea") &&
+        document.querySelector('[data-wuu-state="submitting"]')?.getAttribute("aria-busy") === "true"), "submission feedback spans history preparation and admission");
+      if (outcome === "success") {
+        fs.writeFileSync(path.join(evidence, "history-awaiting-admission.png"), (await win.webContents.capturePage()).toPNG());
+        win.webContents.send("test:server-event", { kind: "notification", workdir: repoRoot, message: {
+          method: "turn/started", params: { thread_id: threadID, turn: {
+            id: sending.params.turnId, status: "in_progress", items_view: "full",
+            items: [{ id: `user-${threadID}`, type: "user_message", text: sending.params.text, source_id: sending.params.clientId }],
+          } },
+        } });
+        await until(() => evaluate(() => document.querySelector('[data-wuu-state="stop"]')?.getAttribute("aria-busy") !== "true" &&
+          Boolean(document.querySelector('[data-wuu-state="stop"]'))), "event acknowledgement ends submission before RPC returns");
+      }
       if (outcome === "send-failure") sending.reject(new Error("Send unavailable"));
       else sending.resolve();
     }
@@ -167,7 +190,8 @@ async function verifyHistoryEdits() {
       if (outcome === "stop") return !editor && !document.querySelector(".composer-stop-button");
       return !editor && Boolean(document.querySelector('[data-user-message-id^="user-"]'));
     }, outcome), `history ${outcome} settlement`);
-    if (outcome !== "success") assert(await evaluate(() => !document.querySelector(".composer-stop-button")));
+    if (outcome !== "success") assert(await evaluate(() => !document.querySelector(".composer-stop-button") &&
+      !document.querySelector('[aria-busy="true"]')), "failure and cancellation clear busy feedback");
     if (outcome === "edit-failure" || outcome === "stop") assert.equal(gates.has("turn/start"), false);
     fs.writeFileSync(path.join(evidence, `history-${outcome}.png`), (await win.webContents.capturePage()).toPNG());
     win.destroy();

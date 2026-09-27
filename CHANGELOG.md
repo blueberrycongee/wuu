@@ -152,6 +152,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   pending feedback, Stop, and failure recovery without a stuck sending notice.
   Sending feedback stays on the input's action button, including question
   responses, instead of redundant status text; actionable errors remain visible.
+  Main and split composers keep one pending indicator from preparation through
+  server acceptance, then show the running control; early server acknowledgements
+  end pending feedback without waiting for the submission RPC.
 
 - Keep sidebar conversation titles and fork markers clear of the status dot
   while a conversation is loading.

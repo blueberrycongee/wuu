@@ -149,6 +149,7 @@ export function Composer({
   sendDisabled = false,
   forceStopWhileRunning = false,
   stopState,
+  submitting = false,
   runtimeControlsDisabled = running,
   status,
   statusLiveProgress,
@@ -257,6 +258,7 @@ export function Composer({
   sendDisabled?: boolean;
   forceStopWhileRunning?: boolean;
   stopState?: "pending" | "retry";
+  submitting?: boolean;
   runtimeControlsDisabled?: boolean;
   status: string;
   statusLiveProgress?: boolean;
@@ -443,7 +445,7 @@ export function Composer({
   // is empty. The moment there is something to send, it flips back to a send
   // button. Its submit action below deliberately follows the same steer/queue
   // decision as Enter, while preserving the stop affordance for an empty input.
-  const showComposerStop = Boolean(stopState) || (running && (forceStopWhileRunning || !hasDraft));
+  const showComposerStop = Boolean(stopState) || ((running || submitting) && (forceStopWhileRunning || !hasDraft));
   const composerSendLabel = running && hasDraft && onSteer
     ? t("composer.steerSend")
     : running
@@ -1445,8 +1447,8 @@ export function Composer({
                 <button
                   className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
                   data-wuu-component="composer-send"
-                  data-wuu-state={stopState ?? (showComposerStopAction ? "stop" : "send")}
-                  aria-busy={stopState === "pending" || undefined}
+                  data-wuu-state={stopState ?? (showComposerStopAction ? submitting ? "submitting" : "stop" : "send")}
+                  aria-busy={stopState === "pending" || (showComposerStopAction && submitting) || undefined}
                   type="button"
                   onPointerDown={(event) => {
                     if (!showComposerStopAction && event.button === 0 && document.activeElement === textareaRef.current) {
@@ -1463,7 +1465,7 @@ export function Composer({
                     (effectiveSendDisabled || readOnly || (!hasDraft) || (handoffMode && !canConfirmHandoff)))
                   }
                 >
-                  {showComposerStopAction ? <ComposerStopIcon state={stopState} /> : <ArrowUp aria-hidden="true" />}
+                  {showComposerStopAction ? <ComposerStopIcon state={stopState} submitting={submitting} /> : <ArrowUp aria-hidden="true" />}
                 </button>
               </div>
             </div>

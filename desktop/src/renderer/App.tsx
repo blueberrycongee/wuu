@@ -2137,6 +2137,8 @@ export function App(): JSX.Element {
       : { kind: "wuu" };
   const emptyThreadTitle = greetingFor(currentHour, greetingContext);
   type TurnAdmission = {
+    message: QueuedComposerMessage;
+    previousTurnIDs: ReadonlySet<string>;
     thread?: Thread;
     ready: Promise<Thread | undefined>;
     resolve: (thread: Thread | undefined) => void;
@@ -2146,6 +2148,19 @@ export function App(): JSX.Element {
     cancelPreparation: () => void;
   };
   const turnAdmissionsRef = useRef(new Map<string, TurnAdmission>());
+  const [turnAdmissions, setTurnAdmissions] = useState(turnAdmissionsRef.current);
+  const submittingThreadIDs = new Set<string>();
+  for (const [key, admission] of turnAdmissions) {
+    // A server event can acknowledge the message before the RPC returns.
+    if (!threadHasAcceptedComposerMessage(threadForTab(state, key), admission.message, undefined, admission.previousTurnIDs)) {
+      submittingThreadIDs.add(key);
+    }
+  }
+  for (const [key, pending] of Object.entries(pendingComposerMessagesByThread)) {
+    if ([...pending.queued, ...pending.guides].some((message) => message.operationState)) {
+      submittingThreadIDs.add(key);
+    }
+  }
   const queueLanesRef = useRef(new Map<string, { tail: Promise<void>; stopVersion: number }>());
   const stopDeliveredRef = useRef(new Map<string, symbol>());
   const stopTargetsRef = useRef(new Map<string, string>());
@@ -3087,6 +3102,7 @@ export function App(): JSX.Element {
           : queuedMessages}
         guideMessages={guideMessages}
         sendDisabled={submissionTargetPending || Boolean(activeThread && stopRequests[activeThread.id])}
+        submitting={submittingThreadIDs.has(activeThread?.id ?? state.activeSessionTabID)}
         stopState={activeThread ? stopRequests[activeThread.id] : undefined}
         running={
           Boolean(activePendingThreadCreation) ||
@@ -4479,6 +4495,8 @@ export function App(): JSX.Element {
     let resolveAdmission!: TurnAdmission["resolve"];
     let cancelPreparation!: () => void;
     const admission: TurnAdmission = {
+      message,
+      previousTurnIDs: new Set(targetThread?.turns.map((turn) => turn.id)),
       thread: targetThread,
       ready: new Promise((resolve) => { resolveAdmission = resolve; }),
       resolve: (thread) => resolveAdmission(thread),
@@ -4489,8 +4507,9 @@ export function App(): JSX.Element {
     };
     const admissionKey = targetThread?.id ?? currentState.activeSessionTabID;
     turnAdmissionsRef.current.set(admissionKey, admission);
+    setTurnAdmissions(new Map(turnAdmissionsRef.current));
     const optimisticTurn = createOptimisticTurn(message, sendClickedAtMs);
-    const previousTurnIDs = new Set(targetThread?.turns.map((turn) => turn.id));
+    const previousTurnIDs = admission.previousTurnIDs;
     if (!targetThread || activeThreadIDForState(currentState) === targetThread.id) {
       if (!prepareThread) requestSubmittedQueryScroll(optimisticTurn.items[0].id);
       appStateRef.current = { ...currentState, running: true, status: "" };
@@ -4594,6 +4613,7 @@ export function App(): JSX.Element {
       if (!targetThread) {
         turnAdmissionsRef.current.set(thread.id, admission);
         turnAdmissionsRef.current.delete(admissionKey);
+        setTurnAdmissions(new Map(turnAdmissionsRef.current));
         const lane = queueLanesRef.current.get(admissionKey);
         if (lane) {
           queueLanesRef.current.set(thread.id, lane);
@@ -4733,6 +4753,7 @@ export function App(): JSX.Element {
         // Re-evaluate a locally cancelled preparation with no server event.
         setStopRequests({ ...stopRequestsRef.current });
       }
+      setTurnAdmissions(new Map(turnAdmissionsRef.current));
     }
     return true;
   }
@@ -5333,6 +5354,7 @@ export function App(): JSX.Element {
                     splitLeftPercent={splitLeftPercent}
                     splitComposerDrafts={splitComposerDrafts}
                     splitPaneRefs={splitPaneRefs}
+                    submittingThreadIDs={submittingThreadIDs}
                     stopRequests={stopRequests}
                     viewSwitchPending={submissionTargetPending}
                     historyMessageEdit={historyMessageEdit}
