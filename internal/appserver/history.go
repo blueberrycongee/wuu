@@ -26,6 +26,7 @@ type persistedToolCall struct {
 }
 
 type persistedImage struct {
+	LocalPath      string `json:"local_path,omitempty"`
 	ProviderItemID string `json:"provider_item_id,omitempty"`
 	Required       bool   `json:"required,omitempty"`
 	MediaType      string `json:"media_type"`
@@ -166,6 +167,7 @@ func chatMessagesFromPersistedMessages(records []persistedMessage) []providers.C
 				continue
 			}
 			msg.Images = append(msg.Images, providers.InputImage{
+				LocalPath:      image.LocalPath,
 				Required:       image.Required,
 				ProviderItemID: image.ProviderItemID,
 				MediaType:      image.MediaType,
@@ -378,6 +380,7 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 			continue
 		}
 		out.Images = append(out.Images, persistedImage{
+			LocalPath:      image.LocalPath,
 			Required:       image.Required,
 			ProviderItemID: image.ProviderItemID,
 			MediaType:      image.MediaType,

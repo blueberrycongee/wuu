@@ -1800,6 +1800,7 @@ func chatMessageFromPersistedMessage(rec persistedMessage) providers.ChatMessage
 			continue
 		}
 		msg.Images = append(msg.Images, providers.InputImage{
+			LocalPath:      image.LocalPath,
 			ProviderItemID: image.ProviderItemID,
 			MediaType:      image.MediaType,
 			Data:           image.Data,
@@ -1881,6 +1882,13 @@ func isThreadTitleUserMessage(msg providers.ChatMessage) bool {
 }
 
 func chatMessageDisplayContent(msg providers.ChatMessage) string {
+	for _, image := range msg.Images {
+		if image.LocalPath != "" {
+			// Image-only messages have a genuinely empty display prompt even
+			// though Content also contains model-facing working-copy paths.
+			return msg.DisplayContent
+		}
+	}
 	if strings.TrimSpace(msg.DisplayContent) != "" {
 		return msg.DisplayContent
 	}
@@ -1892,11 +1900,13 @@ func chatMessageDisplayContent(msg providers.ChatMessage) string {
 // ordinary user messages while letting plugin-generated wake messages reveal
 // the prompt they actually delivered.
 func chatMessageInputText(msg providers.ChatMessage) string {
-	content := strings.TrimSpace(msg.Content)
-	if content == "" || content == strings.TrimSpace(chatMessageDisplayContent(msg)) {
+	// Keep the expanded slash-command prompt, but exclude working-copy paths
+	// from public input that callers may submit again when retrying a turn.
+	content := strings.TrimSuffix(msg.Content, inputImagePathReference(msg.Images))
+	if strings.TrimSpace(content) == "" || strings.TrimSpace(content) == strings.TrimSpace(chatMessageDisplayContent(msg)) {
 		return ""
 	}
-	return msg.Content
+	return content
 }
 
 func threadItemImages(images []providers.InputImage) []ThreadItemImage {

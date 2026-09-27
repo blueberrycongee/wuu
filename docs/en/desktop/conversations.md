@@ -48,6 +48,14 @@ Selected passages stay with their draft when switching tabs or leaving split vie
 
 Older hosts can discard quote metadata while retaining the transmitted text; older desktop clients may not display structured quotes. Use matching current host and desktop versions to retain structured quotes through editing and history recovery. Native clients show the flattened quote and comment as text.
 
+## Work with pasted images
+
+Paste an image or select an image file, then send the message. Wuu saves a local working file and gives the model its absolute path alongside the image for vision. You can ask the model to copy, move, or process that file using its normal file and command tools. The working file preserves the bytes received by the backend; desktop image compression still applies before sending.
+
+When context compaction omits image data, the image notes and the summary input's media index retain the working-file path. Compaction does not recreate missing files or extend their expiry.
+
+Working files live in `sessions/<thread-id>/input-images/` under the workspace's Wuu state directory. They expire after seven days. Wuu checks for expired files when the app-server starts and every six hours while it runs, so deletion may happen after the expiry time. This cleanup does not remove the image from conversation history or delete files copied or moved outside the cache. To keep an image, ask the model to save it in the workspace. If its working file has expired, send the image again.
+
 ## Fork from an earlier message
 
 Choose **Fork** on a historical message, then select where the new conversation should work:

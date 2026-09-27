@@ -9,6 +9,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"strconv"
 	"strings"
 
 	_ "golang.org/x/image/webp"
@@ -41,6 +42,17 @@ func compactMediaEvidence(data string, inspectImage bool) string {
 		evidence += fmt.Sprintf(", dimensions=%dx%d", width, height)
 	}
 	return evidence
+}
+
+// compactImagePathEvidence records the working-copy reference when vision
+// bytes are omitted. It neither recreates missing files nor extends retention.
+// Images without a local working copy must not invent a location.
+func compactImagePathEvidence(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	return ", path=" + strconv.Quote(path)
 }
 
 type compactByteCounter struct {

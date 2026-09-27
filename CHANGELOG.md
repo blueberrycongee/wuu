@@ -14,6 +14,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   them. Quotes wait as cards in the composer tray and follow drafts, send/queue/steer, held-message
   recovery and history; source navigation validates the exact visible passage.
 
+- Image attachments now include local working-file paths for model file operations,
+  with seven-day expiry and automatic cache cleanup. Context compaction includes
+  these paths in image omission notes and the summary input's media index.
+  Retrying an image message keeps internal file references out of the submitted text.
+
 - New conversations can start in an isolated Git worktree from the composer's
   branch selector. The project keeps its current branch and uncommitted changes;
   the worktree toggle resets for the next conversation.

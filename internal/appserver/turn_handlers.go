@@ -197,7 +197,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 		}
 		return nil
 	}
-	userMsg, err := userMessageFromPrompt(params.Prompt, images, files, params.ContentParts)
+	userMsg, err := s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -524,7 +524,7 @@ func (s *Server) handleTurnQueue(req Request) error {
 	if queueID == "" {
 		queueID = session.NewID()
 	}
-	msg, err := userMessageFromPrompt(params.Prompt, images, files, params.ContentParts)
+	msg, err := s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -629,7 +629,7 @@ func (s *Server) handleTurnUpdateQueued(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("thread is read-only"))
 	}
 
-	msg, err := userMessageFromPrompt(params.Prompt, images, files, params.ContentParts)
+	msg, err := s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -807,7 +807,7 @@ func (s *Server) handleTurnSteer(req Request) error {
 		}
 		steerMsg = removedTurn.msg
 	} else {
-		steerMsg, err = userMessageFromPrompt(params.Prompt, images, files, params.ContentParts)
+		steerMsg, err = s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 		if err != nil {
 			th.mu.Unlock()
 			return s.writeResponse(req.ID, nil, err)
