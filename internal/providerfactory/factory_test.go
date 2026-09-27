@@ -588,3 +588,23 @@ func TestNativeDiscoveryProviderBoundaries(t *testing.T) {
 		t.Fatal("legacy Haiku enabled")
 	}
 }
+
+func TestNativeDiscoveryRejectsKnownUnsupportedModels(t *testing.T) {
+	for _, tc := range []struct {
+		provider config.ProviderConfig
+		models   []string
+	}{
+		{config.ProviderConfig{Type: "openai", BaseURL: "https://api.openai.com/v1", WireAPI: "responses"}, []string{"gpt-5.4-nano", "gpt-5.4-nano-2026-03-17"}},
+		{config.ProviderConfig{Type: "anthropic", BaseURL: "https://api.anthropic.com"}, []string{"claude-opus-4-1", "claude-opus-4-1-20250805", "claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219", "claude-3-5-haiku-latest"}},
+	} {
+		for _, model := range tc.models {
+			t.Run(model, func(t *testing.T) {
+				for _, options := range []map[string]any{nil, {"native_tool_search": true}} {
+					if SupportsNativeToolDiscoveryByDefault(tc.provider, model, options) || SupportsNativeToolDiscovery(tc.provider, model, options) {
+						t.Fatalf("unsupported model accepted native discovery with options=%v", options)
+					}
+				}
+			})
+		}
+	}
+}

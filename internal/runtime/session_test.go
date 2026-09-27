@@ -3008,3 +3008,36 @@ func TestNewSessionAutoUsesNativeDeferredForKimiK3(t *testing.T) {
 		t.Fatal("Kimi K3 runner should forward native deferred loading to provider requests")
 	}
 }
+
+func TestUnsupportedNativeToolModelsUseFlatRuntime(t *testing.T) {
+	for _, tc := range []struct {
+		provider config.ProviderConfig
+		model    string
+	}{
+		{config.ProviderConfig{Type: "openai", BaseURL: "https://api.openai.com/v1", WireAPI: "responses"}, "gpt-5.4-nano"},
+		{config.ProviderConfig{Type: "anthropic", BaseURL: "https://api.anthropic.com"}, "claude-opus-4-1-20250805"},
+	} {
+		for _, mode := range []config.ToolLoadingMode{config.ToolLoadingAuto, config.ToolLoadingNative} {
+			t.Run(tc.model+"/"+string(mode), func(t *testing.T) {
+				t.Setenv("WUU_HOME", t.TempDir())
+				tc.provider.APIKey = "test-key"
+				tc.provider.Model = tc.model
+				rt, err := NewSession(Options{RootDir: t.TempDir(), HomeDir: t.TempDir(), Config: config.Config{
+					DefaultProvider: "test", Providers: map[string]config.ProviderConfig{"test": tc.provider}, Agent: config.AgentConfig{ToolLoading: mode},
+				}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { rt.Cleanup() })
+				if rt.ToolLoadingMode != config.ToolLoadingFlat || rt.StreamRunner.NativeDeferredToolDiscovery || rt.Toolkit.ToolSearchEnabled() {
+					t.Fatalf("unsupported model did not fall back to flat: mode=%s", rt.ToolLoadingMode)
+				}
+				for _, def := range rt.Toolkit.Definitions() {
+					if def.DeferLoading || def.Name == "tool_search" {
+						t.Fatalf("native declaration leaked: %s", def.Name)
+					}
+				}
+			})
+		}
+	}
+}

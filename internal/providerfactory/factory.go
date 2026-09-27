@@ -157,6 +157,11 @@ func openAIModelSupportsNativeToolSearch(model string) bool {
 	if !strings.HasPrefix(model, "gpt-") {
 		return false
 	}
+	// Nano shares the 5.4 version but does not implement tool search.
+	// https://developers.openai.com/api/docs/models/gpt-5.4-nano
+	if model == "gpt-5.4-nano" || strings.HasPrefix(model, "gpt-5.4-nano-") {
+		return false
+	}
 	version := strings.TrimPrefix(model, "gpt-")
 	version = strings.TrimLeft(version, "-_")
 	versionToken := ""

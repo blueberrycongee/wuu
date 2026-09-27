@@ -55,8 +55,10 @@ Provider 条目为一条模型连接命名。例如，下面的用户配置片�
 ## 工具加载
 
 `agent.tool_loading` 默认为 `auto`。已支持的官方接口使用原生加载：
-OpenAI Responses 上的 GPT-5.4 及更新模型、Anthropic 上支持该功能的 Claude
-模型（包括 Haiku 4.5），以及 `https://api.moonshot.ai/v1` 或
+OpenAI Responses 上支持该功能的 GPT-5.4 及更新模型（不包括
+[GPT-5.4 nano](https://developers.openai.com/api/docs/models/gpt-5.4-nano)）、Anthropic 上
+[支持工具搜索的 Claude 模型](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool#model-compatibility)
+（包括 Haiku 4.5，不包括 Opus 4.1 及更早模型），以及 `https://api.moonshot.ai/v1` 或
 `https://api.moonshot.cn/v1` 上使用 Chat Completions 的 `kimi-k3`。
 Kimi 使用独立的消息级工具声明协议；这条规则不启用其 Responses 或 Anthropic 兼容接口。
 
@@ -65,7 +67,8 @@ Kimi 使用独立的消息级工具声明协议；这条规则不启用其 Respo
 稳定。支持普通工具调用或兼容 OpenAI/Anthropic 的 URL，并不等于支持原生延迟加载。
 
 将 `agent.tool_loading` 设为 `flat` 可关闭发现，设为 `native` 可在兼容端点上显式启用
-已实现的协议；不支持的模型仍会回退到 flat。模型的
+已实现的协议；Wuu 识别为不支持的模型仍会回退到 flat。这是在配置阶段选择加载方式，
+并非 API 拒绝请求后的自动重试。模型的
 `providers.<name>.models.<model>.options.native_tool_search` 可以显式允许兼容端点
 在 auto 模式下使用原生加载，或用 `false` 关闭。只有端点确实实现了对应模型的原生协议
 时才启用；仅接受未知字段并不够。
