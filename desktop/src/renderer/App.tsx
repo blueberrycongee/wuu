@@ -85,6 +85,7 @@ import {
 } from "./QueryHistoryPopover";
 import { QueryHistoryRail } from "./QueryHistoryRail";
 import { UserQuestionCard } from "./UserQuestionCard";
+import { useVimNavigation, VimNavigationStatus, type VimAction } from "./VimNavigation";
 import { ConversationSearchOverlay } from "./ConversationSearchOverlay";
 import {
   useConversationScrollState,
@@ -1562,11 +1563,12 @@ export function App(): JSX.Element {
   // dialogs, the fork dialog, and the conversation search overlay. TODO: other
   // ad-hoc modals/portals (e.g. participant panels) are not yet
   // enumerated here; extend this predicate as more full-window overlays land.
+  const vimNavigation = useVimNavigation(handleVimAction);
   const browserOverlaySuppressed =
     settingsOpen || accountOpen ||
     environmentDialog !== null ||
     Boolean(pendingFork) ||
-    conversationSearch.open;
+    conversationSearch.open || Boolean(vimNavigation.prefix);
   useBrowserVisibility({
     onInvalidateWorkdir: (workdir) =>
       setActivitySessions((current) =>
@@ -2404,9 +2406,11 @@ export function App(): JSX.Element {
       }
       // Empty and populated sessions share the same bottom composer.
       const visibleTarget = target === "hero" ? "dock" : target;
-      const composer = conversationPaneRef.current?.querySelector<HTMLElement>(
-        `[data-main-conversation-composer="${visibleTarget}"]`,
-      );
+      const composer = splitConversation
+        ? splitPaneRefs.current[state.activePane]?.closest(".conversation-split-pane")
+        : conversationPaneRef.current?.querySelector<HTMLElement>(
+          `[data-main-conversation-composer="${visibleTarget}"]`,
+        );
       const textarea = composer?.querySelector<HTMLTextAreaElement>("textarea");
       if (!textarea || textarea.disabled) {
         return false;
@@ -2421,7 +2425,7 @@ export function App(): JSX.Element {
       }
       return true;
     },
-    [conversationPaneRef],
+    [conversationPaneRef, splitConversation, splitPaneRefs, state.activePane],
   );
   const requestMainComposerFocus = useCallback(
     (
@@ -4843,6 +4847,61 @@ export function App(): JSX.Element {
     return () => window.removeEventListener("wuu:workbench-back", back);
   }, [accountOpen, settingsOpen, sidebarDrawerVisible, closeSidebarDrawer, rightPanelOpen, setRightPanelOpenWithMotion]);
 
+  function openKeyboardShortcuts(): void {
+    setSettingsInitialPage("keyboard");
+    setSettingsOpen(true);
+  }
+
+  function handleVimAction(action: VimAction): void {
+    if (!state.initialized || accountOpen) return;
+    if (action === "help") { openKeyboardShortcuts(); return; }
+    if (action === "settings") {
+      setSettingsInitialPage("general");
+      setSettingsOpen(true);
+      return;
+    }
+    if (action === "sidebar") {
+      if (settingsOpen) toggleSidebar();
+      else toggleSessionSwitcher();
+      return;
+    }
+    if (["down", "up", "halfDown", "halfUp", "top", "bottom"].includes(action)) {
+      const scroll = settingsOpen
+        ? settingsShellRef.current?.querySelector<HTMLElement>(".settings-main")
+        : conversationRailScrollContainer();
+      if (!scroll || scroll.closest("[inert]")) return;
+      if (!settingsOpen) disableConversationAutoFollow();
+      if (action === "top" || action === "bottom") {
+        scroll.scrollTo({ top: action === "top" ? 0 : scroll.scrollHeight, behavior: "instant" });
+      } else {
+        const distance = action === "halfDown" || action === "halfUp" ? scroll.clientHeight / 2 : 60;
+        scroll.scrollBy({ top: distance * (action === "up" || action === "halfUp" ? -1 : 1), behavior: "instant" });
+      }
+      return;
+    }
+    if (!state.activeContext || viewContextSwitchPending) return;
+    setSettingsOpen(false);
+    if (action === "search") { toggleConversationSearch(); return; }
+    if (action === "workspace") { if (!poppedOutMode) toggleRightPanel(); return; }
+    if (action === "files" || action === "terminal" || action === "review" || action === "browser") {
+      if (poppedOutMode) return;
+      if (action === "terminal" && !hostSupports("startTerminalSession")) return;
+      openWorkspaceTool(action);
+      return;
+    }
+    revealConversationFromFocusedWorkspace();
+    closeCompactSessionSwitcher();
+    if (action === "new") { startNewThreadWithComposerFocus(); return; }
+    if (action === "compose") { requestMainComposerFocus("dock"); return; }
+    if (action === "next" || action === "previous") {
+      const tabs = state.sessionTabs.filter(tab => tab.kind === "thread" || tab.kind === "draft");
+      if (tabs.length < 2) return;
+      const index = tabs.findIndex(tab => tab.id === state.activeSessionTabID);
+      const next = index < 0 ? 0 : (index + (action === "next" ? 1 : -1) + tabs.length) % tabs.length;
+      void selectSessionTab(tabs[next].id);
+    }
+  }
+
   if (ENABLE_ACCOUNT && accountOpen && window.wuu?.remoteAccount) {
     return <AccountScreen driver={window.wuu.remoteAccount} onBack={() => setAccountOpen(false)} />;
   }
@@ -5221,6 +5280,8 @@ export function App(): JSX.Element {
               titleEditKey={activeThread?.id ?? currentSessionTab?.id}
             />
           </div>
+          <div className="title-actions">
+          <VimNavigationStatus navigation={vimNavigation} onHelp={openKeyboardShortcuts} />
           <ConversationTitleActions
             state={state}
             compactNavigation={compactNavigation}
@@ -5231,6 +5292,7 @@ export function App(): JSX.Element {
             rightPanelOpen={rightPanelOpen}
             onToggleRightPanel={toggleRightPanel}
           />
+          </div>
         </header>
 
         )}

@@ -19,6 +19,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Optional Vim-style desktop navigation covers reading, conversation search and
+  switching, new drafts, and workspace tools, with prefix hints and a keyboard
+  shortcut reference in Settings. Text inputs and embedded tools retain their keys.
+
 - Hover over sidebar conversations and workspace headers to see status, model,
   workspace, and session details in a card beside the row.
 
@@ -149,6 +153,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   `~/.wuu/channels`, which can be deleted.
 
 ### Fixed
+
+- Starting a new conversation preserves the unfinished draft in the source
+  conversation when switching back to it.
 
 - Isolated workers started from a worktree conversation now write in their own
   worktree. Previously their file and shell tools could resolve into the parent

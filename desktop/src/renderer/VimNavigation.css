@@ -1,0 +1,50 @@
+.vim-key {
+  font-family: inherit;
+  font-size: var(--font-ui);
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.vim-navigation-status {
+  position: relative;
+  flex: 0 0 auto;
+  -webkit-app-region: no-drag;
+}
+
+.vim-mode-button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--font-sm);
+  cursor: pointer;
+}
+
+.vim-mode-button:hover { color: var(--ink); }
+.vim-mode-button kbd { font: inherit; }
+.vim-mode-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+.vim-prefix-hints {
+  width: min(392px, calc(100vw - 16px));
+  max-height: min(60vh, var(--floating-menu-available-height, 60vh));
+  overflow-y: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-md);
+  background: var(--menu-bg);
+  box-shadow: var(--menu-shadow);
+  font-size: var(--font-ui);
+  color: var(--ink);
+}
+
+.vim-prefix-hints > div {
+  display: grid;
+  grid-template-columns: 6em minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
