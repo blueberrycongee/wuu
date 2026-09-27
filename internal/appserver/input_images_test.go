@@ -2,7 +2,9 @@ package appserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,5 +97,72 @@ func TestInputImageCacheRejectsEscapeAndPartialBatch(t *testing.T) {
 	entries, err := os.ReadDir(outside)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("wrote outside cache: %v %v", entries, err)
+	}
+}
+
+func TestInputImagePathsStayOutOfInputText(t *testing.T) {
+	for _, prompt := range []string{"", "inspect this image", "/debug inspect this image"} {
+		t.Run(prompt, func(t *testing.T) {
+			image := encodeTestJPEG(t, 2, 2, 80)
+			client := &fakeClient{response: providers.ChatResponse{Content: "done"}}
+			rt := newTestRuntime(t, client)
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+
+			if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
+				t.Fatal(err)
+			}
+			threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread.ID
+			payload, err := json.Marshal(map[string]any{
+				"id":     "2",
+				"method": MethodTurnStart,
+				"params": TurnStartParams{
+					ThreadID: threadID,
+					Prompt:   prompt,
+					Images:   []TurnStartImage{{MediaType: "image/jpeg", Data: base64.StdEncoding.EncodeToString(image)}},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := srv.handleLine(context.Background(), payload); err != nil {
+				t.Fatal(err)
+			}
+			_ = waitForMethod(t, out, NotificationTurnCompleted)
+
+			started := remarshal[TurnStartResult](t, responseByID(t, parseOutput(t, out.String()), "2")["result"])
+			if len(started.Turn.Items) != 1 {
+				t.Fatalf("unexpected turn items: %+v", started.Turn.Items)
+			}
+			item := started.Turn.Items[0]
+			if item.Text != prompt {
+				t.Fatalf("slash command display or delivered prompt lost: %+v", item)
+			}
+			if strings.HasPrefix(prompt, "/debug") {
+				if !strings.Contains(item.InputText, "inspect this image") {
+					t.Fatalf("expanded command input lost: %+v", item)
+				}
+			} else if item.InputText != "" {
+				t.Fatalf("ordinary input contains synthetic text: %q", item.InputText)
+			}
+			client.mu.Lock()
+			sent := client.requests[0].Messages[1]
+			client.mu.Unlock()
+			if len(sent.Images) != 1 || sent.Images[0].LocalPath == "" || !strings.Contains(sent.Content, sent.Images[0].LocalPath) {
+				t.Fatalf("model prompt lost image path: %+v", sent)
+			}
+			if strings.Contains(item.InputText, sent.Images[0].LocalPath) {
+				t.Fatalf("public input_text exposed the server-added image path: %q", item.InputText)
+			}
+
+			loaded, err := loadChatMessages(rt.SessionDir, threadID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			visible := visibleMessagesForTest(loaded)
+			if len(visible) == 0 || strings.Contains(chatMessageItem("reloaded", visible[0]).InputText, sent.Images[0].LocalPath) {
+				t.Fatalf("reloaded item exposed the server-added image path: %+v", visible)
+			}
+		})
 	}
 }

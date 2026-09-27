@@ -86,8 +86,6 @@ func (s *Server) userMessageWithInputImages(threadID, prompt string, images []pr
 			}
 		}
 	}()
-	var references strings.Builder
-	fmt.Fprintf(&references, "\n\nAttached image files (working copies expire after %g days; copy or move into the workspace to keep):", inputImageRetention.Hours()/24)
 	for index, data := range payloads {
 		name := fmt.Sprintf("image-%d-%s%s", time.Now().Unix(), rand.Text(), extensions[index])
 		path := filepath.Join(dir, name)
@@ -101,13 +99,28 @@ func (s *Server) userMessageWithInputImages(threadID, prompt string, images []pr
 			return msg, err
 		}
 		msg.Images[index].LocalPath = filepath.Join(stateDir, path)
-		fmt.Fprintf(&references, "\nImage %d: %s", index+1, msg.Images[index].LocalPath)
 	}
 	if msg.DisplayContent == "" {
 		msg.DisplayContent = msg.Content
 	}
-	msg.Content += references.String()
+	msg.Content += inputImagePathReference(msg.Images)
 	return msg, nil
+}
+
+// Use the same suffix for model input and public-input projection so retries
+// do not resubmit server-added paths as authored text.
+func inputImagePathReference(images []providers.InputImage) string {
+	var references strings.Builder
+	for index, image := range images {
+		if image.LocalPath == "" {
+			continue
+		}
+		if references.Len() == 0 {
+			fmt.Fprintf(&references, "\n\nAttached image files (working copies expire after %g days; copy or move into the workspace to keep):", inputImageRetention.Hours()/24)
+		}
+		fmt.Fprintf(&references, "\nImage %d: %s", index+1, image.LocalPath)
+	}
+	return references.String()
 }
 
 // Creation time is encoded in the generated name so edits and fork copies do
