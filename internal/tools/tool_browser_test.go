@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +14,9 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/activity"
+	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/providers/openai"
 )
 
 // fakeBrowserBridge is an injectable BrowserBridge that records calls and lets a
@@ -671,5 +676,75 @@ func TestBrowserScreenshotTransientErrorKeepsTab(t *testing.T) {
 	rec, ok, gerr := store.Get("tab-1")
 	if gerr != nil || !ok || rec.URL != "https://example.com" {
 		t.Fatalf("transient screenshot error forgot the tab: ok=%v rec=%+v err=%v", ok, rec, gerr)
+	}
+}
+
+func TestBrowserDiscoverySurvivesRuntimeRebuild(t *testing.T) {
+	for _, compacted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("compacted=%v", compacted), func(t *testing.T) {
+			t.Setenv("WUU_HOME", t.TempDir())
+			bridge := &fakeBrowserBridge{}
+			kit, _, _ := newBrowserKit(t, bridge)
+			kit.registry = NewRegistry(NewBrowserTool(kit.env), NewToolSearchTool(kit))
+			kit.ConfigureSurfaceForProviderModel("openai", "kimi-k3", true)
+			kit.SetToolSearchEnabled(true)
+			kit.SetNativeDeferredToolDiscovery(true)
+			search := providers.ToolCall{ID: "search-1", Name: "tool_search", Arguments: `{"query":"select:wuu_browser"}`}
+			result, err := kit.Execute(context.Background(), search)
+			if err != nil {
+				t.Fatal(err)
+			}
+			history := []providers.ChatMessage{
+				{Role: "user", Content: "list browser tabs"},
+				{Role: "assistant", ToolCalls: []providers.ToolCall{search}},
+				{Role: "tool", Name: search.Name, ToolCallID: search.ID, Content: result},
+			}
+			if compacted {
+				history = []providers.ChatMessage{{Role: "system", Content: "[Conversation summary]\nBrowser loaded.", DiscoveredTools: providers.DiscoveredToolsFromMessages(history)}}
+			}
+			history = append(history, providers.ChatMessage{Role: "user", Content: "continue listing tabs"})
+			// Rebuild the per-thread toolkit, then replay the saved conversation through
+			// the real provider adapter and agent loop without another discovery call.
+			resumed, err := kit.CloneForRoot(kit.RootDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := resumed.Execute(context.Background(), browserCall("tabs", nil)); err == nil {
+				t.Fatal("a fresh runtime must not inherit another conversation's loaded tools")
+			}
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				w.Header().Set("Content-Type", "text/event-stream")
+				if requests == 1 {
+					fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"browser-1\",\"type\":\"function\",\"function\":{\"name\":\"wuu_browser\",\"arguments\":\"{\\\"action\\\":\\\"tabs\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n")
+				} else {
+					fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\n")
+				}
+				fmt.Fprint(w, "data: [DONE]\n\n")
+			}))
+			defer server.Close()
+			client, err := openai.New(openai.ClientConfig{BaseURL: server.URL, APIKey: "test"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner := agent.StreamRunner{Client: client, Tools: resumed, Model: "kimi-k3", NativeDeferredToolDiscovery: true, MaxSteps: 3}
+			run, err := runner.RunWithCallback(context.Background(), history, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, message := range run.NewMessages {
+				if message.Role == "tool" && message.ToolResult != nil && message.ToolResult.IsError {
+					t.Fatalf("resumed browser call failed: %s", message.Content)
+				}
+			}
+			if bridge.listCalls != 1 {
+				t.Fatalf("browser bridge calls = %d, want 1", bridge.listCalls)
+			}
+			resumed.SetBrowserEnabled(false)
+			if _, err := resumed.Execute(agent.ContextWithHistory(context.Background(), history), browserCall("tabs", nil)); err == nil {
+				t.Fatal("discovery history bypassed the disabled browser gate")
+			}
+		})
 	}
 }
