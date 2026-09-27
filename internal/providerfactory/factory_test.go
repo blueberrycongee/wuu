@@ -543,3 +543,48 @@ func TestBuildClientGrokBuildUsesLocalCLICredentials(t *testing.T) {
 		t.Fatalf("resp = %+v, err = %v", resp, err)
 	}
 }
+
+func TestNativeDiscoveryProviderBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name, endpoint, model, wire string
+		want                        bool
+	}{
+		{name: "kimi k3", endpoint: "https://api.moonshot.ai/v1", model: "kimi-k3", want: true},
+		{name: "kimi china", endpoint: "https://api.moonshot.cn/v1", model: "kimi-k3", want: true},
+		{name: "kimi older", endpoint: "https://api.moonshot.ai/v1", model: "kimi-k2.6"},
+		{name: "kimi responses", endpoint: "https://api.moonshot.ai/v1", model: "kimi-k3", wire: "responses"},
+		{name: "kimi proxy", endpoint: "https://proxy.example.com/v1", model: "kimi-k3"},
+		{name: "deepseek", endpoint: "https://api.deepseek.com/v1", model: "deepseek-flash"},
+		{name: "glm", endpoint: "https://open.bigmodel.cn/api/paas/v4", model: "glm-5.3"},
+		{name: "minimax", endpoint: "https://api.minimax.io/v1", model: "MiniMax-M3"},
+		{name: "mimo", endpoint: "https://api.xiaomimimo.com/v1", model: "mimo-v2.6-pro"},
+		{name: "grok", endpoint: "https://api.x.ai/v1", model: "grok-4.7", wire: "responses"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.ProviderConfig{Type: "openai-compatible", BaseURL: tc.endpoint, WireAPI: tc.wire}
+			if got := SupportsNativeToolDiscoveryByDefault(cfg, tc.model, nil); got != tc.want {
+				t.Fatalf("auto=%v want %v", got, tc.want)
+			}
+			if SupportsNativeToolDiscoveryByDefault(cfg, tc.model, map[string]any{"native_tool_search": false}) {
+				t.Fatal("explicit opt-out ignored")
+			}
+		})
+	}
+	cfg := config.ProviderConfig{Type: "openai-compatible", BaseURL: "https://proxy.example.com/v1"}
+	if !SupportsNativeToolDiscoveryByDefault(cfg, "kimi-k3", map[string]any{"native_tool_search": true}) {
+		t.Fatal("Kimi protocol opt-in ignored")
+	}
+	if !SupportsNativeToolDiscovery(cfg, "kimi-k3", nil) {
+		t.Fatal("explicit native Kimi unsupported")
+	}
+	if SupportsNativeToolDiscovery(cfg, "kimi-k2.6", map[string]any{"native_tool_search": true}) {
+		t.Fatal("unsupported Kimi model enabled")
+	}
+	cfg = config.ProviderConfig{Type: "anthropic", BaseURL: "https://api.anthropic.com"}
+	if !SupportsNativeToolDiscoveryByDefault(cfg, "claude-haiku-4-5-20251001", nil) {
+		t.Fatal("Haiku 4.5 must support native discovery")
+	}
+	if SupportsNativeToolDiscoveryByDefault(cfg, "claude-3-5-haiku-latest", nil) {
+		t.Fatal("legacy Haiku enabled")
+	}
+}

@@ -335,7 +335,7 @@ type AgentConfig struct {
 	// is used.
 	CatwalkAutoupdate bool `json:"catwalk_autoupdate,omitempty"`
 	// ToolLoading controls how Wuu exposes large/deferred tool surfaces.
-	// Empty means "auto": first-party native provider paths use provider
+	// Empty means "auto": supported first-party models use their native
 	// deferred-loading protocol; every other path uses a flat tool list.
 	// Valid: auto, flat, native.
 	//

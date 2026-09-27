@@ -796,7 +796,10 @@ func modelSupportsAnthropicToolReference(model string) bool {
 	if normalized == "" {
 		return false
 	}
-	return !strings.Contains(normalized, "haiku")
+	// Haiku 4.5 supports tool references; legacy Haiku models still do not.
+	// https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool
+	return !strings.Contains(normalized, "haiku") || normalized == "claude-haiku-4-5" ||
+		strings.HasPrefix(normalized, "claude-haiku-4-5-")
 }
 
 func isFirstPartyAnthropicBaseURL(raw string) bool {

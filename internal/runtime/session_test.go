@@ -2970,3 +2970,41 @@ func TestNewThreadRuntimeCreatesIsolatedMutableRuntime(t *testing.T) {
 		t.Fatalf("unexpected agent control sessions: first=%q second=%q", first.AgentControl.SessionID(), second.AgentControl.SessionID())
 	}
 }
+
+func TestNewSessionAutoUsesNativeDeferredForKimiK3(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
+
+	rt, err := NewSession(Options{
+		RootDir:    root,
+		HomeDir:    home,
+		ConfigPath: filepath.Join(root, ".wuu.json"),
+		Config: config.Config{
+			DefaultProvider: "openai",
+			Providers: map[string]config.ProviderConfig{
+				"openai": {
+					Type:    "openai-compatible",
+					BaseURL: "https://api.moonshot.ai/v1",
+					APIKey:  "abc",
+					Model:   "kimi-k3",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	if rt.ToolLoadingMode != config.ToolLoadingNative {
+		t.Fatalf("ToolLoadingMode = %q, want native", rt.ToolLoadingMode)
+	}
+	if rt.Toolkit == nil || !rt.Toolkit.ToolSearchEnabled() {
+		t.Fatal("Kimi K3 auto mode should expose tool_search")
+	}
+	if !rt.Toolkit.NativeDeferredToolDiscovery() {
+		t.Fatal("Kimi K3 auto mode should use native deferred loading")
+	}
+	if rt.StreamRunner == nil || !rt.StreamRunner.NativeDeferredToolDiscovery {
+		t.Fatal("Kimi K3 runner should forward native deferred loading to provider requests")
+	}
+}
