@@ -1606,3 +1606,32 @@ func TestUpdateAdvancedRuntimeModelAliasesEmptyMapClearsAll(t *testing.T) {
 		t.Fatalf("model_aliases was not cleared: %s", data)
 	}
 }
+
+func TestUseCodexCredentialsPreservesSelectionAndOtherSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	original := `{"default_provider":"other","agent":{"effort":"high"},"providers":{"other":{"type":"openai-compatible","model":"other-model"},"codex":{"type":"openai-codex","model":"codex-model","api_key":"old","api_key_env":"OLD_KEY"}}}`
+	if err := os.WriteFile(path, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := UseCodexCredentials(path, "other"); err == nil {
+		t.Fatal("must reject non-Codex provider")
+	}
+	if err := UseCodexCredentials(path, "codex"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	provider := got["providers"].(map[string]any)["codex"].(map[string]any)
+	if got["default_provider"] != "other" || got["agent"].(map[string]any)["effort"] != "high" || provider["model"] != "codex-model" {
+		t.Fatal("credential switch changed model selection")
+	}
+	if provider["reuse_codex_credentials"] != true || provider["api_key"] != nil || provider["api_key_env"] != nil {
+		t.Fatal("credential source was not switched")
+	}
+}

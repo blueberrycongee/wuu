@@ -16,7 +16,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/blueberrycongee/wuu/internal/channels"
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/processsandbox"
 	"github.com/blueberrycongee/wuu/internal/shellpath"
@@ -211,7 +210,7 @@ func executeShellCommandInDir(ctx context.Context, env *Env, command string, tim
 	}
 	cmd := exec.Command(shell.Path, shell.CommandArgs(executedCommand)...)
 	cmd.Dir = workDir
-	cmd.Env = shellpath.CommandEnv(shellCommandEnvForTool(os.Environ(), env))
+	cmd.Env = shellpath.CommandEnv(shellCommandEnv(os.Environ()))
 	sandboxPolicy, sandboxTempDir, err := env.processSandboxPolicy(ctx)
 	if err != nil {
 		return shellExecutionResult{}, fmt.Errorf("prepare filesystem process sandbox: %w", err)
@@ -399,26 +398,6 @@ func shellCommandEnv(base []string) []string {
 		filtered = append(filtered, entry)
 	}
 	return mergeEnv(filtered, nonInteractiveShellEnv())
-}
-
-func shellCommandEnvForTool(base []string, env *Env) []string {
-	filtered := make([]string, 0, len(base))
-	for _, entry := range base {
-		key, _, ok := strings.Cut(entry, "=")
-		if ok && strings.EqualFold(key, channels.NamedAgentIDEnv) {
-			continue
-		}
-		filtered = append(filtered, entry)
-	}
-	filtered = shellCommandEnv(filtered)
-	if env == nil || env.ChatAgent == nil {
-		return filtered
-	}
-	agentID := strings.TrimSpace(env.ChatAgent.AgentID())
-	if agentID == "" {
-		return filtered
-	}
-	return mergeEnv(filtered, map[string]string{channels.NamedAgentIDEnv: agentID})
 }
 
 func resolveShellWorkingDir(ctx context.Context, env *Env, cwd string) (string, error) {

@@ -113,7 +113,7 @@ function uniqueModels(provider: ProviderSummary): { id: string; label: string }[
 }
 
 function isBuiltInSubscription(provider: ProviderSummary): boolean {
-  return provider.reuse_codex_credentials === true || isXAI(provider.type) || isGrokBuild(provider.type);
+  return isCodexSubscription(provider.type) || provider.reuse_codex_credentials === true || isXAI(provider.type) || isGrokBuild(provider.type);
 }
 
 function isXAI(type: string | undefined): boolean {
@@ -128,4 +128,8 @@ function isGrokBuild(type: string | undefined): boolean {
 
 function normalize(type: string | undefined): string {
   return (type ?? "").trim().toLowerCase().replaceAll("_", "-");
+}
+
+export function isCodexSubscription(type: string | undefined): boolean {
+  return ["openai-codex", "codex-subscription", "chatgpt-codex"].includes(normalize(type));
 }

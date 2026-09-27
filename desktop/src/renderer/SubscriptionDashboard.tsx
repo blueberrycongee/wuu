@@ -7,6 +7,7 @@ import { SelectMenu } from "./SelectMenu";
 import { useI18n } from "./i18n";
 import { SettingsPageHeader } from "./SettingsSection";
 import {
+  isCodexSubscription,
   selectSubscriptionModel,
   subscriptionSources,
   type SubscriptionSource,
@@ -23,6 +24,9 @@ export function SubscriptionDashboard({
 }): JSX.Element {
   const { t } = useI18n();
   const [error, setError] = useState<"" | "settings.subscriptionRefreshFailed" | "settings.subscriptionModelFailed">("");
+  const [authProviders, setAuthProviders] = useState<ProviderSummary[]>([]);
+  const [authError, setAuthError] = useState("");
+  const [checkedProvider, setCheckedProvider] = useState("");
   const [pending, setPending] = useState("");
   const [revision, setRevision] = useState(0);
   const [loadedInventory, setLoadedInventory] = useState<EngineListResult>();
@@ -31,6 +35,7 @@ export function SubscriptionDashboard({
   const [refreshing, setRefreshing] = useState(true);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [now, setNow] = useState(Date.now);
+  useEffect(() => { setAuthProviders([]); setCheckedProvider(""); }, [providers]);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
@@ -55,9 +60,14 @@ export function SubscriptionDashboard({
         const snapshot = loadedInventory?.engines.find((item) => item.id === engine.id);
         return snapshot ? { ...snapshot, enabled: engine.enabled } : engine;
       }) } : undefined;
-      return subscriptionSources(refreshed, providers ?? loadedInventory?.subscription_providers);
+      const currentProviders = providers ?? loadedInventory?.subscription_providers;
+      return subscriptionSources(refreshed, currentProviders?.map((provider) => {
+        const checked = authProviders.find((item) => item.name === provider.name);
+        return checked ? { ...provider, reuse_codex_credentials: checked.reuse_codex_credentials,
+          codex_credential_source: checked.codex_credential_source, api_key_configured: checked.api_key_configured } : provider;
+      }));
     },
-    [loadedInventory, inventory, providers, revision],
+    [loadedInventory, inventory, providers, revision, authProviders],
   );
 
   // Quota arrives only with this dashboard's own snapshot. Until the first one
@@ -78,6 +88,26 @@ export function SubscriptionDashboard({
       }
     } catch {
       setError("settings.subscriptionModelFailed");
+    } finally {
+      setPending("");
+    }
+  }
+
+  async function checkCodexLogin(source: SubscriptionSource, useLocal: boolean): Promise<void> {
+    if (pending) return;
+    setPending(source.key);
+    setAuthError("");
+    setCheckedProvider("");
+    try {
+      if (useLocal) {
+        const result = await window.wuu.useCodexCredentials(source.id);
+        setAuthProviders(result.providers);
+      }
+      const result = await window.wuu.loadCodexModels(source.id);
+      setAuthProviders(result.providers);
+      setCheckedProvider(source.id);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : String(error));
     } finally {
       setPending("");
     }
@@ -128,6 +158,11 @@ export function SubscriptionDashboard({
                     <div className="settings-subscription-identity">
                       <h2 className="settings-subscription-name">{source.label}</h2>
                       {status ? <p className="settings-subscription-status">{t(status)}</p> : null}
+                      {isCodexSubscription(source.provider?.type) ? (
+                        <p className="settings-subscription-status">
+                          {t(source.provider?.codex_credential_source === "explicit" ? "settings.codexSourceExplicit" : source.provider?.reuse_codex_credentials ? "settings.codexSourceLocal" : "settings.codexSourceSaved")}
+                        </p>
+                      ) : null}
                     </div>
                   </div>
                   <div className="settings-subscription-actions">
@@ -146,6 +181,15 @@ export function SubscriptionDashboard({
                     {showAuthentication ? <EngineAuthentication engineID={source.id} compact onAuthenticated={() => setRefreshVersion((value) => value + 1)} /> : null}
                   </div>
                 </div>
+                {isCodexSubscription(source.provider?.type) ? (
+                  <div className="settings-codex-login">
+                    <div className="settings-subscription-actions">
+                      <button type="button" className="settings-button settings-button-ghost" data-testid="codex-use-local" disabled={!!pending} onClick={() => void checkCodexLogin(source, true)}>{t("settings.codexUseLocal")}</button>
+                      <button type="button" className="settings-button settings-button-ghost" data-testid="codex-check-login" disabled={!!pending} onClick={() => void checkCodexLogin(source, false)}>{t(pending === source.key ? "settings.codexChecking" : "settings.codexCheckLogin")}</button>
+                    </div>
+                    {checkedProvider === source.id ? <p className="settings-subscription-status" role="status">{t("settings.codexLoginVerified")}</p> : null}
+                  </div>
+                ) : null}
                 {quotaLoading && source.engine?.enabled && source.engine.binary_ok && source.engine.capabilities?.includes("account-quota")
                   ? <QuotaSkeleton />
                   : <Quota quota={source.quota} now={now} />}
@@ -154,6 +198,7 @@ export function SubscriptionDashboard({
           })}
         </div>
       )}
+      {authError ? <p className="settings-subscription-status" role="alert">{authError}</p> : null}
       {error ? <p className="settings-subscription-status" role="alert">{t(error)}</p> : null}
     </section>
   );

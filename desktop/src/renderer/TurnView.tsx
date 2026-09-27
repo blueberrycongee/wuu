@@ -20,6 +20,7 @@ import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import { TurnEventNotice, StreamStatusNotice, StreamReconnectNotice } from "./TurnNotice";
 import { turnEventForTurn } from "./TurnEvents";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
+import { groupProjectEvents, ProjectEventGroup } from "./ProjectViews";
 import { turnIsAnswerReady, type TurnStreamStatus } from "./AppState";
 import {
   latestAgentMessageItemID,
@@ -60,7 +61,7 @@ export type TurnViewProps = {
 };
 
 export function TurnView(props: TurnViewProps): JSX.Element | null {
-  const projectedTurn = projectTurnForPresentation(props.turn);
+  const projectedTurn = workspaceTurnForPresentation(props.turn);
   if (props.turn.items.length > 0 && projectedTurn.items.length === 0) {
     return null;
   }
@@ -90,7 +91,7 @@ export function TurnView(props: TurnViewProps): JSX.Element | null {
   );
 }
 
-function projectTurnForPresentation(turn: Turn): Turn {
+function workspaceTurnForPresentation(turn: Turn): Turn {
   const items = turn.items.filter(
     (item) =>
       item.type !== "user_message" || !isInternalUserNotificationItem(item),
@@ -265,7 +266,9 @@ function TurnContent({
       data-turn-status={turn.status}
       data-latest-turn={isLatestTurn || undefined}
     >
-      {userItems.map((item) => renderThreadItem(item, false))}
+      {groupProjectEvents(userItems).map((entry) => Array.isArray(entry)
+        ? <ProjectEventGroup key={entry[0].id} items={entry} />
+        : renderThreadItem(entry, false))}
       {assistantDisplay ? (
         <AssistantTurnShell
           turn={turn}

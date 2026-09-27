@@ -12,6 +12,7 @@ startFocusModality();
 document.documentElement.dataset.theme = params.get("theme") || "light";
 document.body.style.background = "var(--paper)";
 document.documentElement.style.setProperty("--conversation-message-font-size", `${params.get("size") || 14}px`);
+document.documentElement.style.setProperty("--wuu-font-size-ui", `${params.get("size") || 14}px`);
 const usage = { input_tokens: 146800, output_tokens: 24100, cache_creation_tokens: 0, cache_read_tokens: 31000, reported_turns: 12 };
 const inventory: EngineListResult = { engines: params.has("empty") ? [] : [
   { id: "codex", display_name: "Codex", capabilities: ["account-quota"], enabled: true, binary_ok: true, models: [{ id: "gpt-5.4", display_name: "GPT-5.4", is_default: true }], local_usage: usage,
@@ -24,6 +25,9 @@ const inventory: EngineListResult = { engines: params.has("empty") ? [] : [
   { id: "cursor", display_name: "Cursor", protocol: "acp", enabled: false, binary_ok: true },
 ] };
 const providers: ProviderSummary[] = params.has("empty") ? [] : [{ name: "SuperGrok", type: "xai-subscription", model: "grok-4.7", models: [{ id: "grok-4.7", display_name: "Grok 4.7" }, { id: "grok-4-fast", display_name: "Grok 4 Fast" }], api_key_configured: true, local_usage: usage }];
+if (params.has("codex")) {
+  providers.push({ name: "openai-codex", type: "openai-codex", model: "gpt-6-astra", reuse_codex_credentials: false, codex_credential_source: "wuu-auth-store", api_key_configured: true });
+}
 if (params.has("states") && inventory.engines.length) {
   inventory.engines[0].quota!.windows![0].used_percent = 100;
   inventory.engines[0].quota!.windows![1].resets_at = new Date(Date.now() - 60_000).toISOString();
@@ -63,6 +67,17 @@ window.wuu = {
     return { methods: [], authenticated: true };
   },
   cancelEngineAuth: async () => ({ ok: true }),
+  useCodexCredentials: async (name) => {
+    const provider = providers.find((item) => item.name === name)!;
+    provider.reuse_codex_credentials = true;
+    provider.codex_credential_source = "codex-cli";
+    return { providers: structuredClone(providers) };
+  },
+  loadCodexModels: async (name) => {
+    if (params.has("authFail")) throw new Error("Codex login expired. Sign in to Codex, then check again.");
+    const provider = providers.find((item) => item.name === name)!;
+    return { providers: structuredClone(providers), provider: provider.name, model: provider.model, models: [{ slug: provider.model, supported_in_api: true }] };
+  },
 };
 
 function Preview() {

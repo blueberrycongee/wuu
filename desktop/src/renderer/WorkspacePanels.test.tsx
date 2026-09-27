@@ -1112,7 +1112,7 @@ describe("WorkspaceRightPanel context routing (Bug 3: worktree-fork panel root)"
     );
 
     const panel = container?.querySelector<HTMLElement>(".workspace-right-panel");
-    expect(panel?.textContent).toContain("没有项目");
+    expect(panel?.textContent).toContain("没有工作区");
   });
 
   it("roots the terminal on workspaceContext, not activeContext", async () => {

@@ -48,6 +48,7 @@ import {
 } from "./TurnNotice";
 import { userMessageAnchorID } from "./TurnViewHelpers";
 import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
+import { isProjectEvent, ProjectEventRow } from "./ProjectViews";
 import {
   userFacingErrorForMessage,
 } from "./UserFacingErrors";
@@ -253,6 +254,9 @@ function BuiltInThreadItemView({
       if (isInternalUserNotificationItem(item)) {
         return null;
       }
+      if (isProjectEvent(item)) {
+        return <ProjectEventRow item={item} />;
+      }
       const copyable = displayText.trim() !== "";
       const editable = Boolean(
         !item.read_only &&
@@ -260,12 +264,12 @@ function BuiltInThreadItemView({
           (copyable || (item.images?.length ?? 0) > 0 || (item.files?.length ?? 0) > 0),
       );
       const editActionVisible = editable;
-      // Some plugin messages point to a durable related session. Keep that
+      // Some host and plugin messages point to a durable related session. Keep that
       // navigation on the message itself rather than coupling it to a
       // separate inspector plugin.
       const deliveryText = item.input_text?.trim() ?? "";
       const relatedSessionID = item.related_session_id?.trim() || undefined;
-      const sessionMessage = item.origin === "plugin" && item.presentation_kind === "session_message";
+      const sessionMessage = (item.origin === "host" || item.origin === "plugin") && item.presentation_kind === "session_message";
       const sourceLabel = t("message.fromSession", { name: item.name?.trim() || relatedSessionID || t("message.anotherSession") });
       // input_text equals the bubble for ordinary messages (or would, if a
       // stale server projection ever leaks it); only hidden messages with a

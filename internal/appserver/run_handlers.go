@@ -52,9 +52,6 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 	if params.Prompt == "" && len(images) == 0 && len(files) == 0 {
 		return s.writeRunError(req.ID, "invalid_params", errors.New("prompt or attachment is required"))
 	}
-	if err := attachConversationImagePaths(params.ThreadID, images); err != nil {
-		return s.writeRunError(req.ID, "invalid_params", err)
-	}
 	if isManualCompactPrompt(params.Prompt) {
 		return s.writeRunError(req.ID, "invalid_params", errors.New("execution runs do not accept compact commands"))
 	}
@@ -74,11 +71,11 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 	if validator != nil {
 		prompt = validator.InitialPrompt(prompt)
 	}
-	userMsg, err := userMessageFromPrompt(prompt, images, files)
+	userMsg, err := s.userMessageWithInputImages(params.ThreadID, prompt, images, files, params.Images)
 	if err != nil {
 		return s.writeRunError(req.ID, "invalid_params", err)
 	}
-	if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
+	if err := s.takeSessionControlForInput(params.ThreadID); err != nil {
 		return s.writeRunError(req.ID, "internal_error", err)
 	}
 
@@ -195,7 +192,7 @@ func (s *Server) handleRunInterrupt(ctx context.Context, req Request) error {
 	if !view.Attached {
 		return s.writeRunError(req.ID, "run_not_attached", fmt.Errorf("run %q is not attached to this app-server", runID))
 	}
-	if err := s.takeHarnessControl(view.Run.ThreadID, session.ControlPaused); err != nil {
+	if err := s.takeSessionControl(view.Run.ThreadID, session.ControlPaused); err != nil {
 		return s.writeRunError(req.ID, "internal_error", err)
 	}
 	interruptStatus := execution.StatusInterrupted

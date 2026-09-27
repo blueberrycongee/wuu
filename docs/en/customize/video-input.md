@@ -1,6 +1,6 @@
 # Video input
 
-Attach an MP4, MOV, or WebM file by pasting, dropping, or selecting it in a desktop work conversation or Collaboration composer. The attachment can show its name, duration, and size and play locally when the installed codecs support it.
+Attach an MP4, MOV, or WebM file by pasting, dropping, or selecting it in the desktop conversation composer. The attachment can show its name, duration, and size and play locally when the installed codecs support it.
 
 The combined video size is limited to **20 MiB per send**. Wuu sends bounded inline data; it does not transcode the clip, extract frames, upload chunks, or use a provider Files API for large videos. Whether the model understands the audio depends on that model.
 

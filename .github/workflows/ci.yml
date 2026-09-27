@@ -209,6 +209,9 @@ jobs:
           node node_modules/electron/install.js
           node -e 'require("electron")'
 
+      - name: Test macOS process sandbox
+        run: go test ./internal/processsandbox -count=1
+
       - name: Test native helper
         run: make test-native
 

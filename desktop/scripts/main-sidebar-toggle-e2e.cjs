@@ -3,13 +3,13 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { app, BrowserWindow } = require("electron");
 const root = path.resolve(__dirname, "..");
-const output = path.resolve(root, "../.tmp/collaboration-layout/sidebar-main-toggle/verified");
+const output = path.resolve(root, "../.tmp/sidebar-main-toggle/verified");
 fs.mkdirSync(output, { recursive: true });
 app.setPath("userData", fs.mkdtempSync(path.join(output, "profile-")));
 
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1200, height: 820, show: false, titleBarStyle: "hiddenInset", webPreferences: {
-    preload: path.join(__dirname, "main-sidebar-toggle-e2e-preload.cjs"), contextIsolation: true, sandbox: false, backgroundThrottling: false,
+    preload: path.join(__dirname, "resize-e2e-preload.cjs"), contextIsolation: true, sandbox: false, backgroundThrottling: false,
   } });
   win.webContents.debugger.attach("1.3");
   win.webContents.on("did-finish-load", () => void win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true }));
@@ -47,62 +47,49 @@ app.whenReady().then(async () => {
   const report = [];
   await win.loadFile(path.join(root, "out/renderer/index.html"));
   await wait(`!!document.querySelector('${selector}')`);
-  for (const mode of ["session", "collaboration"]) {
-    win.setContentSize(1200, 820); await settled();
-    if (mode === "collaboration") {
-      await wait(`!![...document.querySelectorAll('.sidebar button')].find(n=>n.textContent.includes('Sidebar fixture agent'))`);
-      await js(`[...document.querySelectorAll('.sidebar button')].find(n=>n.textContent.includes('Sidebar fixture agent')).click()`);
-      await wait(`!!document.querySelector('.channel-room-header')`);
-    }
-    for (const theme of ["light", "dark"]) for (const font of [14, 18]) {
-      await js(`document.documentElement.dataset.theme='${theme}';document.documentElement.style.setProperty('--appearance-scale','${font / 14}')`);
-      win.setContentSize(600, 820);
-      await wait(`document.querySelector('.app-shell').classList.contains('compact-navigation')`);
-      await settled(); away();
-      const before = await measure();
-      const p = await point();
-      win.webContents.sendInputEvent({ type: "mouseMove", ...p });
-      await wait(drawerOpen); await settled();
-      const hover = await measure();
-      assert.equal(hover.pressed, "true");
-      assert(hover.hitsButton && hover.hover && hover.sidebar.right > p.x, JSON.stringify(hover));
-      assert.equal(hover.rect.x, before.rect.x, "Drawer must not displace its trigger");
-      assert.notEqual(hover.background, before.background, "Hover must remain visibly active above the drawer");
-      fs.writeFileSync(path.join(output, `${mode}-${theme}-${font}-hover.png`), (await win.webContents.capturePage()).toPNG());
-      click(p); await wait(`!(${drawerOpen})`); await settled();
-      assert.equal((await measure()).pressed, "false");
+  win.setContentSize(1200, 820); await settled();
+  for (const theme of ["light", "dark"]) for (const font of [14, 18]) {
+    await js(`document.documentElement.dataset.theme='${theme}';document.documentElement.style.setProperty('--appearance-scale','${font / 14}')`);
+    win.setContentSize(600, 820);
+    await wait(`document.querySelector('.app-shell').classList.contains('compact-navigation')`);
+    await settled(); away();
+    const before = await measure();
+    const p = await point();
+    win.webContents.sendInputEvent({ type: "mouseMove", ...p });
+    await wait(drawerOpen); await settled();
+    const hover = await measure();
+    assert.equal(hover.pressed, "true");
+    assert(hover.hitsButton && hover.hover && hover.sidebar.right > p.x, JSON.stringify(hover));
+    assert.equal(hover.rect.x, before.rect.x, "Drawer must not displace its trigger");
+    assert.notEqual(hover.background, before.background, "Hover must remain visibly active above the drawer");
+    fs.writeFileSync(path.join(output, `${theme}-${font}-hover.png`), (await win.webContents.capturePage()).toPNG());
+    click(p); await wait(`!(${drawerOpen})`); await settled();
+    assert.equal((await measure()).pressed, "false");
 
-      // Keyboard follows the same toggle contract without requiring hover.
-      away(); await js(`document.querySelector('${selector}').focus()`);
-      key("Tab"); key("Tab", ["shift"]);
-      await wait(`document.activeElement===document.querySelector('${selector}') && document.activeElement.matches(':focus-visible')`);
-      const focused = await measure();
-      key("Enter"); await wait(drawerOpen); await settled();
-      key("Enter"); await wait(`!(${drawerOpen})`); await settled();
+    // Keyboard follows the same toggle contract without requiring hover.
+    away(); await js(`document.querySelector('${selector}').focus()`);
+    key("Tab"); key("Tab", ["shift"]);
+    await wait(`document.activeElement===document.querySelector('${selector}') && document.activeElement.matches(':focus-visible')`);
+    const focused = await measure();
+    key("Enter"); await wait(drawerOpen); await settled();
+    key("Enter"); await wait(`!(${drawerOpen})`); await settled();
 
-      // The wide layout restores its docked preference. A hover preview there
-      // pins on click, rather than using the compact drawer's close action.
-      win.setContentSize(1100, 820);
-      await wait(`!document.querySelector('.app-shell').classList.contains('compact-navigation') && !(${collapsed})`);
-      await settled();
-      click(await point()); await wait(collapsed); await settled();
-      away(); win.webContents.sendInputEvent({ type: "mouseMove", ...await point() });
-      await wait(drawerOpen); await settled();
-      const wide = await measure();
-      assert(wide.hitsButton && wide.pressed === "true", JSON.stringify(wide));
-      click(await point()); await wait(`!(${collapsed})`); await settled();
-      report.push({ mode, theme, font, before, hover, focused, wide });
-      away();
-    }
-  }
-  for (const reference of report.filter(item => item.mode === "session")) {
-    const actual = report.find(item => item.mode === "collaboration" && item.theme === reference.theme && item.font === reference.font);
-    assert.equal(actual.hover.rect.width, reference.hover.rect.width, "Equivalent titlebar controls retain one footprint");
-    assert.equal(actual.hover.background, reference.hover.background);
-    assert.equal(actual.focused.title, reference.focused.title);
+    // The wide layout restores its docked preference. A hover preview there
+    // pins on click, rather than using the compact drawer's close action.
+    win.setContentSize(1100, 820);
+    await wait(`!document.querySelector('.app-shell').classList.contains('compact-navigation') && !(${collapsed})`);
+    await settled();
+    click(await point()); await wait(collapsed); await settled();
+    away(); win.webContents.sendInputEvent({ type: "mouseMove", ...await point() });
+    await wait(drawerOpen); await settled();
+    const wide = await measure();
+    assert(wide.hitsButton && wide.pressed === "true", JSON.stringify(wide));
+    click(await point()); await wait(`!(${collapsed})`); await settled();
+    report.push({ theme, font, before, hover, focused, wide });
+    away();
   }
   assert.equal(errors.length, 0, errors.join("\n"));
   fs.writeFileSync(path.join(output, "results.json"), JSON.stringify({ report, errors }, null, 2));
-  console.log("PASS: main sidebar hover/click/focus, compact drawer, wide pinning and breakpoint restoration in both conversation modes");
+  console.log("PASS: main sidebar hover/click/focus, compact drawer, wide pinning and breakpoint restoration");
   win.destroy(); app.exit(0);
 }).catch(error => { console.error(error); app.exit(1); });

@@ -41,14 +41,14 @@ describe("NavigationPresentation", () => {
         onActivate: activate, onTogglePinned: togglePin,
       },
       {
-        id: "room:r1", kind: "room", label: "Design", parentId: "section:workspace", depth: 1,
+        id: "project:p2", kind: "project", label: "Design", parentId: "section:workspace", depth: 1,
         pinned: true, disabled: true,
       },
     ];
 
     const model = createNavigationModel(source);
     expect(model.snapshot.nodes.map(({ id }) => id)).toEqual([
-      "command:new", "section:workspace", "project:p1", "thread:t1", "room:r1",
+      "command:new", "section:workspace", "project:p1", "thread:t1", "project:p2",
     ]);
     expect(model.snapshot.activeNodeId).toBe("thread:t1");
     expect(model.snapshot.nodes[3]).toMatchObject({
@@ -66,7 +66,7 @@ describe("NavigationPresentation", () => {
     expect(togglePin).toHaveBeenCalledOnce();
     expect(() => model.dispatchAction(NAVIGATION_ACTIONS.activateNode, { id: "missing" }))
       .toThrow("Unknown navigation node id");
-    expect(() => model.dispatchAction(NAVIGATION_ACTIONS.activateNode, { id: "room:r1" }))
+    expect(() => model.dispatchAction(NAVIGATION_ACTIONS.activateNode, { id: "project:p2" }))
       .toThrow("disabled");
   });
 

@@ -69,6 +69,20 @@ Preview `/dev/composer-attachments/` with optional `theme=dark`, `size=20`,
 `width=420`, `hero`, `queued`, and `seed` parameters. Its buttons paste
 synthetic files through the real textarea paste handler.
 
+## Composer project and worktree controls
+
+A new conversation's project sits in one outlined group; in a Git project, the
+branch and the worktree toggle share a second group of the same height. Hover
+fills a segment edge to edge, and the toggle's on state uses the interaction
+accent like Fast mode. A folder outside Git shows only the project group.
+
+Run `npm --prefix desktop run test:e2e:composer-worktree` to start a real
+conversation in a worktree through Electron and the Go core with a disposable
+profile, Git fixture, and local provider. It checks that choosing a start branch
+leaves the project's checkout alone and captures light/dark, default/large-font,
+wide/narrow, and non-Git states in `artifacts/composer-worktree/`. The window is
+visible, so the pointer's position can add a hover surface to a capture.
+
 ## Settings pages
 
 Settings groups pages by task: **Agents & models** (model providers, agents, runtime), **App** (general, appearance), **Extensions** (MCP servers and plugin pages), and **Data** (usage, archive). Page IDs are part of the plugin settings snapshot, so they stay stable when a label or group changes; the runtime page keeps the `advanced` ID.
@@ -137,7 +151,7 @@ With Vite running on port 5189, run `npm --prefix desktop run test:e2e:backgroun
 
 ## Sidebar folds
 
-The Collaboration, Pinned, Folders, and Workspace headings support mouse drag reordering. The desktop profile remembers their order; adding Collaboration to an older profile preserves its existing group order. Run `cd desktop && npx electron scripts/sidebar-collaboration-sort-e2e.cjs` for isolated rendered drag, cancellation, and reload checks. It also captures theme/font variants in `artifacts/sidebar-collaboration-sort/` for separate visual review.
+The Pinned, Folders, and Workspace headings support mouse drag reordering. The desktop profile remembers their order.
 
 Use `SidebarCollapseBody` for sidebar sections and nested groups. It animates intrinsic height and the heading gap together, retains rows until closing finishes, and prevents hidden rows from receiving focus. Avoid inherited measured-height variables or descendant animation rules that change a nested fold when its parent toggles.
 
@@ -154,11 +168,11 @@ that limit.
 
 Expand includes all history; Collapse returns to that recent range without
 closing the project. Both ranges, including conversations still being created,
-scroll within eight rows of height measured by the shared font-responsive row
-size. Short lists use only their content height. The history controls remain
-outside the scroll area. Add `mode=history` to the preview URL for the real project
+use their full content height within the shared sidebar scroll area. Scrolling
+over a project conversation moves the outer sidebar; expanding history moves
+following groups down. The history controls follow the rows. Add `mode=history` to the preview URL for the real project
 component. The same Electron check covers history expansion, read transitions,
-inner scrolling, creating rows, and live font changes, and writes geometry JSON
+outer sidebar scrolling, creating rows, and live font changes, and writes geometry JSON
 and light/dark, 14/20px, wide/narrow screenshots under `desktop/out/sidebar-collapse-e2e-*`.
 
 ## Motion
@@ -191,7 +205,7 @@ Programmatic conversation scrolling uses one trajectory, [`ScrollGlide`](../../.
 
 The glide models a position and a live target, not the remaining distance: the placement compensates a reflow during the React commit, at a timestamp where no frame has elapsed, so a step proportional to elapsed time would move nothing and let the bubble visibly shift until the next frame. Sending therefore ends its placement when the glide lands (about 350ms to cover 96%, then a settling tail) rather than at a fixed deadline; a longer jump takes longer instead of whipping. Reduced motion is decided by the caller, which places the bubble in one write.
 
-Use a CSS transition from the ladder for motion whose geometry is already known: an entrance, a menu, a panel sliding to a fixed size, a hover wash. Reach for a frame-driven trajectory when the destination is only known while the motion runs — scrolling to content that is still arriving — or when something else keeps moving the target underneath it. Such motion needs no deadline and cannot restart; expressed as a transition it would have to be retargeted with a second transition, which is the seam this design removes. Keep a deliberate constant cadence as it is: a summary that reveals at about twelve characters per second is not settling, and a retained glide would turn it into a different animation. A follow that shares its deadline with the height transition of the content it is following — the collaboration receipt — keeps that deadline on purpose, so both finish together.
+Use a CSS transition from the ladder for motion whose geometry is already known: an entrance, a menu, a panel sliding to a fixed size, a hover wash. Reach for a frame-driven trajectory when the destination is only known while the motion runs — scrolling to content that is still arriving — or when something else keeps moving the target underneath it. Such motion needs no deadline and cannot restart; expressed as a transition it would have to be retargeted with a second transition, which is the seam this design removes. Keep a deliberate constant cadence as it is: a summary that reveals at about twelve characters per second is not settling, and a retained glide would turn it into a different animation.
 
 ## Conversation disclosure scrolling
 
@@ -203,7 +217,7 @@ Earlier-history paging inserts rows above the viewport. A paused reader's offset
 
 ## Following and rendering long conversations
 
-A conversation follows its latest content until the reader takes over. Wheel, touch, keyboard, scrollbar and selection input pause following before the browser delivers the scroll, so a streamed chunk cannot pull the view back. Moving back down to the latest content resumes following within a small band that absorbs output streamed while that scroll settles; moving up never resumes it. Jump to latest resumes following when clicked rather than when its motion lands, and the glide hands over to ordinary following once it is close to the moving bottom. The collaboration view's jump goes through its own follow controller in the same way.
+A conversation follows its latest content until the reader takes over. Wheel, touch, keyboard, scrollbar and selection input pause following before the browser delivers the scroll, so a streamed chunk cannot pull the view back. Moving back down to the latest content resumes following within a small band that absorbs output streamed while that scroll settles; moving up never resumes it. Jump to latest resumes following when clicked rather than when its motion lands, and the glide hands over to ordinary following once it is close to the moving bottom.
 
 Off-screen turns skip layout and paint through `content-visibility: auto` and keep the height they last rendered at. Every turn renders once before it may skip, so a skipped turn never falls back to the placeholder height; a placeholder that differs from the real height moves the reader and the scrollbar when the turn finally renders. Chromium decides which skipped turns became visible only after a frame has painted, so [`ConversationRenderWindow`](../../../desktop/src/renderer/ConversationRenderWindow.ts) renders the turns around the viewport from a large scroll's own scroll event. Code that writes `scrollTop` inside a frame, such as a glide or the turn rail, calls it after writing. Do not read geometry inside a skipped turn: the read forces the layout the skip saves. Inactive cached conversations use `content-visibility: hidden`.
 

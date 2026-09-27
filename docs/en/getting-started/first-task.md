@@ -4,7 +4,7 @@ Use a small project you can restore, such as a disposable copy of a Git reposito
 
 ## Choose the folder
 
-In the sidebar, choose **Add workspace → Use existing folder** and select the project. To start without existing files, choose **Create blank project** instead. Open a conversation in that workspace and check the directory before sending.
+In the sidebar, choose **Add workspace → Use existing folder** and select the project folder. To start without existing files, choose **Create blank workspace** instead. Open a conversation in that workspace and check the directory before sending.
 
 Adding the folder does not copy it. The agent works on the real files, so save or commit any existing work you need to preserve.
 
@@ -38,7 +38,7 @@ Use the composer shortcuts to inspect the work:
 
 | Command | Purpose |
 |---|---|
-| `/files` | Browse and open project files |
+| `/files` | Browse and open workspace files |
 | `/diff` | Review the current Git changes |
 | `/terminal` | Run your own checks in a workspace shell |
 

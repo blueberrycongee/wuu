@@ -44,10 +44,9 @@ func compactMediaEvidence(data string, inspectImage bool) string {
 	return evidence
 }
 
-// compactImagePathEvidence keeps an accepted image's local file readable after
-// its bytes are removed from compacted history. The path is already absolute
-// and conversation-scoped; empty paths stay omitted so older transcripts and
-// provider-generated images do not invent a location.
+// compactImagePathEvidence records the working-copy reference when vision
+// bytes are omitted. It neither recreates missing files nor extends retention.
+// Images without a local working copy must not invent a location.
 func compactImagePathEvidence(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {

@@ -2,15 +2,11 @@ package appserver
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -23,7 +19,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
-	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
@@ -42,6 +37,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/sessiontrace"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
+	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 type queuedTurn struct {
@@ -169,9 +165,6 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	if params.Prompt == "" && len(images) == 0 && len(files) == 0 {
 		return s.writeResponse(req.ID, nil, errors.New("prompt or attachment is required"))
 	}
-	if err := attachConversationImagePaths(params.ThreadID, images); err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
 	th, err := s.ensureThreadLoaded(params.ThreadID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -203,12 +196,12 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 		}
 		return nil
 	}
-	userMsg, err := userMessageFromPrompt(params.Prompt, images, files, params.ContentParts)
+	userMsg, err := s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	userMsg.ClientID = strings.TrimSpace(params.ClientID)
-	if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
+	if err := s.takeSessionControlForInput(params.ThreadID); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	snapshot := turnRuntimeSnapshot{}.withPermissions(permissions)
@@ -268,8 +261,8 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 
 func (s *Server) threadRuntimePluginGenerationMatches(th *threadState) bool {
 	return s != nil && th != nil &&
-		(th.NamedAgentID != "" || (th.runtimePluginEpoch == s.pluginGenerationEpoch.Load() &&
-			th.runtimePluginRevision == s.pluginRuntimeRevision.Load()))
+		th.runtimePluginEpoch == s.pluginGenerationEpoch.Load() &&
+		th.runtimePluginRevision == s.pluginRuntimeRevision.Load()
 }
 
 func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.ThreadRuntime, error) {
@@ -277,53 +270,22 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 	if err != nil || threadRuntime == nil {
 		return threadRuntime, err
 	}
-	if th.NamedAgentID != "" {
-		identity, err := s.channelService.GetAgentRuntime(context.Background(), th.NamedAgentID)
-		if err != nil {
-			return nil, err
-		}
-		binding := channels.CollaborationSessionBinding{Purpose: channels.CollaborationSessionConversation}
-		if th.CollaborationSessionRef != "" {
-			binding, err = s.channelService.LookupCollaborationSession(context.Background(), th.CollaborationSessionRef)
-			if err != nil {
-				return nil, err
+	if metadata, found, err := session.Find(s.rt.SessionDir, th.ID); err != nil {
+		return nil, err
+	} else if found {
+		th.mu.Lock()
+		th.Source = metadata.Source
+		th.ProjectID = projectIDForSession(metadata)
+		th.ProjectRole = projectRoleForSession(metadata)
+		th.Instructions = effectiveSessionInstructions(metadata)
+		th.mu.Unlock()
+		isProject := metadata.Source == projectSource || metadata.Source == projectSessionSource
+		if threadRuntime.Toolkit != nil {
+			var handler tools.ProjectSessionHandler
+			if isProject {
+				handler = s.projectSessionHandler(th.ID)
 			}
-		}
-		orientation, err := s.collaborationOrientation(identity, binding.SessionRef)
-		if err != nil {
-			return nil, err
-		}
-		threadRuntime.Toolkit.SetCollaborationScope(binding.Purpose, binding.RoomID, binding.WorkID)
-		// Refresh the prompt while retaining the request-time room/inbox providers
-		// installed on this continuing identity. They resolve the active scope live.
-		requestContext := threadRuntime.StreamRunner.BeforeRequestContext
-		if err := s.rt.ConfigureNamedAgentThreadRuntime(threadRuntime, filepath.Dir(identity.MemoryDir), identity.MemoryDir, orientation); err != nil {
-			return nil, err
-		}
-		threadRuntime.StreamRunner.BeforeRequestContext = requestContext
-	}
-	if th.NamedAgentID == "" && s.channelService != nil && threadRuntime.Toolkit != nil {
-		link, err := s.channelService.HarnessLink(context.Background(), th.ID)
-		control, _, controlErr := session.ReadControl(s.rt.SessionDir, th.ID)
-		if controlErr != nil {
-			return nil, controlErr
-		}
-		if err == nil && link.Active && control.State == session.ControlActive {
-			client, err := s.channelService.BindAgent(context.Background(), link.AgentID)
-			if err != nil {
-				return nil, err
-			}
-			purpose := link.Purpose
-			if purpose == "" {
-				purpose = channels.CollaborationSessionWork
-			}
-			threadRuntime.Toolkit.SetChatAgent(client)
-			threadRuntime.Toolkit.SetCollaborationScope(purpose, link.RoomID, link.WorkID)
-		} else if err != nil && !errors.Is(err, channels.ErrNotFound) {
-			return nil, err
-		} else {
-			threadRuntime.Toolkit.SetChatAgent(nil)
-			threadRuntime.Toolkit.SetCollaborationScope("", "", "")
+			threadRuntime.Toolkit.SetProjectSessions(handler)
 		}
 	}
 	if err := s.refreshThreadGitAttribution(threadRuntime); err != nil {
@@ -340,7 +302,7 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 	th.mu.Lock()
 	if threadRuntime.StreamRunner != nil {
 		if prompt := strings.TrimSpace(threadRuntime.StreamRunner.SystemPrompt); prompt != "" {
-			th.History = replaceBaseSystemPrompt(th.History, prompt)
+			th.History = replaceBaseSystemPrompt(th.History, sessionSystemPrompt(prompt, th.Instructions))
 		}
 	}
 	history := cloneHistory(th.History)
@@ -537,9 +499,6 @@ func (s *Server) handleTurnQueue(req Request) error {
 	if params.Prompt == "" && len(images) == 0 && len(files) == 0 {
 		return s.writeResponse(req.ID, nil, errors.New("prompt or attachment is required"))
 	}
-	if err := attachConversationImagePaths(params.ThreadID, images); err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
 	if isManualCompactPrompt(params.Prompt) {
 		if len(images) > 0 || len(files) > 0 {
 			return s.writeResponse(req.ID, nil, errors.New("compact does not accept attachments"))
@@ -564,13 +523,13 @@ func (s *Server) handleTurnQueue(req Request) error {
 	if queueID == "" {
 		queueID = session.NewID()
 	}
-	msg, err := userMessageFromPrompt(params.Prompt, images, files, params.ContentParts)
+	msg, err := s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	msg.ClientID = queueID
 	if !params.Hold {
-		if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
+		if err := s.takeSessionControlForInput(params.ThreadID); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 	}
@@ -658,9 +617,6 @@ func (s *Server) handleTurnUpdateQueued(req Request) error {
 	if params.Prompt == "" && len(images) == 0 && len(files) == 0 {
 		return s.writeResponse(req.ID, nil, errors.New("prompt or attachment is required"))
 	}
-	if err := attachConversationImagePaths(params.ThreadID, images); err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
 	th, err := s.ensureThreadLoaded(params.ThreadID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -672,7 +628,7 @@ func (s *Server) handleTurnUpdateQueued(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("thread is read-only"))
 	}
 
-	msg, err := userMessageFromPrompt(params.Prompt, images, files, params.ContentParts)
+	msg, err := s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -760,9 +716,6 @@ func (s *Server) handleTurnSteer(req Request) error {
 	if params.Prompt == "" && len(images) == 0 && len(files) == 0 {
 		return s.writeResponse(req.ID, nil, errors.New("prompt or attachment is required"))
 	}
-	if err := attachConversationImagePaths(params.ThreadID, images); err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
 	th, err := s.ensureThreadLoaded(params.ThreadID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -785,7 +738,7 @@ func (s *Server) handleTurnSteer(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
+	if err := s.takeSessionControlForInput(params.ThreadID); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 
@@ -853,7 +806,7 @@ func (s *Server) handleTurnSteer(req Request) error {
 		}
 		steerMsg = removedTurn.msg
 	} else {
-		steerMsg, err = userMessageFromPrompt(params.Prompt, images, files, params.ContentParts)
+		steerMsg, err = s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 		if err != nil {
 			th.mu.Unlock()
 			return s.writeResponse(req.ID, nil, err)
@@ -874,6 +827,7 @@ func (s *Server) handleTurnSteer(req Request) error {
 	})
 	th.applyLatestSteerDocumentOverrideLocked()
 	th.mu.Unlock()
+	s.noticeProjectUserMessage(th, steerMsg)
 	if removedQueued {
 		s.notifyPluginTurnDiscarded(params.ThreadID, removedQueuedTurn, "queued turn was converted to steering input")
 		_ = s.writeNotification(NotificationTurnDequeued, TurnDequeuedNotification{
@@ -1098,7 +1052,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	// belong to the host runtime. Fence every admission, including user takeover
 	// of a managed session and reuse of a runtime cached before rerouting.
 	th.mu.Lock()
-	boundProject := th.NamedAgentID == "" && (th.WorkspaceID != "" || th.Source == "collaboration")
+	boundProject := th.WorkspaceID != ""
 	binding := session.Session{WorkspaceID: th.WorkspaceID, CWD: th.CWD, WorktreeBaseRepo: th.WorktreeBaseRepo}
 	th.mu.Unlock()
 	if boundProject {
@@ -1113,7 +1067,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	// External-engine threads (codex, later claude) carry no native
 	// StreamRunner: the engine session drives the turn in the external
 	// process. Only the engine stamp is needed on the runtime handle.
-	if agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu && strings.TrimSpace(th.NamedAgentID) == "" {
+	if agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
 		th.mu.Lock()
 		if th.execRuntime != nil {
 			rt := th.execRuntime
@@ -1145,12 +1099,11 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	var detached detachedThreadRuntime
 	if existing != nil && !running {
 		selectionMismatch := !s.threadRuntimeMatchesSelectionLocked(th, existing)
-		profileMismatch := th.NamedAgentID != "" && existing.ExecutionProfile != runtime.CollaborationRuntimeVersion
-		if th.pendingRuntimeReset || selectionMismatch || profileMismatch {
+		if th.pendingRuntimeReset || selectionMismatch {
 			if !threadRuntimeHasOutstandingWork(th.ID, existing) {
 				detached = detachThreadRuntimeLocked(th)
 				existing = nil
-			} else if selectionMismatch || profileMismatch {
+			} else if selectionMismatch {
 				// The idle runtime was built for a different selection and
 				// cannot be rebuilt while background agents still depend on
 				// it. Failing admission is honest; silently running the old
@@ -1159,7 +1112,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 				// outstanding work consumes it.
 				threadID := th.ID
 				th.mu.Unlock()
-				return nil, fmt.Errorf("model selection or execution profile for thread %q changed while background agents are running; retry after they settle", threadID)
+				return nil, fmt.Errorf("model selection for thread %q changed while background agents are running; retry after they settle", threadID)
 			}
 		}
 	}
@@ -1171,8 +1124,6 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	modelEffort := th.ModelEffort
 	speed := th.Speed
 	permissionMode := th.PermissionMode
-	namedAgentID := strings.TrimSpace(th.NamedAgentID)
-	collaborationSessionRef := strings.TrimSpace(th.CollaborationSessionRef)
 	th.mu.Unlock()
 	if detached.runtime != nil || detached.subscription != nil {
 		s.releaseDetachedThreadRuntime(detached)
@@ -1192,29 +1143,8 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		Speed:          speed,
 		PermissionMode: permissionMode,
 	}
-	var threadRuntime *runtime.ThreadRuntime
-	var err error
-	if namedAgentID != "" {
-		principal, agentErr := s.channelService.GetAgentRuntime(context.Background(), namedAgentID)
-		if agentErr != nil {
-			return nil, agentErr
-		}
-		if collaborationSessionRef == "" {
-			if binding, bindErr := s.channelService.LookupCollaborationSession(context.Background(), th.ID); bindErr == nil {
-				if binding.PrincipalID != principal.ID {
-					return nil, channels.ErrUnauthorized
-				}
-				collaborationSessionRef = binding.SessionRef
-				th.mu.Lock()
-				th.CollaborationSessionRef = collaborationSessionRef
-				th.mu.Unlock()
-			}
-		}
-		threadRuntime, err = s.newAgentExecutionRuntimeForSession(th.ID, collaborationSessionRef, principal, selection)
-	} else {
-		threadRuntime, err = s.rt.NewThreadRuntimeForRootModel(th.ID, browserWorkdir, selection)
-	}
-	if namedAgentID == "" && errors.Is(err, runtime.ErrThreadProviderUnavailable) {
+	threadRuntime, err := s.rt.NewThreadRuntimeForRootModel(th.ID, browserWorkdir, selection)
+	if errors.Is(err, runtime.ErrThreadProviderUnavailable) {
 		// Draft selections arrive through thread/start, not config/model/update.
 		// Register a discovered connection before treating the pin as removed.
 		cfg, _, loadErr := s.rt.LoadEffectiveConfig()
@@ -1230,7 +1160,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 			threadRuntime, err = s.rt.NewThreadRuntimeForRootModel(th.ID, browserWorkdir, selection)
 		}
 	}
-	if namedAgentID == "" && errors.Is(err, runtime.ErrThreadProviderUnavailable) {
+	if errors.Is(err, runtime.ErrThreadProviderUnavailable) {
 		// The pinned provider was removed from config after this session
 		// selected it. Self-heal the dead provider/model pair to the
 		// workspace defaults so the turn proceeds instead of every send
@@ -1247,15 +1177,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 			Speed:          healed.Speed,
 			PermissionMode: healed.PermissionMode,
 		}
-		if namedAgentID != "" {
-			principal, agentErr := s.channelService.GetAgentRuntime(context.Background(), namedAgentID)
-			if agentErr != nil {
-				return nil, agentErr
-			}
-			threadRuntime, err = s.newAgentExecutionRuntimeForSession(th.ID, collaborationSessionRef, principal, healedSelection)
-		} else {
-			threadRuntime, err = s.rt.NewThreadRuntimeForRootModel(th.ID, browserWorkdir, healedSelection)
-		}
+		threadRuntime, err = s.rt.NewThreadRuntimeForRootModel(th.ID, browserWorkdir, healedSelection)
 	}
 	if err != nil {
 		return nil, err
@@ -1263,12 +1185,15 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	if err := s.configureSessionToolPolicy(th.ID, threadRuntime); err != nil {
 		return nil, err
 	}
+	th.mu.Lock()
+	coordinator := th.Source == projectSource || th.Source == projectSessionSource
+	th.mu.Unlock()
+	if coordinator && threadRuntime.Toolkit != nil {
+		threadRuntime.Toolkit.SetProjectSessions(s.projectSessionHandler(th.ID))
+	}
 	// Stamp the engine the thread is bound to onto the runtime. A cached
 	// runtime keeps its original stamp; threads never silently switch.
 	threadRuntime.EngineID = agentengine.NormalizeEngineID(th.EngineID)
-	if namedAgentID != "" {
-		threadRuntime.EngineID = agentengine.EngineWuu
-	}
 	if threadRuntime.Toolkit != nil {
 		// Inject the embedded-browser bridge for every thread here. The bridge
 		// closure must carry this thread's id + workdir so tab operations route
@@ -1302,7 +1227,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	if th.execRuntime == nil {
 		if threadRuntime.StreamRunner != nil {
 			if prompt := strings.TrimSpace(threadRuntime.StreamRunner.SystemPrompt); prompt != "" {
-				th.History = replaceBaseSystemPrompt(th.History, prompt)
+				th.History = replaceBaseSystemPrompt(th.History, sessionSystemPrompt(prompt, th.Instructions))
 			}
 		}
 		th.execRuntime = threadRuntime
@@ -1469,9 +1394,7 @@ func (s *Server) subscribeThreadRuntime(threadID string, threadRuntime *runtime.
 		control.SetModelPinClientResolver(func(rawPin string) (string, providers.StreamClient, error) {
 			return resolveParticipantModelOverride(ref, "spawn", rawPin, control.WorkerProviderName())
 		})
-		if threadRuntime.ExecutionProfile == "" {
-			control.SetModelAliasResolver(s.resolveSubagentModelAlias)
-		}
+		control.SetModelAliasResolver(s.resolveSubagentModelAlias)
 		control.SetProviderClientResolver(s.resolveSubagentProviderClient)
 	}
 	sub := &threadRuntimeSubscription{
@@ -1721,22 +1644,7 @@ func userMessageFromPrompt(prompt string, images []providers.InputImage, files [
 	if err != nil {
 		return providers.ChatMessage{}, err
 	}
-	// The image path note is model context. Keep the authored prompt as the
-	// bubble text whenever that note would otherwise become the displayed
-	// message. Image-only turns use the existing preview marker because an
-	// empty display field cannot survive session storage separately from an
-	// unset one.
-	if reference := conversationImagePathReference(images); reference != "" {
-		msg.Content = appendConversationImageReference(msg.Content, reference)
-		switch {
-		case ok:
-			msg.DisplayContent = display
-		case strings.TrimSpace(prompt) == "":
-			msg.DisplayContent = imageOnlyDisplayContent(images)
-		default:
-			msg.DisplayContent = prompt
-		}
-	} else if ok {
+	if ok {
 		msg.DisplayContent = display
 	}
 	if len(contentPartSets) > 0 {
@@ -1780,185 +1688,6 @@ func literalUserMessageFromPrompt(prompt string, images []providers.InputImage, 
 		Files:   files,
 	}
 	return msg, nil
-}
-
-// attachConversationImagePaths writes each accepted image to a unique
-// owner-readable file under the process temp root. The absolute path is
-// stored on the image so history, compaction, and later model requests can
-// refer to the same file. A write failure returns before the turn is
-// admitted, so the image is not dropped and no message is persisted.
-//
-// The file name is the content hash, so admission retries and replays of the
-// same normalized bytes reuse the existing file instead of writing another
-// copy. Files are retained for the life of the temp root: deleting one while
-// a compacted transcript still names it would make the reference unreadable.
-func attachConversationImagePaths(conversationID string, images []providers.InputImage) error {
-	if len(images) == 0 {
-		return nil
-	}
-	dir, err := conversationImageDir(conversationID)
-	if err != nil {
-		return err
-	}
-	root := filepath.Dir(dir)
-	if err := os.Mkdir(root, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-		return fmt.Errorf("store conversation images: %w", err)
-	}
-	// The root has a predictable name below the shared system temp directory.
-	// Reject a pre-existing symlink or public directory before writing private
-	// user images into it.
-	info, err := os.Lstat(root)
-	if err != nil {
-		return fmt.Errorf("store conversation images: %w", err)
-	}
-	if !info.IsDir() || info.Mode().Perm() != 0o700 {
-		return errors.New("conversation image directory is not private")
-	}
-	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-		return fmt.Errorf("store conversation images: %w", err)
-	}
-	info, err = os.Lstat(dir)
-	if err != nil {
-		return fmt.Errorf("store conversation images: %w", err)
-	}
-	if !info.IsDir() || info.Mode().Perm() != 0o700 {
-		return errors.New("conversation image directory is not private")
-	}
-	for index := range images {
-		path, err := writeConversationImage(dir, images[index])
-		if err != nil {
-			return fmt.Errorf("image %d: %w", index+1, err)
-		}
-		images[index].Path = path
-	}
-	return nil
-}
-
-func conversationImageDir(conversationID string) (string, error) {
-	key := strings.TrimSpace(conversationID)
-	if key == "" {
-		return "", errors.New("conversation id is required to store images")
-	}
-	if strings.ContainsRune(key, os.PathSeparator) || strings.Contains(key, "/") || strings.Contains(key, "..") {
-		sum := sha256.Sum256([]byte(key))
-		key = hex.EncodeToString(sum[:8])
-	}
-	root := strings.TrimSpace(os.TempDir())
-	if root == "" {
-		return "", errors.New("temporary directory is unavailable")
-	}
-	dir := filepath.Join(root, "wuu-conversation-images", key)
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return "", fmt.Errorf("store conversation images: %w", err)
-	}
-	return abs, nil
-}
-
-func writeConversationImage(dir string, image providers.InputImage) (string, error) {
-	data := strings.TrimSpace(image.Data)
-	raw, err := base64.StdEncoding.DecodeString(data)
-	if err != nil {
-		return "", fmt.Errorf("decode image: %w", err)
-	}
-	if len(raw) == 0 {
-		return "", errors.New("image is empty")
-	}
-	sum := sha256.Sum256(raw)
-	name := hex.EncodeToString(sum[:]) + conversationImageExt(image.MediaType)
-	path := filepath.Join(dir, name)
-	if info, statErr := os.Stat(path); statErr == nil && info.Mode().IsRegular() && info.Size() == int64(len(raw)) {
-		return path, nil
-	}
-	// A same-directory temporary name keeps the publish atomic on one
-	// filesystem. O_EXCL prevents two admissions from truncating one file.
-	tmp, err := os.CreateTemp(dir, ".writing-"+hex.EncodeToString(sum[:4])+"-*")
-	if err != nil {
-		return "", fmt.Errorf("store conversation images: %w", err)
-	}
-	tmpName := tmp.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmpName)
-		}
-	}()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return "", fmt.Errorf("store conversation images: %w", err)
-	}
-	if _, err := tmp.Write(raw); err != nil {
-		_ = tmp.Close()
-		return "", fmt.Errorf("store conversation images: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return "", fmt.Errorf("store conversation images: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		if info, statErr := os.Stat(path); statErr == nil && info.Mode().IsRegular() && info.Size() == int64(len(raw)) {
-			return path, nil
-		}
-		return "", fmt.Errorf("store conversation images: %w", err)
-	}
-	cleanup = false
-	return path, nil
-}
-
-func conversationImageExt(mediaType string) string {
-	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
-	mediaType, _, _ = strings.Cut(mediaType, ";")
-	switch mediaType {
-	case "image/jpeg", "image/jpg":
-		return ".jpg"
-	case "image/gif":
-		return ".gif"
-	case "image/webp":
-		return ".webp"
-	default:
-		return ".png"
-	}
-}
-
-func imageOnlyDisplayContent(images []providers.InputImage) string {
-	switch len(images) {
-	case 0:
-		return ""
-	case 1:
-		return "[Image #1]"
-	default:
-		return fmt.Sprintf("[%d images]", len(images))
-	}
-}
-
-func conversationImagePathReference(images []providers.InputImage) string {
-	if len(images) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	label := 0
-	for _, image := range images {
-		path := strings.TrimSpace(image.Path)
-		if path == "" {
-			continue
-		}
-		label++
-		if label > 1 {
-			b.WriteString("\n")
-		}
-		fmt.Fprintf(&b, "<image name=[Image #%d] path=%q>", label, path)
-	}
-	return b.String()
-}
-
-func appendConversationImageReference(content, reference string) string {
-	reference = strings.TrimSpace(reference)
-	if reference == "" || strings.Contains(content, reference) {
-		return content
-	}
-	if strings.TrimSpace(content) == "" {
-		return reference
-	}
-	return content + "\n\n" + reference
 }
 
 func normalizeImagePayload(mediaType, data string) (string, string, error) {
@@ -2026,7 +1755,7 @@ func (s *Server) handleTurnInterrupt(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	threadID := strings.TrimSpace(params.ThreadID)
-	if err := s.takeHarnessControl(threadID, session.ControlPaused); err != nil {
+	if err := s.takeSessionControl(threadID, session.ControlPaused); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	_, err := s.interruptThreadExecution(threadID, "", "")
@@ -2094,7 +1823,7 @@ func (s *Server) interruptThreadExecution(threadID, expectedRunID, expectedTurnI
 	s.pruneRevokedSteersLocked(th)
 	var humanSteers, pluginSteers []providers.ChatMessage
 	for _, msg := range th.pendingSteers {
-		if msg.Origin == "plugin" {
+		if isGeneratedSessionInput(msg.Origin) {
 			pluginSteers = append(pluginSteers, msg)
 		} else {
 			humanSteers = append(humanSteers, msg)
@@ -2138,13 +1867,11 @@ func (s *Server) interruptThreadExecution(threadID, expectedRunID, expectedTurnI
 	// synchronous observer callback here would otherwise re-enter that ordered
 	// process and prevent the cancellation response from ever being returned.
 	cancel()
-	if th.NamedAgentID == "" {
-		s.notifyPluginTurnInterruptedAsync(pluginhost.AgentTurnInterruptedInput{
-			ThreadID: threadID,
-			TurnID:   turnID,
-			Cause:    "turn_interrupted",
-		})
-	}
+	s.notifyPluginTurnInterruptedAsync(pluginhost.AgentTurnInterruptedInput{
+		ThreadID: threadID,
+		TurnID:   turnID,
+		Cause:    "turn_interrupted",
+	})
 	// turn/interrupt means "freeze this work", not "leave background workers
 	// running": cancel the whole anonymous-worker tree, clear its queued
 	// spawns, and keep partial results as resumable state. The next
@@ -2529,20 +2256,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// silently running the native loop.
 	sessionInstructions := ""
 	if metadata, ok, err := session.Find(s.rt.SessionDir, th.ID); err == nil && ok {
-		sessionInstructions = metadata.Instructions
-	}
-	namedAgentID := strings.TrimSpace(th.NamedAgentID)
-	var hostMCPServers []agentengine.MCPServer
-	var hostMCPError error
-	if namedAgentID != "" && agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
-		if threadRuntime != nil && threadRuntime.StreamRunner != nil {
-			sessionInstructions = threadRuntime.StreamRunner.SystemPrompt
-		}
-		var endpoint string
-		endpoint, hostMCPError = s.namedAgentMCPURL(namedAgentID, th.ID)
-		if hostMCPError == nil {
-			hostMCPServers = []agentengine.MCPServer{{Name: namedAgentMCPServerName, URL: endpoint}}
-		}
+		sessionInstructions = effectiveSessionInstructions(metadata)
 	}
 	engine := s.rt.EngineSessionForThread(ctx, threadRuntime, agentengine.ThreadBinding{
 		ThreadID:       th.ID,
@@ -2552,7 +2266,6 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		Speed:          th.Speed,
 		PermissionMode: th.PermissionMode,
 		Instructions:   sessionInstructions,
-		MCPServers:     hostMCPServers,
 		ExternalRef:    th.EngineRef,
 		PersistRef: func(ref string) error {
 			return s.persistThreadEngineRef(th.ID, ref)
@@ -2561,9 +2274,6 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			return s.requestEngineApproval(approvalCtx, th.ID, turnID, request)
 		},
 	})
-	if hostMCPError != nil {
-		engine = agentengine.FailedSession(hostMCPError)
-	}
 	if engine == nil {
 		engine = s.rt.WuuEngine().SessionForRunner(s.rt.StreamRunner)
 	}
@@ -2580,7 +2290,12 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		if th.steerWake == nil {
 			th.steerWake = make(chan struct{})
 		}
+		coordinator := th.Source == projectSource || th.Source == projectSessionSource
 		th.mu.Unlock()
+		if coordinator {
+			// Deferred team input joins the recipient's next turn.
+			s.startBackground(func() { s.drainSessionInbox(th.ID) })
+		}
 	}
 	if len(frozenTreeContext) > 0 {
 		requestContext = append(append([]agent.ContextSegment(nil), requestContext...), frozenTreeContext...)
@@ -2937,7 +2652,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// RunTurn returns the engine outcome; the built-in wuu engine's result is
 	// the native loop result the rest of the turn accounting consumes.
 	res := turnResult.Result
-	if th.NamedAgentID == "" && s.rt != nil && s.rt.HookDispatcher != nil {
+	if s.rt != nil && s.rt.HookDispatcher != nil {
 		th.mu.Lock()
 		title := th.Title
 		th.mu.Unlock()
@@ -3127,17 +2842,6 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	th.interrupting = false
 	s.pruneRevokedSteersLocked(th)
 	unconsumedSteers := th.drainPendingSteersLocked()
-	// Collaboration retains a durable outbox. An unconsumed correction must
-	// return through that scheduler so its scope and capacity are checked again.
-	remainingSteers := unconsumedSteers[:0]
-	for _, msg := range unconsumedSteers {
-		if msg.Cause == "session_management" {
-			delete(th.pendingSteerControls, msg.ClientID)
-			continue
-		}
-		remainingSteers = append(remainingSteers, msg)
-	}
-	unconsumedSteers = remainingSteers
 	if len(unconsumedSteers) > 0 {
 		if threadRuntime != nil && threadRuntime.AgentControl != nil {
 			unconsumedSteers = filterConsumedAgentCompletionSteers(unconsumedSteers, threadRuntime.AgentControl)
@@ -3247,16 +2951,14 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// Observers are advisory and must not delay terminal state publication. In
 	// particular, a plugin helper can be blocked in a host service while core
 	// is trying to report the cancellation of that same service's child turn.
-	if namedAgentID == "" {
-		_ = s.startBackground(func() {
-			ctx, cancel := context.WithTimeout(context.Background(), pluginObserverDeliveryTimeout)
-			defer cancel()
-			if observerErr := s.notifyPluginTurnCompleted(ctx, completedObservation); observerErr != nil {
-				providers.DebugLogf("notify plugin turn observers for thread %q turn %q: %v", th.ID, turnID, observerErr)
-			}
-		})
-	}
-	s.kickHarnessSessions()
+	_ = s.startBackground(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), pluginObserverDeliveryTimeout)
+		defer cancel()
+		if observerErr := s.notifyPluginTurnCompleted(ctx, completedObservation); observerErr != nil {
+			providers.DebugLogf("notify plugin turn observers for thread %q turn %q: %v", th.ID, turnID, observerErr)
+		}
+	})
+	s.afterProjectTurn(th, turn, turnRuntime.CompactOnly)
 	if reference := turnRuntime.PluginTurn; reference != nil {
 		lifecycleState := pluginhost.TurnLifecycleCompleted
 		errorText := ""
@@ -3301,7 +3003,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		}
 		return
 	}
-	if !turnRuntime.CompactOnly && strings.TrimSpace(th.NamedAgentID) == "" {
+	if !turnRuntime.CompactOnly {
 		_ = s.startBackground(func() { s.generateThreadTitle(th.ID, titleHistory, threadRuntime) })
 	}
 	s.kickAgentCompletionDrain(th.ID)
@@ -3814,11 +3516,6 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	now := time.Now().UTC()
 
 	th.mu.Lock()
-	if th.NamedAgentID != "" && userMsg.Phase != "channel_wake" {
-		th.mu.Unlock()
-		cancel()
-		return startedThreadTurn{}, false, errors.New("collaboration sessions accept input through channel/session/send")
-	}
 	if s.closed.Load() {
 		th.mu.Unlock()
 		cancel()
@@ -3884,13 +3581,17 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		th.mu.Unlock()
 		cancel()
 	}
+	if err := s.validateInboxInput(userMsg); err != nil {
+		abortAdmission()
+		return startedThreadTurn{}, false, err
+	}
 	if snapshot.Control != nil {
 		if err := session.ValidateControl(s.rt.SessionDir, *snapshot.Control); err != nil {
 			abortAdmission()
 			return startedThreadTurn{}, false, err
 		}
 	}
-	if userMsg.ClientID != "" && userMsg.Origin == "plugin" {
+	if userMsg.ClientID != "" && isGeneratedSessionInput(userMsg.Origin) {
 		if _, found := s.findSessionInput(th, userMsg.ClientID); found {
 			abortAdmission()
 			return startedThreadTurn{}, false, errSessionInputApplied
@@ -3911,7 +3612,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		abortAdmission()
 		return startedThreadTurn{}, false, nil
 	}
-	if th.NamedAgentID == "" && s.rt != nil && s.rt.HookDispatcher != nil {
+	if s.rt != nil && s.rt.HookDispatcher != nil {
 		if _, err := s.rt.HookDispatcher.Dispatch(ctx, hookspkg.UserPromptSubmit, &hookspkg.Input{
 			SessionID: threadID, CWD: threadCWD, Prompt: userMsg.Content,
 		}); err != nil {
@@ -4039,6 +3740,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	th.currentExecutionRunID = turnRuntime.ExecutionRunID
 	turnRuntime.RequestContext = cloneContextSegments(snapshot.RequestContext)
 	th.mu.Unlock()
+	s.noticeProjectUserMessage(th, userMsg)
 
 	return startedThreadTurn{
 		ctx:        turnCtx,
@@ -5027,9 +4729,6 @@ func (s *Server) persistTurnResultLocked(th *threadState, res agent.LoopResult, 
 		return err
 	}
 	s.invalidateSettingsUsage()
-	if strings.TrimSpace(th.NamedAgentID) != "" {
-		s.invalidateChannelAgentInsights()
-	}
 	return nil
 }
 

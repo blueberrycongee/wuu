@@ -48,7 +48,7 @@ class ChatThread(val value: JSONObject, pending: List<JSONObject> = emptyList(),
                         JSONObject(it.toString()).put("media_type", it.optString("mime_type"))
                     }).map { it.toString() },
                 if (role == "tool") ToolActivity.from(item, turn.optString("status")) else null, turnId = turn.getString("id"),
-                sourceSessionId = if (item.optString("origin") == "plugin" && item.optString("presentation_kind") == "session_message") item.optString("related_session_id") else "",
+                sourceSessionId = if (item.optString("origin") in listOf("host", "plugin") && item.optString("presentation_kind") == "session_message") item.optString("related_session_id") else "",
                 sourceSessionName = item.optString("name"))
         }
         val error = turn.optJSONObject("error")?.optString("message").orEmpty()

@@ -100,7 +100,7 @@ func codeModeResponseResult(response codemode.RunResult) toolresult.Result {
 }
 
 func (t *Toolkit) withCodeModeSurface(surface capability.Surface) capability.Surface {
-	if t.IsRoomAgent() || surface.ProfileName == "" || !t.CodeModeOnly() {
+	if surface.ProfileName == "" || !t.CodeModeOnly() {
 		return surface
 	}
 	out := cloneSurface(surface)

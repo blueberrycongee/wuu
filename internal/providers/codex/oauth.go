@@ -96,6 +96,25 @@ func (s *OAuthSource) Credentials(ctx context.Context, forceRefresh bool) (crede
 	if err := ctx.Err(); err != nil {
 		return credentials{}, err
 	}
+	// Read the selected local source for every request so account changes and
+	// login refreshes take effect without restarting Wuu. Never mutate it.
+	if s.reuseCodexCredentials {
+		cliState, cliErr := loadCodexCLIAuth(s.home)
+		if cliErr != nil {
+			return credentials{}, fmt.Errorf("no Codex OAuth credentials found; run `codex` to sign in or import credentials into wuu: %w", cliErr)
+		}
+		if tokenExpiring(cliState.AccessToken, 0) {
+			return credentials{}, errors.New("Codex CLI credentials are expired; run `codex` to refresh them before using openai-codex")
+		}
+		creds := credentials{
+			accessToken:  strings.TrimSpace(cliState.AccessToken),
+			refreshToken: strings.TrimSpace(cliState.RefreshToken),
+			accountID:    firstNonEmpty(cliState.AccountID, accountIDFromToken(cliState.AccessToken)),
+			source:       "codex-cli-readonly",
+			refreshable:  false,
+		}
+		return creds, nil
+	}
 	if !forceRefresh && s.hasCached && strings.TrimSpace(s.cached.accessToken) != "" &&
 		!tokenExpiring(s.cached.accessToken, refreshSkew) {
 		return s.cached, nil
@@ -143,32 +162,12 @@ func (s *OAuthSource) Credentials(ctx context.Context, forceRefresh bool) (crede
 		return creds, nil
 	}
 
-	if !s.reuseCodexCredentials {
-		return credentials{}, errors.New("no wuu Codex OAuth credentials found; set reuse_codex_credentials to true on this openai-codex provider to read local Codex CLI credentials")
-	}
-
-	cliState, cliErr := loadCodexCLIAuth(s.home)
-	if cliErr != nil {
-		return credentials{}, fmt.Errorf("no Codex OAuth credentials found; run `codex` to sign in or import credentials into wuu: %w", cliErr)
-	}
-	if tokenExpiring(cliState.AccessToken, 0) {
-		return credentials{}, errors.New("Codex CLI credentials are expired; run `codex` to refresh them before using openai-codex")
-	}
-	creds := credentials{
-		accessToken:  strings.TrimSpace(cliState.AccessToken),
-		refreshToken: strings.TrimSpace(cliState.RefreshToken),
-		accountID:    firstNonEmpty(cliState.AccountID, accountIDFromToken(cliState.AccessToken)),
-		source:       "codex-cli-readonly",
-		refreshable:  false,
-	}
-	s.cached = creds
-	s.hasCached = true
-	return creds, nil
+	return credentials{}, errors.New("no wuu Codex OAuth credentials found; set reuse_codex_credentials to true on this openai-codex provider to read local Codex CLI credentials")
 }
 
 // LocalOAuthStatus reports whether wuu can use local ChatGPT/Codex OAuth
 // credentials without performing a network refresh.
-func LocalOAuthStatus(home string) (string, error) {
+func LocalOAuthStatus(home string, reuseCodexCredentials bool) (string, error) {
 	home = strings.TrimSpace(home)
 	if home == "" {
 		home = os.Getenv("HOME")
@@ -176,10 +175,12 @@ func LocalOAuthStatus(home string) (string, error) {
 	if home == "" {
 		return "", errors.New("home directory is required for Codex OAuth")
 	}
-	if store, err := authstorage.ForHome(home); err == nil {
-		if state, err := store.Get("openai-codex"); err == nil && strings.TrimSpace(state.AccessToken) != "" &&
-			(!tokenExpiring(state.AccessToken, 0) || strings.TrimSpace(state.RefreshToken) != "") {
-			return "wuu-auth-store", nil
+	if !reuseCodexCredentials {
+		if store, err := authstorage.ForHome(home); err == nil {
+			if state, err := store.Get("openai-codex"); err == nil && strings.TrimSpace(state.AccessToken) != "" &&
+				(!tokenExpiring(state.AccessToken, 0) || strings.TrimSpace(state.RefreshToken) != "") {
+				return "wuu-auth-store", nil
+			}
 		}
 	}
 	cliState, err := loadCodexCLIAuth(home)

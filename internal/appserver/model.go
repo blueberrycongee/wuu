@@ -66,6 +66,8 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		SessionControl:  th.SessionControl,
 		ID:              th.ID,
 		Source:          th.Source,
+		ProjectID:       th.ProjectID,
+		ProjectRole:     th.ProjectRole,
 		ParentID:        th.ParentID,
 		AgentPath:       th.AgentPath,
 		Preview:         firstNonEmpty(th.Title, threadPreview(th.History)),
@@ -1798,8 +1800,8 @@ func chatMessageFromPersistedMessage(rec persistedMessage) providers.ChatMessage
 			continue
 		}
 		msg.Images = append(msg.Images, providers.InputImage{
+			LocalPath:      image.LocalPath,
 			ProviderItemID: image.ProviderItemID,
-			Path:           image.Path,
 			MediaType:      image.MediaType,
 			Data:           image.Data,
 			Width:          image.Width,
@@ -1880,6 +1882,13 @@ func isThreadTitleUserMessage(msg providers.ChatMessage) bool {
 }
 
 func chatMessageDisplayContent(msg providers.ChatMessage) string {
+	for _, image := range msg.Images {
+		if image.LocalPath != "" {
+			// Image-only messages have a genuinely empty display prompt even
+			// though Content also contains model-facing working-copy paths.
+			return msg.DisplayContent
+		}
+	}
 	if strings.TrimSpace(msg.DisplayContent) != "" {
 		return msg.DisplayContent
 	}
@@ -1894,14 +1903,6 @@ func chatMessageInputText(msg providers.ChatMessage) string {
 	content := strings.TrimSpace(msg.Content)
 	if content == "" || content == strings.TrimSpace(chatMessageDisplayContent(msg)) {
 		return ""
-	}
-	// A local image path is server-added model context, not authored input.
-	// Leave it out of the public input field so the bubble stays the prompt.
-	if reference := conversationImagePathReference(msg.Images); reference != "" {
-		withoutReference := strings.TrimSpace(strings.TrimSuffix(content, reference))
-		if withoutReference == strings.TrimSpace(chatMessageDisplayContent(msg)) || withoutReference == "" {
-			return ""
-		}
 	}
 	return msg.Content
 }

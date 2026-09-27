@@ -110,7 +110,7 @@ function renderComposer(props: {
   onSelectSpeed?: (speed: string) => void | Promise<boolean>;
   engines?: EngineInfo[];
   variant?: ComposerVariant;
-  canSelectProject?: boolean;
+  canSelectWorkspace?: boolean;
   gitStatus?: Parameters<typeof Composer>[0]["gitStatus"];
   branchPickerDisabled?: boolean;
   onToggleBranchMenu?: () => void;
@@ -150,7 +150,7 @@ function renderComposer(props: {
   tokensPerSecond?: number;
   tokenSpeedSampledAt?: number;
   tokenSpeedSource?: "real" | "estimated" | "none";
-  activeProject?: DesktopProject;
+  activeWorkspace?: DesktopProject;
   projects?: DesktopProject[];
 }): { onSelectPermissionMode: (mode: PermissionMode, approveForMe?: boolean) => void } {
   const codexModels: CodexModelLoadState = {
@@ -167,7 +167,7 @@ function renderComposer(props: {
           <WorkbenchConnectionContext.Provider value={props.connectionAvailable ?? true}>
           <Composer
             variant={props.variant}
-            canSelectProject={props.canSelectProject}
+            canSelectWorkspace={props.canSelectWorkspace}
             mainConversation={props.mainConversation}
             prompt={props.prompt ?? ""}
             setPrompt={props.setPrompt ?? (() => {})}
@@ -192,7 +192,7 @@ function renderComposer(props: {
           branchPickerDisabled={props.branchPickerDisabled}
           projects={props.projects ?? []}
           activeContext={props.activeContext}
-          activeProject={props.activeProject}
+          activeWorkspace={props.activeWorkspace}
           sideThreadDisabledReason={props.sideThreadDisabledReason}
           codexModels={codexModels}
           codexRuntimeMenu={null}
@@ -202,8 +202,8 @@ function renderComposer(props: {
           branchMenuOpen={false}
           menuRef={createRef<HTMLDivElement>()}
           accessMenuRef={createRef<HTMLDivElement>()}
-          projectFilter=""
-          setProjectFilter={() => {}}
+          workspaceFilter=""
+          setWorkspaceFilter={() => {}}
           onToggleMenu={props.onToggleMenu ?? (() => {})}
           onToggleAccessMenu={() => {}}
           onToggleCodexRuntimeMenu={() => {}}
@@ -213,11 +213,11 @@ function renderComposer(props: {
           onToggleBranchMenu={props.onToggleBranchMenu ?? (() => {})}
           onOpenSettings={() => {}}
           onOpenSkillsCatalog={() => {}}
-          onSelectProject={() => {}}
+          onSelectWorkspace={() => {}}
           onSelectNoProject={() => {}}
           onSelectGitBranch={() => {}}
-          onCreateProject={() => {}}
-          onOpenProject={() => {}}
+          onCreateWorkspace={() => {}}
+          onOpenWorkspace={() => {}}
           onStartNewThread={props.onStartNewThread ?? (() => {})}
           onHandoffSession={props.onHandoffSession}
           onOpenSideThread={props.onOpenSideThread}
@@ -525,8 +525,8 @@ function renderStatefulComposer(props: {
           branchMenuOpen={false}
           menuRef={createRef<HTMLDivElement>()}
           accessMenuRef={createRef<HTMLDivElement>()}
-          projectFilter=""
-          setProjectFilter={() => {}}
+          workspaceFilter=""
+          setWorkspaceFilter={() => {}}
           onToggleMenu={() => {}}
           onToggleAccessMenu={() => {}}
           onToggleCodexRuntimeMenu={(menu) => {
@@ -538,11 +538,11 @@ function renderStatefulComposer(props: {
           onToggleBranchMenu={() => {}}
           onOpenSettings={() => {}}
           onOpenSkillsCatalog={() => {}}
-          onSelectProject={() => {}}
+          onSelectWorkspace={() => {}}
           onSelectNoProject={() => {}}
           onSelectGitBranch={() => {}}
-          onCreateProject={() => {}}
-          onOpenProject={() => {}}
+          onCreateWorkspace={() => {}}
+          onOpenWorkspace={() => {}}
           onStartNewThread={() => {}}
           onHandoffSession={props.onHandoffSession}
           onOpenWorkspaceTool={() => {}}
@@ -1724,7 +1724,7 @@ describe("Composer send control", () => {
   });
 
   it.each(["hero", "dock"] as const)("anchors %s slash suggestions to the input, over the content above it", (variant) => {
-    renderComposer({ variant, canSelectProject: true });
+    renderComposer({ variant, canSelectWorkspace: true });
     const frame = container.querySelector<HTMLElement>(".composer-frame")!;
     const shell = container.querySelector<HTMLElement>(".composer-shell")!;
     vi.spyOn(frame, "getBoundingClientRect").mockReturnValue(new DOMRect(80, 400, 640, 120));
@@ -1756,14 +1756,14 @@ describe("Composer send control", () => {
     expect(container.querySelector(".context-project-button")).toBeNull();
     expect(container.querySelector(".composer-workspace-bar > .hero-project-pill-anchor")).not.toBeNull();
     expect(container.querySelector(".hero-project-pill")).not.toBeNull();
-    expect(container.querySelector(".hero-project-pill")?.textContent).toContain("选择项目");
-    expect(container.querySelector<HTMLButtonElement>("button[aria-label=\"打开项目\"]")).toBeNull();
+    expect(container.querySelector(".hero-project-pill")?.textContent).toContain("选择工作区");
+    expect(container.querySelector<HTMLButtonElement>("button[aria-label=\"打开工作区\"]")).toBeNull();
   });
 
   it("opens branch selection independently of the draft project picker", () => {
     const onToggleMenu = vi.fn();
     const onToggleBranchMenu = vi.fn();
-    renderComposer({ variant: "dock", canSelectProject: true,
+    renderComposer({ variant: "dock", canSelectWorkspace: true,
       gitStatus: { is_repo: true, branch: "main", dirty_count: 0 },
       onToggleMenu, onToggleBranchMenu });
     const branch = container.querySelector<HTMLButtonElement>('button[aria-label="切换分支：main"]');
@@ -1775,7 +1775,7 @@ describe("Composer send control", () => {
 
   it.each(["hero", "dock"] as const)("keeps the %s branch picker accessible while tasks run", (variant) => {
     const onToggleBranchMenu = vi.fn();
-    renderComposer({ variant, canSelectProject: true, running: true,
+    renderComposer({ variant, canSelectWorkspace: true, running: true,
       gitStatus: { is_repo: true, branch: "main", dirty_count: 0 }, onToggleBranchMenu });
     const branch = container.querySelector<HTMLButtonElement>('button[aria-label="切换分支：main"]')!;
     expect(branch.disabled).toBe(false);
@@ -1785,7 +1785,7 @@ describe("Composer send control", () => {
 
   it.each([{ readOnly: true }, { branchPickerDisabled: true }])("blocks the branch picker for a read-only or switching context: %j", (props) => {
     const onToggleBranchMenu = vi.fn();
-    renderComposer({ variant: "hero", canSelectProject: true,
+    renderComposer({ variant: "hero", canSelectWorkspace: true,
       gitStatus: { is_repo: true, branch: "main", dirty_count: 0 }, onToggleBranchMenu, ...props });
     const branch = container.querySelector<HTMLButtonElement>('button[aria-label="切换分支：main"]')!;
     expect(branch.disabled).toBe(true);
@@ -1795,7 +1795,7 @@ describe("Composer send control", () => {
 
   it("opens project selection from a new session's bottom composer", () => {
     const onToggleMenu = vi.fn();
-    renderComposer({ variant: "dock", canSelectProject: true, onToggleMenu });
+    renderComposer({ variant: "dock", canSelectWorkspace: true, onToggleMenu });
 
     const selector = container.querySelector<HTMLButtonElement>(".hero-project-pill");
     expect(selector).not.toBeNull();
@@ -1814,7 +1814,7 @@ describe("Composer send control", () => {
     // so neither the hero pill nor the old dock "+" project control renders.
     expect(container.querySelector(".composer-project-control")).toBeNull();
     expect(
-      container.querySelector<HTMLButtonElement>("button[aria-label=\"打开项目\"]"),
+      container.querySelector<HTMLButtonElement>("button[aria-label=\"打开工作区\"]"),
     ).toBeNull();
     // The composer itself still renders — only the workspace/cwd control is gone.
     expect(container.querySelector(".composer-plus-button")).not.toBeNull();
@@ -1824,7 +1824,7 @@ describe("Composer send control", () => {
     renderComposer({
       variant: "hero",
       activeContext: { kind: "project", project_id: "project-1", cwd: "/repo/wuu" },
-      activeProject: {
+      activeWorkspace: {
         id: "project-1",
         name: "wuu",
         path: "/repo/wuu",

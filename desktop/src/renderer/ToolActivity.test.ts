@@ -137,7 +137,7 @@ describe("readableToolActivityCommand", () => {
         arguments: JSON.stringify({ path: "." }),
         display: { kind: "read", text: "（已忽略）" },
       })
-    ).toBe("查看项目目录");
+    ).toBe("查看工作区目录");
   });
 
   it("returns empty string when args are missing for known tools", () => {
@@ -175,7 +175,7 @@ describe("readableToolActivityCommand", () => {
         name: "list_files",
         arguments: JSON.stringify({ path: "." })
       })
-    ).toBe("查看项目目录");
+    ).toBe("查看工作区目录");
 
     expect(
       readableToolActivityCommand({

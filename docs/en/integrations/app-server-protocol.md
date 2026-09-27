@@ -47,7 +47,7 @@ remain invalid; this is recovery behavior, not downgrade compatibility.
 
 | Method | Input | Result |
 | --- | --- | --- |
-| `thread/start` | Optional `cwd`, `workspace_id`, `engine`, `provider`, `model`, `effort`, `permission_mode`, `approve_for_me`, `ephemeral` | `{ "thread": ... }` |
+| `thread/start` | Optional `cwd`, `workspace_id`, `engine`, `provider`, `model`, `effort`, `permission_mode`, `approve_for_me`, `ephemeral`, `workspace`, `base_revision` | `{ "thread": ... }` |
 | `thread/resume` | Optional `session_id`, `response_only`, `history_page` | Thread snapshot and available held/pending user messages |
 | `thread/edit-message` | `thread_id`, `turn_id`, `item_id` | Rewound thread and draft restored from the selected user message |
 | `thread/fork` | `thread_id`; optional `turn_id`, `item_id`, `target`, `mode` | New thread and optional worktree information |
@@ -59,6 +59,15 @@ that cannot be restored after the server exits. Engine binding is fixed at
 creation. New external-engine sessions default to `unconfined` when permission
 mode is omitted; explicitly choose the intended mode. The built-in engine's
 `approve_for_me` review applies only in Standard mode.
+
+`workspace` is `shared` (the default) or `worktree`. A `worktree` session runs in
+a new detached Git worktree of the project, created from `base_revision` (a
+branch, tag, or commit; the project's `HEAD` when omitted) without checking
+anything out in the project. The thread's `cwd` is the worktree, and `worktree`
+reports its path, base commit, and base repository. `base_revision` requires
+`worktree`; ephemeral and handoff sessions cannot use it. A request that cannot
+be honored, such as outside a Git repository or with an unknown revision,
+fails without creating a session or a worktree.
 
 An omitted `session_id` in `thread/resume` selects the most recent visible session
 for the workspace. `response_only` avoids a duplicate resume broadcast to the
@@ -159,11 +168,6 @@ and stored history so clients can reconcile a local send regardless of arrival
 order. It is a correlation identifier, not a promise of idempotent `turn/start`.
 Client waiting-time displays are separate from server execution timestamps.
 
-Named agents can separately select stored room attachments through their `session`
-tool. That [media handoff contract](../automation/app-server.md#named-agent-media-handoff)
-defines source access, durable delivery, and required-evidence behavior; it is not
-an additional JSON-RPC method.
-
 ### Interruption
 
 `turn/interrupt` targets `thread_id` and can include `turn_id`. `run/interrupt`
@@ -187,8 +191,7 @@ See [subagents](../desktop/subagents.md) for worker use and recovery.
 With `thread_id`, selection-only requests change that conversation without
 changing workspace defaults. Omitted fields inherit its current selection.
 Selection changes return `thread_busy` while the conversation has active execution,
-including outstanding workers or a cross-process execution lease. Collaboration
-sessions with a pinned named-agent selection reject this change as well.
+including outstanding workers or a cross-process execution lease.
 
 ```json
 {"id":"20","method":"config/model/update","params":{"thread_id":"thread-id","permission_mode":"read_only"}}
@@ -332,15 +335,14 @@ The method and payload definitions are in
 [`internal/appserver/protocol.go`](../../../internal/appserver/protocol.go), with
 shared TypeScript types in
 [`packages/protocol/src/index.ts`](../../../packages/protocol/src/index.ts).
-Other method families cover configuration, engines, plugins, channels, session
+Other method families cover configuration, engines, plugins, session
 organization, processes, activities, and MCP. Consult the matching handler for
 validation and lifecycle behavior; a method constant alone does not imply direction
 or support on every host.
 
 Use `wuu debug app-server initialize` or `wuu debug app-server send` for a single
 local probe, and `wuu session trace` for stored events without rerunning a task.
-Debug channel commands can send real messages and invoke models; they are not
-read-only protocol inspection. See the [CLI reference](../reference/cli-commands.md).
+See the [CLI reference](../reference/cli-commands.md).
 
 Treat method names, field meanings, and notification handling as integration
 contracts. Tolerate additive fields, validate the protocol version, and test against

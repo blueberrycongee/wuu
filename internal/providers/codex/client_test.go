@@ -240,7 +240,7 @@ func TestLocalOAuthStatusUsesCodexCLIAuth(t *testing.T) {
 	token := fakeJWT(t, time.Now().Add(time.Hour), "acct_status")
 	writeCodexCLIAuth(t, codexHome, token, "refresh-token")
 
-	source, err := LocalOAuthStatus(home)
+	source, err := LocalOAuthStatus(home, true)
 	if err != nil {
 		t.Fatalf("LocalOAuthStatus: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestLocalOAuthStatusUsesRefreshableWuuAuth(t *testing.T) {
 		t.Fatalf("SaveCodexOAuth: %v", err)
 	}
 
-	source, err := LocalOAuthStatus(home)
+	source, err := LocalOAuthStatus(home, false)
 	if err != nil {
 		t.Fatalf("LocalOAuthStatus: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestLocalOAuthStatusReportsMissingCredentials(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex-missing"))
 
-	_, err := LocalOAuthStatus(home)
+	_, err := LocalOAuthStatus(home, true)
 	if err == nil {
 		t.Fatal("expected missing credentials error")
 	}
@@ -733,5 +733,42 @@ func TestCodexProviderScopeSurvivesTokenRefresh(t *testing.T) {
 		if strings.Contains(string(first), secret) {
 			t.Fatalf("scope leaked %q: %q", secret, first)
 		}
+	}
+}
+
+// Local reuse is a source selection, not a fallback behind Wuu's saved login.
+func TestCodexReuseIgnoresSavedLoginAndReloadsRotatedCredentials(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("WUU_HOME", filepath.Join(home, ".wuu"))
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	store, err := authstorage.ForHome(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set("openai-codex", authstorage.Credentials{AccessToken: "invalid-saved-token"}); err != nil {
+		t.Fatal(err)
+	}
+	source := NewOAuthSource(OAuthConfig{Home: home, ReuseCodexCredentials: true})
+	for _, account := range []string{"first", "rotated"} {
+		token := fakeJWT(t, time.Now().Add(time.Hour), account)
+		writeCodexCLIAuth(t, codexHome, token, "refresh-token")
+		got, err := source.Credentials(context.Background(), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.accessToken != token || got.source != "codex-cli-readonly" {
+			t.Fatal("selected local login was not used")
+		}
+	}
+	if err := os.Remove(filepath.Join(codexHome, "auth.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.Credentials(context.Background(), false); err == nil {
+		t.Fatal("missing local login must not reuse cached or saved credentials")
+	}
+	saved, err := store.Get("openai-codex")
+	if err != nil || saved.AccessToken != "invalid-saved-token" {
+		t.Fatal("source selection must preserve saved credentials")
 	}
 }

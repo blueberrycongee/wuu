@@ -219,3 +219,23 @@ describe("SubscriptionDashboard", () => {
     expect(source.querySelector('button[aria-haspopup="menu"]')).not.toBeNull();
   });
 });
+
+it("switches the Codex credential source without changing the model selection and checks authentication", async () => {
+ const provider: ProviderSummary = { name: "codex-login", type: "openai-codex", model: "test-model", codex_credential_source: "wuu-auth-store" };
+ const updated = { ...provider, reuse_codex_credentials: true, codex_credential_source: "codex-cli" };
+ const useLogin = vi.fn().mockResolvedValue({ providers: [updated] });
+ const check = vi.fn().mockRejectedValue(new Error("Login expired"));
+ window.wuu.useCodexCredentials = useLogin;
+ window.wuu.loadCodexModels = check;
+ const select = vi.fn();
+ await act(async () => root.render(<SubscriptionDashboard providers={[provider]} inventory={inventory} onSelectBuiltinModel={select} />));
+ await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="codex-use-local"]')!.click());
+ expect(useLogin).toHaveBeenCalledWith("codex-login");
+ expect(select).not.toHaveBeenCalled();
+ expect(check).toHaveBeenCalledWith("codex-login");
+ expect(container.querySelector('[role="alert"]')?.textContent).toContain("Login expired");
+ check.mockResolvedValue({ providers: [updated], models: [{ id: "test-model" }] });
+ await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="codex-check-login"]')!.click());
+ expect(check).toHaveBeenCalledTimes(2);
+ expect(container.querySelector('[role="alert"]')).toBeNull();
+});

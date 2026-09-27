@@ -33,6 +33,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/process"
+	"github.com/blueberrycongee/wuu/internal/processsandbox"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -858,6 +859,7 @@ func TestProviderHasAuthChecksCodexOAuthAvailability(t *testing.T) {
 }
 
 func TestProviderSummariesExposeDiscoveredCodexCLILogin(t *testing.T) {
+	t.Setenv("WUU_HOME", t.TempDir())
 	rt := newTestRuntime(t, &fakeClient{})
 	home := os.Getenv("HOME")
 	codexHome := filepath.Join(home, ".codex")
@@ -6099,6 +6101,176 @@ INSERT INTO tool_invocations (
 	}
 }
 
+// newWorktreeTestServer builds a server whose runtime root is a Git repository
+// with the state directory, toolkit, and process manager that worktree-bound
+// threads resolve their isolated checkout through.
+func newWorktreeTestServer(t *testing.T, client *fakeClient) (*Server, *runtime.Session, *lockedBuffer) {
+	t.Helper()
+	rt := newTestRuntime(t, client)
+	initAppserverGitRepo(t, rt.RootDir)
+	stateDir := filepath.Join(rt.RootDir, ".wuu", "state")
+	rt.StateDir = stateDir
+	kit, err := tools.New(rt.RootDir)
+	if err != nil {
+		t.Fatalf("tools.New: %v", err)
+	}
+	kit.SetStateDir(stateDir)
+	rt.Toolkit = kit
+	rt.StreamRunner.Tools = kit
+	manager, err := process.NewManager(rt.RootDir, filepath.Join(stateDir, "runtime"))
+	if err != nil {
+		t.Fatalf("process.NewManager: %v", err)
+	}
+	rt.ProcessManager = manager
+	out := &lockedBuffer{}
+	return New(rt, out), rt, out
+}
+
+func appserverGitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func startThreadRequest(t *testing.T, id string, params ThreadStartParams) []byte {
+	t.Helper()
+	req, err := json.Marshal(map[string]any{"id": id, "method": MethodThreadStart, "params": params})
+	if err != nil {
+		t.Fatalf("marshal thread/start: %v", err)
+	}
+	return req
+}
+
+// A new conversation can start in its own worktree from another branch. The
+// shared checkout must keep its branch: choosing a start point is not a
+// checkout of the project the user and other conversations work in.
+func TestServerThreadStartInWorktree(t *testing.T) {
+	srv, rt, out := newWorktreeTestServer(t, &fakeClient{})
+	mainBranch := appserverGitOutput(t, rt.RootDir, "rev-parse", "--abbrev-ref", "HEAD")
+	appserverGitOutput(t, rt.RootDir, "switch", "-q", "-c", "feature")
+	if err := os.WriteFile(filepath.Join(rt.RootDir, "feature.txt"), []byte("feature\n"), 0o644); err != nil {
+		t.Fatalf("write feature file: %v", err)
+	}
+	appserverGitOutput(t, rt.RootDir, "add", "feature.txt")
+	appserverGitOutput(t, rt.RootDir, "commit", "-q", "-m", "feature")
+	featureHead := appserverGitOutput(t, rt.RootDir, "rev-parse", "HEAD")
+	appserverGitOutput(t, rt.RootDir, "switch", "-q", mainBranch)
+
+	if err := srv.handleLine(context.Background(), startThreadRequest(t, "1", ThreadStartParams{Workspace: "worktree", BaseRevision: "feature"})); err != nil {
+		t.Fatalf("thread/start: %v", err)
+	}
+	response := responseByID(t, parseOutput(t, out.String()), "1")
+	if response["error"] != nil {
+		t.Fatalf("thread/start returned error: %+v", response["error"])
+	}
+	thread := remarshal[ThreadStartResult](t, response["result"]).Thread
+	if thread.Worktree == nil || thread.CWD == rt.RootDir || thread.CWD != thread.Worktree.Path {
+		t.Fatalf("thread should run from its worktree, got %+v", thread)
+	}
+	if thread.Worktree.BaseHEAD != featureHead || thread.Worktree.BaseRepo != rt.RootDir {
+		t.Fatalf("worktree should start from feature in the project, got %+v want head %s", thread.Worktree, featureHead)
+	}
+	if _, err := os.Stat(filepath.Join(thread.Worktree.Path, "feature.txt")); err != nil {
+		t.Fatalf("worktree should contain the start branch: %v", err)
+	}
+	if got := appserverGitOutput(t, rt.RootDir, "rev-parse", "--abbrev-ref", "HEAD"); got != mainBranch {
+		t.Fatalf("shared checkout moved to %q, want %q", got, mainBranch)
+	}
+
+	metadata, ok, err := session.Find(rt.SessionDir, thread.ID)
+	if err != nil {
+		t.Fatalf("find thread metadata: %v", err)
+	}
+	if !ok || metadata.CWD != thread.Worktree.Path || metadata.WorktreePath != thread.Worktree.Path ||
+		metadata.WorktreeBaseRepo != rt.RootDir || metadata.WorktreeBaseHEAD != featureHead {
+		t.Fatalf("worktree binding not persisted: ok=%v metadata=%+v", ok, metadata)
+	}
+
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"2","method":"thread/list"}`)); err != nil {
+		t.Fatalf("thread/list: %v", err)
+	}
+	list := remarshal[ThreadListResult](t, responseByID(t, parseOutput(t, out.String()), "2")["result"])
+	listed := false
+	for _, candidate := range list.Threads {
+		listed = listed || (candidate.ID == thread.ID && candidate.Worktree != nil)
+	}
+	if !listed {
+		t.Fatalf("thread/list should include the worktree thread under its project, got %+v", list.Threads)
+	}
+
+	threadRuntime, err := srv.ensureThreadRuntime(srv.thread(thread.ID))
+	if err != nil {
+		t.Fatalf("ensureThreadRuntime: %v", err)
+	}
+	if _, err := threadRuntime.Toolkit.Execute(context.Background(), providers.ToolCall{
+		Name:      "write_file",
+		Arguments: `{"path":"isolated.txt","content":"worktree only\n"}`,
+	}); err != nil {
+		t.Fatalf("write_file in worktree runtime: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(thread.Worktree.Path, "isolated.txt")); err != nil {
+		t.Fatalf("expected file in worktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rt.RootDir, "isolated.txt")); !os.IsNotExist(err) {
+		t.Fatalf("shared checkout should not contain the isolated file, stat err=%v", err)
+	}
+}
+
+// A worktree request that cannot be honored fails before any conversation or
+// checkout exists. None of these may fall back to a shared conversation.
+func TestServerThreadStartRejectsUnusableWorkspaceRequests(t *testing.T) {
+	srv, rt, out := newWorktreeTestServer(t, &fakeClient{})
+	cases := []struct {
+		name   string
+		params ThreadStartParams
+	}{
+		{name: "unknown workspace", params: ThreadStartParams{Workspace: "elsewhere"}},
+		{name: "start point without worktree", params: ThreadStartParams{BaseRevision: "HEAD"}},
+		{name: "ephemeral worktree", params: ThreadStartParams{Workspace: "worktree", Ephemeral: true}},
+		{name: "project worktree", params: ThreadStartParams{Workspace: "worktree", WorkspaceID: "project", CWD: rt.RootDir, Project: &ThreadProjectParams{Name: "Project"}}},
+		{name: "missing start point", params: ThreadStartParams{Workspace: "worktree", BaseRevision: "no-such-branch"}},
+	}
+	for index, tc := range cases {
+		id := fmt.Sprintf("reject-%d", index)
+		if err := srv.handleLine(context.Background(), startThreadRequest(t, id, tc.params)); err != nil {
+			t.Fatalf("%s: thread/start: %v", tc.name, err)
+		}
+		if responseByID(t, parseOutput(t, out.String()), id)["error"] == nil {
+			t.Fatalf("%s: thread/start should fail", tc.name)
+		}
+		if tc.params.Project != nil {
+			failure := fmt.Sprint(responseByID(t, parseOutput(t, out.String()), id)["error"])
+			if !strings.Contains(failure, "a project starts in the shared workspace") {
+				t.Fatalf("project worktree request should be rejected explicitly: %s", failure)
+			}
+		}
+	}
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"list","method":"thread/list"}`)); err != nil {
+		t.Fatalf("thread/list: %v", err)
+	}
+	if list := remarshal[ThreadListResult](t, responseByID(t, parseOutput(t, out.String()), "list")["result"]); len(list.Threads) != 0 {
+		t.Fatalf("rejected requests created threads: %+v", list.Threads)
+	}
+	if worktrees := appserverGitOutput(t, rt.RootDir, "worktree", "list", "--porcelain"); strings.Count(worktrees, "worktree ") != 1 {
+		t.Fatalf("rejected requests left worktrees:\n%s", worktrees)
+	}
+
+	plain := newTestRuntime(t, &fakeClient{})
+	plainOut := &lockedBuffer{}
+	plainSrv := New(plain, plainOut)
+	if err := plainSrv.handleLine(context.Background(), startThreadRequest(t, "1", ThreadStartParams{Workspace: "worktree"})); err != nil {
+		t.Fatalf("thread/start outside Git: %v", err)
+	}
+	if responseByID(t, parseOutput(t, plainOut.String()), "1")["error"] == nil {
+		t.Fatal("a worktree conversation outside a Git repository should fail")
+	}
+}
+
 func TestServerThreadForkToWorktree(t *testing.T) {
 	client := &fakeClient{
 		responses: []providers.ChatResponse{
@@ -6638,6 +6810,11 @@ func TestServerTurnStartAcceptsImageOnlyPrompt(t *testing.T) {
 		response: providers.ChatResponse{Content: "saw it"},
 	}
 	rt := newTestRuntime(t, client)
+	kit, err := tools.New(rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.Toolkit = kit
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 
@@ -6691,13 +6868,43 @@ func TestServerTurnStartAcceptsImageOnlyPrompt(t *testing.T) {
 	if messages[1].Images[0].MediaType != "image/jpeg" || messages[1].Images[0].Data != tinyImageOnlyB64 {
 		t.Fatalf("unexpected provider image: %+v", messages[1].Images[0])
 	}
-	if messages[1].Content == "" || !strings.Contains(messages[1].Content, messages[1].Images[0].Path) {
-		t.Fatalf("provider request lost the local image path: %+v", messages[1])
+	stateDir, err := srv.workspaceStateDir()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if messages[1].DisplayContent != "[Image #1]" {
-		t.Fatalf("image-only display text = %q, want [Image #1]", messages[1].DisplayContent)
+	paths, err := filepath.Glob(filepath.Join(statepath.SessionArtifactDir(stateDir, threadID), "input-images", "*"))
+	if err != nil || len(paths) != 1 || !strings.Contains(messages[1].Content, paths[0]) {
+		t.Fatalf("model must receive an existing input image path: paths=%v err=%v content=%q", paths, err, messages[1].Content)
 	}
+	threadKit := srv.thread(threadID).execRuntime.Toolkit
+	if result, err := threadKit.Execute(context.Background(), providers.ToolCall{Name: "read_file", Arguments: fmt.Sprintf(`{"path":%q}`, paths[0])}); err != nil {
+		t.Fatalf("read submitted image through toolkit: %v (%s)", err, result)
+	}
+	t.Run("SandboxedCopyAndMove", func(t *testing.T) {
+		copied := filepath.Join(rt.RootDir, "copied.jpg")
+		moved := filepath.Join(rt.RootDir, "moved.jpg")
+		command := fmt.Sprintf("cp %q %q && mv %q %q", paths[0], copied, paths[0], moved)
+		args, _ := json.Marshal(map[string]any{"command": command})
+		if result, err := threadKit.Execute(context.Background(), providers.ToolCall{Name: "bash", Arguments: string(args)}); err != nil {
+			if errors.Is(err, processsandbox.ErrUnavailable) {
+				t.Skipf("host cannot run the filesystem sandbox: %v", err)
+			}
+			t.Fatalf("copy/move submitted image through toolkit: %v (%s)", err, result)
+		}
+		if err := maintainInputImageStorage(stateDir, time.Now().Add(8*24*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range []string{copied, moved} {
+			data, err := os.ReadFile(path)
+			if err != nil || base64.StdEncoding.EncodeToString(data) != tinyImageOnlyB64 {
+				t.Fatalf("destination survives cleanup with original bytes: %s: %v", path, err)
+			}
+		}
+	})
 
+	if err := os.Remove(paths[0]); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
 	persisted, err := loadChatMessages(rt.SessionDir, threadID)
 	if err != nil {
 		t.Fatalf("load persisted history: %v", err)
@@ -6705,6 +6912,15 @@ func TestServerTurnStartAcceptsImageOnlyPrompt(t *testing.T) {
 	visiblePersisted := visibleMessagesForTest(persisted)
 	if len(visiblePersisted) != 2 || len(visiblePersisted[0].Images) != 1 {
 		t.Fatalf("unexpected persisted history: %+v", persisted)
+	}
+	if visiblePersisted[0].Images[0].LocalPath != paths[0] || visiblePersisted[0].Images[0].Data != tinyImageOnlyB64 {
+		t.Fatal("reloaded history lost image metadata or vision bytes")
+	}
+	if _, err := os.Stat(paths[0]); !os.IsNotExist(err) {
+		t.Fatalf("loading history recreated a removed input file: %v", err)
+	}
+	if chatMessageDisplayContent(visiblePersisted[0]) != "" {
+		t.Fatalf("image-only restored prompt contains synthetic text: %q", chatMessageDisplayContent(visiblePersisted[0]))
 	}
 	sessions, err := session.List(rt.SessionDir, 1)
 	if err != nil {

@@ -1628,6 +1628,25 @@ func (s *Server) currentConfigModelUpdateResult() ConfigModelUpdateResult {
 	}
 }
 
+func (s *Server) handleConfigCodexCredentials(req Request) error {
+	var params ConfigCodexModelsParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := config.UseCodexCredentials(s.rt.ConfigPath, strings.TrimSpace(params.Provider)); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.refreshConfigIfChanged(); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	// Explicitly discard idle snapshots even when reuse was already enabled.
+	// In-flight turns retain their admitted configuration until completion.
+	s.resetThreadRuntimesForGeneralSettings("")
+	return s.writeResponse(req.ID, struct {
+		Providers []ProviderSummary `json:"providers"`
+	}{s.providerSummaries()}, nil)
+}
+
 func (s *Server) handleConfigCodexModels(ctx context.Context, req Request) error {
 	var params ConfigCodexModelsParams
 	if err := decodeParams(req.Params, &params); err != nil {
@@ -1881,10 +1900,6 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	}
 	defer release()
 	th.mu.Lock()
-	if th.NamedAgentID != "" {
-		th.mu.Unlock()
-		return s.writeResponse(req.ID, nil, errors.New("collaboration model selection is pinned; create another session with the desired model"))
-	}
 
 	provider, model := th.ModelProvider, th.Model
 	variant, effort, permission := th.ModelVariant, th.ModelEffort, th.PermissionMode
@@ -2050,12 +2065,8 @@ func (s *Server) resetThreadRuntimesForGeneralSettings(systemPrompt string) {
 	s.mu.Lock()
 	for _, th := range s.threads {
 		th.mu.Lock()
-		if th.NamedAgentID != "" {
-			th.mu.Unlock()
-			continue
-		}
 		if strings.TrimSpace(systemPrompt) != "" {
-			th.History = replaceBaseSystemPrompt(th.History, systemPrompt)
+			th.History = replaceBaseSystemPrompt(th.History, sessionSystemPrompt(systemPrompt, th.Instructions))
 			if th.PersistHistory {
 				if err := rewriteChatHistory(s.rt.SessionDir, th.ID, th.History); err != nil {
 					providers.DebugLogf("rewrite thread %q system prompt after general settings update: %v", th.ID, err)
@@ -2105,10 +2116,6 @@ func (s *Server) updateIdleThreadAdvancedRuntime(cfg config.Config) {
 	defer s.mu.Unlock()
 	for _, th := range s.threads {
 		th.mu.Lock()
-		if th.NamedAgentID != "" {
-			th.mu.Unlock()
-			continue
-		}
 		if th.running || th.execRuntime == nil {
 			th.mu.Unlock()
 			continue
@@ -2464,7 +2471,9 @@ func providerSummariesFromConfig(cfg config.Config, home string) []ProviderSumma
 		}
 		if isCodexProviderType(provider.Type) {
 			summary.ReuseCodexCredentials = provider.ReuseCodexCredentials
-			if source, err := codex.LocalOAuthStatus(home); err == nil {
+			if explicitProviderAPIKey(provider) != "" {
+				summary.CodexCredentialSource = "explicit"
+			} else if source, err := codex.LocalOAuthStatus(home, provider.ReuseCodexCredentials); err == nil {
 				summary.CodexCredentialSource = source
 			}
 		}
@@ -2478,7 +2487,7 @@ func providerHasAuth(name string, provider config.ProviderConfig, home string) b
 		if strings.TrimSpace(provider.APIKey) != "" || configuredEnvValue(provider.APIKeyEnv) != "" {
 			return true
 		}
-		source, err := codex.LocalOAuthStatus(home)
+		source, err := codex.LocalOAuthStatus(home, provider.ReuseCodexCredentials)
 		return err == nil && (source == "wuu-auth-store" || provider.ReuseCodexCredentials)
 	}
 	if config.IsXAISubscriptionProvider(provider.Type) {

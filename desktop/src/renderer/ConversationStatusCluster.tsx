@@ -26,6 +26,8 @@ interface ConversationStatusClusterProps {
    */
   clusterRef?: (node: HTMLDivElement | null) => void;
   navigation?: ReactNode;
+  /** A host-owned capsule that precedes plugin status, such as a project's work. */
+  hostStatus?: ReactNode;
   threadId?: string;
   todoUpdate: TodoUpdate | undefined;
   onOpenSession: (sessionId: string) => void;
@@ -41,6 +43,7 @@ export function ConversationStatusCluster({
   visible,
   clusterRef,
   navigation,
+  hostStatus,
   threadId,
   todoUpdate,
   onOpenSession,
@@ -80,19 +83,20 @@ export function ConversationStatusCluster({
     return () => document.removeEventListener("pointerdown", dismissOverflow);
   }, []);
 
-  const statusVisible = todoVisible || items.length > 0;
+  const statusVisible = Boolean(hostStatus) || todoVisible || items.length > 0;
   if (!visible || (!navigation && !statusVisible)) return null;
 
-  const visibleItemLimit = MAX_VISIBLE_ITEMS - (todoVisible ? 1 : 0);
+  const visibleItemLimit = MAX_VISIBLE_ITEMS - (hostStatus ? 1 : 0) - (todoVisible ? 1 : 0);
   const visibleItems = items.slice(0, visibleItemLimit);
   const hiddenItems = items.slice(visibleItemLimit);
   return (
     <div
       className="jump-to-latest-cluster conversation-status-cluster"
       ref={statusVisible ? clusterRef : undefined}
-      aria-label={t("channels.status")}
+      aria-label={t("common.status")}
     >
       {navigation}
+      {hostStatus}
       {todoVisible && todoUpdate ? <TodoStatusCapsule todoUpdate={todoUpdate} /> : null}
       {visibleItems.map((item) => (
         <ComposerStatusCapsule key={item.key} item={item} onOpenSession={onOpenSession} />

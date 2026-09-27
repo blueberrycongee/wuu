@@ -14,10 +14,9 @@ import {
   PROCESS_SUMMARY_COUNT_DEBOUNCE_MS,
   PROCESS_SUMMARY_COUNT_MAX_WAIT_MS,
 } from "./ProcessSummary";
-import type { NamedAgent, ThreadItem } from "../shared/protocol";
+import type { ThreadItem } from "../shared/protocol";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { modelMascotAccessory } from "./WuuMascot";
-import { AgentIdentityContext } from "./AgentIdentityContext";
 import { translateCurrent as t } from "./i18n";
 import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 
@@ -788,40 +787,6 @@ describe("ProcessSurface", () => {
     );
     expect(next).toBe(svg);
     expect(next?.getAttribute("data-wuu-mascot-activity")).toBe("edit");
-  });
-
-  it("publishes the morph on a collaboration mascot wrapper so optical alignment can target the slot", () => {
-    const agent: NamedAgent = {
-      id: "agent",
-      name: "Andy2",
-      avatar_key: "abstract-3",
-      autostart: false,
-      memory_dir: "",
-      created_at: "",
-    };
-    if (container) unmount();
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-    act(() => {
-      root!.render(
-        (
-          <AgentIdentityContext.Provider value={agent}>
-            <ProcessSurface
-              processItems={[makeReadFile("tool-1", "a.ts", "in_progress")]}
-              streaming
-            />
-          </AgentIdentityContext.Provider>
-        ) as ReactElement,
-      );
-    });
-
-    const slot = container.querySelector<HTMLElement>(
-      ".process-surface-summary-line > .process-surface-blobatar",
-    );
-    expect(slot?.tagName.toLowerCase()).toBe("span");
-    expect(slot?.getAttribute("data-wuu-mascot-morph")).toBe("scan");
-    expect(slot?.querySelector("[data-wuu-mascot-morph]")).not.toBeNull();
   });
 
   it("marks the count is-changing for ~180ms when the value changes", async () => {
