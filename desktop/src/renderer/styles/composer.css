@@ -582,50 +582,61 @@
   width: 100%;
 }
 
-/* Two outlined groups sit on the canvas: the project the conversation belongs
- * to, and where in its repository the work starts. Segments share their
- * group's border, so hover surfaces fill the group edge to edge. */
+/* A quiet context line above the input: where the conversation will run,
+ * read as a path (project / branch) followed by the worktree mode. It is
+ * secondary to the input, so controls are borderless like the composer
+ * toolbar and their glyphs start on the input's text column. */
 .composer-workspace-bar {
+  --composer-context-height: 28px;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
   min-width: 0;
-  margin: 0 var(--space-3) var(--space-2);
+  margin: 0 var(--space-3) var(--space-1) calc(var(--card-padding) - var(--space-2));
+}
+
+@media (pointer: coarse) {
+  .composer-workspace-bar {
+    --composer-context-height: var(--control-row-height);
+  }
 }
 
 .composer-workspace-group {
   display: inline-flex;
-  align-items: stretch;
+  align-items: center;
+  gap: var(--space-1);
   min-width: 0;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-pill);
-}
-
-.composer-workspace-group :focus-visible {
-  z-index: 1;
 }
 
 .composer-workspace-bar .hero-project-pill-anchor {
   max-width: 100%;
 }
 
-.composer-workspace-bar .hero-project-pill {
-  height: auto;
-  /* The group border completes the shared control row height. */
-  min-height: calc(var(--control-row-height) - 2px);
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-pill);
+.composer-workspace-bar .hero-project-pill,
+.composer-worktree-toggle {
+  height: var(--composer-context-height);
+  gap: 6px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-xs);
+  color: var(--ink-soft);
   font-size: var(--font-sm);
+}
+
+.composer-workspace-bar .hero-project-pill:hover:not(:disabled),
+.composer-workspace-bar .hero-project-pill[aria-expanded="true"] {
+  color: var(--ink);
 }
 
 .composer-git-controls {
   max-width: 50%;
 }
 
-.composer-git-controls .hero-project-pill {
-  border-start-end-radius: 0;
-  border-end-end-radius: 0;
+/* The branch belongs to the project before it. */
+.composer-git-controls::before {
+  flex: none;
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  content: "/" / "";
 }
 
 .composer-worktree-toggle {
@@ -633,15 +644,8 @@
   display: inline-flex;
   flex: none;
   align-items: center;
-  gap: var(--space-2);
-  min-height: calc(var(--control-row-height) - 2px);
-  padding: var(--space-1) var(--space-3);
   border: 0;
-  border-inline-start: 1px solid var(--hairline);
-  border-start-end-radius: var(--radius-pill);
-  border-end-end-radius: var(--radius-pill);
   background: transparent;
-  color: var(--ink-soft);
   font: inherit;
   font-size: var(--font-sm);
   white-space: nowrap;

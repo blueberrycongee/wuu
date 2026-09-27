@@ -13,6 +13,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Desktop navigation uses denser rows, clearer group spacing, and quieter labels.
   Settings navigation and workspace tool lists share the updated spacing while
   preserving saved UI font preferences.
+- The new-conversation composer shows its project, branch, and worktree choice
+  as a quiet project / branch line aligned with the input, replacing the outlined
+  pill groups.
 
 ### Added
 
