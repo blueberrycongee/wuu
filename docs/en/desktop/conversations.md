@@ -42,7 +42,7 @@ Use Stop to interrupt a task. Stopping does not undo commands or file edits, and
 
 ## Quote part of a response
 
-Select text in a completed assistant response, then choose **Add to conversation**. Choose **Comment** to add an optional comment beside the selected passage first. A compact count chip inside that conversation's input groups the selected passages, including in split view. Open it to read the quotes, edit comments, view a source, or remove a passage. You can send a quote without typing another message. Sending, queuing, and steering include both the quoted text and your comment in the model's input.
+Select text in a completed assistant response, then choose **Add to conversation**. Choose **Comment** to add an optional comment beside the selected passage first. Each quote waits as a card in that conversation's input tray, including in split view. Open a card to read the full quote, edit its comment, or view the source; remove a quote from its card or from the open panel. You can send a quote without typing another message. Sending, queuing, and steering include both the quoted text and your comment in the model's input.
 
 Selected passages stay with their draft when switching tabs or leaving split view. Failed sends and editing held messages restore the quotes separately from the editable prompt. **View source** highlights the exact selected passage when the original response is loaded and visible. If it is hidden, unloaded, or changed, Wuu reports that the source is unavailable rather than highlighting another occurrence. Open the source conversation and load its response before trying again.
 

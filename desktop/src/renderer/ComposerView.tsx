@@ -65,7 +65,6 @@ import { Tooltip } from "./Tooltip";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { useCollapsedComposerPrompt } from "./ComposerCollapsedPrompt";
 import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
-import { ComposerResponseSelectionCard } from "./ComposerResponseSelectionCard";
 import {
   WORKSPACE_FILE_DRAG_MIME,
   appendWorkspacePathToPrompt,
@@ -1236,10 +1235,13 @@ export function Composer({
             <ComposerAttachmentTray
               images={textOnly ? [] : images}
               files={textOnly ? [] : files}
+              selections={textOnly ? [] : selections}
               pastedTexts={activeCollapsedPromptBlocks}
               resetKey={queryHistorySessionID}
               onRemoveImage={onRemoveImage}
               onRemoveFile={onRemoveFile}
+              onChangeSelection={readOnly ? undefined : onChangeSelection}
+              onRemoveSelection={onRemoveSelection}
               onRevealText={revealCollapsedPromptBlock}
               onRemoveText={removeCollapsedPromptBlock}
             />
@@ -1288,11 +1290,6 @@ export function Composer({
                 />
               </>
             )}
-            {selections.length > 0 ? <ComposerResponseSelectionCard
-              key={queryHistorySessionID} selections={selections}
-              onChange={readOnly ? undefined : onChangeSelection}
-              onRemove={readOnly ? undefined : onRemoveSelection}
-            /> : null}
             <ComposerTextarea
               ref={textareaRef}
               expanded={isComposerExpanded}

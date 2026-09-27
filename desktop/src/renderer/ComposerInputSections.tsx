@@ -21,7 +21,6 @@ import { useOptionalImagePreview } from "./ImagePreview";
 import { isComposerTextComposing } from "./ComposerSlashCommands";
 import { useCollapsedComposerPrompt } from "./ComposerCollapsedPrompt";
 import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
-import { ComposerResponseSelectionCard } from "./ComposerResponseSelectionCard";
 import {
   WORKSPACE_FILE_DRAG_MIME,
   appendWorkspacePathToPrompt,
@@ -308,10 +307,13 @@ export function SplitPaneComposer({
             <ComposerAttachmentTray
               images={images}
               files={files}
+              selections={selections}
               pastedTexts={collapsedPromptBlocks}
               resetKey={queryHistorySessionID}
               onRemoveImage={onRemoveImage}
               onRemoveFile={onRemoveFile}
+              onChangeSelection={readOnly ? undefined : onChangeSelection}
+              onRemoveSelection={onRemoveSelection}
               onRevealText={revealCollapsedPromptBlock}
               onRemoveText={removeCollapsedPromptBlock}
             />
@@ -353,11 +355,6 @@ export function SplitPaneComposer({
                     }
                   }}
                 />
-                {selections.length > 0 ? <ComposerResponseSelectionCard
-                  key={queryHistorySessionID} selections={selections}
-                  onChange={readOnly ? undefined : onChangeSelection}
-                  onRemove={readOnly ? undefined : onRemoveSelection}
-                /> : null}
                 <textarea
                   ref={textareaRef}
                   value={visiblePromptValue}

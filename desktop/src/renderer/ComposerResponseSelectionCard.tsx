@@ -1,16 +1,28 @@
 import { useEffect, useRef, useState } from "react";
 import type { ResponseSelection } from "../shared/protocol";
+import { ComposerDocumentCard } from "./ComposerDocumentCard";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { useI18n } from "./i18n";
 import { navigateToResponseSelection } from "./ResponseSelection";
-import { MessageSquare, X } from "./WuuIcons";
+import { TruncatedText } from "./TruncatedText";
+import { CornerUpLeft, Quote } from "./WuuIcons";
 import "./ComposerResponseSelectionCard.css";
 
-export function ComposerResponseSelectionCard({ selections, onChange, onRemove }: {
-  selections: ResponseSelection[];
+function singleLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * One quoted passage waiting in the composer's attachment tray. The card
+ * reads like the other document cards; opening it shows the full quote, the
+ * optional comment, and source navigation in a floating panel.
+ */
+export function ComposerResponseSelectionCard({ selection, onChange, onRemove }: {
+  selection: ResponseSelection;
+  /** Absent while the composer is read-only; the comment then shows as-is. */
   onChange?: (selection: ResponseSelection) => void;
-  onRemove?: (id: string) => void;
-}): JSX.Element | null {
+  onRemove: () => void;
+}): JSX.Element {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLDivElement>(null);
@@ -18,12 +30,12 @@ export function ComposerResponseSelectionCard({ selections, onChange, onRemove }
 
   function close(): void {
     setOpen(false);
-    anchorRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    anchorRef.current?.querySelector<HTMLButtonElement>(".composer-document-card-main")?.focus();
   }
 
   useEffect(() => {
     if (!open) return;
-    panelRef.current?.focus();
+    (panelRef.current?.querySelector<HTMLTextAreaElement>("textarea:not([readonly])") ?? panelRef.current)?.focus();
     const dismiss = (event: MouseEvent): void => {
       const target = event.target as Node;
       if (!anchorRef.current?.contains(target) && !panelRef.current?.contains(target)) setOpen(false);
@@ -32,19 +44,21 @@ export function ComposerResponseSelectionCard({ selections, onChange, onRemove }
     return () => document.removeEventListener("mousedown", dismiss);
   }, [open]);
 
-  if (selections.length === 0) return null;
-  const countLabel = t(selections.length === 1 ? "responseSelection.countOne" : "responseSelection.countMany", { count: selections.length });
-
+  const comment = singleLine(selection.comment ?? "");
   return <>
-    <div ref={anchorRef} className="composer-response-selection-anchor">
-      <button type="button" className="composer-response-selection-chip" aria-haspopup="dialog"
-        aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-        <MessageSquare className="icon" aria-hidden="true" />
-        <span>{countLabel}</span>
-      </button>
-    </div>
+    <ComposerDocumentCard
+      ref={anchorRef}
+      className="composer-response-selection-card"
+      icon={<Quote className="icon" />}
+      title={<TruncatedText as="strong" className="composer-document-card-title" text={singleLine(selection.text)} />}
+      meta={comment || t("responseSelection.cardMeta")}
+      openLabel={t("responseSelection.open")}
+      onOpen={() => setOpen((value) => !value)}
+      removeLabel={t("responseSelection.remove")}
+      onRemove={onRemove}
+    />
     {open ? <FloatingMenuPortal anchorRef={anchorRef} owner="composer-attach"
-      placement="above" align="left" width={380} flip
+      placement="above" align="left" width={360} flip
       mobileSheet={{ label: t("responseSelection.quote"), onClose: close }}>
       <div ref={panelRef} className="composer-response-selection-popover" role="dialog"
         aria-label={t("responseSelection.quote")} tabIndex={-1}
@@ -52,30 +66,21 @@ export function ComposerResponseSelectionCard({ selections, onChange, onRemove }
           event.stopPropagation();
           if (event.key === "Escape") { event.preventDefault(); close(); }
         }}>
-        <div className="composer-response-selection-actions">
-          <span>{countLabel}</span>
-          <button type="button" className="icon-button" aria-label={t("common.close")} onClick={close}>
-            <X className="icon" />
+        <blockquote className="composer-response-selection-quote">{selection.text}</blockquote>
+        <textarea className="composer-response-selection-comment" rows={1}
+          aria-label={t("responseSelection.optionalComment")} placeholder={t("responseSelection.optionalComment")}
+          value={selection.comment ?? ""} readOnly={!onChange}
+          onChange={(event) => onChange?.({ ...selection, comment: event.target.value })} />
+        <div className="composer-response-selection-footer">
+          <button type="button" className="composer-response-selection-source" onClick={() => {
+            if (navigateToResponseSelection(selection)) setOpen(false);
+          }}>
+            <CornerUpLeft className="icon" aria-hidden="true" />
+            <span>{t("responseSelection.source")}</span>
           </button>
-        </div>
-        <div className="composer-response-selection-list">
-          {selections.map((selection) => <section key={selection.id} data-selection-id={selection.id}
-            className="composer-response-selection-item">
-            <blockquote>{selection.text}</blockquote>
-            <textarea className="settings-input composer-response-selection-comment"
-              aria-label={t("responseSelection.optionalComment")} placeholder={t("responseSelection.optionalComment")}
-              value={selection.comment ?? ""} rows={2} readOnly={!onChange}
-              onChange={(event) => onChange?.({ ...selection, comment: event.target.value })} />
-            <div className="composer-response-selection-actions">
-              <button type="button" className="composer-response-selection-source" onClick={() => {
-                if (navigateToResponseSelection(selection)) setOpen(false);
-              }}>{t("responseSelection.source")}</button>
-              <button type="button" className="icon-button composer-response-selection-remove"
-                disabled={!onRemove} aria-label={t("responseSelection.remove")} onClick={() => onRemove?.(selection.id)}>
-                <X className="icon" />
-              </button>
-            </div>
-          </section>)}
+          <button type="button" className="composer-response-selection-remove" onClick={() => { setOpen(false); onRemove(); }}>
+            {t("responseSelection.remove")}
+          </button>
         </div>
       </div>
     </FloatingMenuPortal> : null}

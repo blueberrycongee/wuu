@@ -11,7 +11,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Added
 
 - Select text in completed assistant responses to quote passages or comment beside
-  them. A compact composer chip groups quotes, which follow drafts, send/queue/steer, held-message
+  them. Quotes wait as cards in the composer tray and follow drafts, send/queue/steer, held-message
   recovery and history; source navigation validates the exact visible passage.
 
 - New conversations can start in an isolated Git worktree from the composer's

@@ -7,15 +7,18 @@ import {
 } from "./ComposerCollapsedPrompt";
 import { ComposerDocumentCard } from "./ComposerDocumentCard";
 import { isComposerImagePending, type ComposerFile, type ComposerImage } from "./ComposerMessages";
+import { ComposerResponseSelectionCard } from "./ComposerResponseSelectionCard";
 import { useOptionalImagePreview } from "./ImagePreview";
 import { useI18n } from "./i18n";
 import { motionCurve, motionDurationMs, prefersReducedMotion } from "./motion";
 import { formatVideoDuration, useVideoObjectURL } from "./VideoAttachment";
 import { FileText, Film, X } from "./WuuIcons";
+import type { ResponseSelection } from "../shared/protocol";
 
 type TrayCard =
   | { key: string; kind: "image"; image: ComposerImage; number: number }
   | { key: string; kind: "file"; file: ComposerFile; number: number }
+  | { key: string; kind: "quote"; selection: ResponseSelection }
   | { key: string; kind: "text"; block: CollapsedComposerPromptBlock; index: number };
 
 type ExitingCard = { card: TrayCard; index: number };
@@ -25,11 +28,13 @@ type Lift = { stack: Animation; frame: Animation; closing: boolean };
 function trayCards(
   images: ComposerImage[],
   files: ComposerFile[],
+  selections: ResponseSelection[],
   pastedTexts: CollapsedComposerPromptBlock[],
 ): TrayCard[] {
   return [
     ...images.map((image, index) => ({ key: `image:${image.id}`, kind: "image" as const, image, number: index + 1 })),
     ...files.map((file, index) => ({ key: `file:${file.id}`, kind: "file" as const, file, number: index + 1 })),
+    ...selections.map((selection) => ({ key: `quote:${selection.id}`, kind: "quote" as const, selection })),
     ...pastedTexts.map((block, index) => ({ key: `text:${block.id}`, kind: "text" as const, block, index })),
   ];
 }
@@ -58,25 +63,32 @@ function translateOffset(element: HTMLElement, axis: 0 | 1): number {
 export function ComposerAttachmentTray({
   images,
   files,
+  selections = [],
   pastedTexts,
   resetKey,
   onRemoveImage,
   onRemoveFile,
+  onChangeSelection,
+  onRemoveSelection,
   onRevealText,
   onRemoveText,
 }: {
   images: ComposerImage[];
   files: ComposerFile[];
+  /** Quoted assistant passages; their comments edit in place from the card. */
+  selections?: ResponseSelection[];
   pastedTexts: CollapsedComposerPromptBlock[];
   /** Changing identity (a session or draft swap) skips all motion. */
   resetKey?: string;
   onRemoveImage: (id: string) => void;
   onRemoveFile: (id: string) => void;
+  onChangeSelection?: (selection: ResponseSelection) => void;
+  onRemoveSelection?: (id: string) => void;
   onRevealText: (index: number) => void;
   onRemoveText: (index: number) => void;
 }): JSX.Element | null {
   const { t } = useI18n();
-  const cards = trayCards(images, files, pastedTexts);
+  const cards = trayCards(images, files, selections, pastedTexts);
   const signature = cards.map((card) => card.key).join("\n");
   const trayRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
@@ -314,6 +326,12 @@ export function ComposerAttachmentTray({
                   onRemove={() => dismiss(card.key, () => onRemoveFile(card.file.id))}
                 />
               )
+            ) : card.kind === "quote" ? (
+              <ComposerResponseSelectionCard
+                selection={card.selection}
+                onChange={onChangeSelection}
+                onRemove={() => dismiss(card.key, () => onRemoveSelection?.(card.selection.id))}
+              />
             ) : (
               <CollapsedComposerPromptCard
                 text={card.block.text}

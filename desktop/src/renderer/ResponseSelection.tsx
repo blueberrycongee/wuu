@@ -1,8 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import type { ResponseSelection } from "../shared/protocol";
+import { isComposerTextComposing } from "./ComposerSlashCommands";
 import { showToast } from "./Toast";
 import { translateCurrent, useI18n } from "./i18n";
+import { ArrowUp } from "./WuuIcons";
 import "./ResponseSelection.css";
 
 let sourceHighlight: { root: HTMLElement; clear: () => void } | undefined;
@@ -111,18 +113,19 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
   const [captured, setCaptured] = useState<ResponseSelection>();
   const [commenting, setCommenting] = useState(false);
   const [comment, setComment] = useState("");
-  const [position, setPosition] = useState({ left: 0, top: 0 });
+  const [position, setPosition] = useState<CSSProperties & { "--menu-enter-y"?: string }>({ left: 0, top: 0 });
   const { t } = useI18n();
   useLayoutEffect(() => {
     const toolbar = toolbarRef.current;
     const anchor = anchorRef.current;
     if (!captured || !toolbar || !anchor) return;
     const bounds = toolbar.getBoundingClientRect();
-    const above = anchor.top - bounds.height - 8;
-    setPosition({
-      left: Math.max(8, Math.min(anchor.left, window.innerWidth - bounds.width - 8)),
-      top: Math.max(8, Math.min(above >= 8 ? above : anchor.bottom + 8, window.innerHeight - bounds.height - 8)),
-    });
+    const left = Math.max(8, Math.min(anchor.left, window.innerWidth - bounds.width - 8));
+    // Above the passage the panel is pinned by its bottom edge, so a growing
+    // comment extends upward and never covers the quoted text.
+    setPosition(anchor.top - bounds.height - 8 >= 8
+      ? { left, bottom: window.innerHeight - anchor.top + 8, transformOrigin: "bottom left", "--menu-enter-y": "4px" }
+      : { left, top: Math.max(8, Math.min(anchor.bottom + 8, window.innerHeight - bounds.height - 8)), transformOrigin: "top left", "--menu-enter-y": "-4px" });
     if (commenting) {
       commentRef.current?.focus({ preventScroll: true });
       const root = ref.current!.querySelector<HTMLElement>(".agent-text")!;
@@ -136,6 +139,17 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
       commentToggleRef.current?.focus({ preventScroll: true });
       returnToToggleRef.current = false;
     }
+  }, [captured, commenting]);
+  useEffect(() => {
+    // Focus moves into the comment input, so the native selection stops
+    // painting; keep the passage marked until the comment is added or dropped.
+    const highlights = (globalThis.CSS as typeof CSS & { highlights?: Map<string, unknown> } | undefined)?.highlights;
+    const HighlightClass = (globalThis as typeof globalThis & { Highlight?: new (range: Range) => unknown }).Highlight;
+    const root = ref.current?.querySelector<HTMLElement>(".agent-text");
+    const range = captured && commenting && root ? validatedRange(root, captured) : undefined;
+    if (!range || !highlights || !HighlightClass) return;
+    highlights.set("wuu-response-selection", new HighlightClass(range));
+    return () => { highlights.delete("wuu-response-selection"); };
   }, [captured, commenting]);
   useEffect(() => {
     if (!captured) return;
@@ -185,6 +199,7 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
         ...(text === rangeText ? {} : { range_text: rangeText }),
       } };
       anchorRef.current = range.getBoundingClientRect();
+      sourceHighlight?.clear();
       setCommenting(false);
       setComment("");
       setCaptured(validatedRange(root, selection) ? selection : undefined);
@@ -238,11 +253,11 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
   }
   return <article {...props} ref={ref} data-response-item-id={itemID} data-response-turn-id={turnID} data-response-settled={settled}>
     {children}
-    {captured && settled ? createPortal(<div ref={toolbarRef} className={`response-selection-toolbar${commenting ? " response-selection-commenting" : ""}`} style={position}
+    {captured && settled ? createPortal(<div key={commenting ? "comment" : "actions"} ref={toolbarRef}
+      className={`response-selection-toolbar${commenting ? " response-selection-commenting" : ""}`} style={position}
       role="group" aria-label={t("responseSelection.actions")}>
       {commenting ? <>
-        <blockquote className="response-selection-comment-source">{captured.text}</blockquote>
-        <textarea ref={commentRef} className="response-selection-comment-input" rows={2}
+        <textarea ref={commentRef} className="response-selection-comment-input" rows={1}
           aria-label={t("responseSelection.optionalComment")} placeholder={t("responseSelection.optionalComment")}
           value={comment} onChange={event => setComment(event.target.value)}
           onKeyDown={event => {
@@ -252,11 +267,15 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
               returnToToggleRef.current = true;
               setCommenting(false);
               setComment("");
+            } else if (event.key === "Enter" && !event.shiftKey && !isComposerTextComposing(event)) {
+              event.preventDefault();
+              addSelection();
             }
           }} />
-        <div className="response-selection-comment-actions">
-          <button type="button" className="response-selection-add" onClick={addSelection}>{t("responseSelection.add")}</button>
-        </div>
+        <button type="button" className="response-selection-add response-selection-comment-submit" aria-label={t("responseSelection.add")}
+          onPointerDown={event => event.preventDefault()} onClick={addSelection}>
+          <ArrowUp className="icon" aria-hidden="true" />
+        </button>
       </> : <>
         <button type="button" className="response-selection-add" onPointerDown={event => event.preventDefault()} onClick={addSelection}>{t("responseSelection.add")}</button>
         <button ref={commentToggleRef} type="button" className="response-selection-comment-toggle"

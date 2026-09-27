@@ -13,7 +13,7 @@ const report = { scene: "response-selection-v2", boundary: "Real Electron render
 if (ipcMain) ipcMain.on("selection:bridge-call", (_event, call) => report.calls.push(call));
 let win;
 const surface = '[data-thread-id="selection-main"] article[data-response-item-id="selection-main-answer"][data-response-settled="true"] .agent-text';
-const card = '.composer-response-selection-chip';
+const card = '.composer-response-selection-card .composer-document-card-main';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function evaluate(fn, ...args) {
   const result = await win.webContents.executeJavaScript(`(async()=>{try{return {value:await (${fn})(${args.map(arg => JSON.stringify(arg)).join(",")})}}catch(e){return {error:String(e.stack||e)}}})()`, true);
@@ -47,8 +47,16 @@ async function input(selector, value) {
   // before a subsequent submit click reads it.
   await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
+// Entrances and tray lifts run on the compositor; capture the settled UI, not
+// a frame from the middle of a fade.
+async function settle() {
+  await evaluate(() => Promise.race([
+    Promise.all(document.getAnimations().map(animation => animation.finished.catch(() => undefined))),
+    new Promise(resolve => setTimeout(resolve, 1500)),
+  ]).then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
+}
 async function screenshot(name) {
-  await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await settle();
   const file = path.join(output, `${name}.png`);
   fs.writeFileSync(file, (await win.webContents.capturePage()).toPNG());
   report.screenshots.push(file);
@@ -56,7 +64,7 @@ async function screenshot(name) {
 }
 function measureGeometry() {
   const selectors = {
-    toolbar: ".response-selection-toolbar", chip: ".composer-response-selection-chip",
+    toolbar: ".response-selection-toolbar", card: ".composer-response-selection-card",
     frame: "[data-main-conversation-composer] .composer-frame",
     popover: ".composer-response-selection-popover", sourceComment: ".response-selection-comment-input",
   };
@@ -67,8 +75,7 @@ function measureGeometry() {
       return { selector, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height,
         fontSize: css.fontSize, fontFamily: css.fontFamily, lineHeight: css.lineHeight,
         scrollWidth: node.scrollWidth, clientWidth: node.clientWidth, scrollHeight: node.scrollHeight, clientHeight: node.clientHeight,
-        insideComposerFrame: name === "chip" ? !!node.closest(".composer-frame") : null,
-        exteriorTray: name === "chip" ? !!node.closest(".composer-attachment-tray") : null,
+        insideTray: name === "card" ? !!node.closest(".composer-attachment-tray") : null,
         contained: rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1 };
     });
   }
@@ -133,7 +140,12 @@ async function add(text, last = false, physical = false, comment = "") {
   await until(selector => !!document.querySelector(selector), "quote card", card);
   return result;
 }
+async function closeQuotePanel() {
+  await evaluate(() => document.querySelector(".composer-response-selection-popover").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  await until(() => !document.querySelector(".composer-response-selection-popover"), "quote panel closed");
+}
 async function checkSource(expected) {
+  await settle();
   await click(card);
   await click(".composer-response-selection-source");
   const actual = await until(() => {
@@ -152,7 +164,7 @@ async function send(expected, comment, prompt) {
   const before = report.calls.length;
   await input('[data-main-conversation-composer] .composer textarea:not(.composer-response-selection-comment)', prompt);
   await click('[data-main-conversation-composer] .composer-send-button');
-  await until(() => !document.querySelector('.composer-response-selection-chip'), "submitted quote clears");
+  await until(() => !document.querySelector('.composer-response-selection-card'), "submitted quote clears");
   for (let retry = 0; report.calls.length === before && retry < 100; retry++) await sleep(20);
   if (report.calls.length !== before + 1) throw new Error("Expected exactly one bridge call");
   const call = report.calls.at(-1);
@@ -186,6 +198,7 @@ async function run() {
 
   const comment = 'Explain "this" 😀\n第二行';
   const repeated = await select("Repeated 😀 café 中文 target.", true);
+  await screenshot("toolbar-actions");
   await click(".response-selection-comment-toggle");
   // Real Chromium input insertion, not a React setter, protects the restored-Range
   // focus contract: typing must enter the comment rather than replace the quote.
@@ -210,6 +223,7 @@ async function run() {
       document.documentElement.style.setProperty("--conversation-message-font-size", `${font}px`);
       document.documentElement.style.setProperty("--ui-font-size", `${font}px`);
     }, font, theme);
+    await settle();
     await click(card);
     await until(() => {
       const node = document.querySelector(".composer-response-selection-popover");
@@ -218,7 +232,7 @@ async function run() {
       return rect.width > 0 && rect.left >= 0 && rect.right <= innerWidth + 1 && rect.top >= 0 && rect.bottom <= innerHeight + 1;
     }, "quote editor within viewport");
     await screenshot(`${theme}-${width}-${font}`);
-    await click(".composer-response-selection-popover > .composer-response-selection-actions .icon-button");
+    await closeQuotePanel();
   }
   report.cases.push("light/dark, default/large font, wide/narrow quote card and editor geometry");
   report.status = "passed";
@@ -247,7 +261,7 @@ function servePreview() {
   const harness = `const report={scene:'response-selection-v2',calls:window.selectionCalls,cases:[],measurements:[],boundary:"Built React renderer in embedded browser; mock transport; NOT Electron E2E"};
     const surface=${JSON.stringify(surface)},card=${JSON.stringify(card)};
     const evaluate=async(fn,...args)=>fn(...args);
-    ${[sleep, until, click, input, select, add, checkSource, send, validatePayload, measureGeometry].map(fn => `const ${fn.name || "sleep"}=${fn.toString()};`).join("\n")}
+    ${[sleep, until, click, input, select, add, settle, closeQuotePanel, checkSource, send, validatePayload, measureGeometry].map(fn => `const ${fn.name || "sleep"}=${fn.toString()};`).join("\n")}
     const params=new URLSearchParams(location.search);
     report.nativeInput=[];
     report.eventTrace=[];
@@ -304,12 +318,13 @@ function servePreview() {
         for(let index=1;index<count;index++)await add('Native drag selection',false,false,'Comment '+(index+1));
         if(scene==='manager'||scene==='aggregate')await click(card);
         if(scene==='aggregate'){
-          await until(()=>document.querySelectorAll('.composer-response-selection-item').length===2,'two passages in one manager');
-          const chips=document.querySelectorAll(card);if(chips.length!==1||!chips[0].closest('.composer-frame')||chips[0].closest('.composer-attachment-tray'))throw new Error('Aggregate chip is outside composer frame or duplicated');
-          await click('.composer-response-selection-item:nth-child(2) .composer-response-selection-remove');
-          await until(()=>document.querySelectorAll('.composer-response-selection-item').length===1,'remove only selected passage');
-          await click('.composer-response-selection-popover > .composer-response-selection-actions .icon-button');
-          await checkSource(expected);await click(card);report.cases.push('two passages one in-frame chip; remove second preserves first exact source');
+          const cards=()=>[...document.querySelectorAll('.composer-response-selection-card')].filter(node=>!node.closest('[data-exiting]'));
+          await until(()=>cards().length===2,'two quote cards in the tray');
+          if(cards().some(node=>!node.closest('.composer-attachment-tray')))throw new Error('Quote card rendered outside the attachment tray');
+          cards()[1].querySelector('.composer-attachment-card-remove').click();
+          await until(()=>cards().length===1,'remove only the second quote card');
+          await closeQuotePanel();
+          await checkSource(expected);await click(card);report.cases.push('two tray cards; removing the second preserves the first exact source');
         }
       }
       report.measurements.push({name:scene,...measureGeometry()});

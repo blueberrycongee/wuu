@@ -4,7 +4,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ResponseSelection } from "../shared/protocol";
 import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
-import { ComposerResponseSelectionCard } from "./ComposerResponseSelectionCard";
 import {
   CollapsedComposerPromptCard,
   useCollapsedComposerPrompt
@@ -19,7 +18,7 @@ let container: HTMLDivElement;
 let root: Root | null = null;
 let storageKeyCounter = 0;
 
-it("manages multiple quotes through one chip without losing other quotes when editing or removing", () => {
+it("keeps each quote as its own tray card and edits or removes one without losing the other", () => {
   const quote: ResponseSelection = {
     id: "quote-1", text: `${longText()}\nFinal quoted line`,
     source: { thread_id: "thread", turn_id: "turn", item_id: "item", start_offset: 0, end_offset: 200 },
@@ -28,30 +27,31 @@ it("manages multiple quotes through one chip without losing other quotes when ed
   let latest: ResponseSelection | undefined;
   function Harness(): JSX.Element {
     const [selections, setSelections] = useState([quote, second]);
-    return <><ComposerAttachmentTray images={[]} files={[]} pastedTexts={[]}
+    return <ComposerAttachmentTray images={[]} files={[]} pastedTexts={[]} selections={selections}
       onRemoveImage={() => {}} onRemoveFile={() => {}} onRevealText={() => {}} onRemoveText={() => {}}
-      /><ComposerResponseSelectionCard selections={selections}
-      onChange={(selection) => { latest = selection; setSelections((current) => current.map((item) => item.id === selection.id ? selection : item)); }}
-      onRemove={(id) => setSelections((current) => current.filter((selection) => selection.id !== id))} /></>;
+      onChangeSelection={(selection) => { latest = selection; setSelections((current) => current.map((item) => item.id === selection.id ? selection : item)); }}
+      onRemoveSelection={(id) => setSelections((current) => current.filter((selection) => selection.id !== id))} />;
   }
   act(() => { root = createRoot(container); root.render(<Harness />); });
-  expect(container.querySelector("ul")).toBeNull();
-  expect(container.querySelectorAll("[aria-haspopup=dialog]")).toHaveLength(1);
-  act(() => container.querySelector<HTMLButtonElement>("[aria-haspopup=dialog]")!.click());
-  expect(document.querySelectorAll("[role=dialog] blockquote")).toHaveLength(2);
+  const cards = () => container.querySelectorAll(".composer-attachment-tray .composer-response-selection-card");
+  expect(cards()).toHaveLength(2);
+  expect(cards()[0].querySelector(".composer-document-card-title")?.textContent).toBe(quote.text.replace(/\s+/g, " "));
+  act(() => cards()[0].querySelector<HTMLButtonElement>(".composer-document-card-main")!.click());
   expect(document.querySelector("[role=dialog] blockquote")?.textContent).toBe(quote.text);
   const textarea = document.querySelector<HTMLTextAreaElement>("[role=dialog] textarea")!;
+  expect(document.activeElement).toBe(textarea);
   act(() => {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "Explain this part");
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
   });
   expect(latest).toEqual({ ...quote, comment: "Explain this part" });
-  act(() => document.querySelector<HTMLButtonElement>("[data-selection-id='quote-1'] .composer-response-selection-remove")!.click());
-  expect(document.querySelectorAll("[role=dialog] blockquote")).toHaveLength(1);
-  expect(document.querySelector("[role=dialog] blockquote")?.textContent).toBe(second.text);
-  act(() => document.querySelector<HTMLButtonElement>(".composer-response-selection-remove")!.click());
-  expect(container.querySelector("ul")).toBeNull();
+  expect(cards()[0].querySelector(".composer-document-card-meta")?.textContent).toBe("Explain this part");
+  act(() => document.querySelector<HTMLButtonElement>("[role=dialog] .composer-response-selection-remove")!.click());
   expect(document.querySelector("[role=dialog]")).toBeNull();
+  expect(cards()).toHaveLength(1);
+  expect(cards()[0].querySelector(".composer-document-card-title")?.textContent).toBe(second.text);
+  act(() => cards()[0].querySelector<HTMLButtonElement>(".composer-attachment-card-remove")!.click());
+  expect(container.querySelector("ul")).toBeNull();
 });
 
 beforeEach(() => {
