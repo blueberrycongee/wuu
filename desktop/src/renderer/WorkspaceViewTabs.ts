@@ -63,7 +63,7 @@ export function workspaceArtifactViewTab(input: ArtifactPreviewRequest): Workspa
   return { ...input, kind: "artifact", id: `artifact:${JSON.stringify(identity)}`, title: artifact.name };
 }
 
-// A project's overview, and one managed session's proposal, beside the conversation.
+// A project's overview beside the conversation.
 export type WorkspaceProjectViewTab = {
   kind: "project";
   id: string;
@@ -71,19 +71,8 @@ export type WorkspaceProjectViewTab = {
   title: string;
 };
 
-export type WorkspaceProposalViewTab = {
-  kind: "proposal";
-  id: string;
-  sessionID: string;
-  title: string;
-};
-
 export function workspaceProjectViewTab(projectID: string, title: string): WorkspaceProjectViewTab {
   return { kind: "project", id: `project:${projectID}`, projectID, title };
-}
-
-export function workspaceProposalViewTab(sessionID: string, title: string): WorkspaceProposalViewTab {
-  return { kind: "proposal", id: `proposal:${sessionID}`, sessionID, title };
 }
 
 export type WorkspaceViewTab =
@@ -92,8 +81,7 @@ export type WorkspaceViewTab =
   | WorkspaceFileViewTab
   | WorkspacePluginViewTab
   | WorkspaceArtifactViewTab
-  | WorkspaceProjectViewTab
-  | WorkspaceProposalViewTab;
+  | WorkspaceProjectViewTab;
 
 export type WorkspaceViewTabsState = {
   tabs: WorkspaceViewTab[];

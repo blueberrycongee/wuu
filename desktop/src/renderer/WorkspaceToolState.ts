@@ -11,7 +11,6 @@ import {
   workspaceToolViewTab,
   workspacePluginViewTab,
   workspaceProjectViewTab,
-  workspaceProposalViewTab,
   type WorkspaceViewTab,
 } from "./WorkspaceViewTabs";
 
@@ -35,7 +34,6 @@ export function useWorkspaceToolState({
   openWorkspaceFileTab: (input: { context: RuntimeContext; path: string }) => void;
   openWorkspaceArtifactTab: (input: ArtifactPreviewRequest) => void;
   openWorkspaceProjectTab: (projectID: string, title: string) => void;
-  openWorkspaceProposalTab: (sessionID: string, title: string) => void;
   showWorkspaceToolPicker: () => void;
   focusWorkspaceViewTab: (id: string | undefined) => void;
   closeWorkspaceViewTab: (id: string) => void;
@@ -93,11 +91,6 @@ export function useWorkspaceToolState({
     setRightPanelOpenWithMotion(true);
   }
 
-  function openWorkspaceProposalTab(sessionID: string, title: string): void {
-    openTab(workspaceProposalViewTab(sessionID, title));
-    setRightPanelOpenWithMotion(true);
-  }
-
   function showWorkspaceToolPicker(): void {
     focusTab(undefined);
     setRightPanelOpenWithMotion(true);
@@ -150,7 +143,6 @@ export function useWorkspaceToolState({
     openWorkspaceFileTab,
     openWorkspaceArtifactTab,
     openWorkspaceProjectTab,
-    openWorkspaceProposalTab,
     showWorkspaceToolPicker,
     focusWorkspaceViewTab: focusTab,
     closeWorkspaceViewTab,

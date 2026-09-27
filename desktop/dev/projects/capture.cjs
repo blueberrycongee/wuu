@@ -16,8 +16,8 @@ const scenes = [
   ["coordinator-light-20", "view=coordinator&panel=project&size=20", 1440],
   ["coordinator-dark-20", "view=coordinator&panel=project&theme=dark&size=20", 1440],
   ["coordinator-narrow", "view=coordinator&panel=project", 1085],
-  ["session-proposal-light-14", "view=session&panel=proposal", 1440],
-  ["session-proposal-dark-20", "view=session&panel=proposal&theme=dark&size=20", 1440],
+  ["session-light-14", "view=session&panel=project", 1440],
+  ["session-dark-20", "view=session&panel=project&theme=dark&size=20", 1440],
   ["draft-light-14", "view=draft&panel=none", 1280],
   ["empty-light-14", "empty&panel=none", 1280],
   ["coordinator-stopped-dark-20", "view=coordinator&panel=project&theme=dark&size=20&stopped", 1085, ".project-panel-row-main"],
@@ -95,6 +95,19 @@ app.whenReady().then(async () => {
       fs.writeFileSync(path.join(output, `${name}.json`), JSON.stringify(layout, null, 2));
       if (!(layout.status.bottom <= layout.drawer.top || layout.drawer.bottom <= layout.status.top) || layout.task.bottom > layout.input.top) {
         throw new Error(`${name}: project status, task and input overlap`);
+      }
+    }
+    // Session rows are not indented under their role headings: every title
+    // shares the headings' text edge, whether a row is running or hovered.
+    if (query.includes("panel=project")) {
+      const edges = await win.webContents.executeJavaScript(`(() => {
+        const left = selector => [...document.querySelectorAll(selector)].map(node => node.getBoundingClientRect().left);
+        return { headings: left('.project-panel-heading'), titles: left('.project-panel .project-panel-row-title') };
+      })()`);
+      fs.writeFileSync(path.join(output, `${name}.panel-edges.json`), JSON.stringify(edges, null, 2));
+      const edge = edges.headings[0];
+      if (edge === undefined || !edges.titles.length || [...edges.headings, ...edges.titles].some(left => Math.abs(left - edge) > 0.5)) {
+        throw new Error(`${name}: project panel rows are indented from their headings`);
       }
     }
     // The project capsule is one of the conversation's status capsules: same

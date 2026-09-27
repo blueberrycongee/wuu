@@ -724,7 +724,6 @@ export class RemoteDesktopBridge {
 
       returnManagedSession: (params) => this.call("thread/control/return", params),
       takeOverManagedSession: (params) => this.call("thread/control/take", params),
-      projectCandidate: (params) => this.call("project/candidate", params),
       projectSession: (params) => this.call("project/session", params),
 
       startTurn: (threadId, prompt, images, files, permissionMode, activeDocument, contentParts, _targetContext, clientId) =>

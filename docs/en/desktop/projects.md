@@ -1,6 +1,8 @@
 # Projects
 
-The Project Agent is your lead: it keeps your goals and decisions in view, works directly when useful, and delegates independent work to sessions it manages. You review proposals from isolated sessions and decide what reaches the workspace.
+The Project Agent is your lead: it keeps your goals and decisions in view, works directly when useful, and delegates independent work to sessions it manages. The team reviews its own work and delivers it: agents commit, merge, push, and open pull requests without waiting for your approval.
+
+Project coordination is built into Wuu. Creating and managing sessions, delivering results, taking control, and recovering after a restart do not require an installed or enabled plugin. Extensions can add optional tools, but do not own the project or its sessions.
 
 Project coordination is built into Wuu. Creating and managing sessions, delivering results, taking control, and recovering after a restart do not require an installed or enabled plugin. Extensions can add optional tools or delivery actions, but do not own the project or its sessions.
 
@@ -31,32 +33,26 @@ A new member inherits the lead's model unless a configured model alias is select
 
 To bring existing work into a project, drag a conversation from its workspace onto the project in the sidebar. The coordinator manages it from then on and reads its latest answer. Only a conversation of the project's workspace can join.
 
-A project occupies one row in the sidebar; its sessions do not crowd the workspace list. The row shows when any of its sessions is running and how many proposals await your review. In the project conversation:
+A project occupies one row in the sidebar; its sessions do not crowd the workspace list. The row shows when any of its sessions is running. In the project conversation:
 
-- Above the composer, the project's running work and pending reviews open the project in the right panel: what awaits review, then every session. Running indicators describe execution, not project membership.
-- Each event, such as a session finishing a turn, reads as one centered line between messages. Its session name opens the session; **Review** opens a pending proposal, and **Details** shows the text the coordinator received. Consecutive events in a turn fold into one line that counts them; expand it to see each event.
+- Above the composer, the project's running work opens the project in the right panel, which lists its Side Agent and Workers. Running indicators describe execution, not project membership.
+- Each event, such as a session finishing a turn, reads as one centered line between messages. Its session name opens the session, and **Details** shows the text the coordinator received. Consecutive events in a turn fold into one line that counts them; expand it to see each event.
 
 In a Git workspace, a session that changes files works in its own Git worktree by default, so their files are isolated. Worktrees do not resolve interface conflicts: assign one writer to each overlapping scope and verify changes together. A session that works in the workspace directly edits its files in place.
 
-When a session's turn ends, the coordinator decides the next step: a correction, a follow-up session, or telling you what is ready. A result is evidence, not proof that the goal is met. To get an independent check, ask the coordinator to review a change. It starts a separate session from a frozen copy of the change, so the review can run tests without altering it.
+When a session's turn ends, the coordinator decides the next step: a correction, a follow-up session, delivery, or a report to you. A result is evidence, not proof that the goal is met. For an independent check, the coordinator can have another session review a session's worktree or branch and run tests without changing it.
 
-## Review and apply changes
+## Deliver changes
 
-When a worktree session finishes a turn with changes, Wuu freezes them as a proposal: every change of the session that has not been applied or published yet. A newer proposal from the same session replaces the older one, so there is always one proposal to decide. The proposal also appears under the turn that produced it. Choose **Review** to open its files and diff in the right panel, then choose one:
-
-- **Apply to workspace** writes the change into the workspace, without staging it. If the workspace has conflicting changes, nothing is applied and the proposal stays open.
-- **Open PR** appears when an extension provides it, for example the [Git Delivery example](../../../examples/plugins/git-delivery/README.md). The PR is the proposal's decision; its link stays on the proposal.
-- **Reject** records that you declined the change. The changes stay in the session's worktree and appear in its next proposal unless the session reverts them.
-
-The coordinator is told what you chose. A session's next proposal starts from what you applied or published, so a delivered change is never offered again.
+A worktree session's changes stay on its own branch until the team delivers them. Nothing waits for your approval: the lead decides how the work lands, such as committing and merging it into the workspace, pushing a branch, or opening a pull request, and a session does it with ordinary Git and `gh` commands. Those commands follow the project's permission mode like in any conversation. To get a different delivery, such as a draft pull request instead of a merge, tell the lead in the project conversation.
 
 ## Write to or stop a session
 
 You can write to a member at any time. Your message steers the running turn or starts one. The member stays in the project, and the coordinator receives a notice without being woken if idle. The turn's result also includes what you wrote.
 
-Stopping interrupts the current turn; it does not transfer control or require a return step. The interrupted result reaches the coordinator without waking it from idle. Normal completion still wakes the coordinator, and stopped worktree turns can still leave changes for review. The coordinator can assign later work to the same member.
+Stopping interrupts the current turn; it does not transfer control or require a return step. The interrupted result reaches the coordinator without waking it from idle. Normal completion still wakes the coordinator, and a stopped worktree turn keeps its changes in the worktree. The coordinator can assign later work to the same member.
 
-To make a session an ordinary conversation again, choose **Remove from project** in the project view. Decide its pending proposal first.
+To make a session an ordinary conversation again, choose **Remove from project** in the project view. Its worktree and undelivered changes stay with the conversation.
 
 ## Limits
 

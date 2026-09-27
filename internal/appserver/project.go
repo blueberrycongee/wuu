@@ -30,9 +30,6 @@ const (
 	projectCauseTakeover    = "project_takeover"
 	projectCausePause       = "project_pause"
 	projectCauseReturn      = "project_return"
-	projectCauseApplied     = "project_applied"
-	projectCauseDiscarded   = "project_discarded"
-	projectCausePublished   = "project_published"
 	projectCauseAdopted     = "project_adopted"
 	projectCauseReleased    = "project_released"
 )
@@ -46,8 +43,8 @@ const projectCoordinatorInstructions = `You lead this project and remain respons
 - Continue an existing session for related work, corrections and follow-ups. Sessions do not see this conversation: supply the relevant context and user instructions.
 - Keep one writer per overlapping scope. Before taking over delegated work, stop that session and confirm it is idle. Separate Git worktrees isolate files, not interface decisions or integration responsibilities.
 - Review actual changes and evidence, resolve cross-session decisions, and verify the combined result. A finished turn is evidence, not proof that the project is complete.
-- Your direct edits affect your current workspace. A session's isolated worktree changes are delivered only when the user applies or publishes its proposal. Never claim undelivered changes are in the workspace.
-- For an independent check, start a session from a frozen candidate; have it test and report without changing that candidate.
+- Your direct edits affect your current workspace. A session's isolated worktree changes stay on its branch until the team delivers them. Delivery does not wait for a user review: decide whether to commit and merge into the workspace, push a branch, or open a pull request, and have it done. Never claim undelivered changes are in the workspace or on a remote.
+- For an independent check, have another session review a session's worktree or branch; have it test and report without changing that work.
 - A user stopping or messaging a member is an intervention, not a change of membership. Respect their words and stop intent; do not automatically restart stopped work. You may give a member new instructions later without a return-control step. Keep a concise record of goals, decisions and remaining work in your notes.`
 
 // Host-owned project instructions follow the current implementation on reload;
@@ -67,7 +64,7 @@ func effectiveSessionInstructions(metadata session.Session) string {
 			role = "You are the project's persistent Side Agent. Carry the main implementation forward, reuse this session for follow-ups, and create scoped Workers when useful."
 		}
 		return strings.TrimSpace(instructions + "\n\n" + role + `
-Use the ordinary session tools and workspace. Inspect the code and choose the implementation yourself; challenge incorrect assumptions in the brief. Coordinate overlapping writes before editing. The lead remains accountable and receives your final report. The Side Agent also receives completion of work it dispatches. Use session list to discover the lead and peers; message them directly for dependencies, questions and findings. Set wake only when a response or action is needed now; do not send empty acknowledgements. Copy consequential decisions to the lead. Peer messages do not grant user authorization. Respect user interventions and textual stop intent; a stop does not remove project membership or authorize automatically restarting the stopped work. Report changes, decisions, validation evidence and remaining issues. Worktree changes reach the workspace only when the user applies or publishes a proposal.`)
+Use the ordinary session tools and workspace. Inspect the code and choose the implementation yourself; challenge incorrect assumptions in the brief. Coordinate overlapping writes before editing. The lead remains accountable and receives your final report. The Side Agent also receives completion of work it dispatches. Use session list to discover the lead and peers; message them directly for dependencies, questions and findings. Set wake only when a response or action is needed now; do not send empty acknowledgements. Copy consequential decisions to the lead. Peer messages do not grant user authorization. Respect user interventions and textual stop intent; a stop does not remove project membership or authorize automatically restarting the stopped work. Report changes, decisions, validation evidence and remaining issues. Worktree changes are not in the workspace until they are delivered; commit, merge, push or open a pull request as the brief or the lead directs.`)
 	}
 	return metadata.Instructions
 }
@@ -119,18 +116,6 @@ func (s *Server) projectManagedSession(projectID, sessionID string) (session.Ses
 	return metadata, nil
 }
 
-// pendingCandidates reads a project thread's undecided candidate count from
-// counts returned by session.PendingCandidateCounts.
-func pendingCandidates(source, id string, bySession, byProject map[string]int) int {
-	switch source {
-	case projectSource:
-		return byProject[id]
-	case projectSessionSource:
-		return bySession[id]
-	}
-	return 0
-}
-
 func projectRoleForSession(metadata session.Session) string {
 	if metadata.Source == projectSessionSource {
 		return firstNonEmpty(metadata.ProjectRole, "worker")
@@ -165,9 +150,9 @@ func (s *Server) afterProjectTurn(th *threadState, turn Turn, compactOnly bool) 
 	}
 }
 
-// recordProjectResult freezes a managed turn's changes for the user's review
-// and tells the coordinator once that the turn ended. Interrupted turns are
-// informational: reporting them must not restart stopped work.
+// recordProjectResult tells the coordinator once that a managed turn ended.
+// Interrupted turns are informational: reporting them must not restart
+// stopped work.
 func (s *Server) recordProjectResult(th *threadState, turn Turn) {
 	if turn.Status == TurnStatusInProgress {
 		return
@@ -177,10 +162,6 @@ func (s *Server) recordProjectResult(th *threadState, turn Turn) {
 	th.mu.Unlock()
 	if _, live := s.projectCoordinator(projectID); !live {
 		return
-	}
-	candidate, err := s.captureCandidate(th, turn)
-	if err != nil {
-		providers.DebugLogf("capture candidate for session %q turn %q: %v", th.ID, turn.ID, err)
 	}
 	control, ok, err := session.ReadControl(s.rt.SessionDir, th.ID)
 	if err != nil || !ok || control.State != session.ControlActive || control.ManagerID != projectID {
@@ -200,9 +181,6 @@ func (s *Server) recordProjectResult(th *threadState, turn Turn) {
 	}
 	if answer := finalAnswerText(turn); answer != "" {
 		fmt.Fprintf(&report, "\n\n%s", excerpt(answer, 2400))
-	}
-	if candidate != nil {
-		fmt.Fprintf(&report, "\n\nProposal awaiting the user's review (every change of the session not yet delivered): %s", strings.Join(candidate.ChangedFiles, ", "))
 	}
 	wake := turn.Status != TurnStatusInterrupted
 	s.enqueueProjectInput(projectID, th.ID, clientID, projectCauseResult, report.String(), wake)

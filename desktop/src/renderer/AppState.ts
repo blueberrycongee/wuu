@@ -1559,7 +1559,6 @@ function summarizeThreadForSidebar(
     source: thread.source,
     project_id: thread.project_id,
     project_role: thread.project_role,
-    pending_candidates: thread.pending_candidates,
     model_provider: thread.model_provider,
     model: thread.model,
     cwd: thread.cwd,

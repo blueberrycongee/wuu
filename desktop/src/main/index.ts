@@ -95,8 +95,6 @@ import type {
   ThreadForkTarget,
   ThreadResumeResult,
   ThreadStartParams,
-  ProjectCandidateParams,
-  ProjectCandidateResult,
   ProjectSessionParams,
   ProjectSessionResult,
   Turn,
@@ -1837,16 +1835,12 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:session-control-take", (event, params: { thread_id: string; revision: number }) => appServerRequest(event, "thread/control/take", params));
   // A project and its managed sessions live in one workspace; route to the
   // app-server that owns the named project or session.
-  const requestForProject = <T,>(event: IpcMainInvokeEvent, sessionID: string, method: string, params: unknown): Promise<T> => {
+  ipcMain.handle("wuu:project-session", (event, params: ProjectSessionParams) => {
     const context = windowRegistry.runtimeContextForWindow(event.sender.id);
     return context
-      ? appServerClientPool.requestForSession<T>(context, sessionID, method, params)
-      : appServerRequest<T>(event, method, params);
-  };
-  ipcMain.handle("wuu:project-candidate", (event, params: ProjectCandidateParams) =>
-    requestForProject<ProjectCandidateResult>(event, "project_id" in params ? params.project_id : params.session_id, "project/candidate", params));
-  ipcMain.handle("wuu:project-session", (event, params: ProjectSessionParams) =>
-    requestForProject<ProjectSessionResult>(event, params.project_id, "project/session", params));
+      ? appServerClientPool.requestForSession<ProjectSessionResult>(context, params.project_id, "project/session", params)
+      : appServerRequest<ProjectSessionResult>(event, "project/session", params);
+  });
   ipcMain.handle("wuu:codex-pets-list", () => {
     const snapshot = codexPetsSnapshot();
     // Sync the pet window from the renderer-side list call so a failed

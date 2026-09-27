@@ -739,7 +739,7 @@ function ThreadRows({
   // A conversation dragged from another list onto a project row joins it.
   onDropSession?: (project: ThreadSummary, threadID: string) => void;
 }): JSX.Element {
-  const { t, formatNumber } = useI18n();
+  const { t } = useI18n();
   const organization = useSessionOrganizationActions();
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -929,7 +929,6 @@ function ThreadRows({
                 thread,
                 lastViewedTurnByThreadID[thread.id],
               ));
-        const pendingCandidates = summary?.pendingCandidates ?? 0;
         return (
           <div
             key={thread.id}
@@ -982,14 +981,6 @@ function ThreadRows({
                   className="icon-sm thread-row-fork-icon"
                   aria-hidden="true"
                 />
-              ) : null}
-              {pendingCandidates > 0 ? (
-                <span
-                  className="project-thread-pending"
-                  title={t("projects.pendingCandidates", { count: formatNumber(pendingCandidates) })}
-                >
-                  {formatNumber(pendingCandidates)}
-                </span>
               ) : null}
               <div
                 className="thread-row-actions"

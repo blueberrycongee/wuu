@@ -1588,8 +1588,6 @@ export type Thread = {
   project_id?: string;
   // Managed sessions share the ordinary thread lifecycle. Older members are workers.
   project_role?: "side" | "worker";
-  // Undecided candidates: a managed session's own, or all of a coordinator's sessions.
-  pending_candidates?: number;
   model_provider: string;
   model: string;
   model_variant?: string;
@@ -1645,32 +1643,6 @@ export type ThreadStartParams = {
   project?: { name: string };
 };
 
-// A managed session's frozen change at the end of one turn: every change of
-// the session not yet applied or published. An empty disposition awaits the
-// user's decision; a newer turn of the session supersedes it.
-export type ProjectCandidate = {
-  session_id: string;
-  turn_id: string;
-  base_repo: string;
-  base_revision: string;
-  revision: string;
-  changed_files: string[];
-  disposition?: "applied" | "discarded" | "published" | "superseded";
-  // Where a published candidate was sent for review.
-  url?: string;
-  created_at: string;
-  // Present only when the candidate was read with action "get".
-  diff?: string;
-};
-
-// An extension publishes a candidate; "publish" records the URL it returned
-// as the candidate's decision.
-export type ProjectCandidateParams =
-  | { action: "list"; project_id: string }
-  | { action: "list"; session_id: string }
-  | { action: "get" | "apply" | "discard"; session_id: string; turn_id: string }
-  | { action: "publish"; session_id: string; turn_id: string; url: string };
-
 // The user's changes to a project's membership: adopt brings an ordinary
 // conversation of the project's workspace under the project; release makes a
 // managed session an ordinary conversation again.
@@ -1682,11 +1654,6 @@ export type ProjectSessionParams = {
 
 export type ProjectSessionResult = {
   thread: Thread;
-};
-
-export type ProjectCandidateResult = {
-  candidates?: ProjectCandidate[];
-  candidate?: ProjectCandidate;
 };
 
 export type ThreadHandoffParams = {
@@ -2167,8 +2134,7 @@ export type ThreadItem = {
   origin?: string;
   origin_id?: string;
   // Host messages to a project coordinator name their event: "project_result",
-  // "project_takeover", "project_pause", "project_return", "project_applied",
-  // "project_discarded", "project_published", "project_adopted" or
+  // "project_takeover", "project_pause", "project_return", "project_adopted" or
   // "project_released"; related_session_id names the managed session.
   cause?: string;
   presentation_kind?: string;
@@ -2692,7 +2658,6 @@ export type WuuDesktopApi = {
   readSkillContent: (params: SkillContentParams) => Promise<SkillContentResult>;
   returnManagedSession: (params: { thread_id: string; revision: number }) => Promise<{ control: NonNullable<Thread["session_control"]> }>;
   takeOverManagedSession?: (params: { thread_id: string; revision: number }) => Promise<{ control: NonNullable<Thread["session_control"]> }>;
-  projectCandidate?: (params: ProjectCandidateParams) => Promise<ProjectCandidateResult>;
   projectSession?: (params: ProjectSessionParams) => Promise<ProjectSessionResult>;
   startThread: (params?: ThreadStartParams, targetContext?: RuntimeContext) => Promise<{ thread: Thread }>;
   loadEarlierThreadHistory?: (threadID: string, cursor: string) => Promise<void>;

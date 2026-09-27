@@ -18,13 +18,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   The coordinator can work directly or delegate to managed sessions, which open
   like any conversation. Sessions that change files work in their own Git
   worktree. When a turn ends, its result reaches the coordinator once, including
-  after a restart, and its changes wait as proposed changes that you apply to
-  the workspace, open as a PR through an extension, or discard. Sending a message in
+  after a restart. The team delivers worktree changes itself by merging,
+  pushing, or opening a pull request; nothing waits for your approval. Sending a message in
   a session steers it without changing project membership. Stopping interrupts
   its current turn; interrupted results and direct-message notices do not wake
   an idle coordinator. Project members no longer need takeover or return controls. The
-  `project/candidate` app-server method and `project` on `thread/start` expose
-  the same model to clients.
+  `project` option on `thread/start` and the `project/session` app-server
+  method expose the same model to clients.
 
 - The model popover has an independent Fast mode toggle and reset for supported
   provider models and native or ACP engines. Conversation and draft selections

@@ -679,7 +679,6 @@ export function App(): JSX.Element {
     openWorkspaceFileTab,
     openWorkspaceArtifactTab,
     openWorkspaceProjectTab,
-    openWorkspaceProposalTab,
     showWorkspaceToolPicker,
     focusWorkspaceViewTab,
     closeWorkspaceViewTab,
@@ -3583,9 +3582,6 @@ export function App(): JSX.Element {
   const openProjectPanel = useStableCallback((project: ProjectThread) => {
     openWorkspaceProjectTab(project.id, baseThreadTitle(project));
   });
-  const openProjectProposal = useStableCallback((session: ProjectThread) => {
-    openWorkspaceProposalTab(session.id, baseThreadTitle(session));
-  });
   const releaseProjectSession = useStableCallback((session: ProjectThread) => {
     if (!session.project_id || !window.wuu.projectSession) return;
     void window.wuu.projectSession({ action: "release", project_id: session.project_id, session_id: session.id })
@@ -3596,9 +3592,8 @@ export function App(): JSX.Element {
     threads: sidebarThreads,
     openThread: openProjectThread,
     openProjectPanel,
-    openProposal: openProjectProposal,
     release: releaseProjectSession,
-  }), [openProjectPanel, openProjectProposal, openProjectThread, releaseProjectSession, sidebarThreads]);
+  }), [openProjectPanel, openProjectThread, releaseProjectSession, sidebarThreads]);
   const activeProjectSessions = useMemo(
     () => activeThread && isProjectCoordinator(activeThread) ? projectSessionsOf(activeThread.id, sidebarThreads) : [],
     [activeThread, sidebarThreads],

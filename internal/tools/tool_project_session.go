@@ -15,24 +15,17 @@ const projectSessionToolName = "session"
 // ProjectSessionRequest is one project coordinator operation on its managed
 // sessions. The host resolves the project from the calling conversation.
 type ProjectSessionRequest struct {
-	Role       string               `json:"role,omitempty"`
-	ModelAlias string               `json:"model_alias,omitempty"`
-	Wake       bool                 `json:"wake,omitempty"`
-	Action     string               `json:"action"`
-	SessionID  string               `json:"session_id,omitempty"`
-	Title      string               `json:"title,omitempty"`
-	Prompt     string               `json:"prompt,omitempty"`
-	Workspace  string               `json:"workspace,omitempty"`
-	Candidate  *ProjectCandidateRef `json:"candidate,omitempty"`
-	Query      string               `json:"query,omitempty"`
-	Limit      int                  `json:"limit,omitempty"`
-	Before     int                  `json:"before,omitempty"`
-}
-
-// ProjectCandidateRef names one frozen candidate: a managed session's turn.
-type ProjectCandidateRef struct {
-	SessionID string `json:"session_id"`
-	TurnID    string `json:"turn_id"`
+	Role       string `json:"role,omitempty"`
+	ModelAlias string `json:"model_alias,omitempty"`
+	Wake       bool   `json:"wake,omitempty"`
+	Action     string `json:"action"`
+	SessionID  string `json:"session_id,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Prompt     string `json:"prompt,omitempty"`
+	Workspace  string `json:"workspace,omitempty"`
+	Query      string `json:"query,omitempty"`
+	Limit      int    `json:"limit,omitempty"`
+	Before     int    `json:"before,omitempty"`
 }
 
 // ProjectSessionHandler serves a coordinator's session tool calls. callID is
@@ -59,9 +52,9 @@ func (t *ProjectSessionTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name: projectSessionToolName,
 		Description: "Start and manage the sessions that do this project's work. " +
-			"list shows your sessions with their state and review candidates. " +
+			"list shows your sessions with their state. " +
 			"create starts a session from a self-contained brief: the goal, constraints, acceptance checks and what to leave alone; the session does not see this conversation. " +
-			"It works in its own Git worktree unless workspace is shared; give it candidate to review a frozen change in a copy of that change. " +
+			"It works in its own Git worktree unless workspace is shared. " +
 			"send gives an existing session its next instruction or a correction, steering a running turn. " +
 			"stop interrupts a running turn. inspect reads recent history without waiting. " +
 			"Only the lead uses send/stop. Any active team member may message another member or the lead directly; preserve user authorization boundaries and copy consequential decisions to the lead. Messages are durable and attributed to the sender. " +
@@ -76,14 +69,10 @@ func (t *ProjectSessionTool) Definition() providers.ToolDefinition {
 				"session_id":  str("Target session for send, message, stop and inspect; message can also address the project lead."),
 				"title":       str("Short name for a new session."),
 				"prompt":      str("The brief for create, or the next instruction for send."),
-				"workspace":   map[string]any{"type": "string", "enum": []string{"worktree", "shared"}, "description": "worktree (default in a Git workspace) isolates changes for review; shared edits the workspace directly and suits a single writer."},
-				"candidate": map[string]any{"type": "object", "description": "Start the new session from this frozen candidate, for independent review.", "properties": map[string]any{
-					"session_id": str("Session that produced the candidate."),
-					"turn_id":    str("Turn that produced the candidate."),
-				}, "required": []string{"session_id", "turn_id"}},
-				"query":  str("Search text for inspect."),
-				"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 30},
-				"before": map[string]any{"type": "integer", "description": "inspect records before this sequence."},
+				"workspace":   map[string]any{"type": "string", "enum": []string{"worktree", "shared"}, "description": "worktree (default in a Git workspace) isolates changes on the session's own branch until they are delivered; shared edits the workspace directly and suits a single writer."},
+				"query":       str("Search text for inspect."),
+				"limit":       map[string]any{"type": "integer", "minimum": 1, "maximum": 30},
+				"before":      map[string]any{"type": "integer", "description": "inspect records before this sequence."},
 			},
 			"required": []string{"action"},
 		},

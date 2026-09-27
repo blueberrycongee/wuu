@@ -21,13 +21,9 @@ import (
 //   - the project lead cannot execute ordinary work, or bypasses the user-selected permission mode;
 //   - a managed session's result is lost, delivered twice, or re-delivered
 //     after a restart;
-//   - a candidate is applied over conflicting workspace changes, or applied
-//     twice;
-//   - two turns of one session leave overlapping candidates that can each be
-//     decided, so applying them in turn conflicts or records a change twice;
-//   - an applied or published change is offered again;
-//   - turns the user runs in a member session leave no candidate or report;
-//   - clients are not told when a candidate is frozen or decided;
+//   - a worktree session's changes reach the workspace before anyone delivers
+//     them;
+//   - turns the user runs in a member session leave no report;
 //   - a message the user writes into a managed session silently takes it
 //     from the project, or reaches the coordinator without the user's words;
 //   - stopping a member removes membership, preserves stale admitted input,
@@ -37,8 +33,8 @@ import (
 //   - an ordinary conversation cannot be added to a project, or a project
 //     takes a conversation of another workspace, another manager's session,
 //     or a coordinator;
-//   - removing a session from a project orphans its undecided proposal, or
-//     leaves the coordinator able to instruct it;
+//   - removing a session from a project leaves the coordinator able to
+//     instruct it;
 //   - host-generated delegation is mistaken for user authorization or loses
 //     attribution when no plugin runtime is loaded.
 
@@ -183,7 +179,7 @@ func deliveredClientIDs(t *testing.T, rt *runtime.Session, threadID, prefix stri
 	return ids
 }
 
-func TestProjectDelegatesAndDeliversCandidateOnce(t *testing.T) {
+func TestProjectDelegatesAndReportsResultOnce(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
 	coordinator := startProject(t, client, "Catalog search")
 	if coordinator.Source != projectSource || coordinator.Title != "Catalog search" || coordinator.PermissionMode != config.PermissionModeStandard {
@@ -221,53 +217,15 @@ func TestProjectDelegatesAndDeliversCandidateOnce(t *testing.T) {
 		result.Origin != "host" || result.PresentationKind != "session_message" || !strings.Contains(result.Content, "Set PageSize to 50 in search.go.") || !strings.Contains(result.Content, "search.go") {
 		t.Fatalf("delivered result = %+v", result)
 	}
-	wake.response <- providersResponse("Pagination is ready for your review.")
-
-	var listed ProjectCandidateResult
-	client.rpc(t, MethodProjectCandidate, ProjectCandidateParams{ProjectID: coordinator.ID, Action: "list"}, &listed)
-	if len(listed.Candidates) != 1 || listed.Candidates[0].SessionID != worker.ID || !slices.Equal(listed.Candidates[0].ChangedFiles, []string{"search.go"}) || listed.Candidates[0].Disposition != "" {
-		t.Fatalf("candidates = %+v", listed.Candidates)
-	}
-	candidate := listed.Candidates[0]
-	apply := ProjectCandidateParams{SessionID: candidate.SessionID, TurnID: candidate.TurnID, Action: "apply"}
-
-	// A conflicting workspace change leaves the workspace and the decision untouched.
-	target := filepath.Join(rt.RootDir, "search.go")
-	conflict := []byte("package search\n\nconst PageSize = 10\n")
-	if err := os.WriteFile(target, conflict, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if failure := client.call(t, MethodProjectCandidate, apply, nil); failure == nil {
-		t.Fatal("candidate applied over a conflicting change")
-	}
-	if data, _ := os.ReadFile(target); string(data) != string(conflict) {
-		t.Fatalf("conflicting apply changed the workspace: %q", data)
-	}
-	client.rpc(t, MethodProjectCandidate, ProjectCandidateParams{ProjectID: coordinator.ID, Action: "list"}, &listed)
-	if listed.Candidates[0].Disposition != "" {
-		t.Fatalf("failed apply recorded a decision: %+v", listed.Candidates[0])
-	}
-	if err := os.Remove(target); err != nil {
-		t.Fatal(err)
-	}
-
-	var applied ProjectCandidateResult
-	client.rpc(t, MethodProjectCandidate, apply, &applied)
-	if applied.Candidate == nil || applied.Candidate.Disposition != "applied" {
-		t.Fatalf("applied candidate = %+v", applied.Candidate)
-	}
-	if data, _ := os.ReadFile(target); string(data) != "package search\n\nconst PageSize = 50\n" {
-		t.Fatalf("workspace after apply = %q", data)
-	}
-	if failure := client.call(t, MethodProjectCandidate, apply, nil); failure == nil {
-		t.Fatal("candidate was applied twice")
-	}
-	decided := calls.next(t, "Plan catalog pagination")
-	if notice := lastUserRequestMessage(decided.request); notice.ClientID != "project-candidate:"+worker.ID+":"+candidate.TurnID+":applied" {
-		t.Fatalf("decision notice = %+v", notice)
-	}
-	decided.response <- providersResponse("Applied.")
+	wake.response <- providersResponse("Pagination is done.")
 	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
+	// The change stays in the session's worktree until someone delivers it.
+	if _, err := os.Stat(filepath.Join(worker.Worktree.Path, "search.go")); err != nil {
+		t.Fatalf("worktree change is missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rt.RootDir, "search.go")); !os.IsNotExist(err) {
+		t.Fatalf("worktree change reached the workspace undelivered: %v", err)
+	}
 
 	srv.Close()
 	reopened := New(rt, &lockedBuffer{})
@@ -335,81 +293,7 @@ func projectControlClientID(sessionID string, revision int64) string {
 	return "project-control:" + sessionID + ":" + jsonNumber(revision)
 }
 
-func projectCandidates(t *testing.T, client *rpcClient, projectID string) []ProjectCandidate {
-	t.Helper()
-	var listed ProjectCandidateResult
-	client.rpc(t, MethodProjectCandidate, ProjectCandidateParams{ProjectID: projectID, Action: "list"}, &listed)
-	return listed.Candidates
-}
-
-func TestProjectProposalsSupersedeAndStartFromDelivery(t *testing.T) {
-	srv, client, calls, rt := newProjectFixture(t)
-	coordinator := startProject(t, client, "Search")
-	var turn TurnStartResult
-	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: coordinator.ID, Prompt: "Plan search paging"}, &turn)
-	calls.next(t, "Plan search paging").response <- toolCallResponse("create-paging", "session", `{"action":"create","title":"Paging","prompt":"Implement paging in search.go"}`)
-	calls.next(t, "Implement paging").response <- toolCallResponse("write-search", "write_file", `{"path":"search.go","content":"package search\n\nconst PageSize = 50\n"}`)
-	calls.next(t, "Plan search paging").response <- providersResponse("Started.")
-	calls.next(t, "Implement paging").response <- providersResponse("Paged search.")
-	worker := projectManagedSessions(t, client, coordinator.ID)[0]
-
-	// The coordinator corrects the session before the user reviews its first turn.
-	calls.next(t, "Plan search paging").response <- toolCallResponse("send-docs", "session", `{"action":"send","session_id":"`+worker.ID+`","prompt":"Also document paging in api.md"}`)
-	calls.next(t, "document paging").response <- toolCallResponse("write-api", "write_file", `{"path":"api.md","content":"Results are paged.\n"}`)
-	calls.next(t, "Plan search paging").response <- providersResponse("Sent.")
-	calls.next(t, "document paging").response <- providersResponse("Documented.")
-	calls.next(t, "Plan search paging").response <- providersResponse("Ready for review.")
-	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.PendingCandidates == 1 && thread.Status == ThreadStatusIdle })
-	waitForThread(t, srv, worker.ID, func(thread Thread) bool { return thread.PendingCandidates == 1 })
-
-	candidates := projectCandidates(t, client, coordinator.ID)
-	if len(candidates) != 2 || candidates[0].Disposition != session.CandidateSuperseded || candidates[1].Disposition != "" ||
-		!slices.Equal(candidates[1].ChangedFiles, []string{"api.md", "search.go"}) {
-		t.Fatalf("candidates after two turns = %+v", candidates)
-	}
-	older, latest := candidates[0], candidates[1]
-	if failure := client.call(t, MethodProjectCandidate, ProjectCandidateParams{SessionID: worker.ID, TurnID: older.TurnID, Action: "apply"}, nil); failure == nil {
-		t.Fatal("a superseded candidate was applied")
-	}
-	var published ProjectCandidateResult
-	client.rpc(t, MethodProjectCandidate, ProjectCandidateParams{SessionID: worker.ID, TurnID: latest.TurnID, Action: "publish", URL: "https://example.test/pull/1"}, &published)
-	if published.Candidate == nil || published.Candidate.Disposition != session.CandidatePublished || published.Candidate.URL != "https://example.test/pull/1" {
-		t.Fatalf("published candidate = %+v", published.Candidate)
-	}
-	if failure := client.call(t, MethodProjectCandidate, ProjectCandidateParams{SessionID: worker.ID, TurnID: latest.TurnID, Action: "apply"}, nil); failure == nil {
-		t.Fatal("a published candidate was applied as well")
-	}
-	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.PendingCandidates == 0 })
-
-	// The next proposal holds only what was not published.
-	notice := calls.next(t, "Plan search paging")
-	if last := lastUserRequestMessage(notice.request); last.ClientID != "project-candidate:"+worker.ID+":"+latest.TurnID+":published" {
-		t.Fatalf("publish notice = %+v", last)
-	}
-	notice.response <- toolCallResponse("send-test", "session", `{"action":"send","session_id":"`+worker.ID+`","prompt":"Add a paging test"}`)
-	calls.next(t, "Add a paging test").response <- toolCallResponse("write-test", "write_file", `{"path":"search_test.go","content":"package search\n"}`)
-	calls.next(t, "Plan search paging").response <- providersResponse("Sent.")
-	calls.next(t, "Add a paging test").response <- providersResponse("Tested.")
-	calls.next(t, "Plan search paging").response <- providersResponse("Test ready.")
-	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.PendingCandidates == 1 && thread.Status == ThreadStatusIdle })
-	candidates = projectCandidates(t, client, coordinator.ID)
-	third := candidates[len(candidates)-1]
-	if len(candidates) != 3 || third.BaseRevision != latest.Revision || !slices.Equal(third.ChangedFiles, []string{"search_test.go"}) {
-		t.Fatalf("candidates after publishing = %+v", candidates)
-	}
-	client.rpc(t, MethodProjectCandidate, ProjectCandidateParams{SessionID: worker.ID, TurnID: third.TurnID, Action: "apply"}, nil)
-	if _, err := os.Stat(filepath.Join(rt.RootDir, "search_test.go")); err != nil {
-		t.Fatalf("applied candidate is missing from the workspace: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(rt.RootDir, "search.go")); !os.IsNotExist(err) {
-		t.Fatalf("apply re-delivered the published change: %v", err)
-	}
-	calls.next(t, "Plan search paging").response <- providersResponse("Applied.")
-	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
-	calls.assertIdle(t)
-}
-
-func TestProjectFreezesAndReportsUserTurns(t *testing.T) {
+func TestProjectReportsUserTurns(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
 	coordinator := startProject(t, client, "Notes")
 	var turn TurnStartResult
@@ -421,19 +305,15 @@ func TestProjectFreezesAndReportsUserTurns(t *testing.T) {
 	calls.next(t, "Draft notes.md").response <- providersResponse("Drafted.")
 	calls.next(t, "Plan the notes").response <- providersResponse("Draft ready.")
 	worker := projectManagedSessions(t, client, coordinator.ID)[0]
-	worker = waitForThread(t, srv, worker.ID, func(thread Thread) bool { return thread.PendingCandidates == 1 })
+	worker = waitForThread(t, srv, worker.ID, func(thread Thread) bool {
+		return thread.LatestCompletedTurnID != "" && thread.SessionControl != nil
+	})
 
 	var userTurn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: worker.ID, Prompt: "I will rewrite the notes"}, &userTurn)
 	calls.next(t, "rewrite the notes").response <- toolCallResponse("rewrite-notes", "write_file", `{"path":"notes.md","content":"final\n"}`)
 	calls.next(t, "rewrite the notes").response <- providersResponse("Rewritten.")
 	waitForThread(t, srv, worker.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID == userTurn.Turn.ID })
-
-	// User-initiated work remains part of the project and is frozen for review.
-	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool {
-		candidates := projectCandidates(t, client, coordinator.ID)
-		return thread.PendingCandidates == 1 && len(candidates) == 2 && candidates[1].TurnID == userTurn.Turn.ID
-	})
 	settleCoordinator(t, srv, calls, coordinator.ID, "Plan the notes", "I will inspect the notes.",
 		projectResultClientID(worker.ID, userTurn.Turn.ID))
 
@@ -607,20 +487,8 @@ func TestProjectAdoptsAndReleasesConversations(t *testing.T) {
 	result.response <- providersResponse("Steps listed.")
 	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
 
-	// An undecided proposal must be decided before the session leaves.
-	if err := session.PutCandidate(rt.SessionDir, session.Candidate{SessionID: conversation.ID, TurnID: "pending-turn", BaseRepo: rt.RootDir,
-		BaseRevision: strings.Repeat("a", 40), Revision: strings.Repeat("b", 40), ChangedFiles: []string{"README.md"}}); err != nil {
-		t.Fatal(err)
-	}
-	release := ProjectSessionParams{Action: "release", ProjectID: coordinator.ID, SessionID: conversation.ID}
-	if failure := client.call(t, MethodProjectSession, release, nil); failure == nil {
-		t.Fatal("a session with an undecided proposal left the project")
-	}
-	client.rpc(t, MethodProjectCandidate, ProjectCandidateParams{SessionID: conversation.ID, TurnID: "pending-turn", Action: "discard"}, nil)
-	settleCoordinator(t, srv, calls, coordinator.ID, "added the conversation", "Noted.", "project-candidate:"+conversation.ID+":pending-turn:discarded")
-
 	var released ProjectSessionResult
-	client.rpc(t, MethodProjectSession, release, &released)
+	client.rpc(t, MethodProjectSession, ProjectSessionParams{Action: "release", ProjectID: coordinator.ID, SessionID: conversation.ID}, &released)
 	if released.Thread.ProjectID != "" || released.Thread.Source != "" || released.Thread.SessionControl != nil {
 		t.Fatalf("released conversation = %+v", released.Thread)
 	}

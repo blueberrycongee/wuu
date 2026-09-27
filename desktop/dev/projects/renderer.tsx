@@ -3,13 +3,13 @@
 // preload, credentials, or real workspace.
 // From desktop: ./node_modules/.bin/vite --config dev/projects/vite.config.ts,
 // then open http://127.0.0.1:5243/dev/projects/. Query parameters:
-// view=coordinator|session|draft, panel=project|proposal|none, theme=dark,
-// size=20, empty (no projects yet), publisher=0 (hides Open PR), stopped, todo
-// (adds a TODO capsule beside the project status).
+// view=coordinator|session|draft, panel=project|none, theme=dark, size=20,
+// empty (no projects yet), stopped, todo (adds a TODO capsule beside the
+// project status).
 // capture.cjs writes screenshots to artifacts/projects.
 import { createRef, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Ref } from "react";
 import { createRoot } from "react-dom/client";
-import type { ProjectCandidate, ProjectCandidateParams, Thread, Turn } from "../../src/shared/protocol";
+import type { Thread, Turn } from "../../src/shared/protocol";
 import { AppSidebar } from "../../src/renderer/AppSidebar";
 import { initialState, summarizeThreadsForSidebar, type AppState } from "../../src/renderer/AppState";
 import { ConversationTitleActions } from "../../src/renderer/ConversationShellRenderers";
@@ -17,11 +17,11 @@ import { Composer } from "../../src/renderer/ComposerView";
 import { ConversationStatusCluster } from "../../src/renderer/ConversationStatusCluster";
 import { EmptyConversationHome } from "../../src/renderer/LoadingViews";
 import { ProjectActionsProvider, type ProjectActions } from "../../src/renderer/ProjectActions";
-import { ProjectStatusCapsule, useTurnProposals } from "../../src/renderer/ProjectViews";
+import { ProjectStatusCapsule } from "../../src/renderer/ProjectViews";
 import { projectSessionsOf } from "../../src/renderer/ProjectSessions";
 import { TurnView } from "../../src/renderer/TurnView";
 import { WorkspaceRightPanel } from "../../src/renderer/WorkspacePanels";
-import { workspaceProjectViewTab, workspaceProposalViewTab, type WorkspaceViewTab } from "../../src/renderer/WorkspaceViewTabs";
+import { workspaceProjectViewTab, type WorkspaceViewTab } from "../../src/renderer/WorkspaceViewTabs";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { desktopPluginHost } from "../../src/renderer/plugins/DesktopPluginRuntime";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
@@ -54,10 +54,10 @@ const projectEvent = (id: string, cause: string, session: string, name: string, 
 
 const coordinatorTurn: Turn = { id: "project-turn", status: "completed", duration_ms: 12000, items_view: "full", items: [
   { id: "goal", type: "user_message", status: "completed", text: "把目录搜索改成服务端分页，每页 50 条。保持公开 API 不变。" },
-  { id: "plan", type: "agent_message", status: "completed", text: "我会拆成两块：重建搜索索引、给结果分页。两个会话各自在 worktree 里工作，完成后我会告诉你哪些可以审阅。" },
+  { id: "plan", type: "agent_message", status: "completed", text: "我会拆成两块：重建搜索索引、给结果分页。两个会话各自在 worktree 里工作，完成后由我审查并合并。" },
   projectEvent("result", "project_result", "paginate", "Paginate search results",
-    "Session \"Paginate search results\" finished a turn: completed.\n\nAdded cursor pagination with a page size of 50 and tests.\n\nProposal awaiting the user's review (every change of the session not yet delivered): internal/search/paginate.go, internal/search/paginate_test.go, desktop/src/renderer/SearchResults.tsx"),
-  { id: "ready", type: "agent_message", terminal: true, status: "completed", text: "分页已完成，测试通过，可以审阅「Paginate search results」的改动。索引重建还在运行。" },
+    "Session \"Paginate search results\" finished a turn: completed.\n\nAdded cursor pagination with a page size of 50 and tests."),
+  { id: "ready", type: "agent_message", terminal: true, status: "completed", text: "分页已完成，测试通过，已合并「Paginate search results」的改动。索引重建还在运行。" },
   projectEvent("peer", "project_message", "index", "Rebuild the search index", "分页接口已确认，索引计数使用过滤后的总行数。"),
   ...(params.has("stopped") ? [
     projectEvent("stopped", "project_stopped", "index", "Rebuild the search index", "The user stopped the current turn. Project membership remains active."),
@@ -82,7 +82,7 @@ const sessionTurn: Turn = { id: "paginate-turn", status: "completed", duration_m
 const empty = params.has("empty");
 const threads: Thread[] = [
   ...(empty ? [] : [
-    thread("project", "Search overhaul", { source: "project", permission_mode: "standard", pending_candidates: 1, turns: [coordinatorTurn, followUpTurn], latest_completed_turn_id: "project-follow-up" }),
+    thread("project", "Search overhaul", { source: "project", permission_mode: "standard", turns: [coordinatorTurn, followUpTurn], latest_completed_turn_id: "project-follow-up" }),
     thread("index", "Rebuild the search index", {
       source: "project-session", project_id: "project", project_role: "side",
       status: params.has("stopped") ? "idle" : "in_progress",
@@ -90,7 +90,7 @@ const threads: Thread[] = [
       session_control: { ...control, state: "active" },
     }),
     thread("paginate", "Paginate search results", {
-      source: "project-session", project_id: "project", pending_candidates: 1, turns: [sessionTurn], latest_completed_turn_id: "paginate-turn",
+      source: "project-session", project_id: "project", turns: [sessionTurn], latest_completed_turn_id: "paginate-turn",
       session_control: { ...control, state: "active" },
     }),
     thread("latency", "Measure search latency", { source: "project-session", project_id: "project", session_control: { ...control, state: "active" } }),
@@ -111,55 +111,11 @@ if (params.has("long-titles")) {
   }
 }
 
-const candidates: ProjectCandidate[] = [
-  {
-    session_id: "paginate", turn_id: "paginate-turn", base_repo: "/preview", base_revision: "a".repeat(40),
-    revision: "b".repeat(40), created_at: "2026-09-25T09:30:00Z",
-    changed_files: ["internal/search/paginate.go", "internal/search/paginate_test.go", "desktop/src/renderer/SearchResults.tsx"],
-  },
-];
-
-const diff = `diff --git a/internal/search/paginate.go b/internal/search/paginate.go
-index 1111111..2222222 100644
---- a/internal/search/paginate.go
-+++ b/internal/search/paginate.go
-@@ -12,7 +12,9 @@ func Page(results []Result, cursor string) ([]Result, string) {
- 	start := decodeCursor(cursor)
--	end := start + 50
-+	end := start + pageSize
-+	if end > len(results) {
-+		end = len(results)
-+	}
- 	return results[start:end], encodeCursor(end)
- }
-`;
-
 Object.assign(window, {
   wuu: {
-    projectCandidate: async (request: ProjectCandidateParams) => {
-      if (request.action === "list") {
-        return { candidates: candidates.filter(candidate => "project_id" in request || candidate.session_id === request.session_id) };
-      }
-      const candidate = candidates.find(item => item.session_id === request.session_id && item.turn_id === request.turn_id)!;
-      if (request.action === "get") return { candidate: { ...candidate, diff } };
-      candidate.disposition = request.action === "apply" ? "applied" : request.action === "publish" ? "published" : "discarded";
-      return { candidate };
-    },
     listWorkspaceDirectory: async () => ({ root: "/preview", path: "", truncated: false, entries: [] }),
   },
 });
-
-// A publisher makes Open PR visible, as the Git Delivery example does.
-if (params.get("publisher") !== "0") {
-  void desktopPluginHost.activateGeneration({
-    pluginId: "preview:git-delivery",
-    generation: "one",
-    register(api) {
-      api.registerCommand({ id: "open-pr", title: "GitHub draft PR", contexts: ["project-candidate.publish"],
-        execute: async () => ({ url: "https://github.com/example/wuu/pull/1" }) });
-    },
-  });
-}
 
 if (params.has("composer-accessories")) {
   void desktopPluginHost.activateGeneration({
@@ -197,12 +153,9 @@ function PreviewComposer({ current, containerRef }: { current?: Thread; containe
 }
 
 function Conversation({ current }: { current: Thread }) {
-  const renderTurnProposal = useTurnProposals(current);
   return <div className="conversation-width session-flow">
-    {current.turns.filter(turn => turn.items.length).map(turn => <div key={turn.id}>
-      <TurnView turn={turn} onStreamFrame={noop} isLatestTurn cwd="/preview" />
-      {renderTurnProposal(turn.id)}
-    </div>)}
+    {current.turns.filter(turn => turn.items.length).map(turn =>
+      <TurnView key={turn.id} turn={turn} onStreamFrame={noop} isLatestTurn cwd="/preview" />)}
   </div>;
 }
 
@@ -213,7 +166,6 @@ function Fixture() {
   const [collapsedFolderIDs, setCollapsedFolderIDs] = useState<Set<string>>(() => new Set());
   const initialTabs: WorkspaceViewTab[] = params.get("panel") === "none" || empty ? [] : [
     workspaceProjectViewTab("project", "Search overhaul"),
-    ...(params.get("panel") === "proposal" ? [workspaceProposalViewTab("paginate", "Paginate search results")] : []),
   ];
   const [tabs, setTabs] = useState(initialTabs);
   const [activeTab, setActiveTab] = useState(initialTabs.at(-1)?.id);
@@ -244,7 +196,6 @@ function Fixture() {
   const actions = useMemo<ProjectActions>(() => ({
     threads, openThread: setActive,
     openProjectPanel: (project) => openTab(workspaceProjectViewTab(project.id, project.title ?? "")),
-    openProposal: (session) => openTab(workspaceProposalViewTab(session.id, session.title ?? "")),
     release: noop,
   }), []);
   const current = threads.find(item => item.id === active);

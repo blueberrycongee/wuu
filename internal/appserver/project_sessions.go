@@ -13,21 +13,14 @@ import (
 )
 
 type projectSessionView struct {
-	Role                  string                    `json:"role"`
-	SessionID             string                    `json:"session_id"`
-	Title                 string                    `json:"title"`
-	State                 string                    `json:"state"`
-	Control               string                    `json:"control,omitempty"`
-	Workspace             string                    `json:"workspace"`
-	LatestCompletedTurnID string                    `json:"latest_completed_turn_id,omitempty"`
-	TurnID                string                    `json:"turn_id,omitempty"`
-	Candidates            []projectCandidateSummary `json:"candidates,omitempty"`
-}
-
-type projectCandidateSummary struct {
-	TurnID       string   `json:"turn_id"`
-	ChangedFiles []string `json:"changed_files"`
-	Disposition  string   `json:"disposition,omitempty"`
+	Role                  string `json:"role"`
+	SessionID             string `json:"session_id"`
+	Title                 string `json:"title"`
+	State                 string `json:"state"`
+	Control               string `json:"control,omitempty"`
+	Workspace             string `json:"workspace"`
+	LatestCompletedTurnID string `json:"latest_completed_turn_id,omitempty"`
+	TurnID                string `json:"turn_id,omitempty"`
 }
 
 // projectActor resolves the live team and rejects actions after human takeover.
@@ -168,24 +161,11 @@ func (s *Server) listProjectSessions(projectID string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]string, len(managed))
-	for index, metadata := range managed {
-		ids[index] = metadata.ID
-	}
-	candidates, err := session.ListCandidates(s.rt.SessionDir, ids)
-	if err != nil {
-		return nil, err
-	}
 	views := make([]projectSessionView, 0, len(managed))
 	for _, metadata := range managed {
 		view, err := s.projectSessionView(metadata)
 		if err != nil {
 			return nil, err
-		}
-		for _, candidate := range candidates {
-			if candidate.SessionID == metadata.ID {
-				view.Candidates = append(view.Candidates, projectCandidateSummary{TurnID: candidate.TurnID, ChangedFiles: candidate.ChangedFiles, Disposition: candidate.Disposition})
-			}
 		}
 		views = append(views, view)
 	}
@@ -250,20 +230,6 @@ func (s *Server) createProjectSession(ctx context.Context, project, actor sessio
 	if workspace != "shared" && workspace != "worktree" {
 		return nil, errors.New("workspace must be worktree or shared")
 	}
-	baseRevision := ""
-	if request.Candidate != nil {
-		if _, err := s.projectManagedSession(project.ID, request.Candidate.SessionID); err != nil {
-			return nil, err
-		}
-		candidate, found, err := session.FindCandidate(s.rt.SessionDir, request.Candidate.SessionID, request.Candidate.TurnID)
-		if err != nil {
-			return nil, err
-		}
-		if !found {
-			return nil, errors.New("candidate not found")
-		}
-		baseRevision, workspace = candidate.Revision, "worktree"
-	}
 	coordinator, err := s.ensureThreadLoaded(project.ID)
 	if err != nil {
 		return nil, err
@@ -275,12 +241,12 @@ func (s *Server) createProjectSession(ctx context.Context, project, actor sessio
 	if title == "" {
 		title = excerpt(prompt, 60)
 	}
-	th, err := s.createHostSessionThreadAtRevision(projectSessionOwner, projectSessionSource, "", hostSessionCreateParams{
+	th, err := s.createHostSessionThread(projectSessionOwner, projectSessionSource, "", hostSessionCreateParams{
 		RequestID: requestID, Name: title, Visibility: sessionVisibilityUser, ContextSource: sessionContextFresh,
 		ParentSessionID: project.ID, Workspace: workspace, WorkspaceID: project.WorkspaceID,
 		Provider: provider, Model: model, Variant: variant, Effort: effort,
-		PermissionMode: project.PermissionMode, ModelAlias: request.ModelAlias,
-	}, baseRevision, role)
+		PermissionMode: project.PermissionMode, ModelAlias: request.ModelAlias, ProjectRole: role,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -432,19 +398,11 @@ func (s *Server) adoptProjectSession(projectID, sessionID string) (session.Sessi
 }
 
 // releaseProjectSession ends the project's management of a session, which
-// becomes an ordinary conversation. An undecided proposal must be decided
-// first so its changes are not orphaned.
+// becomes an ordinary conversation.
 func (s *Server) releaseProjectSession(projectID, sessionID string) (session.Session, error) {
 	metadata, err := s.projectManagedSession(projectID, sessionID)
 	if err != nil {
 		return session.Session{}, err
-	}
-	bySession, _, err := session.PendingCandidateCounts(s.rt.SessionDir, projectSessionSource)
-	if err != nil {
-		return session.Session{}, err
-	}
-	if bySession[sessionID] > 0 {
-		return session.Session{}, errors.New("decide the session's pending proposal before removing it from the project")
 	}
 	s.controlMu.Lock()
 	defer s.controlMu.Unlock()

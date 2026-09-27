@@ -330,8 +330,8 @@ describe("AppSidebar layout", () => {
   });
 
   // The failure cases these guard: a project or its sessions also crowd the
-  // workspace list, a session of an archived project disappears, the project
-  // row hides pending reviews, and the Projects entries do nothing.
+  // workspace list, a session of an archived project disappears, and the
+  // Projects entries do nothing.
   function sidebarThread(id: string, title: string, overrides: Partial<ThreadSummary> = {}): ThreadSummary {
     return {
       id, title, cwd: "/repo/wuu", workspace_id: "project-1", status: "idle", pinned: false, archived: false,
@@ -346,12 +346,12 @@ describe("AppSidebar layout", () => {
     return group;
   }
 
-  it("lists projects apart from their workspace with their pending reviews", () => {
+  it("lists projects apart from their workspace", () => {
     renderSidebar({
       expandedSidebarSectionIDs: new Set(["project-1"]),
       workspaceThreadsByWorkspaceID: {
         "project-1": [
-          sidebarThread("coordinator", "Search overhaul", { source: "project", pending_candidates: 2 }),
+          sidebarThread("coordinator", "Search overhaul", { source: "project" }),
           sidebarThread("session", "Paginate results", { source: "project-session", project_id: "coordinator", status: "in_progress" }),
           sidebarThread("orphan", "Orphaned session", { source: "project-session", project_id: "archived-project" }),
           sidebarThread("chat", "Ordinary conversation"),
@@ -361,7 +361,6 @@ describe("AppSidebar layout", () => {
 
     const projectRow = projectsGroup().querySelector<HTMLElement>(".project-thread-row");
     expect(projectRow?.textContent).toContain("Search overhaul");
-    expect(projectRow?.querySelector(".project-thread-pending")?.textContent).toBe("2");
     expect(projectRow?.classList.contains("running")).toBe(true);
     const workspace = container.querySelector<HTMLElement>('section[data-section-id="project-1"]');
     const workspaceTitles = [...workspace!.querySelectorAll(".thread-row-title")].map((title) => title.textContent);

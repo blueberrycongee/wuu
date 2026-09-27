@@ -1276,20 +1276,6 @@ func migrateSchema(db *sql.DB) error {
 			FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_session_inbox_pending ON session_inbox(session_id, delivered_at, created_at)`,
-		`CREATE TABLE IF NOT EXISTS session_candidates (
-			session_id TEXT NOT NULL,
-			turn_id TEXT NOT NULL,
-			base_repo TEXT NOT NULL,
-			base_revision TEXT NOT NULL,
-			revision TEXT NOT NULL,
-			changed_files_json TEXT NOT NULL DEFAULT '[]',
-			disposition TEXT NOT NULL DEFAULT '',
-			url TEXT NOT NULL DEFAULT '',
-			created_at TEXT NOT NULL,
-			disposed_at TEXT,
-			PRIMARY KEY(session_id, turn_id),
-			FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
-		)`,
 		`CREATE TABLE IF NOT EXISTS plugin_turn_lifecycle_outbox (
 				plugin_id TEXT NOT NULL,
 				request_id TEXT NOT NULL,
@@ -1900,8 +1886,11 @@ WHERE workflow_id = ''`); err != nil {
 	if _, err := db.Exec(`DELETE FROM session_controls WHERE manager_id GLOB 'agent-[0-9a-f]*'`); err != nil {
 		return fmt.Errorf("remove retired collaboration session controls: %w", err)
 	}
-	if err := addColumnIfMissing(db, "session_candidates", "url", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
+	// Project proposals awaiting the user's review were removed before release;
+	// agents deliver worktree changes themselves. Remove this cleanup once no
+	// development store predates the removal.
+	if _, err := db.Exec(`DROP TABLE IF EXISTS session_candidates`); err != nil {
+		return fmt.Errorf("drop retired project candidates: %w", err)
 	}
 	if err := addColumnIfMissing(db, "session_inbox", "cause", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err

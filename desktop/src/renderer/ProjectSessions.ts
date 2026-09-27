@@ -13,7 +13,6 @@ export function isProjectCoordinator(thread: Pick<Thread, "source">): boolean {
 export type ProjectRowSummary = {
   running: boolean;
   unread: boolean;
-  pendingCandidates: number;
 };
 
 export type ProjectDirectory = {
@@ -54,7 +53,6 @@ export function projectDirectory(
       // Opening this row reads the coordinator, not its hidden member sessions.
       unread: project.id !== activeThreadID && !isThreadExecuting(project) &&
         isThreadUnread(project, lastViewedTurnByThreadID[project.id]),
-      pendingCandidates: project.pending_candidates ?? 0,
     });
   }
   return { projects, sessionsByProjectID, summaries, managedSessionIDs };

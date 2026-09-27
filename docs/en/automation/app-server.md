@@ -65,10 +65,9 @@ workspace. The returned thread has `source: "project"` and follows ordinary
 session permission and model settings. The lead can work directly and manages
 other sessions through its `session` tool. Each managed session is an
 ordinary thread with `source: "project-session"` and `project_id` naming its
-coordinator, and its `session_control` names the project as `manager_name`. Project
-threads carry `pending_candidates`: a session's undecided candidates, or all of a
-coordinator's. The count is refreshed and announced when a candidate is frozen or
-decided.
+coordinator, and its `session_control` names the project as `manager_name`.
+A worktree session's changes stay in its worktree until the team delivers them with
+ordinary Git commands; no protocol step waits for a user decision.
 
 Managed threads expose `project_role: "side" | "worker"`; older members default to
 worker. `session create` accepts `role` (worker by default) and optional
@@ -88,14 +87,13 @@ The coordinator receives host events as user items with `origin: "plugin"`,
 | `project_result` | A managed turn ended, with what the user wrote into it | Yes, except interrupted turns |
 | `project_stopped` | The user stopped a member's current turn | No, joins the next turn |
 | `project_user_message` | The user wrote directly to a member | No, joins the next turn |
-| `project_applied`, `project_discarded`, `project_published` | The user decided a candidate | Yes |
 | `project_adopted` | The user added a conversation to the project | Yes |
 | `project_released` | The user removed a session from the project | No, joins the next turn |
 
 Starting, steering, queuing or interrupting a turn in a project member keeps its
 membership active. Direct user messages send a notice to the coordinator without
 waking it from idle. Interrupted results are also delivered without waking an idle
-coordinator; normal results wake it. Worktree changes remain available for review.
+coordinator; normal results wake it. Worktree changes stay in the member's worktree.
 The same interrupted-result policy applies after recovery and to reports sent to
 the Side Agent that dispatched the member.
 The `thread/control/take` and `thread/control/return` ownership lifecycle is for
@@ -103,25 +101,8 @@ plugin-managed sessions, not project members.
 
 `project/session` changes membership: `adopt` with `project_id` and `session_id`
 brings an ordinary conversation of the project's workspace under the project, and
-`release` makes a managed session an ordinary conversation again once its pending
-candidate is decided. Both return the updated `thread`.
-
-`project/candidate` reviews worktree changes. A candidate holds every change of its
-session not yet applied or published; a newer one supersedes the session's undecided
-candidates.
-
-| Action | Parameters | Result |
-|---|---|---|
-| `list` | `project_id` or `session_id` | `candidates`, oldest first |
-| `get` | `session_id`, `turn_id` | `candidate` with `diff` |
-| `apply` | `session_id`, `turn_id` | `candidate` with `disposition: "applied"` |
-| `discard` | `session_id`, `turn_id` | `candidate` with `disposition: "discarded"` |
-| `publish` | `session_id`, `turn_id`, `url` | `candidate` with `disposition: "published"` and `url` |
-
-`apply` writes only the frozen change into the workspace and leaves it unstaged. A
-conflict returns an error and changes neither the workspace nor the candidate. An
-extension publishes a candidate; `publish` records the link it returned. A candidate
-takes one decision, and a superseded one takes none.
+`release` makes a managed session an ordinary conversation again. Both return the
+updated `thread`.
 
 ## Probe the protocol
 

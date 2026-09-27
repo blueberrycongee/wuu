@@ -56,8 +56,8 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 `source: "project"`，遵循普通会话的模型和权限设置。主 Agent 可以直接动手，通过
 `session` 工具管理其他会话。每个托管会话都是普通会话，带
 `source: "project-session"`，`project_id` 指向其协调者；它的 `session_control` 以
-`manager_name` 给出项目名。项目相关会话带 `pending_candidates`：托管会话自己未决定的候选数，
-或协调者全部会话的候选数。候选被冻结或决定时，这个计数会刷新并通知。
+`manager_name` 给出项目名。worktree 会话的改动留在它的 worktree 里，由团队用普通的 Git
+命令交付；协议里没有等待用户决定的步骤。
 
 托管会话提供 `project_role: "side" | "worker"`，旧成员默认视为 Worker。
 `session create` 接受 `role`（默认 worker）和可选的 `model_alias`。只有主 Agent
@@ -75,33 +75,17 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 | `project_result` | 托管会话的一个回合结束，附带用户在其中写的内容 | 是，中断的回合除外 |
 | `project_stopped` | 用户停止了成员的当前回合 | 否，随下一个回合送达 |
 | `project_user_message` | 用户直接给成员发了消息 | 否，随下一个回合送达 |
-| `project_applied`、`project_discarded`、`project_published` | 用户决定了候选 | 是 |
 | `project_adopted` | 用户把对话加入了项目 | 是 |
 | `project_released` | 用户把会话移出了项目 | 否，随下一个回合送达 |
 
 在项目成员中开始、引导、排队或中断回合，成员关系仍保持活跃。用户直接发消息会通知协调者，
 但不会唤醒空闲的协调者。中断结果也会送达而不唤醒空闲的协调者；正常结果会唤醒它。
 恢复后补发的中断结果，以及发给派遣该成员的 Side Agent 的报告，也遵循相同的不唤醒规则。
-worktree 改动仍可供审阅。`thread/control/take` 和 `thread/control/return` 的控制权生命周期
+worktree 改动留在成员的 worktree 里。`thread/control/take` 和 `thread/control/return` 的控制权生命周期
 用于插件托管会话，不用于项目成员。
 
 `project/session` 修改项目成员：`adopt` 传入 `project_id` 和 `session_id`，把项目所在工作区
-的普通对话交给项目管理；`release` 在托管会话的待决候选已决定后，让它重新成为普通对话。两者都
-返回更新后的 `thread`。
-
-`project/candidate` 用于审阅 worktree 改动。一个候选包含该会话所有尚未应用或发布的改动；新候选
-会取代该会话未决定的旧候选。
-
-| 动作 | 参数 | 结果 |
-|---|---|---|
-| `list` | `project_id` 或 `session_id` | `candidates`，按时间先后 |
-| `get` | `session_id`、`turn_id` | 带 `diff` 的 `candidate` |
-| `apply` | `session_id`、`turn_id` | `disposition: "applied"` 的 `candidate` |
-| `discard` | `session_id`、`turn_id` | `disposition: "discarded"` 的 `candidate` |
-| `publish` | `session_id`、`turn_id`、`url` | `disposition: "published"` 且带 `url` 的 `candidate` |
-
-`apply` 只把冻结的改动写入工作区，不暂存。发生冲突时返回错误，工作区和候选都不变。候选由扩展
-发布，`publish` 记录扩展返回的链接。每个候选只能决定一次，已被取代的候选不能再决定。
+的普通对话交给项目管理；`release` 让托管会话重新成为普通对话。两者都返回更新后的 `thread`。
 
 ## 查询订阅状态
 

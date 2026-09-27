@@ -2395,43 +2395,6 @@ html[data-focus-modality="keyboard"] :is(
   height: var(--sidebar-primary-icon-size);
 }
 
-/* A project's pending reviews count sits beside the right-edge status slot
- * and gives way to the hover actions, like the fork marker. */
-.project-thread-pending {
-  position: absolute;
-  top: 50%;
-  right: calc(var(--sidebar-row-pad-x) + var(--sidebar-fork-slot-inset));
-  z-index: 1;
-  min-width: var(--sidebar-row-action-size);
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--ink) 8%, transparent);
-  color: var(--ink);
-  font-size: var(--font-xs);
-  font-variant-numeric: tabular-nums;
-  line-height: 1.5;
-  padding-inline: 4px;
-  text-align: center;
-  pointer-events: none;
-  transform: translateY(-50%);
-  transition: opacity var(--motion-fast) var(--ease-out);
-}
-
-.thread-row:is(.running, .has-unread, .pending-switch) .project-thread-pending {
-  right: calc(var(--sidebar-row-pad-x) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
-}
-
-.thread-row:is(:hover, :focus-within) .project-thread-pending {
-  opacity: 0;
-}
-
-.thread-row:has(.project-thread-pending) .thread-row-main > .thread-row-title {
-  padding-right: calc(var(--sidebar-row-action-size) + var(--sidebar-accessory-gap));
-}
-
-.thread-row:is(.running, .has-unread, .pending-switch):has(.project-thread-pending) .thread-row-main > .thread-row-title {
-  padding-right: calc(var(--sidebar-row-action-size) * 2 + var(--sidebar-action-gap) + var(--sidebar-accessory-gap));
-}
-
 /* Dropping a conversation on a project row adds it to the project. */
 .thread-row.project-thread-row.drop-active {
   background: color-mix(in srgb, var(--sidebar-accent) 10%, transparent);

@@ -63,7 +63,7 @@ import {
   type WorkspaceFileDirtyState,
 } from "./WorkspaceFiles";
 import { WorkspaceReviewPanel } from "./WorkspaceReviewPanels";
-import { ProjectPanel, ProposalPanel } from "./ProjectPanels";
+import { ProjectPanel } from "./ProjectPanels";
 import { WorkspacePanelLoading } from "./LoadingViews";
 import type { WorkspaceFileViewTab, WorkspaceViewTab } from "./WorkspaceViewTabs";
 import { handleTabListKeyDown, useTabCloseFocusRestoration } from "./TabKeyboardNavigation";
@@ -999,8 +999,6 @@ export function WorkspaceRightPanel({
                   />
                 ) : activeTab.kind === "project" ? (
                   <ProjectPanel projectID={activeTab.projectID} />
-                ) : activeTab.kind === "proposal" ? (
-                  <ProposalPanel sessionID={activeTab.sessionID} />
                 ) : activeTab.kind === "plugin" && workbenchController ? (
                   <PluginViewContent
                     controller={workbenchController}
@@ -1346,21 +1344,20 @@ function workspaceToolFor(view: WorkspacePanelView): (typeof WORKSPACE_TOOL_ITEM
 }
 
 function workspaceViewTabLabel(tab: WorkspaceViewTab): string {
-  return tab.kind === "diff" || tab.kind === "file" || tab.kind === "plugin" || tab.kind === "artifact" ||
-    tab.kind === "project" || tab.kind === "proposal"
+  return tab.kind === "diff" || tab.kind === "file" || tab.kind === "plugin" || tab.kind === "artifact" || tab.kind === "project"
     ? tab.title
     : translateCurrent(workspaceToolFor(tab.kind).titleKey);
 }
 
 function workspaceViewTabTooltip(tab: WorkspaceViewTab): string {
-  if (tab.kind === "plugin" || tab.kind === "artifact" || tab.kind === "project" || tab.kind === "proposal") return tab.title;
+  if (tab.kind === "plugin" || tab.kind === "artifact" || tab.kind === "project") return tab.title;
   return tab.kind === "diff" || tab.kind === "file"
     ? tab.path
     : translateCurrent(workspaceToolFor(tab.kind).titleKey);
 }
 
 function WorkspaceViewTabIcon({ tab, className }: { tab: WorkspaceViewTab; className?: string }): JSX.Element {
-  if (tab.kind === "diff" || tab.kind === "proposal") {
+  if (tab.kind === "diff") {
     return <FileDiff className={className} />;
   }
   if (tab.kind === "project") {

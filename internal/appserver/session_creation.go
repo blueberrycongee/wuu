@@ -36,6 +36,7 @@ type hostSessionCreateParams struct {
 	WorkspaceID     string
 	WorkspaceRoot   string
 	ModelAlias      string
+	ProjectRole     string
 	Provider        string
 	Model           string
 	Variant         string
@@ -60,10 +61,6 @@ type hostSessionLaunchParams struct {
 }
 
 func (s *Server) createHostSessionThread(owner, source, id string, params hostSessionCreateParams) (*threadState, error) {
-	return s.createHostSessionThreadAtRevision(owner, source, id, params, "", "")
-}
-
-func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, params hostSessionCreateParams, baseRevision, projectRole string) (*threadState, error) {
 	if s.rt == nil || s.rt.StreamRunner == nil {
 		return nil, errors.New("runtime session is required")
 	}
@@ -163,7 +160,7 @@ func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, par
 		if err != nil {
 			return nil, err
 		}
-		createdWorktree, err := manager.OpenOrCreate(worktreepkg.OpenOrCreateOptions{SessionID: id, WorkerID: "session", BaseRevision: baseRevision})
+		createdWorktree, err := manager.OpenOrCreate(worktreepkg.OpenOrCreateOptions{SessionID: id, WorkerID: "session"})
 		if err != nil {
 			return nil, err
 		}
@@ -186,7 +183,7 @@ func (s *Server) createHostSessionThreadAtRevision(owner, source, id string, par
 		WorktreePath: worktree.Path, WorktreeBaseHEAD: worktree.BaseHEAD, WorktreeBaseRepo: worktree.BaseRepo,
 		Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant,
 		Effort: selection.Effort, Speed: selection.Speed, PermissionMode: selection.PermissionMode, ApproveForMe: selection.ApproveForMe,
-		ProjectRole: projectRole, Instructions: params.Instructions, ToolPolicyJSON: toolPolicyJSON,
+		ProjectRole: params.ProjectRole, Instructions: params.Instructions, ToolPolicyJSON: toolPolicyJSON,
 	}
 	var records []session.HistoryRecord
 	artifactStateDir := ""

@@ -50,11 +50,9 @@ type threadState struct {
 	// ProjectID is the coordinator of a project's managed session.
 	ProjectID   string
 	ProjectRole string
-	// PendingCandidates mirrors Thread.PendingCandidates for project threads.
-	PendingCandidates int
-	ParentID          string
-	AgentPath         string
-	History           []providers.ChatMessage
+	ParentID    string
+	AgentPath   string
+	History     []providers.ChatMessage
 	// historyHeadSeq is the physical append-only session_messages head that
 	// History was reconstructed through. It must not be derived from the
 	// logical messages: a checkpoint may retain no records or only old seqs.
@@ -303,11 +301,10 @@ type Server struct {
 	controlMu       sync.Mutex
 	projectCreateMu sync.Mutex
 	// inboxMu orders deliveries into a session so pending input is admitted
-	// in creation order; candidateMu serializes candidate decisions.
-	inboxMu     sync.Mutex
-	candidateMu sync.Mutex
-	sideTurnMu  sync.Mutex
-	sideTurns   map[string]*sideThreadTurn
+	// in creation order.
+	inboxMu    sync.Mutex
+	sideTurnMu sync.Mutex
+	sideTurns  map[string]*sideThreadTurn
 }
 
 func New(rt *runtime.Session, out io.Writer) *Server {
@@ -1109,8 +1106,6 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleThreadControl(ctx, req)
 	case "thread/control/take":
 		return s.handleThreadTakeControl(req)
-	case MethodProjectCandidate:
-		return s.handleProjectCandidate(ctx, req)
 	case MethodProjectSession:
 		return s.handleProjectSession(req)
 	case MethodThreadPin:
