@@ -35,6 +35,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
           data-can-select-workspace={props.canSelectWorkspace}
           data-queued={props.queuedMessages.map((message) => message.text).join("|")}
           data-send-disabled={props.sendDisabled}
+          data-running={props.running}
           data-main-conversation-composer={
             props.mainConversation ? variant : undefined
           }
@@ -471,6 +472,47 @@ describe("main composer focus continuity", () => {
     natural += 500;
     act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
     expect(viewport.scrollTop).toBe(natural - 600);
+  });
+
+  it.each(["edit failure", "send failure", "stop", "success"])("settles a slow history submission after %s", async (outcome) => {
+    await renderApp(true);
+    let finishEdit!: (result: { thread: Thread }) => void;
+    let failEdit!: (error: Error) => void;
+    window.wuu.editThreadMessage = vi.fn().mockImplementation(() => new Promise((resolve, reject) => {
+      finishEdit = resolve;
+      failEdit = reject;
+    }));
+    if (outcome === "send failure") vi.mocked(window.wuu.startTurn).mockRejectedValue(new Error("send unavailable"));
+    await act(async () => container.querySelector<HTMLButtonElement>(".message-edit-button")!.click());
+    const editor = container.querySelector<HTMLTextAreaElement>("[data-user-message-id] textarea")!;
+    await enterCommand(editor, "replacement query");
+    expect(editor.disabled).toBe(true);
+    expect(container.querySelector('[data-main-conversation-composer="dock"]')?.getAttribute("data-running")).toBe("true");
+    expect(window.wuu.startTurn).not.toHaveBeenCalled();
+    if (outcome === "stop") {
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="stop-probe"]')!.click());
+    }
+    await act(async () => {
+      if (outcome === "edit failure") failEdit(new Error("edit unavailable"));
+      else finishEdit({ thread: { ...persistedThread(), turns: [] } });
+    });
+    await flushAsync();
+    if (outcome === "edit failure") {
+      expect(editor.isConnected).toBe(true);
+      expect(editor.disabled).toBe(false);
+      expect(editor.value).toBe("replacement query");
+      expect(window.wuu.startTurn).not.toHaveBeenCalled();
+    } else if (outcome === "stop") {
+      expect(window.wuu.startTurn).not.toHaveBeenCalled();
+      expect(container.textContent).toContain("replacement query");
+    } else if (outcome === "send failure") {
+      expect(mainComposer("dock").value).toBe("replacement query");
+    } else {
+      expect(window.wuu.startTurn).toHaveBeenCalledTimes(1);
+    }
+    if (outcome !== "success") {
+      expect(container.querySelector('[data-main-conversation-composer="dock"]')?.getAttribute("data-running")).toBe("false");
+    }
   });
 
   it("focuses the dock composer after /new", async () => {

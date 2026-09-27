@@ -346,6 +346,24 @@
   margin-top: 16px;
 }
 
+.user-question-submit,
+.user-question-cancel,
+.user-question-skip {
+  position: relative;
+}
+
+:is(.user-question-submit, .user-question-cancel, .user-question-skip)[aria-busy="true"] > span {
+  opacity: 0;
+}
+
+:is(.user-question-submit, .user-question-cancel, .user-question-skip) > .control-busy-icon {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
 .user-question-actions button {
   display: inline-flex;
   align-items: center;
@@ -403,6 +421,10 @@
   color: var(--paper);
   background: var(--ink);
   opacity: 0.28;
+}
+
+.user-question-card button[aria-busy="true"]:disabled {
+  opacity: 1;
 }
 
 .user-question-error {
@@ -1715,6 +1737,14 @@
 .composer-send-button:disabled,
 .composer-send-button:disabled:hover {
   background: transparent;
+}
+
+.composer-send-button[aria-busy="true"]:disabled {
+  color: var(--paper);
+}
+
+.composer-send-button[aria-busy="true"]:disabled::before {
+  background: var(--ink);
 }
 
 .composer-stop-button::before {

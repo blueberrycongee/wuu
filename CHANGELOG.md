@@ -140,6 +140,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Project status now shares the conversation capsule row with TODO and plugin
   status, using consistent sizing and alignment above the composer.
 
+- History-message edits now share the composer submission lifecycle, including
+  pending feedback, Stop, and failure recovery without a stuck sending notice.
+  Sending feedback stays on the input's action button, including question
+  responses, instead of redundant status text; actionable errors remain visible.
+
 - Keep sidebar conversation titles and fork markers clear of the status dot
   while a conversation is loading.
 

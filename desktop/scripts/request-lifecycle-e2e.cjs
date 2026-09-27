@@ -8,11 +8,26 @@ const evidence = path.join(desktopRoot, "out/e2e/request-lifecycle");
 process.env.WUU_STREAM_E2E_CWD = repoRoot;
 process.env.WUU_REQUEST_LIFECYCLE_E2E = "1";
 app.setPath("userData", fs.mkdtempSync(path.join(require("node:os").tmpdir(), "wuu-request-lifecycle-")));
+// The scenarios replace their window; only run() decides when the suite ends.
+app.on("window-all-closed", () => {});
 const gates = new Map();
 const queued = [];
-ipcMain.handle("test:request-lifecycle", (_event, method, params) => new Promise((resolve) => gates.set(method, { params, resolve })));
+ipcMain.handle("test:request-lifecycle", (_event, method, params) => new Promise((resolve, reject) => gates.set(method, { params, resolve, reject })));
 ipcMain.on("test:queued-input", (_event, value) => queued.push(value));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+function setVisualTheme(theme, font) {
+  document.documentElement.dataset.theme = theme;
+  // Direct theme stamping bypasses the picker; use the base theme's CSS tokens.
+  for (const name of Array.from(document.documentElement.style)) {
+    if (name.startsWith("--wuu-")) document.documentElement.style.removeProperty(name);
+  }
+  document.documentElement.style.setProperty("--conversation-message-font-size", `${font}px`);
+  document.documentElement.style.setProperty("--appearance-scale", String(font / 14));
+  return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    .then(() => Promise.all((document.querySelector(".user-message-edit")?.getAnimations() ?? [])
+      .filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity)
+      .map(animation => animation.finished.catch(() => {}))));
+}
 async function until(read, label) {
   const deadline = Date.now() + 10000;
   while (Date.now() < deadline) { const value = await read(); if (value) return value; await sleep(25); }
@@ -21,7 +36,7 @@ async function until(read, label) {
 async function run() {
   fs.mkdirSync(evidence, { recursive: true });
   const win = new BrowserWindow({ width: 1100, height: 820, show: false, webPreferences: {
-    contextIsolation: true, nodeIntegration: false, sandbox: false,
+    contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false,
     preload: path.join(__dirname, "streaming-e2e-preload.cjs"),
   } });
   const evaluate = (fn, ...args) => win.webContents.executeJavaScript(`(${fn.toString()})(...${JSON.stringify(args)})`);
@@ -61,11 +76,7 @@ async function run() {
   await until(() => evaluate(() => document.querySelector('[data-wuu-state="pending"]')?.getAttribute("aria-busy") === "true"), "stop feedback");
   for (const [theme, width, font] of [["light", 1100, 14], ["dark", 760, 20]]) {
     win.setSize(width, 820);
-    await evaluate((theme, font) => {
-      document.documentElement.dataset.theme = theme;
-      document.documentElement.style.setProperty("--conversation-message-font-size", `${font}px`);
-      document.documentElement.style.setProperty("--appearance-scale", String(font / 14));
-    }, theme, font);
+    await evaluate(setVisualTheme, theme, font);
     await sleep(100);
     fs.writeFileSync(path.join(evidence, `stopping-${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG());
     assert(await evaluate(() => {
@@ -88,6 +99,79 @@ async function run() {
   fs.writeFileSync(path.join(evidence, "confirmed-stop.png"), (await win.webContents.capturePage()).toPNG());
   console.log("PASS: immediate queue, event-first timing, graphical Stop, terminal-before-RPC, ordered held inputs, two rendered layouts");
   win.destroy();
+  await verifyHistoryEdits();
   app.quit();
+}
+
+async function verifyHistoryEdits() {
+  for (const outcome of ["edit-failure", "send-failure", "stop", "success"]) {
+    gates.clear();
+    const win = new BrowserWindow({ width: 1100, height: 820, show: false, webPreferences: {
+      contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false,
+      preload: path.join(__dirname, "streaming-e2e-preload.cjs"),
+    } });
+    const evaluate = (fn, ...args) => win.webContents.executeJavaScript(`(${fn.toString()})(...${JSON.stringify(args)})`);
+    await win.loadFile(path.join(desktopRoot, "out/renderer/index.html"));
+    await until(() => evaluate(() => Boolean(document.querySelector(".composer textarea"))), "history fixture composer");
+    await evaluate(() => {
+      const input = document.querySelector(".composer textarea");
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(input, "Original question");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await evaluate(() => document.querySelector(".composer textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    (await until(() => gates.get("thread/start"), "fixture creation")).resolve();
+    const admission = await until(() => gates.get("turn/start"), "fixture admission");
+    admission.resolve();
+    await until(() => evaluate(() => Boolean(document.querySelector('[data-user-message-id^="user-"]'))), "fixture acknowledgement");
+    const threadID = admission.params.threadId;
+    win.webContents.send("test:server-event", { kind: "notification", workdir: repoRoot, message: {
+      method: "turn/completed", params: { thread_id: threadID, turn: {
+        id: `turn-${threadID}`, status: "interrupted", items_view: "full",
+        items: [{ id: `user-${threadID}`, type: "user_message", text: "Original question" }],
+      } },
+    } });
+    await until(() => evaluate(() => !document.querySelector(".composer-stop-button")), "fixture stopped");
+    gates.delete("turn/start");
+    await evaluate(() => document.querySelector(".message-edit-button").click());
+    await until(() => evaluate(() => Boolean(document.querySelector("[data-user-message-id] textarea"))), "history editor");
+    await evaluate(() => {
+      const input = document.querySelector("[data-user-message-id] textarea");
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(input, "Replacement question: preserve this draft if the network fails.");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await evaluate(() => document.querySelector("[data-user-message-id] textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    const edit = await until(() => gates.get("thread/edit-message"), "edit preparation");
+    await until(() => evaluate(() => document.querySelector("[data-user-message-id] textarea")?.disabled &&
+      Boolean(document.querySelector(".composer-stop-button"))), "shared preparation feedback");
+    assert.equal(gates.has("turn/start"), false);
+    if (outcome === "success") {
+      for (const [theme, width, font] of [["light", 1100, 14], ["dark", 760, 20]]) {
+        win.setSize(width, 820);
+        await evaluate(setVisualTheme, theme, font);
+        fs.writeFileSync(path.join(evidence, `history-pending-${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG());
+      }
+    }
+    if (outcome === "stop") await evaluate(() => document.querySelector(".composer-stop-button").click());
+    if (outcome === "edit-failure") edit.reject(new Error("Edit unavailable"));
+    else edit.resolve();
+    if (outcome === "success" || outcome === "send-failure") {
+      const sending = await until(() => gates.get("turn/start"), "replacement admission");
+      assert.equal(sending.params.text, "Replacement question: preserve this draft if the network fails.");
+      if (outcome === "send-failure") sending.reject(new Error("Send unavailable"));
+      else sending.resolve();
+    }
+    await until(() => evaluate(outcome => {
+      const editor = document.querySelector("[data-user-message-id] textarea");
+      if (outcome === "edit-failure") return editor && !editor.disabled && editor.value.startsWith("Replacement question");
+      if (outcome === "send-failure") return !editor && document.querySelector(".composer textarea")?.value.startsWith("Replacement question");
+      if (outcome === "stop") return !editor && !document.querySelector(".composer-stop-button");
+      return !editor && Boolean(document.querySelector('[data-user-message-id^="user-"]'));
+    }, outcome), `history ${outcome} settlement`);
+    if (outcome !== "success") assert(await evaluate(() => !document.querySelector(".composer-stop-button")));
+    if (outcome === "edit-failure" || outcome === "stop") assert.equal(gates.has("turn/start"), false);
+    fs.writeFileSync(path.join(evidence, `history-${outcome}.png`), (await win.webContents.capturePage()).toPNG());
+    win.destroy();
+  }
+  console.log("PASS: history preparation, edit/send failures preserve input, Stop prevents admission, success, two rendered layouts");
 }
 app.whenReady().then(run).catch((error) => { console.error(error); app.exit(1); });

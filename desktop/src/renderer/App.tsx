@@ -4413,6 +4413,7 @@ export function App(): JSX.Element {
     targetThread = activeThreadForState(appStateRef.current),
     targetPane = appStateRef.current.activePane,
     onThreadCreated?: (thread: Thread) => void,
+    prepareThread?: () => Promise<Thread>,
   ): Promise<boolean> {
     // Captured before any await: on a brand-new conversation the thread
     // itself is created over IPC first, and the optimistic turn's live
@@ -4429,6 +4430,7 @@ export function App(): JSX.Element {
       !currentState.initialized ||
       targetThread?.read_only ||
       submissionTargetPending ||
+      turnAdmissionsRef.current.has(targetThread?.id ?? currentState.activeSessionTabID) ||
       (targetThread && isThreadRunning(targetThread) &&
         !activeTurnIsAnswerReady(targetThread))
     ) {
@@ -4477,9 +4479,9 @@ export function App(): JSX.Element {
     const optimisticTurn = createOptimisticTurn(message, sendClickedAtMs);
     const previousTurnIDs = new Set(targetThread?.turns.map((turn) => turn.id));
     if (!targetThread || activeThreadIDForState(currentState) === targetThread.id) {
-      requestSubmittedQueryScroll(optimisticTurn.items[0].id);
-      appStateRef.current = { ...currentState, running: true, status: localizedText("app.sendingRequest") };
-      setState((current) => ({ ...current, running: true, status: localizedText("app.sendingRequest") }));
+      if (!prepareThread) requestSubmittedQueryScroll(optimisticTurn.items[0].id);
+      appStateRef.current = { ...currentState, running: true, status: "" };
+      setState((current) => ({ ...current, running: true, status: "" }));
     }
     let optimisticTurnID: string | undefined;
     let optimisticThreadID: string | undefined;
@@ -4500,7 +4502,7 @@ export function App(): JSX.Element {
     }) : undefined;
     try {
       let thread =
-        targetThread ??
+        (prepareThread ? await prepareThread() : targetThread) ??
         requireThread(
           await Promise.race([window.wuu.startThread(projectDraft && activeContext.kind === "project" ? {
             // A renamed draft names the project; otherwise its goal does.
@@ -4604,6 +4606,9 @@ export function App(): JSX.Element {
         };
         appStateRef.current = adoptThread(appStateRef.current);
         setState(adoptThread);
+      }
+      if (prepareThread && activeThreadIDForState(appStateRef.current) === thread.id) {
+        requestSubmittedQueryScroll(optimisticTurn.items[0].id);
       }
       optimisticTurnID = optimisticTurn.id;
       optimisticThreadID = thread.id;
@@ -4722,8 +4727,9 @@ export function App(): JSX.Element {
   async function sendComposerMessageToThread(
     message: QueuedComposerMessage,
     targetThread: Thread,
+    prepareThread?: () => Promise<Thread>,
   ): Promise<boolean> {
-    return sendComposerMessage(message, targetThread);
+    return sendComposerMessage(message, targetThread, appStateRef.current.activePane, undefined, prepareThread);
   }
 
   const failedDraftTabID = failedDraftTabIDs[0];

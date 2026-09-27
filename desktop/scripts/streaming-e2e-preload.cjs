@@ -101,6 +101,12 @@ contextBridge.exposeInMainWorld("wuu", {
   },
   resumeThread: async (id) => ({ thread: threads.get(id) ?? null }),
   forkThread: async () => ({ thread: null }),
+  editThreadMessage: async (threadId) => {
+    await ipcRenderer.invoke("test:request-lifecycle", "thread/edit-message", { threadId });
+    const thread = { ...threads.get(threadId), turns: [], status: "idle" };
+    threads.set(threadId, thread);
+    return { thread };
+  },
   listThreads: async () => ({ threads: process.env.WUU_STREAM_E2E_SIDEBAR_THREADS ? [...threads.values()] : [] }),
   listArchivedThreads: async () => ({ threads: [] }),
   queueTurn: async (threadId, text, _images, id, _files, _permission, _document, _parts, _context, hold) => {
