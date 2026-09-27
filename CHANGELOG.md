@@ -13,6 +13,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Long conversations spend less renderer CPU time rebuilding composer query
   history and recognizing legacy internal notifications, preserving history recall
   and message visibility.
+- Native tool discovery supports Kimi K3 Chat Completions and Claude Haiku 4.5.
+  The embedded browser loads on demand on native paths; flat paths retain direct access.
 - Working-note guidance focuses on recovery checkpoints and clarifies search
   pagination and revision reuse, reducing redundant maintenance instructions.
 - Sidebar conversation history reveals five more hidden sessions per click instead

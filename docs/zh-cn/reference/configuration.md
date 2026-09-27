@@ -52,6 +52,24 @@ Provider 条目为一条模型连接命名。例如，下面的用户配置片�
 
 [外部引擎](../getting-started/external-engines.md)是独立程序，不是 provider 类型。机器本地的 `engines` 配置控制检测、可执行文件选择和默认引擎。在桌面中修改某个会话的模型，不一定改变工作区默认值；需要影响未来会话时，应从设置中修改。
 
+## 工具加载
+
+`agent.tool_loading` 默认为 `auto`。已支持的官方接口使用原生加载：
+OpenAI Responses 上的 GPT-5.4 及更新模型、Anthropic 上支持该功能的 Claude
+模型（包括 Haiku 4.5），以及 `https://api.moonshot.ai/v1` 或
+`https://api.moonshot.cn/v1` 上使用 Chat Completions 的 `kimi-k3`。
+Kimi 使用独立的消息级工具声明协议；这条规则不启用其 Responses 或 Anthropic 兼容接口。
+
+原生加载通过 `tool_search` 按需把延迟工具的 schema 加入模型上下文，启用的内置浏览器
+也按需加载。其他接口使用 `flat`，从一开始暴露可用工具，并在单次运行中保持工具列表
+稳定。支持普通工具调用或兼容 OpenAI/Anthropic 的 URL，并不等于支持原生延迟加载。
+
+将 `agent.tool_loading` 设为 `flat` 可关闭发现，设为 `native` 可在兼容端点上显式启用
+已实现的协议；不支持的模型仍会回退到 flat。模型的
+`providers.<name>.models.<model>.options.native_tool_search` 可以显式允许兼容端点
+在 auto 模式下使用原生加载，或用 `false` 关闭。只有端点确实实现了对应模型的原生协议
+时才启用；仅接受未知字段并不够。
+
 ## 指令与插件设置
 
 团队共享规则放在 `AGENTS.md` 中。核心 `instructions` 对象控制文件名、项目根标记、用户目录和可选的旧指令发现。顶层旧字段 `memory` 用于迁移指令发现设置，不是 Memory 插件设置接口。

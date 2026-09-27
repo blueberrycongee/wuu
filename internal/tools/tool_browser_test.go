@@ -170,17 +170,36 @@ func TestBrowserDefinitionPublishesInputFields(t *testing.T) {
 	}
 }
 
-func TestBrowserToolIsDirectOnDefaultSurface(t *testing.T) {
-	kit, err := New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5-codex", true)
-	if _, ok := kit.ActiveSurface().Tools[browserToolName]; !ok {
-		t.Fatalf("wuu_browser must be a direct tool, got tools=%v deferred=%v", kit.ActiveSurface().Tools, kit.ActiveSurface().DeferredTools)
-	}
-	if !containsProfileDef(kit.Definitions(), browserToolName) {
-		t.Fatal("wuu_browser must appear in Definitions without tool_search")
+func TestBrowserLoadsOnDemandAndRemainsDirectInFlatMode(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		kit, _, _ := newBrowserKit(t, &fakeBrowserBridge{})
+		kit.registry = NewRegistry(NewBrowserTool(kit.env), NewToolSearchTool(kit))
+		kit.ConfigureSurfaceForProviderModel("openai", "gpt-5.4", true)
+		kit.SetToolSearchEnabled(native)
+		kit.SetNativeDeferredToolDiscovery(native)
+		before, _ := json.Marshal(kit.Definitions())
+		_, err := kit.Execute(context.Background(), browserCall("tabs", nil))
+		if native {
+			if err == nil || !strings.Contains(err.Error(), "deferred") {
+				t.Fatalf("unloaded browser executed: %v", err)
+			}
+			if _, err = kit.Execute(context.Background(), providers.ToolCall{Name: "tool_search", Arguments: `{"query":"select:wuu_browser"}`}); err != nil {
+				t.Fatal(err)
+			}
+			after, _ := json.Marshal(kit.Definitions())
+			if string(before) != string(after) {
+				t.Fatal("browser loading changed native top-level definitions")
+			}
+			if _, err = kit.Execute(context.Background(), browserCall("tabs", nil)); err != nil {
+				t.Fatal(err)
+			}
+		} else if err != nil {
+			t.Fatalf("flat browser should execute directly: %v", err)
+		}
+		kit.SetBrowserEnabled(false)
+		if _, err = kit.Execute(context.Background(), browserCall("tabs", nil)); err == nil {
+			t.Fatal("disabled browser executed")
+		}
 	}
 }
 

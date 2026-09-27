@@ -52,6 +52,28 @@ Replace the endpoint and model with values your service supports, and supply the
 
 [External engines](../getting-started/external-engines.md) are separate programs, not provider types. Their machine-local `engines` configuration controls detection, executable selection, and the default engine. In the desktop, changing a conversation's model does not necessarily change the workspace default; use settings when you intend to change future sessions.
 
+## Tool loading
+
+`agent.tool_loading` defaults to `auto`. Supported first-party paths use native
+loading: OpenAI Responses with GPT-5.4 or later, supported Claude models (including
+Haiku 4.5) on Anthropic, and `kimi-k3` Chat Completions at
+`https://api.moonshot.ai/v1` or `https://api.moonshot.cn/v1`. Kimi uses a separate
+message-level tools protocol; its Responses and Anthropic-compatible endpoints
+are not enabled by this rule.
+
+Native loading keeps deferred schemas out of the initial model context and
+loads them through `tool_search`. The embedded browser is deferred when enabled.
+Other paths use `flat`, which exposes available tools up front and keeps the tool
+list stable during a run. Ordinary tool calling or an OpenAI/Anthropic-compatible
+URL alone does not establish support for native loading.
+
+Set `agent.tool_loading` to `flat` to disable discovery, or `native` to opt into an
+implemented protocol on a compatible endpoint. Unsupported models still fall back
+to flat. A model's `providers.<name>.models.<model>.options.native_tool_search`
+can explicitly enable a compatible endpoint in auto mode, or disable discovery
+with `false`. Only enable it when the endpoint implements the model's native
+protocol; accepting unknown fields is not sufficient.
+
 ## Instructions and plugin settings
 
 Put shared project rules in `AGENTS.md`. The core `instructions` object controls filenames, project-root markers, user directories, and optional legacy instruction discovery. The old top-level `memory` name is accepted for instruction-discovery migration; it is not the Memory plugin's settings interface.
