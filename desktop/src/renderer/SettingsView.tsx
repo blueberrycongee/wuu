@@ -1,3 +1,4 @@
+import { FusionSettings } from "./FusionSettings";
 import { hostSupports } from "./HostCapabilities";
 import { isTouchWebShell } from "./ComposerFocus";
 import {
@@ -256,13 +257,13 @@ export function SettingsView({
   workbenchController?: WorkbenchController;
 }): JSX.Element {
   const { t } = useI18n();
-  const providers = initialized?.providers ?? [];
+  const providers = useMemo(() => (initialized?.providers ?? []).map(p => ({ ...p, models: p.models?.filter(m => m.id !== "wuu/fusion") })), [initialized?.providers]);
   const runningProviderNameSet = useMemo(
     () => new Set((runningProviderNames ?? []).map((name) => name.trim()).filter(Boolean)),
     [runningProviderNames],
   );
   const [providerDraft, setProviderDraft] = useState(initialized?.provider ?? "");
-  const [modelDraft, setModelDraft] = useState(initialized?.model ?? "");
+  const [modelDraft, setModelDraft] = useState(initialized?.model === "wuu/fusion" ? providers.find(p => p.name === initialized.provider)?.model ?? "" : initialized?.model ?? "");
   const [variantDraft, setVariantDraft] = useState(initialized?.variant ?? initialized?.effort ?? "");
   const [baseURLDraft, setBaseURLDraft] = useState(initialized?.providers?.find((item) => item.name === initialized.provider)?.base_url ?? "");
   const [apiKeyDraft, setAPIKeyDraft] = useState("");
@@ -556,7 +557,7 @@ export function SettingsView({
     setXAILogin(null);
     setProviderDraft(initialized?.provider ?? "");
     setProviderTypeDraft("openai-compatible");
-    setModelDraft(initialized?.model ?? "");
+    setModelDraft(initialized?.model === "wuu/fusion" ? providers.find(p => p.name === initialized.provider)?.model ?? "" : initialized?.model ?? "");
     setVariantDraft(initialized?.variant ?? initialized?.effort ?? "");
     const summary = initialized?.providers?.find((item) => item.name === initialized.provider);
     setBaseURLDraft(summary?.base_url ?? "");
@@ -1100,47 +1101,50 @@ export function SettingsView({
                 onSelectBuiltinModel={(provider, model) => onSave(provider, model)}
               />
             ) : activePage === "providers" ? (
-              <SettingsProvidersPage
-                providers={providers}
-                providerLabels={providerLabels}
-                running={running}
-                providerDraft={providerDraft}
-                providerTypeDraft={providerTypeDraft}
-                modelDraft={modelDraft}
-                variantDraft={variantDraft}
-                baseURLDraft={baseURLDraft}
-                apiKeyDraft={apiKeyDraft}
-                addingProvider={addingProvider}
-                editorOpen={providerEditorOpen}
-                error={error}
-                selectedProvider={selectedProvider}
-                connectionLocked={connectionLocked}
-                variantOptions={variantOptions}
-                providerNameTaken={Boolean(providerNameTaken)}
-                onProviderToggle={toggleProvider}
-                onStartAddingProvider={startAddingProvider}
-                onCancelAddingProvider={cancelAddingProvider}
-                onProviderDraftChange={setProviderDraft}
-                onProviderTypeDraftChange={changeProviderTypeDraft}
-                onModelDraftChange={(value) => {
-                  setModelDraft(value);
-                  setVariantDraft("");
-                }}
-                onVariantDraftChange={changeVariant}
-                onBaseURLDraftChange={setBaseURLDraft}
-                onAPIKeyDraftChange={setAPIKeyDraft}
-                onCommitModel={commitModelName}
-                onCommitBaseURL={commitBaseURL}
-                onCommitAPIKey={commitAPIKey}
-                onSubmit={submit}
-                onRemoveProvider={requestRemoveProvider}
-                onRefreshModelCatalog={onRefreshModelCatalog}
-                runningProviderNames={runningProviderNameSet}
-                disabled={addSubmitDisabled}
-                xaiLogin={xaiLogin}
-                xaiLoginBusy={xaiLoginBusy}
-                onStartXAILogin={() => void startXAILogin()}
-              />
+              <>
+                <SettingsProvidersPage
+                  providers={providers}
+                  providerLabels={providerLabels}
+                  running={running}
+                  providerDraft={providerDraft}
+                  providerTypeDraft={providerTypeDraft}
+                  modelDraft={modelDraft}
+                  variantDraft={variantDraft}
+                  baseURLDraft={baseURLDraft}
+                  apiKeyDraft={apiKeyDraft}
+                  addingProvider={addingProvider}
+                  editorOpen={providerEditorOpen}
+                  error={error}
+                  selectedProvider={selectedProvider}
+                  connectionLocked={connectionLocked}
+                  variantOptions={variantOptions}
+                  providerNameTaken={Boolean(providerNameTaken)}
+                  onProviderToggle={toggleProvider}
+                  onStartAddingProvider={startAddingProvider}
+                  onCancelAddingProvider={cancelAddingProvider}
+                  onProviderDraftChange={setProviderDraft}
+                  onProviderTypeDraftChange={changeProviderTypeDraft}
+                  onModelDraftChange={(value) => {
+                    setModelDraft(value);
+                    setVariantDraft("");
+                  }}
+                  onVariantDraftChange={changeVariant}
+                  onBaseURLDraftChange={setBaseURLDraft}
+                  onAPIKeyDraftChange={setAPIKeyDraft}
+                  onCommitModel={commitModelName}
+                  onCommitBaseURL={commitBaseURL}
+                  onCommitAPIKey={commitAPIKey}
+                  onSubmit={submit}
+                  onRemoveProvider={requestRemoveProvider}
+                  onRefreshModelCatalog={onRefreshModelCatalog}
+                  runningProviderNames={runningProviderNameSet}
+                  disabled={addSubmitDisabled}
+                  xaiLogin={xaiLogin}
+                  xaiLoginBusy={xaiLoginBusy}
+                  onStartXAILogin={() => void startXAILogin()}
+                />
+                <FusionSettings value={initialized?.advanced_settings?.fusion} providers={providers} disabled={false} onSave={onAdvancedSave} />
+              </>
             ) : activePage === "agents" ? (
               <EngineSettingsSection
                 result={engineInventory}

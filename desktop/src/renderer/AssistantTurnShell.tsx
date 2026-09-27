@@ -1,3 +1,4 @@
+import { fusionTurnStatus } from "./FusionStatus";
 import { localTurnTiming } from "./LocalTurnTiming";
 import { ChevronRight } from "./WuuIcons";
 import {
@@ -172,6 +173,7 @@ export function AssistantTurnShell({
     Boolean(display.latestProcessPreview) ||
     turn.status === "in_progress" ||
     turn.status === "interrupted" ||
+    Boolean(turn.fusion) ||
     turn.status === "failed" ||
     hasAnswer;
   const answerHandoffRequested = answerEntries.some(
@@ -274,6 +276,7 @@ function TurnProcessFold({
   onCollapseComplete?: () => void;
   editSummaryCard?: JSX.Element;
 }): JSX.Element {
+  const { locale } = useI18n();
   const renderActive = useConversationRenderActive();
   const revealSnap = useConversationRevealSnap();
   const [expanded, setExpanded] = useState(!collapseRequested);
@@ -298,6 +301,7 @@ function TurnProcessFold({
   const parsedAnswerReadyAt = parseTurnTimestampMs(turn.answer_ready_at);
   const parsedCompletedAt = parseTurnTimestampMs(turn.completed_at);
   const answerReady = Number.isFinite(parsedAnswerReadyAt);
+  const fusion = fusionTurnStatus(turn, locale === "zh-CN", answerReady);
   // Recovered/provider-backed turns do not always carry duration_ms even
   // though their boundary timestamps are present. Treating that omission as
   // zero makes any such completed turn read "under 1 second".
@@ -427,7 +431,7 @@ function TurnProcessFold({
     setExpanded((prev) => !prev);
   }, []);
 
-  const hasDetails = entries.length > 0;
+  const hasDetails = entries.length > 0 || Boolean(fusion?.tokens);
   const visiblePreview = expanded ? undefined : latestPreview;
   const hasPreview = Boolean(visiblePreview);
   const previewWaveRef = useLiveTextWave<HTMLSpanElement>(
@@ -435,7 +439,13 @@ function TurnProcessFold({
   );
   const toggleContent = (
     <>
-      <span className="turn-process-header">
+      <span className={`turn-process-header${fusion ? " has-fusion" : ""}`}>
+        {fusion ? (
+          <>
+            <span className="fusion-status-summary">{fusion.summary}</span>
+            <span className="fusion-status-separator" aria-hidden="true">·</span>
+          </>
+        ) : null}
         <span className="turn-process-title">{processLabel}</span>
         {metaParts.map((part) => (
           <span className="turn-process-meta" key={part}>
@@ -484,18 +494,18 @@ return (
     >
       <div className="turn-process-topline">
         <div
-          role="button"
-          tabIndex={0}
-          aria-expanded={expanded}
-          aria-controls={`${detailsID}-body`}
-          onClick={handleToggle}
-          onKeyDown={(event) => {
+          role={hasDetails ? "button" : undefined}
+          tabIndex={hasDetails ? 0 : undefined}
+          aria-expanded={hasDetails ? expanded : undefined}
+          aria-controls={hasDetails ? `${detailsID}-body` : undefined}
+          onClick={hasDetails ? handleToggle : undefined}
+          onKeyDown={hasDetails ? (event) => {
             if (event.key === "Enter" || event.key === " ") {
               event.preventDefault();
               handleToggle();
             }
-          }}
-          className="turn-process-toggle"
+          } : undefined}
+          className={`turn-process-toggle${hasDetails ? "" : " no-details"}`}
         >
           {toggleContent}
         </div>
@@ -530,6 +540,11 @@ return (
                   />
                 </div>
               ))}
+              {fusion?.tokens ? (
+                <span className="fusion-usage">
+                  {locale === "zh-CN" ? "Sidekick 用量" : "Sidekick usage"} · {fusion.tokens.toLocaleString()} tokens
+                </span>
+              ) : null}
             </div>
           ) : null}
         </CollapsibleDetails>

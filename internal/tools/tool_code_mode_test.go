@@ -61,6 +61,43 @@ func TestPTCFamilySwitchAndExecutionBoundary(t *testing.T) {
 		t.Fatal("thread family selection leaked")
 	}
 }
+func TestPTCFusionDelegationRemainsDirect(t *testing.T) {
+	kit := newCodeModeTestToolkit(t)
+	calls := 0
+	kit.SetFusionDelegate(func(_ context.Context, brief string) (string, error) {
+		calls++
+		if brief != "check integration" {
+			t.Fatalf("unexpected brief: %s", brief)
+		}
+		return `{"outcome":"completed","summary":"done"}`, nil
+	})
+	if !contains("run_code", kit.Definitions()) || !contains("fusion_delegate", kit.Definitions()) || contains("read_file", kit.Definitions()) {
+		t.Fatal("Fusion delegation is not a direct PTC entry point")
+	}
+	surface := kit.ActiveSurface()
+	if _, ok := surface.Tools["fusion_delegate"]; !ok {
+		t.Fatal("Fusion delegation is missing from the active surface")
+	}
+	nested, err := kit.CodeModeNestedSurface()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains("fusion_delegate", codeModeDefsToProviderDefs(nested)) {
+		t.Fatal("Fusion delegation leaked into run_code")
+	}
+	result, err := kit.ExecuteResult(context.Background(), providers.ToolCall{Name: "fusion_delegate", Arguments: `{"brief":"check integration"}`})
+	if err != nil || calls != 1 || !strings.Contains(result.TextProjection(), `"summary":"done"`) {
+		t.Fatalf("direct delegation: %+v, calls=%d, err=%v", result, calls, err)
+	}
+	clone, err := kit.CloneForRoot(kit.RootDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains("fusion_delegate", clone.Definitions()) {
+		t.Fatal("worker inherited Fusion delegation")
+	}
+}
+
 func TestPTCNestedReadThroughRealNode(t *testing.T) {
 	kit := newCodeModeTestToolkit(t)
 	if err := os.WriteFile(filepath.Join(kit.RootDir(), "fixture.txt"), []byte("PTC_READ_OK"), 0600); err != nil {

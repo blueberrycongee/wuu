@@ -8,6 +8,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/compact"
+	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/participant"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -1453,6 +1454,14 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(rec.Role), "meta") {
+			if current != nil && strings.HasPrefix(rec.Content, fusionSelectionPrefix) {
+				var decision config.FusionSelection
+				if json.Unmarshal([]byte(strings.TrimPrefix(rec.Content, fusionSelectionPrefix)), &decision) == nil {
+					current.Fusion = &decision
+					current.ModelProvider, current.Model = decision.Lead.Provider, decision.Lead.Model
+				}
+			}
+
 			if current != nil && rec.Content == "token_usage" {
 				setProjectedTurnTiming(current, turnStartedAt[current.ID], rec.At)
 			}

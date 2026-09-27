@@ -55,6 +55,9 @@ var historyRecoveryToolNames = []string{historyReadToolName, historySearchToolNa
 // (all registered tools). The old switch-case dispatch is replaced by
 // registry lookup.
 type Toolkit struct {
+	fusionDelegate          func(context.Context, string) (string, error)
+	fusionExecution         sync.RWMutex
+	fusionHandoffErr        error
 	env                     *Env
 	registry                *Registry
 	disabledTools           map[string]struct{}
@@ -375,6 +378,9 @@ func (t *Toolkit) rebuildRegistry() {
 		NewBrowserTool(e),
 		// Deferred tool discovery
 		NewToolSearchTool(t),
+	}
+	if t.fusionDelegate != nil {
+		registered = append(registered, &fusionDelegateTool{delegate: t.fusionDelegate, toolkit: t})
 	}
 	if e.ArtifactPublisher != nil {
 		registered = append(registered, NewPresentArtifactTool(e))
@@ -1040,9 +1046,14 @@ func (t *Toolkit) exposedSurfaceLocked() capability.Surface {
 			surface.Tools[newContextToolName] = capability.CapabilityContextWindow
 		}
 		surface.DeferredTools = nil
-		surface.SystemFragment += "\nPTC mode is enabled. Invoke the capabilities described above through tools bindings inside run_code. Only run_code and separately advertised context controls are callable directly."
+		surface.SystemFragment += "\nPTC mode is enabled. Invoke the capabilities described above through tools bindings inside run_code."
+		if t.fusionDelegate != nil {
+			surface.SystemFragment += " Only run_code, fusion_delegate, and separately advertised context controls are callable directly. Call fusion_delegate by itself."
+		} else {
+			surface.SystemFragment += " Only run_code and separately advertised context controls are callable directly."
+		}
 	}
-	return surface
+	return t.withFusionSurface(surface)
 }
 
 // publishActiveSurfaceLocked is the single write path for env.ActiveSurface.
@@ -1067,7 +1078,7 @@ func (t *Toolkit) activeCompiledSurface() capability.Surface {
 	}
 	t.activeProfileMu.RLock()
 	defer t.activeProfileMu.RUnlock()
-	return t.withDisabledToolsRemoved(t.withCodeModeSurface(t.surfaceForToolLoadingMode(t.activeSurface)))
+	return t.withDisabledToolsRemoved(t.withFusionSurface(t.withCodeModeSurface(t.surfaceForToolLoadingMode(t.activeSurface))))
 }
 
 func (t *Toolkit) withDisabledToolsRemoved(surface capability.Surface) capability.Surface {
@@ -1168,10 +1179,16 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 // content, metadata, or Activity references. Legacy tools are wrapped as one
 // text content part until they migrate to RichTool.
 func (t *Toolkit) ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
-	if t.CodeModeOnly() && call.Name != codeModeExecToolName && call.Name != newContextToolName && !toolctx.IsNestedCall(ctx) {
+	if t.CodeModeOnly() && !t.AllowsDirectCodeModeTool(call.Name) && !toolctx.IsNestedCall(ctx) {
 		return toolresult.Result{}, errors.New("PTC mode requires calling tools inside run_code")
 	}
 
+	// Nested program calls must settle before a Sidekick receives the workspace.
+	release, err := t.BeginFusionToolCall(ctx, call.Name)
+	if err != nil {
+		return toolresult.Result{}, err
+	}
+	defer release()
 	if t.isToolDisabled(call.Name) {
 		return toolresult.Result{}, fmt.Errorf("tool %q is disabled in this session", call.Name)
 	}

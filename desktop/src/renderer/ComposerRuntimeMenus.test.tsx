@@ -156,6 +156,28 @@ describe("RuntimePicker", () => {
     expect(onToggleMenu).toHaveBeenCalledWith("model");
   });
 
+  it("selects Fusion as a local mode and can return to a provider model", () => {
+    const initialized = runtimeWithEffort();
+    const pair = { lead: { provider: "work", model: "claude-sonnet" }, sidekick: { provider: "work", model: "fast-model" } };
+    initialized.advanced_settings = { ...initialized.advanced_settings!, fusion: { enabled: true, default: false, ...pair } };
+    const onSelectModel = vi.fn();
+    renderPicker("model", initialized, vi.fn(), vi.fn(), onSelectModel);
+    act(() => [...document.querySelectorAll<HTMLButtonElement>(".runtime-panel-context button")].find((item) => item.textContent === "work")!.click());
+    const fusion = [...document.querySelectorAll<HTMLButtonElement>(".runtime-provider-option")].find((item) => item.textContent === "Fusion");
+    expect(fusion).toBeDefined();
+    act(() => fusion!.click());
+    expect(onSelectModel).toHaveBeenCalledWith("work", "wuu/fusion", "");
+
+    initialized.model = "wuu/fusion";
+    initialized.variant = "";
+    renderPicker("model", initialized, vi.fn(), vi.fn(), onSelectModel);
+    expect(document.querySelector(".codex-runtime-trigger")?.textContent).toContain("Fusion");
+    act(() => [...document.querySelectorAll<HTMLButtonElement>(".runtime-panel-context button")].find((item) => item.textContent === "Fusion")!.click());
+    const provider = [...document.querySelectorAll<HTMLButtonElement>(".runtime-provider-option")].find((item) => item.textContent === "work");
+    act(() => provider!.click());
+    expect(onSelectModel).toHaveBeenLastCalledWith("work", "claude-sonnet", expect.any(String));
+  });
+
   it("names no level for a model without levels", () => {
     const initialized = runtimeWithEffort();
     delete initialized.providers![0].models![0].supported_efforts;

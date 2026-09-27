@@ -139,6 +139,28 @@ func TestPluginToolExecutorUsesToolkitBoundaryAndAuthorizer(t *testing.T) {
 	}
 }
 
+func TestPluginToolExecutorAllowsDirectFusionDelegationInPTCMode(t *testing.T) {
+	kit, err := tools.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5", true)
+	service := codemode.NewService(codemode.ServiceConfig{})
+	t.Cleanup(func() { _ = service.Close() })
+	kit.ConfigurePTC(service, config.PTCConfig{Enabled: true})
+	kit.SetFusionDelegate(func(_ context.Context, brief string) (string, error) {
+		if brief != "check integration" {
+			t.Fatalf("unexpected brief: %s", brief)
+		}
+		return `{"outcome":"completed","summary":"done"}`, nil
+	})
+	executor := newPluginToolExecutor(kit, pluginhost.New(), "thread", kit.RootDir())
+	result, err := executor.Execute(context.Background(), providers.ToolCall{Name: "fusion_delegate", Arguments: `{"brief":"check integration"}`})
+	if err != nil || !strings.Contains(result, `"summary":"done"`) {
+		t.Fatalf("PTC delegation through plugin wrapper: %s, %v", result, err)
+	}
+}
+
 func TestPluginToolExecutorRunsInsideToolHooks(t *testing.T) {
 	client := &pluginToolTestClient{}
 	host := pluginhost.New(client)

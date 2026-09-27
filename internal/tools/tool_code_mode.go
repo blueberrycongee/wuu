@@ -113,10 +113,23 @@ func (t *Toolkit) withCodeModeSurface(surface capability.Surface) capability.Sur
 	}
 	return out
 }
+
+// AllowsDirectCodeModeTool is the shared top-level boundary for PTC callers.
+func (t *Toolkit) AllowsDirectCodeModeTool(name string) bool {
+	switch name {
+	case codeModeExecToolName, newContextToolName:
+		return true
+	case fusionDelegateToolName:
+		return t.fusionDelegate != nil
+	default:
+		return false
+	}
+}
+
 func (t *Toolkit) codeModeEntryDefinitions() []providers.ToolDefinition {
 	var out []providers.ToolDefinition
 	for _, d := range t.registry.Definitions() {
-		if (d.Name == codeModeExecToolName || d.Name == newContextToolName) && t.SupportsTool(d.Name) {
+		if t.AllowsDirectCodeModeTool(d.Name) && t.SupportsTool(d.Name) {
 			if d.Name == codeModeExecToolName {
 				d.Description += t.codeModeToolCatalog()
 			}
@@ -154,7 +167,7 @@ func (t *Toolkit) CodeModeNestedSurface() ([]codemode.ToolDefinition, error) {
 	}
 	out := make([]codemode.ToolDefinition, 0, len(all))
 	for _, d := range all {
-		if d.Name == codeModeExecToolName || d.Name == newContextToolName || !t.SupportsTool(d.Name) {
+		if d.Name == codeModeExecToolName || d.Name == newContextToolName || d.Name == fusionDelegateToolName || !t.SupportsTool(d.Name) {
 			continue
 		}
 		definition, err := codeModeToolDefinition(d)

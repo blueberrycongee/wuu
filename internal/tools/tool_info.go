@@ -204,7 +204,7 @@ func classifyToolKind(name string) ToolKind {
 		return ToolKindSession
 	case "load_skill":
 		return ToolKindSkill
-	case "list_agent_profiles", "create_agent_profile":
+	case "list_agent_profiles", "create_agent_profile", fusionDelegateToolName:
 		return ToolKindAgent
 	case "browser", browserToolName:
 		return ToolKindBrowser

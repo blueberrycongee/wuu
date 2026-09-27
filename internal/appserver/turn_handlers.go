@@ -111,6 +111,7 @@ type turnAdmissionHooks struct {
 }
 
 type turnRuntimeSnapshot struct {
+	FusionConfig       *config.Config
 	ProviderName       string
 	Model              string
 	PermissionMode     string
@@ -1144,8 +1145,18 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		Speed:          speed,
 		PermissionMode: permissionMode,
 	}
+	requestedSelection := selection
+	if selection.Model == config.FusionID {
+		decision, err := s.findFusionSelection(th)
+		if err != nil {
+			return nil, err
+		}
+		if decision != nil {
+			selection.Provider, selection.Model, selection.Variant, selection.Effort = decision.Lead.Provider, decision.Lead.Model, decision.Lead.Variant, decision.Lead.Effort
+		}
+	}
 	threadRuntime, err := s.rt.NewThreadRuntimeForRootModel(th.ID, browserWorkdir, selection)
-	if errors.Is(err, runtime.ErrThreadProviderUnavailable) {
+	if requestedSelection.Model != config.FusionID && errors.Is(err, runtime.ErrThreadProviderUnavailable) {
 		// Draft selections arrive through thread/start, not config/model/update.
 		// Register a discovered connection before treating the pin as removed.
 		cfg, _, loadErr := s.rt.LoadEffectiveConfig()
@@ -1161,7 +1172,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 			threadRuntime, err = s.rt.NewThreadRuntimeForRootModel(th.ID, browserWorkdir, selection)
 		}
 	}
-	if errors.Is(err, runtime.ErrThreadProviderUnavailable) {
+	if requestedSelection.Model != config.FusionID && errors.Is(err, runtime.ErrThreadProviderUnavailable) {
 		// The pinned provider was removed from config after this session
 		// selected it. Self-heal the dead provider/model pair to the
 		// workspace defaults so the turn proceeds instead of every send
@@ -1182,6 +1193,29 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	}
 	if err != nil {
 		return nil, err
+	}
+	if requestedSelection.Model == config.FusionID {
+		threadRuntime.Selection = requestedSelection
+		threadRuntime.Selection.PermissionMode = config.NormalizePermissionMode(requestedSelection.PermissionMode)
+		// Configure worker defaults before restored queued work may start.
+		pair, loadErr := s.findFusionSelection(th)
+		if loadErr == nil {
+			var cfg config.Config
+			cfg, _, loadErr = s.rt.LoadEffectiveConfig()
+			if loadErr == nil && pair == nil {
+				_, loadErr = cfg.FusionSelection()
+				if loadErr == nil {
+					pair = &config.FusionSelection{Lead: cfg.Agent.Fusion.Lead, Sidekick: cfg.Agent.Fusion.Sidekick}
+				}
+			}
+			if loadErr == nil {
+				loadErr = s.rt.ApplyFusion(threadRuntime, cfg, *pair)
+			}
+		}
+		if loadErr != nil {
+			releaseThreadRuntimeSubscription(threadRuntime, nil)
+			return nil, loadErr
+		}
 	}
 	if err := s.configureSessionToolPolicy(th.ID, threadRuntime); err != nil {
 		return nil, err
@@ -1346,6 +1380,9 @@ func (s *Server) replayPendingAgentCompletions(threadID string, threadRuntime *r
 		return
 	}
 	for _, completion := range pending {
+		if completion.Snapshot.Type == agentcontrol.FusionSidekickType {
+			continue
+		}
 		msg := threadRuntime.AgentControl.AgentCompletionChatMessage(completion.Snapshot, agentthread.RootPath)
 		consumer, _ := threadRuntime.AgentControl.AgentResultDeliveryConsumer(completion.ResultID)
 		if consumer != "" {
@@ -2271,6 +2308,11 @@ func usageContextWindowTokens(runner *agent.StreamRunner) int {
 }
 
 func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState, threadRuntime *runtime.ThreadRuntime, turnID string, turnRuntime turnRuntimeSnapshot, history []providers.ChatMessage, requestContext []agent.ContextSegment) {
+	fusionPair, fusionErr := s.prepareFusion(ctx, th, threadRuntime, turnID, turnRuntime.FusionConfig)
+	if fusionPair != nil {
+		turnRuntime.ProviderName, turnRuntime.Model = fusionPair.Lead.Provider, fusionPair.Lead.Model
+		history = replaceBaseSystemPrompt(history, threadRuntime.StreamRunner.SystemPrompt)
+	}
 	notify := func(method string, params any) {
 		_ = s.writeNotification(method, params)
 	}
@@ -2306,6 +2348,9 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			return s.requestEngineApproval(approvalCtx, th.ID, turnID, request)
 		},
 	})
+	if fusionErr != nil {
+		engine = agentengine.FailedSession(fmt.Errorf("Fusion model selection: %w", fusionErr))
+	}
 	if engine == nil {
 		engine = s.rt.WuuEngine().SessionForRunner(s.rt.StreamRunner)
 	}
@@ -3629,6 +3674,17 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 			return startedThreadTurn{}, false, errSessionInputApplied
 		}
 	}
+	th.mu.Lock()
+	fusionMode := th.Model == config.FusionID
+	th.mu.Unlock()
+	if fusionMode {
+		cfg, _, err := s.rt.LoadEffectiveConfig()
+		if err != nil {
+			abortAdmission()
+			return startedThreadTurn{}, false, err
+		}
+		snapshot.FusionConfig = &cfg
+	}
 	if hooks.afterLease != nil {
 		if err := hooks.afterLease(th, &userMsg); err != nil {
 			abortAdmission()
@@ -3755,6 +3811,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		turnRuntime = turnRuntime.withPermissions(snapshot.permissions())
 		turnRuntime.PermissionExplicit = snapshot.PermissionExplicit
 	}
+	turnRuntime.FusionConfig = snapshot.FusionConfig
 	turnRuntime.ForceCompact = snapshot.ForceCompact
 	turnRuntime.CompactOnly = snapshot.CompactOnly
 	turnRuntime.HistoryBaselineSeq = th.historyHeadSeq

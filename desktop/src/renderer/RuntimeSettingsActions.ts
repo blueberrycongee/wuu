@@ -362,6 +362,7 @@ export function createRuntimeSettingsActions(
         ? {
             ...current.initialized,
             advanced_settings: updated.advanced_settings,
+            model: settings.fusion ? (settings.fusion.enabled && settings.fusion.default ? "wuu/fusion" : (current.initialized.providers?.find(p => p.name === current.initialized?.provider)?.model ?? current.initialized.model)) : current.initialized.model,
             model_aliases:
               updated.model_aliases ??
               settings.model_aliases ??

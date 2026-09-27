@@ -116,7 +116,20 @@ func (s *Server) handleThreadStart(req Request) error {
 	if model := strings.TrimSpace(params.Model); model != "" {
 		selection.Model = model
 	}
-	if effort := strings.TrimSpace(params.Effort); effort != "" {
+	if selection.Model == config.FusionID {
+		if engineID != agentengine.EngineWuu {
+			return s.writeResponse(req.ID, nil, errors.New("Fusion requires the Wuu engine"))
+		}
+		cfg, _, err := s.rt.LoadEffectiveConfig()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if _, err := cfg.FusionSelection(); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		selection.Variant, selection.Effort = "", ""
+	}
+	if effort := strings.TrimSpace(params.Effort); effort != "" && selection.Model != config.FusionID {
 		selection.Effort = effort
 		if engineID == agentengine.EngineWuu {
 			// The desktop mirrors one level choice into both columns before

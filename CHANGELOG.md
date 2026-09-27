@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Native Fusion mode pairs a configurable Lead with a persistent Sidekick.
+  Delegations return structured reports for Lead review, reuse the Sidekick's
+  context, and drain execution before handoff or cancellation. Conversations
+  retain their model pair across settings changes and restarts.
+
 - Select text in completed assistant responses to quote passages or comment beside
   them. Quotes wait as cards in the composer tray and follow drafts, send/queue/steer, held-message
   recovery and history; source navigation validates the exact visible passage.
@@ -60,6 +65,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   activity data is never changed.
 
 ### Changed
+
+- Model services now include Fusion settings for Lead, Sidekick, reasoning,
+  and the default for new conversations. The composer provider menu offers
+  Fusion alongside connected services. Settings save automatically and restore
+  the previous values if saving fails.
+
+- Fusion turn summaries now show the Lead or Sidekick outcome beside elapsed
+  time. The conversation information panel shows its fixed model pair and
+  keeps provider details behind a disclosure.
 
 - The desktop and its documentation call a registered folder a workspace
   (工作区) instead of a project; "project" now means a project coordinator.
@@ -136,6 +150,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   `~/.wuu/channels`, which can be deleted.
 
 ### Fixed
+
+- Fusion accepts detailed Sidekick check results without rejecting a completed
+  handoff; concise string checks remain supported.
 
 - Project status now shares the conversation capsule row with TODO and plugin
   status, using consistent sizing and alignment above the composer.

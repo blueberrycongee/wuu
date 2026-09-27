@@ -70,7 +70,7 @@ func (s *Server) handleInitialize(req Request) error {
 			Dirty:   core.Dirty,
 		},
 		Provider:    s.rt.ProviderName,
-		Model:       s.rt.Model,
+		Model:       s.currentSessionRuntimeSelection().Model,
 		Effort:      s.currentDisplayEffort(),
 		Variant:     s.currentVariant(),
 		MaxParallel: s.rt.MaxParallel(),
@@ -97,7 +97,7 @@ func (s *Server) handleConfigRead(req Request) error {
 	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
 	return s.writeResponse(req.ID, ConfigReadResult{
 		Provider:           s.rt.ProviderName,
-		Model:              s.rt.Model,
+		Model:              s.currentSessionRuntimeSelection().Model,
 		Effort:             s.currentDisplayEffort(),
 		Variant:            s.currentVariant(),
 		MaxParallel:        s.rt.MaxParallel(),
@@ -190,6 +190,7 @@ func (s *Server) currentAdvancedSettingsSummary() AdvancedSettingsSummary {
 		summary.DisableAutoCompact = s.rt.StreamRunner.DisableAutoCompact
 	}
 	if cfg, _, err := s.rt.LoadEffectiveConfig(); err == nil {
+		summary.Fusion = cfg.Agent.Fusion
 		summary.MaxSteps = cfg.Agent.MaxSteps
 		summary.MaxContextTokens = cfg.Agent.MaxContextTokens
 		summary.Temperature = cfg.Agent.Temperature
@@ -973,6 +974,26 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if params.Fusion != nil {
+		// Fusion configuration updates affect future admissions, never a live runner.
+		rest := params
+		rest.Fusion = nil
+		if !reflect.DeepEqual(rest, ConfigAdvancedUpdateParams{}) {
+			return s.writeResponse(req.ID, nil, errors.New("save Fusion settings separately from advanced runtime settings"))
+		}
+		cfg, _, err := s.rt.LoadEffectiveConfig()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		cfg.Agent.Fusion = params.Fusion
+		if err := cfg.ValidateFusion(); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if err := config.UpdateAdvancedRuntime(s.rt.ConfigPath, s.rt.ProviderName, config.AdvancedRuntimeUpdate{Fusion: params.Fusion}); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		return s.writeResponse(req.ID, ConfigAdvancedUpdateResult{AdvancedSettings: s.currentAdvancedSettingsSummary(), ModelAliases: s.currentModelAliasSummaries(), ModelRoles: s.currentModelRoleSummaries(), Providers: s.providerSummaries()}, nil)
+	}
 	if s.hasRunningThread() {
 		return s.writeResponse(req.ID, nil, errors.New("cannot change advanced settings while a turn is running"))
 	}
@@ -1156,6 +1177,9 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 	if threadID != "" && (providerName != "" || model != "" || params.Variant != nil || params.Effort != nil || params.PermissionMode != nil || params.ApproveForMe != nil) {
 		return s.writeResponse(req.ID, nil, errors.New("save provider configuration separately from conversation selection"))
 	}
+	if model == config.FusionID {
+		return s.writeResponse(req.ID, nil, errors.New("use Fusion settings to change the default; Fusion is not an upstream provider model"))
+	}
 	if params.Speed != nil {
 		return s.writeResponse(req.ID, nil, errors.New("speed is a conversation setting; provide thread_id without provider configuration changes"))
 	}
@@ -1170,6 +1194,13 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 	cfg, _, err := s.rt.LoadEffectiveConfig()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if params.RemoveModel != "" && cfg.Agent.Fusion != nil && cfg.Agent.Fusion.Enabled {
+		for _, selection := range cfg.Agent.Fusion.Selections() {
+			if selection.Provider == providerName && selection.Model == params.RemoveModel {
+				return s.writeResponse(req.ID, nil, errors.New("model is referenced by Fusion; update or disable Fusion first"))
+			}
+		}
 	}
 	var providerCfg config.ProviderConfig
 	var resolvedName string
@@ -1715,6 +1746,13 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if cfg.Agent.Fusion != nil && cfg.Agent.Fusion.Enabled {
+		for _, selection := range cfg.Agent.Fusion.Selections() {
+			if selection.Provider == providerName {
+				return s.writeResponse(req.ID, nil, errors.New("provider is referenced by Fusion; update or disable Fusion first"))
+			}
+		}
+	}
 	existing, resolvedName, lookupErr := cfg.ResolveProvider(providerName)
 	if lookupErr != nil {
 		return s.writeResponse(req.ID, nil, lookupErr)
@@ -1946,6 +1984,25 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if model == config.FusionID {
+		if agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
+			return s.writeResponse(req.ID, nil, errors.New("Fusion requires the Wuu engine"))
+		}
+		pair, err := s.findFusionSelection(th)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if pair != nil {
+			provider = pair.Lead.Provider
+		} else {
+			lead, err := cfg.FusionSelection()
+			if err != nil {
+				return s.writeResponse(req.ID, nil, err)
+			}
+			provider = lead.Provider
+		}
+		variant, effort = "", ""
+	}
 	cfg, err = s.registerDiscoveredProvider(cfg, provider)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1954,30 +2011,33 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+
 	providerCfg = s.withCachedCodexModels(resolvedName, providerCfg)
 	if providerCfg.Models[model].Disabled {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("model %s is disabled", model))
 	}
 	ruleName, ruleCfg := modelcatalog.EnrichProvider(resolvedName, providerCfg, model)
-	if params.Variant != nil {
-		variant = strings.TrimSpace(*params.Variant)
-		effort = ""
-	}
-	if params.Effort != nil {
-		effort = strings.TrimSpace(*params.Effort)
-		if params.Variant == nil {
+	if model != config.FusionID {
+		if params.Variant != nil {
+			variant = strings.TrimSpace(*params.Variant)
+			effort = ""
+		}
+		if params.Effort != nil {
+			effort = strings.TrimSpace(*params.Effort)
+			if params.Variant == nil {
+				variant = effort
+			}
+		}
+		if (provider != previousProvider || model != previousModel) && variant == "" {
 			variant = effort
 		}
-	}
-	if (provider != previousProvider || model != previousModel) && variant == "" {
-		variant = effort
-	}
-	if variant != "" {
-		if _, ok := modelvariant.OptionsForProvider(ruleName, ruleCfg, model, variant); !ok {
-			if provider == previousProvider && model == previousModel && (params.Variant != nil || params.Effort != nil) {
-				return s.writeResponse(req.ID, nil, fmt.Errorf("model %s does not support variant %s", model, variant))
+		if variant != "" {
+			if _, ok := modelvariant.OptionsForProvider(ruleName, ruleCfg, model, variant); !ok {
+				if provider == previousProvider && model == previousModel && (params.Variant != nil || params.Effort != nil) {
+					return s.writeResponse(req.ID, nil, fmt.Errorf("model %s does not support variant %s", model, variant))
+				}
+				variant, effort = "", ""
 			}
-			variant, effort = "", ""
 		}
 	}
 	selection := modelvariant.ResolveForProvider(ruleName, ruleCfg, model, variant, effort)
@@ -2120,7 +2180,13 @@ func (s *Server) updateIdleThreadAdvancedRuntime(cfg config.Config) {
 			th.mu.Unlock()
 			continue
 		}
-		derivation, err := s.rt.DeriveThreadModel(cfg, th.execRuntime.Selection)
+		threadConfig := cfg
+		selected := th.execRuntime.Selection
+		if pair := th.execRuntime.FusionPair(); pair != nil {
+			selected.Provider, selected.Model, selected.Variant, selected.Effort = pair.Lead.Provider, pair.Lead.Model, pair.Lead.Variant, pair.Lead.Effort
+			threadConfig.Agent.ModelRoles.Worker = pair.Sidekick
+		}
+		derivation, err := s.rt.DeriveThreadModel(threadConfig, selected)
 		if err != nil {
 			// The thread pins a model that no longer resolves (e.g. a removed
 			// provider). Leave its existing derived budgets/worker in place;
@@ -2252,8 +2318,14 @@ func (s *Server) currentSessionRuntimeSelection() session.RuntimeSelection {
 	if s != nil && s.rt != nil {
 		selection.Provider = s.rt.ProviderName
 		selection.Model = s.rt.Model
+		if cfg, _, err := s.rt.LoadEffectiveConfig(); err == nil && cfg.Agent.Fusion != nil && cfg.Agent.Fusion.Enabled && cfg.Agent.Fusion.Default {
+			selection.Model = config.FusionID
+		}
 		selection.Variant = s.currentVariant()
 		selection.Effort = s.currentEffort()
+		if selection.Model == config.FusionID {
+			selection.Variant, selection.Effort = "", ""
+		}
 		selection.PermissionMode = config.NormalizePermissionMode(s.rt.Permissions.Mode)
 	}
 	return selection
