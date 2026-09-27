@@ -71,9 +71,18 @@ it("opens a suggestion as a draft and creates only on submit", async () => {
 });
 it("shows completed one-shot snapshots without treating recurring runs as finished tasks", async () => {
   const ui = await mount({ tasks: [], runs: [{ id: "run", task_id: "one", status: "completed", triggered_at: "2026-09-15T01:00:00Z", task: { ...task, recurring: false } }, { id: "recurring", task_id: "two", status: "completed", triggered_at: "2026-09-15T02:00:00Z", task: { ...task, id: "two", title: "Recurring" } }] });
-  await ui.click("已完成"); await ui.open();
+  await ui.open();
   expect(ui.container.querySelector("fieldset")!.disabled).toBe(true);
   expect(ui.container.querySelector(".plugin-automation-list")!.textContent).not.toContain("Recurring");
+});
+it("pauses and resumes from the row switch without opening the editor", async () => {
+  let paused = false;
+  const ui = await mount({ mutate: async (input) => { paused = input.paused; return { ...task, paused }; } });
+  const toggle = () => ui.container.querySelector<HTMLInputElement>('.plugin-automation-list input[type="checkbox"]')!;
+  expect(toggle().checked).toBe(true);
+  await act(async () => toggle().click());
+  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "automation.update", input: expect.objectContaining({ id: "one", paused: true }) }));
+  expect(ui.container.querySelector("aside")).toBeNull();
 });
 it("closes the editor and clears workspace-local tasks when changing workspace", async () => {
   const ui = await mount(); await ui.open(); await ui.click("工作区"); await ui.click("Other");
@@ -102,7 +111,7 @@ it("resizes the editor with pointer and keyboard, clamps bounds, and preserves w
   const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 1000 } as DOMRect);
   cleanups.push(() => { width.mockRestore(); rect.mockRestore(); });
-  const ui = await mount(); await ui.click("创建");
+  const ui = await mount(); await ui.click("新建自动化");
   let separator = ui.container.querySelector<HTMLElement>('[role="separator"]')!;
   separator.setPointerCapture = vi.fn(); separator.releasePointerCapture = vi.fn();
   const pointer = async (type: string, x: number) => {
@@ -112,7 +121,7 @@ it("resizes the editor with pointer and keyboard, clamps bounds, and preserves w
   };
   await pointer("pointerdown", 520); await pointer("pointermove", 420); await pointer("pointerup", 420);
   expect(separator.getAttribute("aria-valuenow")).toBe("580");
-  await ui.click("关闭"); await ui.click("创建");
+  await ui.click("关闭"); await ui.click("新建自动化");
   separator = ui.container.querySelector<HTMLElement>('[role="separator"]')!;
   expect(separator.getAttribute("aria-valuenow")).toBe("580");
   await act(async () => separator.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
@@ -126,7 +135,7 @@ it("resizes the editor with pointer and keyboard, clamps bounds, and preserves w
 
 it("keeps the editor mounted through the close motion and cancels it when reopened", async () => {
   const ui = await mount();
-  await ui.click("创建");
+  await ui.click("新建自动化");
   const body = () => ui.container.querySelector(".plugin-automation-body");
   expect(body()?.getAttribute("data-panel")).toBe("true");
   expect(body()?.getAttribute("data-closing")).toBeNull();
@@ -139,9 +148,9 @@ it("keeps the editor mounted through the close motion and cancels it when reopen
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
   expect(ui.container.querySelector("aside")).toBeNull();
   expect(body()?.getAttribute("data-panel")).toBe("false");
-  await ui.click("创建");
+  await ui.click("新建自动化");
   await ui.click("关闭");
-  await ui.click("创建");
+  await ui.click("新建自动化");
   expect(body()?.getAttribute("data-closing")).toBeNull();
   expect(ui.container.querySelector("aside")?.hasAttribute("inert")).toBe(false);
 });
@@ -160,7 +169,7 @@ it("closes the editor immediately when motion is reduced", async () => {
   })) as typeof window.matchMedia;
   cleanups.push(() => { window.matchMedia = matchMedia; });
   const ui = await mount();
-  await ui.click("创建");
+  await ui.click("新建自动化");
   await ui.click("关闭");
   expect(ui.container.querySelector("aside")).toBeNull();
 });

@@ -11,17 +11,14 @@ export async function activate(api) {
     "automation.template.review": "Weekly review", "automation.template.review.prompt": "Review this week's project progress. Summarize completed work, outstanding issues, and priorities for next week.",
     "automation.template.check": "Follow up", "automation.template.check.prompt": "Check the progress of pending work in this project. Report meaningful changes, blockers, and decisions that need my attention.",
 
-    "automation.title": "Automations", "automation.subtitle": "Scheduled prompts and recurring work.",
+    "automation.title": "Automations",
     "automation.new": "New automation", "automation.empty": "No automations yet",
-    "automation.emptyHelp": "Scheduled prompts will show up here.",
-    "automation.search": "Search automations", "automation.filter.all": "All", "automation.filter.active": "Active",
-    "automation.filter.empty": "No tasks match this filter.",
+    "automation.search": "Search automations", "automation.search.empty": "No matching automations.",
+    "automation.enable": "Enabled", "automation.enableNamed": "Enable {name}",
     "automation.name": "Name", "automation.prompt": "Instructions", "automation.schedule": "Cron schedule", "automation.timezone": "Timezone", "automation.workspace": "Workspace",
     "automation.recurring": "Repeat", "automation.workspaceHelp": "Tasks and runs shown below belong to this workspace.", "automation.workspaceNone": "No available project workspaces",
     "automation.isolation": "Run in an isolated git worktree", "automation.isolationHelp": "Each run executes in its own worktree instead of the live project directory.",
-    "automation.create": "Create", "automation.cancel": "Cancel", "automation.pause": "Pause", "automation.resume": "Resume", "automation.remove": "Delete",
-    "automation.paused": "Paused",
-    "automation.mode.new": "New thread", "automation.mode.wake": "Wake session", "automation.mode.worktree": "worktree",
+    "automation.create": "Create", "automation.cancel": "Cancel", "automation.remove": "Delete",
     "automation.next": "Next", "automation.run.completed": "Completed", "automation.run.failed": "Failed",
     "automation.run.running": "Running", "automation.run.queued": "Queued", "automation.run.interrupted": "Interrupted", "automation.run.never": "No runs yet",
     "automation.schedule.daily": "Daily", "automation.schedule.weekdays": "Weekdays", "automation.schedule.weekly": "Weekly",
@@ -39,17 +36,14 @@ export async function activate(api) {
     "automation.template.review": "每周回顾", "automation.template.review.prompt": "回顾这个项目本周的进展，整理已完成的工作、尚未解决的问题和下周的重点。",
     "automation.template.check": "跟进监控", "automation.template.check.prompt": "检查这个项目待办工作的进展，报告有意义的变化、阻碍和需要我决定的事项。",
 
-    "automation.title": "自动化", "automation.subtitle": "按计划运行的提示词与周期性任务。",
+    "automation.title": "自动化",
     "automation.new": "新建自动化", "automation.empty": "还没有自动化任务",
-    "automation.emptyHelp": "按时间执行的提示词会显示在这里。",
-    "automation.search": "搜索自动化", "automation.filter.all": "全部", "automation.filter.active": "已开启",
-    "automation.filter.empty": "没有符合筛选的任务。",
+    "automation.search": "搜索自动化", "automation.search.empty": "没有匹配的自动化。",
+    "automation.enable": "启用", "automation.enableNamed": "启用 {name}",
     "automation.name": "名称", "automation.prompt": "任务内容", "automation.schedule": "Cron 时间", "automation.timezone": "时区", "automation.workspace": "工作区",
     "automation.recurring": "重复", "automation.workspaceHelp": "下方任务和运行记录都属于这个工作区。", "automation.workspaceNone": "没有可用的项目工作区",
     "automation.isolation": "在独立 git worktree 中运行", "automation.isolationHelp": "每次运行都在自己的 worktree 中执行，不直接改动当前项目目录。",
-    "automation.create": "创建", "automation.cancel": "取消", "automation.pause": "暂停", "automation.resume": "继续", "automation.remove": "删除",
-    "automation.paused": "已暂停",
-    "automation.mode.new": "新会话", "automation.mode.wake": "唤醒会话", "automation.mode.worktree": "worktree",
+    "automation.create": "创建", "automation.cancel": "取消", "automation.remove": "删除",
     "automation.next": "下次", "automation.run.completed": "已完成", "automation.run.failed": "失败",
     "automation.run.running": "运行中", "automation.run.queued": "排队中", "automation.run.interrupted": "已中断", "automation.run.never": "暂无运行",
     "automation.schedule.daily": "每天", "automation.schedule.weekdays": "工作日", "automation.schedule.weekly": "每周",
@@ -76,36 +70,36 @@ export async function activate(api) {
     .plugin-automation-body[data-resizing="true"] { transition:none; }
     .plugin-automation-main { min-width:0; overflow:auto; padding:var(--automation-inset); }
     .plugin-automation-main > * { max-width:880px; margin-inline:auto; }
-    .plugin-automation-head { display:flex; align-items:center; justify-content:space-between; gap:var(--automation-gap); margin-bottom:var(--automation-gap); }
-    .plugin-automation-title { margin:0; font-size:var(--font-title); line-height:var(--line-ui); font-weight:var(--weight-semibold); color:var(--ink-strong); }
-    .plugin-automation-toolbar { display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+    .plugin-automation-toolbar { display:flex; align-items:center; gap:8px; margin-bottom:var(--automation-gap); }
+    .plugin-automation-toolbar .plugin-automation-create { display:inline-flex; flex:none; align-items:center; gap:6px; }
+    .plugin-automation-create svg { width:var(--icon-size-sm); height:var(--icon-size-sm); }
     .plugin-automation-search { flex:1; min-width:0; display:flex; align-items:center; gap:8px; height:2.6em; border:1px solid var(--field-border); border-radius:var(--wuu-radius-control, var(--radius-sm)); padding:0 12px; color:var(--ink-tertiary); background:var(--field-bg); }
     .plugin-automation-search:hover { background:var(--field-hover-bg); }
     .plugin-automation-search svg { width:var(--icon-size-sm); height:var(--icon-size-sm); flex:none; }
     .plugin-automation-search input { width:100%; min-width:0; border:0; padding:0; outline:0; background:transparent; color:inherit; font:inherit; color:var(--ink); }
     .plugin-automation-search input::placeholder { color:var(--ink-tertiary); }
-    .plugin-automation-workspace-picker { flex:0 1 34%; min-width:0; }
+    .plugin-automation-workspace-picker { flex:0 1 auto; min-width:0; max-width:34%; }
     .plugin-automation-workspace-picker .plugin-automation-picker-trigger { width:100%; }
-    .plugin-automation-filters { display:flex; flex-wrap:wrap; gap:4px; padding-bottom:12px; border-bottom:1px solid var(--hairline-soft); margin-bottom:4px; }
-    .plugin-automation-filter { min-height:2.2em; border:0; border-radius:var(--wuu-radius-inner, var(--radius-xs)); padding:4px 10px; background:transparent; color:var(--ink-soft); font:inherit; font-size:var(--font-sm); cursor:pointer; }
-    .plugin-automation-filter[aria-pressed="true"], .plugin-automation-filter:hover { background:var(--surface-2); color:var(--ink); }
     .plugin-automation-list { display:flex; flex-direction:column; gap:2px; }
-    .plugin-automation-item { width:100%; display:flex; align-items:flex-start; gap:10px; min-width:0; padding:12px 10px; border:0; border-radius:var(--wuu-radius-inner, var(--radius-xs)); text-align:left; background:transparent; color:inherit; font:inherit; cursor:pointer; }
+    .plugin-automation-list + .plugin-automation-group, .plugin-automation-suggestions + .plugin-automation-group { margin-top:calc(var(--automation-gap) * 2); }
+    .plugin-automation-item { display:flex; align-items:center; gap:var(--automation-gap); min-width:0; border-radius:var(--wuu-radius-inner, var(--radius-xs)); }
     .plugin-automation-item:hover { background:var(--surface-1); }
     .plugin-automation-item[data-selected="true"] { background:var(--surface-2); }
+    .plugin-automation-item-main { flex:1; display:flex; align-items:flex-start; gap:10px; min-width:0; padding:12px 10px; border:0; border-radius:inherit; text-align:left; background:transparent; color:inherit; font:inherit; cursor:pointer; }
     .plugin-automation-item[data-paused="true"] .plugin-automation-item-title { color:var(--ink-soft); }
     .plugin-automation-item-icon { display:flex; align-items:center; justify-content:center; width:var(--icon-size); height:1.5em; flex:none; color:var(--ink-soft); }
     .plugin-automation-item-icon svg { width:var(--icon-size); height:var(--icon-size); }
-    .plugin-automation-item-icon[data-run="failed"] { color:var(--danger); }
-    .plugin-automation-item-main { min-width:0; display:grid; gap:3px; flex:1; }
+    .plugin-automation-item-icon[data-run="failed"], .plugin-automation-history-status[data-run="failed"] { color:var(--danger); }
+    .plugin-automation .plugin-automation-item-switch { flex:none; gap:0; padding-right:10px; }
+    .plugin-automation-item-copy { min-width:0; display:grid; gap:3px; flex:1; }
     .plugin-automation-item-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:inherit; font-weight:var(--weight-medium); line-height:1.5; }
     .plugin-automation-item-meta { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink-tertiary); font-size:var(--font-sm); line-height:1.5; }
-    .plugin-automation-suggestions { margin-top:calc(var(--automation-gap) * 2); }
-    .plugin-automation-suggestions > .plugin-automation-group-title { padding-bottom:12px; border-bottom:1px solid var(--hairline-soft); }
-    .plugin-automation-group-title { margin:0 0 12px; color:var(--ink); font-size:var(--font-ui); font-weight:var(--weight-medium); line-height:1.4; }
+    .plugin-automation-group-title { margin:0 0 8px; padding-inline:10px; color:var(--ink-muted); font-size:var(--font-sm); font-weight:var(--weight-medium); line-height:1.4; }
     .plugin-automation-empty { min-height:160px; }
     .plugin-automation-error { color:var(--danger); font-size:var(--font-sm); overflow-wrap:anywhere; }
     .plugin-automation-filtered-empty { padding:24px 0; color:var(--ink-soft); text-align:center; }
+    .plugin-automation-detail-title { flex:1; min-width:0; margin:0; font-size:var(--font-ui); font-weight:var(--weight-medium); line-height:var(--line-ui); }
+    .plugin-automation-detail-head > .plugin-automation-enable { flex:1; justify-content:start; grid-template-columns:auto auto; gap:var(--space-3); }
     .plugin-automation-detail { position:relative; display:flex; flex-direction:column; width:var(--automation-detail-width); min-width:var(--automation-detail-width); min-height:0; overflow:hidden; border-left:1px solid var(--hairline); transition:opacity var(--environment-panel-exit-duration, 220ms) var(--ease-in, cubic-bezier(0.4, 0, 1, 1)); }
     .plugin-automation-body[data-closing="true"] .plugin-automation-detail { opacity:0; pointer-events:none; }
     .plugin-automation-detail-body { flex:1; min-width:0; min-height:0; overflow:auto; padding:var(--automation-inset); }
@@ -134,13 +128,17 @@ export async function activate(api) {
     .plugin-automation-form-row > span:first-child { flex:none; }
     .plugin-automation-form-row-control { display:flex; justify-content:flex-end; min-width:0; max-width:70%; }
     .plugin-automation-form-row .plugin-ui-checkbox { width:100%; gap:12px; }
+    .plugin-automation-form-row .plugin-ui-field-label { font-weight:var(--weight-regular); }
     .plugin-automation-field { min-width:0; max-width:100%; width:12em; height:2.6em; border:1px solid transparent; border-radius:var(--wuu-radius-control, var(--radius-sm)); padding:0 8px; background:transparent; color:inherit; font:inherit; text-align:right; }
     .plugin-automation-field:hover { background:var(--field-hover-bg); }
     .plugin-automation-field[type="time"] { width:8em; font-variant-numeric:tabular-nums; }
     .plugin-automation-field::-webkit-calendar-picker-indicator { display:none; }
     .plugin-automation-form-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; padding-bottom:4px; }
     .plugin-automation-history { display:grid; gap:12px; margin-top:24px; font-size:var(--font-sm); }
-    .plugin-automation-history-row { display:flex; justify-content:space-between; gap:12px; color:var(--ink-soft); }
+    .plugin-automation-history > .plugin-automation-group-title { padding-inline:0; }
+    .plugin-automation-history-row { display:flex; align-items:center; gap:8px; color:var(--ink-soft); font-variant-numeric:tabular-nums; }
+    .plugin-automation-history-status { display:inline-flex; color:var(--ink-muted); }
+    .plugin-automation-history-status svg { width:var(--icon-size-sm); height:var(--icon-size-sm); }
     .plugin-automation-more { position:relative; }
     .plugin-automation-more summary { display:grid; place-items:center; list-style:none; cursor:pointer; width:2.2em; height:2.2em; border-radius:var(--radius-xs); color:var(--ink-soft); }
     .plugin-automation-more summary:hover { background:var(--surface-2); }
@@ -178,7 +176,6 @@ export async function activate(api) {
     @container (max-width: 420px) {
       .plugin-automation { --automation-inset:16px; }
       .plugin-automation-main, .plugin-automation-detail { padding:16px; }
-      .plugin-automation-filter { padding-inline:8px; }
     }
     @media (prefers-reduced-motion: reduce) {
       .plugin-automation *, .plugin-automation-picker-menu { animation:none!important; transition:none!important; }
@@ -267,6 +264,24 @@ export async function activate(api) {
   function ChevronIcon() {
     return h("svg", { viewBox: "0 0 16 16", fill: "none", "aria-hidden": true },
       h("path", { d: "m4.5 6.5 3.5 3.5 3.5-3.5", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" }));
+  }
+
+  function PlusIcon() {
+    return h("svg", { viewBox: "0 0 16 16", fill: "none", "aria-hidden": true },
+      h("path", { d: "M8 3.5v9M3.5 8h9", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }));
+  }
+
+  function AlertIcon() {
+    return h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.75", strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true },
+      h("circle", { cx: "12", cy: "12", r: "9" }), h("path", { d: "M12 8v4.5M12 16h.01" }));
+  }
+
+  // One symbol per run outcome; the label stays available to assistive tech.
+  function RunStatus({ tr, run }) {
+    const status = runStatus(run);
+    const label = tr(`automation.run.${status}`);
+    return h("span", { className: "plugin-automation-history-status", "data-run": status, role: "img", "aria-label": label, title: label },
+      status === "completed" ? h(CheckIcon) : status === "failed" ? h(AlertIcon) : status === "interrupted" ? h(CloseIcon) : h(ClockIcon));
   }
 
   function ClockIcon() {
@@ -390,7 +405,7 @@ export async function activate(api) {
     const [draft, setDraft] = React.useState(() => initial || draftFor(task));
     const [saved, setSaved] = React.useState(() => initial || draftFor(task));
     const [localError, setLocalError] = React.useState("");
-    const [advanced, setAdvanced] = React.useState(() => !draft.recurring || draft.workspace === "worktree" || draft.timezone !== Intl.DateTimeFormat().resolvedOptions().timeZone);
+    const [advanced, setAdvanced] = React.useState(() => draft.workspace === "worktree" || draft.timezone !== Intl.DateTimeFormat().resolvedOptions().timeZone);
     const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
     const panelRef = React.useRef(null);
     React.useEffect(() => {
@@ -411,9 +426,10 @@ export async function activate(api) {
       separator ? h("div", { ...separator, className: "plugin-automation-resizer", "aria-label": tr("automation.resize") }) : null,
       h("div", { className: "plugin-automation-detail-body" },
         h("div", { className: "plugin-automation-detail-head" },
-          h("span", { className: "plugin-automation-detail-status" }, !task ? tr("automation.new") : readOnly ? tr("automation.run.completed") : tr(task.paused ? "automation.paused" : "automation.filter.active")),
+          !task ? h("h2", { className: "plugin-automation-detail-title" }, tr("automation.new"))
+            : readOnly ? h("span", { className: "plugin-automation-detail-title" })
+            : h(Checkbox, { className: "plugin-automation-enable", label: tr("automation.enable"), checked: !task.paused, disabled: busy, onChange: onPause }),
           task && !readOnly ? h(React.Fragment, null,
-            h(Button, { variant: "ghost", disabled: busy, onClick: onPause }, tr(task.paused ? "automation.resume" : "automation.pause")),
             h("details", { className: "plugin-automation-more" }, h("summary", { "aria-label": tr("automation.more") }, "⋯"), h("div", { className: "plugin-automation-more-menu" }, h(Button, { variant: "danger", disabled: busy, onClick: onRemove }, tr("automation.remove"))))) : null,
           h(Button, { className: "plugin-automation-detail-close", variant: "ghost", disabled: busy, "aria-label": tr("automation.close"), onClick: onClose }, h(CloseIcon))),
         h("form", { className: "plugin-automation-form", onSubmit: save },
@@ -427,18 +443,18 @@ export async function activate(api) {
                 value: { mode: draft.mode, threadId: draft.heartbeat_thread_id, threadTitle: threads.find((thread) => thread.id === draft.heartbeat_thread_id)?.title },
                 onSelect: (target) => setDraft({ ...draft, mode: target.mode, heartbeat_thread_id: target.threadId || "", workspace: target.mode === "thread_heartbeat" ? "shared" : draft.workspace }),
               }))),
-              h(ScheduleFields, { tr, draft, onChange: setDraft })),
+              h(ScheduleFields, { tr, draft, onChange: setDraft }),
+              h("div", { className: "plugin-automation-form-row" }, h(Checkbox, { label: tr("automation.once"), checked: !draft.recurring, onChange: (event) => setDraft({ ...draft, recurring: !event.target.checked }) }))),
             h("details", { className: "plugin-automation-advanced", open: advanced, onToggle: (event) => setAdvanced(event.currentTarget.open) },
               h("summary", null, tr("automation.advanced")),
               h(FieldRow, { label: tr("automation.timezone") }, h("input", { className: "plugin-automation-field", "aria-label": tr("automation.timezone"), required: true, value: draft.timezone, onChange: (event) => setDraft({ ...draft, timezone: event.target.value }) })),
-              h("div", { className: "plugin-automation-form-row" }, h(Checkbox, { label: tr("automation.once"), checked: !draft.recurring, onChange: (event) => setDraft({ ...draft, recurring: !event.target.checked }) })),
               draft.mode !== "thread_heartbeat" ? h("div", { className: "plugin-automation-form-row" }, h(Checkbox, { label: tr("automation.field.isolation"), title: tr("automation.isolationHelp"), checked: draft.workspace === "worktree", onChange: (event) => setDraft({ ...draft, workspace: event.target.checked ? "worktree" : "shared" }) })) : null)),
           error || localError ? h("div", { className: "plugin-automation-error", role: "alert" }, error || localError) : null,
           !readOnly ? h("div", { className: "plugin-automation-form-actions" },
             task && dirty ? h("span", { className: "plugin-automation-detail-status", role: "status" }, tr("automation.unsaved")) : null,
             h(Button, { variant: "ghost", disabled: busy, onClick: onClose }, tr("automation.cancel")),
             h(Button, { type: "submit", variant: "primary", disabled: busy || !draft.prompt.trim() || (!!task && !dirty) }, tr(task ? "automation.save" : "automation.create"))) : null),
-        runs.length ? h("section", { className: "plugin-automation-history" }, h("h3", { className: "plugin-automation-group-title" }, tr("automation.history")), runs.slice(0, 5).map((run) => h("div", { key: run.id }, h("div", { className: "plugin-automation-history-row" }, h("span", null, tr(`automation.run.${runStatus(run)}`)), h("time", null, formatDateTime(run.triggered_at, draft.timezone))), run.error ? h("p", { className: "plugin-automation-error" }, run.error) : null))) : null));
+        runs.length ? h("section", { className: "plugin-automation-history" }, h("h3", { className: "plugin-automation-group-title" }, tr("automation.history")), runs.slice(0, 5).map((run) => h("div", { key: run.id }, h("div", { className: "plugin-automation-history-row" }, h(RunStatus, { tr, run }), h("time", null, formatDateTime(run.triggered_at, draft.timezone))), run.error ? h("p", { className: "plugin-automation-error" }, run.error) : null))) : null));
   }
 
   function useEditorResize() {
@@ -506,7 +522,6 @@ export async function activate(api) {
     const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState("");
     const [query, setQuery] = React.useState("");
-    const [filter, setFilter] = React.useState("all");
     const [threads, setThreads] = React.useState([]);
     const epoch = React.useRef(0);
     const workspace = workspaces.find((item) => item.id === workspaceID);
@@ -557,8 +572,11 @@ export async function activate(api) {
     // keep completed work reachable without changing scheduler persistence.
     const completed = sortedRuns.filter((run) => !run.task?.recurring && run.status === "completed" && !tasks.some((task) => task.id === run.task_id));
     const completedTasks = [...new Map(completed.map((run) => [run.task_id, run.task])).values()].filter(Boolean);
-    const candidates = filter === "completed" ? completedTasks : filter === "all" ? [...tasks, ...completedTasks] : tasks.filter((task) => filter === "paused" ? task.paused : !task.paused);
-    const visible = candidates.filter((task) => `${task.title}\n${task.prompt}`.toLowerCase().includes(query.trim().toLowerCase()));
+    const matchesQuery = (task) => `${task.title}\n${task.prompt}`.toLowerCase().includes(query.trim().toLowerCase());
+    // Scheduled work lists what runs next first. Pausing keeps a task's next
+    // run, so its switch never moves the row.
+    const scheduled = [...tasks].sort((a, b) => String(a.next_run_at || "").localeCompare(String(b.next_run_at || ""))).filter(matchesQuery);
+    const finished = completedTasks.filter(matchesQuery);
     const selectedTask = selection?.id ? tasks.find((task) => task.id === selection.id) || completedTasks.find((task) => task.id === selection.id) : null;
     const panelOpen = !!workspace && !!selection && (selection.kind === "new" || !!selectedTask);
     const closePanel = () => {
@@ -580,12 +598,27 @@ export async function activate(api) {
       }, panelMotionMs("--environment-panel-exit-duration", 220));
       return () => window.clearTimeout(timer);
     }, [panelClosing]);
+    // The row opens the editor; the switch pauses and resumes in place. A
+    // completed one-shot has nothing left to switch.
+    const taskRow = (task, done) => {
+      const lastRun = sortedRuns.find((run) => run.task_id === task.id);
+      const failed = !done && runStatus(lastRun) === "failed";
+      const title = task.title || task.prompt;
+      const schedule = task.recurring === false ? tr("automation.once") : describeSchedule(task.cron, task.timezone, tr) || task.cron;
+      const meta = done
+        ? formatDateTime(lastRun?.completed_at || lastRun?.triggered_at, task.timezone)
+        : [schedule, task.paused ? null : `${tr("automation.next")} ${formatDateTime(task.next_run_at, task.timezone) || "—"}`].filter(Boolean).join(" · ");
+      return h("div", { key: task.id, className: "plugin-automation-item", "data-selected": selection?.id === task.id, "data-paused": !done && task.paused },
+        h("button", { type: "button", className: "plugin-automation-item-main", "aria-pressed": selection?.id === task.id, disabled: busy, onClick: () => { setError(""); setPanelClosing(false); setSelection({ kind: "task", id: task.id }); } },
+          h("span", { className: "plugin-automation-item-icon", "data-run": failed ? "failed" : undefined, role: failed ? "img" : undefined, "aria-label": failed ? tr("automation.run.failed") : undefined, title: failed ? tr("automation.run.failed") : undefined },
+            done ? h(CheckIcon) : failed ? h(AlertIcon) : h(ClockIcon)),
+          h("span", { className: "plugin-automation-item-copy" }, h("span", { className: "plugin-automation-item-title" }, title), h("span", { className: "plugin-automation-item-meta", title: `${task.cron} · ${task.timezone}` }, meta))),
+        done ? null : h(Checkbox, { className: "plugin-automation-item-switch", label: h("span", { className: "plugin-automation-sr" }, tr("automation.enableNamed", { name: title })), checked: !task.paused, disabled: busy, onChange: () => act("automation.update", { id: task.id, paused: !task.paused }) }));
+    };
     const create = (template) => { setError(""); setPanelClosing(false); setSelection({ kind: "new", key: String(Date.now()), draft: { ...draftFor(), ...(template ? { title: tr(`automation.template.${template}`), prompt: tr(`automation.template.${template}.prompt`), schedule: template === "review" ? "0 16 * * 5" : "0 9 * * 1-5" } : {}) } }); };
     return h("main", { className: "plugin-automation" }, h(Page, null,
       h("div", { className: "plugin-automation-body", ref: resize.bodyRef, style: { "--automation-detail-width": `${resize.width}px` }, "data-resizing": resize.resizing ? "true" : "false", "data-panel": panelOpen ? "true" : "false", "data-closing": panelClosing ? "true" : undefined },
         h("section", { className: "plugin-automation-main", "aria-label": tr("automation.title") },
-          h("div", { className: "plugin-automation-head" }, h("h1", { className: "plugin-automation-title" }, tr("automation.title")),
-            h(Button, { variant: "primary", disabled: busy || !workspace, onClick: () => create() }, tr("automation.create"))),
           h("div", { className: "plugin-automation-toolbar" },
             h("label", { className: "plugin-automation-search" }, h(SearchIcon), h("span", { className: "plugin-automation-sr" }, tr("automation.search")), h("input", { type: "search", value: query, placeholder: tr("automation.search"), onChange: (event) => setQuery(event.target.value) })),
             h("div", { className: "plugin-automation-workspace-picker" }, h(Picker, {
@@ -593,20 +626,16 @@ export async function activate(api) {
               placeholder: tr("automation.workspaceNone"),
               options: workspaces.map((item) => ({ value: item.id, label: item.name || workspaceName(item.root) })),
               onChange: (id) => { epoch.current++; setWorkspaceID(id); setPanelClosing(false); setSelection(null); setTasks([]); setRuns([]); setError(""); },
-            }))),
-          h("div", { className: "plugin-automation-filters" }, ["all", "active", "paused", "completed"].map((value) => h("button", { key: value, className: "plugin-automation-filter", "aria-pressed": filter === value, onClick: () => setFilter(value) }, tr(value === "paused" ? "automation.paused" : value === "completed" ? "automation.run.completed" : `automation.filter.${value}`)))),
+            })),
+            h(Button, { className: "plugin-automation-create", disabled: busy || !workspace, onClick: () => create() }, h(PlusIcon), tr("automation.new"))),
           error && !panelOpen ? h("p", { className: "plugin-automation-error", role: "alert" }, error) : null,
-          !tasks.length && !completedTasks.length ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: workspace ? undefined : tr("automation.workspaceNone") }) : !visible.length ? h("p", { className: "plugin-automation-filtered-empty" }, tr("automation.filter.empty")) : h("div", { className: "plugin-automation-list" }, visible.map((task) => {
-            const done = !tasks.some((item) => item.id === task.id);
-            const lastRun = sortedRuns.find((run) => run.task_id === task.id);
-            const meta = done
-              ? [tr("automation.run.completed"), formatDateTime(lastRun?.completed_at || lastRun?.triggered_at, task.timezone)].filter(Boolean).join(" · ")
-              : [describeSchedule(task.cron, task.timezone, tr) || task.cron, task.paused ? tr("automation.paused") : `${tr("automation.next")} ${formatDateTime(task.next_run_at, task.timezone) || "—"}`].join(" · ");
-            return h("button", { key: task.id, className: "plugin-automation-item", "data-selected": selection?.id === task.id, "data-paused": task.paused, "aria-pressed": selection?.id === task.id, disabled: busy, onClick: () => { setError(""); setPanelClosing(false); setSelection({ kind: "task", id: task.id }); } },
-              h("span", { className: "plugin-automation-item-icon", "data-run": runStatus(sortedRuns.find((run) => run.task_id === task.id)) }, done ? h(CheckIcon) : h(ClockIcon)),
-              h("span", { className: "plugin-automation-item-main" }, h("span", { className: "plugin-automation-item-title" }, task.title || task.prompt), h("span", { className: "plugin-automation-item-meta", title: `${task.cron} · ${task.timezone}` }, meta)));
-          })),
-          workspace ? h("section", { className: "plugin-automation-suggestions" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.suggestions")), ["brief", "review", "check"].map((key) => h("button", { key, className: "plugin-automation-item", disabled: busy, onClick: () => create(key) }, h("span", { className: "plugin-automation-item-icon" }, h(ClockIcon)), h("span", { className: "plugin-automation-item-main" }, h("span", { className: "plugin-automation-item-title" }, tr(`automation.template.${key}`)), h("span", { className: "plugin-automation-item-meta" }, tr(`automation.template.${key}.prompt`)))))) : null),
+          !workspace ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: tr("automation.workspaceNone") })
+            : query.trim() && !scheduled.length && !finished.length ? h("p", { className: "plugin-automation-filtered-empty" }, tr("automation.search.empty"))
+            : h(React.Fragment, null,
+              scheduled.length ? h("div", { className: "plugin-automation-list" }, scheduled.map((task) => taskRow(task, false)))
+                // Without scheduled work, templates are the way in.
+                : query.trim() ? null : h("section", { className: "plugin-automation-suggestions" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.suggestions")), ["brief", "review", "check"].map((key) => h("button", { key, type: "button", className: "plugin-automation-item plugin-automation-item-main", disabled: busy, onClick: () => create(key) }, h("span", { className: "plugin-automation-item-icon" }, h(ClockIcon)), h("span", { className: "plugin-automation-item-copy" }, h("span", { className: "plugin-automation-item-title" }, tr(`automation.template.${key}`)), h("span", { className: "plugin-automation-item-meta" }, tr(`automation.template.${key}.prompt`)))))),
+              finished.length ? h("section", { className: "plugin-automation-group" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.run.completed")), h("div", { className: "plugin-automation-list" }, finished.map((task) => taskRow(task, true)))) : null)),
         panelOpen ? h(Editor, {
           key: `${workspaceID}:${selection.id || selection.key}`, tr, task: selectedTask, initial: selection.draft, workspace, threads, busy, error,
           readOnly: !!selectedTask && !tasks.some((task) => task.id === selectedTask.id),

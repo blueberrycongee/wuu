@@ -1807,10 +1807,10 @@
   max-height: min(400px, var(--floating-menu-available-height, calc(100vh - 120px)));
   overflow: hidden;
   border: 1px solid var(--menu-border);
-  border-radius: calc(var(--radius-sm) + var(--space-2));
+  border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
-  padding: var(--space-2);
+  padding: var(--menu-inset);
   transform-origin: bottom left;
   --menu-enter-y: 4px;
   animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
@@ -2062,38 +2062,31 @@
   display: grid;
   min-height: 0;
   flex: 0 1 auto;
-  max-height: 240px;
+  /* A half row at the bottom shows that the list scrolls. */
+  max-height: calc((var(--control-row-height) + 1px) * 7.5 + var(--menu-inset));
   overflow: auto;
-  gap: 2px;
-  padding-block: var(--space-1);
+  gap: 1px;
+  padding-block: var(--menu-inset);
 }
 
+/* The pickers are compact menus: the same row, corner, and label roles as
+ * select panels, with one icon column that lines up with the search icon. */
 .composer-project-menu button {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--icon-size-sm) minmax(0, 1fr) auto;
   flex-shrink: 0;
   height: auto;
   min-height: var(--control-row-height);
   align-items: center;
   gap: var(--menu-item-gap);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
   font-size: var(--font-menu);
-  font-weight: 400;
+  font-weight: var(--weight-medium);
   line-height: var(--line-ui);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
-}
-
-.composer-project-menu > button,
-.project-picker-list > button {
-  display: grid;
-  grid-template-columns: var(--icon-size-sm) minmax(0, 1fr) var(--icon-size-sm);
-  padding: var(--space-2) var(--space-1);
-}
-
-.composer-project-menu > button {
-  font-weight: var(--weight-medium);
 }
 
 .composer-project-menu button:hover:not(:disabled) {
@@ -2123,10 +2116,12 @@
 }
 
 .composer-project-menu .menu-search {
-  padding: var(--space-2) var(--space-1);
-  border-bottom: 0;
   font-weight: 400;
   line-height: var(--line-ui);
+}
+
+.composer-project-menu .menu-search + button {
+  margin-top: var(--menu-inset);
 }
 
 .composer-project-menu .menu-search input {
@@ -2135,10 +2130,11 @@
 
 .project-picker-heading {
   flex-shrink: 0;
-  padding: var(--space-2) var(--space-1) var(--space-1);
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  font-weight: 400;
+  padding: var(--menu-inset) var(--menu-item-padding-inline) 0;
+  color: var(--codex-menu-label-text);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
 }
 
 .composer-project-menu .menu-search svg {
@@ -2148,15 +2144,16 @@
 
 .project-picker-empty {
   color: var(--ink-muted);
-  padding: 8px 9px;
-  font-size: var(--font-sm);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
+  font-size: var(--font-menu);
+  line-height: var(--line-ui);
 }
 
 .project-picker-divider {
   height: 1px;
   flex-shrink: 0;
   background: var(--hairline-soft);
-  margin: var(--space-1);
+  margin: 0 var(--menu-item-padding-inline) var(--menu-inset);
 }
 
 /* Right-click edit menu for the composer textarea (ComposerContextMenu
@@ -2447,35 +2444,40 @@
   max-width: 100%;
 }
 
-.composer-branch-menu small {
-  display: block;
-  margin-top: 2px;
+/* A shared prefix such as codex/ steps back so the part people scan for,
+ * the branch's own name, carries the row. */
+.composer-branch-prefix {
+  color: var(--ink-muted);
+  font-weight: var(--weight-regular);
+}
+
+.composer-branch-trailing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.composer-branch-dirty {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   color: var(--ink-muted);
   font-size: var(--font-xs);
-  font-weight: 400;
+  font-weight: var(--weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-project-menu .composer-branch-dirty svg {
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
 }
 
 .composer-branch-menu button:disabled {
   cursor: default;
 }
 
-.composer-branch-create {
-  display: flex;
-  gap: 6px;
-  padding: 4px;
-}
-
-.composer-branch-create input {
-  min-width: 0;
-  flex: 1;
-  border: 1px solid var(--menu-border);
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--ink);
-  padding: 6px 8px;
-}
-
-.composer-branch-menu button[aria-checked="true"] {
+.composer-project-menu button[aria-checked="true"] {
+  background: var(--menu-hover);
   opacity: 1;
 }
 

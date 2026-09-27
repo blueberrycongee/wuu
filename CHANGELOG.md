@@ -39,6 +39,23 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Conversation search results, shortcut keycaps, and message previews match the
   sidebar and conversation styles, and settings navigation headings match the
   sidebar's.
+- The Plugins page takes its sidebar name and opens on search and actions. Each
+  plugin switches on and off in its row; turning on an unapproved plugin that
+  asks for permissions shows them first. The former status labels become the
+  switch plus one mark for failures, staged updates, and pending approvals.
+- Automations list scheduled tasks by next run, each with a pause switch, and
+  completed one-time tasks after them, replacing the four filters. Suggestions
+  appear when nothing is scheduled, **Run once** sits with the schedule, and run
+  history uses status symbols.
+- Settings rows mark only what needs attention, such as a model service without
+  a credential or an MCP server that failed or needs sign-in. Agents Wuu cannot
+  find are grouped under **Not installed** with an install action. Runtime fields
+  show their unit, programmatic tool calling moves to the Runtime page, refresh
+  and copy are icon buttons, and archived conversations restore from an icon.
+- The composer's project and branch cards use the compact menu geometry. The
+  project card lists **Conversation** first, as the sidebar does. The branch card
+  leads with the checked-out and default branches, lists the rest by most recent
+  commit, counts uncommitted files, and creates a branch from the search text.
 
 ### Added
 

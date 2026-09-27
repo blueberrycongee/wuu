@@ -5,7 +5,7 @@ import {
   ChevronUp,
   Folder,
   FolderOpen,
-  FolderX,
+  MessageSquare,
   ArrowUp,
   ShieldCheck,
   Split,
@@ -629,9 +629,10 @@ export function Composer({
     activeContext?.kind === "project" && activeWorkspace?.path
       ? activeWorkspace.path
       : workspacePillLabel;
+  // Matches the sidebar and the picker, which list these as conversations.
   const WorkspacePillIcon =
     activeContext?.kind === "no_project"
-      ? FolderX
+      ? MessageSquare
       : activeContext?.kind === "project"
         ? Folder
         : FolderOpen;

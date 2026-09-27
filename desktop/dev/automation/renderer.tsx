@@ -20,13 +20,19 @@ let tasks = [
   { id: "brief", title: "每日简报", prompt: "汇总这个项目最近的变更、待办工作，以及今天需要我关注的事项。", cron: "0 8 * * 1-5", timezone: "Asia/Shanghai", mode: "new_thread", recurring: true, paused: false, workspace_mode: "shared", next_run_at: "2026-09-16T00:00:00Z" },
   { id: "review", title: "每周回顾", prompt: "回顾本周进展，整理已完成的工作、尚未解决的问题和下周重点。", cron: "0 16 * * 5", timezone: "Asia/Shanghai", mode: "new_thread", recurring: true, paused: true, workspace_mode: "worktree", next_run_at: "2026-09-18T08:00:00Z" },
 ];
+// A failed run on a recurring task and a finished one-shot task, so the list
+// shows both a run problem and the completed section.
+const runs = [
+  { id: "run-brief", task_id: "brief", status: "failed", triggered_at: "2026-09-15T00:00:00Z", error: "Provider rate limit reached" },
+  { id: "run-once", task_id: "release", status: "completed", triggered_at: "2026-09-14T09:00:00Z", completed_at: "2026-09-14T09:03:00Z", task: { id: "release", title: "发布前检查", prompt: "检查发布分支的构建、测试和发布说明。", cron: "0 17 14 9 *", timezone: "Asia/Shanghai", mode: "new_thread", recurring: false, paused: false, workspace_mode: "shared" } },
+];
 const host = new PluginHost({ react: React,
   listWorkspaces: async () => ({ activeWorkspaceId: "wuu", workspaces: [workspace] }),
   listThreads: async () => ["检查自动化插件的执行与恢复流程", "统一侧栏与编辑面板的交互", "整理本周项目进展", "检查长标题在不同窗口宽度下的显示与截断", "排查会话恢复", "更新开发文档", "核验任务运行记录", "改进菜单的键盘操作", "检查桌面与移动端布局", "整理下一周的工作计划", "检查插件生命周期", "回顾最近一次发布"].map((title, index) => ({ id: `chat-${index}`, title, pinned: index === 0, updatedAt: "2026-09-15T12:00:00Z" })),
   invokeRuntime: async ({ method, input }) => {
     const value = input as Record<string, any>;
     if (method === "automation.list") return { tasks, workspace };
-    if (method === "automation.run.list") return { runs: [] };
+    if (method === "automation.run.list") return { runs };
     if (method === "automation.remove") { tasks = tasks.filter(task => task.id !== value.id); return { ok: true }; }
     const task = { ...(tasks.find(task => task.id === value.id) || {}), ...value, id: value.id || crypto.randomUUID(), ...(value.schedule ? { cron: value.schedule } : {}), ...(value.workspace ? { workspace_mode: value.workspace } : {}) };
     tasks = [...tasks.filter(item => item.id !== task.id), task] as typeof tasks;

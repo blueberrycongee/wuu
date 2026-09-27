@@ -87,6 +87,18 @@ branch and the worktree toggle share a second group of the same height. Hover
 fills a segment edge to edge, and the toggle's on state uses the interaction
 accent like Fast mode. A folder outside Git shows only the project group.
 
+Both groups open compact menu cards. The project card lists **Conversation**
+first, as the sidebar does, then projects in sidebar order; opening a folder and
+creating a blank workspace follow a divider. The branch card needs no heading
+outside a worktree: the checked-out branch comes first with a count of its
+uncommitted files, then the local default branch, then the rest most recently
+committed first. A shared prefix such as `codex/` is muted so the branch's own
+name carries the row. The search field doubles as the new branch name: a name
+that matches no branch adds a create row, and Enter creates it only when no
+branch matches, so a partial match never becomes a branch. While the draft starts
+in its own worktree, the card is headed **Start from**, choosing a branch changes
+nothing in the project, and it offers no new branch.
+
 Run `npm --prefix desktop run test:e2e:composer-worktree` to start a real
 conversation in a worktree through Electron and the Go core with a disposable
 profile, Git fixture, and local provider. It checks that choosing a start branch
@@ -98,19 +110,23 @@ visible, so the pointer's position can add a hover surface to a capture.
 
 Settings groups pages by task: **Agents & models** (model providers, agents, runtime), **App** (general, appearance), **Extensions** (MCP servers and plugin pages), and **Data** (usage, archive). Page IDs are part of the plugin settings snapshot, so they stay stable when a label or group changes; the runtime page keeps the `advanced` ID.
 
-Every page shares one column measured in UI text, so the title stays in place while navigating and a label stays within a glance of its control at large sizes. A page opens with its title, an optional line that states a non-obvious scope, and page actions beside the title. Section titles are the only other semibold text; rows stay regular inside one bordered group. Keep a row description only for units, constraints, or consequences the title does not already state.
+Every page shares one column measured in UI text, so the title stays in place while navigating and a label stays within a glance of its control at large sizes. A page opens with its title, an optional line that states a non-obvious scope, and page actions beside the title; a refresh action is an icon button whose tooltip names it. Section titles are the only other semibold text; rows stay regular inside one bordered group. Keep a row description only for constraints or consequences the title does not already state. A unit belongs inside its numeric field instead: a numeric placeholder keeps the unit, while a word such as "Auto" appears alone.
 
-Status labels carry their meaning in text; the dot beside them repeats the tone for scanning. Model providers and agents expand in place under their own row. Rows without a disclosure reserve its footprint so status labels end on one axis. The titlebar gains its hairline only after content scrolls beneath it.
+A row that works says nothing about it. Only a state that needs a look gets a symbol — a warning triangle for a missing credential or a pending decision, a circled mark for a failure — and the symbol's accessible name and tooltip carry the reason, so the meaning never rests on color. The Agent page lists detected agents in the default radio group; agents Wuu cannot find wait under **Not installed**, each with an install action and its path override, instead of repeating why on every row. Model providers and agents expand in place under their own row. Rows without a disclosure reserve its footprint so trailing controls end on one axis. The titlebar gains its hairline only after content scrolls beneath it.
+
+Programmatic tool calling is agent runtime behavior, so it sits on the runtime page; **General** keeps app-level choices and **About**. Archive groups show the project with a bare conversation count, rows show the year only when it differs from this one, and restoring is an icon button named for the conversation.
 
 Preview `/dev/settings/` with `page` set to a page ID, and optional `theme=dark`, `size=20`, `lang=en`, `rail=` (sidebar width), `collapsed`, `long`, and `empty` parameters. Providers, agents, MCP servers, usage, and archive rows are synthetic; nothing is saved.
 
-## Extensions catalog
+## Plugins catalog
 
-The Extensions page uses the settings page column, header, and groups. Plugins come first because their runtime and approval state may need a decision; official skills and your skills follow. Every row shows a mark, the name over a one-line description, and a trailing status or owning plugin, then a chevron that opens the plugin detail or skill preview. A search hides every group it leaves empty. In a narrow column the trailing label moves under the description.
+The Plugins page, named **Plugins** like its sidebar entry, uses the settings page column and groups. The titlebar already names it, so the page opens on a toolbar: search, then reload and local install. Plugins come first because they switch on and off here and may need a decision; official skills and your skills follow under their own headings.
 
-The plugin detail repeats the row's status label, followed by source and grant scope. Permissions are grouped by capability, and all groups share one label column.
+A plugin row opens its detail from the mark and name, and a switch at its end shows whether the plugin runs. Turning a trusted plugin on or off applies in place. Turning on a plugin that has not been approved is its approval: when it asks for permissions, the detail opens so they can be read first; otherwise the switch approves it directly. One mark before the switch flags the most serious thing that needs a look — a failure or missing requirement, then a staged update, a changed or unapproved package, or a conflict — and its tooltip is the reason. Skill rows end in the owning plugin, when there is one, and a chevron that opens the preview. A search hides every group it leaves empty.
 
-Preview `/dev/extensions/` with optional `theme=dark`, `size=20`, `lang=en`, `long`, and `empty` parameters. Skills and plugin packages are synthetic and cover every status tone; actions in the detail dialog change only the preview's state.
+The plugin detail states its source, then lists every notice, including why approval is needed. Permissions are grouped by capability, and all groups share one label column. The grant scope, path, and fingerprint sit under **Technical info**. The footer's main action approves, updates, or turns the plugin back on; turning a running plugin off is a plain button, and revoking, rejecting, and removing live in the more menu.
+
+Preview `/dev/extensions/` with optional `theme=dark`, `size=20`, `lang=en`, `long`, and `empty` parameters. Skills and plugin packages are synthetic and cover every plugin state; switches and detail actions change only the preview's state.
 
 ## Shared typography and geometry
 

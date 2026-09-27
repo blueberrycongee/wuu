@@ -23,6 +23,7 @@ import {
   Globe,
   Hammer,
   Lock,
+  MessageSquare,
   MessageSquarePlus,
   Paperclip,
   PieChart,
@@ -1799,40 +1800,48 @@ export function WorkspacePickerMenu({
   const filteredWorkspaces = normalizedQuery
     ? projects.filter((project) => project.name.toLocaleLowerCase().includes(normalizedQuery) || project.path.toLocaleLowerCase().includes(normalizedQuery))
     : projects;
+  // Conversations without a project lead the list, as they lead the sidebar.
+  const conversationLabel = t("composer.conversation");
+  const showConversation = !normalizedQuery || conversationLabel.toLocaleLowerCase().includes(normalizedQuery);
+  const noProject = activeContext?.kind === "no_project";
 
   return (
     <div className="composer-project-menu" role="menu"
       style={{ "--composer-project-menu-width": `${COMPOSER_PROJECT_MENU_WIDTH}px` } as CSSProperties}>
       <label className="menu-search project-search">
-        <Search className="icon-lg" />
-        <input value={query} placeholder={t("runtime.searchWorkspaces")} onChange={(event) => setQuery(event.target.value)} />
+        <Search className="icon-sm" aria-hidden="true" />
+        <input autoFocus={!isTouchWebShell()} value={query} aria-label={t("runtime.searchWorkspaces")} placeholder={t("runtime.searchWorkspaces")}
+          onChange={(event) => setQuery(event.target.value)} />
       </label>
       <div className="project-picker-list">
-        {filteredWorkspaces.length === 0 ? <div className="project-picker-empty">{t("runtime.noMatchingWorkspaces")}</div> : null}
+        {showConversation ? (
+          <button type="button" role="menuitemradio" aria-checked={noProject}
+            disabled={!hostSupports("createBlankProject")} onClick={onSelectNoProject}>
+            <MessageSquare />
+            <span>{conversationLabel}</span>
+            {noProject ? <Check /> : null}
+          </button>
+        ) : null}
         {filteredWorkspaces.map((project) => {
           const selected = activeContext?.kind === "project" && activeContext.project_id === project.id;
           return (
-            <button key={project.id} type="button" role="menuitem" title={project.name} onClick={() => onSelectWorkspace(project.id)}>
-              <Folder className="icon-lg" />
+            <button key={project.id} type="button" role="menuitemradio" aria-checked={selected} title={project.name} onClick={() => onSelectWorkspace(project.id)}>
+              <Folder />
               <span>{project.name}</span>
-              {selected ? <Check className="icon-lg" /> : null}
+              {selected ? <Check /> : null}
             </button>
           );
         })}
+        {!showConversation && filteredWorkspaces.length === 0 ? <div className="project-picker-empty">{t("runtime.noMatchingWorkspaces")}</div> : null}
       </div>
       <div className="project-picker-divider" />
       <button type="button" role="menuitem" disabled={!hostSupports("chooseProjectFolder")} onClick={onOpenWorkspace}>
-        <FolderOpen className="icon-lg" />
-        <span>{t("runtime.useExistingFolder")}</span>
+        <FolderOpen />
+        <span>{t("runtime.openFolder")}</span>
       </button>
       <button type="button" role="menuitem" disabled={!hostSupports("createBlankProject")} onClick={onCreateWorkspace}>
-        <FolderPlus className="icon-lg" />
+        <FolderPlus />
         <span>{t("runtime.createBlankWorkspace")}</span>
-      </button>
-      <button type="button" role="menuitem" disabled={!hostSupports("createBlankProject")} onClick={onSelectNoProject}>
-        <FolderX className="icon-lg" />
-        <span>{t("runtime.noWorkspace")}</span>
-        {activeContext?.kind === "no_project" ? <Check className="icon-lg" /> : null}
       </button>
     </div>
   );

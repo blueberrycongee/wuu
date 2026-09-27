@@ -375,7 +375,7 @@ describe("SettingsView provider configuration", () => {
     expect(rootText()).toContain("Model providers");
     expect(rootText()).toContain("Local model provider");
     expect(rootText()).toContain("No model selected");
-    expect(rootText()).toContain("Missing API key");
+    expect(container.querySelector(".settings-provider-attention")?.getAttribute("aria-label")).toBe("Missing API key");
     expect(rootText()).toContain("Reasoning effort");
     expect(rootText()).not.toContain("模型服务");
   });
@@ -408,7 +408,8 @@ describe("SettingsView provider configuration", () => {
     expect(rootText()).toContain("模型服务");
     expect(container.querySelector<HTMLInputElement>('input[aria-label="Base URL"]')?.value).toBe("https://openrouter.ai/api/v1");
     expect(rootText()).toContain("Base URL");
-    expect(rootText()).toContain("API key 已配置");
+    // A usable service carries no mark.
+    expect(container.querySelector(".settings-provider-attention")).toBeNull();
     expect(rootText()).toContain("新增服务");
   });
 
@@ -477,7 +478,7 @@ describe("SettingsView provider configuration", () => {
     const button = container.querySelector(
       '[data-testid="settings-model-catalog-refresh"]',
     ) as HTMLButtonElement;
-    expect(button.textContent).toContain("更新模型目录");
+    expect(button.getAttribute("aria-label")).toBe("更新模型目录");
     expect(button.disabled).toBe(false);
 
     act(() => {
@@ -485,14 +486,14 @@ describe("SettingsView provider configuration", () => {
     });
     expect(onRefreshModelCatalog).toHaveBeenCalledTimes(1);
     expect(button.disabled).toBe(true);
-    expect(button.textContent).toContain("正在更新");
+    expect(button.getAttribute("aria-busy")).toBe("true");
 
     await act(async () => {
       finishRefresh?.();
       await Promise.resolve();
     });
     expect(button.disabled).toBe(false);
-    expect(button.textContent).toContain("更新模型目录");
+    expect(button.getAttribute("aria-busy")).toBe("false");
   });
 
   it("submits a new OpenAI-compatible provider with editable connection fields", async () => {
@@ -661,7 +662,8 @@ describe("SettingsView provider configuration", () => {
       }),
     });
 
-    expect(container.textContent).toContain("已找到 Grok Build CLI 登录");
+    // The discovered login is ready to use, so the row carries no mark.
+    expect(container.querySelector(".settings-provider-attention")).toBeNull();
     expect(container.textContent).not.toContain("当前模型不支持思考");
     const reasoning = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
       .find((button) => button.getAttribute("aria-label") === "思考强度");
@@ -1334,10 +1336,9 @@ describe("SettingsView About section", () => {
     expect(text()).toContain("关于");
     expect(text()).toContain("v0.0.0-test");
     expect(text()).not.toContain("更新于");
-    // 版本与复制合并为一行；按钮语义在 aria-label 上，行内只显示「复制」。
-    expect(about?.querySelector('button[aria-label="复制版本信息"]')).not.toBeNull();
-    const button = about?.querySelector("button.settings-button");
-    expect(button?.textContent).toBe("复制");
+    // 版本与复制合并为一行；复制是图标按钮，语义在 aria-label 上。
+    const button = about?.querySelector<HTMLButtonElement>('button[aria-label="复制版本信息"]');
+    expect(button).not.toBeNull();
     await act(async () => {
       button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
@@ -1368,9 +1369,33 @@ describe("SettingsView About section", () => {
     });
     expect(rootText()).toContain("MCP");
     expect(rootText()).toContain("docs");
-    expect(rootText()).toContain("已连接");
     expect(rootText()).toContain("3 个工具");
     expect(rootText()).toContain("Header 认证");
+    // A connected server needs no status mark; its connect control says it.
+    expect(container.querySelector(".settings-row-attention")).toBeNull();
+  });
+
+  it("marks MCP servers that need a look with their state as the accessible name", async () => {
+    installBuildInfoStub({
+      core: undefined,
+      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
+    });
+    (window as unknown as GlobalWindow).wuu.listMCPServers = vi.fn().mockResolvedValue({
+      servers: [
+        { name: "broken", state: "error", connected: false, tool_count: 0, error: "connect ECONNREFUSED" },
+        { name: "linear", state: "needs_auth", connected: false, tool_count: 0, auth_status: "not_logged_in" },
+      ],
+    });
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp" });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const marks = Array.from(container.querySelectorAll(".settings-row-attention")).map((mark) => [
+      mark.getAttribute("data-tone"),
+      mark.getAttribute("aria-label"),
+    ]);
+    expect(marks).toEqual([["danger", "连接失败"], ["warning", "需要认证"]]);
   });
 
   it("opens MCP OAuth and completes the authorization code flow inline", async () => {
@@ -1700,10 +1725,12 @@ describe("SettingsView archive page", () => {
 
     const groups = container.querySelectorAll(".settings-archive-group");
     expect(groups).toHaveLength(2);
+    const count = (group: Element | undefined) => group?.querySelector(".settings-archive-group-count");
     expect(groups[0]?.textContent).toContain("wuu");
-    expect(groups[0]?.textContent).toContain("2 个会话");
+    expect(count(groups[0])?.textContent).toBe("2");
+    expect(count(groups[0])?.getAttribute("aria-label")).toBe("2 个会话");
     expect(groups[1]?.textContent).toContain("网站");
-    expect(groups[1]?.textContent).toContain("1 个会话");
+    expect(count(groups[1])?.textContent).toBe("1");
   });
 
   it("filters archived threads by workspace", () => {

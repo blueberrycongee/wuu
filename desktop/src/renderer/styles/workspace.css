@@ -2129,9 +2129,24 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   background: var(--paper);
 }
 
-/* The extensions catalog is a .settings-page: the same UI-text column, page
- * header, and section rhythm as Settings, so a plugin's status reads the
- * same here as a model service's does there. */
+/* The plugins catalog is a .settings-page: the same UI-text column and
+ * section rhythm as Settings. The titlebar names the page, so it opens on a
+ * toolbar: search first, then the page's tools. */
+.catalog-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.catalog-toolbar > .catalog-search {
+  flex: 1 1 auto;
+}
+
+/* The search gives up width first; the actions keep their labels. */
+.catalog-toolbar > .settings-button {
+  flex: none;
+}
 
 .catalog-search {
   display: flex;
@@ -2173,10 +2188,9 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   padding: var(--compact-padding-block) var(--compact-padding-inline);
 }
 
-/* One row anatomy for plugins and skills, matching the settings service
- * rows: mark, name over a one-line description, trailing status or source,
- * and a disclosure chevron. The chevron owns the last column, so trailing
- * labels end on one axis whether or not a row has one. */
+/* Skill rows match the settings service rows: mark, name over a one-line
+ * description, the owning plugin, and a disclosure chevron. The chevron owns
+ * the last column, so trailing labels end on one axis. */
 .catalog-row {
   display: grid;
   width: 100%;
@@ -2232,6 +2246,9 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 }
 
 .catalog-row-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   color: var(--ink-muted);
   font-size: var(--font-sm);
   line-height: 1.5;
@@ -2280,6 +2297,38 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   .catalog-row > .settings-disclosure-chevron {
     grid-column: 3;
   }
+}
+
+/* A plugin row splits into the part that opens the detail and the switch,
+ * which ends on the same axis as the skill rows' chevrons. */
+.catalog-row.catalog-plugin-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 0;
+  cursor: default;
+}
+
+.catalog-row-main {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  border: 0;
+  padding: var(--space-3) 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.catalog-row-attention {
+  display: inline-flex;
+  color: var(--warning);
+}
+
+.catalog-row-attention[data-tone="danger"] {
+  color: var(--danger);
 }
 
 .plugin-settings-editor {
@@ -2337,27 +2386,11 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   padding: var(--space-4) 0 0;
 }
 
-/* One quiet status line, the same status label as the catalog row, then
- * source identity and grant scope as plain text separated by dots. */
 .plugin-detail-meta {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  column-gap: var(--space-2);
-  row-gap: var(--space-1);
-}
-
-.plugin-detail-meta-item {
+  margin: 0;
   color: var(--ink-muted);
   font-size: var(--font-sm);
   line-height: 1.4;
-}
-
-.plugin-detail-meta-item::before {
-  content: "·";
-  margin-right: var(--space-2);
-  color: var(--ink-muted);
 }
 
 /* Alerts are the one boxed element in this panel: they carry a state, not a

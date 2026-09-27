@@ -296,7 +296,7 @@ func readWorkspaceGitStatus(ctx context.Context, root, baseline string) (workspa
 		}
 		result.Branch = strings.TrimSpace(string(head))
 	}
-	branches, err := workspaceGitList(ctx, root, "for-each-ref", "--format=%(refname:short)", "refs/heads/")
+	branches, err := workspaceGitList(ctx, root, "for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "refs/heads/")
 	if err != nil {
 		return result, err
 	}

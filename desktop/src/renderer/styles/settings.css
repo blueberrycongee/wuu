@@ -659,11 +659,48 @@
 
 /* Compact numeric input for small-value rows (thresholds, limits): sits
  * in the right-hand control slot instead of stretching the row tall. */
+/* One width fits a token count with its unit, so the numeric fields of a
+ * group share their edges whether or not they carry a unit. */
 .settings-input-num {
   flex: 0 0 auto;
-  width: 104px;
+  width: 136px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+/* The background group follows the theme cards as part of one section. */
+.settings-theme-background {
+  margin-top: var(--space-1);
+}
+
+/* A unit sits inside its field after the number. An empty field whose
+ * placeholder is a word ("Auto") shows it alone; a unit would read as part
+ * of the word. */
+.settings-input-unit {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.settings-input-unit::after {
+  content: attr(data-unit);
+  position: absolute;
+  top: 50%;
+  right: var(--control-padding-inline);
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  line-height: 1;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.settings-input-unit > .settings-input-num:not(:placeholder-shown),
+.settings-input-unit[data-unit-placeholder] > .settings-input-num {
+  padding-right: calc(var(--control-padding-inline) + var(--settings-unit-chars) * 1ch + var(--space-1));
+}
+
+.settings-input-unit:not([data-unit-placeholder]):has(> .settings-input-num:placeholder-shown)::after {
+  content: none;
 }
 
 /* Keep native steppers available on hover and keyboard focus. */
@@ -835,10 +872,11 @@
 }
 
 /* --- Agent page ---------------------------------------------------------------
- * One row per agent: the radio picks the default, the status sits at the
- * trailing edge, and path overrides and enable/disable live behind the
- * row's own disclosure. Rows without a disclosure keep its footprint so
- * every status label ends on the same axis.
+ * One row per agent: the radio picks the default, and path overrides and
+ * enable/disable live behind the row's own disclosure. Only a turned-off
+ * agent carries a status label; agents Wuu cannot find wait in their own
+ * group. Rows without a disclosure keep its footprint so trailing controls
+ * end on the same axis.
  * ----------------------------------------------------------------------------- */
 
 .settings-engine-item + .settings-engine-item {
@@ -864,6 +902,10 @@
 
 .settings-engine-radio:disabled {
   cursor: default;
+}
+
+.settings-engine-radio.is-placeholder {
+  visibility: hidden;
 }
 
 .settings-engine-row-main {
@@ -1283,6 +1325,17 @@ button.settings-engine-expand:hover {
   color: var(--ink);
 }
 
+/* The chevron keeps the last column whether or not a row carries a mark. */
+.settings-provider-button .settings-disclosure-chevron {
+  grid-column: 4;
+}
+
+.settings-provider-attention {
+  display: inline-flex;
+  grid-column: 3;
+  color: var(--warning);
+}
+
 /* A monogram anchors each service in the leading column. */
 .settings-provider-mark {
   display: inline-grid;
@@ -1440,20 +1493,6 @@ button.settings-engine-expand:hover {
 }
 
 @container settings-page (max-width: 32em) {
-  .settings-provider-button {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-
-  .settings-provider-button .settings-status {
-    grid-column: 2;
-    grid-row: 2;
-  }
-
-  .settings-provider-button .settings-disclosure-chevron {
-    grid-column: 3;
-    grid-row: 1 / 3;
-  }
-
   .settings-provider-editor {
     padding-left: 0;
   }
@@ -1604,12 +1643,25 @@ button.settings-engine-expand:hover {
   min-width: 112px;
 }
 
-/* The status leads the meta line; the dot must not wrap away from its label. */
-.settings-row-label-description:has(> .settings-status) {
+/* A state mark leads the meta line and must not wrap away from it. */
+.settings-row-label-description:has(> .settings-row-attention) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  column-gap: 0.25em;
+  column-gap: var(--space-1);
+}
+
+.settings-row-attention {
+  display: inline-flex;
+  color: var(--ink-muted);
+}
+
+.settings-row-attention[data-tone="warning"] {
+  color: var(--warning);
+}
+
+.settings-row-attention[data-tone="danger"] {
+  color: var(--danger);
 }
 
 .settings-codex-pet-select {

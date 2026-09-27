@@ -1,22 +1,27 @@
 import { hostSupports } from "./HostCapabilities";
 import { isTouchWebShell } from "./ComposerFocus";
 import {
+  AlertCircle,
+  AlertTriangle,
   ArrowLeft,
   Archive,
   BarChart3,
   Bot,
   Check,
   ChevronRight,
+  Copy,
   Folder,
   Gauge,
   KeyRound,
   LayoutDashboard,
+  Loader2,
   LogOut,
   Monitor,
   Plug,
   PlugZap,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Settings,
   Smartphone,
@@ -80,7 +85,7 @@ import { ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
 import { BackgroundSettings } from "./background/BackgroundSettings";
 import { SettingsRow } from "./SettingsRow";
-import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsStatus, type SettingsStatusTone } from "./SettingsSection";
+import { SettingsGroup, SettingsPageHeader, SettingsSection, type SettingsStatusTone } from "./SettingsSection";
 import { toastErrorMessage } from "./Toast";
 import { EngineSettingsSection } from "./EngineSettingsSection";
 import { SubscriptionDashboard } from "./SubscriptionDashboard";
@@ -326,7 +331,7 @@ export function SettingsView({
   const [compactKeepRecentDraft, setCompactKeepRecentDraft] = useState("");
   const [providerContextWindowDraft, setProviderContextWindowDraft] = useState("");
   const [maxContextTokensDraft, setMaxContextTokensDraft] = useState("");
-  const [maxStepsDraft, setMaxStepsDraft] = useState("0");
+  const [maxStepsDraft, setMaxStepsDraft] = useState("");
   const [temperatureDraft, setTemperatureDraft] = useState("");
   // Runtime errors stay beside the field that failed to validate or save.
   const [advancedError, setAdvancedError] = useState<{ field: AdvancedField; message: string } | null>(null);
@@ -421,7 +426,7 @@ export function SettingsView({
       compactKeepRecent: formatOptionalNumberDraft(advanced?.compact_keep_recent_tokens),
       providerContextWindow: formatOptionalNumberDraft(advanced?.provider_context_window),
       maxContextTokens: formatOptionalNumberDraft(advanced?.max_context_tokens),
-      maxSteps: String(advanced?.max_steps ?? 0),
+      maxSteps: formatOptionalNumberDraft(advanced?.max_steps),
       temperature: formatTemperatureDraft(advanced?.temperature)
     };
     setAutoCompactDraft(!(advanced?.disable_auto_compact ?? false));
@@ -1179,9 +1184,6 @@ export function SettingsView({
               />
             ) : activePage === "general" ? (
               <SettingsGeneralPage
-                initialized={initialized}
-                running={running}
-                onGeneralSave={onGeneralSave}
                 desktopBuild={desktopBuild}
                 codexPets={codexPets}
                 codexPetsLoading={codexPetsLoading}
@@ -1584,17 +1586,19 @@ function SettingsProvidersPage({
         description={t("settings.providersDescription")}
         actions={<>
           <button
-            className="settings-button settings-button-ghost"
+            className="settings-button settings-button-ghost settings-icon-button"
             type="button"
             data-testid="settings-model-catalog-refresh"
+            aria-label={t("settings.modelCatalogUpdate")}
+            title={t("settings.modelCatalogUpdate")}
+            aria-busy={catalogRefreshing}
             disabled={catalogRefreshing}
             onClick={() => {
               setCatalogRefreshing(true);
               void onRefreshModelCatalog().finally(() => setCatalogRefreshing(false));
             }}
           >
-            <RefreshCw className={`icon${catalogRefreshing ? " settings-spin" : ""}`} />
-            {catalogRefreshing ? t("settings.modelCatalogUpdating") : t("settings.modelCatalogUpdate")}
+            <RefreshCw className={`icon${catalogRefreshing ? " settings-spin" : ""}`} aria-hidden="true" />
           </button>
           <button
             className="settings-button"
@@ -1646,7 +1650,13 @@ function SettingsProvidersPage({
                       {modelCount > 1 ? ` · ${t("provider.modelCount", { count: modelCount })}` : ""}
                     </small>
                   </span>
-                  <SettingsStatus tone={providerConnectionTone(provider)}>{providerConnectionStatus(provider, t)}</SettingsStatus>
+                  {/* A service that can be used says nothing; one that still
+                    * needs a credential carries a mark named by the gap. */}
+                  {providerConnectionTone(provider) === "warning" ? (
+                    <span className="settings-provider-attention" role="img" aria-label={providerConnectionStatus(provider, t)} title={providerConnectionStatus(provider, t)}>
+                      <AlertTriangle className="icon" aria-hidden="true" />
+                    </span>
+                  ) : null}
                   <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
                 </button>
                 {open ? editor : null}
@@ -1722,6 +1732,18 @@ function SettingsRuntimePage({
   onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
+  const ptc = initialized?.general_settings?.ptc ?? { enabled: false };
+  const [ptcBusy, setPTCBusy] = useState(false);
+  const [ptcError, setPTCError] = useState("");
+  const [ptcFamily, setPTCFamily] = useState("gpt");
+  const ptcFamilyValue = ptc.families?.[ptcFamily];
+  async function savePTC(next: NonNullable<RuntimeGeneralSettingsUpdate["ptc"]>): Promise<void> {
+    setPTCBusy(true);
+    setPTCError("");
+    try { await onGeneralSave({ ptc: next }); }
+    catch (error) { setPTCError(error instanceof Error ? error.message : t("settings.saveFailed")); }
+    finally { setPTCBusy(false); }
+  }
   const [gitAttributionBusy, setGitAttributionBusy] = useState(false);
   const [gitAttributionError, setGitAttributionError] = useState("");
   const gitAttributionEnabled = initialized?.general_settings?.git_attribution_enabled ?? true;
@@ -1749,31 +1771,40 @@ function SettingsRuntimePage({
 
   // Enter and blur both commit through onCommitField; the ref-guard inside
   // makes the blur that follows Enter a no-op, so there is one effective
-  // commit per edit.
+  // commit per edit. A unit inside the field replaces a description line
+  // that only named it.
   const numericInput = (
     field: AdvancedNumericField,
     value: string,
     onChange: (value: string) => void,
-    options: { label: string; placeholder?: string; inputMode?: "numeric" | "decimal" },
-  ): JSX.Element => (
-    <input
-      className="settings-input settings-input-num"
-      aria-label={options.label}
-      value={value}
-      aria-invalid={error?.field === field || undefined}
-      inputMode={options.inputMode ?? "numeric"}
-      placeholder={options.placeholder}
-      onChange={(event) => onChange(event.target.value)}
-      onBlur={() => onCommitField(field)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          onCommitField(field);
-          event.currentTarget.blur();
-        }
-      }}
-      disabled={fieldsDisabled}
-    />
-  );
+    options: { label: string; placeholder?: string; inputMode?: "numeric" | "decimal"; unit?: string },
+  ): JSX.Element => {
+    const input = (
+      <input
+        className="settings-input settings-input-num"
+        aria-label={options.label}
+        value={value}
+        aria-invalid={error?.field === field || undefined}
+        inputMode={options.inputMode ?? "numeric"}
+        placeholder={options.placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        onBlur={() => onCommitField(field)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            onCommitField(field);
+            event.currentTarget.blur();
+          }
+        }}
+        disabled={fieldsDisabled}
+      />
+    );
+    // A numeric placeholder (the default) keeps its unit; a word ("Auto") does not.
+    return options.unit ? (
+      <span className="settings-input-unit" data-unit={options.unit}
+        data-unit-placeholder={/^[\d.,\s]+$/.test(options.placeholder ?? "") || undefined}
+        style={{ "--settings-unit-chars": options.unit.length } as CSSProperties}>{input}</span>
+    ) : input;
+  };
 
   return (
     <>
@@ -1782,7 +1813,6 @@ function SettingsRuntimePage({
         <SettingsGroup>
           <SettingsRow
             title={t("settings.autoCompact")}
-            hint={t("settings.autoCompactDescription")}
             error={fieldError("autoCompact")}
           >
             <button
@@ -1799,22 +1829,22 @@ function SettingsRuntimePage({
           </SettingsRow>
           <SettingsRow
             title={t("settings.compactThreshold")}
-            hint={t("settings.compactThresholdDescription")}
             error={fieldError("compactThreshold")}
           >
             {numericInput("compactThreshold", compactThreshold, onCompactThresholdChange, {
               label: t("settings.compactThreshold"),
               placeholder: t("settings.automatic"),
+              unit: "%",
             })}
           </SettingsRow>
           <SettingsRow
             title={t("settings.keepRecentContext")}
-            hint={t("settings.keepRecentContextDescription")}
             error={fieldError("compactKeepRecent")}
           >
             {numericInput("compactKeepRecent", compactKeepRecent, onCompactKeepRecentChange, {
               label: t("settings.keepRecentContext"),
               placeholder: "20,000",
+              unit: t("settings.unitTokens"),
             })}
           </SettingsRow>
         </SettingsGroup>
@@ -1831,6 +1861,7 @@ function SettingsRuntimePage({
             {numericInput("providerContextWindow", providerContextWindow, onProviderContextWindowChange, {
               label: t("settings.providerContextLimit"),
               placeholder: t("settings.detectAutomatically"),
+              unit: t("settings.unitTokens"),
             })}
           </SettingsRow>
           <SettingsRow
@@ -1841,6 +1872,7 @@ function SettingsRuntimePage({
             {numericInput("maxContextTokens", maxContextTokens, onMaxContextTokensChange, {
               label: t("settings.unknownModelLimit"),
               placeholder: t("settings.automatic"),
+              unit: t("settings.unitTokens"),
             })}
           </SettingsRow>
         </SettingsGroup>
@@ -1849,10 +1881,9 @@ function SettingsRuntimePage({
         <SettingsGroup>
           <SettingsRow
             title={t("settings.maxSteps")}
-            hint={t("settings.unlimitedAtZero")}
             error={fieldError("maxSteps")}
           >
-            {numericInput("maxSteps", maxSteps, onMaxStepsChange, { label: t("settings.maxSteps") })}
+            {numericInput("maxSteps", maxSteps, onMaxStepsChange, { label: t("settings.maxSteps"), placeholder: t("settings.unlimited") })}
           </SettingsRow>
           <SettingsRow title={t("settings.temperature")} hint={t("settings.temperatureRange")} error={fieldError("temperature")}>
             {numericInput("temperature", temperature, onTemperatureChange, {
@@ -1861,6 +1892,43 @@ function SettingsRuntimePage({
               inputMode: "decimal",
             })}
           </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
+      <SettingsSection title={t("settings.ptcTitle")} testID="settings-ptc">
+        <SettingsGroup>
+          <SettingsRow title={t("settings.ptcEnabled")} description={t("settings.ptcDescription")}>
+            <button className="settings-switch" type="button" role="switch"
+              aria-label={t("settings.ptcEnabled")} aria-checked={ptc.enabled}
+              data-testid="settings-ptc-enabled" disabled={!initialized || running || ptcBusy}
+              onClick={() => void savePTC({ ...ptc, enabled: !ptc.enabled })}>
+              <span className="settings-switch-thumb" aria-hidden="true" />
+            </button>
+          </SettingsRow>
+          <SettingsRow title={t("settings.ptcFamily")} description={t("settings.ptcFamilyHint")}>
+            <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={t("settings.ptcFamily")}
+              value={ptcFamily} onChange={setPTCFamily}
+              options={[
+                ["gpt", "GPT"], ["codex", "Codex"], ["claude", "Claude"], ["gemini", "Gemini"],
+                ["deepseek", "DeepSeek"], ["kimi", "Kimi"], ["qwen", "Qwen"],
+                ["local", t("settings.ptcLocal")], ["portable", t("settings.ptcOther")],
+              ].map(([value, label]) => ({ value, label }))} />
+            <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={t("settings.ptcFamilyMode")}
+              dataTestid="settings-ptc-family-mode"
+              value={ptcFamilyValue === undefined ? "inherit" : ptcFamilyValue ? "on" : "off"}
+              disabled={!initialized || running || ptcBusy}
+              onChange={(value) => {
+                const families = { ...ptc.families };
+                if (value === "inherit") delete families[ptcFamily];
+                else families[ptcFamily] = value === "on";
+                void savePTC({ ...ptc, families });
+              }}
+              options={[
+                { value: "inherit", label: t("settings.ptcInherit") },
+                { value: "on", label: t("settings.ptcOn") },
+                { value: "off", label: t("settings.ptcOff") },
+              ]} />
+          </SettingsRow>
+          {ptcError ? <p className="settings-error" role="alert">{ptcError}</p> : null}
         </SettingsGroup>
       </SettingsSection>
       <SettingsSection title={t("settings.sectionGit")} testID="settings-git">
@@ -1896,9 +1964,6 @@ function SettingsRuntimePage({
 /* -------------------------------------------------------------------------- */
 
 function SettingsGeneralPage({
-  initialized,
-  running,
-  onGeneralSave,
   desktopBuild,
   codexPets,
   codexPetsLoading,
@@ -1908,9 +1973,6 @@ function SettingsGeneralPage({
   copyState,
   onCopyVersion
 }: {
-  initialized: InitializeResult | undefined;
-  running: boolean;
-  onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
   desktopBuild: DesktopBuildInfo | undefined;
   codexPets: CodexPetsSnapshot | undefined;
   codexPetsLoading: boolean;
@@ -1921,18 +1983,6 @@ function SettingsGeneralPage({
   onCopyVersion: () => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
-  const ptc = initialized?.general_settings?.ptc ?? { enabled: false };
-  const [ptcBusy, setPTCBusy] = useState(false);
-  const [ptcError, setPTCError] = useState("");
-  const [ptcFamily, setPTCFamily] = useState("gpt");
-  const ptcFamilyValue = ptc.families?.[ptcFamily];
-  async function savePTC(next: NonNullable<RuntimeGeneralSettingsUpdate["ptc"]>): Promise<void> {
-    setPTCBusy(true);
-    setPTCError("");
-    try { await onGeneralSave({ ptc: next }); }
-    catch (error) { setPTCError(error instanceof Error ? error.message : t("settings.saveFailed")); }
-    finally { setPTCBusy(false); }
-  }
   const [codexPetBusy, setCodexPetBusy] = useState(false);
   const [codexPetLocalError, setCodexPetLocalError] = useState("");
   const codexPetOptions = codexPets?.pets ?? [];
@@ -1973,10 +2023,7 @@ function SettingsGeneralPage({
             <LanguagePreferenceControl />
           </SettingsRow>
           {hostSupports("listCodexPets") ? <>
-          <SettingsRow
-            title={t("settings.codexPet")}
-            description={isTouchWebShell() ? undefined : t("settings.petSource", { path: codexPets?.home ?? "~/.wuu/pets" })}
-          >
+          <SettingsRow title={t("settings.codexPet")}>
             {codexPetOptions.length > 0 ? (
               <SelectMenu
                 className="settings-codex-pet-select"
@@ -1994,10 +2041,11 @@ function SettingsGeneralPage({
             ) : (
               <span className="settings-row-control-value">{t("settings.noLocalPets")}</span>
             )}
+            {/* The folder it reads belongs with the action that reads it. */}
             <button
               className="settings-button settings-button-ghost settings-icon-button"
               type="button"
-              title={t("settings.refreshPets")}
+              title={isTouchWebShell() ? t("settings.refreshPets") : t("settings.petSource", { path: codexPets?.home ?? "~/.wuu/pets" })}
               aria-label={t("settings.refreshPets")}
               disabled={codexPetsLoading || codexPetBusy}
               onClick={() => void refreshCodexPets()}
@@ -2040,44 +2088,6 @@ function SettingsGeneralPage({
         </SettingsGroup>
       </SettingsSection>
 
-      <SettingsSection title={t("settings.ptcTitle")} testID="settings-ptc">
-        <SettingsGroup>
-          <SettingsRow title={t("settings.ptcEnabled")} description={t("settings.ptcDescription")}>
-            <button className="settings-switch" type="button" role="switch"
-              aria-label={t("settings.ptcEnabled")} aria-checked={ptc.enabled}
-              data-testid="settings-ptc-enabled" disabled={!initialized || running || ptcBusy}
-              onClick={() => void savePTC({ ...ptc, enabled: !ptc.enabled })}>
-              <span className="settings-switch-thumb" aria-hidden="true" />
-            </button>
-          </SettingsRow>
-          <SettingsRow title={t("settings.ptcFamily")} description={t("settings.ptcFamilyHint")}>
-            <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={t("settings.ptcFamily")}
-              value={ptcFamily} onChange={setPTCFamily}
-              options={[
-                ["gpt", "GPT"], ["codex", "Codex"], ["claude", "Claude"], ["gemini", "Gemini"],
-                ["deepseek", "DeepSeek"], ["kimi", "Kimi"], ["qwen", "Qwen"],
-                ["local", t("settings.ptcLocal")], ["portable", t("settings.ptcOther")],
-              ].map(([value, label]) => ({ value, label }))} />
-            <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={t("settings.ptcFamilyMode")}
-              dataTestid="settings-ptc-family-mode"
-              value={ptcFamilyValue === undefined ? "inherit" : ptcFamilyValue ? "on" : "off"}
-              disabled={!initialized || running || ptcBusy}
-              onChange={(value) => {
-                const families = { ...ptc.families };
-                if (value === "inherit") delete families[ptcFamily];
-                else families[ptcFamily] = value === "on";
-                void savePTC({ ...ptc, families });
-              }}
-              options={[
-                { value: "inherit", label: t("settings.ptcInherit") },
-                { value: "on", label: t("settings.ptcOn") },
-                { value: "off", label: t("settings.ptcOff") },
-              ]} />
-          </SettingsRow>
-          {ptcError ? <p className="settings-error" role="alert">{ptcError}</p> : null}
-        </SettingsGroup>
-      </SettingsSection>
-
       <SettingsSection title={t("settings.about")} testID="settings-about">
         <SettingsGroup>
           <SettingsRow title={t("settings.version")}>
@@ -2085,13 +2095,14 @@ function SettingsGeneralPage({
               {desktopBuild ? versionLabel(desktopBuild.version) : t("settings.loading")}
             </span>
             <button
-              className="settings-button"
+              className="settings-button settings-button-ghost settings-icon-button"
               type="button"
               aria-label={t("settings.copyVersion")}
+              title={t(copyState === "copied" ? "settings.copied" : "settings.copyVersion")}
               onClick={() => void onCopyVersion()}
               disabled={!desktopBuild || copyState === "copying"}
             >
-              {copyState === "copied" ? t("settings.copied") : t("settings.copy")}
+              {copyState === "copied" ? <Check className="icon" aria-hidden="true" /> : <Copy className="icon" aria-hidden="true" />}
             </button>
           </SettingsRow>
         </SettingsGroup>
@@ -2109,14 +2120,15 @@ function SettingsAppearancePage(): JSX.Element {
   return (
     <>
       <SettingsPageHeader title={t("settings.appearance")} />
+      {/* The background image is part of the look the theme sets. */}
       <SettingsSection title={t("settings.sectionTheme")} testID="settings-appearance">
         <ThemePreferenceControl />
+        {isTouchWebShell() ? null : (
+          <div className="settings-theme-background" data-testid="settings-background">
+            <SettingsGroup><BackgroundSettings /></SettingsGroup>
+          </div>
+        )}
       </SettingsSection>
-      {isTouchWebShell() ? null : (
-        <SettingsSection title={t("settings.sectionBackground")} testID="settings-background">
-          <SettingsGroup><BackgroundSettings /></SettingsGroup>
-        </SettingsSection>
-      )}
       <AppearanceTypography section="text" />
       <AppearanceTypography section="motion" />
     </>
@@ -2229,8 +2241,8 @@ function SettingsMCPPage({
                   title={name}
                   description={server ? (
                     <>
-                      <SettingsStatus tone={mcpStateTone(server.state)}>{mcpStateLabel(server.state, t)}</SettingsStatus>
-                      {` · ${formatMCPServerMeta(server, t)}`}
+                      <MCPStateMark state={server.state} />
+                      {formatMCPServerMeta(server, t)}
                     </>
                   ) : undefined}
                   error={server?.error}
@@ -2449,8 +2461,11 @@ function SettingsArchivePage({
                     <Folder className="icon" aria-hidden="true" />
                     <span>{group.projectName}</span>
                   </div>
-                  <span className="settings-archive-group-count">
-                    {t("settings.conversationCount", { count: group.threads.length })}
+                  <span
+                    className="settings-archive-group-count"
+                    aria-label={t("settings.conversationCount", { count: group.threads.length })}
+                  >
+                    {group.threads.length}
                   </span>
                 </header>
                 <div className="settings-group settings-archive-list">
@@ -2466,11 +2481,12 @@ function SettingsArchivePage({
                         </div>
                         <button
                           type="button"
-                          className="settings-button settings-archive-restore"
+                          className="settings-button settings-button-ghost settings-icon-button settings-archive-restore"
                           aria-label={t("settings.restoreConversation", { title })}
+                          title={t("settings.restore")}
                           onClick={() => onUnarchiveThread(thread)}
                         >
-                          {t("settings.restore")}
+                          <RotateCcw className="icon" aria-hidden="true" />
                         </button>
                       </div>
                     );
@@ -2506,8 +2522,9 @@ function formatArchiveTime(
   if (Number.isNaN(date.getTime())) {
     return iso;
   }
+  // The year only appears once it differs from this one.
   return formatter(date, {
-    year: "numeric",
+    ...(date.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
     month: "long",
     day: "numeric",
     hour: "2-digit",
@@ -3229,6 +3246,24 @@ function formatMCPServerMeta(server: MCPServerStatus, t: Translate): string {
     pieces.push(mcpAuthLabel(server.auth_status, t));
   }
   return pieces.join(" · ");
+}
+
+// A connected or idle server shows only its tools; the connect control and
+// the switch already say whether it runs. Work in progress and states that
+// need a look get one mark named by the state.
+function MCPStateMark({ state }: { state: string }): JSX.Element | null {
+  const { t } = useI18n();
+  const tone = mcpStateTone(state);
+  const busy = state === "starting" || state === "connecting" || state === "reconnecting";
+  if (!busy && tone !== "danger" && tone !== "warning") return null;
+  const label = mcpStateLabel(state, t);
+  return (
+    <span className="settings-row-attention" data-tone={busy ? "neutral" : tone} role="img" aria-label={label} title={label}>
+      {busy ? <Loader2 className="icon-sm settings-spin" aria-hidden="true" />
+        : tone === "danger" ? <AlertCircle className="icon-sm" aria-hidden="true" />
+        : <AlertTriangle className="icon-sm" aria-hidden="true" />}
+    </span>
+  );
 }
 
 function mcpStateLabel(state: string, t: Translate): string {

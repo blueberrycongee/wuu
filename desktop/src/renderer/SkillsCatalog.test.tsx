@@ -232,7 +232,7 @@ describe("SkillsCatalog", () => {
       );
     });
     const sectionRows = () => Array.from(container.querySelectorAll("section section")).map(
-      (section) => Array.from(section.querySelectorAll("button")).map((row) => row.textContent ?? ""),
+      (section) => Array.from(section.querySelectorAll(".catalog-row")).map((row) => row.textContent ?? ""),
     );
     const search = async (query: string) => {
       const input = container.querySelector<HTMLInputElement>(".catalog-search input")!;
@@ -317,12 +317,10 @@ describe("SkillsCatalog", () => {
       );
     });
 
-    expect(container.textContent).toContain("插件");
     expect(container.textContent).toContain("Control macOS apps through Accessibility.");
-    // Official provenance no longer gets a label in the list; the row carries
-    // its runtime state instead.
-    expect(container.textContent).toContain("已启用");
-    expect(container.textContent).toContain("插件 · cua-mac");
+    // A catalog without package actions lists plugins read-only.
+    expect(container.querySelector('[role="switch"]')).toBeNull();
+    expect(container.querySelector(".catalog-row-meta")?.textContent).toBe("cua-mac");
     expect(container.querySelector(".skill-artwork-plugin-brand [data-icon=\"layout-grid\"]")).toBeTruthy();
     // Non-plugin inventory records (the plugin's MCP server) stay out of the
     // plugin list.
@@ -396,10 +394,12 @@ describe("SkillsCatalog", () => {
       );
     });
 
-    expect(container.textContent).toContain("待授权");
+    expect(attentionLabels()).toEqual(["需要你授权后才能运行"]);
+    // Turning on a plugin that asks for permissions shows them first.
     await act(async () => {
-      skillButton("docs")?.click();
+      pluginSwitch("docs")!.click();
     });
+    expect(onUpdateExtensionPackage).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain("file.read");
     expect(document.body.textContent).toContain("第三方");
     expect(document.body.textContent).toContain("技术信息");
@@ -577,7 +577,8 @@ describe("SkillsCatalog", () => {
       );
     });
 
-    expect(container.textContent).toContain("更新待授权");
+    expect(attentionLabels()).toEqual(["更新待授权"]);
+    expect(pluginSwitch("update-demo")?.getAttribute("aria-checked")).toBe("true");
     await act(async () => {
       skillButton("update-demo")?.click();
     });
@@ -635,12 +636,96 @@ describe("SkillsCatalog", () => {
       root.render(<SkillsCatalog extensionInventory={extensionInventory} />);
     });
 
-    expect(container.textContent).toContain("内容已更改");
-    expect(container.textContent).toContain("启动失败");
+    expect(attentionLabels()).toEqual(["Plugin process exited before initialize", "内容已更改，需要重新授权"]);
     await act(async () => {
       skillButton("broken")?.click();
     });
     expect(document.body.textContent).toContain("Plugin process exited before initialize");
+  });
+
+  it("switches trusted plugins on and off in place and blocks duplicate changes", async () => {
+    installSkillList([]);
+    let finish!: () => void;
+    const onUpdateExtensionPackage = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const plugin = (id: string, enabled: boolean): ExtensionInventoryRecord => ({
+      id: `plugin:bundled:${id}`,
+      name: id,
+      kind: "plugin",
+      provenance: { kind: "plugin", source: "bundled", scope: "bundled", plugin_id: id, official: true },
+      state: enabled ? "active" : "rejected",
+      approval_state: "official",
+      runtime_state: enabled ? "active" : "stopped",
+      enabled,
+      fingerprint: `sha256:${id}`,
+    });
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        <SkillsCatalog
+          extensionInventory={[plugin("dream", false), plugin("todo", true)]}
+          onUpdateExtensionPackage={onUpdateExtensionPackage}
+        />,
+      );
+    });
+
+    expect(pluginSwitch("dream")?.getAttribute("aria-checked")).toBe("false");
+    expect(pluginSwitch("todo")?.getAttribute("aria-checked")).toBe("true");
+    expect(attentionLabels()).toEqual([]);
+    await act(async () => {
+      pluginSwitch("todo")!.click();
+      pluginSwitch("dream")!.click();
+    });
+    expect(onUpdateExtensionPackage).toHaveBeenCalledExactlyOnceWith({
+      id: "plugin:bundled:todo",
+      fingerprint: "sha256:todo",
+      action: "disable",
+    });
+    expect(pluginSwitch("dream")?.disabled).toBe(true);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    await act(async () => finish());
+    await act(async () => {
+      pluginSwitch("dream")!.click();
+    });
+    expect(onUpdateExtensionPackage).toHaveBeenLastCalledWith({
+      id: "plugin:bundled:dream",
+      fingerprint: "sha256:dream",
+      action: "enable",
+    });
+  });
+
+  it("grants a pending plugin that asks for no permissions directly from its switch", async () => {
+    installSkillList([]);
+    const onUpdateExtensionPackage = vi.fn().mockResolvedValue(undefined);
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        <SkillsCatalog
+          extensionInventory={[{
+            id: "plugin:user:paper",
+            name: "paper",
+            kind: "plugin",
+            provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "paper" },
+            state: "pending",
+            approval_state: "pending",
+            runtime_state: "inactive",
+            enabled: true,
+            fingerprint: "sha256:paper",
+          }]}
+          onUpdateExtensionPackage={onUpdateExtensionPackage}
+        />,
+      );
+    });
+
+    expect(pluginSwitch("paper")?.getAttribute("aria-checked")).toBe("false");
+    await act(async () => {
+      pluginSwitch("paper")!.click();
+    });
+    expect(onUpdateExtensionPackage).toHaveBeenCalledWith({
+      id: "plugin:user:paper",
+      fingerprint: "sha256:paper",
+      action: "grant",
+    });
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it("opens a skill preview dialog from a skill row", async () => {
@@ -758,6 +843,18 @@ function installSkillList(skills: SkillSummary[]): void {
 function skillButton(name: string): HTMLButtonElement | undefined {
   return Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
     (button) => button.textContent?.includes(name),
+  );
+}
+
+function pluginSwitch(name: string): HTMLButtonElement | undefined {
+  return Array.from(container.querySelectorAll<HTMLButtonElement>('.catalog-row [role="switch"]')).find(
+    (button) => button.closest(".catalog-row")?.querySelector(".catalog-row-title")?.textContent === name,
+  );
+}
+
+function attentionLabels(): string[] {
+  return Array.from(container.querySelectorAll(".catalog-row-attention")).map(
+    (mark) => mark.getAttribute("aria-label") ?? "",
   );
 }
 
