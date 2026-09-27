@@ -337,16 +337,18 @@
   --sidebar-selected-weight: 500;
   --sidebar-label-size: var(--font-ui);
   --sidebar-heading-size: max(12px, round(nearest, calc(var(--sidebar-label-size) - 2px), 1px));
-  --sidebar-row-height: max(32px, round(nearest, calc(var(--sidebar-label-size) * 2.25), 4px));
+  /* Dense rows, clear groups: rows sit two label heights tall, and the
+   * separation between functional groups carries the structure. */
+  --sidebar-row-height: max(28px, round(nearest, calc(var(--sidebar-label-size) * 2), 4px));
+  /* Labels sit one step below conversation ink so the rail reads as quiet
+   * chrome next to the message flow; icons stay on --ink-soft below them. */
+  --sidebar-label-ink: color-mix(in srgb, var(--ink) 84%, var(--paper));
   /* One icon and text axis for navigation, plugins, projects, and account
-   * controls. Avatars occupy this same glyph slot. */
-  --sidebar-primary-icon-size: 16px;
-  --sidebar-nav-icon-col: 18px;
-  --sidebar-nav-column-gap: 10px;
+   * controls. Avatars occupy this same glyph slot. Icon, column, and row
+   * action sizes scale with the UI font in appearance.css. */
+  --sidebar-nav-column-gap: 8px;
   --sidebar-tree-toggle-col: 14px;
-  --sidebar-tree-icon-col: 16px;
   --sidebar-tree-column-gap: 4px;
-  --sidebar-row-action-size: 24px;
   --sidebar-accessory-gap: 8px;
   --sidebar-fork-icon-size: var(--sidebar-primary-icon-size);
   --sidebar-fork-slot-inset: calc((var(--sidebar-row-action-size) - var(--sidebar-fork-icon-size)) / 2);
@@ -358,7 +360,7 @@
    * row itself instead of stretching the space between related items. */
   --sidebar-functional-row-gap: var(--sidebar-row-gap);
   --sidebar-functional-heading-gap: var(--space-1);
-  --sidebar-functional-group-gap: var(--space-3);
+  --sidebar-functional-group-gap: var(--space-4);
   /* Parent and child rows belong to one tree: use the same separation as
    * sibling rows. The collapse body owns this gap; lists add no outer inset. */
   --sidebar-section-body-gap: var(--sidebar-row-gap);
@@ -824,15 +826,15 @@
   grid-template-columns: minmax(0, 1fr) 32px;
   align-items: center;
   column-gap: 8px;
-  min-height: 44px;
-  padding: 0 var(--sidebar-row-pad-x) 8px;
+  min-height: 36px;
+  padding: 0 var(--sidebar-row-pad-x) var(--space-1);
   color: var(--sidebar-brand-wordmark-color);
 }
 
 .sidebar-brand-wordmark {
   grid-column: 1;
   font-family: var(--empty-home-title-font);
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 650;
   letter-spacing: 0.4px;
   line-height: 1;
@@ -1241,7 +1243,16 @@
   .nav-item > span,
   .project-row-name,
   .thread-row-title,
-  .sidebar-settings-button > span
+  .sidebar-settings-button > span,
+  .settings-nav-item > span
+) {
+  color: var(--sidebar-label-ink);
+}
+
+.sidebar-content :is(
+  .thread-row.active .thread-row-title,
+  .nav-item[aria-current="page"] > span,
+  .settings-nav-item.active > span
 ) {
   color: var(--ink);
 }
@@ -1393,11 +1404,22 @@ html[data-focus-modality="keyboard"] :is(
   margin: 0;
   flex: 0 0 auto;
   color: var(--ink-muted);
-  transition: transform var(--section-fold-ms) var(--section-fold-ease);
+  transition:
+    transform var(--section-fold-ms) var(--section-fold-ease),
+    opacity var(--motion-fast) var(--ease-out);
 }
 
 .sidebar-functional-heading-chevron[data-expanded="true"] {
   transform: rotate(90deg);
+}
+
+/* An open group shows its contents; the chevron only returns as the toggle
+ * affordance under the pointer or keyboard focus. A collapsed group keeps it
+ * as the cue that content is hidden. Touch keeps it visible: no hover. */
+@media (hover: hover) {
+  .sidebar-functional-heading:not(:hover, :focus-within) .sidebar-functional-heading-chevron[data-expanded="true"] {
+    opacity: 0;
+  }
 }
 
 .sidebar-functional-heading-action {

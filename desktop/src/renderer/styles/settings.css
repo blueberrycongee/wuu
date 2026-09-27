@@ -74,15 +74,15 @@
 .settings-back-button {
   display: flex;
   width: 100%;
-  height: 32px;
+  min-height: var(--sidebar-row-height);
   align-items: center;
-  gap: 10px;
+  gap: var(--sidebar-nav-column-gap);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink-tertiary);
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
-  padding: 0 12px;
+  padding: 0 var(--sidebar-row-pad-x);
   text-align: left;
   transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }
@@ -123,7 +123,7 @@
 }
 
 .settings-nav-group-label {
-  padding: 0 12px 6px;
+  padding: 0 var(--sidebar-row-pad-x) 6px;
   color: var(--ink-tertiary);
   font-size: var(--font-sm);
   font-weight: var(--weight-medium);
@@ -134,15 +134,15 @@
 .settings-nav-item {
   display: flex;
   width: 100%;
-  height: 32px;
+  height: auto;
   align-items: center;
-  gap: 10px;
+  gap: var(--sidebar-nav-column-gap);
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink-soft);
   font-size: var(--font-ui);
   font-weight: 400;
-  padding: 0 12px;
+  padding: 0 var(--sidebar-row-pad-x);
   text-align: left;
   transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }

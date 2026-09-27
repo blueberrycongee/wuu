@@ -279,6 +279,14 @@ app.whenReady().then(async () => {
       }
     }
     await load({ mode: "history", theme: "dark", size: "20", width: "240" });
+    // Wheel routing needs an overflowing rail; size the window for that
+    // instead of relying on how many rows happen to fit at the row height.
+    win.setContentSize(1050, 560);
+    await evaluate(async () => {
+      await new Promise(requestAnimationFrame);
+      const outer = document.querySelector(".sidebar-main");
+      if (outer.scrollHeight <= outer.clientHeight) throw new Error("History fixture does not overflow the sidebar");
+    });
     const wheelTarget = await evaluate(() => {
       const rect = document.querySelector(".project-thread-list .thread-row").getBoundingClientRect();
       return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
@@ -326,6 +334,7 @@ app.whenReady().then(async () => {
     });
     assert.ok(keyboard.reachedFooter && parseFloat(keyboard.outline) > 0, `keyboard navigation reaches the history footer with a visible focus ring: ${JSON.stringify(keyboard)}`);
     fs.writeFileSync(path.join(temp, "history-keyboard.png"), (await win.webContents.capturePage()).toPNG());
+    win.setContentSize(1050, 850);
     await load({ mode: "history", busy: "false", count: "3", size: "14" });
     const shortHistory = await evaluate(async () => {
       const commit = async () => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); };

@@ -8,6 +8,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Changed
+
+- Desktop navigation uses denser rows, clearer group spacing, and quieter labels.
+  Settings navigation and workspace tool lists share the updated spacing while
+  preserving saved UI font preferences.
+
 ### Added
 
 - Select text in completed assistant responses to quote passages or comment beside
