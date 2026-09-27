@@ -171,6 +171,8 @@ export type InitializeResult = {
 };
 
 export type FeatureFlags = {
+  // Build-time Project Agent capability. Absence means disabled.
+  project_agent?: boolean;
   // Advertises that this client can host the embedded browser backend
   // (hidden WebContentsView + CDP bridge). Mirrors appserver.FeatureFlags.
   browser?: boolean;

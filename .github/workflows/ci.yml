@@ -67,6 +67,9 @@ jobs:
       - name: Test
         run: make test-go
 
+      - name: Test experimental Project Agent
+        run: go test -tags project_agent ./internal/appserver
+
       - name: Build
         if: github.event_name == 'push'
         run: make build-go

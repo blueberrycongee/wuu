@@ -22,6 +22,18 @@ The override is also forwarded through the macOS LaunchServices launcher.
 
 `make dev` runs the desktop launcher. It builds the shared Web assets, native helper where applicable, and current Go core and plugin helpers before starting Electron. The app uses that checkout's private `wuu-core`, not a separately installed `wuu` on `PATH`. Renderer changes use Vite updates; restart the launcher after changing Go, native helpers, or process-startup code so the running processes use the new build.
 
+Project Agent is experimental and disabled in default and release builds. It
+has no user setting to enable it. Existing project conversations remain readable,
+but cannot run or recover queued work in these builds. To develop the feature,
+run `npm --prefix desktop run dev -- --project-agent`, or build the CLI with
+`go build -tags project_agent -o bin/wuu ./cmd/wuu`. Run its behavioral suite with
+`go test -tags project_agent ./internal/appserver`; ordinary Go tests cover the
+disabled release behavior. Packaged releases must omit this build tag.
+
+`npm --prefix desktop run test:e2e:project-agent` checks the renderer against
+absent, disabled and enabled backend capabilities, saving screenshots and results
+under `desktop/out/e2e/project-agent-gate/`.
+
 For CLI-only development:
 
 ```bash

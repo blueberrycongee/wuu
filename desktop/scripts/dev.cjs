@@ -31,7 +31,7 @@ const build = spawnSync(process.execPath, [buildHelper], {
 if (build.status !== 0) {
   process.exit(build.status ?? 1);
 }
-const coreBuild = spawnSync(process.execPath, [buildCoreAndPluginHelpers], {
+const coreBuild = spawnSync(process.execPath, [buildCoreAndPluginHelpers, ...process.argv.slice(2)], {
   cwd: desktopRoot,
   env: process.env,
   stdio: "inherit",
