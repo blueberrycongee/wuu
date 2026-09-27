@@ -37,6 +37,18 @@ for (let index = 0; index < Number(process.env.WUU_STREAM_E2E_SIDEBAR_THREADS ||
   threads.set(thread.id, thread);
 }
 
+if (process.env.WUU_PROJECT_PANEL_E2E) {
+  for (const [id, preview, source, projectID] of [
+    ["project-a", "Project Alpha", "project"],
+    ["project-b", "Project Beta", "project"],
+    ["worker-a", "Alpha worker", "project-session", "project-a"],
+    ["worker-b", "Beta worker", "project-session", "project-b"],
+    ["ordinary", "Ordinary conversation"],
+  ]) {
+    threads.set(id, { ...mockThread(id, source), preview, project_id: projectID });
+  }
+}
+
 contextBridge.exposeInMainWorld("wuu", {
   listProjects: async () => projectList(),
   createBlankProject: async () => projectList(),
@@ -77,6 +89,7 @@ contextBridge.exposeInMainWorld("wuu", {
   }),
   initialize: async () => ({
     protocol_version: "e2e",
+    features: { project_agent: Boolean(process.env.WUU_PROJECT_PANEL_E2E) },
     provider: "e2e",
     model: "mock-stream",
     workspace_root: cwd,
@@ -107,7 +120,7 @@ contextBridge.exposeInMainWorld("wuu", {
     threads.set(threadId, thread);
     return { thread };
   },
-  listThreads: async () => ({ threads: process.env.WUU_STREAM_E2E_SIDEBAR_THREADS ? [...threads.values()] : [] }),
+  listThreads: async () => ({ threads: process.env.WUU_STREAM_E2E_SIDEBAR_THREADS || process.env.WUU_PROJECT_PANEL_E2E ? [...threads.values()] : [] }),
   listArchivedThreads: async () => ({ threads: [] }),
   queueTurn: async (threadId, text, _images, id, _files, _permission, _document, _parts, _context, hold) => {
     ipcRenderer.send("test:queued-input", { threadId, text, id, hold });

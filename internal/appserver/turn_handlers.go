@@ -174,6 +174,12 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	th.mu.Lock()
+	disabledProject := projectExecutionDisabled(th.Source)
+	th.mu.Unlock()
+	if disabledProject {
+		return s.writeResponse(req.ID, nil, errProjectAgentDisabled)
+	}
 	if isManualCompactPrompt(params.Prompt) {
 		th.mu.Lock()
 		engineID := agentengine.NormalizeEngineID(th.EngineID)

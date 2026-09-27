@@ -21,6 +21,12 @@ const (
 	projectSessionOwner = "user"
 )
 
+var errProjectAgentDisabled = errors.New("Project Agent is disabled in this build")
+
+func projectExecutionDisabled(source string) bool {
+	return !projectAgentEnabled && (source == projectSource || source == projectSessionSource)
+}
+
 // Causes of the host messages a coordinator receives. Clients render them as
 // project events; the model reads the message content.
 const (
@@ -72,6 +78,9 @@ Use the ordinary session tools and workspace. Inspect the code and choose the im
 const projectSessionInstructions = `A project coordinator manages this session; your first message is its brief. The coordinator reads your final answer each time a turn ends, and the user can read this session, write to it, or take it over at any time. End each turn with a plain report: what you did, choices you made that the brief did not settle, the evidence (commands run and their results), and open questions. In a session with its own worktree, your changes reach the workspace only when the user applies them.`
 
 func (s *Server) startProjectThread(selection session.RuntimeSelection, engineID agentengine.EngineID, params ThreadStartParams) (*threadState, error) {
+	if !projectAgentEnabled {
+		return nil, errProjectAgentDisabled
+	}
 	name := strings.TrimSpace(params.Project.Name)
 	if name == "" {
 		return nil, errors.New("a project needs a name")
@@ -261,6 +270,9 @@ func finalAnswerText(turn Turn) string {
 // enqueueProjectInput records host input for a coordinator. wake starts a
 // coordinator turn when it is idle; other input joins its next turn.
 func (s *Server) enqueueProjectInput(projectID, relatedSessionID, clientID, cause, content string, wake bool) {
+	if !projectAgentEnabled {
+		return
+	}
 	if err := session.EnqueueInbox(s.rt.SessionDir, session.InboxMessage{
 		ClientID: clientID, SessionID: projectID, RelatedSessionID: relatedSessionID, Cause: cause, Content: content, Wake: wake,
 	}); err != nil {
@@ -273,6 +285,9 @@ func (s *Server) enqueueProjectInput(projectID, relatedSessionID, clientID, caus
 // startProjectRecovery checks at start-up whether any project work may need
 // recovery and replays it in the background; an idle store costs one read.
 func (s *Server) startProjectRecovery() {
+	if !projectAgentEnabled {
+		return
+	}
 	controls, err := session.ListControls(s.rt.SessionDir)
 	if err != nil {
 		providers.DebugLogf("recover project sessions: %v", err)
@@ -356,6 +371,9 @@ func (s *Server) restoreProjectMembership(id string, old session.Control) error 
 // host was running, then retries undelivered coordinator input. Each step is
 // idempotent, so running them again never duplicates a delivery.
 func (s *Server) recoverProjectInbox() {
+	if !projectAgentEnabled {
+		return
+	}
 	controls, err := session.ListControls(s.rt.SessionDir)
 	if err != nil {
 		providers.DebugLogf("recover project sessions: %v", err)
@@ -412,6 +430,9 @@ func (s *Server) ensureOwnedThreadLoaded(id string) (*threadState, error) {
 // cannot be admitted now stays pending for the session's next turn start or
 // end, the next delivery, or the next start-up.
 func (s *Server) drainSessionInbox(target string) {
+	if !projectAgentEnabled {
+		return
+	}
 	s.inboxMu.Lock()
 	defer s.inboxMu.Unlock()
 	th, err := s.ensureOwnedThreadLoaded(target)

@@ -63,7 +63,7 @@ export function workspaceArtifactViewTab(input: ArtifactPreviewRequest): Workspa
   return { ...input, kind: "artifact", id: `artifact:${JSON.stringify(identity)}`, title: artifact.name };
 }
 
-// A project's overview beside the conversation.
+// The current project's overview beside the conversation, shared across selections.
 export type WorkspaceProjectViewTab = {
   kind: "project";
   id: string;
@@ -72,7 +72,7 @@ export type WorkspaceProjectViewTab = {
 };
 
 export function workspaceProjectViewTab(projectID: string, title: string): WorkspaceProjectViewTab {
-  return { kind: "project", id: `project:${projectID}`, projectID, title };
+  return { kind: "project", id: "project", projectID, title };
 }
 
 export type WorkspaceViewTab =
@@ -343,6 +343,7 @@ export function useWorkspaceViewTabs(): {
   closeTab: (id: string) => void;
   closeTabsWhere: (predicate: (tab: WorkspaceViewTab) => boolean) => void;
   reorderTabs: (activeID: string, overID: string) => void;
+  syncProjectTab: (project: { id: string; title: string } | undefined) => void;
 } {
   const [state, setState] = useState<WorkspaceViewTabsState>(initialWorkspaceViewTabsState);
 
@@ -361,6 +362,17 @@ export function useWorkspaceViewTabs(): {
   const reorderTabs = useCallback((activeID: string, overID: string) => {
     setState((current) => reorderViewTabs(current, activeID, overID));
   }, []);
+  const syncProjectTab = useCallback((project: { id: string; title: string } | undefined) => {
+    setState((current) => {
+      const tab = current.tabs.find((candidate) => candidate.kind === "project");
+      // Following a selection must not reopen a dismissed overview or steal
+      // focus from a file, terminal, or other explicitly selected tool.
+      if (!tab) return current;
+      if (!project) return closeViewTab(current, tab.id);
+      if (tab.projectID === project.id && tab.title === project.title) return current;
+      return openViewTab(current, workspaceProjectViewTab(project.id, project.title), { activate: false });
+    });
+  }, []);
 
   return {
     tabs: state.tabs,
@@ -371,5 +383,6 @@ export function useWorkspaceViewTabs(): {
     closeTab,
     closeTabsWhere,
     reorderTabs,
+    syncProjectTab,
   };
 }

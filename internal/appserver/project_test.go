@@ -1,3 +1,5 @@
+//go:build project_agent
+
 package appserver
 
 import (

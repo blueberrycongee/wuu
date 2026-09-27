@@ -1072,6 +1072,9 @@ export function AppSidebar({
     () => projectDirectory(allSidebarThreads, state.lastViewedTurnByThreadID, activeThreadID),
     [activeThreadID, allSidebarThreads, state.lastViewedTurnByThreadID],
   );
+  const visibleFunctionalGroupOrder = useMemo(() => functionalGroupOrder.filter(
+    (id) => id !== "projects" || onCreateProject || projectIndex.projects.length > 0,
+  ), [functionalGroupOrder, onCreateProject, projectIndex]);
   // Projects list apart from workspaces unless the user pinned or filed them.
   const projectRows = useMemo(() => projectIndex.projects
     .filter((thread) => !thread.pinned && !organization.folderByThreadID[thread.id])
@@ -1690,7 +1693,7 @@ export function AppSidebar({
         }
       }
     }
-    for (const groupID of functionalGroupOrder) {
+    for (const groupID of visibleFunctionalGroupOrder) {
       nodes.push(...functionalGroupNodes[groupID]);
     }
     nodes.push({
@@ -1711,7 +1714,7 @@ export function AppSidebar({
     onTogglePinned, pendingThreadID, pinnedHasRunning,
     pinnedHasUnread, pinnedRows, validPinnedItems,
     projectRows, projectIndex, visibleWorkspaceThreadsByWorkspaceID,
-    folderThreadsByID, functionalGroupOrder, organization.folders, pinnedFolderIDs,
+    folderThreadsByID, visibleFunctionalGroupOrder, organization.folders, pinnedFolderIDs,
     sidebarWorkspaces, sidebarScratchPseudoActive, visibleWorkspaceSectionOrder,
     state.activeProjectId, state.initialized, state.lastViewedTurnByThreadID, t,
   ]);
@@ -1884,10 +1887,10 @@ export function AppSidebar({
             onDragCancel={handleSidebarDragCancel}
           >
             <SortableContext
-              items={functionalGroupOrder}
+              items={visibleFunctionalGroupOrder}
               strategy={verticalListSortingStrategy}
             >
-              {functionalGroupOrder.map((groupID) => groupID === "projects" ? (
+              {visibleFunctionalGroupOrder.map((groupID) => groupID === "projects" ? (
                 <SortableFunctionalGroup
                   key={groupID}
                   id={groupID}

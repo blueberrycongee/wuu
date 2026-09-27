@@ -1,5 +1,10 @@
 # Projects
 
+Project Agent is experimental and disabled in release builds. There is no setting
+to enable it. Existing project conversations remain readable but do not run or
+resume queued work. The following guide applies only to builds that explicitly
+enable the feature; see [development](../project/development.md).
+
 The Project Agent is your lead: it keeps your goals and decisions in view, works directly when useful, and delegates independent work to sessions it manages. The team reviews its own work and delivers it: agents commit, merge, push, and open pull requests without waiting for your approval.
 
 Project coordination is built into Wuu. Creating and managing sessions, delivering results, taking control, and recovering after a restart do not require an installed or enabled plugin. Extensions can add optional tools, but do not own the project or its sessions.

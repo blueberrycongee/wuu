@@ -20,6 +20,16 @@ macOS LaunchServices 启动器也会转发该设置。
 
 `make dev` 运行桌面启动器，在启动 Electron 前构建共享 Web 资源、适用平台的原生辅助程序，以及当前 Go 核心和插件辅助程序。应用使用该检出目录的私有 `wuu-core`，不是 `PATH` 中另行安装的 `wuu`。renderer 修改通过 Vite 更新；修改 Go、原生辅助程序或进程启动代码后，应重启启动器，让运行中的进程使用新构建。
 
+Project Agent 尚属实验功能，默认构建和发布构建均关闭，没有可供用户开启的设置。
+已有项目会话仍可阅读，但不能运行，也不会恢复队列中的任务。开发此功能时，运行
+`npm --prefix desktop run dev -- --project-agent`，或使用
+`go build -tags project_agent -o bin/wuu ./cmd/wuu` 构建 CLI。
+`go test -tags project_agent ./internal/appserver` 验证开启后的行为；普通 Go 测试
+验证发布构建的关闭行为。打包发布时必须省略此构建标签。
+
+`npm --prefix desktop run test:e2e:project-agent` 验证后端能力字段缺省、关闭和开启时
+的界面，将截图与结果保存到 `desktop/out/e2e/project-agent-gate/`。
+
 只开发 CLI 时可以运行：
 
 ```bash

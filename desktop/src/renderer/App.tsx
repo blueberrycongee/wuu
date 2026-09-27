@@ -297,7 +297,7 @@ import {
   customDraftConversationTitle,
 } from "./ThreadTitles";
 import { ProjectActionsProvider, type ProjectActions, type ProjectThread } from "./ProjectActions";
-import { isProjectCoordinator, projectSessionsOf } from "./ProjectSessions";
+import { isProjectCoordinator, PROJECT_SESSION_SOURCE, projectSessionsOf } from "./ProjectSessions";
 import { ProjectStatusCapsule } from "./ProjectViews";
 import { createRuntimeSettingsActions } from "./RuntimeSettingsActions";
 import { createConversationPaneActions } from "./ConversationPaneActions";
@@ -438,6 +438,7 @@ export function App(): JSX.Element {
     state.initialized?.extension_inventory,
     state.initialized?.features?.safe_mode,
   );
+  const projectAgentEnabled = state.initialized?.features?.project_agent === true;
   const {
     prompt,
     promptRevision,
@@ -708,6 +709,7 @@ export function App(): JSX.Element {
     openWorkspaceFileTab,
     openWorkspaceArtifactTab,
     openWorkspaceProjectTab,
+    syncWorkspaceProjectTab,
     showWorkspaceToolPicker,
     focusWorkspaceViewTab,
     closeWorkspaceViewTab,
@@ -1163,7 +1165,7 @@ export function App(): JSX.Element {
       : undefined;
   const activeThread = activeThreadForState(state);
   const activeThreadID = activeThread?.id;
-  const activeProjectDraft = !activeThread && currentSessionTab?.kind === "draft" && currentSessionTab.project === true;
+  const activeProjectDraft = projectAgentEnabled && !activeThread && currentSessionTab?.kind === "draft" && currentSessionTab.project === true;
   const activeThreadRunning = isThreadRunning(activeThread);
   const activeThreadHasRunningTurn = activeThread?.turns.some(turn => turn.status === "in_progress") ?? false;
   useEffect(() => {
@@ -3593,6 +3595,7 @@ export function App(): JSX.Element {
   // A project starts as a draft like a conversation: its first message names
   // the project and becomes the coordinator's first instruction.
   function startNewProject(workspaceID?: string): void {
+    if (!projectAgentEnabled) return;
     const current = appStateRef.current;
     const targetID = workspaceID
       ?? (current.activeContext?.kind === "project" ? current.activeContext.project_id : undefined)
@@ -3617,7 +3620,7 @@ export function App(): JSX.Element {
   }
 
   async function adoptIntoProject(projectID: string, threadID: string): Promise<void> {
-    if (!window.wuu.projectSession) return;
+    if (!projectAgentEnabled || !window.wuu.projectSession) return;
     try {
       const { thread } = await window.wuu.projectSession({ action: "adopt", project_id: projectID, session_id: threadID });
       updateCachedSidebarThread(thread);
@@ -3634,7 +3637,7 @@ export function App(): JSX.Element {
     openWorkspaceProjectTab(project.id, baseThreadTitle(project));
   });
   const releaseProjectSession = useStableCallback((session: ProjectThread) => {
-    if (!session.project_id || !window.wuu.projectSession) return;
+    if (!projectAgentEnabled || !session.project_id || !window.wuu.projectSession) return;
     void window.wuu.projectSession({ action: "release", project_id: session.project_id, session_id: session.id })
       .then(({ thread }) => updateCachedSidebarThread(thread))
       .catch(showErrorToast);
@@ -3645,6 +3648,16 @@ export function App(): JSX.Element {
     openProjectPanel,
     release: releaseProjectSession,
   }), [openProjectPanel, openProjectThread, releaseProjectSession, sidebarThreads]);
+  const selectedProjectID = activeThread && isProjectCoordinator(activeThread)
+    ? activeThread.id
+    : activeThread?.source === PROJECT_SESSION_SOURCE ? activeThread.project_id : undefined;
+  const selectedProject = sidebarThreads.find((thread) => thread.id === selectedProjectID);
+  const selectedProjectTitle = selectedProject ? baseThreadTitle(selectedProject) : selectedProjectID;
+  useEffect(() => {
+    syncWorkspaceProjectTab(selectedProjectID && selectedProjectTitle
+      ? { id: selectedProjectID, title: selectedProjectTitle }
+      : undefined);
+  }, [selectedProjectID, selectedProjectTitle, syncWorkspaceProjectTab]);
   const activeProjectSessions = useMemo(
     () => activeThread && isProjectCoordinator(activeThread) ? projectSessionsOf(activeThread.id, sidebarThreads) : [],
     [activeThread, sidebarThreads],
@@ -4442,7 +4455,7 @@ export function App(): JSX.Element {
     const sendingDraftTab = targetThread
       ? undefined
       : currentState.sessionTabs.find((tab) => tab.id === currentState.activeSessionTabID);
-    const projectDraft = sendingDraftTab?.kind === "draft" && sendingDraftTab.project === true &&
+    const projectDraft = currentState.initialized?.features?.project_agent === true && sendingDraftTab?.kind === "draft" && sendingDraftTab.project === true &&
       activeContext.kind === "project" ? sendingDraftTab : undefined;
     const newThreadEngine = projectDraft
       ? "wuu"
@@ -4916,7 +4929,7 @@ export function App(): JSX.Element {
       {modelCatalogTipNode}
       {!archiveTip && !modelCatalogTip && failedDraftNotice}
       <ImagePreviewProvider>
-      <ProjectActionsProvider value={projectActions}>
+      <ProjectActionsProvider value={projectAgentEnabled ? projectActions : null}>
       <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
       <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceArtifactTab}>
         <div
@@ -5073,8 +5086,8 @@ export function App(): JSX.Element {
             }}
             onRemoveWorkspace={(id) => void removeProject(id)}
             onRelocateWorkspace={(id) => void relocateProject(id)}
-            onCreateProject={startNewProject}
-            onAdoptIntoProject={(projectID, threadID) => void adoptIntoProject(projectID, threadID)}
+            onCreateProject={projectAgentEnabled ? startNewProject : undefined}
+            onAdoptIntoProject={projectAgentEnabled ? (projectID, threadID) => void adoptIntoProject(projectID, threadID) : undefined}
             onReorderSections={setSidebarSectionOrder}
             onPointerEnter={openSidebarDrawer}
             onPointerLeave={(event) =>
@@ -5467,7 +5480,7 @@ export function App(): JSX.Element {
               inline
             />
           ) : null}
-          hostStatus={activeProjectSessions.length > 0 && activeThread ? (
+          hostStatus={projectAgentEnabled && activeProjectSessions.length > 0 && activeThread ? (
             <ProjectStatusCapsule project={activeThread} sessions={activeProjectSessions} />
           ) : undefined}
           threadId={activeThreadID}

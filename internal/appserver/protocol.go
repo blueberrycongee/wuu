@@ -298,6 +298,8 @@ type InitializeResult struct {
 }
 
 type FeatureFlags struct {
+	// ProjectAgent is a build-time capability; clients must treat absence as off.
+	ProjectAgent bool `json:"project_agent"`
 	// Browser advertises that this client can host the embedded browser
 	// backend (hidden WebContentsView + CDP bridge). Mirrored by
 	// desktop/src/shared/protocol.ts. Filled by config_handlers.handleInitialize.

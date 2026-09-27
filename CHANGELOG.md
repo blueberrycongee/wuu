@@ -22,7 +22,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - New conversations can start in an isolated Git worktree from the composer's
   branch selector. The project keeps its current branch and uncommitted changes;
   the worktree toggle resets for the next conversation.
-- Projects: a coordinator conversation for a larger piece of work in one
+- Experimental Projects (build-time opt-in only; disabled in release builds):
+  a coordinator conversation for a larger piece of work in one
   workspace. Create one from the workspace menu; a workspace can hold several.
   The coordinator can work directly or delegate to managed sessions, which open
   like any conversation. Sessions that change files work in their own Git
@@ -136,6 +137,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   `~/.wuu/channels`, which can be deleted.
 
 ### Fixed
+
+- Image preview controls share a compact bottom toolbar, clear of macOS window
+  buttons. Clicking empty preview space, including toolbar margins, dismisses
+  the preview without interrupting image clicks or drag gestures.
+
+- The project overview in the right panel follows the selected project or its
+  managed session, and clears when switching to an ordinary conversation.
 
 - Project status now shares the conversation capsule row with TODO and plugin
   status, using consistent sizing and alignment above the composer.

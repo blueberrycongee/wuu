@@ -1,5 +1,6 @@
 import {
   createContext,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type MouseEvent as ReactMouseEvent,
@@ -260,6 +261,7 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
   }, [onClose, onNavigate, ready, saveImage, zoomAt, pan, rotate]);
 
   function pointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
+    suppressClick.current = false;
     if (!ready || event.button !== 0) return;
     suppressClick.current = event.target !== event.currentTarget;
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -295,7 +297,9 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
   }
 
   function backgroundClick(event: ReactMouseEvent<HTMLDivElement>): void {
-    if (event.target === event.currentTarget && !suppressClick.current) onClose();
+    const target = event.target as Element;
+    if (!target.closest(".image-preview-image, .image-preview-toolbar-actions, .image-preview-save-error")
+      && !suppressClick.current) onClose();
     suppressClick.current = false;
   }
 
@@ -303,7 +307,7 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
   const canPan = width * scale > stageSize.width - 32 || height * scale > stageSize.height - 32;
   return (
     <div ref={overlayRef} className="image-preview-overlay" role="dialog" aria-modal="true"
-      aria-label={t("imagePreview.label")} tabIndex={-1}>
+      aria-label={t("imagePreview.label")} tabIndex={-1} onClick={backgroundClick}>
       <div className="image-preview-toolbar">
         {count > 1 && <div className="image-preview-toolbar-actions image-preview-navigation">
           <button type="button" className="image-preview-toolbar-button" disabled={index === 0}
@@ -354,8 +358,9 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
         </div>
       </div>
       {saveError && <p className="image-preview-save-error" role="alert">{saveError}</p>}
-      <div ref={stageRef} className="image-preview-stage" style={{ cursor: dragging ? "grabbing" : canPan ? "grab" : "zoom-in" }}
-        onClick={backgroundClick} onPointerDown={pointerDown} onPointerMove={pointerMove}
+      <div ref={stageRef} className="image-preview-stage"
+        style={{ "--image-preview-cursor": dragging ? "grabbing" : canPan ? "grab" : "zoom-in" } as CSSProperties}
+        onPointerDown={pointerDown} onPointerMove={pointerMove}
         onPointerUp={endPointer} onPointerCancel={endPointer} onLostPointerCapture={endPointer}
         onDoubleClick={event => {
           if (!ready || event.target === event.currentTarget) return;

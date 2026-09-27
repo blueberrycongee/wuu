@@ -216,6 +216,7 @@ function installWindowStubs(): void {
 function installWuuApi(
   options: {
     withThread?: boolean;
+    projectAgentEnabled?: boolean;
     deferWorkspaceSelection?: boolean;
     rejectWorkspaceSelection?: boolean;
     rejectNoProjectSelection?: boolean;
@@ -254,7 +255,10 @@ function installWuuApi(
       return Promise.resolve({ projects: [project], active_context: activeContext });
     }),
     initialize: vi.fn().mockImplementation(() =>
-      Promise.resolve(initialized(activeContext.cwd)),
+      Promise.resolve({
+        ...initialized(activeContext.cwd),
+        features: { project_agent: options.projectAgentEnabled === true },
+      }),
     ),
     listThreads: vi.fn().mockImplementation(() =>
       Promise.resolve({
@@ -327,6 +331,7 @@ async function flushAsync(): Promise<void> {
 async function renderApp(
   withThread: boolean,
   options: {
+    projectAgentEnabled?: boolean;
     deferWorkspaceSelection?: boolean;
     rejectWorkspaceSelection?: boolean;
     rejectNoProjectSelection?: boolean;
@@ -579,7 +584,7 @@ describe("main composer focus continuity", () => {
   // A project starts from the Projects group in one step: the draft takes the
   // goal, and the first send starts the coordinator named after that goal.
   it("starts a project coordinator from the Projects group on the first send", async () => {
-    await renderApp(false);
+    await renderApp(false, { projectAgentEnabled: true });
     const button = container.querySelector<HTMLButtonElement>(
       '.sidebar-functional-group[data-functional-group-id="projects"] button[aria-label="新建项目"]',
     );
