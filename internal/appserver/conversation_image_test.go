@@ -117,6 +117,63 @@ func TestConversationImageSurvivesSendHistoryReloadAndCompaction(t *testing.T) {
 	}
 }
 
+func TestConversationImageSlashCommandKeepsPathOutOfInputText(t *testing.T) {
+	image := encodeTestJPEG(t, 2, 2, 80)
+	client := &fakeClient{response: providers.ChatResponse{Content: "done"}}
+	rt := newTestRuntime(t, client)
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
+		t.Fatal(err)
+	}
+	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread.ID
+	payload, err := json.Marshal(map[string]any{
+		"id":     "2",
+		"method": MethodTurnStart,
+		"params": TurnStartParams{
+			ThreadID: threadID,
+			Prompt:   "/debug inspect this image",
+			Images:   []TurnStartImage{{MediaType: "image/jpeg", Data: base64.StdEncoding.EncodeToString(image)}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.handleLine(context.Background(), payload); err != nil {
+		t.Fatal(err)
+	}
+	_ = waitForMethod(t, out, NotificationTurnCompleted)
+
+	started := remarshal[TurnStartResult](t, responseByID(t, parseOutput(t, out.String()), "2")["result"])
+	if len(started.Turn.Items) != 1 {
+		t.Fatalf("unexpected turn items: %+v", started.Turn.Items)
+	}
+	item := started.Turn.Items[0]
+	if item.Text != "/debug inspect this image" || !strings.Contains(item.InputText, "inspect this image") {
+		t.Fatalf("slash command display or delivered prompt lost: %+v", item)
+	}
+	client.mu.Lock()
+	sent := client.requests[0].Messages[1]
+	client.mu.Unlock()
+	if !strings.Contains(sent.Content, sent.Images[0].Path) {
+		t.Fatalf("model prompt lost image path: %+v", sent)
+	}
+	assertConversationImageFile(t, threadID, sent.Images[0].Path, image)
+	if strings.Contains(item.InputText, sent.Images[0].Path) || strings.Contains(item.InputText, "<image name=") {
+		t.Fatalf("public input_text exposed the server-added image path: %q", item.InputText)
+	}
+
+	loaded, err := loadChatMessages(rt.SessionDir, threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visible := visibleMessagesForTest(loaded)
+	if len(visible) == 0 || strings.Contains(chatMessageItem("reloaded", visible[0]).InputText, sent.Images[0].Path) {
+		t.Fatalf("reloaded item exposed the server-added image path: %+v", visible)
+	}
+}
+
 func TestConversationImageWriteIsIdempotentAndIsolated(t *testing.T) {
 	image := encodeTestJPEG(t, 4, 4, 80)
 	encoded := base64.StdEncoding.EncodeToString(image)

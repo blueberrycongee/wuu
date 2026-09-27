@@ -1891,19 +1891,16 @@ func chatMessageDisplayContent(msg providers.ChatMessage) string {
 // ordinary user messages while letting plugin-generated wake messages reveal
 // the prompt they actually delivered.
 func chatMessageInputText(msg providers.ChatMessage) string {
-	content := strings.TrimSpace(msg.Content)
-	if content == "" || content == strings.TrimSpace(chatMessageDisplayContent(msg)) {
+	content := msg.Content
+	// A local image path is server-added model context, not authored input.
+	// Leave it out of the public input field, including for rendered slash commands.
+	if reference := conversationImagePathReference(msg.Images); reference != "" {
+		content = strings.TrimSpace(strings.TrimSuffix(content, reference))
+	}
+	if strings.TrimSpace(content) == "" || strings.TrimSpace(content) == strings.TrimSpace(chatMessageDisplayContent(msg)) {
 		return ""
 	}
-	// A local image path is server-added model context, not authored input.
-	// Leave it out of the public input field so the bubble stays the prompt.
-	if reference := conversationImagePathReference(msg.Images); reference != "" {
-		withoutReference := strings.TrimSpace(strings.TrimSuffix(content, reference))
-		if withoutReference == strings.TrimSpace(chatMessageDisplayContent(msg)) || withoutReference == "" {
-			return ""
-		}
-	}
-	return msg.Content
+	return content
 }
 
 func threadItemImages(images []providers.InputImage) []ThreadItemImage {
