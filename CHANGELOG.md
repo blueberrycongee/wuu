@@ -147,6 +147,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Isolated workers started from a worktree conversation now write in their own
+  worktree. Previously their file and shell tools could resolve into the parent
+  conversation's worktree. Workers started after an agent moves its conversation
+  to another workspace mid-turn also run in the new workspace.
+
+- Moving a conversation back to its project is recognized when the project path
+  goes through a symlink, instead of recording the project as a linked worktree.
+
 - When an agent moves its conversation to another workspace mid-turn, the rest
   of that turn now runs there. Previously, tool calls after the move failed if
   the old worktree had been deleted, or kept running in the old worktree.

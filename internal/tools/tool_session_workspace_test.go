@@ -72,7 +72,7 @@ func newMidTurnRebindKit(t *testing.T, checkout string) (*Toolkit, context.Conte
 		t.Fatalf("tools.New: %v", err)
 	}
 	kit.SetOnSessionWorkspaceChanged(func(string) error { return nil })
-	return kit, toolctx.WithWorktreePath(context.Background(), checkout)
+	return kit, toolctx.WithWorktreeBinding(context.Background(), kit.RootDir(), checkout)
 }
 
 func TestSetSessionWorkspaceMidTurnLeavesDeletedWorktree(t *testing.T) {

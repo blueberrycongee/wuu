@@ -7,7 +7,12 @@ import (
 
 type stepIndexKey struct{}
 
-type worktreePathKey struct{}
+type worktreeBindingKey struct{}
+
+type worktreeBinding struct {
+	root     string
+	checkout string
+}
 
 type waitInterruptKey struct{}
 
@@ -63,35 +68,42 @@ func StepIndex(ctx context.Context) (int, bool) {
 	return stepIndex, ok
 }
 
-// WithWorktreePath binds the isolated git-worktree checkout a
-// worktree-forked thread must execute in (fork-to-worktree step 5). The
-// turn entry injects the session's persisted worktree path here; file and
-// shell tools switch their execution CWD to this checkout only AFTER their
-// ordinary sandbox / whitelist checks pass, so the binding never widens
-// what a tool may touch — it only relocates approved workspace paths into
-// the isolated copy.
-func WithWorktreePath(ctx context.Context, path string) context.Context {
-	path = strings.TrimSpace(path)
-	if path == "" {
+// WithWorktreeBinding binds the isolated git-worktree checkout a
+// worktree-bound thread must execute in (fork-to-worktree step 5). The turn
+// entry injects the session's persisted worktree path here together with the
+// root of the toolkit that runs the turn. File and shell tools switch their
+// execution CWD to this checkout only AFTER their ordinary sandbox /
+// whitelist checks pass, so the binding never widens what a tool may touch —
+// it only relocates approved workspace paths into the isolated copy.
+//
+// The binding describes that one toolkit root. A toolkit with another root
+// (a worker cloned for its own directory, or a root moved by an explicit
+// workspace rebind) executes in its own root even though it inherits this
+// context.
+func WithWorktreeBinding(ctx context.Context, root, checkout string) context.Context {
+	root = strings.TrimSpace(root)
+	checkout = strings.TrimSpace(checkout)
+	if root == "" || checkout == "" {
 		return ctx
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return context.WithValue(ctx, worktreePathKey{}, path)
+	return context.WithValue(ctx, worktreeBindingKey{}, worktreeBinding{root: root, checkout: checkout})
 }
 
-// WorktreePath reports the worktree checkout bound to this tool execution,
-// if any. Tools that do not touch the filesystem can ignore it.
-func WorktreePath(ctx context.Context) (string, bool) {
+// WorktreeBinding reports the toolkit root and worktree checkout bound to
+// this tool execution, if any. Tools that do not touch the filesystem can
+// ignore it.
+func WorktreeBinding(ctx context.Context) (root, checkout string, ok bool) {
 	if ctx == nil {
-		return "", false
+		return "", "", false
 	}
-	path, ok := ctx.Value(worktreePathKey{}).(string)
-	if !ok || strings.TrimSpace(path) == "" {
-		return "", false
+	binding, ok := ctx.Value(worktreeBindingKey{}).(worktreeBinding)
+	if !ok {
+		return "", "", false
 	}
-	return path, true
+	return binding.root, binding.checkout, true
 }
 
 // WithWaitInterrupt exposes a turn-scoped signal that wait-only tools may use

@@ -2451,8 +2451,12 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// worktree-bound thread's file/shell tools switch their execution CWD to
 	// the checkout (after their ordinary sandbox checks) even when the
 	// runtime happens to be rooted at the parent repo.
-	if turnWorktreePath != "" {
-		ctx = toolctx.WithWorktreePath(ctx, turnWorktreePath)
+	turnKit := s.rt.Toolkit
+	if threadRuntime != nil && threadRuntime.Toolkit != nil {
+		turnKit = threadRuntime.Toolkit
+	}
+	if turnWorktreePath != "" && turnKit != nil {
+		ctx = toolctx.WithWorktreeBinding(ctx, turnKit.RootDir(), turnWorktreePath)
 	}
 	turnPermissions := turnRuntime.permissions()
 	turnRuntime = turnRuntime.withPermissions(turnPermissions)
