@@ -25,6 +25,12 @@ interface Harness {
   workspaceRightPanelWidth: ReturnType<
     typeof useAppLayoutState
   >["workspaceRightPanelWidth"];
+  clampedWorkspaceRightPanelWidth: ReturnType<
+    typeof useAppLayoutState
+  >["clampedWorkspaceRightPanelWidth"];
+  handleRightPanelSeparatorKey: ReturnType<
+    typeof useAppLayoutState
+  >["handleRightPanelSeparatorKey"];
   rightPanelAnimating: ReturnType<typeof useAppLayoutState>["rightPanelAnimating"];
   toggleSidebar: ReturnType<typeof useAppLayoutState>["toggleSidebar"];
   startSidebarResize: ReturnType<typeof useAppLayoutState>["startSidebarResize"];
@@ -70,6 +76,8 @@ function renderHookHarness(): void {
       sidebarWidth: hook.sidebarWidth,
       sidebarCollapsed: hook.sidebarCollapsed,
       workspaceRightPanelWidth: hook.workspaceRightPanelWidth,
+      clampedWorkspaceRightPanelWidth: hook.clampedWorkspaceRightPanelWidth,
+      handleRightPanelSeparatorKey: hook.handleRightPanelSeparatorKey,
       rightPanelAnimating: hook.rightPanelAnimating,
       toggleSidebar: hook.toggleSidebar,
       startSidebarResize: hook.startSidebarResize,
@@ -307,6 +315,45 @@ describe("useAppLayoutState responsive workspace presentation", () => {
     expect(latest!.sidebarCollapsed).toBe(false);
     expect(latest!.workspaceRightPanelAutoGlobalized).toBe(false);
     expect(latest!.workspaceRightPanelDockableWithoutSidebar).toBe(true);
+  });
+
+  it("keeps the remembered right-panel width through a narrow window", () => {
+    setInnerWidth(1600);
+    window.localStorage.setItem("wuu.desktop.workspaceRightPanelWidth", "700");
+    renderHookHarness();
+    expect(latest!.clampedWorkspaceRightPanelWidth).toBe(700);
+
+    act(() => {
+      setInnerWidth(1100);
+      window.dispatchEvent(new Event("resize"));
+    });
+    expect(latest!.clampedWorkspaceRightPanelWidth).toBeLessThan(700);
+    expect(window.localStorage.getItem("wuu.desktop.workspaceRightPanelWidth")).toBe("700");
+
+    act(() => {
+      setInnerWidth(1600);
+      window.dispatchEvent(new Event("resize"));
+    });
+    expect(latest!.clampedWorkspaceRightPanelWidth).toBe(700);
+  });
+
+  it("steps the right panel from its displayed width in a narrow window", () => {
+    setInnerWidth(1600);
+    window.localStorage.setItem("wuu.desktop.workspaceRightPanelWidth", "700");
+    renderHookHarness();
+    act(() => {
+      setInnerWidth(1100);
+      window.dispatchEvent(new Event("resize"));
+    });
+    const displayed = latest!.clampedWorkspaceRightPanelWidth;
+
+    act(() => {
+      latest!.handleRightPanelSeparatorKey({
+        key: "ArrowRight",
+        preventDefault: vi.fn(),
+      } as unknown as React.KeyboardEvent<HTMLDivElement>);
+    });
+    expect(latest!.clampedWorkspaceRightPanelWidth).toBeLessThan(displayed);
   });
 });
 

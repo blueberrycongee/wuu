@@ -664,18 +664,22 @@
   transform: scale(0.96);
 }
 
-.conversation-search-shortcut-hint {
+/* Shortcut keycaps in the field and in the results share one shape. */
+.conversation-search-shortcut-hint,
+.conversation-search-result-shortcut {
   display: inline-grid;
+  min-width: 20px;
+  height: 20px;
   place-items: center;
-  height: 22px;
-  padding: 0 8px;
-  border-radius: var(--radius-sm);
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
   background: var(--env-search-result-shortcut-bg);
   color: var(--env-search-result-shortcut-text);
   font-family: inherit;
-  font-size: 11px;
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.02em;
+  font-size: var(--font-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-regular);
+  line-height: 1;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -744,13 +748,15 @@
   transform: scale(0.992);
 }
 
+/* Titles read as they do in the sidebar. Selection moves with the arrow
+ * keys, so it stays a background and never a weight that reflows the row. */
 .conversation-search-result-title {
   min-width: 0;
   overflow: hidden;
   color: var(--ink);
   font-size: var(--font-body);
-  font-weight: var(--weight-medium);
-  line-height: 18px;
+  font-weight: var(--weight-regular);
+  line-height: var(--line-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -763,15 +769,7 @@
 
 .conversation-search-result-shortcut {
   grid-column: 2;
-  min-width: 36px;
-  border-radius: var(--radius-pill);
-  background: var(--env-search-result-shortcut-bg);
-  color: var(--env-search-result-shortcut-text);
-  font-size: var(--font-sm);
-  line-height: 20px;
   opacity: 0;
-  padding: 0 7px;
-  text-align: center;
   transition: opacity var(--motion-fast) var(--ease-out);
 }
 
@@ -968,8 +966,10 @@
   flex: 0 1 auto;
   max-width: 85%;
   background: var(--chat-user-message-bg);
-  border-radius: var(--radius-xs);
-  padding: 5px 10px;
+  /* The conversation bubble's shape at preview size: the same corner to
+   * height ratio and a wider side inset than the top one. */
+  border-radius: var(--radius-sm);
+  padding: 5px 12px;
 }
 
 .conversation-search-preview-turn.role-assistant .conversation-search-preview-text {

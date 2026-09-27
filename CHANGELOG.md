@@ -31,6 +31,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Conversation status capsules, the TODO hover card, and the composer's corner
   controls share one size, corner, and elevation scale. The TODO card uses the
   info panel's status marks, and truncated process summaries end in an ellipsis.
+- Plugin pages appear in the sidebar's main navigation beside Plugins instead of
+  a second group headed with the same name.
+- The Files view gives the file tree the whole right panel. A panel too narrow
+  for the tree beside a document shows the document with a button back to the
+  file list.
+- Conversation search results, shortcut keycaps, and message previews match the
+  sidebar and conversation styles, and settings navigation headings match the
+  sidebar's.
 
 ### Added
 
@@ -164,6 +172,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   `~/.wuu/channels`, which can be deleted.
 
 ### Fixed
+
+- Sidebar project folds survive restarts and renderer reloads. They were cleared
+  while the project list was still loading.
+
+- Narrowing the window no longer permanently shrinks a wider right panel; it
+  returns to its width when the window widens again.
+
+- Middle-truncated names in the file tree no longer show clipped text under the
+  ellipsis.
 
 - Message images reserve their preview space while loading or unavailable, keeping
   conversation reading positions stable when switching sessions.

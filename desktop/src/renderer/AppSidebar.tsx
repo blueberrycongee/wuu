@@ -1863,42 +1863,30 @@ export function AppSidebar({
             <PluginBlocksIcon className="icon-lg" />
             <span>{t("skills.sectionSkills")}</span>
           </button>
+          {/* Plugin pages are destinations beside the catalog that lists
+              their plugins, so they continue this list instead of opening a
+              second group headed with the catalog's own name. */}
+          {pluginNavigationEntries.map((entry) => {
+            const active = activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId;
+            return (
+              <button
+                key={`${entry.pluginId}:${entry.id}`}
+                type="button"
+                className={`nav-item plugin-navigation-item${active ? " active" : ""}`}
+                data-wuu-component="plugin-navigation-item"
+                data-wuu-plugin={entry.pluginId}
+                aria-current={active ? "page" : undefined}
+                title={entry.description || entry.title}
+                onClick={() => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId)}
+              >
+                <PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />
+                <span>{entry.title}</span>
+              </button>
+            );
+          })}
         </nav>
 
         <div className="sidebar-main scrollbar-hidden" data-scroll-fade="">
-          {pluginNavigationEntries.length > 0 ? (
-            <section
-              className="sidebar-functional-group plugin-navigation-group"
-              aria-label={t("skills.sectionPlugins")}
-              data-wuu-component="plugin-navigation"
-            >
-              <div className="sidebar-functional-heading">
-                <span className="sidebar-functional-heading-label">{t("skills.sectionPlugins")}</span>
-              </div>
-              <div className="sidebar-functional-group-collapse">
-                <div className="sidebar-functional-group-body">
-                  {pluginNavigationEntries.map((entry) => {
-                    const active = activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId;
-                    return (
-                      <button
-                        key={`${entry.pluginId}:${entry.id}`}
-                        type="button"
-                        className={`nav-item plugin-navigation-item${active ? " active" : ""}`}
-                        data-wuu-component="plugin-navigation-item"
-                        data-wuu-plugin={entry.pluginId}
-                        aria-current={active ? "page" : undefined}
-                        title={entry.description || entry.title}
-                        onClick={() => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId)}
-                      >
-                        <PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />
-                        <span>{entry.title}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </section>
-          ) : null}
           <DndContext
             sensors={sensors}
             collisionDetection={sidebarCollisionDetection}

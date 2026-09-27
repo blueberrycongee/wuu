@@ -750,11 +750,6 @@ export function useAppLayoutState({
         sidebarShouldAutoCollapseForWindow(nextWindowWidth);
       const restoreAutoCollapsedSidebar =
         !autoCollapseSidebar && sidebarAutoCollapsedRef.current;
-      const nextEffectiveSidebarWidth = autoCollapseSidebar
-        ? 0
-        : sidebarCollapsed && !restoreAutoCollapsedSidebar
-          ? 0
-          : clampSidebarWidthForWindow(sidebarPreferredWidth, nextWindowWidth);
       if (autoCollapseSidebar) {
         if (!sidebarCollapsed) {
           sidebarAutoCollapsedRef.current = true;
@@ -770,9 +765,9 @@ export function useAppLayoutState({
         startSidebarMotion();
         setSidebarCollapsedState(false);
       }
-      setWorkspaceRightPanelWidth((current) =>
-        clampWorkspaceRightPanelWidth(current, nextEffectiveSidebarWidth)
-      );
+      // The right panel keeps its remembered width; render clamps it to the
+      // window, as the sidebar's width is, so a narrow window cannot shrink it
+      // for good.
     }
 
     window.addEventListener("resize", handleResize);
@@ -781,7 +776,6 @@ export function useAppLayoutState({
     onCloseWorkspaceMenu,
     resizingSidebar,
     sidebarCollapsed,
-    sidebarPreferredWidth,
     startSidebarMotion,
     viewportWidth,
   ]);
@@ -846,12 +840,14 @@ export function useAppLayoutState({
   }
 
   function handleRightPanelSeparatorKey(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    // Step from the width on screen: the remembered width can exceed what a
+    // narrow window shows, and stepping from it would leave keys without effect.
     if (event.key === "ArrowLeft") {
       event.preventDefault();
-      applyWorkspaceRightPanelWidth(workspaceRightPanelWidth + WORKSPACE_RIGHT_PANEL_STEP);
+      applyWorkspaceRightPanelWidth(clampedWorkspaceRightPanelWidth + WORKSPACE_RIGHT_PANEL_STEP);
     } else if (event.key === "ArrowRight") {
       event.preventDefault();
-      applyWorkspaceRightPanelWidth(workspaceRightPanelWidth - WORKSPACE_RIGHT_PANEL_STEP);
+      applyWorkspaceRightPanelWidth(clampedWorkspaceRightPanelWidth - WORKSPACE_RIGHT_PANEL_STEP);
     } else if (event.key === "Home") {
       event.preventDefault();
       applyWorkspaceRightPanelWidth(WORKSPACE_RIGHT_PANEL_MAX_WIDTH);

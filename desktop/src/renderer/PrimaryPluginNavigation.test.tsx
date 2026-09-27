@@ -173,7 +173,7 @@ describe("primary plugin navigation without a tab strip", () => {
     await click("Updated catalog");
     act(() => host.unload(pluginId));
     expectPage("Original conversation");
-    expect(container.querySelector('[data-wuu-component="plugin-navigation"]')).toBeNull();
+    expect(container.querySelector('[data-wuu-component="plugin-navigation-item"]')).toBeNull();
     await register("three");
     expectPage("Original conversation");
   });

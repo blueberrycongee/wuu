@@ -723,6 +723,67 @@ describe("WorkspaceRightPanel", () => {
     }
   });
 
+  it("gives a file the whole panel when the panel cannot hold the tree beside it", async () => {
+    const originalResizeObserver = globalThis.ResizeObserver;
+    let resizeCallback: ResizeObserverCallback | undefined;
+    class MockResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback;
+      }
+      observe(): void {}
+      disconnect(): void {}
+    }
+    globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
+
+    try {
+      const context: RuntimeContext = {
+        kind: "project",
+        project_id: "project-1",
+        cwd: "/repo/project",
+      };
+      const fileTab = workspaceFileViewTab({ context, path: "src/App.tsx" });
+      const onOpenTool = vi.fn();
+      mount(
+        <WorkspaceRightPanel
+          {...baseProps()}
+          onOpenTool={onOpenTool}
+          tabs={[fileTab]}
+          activeTabID={fileTab.id}
+          activeFileTabID={fileTab.id}
+          workspaceContext={context}
+        />,
+      );
+      await act(async () => Promise.resolve());
+
+      const split = container!.querySelector<HTMLElement>(".workspace-files-split")!;
+      let panelWidth = 300;
+      Object.defineProperty(split, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ width: panelWidth }),
+      });
+      act(() => resizeCallback?.([], {} as ResizeObserver));
+
+      const tree = container!.querySelector<HTMLElement>(".workspace-files-tree")!;
+      expect(tree.hidden).toBe(true);
+      const showTree = container!.querySelector<HTMLButtonElement>(".workspace-file-tree-reveal");
+      expect(showTree).not.toBeNull();
+      act(() => showTree!.click());
+      expect(onOpenTool).toHaveBeenCalledWith("files");
+
+      panelWidth = 600;
+      act(() => resizeCallback?.([], {} as ResizeObserver));
+      expect(tree.hidden).toBe(false);
+      expect(container!.querySelector(".workspace-file-tree-reveal")).toBeNull();
+      expect(window.localStorage.getItem("wuu.desktop.fileTreeVisible")).not.toBe("false");
+    } finally {
+      if (originalResizeObserver) {
+        globalThis.ResizeObserver = originalResizeObserver;
+      } else {
+        Reflect.deleteProperty(globalThis, "ResizeObserver");
+      }
+    }
+  });
+
   it("fits the stored tree width when a panel that started closed opens", async () => {
     const originalResizeObserver = globalThis.ResizeObserver;
     let resizeCallback: ResizeObserverCallback | undefined;

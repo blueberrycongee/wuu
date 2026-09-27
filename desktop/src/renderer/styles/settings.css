@@ -100,14 +100,16 @@
   white-space: nowrap;
 }
 
+/* Groups follow the main sidebar's rhythm: the same group gap and the
+ * same section heading type as its functional groups. */
 .settings-nav {
   display: flex;
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 20px;
+  gap: var(--sidebar-functional-group-gap);
   overflow-y: auto;
-  margin-top: 12px;
+  margin-top: var(--sidebar-functional-group-gap);
   padding-bottom: 12px;
 }
 
@@ -124,10 +126,10 @@
 
 .settings-nav-group-label {
   padding: 0 var(--sidebar-row-pad-x) 6px;
-  color: var(--ink-tertiary);
-  font-size: var(--font-sm);
+  color: var(--ink-muted);
+  font-size: var(--sidebar-heading-size, var(--font-sm));
   font-weight: var(--weight-medium);
-  line-height: 1.3;
+  line-height: var(--line-ui);
   user-select: none;
 }
 

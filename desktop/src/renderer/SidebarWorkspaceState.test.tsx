@@ -310,11 +310,34 @@ describe("useSidebarWorkspaceState", () => {
       JSON.stringify(["missing-project", SIDEBAR_SECTION_PINNED]),
     );
 
-    const hook = await renderSidebarWorkspaceState({ projects: [] });
+    const hook = await renderSidebarWorkspaceState({
+      projects: [project("alpha")],
+      backgroundLoadingEnabled: false,
+    });
 
     expect([...hook.get().collapsedSidebarSectionIDs]).toEqual([
       SIDEBAR_SECTION_PINNED,
     ]);
+  });
+
+  it("keeps persisted folds while the project list has not loaded yet", async () => {
+    const alpha = project("alpha");
+    const beta = project("beta");
+    Object.defineProperty(window, "wuu", {
+      configurable: true,
+      value: { listThreads: vi.fn(async () => ({ threads: [] })) },
+    });
+    window.localStorage.setItem("wuu.desktop.expandedSidebarSectionIDs", JSON.stringify([alpha.id]));
+    window.localStorage.setItem("wuu.desktop.collapsedSidebarSectionIDs", JSON.stringify([beta.id]));
+
+    // A launch or renderer reload renders before the host reports projects.
+    const hook = await renderSidebarWorkspaceState({ projects: [], backgroundLoadingEnabled: false });
+    expect(JSON.parse(window.localStorage.getItem("wuu.desktop.expandedSidebarSectionIDs") ?? "[]")).toContain(alpha.id);
+    expect(JSON.parse(window.localStorage.getItem("wuu.desktop.collapsedSidebarSectionIDs") ?? "[]")).toEqual([beta.id]);
+
+    await hook.rerender({ projects: [alpha, beta] });
+    expect(hook.get().expandedSidebarSectionIDs.has(alpha.id)).toBe(true);
+    expect(hook.get().collapsedSidebarSectionIDs.has(beta.id)).toBe(true);
   });
 
   it("toggles the pinned pseudo section with one click", async () => {

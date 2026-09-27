@@ -860,6 +860,24 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
+/* The files view is the tree itself: a file opens in its own tab, so a
+ * content column beside it would only ever hold the empty prompt and take
+ * the tree's width. The split appears once a file tab has a document. */
+.workspace-right-panel[data-wuu-view="files"] .workspace-files-split:not(.tree-hidden) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace-right-panel[data-wuu-view="files"] .workspace-files-split:not(.tree-hidden)
+  :is(.workspace-files-content, .workspace-files-resizer) {
+  display: none;
+}
+
+.workspace-right-panel[data-wuu-view="files"] .workspace-files-split:not(.tree-hidden)
+  .workspace-files-tree {
+  grid-column: 1;
+  padding: 10px 0;
+}
+
 /* Files become a list -> document stack in compact navigation. The file tabs
  * and editor resources stay mounted, but the tree and document never compete
  * for the phone's width. */

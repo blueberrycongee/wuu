@@ -286,6 +286,12 @@ export function WorkspaceRightPanel({
   const [fileTreeWidth, setFileTreeWidth] = useState(initialWorkspaceFileTreeWidth);
   const [fileTreeSide, setFileTreeSide] = useState<WorkspaceFileTreeSide>(initialWorkspaceFileTreeSide);
   const [fileTreeVisible, setFileTreeVisible] = useState(initialWorkspaceFileTreeVisible);
+  // Too narrow for the tree beside a document: the document takes the panel
+  // and the tree stays one step away, as in compact navigation.
+  const [fileSplitStacked, setFileSplitStacked] = useState(false);
+  const stackedFileView = !compactNavigation && fileSplitStacked && activeTab?.kind === "file";
+  // The saved visibility is untouched; a stacked document only sets it aside.
+  const fileTreeDocked = fileTreeVisible && !stackedFileView;
   const [draggingFileTree, setDraggingFileTree] = useState(false);
   const [fileTreeDropSide, setFileTreeDropSide] = useState<WorkspaceFileTreeSide | undefined>(undefined);
   const [bodyPrewarmed, setBodyPrewarmed] = useState(false);
@@ -350,6 +356,7 @@ export function WorkspaceRightPanel({
       if (panelWidth <= 0) {
         return;
       }
+      setFileSplitStacked(panelWidth < WORKSPACE_FILE_TREE_MIN_WIDTH + WORKSPACE_FILE_CONTENT_MIN_WIDTH);
       setFileTreeWidth((current) => {
         const next = clampWorkspaceFileTreeWidth(
           fileTreePreferredWidthRef.current,
@@ -817,7 +824,7 @@ export function WorkspaceRightPanel({
         <>
           <div className={`workspace-panel-body${activeTab ? "" : " picker"}`}>
             <div
-              className={`workspace-files-split${resizingFileSplit ? " resizing" : ""}${fileTreeVisible ? "" : " tree-hidden"}${draggingFileTree ? " tree-dragging" : ""}`}
+              className={`workspace-files-split${resizingFileSplit ? " resizing" : ""}${fileTreeDocked ? "" : " tree-hidden"}${draggingFileTree ? " tree-dragging" : ""}`}
               data-wuu-component="workspace-files"
               data-tree-drop-side={fileTreeDropSide}
               data-tree-side={fileTreeSide}
@@ -863,7 +870,7 @@ export function WorkspaceRightPanel({
               </section>
               <div
                 className="workspace-files-resizer"
-                hidden={!fileTreeVisible}
+                hidden={!fileTreeDocked}
                 role="separator"
                 aria-label={t("workspace.resizeFileContentTree")}
                 aria-orientation="vertical"
@@ -879,7 +886,7 @@ export function WorkspaceRightPanel({
                 className="workspace-files-tree"
                 data-wuu-component="workspace-file-tree"
                 aria-label={t("workspace.fileTree")}
-                hidden={!compactNavigation && !fileTreeVisible}
+                hidden={!compactNavigation && !fileTreeDocked}
                 ref={fileTreeRef}
               >
                 <div
@@ -906,13 +913,13 @@ export function WorkspaceRightPanel({
                   onOpenFile={onOpenFile}
                 />
               </section>
-              {!fileTreeVisible ? (
+              {!fileTreeDocked ? (
                 <button
                   className={`icon-button workspace-file-tree-reveal ${fileTreeSide}`}
                   type="button"
                   aria-label={t("workspace.showFileTree")}
                   title={t("workspace.showFileTree")}
-                  onClick={() => setFileTreeVisibility(true)}
+                  onClick={() => (stackedFileView ? onOpenTool("files") : setFileTreeVisibility(true))}
                 >
                   {fileTreeSide === "left" ? (
                     <PanelLeftOpen className="icon" />
