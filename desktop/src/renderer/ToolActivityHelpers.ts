@@ -337,6 +337,8 @@ function toolActivitySectionKey(item: ThreadItem): string {
       return "history-read";
     case "history_search":
       return "history-search";
+    case "fusion_delegate":
+      return "agent";
   }
   const capabilityKey = capabilitySectionKey(item.display?.capability);
   if (capabilityKey) {
@@ -451,16 +453,18 @@ function toolActivitySectionFromItems(
         commands: toolCommands(items),
         error: firstToolError(items),
       };
-    case "agent":
+    case "agent": {
+      const onlyFusion = fusionDelegationsOnly(items);
       return {
         id: key,
         kind: "agent",
-        title: t("toolActivity.subtasks"),
-        detail: compactDetailText(compactAgentLabels(items)),
+        title: onlyFusion ? t("toolActivity.delegateSidekick") : t("toolActivity.subtasks"),
+        detail: onlyFusion ? undefined : compactDetailText(compactAgentLabels(items)),
         status: combinedToolStatus(items),
         commands: toolCommands(items),
         error: firstToolError(items),
       };
+    }
     case "todo":
       return {
         id: key,
@@ -637,6 +641,9 @@ function toolActivityProcessSegmentFromItems(
           };
     }
     case "agent": {
+      if (fusionDelegationsOnly(items)) {
+        return { id: key, kind: "agent", status, error, text: t("toolActivity.delegateSidekick") };
+      }
       const labels = compactAgentLabels(items);
       const count = labels.length || items.length;
       return count > 1
@@ -909,6 +916,10 @@ function compactAgentLabels(items: ThreadItem[]): string[] {
   );
 }
 
+function fusionDelegationsOnly(items: ThreadItem[]): boolean {
+  return items.length > 0 && items.every((item) => item.name === "fusion_delegate");
+}
+
 function compactDetailText(values: string[]): string | undefined {
   if (values.length === 0) {
     return undefined;
@@ -1121,6 +1132,8 @@ export function readableToolName(name: string | undefined): string {
       return t("toolActivity.learnSkill");
     case "browser":
       return t("toolActivity.browser");
+    case "fusion_delegate":
+      return t("toolActivity.delegateSidekick");
     default:
       return name?.trim() || t("toolActivity.tool");
   }
