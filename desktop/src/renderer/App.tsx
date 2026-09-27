@@ -297,7 +297,7 @@ import {
   customDraftConversationTitle,
 } from "./ThreadTitles";
 import { ProjectActionsProvider, type ProjectActions, type ProjectThread } from "./ProjectActions";
-import { isProjectCoordinator, projectSessionsOf } from "./ProjectSessions";
+import { isProjectCoordinator, PROJECT_SESSION_SOURCE, projectSessionsOf } from "./ProjectSessions";
 import { ProjectStatusCapsule } from "./ProjectViews";
 import { createRuntimeSettingsActions } from "./RuntimeSettingsActions";
 import { createConversationPaneActions } from "./ConversationPaneActions";
@@ -708,6 +708,7 @@ export function App(): JSX.Element {
     openWorkspaceFileTab,
     openWorkspaceArtifactTab,
     openWorkspaceProjectTab,
+    syncWorkspaceProjectTab,
     showWorkspaceToolPicker,
     focusWorkspaceViewTab,
     closeWorkspaceViewTab,
@@ -3645,6 +3646,16 @@ export function App(): JSX.Element {
     openProjectPanel,
     release: releaseProjectSession,
   }), [openProjectPanel, openProjectThread, releaseProjectSession, sidebarThreads]);
+  const selectedProjectID = activeThread && isProjectCoordinator(activeThread)
+    ? activeThread.id
+    : activeThread?.source === PROJECT_SESSION_SOURCE ? activeThread.project_id : undefined;
+  const selectedProject = sidebarThreads.find((thread) => thread.id === selectedProjectID);
+  const selectedProjectTitle = selectedProject ? baseThreadTitle(selectedProject) : selectedProjectID;
+  useEffect(() => {
+    syncWorkspaceProjectTab(selectedProjectID && selectedProjectTitle
+      ? { id: selectedProjectID, title: selectedProjectTitle }
+      : undefined);
+  }, [selectedProjectID, selectedProjectTitle, syncWorkspaceProjectTab]);
   const activeProjectSessions = useMemo(
     () => activeThread && isProjectCoordinator(activeThread) ? projectSessionsOf(activeThread.id, sidebarThreads) : [],
     [activeThread, sidebarThreads],

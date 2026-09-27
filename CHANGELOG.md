@@ -137,6 +137,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- The project overview in the right panel follows the selected project or its
+  managed session, and clears when switching to an ordinary conversation.
+
 - Project status now shares the conversation capsule row with TODO and plugin
   status, using consistent sizing and alignment above the composer.
 
