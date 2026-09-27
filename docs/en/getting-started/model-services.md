@@ -136,6 +136,8 @@ The Lead owns the conversation, planning, difficult decisions, and final review.
 
 The report states whether work completed, is blocked, needs a decision, or failed, with changed files and verification details. A delegation waits for Sidekick execution and its managed processes to settle before returning. The Lead inspects the actual changes and can accept them, send feedback to the same Sidekick, or take over using its own tools. Cancelling a delegation stops and drains the Sidekick. This version has no classifier or automatic model switching, and does not require the Subagent extension.
 
+Each turn's process row shows the Lead or Sidekick outcome and elapsed time. Expand it to inspect delegation activity and Sidekick usage. The conversation information panel in the upper right shows the Lead and Sidekick models actually bound to that conversation; expand Model services there to see their providers.
+
 A conversation's model pair is fixed when Fusion first starts. Updating the defaults or disabling Fusion does not retarget existing conversations. Removing a provider or disabling a model needed by an existing conversation can prevent it from resuming; restore that provider/model or select a fixed model explicitly. Enabled Fusion references must be changed or Fusion disabled before removing their provider/model.
 
 Fusion runs in Wuu conversations, including Wuu named-agent sessions. External engines manage their own execution and do not support it. `wuu/fusion` is a local conversation selection, not an upstream model name or a CLI model override. Side conversations inherit the active Lead model. Both Lead and Sidekick calls incur their provider's usage charges; delegation and review do not guarantee a cost reduction.

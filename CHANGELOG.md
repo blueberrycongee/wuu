@@ -26,6 +26,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   Fusion alongside connected services. Settings save automatically and restore
   the previous values if saving fails.
 
+- Fusion turn summaries now show the Lead or Sidekick outcome beside elapsed
+  time. The conversation information panel shows its fixed model pair and
+  keeps provider details behind a disclosure.
+
 ### Fixed
 
 - Fusion accepts detailed Sidekick check results without rejecting a completed

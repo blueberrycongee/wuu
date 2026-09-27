@@ -62,6 +62,10 @@ export function EnvironmentSideStack({
   }
 
   const inspectorSnapshot = buildInspectorSnapshot(state, todoUpdate);
+  const thread = state.activePane === "secondary" ? state.secondaryThread : state.thread;
+  const fusion = thread?.model === "wuu/fusion"
+    ? thread.turns.find((turn) => turn.fusion)?.fusion
+    : undefined;
 
   return (
     <div
@@ -72,6 +76,7 @@ export function EnvironmentSideStack({
         panelRef={panelRef}
         motionState={closing ? "closing" : motionState}
         initialized={state.initialized}
+        fusion={fusion}
         gitStatus={state.gitStatus}
         activeMenu={activeMenu}
         running={running}

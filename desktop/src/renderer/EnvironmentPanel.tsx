@@ -16,6 +16,7 @@ import {
 import { type FormEvent as ReactFormEvent, type ReactNode, type RefObject, useEffect, useState } from "react";
 import type {
   GitStatusResult,
+  FusionSelection,
   InitializeResult,
   WorkspaceFileReadResult
 } from "../shared/protocol";
@@ -31,6 +32,7 @@ export function EnvironmentPanel({
   panelRef,
   motionState,
   gitStatus,
+  fusion,
   activeMenu,
   running,
   pullRequestDisabledReason,
@@ -49,6 +51,7 @@ export function EnvironmentPanel({
   motionState: EnvironmentPanelMotionState;
   initialized: InitializeResult;
   gitStatus?: GitStatusResult;
+  fusion?: FusionSelection;
   activeMenu: EnvironmentPanelMenu;
   running: boolean;
   pullRequestDisabledReason: string;
@@ -118,6 +121,22 @@ export function EnvironmentPanel({
       {pluginSections}
 
       <div className="environment-panel-body">
+        {fusion ? (
+          <section className="environment-fusion-section" aria-label={t("environment.fusionModels")}>
+            <h2>Fusion</h2>
+            <dl className="environment-fusion-pair">
+              <div><dt>Lead</dt><dd>{fusion.lead.model}</dd></div>
+              <div><dt>Sidekick</dt><dd>{fusion.sidekick.model}</dd></div>
+            </dl>
+            <details className="environment-fusion-providers">
+              <summary>{t("environment.modelServices")}</summary>
+              <dl>
+                <div><dt>Lead</dt><dd>{fusion.lead.provider}</dd></div>
+                <div><dt>Sidekick</dt><dd>{fusion.sidekick.provider}</dd></div>
+              </dl>
+            </details>
+          </section>
+        ) : null}
         <div className="environment-row-group">
           <EnvironmentActionRow
             className="environment-change-row"
