@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -112,246 +111,245 @@ func bashEnvelope(m map[string]any) string {
 	return mustMarshalMap(base)
 }
 
-func TestFinalizeBashLosslessDeduplication(t *testing.T) {
+// The view is the model-facing contract of a command result: the output a
+// terminal would show plus the facts that change the next step. These tests
+// pin those facts, not the sentences around them.
+func TestRenderBashModelView(t *testing.T) {
 	for _, tc := range []struct {
-		name, stdout, stderr string
-		fields               map[string]any
+		name   string
+		fields map[string]any
+		exact  string
+		want   []string
+		absent []string
 	}{
-		{"stdout", "ok\n", "", nil},
-		{"stderr", "", "warning\n", nil},
-		{"empty", "", "", nil},
-		{"warning", "build succeeded\n", "warning: deprecated\n", map[string]any{"exit_code": 0}},
-		{"failure", "test started\n", "FAIL: assertion\n", map[string]any{"exit_code": 1}},
-		{"timeout", "running\n", "", map[string]any{"exit_code": -1, "timed_out": true, "promoted_process_id": "proc-test"}},
-		{"denied", "", "permission denied\n", map[string]any{"exit_code": 1, "sandbox": map[string]any{"denied": true, "mode": "workspace"}}},
-		{"whitespace", "  界🙂\r\n\r\n\tline  \n", "\nerror\t ", nil},
+		{
+			name:   "success is just the output",
+			fields: map[string]any{"stdout_tail": "\nok\n", "stderr_tail": ""},
+			exact:  "ok",
+		},
+		{
+			name:   "empty success",
+			fields: map[string]any{"stdout_tail": "", "stderr_tail": ""},
+			exact:  "(no output)",
+		},
+		{
+			name:   "failure keeps both streams and the exit code",
+			fields: map[string]any{"exit_code": 1, "stdout_tail": "started\n", "stderr_tail": "FAIL: assertion\n", "next_suggestions": []string{"generic advice"}},
+			exact:  "started\nFAIL: assertion\nExit code 1",
+		},
+		{
+			name:   "timeout names the background process",
+			fields: map[string]any{"exit_code": -1, "timed_out": true, "promoted_process_id": "proc-9", "stdout_tail": "running\n", "stderr_tail": "", "duration_ms": 300000},
+			want:   []string{"running\n", "proc-9", "5m00s"},
+			absent: []string{"Exit code"},
+		},
+		{
+			name:   "sandbox denial is reported",
+			fields: map[string]any{"exit_code": 1, "stdout_tail": "", "stderr_tail": "permission denied\n", "sandbox": map[string]any{"mode": "workspace", "enforcement": "full", "denied": true}},
+			want:   []string{"permission denied\nExit code 1\n", "sandbox"},
+		},
+		{
+			name:   "truncated stream names the full log",
+			fields: map[string]any{"stdout_tail": "head\n... 500 bytes omitted ...\ntail\n", "stderr_tail": "", "stdout_tail_truncated": true, "stdout_bytes": 600},
+			want:   []string{"head\n... 500 bytes omitted ...\ntail\n", "/s/tool-results/shell-logs/x.log"},
+		},
+		{
+			name:   "rewritten verification command",
+			fields: map[string]any{"stdout_tail": "ok\n", "stderr_tail": "", "requested_command": "npx vitest", "resolved_command": "./node_modules/.bin/vitest"},
+			want:   []string{"ok\n", "./node_modules/.bin/vitest"},
+		},
+		{
+			name: "passing verification adds nothing",
+			fields: map[string]any{"stdout_tail": "ok\n", "stderr_tail": "", "verification": map[string]any{
+				"kind": "verification", "scope": "full", "passed": true, "failure_summary": map[string]any{"failed": false},
+			}},
+			exact: "ok",
+		},
+		{
+			name: "complete failing verification does not repeat its summary",
+			fields: map[string]any{"exit_code": 1, "stdout_tail": "--- FAIL: TestThing\n", "stderr_tail": "", "verification": map[string]any{
+				"kind": "verification", "scope": "targeted", "passed": false,
+				"failure_summary": map[string]any{"failed": true, "failing_tests": []string{"TestThing"}},
+				"repeat_guard":    map[string]any{"previous_failed_runs": 0, "max_failed_runs_without_revision_change": 2},
+			}},
+			exact: "--- FAIL: TestThing\nExit code 1",
+		},
+		{
+			name: "cut failing verification keeps its summary and the repeat guard",
+			fields: map[string]any{"exit_code": 1, "stdout_tail": "... 900 bytes omitted ...\nok\n", "stdout_tail_truncated": true, "stderr_tail": "", "verification": map[string]any{
+				"kind": "verification", "scope": "targeted", "passed": false,
+				"failure_summary": map[string]any{"failed": true, "failing_tests": []string{"TestThingHidden"}},
+				"repeat_guard":    map[string]any{"previous_failed_runs": 1, "max_failed_runs_without_revision_change": 2},
+			}},
+			want: []string{"Exit code 1", "TestThingHidden", "2 times"},
+		},
+		{
+			name:   "terminal control codes are stripped",
+			fields: map[string]any{"stdout_tail": "\x1b[32mPASS\x1b[0m\r\nbuilding 10%\rbuilding 100%\n", "stderr_tail": ""},
+			exact:  "PASS\nbuilding 100%",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fields := map[string]any{
-				"output": tc.stdout + tc.stderr, "stdout_tail": tc.stdout, "stderr_tail": tc.stderr,
-				"stdout_tail_truncated": false, "stderr_tail_truncated": false, "truncated": false,
-				"stdout_bytes": len(tc.stdout), "stderr_bytes": len(tc.stderr),
-				"verification":     map[string]any{"passed": false, "summary": "preserve verification"},
-				"next_suggestions": []string{"inspect evidence"},
-				"extension":        map[string]any{"integer": json.Number("9007199254740993"), "decimal": json.Number("1.234567890123456789"), "null": nil},
+			view, om, ok := renderBashModelView(bashEnvelope(tc.fields), commandProjectionTokenBudget)
+			if !ok || om.Lines != 0 {
+				t.Fatalf("view not rendered: ok=%v om=%+v", ok, om)
 			}
-			for key, value := range tc.fields {
-				fields[key] = value
+			if tc.exact != "" && view != tc.exact {
+				t.Fatalf("view mismatch\n got: %q\nwant: %q", view, tc.exact)
 			}
-			raw := toolresult.FromText(bashEnvelope(fields))
-			raw.IsError = tc.name == "failure" || tc.name == "denied"
-			before := raw.Clone()
-			got, d := finalizeBuiltInToolResult("", "bash", "dedup", raw, 0)
-			if !d.Applied || d.Reason != reasonDeduplicated || got.ModelText == nil {
-				t.Fatalf("lossless candidate not settled: %+v", d)
-			}
-			original, _ := parseToolEnvelope(raw.TextProjection())
-			restored, _ := parseToolEnvelope(got.TextProjection())
-			if _, exists := restored["output"]; exists {
-				t.Fatal("duplicate output retained")
-			}
-			restored["output"] = restored["stdout_tail"].(string) + restored["stderr_tail"].(string)
-			if !reflect.DeepEqual(restored, original) {
-				t.Fatalf("inverse transform changed evidence: got %#v want %#v", restored, original)
-			}
-			producer := got.Clone()
-			producer.ModelText = nil
-			if !reflect.DeepEqual(raw, before) || !reflect.DeepEqual(producer, before) {
-				t.Fatal("producer payload changed")
-			}
-			if d.OmittedBytes != 0 || d.OmittedLines != 0 || d.OmittedRecords != 0 || d.ArtifactRef != "" || d.ArtifactWritten || d.ArtifactReused || d.ArtifactFailed {
-				t.Fatalf("deduplication reported missing evidence: %+v", d)
-			}
-			if d.OriginalBytes != len(raw.TextProjection()) || d.ProjectedBytes != len(got.TextProjection()) || d.ProjectedTokens != estimateResultTokens(got.TextProjection()) || d.ProjectionHash != projectionHash(got.TextProjection()) || d.OriginalHash != projectionHash(raw.TextProjection()) {
-				t.Fatalf("incorrect size/hash diagnostics: %+v", d)
-			}
-			for _, input := range []toolresult.Result{got, toolresult.FromText(got.TextProjection())} {
-				again, _ := finalizeBuiltInToolResult("", "bash", "dedup", input, 0)
-				if !reflect.DeepEqual(again, input) {
-					t.Fatal("deduplication is not idempotent")
+			for _, want := range tc.want {
+				if !strings.Contains(view, want) {
+					t.Fatalf("view missing %q:\n%s", want, view)
 				}
 			}
-			t.Logf("model bytes %d -> %d; estimated tokens %d -> %d", d.OriginalBytes, d.ProjectedBytes, d.OriginalTokens, d.ProjectedTokens)
+			for _, absent := range append(tc.absent, "classification", "workspace_revision", `"exit_code"`) {
+				if strings.Contains(view, absent) {
+					t.Fatalf("view leaked %q:\n%s", absent, view)
+				}
+			}
 		})
 	}
 }
 
-func TestFinalizeBashDeduplicationRejectsIncompleteEvidence(t *testing.T) {
-	base := map[string]any{"output": "", "stdout_tail": "", "stderr_tail": "", "stdout_tail_truncated": false, "stderr_tail_truncated": false}
-	for key := range base {
-		for _, mutation := range []string{"missing", "null", "wrong_type", "different"} {
-			t.Run(key+"/"+mutation, func(t *testing.T) {
-				m := cloneShallow(base)
-				switch mutation {
-				case "missing":
-					delete(m, key)
-				case "null":
-					m[key] = nil
-				case "wrong_type":
-					m[key] = 0
-				case "different":
-					if strings.HasSuffix(key, "truncated") {
-						m[key] = true
-					} else {
-						m[key] = "unique evidence\n"
-					}
+func TestRenderBashModelViewBackgroundStart(t *testing.T) {
+	raw := mustMarshalMap(map[string]any{"action": "start", "id": "proc-7", "status": "running", "command": "npm run dev", "tty": true})
+	view, _, ok := renderBashModelView(raw, commandProjectionTokenBudget)
+	if !ok || !strings.Contains(view, "proc-7") || strings.Contains(view, "{") {
+		t.Fatalf("background start view = %q ok=%v", view, ok)
+	}
+}
+
+func TestRenderProcessModelView(t *testing.T) {
+	running := map[string]any{"id": "proc-1", "status": "running", "command": "npm run dev"}
+	exited := map[string]any{"id": "proc-2", "status": "stopped", "command": "npm test", "exit_code": 1, "terminal_cause": "natural_exit", "completion_mode": "detached"}
+	for _, tc := range []struct {
+		name   string
+		raw    map[string]any
+		want   []string
+		absent []string
+	}{
+		{
+			name: "live read shows its output and where to continue",
+			raw: map[string]any{"action": "read", "process_id": "proc-1", "output": "\x1b[1mready\x1b[0m\r\n", "start_offset": 0, "end_offset": 18, "total_bytes": 18,
+				"status": "running", "process": running, "next_suggestions": []string{"do not chain waits"}},
+			want:   []string{"proc-1", "running", "\nready\n", "offset_bytes=18", "do not chain waits"},
+			absent: []string{"\x1b", "\r"},
+		},
+		{
+			name:   "complete read of an exited process",
+			raw:    map[string]any{"action": "read", "process_id": "proc-2", "output": "", "start_offset": 0, "end_offset": 0, "total_bytes": 0, "process": exited},
+			want:   []string{"proc-2", "code 1"},
+			absent: []string{"offset_bytes"},
+		},
+		{
+			name: "list has one line per process",
+			raw:  map[string]any{"action": "list", "processes": []any{running, exited}},
+			want: []string{"proc-1 running · npm run dev\n", "proc-2", "code 1", "npm test", "detached"},
+		},
+		{
+			name: "write",
+			raw:  map[string]any{"action": "write", "process_id": "proc-1", "bytes_written": 6, "process": running},
+			want: []string{"6 bytes", "proc-1"},
+		},
+		{
+			name: "stop",
+			raw:  map[string]any{"action": "stop", "id": "proc-1", "status": "stopped", "terminal_cause": "requested_stop"},
+			want: []string{"proc-1", "stopped"},
+		},
+		{
+			name: "update",
+			raw:  map[string]any{"action": "update", "process_id": "proc-1", "completion_mode": "detached", "recheck_minutes": 10},
+			want: []string{"proc-1", "10 min"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			view, _, ok := renderProcessModelView(mustMarshalMap(tc.raw), commandProjectionTokenBudget)
+			if !ok {
+				t.Fatal("view not rendered")
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(view, want) {
+					t.Fatalf("view missing %q:\n%s", want, view)
 				}
-				raw := toolresult.FromText(mustMarshalMap(m))
-				got, d := finalizeBuiltInToolResult("", "bash", "invalid", raw, 0)
-				if !reflect.DeepEqual(got, raw) || d.Applied {
-					t.Fatalf("incomplete evidence rewritten: %+v", d)
+			}
+			for _, absent := range append(tc.absent, "{", `"process_id"`) {
+				if strings.Contains(view, absent) {
+					t.Fatalf("view leaked %q:\n%s", absent, view)
 				}
-			})
-		}
+			}
+		})
 	}
-	for _, text := range []string{mustMarshalMap(base) + "\nwarning", mustMarshalMap(base) + "\n{}", "null", "[]"} {
-		raw := toolresult.FromText(text)
-		got, d := finalizeBuiltInToolResult("", "bash", "invalid-json", raw, 0)
-		if !reflect.DeepEqual(got, raw) || d.Applied {
-			t.Fatalf("non-envelope text rewritten: %q", text)
+}
+
+func TestFinalizeCommandViewsKeepProducerPayload(t *testing.T) {
+	for _, tc := range []struct{ tool, text, prefix string }{
+		{"bash", bashEnvelope(map[string]any{"exit_code": 1, "stdout_tail": "started\n", "stderr_tail": "FAIL\n"}), "started\nFAIL\nExit code 1"},
+		{"process", mustMarshalMap(map[string]any{"action": "stop", "id": "proc-1", "status": "stopped", "terminal_cause": "requested_stop"}), "Process proc-1"},
+	} {
+		raw := toolresult.FromText(tc.text)
+		before := raw.Clone()
+		got, d := finalizeBuiltInToolResult("", tc.tool, "view", raw, 0)
+		if !d.Applied || d.Reason != reasonRendered || got.ModelText == nil || d.OmittedLines != 0 {
+			t.Fatalf("%s view not settled: %+v", tc.tool, d)
+		}
+		if !strings.HasPrefix(got.TextProjection(), tc.prefix) || got.Content[0].Text != before.Content[0].Text {
+			t.Fatalf("%s producer payload changed or view wrong: %q", tc.tool, got.TextProjection())
+		}
+		if d.ProjectedBytes != len(got.TextProjection()) || d.ProjectionHash != projectionHash(got.TextProjection()) || d.OriginalHash != projectionHash(raw.TextProjection()) {
+			t.Fatalf("%s incorrect size/hash diagnostics: %+v", tc.tool, d)
+		}
+		again, _ := finalizeBuiltInToolResult("", tc.tool, "view", got, 0)
+		if !reflect.DeepEqual(again, got) {
+			t.Fatalf("settled %s view was rewritten", tc.tool)
 		}
 	}
 }
 
-func TestFinalizeBashDeduplicationBudgetBoundary(t *testing.T) {
-	m := map[string]any{
-		"output": strings.Repeat("line\n", 1000), "stdout_tail": strings.Repeat("line\n", 1000), "stderr_tail": "",
-		"stdout_tail_truncated": false, "stderr_tail_truncated": false,
-	}
-	raw := toolresult.FromText(mustMarshalMap(m))
-	delete(m, "output")
-	candidate, _ := marshalEnvelope(m)
-	budget := estimateResultTokens(candidate)
-	got, d := finalizeBuiltInToolResult("", "bash", "boundary", raw, budget)
-	if d.Reason != reasonDeduplicated || got.TextProjection() != candidate || estimateResultTokens(raw.TextProjection()) <= budget {
-		t.Fatalf("candidate at budget boundary not settled: %+v", d)
-	}
-	// With no writable artifact, an oversized candidate must not be settled.
-	got, d = finalizeBuiltInToolResult("", "bash", "boundary", raw, budget-1)
-	if !reflect.DeepEqual(got, raw) || !d.ArtifactFailed || d.Applied {
-		t.Fatalf("oversized candidate bypassed recovery: %+v", d)
-	}
-	got, d = finalizeBuiltInToolResult(t.TempDir(), "bash", "boundary", raw, budget-1)
-	if !d.Applied || d.Reason != reasonProjected || !d.ArtifactWritten || estimateResultTokens(got.TextProjection()) > budget-1 {
-		t.Fatalf("oversized candidate bypassed existing projection: %+v", d)
-	}
-}
-
-func TestProjectBash_DropsRedundantOutput(t *testing.T) {
-	const budget = defaultProjectionTokenBudget
-	bigOutput := strings.Repeat("noise line of build output\n", 3000) // ~80KB, redundant with tails
-	raw := bashEnvelope(map[string]any{
-		"output":      bigOutput,
-		"stdout_tail": "last few stdout lines\nok\n",
-		"stderr_tail": "",
-	})
-	pc := projectorContext{CallID: "c1", BudgetTokens: budget, ArtifactRef: "/s/tool-results/shell-logs/x.log"}
-	out, om, ok := projectBashResult(raw, pc)
-	if !ok {
-		t.Fatalf("bash projector declined")
-	}
-	if got := estimateResultTokens(out); got > budget {
-		t.Fatalf("projected bash = %d tokens, over budget %d", got, budget)
-	}
-	if om.Bytes != len(bigOutput) {
-		t.Fatalf("dropped-output bytes = %d, want %d", om.Bytes, len(bigOutput))
-	}
-	m := parseOut(t, out)
-	if _, present := m["output"]; present {
-		t.Fatalf("redundant output field must be dropped")
-	}
-	// Failure/facts evidence preserved.
-	for _, key := range []string{"exit_code", "duration_ms", "timed_out", "workspace_revision", "full_log_ref"} {
-		if _, ok := m[key]; !ok {
-			t.Fatalf("bash projection dropped required field %q", key)
-		}
-	}
-	if !strings.Contains(m["stdout_tail"].(string), "ok") {
-		t.Fatalf("small stdout tail should be preserved")
-	}
-}
-
-func TestProjectBash_TrimsStdoutButKeepsStderrAndVerification(t *testing.T) {
-	const budget = defaultProjectionTokenBudget
-	hugeStdout := strings.Repeat("stdout progress line\n", 4000)
+func TestRenderBashModelViewTrimsStdoutBeforeStderr(t *testing.T) {
+	stdout := strings.Repeat("stdout progress line\n", 4000)
 	stderr := "FAIL: TestThing at handlers_test.go:42\nexpected 3 got 4\n"
-	raw := bashEnvelope(map[string]any{
-		"exit_code":   1,
-		"output":      hugeStdout,
-		"stdout_tail": hugeStdout,
-		"stderr_tail": stderr,
-		"verification": map[string]any{
-			"passed":        false,
-			"failing_tests": []string{"TestThing"},
-			"summary":       "1 test failed at handlers_test.go:42",
-		},
-	})
-	pc := projectorContext{CallID: "c2", BudgetTokens: budget, ArtifactRef: "/s/tool-results/shell-logs/x.log"}
-	out, _, ok := projectBashResult(raw, pc)
-	if !ok {
-		t.Fatalf("bash projector declined")
+	raw := bashEnvelope(map[string]any{"exit_code": 1, "stdout_tail": stdout, "stderr_tail": stderr})
+	view, om, ok := renderBashModelView(raw, defaultProjectionTokenBudget)
+	if !ok || om.Lines == 0 {
+		t.Fatalf("over-budget view not trimmed: ok=%v om=%+v", ok, om)
 	}
-	if got := estimateResultTokens(out); got > budget {
-		t.Fatalf("projected bash = %d tokens, over budget %d", got, budget)
+	if got := estimateResultTokens(view); got > defaultProjectionTokenBudget {
+		t.Fatalf("view = %d tokens, over budget %d", got, defaultProjectionTokenBudget)
 	}
-	m := parseOut(t, out)
-	// stderr (higher priority) fully preserved.
-	if m["stderr_tail"].(string) != stderr {
-		t.Fatalf("stderr tail must be preserved intact, got %q", m["stderr_tail"])
+	if !strings.Contains(view, stderr[:len(stderr)-1]) || !strings.HasSuffix(view, "Exit code 1") {
+		t.Fatalf("stderr and exit code must survive intact:\n%s", view)
 	}
-	// stdout trimmed to fit.
-	if lineCount(m["stdout_tail"].(string)) >= lineCount(hugeStdout) {
-		t.Fatalf("stdout tail should have been trimmed")
+	if !strings.Contains(view, "lines omitted; full log: /s/tool-results/shell-logs/x.log") || !strings.HasPrefix(view, "stdout progress line") {
+		t.Fatalf("trimmed view lacks the head or the recovery marker:\n%s", view)
 	}
-	// verification evidence kept.
-	if _, ok := m["verification"]; !ok {
-		t.Fatalf("verification evidence must never be dropped")
+	// The status lines alone can exceed the budget; then the view declines so
+	// generic settlement archives the envelope.
+	if _, _, ok := renderBashModelView(raw, 2); ok {
+		t.Fatal("view must decline when even the status lines exceed the budget")
 	}
 }
 
-func TestProjectBash_EndToEndReusesFullLogRef(t *testing.T) {
-	dir := t.TempDir()
-	bigOutput := strings.Repeat("x", 300000) // force over-budget
-	raw := toolresult.FromText(bashEnvelope(map[string]any{
-		"output":      bigOutput,
-		"stdout_tail": strings.Repeat("tail line\n", 2000),
-		"stderr_tail": "",
-	}))
-	got, d := finalizeBuiltInToolResult(dir, "bash", "c-e2e", raw, 0)
-	if !d.Applied || d.Reason != reasonProjected {
-		t.Fatalf("bash finalize diag = %+v", d)
+func TestRenderCommandViewsDeclineUnknownEnvelopes(t *testing.T) {
+	for _, text := range []string{
+		`{"action":"start_background","id":"proc-1","status":"running"}`,
+		`{"action":"start"}`,
+		`{"output":"ok"}` + "\nwarning",
+		"null",
+		"plain text",
+	} {
+		if view, _, ok := renderBashModelView(text, commandProjectionTokenBudget); ok {
+			t.Fatalf("unknown bash envelope rendered: %q -> %q", text, view)
+		}
+		raw := toolresult.FromText(text)
+		got, d := finalizeBuiltInToolResult("", "bash", "legacy", raw, 0)
+		if d.Applied || !reflect.DeepEqual(got, raw) {
+			t.Fatalf("unknown bash envelope rewritten: %+v", d)
+		}
 	}
-	if !d.ArtifactReused || d.ArtifactWritten {
-		t.Fatalf("bash must reuse full_log_ref, not persist a duplicate: %+v", d)
-	}
-	if d.ArtifactRef != "/s/tool-results/shell-logs/x.log" {
-		t.Fatalf("artifact ref = %q, want the embedded full_log_ref", d.ArtifactRef)
-	}
-	if !strings.Contains(got.TextProjection(), "/s/tool-results/shell-logs/x.log") {
-		t.Fatalf("projected bash should reference the full log")
-	}
-}
-
-func TestProjectBash_OverBudgetDeclines(t *testing.T) {
-	raw := bashEnvelope(map[string]any{
-		"output":      "ok\n",
-		"stdout_tail": "ok\n",
-		"stderr_tail": "",
-		"verification": map[string]any{
-			"passed":  false,
-			"summary": strings.Repeat("failing assertion detail ", 4000),
-		},
-	})
-	_, _, ok := projectBashResult(raw, projectorContext{BudgetTokens: defaultProjectionTokenBudget, ArtifactRef: "/s/tool-results/shell-logs/x.log"})
-	if ok {
-		t.Fatal("bash projection must decline when verification evidence still exceeds the budget")
-	}
-	got, d := finalizeBuiltInToolResult(t.TempDir(), "bash", "over", toolresult.FromText(raw), 0)
-	if d.Applied {
-		t.Fatalf("over-budget bash must fail open: %+v", d)
-	}
-	if got.TextProjection() != raw {
-		t.Fatal("declined over-budget bash must keep the original envelope")
+	for _, text := range []string{`{"action":"start","id":"proc-1"}`, `{"action":"read"`, "[]"} {
+		if view, _, ok := renderProcessModelView(text, commandProjectionTokenBudget); ok {
+			t.Fatalf("unknown process envelope rendered: %q -> %q", text, view)
+		}
 	}
 }
 

@@ -25,7 +25,7 @@ func TestThreadRuntimeBindsArtifactPublisher(t *testing.T) {
 	s, err := NewSession(Options{RootDir: root, HomeDir: home, Config: config.Config{
 		DefaultProvider: "test", Providers: map[string]config.ProviderConfig{"test": {
 			Type: "openai-compatible", BaseURL: "https://example.test/v1", APIKeyEnv: "TEST_WUU_KEY", Model: "gpt-test",
-		}}, CodeMode: config.CodeModeConfig{Mode: "direct"},
+		}}, PTC: config.PTCConfig{},
 	}})
 	if err != nil {
 		t.Fatal(err)

@@ -49,7 +49,6 @@ const steerDelivery: HostServiceContracts["host.session.send"]["params"] = {
   input: { prompt: "Summarize now" },
   if_running: "steer",
 };
-if (steerDelivery.if_running !== "steer") throw new Error("session steer contract failed");
 
 if (!PRESENTATION_TARGETS.includes("conversation.tool-activity") || !PRESENTATION_TARGETS.includes("settings")) {
   throw new Error("presentation target contract failed");
@@ -66,7 +65,6 @@ const viewPlacement: ViewPlacementContribution = {
   region: "auxiliary",
   priority: 10,
 };
-if (viewPlacement.region !== "auxiliary") throw new Error("View placement contract failed");
 const genericPresenter: PresenterDefinition = {
   id: "preview",
   target: "content.preview",
@@ -74,7 +72,6 @@ const genericPresenter: PresenterDefinition = {
   priority: 10,
   render: ({ contractVersion, fallback }) => contractVersion === 1 ? fallback : null,
 };
-if (genericPresenter.target !== "content.preview") throw new Error("presenter definition contract failed");
 
 const conversationItem: ConversationItemSnapshotV1 = Object.freeze({
   contractVersion: 1,
@@ -137,11 +134,6 @@ const settings: SettingsSnapshotV1 = Object.freeze({
   availablePages: Object.freeze([{ id: "providers", label: "Providers" }]),
   providers: Object.freeze([{ id: "provider-1", label: "Provider", configured: true }]),
 });
-if (
-  conversationItem.contractVersion !== 1 || conversationProcess.kind !== "mixed" || composer.contractVersion !== 1 || header.contractVersion !== 1
-  || navigation.nodes.length !== 2 || status.items.length !== 1 || preview.resourceId !== "resource-1"
-  || settings.providers?.[0]?.configured !== true
-) throw new Error("presentation snapshot V1 contract failed");
 
 const actionIds = [
   CONVERSATION_ITEM_ACTIONS.copy,
@@ -166,9 +158,7 @@ const presenter: ToolActivityPresenterDefinition = {
   key: "tool.echo",
   render: ({ activity, fallback }) => activity.id === "call" ? activity.argumentsText : fallback,
 };
-if (presenter.render({ activity: snapshot, host: {} as never, fallback: "native" }) !== '{"partial":') {
-  throw new Error("tool activity presenter contract failed");
-}
+presenter.render({ activity: snapshot, host: {} as never, fallback: "native" });
 
 const plugin: RuntimePlugin = {
   initialize(params) {

@@ -4,7 +4,7 @@
 
 ## 安装与选择引擎
 
-请按上游说明自行安装 Agent 或适配器，Wuu 不会下载可执行文件。在设置的引擎区域查看检测结果、指定可执行文件路径或禁用引擎，然后在输入框中选择可用引擎，也可以设置新会话的默认引擎。
+请按上游说明自行安装 Agent 或适配器，Wuu 不会下载可执行文件。在**设置 → Agent**中查看检测结果、指定可执行文件路径或禁用引擎，并选择新会话的默认引擎；也可以在输入框中选择可用引擎。
 
 | 引擎 ID | 启动命令 | 接入方式与安装说明 |
 |---|---|---|
@@ -43,6 +43,14 @@ Antigravity 也会检测 `agy_acp_server.par`；Linux 启动时附加 `--uid=`�
 此界面只支持 Agent 驱动的认证方式，没有可选方式时请使用原生 CLI。查询方式不是检查账号状态，登录成功也不保证模型可用。Wuu 不会把这些引擎的凭据导入模型服务。
 
 ACP 引擎如果在 `session/new` 中声明了模型，输入框会列出这些模型。Grok 使用其一等模型列表（`grok-4.7`、`grok-4.6`、`grok-4.5` 等）并通过 `session/set_model` 切换；推理强度在 Agent 声明 `thought_level` 时可选。Agent 未声明模型时仍显示 **Agent 默认模型**。Wuu 不会套用自己的模型服务目录。通过 API 指定 ACP 模型时，必须使用 Agent 声明的模型；OpenCode 模型 ID 使用 `provider/model` 格式。ACP 图片附件会写成本地文件，并把路径写进提示词，让 Agent 用自己的读文件工具查看。Wuu 不发送 ACP 图片内容块，即使 Agent 声明了图片输入也一样。宿主 HTTP MCP 工具若不被支持，仍会报错，不会丢弃这些工具。
+
+## Fast mode
+
+打开模型浮层，所选模型支持加速时会显示闪电按钮。速度与推理强度独立，按会话保存；已有会话空闲时也可以修改，并用于下一次请求。重置按钮恢复引擎自身的配置默认值。`/fast`、`/fast on`、`/fast off` 和 `/fast status` 使用同一组选项。加速可能增加费用或额度消耗，实际可用性由账户和服务决定。
+
+Codex 从实时模型目录读取支持情况，并在原生会话创建、恢复及每轮请求中发送 `serviceTier: "fast"` 或 `"default"`。Claude 引擎为符合条件的 Opus 选项传递显式 `fastMode` 设置。ACP 逐模型发现选择项，支持分组取值；通过 `session/set_config_option` 使用 agent 宣告的 `fast-mode`、`fast_mode`、`speed` 或 `service_tier` ID 和取值。切换模型后先刷新完整配置列表，再设置速度。未宣告可识别速度选项的 agent 不显示开关；当前 OpenCode 集成没有宣告该能力。
+
+这些映射依据上游的 [Codex 速度配置（英文）](https://learn.chatgpt.com/docs/agent-configuration/speed)、[原生 CLI Fast mode（英文）](https://code.claude.com/docs/en/fast-mode)、[ACP 会话配置协议（英文）](https://agentclientprotocol.com/protocol/v1/session-config-options)及 [Codex ACP 适配器](https://github.com/agentclientprotocol/codex-acp/blob/main/src/FastModeConfig.ts)。保存的选项代表 Wuu 请求的速度，不保证上游服务一定提供加速处理。
 
 ## 权限与会话恢复
 

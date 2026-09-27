@@ -106,62 +106,41 @@
 }
 
 .conversation-width .turn[data-latest-turn="true"] {
-  content-visibility: visible;
-  contain-intrinsic-size: none;
   margin-bottom: 0;
 }
 
 /*
- * content-visibility:auto implies paint containment, which clips any
- * descendant painted outside the turn's border box — exactly where the
- * user action overlays go below the bubble. Lift
- * the containment precisely when those overlays can be visible: while
- * the turn is hovered, holds focus, or keeps a latest-answer action
- * bar visible. Off-screen turns keep the rendering shortcut.
+ * Off-screen turns skip layout and paint and keep the height they last
+ * rendered at. That height must be real, so a turn renders once before it may
+ * skip (`data-sized`): the 260px placeholder differs from the real height and
+ * would move the reader and the scrollbar when the turn finally renders.
+ * Turns around the viewport (`data-near`, see ConversationRenderWindow) render
+ * before Chromium's own relevance check catches up with a large scroll, which
+ * would otherwise paint the landing turns blank. The live turn always renders.
+ * Hovered, focused and persistent-action turns render because
+ * content-visibility implies paint containment, which would clip the overlays
+ * below the bubble.
  */
+.turn:not([data-sized]),
+.turn[data-near],
+.turn[data-turn-status="in_progress"],
+.conversation-width .turn[data-latest-turn="true"],
 .turn:hover,
 .turn:focus-within,
 .turn:has(.agent-actions-persistent) {
   content-visibility: visible;
 }
 
-.turn[data-turn-status="in_progress"] {
-  content-visibility: visible;
-  contain-intrinsic-size: none;
-}
-
-/*
- * The last few turns usually fill the initial viewport when a conversation
- * opens pinned to the bottom. Render them for real from the FIRST layout pass:
- * if they carry the 260px estimate instead, the pre-paint scroll-to-bottom
- * measures a wrong scrollHeight, their true heights resolve at first paint
- * (overflow-anchor is disabled while auto-following, so the browser does
- * not compensate), and the ResizeObserver re-pin lands one frame later —
- * a visible vertical jolt right after opening a session. Turns further up
- * keep the cheap estimate. ResizeObserver-based scroll anchoring corrects
- * older estimated turns asynchronously without delaying the first visible
- * frame of a cached conversation.
- */
-.turn:nth-last-child(-n + 5 of .turn) {
-  content-visibility: visible;
-  contain-intrinsic-size: none;
-}
-
 .turn-collapsed {
   content-visibility: visible;
-  contain-intrinsic-size: none;
   margin-bottom: 14px;
 }
 
-/* A live resize still wraps what is on screen. Turns forced visible for the
- * first paint can sit above the viewport; let those keep their remembered
- * height instead of wrapping again on every width change. */
-.window-resizing .turn:nth-last-child(-n + 5 of .turn),
-.window-resizing .turn[data-turn-status="in_progress"],
-.window-resizing .conversation-width .turn[data-latest-turn="true"],
-.window-resizing .turn-collapsed {
+/* A live window or panel drag rewraps every rendered turn on each frame. For
+ * the drag, turns kept rendered only for being near or live may skip when
+ * off-screen, with their remembered height, and wrap once at the final width. */
+.window-resizing .turn:is([data-near], [data-turn-status="in_progress"], [data-latest-turn="true"]):not(:hover, :focus-within, :has(.agent-actions-persistent)) {
   content-visibility: auto;
-  contain-intrinsic-size: auto 260px;
 }
 
 .conversation-turn-history-loader {
@@ -456,7 +435,7 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .user-message-block.user-message-jump-flash > .user-message-motion > .user-message,
   .user-message-block.user-message-jump-flash > .user-message-motion > .user-message-edit {
     animation: none;
@@ -1627,7 +1606,7 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .agent-actions-enter .agent-message-actions {
     animation-delay: 0ms;
   }
@@ -1850,7 +1829,7 @@
 }
 
                                                         
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .streaming-markdown[data-cursor-state="fading"] .stream-cursor {
     transition: none;
   }
@@ -2070,20 +2049,11 @@
                                                                     
                                                                  
                                 
-  animation: turn-process-live-pulse 1.2s ease-in-out infinite;
+  --pulse-opacity: 0.4;
+  animation: wuu-pulse 1.2s ease-in-out infinite;
 }
 
-@keyframes turn-process-live-pulse {
-  0%,
-  100% {
-    opacity: 0.4;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .turn-process-live-dot {
     animation: none;
     opacity: 1;
@@ -2169,14 +2139,6 @@
 .conversation-render-activity.is-reveal-snap .agent-message-actions,
 .conversation-render-activity.is-reveal-snap [data-wuu-mascot-presence] {
   transition: none;
-}
-
-/* Session restore measures the incoming pane before placing the viewport.
-   Skipped turns would otherwise report the 260px estimate and the scroll
-   position would jump once their real height lands. */
-.cached-conversation-pane.is-reveal-measure .turn {
-  content-visibility: visible;
-  contain-intrinsic-size: none;
 }
 
 /* The inner holds the body content. The outer clips it during
@@ -2363,16 +2325,10 @@
 }
 
 .tool-activity-marker.is-running {
-  animation: tool-activity-marker-pulse 1.5s ease-in-out infinite;
+  animation: wuu-pulse 1.5s ease-in-out infinite;
 }
 
-@keyframes tool-activity-marker-pulse {
-  50% {
-    opacity: 0.45;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .tool-activity-marker.is-running {
     animation: none;
   }
@@ -2535,37 +2491,6 @@
   color: var(--diff-delete-color);
 }
 
-@keyframes process-surface-count-jump {
-  0% {
-    opacity: 0.45;
-    transform: translateY(4px);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes process-text-rise-in {
-  0% {
-    transform: translateY(4px);
-  }
-  100% {
-    transform: translateY(0);
-  }
-}
-
-@keyframes process-text-rise-out {
-  0% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-}
-
 .process-text-motion {
   display: inline-grid;
   min-width: 0;
@@ -2585,16 +2510,19 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  will-change: opacity, transform;
+  will-change: opacity, translate;
 }
 
 .process-text-motion-current.process-text-motion-enter {
-  animation: process-text-rise-in var(--motion-base) var(--ease-out) both;
+  --enter-opacity: 1;
+  --enter-y: 4px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
 }
 
 .process-text-motion-exit {
   pointer-events: none;
-  animation: process-text-rise-out var(--motion-base) var(--ease-out) both;
+  --exit-y: -4px;
+  animation: wuu-exit var(--motion-base) var(--ease-out) both;
 }
 
 .process-surface,
@@ -2699,11 +2627,10 @@
 
 /* Align the painted silhouette, not the SVG's transparent padding. Keep the
  * layout slot fixed so morphing never moves the summary text. Insets follow
- * each shape's motion envelope rather than chasing its edge on every frame.
- * Collaboration wrappers publish the same morph attribute on the slot. */
+ * each shape's motion envelope rather than chasing its edge on every frame. */
 :is(.process-surface-summary-line, .turn-reasoning-summary) > .process-surface-blobatar[data-wuu-mascot-morph] {
   translate: calc(-1 * var(--process-mascot-inset, 4px)) 0;
-  transition: translate 280ms ease-out;
+  transition: translate var(--motion-slow) var(--ease-out);
 }
 
 .process-surface-blobatar:is([data-wuu-mascot-morph="radar"], [data-wuu-mascot-morph="gather"]) {
@@ -2734,12 +2661,6 @@
 
 .process-surface-blobatar[data-wuu-mascot-morph="bang"] {
   --process-mascot-inset: 12px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  :is(.process-surface-summary-line, .turn-reasoning-summary) > .process-surface-blobatar[data-wuu-mascot-morph] {
-    transition: none;
-  }
 }
 
 .process-surface-condensed-summary {
@@ -2803,7 +2724,7 @@
   mask-image: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .process-surface-summary-text.wuu-live-text-wave {
     animation: none;
     mask-image: none;
@@ -2964,6 +2885,8 @@
   inset: 0;
   background: color-mix(in srgb, var(--ink) 14%, transparent);
   transform-origin: left center;
+  /* One step per countdown tick (TurnNotice updates every 100ms), so the
+   * bar reads as continuous travel rather than a ladder transition. */
   transition: transform 100ms linear;
 }
 
@@ -2980,7 +2903,7 @@
   color: var(--ink-muted);
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .stream-reconnect-progress { transition: none; }
 }
 
@@ -2998,7 +2921,9 @@
 }
 
 .process-surface-count.is-changing {
-  animation: process-surface-count-jump var(--motion-base) var(--ease-out);
+  --enter-opacity: 0.45;
+  --enter-y: 4px;
+  animation: wuu-enter var(--motion-base) var(--ease-out);
 }
 
 .process-surface-row.is-live-gray .process-surface-summary-line {
@@ -3012,15 +2937,21 @@
   min-width: 0;
 }
 
+/* Ambient loops pause while nobody can see them: a hidden window, or a
+ * cached conversation kept mounted behind the active pane. */
 :root[data-renderer-hidden] .turn-process-live-dot,
-:root[data-renderer-hidden] .wuu-launch-glass::after,
+:root[data-renderer-hidden] .tool-activity-marker.is-running,
+:root[data-renderer-hidden] .turn-source-avatar[data-load-state="loading"]::before,
 :root[data-renderer-hidden] .wuu-launch-mark::after,
 :root[data-renderer-hidden] .wuu-launch-mark span,
-:root[data-renderer-hidden] .wuu-launch-rail::after {
+:root[data-renderer-hidden] .wuu-launch-rail::after,
+.cached-conversation-pane[data-active="false"] .turn-process-live-dot,
+.cached-conversation-pane[data-active="false"] .tool-activity-marker.is-running,
+.cached-conversation-pane[data-active="false"] .turn-source-avatar[data-load-state="loading"]::before {
   animation-play-state: paused;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .process-surface-count.is-changing {
     animation: none;
   }
@@ -3543,9 +3474,8 @@
 }
 
 /* Speech-bubble insets: step the card radius down so code corners stay
-   concentric with the bubble padding (user 8/16, channel 9/14). */
-.user-message .rich-code-block,
-.channel-message-bubble .rich-code-block {
+   concentric with the user bubble padding (8/16). */
+.user-message .rich-code-block {
   border-radius: var(--radius-sm);
 }
 
@@ -4230,15 +4160,14 @@ pre {
   min-height: 100%;
   align-items: start;
   background: var(--paper);
-  padding: clamp(96px, 18vh, 192px) 0 clamp(72px, 12vh, 128px);
+  padding: clamp(56px, 12vh, 128px) 0 clamp(32px, 6vh, 72px);
   color: var(--ink);
 }
 
 .empty-home-inner {
   /* Outer width, horizontal padding, and 12-col grid come from .session-flow
      (applied via className in JSX). View-specific rules stay here. */
-  justify-items: center;
-  row-gap: clamp(132px, 18vh, 192px);
+  row-gap: var(--space-6);
 }
 
 .empty-home h2 {
@@ -4255,13 +4184,12 @@ pre {
 }
 
 .empty-home-header {
-  /* Span the full inner width so the greeting + mascot read as one row
-     with breathing room on each side; the row is then centered in the
-     session column via flex justify-content. */
+  /* Span the full inner width and start at the column edge, so the
+     greeting shares its left edge with the usage overview and composer. */
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 20px;
   max-width: 100%;
   min-width: 0;
@@ -4277,8 +4205,252 @@ pre {
   width: 64px;
   height: 64px;
   flex: 0 0 auto;
+  /* The idle play squashes and hops the body on its resting point. */
+  transform-origin: 50% 90%;
   -webkit-user-drag: none;
   user-select: none;
+}
+
+/* Usage overview under the greeting: one quiet card groups the totals with
+   their heatmap. It appears only once the host answers, so it enters in
+   stages: the card rises in, the totals settle, and the weeks follow in time
+   order. Every delay and duration comes from the motion ladder, so reduced
+   motion shows the final state at once. The idle play waits for this
+   entrance to finish (EmptyHomeOverview). */
+.empty-home-overview {
+  position: relative;
+  grid-column: 1 / -1;
+  display: grid;
+  row-gap: var(--space-5);
+  min-width: 0;
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--message-flow-card-radius);
+  background: var(--surface-1);
+  padding: var(--panel-padding);
+  --enter-y: 6px;
+  animation: wuu-enter var(--motion-slow) var(--ease-out) both;
+}
+
+/* Stats wrap to fewer columns before a number would need truncating;
+   6em of UI text holds a six-character value such as "12.3M" or "12,345"
+   at the heading size. */
+.empty-home-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 6em), 1fr));
+  gap: var(--space-4);
+  margin: 0;
+  --enter-y: 6px;
+  animation: wuu-enter var(--motion-slow) var(--ease-out) both;
+  animation-delay: calc(var(--motion-fast) / 2);
+}
+
+.empty-home-stats > div {
+  display: grid;
+  align-content: start;
+  row-gap: var(--space-1);
+  min-width: 0;
+}
+
+.empty-home-stats dt {
+  overflow-wrap: anywhere;
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  line-height: 1.3;
+}
+
+.empty-home-stats dd {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--font-heading);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-medium);
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Square cells stay between a readable floor and ceiling. When the column
+   cannot fit every week at the floor, whole older weeks wrap onto a clipped
+   second line instead of shrinking the cells further. The newest week is
+   the first child, so row-reverse keeps it at the right edge. */
+.empty-home-heatmap {
+  container-type: inline-size;
+  min-width: 0;
+}
+
+.empty-home-heatmap-weeks {
+  --empty-home-heatmap-gap: 3px;
+  --empty-home-heatmap-label: calc(var(--font-xs) * 1.25);
+  display: flex;
+  flex-flow: row-reverse wrap;
+  align-content: flex-start;
+  justify-content: space-between;
+  column-gap: var(--empty-home-heatmap-gap);
+  /* Keep cqi on this box's height, not in an inherited cell-size variable:
+     otherwise every day needs style recalculation on each resize frame. */
+  height: calc(
+    var(--empty-home-heatmap-label) +
+      7 * (clamp(
+        8px,
+        (100cqi - (var(--empty-home-heatmap-weeks) - 1) * var(--empty-home-heatmap-gap)) /
+          var(--empty-home-heatmap-weeks),
+        14px
+      ) + var(--empty-home-heatmap-gap))
+  );
+  overflow: hidden;
+}
+
+/* After the totals start, the weeks reveal from the oldest one on screen to
+   today across one slow step. EmptyHomeOverview counts the weeks on the
+   first line, so clipped older weeks start at once and add no wait. */
+.empty-home-heatmap-week {
+  display: grid;
+  flex: none;
+  /* Percentage width stays local to layout; the shared row height keeps
+     even the unfinished current week aligned with the full weeks. */
+  width: clamp(
+    8px,
+    (100% - (var(--empty-home-heatmap-weeks) - 1) * var(--empty-home-heatmap-gap)) /
+      var(--empty-home-heatmap-weeks),
+    14px
+  );
+  height: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: var(--empty-home-heatmap-label) repeat(7, minmax(0, 1fr));
+  row-gap: var(--empty-home-heatmap-gap);
+  --enter-y: 6px;
+  animation: wuu-enter var(--motion-slow) var(--ease-out) both;
+  animation-delay: calc(
+    var(--motion-fast) + var(--motion-slow) *
+      max(0, var(--empty-home-heatmap-visible) - 1 - var(--empty-home-heatmap-week)) /
+      var(--empty-home-heatmap-visible)
+  );
+}
+
+/* A month label starts at its week and runs across the following weeks. */
+.empty-home-heatmap-month {
+  color: var(--ink-muted);
+  font-size: var(--font-xs);
+  line-height: 1.25;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.empty-home-heatmap-week i {
+  border-radius: 2px;
+  background: var(--hairline-soft);
+}
+
+.empty-home-heatmap-week i[data-level="1"] {
+  background: var(--settings-heatmap-level-1);
+}
+
+.empty-home-heatmap-week i[data-level="2"] {
+  background: var(--settings-heatmap-level-2);
+}
+
+.empty-home-heatmap-week i[data-level="3"] {
+  background: var(--settings-heatmap-level-3);
+}
+
+.empty-home-heatmap-week i[data-level="4"] {
+  background: var(--settings-heatmap-level-4);
+}
+
+/* The idle play's little ball leaves the greeting mascot and plays on the
+   heatmap (useEmptyHomePlay). The layer is the card's padding box, so the
+   ball can start above the card and ripple past the heatmap's clip. Each
+   sprite is a track that carries x around a body that carries y. The ball
+   wears the mascot's colours; the eyes keep it legible where the body matches
+   the surface, as they do for the mascot itself. */
+.empty-home-play {
+  --empty-home-play-size: max(8px, calc(var(--empty-home-play-cell) * 0.9));
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.empty-home-play > span {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.empty-home-play-ball > span {
+  position: relative;
+  display: block;
+  width: var(--empty-home-play-size);
+  height: var(--empty-home-play-size);
+  margin: calc(var(--empty-home-play-size) / -2);
+  border-radius: 50%;
+  background: var(--empty-home-play-body);
+  /* The rim separates the ball from busy cells and from a surface that
+     matches its body colour. */
+  box-shadow: 0 0 0 1.5px var(--hairline-strong);
+  opacity: 0;
+}
+
+/* Eyes sit toward the direction of travel; the play mirrors the ball to
+   face the other way. */
+.empty-home-play-ball > span::before,
+.empty-home-play-ball > span::after {
+  position: absolute;
+  top: 28%;
+  width: 15%;
+  height: 34%;
+  border-radius: 999px;
+  background: var(--empty-home-play-eye);
+  content: "";
+}
+
+.empty-home-play-ball > span::before {
+  left: 38%;
+}
+
+.empty-home-play-ball > span::after {
+  left: 62%;
+}
+
+.empty-home-play-ripple {
+  width: var(--empty-home-play-cell);
+  height: var(--empty-home-play-cell);
+  margin: calc(var(--empty-home-play-cell) / -2);
+  border: 1.5px solid var(--ink-muted);
+  border-radius: 50%;
+  opacity: 0;
+}
+
+.empty-home-play-segment > span {
+  display: block;
+  width: var(--empty-home-play-size);
+  height: var(--empty-home-play-size);
+  margin: calc(var(--empty-home-play-size) / -2);
+  border-radius: 50%;
+  background: var(--empty-home-play-body);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--empty-home-play-eye) 55%, transparent);
+  opacity: 0;
+}
+
+.empty-home-play-paddle > span {
+  display: block;
+  width: calc(var(--empty-home-play-cell) * 3.4);
+  height: max(3px, calc(var(--empty-home-play-cell) * 0.3));
+  margin-left: calc(var(--empty-home-play-cell) * -1.7);
+  border-radius: 999px;
+  background: var(--empty-home-play-body);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--empty-home-play-eye) 55%, transparent);
+  opacity: 0;
+}
+
+/* Breakout debris takes its brick's colour from the play. */
+.empty-home-play-shard > span {
+  display: block;
+  width: calc(var(--empty-home-play-cell) * 0.45);
+  height: calc(var(--empty-home-play-cell) * 0.45);
+  margin: calc(var(--empty-home-play-cell) * -0.225);
+  border-radius: 1px;
+  opacity: 0;
 }
 
 .empty-home-inner > .hero-composer-wrap {
@@ -4385,7 +4557,9 @@ pre {
   border-radius: 31%;
   background: var(--surface-2);
   box-shadow: var(--shadow-modal);
-  animation: wuu-launch-glass-enter 620ms var(--ease-out) both;
+  --enter-y: 8px;
+  --enter-scale: 0.96;
+  animation: wuu-enter 620ms var(--ease-out) both;
 }
 
 .wuu-launch-mascot {
@@ -4482,17 +4656,11 @@ pre {
   z-index: 30;
   background: var(--paper);
   pointer-events: auto;
-  animation: view-switch-enter var(--motion-base) var(--ease-out) both;
+  animation: wuu-fade-in var(--motion-base) var(--ease-out) both;
 }
 
 .conversation-pane.environment-panel-reserved .view-switch-loading-conversation {
   padding-right: var(--environment-panel-content-inset);
-}
-
-@keyframes view-switch-enter {
-  from {
-    opacity: 0;
-  }
 }
 
 .view-switch-mark {
@@ -4553,67 +4721,17 @@ pre {
   }
 }
 
-@keyframes wuu-launch-glass-enter {
-  from {
-    opacity: 0;
-    transform: translate3d(0, 8px, 0) scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-}
-
-@keyframes thinking-icon-breathe {
-  0%,
-  100% {
-    opacity: 0.72;
-    transform: scale(1);
-  }
-  42% {
-    opacity: 1;
-    transform: scale(1.05);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .wuu-launch-glass,
   .wuu-launch-mark::after,
   .wuu-launch-mark span,
-  .wuu-launch-rail::after,
-  .view-switch-loading,
-  .view-switch-loading-conversation,
-  .project-row .project-row-loading,
-  .project-row.pending-switch::before,
-  .thread-row.pending-switch::before,
-  .thread-row.running::before,
-  .thread-row-spinner,
-  .session-tab.running .session-tab-status,
-  .session-tab.pending-switch .session-tab-status,
-  .turn-progress.in_progress .turn-progress-label svg,
-  .turn-progress.in_progress .turn-progress-title,
-  .turn-progress.in_progress .turn-progress-rule::after {
+  .wuu-launch-rail::after {
     animation: none;
-    transition: none;
   }
 
   .wuu-launch-mark span {
     opacity: 1;
     transform: none;
-  }
-
-  .turn-progress.in_progress .turn-progress-rule {
-    height: 1px;
-    background: var(--surface-4);
-  }
-
-  .turn-progress.in_progress .turn-progress-rule::before {
-    display: none;
-  }
-
-  .turn-progress.in_progress .turn-progress-title {
-    background: none;
-    color: var(--ink-tertiary);
   }
 }
 
@@ -5340,7 +5458,7 @@ pre {
   transform: rotate(90deg);
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .turn-edit-presentation {
     transition: none;
   }
@@ -5823,7 +5941,7 @@ button.turn-sources-pill:focus-visible {
 /* Honor the OS-level "reduce motion" preference — the hover lift
  * transitions from `transition: transform` are motion rather than
  * decorative; users who opted out shouldn't see them. */
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .turn-source-icon {
     transition: none;
   }

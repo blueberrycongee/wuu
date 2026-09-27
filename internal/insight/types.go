@@ -2,6 +2,8 @@ package insight
 
 import (
 	"time"
+
+	sessionstore "github.com/blueberrycongee/wuu/internal/session"
 )
 
 // SessionMeta is extracted from a session JSONL file without LLM calls.
@@ -68,16 +70,7 @@ func (m ModelUsage) CacheHitRate() *float64 {
 // At is taken from the persisted record (UTC); rows with a zero At are
 // always included for "all" range but excluded from any time-windowed
 // query so a malformed legacy record cannot be pinned to "today".
-type TokenUsageRow struct {
-	SessionID           string
-	At                  time.Time
-	Provider            string
-	Model               string
-	InputTokens         int
-	OutputTokens        int
-	CacheCreationTokens int
-	CacheReadTokens     int
-}
+type TokenUsageRow = sessionstore.TokenUsageRow
 
 // SkillUsage is one load_skill invocation aggregated across session history.
 type SkillUsage struct {

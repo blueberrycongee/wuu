@@ -193,20 +193,17 @@
   overflow: clip;
 }
 
-/* visibility:hidden still lays the pane out, and the pane is stretched over
- * the open conversation, so a width change wraps every cached session.
- * content-visibility:hidden does not help: measuring the open scroller forces
- * that subtree to render. Drop the cached sessions out of the tree for the
- * drag; they lay out once when the frame is released. */
+/* visibility:hidden alone still lays the pane out, and the pane is stretched
+ * over the open conversation, so every width change would wrap every cached
+ * session. content-visibility:hidden skips its style, layout and paint while
+ * keeping that rendering state for the next reveal. Geometry inside a hidden
+ * pane must not be read: a read forces the skipped subtree to lay out. */
 .cached-conversation-pane[data-active="false"] {
   position: absolute;
   inset: 0;
   visibility: hidden;
   pointer-events: none;
-}
-
-.window-resizing .cached-conversation-pane[data-active="false"] {
-  display: none;
+  content-visibility: hidden;
 }
 
 .cached-conversation-pane[data-active="true"] {
@@ -234,7 +231,7 @@
   transition: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .conversation-pane {
     transition: none;
   }
@@ -287,6 +284,7 @@
 }
 
 .conversation-title-heading {
+  --conversation-title-field-inset: calc(var(--space-1) * 1.5);
   display: flex;
   min-width: 0;
   align-items: center;
@@ -294,12 +292,63 @@
 }
 
 .conversation-title-heading h1 {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
-  max-width: none;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The title button and its editor share one box that hugs the text. Only
+ * the background changes between idle, hover, and editing, so the text never
+ * moves. The heading pulls back by the box inset so the idle text keeps its
+ * position beside the leading icon button. */
+.conversation-title-heading h1:is(.is-editable, .is-editing) {
+  margin-inline-start: calc(-1 * var(--conversation-title-field-inset));
+}
+
+.conversation-title-rename,
+.conversation-title-edit {
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 2px var(--conversation-title-field-inset);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: start;
+  transition: background-color var(--motion-fast) var(--ease-out);
+  -webkit-app-region: no-drag;
+}
+
+.conversation-title-rename {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+}
+
+.conversation-title-rename:hover,
+.conversation-title-edit {
+  background: var(--surface-2);
+}
+
+.conversation-title-edit {
+  display: block;
+  field-sizing: content;
+  outline: none;
+}
+
+@container style(--motion-reduced: 1) {
+  .conversation-title-rename,
+  .conversation-title-edit {
+    transition: none;
+  }
 }
 
 .conversation-title-heading .icon-button {
@@ -309,6 +358,14 @@
 .title-actions {
   flex: 0 0 auto;
   min-width: max-content;
+}
+
+.session-control-label {
+  max-width: min(12em, 24vw);
+  overflow: hidden;
+  color: var(--ink-soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Linux frameless caption: fixed to the window's top-right so min/max/close
@@ -345,8 +402,7 @@
 :root[data-platform="linux"] .titlebar,
 :root[data-platform="linux"] .settings-titlebar,
 :root[data-platform="linux"] .account-screen-titlebar,
-:root[data-platform="linux"] .onboarding-chrome,
-:root[data-platform="linux"] .channel-room-header {
+:root[data-platform="linux"] .onboarding-chrome {
   padding-right: var(--linux-caption-width);
 }
 
@@ -358,17 +414,6 @@
 
 :root[data-platform="linux"] .app-shell.right-panel-open .workspace-panel-tabbar {
   padding-right: var(--linux-caption-width);
-}
-
-.channel-room-header-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: stretch;
-  align-self: stretch;
-  gap: 4px;
-  height: 100%;
-  margin-left: auto;
-  -webkit-app-region: no-drag;
 }
 
 .linux-window-control {
@@ -425,7 +470,7 @@
 }
 
 /* Keep the tab rail's available width stable when the active surface does
- * not support creating a conversation (for example, a channel room). */
+ * not support creating a conversation. */
 .session-tab-new-slot {
   display: grid;
   place-items: center;
@@ -832,13 +877,6 @@
   flex-shrink: 0;
 }
 
-.titlebar .task-board-button:disabled {
-  background: transparent;
-  color: var(--ink-tertiary);
-  cursor: default;
-  opacity: 0.38;
-}
-
 .side-panel-toggle-button[aria-pressed="true"] {
   background: transparent;
   color: var(--ink);
@@ -1204,7 +1242,8 @@
   margin-inline: auto;
   transform: translateY(0);
   z-index: 20;
-  animation: jump-to-latest-enter var(--motion-base) var(--ease-out) both;
+  --enter-y: 8px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
   pointer-events: none;
   -webkit-app-region: no-drag;
 }
@@ -1216,8 +1255,7 @@
   padding-block: 4px 8px;
   animation: none;
 }
-.jump-to-latest-cluster-inline > .jump-to-latest-pill,
-.jump-to-latest-cluster-inline .managed-agent-work-pill {
+.jump-to-latest-cluster-inline > .jump-to-latest-pill {
   flex: 0 1 auto;
   min-width: 0;
 }
@@ -1358,13 +1396,16 @@ button.conversation-status-capsule,
   max-width: 100%;
 }
 
-.conversation-status-todo-card,
-.conversation-status-preview-card {
+.conversation-status-todo-card {
   display: flex;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
   width: min(280px, calc(100vw - 48px));
   max-height: min(320px, 50vh);
   flex-direction: column;
-  gap: 1px;
+  gap: var(--space-1);
+  margin: 0;
   padding: var(--menu-inset);
   overflow: auto;
   border: 1px solid var(--shell-todo-card-border);
@@ -1372,14 +1413,6 @@ button.conversation-status-capsule,
   border-radius: var(--menu-shell-radius);
   background: var(--shell-todo-card-bg);
   box-shadow: var(--shadow-pop);
-}
-
-.conversation-status-todo-card {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  gap: var(--space-1);
-  margin: 0;
   list-style: none;
   opacity: 0;
   visibility: hidden;
@@ -1400,61 +1433,6 @@ button.conversation-status-capsule,
   transition-delay: 0s;
   pointer-events: auto;
 }
-
-.conversation-status-preview-card {
-  max-height: min(360px, var(--floating-menu-available-height, 50vh));
-  color: var(--shell-todo-card-ink);
-  font-size: var(--font-ui);
-  pointer-events: auto;
-}
-
-/* Preview rows keep one text column: the running spinner trails the title
- * where the old "running" label sat, so rows never repeat that status as text. */
-.managed-session-preview-list { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
-.managed-session-preview-list li { min-width: 0; }
-.managed-session-preview-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--icon-size);
-  align-items: center;
-  gap: var(--menu-item-gap);
-  width: 100%;
-  min-width: 0;
-  min-height: var(--control-row-height);
-  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: start;
-}
-.managed-session-preview-item:hover { background: var(--ink-overlay-6); }
-.managed-session-preview-item:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
-.managed-session-preview-status { display: grid; place-items: center; color: var(--shell-todo-card-muted); }
-.managed-session-preview-status > svg { width: var(--icon-size); height: var(--icon-size); }
-.managed-session-preview-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.managed-session-preview-empty { margin: 0; padding: var(--menu-inset) var(--menu-item-padding-inline); color: var(--shell-todo-card-muted); }
-
-/* Quiet footer action: separated from the rows, secondary until hovered, and
- * trailing a chevron so it reads as navigation rather than another session. */
-.managed-session-preview-separator { height: 1px; background: var(--shell-todo-card-border); }
-.managed-session-preview-all {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--menu-item-gap);
-  width: 100%;
-  min-height: var(--control-row-height);
-  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--shell-todo-card-muted);
-  font: inherit;
-  text-align: start;
-}
-.managed-session-preview-all:hover { background: var(--ink-overlay-6); color: var(--shell-todo-card-ink); }
-.managed-session-preview-all:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 
 .conversation-status-todo-card li {
   display: grid;
@@ -1555,6 +1533,7 @@ button.conversation-status-capsule,
   opacity: 0;
   overflow: hidden;
   transition:
+    margin-left var(--motion-base) var(--ease-out),
     max-height var(--motion-base) var(--ease-out),
     max-width var(--motion-base) var(--ease-out),
     opacity var(--motion-fast) var(--ease-out);
@@ -1589,17 +1568,6 @@ button.conversation-status-capsule,
   /* Keep the in_progress step a solid darker badge inside the outer pill. */
 }
 
-@keyframes jump-to-latest-enter {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 /*
  * Conversation turn rail on the left edge of the message stream.
  *
@@ -1610,7 +1578,7 @@ button.conversation-status-capsule,
  * macOS Dock-style motion: smooth spring with slight overshoot
  * (cubic-bezier(0.34, 1.56, 0.64, 1) ≈ easeOutBack) so the magnified bar
  * settles with a natural "spring then rest" feel rather than a linear
- * slide. prefers-reduced-motion collapses the easing to a 1ms step.
+ * slide. Reduced motion zeroes the ladder, so the bar snaps instead.
  */
 .conversation-pane {
   position: relative;
@@ -1759,10 +1727,9 @@ button.conversation-status-capsule,
   pointer-events: auto;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .conversation-turn-rail-bar,
   .conversation-turn-rail-preview {
-    transition: opacity 1ms linear;
     transform: none;
   }
 }

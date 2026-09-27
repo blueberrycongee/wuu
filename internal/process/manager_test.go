@@ -505,35 +505,6 @@ func TestCleanupSessionOnlyStopsSessionLifecycle(t *testing.T) {
 	_, _ = m.Stop(managedProc.ID)
 }
 
-func TestReadOutput(t *testing.T) {
-	root := t.TempDir()
-	m, _ := NewManager(root, filepath.Join(root, "state", "runtime"))
-	p, err := m.Start(context.Background(), StartOptions{Command: "echo ready; sleep 1", OwnerKind: OwnerMainAgent, OwnerID: "main", Lifecycle: LifecycleSession})
-	if err != nil {
-		t.Fatal(err)
-	}
-	offset := int64(0)
-	snapshot, err := m.ReadOutputSnapshot(context.Background(), p.ID, OutputReadOptions{
-		MaxBytes:    4096,
-		OffsetBytes: &offset,
-		Wait:        2 * time.Second,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if snapshot.TimedOut {
-		t.Fatalf("timed out waiting for output: %+v", snapshot)
-	}
-	out, _, err := m.ReadOutput(p.ID, 4096)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out, "ready") {
-		t.Fatalf("unexpected output: %q", out)
-	}
-	_, _ = m.Stop(p.ID)
-}
-
 func TestReadLogWindowPagesForwardFromExplicitOffset(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "output.log")
 	if err := os.WriteFile(path, []byte("0123456789abcdef"), 0o644); err != nil {

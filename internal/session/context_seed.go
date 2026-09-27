@@ -75,6 +75,7 @@ type ContextSeed struct {
 }
 
 type SessionRuntimeSelection struct {
+	Speed          string `json:"speed,omitempty"`
 	Provider       string `json:"provider"`
 	Model          string `json:"model"`
 	Variant        string `json:"variant,omitempty"`

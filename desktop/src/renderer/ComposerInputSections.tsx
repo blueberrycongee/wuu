@@ -12,15 +12,15 @@ import {
   PencilLine,
   Send,
   Square,
+  LoaderCircle,
+  RotateCw,
   X
 } from "./WuuIcons";
 import { type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useOptionalImagePreview } from "./ImagePreview";
 import { isComposerTextComposing } from "./ComposerSlashCommands";
-import {
-  CollapsedComposerPromptCard,
-  useCollapsedComposerPrompt
-} from "./ComposerCollapsedPrompt";
+import { useCollapsedComposerPrompt } from "./ComposerCollapsedPrompt";
+import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
 import {
   WORKSPACE_FILE_DRAG_MIME,
   appendWorkspacePathToPrompt,
@@ -43,18 +43,13 @@ import type { MessageContentPart } from "../shared/protocol";
 
 const ComposerDrawer = createComposerDrawer(React);
 
+/** Read-only attachments of a sent message; drafts use ComposerAttachmentTray. */
 export function ComposerAttachmentStrip({
   files,
-  images,
-  onRemoveFile,
-  onRemoveImage,
-  removable = true
+  images
 }: {
   files: ComposerFile[];
   images: ComposerImage[];
-  onRemoveFile?: (id: string) => void;
-  onRemoveImage?: (id: string) => void;
-  removable?: boolean;
 }): JSX.Element | null {
   const { t } = useI18n();
   const imagePreview = useOptionalImagePreview();
@@ -69,19 +64,6 @@ export function ComposerAttachmentStrip({
           <div className="composer-image-attachment" key={image.id}>
             <AttachmentImage image={image} label={label}
               onOpen={src => imagePreview?.openPreview({ src, alt: label, title: label })} />
-            {removable ? (
-              <button
-                type="button"
-                className="composer-attachment-remove"
-                aria-label={t("composer.removeImage", { number: index + 1 })}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onRemoveImage?.(image.id);
-                }}
-              >
-                <X className="icon-xs" />
-              </button>
-            ) : null}
           </div>
         );
       })}
@@ -91,15 +73,16 @@ export function ComposerAttachmentStrip({
             <FileText className="icon" aria-hidden="true" />
             <span>{file.filename?.trim() || t("composer.pdfNumber", { number: index + 1 })}</span>
           </>}
-          {removable ? (
-            <button type="button" className="composer-attachment-remove" aria-label={t("composer.removeFile", { number: index + 1 })} onClick={() => onRemoveFile?.(file.id)}>
-              <X className="icon-xs" />
-            </button>
-          ) : null}
         </div>
       ))}
     </div>
   );
+}
+
+export function ComposerStopIcon({ state }: { state?: "pending" | "retry" }): JSX.Element {
+  if (state === "pending") return <LoaderCircle className="composer-stop-progress is-spinning" aria-hidden="true" />;
+  if (state === "retry") return <RotateCw className="composer-stop-progress" aria-hidden="true" />;
+  return <Square aria-hidden="true" />;
 }
 
 export function SplitPaneComposer({
@@ -110,6 +93,7 @@ export function SplitPaneComposer({
   running,
   readOnly,
   sendDisabled: requestedSendDisabled = false,
+  stopState,
   status,
   statusLiveProgress,
   queryHistorySessionID,
@@ -130,6 +114,7 @@ export function SplitPaneComposer({
   /** Instant view switches keep `running` on for the spinner but must not
    * allow a send/stop against the previous pane's thread. */
   sendDisabled?: boolean;
+  stopState?: "pending" | "retry";
   status: string;
   statusLiveProgress?: boolean;
   queryHistorySessionID?: string;
@@ -143,7 +128,7 @@ export function SplitPaneComposer({
 }): JSX.Element {
   const { t } = useI18n();
   const connected = useWorkbenchConnected();
-  const sendDisabled = requestedSendDisabled || !connected;
+  const sendDisabled = requestedSendDisabled || Boolean(stopState) || !connected;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const photosInputRef = useRef<HTMLInputElement>(null);
@@ -160,7 +145,7 @@ export function SplitPaneComposer({
   // Match the dock composer: the button is a stop control only while running
   // with an empty input. Once there is a draft, it flips to send (queuing
   // mid-turn) so a typed follow-up is never blocked by the stop state.
-  const showStop = running && !sendDisabled && !hasDraft;
+  const showStop = Boolean(stopState) || (running && !sendDisabled && !hasDraft);
   const sendLabel = running ? t("composer.queueSend") : t("composer.send");
   const statusText = composerStatusText(status);
   const statusIsLiveProgress = composerStatusIsLiveProgress(statusLiveProgress);
@@ -194,7 +179,6 @@ export function SplitPaneComposer({
     hasBlocks: hasCollapsedPromptBlocks,
     prefix: collapsedPromptPrefix,
     visiblePrompt: visiblePromptValue,
-    listRef: collapsedPromptListRef,
     handlePaste: handleCollapsedComposerPaste,
     revealBlock: revealCollapsedPromptBlock,
     removeBlock: removeCollapsedPromptBlock,
@@ -313,6 +297,16 @@ export function SplitPaneComposer({
             {cameraOpen && !readOnly ? (
               <ComposerCameraPanel onCapture={captureCamera} onClose={closeCamera} />
             ) : null}
+            <ComposerAttachmentTray
+              images={images}
+              files={files}
+              pastedTexts={collapsedPromptBlocks}
+              resetKey={queryHistorySessionID}
+              onRemoveImage={onRemoveImage}
+              onRemoveFile={onRemoveFile}
+              onRevealText={revealCollapsedPromptBlock}
+              onRemoveText={removeCollapsedPromptBlock}
+            />
             <div
               className={`composer-frame split-composer-shell${dropActive ? " composer-frame-drop-active split-composer-shell-drop-active" : ""}`}
               data-wuu-component="composer-frame"
@@ -320,8 +314,7 @@ export function SplitPaneComposer({
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
             >
-              <div className={`composer${hasCollapsedPromptBlocks ? " has-collapsed-prompt" : ""}`}>
-                <ComposerAttachmentStrip files={files} images={images} onRemoveFile={onRemoveFile} onRemoveImage={onRemoveImage} />
+              <div className="composer">
                 <input
                   ref={attachmentInputRef}
                   className="composer-file-input"
@@ -352,22 +345,6 @@ export function SplitPaneComposer({
                     }
                   }}
                 />
-                {hasCollapsedPromptBlocks ? (
-                  <div
-                    className="composer-collapsed-prompt-list"
-                    ref={collapsedPromptListRef}
-                    aria-label={t("composer.collapsedLongText")}
-                  >
-                    {collapsedPromptBlocks.map((block, index) => (
-                      <CollapsedComposerPromptCard
-                        text={block.text}
-                        key={block.id}
-                        onReveal={() => revealCollapsedPromptBlock(index)}
-                        onRemove={() => removeCollapsedPromptBlock(index)}
-                      />
-                    ))}
-                  </div>
-                ) : null}
                 <textarea
                   ref={textareaRef}
                   value={visiblePromptValue}
@@ -422,10 +399,12 @@ export function SplitPaneComposer({
                         className="composer-action-button composer-stop-button"
                         type="button"
                         onClick={onInterrupt}
-                        aria-label={t("composer.pause")}
-                        title={t("composer.pauseShortcut")}
+                        disabled={stopState === "pending" || !connected}
+                        aria-busy={stopState === "pending" || undefined}
+                        aria-label={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pause")}
+                        title={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pauseShortcut")}
                       >
-                        <Square aria-hidden="true" />
+                        <ComposerStopIcon state={stopState} />
                       </button>
                     ) : (
                       <button
@@ -492,6 +471,7 @@ function buildQueueRows(
 
 export function ComposerQueueStrip({
   guideMessages,
+  dispatchDisabled = false,
   queuedMessages,
   expanded: controlledExpanded,
   onExpandedChange,
@@ -502,6 +482,7 @@ export function ComposerQueueStrip({
   onEditQueuedMessage
 }: {
   guideMessages: QueuedComposerMessage[];
+  dispatchDisabled?: boolean;
   queuedMessages: QueuedComposerMessage[];
   expanded?: boolean;
   onExpandedChange?: (expanded: boolean) => void;
@@ -571,6 +552,7 @@ export function ComposerQueueStrip({
               position={index + 1}
               message={row.message}
               kind={row.kind}
+              dispatchDisabled={dispatchDisabled}
               onGuide={
                 !row.message.operationState
                   ? () => onGuideQueuedMessage(row.message.id)
@@ -599,6 +581,7 @@ function ComposerQueueItem({
   message,
   kind,
   onGuide,
+  dispatchDisabled,
   onEdit,
   onRemove
 }: {
@@ -606,6 +589,7 @@ function ComposerQueueItem({
   message: QueuedComposerMessage;
   kind: QueueRowKind;
   onGuide?: () => void;
+  dispatchDisabled: boolean;
   onEdit: () => void;
   onRemove: () => void;
 }): JSX.Element {
@@ -669,6 +653,7 @@ function ComposerQueueItem({
                   : t("composer.convertToGuideTitle")
             }
             onClick={onGuide}
+            disabled={dispatchDisabled}
           >
             {kind === "guide" && !message.held ? (
               <CornerUpLeft className="icon-sm" aria-hidden="true" />

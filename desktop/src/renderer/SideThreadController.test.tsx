@@ -361,16 +361,6 @@ describe("useSideThreadController", () => {
     expect(hook.get().entry?.streaming).toBe(false);
   });
 
-  it("forwards interrupt requests for the active main thread", () => {
-    const interruptSideThread = vi.fn(async () => ({ ok: true }));
-    const { ipc } = makeIPC({ interruptSideThread });
-    const hook = mountController(ipc);
-
-    act(() => hook.get().interrupt());
-
-    expect(interruptSideThread).toHaveBeenCalledWith("main-1");
-  });
-
   it("updates the shared grid width and clears resize state on pointer up", () => {
     const { ipc } = makeIPC();
     const hook = mountController(ipc);

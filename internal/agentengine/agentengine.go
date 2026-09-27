@@ -181,6 +181,8 @@ type ThreadBinding struct {
 	RootDir  string
 	Model    string
 	Effort   string
+	// Speed is empty to inherit, "standard" to disable acceleration, or "fast".
+	Speed string
 	// PermissionMode is the host's engine-neutral access selection. External
 	// engines map it to their native sandbox or permission mode.
 	PermissionMode string

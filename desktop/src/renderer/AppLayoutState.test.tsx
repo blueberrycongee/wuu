@@ -3,12 +3,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as ComposerFocus from "./ComposerFocus";
 import {
-  RIGHT_PANEL_MOTION_MS,
+  rightPanelMotionMs,
   SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH,
   SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
-  SIDEBAR_MOTION_MS,
+  sidebarMotionMs,
   WORKSPACE_RIGHT_PANEL_DEFAULT_WIDTH,
   clampSidebarWidthForWindow,
   useAppLayoutState
@@ -59,7 +59,7 @@ function makePointerDownEvent(clientX: number): React.PointerEvent<HTMLDivElemen
 function renderHookHarness(): void {
   function Harness(): null {
     const hook = useAppLayoutState({
-      onCloseProjectMenu: () => {}
+      onCloseWorkspaceMenu: () => {}
     });
     const responsiveHook = hook as typeof hook & {
       workspaceRightPanelAutoGlobalized?: boolean;
@@ -99,7 +99,7 @@ it("can use an explicit embedded viewport without reacting to the outer window",
   window.localStorage.setItem("wuu.desktop.sidebarWidth", "500");
   let view!: ReturnType<typeof useAppLayoutState>;
   function ExtensionHarness({ width }: { width?: number }) {
-    view = useAppLayoutState({ viewportWidth: width, onCloseProjectMenu: () => {} });
+    view = useAppLayoutState({ viewportWidth: width, onCloseWorkspaceMenu: () => {} });
     return null;
   }
   root = createRoot(container);
@@ -217,7 +217,7 @@ describe("useAppLayoutState window-resizing class", () => {
     expect(latest!.rightPanelAnimating).toBe(true);
 
     act(() => {
-      vi.advanceTimersByTime(RIGHT_PANEL_MOTION_MS);
+      vi.advanceTimersByTime(rightPanelMotionMs());
     });
     expect(latest!.rightPanelAnimating).toBe(false);
   });
@@ -232,7 +232,7 @@ describe("useAppLayoutState window-resizing class", () => {
     expect(latest!.rightPanelAnimating).toBe(true);
 
     act(() => {
-      vi.advanceTimersByTime(RIGHT_PANEL_MOTION_MS);
+      vi.advanceTimersByTime(rightPanelMotionMs());
     });
     expect(latest!.rightPanelAnimating).toBe(false);
   });
@@ -247,14 +247,9 @@ describe("useAppLayoutState window-resizing class", () => {
     expect(document.documentElement.classList.contains(LAYOUT_MOTION_CLASS)).toBe(true);
 
     act(() => {
-      vi.advanceTimersByTime(SIDEBAR_MOTION_MS);
+      vi.advanceTimersByTime(sidebarMotionMs());
     });
     expect(document.documentElement.classList.contains(LAYOUT_MOTION_CLASS)).toBe(false);
-  });
-
-  it("paces sidebar layout motion as a drawer transition", () => {
-    expect(SIDEBAR_MOTION_MS).toBeGreaterThanOrEqual(200);
-    expect(SIDEBAR_MOTION_MS).toBeLessThanOrEqual(280);
   });
 
   it("does not add the class for non-primary-button pointerdowns on the sidebar", () => {

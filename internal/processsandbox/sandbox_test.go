@@ -2,7 +2,6 @@ package processsandbox
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -17,27 +16,6 @@ func TestNormalizedPolicyCanonicalizesAndDeduplicatesWritableRoots(t *testing.T)
 	}
 	if !filepath.IsAbs(policy.WritableRoots[0]) {
 		t.Fatalf("writable root is not absolute: %q", policy.WritableRoots[0])
-	}
-}
-
-func TestSeatbeltProfileExpressesOnlyFileWritePolicy(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "quoted\"root")
-	profile := seatbeltProfile(normalizedPolicy(Policy{
-		Mode:          ModeWorkspaceWrite,
-		WritableRoots: []string{root},
-	}))
-	for _, required := range []string{
-		"(allow default)",
-		"(deny file-write*)",
-		`(literal "/dev/null")`,
-		"(subpath ",
-	} {
-		if !strings.Contains(profile, required) {
-			t.Fatalf("profile missing %q:\n%s", required, profile)
-		}
-	}
-	if strings.Contains(profile, "deny network") || strings.Contains(profile, "deny process") {
-		t.Fatalf("filesystem-only profile overclaims another boundary:\n%s", profile)
 	}
 }
 

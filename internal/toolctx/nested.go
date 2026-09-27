@@ -29,33 +29,14 @@ func Nested(ctx context.Context) (NestedExecutor, bool) {
 	return executor, ok && executor != nil
 }
 
-// OutlivingScopeSource is implemented by orchestrator scopes that can hand out
-// an executor whose lifetime follows the owning turn runtime rather than the
-// orchestrator tool call itself. Code-mode cells need this: a yielded cell
-// keeps making nested tool calls in later model steps, after the exec tool
-// call has returned, while its child executions must still stop when the turn
-// is cancelled, the extension is disabled, or the session tears down.
-type OutlivingScopeSource interface {
-	OutlivingNested() NestedExecutor
-}
+// NestedCall marks host-scheduled child executions, independently of whether
+// the child is itself an orchestrator. Model arguments cannot create this marker.
+type nestedCallKey struct{}
 
-// OutlivingNested returns an executor that outlives the current orchestrator
-// tool call, or false when the owning scope does not support it. The returned
-// executor inherits the same parent linkage, policy, scheduling gate, and
-// durable recording as the orchestrator's own scope.
-func OutlivingNested(ctx context.Context) (NestedExecutor, bool) {
-	source, ok := ctx.Value(nestedExecutorKey{}).(OutlivingScopeSource)
-	if !ok {
-		return nil, false
-	}
-	executor := source.OutlivingNested()
-	return executor, executor != nil
+func WithNestedCall(ctx context.Context) context.Context {
+	return context.WithValue(ctx, nestedCallKey{}, true)
 }
-
-// ScopedExecutor exposes the owning scope's lifetime. Holders of long-lived
-// cells use Done to stop the cell when the scope ends: the turn that owns the
-// cell has finished or been cancelled.
-type ScopedExecutor interface {
-	NestedExecutor
-	Done() <-chan struct{}
+func IsNestedCall(ctx context.Context) bool {
+	nested, _ := ctx.Value(nestedCallKey{}).(bool)
+	return nested
 }

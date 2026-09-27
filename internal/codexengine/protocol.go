@@ -32,6 +32,11 @@ type ModelListEffort struct {
 }
 
 type ModelListItem struct {
+	AdditionalSpeedTiers []string `json:"additionalSpeedTiers"`
+	ServiceTiers         []struct {
+		ID string `json:"id"`
+	} `json:"serviceTiers"`
+	DefaultServiceTier        string            `json:"defaultServiceTier"`
 	ID                        string            `json:"id"`
 	Model                     string            `json:"model"`
 	DisplayName               string            `json:"displayName"`
@@ -167,6 +172,7 @@ type ThreadInfo struct {
 
 // ThreadResumeParams reopens an existing codex thread by id.
 type ThreadResumeParams struct {
+	ServiceTier        *string        `json:"serviceTier,omitempty"`
 	ThreadID           string         `json:"threadId"`
 	Model              string         `json:"model,omitempty"`
 	ModelProvider      string         `json:"modelProvider,omitempty"`
@@ -203,6 +209,7 @@ type UserInput struct {
 
 // TurnStartParams starts a turn on an existing thread.
 type TurnStartParams struct {
+	ServiceTier           *string         `json:"serviceTier,omitempty"`
 	ThreadID              string          `json:"threadId"`
 	Input                 []UserInput     `json:"input"`
 	Model                 string          `json:"model,omitempty"`

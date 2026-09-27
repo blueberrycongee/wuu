@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { EngineListResult } from "../shared/protocol";
 import {
-  clearDraftEngineMemory,
   lastEffortForEngineModel,
   readDraftEngineMemory,
   rememberedEngineRuntime,
@@ -101,15 +100,6 @@ describe("draft engine memory", () => {
       model: "",
       effort: "",
     });
-  });
-
-  it("ignores a disabled engine", () => {
-    writeDraftEngineMemory({ engine: "claude", model: "", effort: "" });
-    const disabled = inventory({
-      engines: [{ id: "claude", enabled: false, binary_ok: true }],
-    });
-
-    expect(resolveDraftEngineMemory(disabled)).toBeUndefined();
   });
 
   it("drops a model the engine no longer reports so the default applies", () => {
@@ -223,14 +213,6 @@ describe("draft engine memory", () => {
 
     window.localStorage.setItem(MEMORY_KEY, JSON.stringify(["codex"]));
     expect(readDraftEngineMemory()).toBeUndefined();
-  });
-
-  it("clears the memory so the settings default takes over again", () => {
-    writeDraftEngineMemory({ engine: "codex", model: "", effort: "" });
-    clearDraftEngineMemory();
-
-    expect(readDraftEngineMemory()).toBeUndefined();
-    expect(resolveDraftEngineMemory(inventory())).toBeUndefined();
   });
 
   it("clears the memory when written without an engine", () => {

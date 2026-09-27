@@ -3,9 +3,9 @@ import { translateCurrent } from "./i18n";
 
 // Context for the empty new-conversation greeting. We keep it as a
 // discriminated union so the helper can't accidentally mix the
-// project-name and wuu fallbacks.
+// workspace-name and wuu fallbacks.
 export type GreetingContext =
-  | { kind: "project"; projectName: string }
+  | { kind: "workspace"; workspaceName: string }
   | { kind: "wuu" };
 
 // Five time-of-day buckets in the user's local time. Boundaries are
@@ -13,31 +13,31 @@ export type GreetingContext =
 // evening / late night" feel without splitting the day into too many
 // thin slices that would feel jittery.
 export function greetingFor(hour: number, ctx: GreetingContext): string {
-  const project = ctx.kind === "project" ? ctx.projectName : null;
+  const workspace = ctx.kind === "workspace" ? ctx.workspaceName : null;
 
   if (hour >= 5 && hour < 11) {
-    return project
-      ? translateCurrent("greeting.project.morning", { project })
+    return workspace
+      ? translateCurrent("greeting.workspace.morning", { workspace })
       : translateCurrent("greeting.wuu.morning");
   }
   if (hour >= 11 && hour < 14) {
-    return project
-      ? translateCurrent("greeting.project.noon", { project })
+    return workspace
+      ? translateCurrent("greeting.workspace.noon", { workspace })
       : translateCurrent("greeting.wuu.noon");
   }
   if (hour >= 14 && hour < 18) {
-    return project
-      ? translateCurrent("greeting.project.afternoon", { project })
+    return workspace
+      ? translateCurrent("greeting.workspace.afternoon", { workspace })
       : translateCurrent("greeting.wuu.afternoon");
   }
   if (hour >= 18 && hour < 22) {
-    return project
-      ? translateCurrent("greeting.project.evening", { project })
+    return workspace
+      ? translateCurrent("greeting.workspace.evening", { workspace })
       : translateCurrent("greeting.wuu.evening");
   }
   // 22:00 – 04:59 late night.
-  return project
-    ? translateCurrent("greeting.project.lateNight", { project })
+  return workspace
+    ? translateCurrent("greeting.workspace.lateNight", { workspace })
     : translateCurrent("greeting.wuu.lateNight");
 }
 

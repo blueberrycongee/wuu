@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useConversationRevealSnap } from "./ConversationRenderActivity";
+import { prefersReducedMotion } from "./motion";
 
 type LightweightStreamingTextProps = {
   /**
@@ -113,10 +114,10 @@ export function LightweightStreamingText({
   };
 
   useEffect(() => {
-    // Settled or trivially short: snap. The short-text threshold keeps
-    // animations from competing with the live dot for attention on
-    // tiny previews like "OK" or "Done".
-    if (!live || text.length <= PREVIEW_CONFIG.shortTextMax) {
+    // Settled, trivially short, or motion reduced: snap. The short-text
+    // threshold keeps animations from competing with the live dot for
+    // attention on tiny previews like "OK" or "Done".
+    if (!live || text.length <= PREVIEW_CONFIG.shortTextMax || prefersReducedMotion()) {
       syncImmediate(text.length);
       return undefined;
     }

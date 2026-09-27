@@ -1,7 +1,6 @@
 import type {
   Agent,
   AppServerNotification,
-  ChannelRoom,
   ConfigChangedNotification,
   DesktopProject,
   ExtensionInventoryRecord,
@@ -17,10 +16,12 @@ import type {
 } from "../shared/protocol";
 import {
   OPTIMISTIC_TURN_ID_PREFIX,
+  reconcileOptimisticTurns,
   type ComposerFile,
   type ComposerImage,
 } from "./ComposerMessages";
 import { parseRequestedHandoffIntent } from "./HandoffDraft";
+import { localTurnTiming } from "./LocalTurnTiming";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
 import { threadDisplayTitle } from "./ThreadTitles";
 import { sortChildAgents } from "./ThreadAgents";
@@ -96,6 +97,9 @@ type SessionTab =
       images: ComposerImage[];
       files: ComposerFile[];
       createdAt: number;
+      // The draft starts a project: its first message names the project and
+      // becomes the coordinator's first instruction.
+      project?: true;
     }
   | {
       id: string;
@@ -110,28 +114,6 @@ type SessionTab =
   | {
       id: string;
       kind: "skills";
-      context: RuntimeContext;
-      title: string;
-    }
-  | {
-      id: string;
-      kind: "channel-room";
-      context: RuntimeContext;
-      roomID: string;
-      title: string;
-      prompt: string;
-      images: ComposerImage[];
-      files: ComposerFile[];
-    }
-  | {
-      id: string;
-      kind: "agents";
-      context: RuntimeContext;
-      title: string;
-    }
-  | {
-      id: string;
-      kind: "tasks";
       context: RuntimeContext;
       title: string;
     };
@@ -373,6 +355,17 @@ function handleStreamingNotification(
   const notification = event.message;
   const params = notification.params as Record<string, unknown> | undefined;
   switch (notification.method) {
+    case "thread/resumed": {
+      const thread = threadFromRecord(recordValue(params, "thread"));
+      if (thread) {
+        // React may apply the snapshot later; live deltas already use this cache.
+        ingestStreamOnce(event, () => {
+          syncRunningThreadStreamItems(thread);
+          return false;
+        });
+      }
+      return "state";
+    }
     case "item/agentMessage/delta": {
       const active = notificationTargetsActiveThread(params, state);
       if (!active && !notificationTargetsKnownThread(params, state)) {
@@ -794,12 +787,8 @@ function reduceNotification(
       }
       const threadID = threadIDFromParams(params);
       const threadIsActive = threadID === activeThreadIDForState(state);
-      return updateThreadByID(
-        state,
-        threadID,
-        (thread) => upsertTurn(thread, turn),
-        threadIsActive ? { running: true } : {},
-      );
+      const next = updateThreadByID(state, threadID, (thread) => upsertTurn(thread, turn));
+      return threadIsActive ? { ...next, running: isThreadRunning(activeThreadForState(next)) } : next;
     }
     case "item/started":
     case "item/completed": {
@@ -1357,7 +1346,14 @@ export function reconcileResumedThreadTurns(
   resumed: Thread,
   local: Thread | undefined,
 ): Thread {
-  const localTurns = local?.turns;
+  const localTurns = local ? reconcileOptimisticTurns(local.turns, resumed.turns) : undefined;
+  if (localTurns) {
+    const turns = resumed.turns.map((turn) => {
+      const previous = localTurns.find((candidate) => candidate.id === turn.id);
+      return previous && previous.status !== "in_progress" && turn.status === "in_progress" ? previous : turn;
+    });
+    if (turns.some((turn, index) => turn !== resumed.turns[index])) resumed = { ...resumed, turns };
+  }
   if (!localTurns || localTurns.length < resumed.turns.length) {
     return resumed;
   }
@@ -1396,6 +1392,11 @@ export function reconcileResumedThreadTurns(
 // started after the previous answer is ready is the same shape: keep an
 // in-progress tail when a stale snapshot still omits it.
 function mergeThreadUpdatedTurns(incoming: Turn[], current: Turn[]): Turn[] {
+  current = reconcileOptimisticTurns(current, incoming);
+  incoming = incoming.map((turn) => {
+    const previous = current.find((candidate) => candidate.id === turn.id);
+    return previous && previous.status !== "in_progress" && turn.status === "in_progress" ? previous : turn;
+  });
   if (incoming.length === 0) {
     return current;
   }
@@ -1472,7 +1473,7 @@ function upsertThread(threads: Thread[], thread: Thread | undefined): Thread[] {
   // action stays reversible from there. Read-only threads are still real
   // conversations that need to render — they only differ in mutation rights.
   // Filtering archived out of sidebar surfaces is the job of pinnedThreads /
-  // projectThreads / scratchThreads, not of this generic upsert.
+  // workspaceThreads / scratchThreads, not of this generic upsert.
   const index = validThreads.findIndex((item) => item.id === thread.id);
   if (index < 0) {
     return sortThreads([thread, ...validThreads]);
@@ -1555,6 +1556,10 @@ function summarizeThreadForSidebar(
     agent_path: thread.agent_path,
     preview: thread.preview,
     title: thread.title,
+    source: thread.source,
+    project_id: thread.project_id,
+    project_exists: thread.project_exists,
+    project_role: thread.project_role,
     model_provider: thread.model_provider,
     model: thread.model,
     cwd: thread.cwd,
@@ -1567,6 +1572,7 @@ function summarizeThreadForSidebar(
     pinned: thread.pinned,
     folder_id: thread.folder_id,
     archived: thread.archived,
+    archive_reason: thread.archive_reason,
     forked_from_id: thread.forked_from_id,
     forked_from_turn_id: thread.forked_from_turn_id,
     forked_from_item_id: thread.forked_from_item_id,
@@ -1596,8 +1602,8 @@ function summarizeThreadsForSidebar(
   );
 }
 
-function summarizeProjectThreadsForSidebar(
-  projectThreadsByProjectID: Record<string, Thread[]>,
+function summarizeWorkspaceThreadsForSidebar(
+  workspaceThreadsByWorkspaceID: Record<string, Thread[]>,
   liveThreads: readonly Thread[],
   runningThreadIDs?: ReadonlySet<string>,
 ): Record<string, ThreadSummary[]> {
@@ -1617,8 +1623,8 @@ function summarizeProjectThreadsForSidebar(
     liveByID.set(thread.id, thread);
   }
   const next: Record<string, ThreadSummary[]> = {};
-  for (const [projectID, threads] of Object.entries(projectThreadsByProjectID)) {
-    next[projectID] = summarizeThreadsForSidebar(
+  for (const [workspaceID, threads] of Object.entries(workspaceThreadsByWorkspaceID)) {
+    next[workspaceID] = summarizeThreadsForSidebar(
       threads.map((thread) => liveByID.get(thread.id) ?? thread),
       runningThreadIDs,
     );
@@ -1726,6 +1732,10 @@ function mergeListedThread(existing: Thread, listed: Thread): Thread {
     !turns.some((turn) => turn.status === "in_progress");
   return {
     ...listed,
+    project_exists: listed.project_exists ?? (
+      listed.source === existing.source && listed.project_id === existing.project_id
+        ? existing.project_exists : undefined
+    ),
     title: listed.title?.trim() ? listed.title : existing.title,
     preview: listed.preview?.trim() ? listed.preview : existing.preview,
     status: listedStatusRegresses ? existing.status : listed.status,
@@ -1738,6 +1748,7 @@ function mergeListedThread(existing: Thread, listed: Thread): Thread {
 }
 
 function mergeListedThreadTurns(existing: Turn[], listed: Turn[]): Turn[] {
+  existing = reconcileOptimisticTurns(existing, listed);
   if (listed.length === 0) {
     return existing.length === 0 ? listed : existing;
   }
@@ -1914,20 +1925,20 @@ function formatHourMinute(date: Date): string {
   });
 }
 
-// R4: threads that don't belong to any registered project are almost
+// R4: threads that don't belong to any registered workspace are almost
 // always no-project scratch conversations, whose cwd is an internal
 // ~/.wuu/scratch/<date> directory (see allocateNoProjectCwd in
 // src/main/projects.ts). Falling back to that directory's basename used to
 // surface the raw date-stamped folder name in the search result's context
-// label — a wuu implementation detail nobody asked to see. "无项目" reads
+// label — a wuu implementation detail nobody asked to see. "无工作区" reads
 // the same way the sidebar's scratch group already does.
 function conversationSearchContextLabel(
   thread: Thread,
   projects: DesktopProject[],
 ): string {
-  const projectPath = threadProjectPath(thread);
+  const projectPath = threadWorkspacePath(thread);
   const project = projects.find((candidate) => candidate.path === projectPath);
-  return project?.name ?? t("appState.noProject");
+  return project?.name ?? t("appState.noWorkspace");
 }
 
 function pinnedThreads(threads: Thread[]): Thread[] {
@@ -1938,35 +1949,35 @@ function pinnedThreadSummaries(threads: ThreadSummary[]): ThreadSummary[] {
   return sortThreadSummaries(threads).filter((thread) => thread.pinned);
 }
 
-function projectThreads(threads: Thread[]): Thread[] {
+function workspaceThreads(threads: Thread[]): Thread[] {
   return sortThreads(threads).filter((thread) => !thread.pinned && !thread.archived);
 }
 
-function projectThreadSummaries(threads: ThreadSummary[]): ThreadSummary[] {
+function workspaceThreadSummaries(threads: ThreadSummary[]): ThreadSummary[] {
   return sortThreadSummaries(threads).filter((thread) => !thread.pinned);
 }
 
-export function threadProjectPath(
+export function threadWorkspacePath(
   thread: Pick<Thread, "cwd" | "worktree">,
 ): string {
   return thread.worktree?.base_repo?.trim() || thread.cwd;
 }
 
-export function threadBelongsToProject(
+export function threadBelongsToWorkspace(
   thread: Pick<Thread, "cwd" | "workspace_id" | "worktree">,
   project: Pick<DesktopProject, "id" | "path">,
 ): boolean {
   if (thread.workspace_id?.trim()) {
     return thread.workspace_id === project.id;
   }
-  return sameDesktopPath(threadProjectPath(thread), project.path);
+  return sameDesktopPath(threadWorkspacePath(thread), project.path);
 }
 
-function threadBelongsToAnyProject(
+function threadBelongsToAnyWorkspace(
   thread: Pick<Thread, "cwd" | "workspace_id" | "worktree">,
   projects: Pick<DesktopProject, "id" | "path">[],
 ): boolean {
-  return projects.some((project) => threadBelongsToProject(thread, project));
+  return projects.some((project) => threadBelongsToWorkspace(thread, project));
 }
 
 function sameDesktopPath(left: string, right: string): boolean {
@@ -1983,7 +1994,7 @@ function cleanDesktopPath(path: string): string {
 // scratch (no-project) conversation group inside the unified sidebar tree.
 // Threads whose cwd does not belong to a registered DesktopProject (i.e.
 // isScratchThread returns true) are bucketed under this id so the sidebar
-// can render them through the same ProjectList code path as real projects.
+// can render them through the same WorkspaceList code path as real projects.
 // The DesktopProject entry carrying this id is built in App.tsx and never
 // sent from the app-server — it lives only on the renderer side.
 export const SCRATCH_PSEUDO_PROJECT_ID = "__wuu_scratch__";
@@ -1992,7 +2003,7 @@ export function isScratchThread(
   thread: Pick<Thread, "workspace_kind" | "cwd" | "worktree">,
   projects: DesktopProject[],
 ): boolean {
-  if (threadBelongsToAnyProject(thread, projects)) {
+  if (threadBelongsToAnyWorkspace(thread, projects)) {
     return false;
   }
   if (thread.workspace_kind === "scratch") {
@@ -2001,7 +2012,7 @@ export function isScratchThread(
   if (thread.workspace_kind === "project") {
     return false;
   }
-  const projectPath = threadProjectPath(thread);
+  const projectPath = threadWorkspacePath(thread);
   return !projects.some((project) => project.path === projectPath);
 }
 
@@ -2022,7 +2033,7 @@ export function resolveThreadRuntimeContext(
   projects: DesktopProject[],
 ): RuntimeContext {
   const project = projects.find((candidate) =>
-    threadBelongsToProject(thread, candidate),
+    threadBelongsToWorkspace(thread, candidate),
   );
   if (project) {
     return { kind: "project", project_id: project.id, cwd: project.path };
@@ -2035,7 +2046,7 @@ export function resolveThreadRuntimeContext(
  * and terminal should root at. This is ordinarily just the active
  * RuntimeContext, but a worktree-fork thread's own cwd (Thread.cwd) points
  * at a git worktree directory distinct from the project root that
- * resolveThreadRuntimeContext resolves the thread to (threadProjectPath
+ * resolveThreadRuntimeContext resolves the thread to (threadWorkspacePath
  * prefers worktree.base_repo, so the *context* stays pinned to the base
  * project while the *thread* itself runs out of the worktree). When the
  * active thread's cwd differs from the active context's cwd, the panel
@@ -2146,110 +2157,6 @@ function createSkillsSessionTab(context: RuntimeContext): SessionTab {
     kind: "skills",
     context,
     title: "skills",
-  };
-}
-
-function createChannelRoomSessionTab(
-  roomID: string,
-  title: string,
-  context: RuntimeContext,
-): Extract<SessionTab, { kind: "channel-room" }> {
-  return {
-    id: channelRoomSessionTabID(roomID),
-    kind: "channel-room",
-    context,
-    roomID,
-    title,
-    prompt: "",
-    images: [],
-    files: [],
-  };
-}
-
-function createAgentsSessionTab(
-  context: RuntimeContext,
-): Extract<SessionTab, { kind: "agents" }> {
-  return {
-    id: "agents",
-    kind: "agents",
-    context,
-    title: "agents",
-  };
-}
-
-function createTasksSessionTab(
-  context: RuntimeContext,
-): Extract<SessionTab, { kind: "tasks" }> {
-  return {
-    id: "tasks",
-    kind: "tasks",
-    context,
-    title: "tasks",
-  };
-}
-
-function channelRoomSessionTabID(roomID: string): string {
-  return `channel-room:${roomID}`;
-}
-
-function reconcileChannelRoomSessionTabs(
-  state: AppState,
-  rooms: ChannelRoom[],
-): AppState {
-  const roomsByID = new Map(rooms.map((room) => [room.id, room]));
-  let changed = false;
-  let sessionTabs = state.sessionTabs.reduce<SessionTab[]>((nextTabs, tab) => {
-    if (tab.kind !== "channel-room") {
-      nextTabs.push(tab);
-      return nextTabs;
-    }
-    const room = roomsByID.get(tab.roomID);
-    if (!room) {
-      changed = true;
-      return nextTabs;
-    }
-    if (tab.title === room.name) {
-      nextTabs.push(tab);
-      return nextTabs;
-    }
-    changed = true;
-    nextTabs.push({ ...tab, title: room.name });
-    return nextTabs;
-  }, []);
-  if (!changed) {
-    return state;
-  }
-  if (
-    !state.activeSessionTabID ||
-    sessionTabs.some((tab) => tab.id === state.activeSessionTabID)
-  ) {
-    return { ...state, sessionTabs };
-  }
-
-  const removedIndex = state.sessionTabs.findIndex(
-    (tab) => tab.id === state.activeSessionTabID,
-  );
-  if (sessionTabs.length === 0 && state.activeContext) {
-    sessionTabs = [
-      createDraftSessionTab(
-        draftSessionTabIDForContext(state.activeContext),
-        state.activeContext,
-      ),
-    ];
-  }
-  const fallbackTab =
-    sessionTabs[Math.min(Math.max(removedIndex, 0), sessionTabs.length - 1)];
-  return {
-    ...state,
-    sessionTabs,
-    activeSessionTabID: fallbackTab?.id,
-    secondaryThread: undefined,
-    activePane: "primary",
-    allowThreadAutoActivation: fallbackTab?.kind === "thread",
-    running:
-      fallbackTab?.kind === "thread"
-        ? isThreadRunning(threadForTab(state, fallbackTab.threadID))
-        : false,
   };
 }
 
@@ -2442,7 +2349,7 @@ function composerDraftHasContent(draft: ComposerDraftState): boolean {
  * draft along with the user instead of stranding it in the tab they're
  * leaving.
  *
- * The hero-project-pill / ProjectPickerMenu let the user retarget a *draft*
+ * The hero-project-pill / WorkspacePickerMenu let the user retarget a *draft*
  * conversation at a different project (or at no project) before ever
  * sending anything. If they had already typed a prompt (or attached images
  * / files), silently persisting that text back into the old context's
@@ -2560,7 +2467,7 @@ function workspaceNameForContext(context: RuntimeContext, state: AppState): stri
   const project = state.projects.find(
     (candidate) => candidate.id === context.project_id,
   );
-  return project?.name || fileNameFromPath(context.cwd) || t("sidebar.project");
+  return project?.name || fileNameFromPath(context.cwd) || t("sidebar.workspace");
 }
 
 function sessionTabLabel(tab: SessionTab, state: AppState): string {
@@ -2573,15 +2480,6 @@ function sessionTabLabel(tab: SessionTab, state: AppState): string {
   }
   if (tab.kind === "skills") {
     return t("skills.title");
-  }
-  if (tab.kind === "agents") {
-    return t("channels.agents");
-  }
-  if (tab.kind === "tasks") {
-    return t("channels.tasks");
-  }
-  if (tab.kind === "channel-room") {
-    return tab.title || t("channels.rooms");
   }
   return threadDisplayTitle(
     threadForTab(state, tab.threadID),
@@ -2781,7 +2679,7 @@ function setThreadForPane(
   return { ...state, thread };
 }
 
-function activeProjectID(
+function activeWorkspaceID(
   context: RuntimeContext | undefined,
 ): string | undefined {
   return context?.kind === "project" ? context.project_id : undefined;
@@ -2821,7 +2719,7 @@ function threadMatchesActiveContext(
   thread: Thread,
   context: RuntimeContext | undefined,
 ): boolean {
-  return Boolean(context && threadProjectPath(thread) === context.cwd);
+  return Boolean(context && threadWorkspacePath(thread) === context.cwd);
 }
 
 function isThread(value: unknown): value is Thread {
@@ -2934,12 +2832,13 @@ function latestCompletedTurnID(thread: {
 
 function isThreadUnread(
   thread: (ThreadRunningCandidate & {
+    archived?: boolean;
     latest_completed_turn_id?: string;
     turns: Array<Pick<Turn, "id" | "status" | "answer_ready_at">>;
   }) | undefined,
   lastViewedTurnID: string | undefined,
 ): boolean {
-  if (!thread) return false;
+  if (!thread || thread.archived) return false;
   const lastTurnID = latestCompletedTurnID(thread);
   if (!lastTurnID) return false;
   if (!lastViewedTurnID) return true;
@@ -3048,20 +2947,14 @@ function isAnyThreadRunning(state: AppState): boolean {
 }
 
 function upsertTurn(thread: Thread, turn: Turn): Thread {
+  const reconciled = reconcileOptimisticTurns(thread.turns, [turn]);
+  if (reconciled !== thread.turns) thread = { ...thread, turns: reconciled };
   const index = thread.turns.findIndex((item) => item.id === turn.id);
-  const status = turn.status === "in_progress" ? "in_progress" : "idle";
-  if (index < 0) {
-    return threadWithTurnSummary(
-      {
-        ...thread,
-        turns: [...thread.turns, { ...turn, items: orderedTurnItems(turn.items) }],
-        status,
-      },
-      turn,
-    );
-  }
+  if (index >= 0 && thread.turns[index].status !== "in_progress" && turn.status === "in_progress") return thread;
   const turns = thread.turns.slice();
-  turns[index] = { ...turn, items: mergeTurnItemsInOrder(turns[index], turn) };
+  if (index < 0) turns.push({ ...turn, items: orderedTurnItems(turn.items) });
+  else turns[index] = { ...turn, items: mergeTurnItemsInOrder(turns[index], turn) };
+  const status = turns.some((item) => item.status === "in_progress") ? "in_progress" : "idle";
   return threadWithTurnSummary({ ...thread, turns, status }, turn);
 }
 
@@ -3176,11 +3069,13 @@ function markTurnAnswerReady(
 ): Thread {
   return {
     ...thread,
-    turns: thread.turns.map((turn) =>
-      turn.id === turnID && !turn.answer_ready_at
-        ? { ...turn, answer_ready_at: answerReadyAt }
-        : turn,
-    ),
+    turns: thread.turns.map((turn) => {
+      if (turn.id !== turnID || turn.answer_ready_at) return turn;
+      const ready = { ...turn, answer_ready_at: answerReadyAt };
+      // Background conversations may not render before provider cleanup ends.
+      localTurnTiming(ready);
+      return ready;
+    }),
   };
 }
 
@@ -3692,7 +3587,7 @@ function normalizeModelID(model: string | undefined): string {
 
 export {
   activeTodoUpdateForThread,
-  activeProjectID,
+  activeWorkspaceID,
   activeSessionTab,
   activeThreadForState,
   activeThreadIDForState,
@@ -3716,12 +3611,8 @@ export {
   conversationPaneThreadsByID,
   conversationSearchContextLabel,
   conversationSearchThreadMeta,
-  channelRoomSessionTabID,
-  createAgentsSessionTab,
-  createChannelRoomSessionTab,
   createDraftSessionTab,
   createSkillsSessionTab,
-  createTasksSessionTab,
   createThreadSessionTab,
   draftSessionTabForContext,
   draftSessionTabIDForContext,
@@ -3751,12 +3642,11 @@ export {
   pinnedThreads,
   pinnedThreadSummaries,
   presentationRunningThreadIDs,
-  projectThreads,
-  projectThreadSummaries,
+  workspaceThreads,
+  workspaceThreadSummaries,
   queryTextForUserItem,
   queryTextsForThread,
   requestedHandoffIntentForThread,
-  reconcileChannelRoomSessionTabs,
   reduceNotification,
   reduceServerEvent,
   activeTurnAcceptsSteering,
@@ -3777,7 +3667,7 @@ export {
   setThreadForPane,
   skillsSessionTabID,
   sortThreads,
-  summarizeProjectThreadsForSidebar,
+  summarizeWorkspaceThreadsForSidebar,
   summarizeThreadsForSidebar,
   threadItemFromRecord,
   threadForPane,

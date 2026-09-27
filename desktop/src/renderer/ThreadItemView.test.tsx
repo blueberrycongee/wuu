@@ -5,6 +5,7 @@ import type { ThreadItem, Turn } from "../shared/protocol";
 import { streamTextKey, streamTextStore } from "./StreamText";
 import { ImagePreviewProvider } from "./ImagePreview";
 import { ThreadItemView } from "./ThreadItemView";
+import { groupProjectEvents } from "./ProjectViews";
 import { clearToasts, ToastViewport } from "./Toast";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
@@ -366,7 +367,6 @@ describe("ThreadItemView", () => {
     expect((rawQuery?.textContent?.length ?? 0)).toBeLessThan(
       longSingleParagraph.length,
     );
-    expect(toggle?.textContent).toContain("显示更多");
   });
 
   it("shows long query previews as raw pasted text", () => {
@@ -426,7 +426,6 @@ describe("ThreadItemView", () => {
     expect(rawQuery?.textContent?.endsWith("...")).toBe(true);
     expect(rawQuery?.textContent).toContain("line 5");
     expect(rawQuery?.textContent).not.toContain("line 6");
-    expect(toggle?.textContent).toContain("显示更多");
     expect(toggle?.getAttribute("aria-expanded")).toBe("false");
 
     act(() => {
@@ -434,7 +433,6 @@ describe("ThreadItemView", () => {
     });
 
     expect(rawQuery?.textContent).toBe(longText);
-    expect(toggle?.textContent).toContain("收起");
     expect(toggle?.getAttribute("aria-expanded")).toBe("true");
 
     act(() => {
@@ -442,7 +440,6 @@ describe("ThreadItemView", () => {
     });
 
     expect(rawQuery?.textContent).not.toContain("line 20");
-    expect(toggle?.textContent).toContain("显示更多");
   });
 
   it("defaults a different long user query back to collapsed", () => {
@@ -527,8 +524,6 @@ describe("ThreadItemView", () => {
     });
 
     const visibleActions = actionBar();
-    expect(visibleActions.getAttribute("aria-label")).toBe("助手消息操作");
-    expect(visibleActions.dataset.wuuComponent).toBe("message-actions");
     expect(visibleActions.dataset.wuuPlacement).toBe("persistent");
     expect(visibleActions.querySelectorAll("button")).toHaveLength(2);
     expect(visibleActions.querySelectorAll<HTMLButtonElement>("button")[1]?.disabled).toBe(false);
@@ -584,6 +579,16 @@ describe("ThreadItemView", () => {
     expect(streamTextStore.has(key)).toBe(false);
   });
 
+  it("groups host events with legacy project history without folding generic host messages", () => {
+    const legacy = { ...makeUserMessage("Old result", "legacy"), origin: "plugin", cause: "project_result" };
+    const current = { ...makeUserMessage("New result", "host"), origin: "host", cause: "project_message" };
+    const generic = { ...makeUserMessage("Host message", "generic"), origin: "host", cause: "unrelated" };
+    expect(groupProjectEvents([legacy, current, generic])).toEqual([[legacy, current], generic]);
+    render({ item: current, turnStatus: "completed", streaming: false });
+    expect(container?.querySelector(".project-event")).not.toBeNull();
+    expect(container?.querySelector(".user-message")).toBeNull();
+  });
+
   it("renders a plugin-generated query as a read-only user message", () => {
     const onEditMessage = vi.fn();
     render({
@@ -609,7 +614,7 @@ describe("ThreadItemView", () => {
     expect(onEditMessage).not.toHaveBeenCalled();
   });
 
-  it("expands and copies a session message body and opens its source without exposing internal input", async () => {
+  it.each(["host", "plugin"])("expands and copies a %s session message body and opens its source without exposing internal input", async (origin) => {
     const openInSplit = vi.fn();
     setOpenThreadInSplitHandler(openInSplit);
     const copy = vi.fn().mockResolvedValue(undefined);
@@ -620,7 +625,7 @@ describe("ThreadItemView", () => {
       item: {
         id: "peer-message", type: "user_message", text: body,
         input_text: "Private delivery instructions", related_session_id: "source-session",
-        name: "Source task", origin: "plugin", origin_id: "alternative-messenger",
+        name: "Source task", origin, origin_id: "alternative-messenger",
         presentation_kind: "session_message", read_only: true,
       },
       turnStatus: "completed", streaming: false, onEditMessage,
@@ -642,24 +647,6 @@ describe("ThreadItemView", () => {
     act(() => toggle.click());
     expect(container?.textContent).not.toContain("End of update.");
     setOpenThreadInSplitHandler(undefined);
-  });
-
-  it("does not show a related-session action without a related session", () => {
-    render({
-      item: {
-        id: "user-own-1",
-        type: "user_message",
-        text: "这是我的普通消息",
-        input_text: "这是发给 Agent 的隐藏消息",
-        status: "completed",
-      },
-      turnStatus: "completed",
-      streaming: false,
-    });
-
-    const actions = container?.querySelectorAll<HTMLButtonElement>(".user-message-actions button");
-    expect(actions).toHaveLength(1);
-    expect([...(actions ?? [])].some((button) => button.getAttribute("aria-label") === "打开关联会话")).toBe(false);
   });
 
   it("shows the user message time before its copy action", () => {

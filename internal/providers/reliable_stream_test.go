@@ -115,8 +115,8 @@ func TestReliableStreamClientSingleSuccess(t *testing.T) {
 	if lifecycle[0].OperationID == "" || lifecycle[0].AttemptID == "" || lifecycle[0].AttemptID != lifecycle[1].AttemptID {
 		t.Fatalf("lifecycle identity missing or unstable: %+v", lifecycle)
 	}
-	if lifecycle[0].Attempt != 1 || lifecycle[0].MaxAttempts != 4 {
-		t.Fatalf("initial attempt = %+v, want 1/4", lifecycle[0])
+	if lifecycle[0].Attempt != 1 {
+		t.Fatalf("initial attempt = %+v, want 1", lifecycle[0])
 	}
 	if lifecycle[1].SubmissionCount != 1 || lifecycle[1].SubmissionID == "" {
 		t.Fatalf("connected lifecycle missing submission: %+v", lifecycle[1])

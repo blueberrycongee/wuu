@@ -4,8 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   atLatestScrollView,
   latestFollowScrollTop,
-  measureActiveConversationForRestore,
-  measureLatestConversationTurns,
   scrollTopForDistanceFromLatest,
   sessionTailSpacePx,
   useAutoFollowScrollContainer,
@@ -414,11 +412,11 @@ describe("useAutoFollowScrollContainer", () => {
 
 describe("latest follow position", () => {
   it("excludes unconsumed submission tail from the follow target", () => {
-    const pane = document.createElement("main");
-    pane.className = "conversation-pane";
-    pane.style.setProperty("--session-tail-space", "480px");
     const node = document.createElement("div");
-    pane.append(node);
+    const content = document.createElement("div");
+    content.className = "scroll-region-content";
+    content.style.paddingBottom = "480px";
+    node.append(content);
     Object.defineProperties(node, {
       scrollHeight: { configurable: true, get: () => 2000 },
       clientHeight: { configurable: true, get: () => 600 },
@@ -464,62 +462,5 @@ describe("latest follow position", () => {
     const distance = latestFollowScrollTop(node) - layout.scrollTop;
     layout.scrollHeight = 2600;
     expect(scrollTopForDistanceFromLatest(node, distance)).toBe(1400);
-  });
-
-  it("forces the last conversation turns to layout before a restore", () => {
-    const node = document.createElement("div");
-    const turns = Array.from({ length: 7 }, () => {
-      const turn = document.createElement("article");
-      turn.className = "turn";
-      node.append(turn);
-      return turn;
-    });
-    const measured: HTMLElement[] = [];
-    for (const turn of turns) {
-      Object.defineProperty(turn, "offsetHeight", {
-        configurable: true,
-        get() {
-          measured.push(turn);
-          return 40;
-        },
-      });
-    }
-
-    measureLatestConversationTurns(node);
-    expect(measured).toEqual(turns.slice(-5));
-  });
-
-  it("records real heights for every turn in the active pane before restore", () => {
-    const node = document.createElement("div");
-    const active = document.createElement("div");
-    active.className = "cached-conversation-pane";
-    active.dataset.active = "true";
-    const hidden = document.createElement("div");
-    hidden.className = "cached-conversation-pane";
-    hidden.dataset.active = "false";
-    const activeTurns = Array.from({ length: 8 }, () => {
-      const turn = document.createElement("article");
-      turn.className = "turn";
-      active.append(turn);
-      return turn;
-    });
-    const hiddenTurn = document.createElement("article");
-    hiddenTurn.className = "turn";
-    hidden.append(hiddenTurn);
-    node.append(active, hidden);
-    for (const turn of [...activeTurns, hiddenTurn]) {
-      Object.defineProperty(turn, "offsetHeight", {
-        configurable: true,
-        get: () => (turn.closest('[data-active="true"]') ? 80 : 260),
-      });
-    }
-
-    measureActiveConversationForRestore(node);
-
-    expect(active.classList.contains("is-reveal-measure")).toBe(false);
-    for (const turn of activeTurns) {
-      expect(turn.style.containIntrinsicBlockSize).toBe("auto 80px");
-    }
-    expect(hiddenTurn.style.containIntrinsicBlockSize).toBe("");
   });
 });

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"charm.land/catwalk/pkg/catwalk"
-	"charm.land/catwalk/pkg/embedded"
 )
 
 func TestBuildCatwalkIndex_SkipsEmptyAndZero(t *testing.T) {
@@ -86,20 +85,6 @@ func TestCatwalkLookup_PackageSingletonHasData(t *testing.T) {
 	}
 }
 
-func TestCatwalkLookup_HandlesEmptyEmbedded(t *testing.T) {
-	// If catwalk's embedded data is unexpectedly empty (shouldn't
-	// happen in practice, but defensive), buildCatwalkIndex must not
-	// panic and lookup must return 0.
-	idx := buildCatwalkIndex(nil)
-	if got := idx.lookup("gpt-4o"); got != 0 {
-		t.Fatalf("nil providers slice: got %d, want 0", got)
-	}
-	idx2 := buildCatwalkIndex([]catwalk.Provider{})
-	if got := idx2.lookup("gpt-4o"); got != 0 {
-		t.Fatalf("empty providers slice: got %d, want 0", got)
-	}
-}
-
 func TestSetCatwalkSync_InstallsRemoteData(t *testing.T) {
 	// Save and restore the package singleton so we don't pollute
 	// other tests in the same run.
@@ -122,14 +107,6 @@ func TestSetCatwalkSync_InstallsRemoteData(t *testing.T) {
 	}
 	if client.calls != 1 {
 		t.Fatalf("expected sync to fetch once, got %d calls", client.calls)
-	}
-}
-
-func TestRefreshCatwalkIndex_NilSyncIsNoOp(t *testing.T) {
-	t.Cleanup(func() { SetCatwalkSync(nil) })
-	SetCatwalkSync(nil)
-	if err := RefreshCatwalkIndex(context.Background()); err != nil {
-		t.Fatalf("expected nil-sync refresh to be no-op, got %v", err)
 	}
 }
 
@@ -161,16 +138,5 @@ func TestRefreshCatwalkIndex_RebuildsAfterRemoteUpdate(t *testing.T) {
 	}
 	if got := catwalkLookup("wuu-refresh-test"); got != 200_000 {
 		t.Fatalf("after refresh: got %d, want 200000", got)
-	}
-}
-
-// Sanity-check that we're actually pulling something non-trivial
-// from the embedded snapshot — failing this would mean catwalk's
-// embedded.GetAll() returned nothing, which usually means the
-// dependency was removed accidentally.
-func TestCatwalkEmbedded_HasProviders(t *testing.T) {
-	providers := embedded.GetAll()
-	if len(providers) == 0 {
-		t.Fatal("expected charm.land/catwalk embedded providers to be non-empty")
 	}
 }

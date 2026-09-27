@@ -16,6 +16,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/anthropic"
 	"github.com/blueberrycongee/wuu/internal/providers/openai"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,10 +39,8 @@ func TestReadFileImageProviderHTTP(t *testing.T) {
 				require.NoError(t, err)
 				if codeMode {
 					part := result.Content[1]
-					result = codeModeResponseResult(codemode.Response{State: "Result", CellID: "cell", Content: []codemode.ContentItem{
-						{Type: "input_image", ImageURL: "data:" + part.MIMEType + ";base64," + part.Data},
-					}})
-					call.Name, call.Arguments = "exec", `{"source":"image(result.content[1])"}`
+					result = codeModeResponseResult(codemode.RunResult{Media: []toolresult.ContentPart{part}})
+					call.Name, call.Arguments = "run_code", `{"code":"await tools.read_file({path:'screen.png'})","description":"Inspect image"}`
 				}
 				bodies := make(chan []byte, 1)
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

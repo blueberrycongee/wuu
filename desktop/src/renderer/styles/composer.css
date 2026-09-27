@@ -418,8 +418,6 @@
      legible against the message canvas instead of reading as a wider haze. */
   --composer-frame-shadow: var(--shadow-composer);
   --composer-surface-bg: var(--wuu-color-surface, #fdfdfe);
-  --composer-image-attachment-button-shadow: var(--shadow-card);
-  --composer-file-attachment-button-hover-bg: #eceee9;
   --composer-textarea-placeholder: var(--ink-muted);
   --composer-textarea-disabled: var(--wuu-color-text-muted, #6d7471);
   --composer-send-button-disabled-text: rgba(255, 255, 255, 0.86);
@@ -562,13 +560,27 @@
   width: 100%;
 }
 
-/* Context controls sit on the canvas; only the active pill gains a surface. */
+/* Two outlined groups sit on the canvas: the project the conversation belongs
+ * to, and where in its repository the work starts. Segments share their
+ * group's border, so hover surfaces fill the group edge to edge. */
 .composer-workspace-bar {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   min-width: 0;
   margin: 0 var(--space-3) var(--space-2);
+}
+
+.composer-workspace-group {
+  display: inline-flex;
+  align-items: stretch;
+  min-width: 0;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+}
+
+.composer-workspace-group :focus-visible {
+  z-index: 1;
 }
 
 .composer-workspace-bar .hero-project-pill-anchor {
@@ -577,11 +589,62 @@
 
 .composer-workspace-bar .hero-project-pill {
   height: auto;
-  min-height: var(--control-row-height);
+  /* The group border completes the shared control row height. */
+  min-height: calc(var(--control-row-height) - 2px);
   gap: var(--space-2);
   padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-pill);
   font-size: var(--font-sm);
+}
+
+.composer-git-controls {
+  max-width: 50%;
+}
+
+.composer-git-controls .hero-project-pill {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.composer-worktree-toggle {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: calc(var(--control-row-height) - 2px);
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-inline-start: 1px solid var(--hairline);
+  border-start-end-radius: var(--radius-pill);
+  border-end-end-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--font-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.composer-worktree-toggle:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.composer-worktree-toggle[aria-pressed="false"]:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+/* On reads like the other composer toggles (Fast mode): accent label and icon. */
+.composer-worktree-toggle[aria-pressed="true"],
+.composer-worktree-toggle[aria-pressed="true"] .hero-project-pill-icon {
+  color: var(--interaction-accent);
+}
+
+.composer-worktree-toggle:disabled {
+  cursor: default;
 }
 
 .composer-workspace-bar .hero-project-pill::before {
@@ -708,11 +771,7 @@
   pointer-events: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .composer-stack,
-  .composer,
-  .composer-pending-drawer,
-  .composer textarea,
+@container style(--motion-reduced: 1) {
   .composer-expand-button {
     transition: none;
   }
@@ -737,6 +796,14 @@
   transform: translateY(calc(var(--composer-expanded-offset) * -1));
 }
 
+.composer-above-input {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+/* Above-input accessories follow the frame as typing grows it upward. */
+.composer-stack .composer-above-input,
 .composer-stack .composer-pending-drawer {
   transform: translateY(calc(var(--composer-expanded-offset) * -1));
 }
@@ -746,13 +813,11 @@
   min-height: var(--composer-collapsed-min-height);
 }
 
-/* Match .composer textarea padding-left so the attachment thumbnail's left
-   edge sits flush with the placeholder/text x-origin. */
+/* Pending attachments above the composer input. */
 .composer-attachments {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 12px var(--composer-text-start) 0;
 }
 
 .composer-file-input {
@@ -778,35 +843,6 @@
   object-fit: cover;
 }
 
-.composer-attachment-remove {
-  padding: 0;
-  line-height: 0;
-}
-
-.composer-attachment-remove svg {
-  display: block;
-}
-
-.composer-image-attachment .composer-attachment-remove {
-  position: absolute;
-  top: -7px;
-  right: -7px;
-  display: grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-pill);
-  background: var(--paper);
-  color: var(--ink);
-  box-shadow: var(--composer-image-attachment-button-shadow);
-}
-
-.composer-image-attachment .composer-attachment-remove:hover {
-  background: var(--surface-2);
-  color: var(--ink);
-}
-
 .composer-file-attachment {
   position: relative;
   display: inline-flex;
@@ -814,7 +850,7 @@
   max-width: min(260px, 100%);
   min-height: 38px;
   gap: 8px;
-  padding: 8px 34px 8px 10px;
+  padding: 8px 10px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   background: var(--surface-1);
@@ -829,25 +865,6 @@
   white-space: nowrap;
   font-size: 0.82rem;
   font-weight: 600;
-}
-
-.composer-file-attachment .composer-attachment-remove {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  display: grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--ink-tertiary);
-}
-
-.composer-file-attachment .composer-attachment-remove:hover {
-  background: var(--composer-file-attachment-button-hover-bg);
-  color: var(--ink);
 }
 
 .composer-input-header {
@@ -935,12 +952,8 @@
 /* A queue acknowledges receipt locally; it never launches the conversation. */
 .composer-pending-arrival,
 .composer-queue-row {
-  animation: composer-pending-received var(--motion-fast) var(--ease-out);
-}
-
-@keyframes composer-pending-received {
-  from { opacity: 0.75; }
-  to { opacity: 1; }
+  --enter-opacity: 0.75;
+  animation: wuu-enter var(--motion-fast) var(--ease-out);
 }
 
 .composer-queue-row:hover .composer-queue-preview,
@@ -999,7 +1012,7 @@
   color: var(--danger);
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .composer-pending-arrival,
   .composer-queue-row {
     animation: none;
@@ -1007,10 +1020,10 @@
   }
 }
 
-.composer-accessory-drawer {
-  --composer-drawer-row-height: 32px;
+/* Accessories above the input tuck their lower edge behind its frame. */
+.composer-accessory-drawer,
+.composer-attachment-tray {
   --composer-drawer-overlap: 8px;
-  --composer-drawer-max-height: min(34dvh, 280px);
   position: relative;
   z-index: 0;
   width: calc(100% - 24px);
@@ -1023,6 +1036,11 @@
   background: var(--conversation-floating-surface-bg);
   box-shadow: var(--shadow-tray);
   color: var(--ink);
+}
+
+.composer-accessory-drawer {
+  --composer-drawer-row-height: 32px;
+  --composer-drawer-max-height: min(34dvh, 280px);
   font-size: 13.5px;
   line-height: 1.5;
 }
@@ -1106,17 +1124,12 @@
   max-height: max(0px, calc(var(--composer-drawer-max-height) - var(--composer-drawer-row-height) - var(--composer-drawer-overlap)));
   overflow-y: auto;
   overscroll-behavior: contain;
-  animation: composer-drawer-reveal 120ms var(--ease-out);
+  --enter-y: 2px;
+  animation: wuu-enter var(--motion-fast) var(--ease-out);
 }
 
-@keyframes composer-drawer-reveal {
-  from { opacity: 0; transform: translateY(2px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .composer-accessory-drawer { transition: none !important; }
-  .composer-drawer-details { animation: none; }
 }
 
 @media (pointer: coarse) {
@@ -1174,18 +1187,6 @@
   top: 14px;
 }
 
-.composer.has-collapsed-prompt textarea {
-  height: 52px;
-  min-height: 52px;
-  padding-top: 8px;
-}
-
-.hero-composer-wrap .composer.has-collapsed-prompt textarea {
-  height: 56px;
-  min-height: 56px;
-  padding-top: 8px;
-}
-
 .document-composer-wrap .composer-stack {
   --composer-collapsed-min-height: 80px;
 }
@@ -1196,10 +1197,10 @@
 
 .document-composer-wrap .composer-accessory-drawer {
   transition:
-    max-height 180ms var(--ease-out),
+    max-height var(--motion-base) var(--ease-out),
     transform var(--motion-fast) var(--ease-out),
     translate var(--motion-fast) var(--ease-out),
-    border-radius 180ms var(--ease-out),
+    border-radius var(--motion-base) var(--ease-out),
     border-color var(--motion-fast) var(--ease-out),
     box-shadow var(--motion-fast) var(--ease-out);
 }
@@ -1230,119 +1231,6 @@
 .document-composer-wrap .composer-bar {
   height: 36px;
   padding-bottom: 2px;
-}
-
-/* Folded long pastes render as compact attachment-like chips above the
-   textarea. The strip shares the file-attachment visual language: wrap,
-   chip-width cards, and a circular remove button overlaying the top-right
-   corner instead of a full-height column. */
-.composer-collapsed-prompt-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  max-height: min(168px, 26vh);
-  box-sizing: border-box;
-  align-items: flex-start;
-  margin: 10px 44px 0 14px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-right: 4px;
-  scrollbar-gutter: stable;
-}
-
-.composer-collapsed-prompt-card {
-  position: relative;
-  display: inline-flex;
-  min-width: 0;
-  max-width: min(260px, 100%);
-  min-height: 38px;
-  flex: 0 1 auto;
-  align-items: center;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  background: var(--surface-1);
-  box-shadow: var(--shadow-soft);
-}
-
-.hero-composer-wrap .composer-collapsed-prompt-list {
-  margin: 14px 52px 0 22px;
-}
-
-.composer-collapsed-prompt-main {
-  display: inline-flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 32px 7px 8px;
-  border: 0;
-  border-radius: inherit;
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-}
-
-.composer-collapsed-prompt-main:hover {
-  background: var(--surface-2);
-}
-
-.composer-collapsed-prompt-main:focus-visible,
-.composer-collapsed-prompt-remove:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
-.composer-collapsed-prompt-icon {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  flex: 0 0 24px;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--ink-muted);
-}
-
-.composer-collapsed-prompt-icon svg {
-  width: var(--icon-size-sm);
-  height: var(--icon-size-sm);
-}
-
-.composer-collapsed-prompt-title {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ink);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-  line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.composer-collapsed-prompt-remove {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  display: grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--ink-tertiary);
-}
-
-.composer-collapsed-prompt-remove:hover {
-  background: var(--composer-file-attachment-button-hover-bg);
-  color: var(--ink);
-}
-
-.composer-collapsed-prompt-remove svg {
-  width: var(--icon-size-sm);
-  height: var(--icon-size-sm);
 }
 
 .composer textarea::placeholder {
@@ -1584,121 +1472,6 @@
   opacity: 0.55;
 }
 
-/*
- * Members affordance in the group composer bar: a flat button with an
- * avatar stack and the member count — no pill border/background, no
- * hover-expanding name list. Details live in the group info panel it
- * opens.
- */
-.group-members-capsule {
-  appearance: none;
-  display: inline-flex;
-  height: 32px;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--ink-muted);
-  cursor: pointer;
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-  line-height: 1;
-  padding: 0 8px;
-  white-space: nowrap;
-  transition:
-    background-color var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out);
-}
-
-.group-members-capsule:hover,
-.group-members-capsule:focus-visible {
-  background: var(--ink-overlay-6);
-  color: var(--ink);
-}
-
-.group-members-capsule-avatars {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-}
-
-.group-members-capsule-avatar,
-.group-members-capsule-more,
-.group-members-capsule-empty {
-  position: relative;
-  display: inline-flex;
-  width: 20px;
-  height: 20px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  border: 1.5px solid var(--paper);
-  border-radius: var(--radius-pill);
-  background: var(--bg, var(--paper));
-  color: var(--ink);
-  font-size: 10px;
-  font-weight: var(--weight-semibold);
-  overflow: hidden;
-}
-
-.group-members-capsule-avatar + .group-members-capsule-avatar,
-.group-members-capsule-more {
-  margin-left: -7px;
-}
-
-.group-members-capsule-avatar img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.group-members-capsule-more {
-  background: var(--surface-3);
-  color: var(--ink-muted);
-  font-size: 9px;
-}
-
-.group-members-capsule-empty svg {
-  width: 12px;
-  height: 12px;
-}
-
-.group-members-capsule-count {
-  flex: 0 0 auto;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .group-members-capsule {
-    transition: none;
-  }
-}
-
-/*
- * Chat-style (DM/group) composer "work focus" chip. Mirrors
- * permission-menu-anchor's width cap so a long project name still
- * truncates via .permission-chip span's existing ellipsis rule instead
- * of pushing the rest of composer-bar-left around. The default "全部
- * 工作区" state instead renders through .composer-tool-button (fixed
- * 32x32, icon only) so it reads as inert as the Paperclip/Slash buttons
- * beside it until the user actually narrows the focus.
- */
-.chat-focus-menu-anchor {
-  position: relative;
-  display: inline-flex;
-  min-width: 0;
-  max-width: 160px;
-  flex: 0 1 auto;
-}
-
-.chat-focus-chip:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
 .composer-spacer {
   min-width: 0;
   flex: 1 1 8px;
@@ -1728,18 +1501,6 @@
     color var(--motion-base) var(--ease-out),
     opacity var(--motion-base) var(--ease-out),
     box-shadow var(--motion-base) var(--ease-out);
-}
-
-.composer-convert-task-button {
-  background: transparent;
-  color: var(--ink-muted);
-  border: 1px solid var(--hairline);
-}
-
-.composer-convert-task-button:hover {
-  background: var(--surface-2);
-  color: var(--info);
-  border-color: var(--info);
 }
 
 /* Send and stop share the utility-button footprint so the primary action
@@ -1827,8 +1588,8 @@
   padding: 0 8px;
   cursor: pointer;
   transition:
-    background-color var(--motion-fast) var(--menu-enter-easing),
-    color var(--motion-fast) var(--menu-enter-easing);
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
 }
 
 .hero-project-pill:hover,
@@ -2064,97 +1825,6 @@
   line-height: var(--line-ui);
   padding: 14px 12px 15px;
   text-align: center;
-}
-
-.mention-menu {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  z-index: 35;
-  display: grid;
-  width: min(460px, 100%);
-  max-height: min(320px, calc(100vh - 190px));
-  overflow: hidden;
-  padding: var(--menu-inset);
-  border: 1px solid var(--hairline);
-  border-radius: var(--menu-shell-radius);
-  background: var(--paper);
-  box-shadow: var(--shadow-pop);
-  transform-origin: bottom center;
-  animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
-}
-
-.mention-list {
-  display: grid;
-  gap: 1px;
-  max-height: 300px;
-  overflow-y: auto;
-  padding-right: 2px;
-}
-
-.mention-item {
-  display: grid;
-  min-height: 44px;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.mention-item:hover,
-.mention-item.selected {
-  background: var(--surface-2);
-}
-
-.mention-avatar {
-  display: grid;
-  width: 18px;
-  height: 18px;
-  place-items: center;
-  overflow: hidden;
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  line-height: var(--line-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mention-copy {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.mention-copy strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ink);
-  font-size: var(--font-menu);
-  font-weight: var(--weight-medium);
-  line-height: var(--line-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mention-copy small,
-.mention-name {
-  overflow: hidden;
-  color: var(--ink-muted);
-  font-size: var(--font-xs);
-  line-height: var(--line-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mention-name {
-  max-width: 112px;
 }
 
 .permission-menu-anchor .access-menu,
@@ -2568,22 +2238,11 @@
   background: var(--surface-2);
   box-shadow: var(--composer-frame-shadow);
   transform-origin: bottom center;
-  animation: composer-camera-enter 420ms cubic-bezier(.16, 1, .3, 1) both;
+  --enter-y: 100%;
+  animation: wuu-enter var(--motion-slower) var(--ease-out) both;
 }
 
 :root[data-host-kind="web"] .composer-camera[data-exiting] { pointer-events: none; }
-
-@keyframes composer-camera-enter {
-  from {
-    opacity: 0;
-    transform: translateY(100%);
-  }
-
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
 
 :root[data-host-kind="web"] .composer-camera-viewport {
   position: relative;
@@ -2670,7 +2329,7 @@
   color: var(--paper);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  transition: transform 140ms ease-out;
+  transition: transform var(--motion-fast) var(--ease-out);
   cursor: pointer;
 }
 
@@ -2691,7 +2350,7 @@
   border-radius: 50%;
   background: var(--paper);
   background-clip: padding-box;
-  transition: transform 140ms ease-out, opacity 140ms ease-out;
+  transition: transform var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out);
   cursor: pointer;
 }
 
@@ -2717,7 +2376,7 @@
   inset: 0;
   background: var(--paper);
   pointer-events: none;
-  animation: composer-camera-flash 200ms ease-out both;
+  animation: composer-camera-flash var(--motion-base) var(--ease-out) both;
 }
 
 @keyframes composer-camera-flash {
@@ -2730,13 +2389,8 @@
   :root[data-host-kind="web"] .composer-camera-dialog { border-radius: 24px; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  :root[data-host-kind="web"] .composer-camera,
-  :root[data-host-kind="web"] .composer-camera-flash {
-    animation: none;
-  }
+@container style(--motion-reduced: 1) {
   :root[data-host-kind="web"] .composer-camera-flash { display: none; }
-  :root[data-host-kind="web"] .composer-camera-controls button { transition: none; }
 }
 
 .composer-workspace-bar > .composer-project-control {
@@ -2746,7 +2400,7 @@
 
 .composer-branch-control {
   min-width: 0;
-  max-width: 50%;
+  flex: 0 1 auto;
 }
 
 .composer-branch-control .hero-project-pill {
@@ -2792,4 +2446,19 @@
     height: 14px;
     flex-basis: 14px;
   }
+}
+
+
+.composer-stop-button svg.composer-stop-progress {
+  width: 14px;
+  height: 14px;
+  fill: none;
+}
+.composer-stop-progress.is-spinning {
+  animation: wuu-spin var(--motion-spin) linear infinite;
+}
+
+.composer-stop-button[aria-busy="true"] {
+  opacity: 1;
+  cursor: progress;
 }

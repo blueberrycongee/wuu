@@ -3,7 +3,6 @@ package session
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 )
 
@@ -137,11 +136,5 @@ func TestUTF8SafeSliceDoesNotSplitRunes(t *testing.T) {
 	part, next, clipped := utf8SafeSlice("汉字测试", 1, 2)
 	if part != "字测" || next != 3 || !clipped {
 		t.Fatalf("slice = %q %d %v", part, next, clipped)
-	}
-	if utf8RuneCount("汉字") != 2 {
-		t.Fatalf("rune count = %d", utf8RuneCount("汉字"))
-	}
-	if !strings.Contains("汉字", "汉") {
-		t.Fatal("expected CJK literal")
 	}
 }

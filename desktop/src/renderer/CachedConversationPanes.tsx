@@ -23,7 +23,7 @@ import {
   ContextCompositionCard,
   type ContextCompositionEntry,
 } from "./ContextCompositionCard";
-import { ForkWorktreeNotice } from "./ForkWorktreeNotice";
+import { WorktreeNotice } from "./WorktreeNotice";
 import {
   InstructionFilesCard,
   type InstructionFilesEntry,
@@ -321,10 +321,10 @@ const CachedConversationPane = memo(function CachedConversationPane({
       onDismiss={onDismissInstructions}
     />
   ));
-  const forkWorktreeNotice =
-    thread.worktree && thread.forked_from_id ? (
-      <ForkWorktreeNotice thread={thread} />
-    ) : null;
+  const worktreeNotice = thread.worktree ? <WorktreeNotice key="worktree-notice" thread={thread} /> : null;
+  // A fork's notice follows its copied history; a conversation started in a
+  // worktree opens with it.
+  const worktreeNoticeFirst = !thread.forked_from_id;
   const latestTurn = threadTurns[threadTurns.length - 1];
   const latestTurnStreamStatus = latestTurn
     ? turnStreamStatus[latestTurn.id]
@@ -345,12 +345,13 @@ const CachedConversationPane = memo(function CachedConversationPane({
               threadID={thread.id}
               turns={threadTurns}
               renderBeforeTurns={[
+                ...(worktreeNoticeFirst ? [worktreeNotice] : []),
                 ...entriesBeforeTurns.map(renderContextEntry),
               ]}
               renderAfterMissingTurn={
                 <>
                   {entriesAfterMissingTurn.map(renderContextEntry)}
-                  {forkWorktreeNotice}
+                  {worktreeNoticeFirst ? null : worktreeNotice}
                   {threadInstructionCards}
                   <PluginConversationCards
                     host={desktopPluginHost}

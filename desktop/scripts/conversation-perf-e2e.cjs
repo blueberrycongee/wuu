@@ -210,7 +210,7 @@ app.whenReady().then(async () => {
   await delay(750);
   const afterDequeue = await evaluate(win, () => ({
     top: document.querySelector(".conversation-pane > .scroll-region").scrollTop,
-    tail: parseFloat(document.querySelector(".conversation-pane").style.getPropertyValue("--session-tail-space")) || 0,
+    tail: parseFloat(document.querySelector(".conversation-pane > .scroll-region > .scroll-region-content").style.paddingBottom) || 0,
     anchor: window.__queueReadingAnchor.getBoundingClientRect().top,
     connected: window.__queueReadingAnchor.isConnected,
   }));

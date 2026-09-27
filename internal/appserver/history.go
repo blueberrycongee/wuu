@@ -360,6 +360,7 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 		ReasoningContent:  msg.ReasoningContent,
 		ReasoningBlocks:   append([]providers.ReasoningBlock(nil), msg.ReasoningBlocks...),
 		ProviderItems:     append([]providers.ProviderItem(nil), msg.ProviderItems...),
+		ContentParts:      append([]providers.MessageContentPart(nil), msg.ContentParts...),
 		DiscoveredTools:   providers.CloneLoadableToolDefinitions(msg.DiscoveredTools),
 		ToolCallID:        msg.ToolCallID,
 		ToolInvocationID:  msg.ToolInvocationID,
@@ -430,8 +431,10 @@ func loadMetaMessages(sessDir, id string) ([]persistedMessage, error) {
 	return nil, nil
 }
 
+// loadPersistedMessages reads the active branch; physical audit readers use
+// session.LoadHistoryRecords directly.
 func loadPersistedMessages(sessDir, id string, includeMeta bool) ([]persistedMessage, error) {
-	records, err := sessionstore.LoadHistoryRecords(sessDir, id, includeMeta)
+	records, err := sessionstore.LoadActiveHistoryRecords(sessDir, id, includeMeta)
 	if err != nil {
 		return nil, fmt.Errorf("load session history: %w", err)
 	}
@@ -477,7 +480,8 @@ func persistedMessagesFromProviderSnapshot(snapshot sessionstore.ProviderHistory
 // displayHistoryAcrossProviderCheckpoint restores the user-visible transcript
 // that predates the current provider checkpoint without putting compacted tool
 // payloads and reasoning back on the wire. The provider snapshot remains the
-// source of truth from its earliest retained record onward.
+// source of truth from its earliest retained record onward. raw must already
+// exclude edited suffixes; an empty checkpoint still preserves that older past.
 func displayHistoryAcrossProviderCheckpoint(raw, provider []persistedMessage) []persistedMessage {
 	firstRetainedSeq := 0
 	for _, rec := range provider {
@@ -485,12 +489,12 @@ func displayHistoryAcrossProviderCheckpoint(raw, provider []persistedMessage) []
 			firstRetainedSeq = rec.Seq
 		}
 	}
-	if firstRetainedSeq <= 1 {
+	if firstRetainedSeq == 1 {
 		return provider
 	}
 	display := make([]persistedMessage, 0, len(raw)+len(provider))
 	for _, rec := range raw {
-		if rec.Seq <= 0 || rec.Seq >= firstRetainedSeq {
+		if rec.Seq <= 0 || (firstRetainedSeq > 0 && rec.Seq >= firstRetainedSeq) {
 			continue
 		}
 		switch strings.ToLower(strings.TrimSpace(rec.Role)) {

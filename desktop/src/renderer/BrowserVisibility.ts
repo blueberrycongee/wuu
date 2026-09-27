@@ -91,53 +91,6 @@ export function pickBoundsRect(
   return hostRect ?? frameRect;
 }
 
-export type ForegroundSnapshot = {
-  threadID?: string;
-  activityID?: string;
-  state?: string;
-};
-
-// Decide whether an observed browser activity should force the browser panel
-// open. Mirrors useThreadBrowserPreview's "switching threads only restores,
-// never force-opens" discipline: a genuine foreground *transition* on the
-// activity currently in view opens the panel; merely switching to a thread
-// whose activity is already foreground does not.
-export function computeForegroundPromotion(
-  previous: ForegroundSnapshot,
-  threadID: string | undefined,
-  activity: ActivitySession | undefined,
-): { open: boolean; snapshot: ForegroundSnapshot } {
-  const snapshot: ForegroundSnapshot = {
-    threadID,
-    activityID: activity?.id,
-    state: activity?.state,
-  };
-  if (previous.threadID !== threadID) {
-    return { open: false, snapshot };
-  }
-  if (!isForegroundControlled(activity)) {
-    return { open: false, snapshot };
-  }
-  const wasForeground =
-    previous.activityID === activity.id &&
-    previous.state === "foreground_controlled";
-  return { open: !wasForeground, snapshot };
-}
-
-// The agent asked to stop showing the page. Closing is limited to that
-// transition: handing control back, or switching threads, leaves the panel
-// where the user put it.
-export function computeForegroundRetreat(
-  previous: ForegroundSnapshot,
-  threadID: string | undefined,
-  activity: ActivitySession | undefined,
-): boolean {
-  if (!threadID || previous.threadID !== threadID) return false;
-  if (previous.state !== "foreground_controlled") return false;
-  if (!activity || previous.activityID !== activity.id) return false;
-  return activity.state === "background_controlled";
-}
-
 // ── DOM measurement (thin, not unit-tested — jsdom rects are all zero) ───────
 
 function measureRect(element: Element | null): BrowserBoundsRect | undefined {
@@ -323,8 +276,6 @@ export function observeBrowserPanelBounds(
 export function useBrowserVisibility({
   onInvalidateWorkdir,
 }: {
-  activeThreadID?: string | undefined;
-  activeBrowserActivity?: ActivitySession | undefined;
   onInvalidateWorkdir: (workdir: string) => void;
 }): void {
   const onInvalidateWorkdirRef = useRef(onInvalidateWorkdir);

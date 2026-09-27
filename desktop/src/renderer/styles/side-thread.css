@@ -66,7 +66,7 @@
   user-select: none !important;
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .side-thread-panel__resizer::before {
     transition: none;
   }

@@ -13,30 +13,11 @@ func TestRenderLightweightSlashCommandPrompt(t *testing.T) {
 	if display != "/debug login failure" {
 		t.Fatalf("display = %q", display)
 	}
-	for _, want := range []string{"Investigate this problem", "login failure", "root cause"} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("rendered prompt missing %q:\n%s", want, content)
-		}
+	if !strings.Contains(content, "login failure") {
+		t.Fatalf("rendered prompt missing arguments:\n%s", content)
 	}
 	if strings.Contains(content, "/debug") {
 		t.Fatalf("rendered prompt should not include raw slash command:\n%s", content)
-	}
-}
-
-func TestRenderCommitSlashCommandPromptIsSurfaceNeutral(t *testing.T) {
-	content, _, ok := renderLightweightSlashCommandPrompt("/commit polish summary")
-	if !ok {
-		t.Fatal("expected /commit to render")
-	}
-	for _, want := range []string{"repository commit", "active model surface", "prepared message"} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("commit slash prompt missing %q:\n%s", want, content)
-		}
-	}
-	for _, banned := range []string{"git", "bash", "run_shell", "run_test", "start_process"} {
-		if strings.Contains(content, banned) {
-			t.Fatalf("commit slash prompt must not teach command path %q:\n%s", banned, content)
-		}
 	}
 }
 

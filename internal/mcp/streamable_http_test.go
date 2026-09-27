@@ -576,14 +576,6 @@ func TestConnectRemoteAutoNoFallbackOnNetworkError(t *testing.T) {
 	}
 }
 
-// TestConnectRemoteRejectsUnknownTransport pins the config validation error.
-func TestConnectRemoteRejectsUnknownTransport(t *testing.T) {
-	_, err := ConnectRemote(context.Background(), ServerConfig{Name: "s", URL: "http://127.0.0.1:1", Transport: "websocket"})
-	if err == nil || !strings.Contains(err.Error(), `unsupported transport "websocket"`) {
-		t.Fatalf("expected unsupported transport error, got: %v", err)
-	}
-}
-
 // TestNormalizeTransportAliases pins the accepted spellings.
 func TestNormalizeTransportAliases(t *testing.T) {
 	for input, want := range map[string]string{

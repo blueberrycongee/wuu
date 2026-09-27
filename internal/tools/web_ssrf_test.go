@@ -96,30 +96,6 @@ func TestWebFetchExecuteBlocksInternal(t *testing.T) {
 	}
 }
 
-func TestNewWebEvidenceMetadata(t *testing.T) {
-	ts := time.Date(2026, 6, 9, 8, 7, 6, 5, time.UTC)
-	ev := newWebEvidence("fetch", "https://example.com/docs", "web_page", ts)
-
-	if !strings.HasPrefix(ev.ID, "web_") || len(ev.ID) != len("web_")+16 {
-		t.Fatalf("unexpected evidence id: %q", ev.ID)
-	}
-	if ev.Kind != "fetch" {
-		t.Fatalf("Kind = %q, want fetch", ev.Kind)
-	}
-	if ev.Source != "https://example.com/docs" {
-		t.Fatalf("Source = %q", ev.Source)
-	}
-	if ev.SourceTier != "web_page" {
-		t.Fatalf("SourceTier = %q, want web_page", ev.SourceTier)
-	}
-	if ev.RetrievedAt != "2026-06-09T08:07:06.000000005Z" {
-		t.Fatalf("RetrievedAt = %q", ev.RetrievedAt)
-	}
-	if ev.VersionMatchedToRepo != "unknown" {
-		t.Fatalf("VersionMatchedToRepo = %q, want unknown", ev.VersionMatchedToRepo)
-	}
-}
-
 func TestWebEvidenceVersionContext(t *testing.T) {
 	ev := newWebEvidence("fetch", "https://example.com/docs", "web_page", time.Now())
 	applyWebEvidenceVersionContext(&ev, "", webPackageContext{
@@ -218,7 +194,6 @@ func TestToolkitWebEvidenceContextBlockTracksMetadataOnly(t *testing.T) {
 		"source=http://127.0.0.1/",
 		"version_matched_to_repo=unknown",
 		"blocked",
-		"web content bodies and search snippets are intentionally omitted",
 	} {
 		if !strings.Contains(block.Content, want) {
 			t.Fatalf("web evidence context missing %q:\n%s", want, block.Content)

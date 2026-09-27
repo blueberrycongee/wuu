@@ -40,8 +40,24 @@ describe("terminal run records", () => {
     expect(isCommandToolCall(commandItem({ type: "agent_message" }))).toBe(false);
   });
 
-  it("extracts retained output and command metadata", () => {
-    const [run] = agentRunsForTurn("thread-1", turn([commandItem()]));
+  it.each([
+    undefined,
+    "ok\n",
+    '{"ok":true}',
+    '{"exit_code":7,"stdout_tail":"not real output"}',
+  ])("extracts retained output and command metadata with model text %j", (modelText) => {
+    const item = commandItem();
+    const stdout = modelText ?? "ok\n";
+    if (modelText !== undefined) {
+      item.result_detail = {
+        content: [{
+          type: "text",
+          text: JSON.stringify({ ...JSON.parse(item.result!), stdout_tail: stdout }),
+        }],
+      };
+      item.result = modelText;
+    }
+    const [run] = agentRunsForTurn("thread-1", turn([item]));
 
     expect(run).toMatchObject({
       kind: "agent_run",
@@ -52,7 +68,7 @@ describe("terminal run records", () => {
       command: "npm test",
       capability: "command.bash",
       status: "completed",
-      stdout: "ok\n",
+      stdout,
       exitCode: 0,
       durationMs: 1234,
       timedOut: false,
@@ -90,10 +106,29 @@ describe("terminal run records", () => {
     expect(missingID.processID).toBeUndefined();
   });
 
+  it("binds bash background starts with a managed process id", () => {
+    const [live] = agentRunsForTurn("thread-1", turn([
+      commandItem({
+        id: "call-background",
+        arguments: JSON.stringify({ command: "npm run dev", run_in_background: true }),
+        display: { kind: "command", capability: "command.background" },
+        result: JSON.stringify({ action: "start", id: "proc-456", status: "running", command: "npm run dev", tty: true }),
+      }),
+    ]));
+
+    expect(live).toMatchObject({ execution: "managed", processID: "proc-456", command: "npm run dev", tty: true });
+  });
+
   it("does not model background process management actions as terminal sessions", () => {
     const runs = agentRunsForTurn("thread-1", turn([
       commandItem({ arguments: JSON.stringify({ action: "read_background", process_id: "proc-123" }) }),
       commandItem({ id: "call-2", arguments: JSON.stringify({ action: "stop_background", process_id: "proc-123" }) }),
+      commandItem({
+        id: "call-3",
+        name: "process",
+        display: { kind: "command", capability: "command.background" },
+        arguments: JSON.stringify({ action: "read", process_id: "proc-456" }),
+      }),
     ]));
 
     expect(runs).toEqual([]);

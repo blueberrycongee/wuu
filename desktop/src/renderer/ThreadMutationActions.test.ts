@@ -214,6 +214,57 @@ describe("createThreadMutationActions", () => {
     expect(toastMocks.showErrorToast).toHaveBeenCalledWith("pin failed");
   });
 
+  it("shows a renamed conversation immediately and keeps the saved title", async () => {
+    const base = thread();
+    const renamed = { ...base, title: "Release notes", preview: "Release notes" };
+    const renameThread = vi.fn().mockResolvedValue({ thread: renamed });
+    Object.defineProperty(window, "wuu", {
+      configurable: true,
+      value: { renameThread },
+    });
+    const harness = buildActions({
+      initial: {
+        ...initialState,
+        activeContext: projectContext(),
+        thread: base,
+        threads: [base],
+        status: "ready",
+      },
+    });
+
+    const pending = harness.actions.renameThread(summary(base), "  Release notes  ");
+
+    expect(harness.getAppState().thread?.title).toBe("Release notes");
+    await pending;
+    expect(renameThread).toHaveBeenCalledWith(base.id, "Release notes");
+    expect(harness.updateCachedSidebarThread).toHaveBeenCalledWith(renamed);
+    expect(harness.getAppState().thread).toEqual(renamed);
+    expect(harness.getAppState().threads[0]).toEqual(renamed);
+  });
+
+  it("restores the previous title when renaming fails", async () => {
+    const base = thread();
+    Object.defineProperty(window, "wuu", {
+      configurable: true,
+      value: { renameThread: vi.fn().mockRejectedValue(new Error("rename failed")) },
+    });
+    const harness = buildActions({
+      initial: {
+        ...initialState,
+        activeContext: projectContext(),
+        thread: base,
+        threads: [base],
+        status: "ready",
+      },
+    });
+
+    await harness.actions.renameThread(summary(base), "Release notes");
+
+    expect(harness.getAppState().thread?.title).toBe(base.title);
+    expect(harness.getAppState().threads[0]?.title).toBe(base.title);
+    expect(toastMocks.showErrorToast).toHaveBeenCalledWith("rename failed");
+  });
+
   it("archives the active thread after confirmation and opens a fallback draft", async () => {
     const context = projectContext();
     const base = thread();

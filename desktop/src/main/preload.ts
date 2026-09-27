@@ -3,22 +3,6 @@ import {
   MESSAGE_FLOW_FONT_SIZE_RANGE,
   isLanguagePreference,
   type DesktopPlatform,
-  type ChannelAgentCreateParams,
-  type ChannelAgentUpdateParams,
-  type ChannelAgentDeleteParams,
-  type ChannelAgentStartParams,
-  type ChannelAgentResetParams,
-  type ChannelAgentCreationResolveParams,
-  type ChannelMessageListParams,
-  type ChannelMessageSendParams,
-  type ChannelRoomCreateParams,
-  type ChannelDirectMessageOpenParams,
-  type ChannelRoomUpdateParams,
-  type ChannelRoomDeleteParams,
-  type ChannelRoomReadParams,
-  type ChannelRoomPreferences,
-  type ChannelTaskCreateParams,
-  type ChannelTaskUpdateParams,
   type MessageFlowFontSize,
   type PopOutInitResult,
   type BrowserCommandParams,
@@ -35,6 +19,7 @@ import {
   type ThreadForkTarget,
   type ThemePreference,
   type LanguagePreference,
+  type UsageOverviewParams,
   type WindowResizeState,
   type WuuDesktopApi,
 } from "../shared/protocol";
@@ -75,16 +60,6 @@ const initialOnboardingComplete = (() => {
     // A missing handler means an older main process. Do not trap the renderer
     // behind a flow it cannot persist.
     return true;
-  }
-})();
-
-const initialChannelRoomPreferences = ((): ChannelRoomPreferences | undefined => {
-  try {
-    return ipcRenderer.sendSync("wuu:channel-room-preferences-get-sync") as
-      | ChannelRoomPreferences
-      | undefined;
-  } catch {
-    return undefined;
   }
 })();
 
@@ -235,6 +210,7 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:system-notification", params),
   getBuildInfo: () => ipcRenderer.invoke("wuu:build-info"),
   polishText: (text: string) => ipcRenderer.invoke("wuu:text-polish", text),
+  useCodexCredentials: (provider) => ipcRenderer.invoke("wuu:config-codex-credentials", provider),
   loadCodexModels: (provider?: string) =>
     ipcRenderer.invoke("wuu:config-codex-models", provider),
   refreshModelCatalog: () =>
@@ -247,6 +223,7 @@ const api: WuuDesktopApi = {
     variant?: string,
     permissionMode?: string,
     threadId?: string,
+    speed?: string,
   ) =>
     ipcRenderer.invoke(
       "wuu:config-model-update",
@@ -257,6 +234,7 @@ const api: WuuDesktopApi = {
       variant,
       permissionMode,
       threadId,
+      speed,
     ),
   removeProvider: (
     provider: string,
@@ -289,52 +267,12 @@ const api: WuuDesktopApi = {
   requestPluginRuntime: (params) => ipcRenderer.invoke("wuu:plugin-runtime-request", params),
   listSkills: () => ipcRenderer.invoke("wuu:skill-list"),
   readSkillContent: (params) => ipcRenderer.invoke("wuu:skill-content", params),
-  channelContinuity: (params) => ipcRenderer.invoke("wuu:channel-continuity", params),
-  listChannelSessions: (params) => ipcRenderer.invoke("wuu:channel-session-list", params),
-  createChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-create", params),
-  readChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-read", params),
-  sendChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-send", params),
-  stopChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-stop", params),
-  resumeChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-resume", params),
-  listNamedAgents: () => ipcRenderer.invoke("wuu:channel-agent-list"),
-  getNamedAgentInsights: () => ipcRenderer.invoke("wuu:channel-agent-insights"),
-  bootstrapChannels: () => ipcRenderer.invoke("wuu:channel-bootstrap"),
-  createNamedAgent: (params: ChannelAgentCreateParams) =>
-    ipcRenderer.invoke("wuu:channel-agent-create", params),
-  updateNamedAgent: (params: ChannelAgentUpdateParams) =>
-    ipcRenderer.invoke("wuu:channel-agent-update", params),
-  deleteNamedAgent: (params: ChannelAgentDeleteParams) =>
-    ipcRenderer.invoke("wuu:channel-agent-delete", params),
-  startNamedAgent: (params: ChannelAgentStartParams) =>
-    ipcRenderer.invoke("wuu:channel-agent-start", params),
-  resetNamedAgent: (params: ChannelAgentResetParams) =>
-    ipcRenderer.invoke("wuu:channel-agent-reset", params),
-  resolveChannelAgentCreation: (params: ChannelAgentCreationResolveParams) =>
-    ipcRenderer.invoke("wuu:channel-agent-creation-resolve", params),
-  listChannelRooms: () => ipcRenderer.invoke("wuu:channel-room-list"),
-  createChannelRoom: (params: ChannelRoomCreateParams) =>
-    ipcRenderer.invoke("wuu:channel-room-create", params),
-  openChannelDirectMessage: (params: ChannelDirectMessageOpenParams) =>
-    ipcRenderer.invoke("wuu:channel-direct-message-open", params),
-  updateChannelRoom: (params: ChannelRoomUpdateParams) =>
-    ipcRenderer.invoke("wuu:channel-room-update", params),
-  deleteChannelRoom: (params: ChannelRoomDeleteParams) =>
-    ipcRenderer.invoke("wuu:channel-room-delete", params),
-  markChannelRoomRead: (params: ChannelRoomReadParams) =>
-    ipcRenderer.invoke("wuu:channel-room-read", params),
-  listChannelMessages: (params: ChannelMessageListParams) =>
-    ipcRenderer.invoke("wuu:channel-message-list", params),
-  sendChannelMessage: (params: ChannelMessageSendParams) =>
-    ipcRenderer.invoke("wuu:channel-message-send", params),
-  createChannelTask: (params: ChannelTaskCreateParams) =>
-    ipcRenderer.invoke("wuu:channel-task-create", params),
-  updateChannelTask: (params: ChannelTaskUpdateParams) =>
-    ipcRenderer.invoke("wuu:channel-task-update", params),
-  getChannelHumanMentionStatus: () =>
-    ipcRenderer.invoke("wuu:channel-human-mention-status"),
-  ackChannelHumanMentions: () =>
-    ipcRenderer.invoke("wuu:channel-human-mention-ack"),
+  returnManagedSession: (params) => ipcRenderer.invoke("wuu:session-control-return", params),
+  takeOverManagedSession: (params) => ipcRenderer.invoke("wuu:session-control-take", params),
+  projectSession: (params) => ipcRenderer.invoke("wuu:project-session", params),
   getSettingsUsage: () => ipcRenderer.invoke("wuu:settings-usage"),
+  getUsageOverview: (params: UsageOverviewParams) =>
+    ipcRenderer.invoke("wuu:usage-overview", params),
   listMCPServers: () => ipcRenderer.invoke("wuu:mcp-list"),
   connectMCPServer: (name: string) => ipcRenderer.invoke("wuu:mcp-connect", name),
   disconnectMCPServer: (name: string) =>
@@ -400,7 +338,6 @@ const api: WuuDesktopApi = {
   },
   initialThemePreference,
   initialLanguagePreference,
-  initialChannelRoomPreferences,
   initialSystemLocale: Intl.DateTimeFormat().resolvedOptions().locale,
   getLanguagePreference: () => ipcRenderer.invoke("wuu:language-preference-get"),
   getPluginConflictPreferences: () => ipcRenderer.invoke("wuu:plugin-conflict-preferences-get"),
@@ -421,8 +358,6 @@ const api: WuuDesktopApi = {
     return () =>
       ipcRenderer.removeListener("wuu:language-preference-changed", listener);
   },
-  updateChannelRoomPreferences: (preferences: ChannelRoomPreferences) =>
-    ipcRenderer.invoke("wuu:channel-room-preferences-set", preferences),
   initialMessageFlowFontSize,
   getThemePreference: () => ipcRenderer.invoke("wuu:theme-preference-get"),
   setThemePreference: (theme: ThemePreference) =>
@@ -494,10 +429,10 @@ const api: WuuDesktopApi = {
   },
   openExternal: (url: string) =>
     ipcRenderer.invoke("wuu:open-external", url),
-  startTurn: (threadId: string, prompt: string, images, files, permissionMode, activeDocument, contentParts, targetContext) =>
-    ipcRenderer.invoke("wuu:turn-start", threadId, prompt, images, files, permissionMode, activeDocument, contentParts, targetContext),
-  queueTurn: (threadId: string, prompt: string, images, clientId, files, permissionMode, activeDocument, contentParts, targetContext) =>
-    ipcRenderer.invoke("wuu:turn-queue", threadId, prompt, images, clientId, files, permissionMode, activeDocument, contentParts, targetContext),
+  startTurn: (threadId: string, prompt: string, images, files, permissionMode, activeDocument, contentParts, targetContext, clientId) =>
+    ipcRenderer.invoke("wuu:turn-start", threadId, prompt, images, files, permissionMode, activeDocument, contentParts, targetContext, clientId),
+  queueTurn: (threadId: string, prompt: string, images, clientId, files, permissionMode, activeDocument, contentParts, targetContext, hold) =>
+    ipcRenderer.invoke("wuu:turn-queue", threadId, prompt, images, clientId, files, permissionMode, activeDocument, contentParts, targetContext, hold),
   updateQueuedTurn: (threadId: string, queueId: string, prompt: string, images, files, contentParts) =>
     ipcRenderer.invoke("wuu:turn-update-queued", threadId, queueId, prompt, images, files, contentParts),
   dequeueTurn: (threadId: string, queueId: string) =>

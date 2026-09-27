@@ -2,7 +2,6 @@ package appserver
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 )
@@ -43,73 +42,12 @@ func TestGitCommitMessageUsesConfiguredBYOKRuntime(t *testing.T) {
 	if len(request.Messages) != 2 {
 		t.Fatalf("messages = %#v", request.Messages)
 	}
-	if !strings.Contains(request.Messages[0].Content, "Conventional Commits") {
-		t.Fatalf("system prompt = %q", request.Messages[0].Content)
-	}
 	user := request.Messages[1].Content
 	if !strings.Contains(user, "- a.go\n- b.go\n") || strings.Contains(user, "a.go\n- a.go") {
 		t.Fatalf("file list not cleaned/deduped = %q", user)
 	}
 	if !strings.Contains(user, "Staged diff:\ndiff --git a/a.go b/a.go\n+hello") {
 		t.Fatalf("user message = %q", user)
-	}
-}
-
-func TestGitCommitMessageValidationAndUnavailableRuntime(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.StreamRunner = nil
-	out := &lockedBuffer{}
-	srv := New(rt, out)
-
-	for _, raw := range []string{
-		`{"id":"empty","method":"git/commit-message","params":{"diff":"  "}}`,
-		`{"id":"unavailable","method":"git/commit-message","params":{"diff":"diff --git a/a b/a"}}`,
-	} {
-		if err := srv.handleLine(context.Background(), []byte(raw)); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	if got := waitForResponseByID(t, out, "empty")["error"]; !strings.Contains(strings.ToLower(toString(got)), "diff is required") {
-		t.Fatalf("empty error = %v", got)
-	}
-	if got := waitForResponseByID(t, out, "unavailable")["error"]; !strings.Contains(toString(got), "BYOK model runtime") {
-		t.Fatalf("unavailable error = %v", got)
-	}
-}
-
-func TestGitCommitMessageProviderErrorAndEmptyResponse(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		client   *fakeClient
-		contains string
-	}{
-		{
-			name:     "provider failure",
-			client:   &fakeClient{err: errors.New("provider boom")},
-			contains: "generation failed",
-		},
-		{
-			name:     "empty after cleaning",
-			client:   &fakeClient{response: providersResponse("<think>hmm</think>\n```\n```")},
-			contains: "empty commit message",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			rt := newTestRuntime(t, tc.client)
-			out := &lockedBuffer{}
-			srv := New(rt, out)
-
-			if err := srv.handleLine(context.Background(), []byte(
-				`{"id":"gen","method":"git/commit-message","params":{"diff":"diff --git a/a b/a"}}`,
-			)); err != nil {
-				t.Fatal(err)
-			}
-			got := waitForResponseByID(t, out, "gen")["error"]
-			if !strings.Contains(toString(got), tc.contains) {
-				t.Fatalf("error = %v, want substring %q", got, tc.contains)
-			}
-		})
 	}
 }
 

@@ -12,7 +12,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
-func newPeerCompletionFixture(t *testing.T) (*Server, *collaborationFlowProvider, *pluginTurnLifecycleClient, *lockedBuffer, string) {
+func newPeerCompletionFixture(t *testing.T) (*Server, *gatedProvider, *pluginTurnLifecycleClient, *lockedBuffer, string) {
 	t.Helper()
 	rt := newTestRuntime(t, &fakeClient{})
 	kit, err := tools.New(rt.RootDir)
@@ -20,7 +20,7 @@ func newPeerCompletionFixture(t *testing.T) (*Server, *collaborationFlowProvider
 		t.Fatal(err)
 	}
 	rt.Toolkit = kit
-	provider := &collaborationFlowProvider{calls: make(chan *collaborationFlowCall, 4)}
+	provider := newGatedProvider(4)
 	rt.StreamRunner.Client = providers.AdaptStreamClient(provider)
 	owner := &pluginTurnLifecycleClient{id: "peers", calls: make(chan pluginhost.AgentTurnLifecycleInput, 8)}
 	rt.PluginHost = pluginhost.New(owner)
@@ -47,9 +47,6 @@ func TestPeerReplyUsesNativeCompletion(t *testing.T) {
 				t.Fatal(err)
 			}
 			call := provider.next(t)
-			if toolDefinitionNames(call.request.Tools)["yield_turn"] {
-				t.Fatal("ordinary session still exposes the removed completion tool")
-			}
 			response := providers.ChatResponse{StopReason: "completed"}
 			switch resolution {
 			case "reply":

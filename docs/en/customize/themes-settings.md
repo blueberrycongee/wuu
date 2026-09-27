@@ -22,7 +22,7 @@ Appearance settings also let you choose UI and code fonts and reduce motion. A f
 
 ## Control commit attribution
 
-In **Settings → General → Behavior**, **Agent commit attribution** controls whether Wuu adds `wuu-agent[bot]` as a co-author to commits it creates. Existing authors and other co-authors are preserved. You can save this setting while a conversation is running; that conversation keeps its current setting until its turn and background work finish, then adopts the new setting when it next runs.
+In **Settings → Runtime → Git**, **Agent commit attribution** controls whether Wuu adds `wuu-agent[bot]` as a co-author to commits it creates. Existing authors and other co-authors are preserved. You can save this setting while a conversation is running; that conversation keeps its current setting until its turn and background work finish, then adopts the new setting when it next runs.
 
 ## Change a plugin setting
 

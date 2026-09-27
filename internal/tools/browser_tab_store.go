@@ -172,31 +172,6 @@ func (s *BrowserTabFileStore) Delete(tabID string) error {
 	return s.saveLocked(file)
 }
 
-// MarkAllDead flags every record's backing WebContentsView as lost. It is the
-// restart-reconciliation primitive: after a core restart the desktop host has
-// already torn down every hidden view, so the persisted tabs must be rebuilt by
-// URL on next use rather than addressed blindly.
-func (s *BrowserTabFileStore) MarkAllDead() error {
-	if err := s.configured(); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	file, err := s.loadLocked()
-	if err != nil {
-		return err
-	}
-	if len(file.Tabs) == 0 {
-		return nil
-	}
-	now := s.now()
-	for i := range file.Tabs {
-		file.Tabs[i].Dead = true
-		file.Tabs[i].UpdatedAt = now
-	}
-	return s.saveLocked(file)
-}
-
 func (s *BrowserTabFileStore) loadLocked() (browserTabsFile, error) {
 	data, err := os.ReadFile(s.path)
 	if err != nil {

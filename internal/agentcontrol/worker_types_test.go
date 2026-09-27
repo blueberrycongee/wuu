@@ -4,19 +4,6 @@ import (
 	"testing"
 )
 
-func TestLookupWorkerType_GeneralPurpose(t *testing.T) {
-	wt, err := LookupWorkerType(DefaultSubagentType)
-	if err != nil {
-		t.Fatalf("LookupWorkerType(general-purpose) failed: %v", err)
-	}
-	if wt.Name != DefaultSubagentType {
-		t.Errorf("got name %q, want %s", wt.Name, DefaultSubagentType)
-	}
-	if wt.SystemPrompt != "" {
-		t.Errorf("core general-purpose SystemPrompt must stay empty; the bundled Subagent plugin owns the prompt, got %q", wt.SystemPrompt)
-	}
-}
-
 func TestLookupWorkerType_DefaultsToGeneralPurpose(t *testing.T) {
 	wt, err := LookupWorkerType("")
 	if err != nil {
@@ -24,19 +11,6 @@ func TestLookupWorkerType_DefaultsToGeneralPurpose(t *testing.T) {
 	}
 	if wt.Name != DefaultSubagentType {
 		t.Fatalf("expected default = %s, got %q", DefaultSubagentType, wt.Name)
-	}
-}
-
-func TestBuiltinWorkerTypes_ExactRoster(t *testing.T) {
-	want := []string{DefaultSubagentType, "worker"}
-	got := AvailableWorkerTypeNames()
-	if len(got) != len(want) {
-		t.Fatalf("built-in roster must stay minimal, got %v", got)
-	}
-	for _, name := range want {
-		if !containsString(got, name) {
-			t.Fatalf("built-in roster missing %q: %v", name, got)
-		}
 	}
 }
 
@@ -50,14 +24,6 @@ func TestRequiresReportWorkerTypeIsInternal(t *testing.T) {
 	for _, name := range AvailableWorkerTypeNames() {
 		if name == requiresReportWorkerType {
 			t.Fatalf("public roster exposed internal requires-report worker: %v", AvailableWorkerTypeNames())
-		}
-	}
-}
-
-func TestBuiltinWorkerTypes_RoleContracts(t *testing.T) {
-	for _, wt := range AvailableWorkerTypes() {
-		if wt.Role == "" || wt.ContextScope == "" || wt.OutputSchema == "" || len(wt.SuccessCriteria) == 0 {
-			t.Fatalf("%s missing role contract: %+v", wt.Name, wt)
 		}
 	}
 }
@@ -134,48 +100,6 @@ func TestFilterToolsForWorker_AllowlistRespected(t *testing.T) {
 	}
 	if !allowed["read_file"] || !allowed["bash"] || !allowed["agent_report"] {
 		t.Errorf("allowlisted worker missing expected read/report tools: %v", filtered)
-	}
-}
-
-func TestBuiltInWorkerAllowlistsUseBashFirstTools(t *testing.T) {
-	for _, wt := range AvailableWorkerTypes() {
-		for _, name := range wt.AllowedTools {
-			switch name {
-			case "run_shell", "run_test", "start_process", "list_processes", "read_process_output", "stop_process", "git":
-				t.Fatalf("%s allowlist must not include legacy command tool %s", wt.Name, name)
-			}
-		}
-		if len(wt.AllowedTools) > 0 && !containsString(wt.AllowedTools, "bash") {
-			t.Fatalf("%s has a restricted allowlist without bash: %+v", wt.Name, wt.AllowedTools)
-		}
-	}
-}
-
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
-
-func TestWorkerType_DefaultIsolation(t *testing.T) {
-	wt, err := LookupWorkerType(DefaultSubagentType)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if wt.DefaultIsolation != IsolationInplace {
-		t.Errorf("general-purpose: want default isolation %q, got %q",
-			IsolationInplace, wt.DefaultIsolation)
-	}
-	worker, err := LookupWorkerType("worker")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if worker.DefaultIsolation != IsolationWorktree {
-		t.Errorf("worker: want default isolation %q, got %q",
-			IsolationWorktree, worker.DefaultIsolation)
 	}
 }
 

@@ -16,6 +16,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { AVATAR_HUES } from "./DefaultAvatar";
+import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
 import { MASCOT_EXIT_MS, useMascotAttention, useMascotPresence } from "./useMascotMotion";
 import {
   useConversationBecameRenderActive,
@@ -293,16 +294,13 @@ export function WuuMascot({
   useEffect(() => {
     if (!svg || !followPointer) return;
 
-    const reducedMotion = typeof window.matchMedia === "function"
-      ? window.matchMedia("(prefers-reduced-motion: reduce)")
-      : null;
     let pointer: { x: number; y: number } | null = null;
     let animationFrame: number | null = null;
 
     const renderGaze = () => {
       animationFrame = null;
       const rect = svg.getBoundingClientRect();
-      if (!pointer || reducedMotion?.matches || rect.width === 0 || rect.height === 0) {
+      if (!pointer || prefersReducedMotion() || rect.width === 0 || rect.height === 0) {
         svg.style.setProperty("--mo-pointer-yaw", "0");
         svg.style.setProperty("--mo-pointer-pitch", "0");
         return;
@@ -345,13 +343,13 @@ export function WuuMascot({
     window.addEventListener("pointermove", handlePointerMove, { passive: true });
     window.addEventListener("blur", resetGaze);
     document.documentElement.addEventListener("mouseleave", resetGaze);
-    reducedMotion?.addEventListener("change", resetGaze);
+    const stopReducedMotion = subscribeReducedMotion(resetGaze);
 
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("blur", resetGaze);
       document.documentElement.removeEventListener("mouseleave", resetGaze);
-      reducedMotion?.removeEventListener("change", resetGaze);
+      stopReducedMotion();
       if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
       svg.style.removeProperty("--mo-pointer-yaw");
       svg.style.removeProperty("--mo-pointer-pitch");

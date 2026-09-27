@@ -23,9 +23,8 @@ import {
   type ComposerFile,
   type ComposerImage,
 } from "./ComposerMessages";
-import { localizedText, translateCurrent } from "./i18n";
-
-type ComposerDraftStatusSetter = (status: string) => void;
+import { translateCurrent } from "./i18n";
+import { showErrorToast } from "./Toast";
 
 // The textarea owns the input-critical value. Publishing its draft to App
 // after an idle window preserves tab/plugin state without making the entire
@@ -97,7 +96,6 @@ export async function buildComposerAttachments(
 
 async function attachComposerAttachmentFilesToDraft(
   files: File[],
-  setStatus: ComposerDraftStatusSetter,
   targets: ComposerAttachmentTargets,
 ): Promise<void> {
   if (files.length === 0) {
@@ -106,7 +104,7 @@ async function attachComposerAttachmentFilesToDraft(
   const imageFiles = files.filter(isComposerImageFile);
   const documentFiles = files.filter(isComposerDocumentFile);
   if (imageFiles.length === 0 && documentFiles.length === 0) {
-    setStatus(localizedText("composer.attachment.imagesAndPdfOnly"));
+    showErrorToast(translateCurrent("composer.attachment.imagesAndPdfOnly"));
     return;
   }
   try {
@@ -117,15 +115,11 @@ async function attachComposerAttachmentFilesToDraft(
       targets.onFile,
     );
   } catch (error) {
-    setStatus(error instanceof Error ? error.message : translateCurrent("composer.attachment.addFailed"));
+    showErrorToast(error, translateCurrent("composer.attachment.addFailed"));
   }
 }
 
-export function useComposerDraftState({
-  setStatus,
-}: {
-  setStatus: ComposerDraftStatusSetter;
-}): ComposerDraftStateController {
+export function useComposerDraftState(): ComposerDraftStateController {
   const [prompt, setPromptState] = useState("");
   const [promptRevision, setPromptRevision] = useState(0);
   const promptRef = useRef("");
@@ -176,7 +170,7 @@ export function useComposerDraftState({
     Record<ConversationPaneID, ComposerDraftState>
   >(initialSplitComposerDrafts);
   async function attachComposerAttachmentFiles(files: File[]): Promise<void> {
-    await attachComposerAttachmentFilesToDraft(files, setStatus, {
+    await attachComposerAttachmentFilesToDraft(files, {
       onImagePlaceholder: (placeholder) =>
         setComposerImages((current) => [...current, placeholder]),
       onImageEncoded: (encoded) =>
@@ -225,7 +219,7 @@ export function useComposerDraftState({
     pane: ConversationPaneID,
     files: File[],
   ): Promise<void> {
-    await attachComposerAttachmentFilesToDraft(files, setStatus, {
+    await attachComposerAttachmentFilesToDraft(files, {
       onImagePlaceholder: (placeholder) =>
         updateSplitComposerDraft(pane, (draft) => ({
           ...draft,

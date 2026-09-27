@@ -5,20 +5,14 @@
   --responsive-secondary-button-text: var(--wuu-color-text, #3c4145);
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .project-add-menu,
   .codex-runtime-menu,
   .composer-project-menu,
   .composer-context-menu,
-  .slash-command-menu,
   .environment-panel,
   .environment-side-menu,
-  .environment-dialog,
-  .view-switch-loading,
-  .thread-list,
-  .thread-list::before,
-  .thread-row,
-  .project-row.active::before {
+  .environment-dialog {
     animation: none;
   }
 }
@@ -174,15 +168,13 @@
   color: var(--wuu-color-text, var(--responsive-secondary-button-text));
 }
 
-@media (prefers-reduced-motion: reduce) {
+@container style(--motion-reduced: 1) {
   .app-shell,
   .sidebar,
-  .sidebar::before,
   .sidebar-content,
   .side-panel-toggle-icon > rect:last-child,
   .titlebar,
   .scroll-region,
-  .composer-wrap,
   .dock-composer-wrap,
   .workspace-right-panel,
   .workspace-right-panel-resizer,
@@ -198,14 +190,9 @@
   .thread-list-collapse-inner,
   .thread-row,
   .thread-row::before,
-  .thread-row-actions,
   .thread-row-action,
   .thread-list-more,
   .collapsible-details,
-  .turn-process-chevron,
-  .turn-process-details,
-  .activity-chevron,
-  .activity-details,
   .message-actions,
   .message-copy-button,
   .sidebar-settings-button,

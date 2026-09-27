@@ -884,3 +884,26 @@ describe("TurnView optimistic placeholder", () => {
     );
   });
 });
+
+
+it("keeps click-to-answer elapsed through acknowledgement and a shorter server duration", async () => {
+  const { createOptimisticTurn, reconcileOptimisticTurns } = await import("./ComposerMessages");
+  const { forgetLocalTurnTiming } = await import("./LocalTurnTiming");
+  vi.useFakeTimers();
+  vi.setSystemTime(100_000);
+  const optimistic = createOptimisticTurn({ id: "render-clock", text: "work", images: [], files: [] }, Date.now());
+  const view = render(optimistic);
+  await act(async () => { vi.advanceTimersByTime(8000); });
+  expect(view.querySelector(".turn-process-meta")?.textContent).toBe("8s");
+  const real: Turn = { ...optimistic, id: "render-real", started_at: new Date(107_000).toISOString() };
+  reconcileOptimisticTurns([optimistic], [real]);
+  rerender(real);
+  expect(view.querySelector(".turn-process-meta")?.textContent).toBe("8s");
+  await act(async () => { vi.advanceTimersByTime(2000); });
+  rerender({ ...real, status: "completed", duration_ms: 3000, items: [...real.items, makeFinalAnswer("done")] });
+  await act(async () => { vi.advanceTimersByTime(ASSISTANT_TURN_PRESENTATION_STABILIZE_MS); });
+  expect(view.querySelector(".turn-process-title")?.textContent).toContain("10 秒");
+  await act(async () => { vi.advanceTimersByTime(5000); });
+  expect(view.querySelector(".turn-process-title")?.textContent).toContain("10 秒");
+  forgetLocalTurnTiming(optimistic.id);
+});

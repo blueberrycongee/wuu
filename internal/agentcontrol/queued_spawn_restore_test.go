@@ -3,7 +3,6 @@ package agentcontrol
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -15,7 +14,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/harness"
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/subagent"
 )
 
 // pinRecordingClient records every ChatRequest it sees. Multiple instances
@@ -428,52 +426,3 @@ func TestQueuedSpawnRestore_ResolverReturnsNilClientForCrossProvider(t *testing.
 		}
 	}
 }
-
-// TestQueuedSpawnRestore_ResolverErrorMatchesSpec ensures the resolver
-// signature returns errors that bubble up cleanly when called with a
-// cross-provider pin whose provider build fails.
-func TestQueuedSpawnRestore_ResolverErrorMatchesSpec(t *testing.T) {
-	dir := t.TempDir()
-	defaultClient := &pinRecordingClient{id: "default"}
-
-	c := pinAgentControl(t, dir, defaultClient)
-	c.SetWorkerProviderName("default-provider")
-	c.SetModelPinClientResolver(func(rawPin string) (string, providers.StreamClient, error) {
-		return "", nil, errors.New("provider build exploded")
-	})
-
-	writeQueuedSpawnPayload(t, c.HarnessStore().Dir(), "worker_andy_empty_pin", "alt-provider:pinned-model", "pinned-model")
-
-	if err := c.restoreQueuedSpawns(); err != nil {
-		t.Fatalf("restoreQueuedSpawns: %v", err)
-	}
-	c.StartQueuedWork()
-	c.maybeStartQueued(context.Background())
-
-	if _, ok := defaultClient.LastRequest(); ok {
-		t.Fatalf("default client must not receive a request when resolver is forced and returns error")
-	}
-
-	tasks, err := c.HarnessStore().ListTasks()
-	if err != nil {
-		t.Fatalf("ListTasks: %v", err)
-	}
-	var found bool
-	for _, task := range tasks {
-		if task.ID == "worker_andy_empty_pin" {
-			found = true
-			if task.Status != harness.TaskStatusFailed {
-				t.Fatalf("task status = %q, want failed (err=%q)", task.Status, task.Error)
-			}
-			if !strings.Contains(task.Error, "provider build exploded") {
-				t.Fatalf("task error should mention resolver error; got %q", task.Error)
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("expected harness task for worker_andy_empty_pin, got %+v", tasks)
-	}
-}
-
-// Reference subagent.Status for use in failure path assertions below.
-var _ = subagent.StatusRunning

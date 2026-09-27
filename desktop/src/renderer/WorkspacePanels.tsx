@@ -25,6 +25,7 @@ import {
 import { restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useDropAnimation, useSortableTransition } from "./SortableMotion";
 import {
   createWindowResizeSettleScheduler,
   isWindowResizing,
@@ -43,6 +44,7 @@ import {
   Plus,
   ShieldCheck,
   Terminal,
+  Project,
   X,
 } from "./WuuIcons";
 import type { ActivitySession, BrowserDockTarget, GitStatusResult, RuntimeContext, Thread } from "../shared/protocol";
@@ -61,6 +63,7 @@ import {
   type WorkspaceFileDirtyState,
 } from "./WorkspaceFiles";
 import { WorkspaceReviewPanel } from "./WorkspaceReviewPanels";
+import { ProjectPanel } from "./ProjectPanels";
 import { WorkspacePanelLoading } from "./LoadingViews";
 import type { WorkspaceFileViewTab, WorkspaceViewTab } from "./WorkspaceViewTabs";
 import { handleTabListKeyDown, useTabCloseFocusRestoration } from "./TabKeyboardNavigation";
@@ -295,6 +298,7 @@ export function WorkspaceRightPanel({
   const fileTreeDragPreviewRef = useRef<HTMLDivElement>(null);
   const fileSplitResizeRef = useRef<{ startX: number; startTreeWidth: number } | null>(null);
   const tabSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const dropAnimation = useDropAnimation();
   const draggingTab = draggingTabID ? tabs.find((tab) => tab.id === draggingTabID) : undefined;
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const { requestFocusRestoration, tabListRef } = useTabCloseFocusRestoration(
@@ -735,7 +739,7 @@ export function WorkspaceRightPanel({
             * no ancestor of it is transformed. React portals keep context,
             * so DndContext still drives the overlay. */}
           {createPortal(
-            <DragOverlay dropAnimation={{ duration: 150, easing: "cubic-bezier(0.16, 1, 0.3, 1)" }}>
+            <DragOverlay dropAnimation={dropAnimation}>
               {draggingTab ? (
                 <WorkspaceViewTabPreview
                   tab={draggingTab}
@@ -993,6 +997,8 @@ export function WorkspaceRightPanel({
                     gitStatus={gitStatus}
                     workspaceRoot={workspaceContext?.cwd}
                   />
+                ) : activeTab.kind === "project" ? (
+                  <ProjectPanel projectID={activeTab.projectID} />
                 ) : activeTab.kind === "plugin" && workbenchController ? (
                   <PluginViewContent
                     controller={workbenchController}
@@ -1117,7 +1123,8 @@ function SortableWorkspaceViewTab({
   const { t } = useI18n();
   const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tab.id,
-    disabled: !reorderable
+    disabled: !reorderable,
+    transition: useSortableTransition(),
   });
   const { role: _dragRole, ...dragAttributes } = attributes;
   const style: CSSProperties = {
@@ -1337,13 +1344,13 @@ function workspaceToolFor(view: WorkspacePanelView): (typeof WORKSPACE_TOOL_ITEM
 }
 
 function workspaceViewTabLabel(tab: WorkspaceViewTab): string {
-  return tab.kind === "diff" || tab.kind === "file" || tab.kind === "plugin" || tab.kind === "artifact"
+  return tab.kind === "diff" || tab.kind === "file" || tab.kind === "plugin" || tab.kind === "artifact" || tab.kind === "project"
     ? tab.title
     : translateCurrent(workspaceToolFor(tab.kind).titleKey);
 }
 
 function workspaceViewTabTooltip(tab: WorkspaceViewTab): string {
-  if (tab.kind === "plugin" || tab.kind === "artifact") return tab.title;
+  if (tab.kind === "plugin" || tab.kind === "artifact" || tab.kind === "project") return tab.title;
   return tab.kind === "diff" || tab.kind === "file"
     ? tab.path
     : translateCurrent(workspaceToolFor(tab.kind).titleKey);
@@ -1352,6 +1359,9 @@ function workspaceViewTabTooltip(tab: WorkspaceViewTab): string {
 function WorkspaceViewTabIcon({ tab, className }: { tab: WorkspaceViewTab; className?: string }): JSX.Element {
   if (tab.kind === "diff") {
     return <FileDiff className={className} />;
+  }
+  if (tab.kind === "project") {
+    return <Project className={className} />;
   }
   if (tab.kind === "file" || tab.kind === "artifact") {
     return <FileText className={className} />;

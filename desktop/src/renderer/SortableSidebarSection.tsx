@@ -2,6 +2,7 @@ import { ChevronRight } from "./WuuIcons";
 import { type CSSProperties, type HTMLAttributes, type ReactNode, useEffect } from "react";
 import { arrayMove, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useSortableTransition } from "./SortableMotion";
 import { SidebarSectionDragHandleContext } from "./SidebarSection";
 
 export type SidebarSectionHeaderInfo = {
@@ -80,7 +81,7 @@ export function SortableSidebarSection({
     transition,
     isDragging,
     isOver,
-  } = useSortable({ id });
+  } = useSortable({ id, transition: useSortableTransition() });
   const { label, iconKind, CollapsedIcon, ExpandedIcon } = headerInfo;
   useEffect(() => {
     registerHeaderInfo(id, { label, iconKind, CollapsedIcon, ExpandedIcon });

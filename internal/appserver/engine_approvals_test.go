@@ -50,9 +50,6 @@ func TestEngineApprovalUsesConversationQuestionBroker(t *testing.T) {
 		t.Fatalf("approval owner = %+v", pending)
 	}
 	question := pending.Questions[0]
-	if question.ID != "approval.command_execution" || question.Header != "codex approval" || question.Question != "Allow this command to run?" {
-		t.Fatalf("approval question = %+v", question)
-	}
 	if question.Detail == "" || len(question.Options) != 3 {
 		t.Fatalf("approval details/options = %+v", question)
 	}

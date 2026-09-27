@@ -32,10 +32,7 @@ export type FloatingMenuOwner =
   | "codex-runtime"
   | "composer-query-history"
   | "minute-clock"
-  | "channel-agent"
-  | "channel-mention"
-  | "managed-sessions"
-  | "collaboration-new"
+  | "project-sessions"
   | "select-menu";
 export type FloatingMenuPlacement = "above" | "below" | "middle";
 export type FloatingMenuAlign = "left" | "center" | "right";
@@ -60,3 +57,12 @@ export function composerStatusText(status: string): string {
 export function composerStatusIsLiveProgress(liveProgress?: boolean): boolean {
   return liveProgress === true;
 }
+
+/** Starting a new conversation in its own Git worktree, and where from. */
+export type ComposerWorktreeControl = {
+  enabled: boolean;
+  /** Branch the worktree starts from; empty starts from the project's HEAD. */
+  startBranch: string;
+  onToggle: () => void;
+  onSelectStartBranch: (branch: string) => void;
+};

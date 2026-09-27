@@ -1,5 +1,6 @@
 import { useEffect, type RefObject } from "react";
 import { isTouchWebShell } from "./ComposerFocus";
+import { prefersReducedMotion } from "./motion";
 import type { SidebarDrawerPhase } from "./SidebarDrawerState";
 
 // Leave controls and horizontal scrollers (code, editors, terminal) in charge
@@ -79,7 +80,7 @@ export function useSidebarTouchGesture(
       // Commit the dragged position before enabling the release transition.
       sidebar.getBoundingClientRect();
       const remaining = Math.abs((toOpen ? width : 0) - position);
-      const duration = matchMedia("(prefers-reduced-motion: reduce)").matches || remaining < 1
+      const duration = prefersReducedMotion() || remaining < 1
         ? 0
         : Math.round(Math.max(80, Math.min(240, remaining / Math.max(0.8, Math.abs(velocity)))));
       shell.dataset.sidebarTouch = "settling";

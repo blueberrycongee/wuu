@@ -12,8 +12,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
 func TestCreateAndList(t *testing.T) {
@@ -66,19 +64,6 @@ func TestHistoryContentPartsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestDirUsesUserHome(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("WUU_HOME", "")
-	t.Setenv("HOME", home)
-	want := statepath.SessionsDir(filepath.Join(home, ".wuu"))
-	if got := Dir(home); got != want {
-		t.Fatalf("Dir() = %q, want %q", got, want)
-	}
-	if got := Dir(""); got != want {
-		t.Fatalf("Dir(empty) = %q, want %q", got, want)
-	}
-}
-
 func TestSQLiteDSNNormalizesPaths(t *testing.T) {
 	const suffix = "?_pragma=busy_timeout%285000%29&_pragma=foreign_keys%281%29&_txlock=immediate"
 
@@ -126,9 +111,14 @@ func TestSetRuntimeSelectionPersists(t *testing.T) {
 		Model:          "k3",
 		Variant:        "high",
 		Effort:         "xhigh",
+		Speed:          "fast",
 		PermissionMode: "read_only",
 	}); err != nil {
 		t.Fatal(err)
+	}
+	saved, ok, err := Find(dir, "thread-model")
+	if err != nil || !ok || saved.Speed != "fast" {
+		t.Fatalf("speed round trip: %+v %v", saved, err)
 	}
 	sessions, err := List(dir, 0)
 	if err != nil {
@@ -961,16 +951,6 @@ func TestConcurrentHistoryRewriteAndAppend(t *testing.T) {
 	}
 	if rewritten != 1 {
 		t.Fatalf("expected one rewritten record, got %d in %+v", rewritten, history)
-	}
-}
-
-func TestSQLiteDatabaseIsCreated(t *testing.T) {
-	dir := t.TempDir()
-	if _, err := Create(dir); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(DBPath(dir)); err != nil {
-		t.Fatalf("expected sqlite database to exist: %v", err)
 	}
 }
 

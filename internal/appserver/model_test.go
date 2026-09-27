@@ -618,34 +618,6 @@ func TestChatMessageItemUsesDisplayContentForUserMessage(t *testing.T) {
 	}
 }
 
-// TestChatMessageItemProjectsAgentNotificationName verifies that the
-// user-message projection surfaces msg.Name onto ThreadItem.Name so the
-// renderer (and any other downstream consumer) can gate on the reliable
-// server-set field rather than sniffing the JSON payload.
-func TestChatMessageItemProjectsAgentNotificationName(t *testing.T) {
-	item := chatMessageItem("item-handoff", providers.ChatMessage{
-		Role:    "user",
-		Name:    "wuu_agent_notification",
-		Content: `{"author":"/root/worker","recipient":"/root","content":"<subagent_notification>\n{\"agent_path\":\"/root/worker\"}\n</subagent_notification>","trigger_turn":true}`,
-	})
-	if item.Name != "wuu_agent_notification" {
-		t.Fatalf("item.Name = %q, want %q", item.Name, "wuu_agent_notification")
-	}
-}
-
-// TestChatMessageItemLeavesNameEmptyForPlainUserMessage guards normal user
-// input: msg.Name == "" must project to ThreadItem.Name == "" so the wire
-// stays free of an empty "name" key (omitempty on the struct field).
-func TestChatMessageItemLeavesNameEmptyForPlainUserMessage(t *testing.T) {
-	item := chatMessageItem("item-plain", providers.ChatMessage{
-		Role:    "user",
-		Content: "do the thing",
-	})
-	if item.Name != "" {
-		t.Fatalf("item.Name = %q, want empty for plain user message", item.Name)
-	}
-}
-
 func TestThreadPreviewUsesDisplayContent(t *testing.T) {
 	preview := threadPreview([]providers.ChatMessage{{
 		Role:           "user",

@@ -6,19 +6,6 @@ import (
 	"testing"
 )
 
-func TestSnapshotIncludesOnlyLightweightRuntimeInfo(t *testing.T) {
-	info := Snapshot("/tmp/project")
-	if info.CWD != "/tmp/project" {
-		t.Fatalf("expected CWD /tmp/project, got %q", info.CWD)
-	}
-	if info.Date == "" {
-		t.Fatal("expected current date")
-	}
-	if info.GitBranch != "" || info.GitStatus != "" {
-		t.Fatalf("default snapshot should not collect git state: %+v", info)
-	}
-}
-
 func TestCompileBlocksRendersTypedContext(t *testing.T) {
 	got := CompileBlocks([]Block{
 		{Kind: BlockProjectRules, Title: "Rules", Source: "AGENTS.md", Content: "Use gofmt.", TokenBudget: 200},
@@ -55,28 +42,6 @@ func TestCompileRequestBlocksOmitsRuntimeMetadata(t *testing.T) {
 		if strings.Contains(got, omitted) {
 			t.Fatalf("compact request block should omit %q:\n%s", omitted, got)
 		}
-	}
-}
-
-func TestDynamicContextProjectionDefaultsActiveAndSupportsOff(t *testing.T) {
-	t.Setenv(DynamicContextProjectionEnvVar, "")
-	if !DynamicContextProjectionEnabled() {
-		t.Fatal("dynamic context projection should default active")
-	}
-	t.Setenv(DynamicContextProjectionEnvVar, "off")
-	if DynamicContextProjectionEnabled() {
-		t.Fatal("off should disable dynamic context projection")
-	}
-}
-
-func TestDerivedContextLedgersDefaultOffAndSupportOn(t *testing.T) {
-	t.Setenv(DerivedContextLedgersEnvVar, "")
-	if DerivedContextLedgersEnabled() {
-		t.Fatal("derived context ledgers should default off")
-	}
-	t.Setenv(DerivedContextLedgersEnvVar, "on")
-	if !DerivedContextLedgersEnabled() {
-		t.Fatal("on should restore derived context ledgers as the A/B baseline")
 	}
 }
 
@@ -149,9 +114,7 @@ func TestFormatSystemReminderUsesTypedEnvironmentBlock(t *testing.T) {
 	for _, want := range []string{
 		"<system-reminder>",
 		"[ENVIRONMENT]",
-		"title: Runtime environment",
 		"source: runtime.snapshot",
-		"# Environment",
 		"- CWD: /repo",
 		"[ADDITIONAL_CONTEXT]",
 		"Use targeted tests.",

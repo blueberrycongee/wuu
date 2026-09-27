@@ -7,7 +7,6 @@ import {
   bundledOnboardingPlugins,
   discoveredCodexCredential,
   hasOnboardingProvider,
-  recommendedOnboardingEngine,
 } from "./FirstRunOnboarding";
 import { I18nProvider } from "./i18n";
 import { ONBOARDING_PLUGIN_ORDER } from "./onboardingCatalog";
@@ -106,13 +105,6 @@ describe("FirstRunOnboarding", () => {
     }])).toBe(true);
   });
 
-  it("recommends Wuu even when an external engine is already installed", () => {
-    expect(recommendedOnboardingEngine([
-      { id: "wuu", enabled: true, binary_ok: true },
-      { id: "codex", enabled: true, binary_ok: true },
-    ])).toBe("wuu");
-  });
-
   it("decorates the runtime mascot with the selected engine mark", async () => {
     const engines: EngineListResult = {
       engines: [
@@ -140,12 +132,8 @@ describe("FirstRunOnboarding", () => {
     await clickButton("开始设置");
     await clickButton("继续");
 
-    expect(container.querySelector("[data-wuu-mascot-follows-pointer]")).not.toBeNull();
     expect(mascotStage()?.getAttribute("data-onboarding-engine")).toBe("wuu");
     expect(mascotStage()?.querySelector("[data-onboarding-engine-mark]")).toBeNull();
-    expect(
-      container.querySelector("[data-testid=onboarding-engine-codex] svg.engine-icon"),
-    ).not.toBeNull();
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>("[data-testid=onboarding-engine-codex]")
@@ -392,9 +380,6 @@ describe("FirstRunOnboarding", () => {
     });
 
     expect(container.querySelector('[data-testid="first-run-onboarding"]')).not.toBeNull();
-    expect(container.textContent).toContain("保持简单，按需生长");
-    expect(container.textContent).not.toContain("欢迎来到 Wuu");
-    expect(container.textContent).not.toContain("Wuu 的核心负责可靠地运行 Agent");
     expect(document.documentElement.dataset.theme).toBe("light");
 
     await clickButton("开始设置");

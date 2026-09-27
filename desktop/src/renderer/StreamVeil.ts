@@ -1,6 +1,7 @@
 // Cadence and range tracking adapted from Zeron (MIT), Copyright (c) 2026 Wing.
 // The complete upstream notice is retained in desktop/vendor/zeron/LICENSE.
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
@@ -91,7 +92,6 @@ export function useStreamVeil(
     const registry = (globalThis.CSS as unknown as { highlights?: HighlightRegistry } | undefined)?.highlights;
     const HighlightClass = (globalThis as unknown as { Highlight?: HighlightConstructor }).Highlight;
     if (!element || !registry || !HighlightClass) return;
-    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
     const style = document.createElement("style");
     document.head.appendChild(style);
     const sheet = style.sheet!;
@@ -116,8 +116,7 @@ export function useStreamVeil(
       colorCache.set(parent, { epoch: colorEpoch, color });
       return color;
     };
-    const disabled = (): boolean => motion.matches ||
-      document.documentElement.dataset.appearanceMotion === "reduce" || document.hidden;
+    const disabled = (): boolean => prefersReducedMotion() || document.hidden;
     const read = (): { nodes: TextEntry[]; flat: string; committed: number } => {
       const nodes: TextEntry[] = [];
       let flat = "";
@@ -204,6 +203,17 @@ export function useStreamVeil(
     const update = (): void => {
       if (disabled()) { clear(); needsBaseline = true; finishIfIdle(); return; }
       if (knownStableBlocks > latestStableBlocks.current) needsBaseline = true;
+      // Promoted ranges are retained on the assumption that stable blocks never
+      // change. A final snapshot that rewrites the streamed text changes those
+      // nodes in place, and their old offsets would throw in Range.setStart;
+      // restart from the rewritten text instead.
+      for (const state of painted.values()) {
+        if (state.entries.some(entry => entry.end <= offset &&
+          (!entry.node.isConnected || entry.node.length !== entry.end - entry.start))) {
+          needsBaseline = true;
+          break;
+        }
+      }
       if (needsBaseline) {
         clear();
         knownStableBlocks = latestStableBlocks.current;
@@ -266,16 +276,16 @@ export function useStreamVeil(
     };
     painter.current = { update };
     const reset = (): void => { colorEpoch += 1; needsBaseline = true; update(); };
-    const preferenceObserver = new MutationObserver(reset);
-    preferenceObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-appearance-motion", "data-theme"] });
-    motion.addEventListener("change", reset);
+    const themeObserver = new MutationObserver(reset);
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    const stopReducedMotion = subscribeReducedMotion(reset);
     document.addEventListener("visibilitychange", reset);
     return () => {
       clear();
       painter.current = null;
       style.remove();
-      preferenceObserver.disconnect();
-      motion.removeEventListener("change", reset);
+      themeObserver.disconnect();
+      stopReducedMotion();
       document.removeEventListener("visibilitychange", reset);
     };
   }, [root, identity, painting, active]);

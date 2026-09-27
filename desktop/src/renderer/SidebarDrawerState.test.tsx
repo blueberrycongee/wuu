@@ -52,7 +52,7 @@ async function renderSidebarDrawerState({
       appShellRef,
       sidebarCollapsed: collapsed,
       resizingSidebar: false,
-      motionMs: 120,
+      motionMs: () => 120,
       closeOnWindowResize,
     });
     latest = drawer;
@@ -107,21 +107,6 @@ describe("useSidebarDrawerState", () => {
     await act(async () => hook.get().openSidebarDrawer());
     await act(async () => vi.advanceTimersByTime(120));
     expect(hook.get().sidebarDrawerPhase).toBe("closed");
-  });
-
-  it("opens immediately for an explicit focus-mode navigation request", async () => {
-    const hook = await renderSidebarDrawerState();
-    const openSidebarDrawerNow = (
-      hook.get() as SidebarDrawerStateController & {
-        openSidebarDrawerNow?: () => void;
-      }
-    ).openSidebarDrawerNow;
-
-    await act(async () => {
-      openSidebarDrawerNow?.();
-    });
-
-    expect(hook.get().sidebarDrawerPhase).toBe("open");
   });
 
   it("only closes the focused-workspace drawer after the pointer is outside it", async () => {

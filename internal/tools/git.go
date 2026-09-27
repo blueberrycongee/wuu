@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/blueberrycongee/wuu/internal/gitattribution"
 )
@@ -463,13 +462,13 @@ func gitExecute(env *Env, ctx context.Context, argsJSON string) (string, error) 
 		if err := rejectSensitiveStagePathspecs(env, ctx, pathspecs); err != nil {
 			return "", err
 		}
-		gitArgs = append([]string{"--no-optional-locks", "add", "--"}, pathspecs...)
+		gitArgs = append([]string{"--no-optional-locks", "--literal-pathspecs", "add", "--"}, pathspecs...)
 	} else if invocation.Subcommand == "restore --staged" {
 		pathspecs, err := normalizeExplicitGitPathspecs(invocation.Subcommand, invocation.Args, true)
 		if err != nil {
 			return "", err
 		}
-		gitArgs = append([]string{"--no-optional-locks", "restore", "--staged", "--"}, pathspecs...)
+		gitArgs = append([]string{"--no-optional-locks", "--literal-pathspecs", "restore", "--staged", "--"}, pathspecs...)
 	} else if invocation.Subcommand == "push" {
 		normalized, err := normalizePushArgs(env, ctx, invocation.Args)
 		if err != nil {
@@ -667,11 +666,11 @@ func latestCommitMetadata(env *Env, ctx context.Context) (gitCommitMetadata, err
 
 // ── structured git status ───────────────────────────────────────────
 
-// gitStatus runs git status --porcelain and returns structured output
+// gitStatus runs git status --porcelain=v1 -z and returns structured output
 // with staged, unstaged, and untracked file lists.
 func gitStatus(env *Env, ctx context.Context, userArgs []string) (string, error) {
-	// Build args: always use --porcelain, forward behavior-relevant flags.
-	gitArgs := []string{"--no-optional-locks", "status", "--porcelain"}
+	// NUL-delimited paths preserve filenames independently of core.quotePath.
+	gitArgs := []string{"--no-optional-locks", "status", "--porcelain=v1", "-z"}
 	for i := 0; i < len(userArgs); i++ {
 		switch userArgs[i] {
 		case "-u", "--untracked-files":
@@ -798,20 +797,41 @@ func gitStatusNextSuggestions(staged, unstaged []fileEntry, untracked []string, 
 	return []string{"review staged changes with git diff --cached before committing"}
 }
 
-// parseGitPorcelain parses `git status --porcelain` output into
+type gitPorcelainRecord struct {
+	x, y         byte
+	path         string
+	originalPath string
+}
+
+// parseGitPorcelainRecords reads porcelain v1 -z records. Renames and copies
+// put the destination first and the source in a second NUL-delimited field.
+func parseGitPorcelainRecords(output string) []gitPorcelainRecord {
+	var records []gitPorcelainRecord
+	for output != "" {
+		var record string
+		record, output, _ = strings.Cut(output, "\x00")
+		if len(record) < 4 {
+			continue
+		}
+		entry := gitPorcelainRecord{x: record[0], y: record[1], path: record[3:]}
+		if strings.ContainsAny(record[:2], "RC") {
+			entry.originalPath, output, _ = strings.Cut(output, "\x00")
+		}
+		records = append(records, entry)
+	}
+	return records
+}
+
+// parseGitPorcelain parses `git status --porcelain=v1 -z` output into
 // structured staged, unstaged, and untracked file lists.
 func parseGitPorcelain(output string) (staged, unstaged []fileEntry, untracked []string) {
 	staged = []fileEntry{}
 	unstaged = []fileEntry{}
 	untracked = []string{}
 
-	for _, line := range strings.Split(output, "\n") {
-		if len(line) < 3 {
-			continue
-		}
-		x := line[0] // index status
-		y := line[1] // worktree status
-		filename := strings.TrimLeftFunc(line[2:], unicode.IsSpace)
+	for _, record := range parseGitPorcelainRecords(output) {
+		x, y := record.x, record.y
+		filename := record.path
 
 		if x == '?' && y == '?' {
 			untracked = append(untracked, filename)
@@ -933,7 +953,9 @@ func normalizeExplicitGitPathspecs(subcmd string, args []string, allowSensitive 
 				return nil, fmt.Errorf("git %s refuses sensitive path %q (%s). Ask the user for explicit secret handling before staging", subcmd, cleaned, reason)
 			}
 		}
-		pathspecs = append(pathspecs, arg)
+		// Validation may trim whitespace conservatively, but execution must use
+		// the exact filename returned by status, including leading/trailing space.
+		pathspecs = append(pathspecs, raw)
 	}
 	if len(pathspecs) == 0 {
 		return nil, fmt.Errorf("git %s requires at least one explicit file or directory path from git status", subcmd)
@@ -1127,7 +1149,7 @@ func changedPathsForPathspecs(env *Env, ctx context.Context, pathspecs []string)
 	runCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	args := append([]string{"--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--"}, pathspecs...)
+	args := append([]string{"--no-optional-locks", "--literal-pathspecs", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--"}, pathspecs...)
 	cmd := exec.CommandContext(runCtx, "git", args...)
 	cmd.Dir = workDir
 	cmd.Env = mergeEnv(os.Environ(), nonInteractiveShellEnv())
@@ -1139,28 +1161,11 @@ func changedPathsForPathspecs(env *Env, ctx context.Context, pathspecs []string)
 }
 
 func parseGitPorcelainZPaths(output string) []string {
-	if output == "" {
-		return nil
-	}
-	records := strings.Split(strings.TrimRight(output, "\x00"), "\x00")
-	paths := make([]string, 0, len(records))
-	for i := 0; i < len(records); i++ {
-		record := records[i]
-		if len(record) < 4 {
-			continue
-		}
-		x := record[0]
-		path := strings.TrimSpace(record[3:])
-		if path != "" {
-			paths = append(paths, path)
-		}
-		if x == 'R' || x == 'C' {
-			i++
-			if i < len(records) {
-				if extra := strings.TrimSpace(records[i]); extra != "" {
-					paths = append(paths, extra)
-				}
-			}
+	var paths []string
+	for _, record := range parseGitPorcelainRecords(output) {
+		paths = append(paths, record.path)
+		if record.originalPath != "" {
+			paths = append(paths, record.originalPath)
 		}
 	}
 	return paths
@@ -1174,7 +1179,7 @@ func gitStatusSnapshot(env *Env, ctx context.Context) (staged, unstaged []fileEn
 	runCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, "git", "--no-optional-locks", "status", "--porcelain")
+	cmd := exec.CommandContext(runCtx, "git", "--no-optional-locks", "status", "--porcelain=v1", "-z")
 	cmd.Dir = workDir
 	cmd.Env = mergeEnv(os.Environ(), nonInteractiveShellEnv())
 	out, err := cmd.Output()

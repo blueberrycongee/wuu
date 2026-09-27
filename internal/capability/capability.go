@@ -42,10 +42,10 @@ const (
 	// across separate shell / test / process / git tools.
 	CapabilityCommandBash Capability = "command.bash"
 
-	// Long-running managed processes. Profiles that hide this
-	// capability still let the runtime manage processes as a backend
-	// for bash background mode; they just do not advertise the
-	// background process actions as part of the model surface.
+	// Long-running managed processes, exposed through the process
+	// tool. Profiles that hide this capability still let the runtime
+	// adopt a timed-out bash run as a background process; they just do
+	// not advertise process management as part of the model surface.
 	CapabilityCommandBackground Capability = "command.background"
 
 	// External network surface.
@@ -63,8 +63,8 @@ const (
 	CapabilityTodo  Capability = "todo"
 	CapabilitySkill Capability = "skill"
 
-	// Persistent named-agent group chat.
-	CapabilityChat Capability = "chat"
+	// A project coordinator's managed sessions.
+	CapabilityProjectSessions Capability = "project.sessions"
 
 	// Extensions (MCP, plugins).
 	CapabilityMCP Capability = "mcp"
@@ -110,7 +110,7 @@ func All() []Capability {
 		CapabilityContextWindow,
 		CapabilityTodo,
 		CapabilitySkill,
-		CapabilityChat,
+		CapabilityProjectSessions,
 		CapabilityMCP,
 		CapabilityDiscovery,
 		CapabilityCodeMode,

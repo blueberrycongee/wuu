@@ -4,8 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -13,10 +12,10 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/codemode"
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolerrors"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -70,55 +69,6 @@ func (c *pluginToolTestClient) Tools() []pluginhost.ToolRegistration {
 func (c *pluginToolTestClient) ExecuteTool(context.Context, pluginhost.ToolExecuteParams) (pluginhost.ToolExecuteResult, error) {
 	c.executed = true
 	return pluginhost.ToolExecuteResult{Result: toolresult.FromText("changed")}, nil
-}
-
-func TestPluginToolExecutorPreservesArgumentsAndRichResult(t *testing.T) {
-	inner := &recordingToolExecutor{}
-	executor := newPluginToolExecutor(inner, pluginhost.New(), "thread-1", "/workspace")
-	rich := executor.(interface {
-		ExecuteResult(context.Context, providers.ToolCall) (toolresult.Result, error)
-	})
-	result, err := rich.ExecuteResult(toolctx.WithStepIndex(context.Background(), 4), providers.ToolCall{ID: "call-1", Name: "demo", Arguments: `{}`})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.TextProjection() != `{}` {
-		t.Fatalf("result = %q", result.TextProjection())
-	}
-	if len(inner.calls) != 1 || inner.calls[0].Arguments != `{}` {
-		t.Fatalf("calls = %+v", inner.calls)
-	}
-}
-
-func TestPluginToolExecutorKeepsConcurrentCallsIsolated(t *testing.T) {
-	inner := &recordingToolExecutor{}
-	executor := newPluginToolExecutor(inner, pluginhost.New(), "thread", "/workspace")
-	rich := executor.(interface {
-		ExecuteResult(context.Context, providers.ToolCall) (toolresult.Result, error)
-	})
-	var wg sync.WaitGroup
-	errs := make(chan error, 2)
-	for _, id := range []string{"a", "b"} {
-		id := id
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			result, err := rich.ExecuteResult(context.Background(), providers.ToolCall{ID: id, Name: "demo", Arguments: `{}`})
-			if err != nil {
-				errs <- err
-				return
-			}
-			want := `{}`
-			if result.TextProjection() != want {
-				errs <- fmt.Errorf("call %s result = %q, want %q", id, result.TextProjection(), want)
-			}
-		}()
-	}
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		t.Fatal(err)
-	}
 }
 
 func TestPluginToolExecutorRejectsInvalidArgumentsBeforeHooksOrExecution(t *testing.T) {
@@ -189,6 +139,28 @@ func TestPluginToolExecutorUsesToolkitBoundaryAndAuthorizer(t *testing.T) {
 	}
 }
 
+func TestPluginToolExecutorAllowsDirectFusionDelegationInPTCMode(t *testing.T) {
+	kit, err := tools.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5", true)
+	service := codemode.NewService(codemode.ServiceConfig{})
+	t.Cleanup(func() { _ = service.Close() })
+	kit.ConfigurePTC(service, config.PTCConfig{Enabled: true})
+	kit.SetFusionDelegate(func(_ context.Context, brief string) (string, error) {
+		if brief != "check integration" {
+			t.Fatalf("unexpected brief: %s", brief)
+		}
+		return `{"outcome":"completed","summary":"done"}`, nil
+	})
+	executor := newPluginToolExecutor(kit, pluginhost.New(), "thread", kit.RootDir())
+	result, err := executor.Execute(context.Background(), providers.ToolCall{Name: "fusion_delegate", Arguments: `{"brief":"check integration"}`})
+	if err != nil || !strings.Contains(result, `"summary":"done"`) {
+		t.Fatalf("PTC delegation through plugin wrapper: %s, %v", result, err)
+	}
+}
+
 func TestPluginToolExecutorRunsInsideToolHooks(t *testing.T) {
 	client := &pluginToolTestClient{}
 	host := pluginhost.New(client)
@@ -231,19 +203,11 @@ func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	kit.SetBoundary(tools.UnconfinedBoundary())
 	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5", true)
-	executable := os.Getenv("WUU_CODE_MODE_HOST")
-	realHost := executable != ""
-	if !realHost {
-		executable = filepath.Join(root, "host")
-	}
-	service, err := codemode.NewService(codemode.ServiceConfig{Executable: executable, SessionID: "plugin-code-mode"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	service := codemode.NewService(codemode.ServiceConfig{})
 	defer service.Close()
-	kit.SetCodeModeService(service)
-	kit.SetCodeModeOnly(true)
+	kit.ConfigurePTC(service, config.PTCConfig{Enabled: true})
 	client := &pluginToolTestClient{}
 	host := pluginhost.New(client)
 	name := host.ToolDefinitions()[0].Name
@@ -269,40 +233,17 @@ func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
 	if !found {
 		t.Fatal("plugin tool missing from nested execution surface")
 	}
-	if realHost {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		runtime := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: executor, RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
-		defer runtime.Cancel()
-		run := func(call providers.ToolCall) string {
-			messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{call}, nil)
-			if err != nil || len(messages) != 1 {
-				t.Fatalf("tool call failed: %+v, %v", messages, err)
-			}
-			return messages[0].Content
-		}
-		args, _ := json.Marshal(map[string]any{"source": `const tool = ALL_TOOLS.find(t => t.description.includes("change state")); if (!tool || !tool.description.includes('"type":"object"')) throw new Error("tool schema missing"); text(await tools[tool.name]({}));`, "yield_time_ms": 1})
-		result := run(providers.ToolCall{ID: "plugin-exec", Name: "exec", Arguments: string(args)})
-		var output strings.Builder
-		for step := 0; ; step++ {
-			output.WriteString(result)
-			var response struct {
-				State  string `json:"state"`
-				CellID string `json:"cell_id"`
-			}
-			if err := json.Unmarshal([]byte(result), &response); err != nil {
-				t.Fatal(err)
-			}
-			if response.State != "Yielded" {
-				break
-			}
-			args, _ = json.Marshal(map[string]any{"cell_id": response.CellID, "yield_time_ms": 1000})
-			result = run(providers.ToolCall{ID: fmt.Sprintf("plugin-wait-%d", step), Name: "wait", Arguments: string(args)})
-		}
-		if !client.executed || !strings.Contains(output.String(), "changed") {
-			t.Fatalf("nested plugin did not execute: %s", output.String())
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	runtime := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: executor, RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
+	defer runtime.Cancel()
+	code := "return await tools[" + strconv.Quote(name) + "]({})"
+	args, _ := json.Marshal(map[string]any{"code": code, "description": "Call plugin"})
+	messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "plugin-run", Name: "run_code", Arguments: string(args)}}, nil)
+	if err != nil || len(messages) != 1 || !client.executed || !strings.Contains(messages[0].Content, "changed") {
+		t.Fatalf("plugin bridge: %+v %v", messages, err)
 	}
+
 	executor = replacePluginToolHost(executor, pluginhost.New(), "thread", root)
 	nested, err = kit.CodeModeNestedSurface()
 	if err != nil {
@@ -312,55 +253,5 @@ func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
 		if def.Name == name {
 			t.Fatal("replaced plugin host left a stale code-mode catalog")
 		}
-	}
-}
-
-func TestCollaborationPluginToolsRequireExplicitOptIn(t *testing.T) {
-	for _, scopes := range [][]string{nil, {"root"}, {"collaboration"}, {"root", "collaboration"}} {
-		client := &pluginToolTestClient{scopes: scopes}
-		host := pluginhost.New(client)
-		name := host.ToolDefinitions()[0].Name
-		executor := &pluginToolExecutor{inner: &recordingToolExecutor{}, host: host, threadID: "identity", scope: "collaboration"}
-		allowed := false
-		for _, scope := range scopes {
-			if scope == "collaboration" {
-				allowed = true
-			}
-		}
-		found := false
-		for _, def := range executor.Definitions() {
-			if def.Name == name {
-				found = true
-			}
-		}
-		if found != allowed {
-			t.Fatalf("tool discovery scopes %v: found=%v", scopes, found)
-		}
-		_, err := executor.Execute(context.Background(), providers.ToolCall{Name: name, Arguments: `{}`})
-		if (err == nil) != allowed || client.executed != allowed {
-			t.Fatalf("tool dispatch scopes %v: %v, executed=%v", scopes, err, client.executed)
-		}
-	}
-}
-
-func TestCollaborationPluginReplacementRemovesRetiredTools(t *testing.T) {
-	s, _ := collaborationTestSession(t)
-	thread := collaborationTestThread(t, s, "plugin-generation", ThreadModelSelection{})
-	client := &pluginToolTestClient{scopes: []string{"collaboration"}}
-	s.PluginHost = pluginhost.New(client)
-	name := s.PluginHost.ToolDefinitions()[0].Name
-	s.ConfigureCollaborationTools(thread, "plugin-generation")
-	if !s.HasCollaborationTools() {
-		t.Fatal("opt-in plugin was not available")
-	}
-	s.PluginHost = pluginhost.New()
-	s.ConfigureCollaborationTools(thread, "plugin-generation")
-	for _, def := range thread.StreamRunner.Tools.Definitions() {
-		if def.Name == name {
-			t.Fatal("retired plugin stayed in conversation tools")
-		}
-	}
-	if _, err := thread.StreamRunner.Tools.Execute(context.Background(), providers.ToolCall{Name: name, Arguments: `{}`}); err == nil || client.executed {
-		t.Fatal("retired plugin remained callable")
 	}
 }

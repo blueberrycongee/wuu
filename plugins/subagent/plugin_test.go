@@ -168,41 +168,6 @@ func (h *captureHost) CallHost(_ context.Context, method string, params, result 
 	return json.Unmarshal([]byte(response), result)
 }
 
-func TestHandlerOwnsSubagentToolsAndPrompt(t *testing.T) {
-	handler := Handler()
-	if foregroundAwaitBudgetMS != 10*60*1000 {
-		t.Fatalf("foreground wait budget = %d, want ten minutes", foregroundAwaitBudgetMS)
-	}
-	if len(handler.Definition.Tools) != 3 {
-		t.Fatalf("tools = %+v", handler.Definition.Tools)
-	}
-	services := map[string]bool{}
-	for _, service := range handler.Definition.RequiredHostServices {
-		services[service.ID] = true
-	}
-	for _, want := range []string{pluginapi.HostServiceSessionCreate, pluginapi.HostServiceSessionSend, pluginapi.HostServiceSessionList, pluginapi.HostServiceSessionCancel} {
-		if !services[want] {
-			t.Fatalf("missing host service %s: %+v", want, handler.Definition.RequiredHostServices)
-		}
-	}
-	for _, tool := range handler.Definition.Tools {
-		if len(tool.ExecutionScopes) != 2 || tool.ExecutionScopes[0] != "root" || tool.ExecutionScopes[1] != "collaboration" {
-			t.Fatalf("tool %q scopes = %v", tool.ID, tool.ExecutionScopes)
-		}
-	}
-	raw, err := handler.InvokeCapability(context.Background(), &captureHost{}, pluginapi.CapabilityCall{Capability: capabilityPrompt})
-	if err != nil || len(raw) == 0 {
-		t.Fatalf("prompt capability = %s, %v", raw, err)
-	}
-	if !strings.Contains(string(raw), "ten minutes") || strings.Contains(string(raw), "five minutes") {
-		t.Fatalf("prompt does not describe the ten-minute foreground budget: %s", raw)
-	}
-	schema, err := json.Marshal(handler.Definition.Tools[0].InputSchema)
-	if err != nil || !strings.Contains(string(schema), "ten minutes") || strings.Contains(string(schema), "five minutes") {
-		t.Fatalf("spawn schema does not describe the ten-minute foreground budget: %s, %v", schema, err)
-	}
-}
-
 func TestSpawnComposesPublicSessionServices(t *testing.T) {
 	host := &captureHost{}
 	result, err := executeTool(context.Background(), host, pluginapi.ToolCall{ToolID: "spawn_agent", SessionID: "parent-1", Arguments: json.RawMessage(`{"description":"Review parser","prompt":"Inspect and report.","subagent_type":"general-purpose","model":"cheap","run_in_background":true}`)})

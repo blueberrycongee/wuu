@@ -18,7 +18,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/statepath"
-	_ "modernc.org/sqlite"
 )
 
 const (
@@ -57,8 +56,10 @@ type Session struct {
 	Model                 string    `json:"model,omitempty"`
 	Variant               string    `json:"variant,omitempty"`
 	Effort                string    `json:"effort,omitempty"`
+	Speed                 string    `json:"speed,omitempty"`
 	PermissionMode        string    `json:"permission_mode,omitempty"`
 	ApproveForMe          bool      `json:"approve_for_me,omitempty"`
+	ProjectRole           string    `json:"project_role,omitempty"`
 	Instructions          string    `json:"instructions,omitempty"`
 	ToolPolicyJSON        string    `json:"tool_policy_json,omitempty"`
 	// EngineID is the agent engine the thread is bound to. Empty reads as
@@ -81,6 +82,7 @@ type Session struct {
 	PinnedAt         *time.Time `json:"pinned_at,omitempty"`
 	FolderID         string     `json:"folder_id,omitempty"`
 	ArchivedAt       *time.Time `json:"archived_at,omitempty"`
+	ArchiveReason    string     `json:"archive_reason,omitempty"`
 	WorktreePath     string     `json:"worktree_path,omitempty"`
 	WorktreeBaseHEAD string     `json:"worktree_base_head,omitempty"`
 	WorktreeBaseRepo string     `json:"worktree_base_repo,omitempty"`
@@ -214,7 +216,8 @@ func CreateManagedForkWithMetadata(sessDir, id, cwd string, fork ForkMetadata, m
 	return createWithMetadata(sessDir, id, cwd, fork, managed)
 }
 
-// CreateWithWorktree initializes a forked session bound to an isolated git worktree.
+// CreateWithWorktree initializes a session bound to an isolated git worktree.
+// Fork metadata is empty for a conversation that starts in a new worktree.
 func CreateWithWorktree(sessDir, id, cwd string, fork ForkMetadata, worktree WorktreeInfo) (*Session, error) {
 	return createWithMetadataAndWorktree(sessDir, id, cwd, fork, worktree, ManagedMetadata{})
 }
@@ -355,10 +358,10 @@ func List(sessDir string, limit int) ([]Session, error) {
 	rows, err := db.Query(`
 SELECT id, created_at, updated_at, title, summary, entries, cwd,
        forked_from_id, forked_from_turn_id, forked_from_item_id,
-       pinned_at, folder_id, archived_at,
+       pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-	       provider, model, variant, effort, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
+	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json,
 	       COALESCE((SELECT m.client_id FROM session_messages m
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -537,10 +540,10 @@ func FindManagedByRequest(sessDir, owner, requestID string) (Session, bool, erro
 	row := db.QueryRow(`
 SELECT id, created_at, updated_at, title, summary, entries, cwd,
        forked_from_id, forked_from_turn_id, forked_from_item_id,
-       pinned_at, folder_id, archived_at,
+       pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-       provider, model, variant, effort, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
+       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json,
        COALESCE((SELECT m.client_id FROM session_messages m
                  WHERE m.session_id = sessions.id AND m.role = 'meta'
                    AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -630,6 +633,20 @@ func SetWorkspaceID(sessDir, id, workspaceID string) (Session, error) {
 	})
 }
 
+// SetProjectMembership moves an ordinary session into a project, or a
+// managed session back out: source and parentID carry the relation, and
+// instructions replace the session's create-time instructions.
+func SetProjectMembership(sessDir, id, source, parentID, instructions string) (Session, error) {
+	return updateMetadata(sessDir, id, false, func(s *Session) {
+		s.Source = strings.TrimSpace(source)
+		s.ParentID = strings.TrimSpace(parentID)
+		s.Instructions = instructions
+		if source == "" {
+			s.ProjectRole = ""
+		}
+	})
+}
+
 func SetSource(sessDir, id, source string) (Session, error) {
 	return updateMetadata(sessDir, id, false, func(s *Session) {
 		s.Source = strings.TrimSpace(source)
@@ -641,6 +658,7 @@ type RuntimeSelection struct {
 	Model          string
 	Variant        string
 	Effort         string
+	Speed          string
 	PermissionMode string
 	ApproveForMe   bool
 }
@@ -660,6 +678,7 @@ func SetRuntimeSelection(sessDir, id string, selection RuntimeSelection) (Sessio
 		s.Model = selection.Model
 		s.Variant = strings.TrimSpace(selection.Variant)
 		s.Effort = strings.TrimSpace(selection.Effort)
+		s.Speed = selection.Speed
 		s.PermissionMode = strings.TrimSpace(selection.PermissionMode)
 		s.ApproveForMe = selection.ApproveForMe
 	})
@@ -725,6 +744,7 @@ func UpdateArchived(sessDir, id string, archived bool) (Session, error) {
 			s.PinnedAt = nil
 		} else {
 			s.ArchivedAt = nil
+			s.ArchiveReason = ""
 		}
 	})
 }
@@ -1008,6 +1028,11 @@ func RewriteHistoryRecords(sessDir, id string, records []HistoryRecord) error {
 	if _, err := tx.Exec(`DELETE FROM session_messages WHERE session_id = ?`, id); err != nil {
 		return fmt.Errorf("clear session history: %w", err)
 	}
+	// Physical replacement reuses sequence addresses, so branch ranges from
+	// the previous transcript no longer identify the same records.
+	if _, err := tx.Exec(`DELETE FROM session_history_retractions WHERE session_id = ?`, id); err != nil {
+		return fmt.Errorf("clear session history retractions: %w", err)
+	}
 	for i, rec := range records {
 		if err := insertHistoryRecordTx(tx, id, i+1, rec); err != nil {
 			return err
@@ -1021,6 +1046,17 @@ func RewriteHistoryRecords(sessDir, id string, records []HistoryRecord) error {
 
 // LoadHistoryRecords returns history records in write order.
 func LoadHistoryRecords(sessDir, id string, includeMeta bool) ([]HistoryRecord, error) {
+	return loadHistoryRecords(sessDir, id, includeMeta, false)
+}
+
+// LoadActiveHistoryRecords returns the current conversation branch, including
+// history released by compaction but excluding suffixes retracted by editing.
+// Use LoadHistoryRecords or ReadHistoryQuery to inspect the physical audit log.
+func LoadActiveHistoryRecords(sessDir, id string, includeMeta bool) ([]HistoryRecord, error) {
+	return loadHistoryRecords(sessDir, id, includeMeta, true)
+}
+
+func loadHistoryRecords(sessDir, id string, includeMeta, activeOnly bool) ([]HistoryRecord, error) {
 	db, err := openStore(sessDir)
 	if err != nil {
 		return nil, err
@@ -1031,7 +1067,7 @@ func LoadHistoryRecords(sessDir, id string, includeMeta bool) ([]HistoryRecord, 
 	} else if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrSessionNotFound, id)
 	}
-	return loadHistoryRecordsDB(db, id, includeMeta)
+	return loadHistoryRecordsDB(db, id, includeMeta, activeOnly)
 }
 
 func openStore(sessDir string) (*sql.DB, error) {
@@ -1228,6 +1264,18 @@ func migrateSchema(db *sql.DB) error {
 			revision INTEGER NOT NULL,
 			state TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS session_inbox (
+			client_id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			related_session_id TEXT NOT NULL DEFAULT '',
+			cause TEXT NOT NULL DEFAULT '',
+			content TEXT NOT NULL,
+			wake INTEGER NOT NULL DEFAULT 1,
+			created_at TEXT NOT NULL,
+			delivered_at TEXT,
+			FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_session_inbox_pending ON session_inbox(session_id, delivered_at, created_at)`,
 		`CREATE TABLE IF NOT EXISTS plugin_turn_lifecycle_outbox (
 				plugin_id TEXT NOT NULL,
 				request_id TEXT NOT NULL,
@@ -1260,6 +1308,13 @@ func migrateSchema(db *sql.DB) error {
 				UNIQUE(session_id, position),
 				FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
 			)`,
+		`CREATE TABLE IF NOT EXISTS session_history_retractions (
+			session_id TEXT NOT NULL,
+			from_seq INTEGER NOT NULL,
+			through_seq INTEGER NOT NULL,
+			PRIMARY KEY(session_id, from_seq, through_seq),
+			FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+		)`,
 		`CREATE TABLE IF NOT EXISTS session_history_checkpoints (
 			session_id      TEXT NOT NULL,
 			version         INTEGER NOT NULL,
@@ -1745,6 +1800,9 @@ WHERE workflow_id = ''`); err != nil {
 	if err := addColumnIfMissing(db, "sessions", "worktree_path", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(db, "sessions", "archive_reason", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	if err := addColumnIfMissing(db, "sessions", "worktree_base_head", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -1772,6 +1830,9 @@ WHERE workflow_id = ''`); err != nil {
 		return err
 	}
 	if err := addColumnIfMissing(db, "sessions", "variant", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(db, "sessions", "speed", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	if err := addColumnIfMissing(db, "sessions", "effort", "TEXT NOT NULL DEFAULT ''"); err != nil {
@@ -1813,6 +1874,37 @@ WHERE workflow_id = ''`); err != nil {
 		return err
 	}
 	if err := addColumnIfMissing(db, "sessions", "seed_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	// Collaboration was removed without migration: its named-agent identity
+	// conversations have no remaining owner, and fences held by its agents
+	// would otherwise label ordinary sessions as managed forever. Remove this
+	// cleanup once no development store predates the removal.
+	if _, err := db.Exec(`DELETE FROM sessions WHERE source LIKE 'named-agent:%'`); err != nil {
+		return fmt.Errorf("remove retired collaboration sessions: %w", err)
+	}
+	if _, err := db.Exec(`DELETE FROM session_controls WHERE manager_id GLOB 'agent-[0-9a-f]*'`); err != nil {
+		return fmt.Errorf("remove retired collaboration session controls: %w", err)
+	}
+	// Project proposals awaiting the user's review were removed before release;
+	// agents deliver worktree changes themselves. Remove this cleanup once no
+	// development store predates the removal.
+	if _, err := db.Exec(`DROP TABLE IF EXISTS session_candidates`); err != nil {
+		return fmt.Errorf("drop retired project candidates: %w", err)
+	}
+	if err := addColumnIfMissing(db, "session_inbox", "cause", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(db, "session_inbox", "wake", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(db, "sessions", "project_role", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_project_side ON sessions(parent_id) WHERE source='project-session' AND project_role='side' AND archived_at IS NULL`); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(db, "session_inbox", "controls_json", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
 		return err
 	}
 	return nil
@@ -1895,10 +1987,10 @@ func insertSessionSQL() string {
 	return `INSERT INTO sessions (
 		id, created_at, updated_at, title, summary, entries, cwd,
 		forked_from_id, forked_from_turn_id, forked_from_item_id,
-		pinned_at, folder_id, archived_at, worktree_path, worktree_base_head, worktree_base_repo,
+		pinned_at, folder_id, archived_at, archive_reason, worktree_path, worktree_base_head, worktree_base_repo,
 		workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-		provider, model, variant, effort, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 }
 
 func updateSessionTx(tx *sql.Tx, sess Session) error {
@@ -1906,22 +1998,23 @@ func updateSessionTx(tx *sql.Tx, sess Session) error {
 UPDATE sessions
 SET created_at = ?, updated_at = ?, title = ?, summary = ?, entries = ?, cwd = ?,
     forked_from_id = ?, forked_from_turn_id = ?, forked_from_item_id = ?,
-    pinned_at = ?, folder_id = ?, archived_at = ?, worktree_path = ?, worktree_base_head = ?, worktree_base_repo = ?,
+    pinned_at = ?, folder_id = ?, archived_at = ?, archive_reason = ?, worktree_path = ?, worktree_base_head = ?, worktree_base_repo = ?,
     workspace_id = ?, source = ?, owner = ?, visibility = ?, parent_id = ?, context_source = ?, creation_request_id = ?,
-	provider = ?, model = ?, variant = ?, effort = ?, permission_mode = ?, approve_for_me = ?, engine_id = ?, engine_ref = ?, instructions = ?, tool_policy_json = ?
+	provider = ?, model = ?, variant = ?, effort = ?, speed = ?, permission_mode = ?, approve_for_me = ?, engine_id = ?, engine_ref = ?, instructions = ?, project_role = ?, tool_policy_json = ?
 WHERE id = ?`,
 		timeText(sess.CreatedAt), timeText(sess.UpdatedAt), sess.Title, sess.Summary, sess.Entries, normalizeCWD(sess.CWD),
 		sess.ForkedFromID, sess.ForkedFromTurnID, sess.ForkedFromItemID,
-		nullableTimeText(sess.PinnedAt), strings.TrimSpace(sess.FolderID), nullableTimeText(sess.ArchivedAt),
+		nullableTimeText(sess.PinnedAt), strings.TrimSpace(sess.FolderID), nullableTimeText(sess.ArchivedAt), sess.ArchiveReason,
 		normalizeCWD(sess.WorktreePath), sess.WorktreeBaseHEAD, normalizeCWD(sess.WorktreeBaseRepo),
 		strings.TrimSpace(sess.WorkspaceID), strings.TrimSpace(sess.Source),
 		strings.TrimSpace(sess.Owner), strings.TrimSpace(sess.Visibility), strings.TrimSpace(sess.ParentID), strings.TrimSpace(sess.ContextSource), strings.TrimSpace(sess.CreationRequestID),
 		strings.TrimSpace(sess.Provider), strings.TrimSpace(sess.Model), strings.TrimSpace(sess.Variant),
-		strings.TrimSpace(sess.Effort), strings.TrimSpace(sess.PermissionMode),
+		strings.TrimSpace(sess.Effort), strings.TrimSpace(sess.Speed), strings.TrimSpace(sess.PermissionMode),
 		boolToInt(sess.ApproveForMe),
 		strings.TrimSpace(sess.EngineID),
 		strings.TrimSpace(sess.EngineRef),
 		sess.Instructions,
+		sess.ProjectRole,
 		strings.TrimSpace(sess.ToolPolicyJSON),
 		sess.ID,
 	)
@@ -1946,6 +2039,7 @@ func sessionArgs(sess Session) []any {
 		nullableTimeText(sess.PinnedAt),
 		strings.TrimSpace(sess.FolderID),
 		nullableTimeText(sess.ArchivedAt),
+		sess.ArchiveReason,
 		normalizeCWD(sess.WorktreePath),
 		sess.WorktreeBaseHEAD,
 		normalizeCWD(sess.WorktreeBaseRepo),
@@ -1959,12 +2053,13 @@ func sessionArgs(sess Session) []any {
 		strings.TrimSpace(sess.Provider),
 		strings.TrimSpace(sess.Model),
 		strings.TrimSpace(sess.Variant),
-		strings.TrimSpace(sess.Effort),
+		strings.TrimSpace(sess.Effort), strings.TrimSpace(sess.Speed),
 		strings.TrimSpace(sess.PermissionMode),
 		boolToInt(sess.ApproveForMe),
 		strings.TrimSpace(sess.EngineID),
 		strings.TrimSpace(sess.EngineRef),
 		sess.Instructions,
+		sess.ProjectRole,
 		strings.TrimSpace(sess.ToolPolicyJSON),
 	}
 }
@@ -1973,10 +2068,10 @@ func findSessionDB(db *sql.DB, id string) (Session, bool, error) {
 	row := db.QueryRow(`
 SELECT id, created_at, updated_at, title, summary, entries, cwd,
        forked_from_id, forked_from_turn_id, forked_from_item_id,
-       pinned_at, folder_id, archived_at,
+       pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-	       provider, model, variant, effort, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
+	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json,
 	       COALESCE((SELECT m.client_id FROM session_messages m
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -1990,10 +2085,10 @@ func findSessionTx(tx *sql.Tx, id string) (Session, bool, error) {
 	row := tx.QueryRow(`
 SELECT id, created_at, updated_at, title, summary, entries, cwd,
        forked_from_id, forked_from_turn_id, forked_from_item_id,
-       pinned_at, folder_id, archived_at,
+       pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-	       provider, model, variant, effort, permission_mode, approve_for_me, engine_id, engine_ref, instructions, tool_policy_json,
+	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json,
 	       COALESCE((SELECT m.client_id FROM session_messages m
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -2025,10 +2120,10 @@ func scanSession(scanner interface {
 	if err := scanner.Scan(
 		&s.ID, &createdAt, &updatedAt, &s.Title, &s.Summary, &s.Entries, &s.CWD,
 		&s.ForkedFromID, &s.ForkedFromTurnID, &s.ForkedFromItemID,
-		&pinnedAt, &s.FolderID, &archivedAt,
+		&pinnedAt, &s.FolderID, &archivedAt, &s.ArchiveReason,
 		&s.WorktreePath, &s.WorktreeBaseHEAD, &s.WorktreeBaseRepo,
 		&s.WorkspaceID, &s.Source, &s.Owner, &s.Visibility, &s.ParentID, &s.ContextSource, &s.CreationRequestID,
-		&s.Provider, &s.Model, &s.Variant, &s.Effort, &s.PermissionMode, &s.ApproveForMe, &s.EngineID, &s.EngineRef, &s.Instructions, &s.ToolPolicyJSON,
+		&s.Provider, &s.Model, &s.Variant, &s.Effort, &s.Speed, &s.PermissionMode, &s.ApproveForMe, &s.EngineID, &s.EngineRef, &s.Instructions, &s.ProjectRole, &s.ToolPolicyJSON,
 		&s.LatestCompletedTurnID,
 	); err != nil {
 		return Session{}, err
@@ -2145,8 +2240,15 @@ const historyRecordsSelect = `
 	       provider, model
 	FROM session_messages`
 
-func loadHistoryRecordsDB(db *sql.DB, id string, includeMeta bool) ([]HistoryRecord, error) {
+func loadHistoryRecordsDB(db *sql.DB, id string, includeMeta, activeOnly bool) ([]HistoryRecord, error) {
 	query := historyRecordsSelect + ` WHERE session_id = ?`
+	if activeOnly {
+		query += ` AND NOT EXISTS (
+			SELECT 1 FROM session_history_retractions r
+			WHERE r.session_id = session_messages.session_id
+			AND session_messages.seq BETWEEN r.from_seq AND r.through_seq
+		)`
+	}
 	args := []any{id}
 	if !includeMeta {
 		query += ` AND lower(role) <> 'meta'`

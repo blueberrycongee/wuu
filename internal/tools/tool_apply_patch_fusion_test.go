@@ -93,7 +93,7 @@ func TestValue(t *testing.T) {
 	}
 	status, command := fusionCommand(t, message.ToolResult)
 	var outcome shellExecutionResult
-	if err := json.Unmarshal([]byte(command.TextProjection()), &outcome); err != nil {
+	if err := json.Unmarshal([]byte(producerText(command)), &outcome); err != nil {
 		t.Fatal(err)
 	}
 	if status != "completed" || outcome.Verification == nil || !outcome.Verification.Passed || outcome.Verification.Scope != "affected" {
@@ -203,7 +203,7 @@ func TestActionFusionCommandFailureKeepsPatch(t *testing.T) {
 			}
 			if mode == "nonzero" {
 				var outcome shellExecutionResult
-				if err := json.Unmarshal([]byte(command.TextProjection()), &outcome); err != nil || outcome.ExitCode != 7 || !strings.Contains(outcome.StdoutTail, "diagnostic") {
+				if err := json.Unmarshal([]byte(producerText(command)), &outcome); err != nil || outcome.ExitCode != 7 || !strings.Contains(outcome.StdoutTail, "diagnostic") {
 					t.Fatalf("lost command failure evidence: %s, %v", command.TextProjection(), err)
 				}
 				log, err := os.ReadFile(outcome.FullLogRef)

@@ -31,11 +31,7 @@ import { showErrorToast } from "./Toast";
 import { beginSessionSwitch, markSessionSwitch } from "./SessionSwitchPerformance";
 
 type SetAppState = (update: SetStateAction<AppState>) => void;
-type ViewSwitchKind = "thread" | "project" | "runtime";
-type GlobalSessionTab = Extract<
-  SessionTab,
-  { kind: "channel-room" | "agents" | "tasks" }
->;
+type ViewSwitchKind = "thread" | "workspace" | "runtime";
 
 export type SessionTabActionsDeps = {
   getAppState: () => AppState;
@@ -64,7 +60,6 @@ export type SessionTabActionsDeps = {
 };
 
 export type SessionTabActions = {
-  openGlobalSessionTab: (tab: GlobalSessionTab) => void;
   selectSessionTab: (tabID: string) => Promise<void>;
   closeSessionTab: (tabID: string) => Promise<void>;
   closeSessionTabs: (tabIDs: string[]) => Promise<void>;
@@ -92,47 +87,6 @@ export function createSessionTabActions(
     return { ...thread, status: "in_progress" };
   }
 
-  function activateGlobalSessionTab(tab: GlobalSessionTab): void {
-    const outgoingDraft = deps.getPrimaryComposerDraft();
-    deps.cancelViewSwitch();
-    deps.resetSplitComposerDrafts();
-    deps.setAppState((current) => {
-      const withDraft = persistActiveSessionTabDraft(current, outgoingDraft);
-      return {
-        ...withDraft,
-        secondaryThread: undefined,
-        activePane: "primary",
-        sessionTabs: ensureSessionTab(withDraft.sessionTabs, tab),
-        activeSessionTabID: tab.id,
-        allowThreadAutoActivation: false,
-        running: false,
-        status: "ready",
-      };
-    });
-  }
-
-  function openGlobalSessionTab(tab: GlobalSessionTab): void {
-    const currentState = deps.getAppState();
-    const existing = currentState.sessionTabs.find((candidate) => candidate.id === tab.id);
-    const target =
-      tab.kind === "channel-room" && existing?.kind === "channel-room"
-        ? {
-            ...tab,
-            prompt: existing.prompt,
-            images: existing.images,
-            files: existing.files,
-          }
-        : tab;
-    if (currentState.activeSessionTabID === target.id) {
-      deps.setAppState((current) => ({
-        ...current,
-        sessionTabs: ensureSessionTab(current.sessionTabs, target),
-      }));
-      return;
-    }
-    activateGlobalSessionTab(target);
-  }
-
   async function selectSessionTab(tabID: string): Promise<void> {
     const currentState = deps.getAppState();
     const tab = currentState.sessionTabs.find((item) => item.id === tabID);
@@ -146,15 +100,6 @@ export function createSessionTabActions(
       ) {
         await deps.selectThread(tab.threadID);
       }
-      return;
-    }
-
-    if (
-      tab.kind === "channel-room" ||
-      tab.kind === "agents" ||
-      tab.kind === "tasks"
-    ) {
-      activateGlobalSessionTab(tab);
       return;
     }
 
@@ -308,9 +253,9 @@ export function createSessionTabActions(
       markSessionSwitch(performanceThreadID, "state-update-issued");
     }
     try {
-      const projectState = await selectRuntimeContext(tab.context);
+      const workspaceState = await selectRuntimeContext(tab.context);
       const [loadedState, resumed] = await Promise.all([
-        loadRuntime(projectState, { resumeLatestThread: false }),
+        loadRuntime(workspaceState, { resumeLatestThread: false }),
         window.wuu.resumeThread(tab.threadID),
       ]);
       markSessionSwitch(performanceThreadID, "runtime-loaded");
@@ -389,26 +334,6 @@ export function createSessionTabActions(
       activeSessionTabID: fallbackTab.id,
     }));
     
-    if (
-      fallbackTab.kind === "channel-room" ||
-      fallbackTab.kind === "agents" ||
-      fallbackTab.kind === "tasks"
-    ) {
-      deps.cancelViewSwitch();
-      deps.resetSplitComposerDrafts();
-      deps.setAppState((current) => ({
-        ...current,
-        sessionTabs: current.sessionTabs,
-        activeSessionTabID: fallbackTab.id,
-        secondaryThread: undefined,
-        activePane: "primary",
-        allowThreadAutoActivation: false,
-        running: false,
-        status: "ready",
-      }));
-      return;
-    }
-
     if (fallbackTab.kind === "skills") {
       const sameContext = sameRuntimeContext(
         fallbackTab.context,
@@ -651,7 +576,6 @@ export function createSessionTabActions(
   }
 
   return {
-    openGlobalSessionTab,
     selectSessionTab,
     closeSessionTab,
     closeSessionTabs,

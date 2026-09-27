@@ -88,6 +88,8 @@ export interface RegisteredPluginViewEntry extends PluginViewEntryDeclaration {
 }
 
 export interface PluginCommandRegistration {
+  /** Host action contexts in which this command can accept structured input. */
+  contexts?: readonly string[];
   id: string;
   title: string;
   order?: number;
@@ -385,6 +387,7 @@ interface SurfaceRecord extends OrderedRecord {
 }
 
 interface CommandRecord extends OrderedRecord {
+  readonly contexts?: readonly string[];
   readonly title: string;
   readonly execute: PluginCommandRegistration["execute"];
 }
@@ -988,6 +991,7 @@ export class PluginHost {
           id,
           order: normalizeOrder(command.order),
           title: requireNonEmpty(command.title, "command title"),
+          contexts: command.contexts ? Object.freeze([...command.contexts]) : undefined,
           execute: command.execute,
           removed: false,
         };
@@ -1790,6 +1794,7 @@ function toPublicCommand(record: CommandRecord): RegisteredPluginCommand {
     generation: record.generation,
     id: record.id,
     title: record.title,
+    contexts: record.contexts,
     order: record.order,
     execute: record.execute,
   });

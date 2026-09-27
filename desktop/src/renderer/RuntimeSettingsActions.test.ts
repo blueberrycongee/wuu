@@ -289,7 +289,7 @@ describe("createRuntimeSettingsActions", () => {
       secondaryThread: secondary, threads: [primary, secondary], running: true, status: "running",
     } });
     await harness.actions.updateProviderSettings("codex", "gpt-5.1");
-    expect(api.updateRuntimeSettings).toHaveBeenCalledWith("codex", "gpt-5.1", undefined, undefined, undefined, undefined, undefined);
+    expect(api.updateRuntimeSettings).toHaveBeenCalledWith("codex", "gpt-5.1", undefined, undefined, undefined, undefined, undefined, undefined);
     expect(harness.getAppState().thread).toBe(primary);
     expect(harness.getAppState().secondaryThread).toBe(secondary);
     expect(harness.getAppState().running).toBe(true);
@@ -341,6 +341,7 @@ describe("createRuntimeSettingsActions", () => {
       "high",
       "read_only",
       "thread-1",
+      undefined,
     );
     expect(harness.getAppState().initialized?.model).toBe("gpt-5.1");
     expect(harness.getAppState().thread?.model).toBe("gpt-5.1");
@@ -408,6 +409,7 @@ describe("createRuntimeSettingsActions", () => {
       "medium",
       "standard",
       "thread-1",
+      undefined,
     );
   });
 
@@ -494,6 +496,7 @@ describe("createRuntimeSettingsActions", () => {
       "high",
       undefined,
       "thread-2",
+      undefined,
     );
     // Only the effort click is stamped on the thread; the workspace-effective
     // result must not overwrite the thread's pinned provider/model.
@@ -556,6 +559,7 @@ describe("createRuntimeSettingsActions", () => {
       "max",
       undefined,
       "thread-1",
+      undefined,
     );
     expect(api.updateRuntimeSettings).toHaveBeenNthCalledWith(
       2,
@@ -566,6 +570,7 @@ describe("createRuntimeSettingsActions", () => {
       "medium",
       undefined,
       "thread-1",
+      undefined,
     );
     expect(harness.getAppState().thread?.model).toBe("model-b");
     expect(harness.getAppState().thread?.model_variant).toBe("medium");
@@ -616,6 +621,7 @@ describe("createRuntimeSettingsActions", () => {
       "",
       undefined,
       "thread-1",
+      undefined,
     );
     expect(harness.getAppState().thread?.model_variant).toBe("");
     expect(harness.getAppState().thread?.model_effort).toBe("");
@@ -825,6 +831,7 @@ describe("createRuntimeSettingsActions", () => {
       undefined,
       "read_only",
       "thread-1",
+      undefined,
     );
     expect(harness.getAppState().thread?.permission_mode).toBe("read_only");
     expect(harness.getRuntimeMenus().accessMenuOpen).toBe(false);
@@ -871,6 +878,7 @@ describe("createRuntimeSettingsActions", () => {
       undefined,
       "read_only",
       "thread-1",
+      undefined,
     );
     expect(harness.getAppState().thread?.model_provider).toBe("anthropic");
     expect(harness.getAppState().thread?.model).toBe("claude-sonnet-4-6");
@@ -909,6 +917,7 @@ describe("createRuntimeSettingsActions", () => {
       undefined,
       "standard",
       "thread-1",
+      undefined,
     );
   });
 
@@ -1007,6 +1016,7 @@ describe("createRuntimeSettingsActions", () => {
       undefined,
       "standard",
       "thread-1",
+      undefined,
     );
     expect(harness.getAppState().thread?.permission_mode).toBe("standard");
     expect(harness.getAppState().thread?.approve_for_me).toBe(true);
@@ -1045,6 +1055,7 @@ describe("createRuntimeSettingsActions", () => {
       undefined,
       undefined,
       "thread-1",
+      undefined,
     );
     expect(harness.getAppState().thread?.approve_for_me).toBe(true);
     expect(harness.getRuntimeMenus().accessMenuOpen).toBe(true);

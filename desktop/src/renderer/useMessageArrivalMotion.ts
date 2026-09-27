@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import { motionDurationMs, prefersReducedMotion } from "./motion";
-import { messageMotionTime } from "./motion";
+import { messageMotionTime, motionCurve, motionDurationMs, prefersReducedMotion, subscribeReducedMotion } from "./motion";
 
 type Arrival = { element: HTMLElement; animation?: Animation };
 type MessageArrival = { id: string; element: HTMLElement; own: boolean; fresh: boolean };
@@ -24,7 +23,7 @@ export function useMessageArrivalMotion() {
     const freshArrivals: MessageArrival[] = [];
     const startTime = messageMotionTime();
     const duration = motionDurationMs("--motion-base", 180);
-    const easing = getComputedStyle(document.documentElement).getPropertyValue("--ease-out").trim() || "cubic-bezier(0.16, 1, 0.3, 1)";
+    const easing = motionCurve("--ease-out", "cubic-bezier(0.16, 1, 0.3, 1)");
     const canAnimate = !reset && !document.hidden && !prefersReducedMotion() && duration > 0;
     for (const { id, element, own, fresh } of messages) {
       const old = reset ? undefined : rows.current.get(id);
@@ -63,12 +62,10 @@ export function useMessageArrivalMotion() {
   }, []);
 
   useEffect(() => {
-    const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-    const reduce = () => { if (media?.matches) cancel(); };
+    const stopReducedMotion = subscribeReducedMotion((reduced) => { if (reduced) cancel(); });
     const hide = () => { if (document.hidden) cancel(); };
-    media?.addEventListener("change", reduce);
     document.addEventListener("visibilitychange", hide);
-    return () => { cancel(); media?.removeEventListener("change", reduce); document.removeEventListener("visibilitychange", hide); };
+    return () => { cancel(); stopReducedMotion(); document.removeEventListener("visibilitychange", hide); };
   }, [cancel]);
 
   return { reconcile, acknowledge, cancel };

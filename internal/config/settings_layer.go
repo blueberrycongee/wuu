@@ -226,12 +226,12 @@ func deepMergeObject(base, overlay map[string]any) {
 // stripProjectUserSettings enforces the trust boundary for every file under a
 // project root, including settings.local.json. A repository must not be able
 // to choose a provider, model, endpoint, credential source, request headers,
-// external memory inputs, or a broader permission mode. Removing the whole
+// external memory inputs, the optional execution runtime, or a broader permission mode. Removing the whole
 // providers and memory objects is an allowlist-by-omission: newly added fields
 // remain protected until they are deliberately classified as project-safe.
 func stripProjectUserSettings(overlay map[string]any, path string) {
 	var ignored []string
-	for _, field := range []string{"default_provider", "providers", "instructions", "memory"} {
+	for _, field := range []string{"default_provider", "providers", "instructions", "memory", "ptc"} {
 		if deleteKeysEqualFold(overlay, field) {
 			ignored = append(ignored, field)
 		}

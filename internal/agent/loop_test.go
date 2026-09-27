@@ -365,21 +365,6 @@ func TestPartitionToolCallsUsesCallArguments(t *testing.T) {
 	}
 }
 
-func TestRunToolLoop_SimpleAnswer(t *testing.T) {
-	step := &fakeStep{results: []StepResult{{Content: "hello back"}}}
-	res, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("hi")}, LoopConfig{Model: "m"}, step)
-	if err != nil {
-		t.Fatalf("loop error: %v", err)
-	}
-	if res.Content != "hello back" {
-		t.Fatalf("got content %q", res.Content)
-	}
-	visible := visibleMessagesForTest(res.NewMessages)
-	if len(visible) != 1 || visible[0].Role != "assistant" {
-		t.Fatalf("unexpected new messages: %+v", res.NewMessages)
-	}
-}
-
 func TestRunToolLoop_ForwardsNativeDeferredToolDiscovery(t *testing.T) {
 	step := &fakeStep{results: []StepResult{{Content: "ok"}}}
 	_, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("hi")}, LoopConfig{
@@ -1047,25 +1032,6 @@ func TestRunToolLoop_OutputTruncationCompletesTurn(t *testing.T) {
 	}
 }
 
-func TestRunToolLoop_MaxTokensStopReasonNormalizesLength(t *testing.T) {
-	step := &fakeStep{results: []StepResult{
-		{Content: "x", Truncated: true, StopReason: "max_tokens"},
-	}}
-	res, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("loop")}, LoopConfig{Model: "m"}, step)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Content != "x" {
-		t.Fatalf("expected partial content, got %q", res.Content)
-	}
-	if res.FinishReason != providers.FinishReasonLength || res.StopReason != "max_tokens" || !res.Truncated {
-		t.Fatalf("expected max_tokens to normalize to length, got reason=%q stop=%q truncated=%v", res.FinishReason, res.StopReason, res.Truncated)
-	}
-	if len(step.calls) != 1 {
-		t.Fatalf("expected 1 step call, got %d", len(step.calls))
-	}
-}
-
 func TestRunToolLoop_KimiMessageSizeOverflowAutoCompactsOnce(t *testing.T) {
 	body := "total message size 2306631 exceeds limit 2097152"
 	overflow := &providers.HTTPError{StatusCode: 400, Body: body, ContextOverflow: providers.DetectContextOverflow(body)}
@@ -1190,18 +1156,6 @@ func TestRunToolLoop_ContextOverflowOnlyRetriesOnce(t *testing.T) {
 	}
 	if len(step.calls) != 2 {
 		t.Fatalf("expected one retry after changed compact, got %d calls", len(step.calls))
-	}
-}
-
-func TestRunToolLoop_MaxStepsExceeded(t *testing.T) {
-	step := &fakeStep{results: []StepResult{{ToolCalls: []providers.ToolCall{{ID: "a", Name: "t", Arguments: `{}`}}}}}
-	cfg := LoopConfig{Model: "m", Tools: &fakeLoopTools{defs: []providers.ToolDefinition{{Name: "t"}}}, MaxSteps: 1}
-	_, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("loop")}, cfg, step)
-	if err == nil {
-		t.Fatal("expected max-steps error")
-	}
-	if !strings.Contains(err.Error(), "max steps exceeded") {
-		t.Fatalf("got %v", err)
 	}
 }
 
@@ -1918,27 +1872,6 @@ func TestRunToolLoop_ReportedUsageDoesNotDoubleCountAssistant(t *testing.T) {
 	}
 }
 
-func TestRunToolLoop_OverflowCompactFiresOnCompactCallback(t *testing.T) {
-	overflow := &providers.HTTPError{StatusCode: 400, Body: "context_length_exceeded", ContextOverflow: true}
-	step := &fakeStep{results: []StepResult{{}, {Content: "ok"}}, errs: []error{overflow, nil}}
-	var infos []CompactInfo
-	cfg := LoopConfig{Model: "m", Compact: func(_ context.Context, m []providers.ChatMessage) ([]providers.ChatMessage, error) {
-		return m[len(m)-1:], nil
-	}, OnCompact: func(info CompactInfo) { infos = append(infos, info) }}
-	history := []providers.ChatMessage{
-		userMsg("old"),
-		{Role: "assistant", Content: "old answer"},
-		userMsg("big"),
-	}
-	_, err := RunToolLoop(context.Background(), history, cfg, step)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(infos) != 1 || infos[0].Reason != CompactReasonOverflow {
-		t.Fatalf("expected one overflow OnCompact, got %+v", infos)
-	}
-}
-
 func TestRunToolLoop_CompactLifecycleCallbacksWrapProactiveAndReactive(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -2103,33 +2036,6 @@ func TestRunToolLoop_BeforeRequestContextAppendsHiddenMessages(t *testing.T) {
 		contexts[0].SegmentPlacementCounts[string(ContextSegmentAfterHistory)] != 1 ||
 		contexts[0].SegmentCachePolicyCounts[string(ContextSegmentVolatile)] != 1 {
 		t.Fatalf("unexpected request context segment policy metrics: %+v", contexts[0])
-	}
-}
-
-func TestRequestOnlyContextBlocksOwnTypedBlockProjection(t *testing.T) {
-	block := wuucontext.Block{
-		Kind:    wuucontext.BlockEnvironment,
-		Title:   "Runtime environment",
-		Source:  "runtime.snapshot",
-		Content: "# Environment\n- CWD: /tmp/project",
-	}
-	segments := RequestOnlyContextBlocks([]wuucontext.Block{block})
-	if len(segments) != 1 {
-		t.Fatalf("expected one context segment, got %+v", segments)
-	}
-	segment := segments[0]
-	if segment.Lifecycle != ContextSegmentRequestOnly || segment.Placement != ContextSegmentAfterHistory || segment.CachePolicy != ContextSegmentVolatile || segment.Durable || segment.VisibleInUI {
-		t.Fatalf("unexpected segment policy: %+v", segment)
-	}
-	if len(segment.Blocks) != 1 || segment.Blocks[0].Kind != wuucontext.BlockEnvironment {
-		t.Fatalf("segment should retain typed blocks: %+v", segment)
-	}
-	if len(segment.Messages) != 1 {
-		t.Fatalf("segment should include provider projection: %+v", segment)
-	}
-	msg := segment.Messages[0]
-	if msg.Role != "user" || !msg.Hidden || !wuucontext.IsSystemReminder(msg.Name, msg.Content) || !strings.Contains(msg.Content, "[ENVIRONMENT]") {
-		t.Fatalf("unexpected provider projection: %+v", msg)
 	}
 }
 

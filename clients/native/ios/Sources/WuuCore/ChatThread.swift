@@ -91,7 +91,7 @@ public struct ChatThread: Identifiable, Sendable {
     private static func project(_ turn: JSONValue) -> [ChatMessage] {
             var messages: [ChatMessage] = turn["items"].array.compactMap { item in
                 guard let type = item["type"].string, ["user_message", "agent_message", "error", "tool_call"].contains(type) else { return nil }
-                let sessionMessage = item["origin"].string == "plugin" && item["presentation_kind"].string == "session_message"
+                let sessionMessage = ["host", "plugin"].contains(item["origin"].string ?? "") && item["presentation_kind"].string == "session_message"
                 // Host-marked model notifications are not user messages; attributed peer messages remain visible.
                 if type == "user_message", !sessionMessage,
                    ["wuu_process_notification", "wuu_agent_notification"].contains(item["name"].string ?? "") { return nil }

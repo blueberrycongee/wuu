@@ -18,6 +18,21 @@ import { showErrorToast } from "./Toast";
 
 type SetAppState = (update: SetStateAction<AppState>) => void;
 
+function withThreadTitle(
+  state: AppState,
+  threadID: string,
+  title: string | undefined,
+): AppState {
+  const apply = <T extends { id: string }>(item: T): T =>
+    item.id === threadID ? { ...item, title } : item;
+  return {
+    ...state,
+    thread: state.thread ? apply(state.thread) : state.thread,
+    secondaryThread: state.secondaryThread ? apply(state.secondaryThread) : state.secondaryThread,
+    threads: state.threads.map((item) => apply(item)),
+  };
+}
+
 export type ThreadMutationActionsDeps = {
   getAppState: () => AppState;
   setAppState: SetAppState;
@@ -33,7 +48,7 @@ export type ThreadMutationActionsDeps = {
 
 export type ThreadMutationActions = {
   toggleThreadPinned: (thread: ThreadSummary) => Promise<void>;
-  renameThread: (thread: ThreadSummary, title: string) => Promise<void>;
+  renameThread: (thread: Pick<ThreadSummary, "id" | "title">, title: string) => Promise<void>;
   archiveThread: (
     thread: ThreadSummary,
     options?: ThreadArchiveOptions,
@@ -158,13 +173,15 @@ export function createThreadMutationActions(
   }
 
   async function renameThread(
-    thread: ThreadSummary,
+    thread: Pick<ThreadSummary, "id" | "title">,
     title: string,
   ): Promise<void> {
     const trimmed = title.trim();
     if (!trimmed) {
       return;
     }
+    const previousTitle = thread.title;
+    deps.setAppState((current) => withThreadTitle(current, thread.id, trimmed));
     try {
       const result = await window.wuu.renameThread(thread.id, trimmed);
       deps.updateCachedSidebarThread(result.thread);
@@ -184,6 +201,15 @@ export function createThreadMutationActions(
         status: current.status === "ready" ? "ready" : current.status,
       }));
     } catch (error) {
+      deps.setAppState((current) => {
+        const visible = current.thread?.id === thread.id
+          ? current.thread
+          : current.threads.find((item) => item.id === thread.id);
+        if (visible?.title !== trimmed) {
+          return current;
+        }
+        return withThreadTitle(current, thread.id, previousTitle);
+      });
       setStatus(desktopApiErrorMessage(error, translateCurrent("thread.rename.failed")));
     }
   }

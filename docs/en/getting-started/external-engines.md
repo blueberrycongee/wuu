@@ -4,7 +4,7 @@ An external engine runs an installed agent with its own account, model configura
 
 ## Install and select an engine
 
-Install the agent or adapter yourself using its upstream instructions. Wuu does not download executables. Open the engine section in Settings to check detection, set an executable path, or disable an engine. Then choose an available engine in the composer, or set the default for new conversations.
+Install the agent or adapter yourself using its upstream instructions. Wuu does not download executables. Open **Settings → Agents** to check detection, set an executable path, or disable an engine. Choose the default for new conversations there, or pick an available engine in the composer.
 
 | Engine ID | Launch command | Integration and setup |
 |---|---|---|
@@ -43,6 +43,14 @@ Use the agent's native CLI login and configuration. For ACP engines, Settings al
 Only agent-driven authentication methods are supported in this UI. If no method is offered, use the native CLI. Discovery is not an account-status check, and a successful login is not a guarantee of model access. Wuu does not import these engines' credentials into a provider.
 
 ACP engines that advertise models on `session/new` appear in the composer picker. Grok uses that first-class model list (`grok-4.7`, `grok-4.6`, `grok-4.5`, …) plus `session/set_model`; effort uses the agent's `thought_level` option when advertised. If an agent advertises nothing, the composer keeps **Agent default**. Wuu does not substitute its own provider catalog. Programmatic ACP model selection requires an advertised model; OpenCode model IDs use `provider/model`. ACP image attachments are written to local files and included as paths in the prompt so the agent can read them with its own tools. Wuu does not send ACP image content blocks, including when the agent advertises image prompt support. Unsupported host HTTP MCP tools still produce an error rather than dropping the tools.
+
+## Fast mode
+
+Open the model popover and use the lightning button when the selected model advertises acceleration. Speed is independent of reasoning effort. It is saved per conversation, remains editable while an existing conversation is idle, and applies to the next request. Reset restores the engine's configured default. `/fast`, `/fast on`, `/fast off`, and `/fast status` use the same selection. Faster processing can consume more credits or cost more; the account and service determine availability.
+
+Codex discovers support from its live model catalog and sends `serviceTier: "fast"` or `"default"` on native thread creation, resume, and turns. The Claude engine passes an explicit `fastMode` setting for eligible Opus selections. ACP discovers per-model select options, including grouped choices, and uses the advertised `fast-mode`, `fast_mode`, `speed`, or `service_tier` ID and values with `session/set_config_option`. Model changes refresh the complete option list before speed is applied. Agents without a recognized advertised selector do not show this control; OpenCode's current integration does not advertise one.
+
+These mappings follow the upstream [Codex speed configuration](https://learn.chatgpt.com/docs/agent-configuration/speed), [native CLI Fast mode](https://code.claude.com/docs/en/fast-mode), [ACP session configuration contract](https://agentclientprotocol.com/protocol/v1/session-config-options), and [Codex ACP adapter](https://github.com/agentclientprotocol/codex-acp/blob/main/src/FastModeConfig.ts). A saved choice records what Wuu requests, not a guarantee that the upstream service will grant accelerated processing.
 
 ## Permissions and session recovery
 

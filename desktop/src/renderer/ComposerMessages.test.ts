@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   OPTIMISTIC_TURN_ID_PREFIX,
+  createOptimisticTurn,
   dropOptimisticTurn,
   interruptLatestOptimisticTurn,
   threadHasAcceptedComposerMessage,
 } from "./ComposerMessages";
 import type { Turn } from "../shared/protocol";
+import { forgetLocalTurnTiming, localTurnTiming } from "./LocalTurnTiming";
 
 function turnWithUserText(id: string, text: string): Turn {
   return {
@@ -63,6 +65,13 @@ describe("threadHasAcceptedComposerMessage", () => {
 });
 
 describe("settling optimistic turns", () => {
+  it("freezes a cancelled preparation before its conversation renders again", () => {
+    const optimistic = createOptimisticTurn({ id: "cancelled-preparation", text: "pending", images: [], files: [] }, 1000);
+    const settled = interruptLatestOptimisticTurn({ turns: [optimistic] }, 2000);
+    expect(localTurnTiming(settled.turns[0], 5000)?.elapsed).toBe(1000);
+    forgetLocalTurnTiming(optimistic.id);
+  });
+
   it("preserves a real running turn when dropping or stopping a placeholder", () => {
     const optimistic = turnWithUserText(`${OPTIMISTIC_TURN_ID_PREFIX}local`, "pending");
     const accepted = turnWithUserText("accepted-turn", "accepted");

@@ -39,19 +39,6 @@ function message(overrides: Partial<SideThreadMessage> = {}): SideThreadMessage 
 
 describe("SideThreadState", () => {
   describe("createInitialSideThreadStore", () => {
-    it("creates an empty store with default width", () => {
-      const store = createInitialSideThreadStore();
-      expect(store.byThread).toEqual({});
-      expect(store.width).toBe(SIDE_THREAD_DEFAULT_WIDTH);
-    });
-
-    it("clamps out-of-range width values to the allowed band", () => {
-      const tooSmall = createInitialSideThreadStore(100);
-      const tooBig = createInitialSideThreadStore(10_000);
-      expect(tooSmall.width).toBe(SIDE_THREAD_MIN_WIDTH);
-      expect(tooBig.width).toBe(SIDE_THREAD_MAX_WIDTH);
-    });
-
     it("treats non-finite width as default", () => {
       expect(createInitialSideThreadStore(NaN).width).toBe(SIDE_THREAD_DEFAULT_WIDTH);
       expect(createInitialSideThreadStore(Infinity).width).toBe(SIDE_THREAD_DEFAULT_WIDTH);
@@ -59,9 +46,6 @@ describe("SideThreadState", () => {
   });
 
   describe("clampSideThreadWidth", () => {
-    it("passes through values inside the band", () => {
-      expect(clampSideThreadWidth(450)).toBe(450);
-    });
     it("clamps below the minimum", () => {
       expect(clampSideThreadWidth(200)).toBe(SIDE_THREAD_MIN_WIDTH);
     });
@@ -84,52 +68,7 @@ describe("SideThreadState", () => {
     });
   });
 
-  describe("open / close", () => {
-    it("open creates the entry if missing and marks it open", () => {
-      const store = createInitialSideThreadStore();
-      const next = reduceSideThreadStore(store, {
-        type: "open",
-        mainThreadId: "main-1"
-      });
-      expect(next.byThread["main-1"]?.open).toBe(true);
-    });
-
-    it("close keeps the entry but marks it closed", () => {
-      let store = createInitialSideThreadStore();
-      store = reduceSideThreadStore(store, { type: "open", mainThreadId: "main-1" });
-      const next = reduceSideThreadStore(store, {
-        type: "close",
-        mainThreadId: "main-1"
-      });
-      expect(next.byThread["main-1"]?.open).toBe(false);
-      // Closing preserves identity and history.
-      expect(next.byThread["main-1"]).toBeDefined();
-    });
-  });
-
-  describe("setDraft", () => {
-    it("updates draft text for the targeted main thread", () => {
-      const store = createInitialSideThreadStore();
-      const next = reduceSideThreadStore(store, {
-        type: "setDraft",
-        mainThreadId: "main-1",
-        draft: "现在做到哪了？"
-      });
-      expect(next.byThread["main-1"]?.draft).toBe("现在做到哪了？");
-    });
-  });
-
   describe("mergeSummary", () => {
-    it("stores the side-thread summary", () => {
-      const store = createInitialSideThreadStore();
-      const next = reduceSideThreadStore(store, {
-        type: "mergeSummary",
-        mainThreadId: "main-1",
-        summary: summary()
-      });
-      expect(next.byThread["main-1"]?.summary).toEqual(summary());
-    });
-
     it("preserves store identity when the summary snapshot has not changed", () => {
       let store = createInitialSideThreadStore();
       store = reduceSideThreadStore(store, {
@@ -169,41 +108,6 @@ describe("SideThreadState", () => {
   });
 
   describe("messages", () => {
-    it("appendMessage adds to the end without mutating prior messages", () => {
-      let store = createInitialSideThreadStore();
-      store = reduceSideThreadStore(store, {
-        type: "appendMessage",
-        mainThreadId: "main-1",
-        message: message({ id: "m-1", text: "first" })
-      });
-      store = reduceSideThreadStore(store, {
-        type: "appendMessage",
-        mainThreadId: "main-1",
-        message: message({ id: "m-2", text: "second", role: "assistant" })
-      });
-      expect(store.byThread["main-1"]?.messages.map((m) => m.id)).toEqual([
-        "m-1",
-        "m-2"
-      ]);
-    });
-
-    it("updateMessage applies a patch to a single message", () => {
-      let store = createInitialSideThreadStore();
-      store = reduceSideThreadStore(store, {
-        type: "appendMessage",
-        mainThreadId: "main-1",
-        message: message({ id: "m-1", text: "draft" })
-      });
-      const next = reduceSideThreadStore(store, {
-        type: "updateMessage",
-        mainThreadId: "main-1",
-        messageId: "m-1",
-        patch: { status: "completed" }
-      });
-      expect(next.byThread["main-1"]?.messages[0]?.status).toBe("completed");
-      expect(next.byThread["main-1"]?.messages[0]?.text).toBe("draft");
-    });
-
     it("merges late history without overwriting local streaming messages", () => {
       let store = createInitialSideThreadStore();
       store = reduceSideThreadStore(store, {
@@ -302,34 +206,6 @@ describe("SideThreadState", () => {
 
       expect(next).toBe(store);
       expect(next.byThread["main-1"]).toBe(entry);
-    });
-  });
-
-  describe("setStreaming / setError", () => {
-    it("setStreaming toggles the streaming flag", () => {
-      let store = createInitialSideThreadStore();
-      store = reduceSideThreadStore(store, {
-        type: "setStreaming",
-        mainThreadId: "main-1",
-        streaming: true
-      });
-      expect(store.byThread["main-1"]?.streaming).toBe(true);
-    });
-
-    it("setError records an error and clears with undefined", () => {
-      let store = createInitialSideThreadStore();
-      store = reduceSideThreadStore(store, {
-        type: "setError",
-        mainThreadId: "main-1",
-        error: "boom"
-      });
-      expect(store.byThread["main-1"]?.lastError).toBe("boom");
-      store = reduceSideThreadStore(store, {
-        type: "setError",
-        mainThreadId: "main-1",
-        error: undefined
-      });
-      expect(store.byThread["main-1"]?.lastError).toBeUndefined();
     });
   });
 

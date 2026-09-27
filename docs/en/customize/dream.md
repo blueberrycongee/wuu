@@ -4,7 +4,7 @@ Dream turns useful knowledge from a completed conversation into workspace memory
 
 ## Enable Dream
 
-Enable the Dream plugin, then open **Settings → Plugins → Dream** and turn on consolidation. A provider of the `memory.session` service must also be available; the bundled Memory plugin provides it. Dream skips a run if it cannot read current workspace memory through that service.
+Enable the Dream plugin, then open **Settings → Extensions → Dream** and turn on consolidation. A provider of the `memory.session` service must also be available; the bundled Memory plugin provides it. Dream skips a run if it cannot read current workspace memory through that service.
 
 | Setting | Meaning | Default |
 |---|---|---|

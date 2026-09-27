@@ -15,7 +15,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/text"
@@ -89,7 +88,6 @@ func (s *Server) handleMarkdownImageRead(ctx context.Context, req Request) error
 		TurnID    string `json:"turn_id"`
 		MessageID string `json:"message_id"`
 		Source    string `json:"source"`
-		Seq       int64  `json:"seq"`
 		Offset    int    `json:"offset"`
 		Preview   bool   `json:"preview"`
 		SHA256    string `json:"sha256"`
@@ -102,25 +100,6 @@ func (s *Server) handleMarkdownImageRead(ctx context.Context, req Request) error
 	}
 	var body, cwd string
 	switch params.Kind {
-	case "channel":
-		if s.channelService == nil || params.Seq <= 0 || params.Seq == 1<<63-1 {
-			return s.writeResponse(req.ID, nil, errors.New("invalid room message"))
-		}
-		messages, err := s.channelService.ListMessageWindow(ctx, channels.RoomHistoryQuery{RoomID: params.ScopeID, AfterSeq: params.Seq - 1, BeforeSeq: params.Seq + 1, Limit: 1})
-		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
-		if len(messages) == 1 && messages[0].ID == params.MessageID && messages[0].AuthorType == channels.MemberAgent {
-			body, cwd = messages[0].Body, s.rt.RootDir
-			if ref := messages[0].SourceSessionRef; ref != "" {
-				cwd = ""
-				if th, err := s.historyThread(ref); err == nil {
-					th.mu.Lock()
-					cwd = th.CWD
-					th.mu.Unlock()
-				}
-			}
-		}
 	case "thread":
 		th, err := s.historyThread(params.ScopeID)
 		if err != nil {

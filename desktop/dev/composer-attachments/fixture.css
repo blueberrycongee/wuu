@@ -1,0 +1,10 @@
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--paper); color: var(--ink); font-family: var(--font-family-ui, system-ui); }
+.fixture-shell { display: flex; flex-direction: column; height: 100%; }
+.fixture-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--hairline-soft); font-size: 12px; }
+.fixture-controls button { padding: 4px 10px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--surface-1); color: var(--ink); font: inherit; }
+.fixture-status { color: var(--ink-muted); }
+.fixture-pane { position: relative; display: flex; flex: 1; min-height: 0; flex-direction: column; justify-content: flex-end; width: min(100%, var(--fixture-width)); margin: 0 auto; }
+.fixture-pane-hero { justify-content: center; }
+.fixture-history { flex: 1; overflow: auto; padding: 24px var(--session-outer-padding-inline) 0; line-height: 1.7; }
+.fixture-history p { max-width: var(--session-composer-width); margin: 0 auto 16px; }

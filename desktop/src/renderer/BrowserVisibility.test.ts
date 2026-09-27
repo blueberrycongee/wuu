@@ -3,15 +3,12 @@ import type { ActivitySession } from "../shared/protocol";
 import {
   boundsChanged,
   browserTabIDForActivity,
-  computeForegroundPromotion,
-  computeForegroundRetreat,
   displayedBrowserTabID,
   isForegroundControlled,
   isMeasurableRect,
   observeBrowserPanelBounds,
   pickBoundsRect,
   roundRect,
-  type ForegroundSnapshot,
 } from "./BrowserVisibility";
 
 afterEach(() => {
@@ -196,81 +193,11 @@ describe("observeBrowserPanelBounds", () => {
   });
 });
 
-describe("computeForegroundPromotion", () => {
-  const thread = "thread-1";
-
-  it("opens on a background→foreground transition of the same activity", () => {
-    const prev: ForegroundSnapshot = {
-      threadID: thread,
-      activityID: "activity-1",
-      state: "background_controlled",
-    };
-    const result = computeForegroundPromotion(prev, thread, activity());
-    expect(result.open).toBe(true);
-    expect(result.snapshot).toEqual({
-      threadID: thread,
-      activityID: "activity-1",
-      state: "foreground_controlled",
-    });
-  });
-
-  it("opens when a new foreground activity appears within the same thread", () => {
-    const prev: ForegroundSnapshot = { threadID: thread, activityID: undefined, state: undefined };
-    expect(computeForegroundPromotion(prev, thread, activity()).open).toBe(true);
-  });
-
-  it("does not open on a thread switch even if the activity is already foreground (restore, not force)", () => {
-    const prev: ForegroundSnapshot = {
-      threadID: "thread-0",
-      activityID: "activity-1",
-      state: "foreground_controlled",
-    };
-    expect(computeForegroundPromotion(prev, thread, activity()).open).toBe(false);
-  });
-
-  it("does not re-open while the activity stays foreground across merges", () => {
-    const prev: ForegroundSnapshot = {
-      threadID: thread,
-      activityID: "activity-1",
-      state: "foreground_controlled",
-    };
-    expect(computeForegroundPromotion(prev, thread, activity()).open).toBe(false);
-  });
-
-  it("does not open for non-foreground states and still advances the snapshot", () => {
-    const prev: ForegroundSnapshot = { threadID: thread, activityID: "activity-1", state: "active" };
-    const result = computeForegroundPromotion(prev, thread, activity({ state: "user_controlled" }));
-    expect(result.open).toBe(false);
-    expect(result.snapshot.state).toBe("user_controlled");
-  });
-
+describe("displayedBrowserTabID", () => {
   it("uses the agent tab while the activity is alive, otherwise a per-thread tab", () => {
     expect(displayedBrowserTabID(activity({ state: "background_controlled", target: "tab-1" }), "thread-1")).toBe("tab-1");
     expect(displayedBrowserTabID(activity({ state: "stopped" }), "thread-1")).toBe("user:thread-1");
     expect(displayedBrowserTabID(undefined, "thread-1")).toBe("user:thread-1");
     expect(displayedBrowserTabID(undefined, undefined)).toBeUndefined();
-  });
-
-  it("closes the panel only when the agent hides the page it was showing", () => {
-    const showing = {
-      threadID: "thread-1",
-      activityID: "activity-1",
-      state: "foreground_controlled",
-    };
-    expect(computeForegroundRetreat(showing, "thread-1", activity({ state: "background_controlled" }))).toBe(true);
-    expect(computeForegroundRetreat(showing, "thread-1", activity({ state: "user_controlled" }))).toBe(false);
-    expect(computeForegroundRetreat(showing, "thread-2", activity({ state: "background_controlled" }))).toBe(false);
-    expect(computeForegroundRetreat(
-      { threadID: "thread-1", activityID: "activity-1", state: "user_controlled" },
-      "thread-1",
-      activity({ state: "background_controlled" }),
-    )).toBe(false);
-  });
-
-  it("does not open when there is no activity", () => {
-    const prev: ForegroundSnapshot = { threadID: thread };
-    const result = computeForegroundPromotion(prev, thread, undefined);
-    expect(result.open).toBe(false);
-    expect(result.snapshot).toEqual({ threadID: thread, activityID: undefined, state: undefined });
   });
 });

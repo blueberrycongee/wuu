@@ -39,10 +39,10 @@ afterEach(() => {
 describe("ToastViewport", () => {
   it("removes Electron IPC wrappers from operation errors", () => {
     expect(toastErrorMessage(new Error(
-      "Error invoking remote method 'wuu:channel-agent-update': Error: named agent cannot be edited while it is running",
-    ))).toBe("named agent cannot be edited while it is running");
+      "Error invoking remote method 'wuu:project-remove': Error: project cannot be removed while a session is running",
+    ))).toBe("project cannot be removed while a session is running");
     expect(toastErrorMessage(
-      "Error: Error invoking remote method 'wuu:channel-agent-update': Error: save failed",
+      "Error: Error invoking remote method 'wuu:project-remove': Error: save failed",
     )).toBe("save failed");
   });
 
@@ -53,9 +53,6 @@ describe("ToastViewport", () => {
 
     const notice = container.querySelector('[role="alert"]');
     expect(notice?.textContent).toContain("save failed");
-    expect((notice as HTMLElement | null)?.dataset.wuuComponent).toBe("notice");
-    expect((notice as HTMLElement | null)?.dataset.wuuLayer).toBe("notice");
-    expect((notice as HTMLElement | null)?.dataset.wuuState).toBe("open");
     expect(notice?.closest('[data-wuu-layer-host="true"]')).not.toBeNull();
   });
 

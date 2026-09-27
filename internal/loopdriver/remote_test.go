@@ -265,17 +265,3 @@ func TestRemoteDriverResumeSendsCheckpoint(t *testing.T) {
 		t.Fatalf("Resume() = %v", err)
 	}
 }
-
-func TestFailClosedDriver(t *testing.T) {
-	driver := FailClosedDriver{Profile: "demo", Reason: "no provider for service driver.demo"}
-	if _, err := driver.Create(testExecution(), PersistedInput{}); err == nil ||
-		!strings.Contains(err.Error(), `"demo"`) || !strings.Contains(err.Error(), "read-only") {
-		t.Fatalf("Create() = %v", err)
-	}
-	if _, err := driver.Resume(testExecution(), PersistedInput{}, Checkpoint{}); err == nil || !strings.Contains(err.Error(), "read-only") {
-		t.Fatalf("Resume() = %v", err)
-	}
-	if descriptor := driver.Descriptor(); !strings.Contains(descriptor.ID, "demo") {
-		t.Fatalf("descriptor = %+v", descriptor)
-	}
-}

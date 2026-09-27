@@ -3,6 +3,9 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -205,6 +208,61 @@ func TestPluginSessionCreateAndSendPersistProvenanceAndTargetLifecycle(t *testin
 	if item.Text != "后台任务已唤醒 Agent" || item.InputText != "internal inspect prompt" || strings.Contains(item.Text, "internal inspect prompt") || item.Origin != pluginhost.SessionInputPlugin || !item.ReadOnly || item.PresentationKind != pluginhost.SessionPresentationQueryBubble {
 		t.Fatalf("query bubble projection = %+v", item)
 	}
+}
+
+// Create-time instructions are session state. Runtime prompt refreshes on turn
+// preparation and reload must keep them in front of the model.
+func TestPluginSessionInstructionsReachProviderAfterReload(t *testing.T) {
+	const instructions = "Answer only with the release checklist."
+	client := &fakeClient{response: providersResponse("done")}
+	rt := newTestRuntime(t, client)
+	rt.WorkspaceID = "workspace-one"
+	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
+	owner := &pluginTurnLifecycleClient{id: "schedule", calls: make(chan pluginhost.AgentTurnLifecycleInput, 4)}
+	rt.PluginHost = pluginhost.New(owner)
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	created, err := rt.PluginSessionRouter.Create(context.Background(), owner.id, pluginhost.SessionCreateParams{
+		RequestID: "create-instructions", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh,
+		WorkspaceID: rt.WorkspaceID, WorkspaceRoot: rt.RootDir, Instructions: instructions,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send := func(requestID string, out *lockedBuffer) {
+		t.Helper()
+		result, err := rt.PluginSessionRouter.Send(context.Background(), owner.id, pluginhost.SessionSendParams{
+			RequestID: requestID, SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: requestID},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitForTurnCompletedForThread(t, out, result.SessionID)
+	}
+	assertInstructed := func(index int) {
+		t.Helper()
+		client.mu.Lock()
+		defer client.mu.Unlock()
+		if len(client.requests) <= index {
+			t.Fatalf("provider saw %d requests, want request %d", len(client.requests), index)
+		}
+		for _, message := range client.requests[index].Messages {
+			if message.Role == "system" && strings.Contains(message.Content, "# Session instructions\n\n"+instructions) {
+				return
+			}
+		}
+		t.Fatalf("request %d system prompt lacks session instructions: %+v", index, client.requests[index].Messages)
+	}
+	send("first", out)
+	assertInstructed(0)
+	srv.Close()
+
+	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
+	reloaded := &lockedBuffer{}
+	srv = New(rt, reloaded)
+	t.Cleanup(srv.Close)
+	send("after reload", reloaded)
+	assertInstructed(1)
 }
 
 func TestPluginSessionSendTurnOutlivesHostCallContext(t *testing.T) {
@@ -432,10 +490,14 @@ func TestPluginSessionCreateIsIdempotentAndPrivateSessionsStayOutOfSearch(t *tes
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(srv.Close)
-	params := pluginhost.SessionCreateParams{RequestID: "same-create", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh}
+	params := pluginhost.SessionCreateParams{Speed: "fast", RequestID: "same-create", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh}
 	first, err := rt.PluginSessionRouter.Create(context.Background(), "dream", params)
 	if err != nil || !first.Created {
 		t.Fatalf("first create = %+v, %v", first, err)
+	}
+	saved, found, err := session.Find(rt.SessionDir, first.SessionID)
+	if err != nil || !found || saved.Speed != "fast" {
+		t.Fatalf("plugin speed selection was lost: %+v, %v", saved, err)
 	}
 	second, err := rt.PluginSessionRouter.Create(context.Background(), "dream", params)
 	if err != nil || second.Created || second.SessionID != first.SessionID {
@@ -772,5 +834,116 @@ func TestHandoffThreadStartUsesTargetModelWithoutCopyingSourceHistory(t *testing
 	}
 	if len(again.Turns) != len(started.Turns) {
 		t.Fatalf("idempotent retry created extra destination turns: before=%d after=%d", len(started.Turns), len(again.Turns))
+	}
+}
+
+// Exercise the public plugin router against real Git repositories and persisted sessions.
+func TestPluginWorkspaceCommittedDelivery(t *testing.T) {
+	for _, mode := range []string{"committed", "mixed", "conflict", "untracked"} {
+		t.Run(mode, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{response: providersResponse("unused")})
+			initAppserverGitRepo(t, rt.RootDir)
+			rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
+			srv := New(rt, &lockedBuffer{})
+			t.Cleanup(srv.Close)
+			ctx := context.Background()
+			created, err := rt.PluginSessionRouter.Create(ctx, "workspace-test", pluginhost.SessionCreateParams{
+				RequestID: "create", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh, Workspace: "worktree",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			metadata, found, err := session.Find(rt.SessionDir, created.SessionID)
+			if err != nil || !found {
+				t.Fatalf("session lookup: found=%t err=%v", found, err)
+			}
+			write := func(root, name, content string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write(metadata.WorktreePath, "README.md", "committed output\n")
+			runSessionWorkspaceGit(t, metadata.WorktreePath, "add", "README.md")
+			runSessionWorkspaceGit(t, metadata.WorktreePath, "commit", "-qm", "worker output")
+			wantFiles := []string{"README.md"}
+			wantReadme := "committed output\n"
+			if mode == "mixed" {
+				write(metadata.WorktreePath, "staged.txt", "staged output\n")
+				runSessionWorkspaceGit(t, metadata.WorktreePath, "add", "staged.txt")
+				wantReadme = "committed and unstaged output\n"
+				write(metadata.WorktreePath, "README.md", wantReadme)
+				wantFiles = append(wantFiles, "staged.txt")
+			}
+			if mode == "conflict" {
+				write(rt.RootDir, "README.md", "parent output\n")
+			}
+			if mode == "untracked" {
+				write(metadata.WorktreePath, "untracked.txt", "keep me\n")
+			}
+			status, statusErr := rt.PluginSessionRouter.WorkspaceStatus(ctx, "workspace-test", pluginhost.WorkspaceStatusParams{SessionID: created.SessionID})
+			if statusErr != nil {
+				t.Fatal(statusErr)
+			}
+			if !status.Dirty || !strings.Contains(status.Diff, "output") {
+				t.Errorf("missing cumulative delivery: %+v", status)
+			}
+			if mode == "committed" || mode == "mixed" {
+				if !reflect.DeepEqual(status.ChangedFiles, wantFiles) || !status.CanApply {
+					t.Errorf("status=%+v, want files %v", status, wantFiles)
+				}
+				inspected, err := rt.PluginSessionRouter.Inspect(ctx, "workspace-test", pluginhost.SessionInspectParams{SessionID: created.SessionID})
+				if err != nil || inspected.Workspace == nil || !inspected.Workspace.Dirty || !reflect.DeepEqual(inspected.Workspace.ChangedFiles, wantFiles) {
+					t.Errorf("inspect=%+v err=%v", inspected, err)
+				}
+			} else if status.CanApply {
+				t.Errorf("unsafe workspace advertised as applicable: %+v", status)
+			}
+			result, err := rt.PluginSessionRouter.WorkspaceApply(ctx, "workspace-test", pluginhost.WorkspaceApplyParams{SessionID: created.SessionID})
+			if mode == "conflict" || mode == "untracked" {
+				if err == nil {
+					t.Fatalf("unsafe apply succeeded: %+v", result)
+				}
+				if _, err := os.Stat(metadata.WorktreePath); err != nil {
+					t.Fatalf("workspace lost: %v", err)
+				}
+				stored, found, err := session.Find(rt.SessionDir, created.SessionID)
+				if err != nil || !found || stored.WorktreePath != metadata.WorktreePath {
+					t.Fatalf("binding lost: %+v %v", stored, err)
+				}
+				parent, err := os.ReadFile(filepath.Join(rt.RootDir, "README.md"))
+				expected := "hello\n"
+				if mode == "conflict" {
+					expected = "parent output\n"
+				}
+				if err != nil || string(parent) != expected {
+					t.Fatalf("parent changed: %q %v", parent, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.Applied || !result.Discarded || !reflect.DeepEqual(result.ChangedFiles, wantFiles) {
+				t.Fatalf("apply=%+v", result)
+			}
+			parent, err := os.ReadFile(filepath.Join(rt.RootDir, "README.md"))
+			if err != nil || string(parent) != wantReadme {
+				t.Fatalf("parent=%q err=%v", parent, err)
+			}
+			if mode == "mixed" {
+				staged, err := os.ReadFile(filepath.Join(rt.RootDir, "staged.txt"))
+				if err != nil || string(staged) != "staged output\n" {
+					t.Fatalf("staged output=%q err=%v", staged, err)
+				}
+			}
+			if _, err := os.Stat(metadata.WorktreePath); !os.IsNotExist(err) {
+				t.Fatalf("applied worktree remains: %v", err)
+			}
+			stored, found, err := session.Find(rt.SessionDir, created.SessionID)
+			if err != nil || !found || stored.WorktreePath != "" {
+				t.Fatalf("workspace not rebound: %+v %v", stored, err)
+			}
+		})
 	}
 }

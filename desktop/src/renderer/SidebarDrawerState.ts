@@ -45,8 +45,9 @@ export function useSidebarDrawerState({
   appShellRef: RefObject<HTMLDivElement | null>;
   sidebarCollapsed: boolean;
   resizingSidebar: boolean;
-  motionMs: number;
-  dockingMotionMs?: number;
+  /** Read when the close starts, so it follows the current tokens. */
+  motionMs: () => number;
+  dockingMotionMs?: () => number;
   hoverOpenDelayMs?: number;
   closeOnWindowResize?: boolean;
 }): SidebarDrawerStateController {
@@ -221,7 +222,7 @@ export function useSidebarDrawerState({
     sidebarDrawerCloseTimerRef.current = window.setTimeout(() => {
       sidebarDrawerCloseTimerRef.current = undefined;
       setSidebarDrawerPhase("closed");
-    }, motionMs);
+    }, motionMs());
   }, [
     blurSidebarFocus,
     cancelSidebarDrawerOpen,
@@ -364,7 +365,7 @@ export function useSidebarDrawerState({
     sidebarDrawerCloseTimerRef.current = window.setTimeout(() => {
       sidebarDrawerCloseTimerRef.current = undefined;
       setSidebarDrawerPhase("closed");
-    }, dockingMotionMs);
+    }, dockingMotionMs());
   }, [
     cancelSidebarDrawerOpen,
     clearSidebarDrawerCloseTimer,

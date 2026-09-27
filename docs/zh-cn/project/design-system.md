@@ -133,7 +133,7 @@ Renderer 当前定义了默认值为朱红的 `--wuu-accent` 和 `--wuu-accent-p
 
 控件复用 [WuuIcons](../../../desktop/src/renderer/WuuIcons.tsx)，不混用另一套线条风格。标准图形基于 24 单位画布与 1.75 描边；尺寸使用 `--icon-size-*` 角色并随字号有限增长，并取整到偶数像素，使字形在偶数尺寸的控件中居中。UI 基线 14px 与默认 14.5px 时，各档为 12、14、16、18、20px；视觉尺寸、居中与线条密度仍需实际检查。
 
-动效服务于反馈和位置变化：`--motion-fast` 120ms 用于即时反馈，`--motion-base` 180ms 用于菜单与内容切换，`--motion-slow` 280ms 用于结构位移，`--motion-slower` 440ms 用于较大的折叠。优先使用已有语义别名，尊重减少动态效果的系统或用户偏好。不要让高频操作等待装饰动画，也不要自行覆盖组件中已有的专用动效契约。
+动效服务于反馈和位置变化：`--motion-fast` 120ms 用于即时反馈，`--motion-base` 180ms 用于菜单与内容切换，`--motion-slow` 280ms 用于结构位移，`--motion-slower` 440ms 用于较大的折叠。入场以 `--ease-out` 减速进入，退出以 `--ease-in` 加速离开，且比入场更短。优先使用已有语义别名，以及[桌面 UI 维护](desktop-ui.md#动画)中介绍的共享入场、退出 keyframe。系统设置与应用内“动态效果”偏好都会减少动态效果，且效果相同。不要让高频操作等待装饰动画，也不要自行覆盖组件中已有的专用动效契约。
 
 复用现有 [SelectMenu](../../../desktop/src/renderer/SelectMenu.tsx)、[SettingsRow](../../../desktop/src/renderer/SettingsRow.tsx)、[Modal](../../../desktop/src/renderer/Modal.tsx) 和对应样式；共享按钮、输入框使用既有样式角色，不复制一份私有实现。控件必须有可访问名称，并按用途支持悬停、按下、选中、禁用、键盘焦点和错误状态；加载状态保留位置与尺寸。相应状态只能在语义适用时组合，不能把选中和按下混为一谈。
 

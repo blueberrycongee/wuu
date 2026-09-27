@@ -205,6 +205,148 @@ describe("WorkspaceFileService root override", () => {
   });
 });
 
+describe("WorkspaceFileService filesystem path identity", () => {
+  it.runIf(process.platform === "win32")("accepts native Windows separators for listing, reading, and saving", () => {
+    const root = createWorkspace();
+    writeWorkspaceFile(root, "folder/nested/note.txt", "old\n");
+    const service = createService(root);
+    const directory = service.directoryList("folder\\nested");
+    expect(directory.entries[0].path).toBe("folder/nested/note.txt");
+    const base = service.readFile("folder\\nested\\note.txt");
+    expect(service.writeFile({
+      path: "folder\\nested\\note.txt",
+      text: "new\n",
+      base_sha256: base.sha256,
+      base_mtime_ms: base.mtime_ms,
+    })).toMatchObject({ status: "saved", file: { path: "folder/nested/note.txt", text: "new\n" } });
+    expect(readFileSync(join(root, directory.entries[0].path), "utf8")).toBe("new\n");
+  });
+
+  it.each([
+    [" note.txt", "note.txt"],
+    ...(process.platform === "win32" ? [] : [
+      ["note.txt ", "note.txt"],
+      ["\tnote.txt\t", "note.txt"],
+      [" ", "note.txt"],
+      ["folder\\note.txt", "folder/note.txt"],
+      ["folder\\..\\note.txt", "note.txt"],
+    ]),
+  ])("reads and saves the listed file %j without changing %j", (name, otherName) => {
+    const root = createWorkspace();
+    writeWorkspaceFile(root, name, "selected file\n");
+    writeWorkspaceFile(root, otherName, "other file\n");
+    const service = createService(root);
+    const selected = service.directoryList().entries.find((entry) => entry.name === name)!;
+    expect(service.fileTreeList().paths).toContain(selected.path);
+
+    const base = service.readFile(selected.path);
+    const saved = service.writeFile({
+      path: selected.path,
+      text: "edited selected file\n",
+      base_sha256: base.sha256,
+      base_mtime_ms: base.mtime_ms,
+    });
+
+    expect(base).toMatchObject({ path: name, text: "selected file\n" });
+    expect(saved).toMatchObject({ status: "saved", file: { path: name, text: "edited selected file\n" } });
+    expect(readFileSync(join(root, name), "utf8")).toBe("edited selected file\n");
+    expect(readFileSync(join(root, otherName), "utf8")).toBe("other file\n");
+
+    writeWorkspaceFile(root, name, "external edit\n");
+    expect(service.writeFile({
+      path: selected.path,
+      text: "stale edit\n",
+      base_sha256: saved.file.sha256,
+      base_mtime_ms: saved.file.mtime_ms,
+    })).toMatchObject({ status: "conflict", file: { path: name, text: "external edit\n" } });
+    expect(readFileSync(join(root, name), "utf8")).toBe("external edit\n");
+    expect(readFileSync(join(root, otherName), "utf8")).toBe("other file\n");
+  });
+
+  it.each([
+    [" folder", "folder"],
+    ...(process.platform === "win32" ? [] : [
+      ["folder ", "folder"],
+      [" ", "folder"],
+      ["folder\\child", "folder/child"],
+    ]),
+  ])("expands the listed directory %j without changing its identity", (name, otherName) => {
+    const root = createWorkspace();
+    writeWorkspaceFile(root, `${name}/selected.txt`, "selected\n");
+    writeWorkspaceFile(root, `${otherName}/other.txt`, "other\n");
+    const service = createService(root);
+    const selected = service.directoryList().entries.find((entry) => entry.name === name)!;
+
+    for (const path of [selected.path, selected.path.slice(0, -1)]) {
+      const directory = service.directoryList(path);
+      expect(directory.path).toBe(name);
+      expect(directory.entries).toEqual([{ name: "selected.txt", path: `${name}/selected.txt`, kind: "file" }]);
+      expect(service.readFile(directory.entries[0].path).text).toBe("selected\n");
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("preserves the override root and in-workspace symlinks with special names", () => {
+    const parent = createWorkspace();
+    const root = join(parent, " workspace\\root ");
+    writeWorkspaceFile(root, " target.txt ", "selected\n");
+    writeWorkspaceFile(root, "target.txt", "other\n");
+    symlinkSync(" target.txt ", join(root, " link\\name "));
+    const service = createService(parent);
+    const selected = service.directoryList(undefined, root).entries.find((entry) => entry.name === " link\\name ")!;
+    const base = service.readFile(selected.path, root);
+    const result = service.writeFile({
+      path: selected.path,
+      text: "edited\n",
+      base_sha256: base.sha256,
+      base_mtime_ms: base.mtime_ms,
+    }, root);
+
+    expect(result).toMatchObject({ status: "saved", file: { root, path: selected.path } });
+    expect(lstatSync(join(root, selected.path)).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(root, " target.txt "), "utf8")).toBe("edited\n");
+    expect(readFileSync(join(root, "target.txt"), "utf8")).toBe("other\n");
+  });
+
+  it.skipIf(process.platform === "win32")("rejects file and directory symlinks outside the selected root", () => {
+    const parent = createWorkspace();
+    const root = join(parent, " workspace ");
+    writeWorkspaceFile(root, "note.txt", "inside\n");
+    writeWorkspaceFile(parent, "outside/note.txt", "outside\n");
+    symlinkSync("../outside/note.txt", join(root, " note.txt "));
+    symlinkSync("../outside", join(root, " folder\\link "));
+    const service = createService(root);
+    const base = service.readFile("note.txt");
+
+    expect(() => service.readFile(" note.txt ")).toThrow(/outside.*workspace/);
+    expect(() => service.directoryList(" folder\\link /")).toThrow(/outside.*workspace/);
+    expect(() => service.writeFile({
+      path: " note.txt ",
+      text: "overwrite\n",
+      base_sha256: base.sha256,
+      base_mtime_ms: base.mtime_ms,
+    })).toThrow(/outside.*workspace/);
+    expect(readFileSync(join(root, "note.txt"), "utf8")).toBe("inside\n");
+    expect(readFileSync(join(parent, "outside/note.txt"), "utf8")).toBe("outside\n");
+  });
+
+  it("rejects parent traversal and NUL paths for reads, directory lists, and saves", () => {
+    const parent = createWorkspace();
+    const root = join(parent, "workspace");
+    writeWorkspaceFile(root, "note.txt");
+    writeWorkspaceFile(parent, "note.txt");
+    const service = createService(root);
+    const base = service.readFile("note.txt");
+    const paths = ["../note.txt", "nested/../../note.txt", "note.txt\0"];
+    if (process.platform === "win32") paths.push("..\\note.txt");
+    for (const path of paths) {
+      expect(() => service.readFile(path)).toThrow(/invalid|outside/);
+      expect(() => service.directoryList(path)).toThrow(/invalid|outside/);
+      expect(() => service.writeFile({ path, text: "overwrite\n", base_sha256: base.sha256, base_mtime_ms: base.mtime_ms })).toThrow(/invalid|outside/);
+    }
+    expect(readFileSync(join(parent, "note.txt"), "utf8")).toBe("ok\n");
+  });
+});
+
 describe("WorkspaceFileService file save", () => {
   it("returns save metadata when reading a text file", () => {
     const root = createWorkspace();

@@ -4,12 +4,13 @@
  *
  * Self-contained and props-driven: all data and actions arrive from the
  * shell wiring (main-process RemoteHostManager over IPC), so the component
- * renders and tests in isolation. The markup mirrors the shared settings
- * primitives (section/card/row/switch) by class name.
+ * renders and tests in isolation.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import { useI18n } from "./i18n";
+import { SettingsRow } from "./SettingsRow";
+import { SettingsGroup, SettingsSection } from "./SettingsSection";
 
 export type RemoteDeviceView = {
   pub: string;
@@ -58,23 +59,23 @@ export function SettingsRemotePage({
     <div className="settings-remote-page" data-testid="settings-remote-page">
       {statusError ? <div className="settings-error">{statusError}</div> : null}
 
-      <RemoteSection title={t("remote.access")} description={t(status?.account_server ? "remote.accountDescription" : "remote.lanDescription")}>
-        <div className="settings-group">
-          <RemoteRow title={hostRunning ? t("remote.hostRunning") : t("remote.hostStopped")}>
+      <SettingsSection title={t("remote.access")} description={t(status?.account_server ? "remote.accountDescription" : "remote.lanDescription")}>
+        <SettingsGroup>
+          <SettingsRow title={hostRunning ? t("remote.hostRunning") : t("remote.hostStopped")}>
             <button className="settings-switch" type="button" role="switch" aria-checked={hostEnabled}
               disabled={busy} onClick={() => onToggleHost(!hostEnabled)}>
               <span className="settings-switch-thumb" aria-hidden="true" />
               <span className="sr-only">{hostEnabled ? t("remote.disableAccess") : t("remote.enableAccess")}</span>
             </button>
-          </RemoteRow>
-          {hostRunning && webUrl && !status?.account_server ? <RemoteRow title={t("remote.webAddress")}>
+          </SettingsRow>
+          {hostRunning && webUrl && !status?.account_server ? <SettingsRow title={t("remote.webAddress")}>
             <code>{webUrl}</code>
-          </RemoteRow> : null}
-        </div>
-      </RemoteSection>
+          </SettingsRow> : null}
+        </SettingsGroup>
+      </SettingsSection>
 
-      {!status?.account_server && <><RemoteSection title={t("remote.pairSection")} description={t("remote.pairSectionDescription")}>
-        <div className="settings-group">
+      {!status?.account_server && <><SettingsSection title={t("remote.pairSection")} description={t("remote.pairSectionDescription")}>
+        <SettingsGroup>
           {pairUri ? (
             <div className="settings-remote-pairing" data-testid="remote-pair-panel">
               <PairQRCode uri={pairUri} />
@@ -83,7 +84,7 @@ export function SettingsRemotePage({
               <button className="settings-button" type="button" disabled={busy} aria-busy={busy} onClick={onOpenPairing}>{t(busy ? "remote.generatingPairQr" : "remote.refreshPairQr")}</button>
             </div>
           ) : (
-            <RemoteRow
+            <SettingsRow
               title={t("remote.pairNewPhone")}
               description={hostRunning ? t("remote.openPairWindow") : t("remote.enableAccessFirst")}
             >
@@ -96,18 +97,18 @@ export function SettingsRemotePage({
               >
                 {t(busy ? "remote.generatingPairQr" : "remote.showPairQr")}
               </button>
-            </RemoteRow>
+            </SettingsRow>
           )}
-        </div>
-      </RemoteSection>
+        </SettingsGroup>
+      </SettingsSection>
 
-      <RemoteSection title={t("remote.devicesSection")} description={t("remote.devicesSectionDescription")}>
-        <div className="settings-group">
+      <SettingsSection title={t("remote.devicesSection")} description={t("remote.devicesSectionDescription")}>
+        <SettingsGroup>
           {!status || status.devices.length === 0 ? (
-            <div className="settings-empty">{t("remote.noDevices")}</div>
+            <p className="settings-group-empty">{t("remote.noDevices")}</p>
           ) : (
             status.devices.map((device) => (
-              <RemoteRow
+              <SettingsRow
                 key={device.pub}
                 title={device.name && device.name.trim() !== "" ? device.name : t("remote.unnamedDevice")}
                 description={t("remote.pairedAt", { fingerprint: device.fingerprint, date: formatPairedAt(device.added_at, formatDate) })}
@@ -120,11 +121,11 @@ export function SettingsRemotePage({
                 >
                   {t("remote.revoke")}
                 </button>
-              </RemoteRow>
+              </SettingsRow>
             ))
           )}
-        </div>
-      </RemoteSection>
+        </SettingsGroup>
+      </SettingsSection>
       </>}
     </div>
   );
@@ -176,49 +177,4 @@ function formatPairedAt(
     return addedAt;
   }
   return formatter(date, { year: "numeric", month: "short", day: "numeric" });
-}
-
-/* Local copies of the settings primitives' markup: the originals live inside
- * SettingsView.tsx unexported; the wiring commit can consolidate them. */
-
-function RemoteSection({
-  title,
-  description,
-  children
-}: {
-  title: string;
-  description: string;
-  children: ReactNode;
-}): JSX.Element {
-  return (
-    <section className="settings-section">
-      <header className="settings-section-header">
-        <h2 className="settings-section-title">{title}</h2>
-        <p className="settings-section-description">{description}</p>
-      </header>
-      {children}
-    </section>
-  );
-}
-
-function RemoteRow({
-  title,
-  description,
-  block = false,
-  children
-}: {
-  title: string;
-  description?: string;
-  block?: boolean;
-  children: ReactNode;
-}): JSX.Element {
-  return (
-    <div className="settings-row">
-      <div className="settings-row-label">
-        <span className="settings-row-label-title">{title}</span>
-        {description ? <span className="settings-row-label-description">{description}</span> : null}
-      </div>
-      <div className={block ? "settings-row-control-block" : "settings-row-control"}>{children}</div>
-    </div>
-  );
 }

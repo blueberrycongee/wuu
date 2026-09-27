@@ -30,22 +30,6 @@
   white-space: pre-line;
   overflow-wrap: anywhere;
   pointer-events: none;
-  animation: tooltip-layer-in 120ms ease-out;
-}
-
-@keyframes tooltip-layer-in {
-  from {
-    opacity: 0;
-    transform: translateY(2px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .tooltip-layer {
-    animation: none;
-  }
+  --enter-y: 2px;
+  animation: wuu-enter var(--motion-fast) var(--ease-out) both;
 }

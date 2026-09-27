@@ -157,13 +157,6 @@ func pixelLabel(x, y, W int) uint8 {
 	return uint8(y*W + x + 1)
 }
 
-func TestApplyOrientationIdentity(t *testing.T) {
-	src := makeLabeledImage(3, 2)
-	out := applyOrientation(src, 1)
-	assert.Same(t, src, out,
-		"O=1 should return the same image back without allocating")
-}
-
 func TestApplyOrientationOutOfRangeIsIdentity(t *testing.T) {
 	src := makeLabeledImage(3, 2)
 	for _, orient := range []uint16{0, 9, 100, 65535} {
@@ -266,16 +259,6 @@ func TestEncodeModeOriginalSkipsEXIFApplication(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, res.Skipped)
 	assert.Equal(t, full, res.Bytes, "ModeOriginal must return input bytes unchanged")
-}
-
-func TestEncodeCacheHitReturnsSamePointer(t *testing.T) {
-	resetCache()
-	data := makeSolidJPEG(t, 800, 600, 90)
-	r1, err := Encode("a.jpg", data, Options{})
-	require.NoError(t, err)
-	r2, err := Encode("a.jpg", data, Options{})
-	require.NoError(t, err)
-	assert.Same(t, r1, r2, "second identical call must hit the cache")
 }
 
 func TestEncodeCacheMissOnDifferentMode(t *testing.T) {

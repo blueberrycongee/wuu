@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,7 +32,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/instructions"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/mcp"
-	"github.com/blueberrycongee/wuu/internal/memdir"
 	"github.com/blueberrycongee/wuu/internal/modelbudget"
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
@@ -143,11 +141,9 @@ type Session struct {
 	ProcessManager      *process.Manager
 	Toolkit             *tools.Toolkit
 	ActivityRegistry    *activity.Registry
-	// CodeMode is the session-scoped code-mode runtime. One host connection
-	// serves every thread of this session; cells are owned per turn and
-	// terminate when their owning turn ends.
+	// CodeMode owns the session's optional PTC processes. Each program gets a
+	// fresh Node process and ends with its owning invocation.
 	CodeMode                 *codemode.Service
-	codeModeStop             context.CancelFunc
 	WorkerClient             providers.StreamClient
 	ModelRoles               modelroles.Set
 	ModelBudget              modelbudget.Budget
@@ -205,11 +201,15 @@ func (s *Session) MaxParallel() int {
 
 // cloneForThreadModel copies the shared, immutable session dependencies used
 // to build a thread runtime. Thread-specific mutable dependencies are replaced
-// by the caller below.
+// by the caller below. The caller must release the shadow's temporary plugin
+// generation reference after construction; a successful ThreadRuntime retains
+// its own reference.
 func (s *Session) cloneForThreadModel() *Session {
 	if s == nil {
 		return nil
 	}
+	s.pluginGenerationMu.Lock()
+	defer s.pluginGenerationMu.Unlock()
 	clone := &Session{
 		ProviderName:                s.ProviderName,
 		Model:                       s.Model,
@@ -229,6 +229,7 @@ func (s *Session) cloneForThreadModel() *Session {
 		ActivePlugins:               s.ActivePlugins,
 		ExtensionSettings:           s.ExtensionSettings,
 		PluginHost:                  s.PluginHost,
+		pluginGeneration:            s.pluginGeneration,
 		UserQuestions:               s.UserQuestions,
 		DriverProfile:               s.DriverProfile,
 		PluginSessionRouter:         s.PluginSessionRouter,
@@ -263,6 +264,7 @@ func (s *Session) cloneForThreadModel() *Session {
 		DefaultEngine:               s.DefaultEngine,
 		engines:                     s.engines,
 	}
+	clone.pluginGeneration.retain()
 	return clone
 }
 
@@ -297,9 +299,6 @@ type ThreadRuntime struct {
 	// EngineID is the agent engine this runtime executes for. It is stamped
 	// from the thread's persisted binding; the built-in engine is "wuu".
 	EngineID agentengine.EngineID
-	// ExecutionProfile identifies the execution contract used to construct the
-	// runtime. A profile change requires a new runtime rather than hook mutation.
-	ExecutionProfile string
 	// PluginGeneration is the plugin host, hooks, MCP, and capabilities this
 	// conversation started against. Enable/disable publishes a new generation for
 	// later conversations; this pointer keeps the previous one alive until the
@@ -310,6 +309,7 @@ type ThreadRuntime struct {
 // ThreadModelSelection is the model choice persisted with one conversation.
 // Empty fields mean the workspace runtime defaults should be used.
 type ThreadModelSelection struct {
+	Speed          string
 	Provider       string
 	Model          string
 	Variant        string
@@ -508,69 +508,12 @@ func NewSession(opts Options) (*Session, error) {
 		connectMCPServers(cfg, activePlugins, toolkit)
 	}
 
-	// Code Mode is on by default. The service owns one host connection for the
-	// whole workspace session; every thread toolkit shares it through clones.
-	// Direct mode or a missing host path leaves the entry tools unregistered,
-	// so the model falls back to the ordinary tool surface.
+	// The optional PTC service is inert until a model with PTC enabled calls it.
+	// Each program owns its process; thread clones share only the lifecycle owner.
 	var codeModeService *codemode.Service
-	codeModeLife, codeModeStop := context.WithCancel(context.Background())
-	// The lifetime context must not leak when the constructor bails out before
-	// the session takes ownership of it.
-	defer func() {
-		if codeModeService == nil {
-			codeModeStop()
-		}
-	}()
-	if !opts.NoTools && toolkit != nil && cfg.CodeMode.InvocationMode() != config.CodeModeDirect {
-		executable := strings.TrimSpace(cfg.CodeMode.Host)
-		if executable == "" {
-			executable = strings.TrimSpace(os.Getenv("WUU_CODE_MODE_HOST"))
-		}
-		if executable == "" {
-			// Packaged desktop layouts keep the runtime next to wuu-core in
-			// the app's bin directory. This is an explicit, absolute,
-			// pinned-binary lookup — never a PATH search.
-			if self, err := os.Executable(); err == nil {
-				candidate := filepath.Join(filepath.Dir(self), "wuu-code-mode-host")
-				if runtime.GOOS == "windows" {
-					candidate += ".exe"
-				}
-				if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
-					executable = candidate
-				}
-			}
-		}
-		if executable != "" {
-			codeModeSessionID := workspaceID
-			if codeModeSessionID == "" {
-				// SDK/CLI sessions can identify their workspace by path only.
-				codeModeSessionID = workspaceStateDir
-			}
-			var heapLimit *uint64
-			if cfg.CodeMode.MaxHeapSizeBytes > 0 {
-				value := cfg.CodeMode.MaxHeapSizeBytes
-				heapLimit = &value
-			}
-			service, serviceErr := codemode.NewService(codemode.ServiceConfig{
-				Executable:     executable,
-				SessionID:      codeModeSessionID,
-				Limits:         codemode.CellLimits{MaxHeapSizeBytes: heapLimit},
-				DefaultYieldMS: cfg.CodeMode.DefaultYieldMS,
-				Stderr:         os.Stderr,
-				Notify: func(ctx context.Context, callID, cellID, text string) error {
-					fmt.Fprintf(os.Stderr, "code-mode notification (cell %s): %s\n", cellID, text)
-					return nil
-				},
-				Life: codeModeLife,
-			})
-			if serviceErr == nil {
-				codeModeService = service
-				toolkit.SetCodeModeService(service)
-				if cfg.CodeMode.InvocationMode() == config.CodeModeOnly {
-					toolkit.SetCodeModeOnly(true)
-				}
-			}
-		}
+	if !opts.NoTools && toolkit != nil {
+		codeModeService = codemode.NewService(codemode.ServiceConfig{NodeExecutable: cfg.PTC.NodeExecutable})
+		toolkit.ConfigurePTC(codeModeService, cfg.PTC)
 	}
 
 	instructionFiles := discoverInstructions(rootDir, opts.HomeDir, cfg.Instructions)
@@ -788,7 +731,6 @@ func NewSession(opts Options) (*Session, error) {
 		ProcessManager:              processMgr,
 		Toolkit:                     toolkit,
 		CodeMode:                    codeModeService,
-		codeModeStop:                codeModeStop,
 		ActivityRegistry:            activityRegistry,
 		WorkerClient:                workerClient,
 		ModelRoles:                  roleSelections,
@@ -1113,6 +1055,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 		Model:          model,
 		Variant:        strings.TrimSpace(selected.Variant),
 		Effort:         strings.TrimSpace(selected.Effort),
+		Speed:          selected.Speed,
 		PermissionMode: strings.TrimSpace(selected.PermissionMode),
 	}
 	permissionMode := requested.PermissionMode
@@ -1130,9 +1073,10 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 		currentVariant = strings.TrimSpace(s.StreamRunner.Variant)
 		currentEffort = strings.TrimSpace(s.StreamRunner.Effort)
 	}
-	if providerName == "" || model == "" || (providerName == s.ProviderName && model == s.Model && requested.Variant == currentVariant && requested.Effort == currentEffort) {
+	if selected.Speed == "" && (providerName == "" || model == "" || (providerName == s.ProviderName && model == s.Model && requested.Variant == currentVariant && requested.Effort == currentEffort)) {
 		// Permission changes do not require rebuilding an unchanged model client.
 		shadow := s.cloneForThreadModel()
+		defer s.releasePluginGeneration(shadow.pluginGeneration)
 		shadow.Permissions = permissions
 		threadRuntime, err := shadow.NewThreadRuntimeForRoot(sessionID, rootDir)
 		if err != nil {
@@ -1153,6 +1097,9 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	variant := strings.TrimSpace(selected.Variant)
 	effort := strings.TrimSpace(selected.Effort)
 	selection := modelvariant.ResolveForProvider(ruleProviderName, ruleProviderCfg, model, variant, effort)
+	if err := modelvariant.ApplySpeed(ruleProviderCfg, model, selected.Speed, &selection); err != nil {
+		return nil, err
+	}
 	client, err := providerfactory.BuildStreamClient(ruleProviderCfg, resolvedName)
 	if err != nil {
 		return nil, fmt.Errorf("build thread model client: %w", err)
@@ -1166,6 +1113,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	}
 
 	shadow := s.cloneForThreadModel()
+	defer s.releasePluginGeneration(shadow.pluginGeneration)
 	shadow.Permissions = permissions
 	shadow.ProviderName = resolvedName
 	shadow.Model = model
@@ -1235,93 +1183,6 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 		return nil, err
 	}
 	threadRuntime.Selection = requested
-	return threadRuntime, nil
-}
-
-// ConfigureNamedAgentThreadRuntime adds one collaboration named agent's
-// durable identity prompt and notebook scope to a thread runtime.
-func (s *Session) ConfigureNamedAgentThreadRuntime(threadRuntime *ThreadRuntime, rootDir, memoryDir, orientation string) error {
-	if s == nil || threadRuntime == nil || threadRuntime.StreamRunner == nil {
-		return errors.New("named agent thread runtime is required")
-	}
-	if threadRuntime.ExecutionProfile != CollaborationRuntimeVersion {
-		return errors.New("named agent requires the collaboration execution profile")
-	}
-	rootDir = strings.TrimSpace(rootDir)
-	memoryDir = strings.TrimSpace(memoryDir)
-	if rootDir == "" || memoryDir == "" {
-		return errors.New("named agent root and memory directory are required")
-	}
-	if err := memdir.EnsureDir(memoryDir); err != nil {
-		return fmt.Errorf("ensure named agent memory: %w", err)
-	}
-	teaching := memdir.IdentityTeaching(memoryDir)
-	index := ""
-	toolkit := threadRuntime.Toolkit
-	if toolkit != nil && toolkit.IsRoomAgent() {
-		teaching = "Use chat_memory with scope=room for durable shared knowledge. Keep MEMORY.md as a compact index; read relevant topics as needed."
-	}
-	if toolkit != nil {
-		toolkit.SetFileScopeRoots(workspaces.BoundaryRoots(rootDir, s.WuuHome, memoryDir))
-	}
-	catalog := ""
-	if toolkit != nil {
-		var err error
-		catalog, err = deferredToolCatalogPromptForToolkit(toolkit)
-		if err != nil {
-			return err
-		}
-	}
-	runner := threadRuntime.StreamRunner
-	runner.Tools = toolkit
-	if toolkit != nil {
-		id, _ := toolkit.ExecutionActor()
-		s.ConfigureCollaborationTools(threadRuntime, id)
-	}
-	runner.BeforeRequestContext = RuntimeContextInjector(
-		threadRuntime.AgentControl,
-		rootDir,
-		toolkitContextBlockProvider(toolkit),
-		namedAgentWorkspaceContextProvider(s.WuuHome, rootDir, memoryDir, toolkit),
-		namedAgentNotebookContextProvider(memoryDir),
-	)
-	userPrompt := strings.TrimSpace(orientation)
-	promptResult := buildBaseSystemPromptResult(
-		rootDir, s.SessionDate, config.DefaultSystemPrompt(), userPrompt,
-		runner.ProviderName, runner.APIModel, activeSurfaceWithDeferredToolCatalog(toolkit, catalog),
-		nil, teaching, index, nil,
-	)
-	runner.UpdateSystemPromptWithSections(promptResult.Content, agentPromptSections(promptResult.Sections))
-	threadRuntime.refreshModelPrompt = func() error {
-		return s.ConfigureNamedAgentThreadRuntime(threadRuntime, rootDir, memoryDir, orientation)
-	}
-	return nil
-}
-
-func (s *Session) NewNamedAgentThreadRuntime(sessionID, rootDir, memoryDir, orientation string, selected ThreadModelSelection) (*ThreadRuntime, error) {
-	if s == nil {
-		return nil, errors.New("runtime session is required")
-	}
-	rootDir = strings.TrimSpace(rootDir)
-	if rootDir == "" {
-		return nil, errors.New("named agent root is required")
-	}
-	base, err := s.newCollaborationSession(rootDir, orientation, selected)
-	if err != nil {
-		return nil, err
-	}
-	threadRuntime, err := base.NewThreadRuntimeForRoot(sessionID, rootDir)
-	if err != nil {
-		return nil, err
-	}
-	threadRuntime.ExecutionProfile = CollaborationRuntimeVersion
-	if selected.Model == config.FusionID {
-		threadRuntime.Selection = selected
-		threadRuntime.Selection.PermissionMode = base.Permissions.Mode
-	}
-	if err := base.ConfigureNamedAgentThreadRuntime(threadRuntime, rootDir, memoryDir, orientation); err != nil {
-		return nil, err
-	}
 	return threadRuntime, nil
 }
 
@@ -2119,11 +1980,6 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 		s.UserQuestions.Close()
 		s.UserQuestions = nil
 	}
-	if s.codeModeStop != nil {
-		// Killing the process is the termination authority for stuck cells.
-		s.codeModeStop()
-		s.codeModeStop = nil
-	}
 	if s.CodeMode != nil {
 		cleanupErr = errors.Join(cleanupErr, s.CodeMode.Close())
 		s.CodeMode = nil
@@ -2205,53 +2061,6 @@ func toolkitContextBlockProvider(toolkit *tools.Toolkit) func() []wuucontext.Blo
 		return nil
 	}
 	return toolkit.ContextBlocks
-}
-
-func namedAgentNotebookContextProvider(memoryDir string) func() []wuucontext.Block {
-	return func() []wuucontext.Block {
-		snapshot, err := memdir.ReadIndex(memoryDir)
-		if err != nil {
-			providers.DebugLogf("refresh collaboration memory: %v", err)
-			return nil
-		}
-		return []wuucontext.Block{{Kind: wuucontext.BlockMemory, Title: "Current collaboration memory index", Source: "runtime.collaboration_memory", Content: snapshot.Content}}
-	}
-}
-
-func namedAgentWorkspaceContextProvider(wuuHome, agentHome, memoryDir string, toolkit *tools.Toolkit) func() []wuucontext.Block {
-	return func() []wuucontext.Block {
-		if toolkit != nil {
-			toolkit.SetFileScopeRoots(workspaces.BoundaryRoots(agentHome, wuuHome, memoryDir))
-		}
-		registered, err := workspaces.List(wuuHome)
-		if err != nil {
-			providers.DebugLogf("read named agent registered workspaces: %v", err)
-			return nil
-		}
-		var content strings.Builder
-		fmt.Fprintf(&content, "Current execution-host time: %s (%s). Schedules can use Local for this device or an explicit IANA timezone from the user.\n", time.Now().Format(time.RFC3339), time.Now().Weekday())
-		fmt.Fprintf(&content, "Agent home (identity/state anchor, not project scope): %s\n", agentHome)
-		if len(registered) == 0 {
-			content.WriteString("Registered project workspaces: none. Projectless conversation sessions are excluded.")
-		} else {
-			content.WriteString("Registered project workspace directory (discovery, not authorization for unrelated work):\n")
-			for _, workspace := range registered {
-				name := strings.TrimSpace(workspace.Name)
-				root := strings.TrimSpace(workspace.Root)
-				if name == "" {
-					name = root
-				}
-				fmt.Fprintf(&content, "- %s — id: %s — path: %s\n", name, workspace.ID, root)
-			}
-			content.WriteString("Bind each execution session to the project the user requested, using its registered ID or absolute path. Confirm the returned binding before follow-ups; existing sessions retain their project. If the task does not identify a project clearly, ask the user. Your identity home, the foreground workspace, and the process hosting you are not project defaults. Keep direct inspection and commands within the task's authorized project scope.")
-		}
-		return []wuucontext.Block{{
-			Kind:    wuucontext.BlockEnvironment,
-			Title:   "Named agent project activity scope",
-			Source:  "runtime.named_agent_workspaces",
-			Content: strings.TrimSpace(content.String()),
-		}}
-	}
 }
 
 func setupCatwalk(cfg config.Config) {
@@ -2851,6 +2660,7 @@ func (s *Session) ApplyGeneralConfig(cfg config.Config, homeDir string) string {
 	s.InstructionFiles = discoverInstructions(s.RootDir, homeDir, cfg.Instructions)
 	if s.Toolkit != nil {
 		s.Toolkit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
+		s.Toolkit.ConfigurePTC(s.CodeMode, cfg.PTC)
 		s.Toolkit.SetFileScopeRoots(workspaces.BoundaryRoots(s.Toolkit.RootDir(), s.WuuHome))
 	}
 	apiModel := s.Model

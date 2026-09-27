@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Thread, Turn } from "../shared/protocol";
 import {
-  CACHED_CONVERSATION_RENDER_BUDGET,
   MAX_CACHED_CONVERSATION_PANES,
   conversationPaneRenderWeight,
   retainCachedConversationPaneThreads,
@@ -55,7 +54,6 @@ describe("conversation pane cache", () => {
 
     expect(conversationPaneRenderWeight(threads[0])).toBe(80);
     expect(select(threads)).toEqual(["thread-0", "thread-1", "thread-2"]);
-    expect(80 * 3).toBe(CACHED_CONVERSATION_RENDER_BUDGET);
   });
 
   it("charges collapsed history at a lower weight while keeping running turns full", () => {

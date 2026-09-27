@@ -151,15 +151,3 @@ func TestEnginesConfigRejectsUnknownOrDisabledDefault(t *testing.T) {
 		t.Fatalf("Validate disabled default = %v", err)
 	}
 }
-
-func TestEngineEnabledSemantics(t *testing.T) {
-	var c *EngineBinaryConfig
-	if enabled, explicit := c.EngineEnabled(); !enabled || explicit {
-		t.Fatalf("nil config = enabled %v explicit %v, want true/false", enabled, explicit)
-	}
-	falseValue := false
-	c = &EngineBinaryConfig{Enabled: &falseValue}
-	if enabled, explicit := c.EngineEnabled(); enabled || !explicit {
-		t.Fatalf("explicit false = enabled %v explicit %v", enabled, explicit)
-	}
-}

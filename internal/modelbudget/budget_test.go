@@ -6,22 +6,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 )
 
-func TestResolveMiniMaxM3WithoutProviderLimitStaysUnknown(t *testing.T) {
-	budget := Resolve("MiniMax-M3", config.ProviderConfig{Type: "anthropic"}, 0)
-	if budget.ContextWindowTokens != 0 {
-		t.Fatalf("ContextWindowTokens = %d, want 0", budget.ContextWindowTokens)
-	}
-	if budget.ContextWindowSource != SourceUnknown || budget.ContextWindowKnown {
-		t.Fatalf("unexpected context source: source=%q known=%v", budget.ContextWindowSource, budget.ContextWindowKnown)
-	}
-	if budget.OutputReserveTokens != 0 {
-		t.Fatalf("OutputReserveTokens = %d, want 0 without provider metadata", budget.OutputReserveTokens)
-	}
-	if budget.CompactThresholdTokens != 0 {
-		t.Fatalf("CompactThresholdTokens = %d, want 0", budget.CompactThresholdTokens)
-	}
-}
-
 func TestResolveUnknownModelStaysUnknown(t *testing.T) {
 	budget := Resolve("private-unknown-model", config.ProviderConfig{Type: "anthropic"}, 0)
 	if budget.ContextWindowTokens != 0 || budget.ContextWindowKnown {
@@ -130,25 +114,6 @@ func TestResolveCodexProviderContextOverrideCanRaiseAutomaticLimit(t *testing.T)
 	}
 	if got, source := budget.EffectiveContextWindow(); got != 922_000 || source != SourceProviderContextWindow {
 		t.Fatalf("EffectiveContextWindow = %d, %q; want explicit provider override", got, source)
-	}
-}
-
-func TestResolveAliasDoesNotUseAPIModelRegistry(t *testing.T) {
-	provider := config.ProviderConfig{
-		Type: "anthropic",
-		Models: map[string]config.ProviderModelConfig{
-			"fast": {ID: "MiniMax-M3"},
-		},
-	}
-	budget := Resolve("fast", provider, 0)
-	if budget.APIModel != "MiniMax-M3" {
-		t.Fatalf("APIModel = %q, want MiniMax-M3", budget.APIModel)
-	}
-	if budget.ContextWindowTokens != 0 || budget.ContextWindowSource != SourceUnknown {
-		t.Fatalf("alias should not infer API model context registry: %+v", budget)
-	}
-	if budget.OutputReserveTokens != 0 {
-		t.Fatalf("alias should not infer API model output reserve, got %+v", budget)
 	}
 }
 

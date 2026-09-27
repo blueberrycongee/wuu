@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -74,24 +73,6 @@ func TestTopLevelManagersHaveDistinctHostGenerations(t *testing.T) {
 	}
 	if first.HostGenerationID() == second.HostGenerationID() {
 		t.Fatalf("two hosts share a generation id: %q", first.HostGenerationID())
-	}
-	if !strings.HasPrefix(first.HostGenerationID(), "host-") {
-		t.Fatalf("unexpected generation id shape: %q", first.HostGenerationID())
-	}
-}
-
-func TestThreadLocalManagersShareTopLevelHostGeneration(t *testing.T) {
-	runtimeRoot := filepath.Join(t.TempDir(), "runtime")
-	workspace, err := NewManager(t.TempDir(), runtimeRoot)
-	if err != nil {
-		t.Fatalf("NewManager: %v", err)
-	}
-	thread, err := NewManagerWithHostGeneration(t.TempDir(), workspace.HostGenerationID(), runtimeRoot)
-	if err != nil {
-		t.Fatalf("NewManagerWithHostGeneration: %v", err)
-	}
-	if workspace.HostGenerationID() != thread.HostGenerationID() {
-		t.Fatalf("thread-local manager generation = %q, want workspace generation %q", thread.HostGenerationID(), workspace.HostGenerationID())
 	}
 }
 

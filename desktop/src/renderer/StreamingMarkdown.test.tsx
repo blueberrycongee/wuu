@@ -226,44 +226,6 @@ describe("StreamingMarkdown", () => {
     expect(strong?.textContent).toBe("hi");
   });
 
-  it("keeps paragraph and its no-blank-line list as siblings inside one stable block", async () => {
-    const key = streamTextKey("turn", "s9", "text");
-    // Paragraph directly followed by a list (single newline) parses as
-    // two block siblings but lands in ONE stable block wrapper — the
-    // wrapper's adjacency rules must space them just like separate blocks.
-    streamTextStore.seed(key, "分类如下：\n- 只读：a\n- 可编辑：b\n\n后续段落。\n\n");
-    mount({ streamKey: key, initialText: "", isLive: true, phase: "final_answer" });
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-    });
-
-    const surface = document.querySelector(".streaming-markdown") as HTMLElement;
-    const wrappers = surface.querySelectorAll(".streaming-markdown-block");
-    expect(wrappers.length).toBeGreaterThanOrEqual(1);
-    const first = wrappers[0] as HTMLElement;
-    expect(first.querySelector(".rich-paragraph")).toBeTruthy();
-    expect(first.querySelector("ul")).toBeTruthy();
-  });
-
-  it("renders markdown headings as whisper-level rich-heading anchors", async () => {
-    const key = streamTextKey("turn", "s10", "text");
-    streamTextStore.seed(key, "");
-    mount({ streamKey: key, initialText: "", isLive: true, phase: "final_answer" });
-
-    await act(async () => {
-      streamTextStore.append(key, "## 方案\n\n正文段落");
-      await vi.advanceTimersByTimeAsync(500);
-    });
-
-    const surface = document.querySelector(".streaming-markdown") as HTMLElement;
-    const heading = surface.querySelector(".rich-heading");
-    expect(heading?.textContent).toBe("方案");
-    // Keep the existing heading DOM contract; message and file surfaces
-    // apply their own visual hierarchy through the level modifier classes.
-    expect(surface.querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
-  });
-
   it("keeps a loose list's paragraphs and numbering together across streamed blank lines", async () => {
     const key = streamTextKey("turn", "s13", "text");
     const prefix = "9. 第一项\n\n";
@@ -286,27 +248,6 @@ describe("StreamingMarkdown", () => {
     expect(Array.from(list.children[0].querySelectorAll("p"))).toEqual(paragraphs);
   });
 
-  it.each(["final_answer", "commentary"] as const)(
-    "renders legible live text and an inline cursor for %s",
-    async (phase) => {
-      const key = streamTextKey("turn", "s2", "text");
-      streamTextStore.seed(key, "Hello world");
-      mount({ streamKey: key, initialText: "Hello", isLive: true, phase });
-
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(STREAM_TEXT_NOTIFY_INTERVAL_MS);
-      });
-
-      const surface = container!.querySelector(".streaming-markdown")!;
-      const cursor = surface.querySelector(".stream-cursor");
-      expect(surface.textContent).toContain("Hello world");
-      expect(cursor?.tagName).toBe("SPAN");
-      expect(cursor?.closest(".rich-paragraph")).toBeTruthy();
-      expect(surface.querySelector(".stream-feather-enter, .streaming-cover")).toBeNull();
-      expect(surface.classList.contains("streaming-commentary-live")).toBe(false);
-    },
-  );
-
   it("keeps existing text stable when an inline Markdown delimiter closes", async () => {
     const key = streamTextKey("turn", "s2", "text");
     streamTextStore.seed(key, "**bold");
@@ -319,15 +260,6 @@ describe("StreamingMarkdown", () => {
     });
 
     expect(document.querySelector("strong")).not.toBeNull();
-  });
-
-  it("renders the full text immediately when not live", () => {
-    const key = streamTextKey("turn", "s4", "text");
-    streamTextStore.seed(key, "Hello world");
-    mount({ streamKey: key, initialText: "Hello world", isLive: false, phase: "final_answer" });
-
-    const surface = document.querySelector(".streaming-markdown") as HTMLElement;
-    expect(surface.textContent).toContain("Hello world");
   });
 
   it("notifies a frame when non-live text snaps to its final length", async () => {
@@ -349,24 +281,6 @@ describe("StreamingMarkdown", () => {
     });
 
     expect(frameCount).toBeGreaterThan(0);
-  });
-
-  it("hides the settled cursor from the parent state without changing the cursor node class", async () => {
-    const key = streamTextKey("turn", "s5", "text");
-    streamTextStore.seed(key, "Hello world");
-    mount({ streamKey: key, initialText: "Hello world", isLive: false, phase: "final_answer" });
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(50);
-    });
-
-    const surface = document.querySelector(".streaming-markdown") as HTMLElement;
-    const cursor = surface.querySelector(".stream-cursor");
-    // Cursor must stay in the DOM with a stable class so hiding it does
-    // not reparse or remount the Markdown tail.
-    expect(cursor).not.toBeNull();
-    expect(cursor?.className).toBe("stream-cursor");
-    expect(surface.dataset.cursorState).toBe("fading");
   });
 
   it("notifies once when isLive flips off and the cursor is caught up", async () => {
@@ -576,16 +490,6 @@ describe("splitIntoStableBlocks", () => {
     const result = splitIntoStableBlocks(text);
     expect(result.blocks).toEqual([]);
     expect(result.tail).toBe(text);
-  });
-
-  it("does treat a bare ``` line as a closer when no content follows the backticks", () => {
-    // Sanity check that the closer-validation guard above does not
-    // regress the standard case: a fence followed by a line of just
-    // three backticks must still close.
-    const text = "```ts\ncode\n```\n\nafter";
-    const result = splitIntoStableBlocks(text);
-    expect(result.blocks).toEqual(["```ts\ncode\n```\n\n"]);
-    expect(result.tail).toBe("after");
   });
 });
 

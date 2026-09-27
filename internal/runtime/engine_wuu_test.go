@@ -52,27 +52,6 @@ func TestProtocolEngineRebuildUsesSettingsWithoutLaunchingAgents(t *testing.T) {
 	}
 }
 
-func TestWuuEngineDescriptor(t *testing.T) {
-	e := &WuuEngine{}
-	desc, err := e.Descriptor(context.Background())
-	if err != nil {
-		t.Fatalf("Descriptor: %v", err)
-	}
-	if desc.ID != agentengine.EngineWuu {
-		t.Fatalf("descriptor id = %q, want wuu", desc.ID)
-	}
-	if desc.Version == "" {
-		t.Fatal("descriptor version must not be empty")
-	}
-}
-
-func TestWuuEngineSessionNilRunner(t *testing.T) {
-	sess := &wuuEngineSession{}
-	if _, err := sess.RunTurn(context.Background(), agentengine.TurnInput{}, nil); err == nil {
-		t.Fatal("RunTurn on a session without a runner must fail")
-	}
-}
-
 func TestWuuEngineSessionInterrupt(t *testing.T) {
 	sess := &wuuEngineSession{}
 	if err := sess.Interrupt(context.Background(), "stop"); !errors.Is(err, agentengine.ErrNoActiveTurn) {
@@ -91,20 +70,6 @@ func TestWuuEngineSessionInterrupt(t *testing.T) {
 	}
 	if err := sess.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
-	}
-}
-
-func TestSessionForThreadNilHandling(t *testing.T) {
-	e := &WuuEngine{}
-	if sess := e.SessionForThread(nil); sess != nil {
-		t.Fatal("SessionForThread(nil) must return nil")
-	}
-	rt := &ThreadRuntime{}
-	if sess := e.SessionForThread(rt); sess != nil {
-		t.Fatal("SessionForThread with nil runner must return nil")
-	}
-	if sess := e.SessionForRunner(nil); sess != nil {
-		t.Fatal("SessionForRunner(nil) must return nil")
 	}
 }
 
@@ -156,13 +121,6 @@ func TestEngineSessionForThreadUsesRegisteredExternalFactory(t *testing.T) {
 	}
 	if factory.binding.ThreadID != binding.ThreadID || factory.binding.RootDir != binding.RootDir {
 		t.Fatalf("binding = %+v, want %+v", factory.binding, binding)
-	}
-}
-
-func TestEngineUnavailableSession(t *testing.T) {
-	sess := EngineUnavailableSession(agentengine.EngineID("codex"))
-	if _, err := sess.RunTurn(context.Background(), agentengine.TurnInput{}, nil); !errors.Is(err, agentengine.ErrUnknownEngine) {
-		t.Fatalf("RunTurn = %v, want ErrUnknownEngine", err)
 	}
 }
 

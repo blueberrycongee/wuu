@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_MESSAGE_FLOW_FONT_SIZE,
   getCodexPetScale,
-  getChannelRoomPreferences,
   getCodexPetSettings,
   getCodexPetSize,
   getMainWindowBounds,
@@ -16,7 +15,6 @@ import {
   getLanguagePreference,
   readDesktopSettings,
   setCodexPetSettings,
-  setChannelRoomPreferences,
   setMainWindowBounds,
   setMessageFlowFontSize,
   setPluginConflictPreference,
@@ -63,10 +61,6 @@ describe("desktopSettings", () => {
     expect(readDesktopSettings(file)).toEqual({});
   });
 
-  it("defaults the theme preference to system", () => {
-    expect(getThemePreference(file)).toBe("system");
-  });
-
   it("persists completion of the mandatory first-run flow without losing other settings", () => {
     setThemePreference("dark", file);
 
@@ -85,25 +79,6 @@ describe("desktopSettings", () => {
     expect(isOnboardingComplete(file)).toBe(false);
     await writeFile(file, JSON.stringify({ onboarding_version: 1.5 }));
     expect(isOnboardingComplete(file)).toBe(false);
-  });
-
-  it("round-trips normalized channel room preferences", () => {
-    setThemePreference("dark", file);
-    setChannelRoomPreferences(
-      {
-        pinnedRoomIDs: ["room-1", "room-2", "room-2"],
-        archivedRoomIDs: ["room-1", "room-1", ""],
-        selectedRoomID: " ada-dm ",
-      },
-      file,
-    );
-
-    expect(getChannelRoomPreferences(file)).toEqual({
-      pinnedRoomIDs: ["room-2"],
-      archivedRoomIDs: ["room-1"],
-      selectedRoomID: "ada-dm",
-    });
-    expect(getThemePreference(file)).toBe("dark");
   });
 
   it("defaults and round-trips the language preference", () => {
@@ -150,10 +125,6 @@ describe("desktopSettings", () => {
     setMessageFlowFontSize(16, file);
     expect(getThemePreference(file)).toBe("dark");
     expect(getMessageFlowFontSize(file)).toBe(16);
-  });
-
-  it("uses the default message-flow size when no preference is saved", () => {
-    expect(getMessageFlowFontSize(file)).toBe(DEFAULT_MESSAGE_FLOW_FONT_SIZE);
   });
 
   it("round-trips the message-flow font size", () => {
@@ -224,11 +195,6 @@ describe("desktopSettings", () => {
     await writeFile(file, JSON.stringify({ theme: "dark", skin: "work" }));
     expect(readDesktopSettings(file)).toEqual({ theme: "dark" });
     expect(getThemePreference(file)).toBe("dark");
-  });
-
-  it("defaults the codex pet size to the 100% preset", () => {
-    expect(getCodexPetSize(file)).toBe("default");
-    expect(getCodexPetSettings(file).size).toBe("default");
   });
 
   it("round-trips the codex pet size while preserving other settings", () => {

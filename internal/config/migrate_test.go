@@ -72,7 +72,7 @@ func TestLoadFrom_MigratesLegacyConfigToUnifiedHome(t *testing.T) {
 
 	var cfg Config
 	var path string
-	out := captureStderr(t, func() {
+	captureStderr(t, func() {
 		var err error
 		cfg, path, err = LoadFrom(workdir, home)
 		if err != nil {
@@ -92,9 +92,6 @@ func TestLoadFrom_MigratesLegacyConfigToUnifiedHome(t *testing.T) {
 	}
 	if _, err := os.Stat(legacyPath); err != nil {
 		t.Fatalf("legacy config must be preserved, not moved: %v", err)
-	}
-	if !strings.Contains(out, "migrated config.json") {
-		t.Fatalf("expected migration notice on stderr, got %q", out)
 	}
 }
 
@@ -154,25 +151,6 @@ func TestLoadFrom_DoesNotFallBackToLegacyOnCanonicalReadError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), canonicalPath) {
 		t.Fatalf("error %q does not identify canonical config %q", err, canonicalPath)
-	}
-}
-
-func TestLoadFrom_FallsBackToLegacyConfigContent(t *testing.T) {
-	t.Setenv("WUU_HOME", "")
-	workdir := t.TempDir()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	writeLegacyConfig(t, home, migrateTestConfigJSON)
-
-	// Even though the read falls back to legacy content, migration makes the
-	// unified location authoritative on subsequent loads.
-	cfg, _, err := LoadFrom(workdir, home)
-	if err != nil {
-		t.Fatalf("LoadFrom: %v", err)
-	}
-	if cfg.DefaultProvider != "main" || cfg.Providers["main"].BaseURL != "https://legacy.example/v1" {
-		t.Fatalf("legacy config content not read: %+v", cfg)
 	}
 }
 

@@ -93,7 +93,7 @@ Initialization is preparation, not permission to start product behavior. The hos
 
 ## Tools and capabilities
 
-Register model tools in the initialization result's `tools` array. Each tool needs an `id`, `description`, and object `input_schema`. The host creates a namespaced public name. `execution_scopes` can limit availability to `root`, `child`, or `collaboration`; `activity` describes read-only behavior, concurrency safety, risk, and whether the tool orchestrates child tools. Declare real effects rather than marking a writer read-only to bypass scheduling or permission checks.
+Register model tools in the initialization result's `tools` array. Each tool needs an `id`, `description`, and object `input_schema`. The host creates a namespaced public name. `execution_scopes` can limit availability to `root` or `child`; `activity` describes read-only behavior, concurrency safety, risk, and whether the tool orchestrates child tools. Declare real effects rather than marking a writer read-only to bypass scheduling or permission checks. These declarations are trusted-extension contracts, not a sandbox.
 
 `executeTool` receives arguments and execution context such as `cwd`, call ID, and available session/turn identifiers. Validate arguments even when a schema is present. Return `{ result: { content: [...] } }`, setting `is_error: true` for a tool failure. Content can contain text and supported rich result parts. Use `importArtifact` for a file that should become a thread-owned artifact rather than returning a temporary path that may disappear.
 
@@ -160,6 +160,8 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 Most kernel services use method `call`. Storage is not a transaction across keys: use compare-exchange for concurrent updates to one value, check `swapped`, and bound retries. A separate read followed by an unconditional set can lose updates. Missing values are `null`; store structured values as strings, for example JSON.
 
 For session creation, provide a stable `request_id`, `visibility=user|plugin`, and `context_source=fresh|fork|seed`. Sending also needs a stable request ID and `input.prompt`. Admission or queueing is not completion: inspect the turn or handle lifecycle events before consuming its result. Keep model prompts, business state, and retry policy in the plugin; use the host for execution, history, workspace changes, and recovery.
+
+`host.workspace.status` and `apply` compare tracked files against the commit frozen at workspace creation, including committed, staged, and unstaged changes. `apply` writes the cumulative patch into the parent working tree without committing it, then removes the isolated workspace and rebinds the session. Conflicts, untracked files, or an unavailable baseline fail without discarding the workspace or its binding. Automatic cleanup also preserves committed work and workspaces whose baseline cannot be verified.
 
 A completed turn may have an empty `final_output`: normal provider completion does not require an outward reply or an acknowledgement tool. It records the end of execution, not proof that the user's objective was fulfilled. Consumers must inspect results and evidence; transport failures and abnormal stops still fail.
 

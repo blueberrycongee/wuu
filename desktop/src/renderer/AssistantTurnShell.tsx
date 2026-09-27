@@ -1,4 +1,5 @@
 import { fusionTurnStatus } from "./FusionStatus";
+import { localTurnTiming } from "./LocalTurnTiming";
 import { ChevronRight } from "./WuuIcons";
 import {
   type SyntheticEvent,
@@ -42,6 +43,7 @@ import {
   useAutoFollowScrollContainer,
 } from "./AutoFollowScroll";
 import { AnimatedProcessText } from "./ProcessTextMotion";
+import { motionDurationMs } from "./motion";
 import {
   useConversationRenderActive,
   useConversationRevealSnap,
@@ -172,6 +174,7 @@ export function AssistantTurnShell({
     turn.status === "in_progress" ||
     turn.status === "interrupted" ||
     Boolean(turn.fusion) ||
+    turn.status === "failed" ||
     hasAnswer;
   const answerHandoffRequested = answerEntries.some(
     (entry) =>
@@ -322,7 +325,10 @@ function TurnProcessFold({
       : reportedDuration ?? settledTimestampDuration;
   // The visible timer stops at answer readiness. Provider cleanup can continue
   // internally, but must not make a completed-looking answer keep aging.
-  const completedDuration = answerReadyDuration ?? settledDuration;
+  const localTiming = localTurnTiming(turn);
+  const completedDuration = localTiming
+    ? localTiming.finished ? localTiming.elapsed : undefined
+    : answerReadyDuration ?? settledDuration;
   const liveDuration =
     completedDuration === undefined &&
     turn.status === "in_progress";
@@ -339,7 +345,7 @@ function TurnProcessFold({
   }
   const liveNow = useLiveNow(liveDuration && renderActive);
   const liveElapsedMs = liveDuration
-    ? Math.max(0, liveNow - startedAt)
+    ? localTiming?.elapsed ?? Math.max(0, liveNow - startedAt)
     : undefined;
   // Keep the last live elapsed value outside the component lifecycle. A
   // paused turn settles as "interrupted" and its server snapshot usually
@@ -370,7 +376,7 @@ function TurnProcessFold({
   const metaParts = turnProcessMetaParts(
     turn,
     elapsedMs,
-    pausedElapsedMs !== undefined,
+    pausedElapsedMs !== undefined || completedDuration !== undefined,
     answerReady,
   );
 
@@ -409,7 +415,7 @@ function TurnProcessFold({
         if (autoCollapse) {
           onCollapseComplete?.();
         }
-      }, 440);
+      }, motionDurationMs("--collapse-motion-duration", 440) + 32);
       previousExpanded.current = expanded;
       return () => window.clearTimeout(timeoutId);
     }
@@ -732,8 +738,9 @@ function ReasoningFold({
     };
     body.addEventListener("transitionend", snapToBottom);
     // Fallback when transitionend never fires (reduced motion, or the
-    // grid already settled before the listener attached).
-    window.setTimeout(snapToBottom, 280);
+    // grid already settled before the listener attached). The body's
+    // grid-template-rows transition runs on --motion-slow.
+    window.setTimeout(snapToBottom, motionDurationMs("--motion-slow", 280));
   }, [reasoningScroll]);
   return (
     <details
@@ -798,12 +805,9 @@ function turnProcessTitle(
       ? taskFinishedLabel(elapsedMs)
       : translate("task.status.completed");
   }
-  if (turn.status === "completed" || turn.status === "interrupted") {
-    if (!hasKnownDuration) {
-      return turn.status === "interrupted"
-        ? turnProgressContent(turn, elapsedMs, hasFinalText).label
-        : translate("task.status.completed");
-    }
+  if (turn.status === "interrupted") return translate("turn.orchestrationPaused");
+  if (turn.status === "completed") {
+    if (!hasKnownDuration) return translate("task.status.completed");
     return taskFinishedLabel(elapsedMs);
   }
   return turnProgressContent(turn, elapsedMs, hasFinalText).label;

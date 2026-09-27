@@ -4,7 +4,7 @@ Use a small project you can restore, such as a disposable copy of a Git reposito
 
 ## Choose the folder
 
-In the sidebar, choose **Add workspace → Use existing folder** and select the project. To start without existing files, choose **Create blank project** instead. Open a conversation in that workspace and check the directory before sending.
+In the sidebar, choose **Add workspace → Use existing folder** and select the project folder. To start without existing files, choose **Create blank workspace** instead. Open a conversation in that workspace and check the directory before sending.
 
 Adding the folder does not copy it. The agent works on the real files, so save or commit any existing work you need to preserve.
 
@@ -38,7 +38,7 @@ Use the composer shortcuts to inspect the work:
 
 | Command | Purpose |
 |---|---|
-| `/files` | Browse and open project files |
+| `/files` | Browse and open workspace files |
 | `/diff` | Review the current Git changes |
 | `/terminal` | Run your own checks in a workspace shell |
 
@@ -47,3 +47,19 @@ Check that the diff contains only the intended change and that the reported test
 Commands you enter in the terminal use your own OS permissions; the agent's read-only setting does not restrict that terminal. Do not paste a command there simply to bypass an agent permission error.
 
 Reply in the same conversation to request a correction. You can reopen it from the sidebar later, or [fork the conversation](../desktop/conversations.md) to try a different approach. See [workspace tools](../desktop/workspace-tools.md) for file previews and delivered artifacts.
+
+## Sending and stopping
+
+The processing timer starts when you send and includes waiting for the local
+request to be accepted. It stays continuous across updates and conversation
+switches, and freezes when the answer is ready or execution ends. Reopened history
+without a local send record uses the server's execution time.
+
+You can queue more messages while a new conversation is being created. They are
+sent in order after its first request is accepted. If creation fails or is
+cancelled, the inputs are kept as drafts; a notice opens any recovery draft.
+
+Stop shows a progress icon in the same button until execution has ended. Messages
+still waiting to be submitted are retained without automatically starting. If
+Wuu cannot confirm the stop, the button offers a retry; it does not claim the task
+has stopped. Your current draft stays in the composer.

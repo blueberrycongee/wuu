@@ -3,12 +3,11 @@ import { conversationDisclosureHeight } from "./ConversationDisclosure";
 
 /** A submission reserves a minimum content extent, not permanent bottom padding. */
 export function useSessionTailSpace({
-  threadID, enabled, preserveOnThreadChange, paneRef, viewportRef, contentRef, getRestorationOffset,
+  threadID, enabled, preserveOnThreadChange, viewportRef, contentRef, getRestorationOffset,
 }: {
   threadID?: string;
   enabled: boolean;
   preserveOnThreadChange: boolean;
-  paneRef: RefObject<HTMLElement | null>;
   viewportRef: RefObject<HTMLElement | null>;
   contentRef: RefObject<HTMLElement | null>;
   getRestorationOffset: () => number;
@@ -28,8 +27,11 @@ export function useSessionTailSpace({
     // value below half a CSS pixel, but always clear a consumed reservation.
     if (height > 0 && space.current > 0 && Math.abs(height - space.current) < 0.5) return;
     space.current = height;
-    paneRef.current?.style.setProperty("--session-tail-space", `${height}px`);
-  }, [paneRef]);
+    // The reservation changes on stream frames. An inherited variable would
+    // restyle every turn below it; padding changes only the wrapper's box.
+    const content = contentRef.current;
+    if (content) content.style.paddingBottom = height > 0 ? `${height}px` : "";
+  }, [contentRef]);
   const naturalHeight = useCallback(() => {
     // scrollHeight is floored at clientHeight, so it cannot measure short
     // first turns. The content wrapper includes the tail but not that floor.

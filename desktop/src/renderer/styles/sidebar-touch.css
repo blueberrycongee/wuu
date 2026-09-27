@@ -18,7 +18,7 @@
     position: relative;
     overflow: hidden;
     transform: translate3d(var(--sidebar-page-offset), 0, 0);
-    transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+    transition: transform var(--motion-slow) var(--ease-out);
     /* Keep the message surface composited before the first drag. Changing its
        clipping and shadow at gesture start repaints a potentially long thread. */
     will-change: transform;
@@ -41,7 +41,7 @@
     box-shadow: none;
     opacity: 1;
     transform: translate3d(var(--sidebar-touch-offset), 0, 0);
-    transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+    transition: transform var(--motion-slow) var(--ease-out);
     will-change: transform;
   }
 
@@ -71,7 +71,7 @@
     opacity: var(--sidebar-touch-progress);
     pointer-events: none;
     visibility: hidden;
-    transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1), opacity 240ms cubic-bezier(0.22, 1, 0.36, 1);
+    transition: transform var(--motion-slow) var(--ease-out), opacity var(--motion-slow) var(--ease-out);
   }
 
   :root[data-host-kind="web"] .app-shell.compact-navigation:is(.sidebar-drawer-open, .sidebar-drawer-closing, [data-sidebar-touch]) .compact-session-switcher-backdrop {
@@ -84,12 +84,6 @@
   }
 
   :root[data-host-kind="web"] .app-shell.compact-navigation[data-sidebar-touch="dragging"] :is(.sidebar, .compact-session-switcher-backdrop, .conversation-pane) {
-    transition: none;
-  }
-}
-
-@media (pointer: coarse) and (prefers-reduced-motion: reduce) {
-  :root[data-host-kind="web"] .app-shell.compact-navigation :is(.sidebar, .compact-session-switcher-backdrop, .conversation-pane) {
     transition: none;
   }
 }

@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
   FileTreeListResult,
   RuntimeContext,
@@ -223,7 +223,7 @@ function writeWorkspaceFileResult(
   if (!params || typeof params !== "object") {
     throw new Error("missing file save parameters");
   }
-  if (params.path.split(/[\\/]/).some((segment) => segment === "..")) {
+  if (toWorkspaceSlash(params.path).split("/").some((segment) => segment === "..")) {
     throw new Error("file is outside workspace");
   }
   if (typeof params.text !== "string") {
@@ -436,7 +436,8 @@ function isPathInsideRoot(path: string, root: string): boolean {
 }
 
 function toWorkspaceSlash(path: string): string {
-  return path.replace(/\\/g, "/");
+  // Backslashes are filename characters on POSIX, not directory separators.
+  return path.split(sep).join("/");
 }
 
 function sha256Hex(buffer: Buffer): string {
@@ -444,9 +445,7 @@ function sha256Hex(buffer: Buffer): string {
 }
 
 function normalizeWorkspaceRelativePath(path: string): string {
-  const value = path
-    .trim()
-    .replace(/\\/g, "/")
+  const value = toWorkspaceSlash(path)
     .replace(/^\/+/, "")
     .replace(/\/+$/, "");
   if (
@@ -460,9 +459,7 @@ function normalizeWorkspaceRelativePath(path: string): string {
 }
 
 function normalizeWorkspaceDirectoryPath(path: string): string {
-  const value = path
-    .trim()
-    .replace(/\\/g, "/")
+  const value = toWorkspaceSlash(path)
     .replace(/^\/+/, "")
     .replace(/\/+$/, "");
   if (

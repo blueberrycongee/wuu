@@ -12,14 +12,6 @@ export const ENABLE_CONVERSATION_TURN_RAIL = false;
 export const ENABLE_TURN_ARTIFACT_SUMMARY = true;
 
 /**
- * Collaboration is part of the default desktop product in development and
- * release builds. Keep a build-time opt-out for emergency rollback without
- * maintaining a separate release-only product surface.
- */
-export const ENABLE_GROUP_CHAT =
-  import.meta.env.VITE_ENABLE_GROUP_CHAT !== "false";
-
-/**
  * Account and device-linking UI stays available in development. All production
  * builds, including local packages, hide it until the flow is ready for users;
  * a leftover development environment variable must not expose it in a release.

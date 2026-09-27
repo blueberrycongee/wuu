@@ -32,7 +32,7 @@ Remote `headers` are literal header values. Native `mcp_servers` does not expand
 
 ## Manage the connection
 
-Open **Settings → General → MCP servers** to see connection state, tool count, and errors. Connect, disconnect, or refresh a server there. Disconnect ends the current connection without deleting its definition; refresh reconnects with the already-loaded configuration and discovers tools again.
+Open **Settings → MCP servers** to see connection state, tool count, and errors. Connect, disconnect, or refresh a server there. Disconnect ends the current connection without deleting its definition; refresh reconnects with the already-loaded configuration and discovers tools again.
 
 The enable toggle saves the startup preference. Use the connection controls when you need an immediate connection change, and restart Wuu after editing definitions on disk. Refresh is not a configuration-file reload.
 

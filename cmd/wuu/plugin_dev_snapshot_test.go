@@ -36,8 +36,9 @@ func TestChangedPluginSourcePathsReportsAddedChangedRemoved(t *testing.T) {
 
 	base := time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)
 	before := pluginSourceSnapshot{
-		"a.ts": {ModTime: base, Size: 1},
-		"b.ts": {ModTime: base, Size: 2},
+		"a.ts":       {ModTime: base, Size: 1},
+		"b.ts":       {ModTime: base, Size: 2},
+		"removed.ts": {ModTime: base, Size: 1},
 	}
 	after := pluginSourceSnapshot{
 		"a.ts": {ModTime: base.Add(time.Second), Size: 1},
@@ -46,7 +47,7 @@ func TestChangedPluginSourcePathsReportsAddedChangedRemoved(t *testing.T) {
 	}
 
 	got := changedPluginSourcePaths(before, after)
-	want := []string{"a.ts", "b.ts", "c.ts"}
+	want := []string{"a.ts", "b.ts", "c.ts", "removed.ts"}
 	if len(got) != len(want) {
 		t.Fatalf("changed paths = %v, want %v", got, want)
 	}

@@ -633,6 +633,9 @@ func applyAnthropicProviderOptions(payload *anthropicRequest, options map[string
 	}
 	if speed, ok := options["speed"].(string); ok && strings.TrimSpace(speed) != "" {
 		payload.Speed = strings.TrimSpace(speed)
+		if payload.Speed == "fast" {
+			payload.Betas = appendUniqueStrings(payload.Betas, "fast-mode-2026-02-01")
+		}
 	}
 	if payload.Temperature == nil {
 		if temperature, ok := providerOptionFloat(options["temperature"]); ok {

@@ -35,6 +35,7 @@ func TestFusionPairPersistsAcrossTurnsAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := New(rt, &lockedBuffer{})
+	t.Cleanup(srv.Close)
 	th := newThreadState("fusion-thread", nil, "lead", config.FusionID, rt.RootDir, true, time.Now())
 	th.Turns = []Turn{{ID: "turn-one", Kind: TurnKindUser, Status: TurnStatusInProgress}}
 	execution, err := rt.NewThreadRuntime(th.ID)
@@ -92,6 +93,7 @@ func TestFusionSettingsCanChangeWhileTaskRuns(t *testing.T) {
 	}
 	out := &lockedBuffer{}
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	th := newThreadState("running", nil, "fake-provider", "fake-model", rt.RootDir, false, time.Now())
 	th.running = true
 	srv.threads[th.ID] = th

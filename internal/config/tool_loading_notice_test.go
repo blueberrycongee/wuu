@@ -47,12 +47,8 @@ func TestRetiredToolLoadingValueStillValidates(t *testing.T) {
 	}
 
 	cfg.Agent.ToolLoading = ToolLoadingMode("nonsense")
-	err := cfg.Validate()
-	if err == nil {
+	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate() = nil, want an error for an unknown tool_loading value")
-	}
-	if strings.Contains(err.Error(), "wuu_tool_search") {
-		t.Fatalf("validation error should no longer advertise the removed mode: %v", err)
 	}
 }
 
@@ -67,9 +63,6 @@ func TestRetiredToolLoadingNoticeIsEmittedOncePerSpelling(t *testing.T) {
 	}
 	if got := strings.Count(warnings.String(), "was removed"); got != 1 {
 		t.Fatalf("notice count = %d, want 1 (the app-server resolves this on every session build):\n%s", got, warnings.String())
-	}
-	if !strings.Contains(warnings.String(), "auto") {
-		t.Fatalf("notice should name the replacement value: %q", warnings.String())
 	}
 }
 

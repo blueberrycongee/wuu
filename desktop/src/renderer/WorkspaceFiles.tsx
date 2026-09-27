@@ -1,3 +1,4 @@
+import { useActiveContextMenu } from "./ActiveContextMenu";
 import { isTouchWebShell } from "./ComposerFocus";
 import { hostSupports } from "./HostCapabilities";
 import { preparePresortedFileTreeInput } from "@pierre/trees";
@@ -15,6 +16,7 @@ import { WORKSPACE_FILE_DRAG_MIME } from "./ComposerMessages";
 import { RichContent } from "./RichContent";
 import type { WorkspaceMonacoViewState } from "./WorkspaceMonacoEditor";
 import { desktopApiErrorMessage } from "./WorkspaceReviewHelpers";
+import { workspacePathToSlash } from "./WorkspacePaths";
 import { translateCurrent, useI18n } from "./i18n";
 import { desktopPlatform } from "./platform";
 import { FilePreviewPresentation } from "./plugins/FilePreviewPresentation";
@@ -133,7 +135,7 @@ export function WorkspaceFileTree({
   }, [open, workspaceRoot, locale]);
 
   if (!workspaceRoot) {
-    return <WorkspacePanelEmpty title={t("workspace.files.noProject")} hint={t("workspace.files.noProjectDescription")} />;
+    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} hint={t("workspace.files.noWorkspaceDescription")} />;
   }
 
   if (loading && !directories[""]) {
@@ -358,6 +360,7 @@ function WorkspaceTreeContextMenu({
 }): JSX.Element {
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement | null>(null);
+  useActiveContextMenu(onClose);
   // The menu mounts at the cursor, but until React commits the first
   // paint its own size isn't known — measure on the layout effect that
   // runs just before paint, clamp to viewport so the user never sees
@@ -533,8 +536,8 @@ function normalizeSelectedWorkspaceFilePath(path: string | undefined, workspaceR
   if (!path || !workspaceRoot) {
     return undefined;
   }
-  const normalizedPath = normalizePathSeparators(path).replace(/\/+$/, "");
-  const normalizedRoot = normalizePathSeparators(workspaceRoot).replace(/\/+$/, "");
+  const normalizedPath = workspacePathToSlash(path, workspaceRoot).replace(/\/+$/, "");
+  const normalizedRoot = workspacePathToSlash(workspaceRoot, workspaceRoot).replace(/\/+$/, "");
   const relativePath = normalizedPath.startsWith(`${normalizedRoot}/`)
     ? normalizedPath.slice(normalizedRoot.length + 1)
     : normalizedPath.startsWith("/")
@@ -547,8 +550,7 @@ function normalizeSelectedWorkspaceFilePath(path: string | undefined, workspaceR
 }
 
 function normalizeWorkspaceRelativeFilePath(path: string): string | undefined {
-  const value = normalizePathSeparators(path)
-    .trim()
+  const value = path
     .replace(/^\.\/+/, "")
     .replace(/^\/+/, "")
     .replace(/\/+$/, "");
@@ -556,10 +558,6 @@ function normalizeWorkspaceRelativeFilePath(path: string): string | undefined {
     return undefined;
   }
   return value;
-}
-
-function normalizePathSeparators(path: string): string {
-  return path.trim().replace(/\\/g, "/");
 }
 
 function parentDirectoryPathsForFile(path: string): string[] {
@@ -718,8 +716,8 @@ export function WorkspaceFilePreview({
     return (
       <div className="workspace-main-empty">
         <FolderX size={36} />
-        <strong>{t("workspace.files.noProject")}</strong>
-        {!isTouchWebShell() && <span>{t("workspace.files.previewNoProjectDescription")}</span>}
+        <strong>{t("workspace.files.noWorkspace")}</strong>
+        {!isTouchWebShell() && <span>{t("workspace.files.previewNoWorkspaceDescription")}</span>}
       </div>
     );
   }

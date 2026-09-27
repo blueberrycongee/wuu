@@ -51,9 +51,6 @@ func (s *Session) ApplyFusion(rt *ThreadRuntime, cfg config.Config, pair config.
 	if err := validation.ValidateFusion(); err != nil {
 		return err
 	}
-	if rt.ExecutionProfile == CollaborationRuntimeVersion {
-		cfg.Agent = config.Default().Agent
-	}
 	selected := pair.Lead
 	// Fusion owns this worker selection; unrelated worker-role defaults must
 	// not silently override the configured Sidekick.

@@ -61,7 +61,7 @@ func (t *Toolkit) ClearFusionHandoff() {
 // BeginFusionToolCall serializes native and extension calls with delegation.
 // Exec/wait orchestrators defer this gate to their actual leaf operations.
 func (t *Toolkit) BeginFusionToolCall(ctx context.Context, name string) (func(), error) {
-	if t.fusionDelegate == nil || name == codeModeExecToolName || name == codeModeWaitToolName {
+	if t.fusionDelegate == nil || name == codeModeExecToolName {
 		return func() {}, nil
 	}
 	var release func()

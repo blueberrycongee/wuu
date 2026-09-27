@@ -48,12 +48,6 @@ func newDriverTestRegistry(t *testing.T, clients ...pluginhost.Client) *pluginho
 	return registry
 }
 
-func TestResolveLoopDriverEmptyProfileKeepsDefault(t *testing.T) {
-	if driver := resolveLoopDriver("  ", nil, nil); driver != nil {
-		t.Fatalf("driver = %#v, want nil", driver)
-	}
-}
-
 func TestResolveLoopDriverFailsClosedWithoutProvider(t *testing.T) {
 	registry := newDriverTestRegistry(t)
 	if _, ok := resolveLoopDriver("ghost", nil, nil).(loopdriver.FailClosedDriver); !ok {

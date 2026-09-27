@@ -91,7 +91,7 @@ function FoldHarness({
   return (
     <div>
       {fold.hasBlocks ? (
-        <div className="composer-collapsed-prompt-list">
+        <div>
           {fold.blocks.map((block, index) => (
             <CollapsedComposerPromptCard
               key={block.id}
@@ -209,7 +209,7 @@ describe("useCollapsedComposerPrompt persistence", () => {
     });
     act(() => {
       container
-        .querySelector<HTMLButtonElement>(".composer-collapsed-prompt-main")
+        .querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main")
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
     expect(foldedCard()).toBeNull();

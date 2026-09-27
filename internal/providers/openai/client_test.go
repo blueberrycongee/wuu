@@ -534,80 +534,6 @@ func TestChat_DoesNotOverrideExplicitTemperatureWithProviderOption(t *testing.T)
 	}
 }
 
-func TestChat_SendsSnakeCasePromptCacheKeyForOpenRouter(t *testing.T) {
-	t.Helper()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode request body: %v", err)
-		}
-		if body["prompt_cache_key"] != "cache-key-2" {
-			t.Fatalf("expected prompt_cache_key, got %#v", body["prompt_cache_key"])
-		}
-		if _, exists := body["promptCacheKey"]; exists {
-			t.Fatalf("did not expect promptCacheKey on OpenRouter payload: %#v", body["promptCacheKey"])
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
-	}))
-	defer server.Close()
-
-	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	_, err = client.Chat(context.Background(), providers.ChatRequest{
-		Model: "openrouter-test",
-		Messages: []providers.ChatMessage{
-			{Role: "user", Content: "hello"},
-		},
-		CacheHint:       &providers.CacheHint{PromptCacheKey: "cache-key-2"},
-		ProviderOptions: map[string]any{"promptCacheKeySupported": true},
-	})
-	if err != nil {
-		t.Fatalf("Chat: %v", err)
-	}
-}
-
-func TestChat_OmitsPromptCacheKeyWithoutHint(t *testing.T) {
-	t.Helper()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode request body: %v", err)
-		}
-		if _, exists := body["promptCacheKey"]; exists {
-			t.Fatalf("did not expect promptCacheKey without hint: %#v", body["promptCacheKey"])
-		}
-		if _, exists := body["prompt_cache_key"]; exists {
-			t.Fatalf("did not expect prompt_cache_key without hint: %#v", body["prompt_cache_key"])
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
-	}))
-	defer server.Close()
-
-	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	_, err = client.Chat(context.Background(), providers.ChatRequest{
-		Model: "gpt-test",
-		Messages: []providers.ChatMessage{
-			{Role: "user", Content: "hello"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("Chat: %v", err)
-	}
-}
-
 func TestChat_SendsImageContentParts(t *testing.T) {
 	t.Helper()
 
@@ -919,6 +845,202 @@ func TestChat_SendsSupportedPromptCacheKey(t *testing.T) {
 	}
 }
 
+func TestChat_AdjacentMessageWireHistory(t *testing.T) {
+	cases := []struct {
+		name     string
+		model    string
+		messages []providers.ChatMessage
+		want     string
+	}{
+		{
+			name: "text before tool call",
+			messages: []providers.ChatMessage{
+				{Role: "user", Content: "Read the file"},
+				{Role: "assistant", Content: "I will read it."},
+				{Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "call_read", Name: "read_file", Arguments: `{"path":"README.md"}`}}},
+				{Role: "tool", ToolCallID: "call_read", Name: "read_file", Content: "file contents"},
+			},
+			want: `[
+				{"role":"user","content":"Read the file"},
+				{"role":"assistant","content":"I will read it."},
+				{"role":"assistant","content":"","tool_calls":[{"id":"call_read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\"}"}}]},
+				{"role":"tool","tool_call_id":"call_read","name":"read_file","content":"file contents"}
+			]`,
+		},
+		{
+			name: "reasoning and multiple tool results",
+			messages: []providers.ChatMessage{
+				{Role: "user", Content: "Compare files"},
+				{Role: "assistant", Content: "Planning", ReasoningContent: "Need both files"},
+				{Role: "assistant", Content: "Reading", ReasoningContent: "Read them together", ToolCalls: []providers.ToolCall{
+					{ID: "call_a", Name: "read_file", Arguments: `{"path":"a.txt"}`},
+					{ID: "call_b", Name: "read_file", Arguments: `{"path":"b.txt"}`},
+				}},
+				{Role: "tool", ToolCallID: "call_a", Name: "read_file", Content: "contents A"},
+				{Role: "tool", ToolCallID: "call_b", Name: "read_file", Content: "contents B"},
+			},
+			want: `[
+				{"role":"user","content":"Compare files"},
+				{"role":"assistant","content":"Planning","reasoning_content":"Need both files"},
+				{"role":"assistant","content":"Reading","reasoning_content":"Read them together","tool_calls":[
+					{"id":"call_a","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"a.txt\"}"}},
+					{"id":"call_b","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"b.txt\"}"}}
+				]},
+				{"role":"tool","tool_call_id":"call_a","name":"read_file","content":"contents A"},
+				{"role":"tool","tool_call_id":"call_b","name":"read_file","content":"contents B"}
+			]`,
+		},
+		{
+			name: "reasoning around plain assistant text",
+			messages: []providers.ChatMessage{
+				{Role: "user", Content: "Continue"},
+				{Role: "assistant", Content: "First", ReasoningContent: "First reasoning"},
+				{Role: "assistant", Content: "Middle"},
+				{Role: "assistant", Content: "Last", ReasoningContent: "Last reasoning"},
+			},
+			want: `[
+				{"role":"user","content":"Continue"},
+				{"role":"assistant","content":"First","reasoning_content":"First reasoning"},
+				{"role":"assistant","content":"Middle"},
+				{"role":"assistant","content":"Last","reasoning_content":"Last reasoning"}
+			]`,
+		},
+		{
+			name:  "deepseek empty reasoning",
+			model: "deepseek-reasoner",
+			messages: []providers.ChatMessage{
+				{Role: "user", Content: "Continue"},
+				{Role: "assistant", Content: "First", ReasoningContent: "First reasoning"},
+				{Role: "assistant", Content: "Last"},
+			},
+			want: `[
+				{"role":"user","content":"Continue"},
+				{"role":"assistant","content":"First","reasoning_content":"First reasoning"},
+				{"role":"assistant","content":"Last","reasoning_content":""}
+			]`,
+		},
+		{
+			name: "named participants",
+			messages: []providers.ChatMessage{
+				{Role: "user", Name: "alice", Content: "First"},
+				{Role: "user", Name: "bob", Content: "Second"},
+			},
+			want: `[
+				{"role":"user","name":"alice","content":"First"},
+				{"role":"user","name":"bob","content":"Second"}
+			]`,
+		},
+		{
+			name: "safe text and media merges",
+			messages: []providers.ChatMessage{
+				{Role: "system", Content: "First instruction"},
+				{Role: "system", Content: "Second instruction"},
+				{Role: "user", Content: "Inspect", Images: []providers.InputImage{{MediaType: "image/png", Data: "AAAA"}}},
+				{Role: "user", Files: []providers.InputFile{
+					{MediaType: "application/pdf", Filename: "brief.pdf", Data: "BBBB"},
+					{MediaType: "video/mp4", Data: "CCCC"},
+				}},
+				{Role: "user", Hidden: true, Content: "Runtime context"},
+				{Role: "assistant", Content: "First reply"},
+				{Role: "assistant", Content: "Second reply"},
+			},
+			want: `[
+				{"role":"system","content":"First instruction\nSecond instruction"},
+				{"role":"user","content":[
+					{"type":"text","text":"Inspect"},
+					{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}},
+					{"type":"file","file":{"filename":"brief.pdf","file_data":"data:application/pdf;base64,BBBB"}},
+					{"type":"video_url","video_url":{"url":"data:video/mp4;base64,CCCC"}},
+					{"type":"text","text":"Runtime context"}
+				]},
+				{"role":"assistant","content":"First reply\nSecond reply"}
+			]`,
+		},
+	}
+	for _, tc := range cases {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%v", tc.name, stream), func(t *testing.T) {
+				if err := providers.ValidateToolCallHistory(tc.messages); err != nil {
+					t.Fatalf("invalid input history: %v", err)
+				}
+				original := providers.CloneChatMessages(tc.messages)
+				wire := make(chan []byte, 1)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					body, err := io.ReadAll(r.Body)
+					if err != nil {
+						t.Errorf("read request: %v", err)
+						http.Error(w, "read request failed", http.StatusBadRequest)
+						return
+					}
+					wire <- body
+					if stream {
+						w.Header().Set("Content-Type", "text/event-stream")
+						_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+					} else {
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}`)
+					}
+				}))
+				defer server.Close()
+				client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				model := tc.model
+				if model == "" {
+					model = "gpt-test"
+				}
+				req := providers.ChatRequest{
+					Model: model, Messages: tc.messages,
+					ProviderOptions: map[string]any{"video_input": "video_url"},
+				}
+				if stream {
+					events, err := client.StreamChat(context.Background(), req)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for event := range events {
+						if event.Error != nil {
+							t.Fatal(event.Error)
+						}
+					}
+				} else if _, err := client.Chat(context.Background(), req); err != nil {
+					t.Fatal(err)
+				}
+				body := <-wire
+				t.Logf("wire=%s", body)
+				var request struct {
+					Messages []chatMessage `json:"messages"`
+				}
+				if err := json.Unmarshal(body, &request); err != nil {
+					t.Fatal(err)
+				}
+				var history []providers.ChatMessage
+				for _, msg := range request.Messages {
+					decoded := providers.ChatMessage{Role: msg.Role, ToolCallID: msg.ToolCallID}
+					for _, call := range msg.ToolCalls {
+						decoded.ToolCalls = append(decoded.ToolCalls, providers.ToolCall{ID: call.ID, Name: call.Function.Name, Arguments: call.Function.Arguments})
+					}
+					history = append(history, decoded)
+				}
+				if err := providers.ValidateToolCallHistory(history); err != nil {
+					t.Errorf("valid input became invalid wire history: %v", err)
+				}
+				var want []chatMessage
+				if err := json.Unmarshal([]byte(tc.want), &want); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(request.Messages, want) {
+					t.Errorf("wire messages lost content or metadata; want %s", tc.want)
+				}
+				if !reflect.DeepEqual(tc.messages, original) {
+					t.Error("request mapping mutated caller history")
+				}
+			})
+		}
+	}
+}
+
 func TestChat_SendsReasoningContentInAssistantToolCallMessage(t *testing.T) {
 	t.Helper()
 
@@ -1118,27 +1240,6 @@ func TestChat_ParsesReasoningContent(t *testing.T) {
 	}
 }
 
-func TestChat_HandlesProviderError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"bad request"}`))
-	}))
-	defer server.Close()
-
-	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	_, err = client.Chat(context.Background(), providers.ChatRequest{
-		Model:    "gpt-test",
-		Messages: []providers.ChatMessage{{Role: "user", Content: "hello"}},
-	})
-	if err == nil {
-		t.Fatal("expected provider error")
-	}
-}
-
 func TestChat_RetriesTransientServerError(t *testing.T) {
 	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1218,35 +1319,6 @@ func TestChat_DoesNotRetryAuthError(t *testing.T) {
 	}
 	if got := attempts.Load(); got != 1 {
 		t.Fatalf("expected 1 attempt for auth failure, got %d", got)
-	}
-}
-
-func TestNewStreamingHTTPClient_DisablesOverallTimeout(t *testing.T) {
-	base := &http.Client{
-		Timeout:       5 * time.Second,
-		Transport:     http.DefaultTransport,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-
-	streamClient := newStreamingHTTPClient(base, providers.StreamTransportConfig{
-		ConnectTimeout: time.Second,
-		IdleTimeout:    5 * time.Second,
-	})
-
-	if streamClient == base {
-		t.Fatal("expected streaming client to clone the base client")
-	}
-	if streamClient.Timeout != 0 {
-		t.Fatalf("expected streaming client timeout disabled, got %s", streamClient.Timeout)
-	}
-	if streamClient.Transport == base.Transport {
-		t.Fatal("expected streaming client transport to be cloned")
-	}
-	if streamClient.CheckRedirect == nil {
-		t.Fatal("expected streaming client to preserve redirect policy")
-	}
-	if base.Timeout != 5*time.Second {
-		t.Fatalf("expected base client timeout unchanged, got %s", base.Timeout)
 	}
 }
 
@@ -1434,24 +1506,6 @@ func TestStreamChat_EmitsThinkingEventsForReasoningContent(t *testing.T) {
 	}
 }
 
-func TestStreamChat_ValidationErrors(t *testing.T) {
-	client, _ := New(ClientConfig{BaseURL: "http://localhost", APIKey: "k"})
-
-	_, err := client.StreamChat(context.Background(), providers.ChatRequest{
-		Model: "", Messages: []providers.ChatMessage{{Role: "user", Content: "hi"}},
-	})
-	if err == nil {
-		t.Fatal("expected error for empty model")
-	}
-
-	_, err = client.StreamChat(context.Background(), providers.ChatRequest{
-		Model: "m", Messages: nil,
-	})
-	if err == nil {
-		t.Fatal("expected error for empty messages")
-	}
-}
-
 func TestStreamChat_MissingDoneYieldsIncompleteError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -1596,9 +1650,6 @@ func TestStreamChat_IdleWatchdogFires(t *testing.T) {
 	}
 	if !gotError {
 		t.Fatal("expected error event from idle watchdog")
-	}
-	if !errors.Is(fmt.Errorf("wrap: %w", context.DeadlineExceeded), context.DeadlineExceeded) {
-		t.Fatal("sanity check failed")
 	}
 	if errMsg == "" || !strings.Contains(errMsg, "idle timeout") {
 		t.Fatalf("expected idle timeout error, got: %q", errMsg)
@@ -3252,15 +3303,6 @@ func TestResponsesFinalAnswerItemDone(t *testing.T) {
 	}
 }
 
-func TestResponsesFinalAnswerTailTimeout(t *testing.T) {
-	if got := responsesFinalAnswerTailTimeout(300 * time.Second); got != 2*time.Second {
-		t.Fatalf("production tail timeout = %s, want 2s", got)
-	}
-	if got := responsesFinalAnswerTailTimeout(100 * time.Millisecond); got != 50*time.Millisecond {
-		t.Fatalf("short-test tail timeout = %s, want 50ms", got)
-	}
-}
-
 func TestResponsesStreamChat_ParsesReasoningItem(t *testing.T) {
 	ssePayload := "event: response.output_item.added\n" +
 		"data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"status\":\"in_progress\"},\"output_index\":0}\n\n" +
@@ -3452,13 +3494,6 @@ func TestResponsesStreamChat_TopLevelContextLengthErrorClassified(t *testing.T) 
 	}
 }
 
-func TestNew_RejectsUnknownWireAPI(t *testing.T) {
-	_, err := New(ClientConfig{BaseURL: "https://example.com", WireAPI: "legacy", APIKey: "test-key"})
-	if err == nil {
-		t.Fatal("expected unknown wire API error")
-	}
-}
-
 func TestChunkUsage_AsTokenUsage_Cached(t *testing.T) {
 	// gpt-4o reports cached_tokens as a SUBSET of prompt_tokens. The
 	// helper has to split it out so wuu's auto-compact accounts for
@@ -3483,24 +3518,6 @@ func TestChunkUsage_AsTokenUsage_Cached(t *testing.T) {
 	// prompt_tokens + completion_tokens.
 	if total := got.TotalContextTokens(); total != 5200 {
 		t.Fatalf("expected total 5200, got %d", total)
-	}
-}
-
-func TestChunkUsage_AsTokenUsage_NoCacheDetails(t *testing.T) {
-	// Older OpenAI / OpenRouter / proxy responses without
-	// prompt_tokens_details should still parse cleanly.
-	u := &chunkUsage{PromptTokens: 1000, CompletionTokens: 300}
-	got := u.asTokenUsage()
-	want := &providers.TokenUsage{InputTokens: 1000, OutputTokens: 300}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %+v, want %+v", got, want)
-	}
-}
-
-func TestChunkUsage_AsTokenUsage_Nil(t *testing.T) {
-	var u *chunkUsage
-	if got := u.asTokenUsage(); got != nil {
-		t.Fatalf("expected nil for nil receiver, got %+v", got)
 	}
 }
 

@@ -127,13 +127,3 @@ func TestResolveEffectiveCompactionPropagatesProviderErrors(t *testing.T) {
 		t.Fatalf("expected provider error to propagate, got %v", err)
 	}
 }
-
-func TestResolveEffectiveCompactionWithoutRegistryReturnsDefault(t *testing.T) {
-	defaultCompact := func(ctx context.Context, messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
-		return messages, nil
-	}
-	effective := resolveEffectiveCompaction(LoopConfig{Model: "test-model", Compact: defaultCompact})
-	if effective == nil {
-		t.Fatal("expected the default compactor when no registry is configured")
-	}
-}

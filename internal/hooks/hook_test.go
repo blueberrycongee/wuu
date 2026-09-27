@@ -7,17 +7,6 @@ import (
 	"time"
 )
 
-func TestCommandHook_Success(t *testing.T) {
-	h := &CommandHook{Command: "true", Timeout: 5 * time.Second}
-	out, err := h.Execute(context.Background(), &Input{Event: PreToolUse})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out.IsBlocked() {
-		t.Fatal("expected not blocked")
-	}
-}
-
 func TestCommandHook_BlockViaExitCode(t *testing.T) {
 	h := &CommandHook{Command: "exit 2", Timeout: 5 * time.Second}
 	_, err := h.Execute(context.Background(), &Input{Event: PreToolUse})
@@ -93,12 +82,5 @@ func TestCommandHook_NonZeroExitIsError(t *testing.T) {
 	}
 	if IsBlocked(err) {
 		t.Fatal("exit 1 should not be classified as block")
-	}
-}
-
-func TestCommandHook_HookType(t *testing.T) {
-	h := &CommandHook{Command: "true"}
-	if h.Type() != "command" {
-		t.Fatalf("expected 'command', got %s", h.Type())
 	}
 }

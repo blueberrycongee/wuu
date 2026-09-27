@@ -16,18 +16,14 @@ import {
 import { motionDurationMs } from "./motion";
 import { isTouchWebShell } from "./ComposerFocus";
 
-export const SIDEBAR_MOTION_MS = motionDurationMs(
-  "--sidebar-motion-duration",
-  280,
-);
-export const SIDEBAR_DRAWER_EXIT_MS = motionDurationMs(
-  "--sidebar-drawer-exit-duration",
-  220,
-);
-export const RIGHT_PANEL_MOTION_MS = motionDurationMs(
-  "--workspace-panel-motion-duration",
-  280,
-);
+// Shell motion windows, read when each motion starts so the timers follow
+// the stylesheet, theme overrides, and reduced motion as they change.
+export const sidebarMotionMs = (): number =>
+  motionDurationMs("--sidebar-motion-duration", 280);
+export const sidebarDrawerExitMs = (): number =>
+  motionDurationMs("--sidebar-drawer-exit-duration", 220);
+export const rightPanelMotionMs = (): number =>
+  motionDurationMs("--workspace-panel-motion-duration", 280);
 export const SIDEBAR_DEFAULT_WIDTH = 296;
 // Keep enough horizontal room for one-line navigation labels and useful
 // conversation titles. The rail becomes an overlay drawer below the compact
@@ -344,7 +340,7 @@ export function useAppLayoutState({
   layoutRootRef,
   settingsLayoutRootRef,
   viewportWidth,
-  onCloseProjectMenu
+  onCloseWorkspaceMenu
 }: {
   layoutRootRef?: RefObject<HTMLElement | null>;
   // The settings shell mounts in place of the main app shell but shares the
@@ -354,7 +350,7 @@ export function useAppLayoutState({
   // Callers with a virtual or embedded viewport can provide the width that
   // owns layout decisions instead of the outer browser window.
   viewportWidth?: number;
-  onCloseProjectMenu: () => void;
+  onCloseWorkspaceMenu: () => void;
 }): {
   compactNavigation: boolean;
   sidebarWidth: number;
@@ -448,7 +444,7 @@ export function useAppLayoutState({
     sidebarMotionTimerRef.current = window.setTimeout(() => {
       sidebarMotionTimerRef.current = undefined;
       setSidebarAnimating(false);
-    }, SIDEBAR_MOTION_MS);
+    }, sidebarMotionMs());
   }, []);
 
   const startRightPanelMotion = useCallback((): void => {
@@ -459,7 +455,7 @@ export function useAppLayoutState({
     rightPanelMotionTimerRef.current = window.setTimeout(() => {
       rightPanelMotionTimerRef.current = undefined;
       setRightPanelAnimating(false);
-    }, RIGHT_PANEL_MOTION_MS);
+    }, rightPanelMotionMs());
   }, []);
 
   // Only one shell root (main app or settings) is mounted at a time; write to
@@ -543,7 +539,7 @@ export function useAppLayoutState({
         if (!sidebarCollapsed && !resizingSidebar) {
           startSidebarMotion();
         }
-        onCloseProjectMenu();
+        onCloseWorkspaceMenu();
         setSidebarCollapsed(true);
         // Same rule as toggleSidebar: a collapsed sidebar whose remembered
         // open width is the bare minimum reopens (hover drawer included) at
@@ -559,7 +555,7 @@ export function useAppLayoutState({
       setSidebarCollapsed(false);
       setSidebarPreferredWidth(sidebarPreferredWidthForDisplay(nextWidth, windowWidth));
     },
-    [onCloseProjectMenu, resizingSidebar, sidebarCollapsed, startSidebarMotion, windowWidth]
+    [onCloseWorkspaceMenu, resizingSidebar, sidebarCollapsed, startSidebarMotion, windowWidth]
   );
 
   const applyWorkspaceRightPanelWidth = useCallback(
@@ -763,7 +759,7 @@ export function useAppLayoutState({
         if (!sidebarCollapsed) {
           sidebarAutoCollapsedRef.current = true;
           startSidebarMotion();
-          onCloseProjectMenu();
+          onCloseWorkspaceMenu();
         }
         setSidebarCollapsedState(true);
         setSidebarPreferredWidth((width) =>
@@ -782,7 +778,7 @@ export function useAppLayoutState({
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, [
-    onCloseProjectMenu,
+    onCloseWorkspaceMenu,
     resizingSidebar,
     sidebarCollapsed,
     sidebarPreferredWidth,
@@ -832,7 +828,7 @@ export function useAppLayoutState({
       currentWidth: sidebarCollapsed ? 0 : sidebarWidth,
       collapsedDuringDrag: sidebarCollapsed
     };
-    onCloseProjectMenu();
+    onCloseWorkspaceMenu();
     setResizingSidebar(true);
   }
 
@@ -906,7 +902,7 @@ export function useAppLayoutState({
   }
 
   function toggleSidebar(): void {
-    onCloseProjectMenu();
+    onCloseWorkspaceMenu();
     startSidebarMotion();
     setSidebarCollapsed(!sidebarCollapsed);
     setSidebarPreferredWidth((width) =>

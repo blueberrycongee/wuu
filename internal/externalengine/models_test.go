@@ -134,12 +134,6 @@ func TestPermissionModesFromACPSessionKeepHostSelectionsWithoutNativeIds(t *test
 	}
 }
 
-func TestModelsFromACPSessionEmptyWhenAgentAdvertisesNothing(t *testing.T) {
-	if models := modelsFromACPSession(acpSession{ID: "s"}); len(models) != 0 {
-		t.Fatalf("models = %+v", models)
-	}
-}
-
 func parseACPSession(t *testing.T, raw string) acpSession {
 	t.Helper()
 	var session acpSession

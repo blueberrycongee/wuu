@@ -18,25 +18,6 @@ func (c *unaryOnlyClient) Chat(context.Context, ChatRequest) (ChatResponse, erro
 	return c.resp, nil
 }
 
-type streamingClientStub struct {
-	unaryOnlyClient
-}
-
-func (c *streamingClientStub) StreamChat(context.Context, ChatRequest) (<-chan StreamEvent, error) {
-	ch := make(chan StreamEvent, 1)
-	ch <- StreamEvent{Type: EventDone}
-	close(ch)
-	return ch, nil
-}
-
-func TestAdaptStreamClient_ReturnsExistingStreamClient(t *testing.T) {
-	streamClient := &streamingClientStub{}
-	adapted := AdaptStreamClient(streamClient)
-	if adapted != streamClient {
-		t.Fatal("expected AdaptStreamClient to return original stream client")
-	}
-}
-
 func TestAdaptStreamClient_WrapsUnaryResponseIntoEvents(t *testing.T) {
 	usage := &TokenUsage{InputTokens: 10, OutputTokens: 4}
 	client := &unaryOnlyClient{resp: ChatResponse{

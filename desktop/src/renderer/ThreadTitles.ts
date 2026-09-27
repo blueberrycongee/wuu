@@ -61,3 +61,31 @@ export function threadDisplayTitle(
   }
   return translateCurrent("thread.forkTitle", { title: baseTitle });
 }
+
+/** Title shown in the conversation title bar. A saved title wins over the generated preview. */
+export function conversationHeadingTitle(
+  thread: Pick<ThreadTitleSource, "title" | "preview"> | undefined,
+  draftTitle: string | undefined,
+  fallback: string,
+): string {
+  if (thread) {
+    return thread.title?.trim() || resolveLocalizedText(thread.preview?.trim() ?? "") || fallback;
+  }
+  return draftTitle?.trim() || fallback;
+}
+
+/**
+ * A draft stores the default "new conversation" label until the user renames it.
+ * That placeholder must not be written as a session title, or a later generated
+ * title would leave the user's unchanged label stuck in place.
+ */
+export function customDraftConversationTitle(
+  draftTitle: string | undefined,
+  defaultTitle: string,
+): string {
+  const trimmed = draftTitle?.trim() ?? "";
+  if (!trimmed || trimmed === defaultTitle.trim()) {
+    return "";
+  }
+  return trimmed;
+}

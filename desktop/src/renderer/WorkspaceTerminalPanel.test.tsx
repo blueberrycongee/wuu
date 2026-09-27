@@ -336,7 +336,7 @@ describe("WorkspaceTerminalPanel", () => {
     });
 
     expect(startTerminalSession).not.toHaveBeenCalled();
-    expect(container.textContent).toContain("没有项目");
+    expect(container.textContent).toContain("没有工作区");
   });
 
   it("uses the applied theme and updates an open terminal when it changes", async () => {

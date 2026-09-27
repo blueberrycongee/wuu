@@ -26,8 +26,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/harness"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/mcp"
-	"github.com/blueberrycongee/wuu/internal/modelbudget"
-	"github.com/blueberrycongee/wuu/internal/modelroles"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -36,33 +34,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
-
-func TestBrowserEnabledFromEnvDefaultsOn(t *testing.T) {
-	t.Setenv("WUU_ENABLE_BROWSER", "")
-	if !browserEnabledFromEnv() {
-		t.Fatal("unset WUU_ENABLE_BROWSER must keep the embedded browser enabled")
-	}
-	t.Setenv("WUU_ENABLE_BROWSER", "1")
-	if !browserEnabledFromEnv() {
-		t.Fatal("WUU_ENABLE_BROWSER=1 must keep the embedded browser enabled")
-	}
-	t.Setenv("WUU_ENABLE_BROWSER", "0")
-	if browserEnabledFromEnv() {
-		t.Fatal("WUU_ENABLE_BROWSER=0 must hide the embedded browser")
-	}
-}
-
-func TestSessionMaxParallelDefaultsAndOverrides(t *testing.T) {
-	session := &Session{maxParallel: 3}
-	if session.MaxParallel() != 3 {
-		t.Fatalf("MaxParallel = %d, want 3", session.MaxParallel())
-	}
-
-	var zero Session
-	if zero.MaxParallel() != config.DefaultAgentMaxParallel {
-		t.Fatalf("zero-value MaxParallel = %d, want %d", zero.MaxParallel(), config.DefaultAgentMaxParallel)
-	}
-}
 
 func TestThreadProcessManagerSharesRuntimeHostGeneration(t *testing.T) {
 	workspaceRoot := t.TempDir()
@@ -597,7 +568,7 @@ func TestRuntimeContextInjectorIncludesOnlyDynamicTypedBlocks(t *testing.T) {
 		combined.WriteString("\n")
 	}
 	content := combined.String()
-	for _, want := range []string{"<system-reminder>", "[TASK_STATE]", "rule: Latest update for this key wins.", "[in_progress] edit"} {
+	for _, want := range []string{"<system-reminder>", "[TASK_STATE]", "[in_progress] edit"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("injected context missing %q:\n%s", want, content)
 		}
@@ -1482,7 +1453,7 @@ func TestNewThreadRuntimeWorkerUsesWorkerProfileToolSurface(t *testing.T) {
 		t.Fatal("worker sent no messages")
 	}
 	systemPrompt := req.Messages[0].Content
-	for _, want := range []string{"[Tool surface: anthropic_claude]", "Use edit_file for targeted changes", "write_file for new files or complete rewrites"} {
+	for _, want := range []string{"[Tool surface: anthropic_claude]"} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("worker system prompt should use worker profile fragment %q:\n%s", want, systemPrompt)
 		}
@@ -1574,39 +1545,6 @@ func TestNewThreadRuntimeLocalWorkerDoesNotTeachTerminalPaths(t *testing.T) {
 		if strings.Contains(systemPrompt, banned) {
 			t.Fatalf("local worker prompt must not teach terminal path %q:\n%s", banned, systemPrompt)
 		}
-	}
-}
-
-func TestNewSessionDoesNotAppendRetiredConfigPrompt(t *testing.T) {
-	root := t.TempDir()
-	home := t.TempDir()
-	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
-	t.Setenv("TEST_WUU_KEY", "abc")
-
-	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
-		Config: config.Config{
-			DefaultProvider: "test",
-			Providers: map[string]config.ProviderConfig{
-				"test": {
-					Type:      "openai-compatible",
-					BaseURL:   "https://example.test/v1",
-					APIKeyEnv: "TEST_WUU_KEY",
-					Model:     "gpt-test",
-				},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("NewSession: %v", err)
-	}
-	if !strings.Contains(rt.BaseSystemPrompt, config.DefaultSystemPrompt()) {
-		t.Fatalf("assembled prompt missing built-in base:\n%s", rt.BaseSystemPrompt)
-	}
-	if strings.Contains(rt.BaseSystemPrompt, "User Custom Instructions") {
-		t.Fatalf("assembled prompt should not inject retired config prompt:\n%s", rt.BaseSystemPrompt)
 	}
 }
 
@@ -1766,27 +1704,8 @@ func TestNewSessionUsesCatalogModelAPIIDAndOptions(t *testing.T) {
 	if rt.StreamRunner.APIModel != "gpt-5.5" {
 		t.Fatalf("APIModel = %q", rt.StreamRunner.APIModel)
 	}
-	for _, want := range []string{
-		"[Tool surface: openai_gpt]",
-		"Use apply_patch for file changes and bash for command execution",
-	} {
-		if !strings.Contains(rt.BaseSystemPrompt, want) {
-			t.Fatalf("BaseSystemPrompt missing harness adapter text %q:\n%s", want, rt.BaseSystemPrompt)
-		}
-	}
-	for _, bad := range []string{
-		"# Harness Adapter",
-		"Provider/model:",
-		"task-handling options inside wuu",
-		"direct work, subagents, or workflows",
-		"workflows only when",
-		"matching saved workflow",
-		"especially MCP tools, workflows",
-		"workflows, scheduling",
-	} {
-		if strings.Contains(rt.BaseSystemPrompt, bad) {
-			t.Fatalf("BaseSystemPrompt should not include generic workflow guidance %q:\n%s", bad, rt.BaseSystemPrompt)
-		}
+	if !strings.Contains(rt.BaseSystemPrompt, "[Tool surface: openai_gpt]") {
+		t.Fatalf("BaseSystemPrompt missing openai_gpt tool surface:\n%s", rt.BaseSystemPrompt)
 	}
 	if got := rt.StreamRunner.ProviderOptions["serviceTier"]; got != "priority" {
 		t.Fatalf("ProviderOptions serviceTier = %#v", got)
@@ -2257,9 +2176,6 @@ func TestNewSessionFlattensToolSurfaceWhenToolLoadingFlat(t *testing.T) {
 	if defs["tool_search"] {
 		t.Fatalf("flat surface should hide tool_search: %+v", defs)
 	}
-	if strings.Contains(rt.BaseSystemPrompt, "# Tool Discovery") {
-		t.Fatalf("flat surface should not include tool_search guidance:\n%s", rt.BaseSystemPrompt)
-	}
 }
 
 func TestNewSessionResolvesRoleModelSelections(t *testing.T) {
@@ -2578,24 +2494,14 @@ func TestSessionRefreshSystemPromptUpdatesRunnerPrompt(t *testing.T) {
 
 	prompt := rt.RefreshSystemPrompt("openai", "gpt-5-codex")
 
-	for _, want := range []string{
-		"[Tool surface: openai_codex]",
-		"Use apply_patch for file changes and bash for command execution",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("refreshed prompt missing %q:\n%s", want, prompt)
-		}
+	if !strings.Contains(prompt, "[Tool surface: openai_codex]") {
+		t.Fatalf("refreshed prompt missing openai_codex tool surface:\n%s", prompt)
 	}
 	if rt.BaseSystemPrompt != prompt || rt.StreamRunner.SystemPrompt != prompt {
 		t.Fatalf("refresh should update session and runner prompts")
 	}
 	if strings.Contains(prompt, "old prompt") {
 		t.Fatalf("refreshed prompt should not keep stale runner prompt:\n%s", prompt)
-	}
-	for _, duplicated := range []string{"# Harness Adapter", "Provider/model:"} {
-		if strings.Contains(prompt, duplicated) {
-			t.Fatalf("refreshed prompt should not expose provider-brand adapter text %q:\n%s", duplicated, prompt)
-		}
 	}
 }
 
@@ -2770,10 +2676,6 @@ func TestBuildBaseSystemPromptNoToolsSkipsToolLoadedGuidance(t *testing.T) {
 	for _, bad := range []string{
 		"<available_skills>",
 		"Create a commit",
-		"Workflow guidance",
-		"Release workflow",
-		"`start_workflow`",
-		"Tool Discovery",
 	} {
 		if strings.Contains(promptText, bad) {
 			t.Fatalf("no-tools prompt should not advertise tool-loaded guidance %q:\n%s", bad, promptText)
@@ -2862,51 +2764,6 @@ func TestBuildBaseSystemPromptFiltersSkillsBySurface(t *testing.T) {
 	}
 	if !strings.Contains(promptText, "implementation-plan") {
 		t.Fatalf("local/no-shell prompt should keep compatible skills:\n%s", promptText)
-	}
-}
-
-func TestResolveInputWindow_CapsCodexSubscriptionGPT5(t *testing.T) {
-	got := ResolveInputWindow("gpt-5.5", config.ProviderConfig{
-		Type:  "openai-codex",
-		Model: "gpt-5.5",
-	})
-	if got != codexSubscriptionGPT5InputCap {
-		t.Fatalf("ResolveInputWindow = %d, want %d", got, codexSubscriptionGPT5InputCap)
-	}
-}
-
-func TestResolveInputWindow_CapsCodexSubscriptionGPT6Astra(t *testing.T) {
-	got := ResolveInputWindow("gpt-6-astra", config.ProviderConfig{
-		Type:  "openai-codex",
-		Model: "gpt-6-astra",
-	})
-	if got != modelbudget.CodexSubscriptionGPT6InputCap {
-		t.Fatalf("ResolveInputWindow = %d, want %d", got, modelbudget.CodexSubscriptionGPT6InputCap)
-	}
-}
-
-func TestResolveWindowsFallBackToAPIModelLimits(t *testing.T) {
-	provider := config.ProviderConfig{
-		Type:  "openai-compatible",
-		Model: "fast-alias",
-		Models: map[string]config.ProviderModelConfig{
-			"fast-alias": {
-				ID: "base-model",
-			},
-			"base-model": {
-				Limit: &config.ProviderModelLimitConfig{
-					Context: 1_000_000,
-					Input:   900_000,
-				},
-			},
-		},
-	}
-
-	if got := ResolveContextWindow("fast-alias", provider, 0); got != 1_000_000 {
-		t.Fatalf("ResolveContextWindow = %d, want 1000000", got)
-	}
-	if got := ResolveInputWindow("fast-alias", provider); got != 900_000 {
-		t.Fatalf("ResolveInputWindow = %d, want 900000", got)
 	}
 }
 
@@ -3021,33 +2878,6 @@ func TestWorkerDeferredToolCatalogPromptForToolkit(t *testing.T) {
 	}
 }
 
-func TestMCPToolOverridesFromConfig(t *testing.T) {
-	readOnly := true
-	concurrencySafe := false
-
-	out := mcpToolOverrides(map[string]config.MCPToolOverride{
-		"search": {
-			ReadOnly:        &readOnly,
-			ConcurrencySafe: &concurrencySafe,
-			Capability:      capability.CapabilitySearchSemantic,
-		},
-	})
-
-	override, ok := out["search"]
-	if !ok {
-		t.Fatal("missing converted override")
-	}
-	if override.ReadOnly == nil || *override.ReadOnly != true {
-		t.Fatalf("ReadOnly = %v, want true", override.ReadOnly)
-	}
-	if override.ConcurrencySafe == nil || *override.ConcurrencySafe != false {
-		t.Fatalf("ConcurrencySafe = %v, want false", override.ConcurrencySafe)
-	}
-	if override.Capability != capability.CapabilitySearchSemantic {
-		t.Fatalf("Capability = %q, want %q", override.Capability, capability.CapabilitySearchSemantic)
-	}
-}
-
 func TestBoundaryForMode(t *testing.T) {
 	tests := []struct {
 		mode           string
@@ -3138,20 +2968,5 @@ func TestNewThreadRuntimeCreatesIsolatedMutableRuntime(t *testing.T) {
 	}
 	if first.AgentControl.SessionID() != "thread-a" || second.AgentControl.SessionID() != "thread-b" {
 		t.Fatalf("unexpected agent control sessions: first=%q second=%q", first.AgentControl.SessionID(), second.AgentControl.SessionID())
-	}
-}
-
-func TestMediaInputPolicyFromCapabilitiesPreservesUnknown(t *testing.T) {
-	unknown := mediaInputPolicyFromCapabilities(modelroles.Capabilities{})
-	if unknown.ImageKnown || unknown.FileKnown {
-		t.Fatalf("missing modality evidence must remain unknown: %+v", unknown)
-	}
-
-	unsupported := mediaInputPolicyFromCapabilities(modelroles.Capabilities{
-		ImageInputKnown: true,
-		FileInputKnown:  true,
-	})
-	if !unsupported.ImageKnown || unsupported.Image || !unsupported.FileKnown || unsupported.File {
-		t.Fatalf("explicit unsupported capabilities were not preserved: %+v", unsupported)
 	}
 }

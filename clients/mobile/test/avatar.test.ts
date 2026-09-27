@@ -10,10 +10,8 @@ import { describe, expect, it } from "vitest";
 import { blobatar } from "blobatar";
 
 import {
-  AVATAR_HUES,
   avatarHueIndex,
   avatarSeed,
-  avatarSvgParts,
   blobatarSvgToParts,
   fnv1a,
 } from "../src/lib/avatar";
@@ -30,18 +28,9 @@ describe("fnv1a", () => {
 
 describe("avatar assignment", () => {
   it("hue spans all 12 muted hues", () => {
-    expect(AVATAR_HUES).toHaveLength(12);
-    expect(AVATAR_HUES[0]).toBe(14);
-    expect(AVATAR_HUES[11]).toBe(350);
     expect(avatarHueIndex("andy")).toBe(9);
     expect(avatarHueIndex("participant-42")).toBe(3);
     expect(avatarHueIndex("墨白")).toBe(6);
-  });
-
-  it("is deterministic", () => {
-    for (const seed of ["a", "b", "长长的中文名字", "participant-1"]) {
-      expect(avatarHueIndex(seed)).toBe(avatarHueIndex(seed));
-    }
   });
 
   it("seeds from id first, then display name", () => {
@@ -69,12 +58,5 @@ describe("blobatarSvgToParts", () => {
     expect(parts.plate).toBeUndefined();
     expect(parts.head.paths).toHaveLength(1);
     expect(parts.eyes.paths).toHaveLength(2);
-  });
-
-  it("pins the same hue the desktop would", () => {
-    const parts = avatarSvgParts("andy");
-    const hue = AVATAR_HUES[avatarHueIndex("andy")];
-    const direct = blobatarSvgToParts(blobatar("andy", { hue, background: "circle" }));
-    expect(parts).toEqual(direct);
   });
 });

@@ -50,39 +50,52 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 等待后重试。不带 `thread_id` 的请求修改未来
 对话的默认设置。不要通过 `turn/start` 临时覆盖单个回合的权限模式。
 
+## 运行项目
+
+`thread/start` 带 `project: {"name": "..."}` 时，在工作区创建项目主 Agent。返回的会话带
+`source: "project"`，遵循普通会话的模型和权限设置。主 Agent 可以直接动手，通过
+`session` 工具管理其他会话。每个托管会话都是普通会话，带
+`source: "project-session"`，`project_id` 指向其协调者；它的 `session_control` 以
+`manager_name` 给出项目名。worktree 会话的改动留在它的 worktree 里，由团队用普通的 Git
+命令交付；协议里没有等待用户决定的步骤。
+
+托管会话提供 `project_role: "side" | "worker"`，旧成员默认视为 Worker。
+`session create` 接受 `role`（默认 worker）和可选的 `model_alias`。只有主 Agent
+能创建 Side；重复创建会返回已有的活跃 Side，不会发送新任务。主 Agent 和 Side
+都能创建 Worker。活跃成员均可 `list`、`inspect` 和 `message`，只有主 Agent 能
+`send` 和 `stop`。消息仅限项目内，包含 `prompt`、`session_id` 和可选的 `wake`
+（默认 false）。停止成员或直接给它发消息不会改变项目成员关系，也不会使排队中的团队消息失效。
+
+协调者以用户条目接收宿主事件，条目带 `origin: "plugin"`，`related_session_id` 指向相关会话，
+`cause` 给出事件：
+
+| Cause | 事件 | 协调者空闲时是否开始新回合 |
+|---|---|---|
+| `project_message` | 成员发来的消息，主 Agent 或其他成员均可接收 | 仅当 `wake` 为 true |
+| `project_result` | 托管会话的一个回合结束，附带用户在其中写的内容 | 是，中断的回合除外 |
+| `project_stopped` | 用户停止了成员的当前回合 | 否，随下一个回合送达 |
+| `project_user_message` | 用户直接给成员发了消息 | 否，随下一个回合送达 |
+| `project_adopted` | 用户把对话加入了项目 | 是 |
+| `project_released` | 用户把会话移出了项目 | 否，随下一个回合送达 |
+
+在项目成员中开始、引导、排队或中断回合，成员关系仍保持活跃。用户直接发消息会通知协调者，
+但不会唤醒空闲的协调者。中断结果也会送达而不唤醒空闲的协调者；正常结果会唤醒它。
+恢复后补发的中断结果，以及发给派遣该成员的 Side Agent 的报告，也遵循相同的不唤醒规则。
+worktree 改动留在成员的 worktree 里。`thread/control/take` 和 `thread/control/return` 的控制权生命周期
+用于插件托管会话，不用于项目成员。
+
+`project/session` 修改项目成员：`adopt` 传入 `project_id` 和 `session_id`，把项目所在工作区
+的普通对话交给项目管理；`release` 让托管会话重新成为普通对话。两者都返回更新后的 `thread`。
+
 ## 查询订阅状态
 
 `engine/list` 可选参数 `{ "include_quota": true }` 通过支持的本地 CLI（目前为 Codex）读取账户额度，并返回内置订阅来源 `subscription_providers`。`quota` 包含 `status`（`available` 或 `unavailable`）、`checked_at` 和可选 `windows`；窗口提供 `id`、`label`、`used_percent`、`window_minutes`、`resets_at`。缺失额度表示未支持或未查询，不代表无限额度。过期快照应提示刷新，不能在重置时间自行补满。
 
 引擎及订阅来源的 `local_usage` 汇总本地保留历史中已上报的输入、输出、缓存 token 和 `reported_turns`，不含未上报或 Wuu 外用量，也不是账单。可选 `latest_request` 提供最近请求的 `status`、`error`、`at`、`model`、`usage_reported`，有上报时附带 token 计数。新旧顺序按请求时间判断，来源按持久记录归属；对话编辑和供应商切换不改变历史归属，旧请求用量不得填充到新请求。
 
-## Named Agent 媒体交接
+## 查询用量概览
 
-具名 Agent 的 `session` 工具可以在创建工作会话或向其发送消息时附上选中的房间媒体，包括 queue 和 steer 模式。这是工具契约，不是新的 JSON-RPC 方法：
-
-```json
-{
-  "action": "create",
-  "workspace_root": "/path/to/project",
-  "prompt": "对照实现检查截图",
-  "media": [
-    {"message_id": "chat_read 返回的消息 ID", "kind": "image", "index": 1,
-     "description": "检查底部被裁切的行"}
-  ]
-}
-```
-
-使用 `chat_read` 提供的消息 ID 和附件顺序。`kind` 选择 `image` 或 `file`，`index` 从 1 开始，对应该消息相应数组中的位置。最多选择 32 个不重复附件，随附房间、消息、作者、来源文字和可选说明。省略 `media` 只发送文字，在提示词中写路径不会附上文件；已保存的图片复制时不会再次缩放。
-
-来源必须属于发起回合所在的房间，且具名身份仍有访问权。即使加入了其他房间，也不能跨房间引用。身份和回合范围由宿主提供，路径、URL 和远程缓存引用不能替代持久消息引用。接收会话获得选中的证据，不获得房间访问权或额外文件权限，仍使用自身绑定项目的运行时。
-
-交付前，持久操作保留引用，并在分发或恢复时重新检查访问权和数据。消息不存在、位置无效、数据为空或类型不支持时拒绝交接。接纳后，字节和来源成为持久会话输入；之后删除来源不会撤回已交付副本。恢复时会先识别已有接收记录，再决定是否重新解析来源。
-
-PNG、JPEG、GIF、WebP、PDF 和受支持的视频附件沿用已有媒体路径。视频需要兼容的模型与连接；暂不支持音频、任意文档，以及向外部引擎交接媒体。
-
-选中的媒体属于必需证据。已知模型不兼容时，在接纳输入前报错；provider 请求边界也会拒绝不支持的必需媒体，而不是丢弃它，包括切换模型后仍保留的证据。模型目录能力未知时交给 provider 校验，不保证支持。较早历史仍遵循正常的上下文压缩规则。
-
-Provider 失败通过普通会话结果报告；排队期间的失败记入操作，并在来源对话仍有权限时通知它。不要静默改成纯文字重试，应先选择兼容输入或补足缺失证据。
+`usage/overview` 汇总本地保留历史中已记录的 token 用量：`total_sessions`（至少有一条用量记录的会话数）、`metrics`（与 `settings/usage` 相同的汇总对象，含 `active_days`）和 `days`（每个活跃日一条，按日期升序）。它只读取用量记录，不读取对话内容。可选参数 `{ "timezone": "America/Los_Angeles" }` 按 IANA 时区划分日期；省略时使用 UTC，未知时区返回请求错误。没有记录时返回零值和空的 `days`。与 `local_usage` 一样，这些值不含未上报或 Wuu 外的用量，也不是账单。
 
 ## 探查协议
 

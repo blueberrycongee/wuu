@@ -10,6 +10,7 @@ import {
   workspaceFileViewTab,
   workspaceToolViewTab,
   workspacePluginViewTab,
+  workspaceProjectViewTab,
   type WorkspaceViewTab,
 } from "./WorkspaceViewTabs";
 
@@ -32,6 +33,7 @@ export function useWorkspaceToolState({
   openWorkspaceDiffTab: (input: { threadID: string; path: string; selection: TurnFileDiffSelection }) => void;
   openWorkspaceFileTab: (input: { context: RuntimeContext; path: string }) => void;
   openWorkspaceArtifactTab: (input: ArtifactPreviewRequest) => void;
+  openWorkspaceProjectTab: (projectID: string, title: string) => void;
   showWorkspaceToolPicker: () => void;
   focusWorkspaceViewTab: (id: string | undefined) => void;
   closeWorkspaceViewTab: (id: string) => void;
@@ -81,6 +83,11 @@ export function useWorkspaceToolState({
 
   function openWorkspaceArtifactTab(input: ArtifactPreviewRequest): void {
     openTab(workspaceArtifactViewTab(input));
+    setRightPanelOpenWithMotion(true);
+  }
+
+  function openWorkspaceProjectTab(projectID: string, title: string): void {
+    openTab(workspaceProjectViewTab(projectID, title));
     setRightPanelOpenWithMotion(true);
   }
 
@@ -135,6 +142,7 @@ export function useWorkspaceToolState({
     openWorkspaceDiffTab,
     openWorkspaceFileTab,
     openWorkspaceArtifactTab,
+    openWorkspaceProjectTab,
     showWorkspaceToolPicker,
     focusWorkspaceViewTab: focusTab,
     closeWorkspaceViewTab,

@@ -4,11 +4,22 @@ A conversation keeps messages, tool activity, and results together. Continue the
 
 ## Start and organize conversations
 
-Select a workspace, then start a conversation. Its menu provides rename, pin, and archive actions. An archived conversation is hidden from the normal list and can be restored through **Settings → Archive**.
+Select a workspace, then start a conversation. Click the title in the conversation title bar to rename it. The name is saved immediately for an existing conversation, and a new conversation keeps it when the first message creates the session. The sidebar menu still provides rename, pin, and archive. An archived conversation is hidden from the normal list and can be restored through **Settings → Archive**.
 
-Delete is permanent: it removes saved history and cleans up associated artifacts and any fork worktree still bound to the conversation. Preserve outputs and changes you need before deleting. Wuu rejects deletion while the conversation, its side chat, or its child agents are active.
+Delete is permanent: it removes saved history and cleans up associated artifacts and any worktree still bound to the conversation. Preserve outputs and changes you need before deleting. Wuu rejects deletion while the conversation, its side chat, or its child agents are active.
 
 After the first send, the workspace sidebar immediately shows the pending conversation. You can switch away and return while it is being created. Stop cancels this wait and retains your input; a late creation response does not send the cancelled message or keep an unused empty conversation. Starting another conversation uses a separate draft.
+
+## Choose where a new conversation works
+
+Above a new conversation's input, the project control shows the workspace it belongs to. In a Git project, a second control holds the branch and a **Worktree** toggle:
+
+| Worktree | Choosing a branch |
+|---|---|
+| Off | Checks the branch out in the project. Your editor, terminal, and other conversations in the project see the change. |
+| On | Only sets the branch the new worktree starts from. The project stays on its current branch. |
+
+With **Worktree** on, the first message creates a separate directory from the chosen branch's committed content, and the conversation works there. Uncommitted changes in the project are not carried over. The worktree starts without a branch of its own (detached `HEAD`), so a pull request from it needs a named branch first. The toggle applies to one new conversation; the next draft starts in the project again.
 
 ## While a task is running
 
@@ -43,10 +54,6 @@ A fork copies history through the selected message. It does **not** restore file
 ## Ask a side question
 
 Use `/side` for questions about progress, output, or alternatives without adding those messages to the main conversation. Availability depends on the engine. For a separate task you want to develop over time, start another conversation or fork instead.
-
-## Continue delegated work yourself
-
-[Collaboration](collaboration.md) can open ordinary work conversations. Viewing one does not change its control state. Sending your own message takes control and pauses Collaboration's automatic instructions and follow-up for that session.
 
 ## Use saved sessions from the CLI
 

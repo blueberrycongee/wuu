@@ -202,10 +202,10 @@ public class AccountFlowTest {
                 nativeScreenshot("system-picker-open");
                 waitFor(() -> nativeClick(imageName));
                 waitFor(() -> onWebView().check(webMatches(androidx.test.espresso.web.model.Atoms.script(
-                    "function() { var image = document.querySelector('.composer-image-attachment img'); return !!image && image.complete && image.naturalWidth > 0; }",
+                    "function() { var image = document.querySelector('.composer-media-card-image'); return !!image && image.complete && image.naturalWidth > 0; }",
                     androidx.test.espresso.web.model.Atoms.castOrDie(Boolean.class)), equalTo(true))));
                 screenshot("system-image-imported");
-                onWebView().withElement(findElement(Locator.CSS_SELECTOR, ".composer-attachment-remove")).perform(webClick());
+                onWebView().withElement(findElement(Locator.CSS_SELECTOR, ".composer-attachment-card-remove")).perform(webClick());
             }
             if ("true".equals(args.getString("outage"))) {
                 fill("textarea", "Preserve this unsent draft across computer loss");

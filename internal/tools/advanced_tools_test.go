@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
@@ -69,51 +68,4 @@ func TestAdvancedToolsHiddenFromModelSurfaces(t *testing.T) {
 			}
 		}
 	}
-}
-
-// TestAdvancedToolsRemainReachableViaRegistry confirms that
-// hiding the git tool from the model surface does not remove it
-// from the registry. Internal callers can still look it up by name
-// and execute it.
-func TestAdvancedToolsRemainReachableViaRegistry(t *testing.T) {
-	kit, err := New(t.TempDir())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	for _, name := range []string{"git"} {
-		tool := kit.LookupTool(name)
-		if tool == nil {
-			t.Errorf("registry must still contain %s for internal callers, got nil", name)
-			continue
-		}
-		if tool.Name() != name {
-			t.Errorf("registry lookup for %s returned %q", name, tool.Name())
-		}
-	}
-
-	// The removed legacy command tools must not resolve at all.
-	for _, name := range []string{"run_shell", "run_test", "start_process", "list_processes", "read_process_output", "write_stdin", "stop_process"} {
-		if tool := kit.LookupTool(name); tool != nil {
-			t.Errorf("removed legacy tool %s must not resolve via registry", name)
-		}
-	}
-
-	// The Execute path bypasses the model surface filter — the
-	// surface only hides tools from Definitions. Confirm the
-	// internal path resolves git.
-	if _, err := kit.executeByName(context.Background(), "git", `{"subcommand":"status"}`); err != nil {
-		t.Logf("git Execute error (expected for unit test without project setup): %v", err)
-	}
-}
-
-// executeByName resolves a tool by name and dispatches the call
-// through the registry, bypassing the model surface filter. It
-// exists so the registry-reachability test does not have to
-// construct a full providers.ToolCall by hand.
-func (t *Toolkit) executeByName(ctx context.Context, name, args string) (string, error) {
-	tool := t.LookupTool(name)
-	if tool == nil {
-		return "", nil
-	}
-	return tool.Execute(ctx, args)
 }

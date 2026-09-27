@@ -3,6 +3,7 @@ import {
   Suspense,
   useLayoutEffect,
   useRef,
+  useState,
   useSyncExternalStore,
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -14,6 +15,7 @@ import {
   ArrowLeft,
   SquarePen,
   Info,
+  Project,
   X,
 } from "./WuuIcons";
 import type {
@@ -53,6 +55,7 @@ import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { ViewSwitchLoading } from "./LoadingViews";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import { useI18n } from "./i18n";
+import { useProjectActions } from "./ProjectActions";
 import { HeaderPresentation, immutableHeaderSnapshot } from "./plugins/HeaderPresentation";
 import { desktopPluginHost, desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 import type { PluginHost } from "./plugins/PluginHost";
@@ -73,6 +76,7 @@ export type ConversationSplitPaneRendererProps = {
   splitComposerDrafts: Record<ConversationPaneID, ComposerDraftState>;
   splitPaneRefs: MutableRefObject<Record<ConversationPaneID, HTMLElement | null>>;
   viewSwitchPending: boolean;
+  stopRequests?: Record<string, "pending" | "retry">;
   historyMessageEdit?: HistoryMessageEditState;
   onActivatePane: (pane: ConversationPaneID) => void;
   onClosePane: (pane: ConversationPaneID) => void;
@@ -126,6 +130,7 @@ export function ConversationSplitPaneRenderer({
   splitComposerDrafts,
   splitPaneRefs,
   viewSwitchPending,
+  stopRequests,
   historyMessageEdit,
   onActivatePane,
   onClosePane,
@@ -160,6 +165,7 @@ export function ConversationSplitPaneRenderer({
       streamStatus={turnStreamStatusForThread(state, thread)}
       draft={splitComposerDrafts[pane] ?? emptyComposerDraft()}
       viewSwitchPending={viewSwitchPending}
+      stopState={stopRequests?.[thread.id]}
       queryHistory={queryTextsForThread(thread)}
       requestedHandoffIntent={requestedHandoffIntentForThread(thread)}
       editingMessage={
@@ -265,9 +271,103 @@ export type ConversationTitleContentProps = {
   pendingSwitchThreadID?: string;
   activeTitle: string;
   onStartNewThread: () => void;
+  onRenameTitle?: (title: string) => void;
+  titleEditKey?: string;
   pluginHost?: PluginHost;
   workbenchController?: WorkbenchController;
 };
+
+function ConversationTitleText({
+  title,
+  editable,
+  editKey,
+  headingRef,
+  onRenameTitle,
+}: {
+  title: string;
+  editable: boolean;
+  editKey?: string;
+  headingRef: RefObject<HTMLHeadingElement | null>;
+  onRenameTitle?: (title: string) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(title);
+  const [sessionKey, setSessionKey] = useState(editKey);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const skipBlurCommit = useRef(false);
+  if (sessionKey !== editKey) {
+    if (editing) skipBlurCommit.current = true;
+    setSessionKey(editKey);
+    setEditing(false);
+  }
+  useLayoutEffect(() => {
+    if (!editing) return;
+    const input = inputRef.current;
+    input?.focus();
+    input?.select();
+  }, [editing]);
+
+  function closeEditor(commit: boolean): void {
+    const next = draft.trim();
+    skipBlurCommit.current = true;
+    setEditing(false);
+    if (commit && next && next !== title.trim()) {
+      onRenameTitle?.(next);
+    }
+  }
+
+  function handleBlur(): void {
+    if (skipBlurCommit.current) {
+      skipBlurCommit.current = false;
+      return;
+    }
+    closeEditor(true);
+  }
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLInputElement>): void {
+    if (event.nativeEvent.isComposing || event.key === "Process") return;
+    if (event.key !== "Enter" && event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeEditor(event.key === "Enter");
+  }
+
+  return (
+    <h1
+      ref={headingRef}
+      className={editing ? "is-editing" : editable ? "is-editable" : undefined}
+      tabIndex={-1}
+    >
+      {editing ? (
+        <input
+          ref={inputRef}
+          className="conversation-title-edit"
+          aria-label={t("threadSidebar.title")}
+          value={draft}
+          spellCheck={false}
+          autoComplete="off"
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={handleBlur}
+          onKeyDown={handleKeyDown}
+        />
+      ) : editable ? (
+        <button
+          type="button"
+          className="conversation-title-rename"
+          aria-label={t("thread.rename.editNamed", { title })}
+          title={t("threadSidebar.rename")}
+          onClick={() => {
+            setDraft(title);
+            setEditing(true);
+          }}
+        >
+          {title}
+        </button>
+      ) : title}
+    </h1>
+  );
+}
 
 export function ConversationTitleContent({
   state,
@@ -275,6 +375,8 @@ export function ConversationTitleContent({
   pendingSwitchThreadID,
   activeTitle,
   onStartNewThread,
+  onRenameTitle,
+  titleEditKey,
   pluginHost,
   workbenchController,
 }: ConversationTitleContentProps): JSX.Element {
@@ -326,7 +428,13 @@ export function ConversationTitleContent({
       >
         <SquarePen aria-hidden="true" />
       </button>)}
-      <h1 ref={headingRef} tabIndex={-1}>{title}</h1>
+      <ConversationTitleText
+        title={title}
+        editable={Boolean(onRenameTitle) && !navigateBack}
+        editKey={titleEditKey}
+        headingRef={headingRef}
+        onRenameTitle={onRenameTitle}
+      />
     </div>
   );
   const showingPrimaryWorkbench = activePrimaryView !== undefined;
@@ -398,9 +506,20 @@ export function ConversationTitleActions({
   onToggleRightPanel,
 }: ConversationTitleActionsProps): JSX.Element {
   const { t } = useI18n();
-  const control = (state.activePane === "secondary" ? state.secondaryThread : state.thread)?.session_control;
-  const controlLabel = control ? t(`channels.sessions.control.${control.state === "taken_over" ? "takenOver" : control.state}`) : "";
-  const management = control ? <span className="session-control-label" title={`${control.manager_name} · ${controlLabel}`}>
+  const projectActions = useProjectActions();
+  const thread = state.activePane === "secondary" ? state.secondaryThread : state.thread;
+  const control = thread?.session_control;
+  const controlLabel = control ? t(`sessionControl.${control.state === "taken_over" ? "takenOver" : control.state}`) : "";
+  // Project membership is independent of user intervention; only extensions
+  // expose ownership state here.
+  const projectSession = thread && control && projectActions && thread.project_id === control.manager_id;
+  const management = projectSession ? <>
+    <button type="button" className="session-control-project" title={t("projects.openCoordinator")}
+      onClick={() => projectActions.openThread(control.manager_id)}>
+      <Project aria-hidden="true" />
+      <span>{control.manager_name}</span>
+    </button>
+  </> : control ? <span className="session-control-label" title={control.state === "active" ? t("sessionControl.takeoverHint") : `${control.manager_name} · ${controlLabel}`}>
     {control.manager_name} · {controlLabel}
   </span> : null;
   if (compactNavigation) {

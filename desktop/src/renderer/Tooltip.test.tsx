@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { ThreadContextMenu } from "./ThreadContextMenu";
 import { Tooltip, TOOLTIP_MAX_CONTENT_LENGTH, tooltipContent } from "./Tooltip";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 
@@ -83,9 +84,6 @@ describe("Tooltip", () => {
     expect(layer).not.toBeNull();
     expect(layer?.textContent).toBe("提示文案");
     expect(layer?.getAttribute("role")).toBe("tooltip");
-    expect(layer?.dataset.wuuComponent).toBe("tooltip");
-    expect(layer?.dataset.wuuLayer).toBe("tooltip");
-    expect(layer?.dataset.wuuState).toBe("open");
     expect(layer?.closest('[data-wuu-layer-host="true"]')).not.toBeNull();
     // Portaled to the protected host, not inside the trigger wrapper.
     expect(trigger.contains(layer)).toBe(false);
@@ -166,6 +164,56 @@ describe("Tooltip", () => {
       window.dispatchEvent(new Event("scroll"));
     });
     expect(tooltipLayer()).toBeNull();
+  });
+
+  it("stays closed while a context menu is open", () => {
+    function renderSurface(menuOpen: boolean): void {
+      act(() => {
+        root ??= createRoot(container);
+        root.render(
+          <WuuUIRoot>
+            <Tooltip content="提示文案">
+              <button type="button">触发</button>
+            </Tooltip>
+            {menuOpen ? (
+              <ThreadContextMenu
+                x={10}
+                y={10}
+                items={[{ label: "操作", onSelect: () => {} }]}
+                onClose={() => {}}
+              />
+            ) : null}
+          </WuuUIRoot>,
+        );
+      });
+    }
+    renderSurface(false);
+    const trigger = container.querySelector(".tooltip-trigger")!;
+    pointerOver(trigger);
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(tooltipLayer()).not.toBeNull();
+
+    // Opening a menu without a press on the trigger (keyboard, or a menu
+    // elsewhere) still retires the hint.
+    renderSurface(true);
+    expect(tooltipLayer()).toBeNull();
+    // The pointer crosses the menu and returns to the trigger.
+    pointerOut(trigger);
+    pointerOver(trigger);
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(tooltipLayer()).toBeNull();
+
+    renderSurface(false);
+    pointerOut(trigger);
+    pointerOver(trigger);
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(tooltipLayer()).not.toBeNull();
   });
 
   it("opens immediately when another tooltip closed moments ago (skip delay)", () => {

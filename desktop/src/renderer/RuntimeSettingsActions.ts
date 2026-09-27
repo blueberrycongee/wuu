@@ -36,7 +36,7 @@ export type RuntimeSettingsActionsDeps = {
   setBranchMenuOpen: (open: boolean) => void;
   setCodexRuntimeMenu: (update: SetStateAction<CodexRuntimeMenu>) => void;
   clearThreadPendingComposerMessages: (threadID: string) => void;
-  markOptimisticTurnInterrupted?: (threadID: string) => void;
+  requestThreadStop?: (thread: Thread) => Promise<void>;
   variantByModel: Map<string, string>;
 };
 
@@ -68,6 +68,7 @@ export type RuntimeSettingsActions = {
     variant?: string,
   ) => Promise<boolean>;
   selectRuntimeEffort: (nextVariant: string) => Promise<boolean>;
+  selectRuntimeSpeed: (speed: string) => Promise<boolean>;
   selectPermissionMode: (mode: PermissionMode, approveForMe?: boolean) => Promise<void>;
   setApproveForMe: (enabled: boolean) => Promise<void>;
   interrupt: () => Promise<void>;
@@ -75,6 +76,7 @@ export type RuntimeSettingsActions = {
 };
 
 type RuntimeSelectionUpdate = {
+  speed?: string;
   provider?: string;
   model?: string;
   effort?: string;
@@ -115,13 +117,15 @@ export function createRuntimeSettingsActions(
         ?? state.initialized.variant
         ?? state.initialized.effort
         ?? "";
-      rememberDraftRuntime(nextProvider, nextModel, nextEffort);
+      const nextSpeed = update.speed ?? ((nextProvider !== state.initialized.provider || nextModel !== state.initialized.model) ? "" : state.initialized.speed);
+      rememberDraftRuntime(nextProvider, nextModel, nextEffort, nextSpeed);
       deps.setAppState((current) => ({
         ...current,
         initialized: current.initialized ? {
           ...current.initialized,
           provider: nextProvider,
           model: nextModel,
+          speed: nextSpeed,
           variant: nextEffort,
           effort: nextEffort,
           permissions: {
@@ -220,7 +224,7 @@ export function createRuntimeSettingsActions(
       !variantChanged &&
       !connectionChanged &&
       !permissionModeChanged &&
-      !approveForMeChanged
+      !approveForMeChanged && update.speed === undefined
     ) {
       return;
     }
@@ -237,6 +241,7 @@ export function createRuntimeSettingsActions(
         nextVariant,
         nextPermissionMode,
         targetThread?.id,
+        update.speed,
       );
       if (scope === "workspace") {
         // Settings writes the workspace default, which is the same "last pick"
@@ -274,6 +279,7 @@ export function createRuntimeSettingsActions(
         // Only the requested values may be used for a local thread patch;
         // thread/updated carries the server's resolved selection.
         const threadPatch: Partial<Thread> = {
+          ...(update.speed === undefined ? {} : { speed: update.speed }),
           ...(nextProvider === undefined
             ? {}
             : { model_provider: nextProvider }),
@@ -548,6 +554,14 @@ export function createRuntimeSettingsActions(
     // Keep the panel open — see selectRuntimeModel.
   }
 
+  async function selectRuntimeSpeed(speed: string): Promise<boolean> {
+    if (!deps.getAppState().initialized || deps.getViewContextSwitchPending()) return false;
+    try {
+      await sendRuntimeSelection({ speed });
+      return true;
+    } catch { return false; }
+  }
+
   async function selectPermissionMode(mode: PermissionMode, approveForMe?: boolean): Promise<void> {
     if (!deps.getAppState().initialized || deps.getViewContextSwitchPending()) {
       return;
@@ -586,8 +600,8 @@ export function createRuntimeSettingsActions(
     if (!thread) {
       return;
     }
-    deps.markOptimisticTurnInterrupted?.(thread.id);
-    await window.wuu.interruptTurn(thread.id);
+    if (deps.requestThreadStop) await deps.requestThreadStop(thread);
+    else await window.wuu.interruptTurn(thread.id);
   }
 
   async function interruptPane(pane: ConversationPaneID): Promise<void> {
@@ -595,13 +609,17 @@ export function createRuntimeSettingsActions(
     if (!thread) {
       return;
     }
-    deps.markOptimisticTurnInterrupted?.(thread.id);
-    await window.wuu.interruptTurn(thread.id);
+    if (deps.requestThreadStop) await deps.requestThreadStop(thread);
+    else await window.wuu.interruptTurn(thread.id);
   }
 
-  function rememberDraftRuntime(provider: string, model: string, effort: string): void {
-    writeDraftRuntimeMemory({ provider, model, effort });
+  function rememberDraftRuntime(provider: string, model: string, effort: string, speed?: string): void {
     const state = deps.getAppState();
+    const active = activeThreadForState(state);
+    const currentProvider = active?.model_provider ?? state.initialized?.provider;
+    const currentModel = active?.model ?? state.initialized?.model;
+    const rememberedSpeed = speed ?? (provider === currentProvider && model === currentModel ? active?.speed ?? state.initialized?.speed : undefined);
+    writeDraftRuntimeMemory({ provider, model, effort, ...(rememberedSpeed === undefined ? {} : { speed: rememberedSpeed }) });
     const scope = activeThreadForState(state)?.id ?? "workspace";
     deps.variantByModel.set(modelSelectionKey(scope, provider, model), effort);
   }
@@ -616,6 +634,7 @@ export function createRuntimeSettingsActions(
     loadCodexModelsForProvider,
     selectRuntimeModel,
     selectRuntimeEffort,
+    selectRuntimeSpeed,
     selectPermissionMode,
     setApproveForMe,
     interrupt,

@@ -141,6 +141,11 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/** The jump glides over frames; advance until it lands. */
+function settleJump(): void {
+  vi.advanceTimersByTime(2000);
+}
+
 describe("scrollToUserMessage", () => {
   it("scrolls the .scroll-region container so the anchor lands below the top padding", () => {
     const { container, node } = mountAnchor({
@@ -153,13 +158,14 @@ describe("scrollToUserMessage", () => {
     });
 
     scrollToUserMessage("turn-1", "item-1");
+    expect(node.classList.contains("user-message-jump-flash")).toBe(true);
+    settleJump();
 
     // The helper subtracts JUMP_TOP_OFFSET_PX (64) from the node's
     // offsetTop so the message sits 64px below the visible top — this
     // is what gives the jump enough headroom to keep the previous turn
     // header in view.
     expect(container.scrollTop).toBe(600 - 64);
-    expect(node.classList.contains("user-message-jump-flash")).toBe(true);
   });
 
   it("scrolls without the highlight pulse when highlight is disabled", () => {
@@ -171,6 +177,7 @@ describe("scrollToUserMessage", () => {
     });
 
     scrollToUserMessage("turn-1", "item-1", { highlight: false });
+    settleJump();
 
     expect(container.scrollTop).toBe(600 - 64);
     expect(node.classList.contains("user-message-jump-flash")).toBe(false);
@@ -187,9 +194,10 @@ describe("scrollToUserMessage", () => {
     });
 
     scrollToUserMessage("turn-1", "item-1");
+    expect(node.classList.contains("user-message-jump-flash")).toBe(true);
+    settleJump();
 
     expect(container.scrollTop).toBe(700 - 64);
-    expect(node.classList.contains("user-message-jump-flash")).toBe(true);
   });
 
   it("clamps the target scrollTop so the scroll surface does not overshoot", () => {
@@ -203,6 +211,7 @@ describe("scrollToUserMessage", () => {
     });
 
     scrollToUserMessage("turn-1", "item-1");
+    settleJump();
 
     expect(container.scrollTop).toBe(800);
   });
@@ -246,9 +255,10 @@ describe("scrollToUserMessage", () => {
     container.appendChild(replacement);
 
     await vi.advanceTimersByTimeAsync(260);
+    expect(replacement.classList.contains("user-message-jump-flash")).toBe(true);
+    settleJump();
 
     expect(container.scrollTop).toBe(600 - 64);
-    expect(replacement.classList.contains("user-message-jump-flash")).toBe(true);
   });
 
   it("does nothing when no anchor exists and retries are exhausted", async () => {

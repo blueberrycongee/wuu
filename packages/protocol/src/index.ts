@@ -137,6 +137,7 @@ export type InitializeParams = {
 };
 
 export type InitializeResult = {
+  speed?: string;
   status?: "ready" | "needs_setup";
   issues?: RuntimeIssue[];
   protocol_version: string;
@@ -276,7 +277,13 @@ export type AdvancedSettingsSummary = {
   compact_threshold_tokens?: number;
 };
 
+export type PTCSettings = {
+  enabled: boolean;
+  families?: Record<string, boolean>;
+};
+
 export type GeneralSettingsSummary = {
+  ptc?: PTCSettings;
   git_attribution_enabled?: boolean;
   mcp_server_enabled: Record<string, boolean>;
 };
@@ -674,6 +681,8 @@ export type ProviderSummary = {
 };
 
 export type ProviderModelSummary = {
+  fast_mode?: boolean;
+  default_speed?: string;
   id: string;
   display_name?: string;
   default_effort?: string;
@@ -797,412 +806,6 @@ export type SkillContentResult = {
   content: string;
 };
 
-export type NamedAgent = {
-  id: string;
-  name: string;
-  role?: string;
-  memory_dir: string;
-  avatar_key: string;
-  avatar_image?: string;
-  engine_override?: string;
-  provider_override?: string;
-  model_override?: string;
-  effort_override?: string;
-  autostart: boolean;
-  created_at: string;
-  activity_status?: "idle" | "thinking";
-  activity_room_ids?: string[];
-  session_capacity?: {
-    active: number;
-    starting: number;
-    queued: number;
-    idle: number;
-    limit: number;
-  };
-};
-
-export type ChannelRoomMember = {
-  room_id: string;
-  member_type: "human" | "agent";
-  member_id: string;
-  joined_at: string;
-};
-
-export type ChannelRoomOnboarding = {
-  model_prompt: string;
-  name_prompt: string;
-  name: string;
-  provider: string;
-  model: string;
-  effort?: string;
-  avatar_key: string;
-};
-
-export type ChannelRoom = {
-  onboarding?: ChannelRoomOnboarding;
-  id: string;
-  kind: "channel" | "dm";
-  name: string;
-  avatar_key?: string;
-  avatar_image?: string;
-  created_by: string;
-  created_at: string;
-  membership_revision?: number;
-  members: ChannelRoomMember[];
-  unread_count?: number;
-  activity_status?: "idle" | "thinking";
-  /** Latest public message excerpt (at most 240 characters), without attachment payloads. */
-  last_message?: {
-    id: string;
-    author_type: "human" | "agent";
-    author_id: string;
-    kind: "text" | "task" | "system";
-    body: string;
-    has_attachments: boolean;
-    created_at: string;
-  };
-};
-
-export type ChannelAgentCreationProposal = {
-  id: string;
-  message_id: string;
-  room_id: string;
-  name: string;
-  role: string;
-  state: "pending" | "processing" | "approved" | "cancelled";
-  provider?: string;
-  model?: string;
-  created_agent_id?: string;
-  created_at: string;
-  resolved_at?: string;
-};
-
-export type ChannelMessage = {
-  /** Local images explicitly embedded in the reply; projected for remote clients. */
-  markdown_images?: InputImage[];
-  source_session_ref?: string;
-  source_turn_id?: string;
-  id: string;
-  room_id: string;
-  seq: number;
-  thread_id?: string;
-  author_type: "human" | "agent";
-  author_id: string;
-  kind: "text" | "task" | "system";
-  body: string;
-  images?: InputImage[];
-  files?: InputFile[];
-  mentions?: string[];
-  reply_to?: string;
-  task_title?: string;
-  task_state?: string;
-  task_owner?: string;
-  task_verification_required?: boolean;
-  task_goal_revision?: number;
-  task_candidate_revision?: number;
-  agent_creation_proposal?: ChannelAgentCreationProposal;
-  work?: ChannelWork;
-  created_at: string;
-};
-
-export type ChannelWorkState = "open" | "working" | "checking" | "revising" | "integrating" | "needs_human" | "completed" | "failed" | "cancelled" | "interrupted";
-export type ChannelWorkVerificationState = "not_required" | "pending" | "pass" | "block" | "unknown";
-
-export type ChannelWorkCapacity = {
-  named_agent_id?: string;
-  room_id?: string;
-  active: number;
-  starting: number;
-  queued: number;
-  idle: number;
-  limit: number;
-};
-
-export type ChannelWorkRun = {
-  id: string;
-  work_id: string;
-  kind: "producer" | "verifier" | "selector" | "integration";
-  profile?: string;
-  session_ref?: string;
-  state: "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted" | "timed_out";
-  goal_revision: number;
-  candidate_revision: number;
-  workspace_revision?: string;
-  provider?: string;
-  model?: string;
-  input_tokens?: number;
-  output_tokens?: number;
-  cost_usd?: number;
-  checks_rerun?: number;
-  findings_count?: number;
-  outcome?: string;
-  repair_outcome?: string;
-  request_id?: string;
-  round?: number;
-  qualified?: boolean;
-  deadline_at?: string;
-  queue_reason?: string;
-  started_at?: string;
-  ended_at?: string;
-  created_at: string;
-  updated_at: string;
-};
-
-export type ChannelWorkArtifact = {
-  id: string;
-  work_id: string;
-  run_id?: string;
-  kind: "candidate" | "diff" | "snapshot" | "check_log" | "screenshot" | "report" | "other";
-  uri: string;
-  label?: string;
-  summary?: string;
-  workspace_revision?: string;
-  created_at: string;
-};
-
-export type ChannelWorkEvent = {
-  id: string;
-  work_id: string;
-  kind: "state" | "verification" | "correction" | "cancellation" | "recovery";
-  state?: string;
-  summary?: string;
-  goal_revision: number;
-  candidate_revision: number;
-  created_at: string;
-};
-
-export type ChannelTaskVerification = {
-  task_id: string;
-  room_id: string;
-  owner_id: string;
-  decision: "pass" | "block" | "unknown";
-  report: string;
-  evidence_refs?: string[];
-  run_ref?: string;
-  attempt: number;
-  goal_revision: number;
-  candidate_revision: number;
-  updated_at: string;
-};
-
-export type ChannelCollaborationMessage = {
-  id: string;
-  room_id: string;
-  from_id?: string;
-  to_agent_id?: string;
-  kind?: "control" | "assignment" | "peer_result" | "candidate_ready" | "verification_feedback" | "completion" | "work_run_terminal";
-  body: string;
-  work_id?: string;
-  source_message_id?: string;
-  goal_revision?: number;
-  candidate_revision?: number;
-  artifact_refs?: string[];
-  target_kind?: "room" | "named_agent" | "session" | "room_runtime";
-  target_id?: string;
-  visibility?: "room" | "private" | "work_private" | "system";
-  correlation_id?: string;
-  request_id?: string;
-  terminal_state?: "completed" | "failed" | "interrupted" | "cancelled" | "timed_out" | "undeliverable";
-  created_at: string;
-  consumed_at?: string;
-  invalidated_at?: string;
-};
-
-export type ChannelWork = {
-  id: string;
-  room_id: string;
-  source_message_id: string;
-  owner_named_agent_id: string;
-  lead_named_agent_id?: string;
-  title: string;
-  brief: string;
-  goal_revision: number;
-  candidate_revision: number;
-  state: ChannelWorkState;
-  current_run_ref?: string;
-  candidate_artifact_ref?: string;
-  candidate_workspace_revision?: string;
-  promotion_run_ref?: string;
-  selection_reason?: string;
-  verification_state: ChannelWorkVerificationState;
-  verification_required: boolean;
-  pending_delivery_refs?: string[];
-  deliveries?: ChannelCollaborationMessage[];
-  max_verifier_attempts: number;
-  max_candidates: number;
-  verifier_attempts_used: number;
-  candidates_used: number;
-  fanout_reason?: string;
-  max_rounds?: number;
-  current_round?: number;
-  qualified_candidates?: number;
-  max_input_tokens?: number;
-  max_output_tokens?: number;
-  deadline_at?: string;
-  owner_capacity?: ChannelWorkCapacity;
-  room_capacity?: ChannelWorkCapacity;
-  global_capacity?: ChannelWorkCapacity;
-  total_cost_usd?: number;
-  checks_summary?: string;
-  changed_files_count?: number;
-  unresolved_items?: string;
-  failure_reason?: string;
-  cancelled_at?: string;
-  created_at: string;
-  updated_at: string;
-  runs?: ChannelWorkRun[];
-  artifacts?: ChannelWorkArtifact[];
-  events?: ChannelWorkEvent[];
-  verification?: ChannelTaskVerification;
-};
-
-export type CollaborationSessionBinding = {
-  turn_id?: string;
-  session_ref: string;
-  principal_id: string;
-  named_agent_id?: string;
-  room_id?: string;
-  work_id?: string;
-  run_id?: string;
-  title?: string;
-  objective?: string;
-  parent_session_ref?: string;
-  provider?: string;
-  model?: string;
-  effort?: string;
-  runtime_version?: string;
-  failure_reason?: string;
-  primary?: boolean;
-  purpose: "conversation" | "coordination" | "work" | "verification";
-  state: "queued" | "waiting" | "idle" | "starting" | "running" | "interrupted" | "missing" | "completed" | "cancelled" | "failed";
-  created_at: string;
-  updated_at: string;
-};
-
-export type CollaborationArrangement = {
-  id: string; owner_id: string; room_id: string; scope: "session" | "agent" | "room";
-  mode: "wake" | "message"; note: string; state: "active" | "paused" | "done" | "cancelled" | "blocked";
-  next_at: string; last_at?: string; schedule?: string; timezone?: string; when_session?: string;
-  session_ref?: string; reason?: string; revision: number;
-};
-export type CollaborationMemoryEntry = { name: string; revision: string; content?: string };
-export type ChannelContinuityParams = {
-  action: "list" | "control" | "memory"; roomId: string; ownerId?: string; id?: string;
-  state?: "active" | "paused" | "cancelled"; revision?: number; after?: string; limit?: number;
-  memory?: { action: "list" | "search" | "read" | "write" | "delete"; name?: string; query?: string;
-    after?: string; limit?: number; content?: string; revision?: string };
-};
-export type ChannelContinuityResult = { arrangements?: CollaborationArrangement[]; entries?: CollaborationMemoryEntry[]; next?: string };
-
-export type ChannelSessionListParams = { agentId?: string; roomId?: string };
-export type ManagedHarnessSession = {
- session_id: string; title: string; workspace_root: string; workspace_id?: string;
- provider: string; model: string; effort?: string; state: "running" | "idle";
- control?: { manager_id: string; state: "active" | "paused" | "taken_over"; revision: number };
-};
-export type ChannelSessionListResult = { sessions: CollaborationSessionBinding[]; managed_sessions?: ManagedHarnessSession[] };
-export type ChannelSessionCreateParams = {
-  agentId: string;
-  roomId: string;
-  requestId?: string;
-  title?: string;
-  prompt: string;
-  provider?: string;
-  model?: string;
-  effort?: string;
-};
-export type ChannelSessionRefParams = { sessionRef: string };
-export type ChannelSessionSendParams = ChannelSessionRefParams & { prompt: string; requestId?: string };
-export type ChannelSessionResult = { session: CollaborationSessionBinding };
-export type ChannelSessionReadResult = ChannelSessionResult & { thread: Thread };
-
-export type ChannelAgentListResult = { agents: NamedAgent[] };
-export type ChannelAgentLanguageUsage = { name: string; lines: number; share: number };
-export type ChannelAgentInsight = {
-  agent_id: string;
-  window_days: number;
-  files_changed: number;
-  additions: number;
-  deletions: number;
-  input_tokens: number;
-  output_tokens: number;
-  last_active_at?: string;
-  workspace?: string;
-  languages: ChannelAgentLanguageUsage[];
-  attribution_partial: boolean;
-};
-export type ChannelAgentInsightsResult = { generated_at: string; insights: ChannelAgentInsight[] };
-export type ChannelBootstrapResult = { agents: NamedAgent[]; rooms: ChannelRoom[] };
-export type ChannelAgentCreateParams = {
-  request_id?: string;
-  name: string;
-  role?: string;
-  avatar_key?: string;
-  avatar_image?: string;
-  engine_override?: string;
-  provider_override?: string;
-  model_override?: string;
-  effort_override?: string;
-};
-export type ChannelAgentCreateResult = { agent: NamedAgent };
-export type ChannelAgentUpdateParams = Omit<ChannelAgentCreateParams, "request_id"> & { agent_id: string };
-export type ChannelAgentUpdateResult = { agent: NamedAgent };
-export type ChannelAgentDeleteParams = { agent_id: string };
-export type ChannelAgentDeleteResult = { deleted: boolean };
-export type ChannelAgentStartParams = { agent_id: string };
-export type ChannelAgentStartResult = { agent: NamedAgent };
-export type ChannelAgentWakeState = {
-  agent_id: string;
-  outstanding: boolean;
-  pending: boolean;
-  updated_at: string;
-};
-export type ChannelAgentResetParams = { agent_id: string };
-export type ChannelAgentResetResult = {
-  agent: NamedAgent;
-  wake_state: ChannelAgentWakeState;
-  requested: boolean;
-  thread_id: string;
-};
-export type ChannelAgentCreationResolveParams = {
-  proposal_id: string;
-  approve: boolean;
-  provider?: string;
-  model?: string;
-};
-export type ChannelAgentCreationResolveResult = { proposal: ChannelAgentCreationProposal };
-export type ChannelRoomListResult = { rooms: ChannelRoom[] };
-export type ChannelRoomCreateParams = {
-  name: string;
-  avatar_image?: string;
-  agent_ids?: string[];
-};
-export type ChannelRoomCreateResult = { room: ChannelRoom };
-export type ChannelDirectMessageOpenParams = {
-  agent_id: string;
-  onboarding?: ChannelRoomOnboarding;
-};
-export type ChannelDirectMessageOpenResult = { room: ChannelRoom };
-export type ChannelRoomUpdateParams = {
-  room_id: string;
-  name?: string;
-  avatar_image?: string;
-  agent_ids?: string[];
-};
-export type ChannelRoomUpdateResult = { room: ChannelRoom };
-export type ChannelRoomDeleteParams = { room_id: string };
-export type ChannelRoomDeleteResult = { deleted: boolean };
-export type ChannelRoomReadParams = { room_id: string };
-export type ChannelRoomReadResult = { read: boolean };
-export type ChannelMessageListParams = {
-  room_id: string;
-  after_seq?: number;
-  before_seq?: number;
-  limit?: number;
-  latest?: boolean;
-  attachment_metadata_only?: boolean;
-};
-
 /** Offset and total count base64 characters; each chunk is at most 128 KiB. */
 export type AttachmentReadResult = {
   data: string;
@@ -1211,68 +814,18 @@ export type AttachmentReadResult = {
   content_type: string;
   sha256?: string;
 };
-export type ChannelAttachmentReadParams = {
-  room_id: string;
-  message_id: string;
-  seq: number;
-  field: "images" | "files";
-  index: number;
-  sha256: string;
-  offset?: number;
-  preview?: boolean;
-};
 /** Source must be an image embedded in this assistant reply. No remote URLs are fetched. */
 export type MessageImageReadParams = {
-  kind: "channel" | "thread";
+  kind: "thread";
   scope_id: string;
   turn_id?: string;
   message_id: string;
-  seq?: number;
   source: string;
   offset?: number;
   preview?: boolean;
   /** Echo the first response digest for every later original-image chunk. */
   sha256?: string;
 };
-export type ChannelResponse = {
-  id: string;
-  room_id: string;
-  agent_id: string;
-  session_ref: string;
-  turn_id: string;
-  state: "queued" | "thinking" | "responding" | "waiting" | "failed" | "interrupted";
-  body: string;
-  error?: string;
-  created_at: string;
-};
-export type ChannelCoordinatorStatus = {
-  state: "idle" | "queued" | "working" | "waiting" | "failed" | "needs_members";
-  session_ref?: string;
-  agent_ids?: string[];
-  error?: string;
-};
-export type ChannelMessageListResult = { messages: ChannelMessage[]; responses?: ChannelResponse[]; coordinator?: ChannelCoordinatorStatus };
-export type ChannelMessageSendParams = {
-  room_id: string;
-  body: string;
-  images?: InputImage[];
-  files?: InputFile[];
-};
-export type ChannelMessageSendResult = { message: ChannelMessage };
-export type ChannelTaskCreateParams = {
-  room_id: string;
-  title: string;
-  owner_id: string;
-};
-export type ChannelTaskCreateResult = { task: ChannelMessage };
-export type ChannelTaskUpdateParams = {
-  task_id: string;
-  state?: "open" | "doing" | "done";
-  owner_id?: string;
-};
-export type ChannelTaskUpdateResult = { task: ChannelMessage };
-export type ChannelHumanMentionStatusResult = { count: number };
-export type ChannelHumanMentionAckResult = { acknowledged: number };
 
 export type MCPServerStatus = {
   name: string;
@@ -1453,6 +1006,7 @@ export type ConfigAdvancedUpdateResult = {
 };
 
 export type RuntimeGeneralSettingsUpdate = {
+  ptc?: PTCSettings;
   git_attribution_enabled?: boolean;
   mcp_enabled_toggles?: Record<string, boolean>;
 };
@@ -1525,6 +1079,8 @@ export type EnginePermissionModeInfo = {
 
 /** One model exposed by an external agent engine. */
 export type EngineModelInfo = {
+  fast_mode?: boolean;
+  default_speed?: string;
   id: string;
   display_name?: string;
   default_effort?: string;
@@ -2030,13 +1586,21 @@ export type SessionOrganization = {
 };
 
 export type Thread = {
- session_control?: { manager_id: string; manager_name: string; state: "active" | "paused" | "taken_over"; revision: number };
+  speed?: string;
+  session_control?: { manager_id: string; manager_name: string; state: "active" | "paused" | "taken_over"; revision: number };
   id: string;
   parent_id?: string;
   agent_path?: string;
   preview: string;
   title?: string;
+  // "project" marks a project coordinator; "project-session" a session it manages.
   source?: string;
+  // The coordinator that manages this session.
+  project_id?: string;
+  /** Resolved coordinator existence, including archived projects. Omitted by incremental events. */
+  project_exists?: boolean;
+  // Managed sessions share the ordinary thread lifecycle. Older members are workers.
+  project_role?: "side" | "worker";
   model_provider: string;
   model: string;
   model_variant?: string;
@@ -2058,6 +1622,7 @@ export type Thread = {
   pinned?: boolean;
   folder_id?: string;
   archived?: boolean;
+  archive_reason?: string;
   forked_from_id?: string;
   forked_from_turn_id?: string;
   forked_from_item_id?: string;
@@ -2072,6 +1637,7 @@ export type Thread = {
 };
 
 export type ThreadStartParams = {
+  speed?: string;
   ephemeral?: boolean;
   cwd?: string;
   workspace_id?: string;
@@ -2081,7 +1647,26 @@ export type ThreadStartParams = {
   permission_mode?: string;
   approve_for_me?: boolean;
   provider?: string;
+  /** `worktree` starts in an isolated Git worktree; the default is `shared`. */
+  workspace?: "shared" | "worktree";
+  /** Branch, tag, or commit a worktree starts from; defaults to the project's HEAD. */
+  base_revision?: string;
   handoff?: ThreadHandoffParams;
+  // Start a project coordinator in the workspace instead of a conversation.
+  project?: { name: string };
+};
+
+// The user's changes to a project's membership: adopt brings an ordinary
+// conversation of the project's workspace under the project; release makes a
+// managed session an ordinary conversation again.
+export type ProjectSessionParams = {
+  action: "adopt" | "release";
+  project_id: string;
+  session_id: string;
+};
+
+export type ProjectSessionResult = {
+  thread: Thread;
 };
 
 export type ThreadHandoffParams = {
@@ -2562,6 +2147,9 @@ export type ThreadItem = {
   // their trusted source and plugin-selected presentation separately.
   origin?: string;
   origin_id?: string;
+  // Host messages to a project coordinator name their event: "project_result",
+  // "project_takeover", "project_pause", "project_return", "project_adopted" or
+  // "project_released"; related_session_id names the managed session.
   cause?: string;
   presentation_kind?: string;
   arguments?: string;
@@ -2732,6 +2320,22 @@ export type SettingsUsageResponse = {
   days: SettingsUsageDay[];
 };
 
+// UsageOverviewParams selects the IANA time zone whose calendar days bucket
+// usage/overview. Omitted means UTC; an unknown zone is a request error.
+export type UsageOverviewParams = {
+  timezone?: string;
+};
+
+// UsageOverviewResponse summarizes the same token_usage trail as
+// settings/usage without reading conversation content, so it has no model or
+// skill breakdowns. Days are dates in the requested zone. An empty store
+// reports zero totals and no days.
+export type UsageOverviewResponse = {
+  total_sessions: number;
+  metrics: SettingsUsageMetrics;
+  days: SettingsUsageDay[];
+};
+
 // Appearance preference for the desktop shell. "system" follows the OS
 // light/dark setting via prefers-color-scheme.
 // UI and message-stream size in CSS pixels. The renderer clamps incoming
@@ -2774,12 +2378,6 @@ export function resolveAppLocale(
   if (preference !== "system") return preference;
   return systemLocale.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
 }
-
-export type ChannelRoomPreferences = {
-  pinnedRoomIDs: string[];
-  archivedRoomIDs: string[];
-  selectedRoomID?: string;
-};
 
 // The three OS families the desktop shell distinguishes. Anything more
 // exotic collapses to "linux" (native-frame fallback chrome).
@@ -3008,6 +2606,7 @@ export type WuuDesktopApi = {
     params: SystemNotificationParams,
   ) => Promise<SystemNotificationResult>;
   getBuildInfo: () => Promise<BuildInfoResult>;
+  useCodexCredentials: (provider: string) => Promise<{ providers: ProviderSummary[] }>;
   loadCodexModels: (provider?: string) => Promise<ConfigCodexModelsResult>;
   refreshModelCatalog: () => Promise<ConfigModelCatalogRefreshResult>;
   // provider/model may be omitted when threadId is set: the server inherits
@@ -3020,7 +2619,8 @@ export type WuuDesktopApi = {
     connection?: RuntimeConnectionUpdate,
     variant?: string,
     permissionMode?: string,
-    threadId?: string
+    threadId?: string,
+    speed?: string
   ) => Promise<ConfigModelUpdateResult>;
   removeProvider: (
     provider: string,
@@ -3070,34 +2670,9 @@ export type WuuDesktopApi = {
   stopActivity: (threadId: string, activityId: string) => Promise<ActivityActionResult>;
   listSkills: () => Promise<SkillListResult>;
   readSkillContent: (params: SkillContentParams) => Promise<SkillContentResult>;
-  channelContinuity: (params: ChannelContinuityParams) => Promise<ChannelContinuityResult>;
-  listChannelSessions: (params?: ChannelSessionListParams) => Promise<ChannelSessionListResult>;
-  createChannelSession: (params: ChannelSessionCreateParams) => Promise<ChannelSessionResult>;
-  readChannelSession: (params: ChannelSessionRefParams & { requestId?: string }) => Promise<ChannelSessionReadResult>;
-  sendChannelSession: (params: ChannelSessionSendParams) => Promise<ChannelSessionResult>;
-  stopChannelSession: (params: ChannelSessionRefParams) => Promise<ChannelSessionResult>;
-  resumeChannelSession: (params: ChannelSessionRefParams) => Promise<ChannelSessionResult>;
-  listNamedAgents: () => Promise<ChannelAgentListResult>;
-  getNamedAgentInsights: () => Promise<ChannelAgentInsightsResult>;
-  bootstrapChannels: () => Promise<ChannelBootstrapResult>;
-  createNamedAgent: (params: ChannelAgentCreateParams) => Promise<ChannelAgentCreateResult>;
-  updateNamedAgent: (params: ChannelAgentUpdateParams) => Promise<ChannelAgentUpdateResult>;
-  deleteNamedAgent: (params: ChannelAgentDeleteParams) => Promise<ChannelAgentDeleteResult>;
-  startNamedAgent: (params: ChannelAgentStartParams) => Promise<ChannelAgentStartResult>;
-  resetNamedAgent: (params: ChannelAgentResetParams) => Promise<ChannelAgentResetResult>;
-  resolveChannelAgentCreation: (params: ChannelAgentCreationResolveParams) => Promise<ChannelAgentCreationResolveResult>;
-  listChannelRooms: () => Promise<ChannelRoomListResult>;
-  createChannelRoom: (params: ChannelRoomCreateParams) => Promise<ChannelRoomCreateResult>;
-  openChannelDirectMessage: (params: ChannelDirectMessageOpenParams) => Promise<ChannelDirectMessageOpenResult>;
-  updateChannelRoom: (params: ChannelRoomUpdateParams) => Promise<ChannelRoomUpdateResult>;
-  deleteChannelRoom: (params: ChannelRoomDeleteParams) => Promise<ChannelRoomDeleteResult>;
-  markChannelRoomRead: (params: ChannelRoomReadParams) => Promise<ChannelRoomReadResult>;
-  listChannelMessages: (params: ChannelMessageListParams) => Promise<ChannelMessageListResult>;
-  sendChannelMessage: (params: ChannelMessageSendParams) => Promise<ChannelMessageSendResult>;
-  createChannelTask: (params: ChannelTaskCreateParams) => Promise<ChannelTaskCreateResult>;
-  updateChannelTask: (params: ChannelTaskUpdateParams) => Promise<ChannelTaskUpdateResult>;
-  getChannelHumanMentionStatus: () => Promise<ChannelHumanMentionStatusResult>;
-  ackChannelHumanMentions: () => Promise<ChannelHumanMentionAckResult>;
+  returnManagedSession: (params: { thread_id: string; revision: number }) => Promise<{ control: NonNullable<Thread["session_control"]> }>;
+  takeOverManagedSession?: (params: { thread_id: string; revision: number }) => Promise<{ control: NonNullable<Thread["session_control"]> }>;
+  projectSession?: (params: ProjectSessionParams) => Promise<ProjectSessionResult>;
   startThread: (params?: ThreadStartParams, targetContext?: RuntimeContext) => Promise<{ thread: Thread }>;
   loadEarlierThreadHistory?: (threadID: string, cursor: string) => Promise<void>;
   readRemoteAttachment?: (ref: string) => Promise<string>;
@@ -3170,10 +2745,6 @@ export type WuuDesktopApi = {
   onLanguagePreferenceChange: (
     handler: (language: LanguagePreference) => void,
   ) => () => void;
-  initialChannelRoomPreferences?: ChannelRoomPreferences;
-  updateChannelRoomPreferences: (
-    preferences: ChannelRoomPreferences,
-  ) => Promise<ChannelRoomPreferences>;
   // The preference is app-global: the main process broadcasts every change
   // (explicit choice, or an OS dark-mode flip while on "system") to all
   // windows, and each renderer re-applies data-theme. Returns a disposer.
@@ -3243,6 +2814,7 @@ export type WuuDesktopApi = {
     contentParts?: MessageContentPart[],
     // Capture the destination before attachment preparation or a workspace switch.
     targetContext?: RuntimeContext,
+    clientId?: string,
   ) => Promise<{ turn: Turn }>;
   queueTurn: (
     threadId: string,
@@ -3254,6 +2826,7 @@ export type WuuDesktopApi = {
     activeDocument?: ActiveDocumentContext,
     contentParts?: MessageContentPart[],
     targetContext?: RuntimeContext,
+    hold?: boolean,
   ) => Promise<{ queued: QueuedTurn }>;
   updateQueuedTurn: (
     threadId: string,
@@ -3315,6 +2888,7 @@ export type WuuDesktopApi = {
   // can't escalate arbitrary schemes via this channel.
   openExternal: (url: string) => Promise<void>;
   getSettingsUsage: () => Promise<SettingsUsageResponse>;
+  getUsageOverview: (params: UsageOverviewParams) => Promise<UsageOverviewResponse>;
   /**
    * Pop-out session IPC (Plan §2.2 `wuu:pop-out-session`). Renderer
    * sends either a thread tab or a draft tab plus its runtime context.

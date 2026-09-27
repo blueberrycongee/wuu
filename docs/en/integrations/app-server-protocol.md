@@ -47,8 +47,9 @@ remain invalid; this is recovery behavior, not downgrade compatibility.
 
 | Method | Input | Result |
 | --- | --- | --- |
-| `thread/start` | Optional `cwd`, `workspace_id`, `engine`, `provider`, `model`, `effort`, `permission_mode`, `approve_for_me`, `ephemeral` | `{ "thread": ... }` |
+| `thread/start` | Optional `cwd`, `workspace_id`, `engine`, `provider`, `model`, `effort`, `permission_mode`, `approve_for_me`, `ephemeral`, `workspace`, `base_revision` | `{ "thread": ... }` |
 | `thread/resume` | Optional `session_id`, `response_only`, `history_page` | Thread snapshot and available held/pending user messages |
+| `thread/edit-message` | `thread_id`, `turn_id`, `item_id` | Rewound thread and draft restored from the selected user message |
 | `thread/fork` | `thread_id`; optional `turn_id`, `item_id`, `target`, `mode` | New thread and optional worktree information |
 | `thread/list`, `thread/listAll`, `thread/listArchived`, `thread/search` | Method-specific filters | Session metadata |
 | `thread/rename`, `thread/pin`, `thread/archive`, `thread/delete` | Target and method-specific changes | Updated state or operation result |
@@ -59,10 +60,27 @@ creation. New external-engine sessions default to `unconfined` when permission
 mode is omitted; explicitly choose the intended mode. The built-in engine's
 `approve_for_me` review applies only in Standard mode.
 
+`workspace` is `shared` (the default) or `worktree`. A `worktree` session runs in
+a new detached Git worktree of the project, created from `base_revision` (a
+branch, tag, or commit; the project's `HEAD` when omitted) without checking
+anything out in the project. The thread's `cwd` is the worktree, and `worktree`
+reports its path, base commit, and base repository. `base_revision` requires
+`worktree`; ephemeral and handoff sessions cannot use it. A request that cannot
+be honored, such as outside a Git repository or with an unknown revision,
+fails without creating a session or a worktree.
+
 An omitted `session_id` in `thread/resume` selects the most recent visible session
 for the workspace. `response_only` avoids a duplicate resume broadcast to the
 requester. `history_page` requests bounded recent history rather than the full
 snapshot. Forks retain the source conversation and copy its selection.
+
+For the built-in engine, `thread/edit-message` retracts the selected user message
+and later messages from the active conversation. Resuming and forking use that
+active branch, including valid history released from model context by compaction.
+The physical audit transcript remains append-only; editing does not erase its
+records. Retraction metadata is recorded for new edits; previously edited
+sessions without that metadata cannot reliably distinguish discarded branches
+from compacted history.
 
 ## Turns and execution runs
 
@@ -77,7 +95,11 @@ The response contains `turn`; consume `turn/started`, item updates,
 snapshot. The legacy `permission_mode` request field must match the thread's
 selection rather than override it. `turn/queue`, `turn/update-queued`,
 `turn/dequeue`, `turn/steer`, and `turn/unsteer` manage pending user input;
-they are distinct from starting another concurrent turn.
+they are distinct from starting another concurrent turn. `turn/queue` accepts
+optional `hold: true` to persist input as held work without dispatching it, even
+when the interrupted turn has already settled. This lets clients retain messages
+whose preparation or admission finishes after a Stop request. Held input remains
+available through the existing pending-input controls and resume snapshots.
 
 Failed Wuu-engine streams can include `turn.error.recovery`. Its `attempt_count`
 and `retry_count` count recovery-executor calls that actually started; a prepared
@@ -140,12 +162,11 @@ base64 `data`, and optional `filename`; the file path supports PDFs and supporte
 [video inputs](../customize/video-input.md).
 These are attachment bytes, not local path strings. Image normalization and model
 capability checks occur in the core. `turn/start` additionally supports
-`active_document` and ordered `content_parts` for interactive clients.
-
-Named agents can separately select stored room attachments through their `session`
-tool. That [media handoff contract](../automation/app-server.md#named-agent-media-handoff)
-defines source access, durable delivery, and required-evidence behavior; it is not
-an additional JSON-RPC method.
+`active_document` and ordered `content_parts` for interactive clients. An optional
+`client_id` is preserved as the user item's `source_id` in notifications, responses,
+and stored history so clients can reconcile a local send regardless of arrival
+order. It is a correlation identifier, not a promise of idempotent `turn/start`.
+Client waiting-time displays are separate from server execution timestamps.
 
 ### Interruption
 
@@ -170,8 +191,7 @@ See [subagents](../desktop/subagents.md) for worker use and recovery.
 With `thread_id`, selection-only requests change that conversation without
 changing workspace defaults. Omitted fields inherit its current selection.
 Selection changes return `thread_busy` while the conversation has active execution,
-including outstanding workers or a cross-process execution lease. Collaboration
-sessions with a pinned named-agent selection reject this change as well.
+including outstanding workers or a cross-process execution lease.
 
 ```json
 {"id":"20","method":"config/model/update","params":{"thread_id":"thread-id","permission_mode":"read_only"}}
@@ -246,6 +266,19 @@ support Codex, Claude Code, or OpenCode; use their native login flows. See
 [external engines](../getting-started/external-engines.md) for installation,
 protocol versions, model selection, and permission boundaries.
 
+## Usage overview
+
+`usage/overview` summarizes token usage recorded in retained Wuu history. It
+returns `total_sessions` (sessions with at least one usage record), `metrics`
+(the same totals object as `settings/usage`, including `active_days`), and
+`days`, one entry per active calendar day in ascending order. It reads only
+usage records, not conversation content. Optional
+`{ "timezone": "America/Los_Angeles" }` selects the IANA zone for day
+boundaries; omitted means UTC, and an unknown zone is a request error. A store
+without records returns zero totals and an empty `days` list. Like
+`local_usage`, these values exclude unreported and external activity and are
+not billing totals.
+
 ## Notifications
 
 | Family | Client handling |
@@ -302,15 +335,14 @@ The method and payload definitions are in
 [`internal/appserver/protocol.go`](../../../internal/appserver/protocol.go), with
 shared TypeScript types in
 [`packages/protocol/src/index.ts`](../../../packages/protocol/src/index.ts).
-Other method families cover configuration, engines, plugins, channels, session
+Other method families cover configuration, engines, plugins, session
 organization, processes, activities, and MCP. Consult the matching handler for
 validation and lifecycle behavior; a method constant alone does not imply direction
 or support on every host.
 
 Use `wuu debug app-server initialize` or `wuu debug app-server send` for a single
 local probe, and `wuu session trace` for stored events without rerunning a task.
-Debug channel commands can send real messages and invoke models; they are not
-read-only protocol inspection. See the [CLI reference](../reference/cli-commands.md).
+See the [CLI reference](../reference/cli-commands.md).
 
 Treat method names, field meanings, and notification handling as integration
 contracts. Tolerate additive fields, validate the protocol version, and test against

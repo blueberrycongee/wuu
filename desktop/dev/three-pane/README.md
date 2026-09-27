@@ -5,7 +5,7 @@ From `desktop/`, run `npx vite --config dev/three-pane/vite.config.ts` and open
 avatar dependencies with the automatic JSX runtime used by production.
 
 This development-only entry mounts production `ProjectGroup`, `TurnView`,
-`ConversationTitleActions`, and `WorkspaceRightPanel` with the complete renderer stylesheet. Files and
+`ConversationTitleContent`, `ConversationTitleActions`, and `WorkspaceRightPanel` with the complete renderer stylesheet. Files and
 conversations are synthetic; no app-server, saved desktop preferences, or live
 workspace files are used. The composer is a layout specimen and cannot send.
 File-tree selection does not open a real file.
@@ -22,6 +22,8 @@ picker, and file-tree search. `?theme=dark&size=20` selects those preview settin
 Titlebar information and sidebar buttons expose their selected states; the
 workspace expand button switches between expand and restore. Add `compact` to
 preview the compact titlebar menu, or `globalized` to start with an expanded panel.
+Add `empty` for the empty-session greeting and synthetic usage overview; add
+`new-user` as well to preview the overview with no recorded usage.
 The information button only toggles its selected state; it does not open live
 environment data.
 

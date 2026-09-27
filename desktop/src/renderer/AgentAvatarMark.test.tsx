@@ -17,20 +17,6 @@ vi.mock("blobatar/react", () => ({
 describe("AgentAvatarMark", () => {
   beforeEach(() => blobatarProps.mockClear());
 
-  it.each(["idle", "thinking", "sending"] as const)(
-    "renders the %s blob without a backdrop",
-    (status) => {
-      renderToStaticMarkup(
-        <AgentAvatarMark seed="agent-1" avatarKey="abstract-1" status={status} />,
-      );
-
-      expect(blobatarProps).toHaveBeenCalledOnce();
-      expect(blobatarProps.mock.calls[0][0]).toEqual(
-        expect.objectContaining({ background: false }),
-      );
-    },
-  );
-
   it("opts sidebar avatars into idle attention and working animation", () => {
     renderToStaticMarkup(
       <AgentAvatarMark seed="agent-1" avatarKey="abstract-1" status="idle" motion="expressive" />,
