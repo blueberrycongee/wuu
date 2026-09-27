@@ -53,9 +53,9 @@ fields.css .settings-switch-thumb, .plugin-ui-checkbox input::after background -
 image-preview.css .image-preview-overlay background --image-preview-overlay-bg
 image-preview.css .image-preview-status color --image-preview-status-text
 image-preview.css .image-preview-title color --image-preview-title-text
+image-preview.css .image-preview-toolbar background --image-preview-toolbar-actions-bg
+image-preview.css .image-preview-toolbar border --image-preview-toolbar-border
 image-preview.css .image-preview-toolbar color --image-preview-toolbar-text
-image-preview.css .image-preview-toolbar-actions background --image-preview-toolbar-actions-bg
-image-preview.css .image-preview-toolbar-actions border --image-preview-toolbar-border
 image-preview.css .image-preview-toolbar-button:active:not(:disabled) background --image-preview-toolbar-button-active
 image-preview.css .image-preview-toolbar-button:focus-visible outline --image-preview-toolbar-text
 image-preview.css .image-preview-toolbar-button:hover:not(:disabled) background --image-preview-toolbar-button-hover

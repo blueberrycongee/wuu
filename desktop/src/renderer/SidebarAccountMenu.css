@@ -13,7 +13,9 @@
   min-height: var(--sidebar-row-height, 2.5em);
   font-size: var(--sidebar-label-size, var(--font-ui));
   line-height: 1.45;
-  padding: 0.35em var(--sidebar-row-pad-x);
+  /* The navigation rows' block padding, so the account row lands on the
+   * same row height instead of a fractional one. */
+  padding: 0.2em var(--sidebar-row-pad-x);
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
@@ -47,7 +49,8 @@
   flex-basis: var(--sidebar-primary-icon-size, 16px);
   width: var(--sidebar-primary-icon-size, 16px);
   height: var(--sidebar-primary-icon-size, 16px);
-  font-size: 9px;
+  /* Initials keep their share of the glyph slot as the UI font grows. */
+  font-size: round(nearest, calc(var(--sidebar-primary-icon-size, 16px) * 9 / 16), 1px);
 }
 
 .sidebar-account-trigger .sidebar-account-avatar:has(svg) {

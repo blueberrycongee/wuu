@@ -9,6 +9,7 @@ import type {
 } from "./plugins/PluginHost";
 import { useI18n } from "./i18n";
 import { externalAgentActivityStatusSource } from "./ExternalAgentActivityStore";
+import { Check, Circle } from "./WuuIcons";
 
 const EMPTY_ITEMS: readonly ResolvedStatusItem[] = Object.freeze([]);
 const MAX_VISIBLE_ITEMS = 3;
@@ -143,7 +144,9 @@ function TodoStatusCapsule({ todoUpdate }: { todoUpdate: TodoUpdate }) {
       <ol className="conversation-status-todo-card" role="tooltip">
         {todoUpdate.todos.map((item, index) => (
           <li className={`is-${item.status}`} key={`${index}:${item.content}`}>
-            <span aria-hidden="true">{item.status === "completed" ? "✓" : index + 1}</span>
+            <span className="conversation-status-todo-marker" aria-hidden="true">
+              {item.status === "completed" ? <Check /> : <Circle />}
+            </span>
             <span>{item.content}</span>
           </li>
         ))}

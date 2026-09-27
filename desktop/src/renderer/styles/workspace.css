@@ -169,13 +169,18 @@
   height: var(--window-titlebar-height);
   align-items: center;
   gap: 4px;
-  box-shadow: inset 0 -1px 0 var(--surface-3);
+  box-shadow: inset 0 -1px 0 var(--hairline-soft);
   /* The docked panel sits at the window's right edge, so the tabbar is
    * what clears the Windows controls overlay; a no-op elsewhere. */
   padding: 0 max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0 8px;
   -webkit-app-region: drag;
   position: relative;
   z-index: 1;
+}
+
+/* With no tab open there is no strip to separate from its content. */
+.workspace-right-panel:has(> .workspace-panel-body.picker) > .workspace-panel-tabbar {
+  box-shadow: none;
 }
 
 .workspace-panel-tabbar button {
@@ -1352,7 +1357,7 @@ html.resizing-workspace-file-split * {
   min-height: var(--control-row-height);
   align-items: center;
   column-gap: var(--space-2);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
   padding: var(--space-1) var(--space-3);
@@ -3988,10 +3993,11 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   flex: 1 1 auto;
 }
 
+/* Secondary to the model beside it: quieter ink, never a heavier weight. */
 .codex-runtime-effort {
   flex: 0 0 auto;
   color: var(--codex-runtime-effort-text);
-  font-weight: var(--weight-medium);
+  font-weight: inherit;
 }
 
 .codex-runtime-trigger:hover,
@@ -4410,6 +4416,12 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   font-size: var(--font-xs);
   font-weight: var(--weight-medium);
   transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
+}
+
+/* Engine names are a word long; the provider beside them can be any length,
+ * so it alone gives way when the row runs short. */
+.codex-runtime-menu .runtime-panel-context button:has(> .engine-icon) {
+  flex-shrink: 0;
 }
 
 .codex-runtime-menu .runtime-panel-context button:hover {

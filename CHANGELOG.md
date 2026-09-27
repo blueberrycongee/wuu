@@ -23,6 +23,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - The new-conversation composer shows its project, branch, and worktree choice
   as a quiet project / branch line aligned with the input, replacing the outlined
   pill groups.
+- The info panel docks beside the conversation whenever the conversation keeps a
+  readable column after the sidebar and right panel, and floats over narrower
+  conversations instead of covering text at medium widths or squeezing it.
+- Conversation status capsules, the TODO hover card, and the composer's corner
+  controls share one size, corner, and elevation scale. The TODO card uses the
+  info panel's status marks, and truncated process summaries end in an ellipsis.
 
 ### Added
 

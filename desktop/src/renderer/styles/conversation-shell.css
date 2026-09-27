@@ -1274,15 +1274,18 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: max(34px, calc(var(--font-ui) * var(--line-ui) + var(--space-3)));
+  /* Compact-chip type on the shared control floor, so a capsule matches the
+   * composer's chips and buttons below it and grows with the UI font. */
+  min-height: max(32px, round(up, calc(var(--font-sm) * var(--line-ui) + var(--space-3)), 4px));
   border-radius: var(--radius-pill);
   border: 1px solid var(--shell-jump-pill-border);
   background: var(--shell-jump-pill-bg);
-  /* These controls float over reading content at the same elevation as menus. */
-  box-shadow: var(--shadow-pop);
+  /* Status floats with the composer as one dock, at its elevation rather
+   * than a menu's: it is ambient, and hover adds no lift. */
+  box-shadow: var(--shadow-composer);
 
   color: var(--ink);
-  font-size: var(--font-ui);
+  font-size: var(--font-sm);
   font-weight: var(--weight-medium);
   line-height: var(--line-ui);
 
@@ -1372,6 +1375,7 @@ button.conversation-status-capsule,
 .conversation-status-secondary {
   flex: 0 0 auto;
   color: var(--ink-muted);
+  font-weight: var(--weight-regular);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1396,23 +1400,29 @@ button.conversation-status-capsule,
   max-width: 100%;
 }
 
+/* A read-only description of the list: one type step below reading text,
+ * no row surfaces, and the same status marks as the info panel's TODO list. */
 .conversation-status-todo-card {
   display: flex;
   position: absolute;
   bottom: calc(100% + 8px);
   left: 50%;
-  width: min(280px, calc(100vw - 48px));
+  /* In em so the card widens with the UI font instead of wrapping more. */
+  width: max-content;
+  min-width: 16em;
+  max-width: min(26em, calc(100vw - 32px));
   max-height: min(320px, 50vh);
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 6px;
   margin: 0;
-  padding: var(--menu-inset);
+  padding: var(--space-2) var(--space-3);
   overflow: auto;
   border: 1px solid var(--shell-todo-card-border);
-  /* Compact shell: inner row radius + inset, not a panel-sized corner. */
-  border-radius: var(--menu-shell-radius);
+  border-radius: var(--radius-sm);
   background: var(--shell-todo-card-bg);
   box-shadow: var(--shadow-pop);
+  font-size: var(--font-sm);
+  line-height: round(nearest, calc(var(--font-sm) * 1.5), 2px);
   list-style: none;
   opacity: 0;
   visibility: hidden;
@@ -1436,14 +1446,10 @@ button.conversation-status-capsule,
 
 .conversation-status-todo-card li {
   display: grid;
-  grid-template-columns: var(--icon-size-xs) minmax(0, 1fr);
+  grid-template-columns: var(--icon-size-sm) minmax(0, 1fr);
   align-items: start;
-  gap: var(--menu-item-gap);
-  padding: var(--space-2);
-  border-radius: var(--radius-xs);
+  column-gap: var(--space-2);
   color: var(--shell-todo-card-soft);
-  font-size: var(--font-ui);
-  line-height: var(--line-body);
   overflow-wrap: anywhere;
 }
 
@@ -1451,15 +1457,29 @@ button.conversation-status-capsule,
   white-space: pre-wrap;
 }
 
-.conversation-status-todo-card li > span:first-child {
+/* One line tall, so the mark centers on the first line of a wrapped item. */
+.conversation-status-todo-marker {
+  display: grid;
+  height: 1lh;
+  place-items: center;
   color: var(--shell-todo-card-muted);
-  font-variant-numeric: tabular-nums;
-  text-align: center;
+}
+
+.conversation-status-todo-marker > svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
 }
 
 .conversation-status-todo-card li.is-in_progress {
-  background: var(--menu-hover);
   color: var(--shell-todo-card-ink);
+}
+
+.conversation-status-todo-card li.is-in_progress .conversation-status-todo-marker {
+  color: var(--wuu-accent);
+}
+
+.conversation-status-todo-card li.is-in_progress .conversation-status-todo-marker > svg {
+  fill: currentColor;
 }
 
 .conversation-status-todo-card li.is-completed {
@@ -1506,7 +1526,6 @@ button.conversation-status-capsule,
 .conversation-status-capsule:hover {
   background: var(--shell-jump-pill-hover-bg);
   border-color: var(--shell-jump-pill-hover-border);
-  box-shadow: var(--shadow-pop);
 }
 
 .jump-to-latest-pill:focus-visible,
@@ -1514,12 +1533,18 @@ button.conversation-status-capsule,
   /* Keep focus visible even when a theme sets panel elevation to none. */
   outline: 2px solid var(--shell-jump-pill-focus-shadow-1);
   outline-offset: 0;
-  box-shadow: var(--shadow-pop);
 }
 
 .jump-to-latest-pill svg {
   flex: 0 0 auto;
   color: currentColor;
+}
+
+/* Compact-chip glyph, as on the composer's chips at the same type size;
+ * specific enough to override the button icon default in appearance.css. */
+.jump-to-latest-pill > :is(svg.wuu-icon, svg.lucide) {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
 }
 
 .jump-to-latest-progress-detail {

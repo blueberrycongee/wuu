@@ -153,12 +153,14 @@
   gap: 4px;
 }
 
+/* The close button fills its row-height slot and takes the rows' corner:
+ * like every row, it sits one inset inside the panel's radius. */
 .environment-panel-actions .icon-button {
-  width: 26px;
-  height: 26px;
+  width: var(--environment-panel-close-size);
+  height: var(--environment-panel-close-size);
   padding: 0;
   line-height: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
 }
 
 .environment-panel-actions .icon-button > svg {

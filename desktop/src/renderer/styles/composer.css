@@ -726,8 +726,8 @@
 
 .composer-expand-button {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: var(--composer-corner-inset);
+  right: var(--composer-corner-inset);
   width: 28px;
   height: 28px;
   z-index: 3;
@@ -809,6 +809,9 @@
    * bubbles; the toolbar subtracts its 32px buttons' glyph offset. */
   --composer-text-start: var(--card-padding);
   --composer-control-icon-inset: calc((32px - var(--icon-size)) / 2);
+  /* Filled corner controls keep their visible edge this far from the frame
+   * on both sides, so the send circle and the expand button share an axis. */
+  --composer-corner-inset: var(--space-2);
   position: relative;
   width: 100%;
   min-height: var(--composer-collapsed-min-height);
@@ -1277,7 +1280,10 @@
   align-items: center;
   gap: 8px;
   overflow: hidden;
-  padding: 0 calc(var(--composer-text-start) - var(--composer-control-icon-inset)) 4px;
+  /* The leading glyph aligns with the text; the trailing send circle, drawn
+   * 2px inside its button, aligns with the corner instead. */
+  padding: 0 calc(var(--composer-corner-inset) - 2px) 4px
+    calc(var(--composer-text-start) - var(--composer-control-icon-inset));
   container: composer-toolbar / inline-size;
 }
 

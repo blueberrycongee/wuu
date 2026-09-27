@@ -2459,6 +2459,9 @@
 
 .process-text-motion {
   display: inline-grid;
+  /* A shrinkable track: the copy's max-width then follows a narrowed row
+   * and ends in its ellipsis instead of being clipped mid-glyph here. */
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   max-width: 100%;
   align-items: baseline;
@@ -2646,11 +2649,13 @@
 /* Mask the actual glyphs so segmented labels and changing counts stay aligned.
  * The mascot sits outside this wrapper and keeps its normal contrast. */
 .process-surface-summary-text {
+  --process-segment-gap: 8px;
+  --process-segment-inner-gap: 4px;
   display: inline-flex;
   flex: 1 1 auto;
   min-width: 0;
   align-items: center;
-  gap: 8px;
+  gap: var(--process-segment-gap);
   overflow: hidden;
 }
 
@@ -2701,7 +2706,7 @@
   display: inline-flex;
   min-width: 0;
   align-items: baseline;
-  gap: 4px;
+  gap: var(--process-segment-inner-gap);
 }
 
 .process-surface-segment > span:last-child {
@@ -2712,6 +2717,22 @@
 
 .process-surface-separator {
   flex: 0 0 auto;
+}
+
+/* A comma closes the phrase before it, so it drops the segment gap; the
+ * space after it comes from the glyph itself. */
+.process-surface-segment > .process-surface-separator {
+  margin-inline-start: calc(-1 * var(--process-segment-gap));
+}
+
+/* A centered dot keeps the segment gap on both sides, as it does between a
+ * notice's title and detail. The label after it is too short to truncate. */
+.process-surface-reasoning-segment {
+  flex-shrink: 0;
+}
+
+.process-surface-reasoning-segment > .process-surface-separator {
+  margin-inline: 0 calc(var(--process-segment-gap) - var(--process-segment-inner-gap));
 }
 
 /* Keep the compacted-state label readable and give the longer detail the

@@ -333,6 +333,19 @@ const ENGINE_INVENTORY_STALE_MS = 6 * 60 * 60 * 1000;
 type WorkspaceSheetPhase = "docked" | "arming" | "open" | "exiting" | "docking";
 const ENVIRONMENT_PANEL_WIDTH_PX = 328;
 const ENVIRONMENT_PANEL_WIDTH_CSS = `${ENVIRONMENT_PANEL_WIDTH_PX}px`;
+const ENVIRONMENT_PANEL_RESERVED_WIDTH_PX = 372;
+// The info panel docks beside the conversation only while the conversation
+// pane keeps a readable column next to it: the reserved width, two 32px page
+// insets and a 480px column, the width at which the composer's controls stop
+// fitting. The window alone cannot decide this, because the sidebar and the
+// right panel take their share first. A narrower pane shows it as an overlay.
+const ENVIRONMENT_PANEL_ROOM_PANE_WIDTH_PX = ENVIRONMENT_PANEL_RESERVED_WIDTH_PX + 2 * 32 + 480;
+const ENVIRONMENT_PANEL_ROOM_MIN_HEIGHT_PX = 680;
+
+function environmentPanelFits(paneWidth: number): boolean {
+  return paneWidth >= ENVIRONMENT_PANEL_ROOM_PANE_WIDTH_PX &&
+    window.innerHeight >= ENVIRONMENT_PANEL_ROOM_MIN_HEIGHT_PX;
+}
 // Cap on the number of bars rendered in the always-visible rail. The
 // rail is a thin at-a-glance index; if there are more queries than fit,
 // we collapse the tail into a single bar.
@@ -722,11 +735,14 @@ export function App(): JSX.Element {
   const [environmentPanelOpen, setEnvironmentPanelOpen] = useState(false);
   const [environmentPanelDismissed, setEnvironmentPanelDismissed] =
     useState(false);
+  // Everything the window gives to other columns before the conversation.
+  const environmentPanelPaneOffset =
+    effectiveSidebarWidth +
+    (rightPanelOpen && !rightPanelGlobalized ? clampedWorkspaceRightPanelWidth : 0);
   const [environmentPanelHasRoom, setEnvironmentPanelHasRoom] = useState(() =>
     typeof window === "undefined"
       ? false
-      : window.matchMedia("(min-width: 1320px) and (min-height: 680px)")
-          .matches,
+      : environmentPanelFits(window.innerWidth - environmentPanelPaneOffset),
   );
   const [environmentPanelMounted, setEnvironmentPanelMounted] = useState(false);
   const [environmentPanelClosing, setEnvironmentPanelClosing] = useState(false);
@@ -1712,11 +1728,10 @@ export function App(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    const query = window.matchMedia(
-      "(min-width: 1320px) and (min-height: 680px)",
-    );
     const update = (): void => {
-      const nextHasRoom = query.matches;
+      const nextHasRoom = environmentPanelFits(
+        window.innerWidth - environmentPanelPaneOffset,
+      );
       if (
         windowResizingRef.current ||
         document.documentElement.classList.contains(WINDOW_RESIZING_CLASS)
@@ -1729,9 +1744,9 @@ export function App(): JSX.Element {
       setEnvironmentPanelHasRoom(nextHasRoom);
     };
     update();
-    query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
-  }, []);
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, [environmentPanelPaneOffset]);
 
   useLayoutEffect(() => {
     appStateRef.current = state;
@@ -2881,7 +2896,7 @@ export function App(): JSX.Element {
     "--side-thread-width": `${sideThread.width}px`,
     "--conversation-split-left": `${splitLeftPercent}%`,
     "--environment-panel-width": ENVIRONMENT_PANEL_WIDTH_CSS,
-    "--environment-panel-reserved-width": "372px",
+    "--environment-panel-reserved-width": `${ENVIRONMENT_PANEL_RESERVED_WIDTH_PX}px`,
     "--environment-panel-edge-gap": "18px",
   } as CSSProperties;
   const pullRequestDisabledReason = pullRequestUnavailableReason(
