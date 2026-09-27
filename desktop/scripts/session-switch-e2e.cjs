@@ -10,6 +10,7 @@
 // WUU_SWITCH_INIT_DELAY_MS injects a readiness fault; never pool it with baseline.
 // WUU_SWITCH_CHECK_BUDGET=1 checks settled work counters, never wall-clock time.
 // WUU_SWITCH_TRACE=1 records a Chromium trace; exclude traced runs from baselines.
+// WUU_SWITCH_CPU_PROFILE=1 records renderer CPU samples; exclude from baselines.
 // WUU_SWITCH_OUTPUT selects an evidence directory separate from fixture data.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -49,11 +50,13 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-session-switch-'));
 const output = process.env.WUU_SWITCH_OUTPUT || fixture;
 fs.mkdirSync(output, { recursive: true });
 const traceEnabled = process.env.WUU_SWITCH_TRACE === '1';
+const cpuProfileEnabled = process.env.WUU_SWITCH_CPU_PROFILE === '1';
 const checkBudget = process.env.WUU_SWITCH_CHECK_BUDGET === '1';
 if (checkBudget) {
   assert.deepEqual({ turns, rounds, variant, safeMode }, budget.fixture);
   assert.equal(initDelayMs, 0, 'Fault injection is not a comparable budget workload');
   assert.equal(traceEnabled, false, 'Tracing is not a comparable budget workload');
+  assert.equal(cpuProfileEnabled, false, 'CPU profiling is not a comparable budget workload');
 }
 const home = path.join(fixture, 'home');
 fs.mkdirSync(home);
@@ -394,6 +397,19 @@ async function switchTo(win, index, scenario) {
   }
   console.log(JSON.stringify(result));
   assert.equal(await evaluate(win, () => document.querySelector('.composer textarea')?.value), draft, 'Runtime refresh lost the typed draft');
+  // Check history recall and draft restoration outside the timing window.
+  await evaluate(win, () => document.querySelector('.composer textarea').setSelectionRange(0, 0));
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Up' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Up' });
+  const lastQuestion = `Session ${index} question ${(index === 1 || index === 5 ? turns : 3) - 1}`;
+  await waitFor(win, text => document.querySelector('.composer textarea')?.value === text, lastQuestion);
+  await evaluate(win, () => {
+    const input = document.querySelector('.composer textarea');
+    input.setSelectionRange(input.value.length, input.value.length);
+  });
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Down' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Down' });
+  await waitFor(win, text => document.querySelector('.composer textarea')?.value === text, draft);
   // Clear without submitting; the fixture never invokes inference.
   await evaluate(win, () => document.querySelector('.composer textarea').select());
   win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' });
@@ -429,6 +445,10 @@ startFixtureProvider().then(() => import(pathToFileURL(mainBundle).href)).then(a
     included_categories: ['devtools.timeline', 'blink.user_timing', 'v8', 'disabled-by-default-devtools.timeline.stack'],
     recording_mode: 'record-until-full', trace_buffer_size_in_kb: 256 * 1024,
   });
+  if (cpuProfileEnabled) {
+    await main.webContents.debugger.sendCommand('Profiler.enable');
+    await main.webContents.debugger.sendCommand('Profiler.start');
+  }
   for (const index of [1, 5, 0]) await switchTo(main, index, 'initial-pass');
   for (let round = 0; round < rounds; round++) {
     for (const index of [1, 5, 0]) await switchTo(main, index, 'repeat');
@@ -470,6 +490,11 @@ startFixtureProvider().then(() => import(pathToFileURL(mainBundle).href)).then(a
     await contentTracing.stopRecording(path.join(output, 'trace.json'));
     assert.ok(usage.percentage < 1, 'Trace buffer filled; recording is incomplete');
   }
+  if (cpuProfileEnabled) {
+    const { profile } = await main.webContents.debugger.sendCommand('Profiler.stop');
+    fs.writeFileSync(path.join(output, 'renderer.cpuprofile'), JSON.stringify(profile));
+    await main.webContents.debugger.sendCommand('Profiler.disable');
+  }
   const groups = {};
   for (const result of results) {
     const key = `${result.scenario}/${result.history}/${result.firstOpen ? 'first' : 'revisit'}/spawn-${result.coreSpawns}`;
@@ -495,7 +520,7 @@ startFixtureProvider().then(() => import(pathToFileURL(mainBundle).href)).then(a
     sourceChanges: git(['status', '--short']), platform: process.platform, arch: process.arch,
     osRelease: os.release(), cpu: os.cpus()[0].model, cpuCount: os.cpus().length,
     versions: process.versions, turns, rounds, safeMode, variant, initDelayMs,
-    traceEnabled, checkBudget, budget: checkBudget ? budget : null,
+    traceEnabled, cpuProfileEnabled, checkBudget, budget: checkBudget ? budget : null,
     zoomFactor: main.webContents.getZoomFactor(), windowSize: main.getSize(),
     coreSha256: hash(process.env.WUU_DESKTOP_CORE), harnessSha256: hash(__filename),
     mainSha256: hash(mainBundle),
@@ -509,14 +534,14 @@ startFixtureProvider().then(() => import(pathToFileURL(mainBundle).href)).then(a
     '# Session switch baseline', '',
     `Source: ${metadata.sourceCommit}. ${metadata.platform}/${metadata.arch}; Electron ${process.versions.electron}; ${metadata.turns} turns; safe mode ${metadata.safeMode}; delay ${initDelayMs}ms.`, '',
     metadata.endpoint, '', metadata.attribution, '',
-    `Work budget: ${checkBudget ? 'enforced' : 'diagnostic only'}. Trace: ${traceEnabled ? 'enabled; exclude from timing baselines' : 'disabled'}.`, '',
+    `Work budget: ${checkBudget ? 'enforced' : 'diagnostic only'}. Trace: ${traceEnabled ? 'enabled; exclude from timing baselines' : 'disabled'}. CPU profile: ${cpuProfileEnabled ? 'enabled; exclude from timing baselines' : 'disabled'}.`, '',
     '| Repeated large-fixture work | Observed maximum | Configured ceiling |',
     '| --- | ---: | ---: |',
     ...Object.entries(budget.ceilings).map(([counter, ceiling]) => `| ${counter} | ${Math.max(...results.filter(r => r.scenario === 'repeat' && r.history === 'large').map(r => r.work[counter]))} | ${ceiling} |`), '',
     '| Scenario / history / first visit / observed spawns | n | Content P50 / P75 (ms) | Interactive P50 / P75 (ms) |',
     '| --- | ---: | ---: | ---: |',
     ...Object.entries(summary).map(([key, s]) => `| ${key} | ${s.n} | ${s.contentFrameMs.p50.toFixed(1)} / ${s.contentFrameMs.p75.toFixed(1)} | ${s.interactiveFrameMs.p50.toFixed(1)} / ${s.interactiveFrameMs.p75.toFixed(1)} |`),
-    '', 'Wall-clock samples are diagnostic, not thresholds. Do not pool scenarios, runtimes, or traced runs, or compare against the old paintMs/readyMs definition. Full samples and build hashes are in results.json.', '',
+    '', 'Wall-clock samples are diagnostic, not thresholds. Do not pool scenarios, runtimes, or profiled/traced runs, or compare against the old paintMs/readyMs definition. Full samples and build hashes are in results.json.', '',
   ].join('\n');
   fs.writeFileSync(path.join(output, 'report.md'), report);
   await checkStreaming(main);

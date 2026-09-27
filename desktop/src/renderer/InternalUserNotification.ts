@@ -40,12 +40,13 @@ export function isAgentNotificationText(text: string | undefined): boolean {
   ) {
     return true;
   }
+  // Only JSON objects can carry legacy envelopes. Ordinary user prose is the
+  // hot path during history navigation; do not parse it by throwing exceptions.
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    return false;
+  }
   try {
-    const envelope = JSON.parse(trimmed) as unknown;
-    if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
-      return false;
-    }
-    const value = envelope as Record<string, unknown>;
+    const value = JSON.parse(trimmed) as Record<string, unknown>;
     if (
       typeof value.content === "string" &&
       isAgentNotificationText(value.content)

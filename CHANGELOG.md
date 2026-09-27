@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Long conversations spend less renderer CPU time rebuilding composer query
+  history and recognizing legacy internal notifications, preserving history recall
+  and message visibility.
 - Working-note guidance focuses on recovery checkpoints and clarifies search
   pagination and revision reuse, reducing redundant maintenance instructions.
 - Sidebar conversation history reveals five more hidden sessions per click instead

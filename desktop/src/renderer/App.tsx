@@ -142,7 +142,6 @@ import {
   queryTextForUserItem,
   SCRATCH_PSEUDO_PROJECT_ID,
   scratchThreadSummaries,
-  queryTextsForThread,
   requestedHandoffIntentForThread,
   reduceServerEvent,
   reconcileListedThreadState,
@@ -2296,6 +2295,10 @@ export function App(): JSX.Element {
     }
     return entries;
   }, [turns]);
+  const composerQueryHistory = useMemo(
+    () => pastQueries.map((entry) => entry.text),
+    [pastQueries],
+  );
   const showingPrimaryPluginView = usePrimaryPluginViewCover();
   const mainConversationDockVisible =
     Boolean(state.initialized) &&
@@ -3307,7 +3310,7 @@ export function App(): JSX.Element {
           else void interrupt();
         }}
         queryHistorySessionID={activeThread?.id ?? currentSessionTab?.id}
-        queryHistory={queryTextsForThread(activeThread)}
+        queryHistory={composerQueryHistory}
         requestedHandoffIntent={requestedHandoffIntentForThread(activeThread)}
       />
       </>

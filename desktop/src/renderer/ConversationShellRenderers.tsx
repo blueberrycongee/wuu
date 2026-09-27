@@ -2,6 +2,7 @@ import {
   lazy,
   Suspense,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -162,6 +163,7 @@ export function ConversationSplitPaneRenderer({
   onAnswerUserQuestion,
   onCancelUserQuestion,
 }: ConversationSplitPaneRendererProps): JSX.Element {
+  const queryHistory = useMemo(() => queryTextsForThread(thread), [thread]);
   return (
     <ConversationSplitPane
       pane={pane}
@@ -174,7 +176,7 @@ export function ConversationSplitPaneRenderer({
       viewSwitchPending={viewSwitchPending}
       submitting={submittingThreadIDs?.has(thread.id)}
       stopState={stopRequests?.[thread.id]}
-      queryHistory={queryTextsForThread(thread)}
+      queryHistory={queryHistory}
       requestedHandoffIntent={requestedHandoffIntentForThread(thread)}
       editingMessage={
         historyMessageEdit?.threadID === thread.id
