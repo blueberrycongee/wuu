@@ -22,14 +22,14 @@ beforeEach(() => {
   props = {
     visible: true,
     state: { ...initialState, activeProjectId: "one", activeContext: { kind: "project", project_id: "one", cwd: "/repo/one" } },
-    sidebarProjects: [SCRATCH_PSEUDO_PROJECT_ID, "one", "two"].map((id) => ({ id, name: id, path: id === SCRATCH_PSEUDO_PROJECT_ID ? "" : `/repo/${id}`, created_at: date, updated_at: date })),
+    sidebarWorkspaces: [SCRATCH_PSEUDO_PROJECT_ID, "one", "two"].map((id) => ({ id, name: id, path: id === SCRATCH_PSEUDO_PROJECT_ID ? "" : `/repo/${id}`, created_at: date, updated_at: date })),
     activeThreadID: "first",
-    projectThreadsByProjectID: { one: [thread("first")], two: [thread("second")], [SCRATCH_PSEUDO_PROJECT_ID]: [] },
+    workspaceThreadsByWorkspaceID: { one: [thread("first")], two: [thread("second")], [SCRATCH_PSEUDO_PROJECT_ID]: [] },
     expandedSidebarSectionIDs: new Set(["one"]),
     onToggleSidebarSectionCollapsed: vi.fn(),
-    onStartNewThreadForProject: vi.fn(), onSelectProjectThread: vi.fn(),
+    onStartNewThreadInWorkspace: vi.fn(), onSelectWorkspaceThread: vi.fn(),
     onTogglePinned: vi.fn(), onArchiveThread: vi.fn(), onRenameThread: vi.fn(), onDeleteThread: vi.fn(),
-    onRemoveProject: vi.fn(), onRelocateProject: vi.fn(), onCreateProject: vi.fn(), onOpenProjectFolder: vi.fn(),
+    onRemoveWorkspace: vi.fn(), onRelocateWorkspace: vi.fn(), onCreateWorkspace: vi.fn(), onOpenWorkspaceFolder: vi.fn(),
     commands: [],
   };
 });
@@ -45,8 +45,8 @@ function click(label: string) {
   expect(button, label).toBeDefined();
   act(() => button!.click());
 }
-function chooseProject(id: string) {
-  click(translateCurrent("sidebar.switchProject"));
+function chooseWorkspace(id: string) {
+  click(translateCurrent("sidebar.switchWorkspace"));
   const button = [...container.querySelectorAll("button")].find((item) => item.querySelector("strong")?.textContent === id);
   expect(button).toBeDefined();
   act(() => button!.click());
@@ -54,18 +54,18 @@ function chooseProject(id: string) {
 
 it("browses projects without navigating away, then creates and selects in that project", () => {
   render();
-  chooseProject("two");
-  expect(props.onSelectProjectThread).not.toHaveBeenCalled();
+  chooseWorkspace("two");
+  expect(props.onSelectWorkspaceThread).not.toHaveBeenCalled();
   expect(props.onToggleSidebarSectionCollapsed).toHaveBeenCalledWith("two");
   click(translateCurrent("sidebar.newConversation"));
-  expect(props.onStartNewThreadForProject).toHaveBeenCalledWith("two");
+  expect(props.onStartNewThreadInWorkspace).toHaveBeenCalledWith("two");
   click("second");
-  expect(props.onSelectProjectThread).toHaveBeenCalledWith("two", "second");
+  expect(props.onSelectWorkspaceThread).toHaveBeenCalledWith("two", "second");
 });
 
 it("reopens at the active conversation rather than the last browsed project", () => {
   render();
-  chooseProject("two");
+  chooseWorkspace("two");
   props = { ...props, visible: false };
   render();
   props = { ...props, visible: true };
@@ -76,7 +76,7 @@ it("reopens at the active conversation rather than the last browsed project", ()
 
 it("lets native Back leave project selection before closing the drawer", () => {
   render();
-  click(translateCurrent("sidebar.switchProject"));
+  click(translateCurrent("sidebar.switchWorkspace"));
   const closeDrawer = vi.fn();
   window.addEventListener("wuu:workbench-back", closeDrawer);
   try {
@@ -92,14 +92,14 @@ it("lets native Back leave project selection before closing the drawer", () => {
 });
 
 it("keeps empty loading and missing projects distinct and prevents creating in a missing folder", () => {
-  props = { ...props, projectThreadsByProjectID: {}, loadingProjectThreadIDs: new Set(["one"]) };
+  props = { ...props, workspaceThreadsByWorkspaceID: {}, loadingWorkspaceThreadIDs: new Set(["one"]) };
   render();
   expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
   expect(container.textContent).not.toContain(translateCurrent("sidebar.noConversations"));
-  props = { ...props, loadingProjectThreadIDs: new Set(), sidebarProjects: props.sidebarProjects.map((item) => ({ ...item, missing: item.id === "one" })) };
+  props = { ...props, loadingWorkspaceThreadIDs: new Set(), sidebarWorkspaces: props.sidebarWorkspaces.map((item) => ({ ...item, missing: item.id === "one" })) };
   render();
   click(translateCurrent("sidebar.newConversation"));
-  expect(props.onStartNewThreadForProject).not.toHaveBeenCalled();
+  expect(props.onStartNewThreadInWorkspace).not.toHaveBeenCalled();
   expect(container.textContent).toContain(translateCurrent("threadSidebar.missingWorkspace"));
 });
 
@@ -114,7 +114,7 @@ it("opens actions on long press, suppresses selection, and confirms permanent de
   expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   click(translateCurrent("threadSidebar.delete"));
   expect(props.onDeleteThread).not.toHaveBeenCalled();
-  expect(props.onSelectProjectThread).not.toHaveBeenCalled();
+  expect(props.onSelectWorkspaceThread).not.toHaveBeenCalled();
   click(translateCurrent("common.cancel"));
   expect(props.onDeleteThread).not.toHaveBeenCalled();
   click(translateCurrent("threadSidebar.delete"));
@@ -140,7 +140,7 @@ it.each(["move", "scroll", "cancel", "unmount", "hide"])("cancels long press on 
   else act(() => root.render(null));
   act(() => vi.advanceTimersByTime(1000));
   expect(document.querySelector('[role="dialog"]')).toBeNull();
-  expect(props.onSelectProjectThread).not.toHaveBeenCalled();
+  expect(props.onSelectWorkspaceThread).not.toHaveBeenCalled();
   if (reason === "hide") {
     props = { ...props, visible: true };
     render();
@@ -151,7 +151,7 @@ it.each(["move", "scroll", "cancel", "unmount", "hide"])("cancels long press on 
 it("selects a short tap and keeps the complete long title available to assistive technology", () => {
   vi.useFakeTimers();
   const title = "A long conversation title about investigating a mobile connection failure";
-  props.projectThreadsByProjectID.one[0].title = title;
+  props.workspaceThreadsByWorkspaceID.one[0].title = title;
   render();
   const row = container.querySelector<HTMLButtonElement>(`button[aria-label="${title}"]`)!;
   expect(row).not.toBeNull();
@@ -160,7 +160,7 @@ it("selects a short tap and keeps the complete long title available to assistive
   pointer(row, "pointerup");
   act(() => row.click());
   act(() => vi.advanceTimersByTime(600));
-  expect(props.onSelectProjectThread).toHaveBeenCalledWith("one", "first");
+  expect(props.onSelectWorkspaceThread).toHaveBeenCalledWith("one", "first");
   expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
 
@@ -182,7 +182,7 @@ it("leads with running sessions in a fixed order instead of pulling them into a 
   const running: ThreadSummary = { ...thread("running"), status: "in_progress" };
   const unread = { ...thread("unread"), latest_completed_turn_id: "reply" };
   const newer = { ...thread("newer"), updated_at: "2026-02-01T00:00:00Z" };
-  props.projectThreadsByProjectID.one = [thread("older"), unread, running, pinned, newer];
+  props.workspaceThreadsByWorkspaceID.one = [thread("older"), unread, running, pinned, newer];
   render();
   const rows = () => [...container.querySelectorAll('section button[aria-label]')].map(row => row.getAttribute("aria-label"));
   const groupRows = (key: Parameters<typeof translateCurrent>[0]) =>
@@ -191,7 +191,7 @@ it("leads with running sessions in a fixed order instead of pulling them into a 
   expect(groupRows("sidebar.pinned")).toEqual(["pinned"]);
   expect(groupRows("sidebar.conversations")).toEqual(["running", "newer", "older", "unread"]);
   click("unread");
-  expect(props.onSelectProjectThread).toHaveBeenCalledWith("one", "unread");
+  expect(props.onSelectWorkspaceThread).toHaveBeenCalledWith("one", "unread");
   props.state = { ...props.state, lastViewedTurnByThreadID: { unread: "reply", pinned: "reply" } };
   render();
   expect(rows()).toEqual(["pinned", "running", "newer", "older", "unread"]);
@@ -212,19 +212,19 @@ it("holds a running row in place while its stream advances updated_at", () => {
     updated_at: "2026-01-02T00:00:00Z",
   };
   const settled = { ...thread("settled"), updated_at: "2026-03-01T00:00:00Z" };
-  props.projectThreadsByProjectID.one = [older, settled, newer];
+  props.workspaceThreadsByWorkspaceID.one = [older, settled, newer];
   render();
   const rowLabels = () => [...container.querySelectorAll('section button[aria-label]')].map(row => row.getAttribute("aria-label"));
   expect(rowLabels()).toEqual(["newer-running", "older-running", "settled"]);
 
   // Item-level updates order running rows by creation time, so a session that
   // is streaming cannot climb over the one above it.
-  props.projectThreadsByProjectID.one = [{ ...older, updated_at: "2026-02-01T00:00:00Z" }, settled, newer];
+  props.workspaceThreadsByWorkspaceID.one = [{ ...older, updated_at: "2026-02-01T00:00:00Z" }, settled, newer];
   render();
   expect(rowLabels()).toEqual(["newer-running", "older-running", "settled"]);
 
   // Once it stops running, the row settles back into recency order.
-  props.projectThreadsByProjectID.one = [
+  props.workspaceThreadsByWorkspaceID.one = [
     { ...older, status: "idle" as const, updated_at: "2026-02-01T00:00:00Z" },
     settled,
     newer,
@@ -240,5 +240,5 @@ it("opens the phone device directory from the sidebar without changing the selec
   expect(button).toBeDefined();
   act(() => button.click());
   expect(openDevices).toHaveBeenCalledOnce();
-  expect(props.onSelectProjectThread).not.toHaveBeenCalled();
+  expect(props.onSelectWorkspaceThread).not.toHaveBeenCalled();
 });

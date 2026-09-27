@@ -127,7 +127,7 @@ export class ProjectManager {
     this.load();
     const resolvedPath = resolve(projectPath);
     if (!isDirectory(resolvedPath)) {
-      throw new Error("selected project is not a directory");
+      throw new Error("selected workspace folder is not a directory");
     }
     const now = new Date().toISOString();
     // Dedup by path — a project is one folder — but the id is a stable, opaque
@@ -161,7 +161,7 @@ export class ProjectManager {
       (candidate) => candidate.id === projectIDToSelect,
     );
     if (!project) {
-      throw new Error("project not found");
+      throw new Error("workspace not found");
     }
     this.store.active_context = {
       kind: "project",
@@ -197,7 +197,7 @@ export class ProjectManager {
       (project) => project.id === projectIDToRelocate,
     );
     if (index < 0) {
-      throw new Error("project not found");
+      throw new Error("workspace not found");
     }
     // Keep the stable id; only the path (and derived name) move. Because the
     // workspace state dir and its sessions are keyed by the id, everything

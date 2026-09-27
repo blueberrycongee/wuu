@@ -107,7 +107,7 @@ describe("motionEasing", () => {
   it("evaluates the curve a token names, matching the CSS transition", () => {
     stubComputedValue("cubic-bezier(0.333333, 1, 0.666667, 1)");
     const easing = motionEasing("--query-submit-easing", linear);
-    // The collaboration follow used to hand-roll this curve as 1-(1-p)^3.
+    // The split-pane bottom-follow used to hand-roll this curve as 1-(1-p)^3.
     for (const progress of [0.1, 0.25, 0.5, 0.75, 0.9]) {
       expect(easing(progress)).toBeCloseTo(1 - (1 - progress) ** 3, 2);
     }

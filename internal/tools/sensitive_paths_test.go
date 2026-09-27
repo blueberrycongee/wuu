@@ -23,47 +23,6 @@ func runtimeHome(t *testing.T) string {
 	return filepath.ToSlash(filepath.Clean(home))
 }
 
-func TestIsNamedAgentIdentityNotebookPath(t *testing.T) {
-	runtimeDir := runtimeHome(t)
-
-	cases := []struct {
-		name string
-		path string
-		want bool
-	}{
-		{"identity notebook file", runtimeDir + "/channels/agents/agent-1/memory/test.md", true},
-		{"identity notebook root", runtimeDir + "/channels/agents/agent-1/memory", true},
-		{"user memory", runtimeDir + "/memory/test.md", false},
-		{"legacy participant memory", runtimeDir + "/participants/agent-1/memory/test.md", false},
-		{"channel database", runtimeDir + "/channels/channels.db", false},
-		{"workspace root", "/Users/somebody/work/foo", false},
-		{"unrelated dot wuu sibling", "/Users/somebody/.wuuish/foo", false},
-		{"partial suffix only", runtimeDir + "ish/foo", false},
-		{"empty path", "", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := isNamedAgentIdentityNotebookPath(tc.path); got != tc.want {
-				t.Fatalf("isNamedAgentIdentityNotebookPath(%q) = %v, want %v", tc.path, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestRejectSensitiveToolPath_AllowsNamedAgentIdentityNotebook(t *testing.T) {
-	target := runtimeHome(t) + "/channels/agents/agent-1/memory/test.md"
-
-	kit, err := New(t.TempDir())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	kit.env.AllowMutations = true
-
-	if err := rejectSensitiveToolPath(kit.env, "write_file", "write", target); err != nil {
-		t.Fatalf("named-agent identity notebook should be allowed when mutations are enabled: %v", err)
-	}
-}
-
 func TestRejectSensitiveToolPath_BlocksUserMemory(t *testing.T) {
 	target := runtimeHome(t) + "/memory/test.md"
 
@@ -161,36 +120,6 @@ func TestReadFile_BlocksUserMemoryInStandardMode(t *testing.T) {
 	}
 	if strings.Contains(result, "durable preference") || strings.Contains(err.Error(), "durable preference") {
 		t.Fatalf("read_file leaked user memory: result=%q err=%v", result, err)
-	}
-}
-
-func TestReadFile_AllowsNamedAgentIdentityNotebookInExplicitScope(t *testing.T) {
-	wuuHome := filepath.Join(t.TempDir(), ".wuu")
-	t.Setenv("WUU_HOME", wuuHome)
-	notebook := filepath.Join(wuuHome, "channels", "agents", "agent-1", "memory")
-	target := filepath.Join(notebook, "MEMORY.md")
-	if err := os.MkdirAll(notebook, 0o755); err != nil {
-		t.Fatalf("mkdir identity notebook: %v", err)
-	}
-	if err := os.WriteFile(target, []byte("durable identity\n"), 0o600); err != nil {
-		t.Fatalf("write identity notebook: %v", err)
-	}
-
-	kit, err := New(t.TempDir())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	kit.SetBoundary(StandardBoundary())
-	kit.SetFileScopeRoots([]string{kit.RootDir(), notebook})
-	result, err := kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "read_file",
-		Arguments: fmt.Sprintf(`{"path":%q}`, target),
-	})
-	if err != nil {
-		t.Fatalf("read_file identity notebook: %v", err)
-	}
-	if !strings.Contains(result, "durable identity") {
-		t.Fatalf("read_file result missing identity content: %s", result)
 	}
 }
 

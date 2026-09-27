@@ -1,11 +1,12 @@
 package worktree
 
 import (
-	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -740,8 +741,8 @@ func TestCreateLeaseWritesManifestAndReview(t *testing.T) {
 	if !review.Status.Dirty || len(review.Status.ChangedFiles) != 2 {
 		t.Fatalf("review should see changed tracked and untracked files: %+v", review.Status)
 	}
-	if review.Diff == "" || !review.MergePreview.CanApply {
-		t.Fatalf("expected tracked diff with clean merge preview: %+v", review)
+	if review.Diff == "" || review.MergePreview.CanApply || review.MergePreview.Error == "" {
+		t.Fatalf("expected tracked diff and rejection of untracked delivery: %+v", review)
 	}
 
 	if err := m.WriteManifest(lease); err != nil {
@@ -884,79 +885,111 @@ func TestIsGitRepo(t *testing.T) {
 	}
 }
 
-func TestSnapshotPreservesWorkingTreeAndFreezesCandidate(t *testing.T) {
-	root := t.TempDir()
-	initRepo(t, root)
-	base := runGit(t, root, "rev-parse", "HEAD")
-	write := func(name, value string) {
-		t.Helper()
-		if err := os.WriteFile(filepath.Join(root, name), []byte(value), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	write("README.md", "staged\n")
-	runGit(t, root, "add", "README.md")
-	write("README.md", "unstaged\n")
-	write("new.txt", "untracked\n")
-	before := runGit(t, root, "status", "--porcelain=v1")
-	index := runGit(t, root, "write-tree")
-	revision, diff, err := Snapshot(context.Background(), root, base, "run-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(diff, "+unstaged") || !strings.Contains(diff, "+untracked") {
-		t.Fatalf("incomplete candidate: %s", diff)
-	}
-	if before != runGit(t, root, "status", "--porcelain=v1") || index != runGit(t, root, "write-tree") || base != runGit(t, root, "rev-parse", "HEAD") {
-		t.Fatal("snapshot changed user's git state")
-	}
-	write("README.md", "later edit\n")
-	replay, replayDiff, err := Snapshot(context.Background(), root, base, "run-1")
-	if err != nil || replay != revision || replayDiff != diff {
-		t.Fatalf("candidate changed on replay: %s %v", replay, err)
+func TestCleanupSessionPreservesCommittedWork(t *testing.T) {
+	for _, mode := range []string{"committed", "unknown-base", "clean"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			initRepo(t, dir)
+			m, err := NewManager(dir, filepath.Join(t.TempDir(), "worktrees"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			wt, err := m.OpenOrCreate(OpenOrCreateOptions{SessionID: "session", WorkerID: "worker"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer m.Cleanup(wt)
+			if mode != "clean" {
+				commitFile(t, wt.Path, "README.md", "committed output")
+			}
+			if mode == "unknown-base" {
+				if err := os.Remove(wt.ManifestPath); err != nil {
+					t.Fatal(err)
+				}
+			}
+			kept, err := m.CleanupSessionIfClean("session")
+			if mode == "clean" {
+				if err != nil || kept {
+					t.Fatalf("clean workspace retained: kept=%t err=%v", kept, err)
+				}
+				return
+			}
+			if !kept {
+				t.Errorf("committed work not preserved: err=%v", err)
+			}
+			if content, err := os.ReadFile(filepath.Join(wt.Path, "README.md")); err != nil || string(content) != "committed output" {
+				t.Fatalf("output lost: %q %v", content, err)
+			}
+		})
 	}
 }
 
-func TestApplySnapshotPreservesUnrelatedChangesAndRejectsConflicts(t *testing.T) {
-	ctx := context.Background()
-	root := t.TempDir()
-	initRepo(t, root)
-	base := runGit(t, root, "rev-parse", "HEAD")
-	candidate := filepath.Join(t.TempDir(), "candidate")
-	runGit(t, root, "worktree", "add", "--detach", candidate, base)
-	if err := os.WriteFile(filepath.Join(candidate, "README.md"), []byte("candidate\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	revision, _, err := Snapshot(ctx, candidate, base, "apply-test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "user.txt"), []byte("keep me\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, root, "add", "user.txt")
-	index := runGit(t, root, "write-tree")
-	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("conflicting user edit\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := ApplySnapshot(ctx, root, base, revision); err == nil {
-		t.Fatal("conflicting patch applied")
-	}
-	content, err := os.ReadFile(filepath.Join(root, "README.md"))
-	if err != nil || string(content) != "conflicting user edit\n" {
-		t.Fatal("conflict damaged user edits")
-	}
-	runGit(t, root, "restore", "--worktree", "README.md")
-	for range 2 {
-		if err := ApplySnapshot(ctx, root, base, revision); err != nil {
-			t.Fatal(err)
+func TestWorkspaceDeliveryPreservesLiteralPaths(t *testing.T) {
+	for _, name := range []string{"报告.txt", " leading space.txt ", "arrow -> name.txt", "quote\"slash\\tab\tline\n.txt"} {
+		if runtime.GOOS == "windows" && (strings.ContainsAny(name, "\"\\\t\n") || strings.HasSuffix(name, " ")) {
+			continue
 		}
-	}
-	if index != runGit(t, root, "write-tree") {
-		t.Fatal("apply changed user's index")
-	}
-	content, err = os.ReadFile(filepath.Join(root, "user.txt"))
-	if err != nil || string(content) != "keep me\n" {
-		t.Fatal("apply lost unrelated work")
+		for _, mode := range []string{"staged", "renamed", "untracked"} {
+			t.Run(mode+"/"+name, func(t *testing.T) {
+				dir := t.TempDir()
+				initRepo(t, dir)
+				runGit(t, dir, "config", "core.quotePath", "true")
+				m, err := NewManager(dir, filepath.Join(t.TempDir(), "worktrees"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				wt, err := m.OpenOrCreate(OpenOrCreateOptions{SessionID: "paths", WorkerID: "worker"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = m.Cleanup(wt) })
+				content := "literal output"
+				if mode == "renamed" {
+					runGit(t, wt.Path, "mv", "--", "README.md", name)
+					content = "hello"
+				} else {
+					if err := os.WriteFile(filepath.Join(wt.Path, name), []byte(content), 0644); err != nil {
+						t.Fatal(err)
+					}
+					if mode == "staged" {
+						runGit(t, wt.Path, "--literal-pathspecs", "add", "--", name)
+					}
+				}
+				status, err := m.Status(wt)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(status.ChangedFiles, []string{name}) {
+					t.Errorf("status paths=%q, want one literal path %q", status.ChangedFiles, name)
+				}
+				if mode == "untracked" {
+					if preview := m.MergePreview(wt, dir); preview.CanApply {
+						t.Fatal("untracked path advertised as applicable")
+					}
+					if _, err := m.ApplyToTarget(wt, dir); err == nil {
+						t.Fatal("untracked path applied")
+					}
+					if got, err := os.ReadFile(filepath.Join(wt.Path, name)); err != nil || string(got) != content {
+						t.Fatalf("untracked output lost: %q %v", got, err)
+					}
+					return
+				}
+				result, err := m.ApplyToTarget(wt, dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !result.Applied || !reflect.DeepEqual(result.ChangedFiles, []string{name}) {
+					t.Errorf("apply result=%+v, want one literal path %q", result, name)
+				}
+				if got, err := os.ReadFile(filepath.Join(dir, name)); err != nil || string(got) != content {
+					t.Fatalf("literal output not delivered: %q %v", got, err)
+				}
+				if mode == "renamed" {
+					if _, err := os.Stat(filepath.Join(dir, "README.md")); !os.IsNotExist(err) {
+						t.Fatalf("rename source remains: %v", err)
+					}
+				}
+			})
+		}
 	}
 }

@@ -155,9 +155,6 @@ func (s *Server) threadSearchSources() ([]threadSearchSource, error) {
 		if sess.ArchivedAt != nil {
 			continue
 		}
-		if isNamedAgentSessionSource(sess.Source) {
-			continue
-		}
 		entry := threadEntryFromSession(sess, s.rt.ProviderName, s.rt.Model)
 		sourcesByID[sess.ID] = threadSearchSource{entry: entry}
 	}
@@ -178,10 +175,6 @@ func (s *Server) threadSearchSources() ([]threadSearchSource, error) {
 			continue
 		}
 		if thread.ReadOnly {
-			continue
-		}
-		if isNamedAgentSessionSource(thread.Source) {
-			delete(sourcesByID, thread.ID)
 			continue
 		}
 		if thread.Archived {

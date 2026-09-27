@@ -14,6 +14,8 @@ For the Wuu engine:
 
 Registered file roots can include the agent's scoped home, user workspaces, and the system temporary directory. Commands do not receive the whole shared temporary directory as a writable root: they get a private temporary directory instead.
 
+On macOS, both confined modes also permit writes to the current user’s Module Directory Services (`mds`) cache, which Keychain reads require. This exception does not grant direct filesystem writes to keychain stores or other user caches.
+
 Use **Read only** for investigation and **Standard** for ordinary changes. Unconfined gives commands the local authority of the user running Wuu. Choose it only when you understand why the task needs that access.
 
 ## System permissions and isolation

@@ -484,16 +484,33 @@ it("routes background thread actions and questions to their owner after a worksp
   expect(remote.call).toHaveBeenLastCalledWith("user-question/hold", { request_id: "q" }, 30_000, "/alpha");
 });
 
-it("synchronizes a resumed snapshot once from the response without requesting a broadcast", async () => {
+it.each([false, true])("installs one shared resume before following notifications (stale=%s)", async stale => {
   const bridge = await connectBridge();
+  const sent: ProtocolEnvelope[] = [];
+  const protocol = new ProtocolClient(env => sent.push(env), {
+    onNotification: (method, params, workdir) => remote.options.onNotification?.(method, params, workdir),
+  });
+  remote.call.mockImplementation((...args) => protocol.call(...args as Parameters<ProtocolClient["call"]>));
   const listener = vi.fn();
   bridge.api.onServerEvent(listener);
-  const result = { thread: { id: "t", cwd: "/paired/workspace", turns: [] }, held_user_messages: [{id:"held"}] };
-  remote.call.mockResolvedValueOnce(result);
-  expect(await bridge.api.resumeThread("t")).toEqual(result);
-  expect(remote.call).toHaveBeenLastCalledWith("thread/resume", {session_id:"t", response_only:true}, 90_000, "/paired/workspace");
-  expect(listener).toHaveBeenCalledTimes(1);
-  expect(listener.mock.calls[0][0].message).toEqual({method:"thread/resumed", params:result});
+  const first = bridge.api.resumeThread("t");
+  const second = bridge.api.resumeThread("t");
+  expect(sent).toHaveLength(1);
+  expect(sent[0]).toMatchObject({ method: "thread/resume", params: { session_id: "t", response_only: true } });
+  const result = { thread: { id: "t", cwd: "/paired/workspace", turns: [] }, held_user_messages: [{ id: "held" }] };
+  if (stale) remote.options.onDetach?.();
+  protocol.feed({ id: sent[0].id, result });
+  protocol.feed({ method: "item/agentMessage/delta", params: { thread_id: "t", delta: "new" } });
+  if (stale) {
+    await expect(first).rejects.toThrow("connection changed");
+    await expect(second).rejects.toThrow("connection changed");
+    expect(listener.mock.calls.map(([event]) => event.message.method)).toEqual(["item/agentMessage/delta"]);
+  } else {
+    await expect(first).resolves.toEqual(result);
+    await expect(second).resolves.toEqual(result);
+    expect(listener.mock.calls.map(([event]) => event.message.method)).toEqual(["thread/resumed", "item/agentMessage/delta"]);
+  }
+  await bridge.disconnect();
 });
 
 it("assembles explicitly requested image chunks and shares repeated reads", async () => {

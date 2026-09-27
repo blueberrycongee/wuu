@@ -26,6 +26,7 @@ type persistedToolCall struct {
 }
 
 type persistedImage struct {
+	LocalPath      string `json:"local_path,omitempty"`
 	ProviderItemID string `json:"provider_item_id,omitempty"`
 	Required       bool   `json:"required,omitempty"`
 	MediaType      string `json:"media_type"`
@@ -151,7 +152,7 @@ func chatMessagesFromPersistedMessages(records []persistedMessage) []providers.C
 			ReasoningContent:     rec.ReasoningContent,
 			ReasoningBlocks:      append([]providers.ReasoningBlock(nil), rec.ReasoningBlocks...),
 			ProviderItems:        append([]providers.ProviderItem(nil), rec.ProviderItems...),
-			ContentParts:         append([]providers.MessageContentPart(nil), rec.ContentParts...),
+			ContentParts:         providers.CloneMessageContentParts(rec.ContentParts),
 			ToolCallID:           rec.ToolCallID,
 			ToolInvocationID:     rec.ToolInvocationID,
 			ToolResultKind:       providers.NormalizeToolCallKind(rec.ToolResultKind),
@@ -166,6 +167,7 @@ func chatMessagesFromPersistedMessages(records []persistedMessage) []providers.C
 				continue
 			}
 			msg.Images = append(msg.Images, providers.InputImage{
+				LocalPath:      image.LocalPath,
 				Required:       image.Required,
 				ProviderItemID: image.ProviderItemID,
 				MediaType:      image.MediaType,
@@ -360,6 +362,7 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 		ReasoningContent:  msg.ReasoningContent,
 		ReasoningBlocks:   append([]providers.ReasoningBlock(nil), msg.ReasoningBlocks...),
 		ProviderItems:     append([]providers.ProviderItem(nil), msg.ProviderItems...),
+		ContentParts:      providers.CloneMessageContentParts(msg.ContentParts),
 		DiscoveredTools:   providers.CloneLoadableToolDefinitions(msg.DiscoveredTools),
 		ToolCallID:        msg.ToolCallID,
 		ToolInvocationID:  msg.ToolInvocationID,
@@ -377,6 +380,7 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 			continue
 		}
 		out.Images = append(out.Images, persistedImage{
+			LocalPath:      image.LocalPath,
 			Required:       image.Required,
 			ProviderItemID: image.ProviderItemID,
 			MediaType:      image.MediaType,
@@ -430,8 +434,10 @@ func loadMetaMessages(sessDir, id string) ([]persistedMessage, error) {
 	return nil, nil
 }
 
+// loadPersistedMessages reads the active branch; physical audit readers use
+// session.LoadHistoryRecords directly.
 func loadPersistedMessages(sessDir, id string, includeMeta bool) ([]persistedMessage, error) {
-	records, err := sessionstore.LoadHistoryRecords(sessDir, id, includeMeta)
+	records, err := sessionstore.LoadActiveHistoryRecords(sessDir, id, includeMeta)
 	if err != nil {
 		return nil, fmt.Errorf("load session history: %w", err)
 	}
@@ -477,7 +483,8 @@ func persistedMessagesFromProviderSnapshot(snapshot sessionstore.ProviderHistory
 // displayHistoryAcrossProviderCheckpoint restores the user-visible transcript
 // that predates the current provider checkpoint without putting compacted tool
 // payloads and reasoning back on the wire. The provider snapshot remains the
-// source of truth from its earliest retained record onward.
+// source of truth from its earliest retained record onward. raw must already
+// exclude edited suffixes; an empty checkpoint still preserves that older past.
 func displayHistoryAcrossProviderCheckpoint(raw, provider []persistedMessage) []persistedMessage {
 	firstRetainedSeq := 0
 	for _, rec := range provider {
@@ -485,12 +492,12 @@ func displayHistoryAcrossProviderCheckpoint(raw, provider []persistedMessage) []
 			firstRetainedSeq = rec.Seq
 		}
 	}
-	if firstRetainedSeq <= 1 {
+	if firstRetainedSeq == 1 {
 		return provider
 	}
 	display := make([]persistedMessage, 0, len(raw)+len(provider))
 	for _, rec := range raw {
-		if rec.Seq <= 0 || rec.Seq >= firstRetainedSeq {
+		if rec.Seq <= 0 || (firstRetainedSeq > 0 && rec.Seq >= firstRetainedSeq) {
 			continue
 		}
 		switch strings.ToLower(strings.TrimSpace(rec.Role)) {

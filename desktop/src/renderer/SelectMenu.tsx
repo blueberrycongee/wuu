@@ -76,10 +76,8 @@ export function SelectMenu({
   emptyMessage = "没有可选项",
   // When true, the floating menu flips to the opposite side of the
   // trigger if the requested placement doesn't have enough viewport
-  // room (e.g. the model picker in the new-participant dialog, where
-  // the list of providers × models can easily exceed the space below
-  // the trigger inside a centered modal). See FloatingMenuPortal for
-  // the actual flip heuristic.
+  // room (e.g. a long provider × model list inside a centered modal).
+  // See FloatingMenuPortal for the actual flip heuristic.
   flip = false
 }: {
   value: string;

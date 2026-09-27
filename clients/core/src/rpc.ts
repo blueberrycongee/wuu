@@ -51,6 +51,7 @@ interface Pending {
   resolve: (v: unknown) => void;
   reject: (err: Error) => void;
   timer?: ReturnType<typeof setTimeout>;
+  onResult?: (result: unknown) => void;
 }
 
 export class ProtocolClient {
@@ -64,8 +65,10 @@ export class ProtocolClient {
   ) {}
 
   /** Sends one request and resolves with its result. Timed-out requests are
-   *  removed so a late response cannot retain or settle stale UI work. */
-  call<T = unknown>(method: string, params?: unknown, timeoutMs?: number, workdir?: string): Promise<T> {
+   *  removed so a late response cannot retain or settle stale UI work.
+   *  onResult must synchronously install a successful response; it runs before
+   *  the next notification is fed. A thrown error rejects this call. */
+  call<T = unknown>(method: string, params?: unknown, timeoutMs?: number, workdir?: string, onResult?: (result: T) => void): Promise<T> {
     if (method.trim() === "") return Promise.reject(new Error("method is required"));
     if (this.closed) return Promise.reject(this.closed);
     if (timeoutMs !== undefined && timeoutMs <= 0) {
@@ -74,7 +77,7 @@ export class ProtocolClient {
     this.nextId++;
     const id = `${this.opts.idPrefix ?? "rc"}-${this.nextId}`;
     return new Promise<T>((resolve, reject) => {
-      const pending: Pending = { method, resolve: resolve as (v: unknown) => void, reject };
+      const pending: Pending = { method, resolve: resolve as (v: unknown) => void, reject, onResult: onResult as Pending["onResult"] };
       this.pending.set(id, pending);
       if (timeoutMs !== undefined) {
         pending.timer = setTimeout(() => {
@@ -115,7 +118,12 @@ export class ProtocolClient {
     if (env.error) {
       pending.reject(new Error(env.error.message));
     } else {
-      pending.resolve(env.result);
+      try {
+        pending.onResult?.(env.result);
+        pending.resolve(env.result);
+      } catch (err) {
+        pending.reject(err instanceof Error ? err : new Error(String(err)));
+      }
     }
   }
 

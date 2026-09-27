@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -128,5 +129,59 @@ func TestToolkit_LoadSkillFiltersByActiveSurface(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "not found") {
 			t.Fatalf("local/no-shell must not load incompatible skill %q, got %v", skillName, err)
 		}
+	}
+}
+
+func TestPTCSkillsRetainReachableTools(t *testing.T) {
+	// PTC must preserve skill discovery and loading, without restoring tools
+	// disabled by the session or incompatible with the selected model family.
+	all := []skills.Skill{
+		{Name: "inspect", Description: "Inspect files", Content: "Inspect the workspace.", AllowedTools: []string{"read_file", "grep", "glob"}},
+		{Name: "patch", Description: "Apply a patch", Content: "Apply the patch.", AllowedTools: []string{"apply_patch"}},
+		{Name: "edit", Description: "Edit text", Content: "Edit the file.", AllowedTools: []string{"edit_file"}},
+		{Name: "shell", Description: "Run a command", Content: "Run the command.", AllowedTools: []string{"bash"}},
+	}
+	for _, tc := range []struct {
+		name, provider, model string
+		disabled              []string
+		want                  []string
+	}{
+		{"gpt", "openai", "gpt-5", nil, []string{"inspect", "patch", "shell"}},
+		{"claude", "anthropic", "claude-sonnet-4", nil, []string{"inspect", "edit", "shell"}},
+		{"local", "ollama", "llama-coder", nil, []string{"inspect", "edit"}},
+		{"disabled read", "openai", "gpt-5", []string{"read_file"}, []string{"patch", "shell"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kit := newCodeModeTestToolkit(t)
+			kit.DisableTools(tc.disabled...)
+			kit.ConfigureSurfaceForProviderModel(tc.provider, tc.model, true)
+			kit.SetSkills(all)
+			visible := FilterSkillsForSurface(all, kit.ActiveSurface())
+			var names []string
+			for _, skill := range visible {
+				names = append(names, skill.Name)
+			}
+			if !slices.Equal(names, tc.want) {
+				t.Errorf("skill catalog=%v, want %v", names, tc.want)
+			}
+			for _, skill := range all {
+				args, err := json.Marshal(map[string]string{"name": skill.Name})
+				if err != nil {
+					t.Fatal(err)
+				}
+				result := runPTCProgram(t, kit, "return JSON.parse((await tools.load_skill("+string(args)+")).content[0].text).metadata.name;")
+				allowed := slices.Contains(tc.want, skill.Name)
+				if result.IsError == allowed {
+					t.Errorf("load %s allowed=%v result=%s", skill.Name, allowed, result.TextProjection())
+					continue
+				}
+				if allowed {
+					var loaded string
+					if err := json.Unmarshal([]byte(result.TextProjection()), &loaded); err != nil || loaded != skill.Name {
+						t.Errorf("loaded %s: %s %v", skill.Name, result.TextProjection(), err)
+					}
+				}
+			}
+		})
 	}
 }

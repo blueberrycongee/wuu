@@ -122,7 +122,7 @@ func (s *Session) newSideThreadBaseRunner(selected ThreadModelSelection) *agent.
 	currentVariant := strings.TrimSpace(s.StreamRunner.Variant)
 	currentEffort := strings.TrimSpace(s.StreamRunner.Effort)
 	if providerName == "" || model == "" ||
-		(providerName == s.ProviderName && model == s.Model &&
+		(selected.Speed == "" && providerName == s.ProviderName && model == s.Model &&
 			strings.TrimSpace(selected.Variant) == currentVariant &&
 			strings.TrimSpace(selected.Effort) == currentEffort) {
 		return cloneStreamRunnerForThread(s.StreamRunner, nil)
@@ -140,6 +140,9 @@ func (s *Session) newSideThreadBaseRunner(selected ThreadModelSelection) *agent.
 	}
 	ruleProviderName, ruleProviderCfg := modelcatalog.EnrichProvider(resolvedName, providerCfg, model)
 	selection := modelvariant.ResolveForProvider(ruleProviderName, ruleProviderCfg, model, strings.TrimSpace(selected.Variant), strings.TrimSpace(selected.Effort))
+	if err := modelvariant.ApplySpeed(ruleProviderCfg, model, selected.Speed, &selection); err != nil {
+		providers.DebugLogf("side thread speed unavailable: %v", err)
+	}
 	client, err := providerfactory.BuildStreamClient(ruleProviderCfg, resolvedName)
 	if err != nil {
 		providers.DebugLogf("side thread base runner falling back to workspace model (build client for %q failed): %v", resolvedName, err)

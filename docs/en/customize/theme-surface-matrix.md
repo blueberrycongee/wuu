@@ -29,7 +29,7 @@ token, so anything you do not override keeps the built-in appearance:
 
 The contract defines **82 public tokens** (**7**
 legacy compatibility aliases) and **16 syntax-highlighting
-tokens**; **54** of them are currently wired into host surfaces.
+tokens**; **53** of them are currently wired into host surfaces.
 "Wired" means host styles already reference the token and overrides take effect;
 "Not wired (reserved)" means the token is declared but the host does not consume
 it yet, so overrides do not change anything.
@@ -41,7 +41,7 @@ it yet, so overrides do not change anything.
 | `--wuu-paper` | Legacy name; use `--wuu-color-canvas` instead | Wired |
 | `--wuu-ink` | Legacy name; use `--wuu-color-text` instead | Not wired (reserved) |
 | `--wuu-ink-soft` | Legacy name; use `--wuu-color-text-muted` instead | Wired |
-| `--wuu-hairline` | Legacy name; use `--wuu-color-border-subtle` instead | Wired |
+| `--wuu-hairline` | Legacy name; use `--wuu-color-border-subtle` instead | Not wired (reserved) |
 | `--wuu-surface-muted` | Legacy name; use `--wuu-color-surface-muted` instead | Not wired (reserved) |
 | `--wuu-accent` | Legacy name; use `--wuu-color-accent` instead | Wired |
 | `--wuu-accent-press` | Legacy name; use `--wuu-color-accent-pressed` instead | Not wired (reserved) |

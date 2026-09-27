@@ -1,13 +1,14 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import { X } from "./WuuIcons";
 
 /**
- * The card for attachments without a visual thumbnail — folded long pastes
- * and PDFs: a glyph tile, a title, and one meta line. The title always
- * reserves the remove control's footprint, so revealing it on hover never
- * rewraps the text.
+ * The card for attachments without a visual thumbnail — folded long pastes,
+ * PDFs and quoted passages: a glyph tile, a title, and one meta line. The
+ * title always reserves the remove control's footprint, so revealing it on
+ * hover never rewraps the text.
  */
 export function ComposerDocumentCard({
+  ref,
   className,
   icon,
   title,
@@ -17,6 +18,8 @@ export function ComposerDocumentCard({
   removeLabel,
   onRemove,
 }: {
+  /** The card box, for anchoring a panel opened from it. */
+  ref?: Ref<HTMLDivElement>;
   className?: string;
   icon: ReactNode;
   title: ReactNode;
@@ -37,7 +40,7 @@ export function ComposerDocumentCard({
     </>
   );
   return (
-    <div className={`composer-attachment-card composer-document-card${className ? ` ${className}` : ""}`}>
+    <div ref={ref} className={`composer-attachment-card composer-document-card${className ? ` ${className}` : ""}`}>
       {onOpen ? (
         <button className="composer-document-card-main" type="button" aria-label={openLabel} onClick={onOpen}>
           {body}

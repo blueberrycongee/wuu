@@ -50,6 +50,34 @@ make build-go
 崩溃，检查恢复、重试上限、窗口隔离和 IPC。测试使用临时配置目录和模拟内容，不读取
 你的 Wuu 数据。请在图形桌面会话中运行；它不验证原生对话框外观或打包应用行为。
 
+### 会话切换性能护栏
+
+安装依赖后构建核心与桌面，在图形桌面会话中运行真实 Electron/main/preload/Go 测试：
+
+```sh
+mkdir -p .tmp/performance
+go build -o "$PWD/.tmp/performance/wuu-core" ./cmd/wuu
+(cd desktop && ./node_modules/.bin/electron-vite build)
+WUU_DESKTOP_CORE="$PWD/.tmp/performance/wuu-core" WUU_SWITCH_CHECK_BUDGET=1 desktop/node_modules/.bin/electron desktop/scripts/session-switch-e2e.cjs
+```
+
+测试打开临时合成会话，不发送推理请求。它记录原生点击到内容帧、草稿回显及发送就绪帧
+的耗时，再累计到后台恢复完成后两个动画帧的工作量。动画帧不证明物理呈现完成；交互
+确认包括输入探针的 IPC 开销。首次访问、重复访问、进程池淘汰与归档阻塞分组记录。
+墙钟 P50/P75 仅供诊断，不作为 CI 门槛。
+
+CI 检查大历史样本的重复切换，恢复调用、布局及样式重算的上限由
+[`session-switch-budget.json`](../../../desktop/scripts/session-switch-budget.json)
+定义。计数包括观察器和输入探针的开销。护栏拒绝提高上限、删除计数项或改变工作负载；
+原始结果、报告、日志和最终合成截图以 `session-switch-evidence` 工件上传。
+
+诊断时去掉 `WUU_SWITCH_CHECK_BUDGET`，可设置 `WUU_SWITCH_TURNS=3000`、
+`WUU_SWITCH_ROUNDS` 或 `WUU_SWITCH_INIT_DELAY_MS=600`。
+`WUU_SWITCH_TRACE=1` 记录带动作、内容及交互标记的 Chromium trace；不要将 trace 运行
+与墙钟基线混合统计。`WUU_SWITCH_OUTPUT` 指定证据目录，不包含临时 profile 和数据库。
+`WUU_SWITCH_MAIN` 可选择另一个已构建的 main bundle 及相邻 preload/renderer 进行 A/B
+验证。结果记录实际加载工件的哈希；仅凭 checkout 提交不能确定外部构建的版本。
+
 ## 原生手机与远程服务
 
 当前手机实现位于 [`clients/native`](../../../clients/native/README.md)，iOS 使用 SwiftUI，Android 使用 Jetpack Compose。专用验证命令为：
@@ -60,7 +88,7 @@ bash clients/native/verify.sh all
 
 可用 `ios` 或 `android` 选择单个平台。脚本启动隔离的 PostgreSQL 测试环境，构建测试宿主，并运行平台测试和构建。PostgreSQL、Xcode、Java 和 Android SDK 要求见原生 README。通过这些检查不代表完成真机或发布验收。
 
-原生构建打包已提交的头像与过程摘要资源快照，不要求快照与最新桌面源码一致。采用桌面表现层变化属于主动的原生端更新；生成、校验和视觉验收步骤见[共享渲染器说明（英文）](../../../clients/native/shared-ui/README.md)。
+iOS 构建打包已提交的小球与过程摘要资源快照，不要求快照与最新桌面源码一致。采用桌面表现层变化属于主动的 iOS 更新；生成、校验和视觉验收步骤见[共享渲染器说明（英文）](../../../clients/native/shared-ui/README.md)。
 
 旧的 `clients/mobile`、`clients/mobile-web`、`clients/mobile-app` 手机实现已停止开发。部分代码仍参与共享 Web 构建和仓库检查，通过这些检查不能证明原生 App 已通过验证。账号和 relay 部署与本地桌面设置分开，见[远程访问](../automation/remote.md)。
 

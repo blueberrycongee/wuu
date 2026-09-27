@@ -59,7 +59,7 @@ function makePointerDownEvent(clientX: number): React.PointerEvent<HTMLDivElemen
 function renderHookHarness(): void {
   function Harness(): null {
     const hook = useAppLayoutState({
-      onCloseProjectMenu: () => {}
+      onCloseWorkspaceMenu: () => {}
     });
     const responsiveHook = hook as typeof hook & {
       workspaceRightPanelAutoGlobalized?: boolean;
@@ -99,7 +99,7 @@ it("can use an explicit embedded viewport without reacting to the outer window",
   window.localStorage.setItem("wuu.desktop.sidebarWidth", "500");
   let view!: ReturnType<typeof useAppLayoutState>;
   function ExtensionHarness({ width }: { width?: number }) {
-    view = useAppLayoutState({ viewportWidth: width, onCloseProjectMenu: () => {} });
+    view = useAppLayoutState({ viewportWidth: width, onCloseWorkspaceMenu: () => {} });
     return null;
   }
   root = createRoot(container);

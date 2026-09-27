@@ -1165,7 +1165,7 @@ func appendAttachmentOmissionNote(content string, images []providers.InputImage,
 		if mediaType == "" {
 			mediaType = "image"
 		}
-		fmt.Fprintf(&b, "[Image attachment omitted from compacted history: %s, %s.]", mediaType, compactMediaEvidence(image.Data, true))
+		fmt.Fprintf(&b, "[Image attachment omitted from compacted history: %s, %s%s.]", mediaType, compactMediaEvidence(image.Data, true), compactImagePathEvidence(image.LocalPath))
 	}
 	for i, file := range files {
 		if len(images) > 0 || i > 0 {
@@ -1315,7 +1315,7 @@ func writeSummaryPromptMessageWithLimits(b *strings.Builder, msg providers.ChatM
 		if mediaType == "" {
 			mediaType = "image"
 		}
-		fmt.Fprintf(b, "  [image omitted: %s, %s]\n", mediaType, compactMediaEvidence(image.Data, true))
+		fmt.Fprintf(b, "  [image omitted: %s, %s%s]\n", mediaType, compactMediaEvidence(image.Data, true), compactImagePathEvidence(image.LocalPath))
 	}
 	for _, file := range msg.Files {
 		mediaType := strings.TrimSpace(file.MediaType)

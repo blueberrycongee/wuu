@@ -11,12 +11,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
-	"github.com/blueberrycongee/wuu/internal/authstorage"
-	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	wuuexec "github.com/blueberrycongee/wuu/internal/exec"
@@ -1169,21 +1166,17 @@ func firstNonEmptyString(values ...string) string {
 type debugAppServerClient interface {
 	Call(context.Context, string, any, any) error
 	Notifications() <-chan wuuexec.Notification
-	SandboxDir() string
 	Shutdown(context.Context) error
 }
 
 var debugAppServerClientOverride func(context.Context, debugAppServerOptions) (debugAppServerClient, error)
 
 type debugAppServerOptions struct {
-	workdir     string
-	provider    string
-	model       string
-	driver      string
-	noTools     bool
-	sandbox     bool
-	sandboxName string
-	keepSandbox bool
+	workdir  string
+	provider string
+	model    string
+	driver   string
+	noTools  bool
 }
 
 type debugAppServerCLIConfig struct {
@@ -1201,10 +1194,6 @@ func runDebug(args []string) error {
 	switch args[0] {
 	case "app-server":
 		return runDebugAppServer(args[1:])
-	case "channel":
-		return runDebugChannel(args[1:])
-	case "sandbox":
-		return runDebugSandbox(args[1:])
 	case "protocol":
 		return runDebugProtocol(args[1:])
 	default:
@@ -1302,14 +1291,6 @@ func runDebugAppServerSend(args []string) error {
 		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, errors.New("method is required"))
 	}
 	method := strings.TrimSpace(remaining[0])
-	if method == appserver.MethodChannelMessageSend {
-		if agentID := strings.TrimSpace(os.Getenv(channels.NamedAgentIDEnv)); agentID != "" {
-			return wuuexec.WithExitCode(
-				wuuexec.ExitInvalidInput,
-				fmt.Errorf("%s is human-only and cannot send as named agent %q; use chat_send so the message keeps the agent identity", method, agentID),
-			)
-		}
-	}
 	params, err := parseDebugJSONParams(remaining[1:])
 	if err != nil {
 		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, err)
@@ -1355,16 +1336,12 @@ func newDebugAppServerClient(ctx context.Context, opts debugAppServerOptions) (d
 }
 
 type localDebugAppServerClient struct {
-	rt             *runtime.Session
-	client         *wuuexec.ProtocolClient
-	cancel         context.CancelFunc
-	done           chan error
-	pipes          []io.Closer
-	sandboxDir     string
-	sandboxCleanup func()
+	rt     *runtime.Session
+	client *wuuexec.ProtocolClient
+	cancel context.CancelFunc
+	done   chan error
+	pipes  []io.Closer
 }
-
-var debugSandboxMu sync.Mutex
 
 func newLocalDebugAppServerClient(ctx context.Context, opts debugAppServerOptions) (*localDebugAppServerClient, error) {
 	rootDir, err := resolveWorkdir(opts.workdir)
@@ -1375,19 +1352,6 @@ func newLocalDebugAppServerClient(ctx context.Context, opts debugAppServerOption
 	cfg, configPath, err := loadOrCreateAppServerConfig(rootDir, homeDir)
 	if err != nil {
 		return nil, err
-	}
-	var sandboxDir string
-	var sandboxCleanup func()
-	if opts.sandbox || strings.TrimSpace(opts.sandboxName) != "" {
-		realWuuHome, homeErr := statepath.Home(homeDir)
-		if homeErr != nil {
-			return nil, homeErr
-		}
-		hydrateDebugSandboxCredentials(&cfg, homeDir)
-		sandboxDir, sandboxCleanup, err = activateDebugSandbox(realWuuHome, opts.sandboxName, opts.keepSandbox)
-		if err != nil {
-			return nil, err
-		}
 	}
 	rt, err := runtime.NewSession(runtime.Options{
 		RootDir:       rootDir,
@@ -1400,57 +1364,22 @@ func newLocalDebugAppServerClient(ctx context.Context, opts debugAppServerOption
 		NoTools:       opts.noTools,
 	})
 	if err != nil {
-		if sandboxCleanup != nil {
-			sandboxCleanup()
-		}
 		return nil, err
 	}
 	serverInR, serverInW := io.Pipe()
 	serverOutR, serverOutW := io.Pipe()
 	serverCtx, cancel := context.WithCancel(ctx)
 	client := &localDebugAppServerClient{
-		rt:             rt,
-		client:         wuuexec.NewProtocolClient(serverOutR, serverInW),
-		cancel:         cancel,
-		done:           make(chan error, 1),
-		pipes:          []io.Closer{serverInR, serverInW, serverOutR, serverOutW},
-		sandboxDir:     sandboxDir,
-		sandboxCleanup: sandboxCleanup,
+		rt:     rt,
+		client: wuuexec.NewProtocolClient(serverOutR, serverInW),
+		cancel: cancel,
+		done:   make(chan error, 1),
+		pipes:  []io.Closer{serverInR, serverInW, serverOutR, serverOutW},
 	}
 	go func() {
 		client.done <- appserver.RunStdio(serverCtx, rt, serverInR, serverOutW)
 	}()
 	return client, nil
-}
-
-// hydrateDebugSandboxCredentials carries credentials into the in-process
-// runtime only. The sandbox remains free of credential files, while provider
-// clients built after WUU_HOME switches still use the user's configured auth.
-func hydrateDebugSandboxCredentials(cfg *config.Config, home string) {
-	if cfg == nil {
-		return
-	}
-	store, err := authstorage.ForHome(home)
-	if err != nil {
-		return
-	}
-	file, err := store.Load()
-	if err != nil {
-		return
-	}
-	for name, provider := range cfg.Providers {
-		credentials, ok := file.Providers[name]
-		if !ok {
-			continue
-		}
-		if strings.TrimSpace(provider.APIKey) == "" {
-			provider.APIKey = strings.TrimSpace(credentials.APIKey)
-		}
-		if strings.TrimSpace(provider.AuthToken) == "" {
-			provider.AuthToken = strings.TrimSpace(credentials.AuthToken)
-		}
-		cfg.Providers[name] = provider
-	}
 }
 
 func (c *localDebugAppServerClient) Call(ctx context.Context, method string, params any, result any) error {
@@ -1461,15 +1390,7 @@ func (c *localDebugAppServerClient) Notifications() <-chan wuuexec.Notification 
 	return c.client.Notifications()
 }
 
-func (c *localDebugAppServerClient) SandboxDir() string {
-	return c.sandboxDir
-}
-
 func (c *localDebugAppServerClient) Shutdown(ctx context.Context) error {
-	if c.sandboxCleanup != nil {
-		defer c.sandboxCleanup()
-		c.sandboxCleanup = nil
-	}
 	if c.cancel != nil {
 		defer c.cancel()
 	}
@@ -2326,11 +2247,6 @@ Usage:
   wuu plugin inspect|install|update|list|approve|reject|enable|disable|remove [flags]
   wuu debug app-server initialize [flags]
   wuu debug app-server send [flags] METHOD [JSON]
-  wuu debug channel e2e (--sandbox|--sandbox-name NAME) [flags]
-  wuu debug channel inspect [--sandbox NAME] [flags]
-  wuu debug channel send [--sandbox NAME] [flags] "message"
-  wuu debug sandbox list
-  wuu debug sandbox delete NAME
   wuu debug protocol events [flags] THREAD_ID
   wuu run [flags] "your coding task"
   wuu eval [flags]
@@ -2410,15 +2326,6 @@ Debug commands:
                    start a local app-server and print its initialize result
   app-server send [flags] METHOD [JSON]
                    send one app-server method and print the raw JSON result
-  channel e2e (--sandbox|--sandbox-name NAME) [--keep-sandbox] [--agent NAME] [--room NAME] [--message TEXT] [--expect TEXT] [--timeout DURATION] [app-server flags]
-                   create or resume an isolated real-provider scenario and assert the named-agent reply
-  channel inspect [--sandbox NAME] [--room ID|NAME] [--after SEQ] [--limit N] [app-server flags]
-                   inspect persistent rooms and optionally one room's messages
-  channel send [--sandbox NAME] --room ID|NAME [--wait DURATION] [--replies N] [app-server flags] "message"
-                   send through the real channel path and optionally wait for agent replies
-  sandbox list      list reusable named debug sandboxes
-  sandbox delete NAME
-                   delete one reusable named debug sandbox
   protocol events [--json] [--workdir DIR] THREAD_ID
                    print trace JSONL events recorded for a session
 

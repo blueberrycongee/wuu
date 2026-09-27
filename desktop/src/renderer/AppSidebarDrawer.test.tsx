@@ -131,7 +131,7 @@ function installWindowStubs(): void {
 }
 
 function installWuuApi(threads: Thread[] = []): void {
-  const projectState = (): {
+  const workspaceState = (): {
     projects: never[];
     active_context: { kind: "no_project"; cwd: string };
   } => ({
@@ -141,10 +141,10 @@ function installWuuApi(threads: Thread[] = []): void {
   const api = {
     listProjects: vi
       .fn()
-      .mockImplementation(() => Promise.resolve(projectState())),
+      .mockImplementation(() => Promise.resolve(workspaceState())),
     selectNoProject: vi
       .fn()
-      .mockImplementation(() => Promise.resolve(projectState())),
+      .mockImplementation(() => Promise.resolve(workspaceState())),
     initialize: vi.fn().mockResolvedValue(initialized()),
     listThreads: vi.fn().mockResolvedValue({ threads }),
     listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
@@ -347,7 +347,7 @@ describe("collapsed sidebar hover drawer", () => {
     }));
     await renderCollapsedApp();
     expect(Boolean(container.querySelector('[data-wuu-component="conversation-titlebar"]'))).toBe(!inComposer);
-    expect(Boolean(container.querySelector(`aside button[aria-label="${translateCurrent("sidebar.switchProject")}"]`))).toBe(host === "web" && coarse && width < 700);
+    expect(Boolean(container.querySelector(`aside button[aria-label="${translateCurrent("sidebar.switchWorkspace")}"]`))).toBe(host === "web" && coarse && width < 700);
     expect(container.querySelector('.composer-bar .compact-conversation-actions')).toBeNull();
     await act(async () => {
       window.innerWidth = 820;

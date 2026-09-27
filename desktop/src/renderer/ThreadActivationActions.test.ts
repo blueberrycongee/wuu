@@ -101,7 +101,7 @@ function buildActions({
   activeThreadID,
   pendingViewSwitch,
   sidebarThreads = [],
-  sidebarProjectThreadsByProjectID = {},
+  sidebarWorkspaceThreadsByWorkspaceID = {},
   loadedState,
 }: {
   initial: AppState;
@@ -109,7 +109,7 @@ function buildActions({
   activeThreadID?: string;
   pendingViewSwitch?: PendingViewSwitch;
   sidebarThreads?: Thread[];
-  sidebarProjectThreadsByProjectID?: Record<string, Thread[] | undefined>;
+  sidebarWorkspaceThreadsByWorkspaceID?: Record<string, Thread[] | undefined>;
   loadedState?: Partial<AppState>;
 }) {
   let appState = initial;
@@ -145,7 +145,7 @@ function buildActions({
     restorePrimaryComposerDraft,
     resetSplitComposerDrafts,
     getSidebarThreads: () => sidebarThreads,
-    getSidebarProjectThreadsByProjectID: () => sidebarProjectThreadsByProjectID,
+    getSidebarWorkspaceThreadsByWorkspaceID: () => sidebarWorkspaceThreadsByWorkspaceID,
     
     beginViewSwitch,
     beginInstantThreadSwitch,
@@ -178,7 +178,7 @@ function buildActions({
 describe("createThreadActivationActions", () => {
   it.each([false, true])(
     "reuses sidebar history instead of a runtime summary (cross-project: %s)",
-    async (crossProject) => {
+    async (crossWorkspace) => {
       const cached = {
         ...thread("target", "/tmp/project-2"),
         turns: [{ id: "cached-turn", status: "completed", items_view: "full", items: [] }],
@@ -190,13 +190,13 @@ describe("createThreadActivationActions", () => {
       const harness = buildActions({
         initial: {
           ...initialState,
-          activeContext: projectContext(crossProject ? "project-1" : "project-2"),
-          activeProjectId: crossProject ? "project-1" : "project-2",
+          activeContext: projectContext(crossWorkspace ? "project-1" : "project-2"),
+          activeProjectId: crossWorkspace ? "project-1" : "project-2",
           projects: [project("project-1"), project("project-2")],
           threads: [summary],
         },
         sidebarThreads: [summary],
-        sidebarProjectThreadsByProjectID: { "project-2": [cached] },
+        sidebarWorkspaceThreadsByWorkspaceID: { "project-2": [cached] },
       });
 
       const activation = harness.actions.activateThread(cached.id);
@@ -263,23 +263,23 @@ describe("createThreadActivationActions", () => {
   });
 
   it("activates a thread from another project by switching runtime first", async () => {
-    const projectTwo = project("project-2");
+    const workspaceTwo = project("project-2");
     const targetContext = projectContext("project-2");
-    const targetThread = thread("thread-2", projectTwo.path);
+    const targetThread = thread("thread-2", workspaceTwo.path);
     installWuuApi(targetThread);
     const harness = buildActions({
       initial: {
         ...initialState,
         activeContext: projectContext("project-1"),
         activeProjectId: "project-1",
-        projects: [project("project-1"), projectTwo],
+        projects: [project("project-1"), workspaceTwo],
         status: "ready",
       },
-      sidebarProjectThreadsByProjectID: { "project-2": [targetThread] },
+      sidebarWorkspaceThreadsByWorkspaceID: { "project-2": [targetThread] },
       loadedState: {
         activeContext: targetContext,
         activeProjectId: "project-2",
-        projects: [project("project-1"), projectTwo],
+        projects: [project("project-1"), workspaceTwo],
         threads: [targetThread],
       },
     });
@@ -295,10 +295,10 @@ describe("createThreadActivationActions", () => {
   });
 
   it("shows a loaded thread from another project before runtime selection resolves", async () => {
-    const projectTwo = project("project-2");
+    const workspaceTwo = project("project-2");
     const targetContext = projectContext("project-2");
     const targetThread = {
-      ...thread("thread-2", projectTwo.path),
+      ...thread("thread-2", workspaceTwo.path),
       turns: [{ id: "turn-1", status: "completed", items_view: "full", items: [] }],
     } as Thread;
     installWuuApi(targetThread);
@@ -307,15 +307,15 @@ describe("createThreadActivationActions", () => {
         ...initialState,
         activeContext: projectContext("project-1"),
         activeProjectId: "project-1",
-        projects: [project("project-1"), projectTwo],
+        projects: [project("project-1"), workspaceTwo],
         status: "ready",
       },
       sidebarThreads: [targetThread],
-      sidebarProjectThreadsByProjectID: { "project-2": [targetThread] },
+      sidebarWorkspaceThreadsByWorkspaceID: { "project-2": [targetThread] },
       loadedState: {
         activeContext: targetContext,
         activeProjectId: "project-2",
-        projects: [project("project-1"), projectTwo],
+        projects: [project("project-1"), workspaceTwo],
         threads: [targetThread],
       },
     });
@@ -380,7 +380,7 @@ describe("createThreadActivationActions", () => {
     harness.loadRuntimeConfiguration.mockImplementation(loadRuntimeConfiguration);
     harness.loadRuntimeThreadList.mockImplementation(loadRuntimeThreadList);
 
-    const activation = harness.actions.selectProjectThread("project-2", target.id);
+    const activation = harness.actions.selectWorkspaceThread("project-2", target.id);
     await Promise.resolve(); // Runtime selection has resolved; initialization has not.
     expect(api.resumeThread).toHaveBeenCalledWith(target.id);
     expect(harness.getAppState().activeProjectId).toBe("project-1");
@@ -430,7 +430,7 @@ describe("createThreadActivationActions", () => {
       },
     });
     harness.loadRuntimeThreadList.mockReturnValue(pending.promise);
-    await harness.actions.selectProjectThread("project-2", target.id);
+    await harness.actions.selectWorkspaceThread("project-2", target.id);
     api.resumeThread.mockResolvedValue({ thread: next });
     await harness.actions.selectThread(next.id);
     const created = thread("created", target.cwd);
@@ -461,10 +461,10 @@ describe("createThreadActivationActions", () => {
       },
     });
     harness.loadRuntimeThreadList.mockReturnValueOnce(pending.promise);
-    await harness.actions.selectProjectThread("project-2", target.id);
+    await harness.actions.selectWorkspaceThread("project-2", target.id);
     api.resumeThread.mockResolvedValueOnce({ thread: thread("source") });
-    await harness.actions.selectProjectThread("project-1", "source");
-    await harness.actions.selectProjectThread("project-2", target.id);
+    await harness.actions.selectWorkspaceThread("project-1", "source");
+    await harness.actions.selectWorkspaceThread("project-2", target.id);
     const current = harness.getAppState();
     pending.resolve([thread("obsolete", target.cwd)]);
     await pending.promise;
@@ -498,7 +498,7 @@ describe("createThreadActivationActions", () => {
       draft: outgoingDraft,
       sidebarThreads: [target],
     });
-    const activation = harness.actions.selectProjectThread("project-2", target.id);
+    const activation = harness.actions.selectWorkspaceThread("project-2", target.id);
     expect(harness.getDraft()).toEqual(targetDraft);
     const editedDraft = { ...targetDraft, prompt: "edited while waiting" };
     harness.setDraft(editedDraft);
@@ -533,10 +533,10 @@ describe("createThreadActivationActions", () => {
         api.resumeThread.mockResolvedValueOnce({ thread: older });
         harness.loadRuntimeThreadList.mockReturnValueOnce(pending.promise);
       }
-      const olderActivation = harness.actions.selectProjectThread("project-2", older.id);
+      const olderActivation = harness.actions.selectWorkspaceThread("project-2", older.id);
       if (phase === "catalog") await olderActivation;
       else await Promise.resolve();
-      await harness.actions.selectProjectThread("project-3", newer.id);
+      await harness.actions.selectWorkspaceThread("project-3", newer.id);
       const newerState = harness.getAppState();
 
       pending.resolve(phase === "selection"
@@ -563,7 +563,7 @@ describe("createThreadActivationActions", () => {
       },
     });
     harness.loadRuntimeThreadList.mockReturnValue(pending.promise);
-    await harness.actions.selectProjectThread("project-2", target.id);
+    await harness.actions.selectWorkspaceThread("project-2", target.id);
     const activated = harness.getAppState();
     pending.reject(new Error("catalog unavailable"));
     await pending.promise.catch(() => {});

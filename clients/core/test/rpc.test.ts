@@ -103,3 +103,45 @@ it("carries workspace identity independently of request parameters and notificat
   client.feed({ method: "turn/completed", params: { thread_id: "t" }, workdir: "/alpha" });
   expect(seen).toHaveBeenCalledWith("turn/completed", { thread_id: "t" }, "/alpha");
 });
+
+
+it("installs a response before publishing the next notification", async () => {
+  let text = "old";
+  const { client, written } = makeClient({ onNotification: (_method, delta) => { text += delta; } });
+  const response = client.call<string>("thread/resume", undefined, undefined, undefined, snapshot => { text = snapshot; });
+  client.feed({ id: written[0].id, result: "snapshot" });
+  client.feed({ method: "item/agentMessage/delta", params: " delta" });
+  await expect(response).resolves.toBe("snapshot");
+  expect(text).toBe("snapshot delta");
+});
+
+it("rejects a failed response installer without breaking subsequent RPCs", async () => {
+  const { client, written } = makeClient();
+  const response = client.call("thread/resume", undefined, undefined, undefined, () => { throw new Error("stale connection"); });
+  expect(() => client.feed({ id: written[0].id, result: {} })).not.toThrow();
+  await expect(response).rejects.toThrow("stale connection");
+  const next = client.call("initialize");
+  client.feed({ id: written[1].id, result: {} });
+  await expect(next).resolves.toEqual({});
+});
+
+it("does not install failed, expired, or closed responses", async () => {
+  vi.useFakeTimers();
+  try {
+    const install = vi.fn();
+    const { client, written } = makeClient();
+    const failed = client.call("thread/resume", undefined, 20, undefined, install);
+    client.feed({ id: written[0].id, error: { message: "missing" } });
+    await expect(failed).rejects.toThrow("missing");
+    const expired = client.call("thread/resume", undefined, 20, undefined, install);
+    const rejection = expect(expired).rejects.toThrow("rpc timeout");
+    await vi.advanceTimersByTimeAsync(20);
+    await rejection;
+    client.feed({ id: written[1].id, result: {} });
+    const closed = client.call("thread/resume", undefined, 20, undefined, install);
+    client.close();
+    await expect(closed).rejects.toThrow("closed");
+    client.feed({ id: written[2].id, result: {} });
+    expect(install).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});

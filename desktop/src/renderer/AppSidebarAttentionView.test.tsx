@@ -133,13 +133,13 @@ function installWindowStubs(): void {
 }
 
 function installWuuApi(threads: Thread[]): void {
-  const projectState = () => ({
+  const workspaceState = () => ({
     projects: [],
     active_context: { kind: "no_project" as const, cwd: workspace },
   });
   const api = {
-    listProjects: vi.fn().mockImplementation(() => Promise.resolve(projectState())),
-    selectNoProject: vi.fn().mockImplementation(() => Promise.resolve(projectState())),
+    listProjects: vi.fn().mockImplementation(() => Promise.resolve(workspaceState())),
+    selectNoProject: vi.fn().mockImplementation(() => Promise.resolve(workspaceState())),
     initialize: vi.fn().mockResolvedValue(initialized()),
     listThreads: vi.fn().mockResolvedValue({ threads }),
     listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),

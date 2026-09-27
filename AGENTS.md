@@ -157,6 +157,9 @@ machine-specific setup in user-level configuration.
 
 ## Extension architecture
 
+- Project Agent coordination and its ordinary managed sessions are core product
+  behavior. Creation, control, result delivery and recovery must work without
+  loading plugins. Keep extension adapters outside host session contracts.
 - Wuu is a decentralized trusted-extension system. Installation grants trust and
   enables the extension. Same-source updates retain trust; source changes require
   confirmation. Do not add approval, inspection, restart, or per-update ceremonies

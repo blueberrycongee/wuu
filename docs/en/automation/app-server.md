@@ -58,33 +58,51 @@ the client to wait and retry. A request without `thread_id` updates defaults
 for future conversations. Do not try to override a turn's permission mode through
 `turn/start`.
 
-## Named Agent media handoff
+## Run a project
 
-The named-agent `session` tool can attach selected room media when creating or sending to a work session, including queue and steer modes. This is a tool contract, not a new JSON-RPC method:
+`thread/start` with `project: {"name": "..."}` creates a project coordinator in the
+workspace. The returned thread has `source: "project"` and follows ordinary
+session permission and model settings. The lead can work directly and manages
+other sessions through its `session` tool. Each managed session is an
+ordinary thread with `source: "project-session"` and `project_id` naming its
+coordinator, and its `session_control` names the project as `manager_name`.
+A worktree session's changes stay in its worktree until the team delivers them with
+ordinary Git commands; no protocol step waits for a user decision.
 
-```json
-{
-  "action": "create",
-  "workspace_root": "/path/to/project",
-  "prompt": "Check the screenshot against the implementation",
-  "media": [
-    {"message_id": "message-id-from-chat_read", "kind": "image", "index": 1,
-     "description": "Inspect the clipped bottom row"}
-  ]
-}
-```
+Managed threads expose `project_role: "side" | "worker"`; older members default to
+worker. `session create` accepts `role` (worker by default) and optional
+`model_alias`. Only the lead creates a side; repeated creation returns the existing
+live side without sending a new prompt. Lead and side can create workers. All
+active members can `list`, `inspect`, and `message`; only the lead can `send` and
+`stop`. Messages stay in the project and include `prompt`, `session_id`, and
+optional `wake` (false by default). Stopping or directly messaging a member keeps
+its project membership and does not invalidate queued team messages.
 
-Use the message ID and attachment order from `chat_read`. `kind` selects `image` or `file`, and `index` is one-based within the message's corresponding array. Up to 32 distinct selections carry their room, message, author, source text, and optional description. Omitting `media` sends text only; a path mentioned in the prompt does not attach a file. Stored images are copied without another resize.
+The coordinator receives host events as user items with `origin: "plugin"`,
+`related_session_id` naming the session, and a `cause`:
 
-Sources must belong to the originating turn's room, and the named identity must still have access. Membership in another room does not allow cross-room references. The host supplies identity and turn scope; paths, URLs, and remote cache references cannot replace stored-message references. The receiving session gains the selected evidence, not room access or additional filesystem permissions, and uses its own bound project's runtime.
+| Cause | Event | Starts a turn when idle |
+|---|---|---|
+| `project_message` | Message from a team member, received by any member or the lead | Only when `wake` is true |
+| `project_result` | A managed turn ended, with what the user wrote into it | Yes, except interrupted turns |
+| `project_stopped` | The user stopped a member's current turn | No, joins the next turn |
+| `project_user_message` | The user wrote directly to a member | No, joins the next turn |
+| `project_adopted` | The user added a conversation to the project | Yes |
+| `project_released` | The user removed a session from the project | No, joins the next turn |
 
-Before delivery, durable operations retain references and recheck access and payloads during dispatch or recovery. Missing messages, invalid positions, empty payloads, and unsupported types reject the handoff. Once admitted, bytes and provenance become durable session input; later source deletion does not recall a delivered copy. Recovery recognizes an existing receipt before resolving the source again.
+Starting, steering, queuing or interrupting a turn in a project member keeps its
+membership active. Direct user messages send a notice to the coordinator without
+waking it from idle. Interrupted results are also delivered without waking an idle
+coordinator; normal results wake it. Worktree changes stay in the member's worktree.
+The same interrupted-result policy applies after recovery and to reports sent to
+the Side Agent that dispatched the member.
+The `thread/control/take` and `thread/control/return` ownership lifecycle is for
+plugin-managed sessions, not project members.
 
-PNG, JPEG, GIF, WebP, PDF, and supported video attachments use the existing media path. Video requires a compatible model and connection. Audio, arbitrary documents, and media handoff to external engines are not supported.
-
-Selected media is required evidence. Known-incompatible model capabilities fail before input admission, and the provider request boundary rejects unsupported required media instead of dropping it, including retained evidence after a model switch. Unknown catalog capabilities defer to provider validation and do not guarantee support. Normal context compaction still applies to older history.
-
-Provider failures appear in normal session results; queue-time failures are recorded in the operation and reported while the source conversation remains authorized. Do not silently retry with text alone: choose compatible input or replace the missing evidence first.
+`project/session` changes membership: `adopt` with `project_id` and `session_id`
+brings an ordinary conversation of the project's workspace under the project, and
+`release` makes a managed session an ordinary conversation again. Both return the
+updated `thread`.
 
 ## Probe the protocol
 
@@ -100,38 +118,3 @@ The stdio protocol is a trusted local control surface, not an authenticated netw
 service. A remote or hosted deployment must provide its own transport security and
 isolation around it. The [protocol reference](../integrations/app-server-protocol.md)
 covers message shapes, capabilities, selection rules, and cloud process identity.
-
-## Collaboration task and candidate control
-
-`channel/direct/open` accepts `workspace_root` and `workspace_id`. A DM is unique
-per human, named agent and workspace. Omission retains compatibility with legacy
-clients; the host resolves the current workspace. Execution defaults to the DM's
-registered project.
-
-`channel/task/update` accepts `expected_revision` with the Work revision returned
-by reads. Model task updates require it; older human clients can omit it. A stale
-revision fails without applying the requested change. Goal and constraint updates
-advance the goal revision and invalidate prior execution authority.
-
-`channel/work/candidate` accepts `work_id`, `artifact_id`, and `action` (`get`,
-`apply`, or `discard`). Mutation requires `expected_revision` from candidate review.
-Only host-created immutable snapshots can be applied. The response contains
-`candidate`, `artifact`, `work_revision`, and `stale`; candidate includes its Git
-base and revision, diff, source session/turn and structured report. Applying a
-conflicting diff leaves the checkout unchanged and does not stage files.
-
-`thread/control/return` accepts `thread_id` and the current control `revision`.
-This human action restores Collaboration management and sends a durable notice to
-the originating coordinator. Revoked queued inputs remain revoked.
-
-Execution reports contain `result`, `implicit_choices`, `evidence_refs`, and
-`unresolved_items`. The host creates the candidate, records accounting and starts
-independent verification when required. A verifier can record its conclusion with
-`chat_verify`; the host publishes a receipt only after that exact execution
-completes successfully. Workers receive room provenance and shared Work decisions,
-not access to the named identity's private conversation.
-
-Desktop extensions may register a command with context `work-candidate.publish`.
-The candidate review invokes it with `{ candidate, title }` and displays a returned
-`{ url }`. Unloading the extension removes the action. Publication credentials,
-remote policy and PR lifecycle belong to that trusted extension.

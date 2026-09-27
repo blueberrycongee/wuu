@@ -26,7 +26,6 @@ func TestCodeModeLargeCatalogCanStreamAcrossProviders(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			kit := newCodeModeTestToolkit(t)
 			kit.ConfigureSurfaceForProviderModel(tc.name, tc.model, true)
-			kit.SetCodeModeOnly(true)
 			kit.SetCodeModeAdditionalTools(func() []providers.ToolDefinition {
 				var defs []providers.ToolDefinition
 				for i := 0; i < 3; i++ {
@@ -78,7 +77,7 @@ func TestCodeModeLargeCatalogCanStreamAcrossProviders(t *testing.T) {
 					if tool.Function != nil {
 						tool.Name, tool.Description = tool.Function.Name, tool.Function.Description
 					}
-					if tool.Name == "exec" {
+					if tool.Name == "run_code" {
 						execDescription = tool.Description
 					}
 				}
