@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Sidebar conversation history reveals five more hidden sessions per click instead
+  of expanding the entire history at once.
 - Desktop navigation uses denser rows, clearer group spacing, and quieter labels.
   Settings navigation and workspace tool lists share the updated spacing while
   preserving saved UI font preferences.

@@ -203,14 +203,30 @@ describe("WorkspaceList", () => {
     return Array.from(container.querySelectorAll(".thread-row-title"), row => row.textContent ?? "");
   }
 
-  it("expands the entire history in one action and can return to the recent range", () => {
+  it("reveals history in batches and can return to the recent range", () => {
     renderHistory();
     expect(historyTitles()).toHaveLength(5);
     act(() => container.querySelector<HTMLButtonElement>(".thread-list-more")!.click());
-    expect(historyTitles()).toHaveLength(30);
+    expect(historyTitles()).toEqual(Array.from({ length: 10 }, (_, index) => `History ${index}`));
+    act(() => container.querySelector<HTMLButtonElement>(".thread-list-more")!.click());
+    expect(historyTitles()).toEqual(Array.from({ length: 15 }, (_, index) => `History ${index}`));
     act(() => container.querySelector<HTMLButtonElement>(".thread-list-collapse-btn")!.click());
     expect(historyTitles()).toHaveLength(5);
     expect(container.querySelector(".project-row")?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("adds hidden rows even when the next range is already visible as unread", () => {
+    const threads = summarizeThreadsForSidebar(Array.from({ length: 23 }, (_, index) =>
+      makeWorkspaceThread(`history-${index}`, "/repo/history", `History ${index}`,
+        index >= 5 && index < 15 ? [{ id: `turn-${index}`, status: "completed" }] : []),
+    ));
+    renderHistory({ threadsByWorkspaceID: { history: threads } });
+    expect(historyTitles()).toHaveLength(15);
+    act(() => container.querySelector<HTMLButtonElement>(".thread-list-more")!.click());
+    expect(historyTitles()).toEqual(Array.from({ length: 20 }, (_, index) => `History ${index}`));
+    act(() => container.querySelector<HTMLButtonElement>(".thread-list-more")!.click());
+    expect(historyTitles()).toEqual(Array.from({ length: 23 }, (_, index) => `History ${index}`));
+    expect(container.querySelector(".thread-list-more")).toBeNull();
   });
 
   it("does not permanently retain previously selected, switching, or running history", () => {

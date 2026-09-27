@@ -69,7 +69,7 @@ function ProjectHistoryFixture(): JSX.Element {
     id: `thread-${index}`, title: `Conversation ${index + 1}: a long title with descenders gyp`, preview: "",
     cwd: project.path, workspace_kind: "project", model_provider: "synthetic", model: "fixture",
     created_at: "", updated_at: "", status: running ? "in_progress" : "idle",
-    forked_from_id: index === 5 ? "thread-4" : undefined,
+    forked_from_id: busy && index === 5 ? "thread-4" : undefined,
     turns: [{ id: `turn-${index}`, status: running ? "in_progress" : "completed", items: [], items_view: "full" }],
   });
   const [threads, setThreads] = useState(() => Array.from({ length: count }, (_, index) => makeThread(index)));

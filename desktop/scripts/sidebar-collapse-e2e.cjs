@@ -232,6 +232,8 @@ app.whenReady().then(async () => {
             await commit();
             const readRetained = rows().includes(read) && !read.classList.contains("has-unread");
             await click(".thread-list-more");
+            const batch = measure();
+            while (document.querySelector(".thread-list-more")) await click(".thread-list-more");
             const expanded = measure();
             rows().at(-1).scrollIntoView({ block: "nearest" });
             await commit();
@@ -258,13 +260,14 @@ app.whenReady().then(async () => {
             document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
             await commit();
             outer().scrollTop = 0;
-            return { initial, expanded, collapsed, growing, readRetained, oldestVisible, footerOutside, selectedVisible, menuOutside };
+            return { initial, batch, expanded, collapsed, growing, readRetained, oldestVisible, footerOutside, selectedVisible, menuOutside };
           });
           assert.equal(history.initial.count, 16, "five recent, five unread, four running, and two creating rows are candidates");
-          assert.equal(history.expanded.count, 32, "one expansion includes every historical and creating row");
+          assert.equal(history.batch.count, 21, "one expansion adds five hidden rows");
+          assert.equal(history.expanded.count, 32, "repeated expansion includes every historical and creating row");
           assert.equal(history.collapsed.count, 16, "collapsing restores the recent range plus retained states");
           assert.equal(history.growing.count, 36, "running candidates remain reachable in the outer sidebar");
-          for (const state of ["initial", "expanded", "collapsed", "growing"]) {
+          for (const state of ["initial", "batch", "expanded", "collapsed", "growing"]) {
             assert.ok(Math.abs(history[state].height - history[state].content) < 1, `${state}: all candidate rows occupy their full height`);
             assert.equal(history[state].horizontalOverflow, false, `${state}: long titles fit without horizontal scrolling`);
             assert.equal(history[state].fitsSidebar, true, `${state}: list remains inside the sidebar`);
@@ -275,9 +278,38 @@ app.whenReady().then(async () => {
           }
           fs.writeFileSync(path.join(temp, `history-${theme}-${size}-${width}.png`), (await win.webContents.capturePage()).toPNG());
           historyResults.push({ theme, size, width, ...history });
+          await load({ mode: "history", busy: "false", count: "12", theme, size, width });
+          await evaluate(async () => {
+            document.querySelector(".thread-list-more").click();
+            await new Promise(requestAnimationFrame);
+            await new Promise(requestAnimationFrame);
+            document.querySelector(".thread-list-footer").scrollIntoView({ block: "nearest" });
+          });
+          fs.writeFileSync(path.join(temp, `batch-${theme}-${size}-${width}.png`), (await win.webContents.capturePage()).toPNG());
         }
       }
     }
+    await load({ mode: "history", busy: "false", count: "1003" });
+    const batches = await evaluate(async () => {
+      const counts = [];
+      const titles = () => [...document.querySelectorAll(".thread-row-title")].map(row => row.textContent);
+      let previous = titles();
+      counts.push(previous.length);
+      while (document.querySelector(".thread-list-more")) {
+        document.querySelector(".thread-list-more").click();
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+        const current = titles();
+        if (current.length !== Math.min(previous.length + 5, 1003)) throw new Error("Incorrect batch size");
+        if (current.some((title, index) => title !== `Conversation ${index + 1}: a long title with descenders gyp`)) throw new Error("Missing, duplicate, or reordered history");
+        previous = current;
+        counts.push(current.length);
+      }
+      return counts;
+    });
+    assert.equal(batches[0], 5);
+    assert.equal(batches.at(-1), 1003);
+    fs.writeFileSync(path.join(temp, "history-batches.json"), JSON.stringify(batches));
     await load({ mode: "history", theme: "dark", size: "20", width: "240" });
     // Wheel routing needs an overflowing rail; size the window for that
     // instead of relying on how many rows happen to fit at the row height.
