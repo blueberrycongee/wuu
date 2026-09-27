@@ -1,6 +1,17 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
+  "responseSelection.add": "Add to conversation",
+  "responseSelection.countOne": "{count} selected passage",
+  "responseSelection.countMany": "{count} selected passages",
+  "responseSelection.expand": "View quoted text",
+  "responseSelection.remove": "Remove quote",
+  "responseSelection.comment": "Comment",
+  "responseSelection.optionalComment": "Add a comment (optional)",
+  "responseSelection.actions": "Selected response actions",
+  "responseSelection.quote": "Quoted text",
+  "responseSelection.source": "View source",
+  "responseSelection.unavailable": "The source is not currently visible or has changed.",
 
   "account.directoryUnavailable": "Computer list unavailable. You are still signed in.",
   "account.githubWaiting": "Waiting for GitHub authorization…",

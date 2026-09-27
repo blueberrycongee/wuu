@@ -217,12 +217,44 @@ func NormalizeMessagePhase(phase string) MessagePhase {
 	}
 }
 
+// ResponseSelection identifies a quoted assistant response and its authored comment.
+type ResponseSelection struct {
+	ID      string                  `json:"id"`
+	Text    string                  `json:"text"`
+	Comment string                  `json:"comment,omitempty"`
+	Source  ResponseSelectionSource `json:"source"`
+}
+
+// ResponseSelectionSource records the original response and UTF-16 selection range.
+type ResponseSelectionSource struct {
+	ThreadID    string `json:"thread_id"`
+	TurnID      string `json:"turn_id"`
+	ItemID      string `json:"item_id"`
+	StartOffset int    `json:"start_offset"`
+	EndOffset   int    `json:"end_offset"`
+	// RangeText is the exact DOM textContent slice when readable selection text differs.
+	RangeText string `json:"range_text,omitempty"`
+}
+
 // MessageContentPart preserves the authored structure of one user message.
 // Providers still consume ChatMessage.Content as flattened text.
 type MessageContentPart struct {
-	Type  string `json:"type"`
-	Text  string `json:"text,omitempty"`
-	Title string `json:"title,omitempty"`
+	Type      string             `json:"type"`
+	Text      string             `json:"text,omitempty"`
+	Title     string             `json:"title,omitempty"`
+	Selection *ResponseSelection `json:"selection,omitempty"`
+}
+
+// CloneMessageContentParts returns independently mutable presentation metadata.
+func CloneMessageContentParts(parts []MessageContentPart) []MessageContentPart {
+	out := append([]MessageContentPart(nil), parts...)
+	for i := range out {
+		if out[i].Selection != nil {
+			selection := *out[i].Selection
+			out[i].Selection = &selection
+		}
+	}
+	return out
 }
 
 // ChatMessage is a generic multi-provider chat message.

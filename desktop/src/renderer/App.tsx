@@ -3,7 +3,7 @@ import { subscribeServerEvents } from "./ServerEvents";
 import { PhoneNavigationContext } from "./PhoneNavigationContext";
 import { AccountScreen } from "./AccountScreen";
 import { hostSupports } from "./HostCapabilities";
-import { isTouchWebShell } from "./ComposerFocus";
+import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { useSidebarTouchGesture } from "./SidebarTouchGesture";
 import { readThreadReadState, writeThreadReadState } from "./ThreadReadState";
 /// <reference path="../shared/jsx-compat.d.ts" />
@@ -33,6 +33,7 @@ import type {
   InputFile,
   InputImage,
   MessageContentPart,
+  ResponseSelection,
   PopOutInitResult,
   PluginPackageInstallResult,
   PluginPackageRemoveResult,
@@ -51,6 +52,7 @@ import {
   OPTIMISTIC_TURN_ID_PREFIX,
   awaitComposerImages,
   createComposerMessage,
+  composerContextFromMessage,
   createOptimisticCompactTurn,
   createOptimisticTurn,
   dropOptimisticTurn,
@@ -117,6 +119,7 @@ import {
   activeTurnIDForThread,
   bindActiveSessionTabToThread,
   cloneSessionTabDraft,
+  sessionTabDraftForThread,
   composerDraftHasContent,
   conversationPaneThreadsByID,
   createDraftSessionTab,
@@ -444,6 +447,8 @@ export function App(): JSX.Element {
     setComposerImages,
     composerFiles,
     setComposerFiles,
+    composerSelections,
+    setComposerSelections,
     splitComposerDrafts,
     setSplitComposerDrafts,
     attachComposerAttachmentFiles,
@@ -457,6 +462,30 @@ export function App(): JSX.Element {
     currentPrimaryComposerDraft,
     restorePrimaryComposerDraft,
   } = useComposerDraftState();
+  useEffect(() => {
+    const addSelection = (event: Event) => {
+      const selection = (event as CustomEvent<ResponseSelection>).detail;
+      const current = appStateRef.current;
+      const pane = current.thread?.id === selection.source.thread_id ? "primary"
+        : current.secondaryThread?.id === selection.source.thread_id ? "secondary" : undefined;
+      // A toolbar belongs to its response, not to whichever composer is active.
+      if (!pane || threadForPane(current, pane)?.read_only) return;
+      const copy = { ...selection, source: { ...selection.source } };
+      if (current.thread && current.secondaryThread) {
+        setSplitComposerDrafts((drafts) => ({ ...drafts, [pane]: {
+          ...drafts[pane], selections: [...(drafts[pane].selections ?? []), copy],
+        } }));
+      } else {
+        setComposerSelections((selections) => [...selections, copy]);
+      }
+      const owner = current.secondaryThread
+        ? [...document.querySelectorAll<HTMLElement>(".conversation-split-pane[data-thread-id]")].find((element) => element.dataset.threadId === selection.source.thread_id)
+        : document.querySelector<HTMLElement>("[data-main-conversation-composer]");
+      focusComposerTextarea(owner?.querySelector<HTMLTextAreaElement>("textarea") ?? null);
+    };
+    window.addEventListener("wuu:add-response-selection", addSelection);
+    return () => window.removeEventListener("wuu:add-response-selection", addSelection);
+  }, [setComposerSelections, setSplitComposerDrafts]);
   const [historyMessageEdit, setHistoryMessageEdit] =
     useState<HistoryMessageEditState | undefined>(undefined);
   const composerDraftsRef = useRef({ primary: currentPrimaryComposerDraft, split: splitComposerDrafts });
@@ -988,8 +1017,25 @@ export function App(): JSX.Element {
     threadHasPendingComposerMessages,
   } = useComposerPendingState({
     getAppState: () => appStateRef.current,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftForThread: (threadID) => {
+      const current = appStateRef.current;
+      if (current.thread && current.secondaryThread) {
+        if (current.thread.id === threadID) return composerDraftsRef.current.split.primary;
+        if (current.secondaryThread.id === threadID) return composerDraftsRef.current.split.secondary;
+      }
+      return activeThreadIDForState(current) === threadID || current.activeSessionTabID === threadID
+        ? composerDraftsRef.current.primary() : sessionTabDraftForThread(current, threadID);
+    },
     restoreComposerDraftForThread: (threadID, draft) => {
+      const currentState = appStateRef.current;
+      if (currentState.thread && currentState.secondaryThread) {
+        const pane = currentState.thread.id === threadID ? "primary"
+          : currentState.secondaryThread.id === threadID ? "secondary" : undefined;
+        if (pane) {
+          setSplitComposerDrafts((current) => ({ ...current, [pane]: draft }));
+          return;
+        }
+      }
       if ((activeThreadIDForState(appStateRef.current) === threadID || appStateRef.current.activeSessionTabID === threadID)) {
         restorePrimaryComposerDraft(draft);
         return;
@@ -1003,6 +1049,7 @@ export function App(): JSX.Element {
                 prompt: draft.prompt,
                 images: draft.images.map((image) => ({ ...image })),
                 files: draft.files.map((file) => ({ ...file })),
+                selections: draft.selections?.map((selection) => ({ ...selection, source: { ...selection.source } })),
               }
             : tab,
         ),
@@ -1014,6 +1061,7 @@ export function App(): JSX.Element {
         status,
       })),
     sendComposerMessageToThread,
+    preserveFailedComposerMessage,
   });
   const runtimeVariantByModelRef = useRef(new Map<string, string>());
   const cachedThreadPaneHistoryRef = useRef<string[]>([]);
@@ -3028,6 +3076,9 @@ export function App(): JSX.Element {
         promptRevision={promptRevision}
         setPrompt={setPromptFromInput}
         files={composerFiles}
+        selections={composerSelections}
+        onChangeSelection={(selection) => setComposerSelections((current) => current.map((entry) => entry.id === selection.id ? selection : entry))}
+        onRemoveSelection={(id) => setComposerSelections((current) => current.filter((entry) => entry.id !== id))}
         images={composerImages}
         queuedMessages={activePendingThreadCreation
           ? pendingComposerMessagesForActiveThread(activePendingThreadCreation.sessionTabID).queued
@@ -3696,6 +3747,7 @@ export function App(): JSX.Element {
     void startNewThread().then(() => {
       setComposerImages([]);
       setComposerFiles([]);
+      setComposerSelections([]);
       setPrompt(`/${skill.name} `);
       requestMainComposerFocus("hero", origin);
     });
@@ -3848,9 +3900,7 @@ export function App(): JSX.Element {
     getActiveTitle: () => activeTitle,
     getPrimaryComposerDraft: currentPrimaryComposerDraft,
     setSplitComposerDrafts,
-    setPrompt,
-    setComposerImages,
-    setComposerFiles,
+    restorePrimaryComposerDraft,
     
     cancelViewSwitch,
     setContextCompositionEntries,
@@ -3879,13 +3929,15 @@ export function App(): JSX.Element {
     setPendingFork,
     setHistoryMessageEdit,
     
-    getPrompt: () => currentPrimaryComposerDraft().prompt,
-    getComposerImages: () => composerImages,
-    getComposerFiles: () => composerFiles,
-    getSplitComposerDrafts: () => splitComposerDrafts,
+    getPrompt: () => composerDraftsRef.current.primary().prompt,
+    getComposerImages: () => composerDraftsRef.current.primary().images,
+    getComposerFiles: () => composerDraftsRef.current.primary().files,
+    getComposerSelections: () => composerDraftsRef.current.primary().selections ?? [],
+    getSplitComposerDrafts: () => composerDraftsRef.current.split,
     setPrompt,
     setComposerImages,
     setComposerFiles,
+    setComposerSelections,
     setSplitComposerDrafts,
     restorePrimaryComposerDraft,
     closeConversationSearch,
@@ -3899,6 +3951,17 @@ export function App(): JSX.Element {
     sendComposerMessageToThread,
     worktreeForkNonGitReason: t("app.worktreeRequiresGit"),
   });
+
+  function preserveFailedComposerMessage(threadID: string, message: QueuedComposerMessage): void {
+    const failedTurn: Turn = {
+      ...createOptimisticTurn(message, Date.now()),
+      status: "failed",
+      error: { message: t("composer.sendFailed") },
+    };
+    const preserve = (state: AppState) => updateThreadByID(state, threadID, (thread) => upsertTurn(thread, failedTurn));
+    appStateRef.current = preserve(appStateRef.current);
+    setState(preserve);
+  }
 
   function sendPrompt(
     runningAction: "queue" | "steer" = "queue",
@@ -3916,6 +3979,7 @@ export function App(): JSX.Element {
       draft.images,
       draft.files,
       contentParts,
+      draft.selections,
     );
     const activeDocumentPath = pane ? undefined : activeWorkspaceFile;
     const message =
@@ -3978,10 +4042,13 @@ export function App(): JSX.Element {
       if (sent) return;
       submittedThread ??= admission?.thread;
       const latest = appStateRef.current;
-      const recoveryDraft = { prompt: message.text, images: message.images, files: message.files };
+      const recoveryDraft = { ...composerContextFromMessage(message.text, message.contentParts), images: message.images, files: message.files };
+      const latestTab = activeSessionTab(latest);
       const stillTarget = submittedThread
-        ? threadForPane(latest, targetPane)?.id === submittedThread.id
-        : latest.activeSessionTabID === sessionTabID;
+        ? latestTab?.kind === "thread" &&
+          (pane ? Boolean(latest.secondaryThread) : !latest.secondaryThread) &&
+          threadForPane(latest, targetPane)?.id === submittedThread.id
+        : latestTab?.kind === "draft" && latest.activeSessionTabID === sessionTabID;
       const latestDraft = pane ? composerDraftsRef.current.split[pane] : composerDraftsRef.current.primary();
       if (stillTarget && !composerDraftHasContent(latestDraft)) {
         if (pane) {
@@ -3991,15 +4058,7 @@ export function App(): JSX.Element {
         }
       } else if (submittedThread) {
         // Keep failed input in its conversation without replacing a newer draft.
-        const failedTurn: Turn = {
-          ...createOptimisticTurn(message, Date.now()),
-          status: "failed",
-          error: { message: t("composer.sendFailed") },
-        };
-        const threadID = submittedThread.id;
-        const preserve = (state: AppState) => updateThreadByID(state, threadID, (thread) => upsertTurn(thread, failedTurn));
-        appStateRef.current = preserve(appStateRef.current);
-        setState(preserve);
+        preserveFailedComposerMessage(submittedThread.id, message);
       } else {
         // Thread creation failed before there was a conversation to retain the
         // input. A separate draft must not replace newer work in the source tab.
@@ -5270,6 +5329,8 @@ export function App(): JSX.Element {
                     }
                     onRemoveFile={removeSplitComposerFile}
                     onRemoveImage={removeSplitComposerImage}
+                    onChangeSelection={(pane, selection) => setSplitComposerDrafts((current) => ({ ...current, [pane]: { ...current[pane], selections: current[pane].selections?.map((entry) => entry.id === selection.id ? selection : entry) } }))}
+                    onRemoveSelection={(pane, id) => setSplitComposerDrafts((current) => ({ ...current, [pane]: { ...current[pane], selections: current[pane].selections?.filter((entry) => entry.id !== id) } }))}
                     onSend={(pane, promptOverride, contentParts) =>
                       sendPrompt("queue", promptOverride, contentParts, undefined, pane)
                     }
@@ -5325,7 +5386,7 @@ export function App(): JSX.Element {
                 title={activeProjectDraft ? t("projects.newProject") : emptyThreadTitle}
                 // A draft lowers the greeting mascot’s gaze toward the composer.
                 activity={
-                  prompt.trim().length > 0 || composerImages.length > 0 || composerFiles.length > 0
+                  prompt.trim().length > 0 || composerImages.length > 0 || composerFiles.length > 0 || composerSelections.length > 0
                     ? "compose"
                     : "idle"
                 }

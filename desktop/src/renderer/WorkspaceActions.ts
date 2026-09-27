@@ -4,12 +4,12 @@ import {
   activeThreadForState,
   createSkillsSessionTab,
   ensureSessionTab,
+  emptyComposerDraft,
   initialSplitComposerDrafts,
   persistActiveSessionTabDraft,
   type AppState,
   type ComposerDraftState,
 } from "./AppState";
-import type { ComposerFile, ComposerImage } from "./ComposerMessages";
 import type { ContextCompositionEntry } from "./ContextCompositionCard";
 import type { InstructionFilesEntry } from "./InstructionFilesCard";
 import { desktopApiErrorMessage } from "./WorkspaceReviewHelpers";
@@ -26,9 +26,7 @@ export type WorkspaceActionsDeps = {
   setSplitComposerDrafts: Dispatch<
     SetStateAction<Record<"primary" | "secondary", ComposerDraftState>>
   >;
-  setPrompt: Dispatch<SetStateAction<string>>;
-  setComposerImages: Dispatch<SetStateAction<ComposerImage[]>>;
-  setComposerFiles: Dispatch<SetStateAction<ComposerFile[]>>;
+  restorePrimaryComposerDraft: (draft: ComposerDraftState) => void;
   cancelViewSwitch: () => void;
   setContextCompositionEntries: Dispatch<
     SetStateAction<ContextCompositionEntry[]>
@@ -67,18 +65,22 @@ export function createWorkspaceActions(
       return;
     }
     const tab = createSkillsSessionTab(state.activeContext);
-    
+    const draft = deps.getPrimaryComposerDraft();
+    deps.restorePrimaryComposerDraft(emptyComposerDraft());
     deps.setSplitComposerDrafts(initialSplitComposerDrafts());
-    deps.setAppState((current) => ({
-      ...persistActiveSessionTabDraft(current, deps.getPrimaryComposerDraft()),
-      secondaryThread: undefined,
-      activePane: "primary",
-      sessionTabs: ensureSessionTab(current.sessionTabs, tab),
-      activeSessionTabID: tab.id,
-      allowThreadAutoActivation: false,
-      running: false,
-      status: "ready",
-    }));
+    deps.setAppState((current) => {
+      const persisted = persistActiveSessionTabDraft(current, draft);
+      return {
+        ...persisted,
+        secondaryThread: undefined,
+        activePane: "primary",
+        sessionTabs: ensureSessionTab(persisted.sessionTabs, tab),
+        activeSessionTabID: tab.id,
+        allowThreadAutoActivation: false,
+        running: false,
+        status: "ready",
+      };
+    });
   }
 
   function dismissContextCompositionEntry(id: string): void {

@@ -41,7 +41,10 @@ vi.mock("./ComposerView", async (importOriginal) => {
         >
           <button aria-label="stop-probe" onClick={props.onInterrupt}>stop</button>
           {props.queuedMessages.map((message) => (
-            <button key={message.id} aria-label={`remove ${message.text}`} onClick={() => props.onRemoveQueuedMessage(message.id)}>remove</button>
+            <span key={message.id}>
+              <button aria-label={`remove ${message.text}`} onClick={() => props.onRemoveQueuedMessage(message.id)}>remove</button>
+              <button aria-label={`edit ${message.text}`} onClick={() => props.onEditQueuedMessage(message.id)}>edit</button>
+            </span>
           ))}
           <textarea
             aria-label={label}
@@ -89,6 +92,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 }));
 
 import { App } from "./App";
+import { translateCurrent } from "./i18n";
 
 const scratchCwd = "/tmp/wuu-composer-focus/scratch";
 const workspaceCwd = "/tmp/wuu-composer-focus/project";
@@ -858,6 +862,59 @@ describe("main composer focus continuity", () => {
       await enterCommand(mainComposer("dock"), "/new");
       expect(mainComposer("dock").value).toBe(newerDraft);
     }
+  });
+
+  it("retains a failed send in its thread when Skills hides the composer before acknowledgement", async () => {
+    await renderApp(true);
+    let rejectSend!: (error: Error) => void;
+    const acknowledgement = new Promise<never>((_resolve, reject) => { rejectSend = reject; });
+    vi.mocked(window.wuu.startTurn).mockReturnValueOnce(acknowledgement);
+    window.wuu.listSkills = vi.fn().mockResolvedValue({ skills: [] });
+    await enterCommand(mainComposer("dock"), "Retain the failed Skills send");
+    expect(window.wuu.startTurn).toHaveBeenCalled();
+    const skills = Array.from(container.querySelectorAll<HTMLButtonElement>("button.nav-item"))
+      .find(button => button.textContent?.trim() === translateCurrent("skills.sectionSkills"));
+    expect(skills).toBeDefined();
+    await act(async () => { skills!.click(); });
+    await flushAsync();
+    expect(container.querySelector('textarea[aria-label="main composer dock"]')).toBeNull();
+    await act(async () => { rejectSend(new Error("deferred send failed")); });
+    await flushAsync();
+    const source = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find(button => button.textContent?.trim() === "focus continuity");
+    expect(source).toBeDefined();
+    await act(async () => { source!.click(); });
+    await flushAsync();
+    expect(mainComposer("dock").value).toBe("");
+    expect(Array.from(container.querySelectorAll("[data-user-message-id]"))
+      .some(item => item.textContent?.includes("Retain the failed Skills send"))).toBe(true);
+  });
+
+  it("restores a removed queue message to its saved tab when Skills opens before dequeue acknowledgement", async () => {
+    await renderApp(true);
+    let acknowledge!: (result: { ok: boolean }) => void;
+    window.wuu.dequeueTurn = vi.fn(() => new Promise<{ ok: boolean }>(resolve => { acknowledge = resolve; }));
+    window.wuu.listSkills = vi.fn().mockResolvedValue({ skills: [] });
+    await act(async () => {
+      for (const handler of serverEventHandlers) handler({
+        kind: "notification", workdir: scratchCwd,
+        message: { method: "turn/held", params: { thread_id: "thread-focus", messages: [{ id: "held-skills", origin: "queue", prompt: "Recover queue after Skills" }] } },
+      });
+    });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="edit Recover queue after Skills"]')!.click(); });
+    expect(window.wuu.dequeueTurn).toHaveBeenCalledWith("thread-focus", "held-skills");
+    const skills = Array.from(container.querySelectorAll<HTMLButtonElement>("button.nav-item"))
+      .find(button => button.textContent?.trim() === translateCurrent("skills.sectionSkills"))!;
+    await act(async () => { skills.click(); });
+    await flushAsync();
+    expect(container.querySelector('textarea[aria-label="main composer dock"]')).toBeNull();
+    await act(async () => { acknowledge({ ok: true }); });
+    await flushAsync();
+    const source = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find(button => button.textContent?.trim() === "focus continuity")!;
+    await act(async () => { source.click(); });
+    await flushAsync();
+    expect(mainComposer("dock").value).toBe("Recover queue after Skills");
   });
 
   it("restores focus to the dock when the first query fails", async () => {

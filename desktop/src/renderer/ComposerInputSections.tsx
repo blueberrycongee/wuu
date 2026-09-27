@@ -21,6 +21,7 @@ import { useOptionalImagePreview } from "./ImagePreview";
 import { isComposerTextComposing } from "./ComposerSlashCommands";
 import { useCollapsedComposerPrompt } from "./ComposerCollapsedPrompt";
 import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
+import { ComposerResponseSelectionCard } from "./ComposerResponseSelectionCard";
 import {
   WORKSPACE_FILE_DRAG_MIME,
   appendWorkspacePathToPrompt,
@@ -39,7 +40,7 @@ import { ComposerAttachMenuButton, ComposerCameraPanel } from "./ComposerCamera"
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
 import { Tooltip } from "./Tooltip";
 import { ComposerFeedback } from "./ComposerFeedback";
-import type { MessageContentPart } from "../shared/protocol";
+import type { MessageContentPart, ResponseSelection } from "../shared/protocol";
 
 const ComposerDrawer = createComposerDrawer(React);
 
@@ -90,6 +91,9 @@ export function SplitPaneComposer({
   setPrompt,
   files,
   images,
+  selections = [],
+  onChangeSelection,
+  onRemoveSelection,
   running,
   readOnly,
   sendDisabled: requestedSendDisabled = false,
@@ -109,6 +113,9 @@ export function SplitPaneComposer({
   setPrompt: (value: string) => void;
   files: ComposerFile[];
   images: ComposerImage[];
+  selections?: ResponseSelection[];
+  onChangeSelection?: (selection: ResponseSelection) => void;
+  onRemoveSelection?: (id: string) => void;
   running: boolean;
   readOnly: boolean;
   /** Instant view switches keep `running` on for the spinner but must not
@@ -123,7 +130,7 @@ export function SplitPaneComposer({
   onPasteAttachmentFiles: (files: File[]) => void;
   onRemoveFile: (id: string) => void;
   onRemoveImage: (id: string) => void;
-  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => void;
+  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
   onInterrupt: () => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -140,8 +147,11 @@ export function SplitPaneComposer({
   useEffect(() => {
     setCameraOpen(false);
   }, [readOnly, queryHistorySessionID]);
-  const hasAttachments = images.length > 0 || files.length > 0;
+  const hasAttachments = images.length > 0 || files.length > 0 || selections.length > 0;
   const hasDraft = prompt.trim().length > 0 || hasAttachments;
+  const draftSignature = JSON.stringify([prompt, images.map(image => image.id), files.map(file => file.id), selections]);
+  const submittedDraftRef = useRef<string | undefined>(undefined);
+  useEffect(() => { submittedDraftRef.current = undefined; }, [draftSignature, queryHistorySessionID]);
   // Match the dock composer: the button is a stop control only while running
   // with an empty input. Once there is a draft, it flips to send (queuing
   // mid-turn) so a typed follow-up is never blocked by the stop state.
@@ -252,14 +262,12 @@ export function SplitPaneComposer({
   }
 
   function submitComposer(): void {
-    if (readOnly || sendDisabled) return;
+    if (readOnly || sendDisabled || submittedDraftRef.current === draftSignature) return;
     resetQueryHistoryNavigation();
     const contentParts = collapsedContentPartsForPrompt(prompt);
-    if (contentParts) {
-      onSend(prompt, contentParts);
-    } else {
-      onSend();
-    }
+    const accepted = contentParts ? onSend(prompt, contentParts) : onSend();
+    if (accepted === false) return;
+    submittedDraftRef.current = draftSignature;
     // Keep focus restoration in the user action, without viewport scrolling.
     const textarea = textareaRef.current;
     if (textarea && document.activeElement !== textarea) {
@@ -345,6 +353,11 @@ export function SplitPaneComposer({
                     }
                   }}
                 />
+                {selections.length > 0 ? <ComposerResponseSelectionCard
+                  key={queryHistorySessionID} selections={selections}
+                  onChange={readOnly ? undefined : onChangeSelection}
+                  onRemove={readOnly ? undefined : onRemoveSelection}
+                /> : null}
                 <textarea
                   ref={textareaRef}
                   value={visiblePromptValue}

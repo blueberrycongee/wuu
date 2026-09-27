@@ -168,6 +168,25 @@ and stored history so clients can reconcile a local send regardless of arrival
 order. It is a correlation identifier, not a promise of idempotent `turn/start`.
 Client waiting-time displays are separate from server execution timestamps.
 
+`content_parts` supports `text`, `pasted_text`, and `response_selection`. A response
+selection carries `selection: {id, text, comment?, source: {thread_id, turn_id,
+item_id, start_offset, end_offset, range_text?}}`. Offsets are UTF-16 code units in
+the settled rendered response's DOM text, not Markdown source. When native
+selection adds readable paragraph or table separators, `text` retains that
+readable form and `source.range_text` holds the exact DOM slice. Source navigation
+must validate both identity and `range_text` (or `text` when absent) at those offsets.
+
+Its flattened part `text` is `Quoted assistant response (JSON):\n`, followed by
+JSON with `text` and `comment` strings, then a newline. Concatenating every part's
+`text` must match the request prompt after outer whitespace trimming. The host
+checks selection text/comment against that JSON before retaining rich metadata;
+invalid metadata falls back to ordinary text. Providers consume the flattened
+prompt, so quotes and comments remain model input without provider-specific
+support. Queue updates, steering, held work, history hydration, and forks retain
+valid metadata. Clients must render unknown parts using their `text` fallback.
+Older hosts may discard metadata during normalization or typed history rewrites,
+and older desktop clients may hide unknown parts; raw prompt text still survives.
+
 ### Interruption
 
 `turn/interrupt` targets `thread_id` and can include `turn_id`. `run/interrupt`

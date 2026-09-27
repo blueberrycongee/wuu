@@ -1,0 +1,125 @@
+.composer-response-selection-anchor {
+  display: flex;
+  min-width: 0;
+  padding: var(--space-3) var(--composer-text-start) 0;
+}
+
+.composer-response-selection-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-height: var(--control-field-height);
+  padding: var(--control-padding-block) var(--control-padding-inline);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+  background: var(--surface-1);
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--font-ui);
+  font-weight: 400;
+  line-height: var(--line-ui);
+  cursor: pointer;
+}
+
+.composer-response-selection-chip:hover,
+.composer-response-selection-chip[aria-expanded="true"] {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.composer-response-selection-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-response-selection-chip .icon {
+  flex: 0 0 auto;
+}
+
+.composer-response-selection-chip:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.composer-response-selection-popover {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+  gap: var(--menu-inset);
+  max-height: min(480px, 60dvh);
+  overflow: auto;
+  padding: var(--menu-inset);
+  border: 1px solid var(--hairline);
+  border-radius: var(--menu-shell-radius);
+  /* Keep the theme's elevated tint without letting source prose bleed through. */
+  background: linear-gradient(var(--menu-bg), var(--menu-bg)), var(--paper);
+  color: var(--ink);
+  font-size: var(--font-ui);
+  box-shadow: var(--shadow-pop);
+  font-weight: 400;
+}
+
+.composer-response-selection-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.composer-response-selection-popover > .composer-response-selection-actions {
+  padding-inline-start: var(--space-2);
+}
+
+.composer-response-selection-source {
+  min-height: var(--control-field-height);
+  padding: var(--control-padding-block) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-weight: 400;
+  text-align: start;
+  cursor: pointer;
+}
+
+.composer-response-selection-source:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.composer-response-selection-source:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.composer-response-selection-item {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2);
+}
+
+.composer-response-selection-item + .composer-response-selection-item {
+  border-top: 1px solid var(--hairline-soft);
+  margin-top: var(--space-2);
+  padding-top: var(--space-3);
+}
+
+.composer-response-selection-popover blockquote {
+  margin: 0;
+  padding-inline-start: var(--space-3);
+  border-inline-start: 2px solid var(--hairline-soft);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: var(--line-body);
+}
+
+.composer-response-selection-comment.settings-input {
+  box-sizing: border-box;
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+}

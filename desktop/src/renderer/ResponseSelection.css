@@ -1,0 +1,91 @@
+.response-selection-toolbar {
+  position: fixed;
+  display: flex;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  z-index: 5;
+  padding: 2px;
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-pop);
+}
+.response-selection-source {
+  color: var(--ink-strong);
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+.response-selection-toolbar button:hover,
+.response-selection-source:hover { background: var(--surface-1); }
+.response-selection-toolbar button {
+  min-height: var(--control-row-height);
+  padding: var(--control-padding-block) var(--control-padding-inline);
+  color: var(--ink-strong);
+  background: transparent;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 3px);
+  font: inherit;
+  cursor: pointer;
+}
+.response-selection-comment-toggle { position: relative; }
+.response-selection-comment-toggle::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: -1px;
+  inset-block: 8px;
+  border-inline-start: 1px solid var(--hairline-soft);
+}
+.response-selection-commenting {
+  display: block;
+  width: min(340px, calc(100vw - 16px));
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+}
+.response-selection-comment-source {
+  margin: 0 0 var(--space-3);
+  padding-inline-start: var(--space-2);
+  border-inline-start: 2px solid var(--info);
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.response-selection-comment-input {
+  display: block;
+  width: 100%;
+  min-height: var(--control-field-height);
+  padding: var(--compact-padding-block) var(--compact-padding-inline);
+  resize: none;
+  color: var(--ink);
+  background: var(--field-bg);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  line-height: 1.5;
+}
+.response-selection-comment-input::placeholder { color: var(--ink-soft); }
+.response-selection-comment-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-2);
+}
+.response-selection-reference {
+  padding: 10px 0;
+  overflow-wrap: anywhere;
+}
+.response-selection-reference blockquote {
+  margin: 0 0 8px;
+  padding-inline-start: 12px;
+  border-inline-start: 2px solid var(--hairline);
+  white-space: pre-wrap;
+}
+.response-selection-reference p { margin: 0 0 8px; white-space: pre-wrap; }
+::highlight(wuu-response-source) { background: var(--selection-bg); color: var(--ink-strong); }

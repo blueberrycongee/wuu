@@ -36,6 +36,7 @@ import type {
   GitStatusResult,
   InitializeResult,
   MessageContentPart,
+  ResponseSelection,
   RuntimeContext,
   SkillSummary
 } from "../shared/protocol";
@@ -64,6 +65,7 @@ import { Tooltip } from "./Tooltip";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { useCollapsedComposerPrompt } from "./ComposerCollapsedPrompt";
 import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
+import { ComposerResponseSelectionCard } from "./ComposerResponseSelectionCard";
 import {
   WORKSPACE_FILE_DRAG_MIME,
   appendWorkspacePathToPrompt,
@@ -138,6 +140,9 @@ export function Composer({
   promptRevision = 0,
   setPrompt: commitPrompt,
   files,
+  selections = [],
+  onChangeSelection,
+  onRemoveSelection,
   images,
   queuedMessages,
   guideMessages,
@@ -243,6 +248,9 @@ export function Composer({
   promptRevision?: number;
   setPrompt: (value: string) => void;
   files: ComposerFile[];
+  selections?: ResponseSelection[];
+  onChangeSelection?: (selection: ResponseSelection) => void;
+  onRemoveSelection?: (id: string) => void;
   images: ComposerImage[];
   queuedMessages: QueuedComposerMessage[];
   guideMessages: QueuedComposerMessage[];
@@ -409,7 +417,7 @@ export function Composer({
         ? "dock-composer-wrap document-composer-wrap"
         : "dock-composer-wrap"
   }`;
-  const hasAttachments = images.length > 0 || files.length > 0;
+  const hasAttachments = images.length > 0 || files.length > 0 || selections.length > 0;
   const hasDraft = prompt.trim().length > 0 || hasAttachments;
   const pluginTranslate = useMemo(() => t, [locale]);
   const pluginSlotContext = useMemo(() => Object.freeze({
@@ -743,6 +751,7 @@ export function Composer({
       promptOverride,
       images.map((image) => image.id),
       files.map((file) => file.id),
+      selections,
     ]);
     if (submittedDraftSignatureRef.current === draftSignature) {
       return;
@@ -1279,6 +1288,11 @@ export function Composer({
                 />
               </>
             )}
+            {selections.length > 0 ? <ComposerResponseSelectionCard
+              key={queryHistorySessionID} selections={selections}
+              onChange={readOnly ? undefined : onChangeSelection}
+              onRemove={readOnly ? undefined : onRemoveSelection}
+            /> : null}
             <ComposerTextarea
               ref={textareaRef}
               expanded={isComposerExpanded}

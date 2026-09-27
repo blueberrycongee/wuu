@@ -2,6 +2,9 @@ import { useState } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { ResponseSelection } from "../shared/protocol";
+import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
+import { ComposerResponseSelectionCard } from "./ComposerResponseSelectionCard";
 import {
   CollapsedComposerPromptCard,
   useCollapsedComposerPrompt
@@ -15,6 +18,41 @@ import {
 let container: HTMLDivElement;
 let root: Root | null = null;
 let storageKeyCounter = 0;
+
+it("manages multiple quotes through one chip without losing other quotes when editing or removing", () => {
+  const quote: ResponseSelection = {
+    id: "quote-1", text: `${longText()}\nFinal quoted line`,
+    source: { thread_id: "thread", turn_id: "turn", item_id: "item", start_offset: 0, end_offset: 200 },
+  };
+  const second = { ...quote, id: "quote-2", text: "Another passage" };
+  let latest: ResponseSelection | undefined;
+  function Harness(): JSX.Element {
+    const [selections, setSelections] = useState([quote, second]);
+    return <><ComposerAttachmentTray images={[]} files={[]} pastedTexts={[]}
+      onRemoveImage={() => {}} onRemoveFile={() => {}} onRevealText={() => {}} onRemoveText={() => {}}
+      /><ComposerResponseSelectionCard selections={selections}
+      onChange={(selection) => { latest = selection; setSelections((current) => current.map((item) => item.id === selection.id ? selection : item)); }}
+      onRemove={(id) => setSelections((current) => current.filter((selection) => selection.id !== id))} /></>;
+  }
+  act(() => { root = createRoot(container); root.render(<Harness />); });
+  expect(container.querySelector("ul")).toBeNull();
+  expect(container.querySelectorAll("[aria-haspopup=dialog]")).toHaveLength(1);
+  act(() => container.querySelector<HTMLButtonElement>("[aria-haspopup=dialog]")!.click());
+  expect(document.querySelectorAll("[role=dialog] blockquote")).toHaveLength(2);
+  expect(document.querySelector("[role=dialog] blockquote")?.textContent).toBe(quote.text);
+  const textarea = document.querySelector<HTMLTextAreaElement>("[role=dialog] textarea")!;
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "Explain this part");
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(latest).toEqual({ ...quote, comment: "Explain this part" });
+  act(() => document.querySelector<HTMLButtonElement>("[data-selection-id='quote-1'] .composer-response-selection-remove")!.click());
+  expect(document.querySelectorAll("[role=dialog] blockquote")).toHaveLength(1);
+  expect(document.querySelector("[role=dialog] blockquote")?.textContent).toBe(second.text);
+  act(() => document.querySelector<HTMLButtonElement>(".composer-response-selection-remove")!.click());
+  expect(container.querySelector("ul")).toBeNull();
+  expect(document.querySelector("[role=dialog]")).toBeNull();
+});
 
 beforeEach(() => {
   container = document.createElement("div");

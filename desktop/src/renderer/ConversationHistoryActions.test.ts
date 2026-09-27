@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   GitStatusResult,
   RuntimeContext,
+  ResponseSelection,
   Thread,
   ThreadItem,
   Turn,
@@ -12,6 +13,7 @@ import {
   initialState,
   threadSessionTabID,
   type AppState,
+  type ComposerDraftState,
 } from "./AppState";
 import type { ComposerFile, ComposerImage, QueuedComposerMessage } from "./ComposerMessages";
 import {
@@ -141,6 +143,7 @@ function buildActions({
   let pendingForkState = pendingFork;
   let historyMessageEdit: HistoryMessageEditState | undefined;
   let prompt = "draft prompt";
+  let composerSelections: ResponseSelection[] = [];
   let composerImages: ComposerImage[] = [
     { id: "image-1", media_type: "image/png", data: "img" },
   ];
@@ -204,6 +207,8 @@ function buildActions({
     getPrompt: () => prompt,
     getComposerImages: () => composerImages,
     getComposerFiles: () => composerFiles,
+    getComposerSelections: () => composerSelections,
+    setComposerSelections: (update) => { composerSelections = typeof update === "function" ? update(composerSelections) : update; },
     getSplitComposerDrafts: () => splitDrafts,
     setPrompt: (update) => {
       prompt = typeof update === "function" ? update(prompt) : update;
@@ -236,6 +241,11 @@ function buildActions({
     actions,
     appStateRef,
     getAppState: () => appState,
+    setAppState: (state: AppState) => { appState = state; appStateRef.current = state; },
+    setDraft: (draft: ComposerDraftState, pane?: "primary" | "secondary") => {
+      if (pane) { splitDrafts = { ...splitDrafts, [pane]: draft }; return; }
+      prompt = draft.prompt; composerImages = draft.images; composerFiles = draft.files; composerSelections = draft.selections ?? [];
+    },
     getPendingFork: () => pendingForkState,
     getHistoryMessageEdit: () => historyMessageEdit,
     getComposerState: () => ({
@@ -258,6 +268,21 @@ function buildActions({
 }
 
 describe("createConversationHistoryActions", () => {
+  it.each([undefined, "secondary"] as const)("restores raw prompt and selections after failed history resend in %s", async (pane) => {
+    const source = thread();
+    installWuuApi({ editThreadResult: source });
+    const harness = buildActions({ sendResult: false, initial: { ...initialState, activeContext: projectContext(), thread: source, secondaryThread: pane ? source : undefined } });
+    harness.setDraft({ prompt: "", images: [], files: [] });
+    const selection = { id: "quote", text: "Quoted answer", source: { thread_id: "source", turn_id: "turn", item_id: "answer", start_offset: 0, end_offset: 13 } };
+    await harness.actions.submitEditedThreadMessageFromHistory(source, "turn-1", userItem(), "Context\nQuestion", [], [], [
+      { type: "response_selection", text: "Context\n", selection },
+      { type: "text", text: "Question" },
+    ], pane);
+    const restored = pane ? harness.getComposerState().splitDrafts[pane] : harness.restorePrimaryComposerDraft.mock.calls[0][0];
+    expect(restored).toEqual({ prompt: "Question", images: [], files: [], selections: [selection] });
+    expect(restored.selections[0].source).not.toBe(selection.source);
+  });
+
   it("forks a pending conversation and clears the pending dialog", async () => {
     const source = thread("source-thread", {
       turns: [
@@ -462,11 +487,43 @@ describe("createConversationHistoryActions", () => {
     expect(harness.getHistoryMessageEdit()).toBeUndefined();
   });
 
+  it.each(([undefined, "secondary"] as const).flatMap(pane => [
+    { pane, switchOwner: true, newerDraft: true, hideComposer: false },
+    { pane, switchOwner: true, newerDraft: false, hideComposer: false },
+    { pane, switchOwner: false, newerDraft: true, hideComposer: false },
+    { pane, switchOwner: false, newerDraft: false, hideComposer: true },
+  ]))("retains a failed resend safely: %j", async ({ pane, switchOwner, newerDraft, hideComposer }) => {
+    const source = thread("source-thread");
+    const other = thread("other-thread");
+    installWuuApi({ editThreadResult: source });
+    const harness = buildActions({ initial: { ...initialState, activeContext: projectContext(), thread: source, secondaryThread: pane ? source : undefined, threads: [source, other] } });
+    harness.setDraft({ prompt: "", images: [], files: [] });
+    let rejectSend!: (sent: boolean) => void;
+    let sending!: () => void;
+    const started = new Promise<void>(resolve => { sending = resolve; });
+    harness.sendComposerMessageToThread.mockImplementationOnce(() => { sending(); return new Promise<boolean>(resolve => { rejectSend = resolve; }); });
+    const selection = { id: "quote", text: "Answer", source: { thread_id: source.id, turn_id: "turn", item_id: "answer", start_offset: 0, end_offset: 6 } };
+    const parts = [{ type: "response_selection" as const, text: "Context\n", selection }, { type: "text" as const, text: "Question" }];
+    const submission = harness.actions.submitEditedThreadMessageFromHistory(source, "turn", userItem(), "Context\nQuestion", [], [], parts, pane);
+    await started;
+    if (switchOwner) harness.setAppState({ ...harness.getAppState(), thread: pane ? source : other, secondaryThread: pane ? other : undefined });
+    if (hideComposer) harness.setAppState({ ...harness.getAppState(), activeSessionTabID: "skills", secondaryThread: undefined });
+    if (newerDraft) harness.setDraft({ prompt: "New question", images: [], files: [], selections: [selection] }, pane);
+    rejectSend(false);
+    await submission;
+    expect(harness.restorePrimaryComposerDraft).not.toHaveBeenCalled();
+    if (pane) expect(harness.getComposerState().splitDrafts[pane].prompt).toBe(newerDraft ? "New question" : "");
+    const retained = harness.getAppState().threads.find(item => item.id === source.id)!.turns.at(-1)!;
+    expect(retained.status).toBe("failed");
+    expect(retained.items[0]).toMatchObject({ text: "Context\nQuestion", content_parts: parts });
+  });
+
   it("restores the edited draft when replacement sending fails", async () => {
     const item = userItem("item-1");
     const source = thread("source-thread", { turns: [turn("turn-1", [item])] });
     installWuuApi({ editThreadResult: thread("source-thread") });
-    const harness = buildActions({ sendResult: false });
+    const harness = buildActions({ sendResult: false, initial: { ...initialState, activeContext: projectContext(), thread: source } });
+    harness.setDraft({ prompt: "", images: [], files: [] });
 
     await harness.actions.submitEditedThreadMessageFromHistory(
       source,

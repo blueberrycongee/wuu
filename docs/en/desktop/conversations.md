@@ -40,6 +40,14 @@ If sending fails, Wuu restores the input when that composer is still empty. If y
 
 Use Stop to interrupt a task. Stopping does not undo commands or file edits, and separately managed background work may need its own stop action. Review the [current diff and command results](workspace-tools.md#review) before continuing.
 
+## Quote part of a response
+
+Select text in a completed assistant response, then choose **Add to conversation**. Choose **Comment** to add an optional comment beside the selected passage first. A compact count chip inside that conversation's input groups the selected passages, including in split view. Open it to read the quotes, edit comments, view a source, or remove a passage. You can send a quote without typing another message. Sending, queuing, and steering include both the quoted text and your comment in the model's input.
+
+Selected passages stay with their draft when switching tabs or leaving split view. Failed sends and editing held messages restore the quotes separately from the editable prompt. **View source** highlights the exact selected passage when the original response is loaded and visible. If it is hidden, unloaded, or changed, Wuu reports that the source is unavailable rather than highlighting another occurrence. Open the source conversation and load its response before trying again.
+
+Older hosts can discard quote metadata while retaining the transmitted text; older desktop clients may not display structured quotes. Use matching current host and desktop versions to retain structured quotes through editing and history recovery. Native clients show the flattened quote and comment as text.
+
 ## Fork from an earlier message
 
 Choose **Fork** on a historical message, then select where the new conversation should work:
