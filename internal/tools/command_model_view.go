@@ -270,8 +270,8 @@ func joinViewParts(stdout, stderr string, status []string, succeeded bool) strin
 }
 
 // viewLines normalizes one output stream for the model: terminal control
-// codes and carriage-return redraws are removed, surrounding blank lines are
-// trimmed, and the rest is split into lines.
+// codes are removed, carriage returns become line breaks, surrounding blank
+// lines are trimmed, and the rest is split into lines.
 func viewLines(s string) []string {
 	s = StripTerminalControls(s)
 	s = strings.TrimRight(s, " \t\n")
@@ -307,28 +307,17 @@ func keepHeadTailLines(lines []string, keep int, marker func(int) string) (strin
 
 var terminalControlPattern = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()*+][0-9A-Za-z]|\x1b[@-Z\\-_]`)
 
-// StripTerminalControls removes ANSI escape sequences and carriage-return
-// redraws from terminal output so only the text a person would finally read
-// remains. Background processes run in a pseudo-terminal, so their logs carry
-// colors and progress-bar redraws that cost tokens without adding meaning.
+// StripTerminalControls removes ANSI escape sequences and normalizes CRLF and
+// bare carriage returns to line breaks. Text before a redraw may contain a
+// diagnostic, so preserve it rather than treating this evidence as a terminal's
+// final screen. Output budgets, not redraw rules, bound the retained evidence.
 func StripTerminalControls(s string) string {
 	if !strings.ContainsAny(s, "\x1b\r") {
 		return s
 	}
 	s = terminalControlPattern.ReplaceAllString(s, "")
 	s = strings.ReplaceAll(s, "\r\n", "\n")
-	if !strings.Contains(s, "\r") {
-		return s
-	}
-	lines := strings.Split(s, "\n")
-	for i, line := range lines {
-		line = strings.TrimRight(line, "\r")
-		if idx := strings.LastIndex(line, "\r"); idx >= 0 {
-			line = line[idx+1:]
-		}
-		lines[i] = line
-	}
-	return strings.Join(lines, "\n")
+	return strings.ReplaceAll(s, "\r", "\n")
 }
 
 func viewLogRef(r shellExecutionResult) string {

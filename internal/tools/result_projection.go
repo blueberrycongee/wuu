@@ -48,7 +48,7 @@ const (
 	// projectorVersion is recorded in diagnostics so telemetry can attribute a
 	// projected result to the exact projector revision that produced it. Bump
 	// on any change that alters projected bytes for the same input.
-	projectorVersion = "8"
+	projectorVersion = "9"
 )
 
 // commandViewRenderers render the plain-text model view of command tools.

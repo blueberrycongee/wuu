@@ -186,7 +186,7 @@ func TestRenderBashModelView(t *testing.T) {
 		{
 			name:   "terminal control codes are stripped",
 			fields: map[string]any{"stdout_tail": "\x1b[32mPASS\x1b[0m\r\nbuilding 10%\rbuilding 100%\n", "stderr_tail": ""},
-			exact:  "PASS\nbuilding 100%",
+			exact:  "PASS\nbuilding 10%\nbuilding 100%",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -240,6 +240,12 @@ func TestRenderProcessModelView(t *testing.T) {
 			raw:    map[string]any{"action": "read", "process_id": "proc-2", "output": "", "start_offset": 0, "end_offset": 0, "total_bytes": 0, "process": exited},
 			want:   []string{"proc-2", "code 1"},
 			absent: []string{"offset_bytes"},
+		},
+		{
+			name:   "read preserves a diagnostic before a carriage return",
+			raw:    map[string]any{"action": "read", "process_id": "proc-2", "output": "FATAL\rstopped\r\n", "start_offset": 0, "end_offset": 15, "total_bytes": 15, "process": exited},
+			want:   []string{"proc-2", "exited with code 1", "\nFATAL\nstopped"},
+			absent: []string{"\r"},
 		},
 		{
 			name: "list has one line per process",

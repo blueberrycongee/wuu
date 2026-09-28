@@ -190,6 +190,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Command output preserves diagnostics before carriage returns in model-visible
+  bash results, process reads, and background notifications instead of silently
+  dropping them as terminal redraws.
+
 - Sidebar project folds survive restarts and renderer reloads. They were cleared
   while the project list was still loading.
 

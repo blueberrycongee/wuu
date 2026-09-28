@@ -48,7 +48,7 @@ func TestProcessCompletionChatMessageIncludesOutputTail(t *testing.T) {
 			t.Fatal("timed out waiting for natural process exit")
 		}
 	}
-	logOutput := strings.Repeat("x", processCompletionOutputBytes+512) + "hello-tail\n"
+	logOutput := strings.Repeat("x", processCompletionOutputBytes+512) + "\x1b[31mFATAL_MISSING_CONFIG\x1b[0m\rhello-tail\r\n"
 	if err := os.WriteFile(started.LogPath, []byte(logOutput), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -62,6 +62,7 @@ func TestProcessCompletionChatMessageIncludesOutputTail(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Background process " + started.ID + " exited with code 0: printf 'hello-tail\\n'",
+		"FATAL_MISSING_CONFIG\nhello-tail",
 		"hello-tail\n[last 2048 of " + strconv.Itoa(len(logOutput)) + " output bytes; read earlier output with process action=read process_id=" + started.ID + " offset_bytes=0]",
 		"without polling",
 	} {
