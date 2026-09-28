@@ -47,18 +47,22 @@ func renderBashModelView(rawText string, budgetTokens int) (string, projectionOm
 	if err := json.Unmarshal([]byte(rawText), &r); err != nil {
 		return "", projectionOmission{}, false
 	}
-	stdoutLines := viewLines(r.StdoutTail)
-	stderrLines := viewLines(r.StderrTail)
+	stdoutLines, stdoutRedraws := viewLines(r.StdoutTail)
+	stderrLines, stderrRedraws := viewLines(r.StderrTail)
+	redraws := stdoutRedraws + stderrRedraws
 	status := bashStatusLines(r)
+	if redraws > 0 && !r.StdoutTailTruncated && !r.StderrTailTruncated {
+		status = append(status, "[full log: "+viewLogRef(r)+"]")
+	}
 	marker := omittedLinesMarker("full log: " + viewLogRef(r))
 	build := func(keepOut, keepErr int) (string, int) {
 		out, omittedOut := keepHeadTailLines(stdoutLines, keepOut, marker)
 		errText, omittedErr := keepHeadTailLines(stderrLines, keepErr, marker)
-		return joinViewParts(out, errText, status, r.ExitCode == 0 && !r.TimedOut), omittedOut + omittedErr
+		return joinViewParts(out, errText, status, r.ExitCode == 0 && !r.TimedOut), omittedOut + omittedErr + redraws
 	}
 	text, _ := build(len(stdoutLines), len(stderrLines))
 	if budgetTokens <= 0 || estimateResultTokens(text) <= budgetTokens {
-		return text, projectionOmission{}, true
+		return text, projectionOmission{Lines: redraws}, true
 	}
 	size := func(keepOut, keepErr int) int {
 		candidate, _ := build(keepOut, keepErr)
@@ -208,7 +212,14 @@ func renderProcessRead(rawText string, budgetTokens int) (string, projectionOmis
 		footer = append(footer, fmt.Sprintf("[output bytes %d-%d of %d; continue with offset_bytes=%d]", r.StartOffset, r.EndOffset, r.TotalBytes, r.EndOffset))
 	}
 	footer = append(footer, r.NextSuggestions...)
-	lines := viewLines(r.Output)
+	lines, redraws := viewLines(r.Output)
+	if redraws > 0 {
+		ref := r.Process.LogPath
+		if ref == "" {
+			ref = "unavailable"
+		}
+		footer = append(footer, "[full log: "+ref+"]")
+	}
 	marker := omittedLinesMarker("page with offset_bytes")
 	build := func(keep int) (string, int) {
 		out, omitted := keepHeadTailLines(lines, keep, marker)
@@ -216,11 +227,11 @@ func renderProcessRead(rawText string, budgetTokens int) (string, projectionOmis
 			out = "(no new output)"
 		}
 		parts := append([]string{header, out}, footer...)
-		return strings.Join(parts, "\n"), omitted
+		return strings.Join(parts, "\n"), omitted + redraws
 	}
 	text, _ := build(len(lines))
 	if budgetTokens <= 0 || estimateResultTokens(text) <= budgetTokens {
-		return text, projectionOmission{}, true
+		return text, projectionOmission{Lines: redraws}, true
 	}
 	keep := largestFitting(len(lines), budgetTokens, func(k int) int {
 		candidate, _ := build(k)
@@ -270,16 +281,16 @@ func joinViewParts(stdout, stderr string, status []string, succeeded bool) strin
 }
 
 // viewLines normalizes one output stream for the model: terminal control
-// codes are removed, carriage returns become line breaks, surrounding blank
-// lines are trimmed, and the rest is split into lines.
-func viewLines(s string) []string {
-	s = StripTerminalControls(s)
+// codes are removed, redraws are folded, surrounding blank lines are trimmed,
+// and the rest is split into lines.
+func viewLines(s string) ([]string, int) {
+	s, redraws := StripTerminalControls(s)
 	s = strings.TrimRight(s, " \t\n")
 	s = strings.TrimLeft(s, "\n")
 	if strings.TrimSpace(s) == "" {
-		return nil
+		return nil, redraws
 	}
-	return strings.Split(s, "\n")
+	return strings.Split(s, "\n"), redraws
 }
 
 func omittedLinesMarker(recovery string) func(int) string {
@@ -307,17 +318,29 @@ func keepHeadTailLines(lines []string, keep int, marker func(int) string) (strin
 
 var terminalControlPattern = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()*+][0-9A-Za-z]|\x1b[@-Z\\-_]`)
 
-// StripTerminalControls removes ANSI escape sequences and normalizes CRLF and
-// bare carriage returns to line breaks. Text before a redraw may contain a
-// diagnostic, so preserve it rather than treating this evidence as a terminal's
-// final screen. Output budgets, not redraw rules, bound the retained evidence.
-func StripTerminalControls(s string) string {
+// StripTerminalControls removes ANSI escapes and preserves the first and last
+// frame of each carriage-return redraw sequence. It marks and counts omitted
+// middle frames so callers can offer the raw log for recovering diagnostics.
+func StripTerminalControls(s string) (string, int) {
 	if !strings.ContainsAny(s, "\x1b\r") {
-		return s
+		return s, 0
 	}
 	s = terminalControlPattern.ReplaceAllString(s, "")
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	return strings.ReplaceAll(s, "\r", "\n")
+	lines := strings.Split(s, "\n")
+	omitted := 0
+	for i, line := range lines {
+		// PTYs may turn CRLF into CRCRLF. Trailing carriage returns do not
+		// start a new frame and must not introduce extra blank lines.
+		frames := strings.Split(strings.Trim(line, "\r"), "\r")
+		if len(frames) <= 2 {
+			lines[i] = strings.Join(frames, "\n")
+			continue
+		}
+		count := len(frames) - 2
+		omitted += count
+		lines[i] = fmt.Sprintf("%s\n... %d redraws omitted ...\n%s", frames[0], count, frames[len(frames)-1])
+	}
+	return strings.Join(lines, "\n"), omitted
 }
 
 func viewLogRef(r shellExecutionResult) string {

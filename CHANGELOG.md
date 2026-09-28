@@ -191,8 +191,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Fixed
 
 - Command output preserves diagnostics before carriage returns in model-visible
-  bash results, process reads, and background notifications instead of silently
-  dropping them as terminal redraws.
+  bash results, process reads, and background notifications. Long redraw sequences
+  retain their first and last frames with an omission count and raw-log reference;
+  PTY line endings no longer introduce extra blank lines.
 
 - Sidebar project folds survive restarts and renderer reloads. They were cleared
   while the project list was still loading.

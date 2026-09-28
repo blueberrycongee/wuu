@@ -14,7 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
-func TestBashRunRecordsFullLogSHA256(t *testing.T) {
+func TestBashRunPreservesDiagnosticViewAndFullLog(t *testing.T) {
 	t.Setenv(projectionModeEnvVar, "active")
 	root := t.TempDir()
 	kit := newShellTestToolkit(t, root)

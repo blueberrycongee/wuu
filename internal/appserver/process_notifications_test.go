@@ -73,6 +73,22 @@ func TestProcessCompletionChatMessageIncludesOutputTail(t *testing.T) {
 	if strings.Contains(msg.Content, `"process_id"`) {
 		t.Fatalf("completion notification should be plain text: %s", msg.Content)
 	}
+	if err := os.WriteFile(started.LogPath, []byte("FATAL\rhidden diagnostic\rstopped\r\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, notification := range []providers.ChatMessage{
+		processCompletionChatMessage(manager, terminal),
+		processRecheckChatMessage(manager, terminal.Process),
+	} {
+		for _, want := range []string{"FATAL\n", "1 redraws omitted", "\nstopped\n", started.LogPath} {
+			if !strings.Contains(notification.Content, want) {
+				t.Fatalf("notification lost redraw evidence or recovery %q: %s", want, notification.Content)
+			}
+		}
+		if strings.Contains(notification.Content, "\n\n") {
+			t.Fatalf("PTY line ending introduced a blank line: %s", notification.Content)
+		}
+	}
 }
 
 func TestForwardProcessNotificationsQueuesOnlyNaturalOwnerExit(t *testing.T) {

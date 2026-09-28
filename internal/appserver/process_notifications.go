@@ -95,11 +95,19 @@ func processOutputTailLines(manager *process.Manager, id string) []string {
 	if err != nil {
 		return nil
 	}
-	output := strings.TrimRight(tools.StripTerminalControls(tools.RedactToolOutput(snapshot.Output)), " \t\n")
+	output, redraws := tools.StripTerminalControls(tools.RedactToolOutput(snapshot.Output))
+	output = strings.TrimRight(output, " \t\n")
 	if strings.TrimSpace(output) == "" {
 		output = "(no output)"
 	}
 	lines := []string{output}
+	if redraws > 0 {
+		ref := snapshot.Process.LogPath
+		if ref == "" {
+			ref = "unavailable"
+		}
+		lines = append(lines, "[full log: "+tools.RedactToolOutput(ref)+"]")
+	}
 	if snapshot.StartOffset > 0 {
 		lines = append(lines, fmt.Sprintf("[last %d of %d output bytes; read earlier output with process action=read process_id=%s offset_bytes=0]", snapshot.EndOffset-snapshot.StartOffset, snapshot.TotalBytes, id))
 	}
