@@ -1201,7 +1201,9 @@
   padding: 10px 44px 8px var(--composer-text-start);
   color: var(--ink);
   font-size: var(--font-body);
-  line-height: 24px;
+  /* Drafts read at the message rhythm: typed text keeps its leading once
+   * it is sent. */
+  line-height: var(--conversation-reading-line-height);
 }
 
 .hero-composer-wrap .composer textarea {

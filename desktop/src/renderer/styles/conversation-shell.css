@@ -59,6 +59,11 @@
   --conversation-turn-boundary-gap: 16px;
   --conversation-turn-item-gap: 8px;
   --conversation-image-gap: max(var(--space-6), calc(var(--conversation-message-font-size) * 1.2));
+  /* One leading for everything read or typed in a conversation: answers,
+     sent queries and every composer draft, including composers outside
+     .conversation-pane. A relaxed body line makes mixed CJK, Latin and inline
+     code read as one continuous answer instead of a stack of dense rows. */
+  --conversation-reading-line-height: round(nearest, calc(var(--conversation-message-font-size) * 1.8), 2px);
   --conversation-composer-clearance: 12px;
 }
 
@@ -101,9 +106,6 @@
   /* Reading rhythm follows the user's text size. Keep related blocks
    * closer than sections, with headings attached to the text below.
    * Prose, previews and composer share the same column measure. */
-  /* A relaxed body line makes mixed CJK, Latin and inline code read as one
-     continuous answer instead of a stack of dense rows. */
-  --conversation-reading-line-height: round(nearest, calc(var(--conversation-message-font-size) * 1.8), 2px);
   /* Providers may confirm an answer only after streaming finishes. Its
      provisional process placement must use the final reading rhythm. */
   --conversation-commentary-line-height: var(--conversation-reading-line-height);
