@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Plugins and skills have separate catalog tabs. Plugin cards group by status,
+  and dedicated detail pages show contributions and inline settings.
+- Model services settings separate the default model from connected services,
+  with catalog-backed connections, custom endpoints, and model visibility controls.
+  Editing a service can preserve the current workspace default.
 - Long conversations spend less renderer CPU time rebuilding composer query
   history and recognizing legacy internal notifications, preserving history recall
   and message visibility.

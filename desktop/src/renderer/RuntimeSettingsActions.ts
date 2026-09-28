@@ -18,7 +18,7 @@ import type {
   PermissionMode,
 } from "./ComposerTypes";
 import { lastEffortForRuntimeModel, writeDraftApproveForMeMemory, writeDraftPermissionMemory, writeDraftRuntimeMemory } from "./DraftRuntimeMemory";
-import { isCodexProvider, normalizedVariantForProviderModel } from "./RuntimeHelpers";
+import { isCodexProvider, normalizedVariantForProviderModel, providerIsCodex } from "./RuntimeHelpers";
 import { runtimeViewForSession } from "./SessionRuntimeState";
 import { showErrorToast } from "./Toast";
 import { translateCurrent } from "./i18n";
@@ -175,6 +175,8 @@ export function createRuntimeSettingsActions(
               : {}),
             ...(connection.create_provider ? { create_provider: true } : {}),
             ...(connection.remove_model ? { remove_model: connection.remove_model } : {}),
+            ...(connection.add_model ? { add_model: connection.add_model } : {}),
+            ...(connection.keep_selection ? { keep_selection: true } : {}),
             ...(connection.reuse_codex_credentials === undefined
               ? {}
               : { reuse_codex_credentials: connection.reuse_codex_credentials }),
@@ -184,6 +186,7 @@ export function createRuntimeSettingsActions(
     );
     const connectionChanged =
       Boolean(nextConnection?.remove_model) ||
+      Boolean(nextConnection?.add_model) ||
       Boolean(nextConnection?.create_provider) ||
       Boolean(nextConnection?.api_key) ||
       Boolean(nextConnection?.auth_token) ||
@@ -243,7 +246,9 @@ export function createRuntimeSettingsActions(
         targetThread?.id,
         update.speed,
       );
-      if (scope === "workspace") {
+      // Saving another service leaves the default, and the draft memory that
+      // mirrors it, where they were.
+      if (scope === "workspace" && !nextConnection?.keep_selection) {
         // Settings writes the workspace default, which is the same "last pick"
         // the composer memory tracks. Recording it keeps the next new
         // conversation on the model just chosen in Settings instead of an older
@@ -424,7 +429,11 @@ export function createRuntimeSettingsActions(
           }
         : current.initialized,
     }));
-    void loadCodexModelsForProvider(updated.provider);
+    // Only a Codex subscription has a live model list to load.
+    const providers = updated.providers ?? state.initialized.providers;
+    if (providerIsCodex({ ...state.initialized, providers }, updated.provider)) {
+      void loadCodexModelsForProvider(updated.provider);
+    }
   }
 
   function toggleCodexRuntimeMenu(

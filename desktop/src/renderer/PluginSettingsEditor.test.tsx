@@ -41,10 +41,11 @@ describe("PluginSettingsEditor", () => {
     expect(field("feature.enabled").querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked).toBe(false);
     expect(field("display.name").querySelector<HTMLInputElement>('input[type="text"]')?.value).toBe("Custom name");
     expect(field("retry.count").querySelector<HTMLInputElement>('input[type="number"]')?.value).toBe("5");
-    expect(Array.from(field("display.mode").querySelectorAll("option")).map((option) => option.value)).toEqual(["compact", "roomy"]);
+    expect(field("display.mode").querySelector(".select-menu-value")?.textContent).toBe("roomy");
+    await act(async () => field("display.mode").querySelector<HTMLButtonElement>(".select-menu-trigger")?.click());
+    expect(Array.from(document.querySelectorAll(".select-menu-item-label")).map((option) => option.textContent)).toEqual(["compact", "roomy"]);
     expect(field("display.name").textContent).toContain("Shown in the header");
-    expect(field("display.name").textContent).toContain("默认值：Default name");
-    expect(field("display.name").textContent).toContain("用户范围");
+    // Only a setting narrower than the user's own scope says where it applies.
     expect(field("retry.count").textContent).toContain("工作区范围");
   });
 

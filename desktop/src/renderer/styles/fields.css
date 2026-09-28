@@ -63,7 +63,7 @@
 
 /* Host settings and extension settings share the same switch. The target is
  * larger than its track; font growth never stretches the track or the thumb. */
-:is(.settings-switch, .plugin-ui-checkbox input) {
+:is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch) {
   --switch-track-color: var(--gray-350);
   position: relative;
   display: inline-block;
@@ -81,7 +81,7 @@
   cursor: pointer;
 }
 
-:is(.settings-switch, .plugin-ui-checkbox input)::before {
+:is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch)::before {
   content: "";
   position: absolute;
   left: calc(50% - 16px);
@@ -95,7 +95,8 @@
 }
 
 .settings-switch-thumb,
-.plugin-ui-checkbox input::after {
+.plugin-ui-checkbox input::after,
+.plugin-setting-switch::after {
   content: "";
   position: absolute;
   left: calc(50% - 14px);
@@ -110,26 +111,28 @@
 }
 
 .settings-switch[aria-checked="true"],
-.plugin-ui-checkbox input:checked {
+.plugin-ui-checkbox input:checked,
+.plugin-setting-switch:checked {
   --switch-track-color: var(--wuu-color-text, var(--gray-900));
 }
 
 .settings-switch[aria-checked="true"] .settings-switch-thumb,
-.plugin-ui-checkbox input:checked::after {
+.plugin-ui-checkbox input:checked::after,
+.plugin-setting-switch:checked::after {
   transform: translateX(12px);
 }
 
-:is(.settings-switch, .plugin-ui-checkbox input):hover:not(:disabled)::before {
+:is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch):hover:not(:disabled)::before {
   border-color: var(--ink);
 }
 
-:is(.settings-switch, .plugin-ui-checkbox input):disabled {
+:is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch):disabled {
   opacity: 0.55;
   cursor: default;
 }
 
 @media (pointer: coarse) {
-  :is(.settings-switch, .plugin-ui-checkbox input) {
+  :is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch) {
     width: 44px;
     min-height: 44px;
   }

@@ -2299,100 +2299,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   }
 }
 
-/* A plugin row splits into the part that opens the detail and the switch,
- * which ends on the same axis as the skill rows' chevrons. */
-.catalog-row.catalog-plugin-row {
-  grid-template-columns: minmax(0, 1fr) auto;
-  padding: 0;
-  cursor: default;
-}
-
-.catalog-row-main {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-3);
-  border: 0;
-  padding: var(--space-3) 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.catalog-row-attention {
-  display: inline-flex;
-  color: var(--warning);
-}
-
-.catalog-row-attention[data-tone="danger"] {
-  color: var(--danger);
-}
-
-.plugin-settings-editor {
-  display: grid;
-  grid-column: 2 / -1;
-  gap: 14px;
-  margin-top: 12px;
-  border-top: var(--wuu-border-subtle, 1px solid var(--skills-section-border));
-  padding-top: 14px;
-}
-
-/* The plugin detail dialog reuses the skill-preview shell but keeps its own
- * rhythm: the identity block (artwork / name / description) is separated
- * from the body by a single hairline, and the body is a flex column with one
- * 16px gap — no stacked margins competing with the Modal grid gap. */
-
-.skill-preview-dialog.plugin-detail-dialog {
-  width: min(620px, calc(100vw - 64px));
-  height: auto;
-  max-height: min(84vh, 860px);
-  grid-template-rows: auto auto auto auto auto;
-  overflow: auto;
-}
-
-.skill-preview-dialog.plugin-detail-dialog .environment-dialog-header {
-  padding-bottom: 0;
-}
-
-.plugin-detail-dialog .environment-dialog-icon .skill-artwork {
-  width: round(up, calc(var(--font-ui) * 3), 2px);
-  height: round(up, calc(var(--font-ui) * 3), 2px);
-  box-shadow: var(--shadow-soft);
-}
-
-.plugin-detail-dialog .environment-dialog-icon .skill-artwork svg {
-  width: var(--icon-size-xl);
-  height: var(--icon-size-xl);
-}
-
-.plugin-detail-dialog h2 {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.skill-preview-dialog.plugin-detail-dialog .environment-dialog-footer {
-  margin-top: 0;
-}
-
-.plugin-detail-body {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-4);
-  border-top: 1px solid var(--hairline);
-  padding: var(--space-4) 0 0;
-}
-
-.plugin-detail-meta {
-  margin: 0;
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  line-height: 1.4;
-}
-
 /* Alerts are the one boxed element in this panel: they carry a state, not a
  * grouping, so a soft tone plus an icon replaces bare colored text. */
 .plugin-detail-notices {
@@ -2405,7 +2311,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   min-width: 0;
   align-items: flex-start;
   gap: 8px;
-  border: 1px solid var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 32%, transparent);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   background: var(--warning-soft);
@@ -2415,7 +2321,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 }
 
 .plugin-detail-notice.is-error {
-  border-color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 32%, transparent);
   background: var(--danger-soft);
 }
 
@@ -2435,219 +2341,56 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   user-select: text;
 }
 
-/* Sections follow the settings language: a quiet label plus whitespace,
- * hairline-separated rows, no painted boxes. */
-.plugin-detail-section {
-  display: grid;
-  min-width: 0;
-  gap: 8px;
-}
-
-.plugin-detail-section-title {
-  margin: 0;
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  font-weight: 500;
-  line-height: 1.3;
-}
-
-.plugin-detail-empty {
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  line-height: 1.45;
-}
-
-/* Permissions are grouped by capability and rendered as readable chips;
- * the raw manifest code stays available as a tooltip. Groups share one
- * label column sized by the longest label, so chips start on one edge in
- * every language and font size. */
-.plugin-permission-groups {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: max-content minmax(0, 1fr);
-  align-items: baseline;
-  gap: var(--space-2) var(--space-3);
-}
-
-.plugin-permission-group {
-  display: contents;
-}
-
 .plugin-permission-group-label {
   color: var(--ink-muted);
   font-size: var(--font-sm);
   line-height: 1.6;
 }
 
-.plugin-permission-chips {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.plugin-permission-chip {
-  border: 1px solid var(--skills-section-border);
-  border-radius: var(--radius-pill);
-  padding: 1px 10px;
-  background: var(--wuu-badge-neutral-background, var(--skill-artwork-neutral-bg));
-  color: var(--ink-secondary);
-  font-size: var(--font-sm);
-  line-height: 1.7;
-  white-space: nowrap;
-}
-
-/* Path and fingerprint are diagnostic data, not trust information — they
- * live behind a collapsed summary at the bottom of the dialog. */
-.plugin-detail-technical {
-  min-width: 0;
-  border-top: 1px solid var(--hairline-soft);
-  padding-top: 12px;
-}
-
-.plugin-detail-technical summary {
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  line-height: 1.45;
-  cursor: pointer;
-  user-select: none;
-}
-
-.plugin-detail-technical[open] summary {
-  margin-bottom: 8px;
-}
-
-.plugin-detail-provenance {
+/* Plugin settings read as one settings group: label and description on the
+ * left, the control pinned right, and a status line only when there is
+ * something to say (saving, an error, or a restart the change still needs). */
+.plugin-settings-editor {
   display: grid;
   min-width: 0;
-  margin: 0;
-}
-
-.plugin-detail-provenance-row {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(76px, max-content) minmax(0, 1fr);
-  gap: 14px;
-  border-bottom: 1px solid var(--hairline-soft);
-  padding: 6px 0;
-}
-
-.plugin-detail-provenance-row:last-child {
-  border-bottom: 0;
-}
-
-.plugin-detail-provenance dt,
-.plugin-detail-provenance dd {
-  min-width: 0;
-  margin: 0;
-  font-size: var(--font-sm);
-  line-height: 1.45;
-}
-
-.plugin-detail-provenance dt {
-  color: var(--ink-muted);
-}
-
-.plugin-detail-provenance dd {
-  color: var(--ink-secondary);
-  overflow-wrap: anywhere;
-  user-select: text;
-}
-
-.plugin-detail-provenance code {
-  font-family: var(--font-mono);
-  font-size: var(--appearance-code-size);
-}
-
-.plugin-detail-dialog .plugin-settings-editor {
-  grid-column: auto;
-  margin-top: 0;
+  gap: var(--space-3);
 }
 
 .plugin-settings-editor-title {
-  grid-column: 1 / -1;
   margin: 0;
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  font-weight: 400;
-  line-height: 1.3;
+  color: var(--ink-strong);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-semibold);
+  line-height: 1.4;
 }
 
-.plugin-detail-dialog .environment-dialog-footer .extension-package-more {
-  margin-right: auto;
-}
-
-.plugin-settings-editor-page {
-  display: flex;
-  grid-column: auto;
-  flex-direction: column;
-  gap: 0;
-  width: 100%;
-  margin-top: 0;
-  border-top: 0;
-  padding-top: 0;
-}
-
-.plugin-setting {
-  display: flex;
+.plugin-settings-editor-body {
+  display: grid;
   min-width: 0;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-  padding: 16px 0;
-}
-
-.plugin-settings-editor-page {
-  padding: 0 16px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
+  padding-inline: var(--card-padding);
 }
 
-.plugin-settings-editor-page .plugin-setting {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(160px, 240px);
-  column-gap: 24px;
+.plugin-settings-editor-body > .plugin-contribution-conflict,
+.plugin-settings-editor-body > .plugin-contribution-warning {
+  margin-block: var(--space-3);
 }
 
-.plugin-settings-editor .plugin-setting:last-child {
+.plugin-setting.settings-row {
+  row-gap: 0;
+}
+
+.plugin-setting:last-child {
   border-bottom: 0;
 }
 
-.plugin-settings-editor-page input[type="text"],
-.plugin-settings-editor-page input[type="number"],
-.plugin-settings-editor-page select {
-  background: var(--field-bg);
-  border-color: var(--field-border);
+.plugin-setting .settings-input {
+  width: min(15em, 100%);
 }
 
-.plugin-settings-editor-page .plugin-setting-heading {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-}
-
-.plugin-settings-editor-page .plugin-setting-heading label {
-  flex: initial;
-}
-
-.plugin-settings-editor-page .plugin-setting > p {
-  grid-column: 1;
-}
-
-.plugin-settings-editor-page .plugin-setting-control {
-  grid-column: 2;
-  grid-row: 1 / 3;
-  align-content: center;
-}
-
-.plugin-settings-editor-page .plugin-setting-status {
-  grid-column: 1 / -1;
-}
-
-@container settings-page (max-width: 520px) {
-  .plugin-settings-editor-page .plugin-setting {
-    display: flex;
-  }
+.plugin-setting-select {
+  min-width: min(10em, 100%);
 }
 
 .plugin-contribution-conflict,
@@ -2679,78 +2422,21 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   min-width: 180px;
 }
 
-.plugin-setting-heading,
-.plugin-setting-control,
 .plugin-setting-status {
   display: flex;
   min-width: 0;
-  gap: 8px;
-}
-
-.plugin-setting-heading {
-  flex-direction: row;
+  grid-column: 1 / -1;
   flex-wrap: wrap;
   align-items: baseline;
-  justify-content: space-between;
-}
-
-.plugin-setting-heading label {
-  min-width: 0;
-  flex: 1 1 240px;
-  color: var(--ink);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  line-height: 1.4;
-}
-
-.plugin-setting-heading span {
-  flex: none;
-  white-space: nowrap;
-}
-
-.plugin-setting-heading span,
-.plugin-setting-default,
-.plugin-setting-status,
-.plugin-setting p {
-  color: var(--ink-tertiary);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.plugin-setting p {
-  margin: 0;
-  max-width: 68ch;
+  gap: var(--space-2);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
-.plugin-setting-control {
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-.plugin-setting input[type="text"],
-.plugin-setting input[type="number"],
-.plugin-setting select {
-  width: min(240px, 100%);
-  min-width: 0;
-  min-height: 32px;
-  flex: 0 1 240px;
-  border: 1px solid var(--skills-section-border);
-  border-radius: var(--radius-sm);
-  padding: 5px 9px;
-  background: var(--surface);
-  color: var(--ink);
-}
-
-.plugin-setting-status {
-  flex-wrap: wrap;
-  align-items: flex-start;
-  overflow-wrap: anywhere;
-}
-
-.plugin-setting-status span {
-  min-width: 0;
-  flex: 1 1 320px;
+.plugin-setting-status:not(:empty) {
+  margin-top: var(--space-1);
 }
 
 .plugin-setting-status.is-error {
@@ -2760,6 +2446,17 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 .plugin-setting-status button {
   min-height: auto;
   padding: 0;
+}
+
+@container settings-page (max-width: 32em) {
+  .plugin-setting[data-setting-type="string"],
+  .plugin-setting[data-setting-type="number"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .plugin-setting .settings-input {
+    width: 100%;
+  }
 }
 
 .skills-empty {

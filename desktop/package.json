@@ -52,6 +52,7 @@
     "test:e2e:sidebar-scroll-fade": "npm run build && electron scripts/sidebar-scroll-fade-e2e.cjs",
     "test:e2e:background-image": "electron-vite build && electron scripts/background-image-e2e.cjs",
     "test:e2e:ptc-settings": "electron-vite build && electron scripts/ptc-settings-e2e.cjs",
+    "test:e2e:model-services": "npm run build:core && electron-vite build && electron scripts/model-services-e2e.cjs",
     "test:e2e:project-agent": "electron-vite build && electron scripts/project-agent-gate-e2e.cjs",
     "test:e2e:settings-sidebar-hit": "npm run build && electron scripts/settings-sidebar-hit-e2e.cjs",
     "test:e2e:browser-pip": "node scripts/browser-pip-e2e.cjs",

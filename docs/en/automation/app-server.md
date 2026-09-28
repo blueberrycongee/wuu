@@ -55,7 +55,8 @@ A conversation keeps its own model and permission selection. Change it through
 `config/model/update` with `thread_id` while the conversation is idle. This does
 not change workspace defaults. A busy conversation returns `thread_busy`, allowing
 the client to wait and retry. A request without `thread_id` updates defaults
-for future conversations. Do not try to override a turn's permission mode through
+for future conversations; add `keep_selection: true` to save a provider's
+connection without making it the default. Do not try to override a turn's permission mode through
 `turn/start`.
 
 ## Run a project

@@ -59,7 +59,7 @@ describe("SkillsCatalog", () => {
 
     expect(onInstallPluginPackage).toHaveBeenCalledOnce();
     expect(container.querySelector(".skills-catalog-error")).toBeNull();
-    expect(container.textContent).toContain("当前运行时未发现 Skills");
+    expect(container.textContent).toContain("暂无 Skills");
   });
 
   it("shows install errors as a toast instead of inline catalog state", async () => {
@@ -242,12 +242,16 @@ describe("SkillsCatalog", () => {
       });
     };
 
-    expect(sectionRows()).toHaveLength(2);
+    expect(sectionRows()).toEqual([[expect.stringContaining("Scheduler")]]);
 
     await search("existing");
+    expect(sectionRows()).toEqual([]);
+    await selectTab("skills");
     expect(sectionRows()).toEqual([[expect.stringContaining("existing-skill")]]);
 
     await search("scheduler");
+    expect(sectionRows()).toEqual([]);
+    await selectTab("plugins");
     expect(sectionRows()).toEqual([[expect.stringContaining("Scheduler")]]);
 
     await search("no such extension");
@@ -273,7 +277,7 @@ describe("SkillsCatalog", () => {
           extensionInventory={[
             {
               id: "plugin:user:cua-mac",
-              name: "cua-mac",
+              name: "Computer Use for Mac",
               description: "Control macOS apps through Accessibility.",
               kind: "plugin",
               icon: { name: "layout-grid" },
@@ -320,8 +324,10 @@ describe("SkillsCatalog", () => {
     expect(container.textContent).toContain("Control macOS apps through Accessibility.");
     // A catalog without package actions lists plugins read-only.
     expect(container.querySelector('[role="switch"]')).toBeNull();
-    expect(container.querySelector(".catalog-row-meta")?.textContent).toBe("cua-mac");
     expect(container.querySelector(".skill-artwork-plugin-brand [data-icon=\"layout-grid\"]")).toBeTruthy();
+    // A plugin's skill names its plugin the way the plugin card does.
+    await selectTab("skills");
+    expect(container.querySelector(".catalog-row-meta")?.textContent).toBe("Computer Use for Mac");
     // Non-plugin inventory records (the plugin's MCP server) stay out of the
     // plugin list.
     expect(container.textContent).not.toContain("computer");
@@ -395,14 +401,12 @@ describe("SkillsCatalog", () => {
     });
 
     expect(attentionLabels()).toEqual(["需要你授权后才能运行"]);
-    // Turning on a plugin that asks for permissions shows them first.
+    // A plugin waiting for approval opens on the permissions it asks for.
     await act(async () => {
-      pluginSwitch("docs")!.click();
+      skillButton("docs")!.click();
     });
     expect(onUpdateExtensionPackage).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain("file.read");
-    expect(document.body.textContent).toContain("第三方");
-    expect(document.body.textContent).toContain("技术信息");
 
     const grantButton = buttonByText("授权并启用");
     await act(async () => {
@@ -537,6 +541,10 @@ describe("SkillsCatalog", () => {
       "确定移除用户插件 community-tools？Wuu 中已安装的插件文件将被删除。",
     );
     expect(onRemovePluginPackage).toHaveBeenCalledWith("community-tools");
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="plugin-page-back"]')?.click();
+    });
+    await selectTab("skills");
     expect(container.textContent).toContain("remaining-skill");
   });
 
@@ -578,11 +586,10 @@ describe("SkillsCatalog", () => {
     });
 
     expect(attentionLabels()).toEqual(["更新待授权"]);
-    expect(pluginSwitch("update-demo")?.getAttribute("aria-checked")).toBe("true");
     await act(async () => {
       skillButton("update-demo")?.click();
     });
-    expect(document.body.textContent).toContain("版本 2.0.0 已就绪");
+    expect(document.body.textContent).toContain("有可用更新");
     await act(async () => {
       buttonByText("授权并更新")?.click();
     });
@@ -636,7 +643,7 @@ describe("SkillsCatalog", () => {
       root.render(<SkillsCatalog extensionInventory={extensionInventory} />);
     });
 
-    expect(attentionLabels()).toEqual(["Plugin process exited before initialize", "内容已更改，需要重新授权"]);
+    expect(attentionLabels()).toEqual(["启动失败", "内容已更改，需要重新授权"]);
     await act(async () => {
       skillButton("broken")?.click();
     });
@@ -693,7 +700,7 @@ describe("SkillsCatalog", () => {
     });
   });
 
-  it("grants a pending plugin that asks for no permissions directly from its switch", async () => {
+  it("grants a pending plugin that asks for no permissions from its page", async () => {
     installSkillList([]);
     const onUpdateExtensionPackage = vi.fn().mockResolvedValue(undefined);
     await act(async () => {
@@ -716,16 +723,19 @@ describe("SkillsCatalog", () => {
       );
     });
 
-    expect(pluginSwitch("paper")?.getAttribute("aria-checked")).toBe("false");
+    expect(attentionLabels()).toEqual(["需要你授权后才能运行"]);
     await act(async () => {
-      pluginSwitch("paper")!.click();
+      skillButton("paper")!.click();
+    });
+    expect(container.querySelector(".plugin-permission-row")).toBeNull();
+    await act(async () => {
+      buttonByText("授权并启用")?.click();
     });
     expect(onUpdateExtensionPackage).toHaveBeenCalledWith({
       id: "plugin:user:paper",
       fingerprint: "sha256:paper",
       action: "grant",
     });
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it("opens a skill preview dialog from a skill row", async () => {
@@ -847,15 +857,21 @@ function skillButton(name: string): HTMLButtonElement | undefined {
 }
 
 function pluginSwitch(name: string): HTMLButtonElement | undefined {
-  return Array.from(container.querySelectorAll<HTMLButtonElement>('.catalog-row [role="switch"]')).find(
-    (button) => button.closest(".catalog-row")?.querySelector(".catalog-row-title")?.textContent === name,
+  return Array.from(container.querySelectorAll<HTMLButtonElement>('.plugin-card [role="switch"]')).find(
+    (button) => button.closest(".plugin-card")?.querySelector(".plugin-card-name")?.textContent === name,
   );
 }
 
 function attentionLabels(): string[] {
-  return Array.from(container.querySelectorAll(".catalog-row-attention")).map(
-    (mark) => mark.getAttribute("aria-label") ?? "",
+  return Array.from(container.querySelectorAll(".plugin-attention-row .plugin-attention-reason")).map(
+    (reason) => reason.textContent ?? "",
   );
+}
+
+async function selectTab(tab: "plugins" | "skills"): Promise<void> {
+  await act(async () => {
+    container.querySelector<HTMLButtonElement>(`[data-tab="${tab}"]`)?.click();
+  });
 }
 
 function buttonByText(text: string): HTMLButtonElement | undefined {

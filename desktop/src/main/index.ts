@@ -36,6 +36,7 @@ import type {
   ConfigAdvancedUpdateResult,
   ConfigGeneralUpdateResult,
   ConfigCodexModelsResult,
+  ConfigModelCatalogProvidersResult,
   ConfigModelCatalogRefreshResult,
   ConfigModelUpdateResult,
   EngineListResult,
@@ -1634,6 +1635,13 @@ app.whenReady().then(async () => {
       provider: provider ?? "",
     }),
   );
+  ipcMain.handle("wuu:config-model-catalog-providers", (event, provider?: string) =>
+    appServerRequest<ConfigModelCatalogProvidersResult>(
+      event,
+      "config/model-catalog/providers",
+      provider ? { provider } : {},
+    ),
+  );
   ipcMain.handle("wuu:config-model-catalog-refresh", (event) =>
     appServerRequest<ConfigModelCatalogRefreshResult>(
       event,
@@ -1654,6 +1662,8 @@ app.whenReady().then(async () => {
         type?: string;
         create_provider?: boolean;
         remove_model?: string;
+        add_model?: string;
+        keep_selection?: boolean;
         reuse_codex_credentials?: boolean;
         approve_for_me?: boolean;
       },
@@ -1683,6 +1693,8 @@ app.whenReady().then(async () => {
         ...(connection?.type === undefined ? {} : { type: connection.type }),
         ...(connection?.create_provider ? { create_provider: true } : {}),
         ...(connection?.remove_model ? { remove_model: connection.remove_model } : {}),
+        ...(connection?.add_model ? { add_model: connection.add_model } : {}),
+        ...(connection?.keep_selection ? { keep_selection: true } : {}),
         ...(connection?.reuse_codex_credentials === undefined
           ? {}
           : { reuse_codex_credentials: connection.reuse_codex_credentials }),

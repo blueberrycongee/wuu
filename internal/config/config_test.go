@@ -873,8 +873,8 @@ func TestUpdateProviderSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := UpdateProviderSelection(path, "next", "chosen-model"); err != nil {
-		t.Fatalf("UpdateProviderSelection: %v", err)
+	if err := UpdateProvider(path, "next", ProviderChange{Model: "chosen-model", Select: true}); err != nil {
+		t.Fatalf("UpdateProvider: %v", err)
 	}
 
 	cfg, _, err := LoadProjectConfig(dir)
@@ -919,8 +919,8 @@ func TestUpdateProviderRuntimePersistsConnectionFields(t *testing.T) {
 
 	baseURL := "https://custom.example.com/v1"
 	apiKey := "sk-custom"
-	if err := UpdateProviderRuntime(path, "next", "custom-model", &baseURL, &apiKey, nil, nil, nil, nil, nil); err != nil {
-		t.Fatalf("UpdateProviderRuntime: %v", err)
+	if err := UpdateProvider(path, "next", ProviderChange{Model: "custom-model", BaseURL: &baseURL, APIKey: &apiKey, Select: true}); err != nil {
+		t.Fatalf("UpdateProvider: %v", err)
 	}
 
 	cfg, _, err := LoadProjectConfig(dir)
@@ -968,8 +968,8 @@ func TestUpdateProviderRuntimePersistsPermissionMode(t *testing.T) {
 	}
 
 	mode := PermissionModeUnconfined
-	if err := UpdateProviderRuntime(path, "old", "old-model", nil, nil, nil, nil, nil, &mode, nil); err != nil {
-		t.Fatalf("UpdateProviderRuntime: %v", err)
+	if err := UpdateProvider(path, "old", ProviderChange{Model: "old-model", Select: true, PermissionMode: &mode}); err != nil {
+		t.Fatalf("UpdateProvider: %v", err)
 	}
 
 	cfg, _, err := LoadProjectConfig(dir)
@@ -1011,8 +1011,8 @@ func TestCreateProviderRuntimePersistsNewProvider(t *testing.T) {
 
 	baseURL := "https://custom.example.com/v1"
 	apiKey := "sk-custom"
-	if err := CreateProviderRuntime(path, "custom-1", nil, "custom-model", &baseURL, &apiKey, nil, nil, nil, nil, nil); err != nil {
-		t.Fatalf("CreateProviderRuntime: %v", err)
+	if err := UpdateProvider(path, "custom-1", ProviderChange{Create: true, Model: "custom-model", BaseURL: &baseURL, APIKey: &apiKey, Select: true}); err != nil {
+		t.Fatalf("UpdateProvider: %v", err)
 	}
 
 	cfg, _, err := LoadProjectConfig(dir)
@@ -1044,9 +1044,8 @@ func TestGrokBuildDefaultsAndRuntimeCreation(t *testing.T) {
 	if err := os.WriteFile(path, []byte(orig), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	providerType := "grok-build"
-	if err := CreateProviderRuntime(path, "grok-build", &providerType, "grok-4.5", nil, nil, nil, nil, nil, nil, nil); err != nil {
-		t.Fatalf("CreateProviderRuntime: %v", err)
+	if err := UpdateProvider(path, "grok-build", ProviderChange{Create: true, Type: "grok-build", Model: "grok-4.5", Select: true}); err != nil {
+		t.Fatalf("UpdateProvider: %v", err)
 	}
 	cfg, _, err := LoadProjectConfig(dir)
 	if err != nil {
@@ -1076,8 +1075,8 @@ func TestUpdateProviderRuntimePersistsExplicitCodexCredentialReuse(t *testing.T)
 		t.Fatal(err)
 	}
 	enabled := true
-	if err := UpdateProviderRuntime(path, "openai-codex", "gpt-6-astra", nil, nil, nil, nil, nil, nil, &enabled); err != nil {
-		t.Fatalf("UpdateProviderRuntime: %v", err)
+	if err := UpdateProvider(path, "openai-codex", ProviderChange{Model: "gpt-6-astra", ReuseCodexCredentials: &enabled, Select: true}); err != nil {
+		t.Fatalf("UpdateProvider: %v", err)
 	}
 	cfg, _, err := LoadProjectConfig(dir)
 	if err != nil {

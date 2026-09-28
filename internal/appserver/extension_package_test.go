@@ -180,8 +180,45 @@ func TestExtensionCatalogRefreshRediscoversPackages(t *testing.T) {
 	}
 	result := remarshal[ExtensionCatalogRefreshResult](t, responseByID(t, parseOutput(t, out.String()), "refresh")["result"])
 	record := findPluginExtensionRecord(t, result.ExtensionInventory, "fresh")
-	if record.Name != "fresh" || record.ApprovalState != ExtensionApprovalPending {
+	if record.Name != "Fresh plugin" || record.ApprovalState != ExtensionApprovalPending {
 		t.Fatalf("refreshed package record = %+v", record)
+	}
+}
+
+// People see a plugin by the name and words its manifest gives them; the id
+// is only the fallback when a manifest names nothing.
+func TestExtensionInventoryUsesManifestPresentation(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.Plugins = []pluginpkg.Plugin{
+		{
+			Manifest: pluginpkg.Manifest{
+				ID: "cua-mac", Name: "cua-mac", Description: "Control macOS apps through Accessibility.",
+				Interface: json.RawMessage(`{"displayName":"Computer Use for Mac","shortDescription":"Operate Mac apps with native input.","longDescription":"Uses Accessibility for semantic control and native input as a fallback.","developerName":"Wuu"}`),
+			},
+			Source: "bundled", Official: true, SubjectID: "plugin:bundled:cua-mac", Fingerprint: "sha256:cua",
+		},
+		{
+			Manifest: pluginpkg.Manifest{ID: "todo", Name: "TODO", Description: "Visible task tracking."},
+			Source:   "bundled", Official: true, SubjectID: "plugin:bundled:todo", Fingerprint: "sha256:todo",
+		},
+		{
+			Manifest: pluginpkg.Manifest{ID: "bare"},
+			Source:   "user", SubjectID: "plugin:user:bare", Fingerprint: "sha256:bare",
+		},
+	}
+	srv := New(rt, &lockedBuffer{})
+	inventory := srv.currentExtensionInventory()
+
+	cua := findPluginExtensionRecord(t, inventory, "cua-mac")
+	if cua.Name != "Computer Use for Mac" || cua.Description != "Operate Mac apps with native input." ||
+		cua.LongDescription != "Uses Accessibility for semantic control and native input as a fallback." || cua.Developer != "Wuu" {
+		t.Fatalf("interface presentation not used: %+v", cua)
+	}
+	if todo := findPluginExtensionRecord(t, inventory, "todo"); todo.Name != "TODO" || todo.Description != "Visible task tracking." || todo.LongDescription != "" {
+		t.Fatalf("manifest name and description not used: %+v", todo)
+	}
+	if bare := findPluginExtensionRecord(t, inventory, "bare"); bare.Name != "bare" || bare.Description != "" {
+		t.Fatalf("an unnamed plugin lost its id: %+v", bare)
 	}
 }
 

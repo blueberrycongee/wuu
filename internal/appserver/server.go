@@ -1055,6 +1055,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleAuthXAILoginPoll(ctx, req)
 	case MethodAuthXAILoginCancel:
 		return s.handleAuthXAILoginCancel(req)
+	case MethodConfigCatalogProviders:
+		return s.handleConfigModelCatalogProviders(req)
 	case MethodConfigCatalogRefresh:
 		if !s.startBackground(func() {
 			if err := s.handleConfigModelCatalogRefresh(ctx, req); err != nil {

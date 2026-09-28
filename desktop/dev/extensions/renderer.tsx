@@ -59,15 +59,42 @@ const record = (
 });
 
 const initialPlugins: ExtensionInventoryRecord[] = empty ? [] : [
-  record("automation", "Automation", "clock", "Scheduled Agent prompts and recurring work."),
-  record("memory", "Memory", "brain", "Durable user memory notebook and management view.", {
-    contributions: { settings: [{ id: "autosave", type: "boolean", title: "自动整理记忆", description: "会话结束后整理可复用的偏好与经验。", default: true, scope: "user", apply: "live" }] },
+  record("automation", "Automation", "clock", "Schedule prompts and recurring Agent work.", {
+    developer: "Wuu",
+    long_description: "Runs saved prompts on a schedule, either as new conversations or by waking an existing one, so recurring checks and reports happen without you.",
+    contributions: { navigation: [{ id: "automations", view: "automations", title: "Automations" }] },
   }),
-  record("dream", "Dream", "moon", "Background consolidation of durable workspace memory.", { enabled: false, runtime_state: "stopped" }),
-  record("cua-mac", "Computer Use for Mac", "layout-grid", "Control macOS apps through Accessibility, ScreenCaptureKit, and native input.", {
+  record("ask-user", "Ask User", "message-square", "Offer focused questions without pausing a task.", { developer: "Wuu", enabled: false, runtime_state: "stopped" }),
+  record("memory", "Memory", "brain", "Remember durable preferences, feedback, references, and lessons.", {
+    developer: "Wuu",
+    contributions: {
+      settings: [
+        { id: "autosave", type: "boolean", title: "自动整理记忆", description: "会话结束后整理可复用的偏好与经验。", default: true, scope: "user", apply: "live" },
+        { id: "recall", type: "enum", title: "召回方式", enum: ["相关时", "每轮"], default: "相关时", scope: "workspace", apply: "live" },
+        { id: "limit", type: "number", title: "最多保留条目", default: 200, scope: "user", apply: "restart" },
+      ],
+      navigation: [{ id: "memory", view: "memory", title: "Memory" }],
+    },
+  }),
+  record("dream", "Dream", "moon", "Consolidate durable workspace knowledge in the background.", { developer: "Wuu", enabled: false, runtime_state: "stopped" }),
+  record("todo", "TODO", "list-todo", "Track a visible task checklist.", { developer: "Wuu" }),
+  record("goal", "Goal", "check-circle", "Continue toward a persistent goal.", {
+    developer: "Wuu",
+    contributions: { commands: [{ id: "goal", title: "Set a goal", kind: "prompt_template" }] },
+  }),
+  record("cua-mac", "Computer Use for Mac", "layout-grid", "Observe and operate Mac apps with native mouse and keyboard control.", {
+    developer: "Wuu",
+    long_description: "Uses macOS Accessibility for semantic control, ScreenCaptureKit for observation, and native input when an app offers no accessible controls.",
     runtime_state: "failed",
     last_error: "wuu-cua-mac exited: accessibility permission not granted",
     requested_permissions: ["accessibility.read", "accessibility.control", "screen.capture", "app.activate", "input.synthesize"],
+  }),
+  record("paper-atelier", "Paper Atelier", "", "A cream-paper appearance for pastel wallpapers.", {
+    package_source: "user",
+    approval_state: "granted",
+    developer: "Community",
+    provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "paper-atelier", path: "~/.wuu/plugins/paper-atelier" },
+    contributions: { themes: [{ id: "paper", name: "Paper", base: "light", tokens: {} }] },
   }),
   record("git-delivery", long ? "Git Delivery with an exceptionally long community plugin name" : "Git Delivery", "", long
     ? "Publishes finished work to a review branch, opens the pull request, and keeps its description in sync with the conversation summary."
@@ -75,6 +102,7 @@ const initialPlugins: ExtensionInventoryRecord[] = empty ? [] : [
     package_source: "user",
     approval_state: "pending",
     runtime_state: "inactive",
+    enabled: false,
     provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "git-delivery", path: "~/.wuu/plugins/git-delivery" },
     requested_permissions: ["files.read", "process.spawn", "network.connect", "session.read"],
   }),
@@ -98,8 +126,8 @@ window.wuu = {
   setMessageFlowFontSize: async () => undefined,
   listSkills: async () => ({ skills: structuredClone(skills) }),
   readSkillContent: async ({ name }: { name: string }) => ({ content: `# ${name}\n\n示例技能内容，仅用于预览。` }),
-  getPluginSetting: async () => ({ value: true }),
-  setPluginSetting: async () => ({ value: true }),
+  getPluginSetting: async ({ key }: { key: string }) => ({ value: ({ autosave: true, recall: "相关时", limit: 200 } as Record<string, boolean | string | number>)[key] }),
+  setPluginSetting: async ({ value }: { value: boolean | string | number }) => ({ value }),
   getPluginDiagnostics: async () => ({ diagnostics: [] }),
   unsupportedMethods: [],
 } as unknown as WuuDesktopApi;
