@@ -31,6 +31,16 @@ html[data-focus-modality="keyboard"] :is(
   outline: none;
 }
 
+/* A switch's target is wider than its track; the ring follows the pill. */
+html[data-focus-modality="keyboard"] :is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch):focus-visible {
+  outline: none;
+}
+
+html[data-focus-modality="keyboard"] :is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch):focus-visible::before {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 /* The heading clips overflow for long titles, so the title button draws its
  * ring inside its own box instead of outside it. */
 html[data-focus-modality="keyboard"] .conversation-title-rename:focus-visible {

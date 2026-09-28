@@ -62,17 +62,57 @@
 }
 
 /* Host settings and extension settings share the same switch. The target is
- * larger than its track; font growth never stretches the track or the thumb. */
+ * larger than its track; font growth never stretches the track or the thumb.
+ * Switches end their rows, so the end margin gives back the target's overhang
+ * and the visible track ends where fields and buttons do.
+ *
+ * Geometry: a 32x20 track drawn inside its own box (no border adding to it),
+ * centered in the target, and a 16px thumb inset 2px on every side, so the
+ * thumb's center is the track's center in both positions. On is the ink pill
+ * with a paper thumb; off is a quiet ink tint with a raised thumb. Fills carry
+ * the state, so the track needs no outline. */
+:root {
+  --switch-target-width: 36px;
+  --switch-track-width: 32px;
+  --switch-track-height: 20px;
+  --switch-thumb-inset: 2px;
+  --switch-thumb-size: calc(var(--switch-track-height) - var(--switch-thumb-inset) * 2);
+  --switch-track-off: color-mix(in srgb, var(--ink) 20%, transparent);
+  --switch-track-off-hover: color-mix(in srgb, var(--ink) 28%, transparent);
+  --switch-track-on: var(--ink-strong);
+  --switch-track-on-hover: color-mix(in srgb, var(--ink-strong) 88%, var(--paper));
+  --switch-thumb-on: var(--paper);
+  --switch-thumb-off: var(--paper);
+  /* Only the off thumb sits on a quiet tint and needs lift; the on thumb
+   * already contrasts fully with its pill. */
+  --switch-thumb-shadow-off: 0 1px 2px var(--shadow-color-strong), 0 0 0 0.5px var(--shadow-color-medium);
+}
+
+/* A paper thumb would sink into the dark tint, so the off thumb lifts to the
+ * soft ink tone there. */
+:root[data-theme="dark"] {
+  --switch-thumb-off: var(--ink-soft);
+}
+
+@media (pointer: coarse) {
+  :root {
+    --switch-target-width: 44px;
+  }
+}
+
 :is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch) {
-  --switch-track-color: var(--gray-350);
+  --switch-track-color: var(--switch-track-off);
+  --switch-thumb-color: var(--switch-thumb-off);
+  --switch-thumb-shadow: var(--switch-thumb-shadow-off);
   position: relative;
   display: inline-block;
   order: 2;
   justify-self: end;
   flex: 0 0 auto;
-  width: 36px;
+  width: var(--switch-target-width);
   height: var(--control-field-height);
   margin: 0;
+  margin-inline-end: calc((var(--switch-track-width) - var(--switch-target-width)) / 2);
   padding: 0;
   appearance: none;
   border: 0;
@@ -84,11 +124,11 @@
 :is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch)::before {
   content: "";
   position: absolute;
-  left: calc(50% - 16px);
-  top: calc(50% - 10px);
-  width: 32px;
-  height: 20px;
-  border: 1px solid var(--control-boundary);
+  left: calc(50% - var(--switch-track-width) / 2);
+  top: calc(50% - var(--switch-track-height) / 2);
+  box-sizing: border-box;
+  width: var(--switch-track-width);
+  height: var(--switch-track-height);
   border-radius: var(--radius-pill);
   background: var(--switch-track-color);
   transition: background var(--motion-fast) var(--ease-out);
@@ -99,31 +139,39 @@
 .plugin-setting-switch::after {
   content: "";
   position: absolute;
-  left: calc(50% - 14px);
-  top: calc(50% - 8px);
-  width: 16px;
-  height: 16px;
+  left: calc(50% - var(--switch-track-width) / 2 + var(--switch-thumb-inset));
+  top: calc(50% - var(--switch-thumb-size) / 2);
+  width: var(--switch-thumb-size);
+  height: var(--switch-thumb-size);
   border-radius: var(--radius-circle);
-  background: var(--gray-0);
-  box-shadow: var(--shadow-soft);
-  transition: transform var(--motion-fast) var(--ease-out);
+  background: var(--switch-thumb-color);
+  box-shadow: var(--switch-thumb-shadow);
+  transition:
+    transform var(--motion-fast) var(--ease-out),
+    background var(--motion-fast) var(--ease-out);
   pointer-events: none;
 }
 
 .settings-switch[aria-checked="true"],
 .plugin-ui-checkbox input:checked,
 .plugin-setting-switch:checked {
-  --switch-track-color: var(--wuu-color-text, var(--gray-900));
+  --switch-track-color: var(--switch-track-on);
+  --switch-thumb-color: var(--switch-thumb-on);
+  --switch-thumb-shadow: none;
 }
 
 .settings-switch[aria-checked="true"] .settings-switch-thumb,
 .plugin-ui-checkbox input:checked::after,
 .plugin-setting-switch:checked::after {
-  transform: translateX(12px);
+  transform: translateX(calc(var(--switch-track-width) - var(--switch-thumb-size) - var(--switch-thumb-inset) * 2));
 }
 
-:is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch):hover:not(:disabled)::before {
-  border-color: var(--ink);
+:is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch):hover:not(:disabled) {
+  --switch-track-color: var(--switch-track-off-hover);
+}
+
+:is(.settings-switch[aria-checked="true"], .plugin-ui-checkbox input:checked, .plugin-setting-switch:checked):hover:not(:disabled) {
+  --switch-track-color: var(--switch-track-on-hover);
 }
 
 :is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch):disabled {
@@ -133,7 +181,6 @@
 
 @media (pointer: coarse) {
   :is(.settings-switch, .plugin-ui-checkbox input, .plugin-setting-switch) {
-    width: 44px;
     min-height: 44px;
   }
 }

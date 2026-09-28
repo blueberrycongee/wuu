@@ -73,7 +73,6 @@
  * line. The switch sits above the card's open target, so the copy reserves
  * its footprint instead of running under it. */
 .plugin-card {
-  --plugin-card-switch-width: 36px;
   position: relative;
   display: grid;
   min-width: 0;
@@ -98,7 +97,7 @@
   background: transparent;
   color: var(--ink);
   padding: var(--card-padding);
-  padding-inline-end: calc(var(--card-padding) + var(--plugin-card-switch-width) + var(--space-2));
+  padding-inline-end: calc(var(--card-padding) + var(--switch-target-width) + var(--space-2));
   text-align: left;
 }
 
@@ -126,19 +125,12 @@
   -webkit-line-clamp: 2;
 }
 
-/* Centered on the name line; the target is wider than the track, so the
- * track's right edge lands on the card padding. */
+/* Centered on the name line. The switch's end margin puts its track's right
+ * edge on the card padding, mirroring the mark on the left. */
 .plugin-card > .plugin-card-switch {
   position: absolute;
   top: calc(var(--card-padding) + (var(--font-ui) * 1.4 - var(--control-field-height)) / 2);
-  right: calc(var(--card-padding) - (var(--plugin-card-switch-width) - 32px) / 2);
-  width: var(--plugin-card-switch-width);
-}
-
-@media (pointer: coarse) {
-  .plugin-card {
-    --plugin-card-switch-width: 44px;
-  }
+  right: var(--card-padding);
 }
 
 /* Off plugins keep their place but step back. */
