@@ -140,9 +140,10 @@ export async function activate(api) {
     .plugin-automation-history-status { display:inline-flex; color:var(--ink-muted); }
     .plugin-automation-history-status svg { width:var(--icon-size-sm); height:var(--icon-size-sm); }
     .plugin-automation-more { position:relative; }
-    .plugin-automation-more summary { display:grid; place-items:center; list-style:none; cursor:pointer; width:2.2em; height:2.2em; border-radius:var(--radius-xs); color:var(--ink-soft); }
-    .plugin-automation-more summary:hover { background:var(--surface-2); }
-    .plugin-automation-more-menu { position:absolute; top:100%; right:0; z-index:5; padding:var(--menu-inset); background:var(--menu-bg); border:1px solid var(--menu-border); border-radius:var(--menu-shell-radius); box-shadow:var(--menu-shadow); }
+    .plugin-automation-more summary { display:grid; place-items:center; list-style:none; cursor:pointer; width:2.2em; height:2.2em; border-radius:var(--radius-xs); color:var(--wuu-color-text-muted, var(--ink-soft)); }
+    .plugin-automation-more summary svg { width:var(--icon-size-sm); height:var(--icon-size-sm); }
+    .plugin-automation-more summary:hover, .plugin-automation-more[open] summary { color:var(--wuu-color-text, var(--ink)); background:var(--wuu-control-secondary-background, var(--surface-3)); }
+    .plugin-automation-more-menu { position:absolute; top:100%; right:0; z-index:5; width:max-content; margin-top:6px; padding:var(--menu-inset); background:var(--menu-bg); border:1px solid var(--menu-border); border-radius:var(--menu-shell-radius); box-shadow:var(--menu-shadow); }
     .plugin-automation-sr { position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
     .plugin-automation :is(button,summary):focus-visible { outline:1px solid var(--ink-soft); outline-offset:2px; box-shadow:none; }
     .plugin-automation :is(input,textarea):focus-visible { outline:0; border-color:var(--ink-soft); box-shadow:none; }
@@ -254,6 +255,11 @@ export async function activate(api) {
   function CloseIcon() {
     return h("svg", { viewBox: "0 0 16 16", fill: "none", "aria-hidden": true },
       h("path", { d: "m4 4 8 8m0-8-8 8", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }));
+  }
+
+  function MoreIcon() {
+    return h("svg", { viewBox: "0 0 16 16", fill: "currentColor", "aria-hidden": true },
+      h("circle", { cx: "3.5", cy: "8", r: "1.25" }), h("circle", { cx: "8", cy: "8", r: "1.25" }), h("circle", { cx: "12.5", cy: "8", r: "1.25" }));
   }
 
   function CheckIcon() {
@@ -401,6 +407,21 @@ export async function activate(api) {
     return raw.endsWith("ms") ? value : raw.endsWith("s") ? value * 1000 : value;
   }
 
+  // Escape and outside clicks dismiss only this menu; the editor's own Escape
+  // would otherwise close the panel and discard the draft.
+  function MoreMenu({ tr, busy, onRemove }) {
+    const menu = React.useRef(null);
+    React.useEffect(() => {
+      const outside = (event) => { if (menu.current?.open && !menu.current.contains(event.target)) menu.current.open = false; };
+      document.addEventListener("pointerdown", outside);
+      return () => document.removeEventListener("pointerdown", outside);
+    }, []);
+    return h("details", { className: "plugin-automation-more", ref: menu,
+      onKeyDown: (event) => { if (event.key !== "Escape" || !menu.current.open) return; event.stopPropagation(); menu.current.open = false; menu.current.querySelector("summary").focus(); } },
+      h("summary", { "aria-label": tr("automation.more"), title: tr("automation.more") }, h(MoreIcon)),
+      h("div", { className: "plugin-automation-more-menu" }, h(Button, { variant: "danger", disabled: busy, onClick: onRemove }, tr("automation.remove"))));
+  }
+
   function Editor({ tr, task, initial, workspace, threads, busy, error, onSave, onPause, onRemove, onClose, runs, readOnly, closing, separator }) {
     const [draft, setDraft] = React.useState(() => initial || draftFor(task));
     const [saved, setSaved] = React.useState(() => initial || draftFor(task));
@@ -429,9 +450,8 @@ export async function activate(api) {
           !task ? h("h2", { className: "plugin-automation-detail-title" }, tr("automation.new"))
             : readOnly ? h("span", { className: "plugin-automation-detail-title" })
             : h(Checkbox, { className: "plugin-automation-enable", label: tr("automation.enable"), checked: !task.paused, disabled: busy, onChange: onPause }),
-          task && !readOnly ? h(React.Fragment, null,
-            h("details", { className: "plugin-automation-more" }, h("summary", { "aria-label": tr("automation.more") }, "⋯"), h("div", { className: "plugin-automation-more-menu" }, h(Button, { variant: "danger", disabled: busy, onClick: onRemove }, tr("automation.remove"))))) : null,
-          h(Button, { className: "plugin-automation-detail-close", variant: "ghost", disabled: busy, "aria-label": tr("automation.close"), onClick: onClose }, h(CloseIcon))),
+          task && !readOnly ? h(MoreMenu, { tr, busy, onRemove }) : null,
+          h(Button, { className: "plugin-automation-detail-close", variant: "ghost", disabled: busy, "aria-label": tr("automation.close"), title: tr("automation.close"), onClick: onClose }, h(CloseIcon))),
         h("form", { className: "plugin-automation-form", onSubmit: save },
           h("fieldset", { disabled: busy || readOnly, style: { border: 0, padding: 0, margin: 0, minWidth: 0, display: "contents" } },
             h("div", { className: "plugin-automation-form-identity" },

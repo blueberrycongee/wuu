@@ -5242,6 +5242,7 @@ export function App(): JSX.Element {
           <ConversationTitleActions
             state={state}
             compactNavigation={compactNavigation}
+            pluginPageVisible={showingPrimaryPluginView}
             onStartNewThread={startNewThreadWithComposerFocus}
             environmentToggleRef={environmentToggleRef}
             environmentPanelVisible={environmentPanelVisible}

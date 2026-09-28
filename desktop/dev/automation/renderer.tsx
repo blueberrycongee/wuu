@@ -7,7 +7,11 @@ import { DesktopWorkbench, PluginViewContent, WorkbenchController } from "../../
 import { AppBackground } from "../../src/renderer/background/AppBackground";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { startFocusModality } from "../../src/renderer/FocusModality";
+import { initialState } from "../../src/renderer/AppState";
+import { ConversationTitleActions, ConversationTitleContent } from "../../src/renderer/ConversationShellRenderers";
+import { usePrimaryPluginViewCover } from "../../src/renderer/PrimaryPluginViewCover";
 import source from "../../../internal/plugin/bundled/automation/desktop.js?raw";
+import manifest from "../../../internal/plugin/bundled/automation/plugin.json";
 const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
 import "../../src/renderer/styles.css";
 
@@ -39,7 +43,8 @@ const host = new PluginHost({ react: React,
     return task;
   },
 });
-await host.activateGeneration({ pluginId: "automation", generation: "preview", register: activate });
+// The manifest's navigation entry is what makes Automations a sidebar destination.
+await host.activateGeneration({ pluginId: "automation", generation: "preview", contributions: { navigation: manifest.contributes.navigation.map(({ id, title, view, order }) => ({ id, title, view, order })) }, register: activate });
 const controller = new WorkbenchController(host, {}, { getItem: () => null, setItem: () => {}, removeItem: () => {} });
 const region = params.get("region") || "workspace";
 const portalRegion = region === "primary" || region === "overlay" || region === "auxiliary";
@@ -47,13 +52,28 @@ if (portalRegion) await controller.openPluginView("automation", "automation.cata
 const style = document.createElement("style");
 style.textContent = "html,body,#root { width:100%; height:100%; margin:0; } .plugin-view-content {height:100%;} body {background:var(--paper);} ";
 document.head.append(style);
+const noop = () => {};
+// Portal regions keep the production titlebar, so its Back and page actions
+// are inspected against the real plugin page rather than a mock header.
+function Titlebar() {
+  const [rightPanelOpen, setRightPanelOpen] = React.useState(false);
+  const pluginPageVisible = usePrimaryPluginViewCover(controller);
+  const state = { ...initialState, activeContext: { kind: "project" as const, project_id: "wuu", cwd: workspace.root } };
+  return <header className="titlebar">
+    <div className="title-block"><ConversationTitleContent state={state} activeTitle="检查自动化插件的执行与恢复流程" onStartNewThread={noop} pluginHost={host} workbenchController={controller} /></div>
+    <ConversationTitleActions state={state} compactNavigation={params.has("compact")} pluginPageVisible={pluginPageVisible} onStartNewThread={noop}
+      environmentToggleRef={React.createRef()} environmentPanelVisible={false} onToggleEnvironmentPanel={noop}
+      rightPanelOpen={rightPanelOpen} onToggleRightPanel={() => setRightPanelOpen(!rightPanelOpen)} />
+  </header>;
+}
 function Preview() {
   const [value, setValue] = React.useState("daily");
+  const pluginPageVisible = usePrimaryPluginViewCover(controller);
   const content = <PluginViewContent controller={controller} pluginId="automation" viewTypeId="automation.catalog" />;
   return <><AppBackground />{params.has("reference") ? <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--hairline)" }}>
     <SettingsRow title="Wuu 原生设置行"><SelectMenu ariaLabel="原生计划" value={value} onChange={setValue} options={[{ value: "daily", label: "每天" }, { value: "weekdays", label: "工作日" }]} /></SettingsRow>
   </div> : null}{portalRegion ? <>
-    <main className="conversation-pane" style={{ flex: 1 }}><header /></main>
+    <main className="conversation-pane" style={{ flex: 1 }} data-primary-plugin-view={pluginPageVisible ? "" : undefined}><Titlebar /></main>
     <DesktopWorkbench host={host} controller={controller} />
   </> : region === "settings" ? <div className="settings-main" style={{ flex: 1 }}><div className="settings-page" style={{ height: "100%" }}>{content}</div></div>
     : <div className="workspace-panel-body" style={{ minHeight: 0, flex: 1 }}>{content}</div>}</>;

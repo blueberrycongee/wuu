@@ -105,6 +105,20 @@ it("supports keyboard selection and dismisses only the open menu with Escape", a
   expect(ui.container.querySelector('[role="listbox"]')).toBeNull();
   expect(ui.container.querySelector("aside")).not.toBeNull();
   expect(document.activeElement?.getAttribute("aria-label")).toBe("运行于");
+
+  await ui.edit("textarea", "Unsaved instructions");
+  const trigger = ui.container.querySelector<HTMLElement>('summary[aria-label="更多操作"]')!;
+  const more = trigger.closest("details")!;
+  const openMore = async () => act(async () => { more.open = true; more.dispatchEvent(new Event("toggle")); });
+  await openMore();
+  await act(async () => more.querySelector("button")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  expect(more.open).toBe(false);
+  expect(document.activeElement).toBe(trigger);
+  expect(ui.container.querySelector("textarea")!.value).toBe("Unsaved instructions");
+  await openMore();
+  await act(async () => document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+  expect(more.open).toBe(false);
+  expect(ui.container.querySelector("aside")).not.toBeNull();
 });
 
 it("resizes the editor with pointer and keyboard, clamps bounds, and preserves width when reopened", async () => {

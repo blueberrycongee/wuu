@@ -393,14 +393,31 @@ export function ConversationTitleContent({
   workbenchController,
 }: ConversationTitleContentProps): JSX.Element {
   const { t } = useI18n();
+  const host = pluginHost ?? desktopPluginHost;
   const controller = workbenchController ?? desktopWorkbenchController;
   const workbenchSnapshot = useSyncExternalStore(
     controller.subscribe,
     controller.getSnapshot,
     controller.getSnapshot,
   );
+  const navigationEntries = useSyncExternalStore(
+    (listener) => host.subscribe(listener),
+    () => host.getNavigationEntries(),
+    () => host.getNavigationEntries(),
+  );
   const activePrimaryView = workbenchSnapshot.views.find(
     (view) => view.region === "primary" && view.id === workbenchSnapshot.activeViewByRegion.primary,
+  );
+  // A declared destination keeps its sidebar row after it closes, so closing
+  // its only page would just repeat Back. Close is offered only where it
+  // removes a row: API-opened pages and extra instances.
+  const closable = activePrimaryView !== undefined && (
+    !navigationEntries.some((entry) =>
+      entry.pluginId === activePrimaryView.pluginId && entry.view === activePrimaryView.viewTypeId)
+    || workbenchSnapshot.views.filter((view) =>
+      view.region === "primary"
+      && view.pluginId === activePrimaryView.pluginId
+      && view.viewTypeId === activePrimaryView.viewTypeId).length > 1
   );
   const headingRef = useRef<HTMLHeadingElement>(null);
   const restoreFocus = useRef(false);
@@ -463,7 +480,7 @@ export function ConversationTitleContent({
   return (
     <>
       <PluginSlot
-        host={pluginHost ?? desktopPluginHost}
+        host={host}
         id={showingPrimaryWorkbench ? "workspace.header" : "conversation.header"}
         context={Object.freeze({
           scope: showingPrimaryWorkbench ? "workspace" : "conversation",
@@ -479,7 +496,7 @@ export function ConversationTitleContent({
         host={pluginHost}
         controller={controller}
       />
-      {activePrimaryView ? <button
+      {activePrimaryView && closable ? <button
         className="icon-button"
         data-wuu-component="primary-view-close"
         type="button"
@@ -499,6 +516,8 @@ export function ConversationTitleContent({
 export type ConversationTitleActionsProps = {
   state: AppState;
   compactNavigation?: boolean;
+  /** A primary plugin page covers the conversation and its environment panel. */
+  pluginPageVisible?: boolean;
   onStartNewThread: () => void;
   environmentToggleRef: RefObject<HTMLButtonElement | null>;
   environmentPanelVisible: boolean;
@@ -510,6 +529,7 @@ export type ConversationTitleActionsProps = {
 export function ConversationTitleActions({
   state,
   compactNavigation,
+  pluginPageVisible,
   onStartNewThread,
   environmentToggleRef,
   environmentPanelVisible,
@@ -520,7 +540,9 @@ export function ConversationTitleActions({
   const { t } = useI18n();
   const projectActions = useProjectActions();
   const thread = state.activePane === "secondary" ? state.secondaryThread : state.thread;
-  const control = thread?.session_control;
+  // Controls for the covered conversation leave with it; new conversations
+  // and the right panel stay available on every page.
+  const control = pluginPageVisible ? undefined : thread?.session_control;
   const controlLabel = control ? t(`sessionControl.${control.state === "taken_over" ? "takenOver" : control.state}`) : "";
   // Project membership is independent of user intervention; only extensions
   // expose ownership state here.
@@ -537,6 +559,7 @@ export function ConversationTitleActions({
   if (compactNavigation) {
     return <div className="title-actions">{management}<CompactConversationActions
       canStartNewThread={Boolean(state.activeContext)} onStartNewThread={onStartNewThread}
+      environmentAvailable={!pluginPageVisible}
       environmentToggleRef={environmentToggleRef} environmentPanelVisible={environmentPanelVisible}
       onToggleEnvironmentPanel={onToggleEnvironmentPanel} rightPanelOpen={rightPanelOpen}
       onToggleRightPanel={onToggleRightPanel}
@@ -545,7 +568,7 @@ export function ConversationTitleActions({
   return (
     <div className="title-actions">
       {management}
-      <button
+      {pluginPageVisible ? null : <button
             ref={environmentToggleRef}
             className={`icon-button environment-toggle-button${environmentPanelVisible ? " active" : ""}`}
             type="button"
@@ -558,7 +581,7 @@ export function ConversationTitleActions({
             onClick={onToggleEnvironmentPanel}
           >
             <Info />
-      </button>
+      </button>}
       <button
             className="icon-button side-panel-toggle-button"
             type="button"

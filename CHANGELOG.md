@@ -195,6 +195,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Automations and other plugin pages in the sidebar leave through Back alone.
+  The close button that repeated it stays for pages that closing removes from
+  the sidebar, and the environment info toggle for the covered conversation is
+  gone. An automation's More actions menu closes on Escape or an outside click
+  without closing the editor and its unsaved edits, and keeps Delete on one line.
+
 - Sidebar project folds survive restarts and renderer reloads. They were cleared
   while the project list was still loading.
 
