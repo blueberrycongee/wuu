@@ -94,7 +94,7 @@ The standard unit is 4px, multiplied by density to form `--space-1`. The existin
 | --- | --- | --- |
 | Pane edge to first and last glyph | `--pane-inset` | 20px |
 | Page inset | `--page-padding` | 32px |
-| Between groups | `--section-gap` | 32px |
+| Between groups, including the latest turn and the input | `--section-gap` | 32px |
 | Heading to content | `--section-heading-gap` | 16px |
 | Card and panel insets | `--card-padding`, `--panel-padding` | 16px, 20px |
 | Compact block/inline padding | `--compact-padding-block`, `--compact-padding-inline` | 8px, 12px |

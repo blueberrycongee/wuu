@@ -77,7 +77,11 @@
       1px
     )
   );
-  --conversation-composer-clearance: 12px;
+  /* Transparent dock space above the composer frame. It is part of the gap
+     between the latest turn and the input, so the clearance subtracts it and
+     that gap stays one group gap at every window width. */
+  --conversation-dock-top-space: clamp(12px, calc(0.833333vw + 8.666667px), 16px);
+  --conversation-composer-clearance: calc(var(--section-gap) - var(--conversation-dock-top-space));
 }
 
 .conversation-pane {

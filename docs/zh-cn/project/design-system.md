@@ -94,7 +94,7 @@ Renderer 当前定义了默认值为朱红的 `--wuu-accent` 和 `--wuu-accent-p
 | --- | --- | --- |
 | 面板边缘到首尾字形 | `--pane-inset` | 20px |
 | 页面内缩 | `--page-padding` | 32px |
-| 分组到分组 | `--section-gap` | 32px |
+| 分组到分组，包括最新一轮对话到输入框 | `--section-gap` | 32px |
 | 标题到内容 | `--section-heading-gap` | 16px |
 | 卡片、面板内缩 | `--card-padding`、`--panel-padding` | 16px、20px |
 | 紧凑区域纵向、横向内缩 | `--compact-padding-block`、`--compact-padding-inline` | 8px、12px |
