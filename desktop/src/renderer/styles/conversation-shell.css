@@ -64,6 +64,19 @@
      .conversation-pane. A relaxed body line makes mixed CJK, Latin and inline
      code read as one continuous answer instead of a stack of dense rows. */
   --conversation-reading-line-height: round(nearest, calc(var(--conversation-message-font-size) * 1.8), 2px);
+  /* Framed text (the query bubble and the composer draft) keeps its glyphs
+     --card-padding from the frame on every side: the block padding gives back
+     the line's half-leading, so the inset holds at every text size. The floor
+     keeps the first line clear of the composer's rounded corner where narrow
+     panes reduce the card padding. */
+  --conversation-framed-text-inset-block: max(
+    var(--space-2),
+    round(
+      nearest,
+      calc(var(--card-padding) - (var(--conversation-reading-line-height) - var(--conversation-message-font-size)) / 2),
+      1px
+    )
+  );
   --conversation-composer-clearance: 12px;
 }
 

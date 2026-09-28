@@ -726,7 +726,12 @@
 
 .composer-expand-button {
   position: absolute;
-  top: var(--composer-corner-inset);
+  /* Centered on the first text line, never closer to the corner than the
+   * send circle; the text's own leading sets the axis at every size. */
+  top: max(
+    var(--composer-corner-inset),
+    calc(var(--composer-text-padding-top) + var(--conversation-reading-line-height) / 2 - 14px)
+  );
   right: var(--composer-corner-inset);
   width: 28px;
   height: 28px;
@@ -808,6 +813,9 @@
   /* Text and toolbar glyphs share the card inset used by code blocks and
    * bubbles; the toolbar subtracts its 32px buttons' glyph offset. */
   --composer-text-start: var(--card-padding);
+  /* The draft keeps the query bubble's framed-text inset, so typed and sent
+   * text sit the same distance from their frames. */
+  --composer-text-padding-top: var(--conversation-framed-text-inset-block);
   --composer-control-icon-inset: calc((32px - var(--icon-size)) / 2);
   /* Filled corner controls keep their visible edge this far from the frame
    * on both sides, so the send circle and the expand button share an axis. */
@@ -839,6 +847,7 @@
 
 .hero-composer-wrap .composer {
   --composer-text-start: var(--card-padding);
+  --composer-text-padding-top: 16px;
   min-height: var(--composer-collapsed-min-height);
 }
 
@@ -1198,7 +1207,7 @@
   border: 0;
   outline: 0;
   background: transparent;
-  padding: 10px 44px 8px var(--composer-text-start);
+  padding: var(--composer-text-padding-top) 44px 8px var(--composer-text-start);
   color: var(--ink);
   font-size: var(--font-body);
   /* Drafts read at the message rhythm: typed text keeps its leading once
@@ -1206,16 +1215,12 @@
   line-height: var(--conversation-reading-line-height);
 }
 
+/* The hero keeps a roomier top inset than the dock composer; its expand
+   control follows the first line through --composer-text-padding-top. */
 .hero-composer-wrap .composer textarea {
   height: 78px;
   min-height: 78px;
-  padding: 16px 52px 8px var(--composer-text-start);
-}
-
-/* The hero keeps a roomier top inset than the dock composer. Move its
-   expand control by the same amount so both still share one first-row axis. */
-.hero-composer-wrap .composer-expand-button {
-  top: 14px;
+  padding-right: 52px;
 }
 
 .document-composer-wrap .composer-stack {
@@ -1250,12 +1255,15 @@
   box-shadow: var(--shadow-tray);
 }
 
+/* One line of text plus the dock's top inset, so the first row keeps the
+   dock's axis and a single line never scrolls at large text sizes. */
 .document-composer-wrap .composer-stack .composer textarea {
-  height: 44px;
-  min-height: 44px;
-  /* Match the canonical dock first-row axis: 10px + half of the 24px line
-     height equals the 22px center of the 28px button positioned at top: 8px. */
-  padding-top: 10px;
+  --composer-document-input-height: max(
+    44px,
+    calc(var(--composer-text-padding-top) + var(--conversation-reading-line-height) + 4px)
+  );
+  height: var(--composer-document-input-height);
+  min-height: var(--composer-document-input-height);
   padding-bottom: 4px;
 }
 

@@ -336,7 +336,8 @@
   box-shadow: var(--wuu-message-user-shadow, none);
   color: var(--wuu-message-user-color, var(--user-message-fg-color));
   border-radius: var(--user-message-radius);
-  padding: 6px var(--card-padding);
+  /* The same framed-text inset as the composer draft it was sent from. */
+  padding: var(--conversation-framed-text-inset-block) var(--card-padding);
 }
 
 .user-message-block {

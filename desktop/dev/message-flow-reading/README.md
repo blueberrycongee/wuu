@@ -28,9 +28,10 @@ live and settled states; its action row must not move the following message.
 On touch devices actions remain visible, while keyboard focus reveals desktop
 actions without changing their footprint.
 
-The production input frame is wider than the reading column at every width.
-Message text aligns with the textarea's text origin, not the frame edge. Both
-consume the shared session text inset; narrow panes retain that relationship.
+The production input frame shares the reading column's edges at every width.
+Answer prose starts on those edges; framed text (query bubbles, code blocks and
+the composer draft) sits `--card-padding` inside its frame on every side, and
+drafts use the message reading line height. Narrow panes retain that relationship.
 
 With the development server running, execute
 `./node_modules/.bin/electron scripts/message-flow-layout-e2e.cjs` from `desktop/`.
