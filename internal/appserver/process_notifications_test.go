@@ -48,7 +48,7 @@ func TestProcessCompletionChatMessageIncludesOutputTail(t *testing.T) {
 			t.Fatal("timed out waiting for natural process exit")
 		}
 	}
-	logOutput := strings.Repeat("x", processCompletionOutputBytes+512) + "hello-tail\n"
+	logOutput := strings.Repeat("x", processCompletionOutputBytes+512) + "\x1b[31mFATAL_MISSING_CONFIG\x1b[0m\rhello-tail\r\n"
 	if err := os.WriteFile(started.LogPath, []byte(logOutput), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -62,6 +62,7 @@ func TestProcessCompletionChatMessageIncludesOutputTail(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Background process " + started.ID + " exited with code 0: printf 'hello-tail\\n'",
+		"FATAL_MISSING_CONFIG\nhello-tail",
 		"hello-tail\n[last 2048 of " + strconv.Itoa(len(logOutput)) + " output bytes; read earlier output with process action=read process_id=" + started.ID + " offset_bytes=0]",
 		"without polling",
 	} {
@@ -71,6 +72,22 @@ func TestProcessCompletionChatMessageIncludesOutputTail(t *testing.T) {
 	}
 	if strings.Contains(msg.Content, `"process_id"`) {
 		t.Fatalf("completion notification should be plain text: %s", msg.Content)
+	}
+	if err := os.WriteFile(started.LogPath, []byte("FATAL\rhidden diagnostic\rstopped\r\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, notification := range []providers.ChatMessage{
+		processCompletionChatMessage(manager, terminal),
+		processRecheckChatMessage(manager, terminal.Process),
+	} {
+		for _, want := range []string{"FATAL\n", "1 redraws omitted", "\nstopped\n", started.LogPath} {
+			if !strings.Contains(notification.Content, want) {
+				t.Fatalf("notification lost redraw evidence or recovery %q: %s", want, notification.Content)
+			}
+		}
+		if strings.Contains(notification.Content, "\n\n") {
+			t.Fatalf("PTY line ending introduced a blank line: %s", notification.Content)
+		}
 	}
 }
 

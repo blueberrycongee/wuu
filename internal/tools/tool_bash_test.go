@@ -14,17 +14,22 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
-func TestBashRunRecordsFullLogSHA256(t *testing.T) {
+func TestBashRunPreservesDiagnosticViewAndFullLog(t *testing.T) {
+	t.Setenv(projectionModeEnvVar, "active")
 	root := t.TempDir()
 	kit := newShellTestToolkit(t, root)
 	kit.SetSessionDir(t.TempDir())
-	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+	result, err := kit.ExecuteResult(context.Background(), providers.ToolCall{
 		Name:      "bash",
-		Arguments: `{"command":"printf 'hello-log'"}`,
+		Arguments: `{"command":"printf '\\033[31mFATAL_MISSING_CONFIG\\033[0m\\rworker stopped\\r\\n' >&2; exit 1"}`,
 	})
 	if err != nil {
 		t.Fatalf("bash: %v", err)
 	}
+	if got := result.TextProjection(); got != "FATAL_MISSING_CONFIG\nworker stopped\nExit code 1" {
+		t.Fatalf("model view lost the diagnostic before a carriage return: %q", got)
+	}
+	resp := producerText(result)
 	var parsed shellExecutionResult
 	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
 		t.Fatalf("parse bash result: %v\n%s", err, resp)
@@ -38,6 +43,9 @@ func TestBashRunRecordsFullLogSHA256(t *testing.T) {
 	}
 	if got := sha256Hex(data); got != parsed.FullLogSHA256 {
 		t.Fatalf("full_log_sha256 = %q, file hash %q", parsed.FullLogSHA256, got)
+	}
+	if !strings.Contains(string(data), "\x1b[31mFATAL_MISSING_CONFIG\x1b[0m\rworker stopped\r\n") {
+		t.Fatalf("model normalization changed the archived output: %q", data)
 	}
 }
 

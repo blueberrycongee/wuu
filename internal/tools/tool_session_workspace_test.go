@@ -148,7 +148,8 @@ func TestSharedProcessManagerKeepsEachSessionWorkspaceAfterRebind(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		output := strings.TrimSpace(StripTerminalControls(snapshot.Output))
+		output, _ := StripTerminalControls(snapshot.Output)
+		output = strings.TrimSpace(output)
 		if !sameRuntimeFileScopePath(launched.CWD, env.RootDir) || !sameRuntimeFileScopePath(output, env.RootDir) {
 			t.Fatalf("session %q launched outside its workspace: cwd=%q output=%q want=%q", env.SessionID, launched.CWD, output, env.RootDir)
 		}

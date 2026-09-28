@@ -186,7 +186,12 @@ func TestRenderBashModelView(t *testing.T) {
 		{
 			name:   "terminal control codes are stripped",
 			fields: map[string]any{"stdout_tail": "\x1b[32mPASS\x1b[0m\r\nbuilding 10%\rbuilding 100%\n", "stderr_tail": ""},
-			exact:  "PASS\nbuilding 100%",
+			exact:  "PASS\nbuilding 10%\nbuilding 100%",
+		},
+		{
+			name:   "PTY CRCRLF preserves real blank lines without adding any",
+			fields: map[string]any{"stdout_tail": "a\r\r\nb\r\r\n\r\r\nc\r\r\n"},
+			exact:  "a\nb\n\nc",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -207,6 +212,30 @@ func TestRenderBashModelView(t *testing.T) {
 					t.Fatalf("view leaked %q:\n%s", absent, view)
 				}
 			}
+		})
+	}
+}
+
+func TestRenderBashModelViewProgressPreservesResult(t *testing.T) {
+	var progress strings.Builder
+	for i := range 200 {
+		fmt.Fprintf(&progress, "\r%3d%%|                    | %d/1000 [00:01<00:20]", i/10, i)
+	}
+	progress.WriteString("\rdone\r\r\n")
+	stdout := strings.Repeat("metric iteration completed\n", 20) + "RESULT accuracy=0.93\n"
+	for _, budget := range []int{2048, commandProjectionTokenBudget} {
+		t.Run(fmt.Sprint(budget), func(t *testing.T) {
+			raw := bashEnvelope(map[string]any{"stdout_tail": stdout, "stderr_tail": progress.String()})
+			view, omitted, ok := renderBashModelView(raw, budget)
+			if !ok || omitted.Lines == 0 || estimateResultTokens(view) > budget {
+				t.Fatalf("invalid progress view: ok=%v omitted=%+v tokens=%d", ok, omitted, estimateResultTokens(view))
+			}
+			for _, want := range []string{strings.TrimSuffix(stdout, "\n"), "0/1000", "redraws omitted", "done", "/s/tool-results/shell-logs/x.log"} {
+				if !strings.Contains(view, want) {
+					t.Fatalf("progress displaced evidence or recovery %q: %s", want, view)
+				}
+			}
+			t.Logf("budget=%d rendered_tokens=%d omitted_frames=%d", budget, estimateResultTokens(view), omitted.Lines)
 		})
 	}
 }
@@ -240,6 +269,19 @@ func TestRenderProcessModelView(t *testing.T) {
 			raw:    map[string]any{"action": "read", "process_id": "proc-2", "output": "", "start_offset": 0, "end_offset": 0, "total_bytes": 0, "process": exited},
 			want:   []string{"proc-2", "code 1"},
 			absent: []string{"offset_bytes"},
+		},
+		{
+			name:   "read preserves a diagnostic before a carriage return",
+			raw:    map[string]any{"action": "read", "process_id": "proc-2", "output": "FATAL\rstopped\r\n", "start_offset": 0, "end_offset": 15, "total_bytes": 15, "process": exited},
+			want:   []string{"proc-2", "exited with code 1", "\nFATAL\nstopped"},
+			absent: []string{"\r"},
+		},
+		{
+			name: "folded process redraws offer the raw log, not only the next offset",
+			raw: map[string]any{"action": "read", "process_id": "proc-2", "output": "first\rhidden diagnostic\rlast\r\r\n",
+				"process": map[string]any{"status": "stopped", "log_path": "/logs/process.log"}},
+			want:   []string{"first\n", "1 redraws omitted", "\nlast", "/logs/process.log"},
+			absent: []string{"\r", "\n\n"},
 		},
 		{
 			name: "list has one line per process",
