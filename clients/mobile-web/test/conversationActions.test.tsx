@@ -20,7 +20,7 @@ it.each(['web', 'desktop'])('%s touch shell exposes only appropriate conversatio
   const onStartNewThread = vi.fn();
   try {
     const render = (canStartNewThread: boolean) => root.render(<I18nProvider>
-      <CompactConversationActions canStartNewThread={canStartNewThread}
+      <CompactConversationActions canStartNewThread={canStartNewThread} environmentAvailable
         onStartNewThread={onStartNewThread} environmentToggleRef={createRef()}
         environmentPanelVisible={false} onToggleEnvironmentPanel={() => {}}
         rightPanelOpen={false} onToggleRightPanel={() => {}} />
