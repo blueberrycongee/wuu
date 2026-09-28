@@ -2,41 +2,31 @@
  * what they need from you (attention, on, off) as a grid of cards, and a
  * card opens the plugin's own page. */
 
+/* The switch is a segmented control: its track is always visible, so its
+ * box starts on the column edge like the search field above and the groups
+ * below, whichever tab is selected. The track matches the field height. */
 .catalog-tabs {
-  display: flex;
-  gap: var(--space-1);
+  align-self: flex-start;
   margin-block-end: calc(var(--settings-gap) * -0.5);
 }
 
-.catalog-tab {
-  display: inline-flex;
-  min-height: var(--control-field-height);
-  align-items: center;
+/* Label and count differ in size, so they share a baseline, not a center.
+ * The height comes from the field height less the track's 2px inset. */
+.catalog-tabs .catalog-tab {
+  display: inline-grid;
+  min-height: calc(var(--control-field-height) - 4px);
+  grid-auto-flow: column;
+  align-content: center;
+  align-items: baseline;
   gap: var(--space-2);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink-soft);
-  font-size: var(--font-ui);
-  padding: 0 var(--space-3);
-  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
-}
-
-.catalog-tab:first-child {
-  margin-inline-start: calc(var(--space-3) * -1);
-}
-
-.catalog-tab:hover {
-  color: var(--ink-strong);
-}
-
-.catalog-tab[aria-selected="true"] {
-  background: var(--selection-surface);
-  color: var(--ink-strong);
+  line-height: 1.4;
+  padding-block: 0;
 }
 
 .catalog-tab-count {
   color: var(--ink-muted);
   font-size: var(--font-sm);
+  font-weight: var(--weight-regular);
   font-variant-numeric: tabular-nums;
 }
 
@@ -101,9 +91,13 @@
   text-align: left;
 }
 
+/* The page's row mark, so card copy starts on the same axis as the rows in
+ * the attention group above. It centers on the name and the first tagline
+ * line, which keeps marks level across cards with one- and two-line
+ * taglines. */
 .plugin-card-main > .skill-artwork {
-  --settings-mark-size: 40px;
   grid-row: 1 / 3;
+  margin-top: max(0px, calc((var(--font-ui) * 1.4 + 2px + var(--font-sm) * 1.5 - var(--settings-mark-size)) / 2));
 }
 
 .plugin-card-name {
@@ -139,24 +133,6 @@
 }
 
 /* --- Plugin page ------------------------------------------------------------- */
-
-.plugin-page-back button {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--ink-soft);
-  font-size: var(--font-ui);
-  line-height: 1.5;
-  margin-inline: calc(var(--space-1) * -1);
-  padding: 0 var(--space-2) 0 var(--space-1);
-}
-
-.plugin-page-back button:hover {
-  background: var(--surface-1);
-  color: var(--ink-strong);
-}
 
 .plugin-page-hero {
   display: grid;
@@ -200,31 +176,6 @@
   line-height: 1.5;
 }
 
-.plugin-page-hero-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.plugin-page-hero-actions .settings-icon-button {
-  width: var(--control-field-height);
-  padding: 0;
-}
-
-/* A lone switch stays beside the name; a text button needs its own line. */
-@container settings-page (max-width: 32em) {
-  .plugin-page-hero:has(.settings-button-primary) {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  /* On its own line the primary action leads, at the page's left edge. */
-  .plugin-page-hero-actions:has(.settings-button-primary) {
-    grid-column: 1 / -1;
-    flex-direction: row-reverse;
-    justify-content: flex-end;
-  }
-}
-
 .plugin-page-about {
   max-width: 65ch;
   margin: 0;
@@ -239,12 +190,14 @@
   font-size: var(--font-sm);
 }
 
-/* What the plugin adds: one row per page, command, skill, or theme. */
+/* What the plugin adds: one row per page, command, skill, or theme. Rows
+ * that open nothing keep the chevron's column (its box less the tip inset),
+ * so every kind label ends on one axis. */
 .plugin-contribution {
   display: grid;
   min-width: 0;
   min-height: calc(var(--control-field-height) + var(--space-3) * 2);
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto calc(var(--icon-size) * (1 - var(--chevron-tip-inset)));
   align-items: center;
   gap: var(--space-3);
   width: 100%;
@@ -284,14 +237,18 @@ button.plugin-contribution:hover .settings-disclosure-chevron {
   color: var(--ink);
 }
 
-/* Shown only while deciding whether to trust a plugin. */
+/* Shown only while deciding whether to trust a plugin. The label shares the
+ * first baseline of a value that may wrap; the line pair stays centered in
+ * the row. */
 .plugin-permission-row {
   display: grid;
   min-height: calc(var(--control-field-height) + var(--space-3) * 2);
   grid-template-columns: minmax(7em, max-content) minmax(0, 1fr);
-  align-items: center;
+  align-content: center;
+  align-items: baseline;
   gap: var(--space-4);
   border-bottom: 1px solid var(--hairline-soft);
+  padding-block: var(--space-3);
 }
 
 .plugin-permission-row:last-child {

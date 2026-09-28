@@ -2325,9 +2325,10 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   background: var(--danger-soft);
 }
 
+/* Centered on the first line, wherever the text wraps. */
 .plugin-detail-notice svg {
   flex: none;
-  margin-top: 1px;
+  margin-top: calc((var(--font-sm) * 1.5 - var(--icon-size-sm)) / 2);
   color: var(--warning);
 }
 

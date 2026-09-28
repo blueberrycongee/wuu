@@ -464,7 +464,7 @@
   color: var(--ink);
 }
 
-.theme-segmented button[aria-pressed="true"] {
+.theme-segmented button:is([aria-pressed="true"], [aria-selected="true"]) {
   background: var(--paper);
   color: var(--ink);
   font-weight: var(--weight-medium);

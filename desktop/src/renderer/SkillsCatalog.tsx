@@ -438,7 +438,7 @@ export function SkillsCatalog({
         </button>
       </div>
 
-      <div className="catalog-tabs" role="tablist" aria-label={t("skills.catalogLabel")}>
+      <div className="theme-segmented catalog-tabs" role="tablist" aria-label={t("skills.catalogLabel")}>
         {(["plugins", "skills"] as const).map((tab) => (
           <button
             key={tab}
@@ -820,9 +820,9 @@ function PluginDetailPage({
 
   return (
     <>
-      <nav className="plugin-page-back" aria-label={t("skills.tabPlugins")}>
+      <nav className="settings-page-back" aria-label={t("skills.tabPlugins")}>
         <button type="button" onClick={onBack} data-testid="plugin-page-back">
-          <ChevronLeft className="icon-sm" aria-hidden="true" />
+          <ChevronLeft className="icon" aria-hidden="true" />
           {t("skills.tabPlugins")}
         </button>
       </nav>
@@ -833,7 +833,7 @@ function PluginDetailPage({
           <h1>{record.name}</h1>
           {record.description ? <p>{record.description}</p> : null}
         </div>
-        <div className="plugin-page-hero-actions">
+        <div className="settings-detail-actions">
           {hasMoreActions ? (
             <button
               type="button"

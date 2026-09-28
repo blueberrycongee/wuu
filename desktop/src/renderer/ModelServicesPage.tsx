@@ -684,9 +684,9 @@ function ServiceDetail({
 
   return (
     <>
-      <nav className="model-service-back" aria-label={t("settings.providers")}>
+      <nav className="settings-page-back" aria-label={t("settings.providers")}>
         <button type="button" onClick={onBack} data-testid="settings-provider-back">
-          <ChevronLeft className="icon-sm" aria-hidden="true" />
+          <ChevronLeft className="icon" aria-hidden="true" />
           {t("settings.providers")}
         </button>
       </nav>
@@ -697,7 +697,22 @@ function ServiceDetail({
           <h1>{label}</h1>
           {isDefault ? <span className="model-service-badge">{t("provider.defaultBadge")}</span> : null}
         </div>
-        <div className="model-service-hero-actions">
+        <div className="settings-detail-actions model-service-hero-actions">
+          {removable ? (
+            <button
+              type="button"
+              className="settings-button settings-button-ghost settings-icon-button"
+              aria-label={t("provider.moreActions", { name: label })}
+              aria-haspopup="menu"
+              disabled={disabled}
+              onClick={(event) => {
+                const bounds = event.currentTarget.getBoundingClientRect();
+                setMenu({ x: bounds.right, y: bounds.bottom + 4 });
+              }}
+            >
+              <MoreHorizontal className="icon" aria-hidden="true" />
+            </button>
+          ) : null}
           {isDefault ? null : (
             <button
               type="button"
@@ -715,21 +730,6 @@ function ServiceDetail({
               {t("provider.makeDefault")}
             </button>
           )}
-          {removable ? (
-            <button
-              type="button"
-              className="settings-button settings-button-ghost settings-icon-button"
-              aria-label={t("provider.moreActions", { name: label })}
-              aria-haspopup="menu"
-              disabled={disabled}
-              onClick={(event) => {
-                const bounds = event.currentTarget.getBoundingClientRect();
-                setMenu({ x: bounds.right, y: bounds.bottom + 4 });
-              }}
-            >
-              <MoreHorizontal className="icon" aria-hidden="true" />
-            </button>
-          ) : null}
         </div>
       </header>
 

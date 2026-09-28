@@ -594,6 +594,18 @@
   transition: transform var(--motion-fast) var(--menu-enter-easing);
 }
 
+/* The chevron's tip (x 15 plus half its 1.75 stroke on a 24-unit grid) ends
+ * 8.125/24 of the icon short of its box. Rows that open a page end on the
+ * tip, so it lands on the padding edge their leading mark starts from.
+ * Expanding disclosures keep their box: they rotate about its center. */
+:root {
+  --chevron-tip-inset: calc(8.125 / 24);
+}
+
+:is(.catalog-row, .plugin-contribution, .model-service-card) > .settings-disclosure-chevron {
+  margin-inline-end: calc(var(--icon-size) * var(--chevron-tip-inset) * -1);
+}
+
 :is([aria-expanded="true"] > .settings-disclosure-chevron, .settings-disclosure-chevron.open) {
   transform: rotate(90deg);
 }
@@ -827,11 +839,66 @@
   background: var(--danger-border);
 }
 
-/* Match the field height after appearance font scaling. */
+/* Square at the field height, so icon and text buttons share one box height
+ * at every font size. */
 .settings-icon-button {
-  width: max(32px, 2.6em);
+  width: var(--control-field-height);
   flex: 0 0 auto;
   padding: 0;
+}
+
+/* A ghost button has no box at rest, so the last one in a page, section, or
+ * hero action row ends on its glyph (icon) or text, not its padding. The
+ * hover fill reaches past the edge. */
+:is(.settings-page-actions, .settings-section-actions, .settings-detail-actions) > .settings-button-ghost:last-child {
+  margin-inline-end: calc(var(--control-padding-inline) * -1);
+}
+
+:is(.settings-page-actions, .settings-section-actions, .settings-detail-actions) > .settings-button-ghost.settings-icon-button:last-child {
+  margin-inline-end: calc((var(--control-field-height) - var(--icon-size)) / -2);
+}
+
+/* A detail page's hero actions: overflow first, then the main action, which
+ * owns the trailing edge so a switch lines up with the switches in lists. */
+.settings-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* A lone icon or switch stays beside the name; a text action takes its own
+ * line, where the main action leads at the page's left edge. */
+@container settings-page (max-width: 32em) {
+  :has(> .settings-detail-actions > .settings-button:not(.settings-icon-button)) {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .settings-detail-actions:has(> .settings-button:not(.settings-icon-button)) {
+    grid-column: 1 / -1;
+    flex-direction: row-reverse;
+    justify-content: flex-end;
+  }
+}
+
+/* Detail pages (a plugin, a model service) open on a way back. The chevron's
+ * tip, not the button box, starts on the column edge; the hover fill reaches
+ * past it. */
+.settings-page-back button {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
+  line-height: 1.5;
+  margin-inline-start: calc((var(--space-1) + var(--icon-size) * var(--chevron-tip-inset)) * -1);
+  padding: 0 var(--space-2) 0 var(--space-1);
+}
+
+.settings-page-back button:hover {
+  background: var(--surface-1);
+  color: var(--ink-strong);
 }
 
 /* --- Feedback text, empty states, quiet lines ---------------------------------- */

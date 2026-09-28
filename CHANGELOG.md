@@ -15,6 +15,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Model services settings separate the default model from connected services,
   with catalog-backed connections, custom endpoints, and model visibility controls.
   Editing a service can preserve the current workspace default.
+- Switches center their thumb in both positions and no longer draw an outline.
+  The plugin catalog, plugin pages, and model services settings line up icons,
+  text, and trailing controls on shared edges.
 - Long conversations spend less renderer CPU time rebuilding composer query
   history and recognizing legacy internal notifications, preserving history recall
   and message visibility.
