@@ -12,7 +12,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Composer drafts use the conversation's reading line height, and query bubbles
   and drafts keep text the same distance from their frames at every font size.
-  The latest turn sits one group gap above the input at every window width.
+  The latest turn sits one group gap above the input at every window width,
+  and the queued-message drawer follows the UI font size.
 - Plugins and skills have separate catalog tabs. Plugin cards group by status,
   and dedicated detail pages show contributions and inline settings.
 - Model services settings separate the default model from connected services,

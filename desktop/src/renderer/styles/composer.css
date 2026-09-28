@@ -978,7 +978,7 @@
   min-height: var(--composer-input-header-row-height, 36px);
   padding: 4px var(--composer-input-header-inline-padding, 8px);
   color: var(--ink);
-  font-size: 13.5px;
+  font-size: var(--font-sm);
   line-height: 1.5;
   transition: background-color var(--motion-fast) var(--ease-out);
 }
@@ -1079,7 +1079,9 @@
 .composer-accessory-drawer {
   --composer-drawer-row-height: 32px;
   --composer-drawer-max-height: min(34dvh, 280px);
-  font-size: 13.5px;
+  /* Compact composer chrome: the same step as the toolbar chips, following
+   * the UI size preference. */
+  font-size: var(--font-sm);
   line-height: 1.5;
 }
 
@@ -1184,8 +1186,7 @@
 
 .composer-pending-drawer.expanded .composer-pending-preview {
   color: var(--ink-muted);
-  font-size: 12.5px;
-  font-weight: 500;
+  font-weight: var(--weight-medium);
 }
 
 .composer-pending-drawer.expanded.is-held .composer-pending-preview {
