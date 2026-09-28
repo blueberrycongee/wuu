@@ -1,6 +1,7 @@
 package session
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -155,6 +156,17 @@ func TestSubscriptionUsageTracksRecordedProviderAcrossSelectionChanges(t *testin
 	}
 	if external := got[SubscriptionActivityKey{EngineID: "codex"}].LocalUsage; external.InputTokens != 100 {
 		t.Fatalf("external = %+v", external)
+	}
+	// A shared scan must match isolated reads even when external and built-in
+	// requests record the same provider name, and when a source has only usage.
+	for key, activity := range got {
+		single, err := LatestSubscriptionActivity(dir, []SubscriptionActivityKey{key, key, {}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(single[key], activity) {
+			t.Fatalf("batch changed attribution for %+v: batch=%+v single=%+v", key, activity, single[key])
+		}
 	}
 }
 

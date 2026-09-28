@@ -270,7 +270,14 @@ and includes `subscription_providers` for built-in subscription services. Engine
 Missing quota is unsupported or not queried, never unlimited. Clients must not
 infer account allowance from ACP context usage or local tokens, and should mark
 old snapshots as needing refresh rather than refill them at the reset time.
-Engines and subscription providers may also contain `local_usage`, the reported
+Only this opt-in subscription response reads historical statistics. `initialize`,
+configuration responses, ordinary `engine/list`, and `engine/update` omit
+`latest_request` and `local_usage`; clients needing them must load the subscription
+snapshot separately without blocking navigation. All requested sources share one
+history scan. A failed scan leaves those fields absent, not zero, while retaining
+the service inventory.
+
+Engines and subscription providers in this response may contain `local_usage`, the reported
 input/output/cache token totals and `reported_turns` in retained Wuu history.
 These values exclude unreported and external activity and are not billing totals.
 The optional `latest_request` contains the newest recorded request's `status`,

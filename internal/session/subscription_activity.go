@@ -47,8 +47,9 @@ type SubscriptionUsage struct {
 }
 
 // LatestSubscriptionActivity reads one newest request per requested source.
-// It also aggregates reported token usage across retained sessions. A missing
-// store returns an empty map; absent usage is not evidence of zero billing.
+// It also aggregates reported token usage in the same scan across retained
+// sessions. A missing store returns an empty map; absent usage is not evidence
+// of zero billing.
 func LatestSubscriptionActivity(sessDir string, keys []SubscriptionActivityKey) (map[SubscriptionActivityKey]SubscriptionActivity, error) {
 	out := make(map[SubscriptionActivityKey]SubscriptionActivity)
 	wanted := make([]SubscriptionActivityKey, 0, len(keys))
@@ -74,50 +75,25 @@ func LatestSubscriptionActivity(sessDir string, keys []SubscriptionActivityKey) 
 	}
 	defer db.Close()
 
+	engineIDs := make(map[string]bool)
 	for _, key := range wanted {
-		activity, found, err := latestSubscriptionActivity(db, key)
-		if err != nil {
-			return nil, err
-		}
-		usage, err := subscriptionUsage(db, key)
-		if err != nil {
-			return nil, err
-		}
-		activity.LocalUsage = usage
-		if found || usage.ReportedTurns > 0 {
-			out[key] = activity
+		if key.Provider != "" {
+			engineIDs[""] = true
+			engineIDs["wuu"] = true
+		} else {
+			engineIDs[key.EngineID] = true
 		}
 	}
-	return out, nil
-}
-
-func subscriptionUsage(db *sql.DB, key SubscriptionActivityKey) (SubscriptionUsage, error) {
-	where, value := "s.engine_id = ?", key.EngineID
-	if key.Provider != "" {
-		// Attribute by the recorded provider, never the session's current
-		// selection: users can change providers between turns.
-		where, value = "(s.engine_id = '' OR s.engine_id = 'wuu') AND m.provider = ?", key.Provider
+	args := make([]any, 0, len(engineIDs))
+	for id := range engineIDs {
+		args = append(args, id)
 	}
-	var usage SubscriptionUsage
-	err := db.QueryRow(`SELECT COALESCE(SUM(m.input_tokens),0), COALESCE(SUM(m.output_tokens),0),
-		COALESCE(SUM(m.cache_creation_tokens),0), COALESCE(SUM(m.cache_read_tokens),0), COUNT(*)
-		FROM session_messages m JOIN sessions s ON s.id = m.session_id
-		WHERE m.role = 'meta' AND m.content = 'token_usage'
-		AND (m.input_tokens > 0 OR m.output_tokens > 0 OR m.cache_creation_tokens > 0 OR m.cache_read_tokens > 0)
-		AND `+where, value).Scan(&usage.InputTokens, &usage.OutputTokens, &usage.CacheCreationTokens, &usage.CacheReadTokens, &usage.ReportedTurns)
-	return usage, err
-}
-
-func latestSubscriptionActivity(db *sql.DB, key SubscriptionActivityKey) (SubscriptionActivity, bool, error) {
-	where := "s.engine_id = ?"
-	args := []any{key.EngineID}
-	if key.Provider != "" {
-		where = "(s.engine_id = '' OR s.engine_id = 'wuu')"
-		args = nil
-	}
+	where := "s.engine_id IN (" + strings.TrimSuffix(strings.Repeat("?,", len(args)), ",") + ")"
 	// Read durable request boundaries, not the mutable session selection or
 	// updated_at (which also changes when a user renames or pins a session).
-	rows, err := db.Query(`SELECT m.session_id, m.role,
+	// Do not filter rows by provider: legacy terminals and user boundaries may
+	// be untagged. All requested sources share this one ordered scan.
+	rows, err := db.Query(`SELECT m.session_id, s.engine_id, m.role,
 		CASE WHEN m.role = 'meta' THEN m.content ELSE '' END,
 		m.steered, m.client_id, m.stop_reason, m.display_content, m.at, m.provider, m.model,
 		m.input_tokens, m.output_tokens, m.cache_creation_tokens, m.cache_read_tokens
@@ -126,19 +102,24 @@ func latestSubscriptionActivity(db *sql.DB, key SubscriptionActivityKey) (Subscr
 		(m.role = 'meta' AND m.content IN ('turn_terminal', 'token_usage')))
 		ORDER BY m.session_id, m.seq`, args...)
 	if err != nil {
-		return SubscriptionActivity{}, false, err
+		return nil, err
 	}
 	defer rows.Close()
 
-	latest := SubscriptionActivity{Key: key}
-	found := false
-	var sessionID string
+	totals := make(map[SubscriptionActivityKey]SubscriptionUsage)
+	var sessionID, engineID string
 	var usage *HistoryRecord
+	matches := func(key SubscriptionActivityKey, provider string) bool {
+		if key.Provider != "" {
+			return (engineID == "" || engineID == "wuu") && key.Provider == provider
+		}
+		return key.EngineID == engineID
+	}
 	consider := func(terminal *HistoryRecord) {
 		if terminal == nil && usage == nil {
 			return
 		}
-		candidate := SubscriptionActivity{Key: key}
+		candidate := SubscriptionActivity{}
 		provider := ""
 		requestUsage := usage
 		if terminal != nil {
@@ -160,9 +141,6 @@ func latestSubscriptionActivity(db *sql.DB, key SubscriptionActivityKey) (Subscr
 		if provider == "" && requestUsage != nil {
 			provider = requestUsage.Provider
 		}
-		if key.Provider != "" && provider != key.Provider {
-			return
-		}
 		if requestUsage != nil && (provider == "" || requestUsage.Provider == provider) && (requestUsage.InputTokens > 0 || requestUsage.OutputTokens > 0 || requestUsage.CacheCreationTokens > 0 || requestUsage.CacheReadTokens > 0) {
 			candidate.UsageReported = true
 			candidate.InputTokens = requestUsage.InputTokens
@@ -176,24 +154,31 @@ func latestSubscriptionActivity(db *sql.DB, key SubscriptionActivityKey) (Subscr
 				candidate.At = requestUsage.At
 			}
 		}
-		if !found || !candidate.At.Before(latest.At) {
-			latest, found = candidate, true
+		for _, key := range wanted {
+			if !matches(key, provider) {
+				continue
+			}
+			if latest, found := out[key]; !found || !candidate.At.Before(latest.At) {
+				candidate.Key = key
+				out[key] = candidate
+			}
 		}
 	}
 	for rows.Next() {
-		var id string
+		var id, engine string
 		var record HistoryRecord
 		var at sql.NullString
-		if err := rows.Scan(&id, &record.Role, &record.Content, &record.Steered, &record.ClientID,
+		if err := rows.Scan(&id, &engine, &record.Role, &record.Content, &record.Steered, &record.ClientID,
 			&record.StopReason, &record.DisplayContent, &at, &record.Provider, &record.Model,
 			&record.InputTokens, &record.OutputTokens, &record.CacheCreationTokens, &record.CacheReadTokens); err != nil {
-			return SubscriptionActivity{}, false, err
+			return nil, err
 		}
 		if id != sessionID || (record.Role == "user" && !record.Steered) {
 			consider(nil)
 			usage = nil
 		}
 		sessionID = id
+		engineID = engine
 		if at.Valid {
 			record.At = parseTime(at.String)
 		}
@@ -201,6 +186,18 @@ func latestSubscriptionActivity(db *sql.DB, key SubscriptionActivityKey) (Subscr
 		case tokenUsageContent:
 			if record.InputTokens > 0 || record.OutputTokens > 0 || record.CacheCreationTokens > 0 || record.CacheReadTokens > 0 {
 				usage = &record
+				for _, key := range wanted {
+					if !matches(key, record.Provider) {
+						continue
+					}
+					total := totals[key]
+					total.InputTokens += record.InputTokens
+					total.OutputTokens += record.OutputTokens
+					total.CacheCreationTokens += record.CacheCreationTokens
+					total.CacheReadTokens += record.CacheReadTokens
+					total.ReportedTurns++
+					totals[key] = total
+				}
 			}
 		case turnTerminalContent:
 			consider(&record)
@@ -208,8 +205,14 @@ func latestSubscriptionActivity(db *sql.DB, key SubscriptionActivityKey) (Subscr
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return SubscriptionActivity{}, false, err
+		return nil, err
 	}
 	consider(nil)
-	return latest, found, nil
+	for key, total := range totals {
+		activity := out[key]
+		activity.Key = key
+		activity.LocalUsage = total
+		out[key] = activity
+	}
+	return out, nil
 }

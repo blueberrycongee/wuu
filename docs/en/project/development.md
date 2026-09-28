@@ -101,6 +101,20 @@ selects another built main bundle and its adjacent preload/renderer for A/B
 checks. Results record the loaded artifact hashes; the checkout commit alone
 does not identify an externally selected build.
 
+For subscription-history navigation diagnostics, set
+`WUU_SWITCH_SUBSCRIPTION_TURNS=30000` and omit `WUU_SWITCH_CHECK_BUDGET`.
+This adds about 2 GiB of disposable history and two subscription services with
+isolated credentials and disabled external engines. It checks cross-project new
+drafts while an opt-in statistics response is held at IPC, then after an injected
+IPC failure, and verifies the real backend's request attribution and token totals.
+`results.json` includes the separate startup-to-conversation frame measurement,
+`subscriptionResults`, database size, observed process
+spawns, navigation RPC timings, and statistics response timings before the gate.
+These are RPC envelopes, not isolated SQL timings. A first project visit is not
+necessarily a cold process start; keep those measurements separate. The fixture
+also saves `subscription-navigation.png`. The held response tests navigation
+independence, not a database lock or an account-service outage.
+
 ## Native phones and remote services
 
 The active phone implementations are SwiftUI on iOS and Jetpack Compose on Android in [`clients/native`](../../../clients/native/README.md) (Chinese). Their dedicated verification command is:

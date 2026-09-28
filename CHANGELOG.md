@@ -202,6 +202,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Project switches and new conversations no longer wait for global subscription
+  history statistics. Subscription snapshots load on demand and share one history
+  scan across services instead of repeating it for each source.
+
 - Automations and other plugin pages in the sidebar leave through Back alone.
   The close button that repeated it stays for pages that closing removes from
   the sidebar, and the environment info toggle for the covered conversation is

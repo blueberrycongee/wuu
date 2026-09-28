@@ -88,6 +88,14 @@ CI 检查大历史样本的重复切换，恢复调用、布局及样式重算�
 `WUU_SWITCH_MAIN` 可选择另一个已构建的 main bundle 及相邻 preload/renderer 进行 A/B
 验证。结果记录实际加载工件的哈希；仅凭 checkout 提交不能确定外部构建的版本。
 
+诊断订阅历史对导航的影响时，设置 `WUU_SWITCH_SUBSCRIPTION_TURNS=30000`，并去掉
+`WUU_SWITCH_CHECK_BUDGET`。夹具会增加约 2 GiB 的临时历史和两个订阅服务，隔离凭据，
+禁用外部引擎。它在 IPC 层挂起按需统计响应、随后注入 IPC 失败，检查跨项目新建对话，
+并核对真实后端的请求归属和 token 总量。`results.json` 单独记录启动到会话画面的耗时，包含 `subscriptionResults`、
+数据库大小、观察到的进程启动次数、导航 RPC 耗时和挂起前的统计响应耗时。
+这些是 RPC 整体耗时，不是独立 SQL 计时；首次进入项目不一定启动新进程，应与冷启动区分。
+夹具还保存 `subscription-navigation.png`。挂起响应验证导航独立性，不模拟数据库锁或账户服务故障。
+
 ## 原生手机与远程服务
 
 当前手机实现位于 [`clients/native`](../../../clients/native/README.md)，iOS 使用 SwiftUI，Android 使用 Jetpack Compose。专用验证命令为：
