@@ -89,9 +89,12 @@ export function EnvironmentPanel({
 
   const diff = gitStatus?.diff ?? { files: 0, additions: 0, deletions: 0 };
   const hasChanges = Boolean(gitStatus?.is_repo && (gitStatus.dirty_count > 0 || diff.files > 0));
+  // Outside a repository every Git row would repeat that it is unavailable;
+  // say it once instead. Until the first status arrives the rows stay quiet.
+  const notRepository = gitStatus?.is_repo === false;
   const branchLabel = gitStatus?.is_repo
     ? gitStatus.branch ?? "detached"
-    : t("environment.notGitRepository");
+    : t("common.loadingEllipsis");
   const prDisabled = Boolean(pullRequestDisabledReason && !gitStatus?.pr_url);
 
   function toggleMenu(menu: Exclude<EnvironmentPanelMenu, null>): void {
@@ -118,6 +121,9 @@ export function EnvironmentPanel({
       {pluginSections}
 
       <div className="environment-panel-body">
+        {notRepository ? (
+          <p className="environment-panel-note">{t("environment.notGitRepository")}</p>
+        ) : <>
         <div className="environment-row-group">
           <EnvironmentActionRow
             className="environment-change-row"
@@ -126,23 +132,20 @@ export function EnvironmentPanel({
             icon={<FileDiff className="icon-lg" aria-hidden="true" />}
             label={t("environment.changes")}
             meta={
-              gitStatus?.is_repo
-                ? hasChanges
-                  ? (
-                    <>
-                      {t(diff.files === 1 ? "environment.fileCountOne" : "environment.fileCount", {
-                        count: formatNumber(diff.files),
-                      })}
-                      <span className="environment-diff">
-                        <span className="additions">+{formatNumber(diff.additions)}</span>
-                        <span className="deletions">-{formatNumber(diff.deletions)}</span>
-                      </span>
-                    </>
-                  )
-                  : null
-                : t("environment.notGit")
+              hasChanges
+                ? (
+                  <>
+                    {t(diff.files === 1 ? "environment.fileCountOne" : "environment.fileCount", {
+                      count: formatNumber(diff.files),
+                    })}
+                    <span className="environment-diff">
+                      <span className="additions">+{formatNumber(diff.additions)}</span>
+                      <span className="deletions">-{formatNumber(diff.deletions)}</span>
+                    </span>
+                  </>
+                )
+                : null
             }
-            trailing={gitStatus?.is_repo ? <ChevronRight className="icon-sm" aria-hidden="true" /> : null}
           />
           <EnvironmentActionRow
             className={activeMenu === "branch" ? "active" : undefined}
@@ -176,6 +179,7 @@ export function EnvironmentPanel({
             />
           </Tooltip>
         </div>
+        </>}
       </div>
 
       {activeMenu === "branch" && gitStatus?.is_repo ? (
@@ -216,7 +220,7 @@ function EnvironmentActionRow({
       {icon}
       <strong>{label}</strong>
       <span className="environment-row-meta">{meta}</span>
-      <span className="environment-row-trailing">{trailing}</span>
+      {trailing ? <span className="environment-row-trailing">{trailing}</span> : null}
     </button>
   );
 }
@@ -270,7 +274,7 @@ function EnvironmentBranchMenu({
         {branches.map((branch) => {
           const selected = branch === gitStatus.branch;
           return (
-            <button key={branch} role="menuitem" type="button" disabled={selected || !hostSupports("checkoutGitBranch")} onClick={() => onSelectBranch(branch)}>
+            <button key={branch} role="menuitem" type="button" aria-current={selected || undefined} disabled={selected || !hostSupports("checkoutGitBranch")} onClick={() => onSelectBranch(branch)}>
               <GitBranch className="icon" />
               <span>{branch}</span>
               {selected ? <Check className="icon" /> : null}

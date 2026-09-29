@@ -308,6 +308,7 @@ import {
 } from "./ConversationHistoryActions";
 import { localizedText, resolveLocalizedText, translateCurrent, useI18n } from "./i18n";
 import { CachedConversationPanes } from "./CachedConversationPanes";
+import { observeAppearance } from "./AppearancePreferences";
 import {
   retainCachedConversationPaneThreads,
   selectCachedConversationPaneIDs,
@@ -334,17 +335,25 @@ const ENGINE_INVENTORY_STALE_MS = 6 * 60 * 60 * 1000;
 type WorkspaceSheetPhase = "docked" | "arming" | "open" | "exiting" | "docking";
 const ENVIRONMENT_PANEL_WIDTH_PX = 328;
 const ENVIRONMENT_PANEL_WIDTH_CSS = `${ENVIRONMENT_PANEL_WIDTH_PX}px`;
-const ENVIRONMENT_PANEL_RESERVED_WIDTH_PX = 372;
+// The panel's width grows with the UI text size, like
+// --environment-panel-width in conversation-shell.css; the reserved column
+// adds the gap to the conversation.
+const ENVIRONMENT_PANEL_WIDTH_PER_UI_PX = ENVIRONMENT_PANEL_WIDTH_PX / 14.5;
+const ENVIRONMENT_PANEL_FLOW_GAP_PX = 44;
 // The info panel docks beside the conversation only while the conversation
 // pane keeps a readable column next to it: the reserved width, two 32px page
 // insets and a 480px column, the width at which the composer's controls stop
 // fitting. The window alone cannot decide this, because the sidebar and the
 // right panel take their share first. A narrower pane shows it as an overlay.
-const ENVIRONMENT_PANEL_ROOM_PANE_WIDTH_PX = ENVIRONMENT_PANEL_RESERVED_WIDTH_PX + 2 * 32 + 480;
 const ENVIRONMENT_PANEL_ROOM_MIN_HEIGHT_PX = 680;
 
 function environmentPanelFits(paneWidth: number): boolean {
-  return paneWidth >= ENVIRONMENT_PANEL_ROOM_PANE_WIDTH_PX &&
+  const uiSize = parseFloat(getComputedStyle(document.documentElement).fontSize) || 14.5;
+  const panelWidth = Math.max(
+    ENVIRONMENT_PANEL_WIDTH_PX,
+    Math.ceil((uiSize * ENVIRONMENT_PANEL_WIDTH_PER_UI_PX) / 4) * 4,
+  );
+  return paneWidth >= panelWidth + ENVIRONMENT_PANEL_FLOW_GAP_PX + 2 * 32 + 480 &&
     window.innerHeight >= ENVIRONMENT_PANEL_ROOM_MIN_HEIGHT_PX;
 }
 // Cap on the number of bars rendered in the always-visible rail. The
@@ -1756,7 +1765,12 @@ export function App(): JSX.Element {
     };
     update();
     window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
+    // The panel widens with the UI text size, so a size change moves the fit.
+    const stopObservingAppearance = observeAppearance(update);
+    return () => {
+      window.removeEventListener("resize", update);
+      stopObservingAppearance();
+    };
   }, [environmentPanelPaneOffset]);
 
   useLayoutEffect(() => {
@@ -2859,14 +2873,20 @@ export function App(): JSX.Element {
     state.initialized &&
     !poppedOutMode &&
     !rightPanelGlobalized &&
-    !sideThreadPanelVisible,
+    !sideThreadPanelVisible &&
+    // The card describes the conversation's workspace; pages that replace the
+    // conversation have nothing for it to describe.
+    !showingManagementCatalog &&
+    !showingPrimaryPluginView,
   );
   const environmentPanelTargetVisible =
     environmentPanelCanShow &&
     (environmentPanelOpen ||
       (environmentPanelHasRoom &&
         !environmentPanelDismissed &&
-        !emptyConversation));
+        !emptyConversation &&
+        // A folder outside Git has nothing to show until asked for.
+        state.gitStatus?.is_repo !== false));
   const environmentPanelVisible = environmentPanelTargetVisible;
   const environmentPanelMotionState: EnvironmentPanelMotionState =
     environmentPanelVisible ? "open" : "closing";
@@ -2906,9 +2926,6 @@ export function App(): JSX.Element {
     "--workspace-right-panel-width": `${clampedWorkspaceRightPanelWidth}px`,
     "--side-thread-width": `${sideThread.width}px`,
     "--conversation-split-left": `${splitLeftPercent}%`,
-    "--environment-panel-width": ENVIRONMENT_PANEL_WIDTH_CSS,
-    "--environment-panel-reserved-width": `${ENVIRONMENT_PANEL_RESERVED_WIDTH_PX}px`,
-    "--environment-panel-edge-gap": "18px",
   } as CSSProperties;
   const pullRequestDisabledReason = pullRequestUnavailableReason(
     state.gitStatus,
@@ -5262,7 +5279,7 @@ export function App(): JSX.Element {
           <ConversationTitleActions
             state={state}
             compactNavigation={compactNavigation}
-            pluginPageVisible={showingPrimaryPluginView}
+            pluginPageVisible={showingPrimaryPluginView || showingManagementCatalog}
             onStartNewThread={startNewThreadWithComposerFocus}
             environmentToggleRef={environmentToggleRef}
             environmentPanelVisible={environmentPanelVisible}

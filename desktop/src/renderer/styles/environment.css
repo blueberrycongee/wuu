@@ -246,7 +246,7 @@
   grid-row: 1;
 }
 
-.environment-panel:has(> .environment-panel-header.environment-panel-close-row):not(:has(.plugin-inspector-section)) .environment-change-row {
+.environment-panel:has(> .environment-panel-header.environment-panel-close-row):not(:has(.plugin-inspector-section)) :is(.environment-change-row, .environment-panel-note) {
   margin-right: calc(var(--environment-panel-close-size) + var(--environment-panel-close-gap));
 }
 
@@ -301,10 +301,14 @@
 }
 
 .environment-row {
-  grid-template-columns: 22px minmax(0, auto) minmax(0, 1fr) 16px;
+  grid-template-columns: 22px minmax(0, auto) minmax(0, 1fr);
   min-height: var(--environment-row-height, 32px);
   column-gap: 8px;
   padding: 0 8px;
+}
+
+.environment-row:has(> .environment-row-trailing) {
+  grid-template-columns: 22px minmax(0, auto) minmax(0, 1fr) 16px;
 }
 
 .environment-row.static {
@@ -322,10 +326,10 @@
   opacity: 1;
 }
 
-.environment-row:disabled > svg,
-.environment-row:disabled > strong,
-.environment-row:disabled > .environment-row-trailing {
-  opacity: 0.48;
+/* An unavailable row reads as one quieter line, its reason included: fading
+ * it with opacity would drop the reason below readable contrast. */
+.environment-row:disabled > :is(strong, .environment-row-meta) {
+  color: var(--ink-tertiary);
 }
 
 .environment-row svg,
@@ -357,9 +361,13 @@
   white-space: nowrap;
 }
 
-.environment-row:disabled > .environment-row-meta {
-  opacity: 1;
-  color: var(--ink-soft);
+.environment-panel-note {
+  display: flex;
+  min-height: var(--environment-row-height);
+  align-items: center;
+  margin: 0;
+  padding: 0 8px;
+  color: var(--ink-tertiary);
 }
 
 .environment-row-trailing {
@@ -438,7 +446,11 @@
   right: calc(100% - 8px);
   z-index: 36;
   display: grid;
-  width: 318px;
+  /* One track that may shrink: a field's intrinsic width must not push the
+   * menu's content past its clipped edge. */
+  grid-template-columns: minmax(0, 1fr);
+  /* In em, like the card it opens from, so names keep their room as UI text grows. */
+  width: 22em;
   max-height: min(420px, calc(100vh - 112px));
   overflow: hidden;
   border: 1px solid var(--menu-border);
@@ -453,7 +465,7 @@
 
 .environment-side-menu.branch {
   top: calc(var(--environment-row-height) + var(--environment-row-gap));
-  width: 344px;
+  width: 23.75em;
 }
 
 .environment-side-label {
@@ -486,6 +498,15 @@
 
 .environment-side-menu button svg {
   color: var(--ink-tertiary);
+}
+
+/* The checked-out branch is the current choice, not an unavailable one. */
+.environment-side-menu button[aria-current="true"]:disabled {
+  opacity: 1;
+}
+
+.environment-side-menu button[aria-current="true"] > svg:last-child {
+  color: var(--ink);
 }
 
 .environment-side-menu button span {

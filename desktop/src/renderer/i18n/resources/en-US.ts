@@ -1467,7 +1467,6 @@ export const enUS = {
   "environment.changes": "Changes",
   "environment.fileCountOne": "{count} file",
   "environment.fileCount": "{count} files",
-  "environment.notGit": "Not Git",
   "environment.commit": "Commit",
   "environment.commitChanges": "Commit current changes",
   "environment.viewPR": "View pull request",

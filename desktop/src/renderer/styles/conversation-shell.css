@@ -85,12 +85,15 @@
 }
 
 .conversation-pane {
-  --environment-panel-reserved-width: 372px;
-  --environment-panel-width: 328px;
-  --environment-panel-edge-gap: 18px;
-  --environment-panel-flow-gap: calc(
-    var(--environment-panel-reserved-width) - var(--environment-panel-width)
+  /* The info card is UI text, so it widens with the text size: 328px at the
+   * 14.5px default (App.tsx's room check uses the same ratio), with a 44px
+   * gap between the card and the conversation it reserves room beside. */
+  --environment-panel-width: max(328px, round(up, calc(var(--font-ui) * 328 / 14.5), 4px));
+  --environment-panel-flow-gap: 44px;
+  --environment-panel-reserved-width: calc(
+    var(--environment-panel-width) + var(--environment-panel-flow-gap)
   );
+  --environment-panel-edge-gap: 18px;
   /* Reserve only the space needed to keep a centered composer clear of the
      right panel. As the effective sidebar shrinks and the conversation pane
      grows, this falls smoothly to zero so the message flow returns to the
