@@ -189,6 +189,7 @@ func (t *BashTool) executeStartBackground(ctx context.Context, args bashArgs) (s
 		OwnerKind:             proc.OwnerKind(defaultProcessOwnerKind(t.env, "")),
 		OwnerID:               defaultProcessOwnerID(t.env),
 		RootThreadID:          rootThreadID,
+		Lifecycle:             proc.LifecycleManaged,
 		TTY:                   true,
 		AllowOutsideWorkspace: t.env.BypassToolHardProtections(),
 		SandboxPolicy:         sandboxPolicy,
