@@ -112,11 +112,7 @@
 
   --menu-bg: var(--wuu-color-surface-elevated, rgb(30, 33, 37));
   --menu-hover: var(--wuu-color-surface-muted, #2b2f34);
-
-  --sidebar-glass-bg: linear-gradient(180deg, rgba(26, 29, 32, 0.94), rgba(20, 22, 24, 0.9));
-  --sidebar-glass-border: rgba(228, 232, 235, 0.12);
-  --sidebar-glass-highlight: rgba(255, 255, 255, 0.06);
-  --sidebar-glass-hover: var(--wuu-nav-item-hover-background, var(--ink-overlay-4));
+  --sidebar-row-hover-bg: var(--wuu-nav-item-hover-background, var(--ink-overlay-4));
 
   --scrollbar-thumb: rgba(170, 178, 186, 0.22);
   --scrollbar-thumb-hover: rgba(170, 190, 210, 0.34);
@@ -306,18 +302,10 @@
   --sidebar-material-fill: var(--surface-1);
   --sidebar-material-edge: rgba(255, 255, 255, 0.16);
   --sidebar-material-inner-edge: rgba(255, 255, 255, 0.055);
-  --sidebar-material-highlight: transparent;
-  --sidebar-material-veil-1: transparent;
-  --sidebar-material-veil-2: transparent;
   --sidebar-drawer-edge: rgba(255, 255, 255, 0.42);
   --sidebar-drawer-inner-edge: rgba(255, 255, 255, 0.24);
   --sidebar-edge-shadow: 1px 0 16px rgba(20, 24, 28, 0.025);
-  --sidebar-glass-shadow-ambient: rgba(0, 0, 0, 0.3);
-  --sidebar-glass-shadow-elevated: rgba(0, 0, 0, 0.5);
-  --sidebar-glass-overlay-bright: rgba(255, 255, 255, 0.06);
-  --sidebar-glass-overlay-light: rgba(255, 255, 255, 0.02);
-  --sidebar-glass-overlay-accent: rgba(209, 220, 211, 0.03);
-  --sidebar-glass-overlay-highlight-strong: rgba(255, 255, 255, 0.05);
+  --sidebar-hover-card-rim: rgba(255, 255, 255, 0.06);
   --sidebar-drawer-bg: var(--wuu-color-surface-muted, #1a1d20);
   /* Navigation shares one selection surface across both themes. */
   --sidebar-row-selected-bg: var(--selection-surface);

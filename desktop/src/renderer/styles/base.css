@@ -322,10 +322,7 @@
   /* Deliberate exception: session skeleton loading is an ambient state, its
    * spinner breathes slower than the active-progress --motion-spin rhythm. */
   --session-loading-spin-duration: 1400ms;
---sidebar-glass-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(247, 247, 245, 0.9));
-  --sidebar-glass-border: rgba(17, 19, 21, 0.11);
-  --sidebar-glass-highlight: rgba(255, 255, 255, 0.62);
-  --sidebar-glass-hover: var(--wuu-nav-item-hover-background, var(--ink-overlay-4));
+  --sidebar-row-hover-bg: var(--wuu-nav-item-hover-background, var(--ink-overlay-4));
 
   /* Scrollbar tokens — unify every scrollbar in the renderer.
    * The default state hides the thumb (transparent, over a transparent track)

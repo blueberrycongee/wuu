@@ -13,20 +13,7 @@
    * The dark theme keeps its own light-on-dark edge overrides in theme.css. */
   --sidebar-material-edge: rgba(17, 19, 21, 0.07);
   --sidebar-material-inner-edge: transparent;
-  /* Light theme keeps the frost perfectly uniform: the ::before highlight
-   * gradient is zeroed out here (it only brightened the top-left corner,
-   * making the rest of the rail look dingy by contrast). The dark theme
-   * re-enables it via its own token overrides in theme.css. */
-  --sidebar-material-highlight: transparent;
-  /* Sidebar shadows + structural overlays: pin to the same neutral hue as the
-   * ink overlays in base.css so the vignette, drawer backdrop, and resizer
-   * all read as one material instead of three slightly-different greys. */
-  --sidebar-glass-shadow-ambient: var(--ink-overlay-6);
-  --sidebar-glass-shadow-elevated: var(--ink-overlay-18);
-  --sidebar-glass-overlay-bright: rgba(255, 255, 255, 0.72);
-  --sidebar-glass-overlay-light: rgba(255, 255, 255, 0.14);
-  --sidebar-glass-overlay-accent: rgba(209, 220, 211, 0.12);
-  --sidebar-glass-overlay-highlight-strong: rgba(255, 255, 255, 0.44);
+  --sidebar-hover-card-rim: rgba(255, 255, 255, 0.72);
   --sidebar-drawer-bg: var(--wuu-color-surface-muted, #ffffff);
   --sidebar-brand-wordmark-color: var(--ink-strong);
   --sidebar-resizer-hover-bg: var(--ink-overlay-18);
@@ -57,14 +44,12 @@
   --sidebar-thread-child-agent-completed-status: var(--ink-tertiary);
   --sidebar-thread-child-agent-cancelled-status: #94745f;
   --sidebar-settings-button-hover-ring: rgba(255, 255, 255, 0.42);
-  /* Collapsed-drawer chrome and the vibrancy veils. */
+  /* Collapsed-drawer chrome. */
   --sidebar-drawer-edge: rgba(17, 19, 21, 0.09);
   --sidebar-drawer-inner-edge: transparent;
   /* Must stay a valid <shadow> (not `none`): it is one item in a comma-
    * separated box-shadow list. */
   --sidebar-edge-shadow: 0 0 0 0 transparent;
-  --sidebar-material-veil-1: transparent;
-  --sidebar-material-veil-2: transparent;
 }
 
 /* Windows has no vibrancy view — the themed window fill is all that sits
@@ -272,19 +257,6 @@
   box-shadow:
     inset -1px 0 0 var(--sidebar-material-inner-edge),
     var(--sidebar-edge-shadow);
-}
-
-.sidebar::before,
-.settings-sidebar::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background:
-    linear-gradient(112deg, var(--sidebar-material-highlight), var(--sidebar-material-veil-1) 38%, transparent 72%),
-    linear-gradient(180deg, var(--sidebar-material-veil-2), transparent 24%);
-  opacity: 0.5;
-  pointer-events: none;
 }
 
 .sidebar {
@@ -531,16 +503,6 @@
     border-color var(--sidebar-motion-duration) var(--sidebar-motion-ease),
     background-color var(--sidebar-motion-duration) var(--sidebar-motion-ease),
     box-shadow var(--sidebar-motion-duration) var(--sidebar-motion-ease);
-}
-
-.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
-  :is(.sidebar, .settings-sidebar)::before {
-  opacity: 0;
-}
-
-.sidebar-drawer-docking :is(.sidebar, .settings-sidebar)::before {
-  opacity: 0.5;
-  transition: opacity var(--sidebar-motion-duration) var(--sidebar-motion-ease);
 }
 
 /* Shared rule aliases — `.sidebar-collapsed.sidebar-drawer-*` rules below
@@ -899,17 +861,17 @@
 }
 
 .sidebar-notifications-button:hover {
-  background: var(--wuu-nav-item-hover-background, var(--sidebar-glass-hover));
+  background: var(--wuu-nav-item-hover-background, var(--sidebar-row-hover-bg));
   color: var(--ink-strong);
 }
 
 .sidebar-notifications-button[aria-pressed="true"] {
-  background: var(--wuu-nav-item-active-background, var(--sidebar-glass-hover));
+  background: var(--wuu-nav-item-active-background, var(--sidebar-row-hover-bg));
   color: var(--ink-strong);
 }
 
 .sidebar-notifications-button[data-holding="true"] {
-  background: var(--wuu-nav-item-hover-background, var(--sidebar-glass-hover));
+  background: var(--wuu-nav-item-hover-background, var(--sidebar-row-hover-bg));
   color: var(--wuu-accent);
   transform: scale(0.94);
 }
@@ -1037,7 +999,7 @@
   min-width: 18px;
   border-radius: var(--radius-pill);
   padding: 1px 5px;
-  background: var(--sidebar-glass-hover);
+  background: var(--sidebar-row-hover-bg);
   color: var(--ink-tertiary);
   font-size: 10px;
   line-height: 16px;
@@ -1268,7 +1230,7 @@
 .nav-item:hover,
 .project-row:hover,
 .thread-row:hover {
-  background: var(--wuu-nav-item-hover-background, var(--sidebar-glass-hover));
+  background: var(--wuu-nav-item-hover-background, var(--sidebar-row-hover-bg));
   color: var(--ink);
   box-shadow: inset 0 0 0 1px var(--wuu-nav-item-hover-ring, var(--sidebar-nav-item-hover-ring));
   /* Keep the hitbox and its contents on the same x-axis. A 1 CSS px hover
@@ -2497,7 +2459,7 @@ html[data-focus-modality="keyboard"] :is(
 
   .sidebar-notifications-button[data-holding="true"]::before {
     animation: none;
-    background: var(--sidebar-glass-hover);
+    background: var(--sidebar-row-hover-bg);
     box-shadow: inset 0 0 0 1px var(--focus-ring);
   }
 
@@ -2649,7 +2611,7 @@ html[data-focus-modality="keyboard"] :is(
 
 .sidebar-settings-button:hover,
 .sidebar-settings-button[aria-expanded="true"] {
-  background: var(--wuu-nav-item-hover-background, var(--sidebar-glass-hover));
+  background: var(--wuu-nav-item-hover-background, var(--sidebar-row-hover-bg));
   color: var(--ink);
   box-shadow: inset 0 0 0 1px var(--sidebar-settings-button-hover-ring);
   transform: none;
@@ -2847,7 +2809,7 @@ html[data-focus-modality="keyboard"] :is(
   opacity: 0.98;
   pointer-events: none;
   transform: scale(1.025);
-  box-shadow: inset 0 0 0 1px var(--sidebar-glass-overlay-bright), var(--shadow-pop);
+  box-shadow: inset 0 0 0 1px var(--sidebar-hover-card-rim), var(--shadow-pop);
 }
 
 /* Sidebar hover card: a visual-only description of a sidebar row, placed

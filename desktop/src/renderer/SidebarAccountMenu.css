@@ -24,7 +24,7 @@
 
 .sidebar-account-trigger:hover,
 .sidebar-account-trigger[aria-expanded="true"] {
-  background: var(--wuu-nav-item-hover-background, var(--sidebar-glass-hover));
+  background: var(--wuu-nav-item-hover-background, var(--sidebar-row-hover-bg));
 }
 
 .sidebar-account-avatar {
