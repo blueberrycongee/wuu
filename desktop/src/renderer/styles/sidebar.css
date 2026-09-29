@@ -2409,6 +2409,12 @@ html[data-focus-modality="keyboard"] :is(
   padding: var(--menu-inset);
 }
 
+/* The menu holds focus only until an arrow key reaches an item; its items,
+ * not the shell, show the keyboard ring. */
+html[data-focus-modality="keyboard"] .thread-row-context-menu:focus-visible {
+  outline: none;
+}
+
 /* Enter only after viewport placement. Starting menu-enter while the
  * first layout is still `visibility: hidden` lets Chromium finish or
  * skip the animation off-screen, then replay it on the first visible

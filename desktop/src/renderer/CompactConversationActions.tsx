@@ -4,6 +4,7 @@ import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { isTouchWebShell } from "./ComposerFocus";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { useI18n } from "./i18n";
+import { moveMenuFocus } from "./MenuKeyboardNavigation";
 
 export function CompactConversationActions({
   canStartNewThread, onStartNewThread, environmentAvailable, environmentToggleRef,
@@ -78,14 +79,8 @@ export function CompactConversationActions({
       {showPanelActions && environmentAvailable && open && <FloatingMenuPortal anchorRef={environmentToggleRef} owner="conversation-actions" placement="below" align="right" width={224}>
         <div ref={menuRef} id={menuID} role="menu" aria-label={t("shell.moreActions")} className="conversation-actions-menu"
           onKeyDown={(event) => {
-            const buttons = items();
-            const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-            if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
-              event.preventDefault();
-              const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1
-                : (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
-              buttons[next]?.focus();
-            } else if (event.key === "Escape") {
+            if (moveMenuFocus(event, menuRef.current)) return;
+            if (event.key === "Escape") {
               event.preventDefault();
               event.stopPropagation();
               close();

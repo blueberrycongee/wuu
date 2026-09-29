@@ -91,6 +91,7 @@ import { SidebarPointerSensor } from "./SidebarPointerSensor";
 import { PluginBlocksIcon } from "./PluginBlocksIcon";
 import { PluginIcon } from "./PublicIcon";
 import { SidebarBrand } from "./SidebarBrand";
+import { moveMenuFocus } from "./MenuKeyboardNavigation";
 import { useI18n } from "./i18n";
 import {
   NavigationPresentation,
@@ -640,6 +641,14 @@ export function AppSidebar({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
   const dropAnimation = useDropAnimation();
+  const addWorkspaceTriggerRef = useRef<HTMLButtonElement>(null);
+  const addWorkspaceMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!workspaceMenuOpen) return;
+    addWorkspaceMenuRef.current
+      ?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')
+      ?.focus({ preventScroll: true });
+  }, [workspaceMenuOpen]);
   const [draggingSectionID, setDraggingSectionID] = useState<string | undefined>();
   const [sidebarSortIndicator, setSidebarSortIndicator] = useState<{
     id: string;
@@ -2137,8 +2146,25 @@ export function AppSidebar({
                   )}
                   onToggleCollapsed={() => toggleFunctionalGroupCollapsed(groupID)}
                   action={(
-                    <div className="sidebar-add-workspace" ref={workspaceMenuRef}>
+                    <div
+                      className="sidebar-add-workspace"
+                      ref={workspaceMenuRef}
+                      onKeyDown={(event) => {
+                        if (!workspaceMenuOpen) return;
+                        if (moveMenuFocus(event, addWorkspaceMenuRef.current)) return;
+                        if (event.key === "Escape" || event.key === "Tab") {
+                          // Tab resumes the native order from the trigger.
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }
+                          addWorkspaceTriggerRef.current?.focus();
+                          onToggleWorkspaceMenu();
+                        }
+                      }}
+                    >
                       <button
+                        ref={addWorkspaceTriggerRef}
                         className="sidebar-functional-action"
                         type="button"
                         aria-label={t("sidebar.addWorkspace")}
@@ -2150,7 +2176,7 @@ export function AppSidebar({
                         <Plus aria-hidden="true" />
                       </button>
                       {workspaceMenuOpen ? (
-                        <div className="project-add-menu" role="menu">
+                        <div className="project-add-menu" role="menu" ref={addWorkspaceMenuRef}>
                           <button role="menuitem" disabled={!hostSupports("createBlankProject")} onClick={onCreateWorkspace}>
                             <FolderPlus className="icon-xl" />
                             <span>{t("sidebar.newBlankWorkspace")}</span>

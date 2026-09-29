@@ -5,6 +5,7 @@ import type { AccountView } from "./AccountPanel";
 import { hostSupports } from "./HostCapabilities";
 import { ENABLE_ACCOUNT } from "./FeatureFlags";
 import { useI18n } from "./i18n";
+import { moveMenuFocus } from "./MenuKeyboardNavigation";
 import "./SidebarAccountMenu.css";
 
 export function SidebarAccountMenu({ disabled, localOnly = false, onOpenSettings, onOpenAccount }: {
@@ -89,14 +90,8 @@ export function SidebarAccountMenu({ disabled, localOnly = false, onOpenSettings
       <div ref={panel} id={id} role="menu" aria-label={t("account.menu")} className="select-menu-panel sidebar-account-menu"
         onBlur={event => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node) && event.relatedTarget !== anchor.current) setOpen(false); }}
         onKeyDown={event => {
-          if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
-          if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
-            event.preventDefault();
-            const items = Array.from(panel.current?.querySelectorAll<HTMLButtonElement>("[role=menuitem]:not(:disabled)") ?? []);
-            const index = items.indexOf(document.activeElement as HTMLButtonElement);
-            const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-            items[next]?.focus();
-          }
+          if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); return; }
+          moveMenuFocus(event, panel.current);
         }}>
         <div className="sidebar-account-profile">{avatar}<div><strong>{account.display_name || account.username || "Wuu"}</strong><span>{account.username ? account.server : t("account.localMode")}</span></div></div>
         <div className="sidebar-account-divider" role="separator" />
