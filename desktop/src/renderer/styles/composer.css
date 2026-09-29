@@ -1862,29 +1862,21 @@ html[data-focus-modality="keyboard"] :is(
   text-align: center;
 }
 
-.permission-menu-anchor .access-menu,
-.hero-composer-wrap .permission-menu-anchor .access-menu {
-  top: auto;
-  bottom: calc(100% + 6px);
-  left: 0;
-  width: 176px;
-}
 
+/* The permission menu reads like its chip: the mode's symbol and name, and
+ * one line on what the mode allows. */
 .access-menu {
-  gap: 1px;
-  background: var(--menu-bg);
-  padding: var(--menu-inset);
-  width: 176px;
+  width: var(--composer-menu-width);
 }
 
-.mode-menu {
-  left: 170px;
-  width: 224px;
+.access-menu .permission-mode-icon {
+  flex: none;
+  color: var(--ink-soft);
 }
 
-.branch-menu {
-  left: 304px;
-  width: 300px;
+/* Unconfined carries its warning symbol and consequence line, not only red. */
+.access-menu .is-danger :is(.permission-mode-icon, .select-menu-item-label) {
+  color: var(--danger);
 }
 
 .composer-context-menu button {
@@ -1909,23 +1901,12 @@ html[data-focus-modality="keyboard"] :is(
 }
 
 /* Menu rows sit 1px apart, so a row's ring stays inside it. */
-html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-project-menu, .codex-runtime-menu) button:focus-visible {
+html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-project-menu, .codex-runtime-menu, .access-menu) button:focus-visible {
   outline-offset: -2px;
 }
 
 .composer-context-menu button:disabled {
   opacity: 0.52;
-}
-
-.composer-context-menu .permission-mode-option {
-  height: auto;
-  min-height: var(--control-row-height);
-  justify-content: flex-start;
-  gap: var(--menu-item-gap);
-  border: 0;
-  border-radius: var(--radius-xs);
-  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
-  text-align: left;
 }
 
 .composer-context-menu button span {
@@ -1934,27 +1915,6 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.permission-mode-option strong {
-  color: var(--ink);
-  flex: 1;
-  font-size: inherit;
-  font-weight: inherit;
-  line-height: inherit;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.permission-mode-option.danger strong {
-  color: var(--danger);
-}
-
-.permission-mode-option[aria-checked="true"] strong,
-.permission-mode-option[aria-checked="true"] svg {
-  color: var(--accent, var(--ink));
 }
 
 .composer-context-menu button svg {

@@ -5,7 +5,7 @@ import type { InitializeResult } from "../shared/protocol";
 import { writeDraftRuntimeMemory } from "./DraftRuntimeMemory";
 import { permissionModeOption, RuntimePicker } from "./ComposerRuntimeMenus";
 import type { CodexRuntimeMenu } from "./ComposerTypes";
-import { setActiveLocale } from "./i18n";
+import { setActiveLocale, translateCurrent } from "./i18n";
 import { variantLabel } from "./RuntimeHelpers";
 
 describe("RuntimePicker", () => {
@@ -438,18 +438,30 @@ describe("RuntimePicker", () => {
     setActiveLocale("en-US");
 
     expect(permissionModeOption("standard")).toMatchObject({
-      label: "Full trust within workspace",
-      chipLabel: "Standard",
+      label: translateCurrent("runtime.permission.standard"),
+      hint: translateCurrent("runtime.permission.standardHint"),
     });
   });
 
-  it("uses advertised ACP permission labels when the engine publishes them", () => {
+  it.each(["codex", "claude", "cursor", "devin"])(
+    "names %s modes with the shared words and keeps the engine's own mode as the hint",
+    (engine) => {
+      for (const mode of ["standard", "unconfined"] as const) {
+        const option = permissionModeOption(mode, engine);
+        expect(option.label).toBe(permissionModeOption(mode).label);
+        expect(option.hint).not.toBe("");
+        expect(option.hint).not.toBe(option.label);
+      }
+    },
+  );
+
+  it("shows advertised ACP permission labels as the hint under the shared name", () => {
     expect(permissionModeOption("unconfined", "devin", [
       { mode: "standard", id: "ask", label: "Ask" },
       { mode: "unconfined", id: "bypass", label: "Bypass Permissions" },
     ])).toMatchObject({
-      label: "Bypass Permissions",
-      chipLabel: "Bypass Permissions",
+      label: permissionModeOption("unconfined").label,
+      hint: "Bypass Permissions",
       tone: "danger",
     });
   });

@@ -85,6 +85,8 @@ import { ComposerPluginToolbar } from "./plugins/ComposerPluginToolbar";
 import {
   AccessMenu,
   ComposerPlusButton,
+  PERMISSION_MENU_WIDTH,
+  composerMenuWidth,
   WorkspacePickerMenu,
   RuntimePicker,
   RuntimeModelMenu,
@@ -126,7 +128,7 @@ export type {
 } from "./ComposerTypes";
 export { FloatingMenuPortal, isInsideFloatingMenu } from "./ComposerFloatingMenu";
 export { SplitPaneComposer } from "./ComposerInputSections";
-export { permissionModeFromSummary, permissionModeHasAdvancedOverrides } from "./ComposerRuntimeMenus";
+export { permissionModeFromSummary } from "./ComposerRuntimeMenus";
 
 export function Composer({
   variant = "dock",
@@ -624,7 +626,7 @@ export function Composer({
   const approveForMeOn = permissionMode === "standard" && Boolean(initialized?.permissions?.approve_for_me);
   const permissionChipLabel = approveForMeOn
     ? t("runtime.permission.approveForMe")
-    : permissionOption.chipLabel;
+    : permissionOption.label;
   const PermissionChipIcon = approveForMeOn ? ShieldCheck : permissionOption.icon;
   const workspacePillLabel = heroWorkspacePillLabel(activeContext, activeWorkspace);
   const workspacePillTitle =
@@ -1389,7 +1391,7 @@ export function Composer({
                         placement="above"
                         align="left"
                         offset={6}
-                        width={176}
+                        width={composerMenuWidth(PERMISSION_MENU_WIDTH)}
                         mobileSheet={{ label: t("composer.permissionMode", { mode: permissionChipLabel }), onClose: onToggleAccessMenu }}
                       >
                         <AccessMenu

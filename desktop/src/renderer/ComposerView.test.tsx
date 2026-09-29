@@ -13,6 +13,7 @@ import {
 } from "./ComposerView";
 import { ImagePreviewProvider } from "./ImagePreview";
 import { ConversationSplitPane } from "./ConversationSplitPane";
+import { permissionModeOption } from "./ComposerRuntimeMenus";
 import { translateCurrent } from "./i18n";
 import { WorkbenchConnectionContext } from "./WorkbenchConnectionContext";
 import { ComposerTokenGauge } from "./ComposerTokenGauge";
@@ -2793,44 +2794,40 @@ describe("Composer permission menu", () => {
     expect(permissionModeFromSummary({ mode: "unconfined" })).toBe("unconfined");
   });
 
-  it("shows the everyday permission modes in the composer menu", () => {
-    const onSelectPermissionMode = vi.fn();
-    renderComposer({
-      accessMenuOpen: true,
-      permissions: { mode: "standard" },
-      onSelectPermissionMode,
-    });
+  function accessRows(): HTMLButtonElement[] {
+    return Array.from(document.body.querySelectorAll<HTMLButtonElement>('.access-menu [role="menuitemradio"]'));
+  }
 
-    const chip = container.querySelector<HTMLButtonElement>(
-      "button[aria-label=\"权限模式：标准\"]",
-    );
-    expect(chip).not.toBeNull();
-    expect(chip?.disabled).toBe(false);
+  function rowLabel(row: Element | undefined): string | undefined {
+    return row?.querySelector(".select-menu-item-label")?.textContent ?? undefined;
+  }
 
-    const labels = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>(
-        "button[role=\"menuitemradio\"] strong",
-      ),
-    ).map((label) => label.textContent?.trim());
-    expect(labels).toEqual(["工作区内完全信任", "替我审批", "只读", "无边界"]);
-    expect(document.body.textContent).not.toContain("平衡");
-    expect(document.body.textContent).not.toContain("严格");
-    const menuLabels = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>(
-        ".access-menu button strong",
-      ),
-    ).map((label) => label.textContent?.trim());
-    expect(menuLabels).toEqual(["工作区内完全信任", "替我审批", "只读", "无边界"]);
+  function accessRow(mode: PermissionMode, approveForMe = false): HTMLButtonElement | undefined {
+    const label = approveForMe ? translateCurrent("runtime.permission.approveForMe") : permissionModeOption(mode).label;
+    return accessRows().find((row) => rowLabel(row) === label);
+  }
 
-    const checkedLabels = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>(
-        "button[role=\"menuitemradio\"][aria-checked=\"true\"] strong",
-      ),
-    ).map((label) => label.textContent?.trim());
-    expect(checkedLabels).toEqual(["工作区内完全信任"]);
-    expect(document.body.querySelector(
-      "button[role=\"menuitemradio\"][aria-checked=\"true\"] svg",
-    )).not.toBeNull();
+  it.each([
+    { mode: "standard" },
+    { mode: "standard", approve_for_me: true },
+    { mode: "read_only" },
+    { mode: "unconfined" },
+  ])("names the current mode with the same words on the chip and in the menu: %j", (permissions) => {
+    renderComposer({ accessMenuOpen: true, permissions });
+
+    const chip = container.querySelector<HTMLButtonElement>(".permission-chip")!;
+    expect(chip.disabled).toBe(false);
+    const rows = accessRows();
+    expect(rows).toHaveLength(4);
+    expect(new Set(rows.map(rowLabel)).size).toBe(4);
+    const checked = rows.filter((row) => row.getAttribute("aria-checked") === "true");
+    expect(checked).toHaveLength(1);
+    expect(chip.textContent).toBe(rowLabel(checked[0]));
+    expect(chip.getAttribute("aria-label")).toContain(chip.textContent);
+    // Each mode explains itself in one secondary line rather than a longer name.
+    for (const row of rows) {
+      expect(row.querySelector(".select-menu-item-hint")?.textContent).toBeTruthy();
+    }
     expect(document.body.textContent).not.toContain("profile:");
     expect(document.body.textContent).not.toContain("reviewer:");
   });
@@ -2880,13 +2877,13 @@ describe("Composer permission menu", () => {
       activeEngine: "grok",
       permissions: { mode: "unconfined" },
     });
-    const labels = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>(".access-menu button strong"),
-    ).map((label) => label.textContent?.trim());
-    expect(labels).toEqual(["工作区内完全信任", "无边界"]);
+    expect(accessRows().map(rowLabel)).toEqual([
+      permissionModeOption("standard").label,
+      permissionModeOption("unconfined").label,
+    ]);
   });
 
-  it("shows advertised ACP permission labels in the unified access menu", () => {
+  it("keeps advertised ACP permission labels visible under the shared mode names", () => {
     const onSelectPermissionMode = vi.fn();
     renderComposer({
       accessMenuOpen: true,
@@ -2906,15 +2903,13 @@ describe("Composer permission menu", () => {
         },
       ],
     });
-    const labels = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>(".access-menu button strong"),
-    ).map((label) => label.textContent?.trim());
-    expect(labels).toEqual(["Ask", "Plan", "Bypass Permissions"]);
-    const plan = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
-    ).find((button) => button.textContent?.includes("Plan"));
+    const rows = accessRows();
+    expect(rows.map(rowLabel)).toEqual(
+      (["standard", "read_only", "unconfined"] as const).map((mode) => permissionModeOption(mode).label),
+    );
+    expect(rows.map((row) => row.querySelector(".select-menu-item-hint")?.textContent)).toEqual(["Ask", "Plan", "Bypass Permissions"]);
     act(() => {
-      plan?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      accessRow("read_only")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
     expect(onSelectPermissionMode).toHaveBeenCalledWith("read_only", undefined);
   });
@@ -2927,13 +2922,8 @@ describe("Composer permission menu", () => {
       onSelectPermissionMode,
     });
 
-    const standard = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>(
-        "button[role=\"menuitemradio\"]",
-      ),
-    ).find((button) => button.textContent?.includes("工作区内完全信任"));
     act(() => {
-      standard?.dispatchEvent(
+      accessRow("standard")?.dispatchEvent(
         new MouseEvent("click", { bubbles: true, cancelable: true }),
       );
     });
@@ -2959,47 +2949,24 @@ describe("Composer permission menu", () => {
     expect(onSelectPermissionMode).toHaveBeenCalledWith("standard", true);
   });
 
-  it("shows Approve for me as selected on the chip and with a check in the menu", () => {
+  it("marks Approve for me, not Standard, while it is on", () => {
     renderComposer({
       accessMenuOpen: true,
       permissions: { mode: "standard", approve_for_me: true },
     });
 
-    const chip = container.querySelector<HTMLButtonElement>(
-      "button[aria-label=\"权限模式：替我审批\"]",
-    );
-    expect(chip).not.toBeNull();
-    expect(chip?.textContent).toContain("替我审批");
-
-    const radios = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
-    );
-    const approveForMe = radios.find((button) => button.textContent?.includes("替我审批"));
-    const standard = radios.find((button) => button.textContent?.includes("工作区内完全信任"));
-    expect(approveForMe?.getAttribute("aria-checked")).toBe("true");
-    expect(approveForMe?.querySelector("svg")).not.toBeNull();
-    expect(standard?.getAttribute("aria-checked")).toBe("false");
-    expect(standard?.querySelector("svg")).toBeNull();
+    expect(accessRow("standard", true)?.getAttribute("aria-checked")).toBe("true");
+    expect(accessRow("standard")?.getAttribute("aria-checked")).toBe("false");
   });
 
-  it("does not mark Approve for me selected when it is off", () => {
+  it("marks Standard, not Approve for me, while it is off", () => {
     renderComposer({
       accessMenuOpen: true,
       permissions: { mode: "standard", approve_for_me: false },
     });
 
-    expect(container.querySelector<HTMLButtonElement>(
-      "button[aria-label=\"权限模式：标准\"]",
-    )).not.toBeNull();
-
-    const radios = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
-    );
-    const approveForMe = radios.find((button) => button.textContent?.includes("替我审批"));
-    const standard = radios.find((button) => button.textContent?.includes("工作区内完全信任"));
-    expect(approveForMe?.getAttribute("aria-checked")).toBe("false");
-    expect(approveForMe?.querySelector("svg")).toBeNull();
-    expect(standard?.getAttribute("aria-checked")).toBe("true");
+    expect(accessRow("standard", true)?.getAttribute("aria-checked")).toBe("false");
+    expect(accessRow("standard")?.getAttribute("aria-checked")).toBe("true");
   });
 
   it("keeps Approve for me selectable from unconfined mode", () => {
@@ -3009,19 +2976,10 @@ describe("Composer permission menu", () => {
       permissions: { mode: "unconfined", approve_for_me: true },
       onSelectPermissionMode,
     });
-    const radios = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
-    );
-    const approveForMe = radios.find((button) => button.textContent?.includes("替我审批"));
-    const unconfined = radios.find((button) => button.textContent?.includes("无边界"));
-    expect(approveForMe).not.toBeUndefined();
+    const approveForMe = accessRow("standard", true);
     expect(approveForMe?.disabled).toBe(false);
     expect(approveForMe?.getAttribute("aria-checked")).toBe("false");
-    expect(approveForMe?.querySelector("svg")).toBeNull();
-    expect(unconfined?.getAttribute("aria-checked")).toBe("true");
-    expect(container.querySelector<HTMLButtonElement>(
-      "button[aria-label=\"权限模式：无边界\"]",
-    )).not.toBeNull();
+    expect(accessRow("unconfined")?.getAttribute("aria-checked")).toBe("true");
     act(() => {
       approveForMe?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });

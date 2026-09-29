@@ -16,7 +16,6 @@ import {
   FolderPlus,
   FolderX,
   Gauge,
-  GitBranch,
   GitCommitHorizontal,
   GitCompare,
   GitPullRequest,
@@ -34,6 +33,7 @@ import {
   Search,
   Settings,
   Shield,
+  ShieldCheck,
   Terminal,
   TriangleAlert,
   Zap,
@@ -46,7 +46,6 @@ import type {
   EngineInfo,
   EngineModelInfo,
   EnginePermissionModeInfo,
-  GitStatusResult,
   InitializeResult,
   PermissionSummary,
   ProviderModelSummary,
@@ -76,8 +75,6 @@ import { engineLabel } from "./EngineDisplay";
 import { EngineIcon } from "./EngineIcons";
 import { lastEffortForRuntimeModel, lastModelForProvider } from "./DraftRuntimeMemory";
 import {
-  codexEffortOptions,
-  displayCodexModelName,
   effectiveModelSpeed,
   orderedEffortOptions,
   providerIsCodex,
@@ -167,15 +164,20 @@ function EngineOptionsMenu({
 export type RuntimePanelView = "summary" | "engines" | "providers" | "models";
 type RuntimePanelDirection = "forward" | "back";
 
-// The panel is drawn at 224px for the default UI size and widens with larger
-// UI text so model names keep the same room. The floating layer positions the
-// panel from this number, so it is resolved here rather than in CSS.
-const RUNTIME_PANEL_WIDTH = 224;
-
-export function runtimePanelWidth(): number {
+// Composer menus are drawn for the default UI size and widen with larger UI
+// text so their labels keep the same room. The floating layer positions a menu
+// from this number, so it is resolved here rather than in CSS.
+export function composerMenuWidth(base: number): number {
   const uiSize = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--font-ui"));
   const defaultSize = MESSAGE_FLOW_FONT_SIZE_RANGE.default;
-  return uiSize > defaultSize ? Math.round((RUNTIME_PANEL_WIDTH * uiSize) / defaultSize) : RUNTIME_PANEL_WIDTH;
+  return uiSize > defaultSize ? Math.round((base * uiSize) / defaultSize) : base;
+}
+
+const RUNTIME_PANEL_WIDTH = 224;
+export const PERMISSION_MENU_WIDTH = 264;
+
+export function runtimePanelWidth(): number {
+  return composerMenuWidth(RUNTIME_PANEL_WIDTH);
 }
 
 // The panel morphs between pages with a height transition, so its shell
@@ -343,56 +345,50 @@ type PermissionModeState = PermissionMode;
 
 type PermissionModeOption = {
   mode: PermissionMode;
+  // The chip and the menu name a mode with the same words on every engine.
   label: string;
-  chipLabel: string;
+  // One line on what the mode allows; for an external engine, the native mode
+  // Wuu selects, in the words of that engine's own documentation.
+  hint: string;
   icon: IconComponent;
   tone: ChipTone;
 };
 
-function permissionModeLabels(engine?: string): Record<PermissionMode, { label: string; chipLabel: string }> {
+function permissionModeLabel(mode: PermissionMode): string {
+  switch (mode) {
+    case "read_only":
+      return translate("runtime.permission.readOnly");
+    case "unconfined":
+      return translate("runtime.permission.unconfined");
+    default:
+      return translate("runtime.permission.standard");
+  }
+}
+
+function permissionModeHint(mode: PermissionMode): string {
+  switch (mode) {
+    case "read_only":
+      return translate("runtime.permission.readOnlyHint");
+    case "unconfined":
+      return translate("runtime.permission.unconfinedHint");
+    default:
+      return translate("runtime.permission.standardHint");
+  }
+}
+
+// Mode names the external programs use for the setting Wuu passes them.
+function nativePermissionModeNames(engine?: string): Partial<Record<PermissionMode, string>> {
   switch (engine?.trim().toLowerCase()) {
     case "codex":
-      return {
-        standard: { label: "Workspace Write", chipLabel: "Workspace Write" },
-        read_only: { label: "Read Only", chipLabel: "Read Only" },
-        unconfined: { label: "Danger Full Access", chipLabel: "Danger Full Access" }
-      };
+      return { standard: "Workspace Write", read_only: "Read Only", unconfined: "Danger Full Access" };
     case "claude":
-      return {
-        standard: { label: "Don't Ask", chipLabel: "Don't Ask" },
-        read_only: { label: "Plan", chipLabel: "Plan" },
-        unconfined: { label: "Bypass Permissions", chipLabel: "Bypass Permissions" }
-      };
+      return { standard: "Don't Ask", read_only: "Plan", unconfined: "Bypass Permissions" };
     case "cursor":
-      return {
-        standard: { label: "Agent", chipLabel: "Agent" },
-        read_only: { label: "Plan", chipLabel: "Plan" },
-        unconfined: {
-          label: translate("runtime.permission.unconfined"),
-          chipLabel: translate("runtime.permission.unconfined")
-        }
-      };
+      return { standard: "Agent", read_only: "Plan" };
     case "devin":
-      return {
-        standard: { label: "Ask", chipLabel: "Ask" },
-        read_only: { label: "Ask", chipLabel: "Ask" },
-        unconfined: { label: "Bypass", chipLabel: "Bypass" }
-      };
+      return { standard: "Ask", unconfined: "Bypass" };
     default:
-      return {
-        standard: {
-          label: translate("runtime.permission.standardLabel"),
-          chipLabel: translate("runtime.permission.standard")
-        },
-        read_only: {
-          label: translate("runtime.permission.readOnly"),
-          chipLabel: translate("runtime.permission.readOnly")
-        },
-        unconfined: {
-          label: translate("runtime.permission.unconfined"),
-          chipLabel: translate("runtime.permission.unconfined")
-        }
-      };
+      return {};
   }
 }
 
@@ -407,36 +403,28 @@ function permissionModeIcons(mode: PermissionMode): { icon: IconComponent; tone:
   }
 }
 
-function advertisedPermissionLabel(
-  advertised: EnginePermissionModeInfo | undefined,
-  fallback: { label: string; chipLabel: string }
-): { label: string; chipLabel: string } {
-  const label = advertised?.label?.trim();
-  if (!label) {
-    return fallback;
-  }
-  return { label, chipLabel: label };
+function permissionModeOptionFor(
+  mode: PermissionMode,
+  engine?: string,
+  advertised?: readonly EnginePermissionModeInfo[],
+): PermissionModeOption {
+  const hint = advertised?.find((item) => item.mode === mode)?.label?.trim()
+    || nativePermissionModeNames(engine)[mode]
+    || permissionModeHint(mode);
+  return { mode, label: permissionModeLabel(mode), hint, ...permissionModeIcons(mode) };
 }
 
 function permissionModeOptions(
   engine?: string,
   advertised?: readonly EnginePermissionModeInfo[],
 ): PermissionModeOption[] {
-  const labels = permissionModeLabels(engine);
   const catalog = advertised?.filter((mode) => mode.mode === "standard" || mode.mode === "read_only" || mode.mode === "unconfined");
   const modes: PermissionMode[] = catalog && catalog.length > 0
     ? catalog.map((mode) => mode.mode)
     : engineOffersReadOnly(engine)
       ? ["standard", "read_only", "unconfined"]
       : ["standard", "unconfined"];
-  return modes.map((mode) => {
-    const native = catalog?.find((item) => item.mode === mode);
-    return {
-      mode,
-      ...advertisedPermissionLabel(native, labels[mode]),
-      ...permissionModeIcons(mode)
-    };
-  });
+  return modes.map((mode) => permissionModeOptionFor(mode, engine, catalog));
 }
 
 function engineOffersReadOnly(engine?: string): boolean {
@@ -466,22 +454,13 @@ export function permissionModeFromSummary(permissions?: PermissionSummary): Perm
   }
 }
 
-export function permissionModeHasAdvancedOverrides(_permissions?: PermissionSummary): boolean {
-  return false;
-}
-
 export function permissionModeOption(
   mode: PermissionModeState,
   engine?: string,
   advertised?: readonly EnginePermissionModeInfo[],
-): Omit<PermissionModeOption, "mode"> & { mode: PermissionModeState } {
-  const options = permissionModeOptions(engine, advertised);
-  const match = options.find((option) => option.mode === mode);
-  if (match) {
-    return match;
-  }
-  const labels = permissionModeLabels(engine);
-  return { mode, ...advertisedPermissionLabel(undefined, labels[mode] ?? labels.standard), ...permissionModeIcons(mode) };
+): PermissionModeOption {
+  return permissionModeOptions(engine, advertised).find((option) => option.mode === mode)
+    ?? permissionModeOptionFor(mode, engine, advertised);
 }
 
 export type HandoffRuntimePicker = {
@@ -1663,12 +1642,9 @@ export function SlashCommandIcon({ command }: { command: ComposerSlashCommand })
   }
 }
 
-type AccessOption = {
+type AccessOption = PermissionModeOption & {
   key: string;
-  mode: PermissionMode;
   approveForMe: boolean;
-  label: string;
-  tone: ChipTone;
 };
 
 function accessOptions(
@@ -1678,19 +1654,15 @@ function accessOptions(
 ): AccessOption[] {
   const options: AccessOption[] = [];
   for (const option of permissionModeOptions(engine, advertised)) {
-    options.push({
-      key: option.mode,
-      mode: option.mode,
-      approveForMe: false,
-      label: option.label,
-      tone: option.tone,
-    });
+    options.push({ ...option, key: option.mode, approveForMe: false });
     if (includeApproveForMe && option.mode === "standard") {
       options.push({
         key: "approve_for_me",
         mode: "standard",
         approveForMe: true,
         label: translate("runtime.permission.approveForMe"),
+        hint: translate("runtime.permission.approveForMeHint"),
+        icon: ShieldCheck,
         tone: "neutral",
       });
     }
@@ -1698,6 +1670,8 @@ function accessOptions(
   return options;
 }
 
+// The permission menu uses the shared select rows: the mode's symbol (the
+// same one its chip shows), its name, and one line on what it allows.
 export function AccessMenu({
   permissions,
   engine,
@@ -1720,62 +1694,32 @@ export function AccessMenu({
   const approveForMeOn = mode === "standard" && Boolean(permissions?.approve_for_me);
   const showApproveForMe = (engine || "wuu") === "wuu";
   return (
-    <div ref={menuRef} className="composer-context-menu access-menu" role="menu" onKeyDown={onKeyDown}>
+    <div
+      ref={menuRef}
+      className="select-menu-panel access-menu"
+      role="menu"
+      style={{ "--composer-menu-width": `${composerMenuWidth(PERMISSION_MENU_WIDTH)}px` } as CSSProperties}
+      onKeyDown={onKeyDown}
+    >
       {accessOptions(engine, showApproveForMe, permissionModes).map((option) => {
         const selected = mode === option.mode && option.approveForMe === approveForMeOn;
+        const Icon = option.icon;
         return (
           <button
             key={option.key}
-            className={`permission-mode-option ${option.tone}`}
+            className={`select-menu-item permission-mode-option${option.tone === "danger" ? " is-danger" : ""}`}
             role="menuitemradio"
             aria-checked={selected}
-            aria-label={option.label}
             type="button"
             disabled={disabled}
             onClick={() => onSelect(option.mode, showApproveForMe ? option.approveForMe : undefined)}
           >
-            <strong>{option.label}</strong>
-            {selected ? <Check aria-hidden="true" /> : null}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-
-
-export function BranchMenu({
-  gitStatus,
-  onSelectBranch
-}: {
-  gitStatus: GitStatusResult;
-  onSelectBranch: (branch: string) => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const branches = gitStatus.branches ?? [];
-  return (
-    <div className="composer-context-menu branch-menu" role="menu">
-      {gitStatus.dirty_count > 0 ? (
-        <div className="composer-menu-note warning">
-          <strong>{t("runtime.uncommittedChanges")}</strong>
-          <span>{t(gitStatus.dirty_count === 1 ? "runtime.dirtyFileWarningOne" : "runtime.dirtyFileWarning", { count: gitStatus.dirty_count })}</span>
-        </div>
-      ) : null}
-      {branches.length === 0 ? <div className="composer-menu-empty">{t("runtime.noLocalBranches")}</div> : null}
-      {branches.map((branch) => {
-        const selected = branch === gitStatus.branch;
-        return (
-          <button
-            key={branch}
-            role="menuitem"
-            type="button"
-            disabled={selected || !hostSupports("checkoutGitBranch")}
-            onClick={() => onSelectBranch(branch)}
-          >
-            <GitBranch className="icon-lg" />
-            <span>{branch}</span>
-            {selected ? <Check className="icon" /> : null}
+            <Icon className="permission-mode-icon" aria-hidden="true" />
+            <span className="select-menu-item-text">
+              <span className="select-menu-item-label">{option.label}</span>
+              <span className="select-menu-item-hint">{option.hint}</span>
+            </span>
+            <Check className="select-menu-check" aria-hidden="true" />
           </button>
         );
       })}
