@@ -63,6 +63,103 @@ afterEach(() => {
 });
 
 describe("GitService file previews", () => {
+  it.each(["original", "modified", "both"])(
+    "uses the complete patch when the %s full-text preview exceeds the limit",
+    (oversizedSide) => {
+      const root = makeRepository();
+      const prefix = `${"x".repeat(71)}\n`.repeat(7281);
+      const before = `${prefix}${oversizedSide === "modified" ? "before" : "before".repeat(20)}\n`;
+      const after = `${prefix}${oversizedSide === "original" ? "after" : "after".repeat(24)}\n`;
+      writeFileSync(join(root, "README.md"), before);
+      execFileSync("git", ["-C", root, "add", "README.md"]);
+      execFileSync("git", ["-C", root, "commit", "-qm", "add large text"]);
+      writeFileSync(join(root, "README.md"), after);
+
+      const preview = serviceFor(root).fileDiff("README.md");
+      expect(preview.patch).toContain(`-${before.slice(prefix.length)}+${after.slice(prefix.length)}`);
+      expect(preview.original_text).toBeUndefined();
+      expect(preview.modified_text).toBeUndefined();
+      expect(preview.truncated).toBe(false);
+    },
+  );
+
+  it.each(["modified", "untracked", "ignored"])(
+    "labels a truncated %s patch without exposing incomplete full-text models",
+    (state) => {
+      const root = makeRepository();
+      const path = state === "modified" ? "README.md" : "large.txt";
+      if (state === "ignored") writeFileSync(join(root, ".gitignore"), "/large.txt\n");
+      writeFileSync(join(root, path), "large changed text\n".repeat(40000));
+
+      const preview = serviceFor(root).fileDiff(path);
+      expect(preview.patch).toContain("+large changed text");
+      expect(preview.original_text).toBeUndefined();
+      expect(preview.modified_text).toBeUndefined();
+      expect(preview.truncated).toBe(true);
+    },
+  );
+
+  it("keeps legitimate empty sides for added, emptied and deleted files", () => {
+    const root = makeRepository();
+    const service = serviceFor(root);
+    writeFileSync(join(root, "empty.txt"), "");
+    execFileSync("git", ["-C", root, "add", "empty.txt"]);
+    expect(service.fileDiff("empty.txt")).toMatchObject({ original_text: "", modified_text: "" });
+    writeFileSync(join(root, "README.md"), "");
+    expect(service.fileDiff("README.md")).toMatchObject({ original_text: "workspace\n", modified_text: "" });
+    unlinkSync(join(root, "README.md"));
+    expect(service.fileDiff("README.md")).toMatchObject({ original_text: "workspace\n", modified_text: "" });
+  });
+
+  it("uses the submodule patch with both commit IDs instead of empty text models", () => {
+    const child = makeRepository();
+    const before = execFileSync("git", ["-C", child, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    const root = makeRepository();
+    execFileSync("git", ["-C", root, "-c", "protocol.file.allow=always", "submodule", "add", "-q", child, "vendor"]);
+    const service = serviceFor(root);
+    const added = service.fileDiff("vendor");
+    expect(added.patch).toContain(`+Subproject commit ${before}`);
+    expect(added.original_text).toBeUndefined();
+    expect(added.modified_text).toBeUndefined();
+    execFileSync("git", ["-C", root, "commit", "-qam", "add submodule"]);
+    writeFileSync(join(child, "README.md"), "updated library\n");
+    execFileSync("git", ["-C", child, "commit", "-qam", "update library"]);
+    const after = execFileSync("git", ["-C", child, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    execFileSync("git", ["-C", join(root, "vendor"), "-c", "protocol.file.allow=always", "fetch", "-q", "origin"]);
+    execFileSync("git", ["-C", join(root, "vendor"), "checkout", "-q", after]);
+    expect(service.changes().files).toEqual([
+      { path: "vendor", status: "modified", additions: 1, deletions: 1, binary: false },
+    ]);
+    const preview = service.fileDiff("vendor");
+    expect(preview.patch).toContain(`-Subproject commit ${before}\n+Subproject commit ${after}`);
+    expect(preview.original_text).toBeUndefined();
+    expect(preview.modified_text).toBeUndefined();
+    expect(preview.truncated).toBe(false);
+    execFileSync("git", ["-C", root, "rm", "-qf", "vendor"]);
+    const deleted = service.fileDiff("vendor");
+    expect(deleted.patch).toContain(`-Subproject commit ${before}`);
+    expect(deleted.original_text).toBeUndefined();
+    expect(deleted.modified_text).toBeUndefined();
+  });
+
+  it.each(["GIT binary patch", "Binary files ", "normal text change"])(
+    "keeps text containing %j readable as a text diff",
+    (marker) => {
+      const root = makeRepository();
+      const modifiedText = `export const marker = "${marker}";\n`;
+      writeFileSync(join(root, "README.md"), modifiedText);
+      const service = serviceFor(root);
+
+      expect(service.changes().files).toEqual([
+        { path: "README.md", status: "modified", additions: 1, deletions: 1, binary: false },
+      ]);
+      expect(service.fileDiff("README.md")).toMatchObject({
+        binary: false, original_text: "workspace\n", modified_text: modifiedText,
+        patch: expect.stringContaining(`+${modifiedText}`), truncated: false,
+      });
+    },
+  );
+
   it.skipIf(process.platform === "win32").each(["target.txt", "binary.bin", "missing.txt", "directory"])(
     "previews symlink values through untracked, staged, modified and deleted states (%s)",
     (target) => {
