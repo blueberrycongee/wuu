@@ -695,12 +695,13 @@
 }
 
 /* Compact numeric input for small-value rows (thresholds, limits): sits
- * in the right-hand control slot instead of stretching the row tall. */
-/* One width fits a token count with its unit, so the numeric fields of a
- * group share their edges whether or not they carry a unit. */
+ * in the right-hand control slot instead of stretching the row tall. One
+ * width fits a token count with its unit, so the numeric fields of a group
+ * share their edges whether or not they carry a unit. The width follows the
+ * text, so the default and its unit still fit at large sizes. */
 .settings-input-num {
   flex: 0 0 auto;
-  width: 136px;
+  width: 9.5em;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -742,7 +743,7 @@
 
 /* Keep native steppers available on hover and keyboard focus. */
 .settings-input-num-center {
-  width: 72px;
+  width: 5em;
   padding: 0;
   text-align: center;
 }
@@ -1509,8 +1510,8 @@ button.settings-engine-expand:hover {
 /* --- MCP servers + pets --------------------------------------------------------- */
 
 .settings-mcp-code-input {
-  width: 140px;
-  min-width: 112px;
+  width: 9.5em;
+  min-width: 7.5em;
 }
 
 /* A state mark leads the meta line and must not wrap away from it. */
@@ -1535,7 +1536,7 @@ button.settings-engine-expand:hover {
 }
 
 .settings-codex-pet-select {
-  max-width: 200px;
+  max-width: 14em;
   min-width: 0;
 }
 
