@@ -7,6 +7,7 @@ import type {
 } from "../shared/protocol";
 import { useI18n } from "./i18n";
 import { SelectMenu } from "./SelectMenu";
+import { AlertCircle, AlertTriangle } from "./WuuIcons";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import type { PluginContributionConflict, PluginGenerationDiagnostic } from "./plugins/PluginHost";
 
@@ -71,17 +72,15 @@ export function PluginSettingsEditor({
         <PluginConflictControl key={conflict.key} conflict={conflict} />
       ))}
       {runtimeDiagnostics.map((diagnostic) => (
-        <div className="plugin-contribution-warning" role="status" key={`runtime:${diagnostic.contribution}`}>
-          <strong>{t("skills.pluginContributionIsolated")}</strong>
-          <span>{t("skills.pluginContributionDetail", { contribution: diagnostic.contribution, message: diagnostic.message })}</span>
-        </div>
+        <PluginNotice
+          key={`runtime:${diagnostic.contribution}`}
+          title={t("skills.pluginContributionIsolated")}
+          detail={t("skills.pluginContributionDetail", { contribution: diagnostic.contribution, message: diagnostic.message })}
+        />
       ))}
-      {runtimeDiagnosticError ? <div className="plugin-contribution-warning" role="alert">{runtimeDiagnosticError}</div> : null}
+      {runtimeDiagnosticError ? <PluginNotice tone="danger" title={runtimeDiagnosticError} /> : null}
       {rendererDiagnostics.map((diagnostic, index) => (
-        <div className="plugin-contribution-warning" role="status" key={`${diagnostic.message}:${index}`}>
-          <strong>{t("skills.pluginContributionIsolated")}</strong>
-          <span>{diagnostic.message}</span>
-        </div>
+        <PluginNotice key={`${diagnostic.message}:${index}`} title={t("skills.pluginContributionIsolated")} detail={diagnostic.message} />
       ))}
       {settings.map((setting) => (
         <PluginSettingControl
@@ -119,16 +118,18 @@ function PluginConflictControl({ conflict }: { conflict: PluginContributionConfl
   }
 
   return (
-    <div className="plugin-contribution-conflict" data-conflict-key={conflict.key}>
-      <div>
-        <strong>{t("skills.pluginConflictTitle")}</strong>
-        <span>{t("skills.pluginConflictTarget", {
+    <div className="settings-row plugin-notice" data-conflict-key={conflict.key}>
+      <div className="settings-row-label">
+        <span className="settings-row-label-title plugin-notice-title">
+          <AlertTriangle className="icon-sm" aria-hidden="true" />
+          {t("skills.pluginConflictTitle")}
+        </span>
+        <span className="settings-row-label-description">{t("skills.pluginConflictTarget", {
           kind: conflict.kind === "surface" ? t("skills.pluginConflictSurface") : t("skills.pluginConflictRenderer"),
           target: conflict.target,
         })}</span>
       </div>
-      <div>
-        <span>{t("skills.pluginConflictUse")}</span>
+      <div className="settings-row-control">
         <SelectMenu
           triggerClassName="settings-select-trigger"
           ariaLabel={t("skills.pluginConflictUse")}
@@ -142,7 +143,24 @@ function PluginConflictControl({ conflict }: { conflict: PluginContributionConfl
           onChange={(pluginId) => void choose(pluginId)}
         />
       </div>
-      {error ? <span role="alert">{error}</span> : null}
+      {error ? <div className="settings-row-error settings-error" role="alert">{error}</div> : null}
+    </div>
+  );
+}
+
+// Something about the plugin that needs a look, as a row of its group: the
+// symbol and title carry the state, the detail says which contribution.
+function PluginNotice({ title, detail, tone = "warning" }: { title: string; detail?: string; tone?: "warning" | "danger" }): JSX.Element {
+  const Icon = tone === "danger" ? AlertCircle : AlertTriangle;
+  return (
+    <div className="settings-row plugin-notice" role={tone === "danger" ? "alert" : "status"}>
+      <div className="settings-row-label">
+        <span className="settings-row-label-title plugin-notice-title" data-tone={tone}>
+          <Icon className="icon-sm" aria-hidden="true" />
+          {title}
+        </span>
+        {detail ? <span className="settings-row-label-description">{detail}</span> : null}
+      </div>
     </div>
   );
 }
@@ -277,7 +295,6 @@ function PluginSettingControl({
         ) : setting.type === "enum" ? (
           <SelectMenu
             id={controlId}
-            className="plugin-setting-select"
             triggerClassName="settings-select-trigger"
             value={String(draft)}
             disabled={loading || saving}
@@ -309,7 +326,10 @@ function PluginSettingControl({
       <div id={statusId} className={`plugin-setting-status${error ? " is-error" : ""}`} aria-live="polite">
         {error ? (
           <>
-            <span>{error}</span>
+            <span className="plugin-setting-status-message">
+              <AlertCircle className="icon-sm" aria-hidden="true" />
+              {error}
+            </span>
             <button type="button" className="settings-button settings-button-ghost" onClick={retry} disabled={loading || saving}>
               {t("skills.pluginSettingRetry")}
             </button>

@@ -202,7 +202,11 @@ window.wuu = {
     pluginSettingValues[key] = value;
     return { id, key, scope: key === "retry.count" ? "workspace" : "user", value };
   },
-  getPluginDiagnostics: async ({ id }: { id: string }) => ({ id, diagnostics: [] }),
+  // `diagnostics` adds an isolated contribution to the plugin page.
+  getPluginDiagnostics: async ({ id }: { id: string }) => ({
+    id,
+    diagnostics: params.has("diagnostics") ? [{ contribution: "agent.request.transform", message: "The transform threw during the last request." }] : [],
+  }),
   unsupportedMethods: [],
 } as unknown as WuuDesktopApi;
 

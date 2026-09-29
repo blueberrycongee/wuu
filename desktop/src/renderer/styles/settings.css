@@ -1532,6 +1532,105 @@ button.settings-engine-expand:hover {
   background: var(--settings-preview-dark-line);
 }
 
+/* --- Generated plugin settings ----------------------------------------------
+ * A plugin's settings read as one settings group: its notices (an isolated
+ * contribution, a conflict to settle) come first as rows that lead with a
+ * symbol, then one row per setting with a status line only when there is
+ * something to say (saving, an error with its retry, a restart still due).
+ * ----------------------------------------------------------------------------- */
+
+.plugin-settings-editor {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+.plugin-settings-editor-title {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-semibold);
+  line-height: 1.4;
+}
+
+.plugin-settings-editor-body {
+  display: grid;
+  min-width: 0;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  padding-inline: var(--card-padding);
+}
+
+.plugin-settings-editor-body > .settings-row:last-child {
+  border-bottom: 0;
+}
+
+.plugin-notice-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.plugin-notice-title .icon-sm {
+  flex: 0 0 auto;
+  color: var(--warning);
+}
+
+.plugin-notice-title[data-tone="danger"] {
+  color: var(--danger);
+}
+
+.plugin-notice-title[data-tone="danger"] .icon-sm {
+  color: inherit;
+}
+
+.plugin-setting.settings-row {
+  row-gap: 0;
+}
+
+.plugin-setting .settings-input:not(.settings-input-num) {
+  width: min(15em, 100%);
+}
+
+.plugin-setting-status {
+  display: flex;
+  min-width: 0;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-2);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.plugin-setting-status:not(:empty) {
+  margin-top: var(--space-1);
+}
+
+.plugin-setting-status.is-error {
+  color: var(--danger);
+}
+
+/* The message wraps as text with its symbol on the first line; Retry
+ * follows it. */
+.plugin-setting-status-message {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.plugin-setting-status-message .icon-sm {
+  margin-inline-end: var(--space-1);
+  vertical-align: -0.2em;
+}
+
+@container settings-page (max-width: 32em) {
+  .plugin-setting .settings-input:not(.settings-input-num) {
+    width: 100%;
+  }
+}
+
 /* --- MCP servers + pets --------------------------------------------------------- */
 
 .settings-mcp-code-input {
@@ -2436,7 +2535,7 @@ button.settings-engine-expand:hover {
   }
 
   /* Switches and icon actions are narrow enough to stay beside their label. */
-  .settings-row:not(:has(> .settings-row-control > :not(.settings-switch, .settings-row-actions, .settings-icon-button))) {
+  .settings-row:not(:has(> .settings-row-control > :not(.settings-switch, .plugin-setting-switch, .settings-row-actions, .settings-icon-button))) {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
   }
