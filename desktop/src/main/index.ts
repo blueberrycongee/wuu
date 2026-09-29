@@ -1,4 +1,5 @@
 import { saveArtifactFile } from "./artifactSave";
+import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
 import { readCatalogSkill } from "./remoteSkills";
 import { inheritSystemProxy } from "./systemProxy";
 import { RemoteAppServerBridge } from "./remoteAppServerBridge";
@@ -714,6 +715,19 @@ function persistMainWindowBoundsNow(win: BrowserWindow): void {
 }
 
 function loadRenderer(window: BrowserWindow): void {
+  // Shell windows only: browser and observation surfaces keep their own zoom.
+  window.webContents.on("before-input-event", (event, input) => {
+    const modifier = process.platform === "darwin" ? input.meta : input.control;
+    if (!modifier || input.alt || (process.platform === "darwin" && input.control)) return;
+    let action: DesktopZoomAction;
+    if (input.key === "+" || input.key === "=") action = "in";
+    else if (input.key === "-" || input.code === "NumpadSubtract") action = "out";
+    else if (input.key === "0" && !input.shift) action = "reset";
+    else return;
+    // Consume both phases so native menu accelerators and editors cannot also zoom.
+    event.preventDefault();
+    if (input.type === "keyDown") window.webContents.send("wuu:desktop-zoom", action);
+  });
   if (!app.isPackaged) {
     window.webContents.on("console-message", (_event, _level, message) => {
       if (message) {

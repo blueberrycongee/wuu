@@ -2,6 +2,15 @@
 
 Use the workspace panels to inspect what actually happened during a task. A conversation records the agent's activity; the files and Git diff show what is on disk now.
 
+## App zoom
+
+Press **Command + + / −** on macOS (**Ctrl + + / −** on other platforms) to
+resize the entire desktop interface. **Command/Ctrl + =** also zooms in;
+**Command/Ctrl + 0** restores 100%. Zoom changes in 10-percentage-point steps
+between 50% and 200%. A percentage appears briefly in the center of the window.
+Your zoom is remembered across launches, independently of UI and code font sizes.
+These shortcuts apply to Wuu windows, not embedded browser pages.
+
 ## Files
 
 Open **Files** or enter `/files` to browse the workspace. Select a file to view supported text, code, images, or documents. This view follows the current file, not its content at the time of an earlier message.

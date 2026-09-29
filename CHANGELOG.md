@@ -8,6 +8,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Desktop app zoom shortcuts (Command/Ctrl + plus, minus, and zero), with a
+  centered percentage indicator, saved zoom, and a 50%–200% range.
+
 ### Fixed
 
 - Harden MCP transport compatibility, request timeouts, OAuth refresh recovery,

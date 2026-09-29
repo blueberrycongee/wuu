@@ -51,6 +51,7 @@
     "test:e2e:sidebar-collapse": "electron scripts/sidebar-collapse-e2e.cjs",
     "test:e2e:sidebar-scroll-fade": "npm run build && electron scripts/sidebar-scroll-fade-e2e.cjs",
     "test:e2e:background-image": "electron-vite build && electron scripts/background-image-e2e.cjs",
+    "test:e2e:desktop-zoom": "npm run build:core && electron-vite build && electron scripts/desktop-zoom-e2e.cjs",
     "test:e2e:ptc-settings": "VITE_ENABLE_PTC=true electron-vite build && electron scripts/ptc-settings-e2e.cjs",
     "test:e2e:model-services": "npm run build:core && electron-vite build && electron scripts/model-services-e2e.cjs",
     "test:e2e:project-agent": "electron-vite build && electron scripts/project-agent-gate-e2e.cjs",

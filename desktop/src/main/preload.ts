@@ -24,11 +24,15 @@ import {
   type WuuDesktopApi,
 } from "../shared/protocol";
 
-import { initializeDesktopPageZoom } from "../shared/DesktopPageZoom";
+import { initializeDesktopPageZoom, type DesktopZoomAction } from "../shared/DesktopPageZoom";
 
-// The default is one Zoom Out step; subsequent loads honor the user's choice.
+// Preserve the existing first-run scale; subsequent loads honor the user's choice.
 // Browser/PiP contents do not use this preload.
-initializeDesktopPageZoom(webFrame, window);
+initializeDesktopPageZoom(webFrame, window, listener => {
+  const handler = (_event: Electron.IpcRendererEvent, action: DesktopZoomAction) => listener(action);
+  ipcRenderer.on("wuu:desktop-zoom", handler);
+  return () => ipcRenderer.removeListener("wuu:desktop-zoom", handler);
+});
 
 // Read the persisted theme preference synchronously so the very first
 // paint carries the right data-theme — an async round-trip would flash
