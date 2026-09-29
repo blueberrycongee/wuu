@@ -1950,7 +1950,6 @@
   border: 0;
   background: transparent;
   color: inherit;
-  cursor: pointer;
   font: inherit;
   font-weight: var(--conversation-process-font-weight);
   line-height: var(--conversation-process-line-height);
@@ -1964,15 +1963,34 @@
   min-width: 0;
 }
 
-.turn-process-toggle:hover,
-.turn-process-toggle:focus-visible {
-  color: var(--ink-tertiary);
-  outline: 0;
+.turn-process-toggle[role="button"] {
+  cursor: pointer;
 }
 
 .turn-process-toggle svg {
   flex: 0 0 auto;
   color: currentColor;
+}
+
+/* The fold's chevron matches the nested process and reasoning folds, so a
+ * collapsed turn says it holds more than its duration. */
+.turn-process-header > .turn-process-chevron {
+  align-self: center;
+  color: var(--ink-muted);
+  opacity: 0.7;
+  transform: rotate(0deg);
+  transition:
+    color var(--motion-fast) var(--ease-out),
+    transform var(--motion-base) var(--ease-out);
+}
+
+.turn-process-toggle[aria-expanded="true"] .turn-process-chevron {
+  opacity: 1;
+  transform: rotate(90deg);
+}
+
+.turn-process-toggle[role="button"]:hover :is(.turn-process-title, .turn-process-meta, .turn-process-chevron) {
+  color: var(--activity-toggle-hover-color);
 }
 
 .turn-process-header {
@@ -2037,6 +2055,7 @@
   flex: 0 0 auto;
   color: var(--ink-muted);
   font-size: var(--conversation-process-font-size);
+  font-variant-numeric: tabular-nums;
   font-weight: var(--conversation-process-font-weight);
   line-height: var(--conversation-process-line-height);
 }

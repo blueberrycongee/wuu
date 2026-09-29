@@ -1,6 +1,7 @@
 import { localTurnTiming } from "./LocalTurnTiming";
 import { ChevronRight } from "./WuuIcons";
 import {
+  type KeyboardEvent,
   type SyntheticEvent,
   useCallback,
   useEffect,
@@ -442,6 +443,9 @@ function TurnProcessFold({
             {part}
           </span>
         ))}
+        {hasDetails ? (
+          <ChevronRight className="turn-process-chevron icon-xs" aria-hidden />
+        ) : null}
       </span>
       {hasPreview ? (
         <span
@@ -483,18 +487,22 @@ return (
       id={detailsID}
     >
       <div className="turn-process-topline">
+        {/* A direct answer has nothing to fold, so its duration is a plain
+            label rather than a control that toggles nothing. */}
         <div
-          role="button"
-          tabIndex={0}
-          aria-expanded={expanded}
-          aria-controls={`${detailsID}-body`}
-          onClick={handleToggle}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              handleToggle();
-            }
-          }}
+          {...(hasDetails ? {
+            role: "button",
+            tabIndex: 0,
+            "aria-expanded": expanded,
+            "aria-controls": `${detailsID}-body`,
+            onClick: handleToggle,
+            onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                handleToggle();
+              }
+            },
+          } : {})}
           className="turn-process-toggle"
         >
           {toggleContent}
