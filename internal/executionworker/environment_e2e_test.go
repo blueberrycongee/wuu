@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,14 @@ func TestDockerEnvironmentEndToEnd(t *testing.T) {
 	}
 	profile := executionenv.Profile{Backend: "docker", Image: image, Workspace: "/workspace", Network: "none"}
 	testEnvironmentEndToEnd(t, profile)
+}
+
+func TestSingularityEnvironmentEndToEnd(t *testing.T) {
+	image := os.Getenv("WUU_EXECUTION_E2E_SIF")
+	if image == "" {
+		t.Skip("set WUU_EXECUTION_E2E_SIF to the current worker image")
+	}
+	testEnvironmentEndToEnd(t, executionenv.Profile{Backend: "singularity", Image: image, Workspace: "/workspace"})
 }
 
 func TestSSHEnvironmentEndToEnd(t *testing.T) {
@@ -168,4 +177,52 @@ func TestDockerReconnectEndToEnd(t *testing.T) {
 		t.Fatalf("reconnect: %v %s", err, result.TextProjection())
 	}
 	t.Log("verified: reconnect reuses authenticated worker and retained filesystem")
+}
+
+func TestDockerMountAndEnvironmentBoundaryEndToEnd(t *testing.T) {
+	image := os.Getenv("WUU_EXECUTION_E2E_IMAGE")
+	if image == "" {
+		t.Skip("set WUU_EXECUTION_E2E_IMAGE")
+	}
+	base := os.Getenv("WUU_EXECUTION_E2E_MOUNT_ROOT")
+	if base == "" {
+		base = t.TempDir()
+	}
+	mount, err := os.MkdirTemp(base, "execution-mount-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(mount)
+	if err := os.WriteFile(filepath.Join(mount, "input.txt"), []byte("mounted input"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WUU_E2E_VISIBLE", "explicit-value")
+	t.Setenv("WUU_E2E_HIDDEN", "must-stay-on-host")
+	p := executionenv.Profile{Backend: "docker", Image: image, Workspace: "/workspace", HostWorkspace: mount, MountReadOnly: true, Network: "none", ForwardEnv: []string{"WUU_E2E_VISIBLE"}}
+	store := t.TempDir()
+	identity := executionenv.Identity(store, "boundary", "test", p)
+	environment := executionenv.NewEnvironment(p, identity, "boundary", store)
+	defer environment.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	run := func(name, args string) (toolresult.Result, error) {
+		return environment.Execute(ctx, executionenv.ToolRequest{Actor: "boundary", PermissionMode: "standard", Call: providers.ToolCall{Name: name, Arguments: args}})
+	}
+	result, err := run("read_file", `{"path":"input.txt"}`)
+	if err != nil || !strings.Contains(result.TextProjection(), "mounted input") {
+		t.Fatalf("read mount: %v %s", err, result.TextProjection())
+	}
+	if _, err := run("write_file", `{"path":"denied.txt","content":"no"}`); err == nil {
+		t.Fatal("read-only mount accepted a write")
+	}
+	result, err = run("bash", `{"command":"printf '%s/%s' \"$WUU_E2E_VISIBLE\" \"${WUU_E2E_HIDDEN-unset}\""}`)
+	if err != nil || !strings.Contains(result.TextProjection(), "explicit-value/unset") {
+		t.Fatalf("environment boundary: %v %s", err, result.TextProjection())
+	}
+	unauthorized := executionenv.NewClient([]string{"docker", "exec", "-i", identity, "wuu", "execution-connect", "--socket", identity + "-boundary"}, os.Environ())
+	defer unauthorized.Close()
+	if _, err := unauthorized.Call(ctx, "initialize", executionenv.Init{Version: executionenv.ProtocolVersion, Root: "/workspace", Session: "boundary"}); err == nil {
+		t.Fatal("worker accepted an unauthenticated connection")
+	}
+	t.Log("verified: explicit host mount, read-only mount rejection, allowlisted variable forwarding, authenticated worker boundary")
 }

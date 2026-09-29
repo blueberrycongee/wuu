@@ -734,15 +734,15 @@ func (m *Manager) ReadOutput(id string, maxBytes int) (string, bool, error) {
 }
 
 func (m *Manager) ReadOutputSnapshot(ctx context.Context, id string, opt OutputReadOptions) (OutputSnapshot, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if m.remote != nil {
 		var result OutputSnapshot
 		err := m.remote.Request(ctx, "read", map[string]any{"id": id, "options": opt}, &result)
 		return result, err
 	}
 	started := time.Now()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if opt.MaxBytes <= 0 {
 		opt.MaxBytes = 32 * 1024
 	}

@@ -12,4 +12,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && mkdir -p /workspace
 COPY --from=build /wuu /usr/local/bin/wuu
 WORKDIR /workspace
-ENTRYPOINT ["wuu", "execution-worker"]
+CMD ["sleep", "infinity"]

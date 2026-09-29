@@ -83,8 +83,8 @@ def modal_backend():
             app = modal.App.lookup("wuu-execution", create_if_missing=True)
             sandbox = modal.Sandbox.create(
                 image=image, app=app, timeout=lifetime,
-                cpu=profile.get("cpus") or 2,
-                memory=profile.get("memory_mb") or 2048,
+                cpu=(profile.get("cpus") or 2, profile.get("cpus") or 2),
+                memory=(profile.get("memory_mb") or 2048, profile.get("memory_mb") or 2048),
                 block_network=profile.get("network") == "none",
             )
             saved["sandbox"] = sandbox.object_id
@@ -101,7 +101,10 @@ def modal_backend():
         except Exception as error:
             errors.append(error)
     threading.Thread(target=input_stream, daemon=True).start()
-    threading.Thread(target=lambda: [sys.stderr.write(chunk) for chunk in process.stderr], daemon=True).start()
+    def error_stream():
+        for chunk in process.stderr:
+            sys.stderr.write(chunk)
+    threading.Thread(target=error_stream, daemon=True).start()
     try:
         for chunk in process.stdout:
             sys.stdout.write(chunk)
