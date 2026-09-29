@@ -308,7 +308,7 @@ export const enUS = {
   "settings.voice.openSettingsFailed": "Unable to open macOS privacy settings.",
   "settings.save": "Save",
   "settings.gitAttribution": "Agent commit attribution",
-  "settings.gitAttributionDescription": "Add wuu-agent[bot] as a co-author to commits created by WUU; preserve the author and other co-authors",
+  "settings.gitAttributionDescription": "Commits Wuu creates list wuu-agent[bot] as a co-author; existing authors are kept",
   "settings.enableGitAttribution": "Enable WUU Agent commit attribution",
   "settings.disableGitAttribution": "Disable WUU Agent commit attribution",
   "settings.saveGitAttributionFailed": "Failed to save commit attribution setting",
