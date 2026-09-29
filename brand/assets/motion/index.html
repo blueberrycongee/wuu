@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Wuu ball motion reference</title>
+<link rel="stylesheet" href="../../tokens/wuu-brand.css">
+<style>
+  @font-face { font-family: "Hanken Grotesk"; src: url("../../fonts/hanken-grotesk/HankenGrotesk-Variable.ttf"); font-weight: 100 900; }
+  html, body { background: var(--wuu-brand-canvas); }
+  body { margin: 0; font: 400 15px/1.6 var(--wuu-brand-font-brand); color: var(--wuu-brand-text); }
+  main { max-width: 1040px; margin: 0 auto; padding: 56px 32px; }
+  h1 { font-size: 28px; line-height: 1.25; font-weight: 600; margin: 0 0 8px; }
+  p { margin: 0; color: var(--wuu-brand-text-2); }
+  .stage { display: flex; align-items: flex-end; gap: 48px; margin: 40px 0 28px; padding: 40px; background: var(--wuu-brand-surface); border-radius: 16px; }
+  .stage .size { text-align: center; font-size: 12px; color: var(--wuu-brand-text-3); }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button { font: 500 14px var(--wuu-brand-font-brand); padding: 8px 14px; border-radius: 999px; border: 0; background: var(--wuu-brand-surface-3); color: var(--wuu-brand-text); cursor: pointer; }
+  button[aria-pressed="true"] { background: var(--wuu-brand-text); color: var(--wuu-brand-canvas); }
+  button:focus-visible { outline: 2px solid var(--wuu-brand-focus); outline-offset: 2px; }
+  label { margin-left: 16px; font-size: 14px; color: var(--wuu-brand-text-2); display: inline-flex; gap: 6px; align-items: center; }
+  .status { margin-top: 18px; font-size: 13px; color: var(--wuu-brand-text-3); }
+</style>
+<script src="wuu-ball.js"></script>
+</head>
+<body>
+<main>
+  <h1>小球动效参考 · Ball motion</h1>
+  <p>选择一个状态，观察三种尺寸下的同一只小球。“减少动态效果”与系统设置效果相同。规则见品牌手册第 07 章。</p>
+  <div class="stage" id="stage"></div>
+  <div class="controls" id="states"></div>
+  <div class="controls" style="margin-top:12px">
+    <label><input type="checkbox" id="reduced"> 减少动态效果</label>
+    <label><input type="checkbox" id="dark"> 暗色</label>
+  </div>
+  <p class="status" id="status" aria-live="polite"></p>
+</main>
+<script>
+  var sizes = [120, 40, 20], balls = [], stateButtons = document.getElementById("states");
+  var reducedBox = document.getElementById("reduced"), darkBox = document.getElementById("dark");
+  var current = "rest";
+  function build() {
+    var stage = document.getElementById("stage");
+    balls.forEach(function (b) { b.destroy(); });
+    stage.innerHTML = "";
+    var dark = darkBox.checked, css = getComputedStyle(document.body);
+    balls = sizes.map(function (px) {
+      var cell = document.createElement("div"); cell.className = "size";
+      var holder = document.createElement("div"); cell.appendChild(holder);
+      cell.appendChild(document.createTextNode(px + " px")); stage.appendChild(cell);
+      return WuuBall.mount(holder, {
+        px: px, state: current,
+        body: css.getPropertyValue("--wuu-brand-ball").trim(),
+        eye: css.getPropertyValue("--wuu-brand-ball-eye").trim(),
+        reducedMotion: reducedBox.checked ? true : undefined,
+      });
+    });
+    document.getElementById("status").textContent = "当前状态：" + WuuBall.STATES[current].label;
+  }
+  Object.keys(WuuBall.STATES).forEach(function (s) {
+    var b = document.createElement("button");
+    b.textContent = WuuBall.STATES[s].label; b.setAttribute("aria-pressed", s === current);
+    b.onclick = function () {
+      current = s;
+      stateButtons.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", x === b); });
+      balls.forEach(function (ball) { ball.set(s); });
+      document.getElementById("status").textContent = "当前状态：" + WuuBall.STATES[s].label;
+    };
+    stateButtons.appendChild(b);
+  });
+  reducedBox.onchange = build;
+  darkBox.onchange = function () { document.documentElement.classList.toggle("wuu-brand-dark", darkBox.checked); build(); };
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) reducedBox.checked = true;
+  build();
+</script>
+</body>
+</html>

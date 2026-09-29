@@ -1,0 +1,12 @@
+{
+  "name": "wuu-brand",
+  "private": true,
+  "description": "Generators for the Wuu brand assets and manual",
+  "scripts": {
+    "build": "node src/build-assets.mjs && node src/build-manual.mjs",
+    "render": "../desktop/node_modules/.bin/electron scripts/render.cjs"
+  },
+  "devDependencies": {
+    "canvaskit-wasm": "0.42.0"
+  }
+}
