@@ -4,7 +4,7 @@
 }
 
 .catalog-search input::placeholder {
-  color: var(--ink-tertiary);
+  color: var(--placeholder-ink);
 }
 
 @container style(--motion-reduced: 1) {
@@ -46,7 +46,7 @@
 }
 
 .menu-search input::placeholder {
-  color: var(--ink-tertiary);
+  color: var(--placeholder-ink);
 }
 
 .menu-search svg {

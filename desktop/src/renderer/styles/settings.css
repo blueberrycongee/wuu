@@ -132,7 +132,7 @@
 
 .settings-nav-group-label {
   padding: 0 var(--sidebar-row-pad-x) 6px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--sidebar-heading-size, var(--font-sm));
   font-weight: var(--weight-medium);
   line-height: var(--line-ui);
@@ -636,7 +636,7 @@
 }
 
 .settings-input::placeholder {
-  color: var(--ink-tertiary);
+  color: var(--placeholder-ink);
 }
 
 .settings-input:hover:not(:disabled),
@@ -2238,7 +2238,7 @@ button.settings-engine-expand:hover {
 }
 
 .settings-archive-search input::placeholder {
-  color: var(--ink-tertiary);
+  color: var(--placeholder-ink);
 }
 
 .settings-archive-group {
