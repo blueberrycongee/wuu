@@ -22,6 +22,18 @@ The override is also forwarded through the macOS LaunchServices launcher.
 
 `make dev` runs the desktop launcher. It builds the shared Web assets, native helper where applicable, and current Go core and plugin helpers before starting Electron. The app uses that checkout's private `wuu-core`, not a separately installed `wuu` on `PATH`. Renderer changes use Vite updates; restart the launcher after changing Go, native helpers, or process-startup code so the running processes use the new build.
 
+Project Agent is experimental and disabled in default and release builds. It
+has no user setting to enable it. Existing project conversations remain readable,
+but cannot run or recover queued work in these builds. To develop the feature,
+run `npm --prefix desktop run dev -- --project-agent`, or build the CLI with
+`go build -tags project_agent -o bin/wuu ./cmd/wuu`. Run its behavioral suite with
+`go test -tags project_agent ./internal/appserver`; ordinary Go tests cover the
+disabled release behavior. Packaged releases must omit this build tag.
+
+`npm --prefix desktop run test:e2e:project-agent` checks the renderer against
+absent, disabled and enabled backend capabilities, saving screenshots and results
+under `desktop/out/e2e/project-agent-gate/`.
+
 For CLI-only development:
 
 ```bash
@@ -88,6 +100,20 @@ directory, excluding the temporary profile and database. `WUU_SWITCH_MAIN`
 selects another built main bundle and its adjacent preload/renderer for A/B
 checks. Results record the loaded artifact hashes; the checkout commit alone
 does not identify an externally selected build.
+
+For subscription-history navigation diagnostics, set
+`WUU_SWITCH_SUBSCRIPTION_TURNS=30000` and omit `WUU_SWITCH_CHECK_BUDGET`.
+This adds about 2 GiB of disposable history and two subscription services with
+isolated credentials and disabled external engines. It checks cross-project new
+drafts while an opt-in statistics response is held at IPC, then after an injected
+IPC failure, and verifies the real backend's request attribution and token totals.
+`results.json` includes the separate startup-to-conversation frame measurement,
+`subscriptionResults`, database size, observed process
+spawns, navigation RPC timings, and statistics response timings before the gate.
+These are RPC envelopes, not isolated SQL timings. A first project visit is not
+necessarily a cold process start; keep those measurements separate. The fixture
+also saves `subscription-navigation.png`. The held response tests navigation
+independence, not a database lock or an account-service outage.
 
 ## Native phones and remote services
 

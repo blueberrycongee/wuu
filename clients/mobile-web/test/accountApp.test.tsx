@@ -12,7 +12,7 @@ vi.mock('../src/lib/notifications', () => ({ startPushLifecycle: async () => {},
 vi.mock('../src/NotificationSettings', () => ({ NotificationSettings: () => null }));
 vi.mock('../src/App', () => ({ default: function Workspace() {
   const ref = useRef<HTMLButtonElement>(null);
-  return <CompactConversationActions environmentToggleRef={ref} canStartNewThread
+  return <CompactConversationActions environmentToggleRef={ref} canStartNewThread environmentAvailable
     onStartNewThread={() => {}} environmentPanelVisible={false} onToggleEnvironmentPanel={() => {}}
     rightPanelOpen={false} onToggleRightPanel={() => {}} />;
 } }));

@@ -79,7 +79,24 @@ app.whenReady().then(async () => {
         const result = await win.webContents.executeJavaScript(`(${measure})()`);
         await win.webContents.executeJavaScript("document.querySelector('.process-surface-body').scrollTop = 0");
         fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage()).toPNG());
-        reports.push({ name, size, ...result });
+        const todo = await win.webContents.executeJavaScript(`(async () => {
+          const trigger = document.querySelector('.conversation-status-todo-trigger');
+          trigger.focus({ preventScroll: true });
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const card = document.querySelector('.conversation-status-todo-card');
+          await Promise.all(card.getAnimations().map(a => a.finished));
+          const rect = card.getBoundingClientRect();
+          return {
+            rect: rect.toJSON(),
+            fontSize: getComputedStyle(card).fontSize,
+            padding: getComputedStyle(card).padding,
+            colors: [...document.querySelectorAll('.plugin-todo-item[data-status="in_progress"] .plugin-todo-marker, .is-in_progress .conversation-status-todo-marker')].map(el => getComputedStyle(el).color),
+            inViewport: rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight,
+          };
+        })()`);
+        if (!todo.inViewport) throw new Error(`${name}: TODO popover outside viewport`);
+        fs.writeFileSync(path.join(output, `${name}-todo.png`), (await win.webContents.capturePage()).toPNG());
+        reports.push({ name, size, todo, ...result });
         console.log(name, JSON.stringify(result));
       }
     }

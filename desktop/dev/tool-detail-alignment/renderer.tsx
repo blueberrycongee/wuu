@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import type { ThreadItem } from "../../src/shared/protocol";
 import type { InspectorTodoItemSnapshotV1 } from "../../src/shared/workbench";
 import { ProcessSurface } from "../../src/renderer/ProcessSurface";
+import { ConversationStatusCluster } from "../../src/renderer/ConversationStatusCluster";
 import { ToolActivityRow } from "../../src/renderer/ToolActivity";
 import { I18nProvider } from "../../src/renderer/i18n";
 import { desktopPluginHost, desktopWorkbenchController } from "../../src/renderer/plugins/DesktopPluginRuntime";
@@ -63,6 +64,14 @@ createRoot(document.getElementById("root")!).render(
             host={desktopPluginHost}
             controller={desktopWorkbenchController}
             snapshot={{ contractVersion: 1, session: { status: "idle" }, todo: { completed: 1, total: todos.length, items: todos } }}
+          />
+        </div>
+        <div style={{ position: "fixed", bottom: 24, left: 24, right: 24 }}>
+          <ConversationStatusCluster
+            host={desktopPluginHost}
+            visible
+            todoUpdate={{ todos }}
+            onOpenSession={() => {}}
           />
         </div>
       </div>

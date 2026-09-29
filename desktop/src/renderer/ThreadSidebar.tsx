@@ -28,12 +28,19 @@ import {
 } from "./AppState";
 import { isProjectCoordinator, type ProjectRowSummary } from "./ProjectSessions";
 import { resolveLocalizedText, useI18n } from "./i18n";
+import { useHoverReveal } from "./HoverReveal";
+import {
+  SidebarHoverCardLayer,
+  ThreadHoverCardContent,
+  WorkspaceHoverCardContent,
+} from "./SidebarHoverCard";
 
 function unpinnedThreads(threads: ThreadSummary[]): ThreadSummary[] {
   return threads.filter((thread) => !thread.pinned);
 }
 
 const PROJECT_THREAD_INITIAL_VISIBLE_COUNT = 5;
+const PROJECT_THREAD_BATCH_SIZE = 5;
 const RECENTLY_READ_THREAD_LIMIT = 3;
 const RECENTLY_READ_THREAD_RETENTION_MS = 2 * 60 * 1000;
 const SIDEBAR_THREAD_ORDER_KEY = "wuu.desktop.sidebarThreadOrderByWorkspace";
@@ -251,7 +258,7 @@ export function WorkspaceGroup({
   onToggleWorkspacePinned?: (id: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [historyVisibleCount, setHistoryVisibleCount] = useState(PROJECT_THREAD_INITIAL_VISIBLE_COUNT);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -401,6 +408,9 @@ export function WorkspaceGroup({
             ? t("threadSidebar.loadingConversations")
             : undefined
         }
+        hoverCard={() => (
+          <WorkspaceHoverCardContent workspace={project} scratch={isScratchPseudo} />
+        )}
       >
         {pendingConversations.length > 0 || workspaceThreads.length > 0 ? (
           <ThreadList
@@ -411,15 +421,15 @@ export function WorkspaceGroup({
             activeID={activeThreadID}
             pendingThreadID={pendingThreadID}
             lastViewedTurnByThreadID={lastViewedTurnByThreadID}
-            expanded={historyExpanded}
+            visibleCount={historyVisibleCount}
             onSelect={(threadID) => onSelectThread(project.id, threadID)}
             onTogglePinned={onToggleThreadPinned}
             onArchive={onArchiveThread}
             onDelete={onDeleteThread}
             onRename={onRenameThread}
             onReorder={reorderWorkspaceThreads}
-            onShowMore={() => setHistoryExpanded(true)}
-            onCollapse={() => setHistoryExpanded(false)}
+            onShowMore={setHistoryVisibleCount}
+            onCollapse={() => setHistoryVisibleCount(PROJECT_THREAD_INITIAL_VISIBLE_COUNT)}
           />
         ) : null}
       </SidebarSection>
@@ -505,7 +515,7 @@ function ThreadList({
   activeID,
   pendingThreadID,
   lastViewedTurnByThreadID,
-  expanded,
+  visibleCount,
   onSelect,
   onTogglePinned,
   onArchive,
@@ -522,7 +532,7 @@ function ThreadList({
   activeID?: string;
   pendingThreadID?: string;
   lastViewedTurnByThreadID: Record<string, string>;
-  expanded: boolean;
+  visibleCount: number;
   onSelect: (id: string) => void;
   onTogglePinned: (thread: ThreadSummary) => void;
   onArchive: (thread: ThreadSummary) => void;
@@ -533,7 +543,7 @@ function ThreadList({
     overThreadID: string,
     position: ThreadDropPosition,
   ) => void;
-  onShowMore: () => void;
+  onShowMore: (visibleCount: number) => void;
   onCollapse: () => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -577,13 +587,14 @@ function ThreadList({
   }, [recentlyRead]);
   const limitedThreads = limitedWorkspaceThreads(
     threads,
-    expanded ? threads.length : PROJECT_THREAD_INITIAL_VISIBLE_COUNT,
+    visibleCount,
     activeID,
     pendingThreadID,
     lastViewedTurnByThreadID,
     recentlyRead,
   );
   const hiddenCount = threads.length - limitedThreads.length;
+  const expanded = visibleCount > PROJECT_THREAD_INITIAL_VISIBLE_COUNT;
   const showFooter = hiddenCount > 0 || expanded;
   useLayoutEffect(() => {
     const list = listRef.current;
@@ -629,8 +640,18 @@ function ThreadList({
       {showFooter ? (
         <div className="thread-list-footer">
           {hiddenCount > 0 ? (
-            <button className="thread-list-more" type="button" onClick={onShowMore}>
-              {t("common.expand")}
+            <button className="thread-list-more" type="button" onClick={() => {
+              // Skip rows already exposed by selection, unread, or running state.
+              const visibleIDs = new Set(limitedThreads.map(thread => thread.id));
+              let remaining = PROJECT_THREAD_BATCH_SIZE;
+              let nextCount = visibleCount;
+              for (let index = visibleCount; index < threads.length; index++) {
+                nextCount = index + 1;
+                if (!visibleIDs.has(threads[index].id) && --remaining === 0) break;
+              }
+              onShowMore(nextCount);
+            }}>
+              {t("common.showMore")}
             </button>
           ) : null}
           {expanded ? (
@@ -758,6 +779,10 @@ function ThreadRows({
     id: string;
     position: ThreadDropPosition;
   }>();
+  const hoverCard = useHoverReveal<string>({
+    focus: "keyboard",
+    disabled: draggingThreadID !== undefined,
+  });
 
   function handleContextMenu(
     targetThread: ThreadSummary,
@@ -910,25 +935,40 @@ function ThreadRows({
     closeRenameDialog();
   }
 
+  function rowState(thread: ThreadSummary) {
+    const pendingSwitch = pendingThreadID === thread.id;
+    const project = isProjectCoordinator(thread);
+    const summary = project ? projectSummaries?.get(thread.id) : undefined;
+    const running = summary?.running ?? isThreadExecuting(thread);
+    const unread =
+      !running &&
+      !pendingSwitch &&
+      (summary
+        ? summary.unread
+        : thread.id !== activeID &&
+          isThreadUnread(
+            thread,
+            lastViewedTurnByThreadID[thread.id],
+          ));
+    return {
+      pendingSwitch,
+      project,
+      running,
+      title: baseThreadTitle(thread, threads),
+      forkMarker: threadShowsForkMarker(thread, threads),
+      unread,
+    };
+  }
+
+  const revealedThread = hoverCard.revealed
+    ? threads.find((thread) => thread.id === hoverCard.revealed!.key)
+    : undefined;
+  const revealedRowState = revealedThread ? rowState(revealedThread) : undefined;
+
   return (
     <>
       {threads.map((thread) => {
-        const pendingSwitch = pendingThreadID === thread.id;
-        const project = isProjectCoordinator(thread);
-        const summary = project ? projectSummaries?.get(thread.id) : undefined;
-        const running = summary?.running ?? isThreadExecuting(thread);
-        const title = baseThreadTitle(thread, threads);
-        const forkMarker = threadShowsForkMarker(thread, threads);
-        const unread =
-          !running &&
-          !pendingSwitch &&
-          (summary
-            ? summary.unread
-            : thread.id !== activeID &&
-              isThreadUnread(
-                thread,
-                lastViewedTurnByThreadID[thread.id],
-              ));
+        const { pendingSwitch, project, running, title, forkMarker, unread } = rowState(thread);
         return (
           <div
             key={thread.id}
@@ -951,6 +991,7 @@ function ThreadRows({
             onDragLeave={(event) => leaveThreadDropTarget(thread.id, event)}
             onDrop={(event) => dropThread(thread, event)}
             onDragEnd={endThreadDrag}
+            {...hoverCard.anchorHandlers(thread.id)}
           >
               {running ? (
                 <span className="thread-row-spinner" aria-hidden="true" />
@@ -1008,6 +1049,16 @@ function ThreadRows({
           </div>
         );
       })}
+      {revealedThread && revealedRowState && hoverCard.revealed ? (
+        <SidebarHoverCardLayer anchor={hoverCard.revealed.anchor}>
+          <ThreadHoverCardContent
+            thread={revealedThread}
+            title={revealedRowState.title}
+            running={revealedRowState.running}
+            unread={revealedRowState.unread}
+          />
+        </SidebarHoverCardLayer>
+      ) : null}
       {contextMenu ? (
         <ThreadContextMenu
           x={contextMenu.x}

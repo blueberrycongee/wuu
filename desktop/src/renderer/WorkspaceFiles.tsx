@@ -84,6 +84,22 @@ const WORKSPACE_TREE_CSS = `
   :host-context(html[data-focus-modality="pointer"]) [data-file-tree-search-input][data-file-tree-search-input-fake-focus="true"] {
     outline: none;
   }
+
+  /* The ellipsis hides the clipped glyphs under it by painting the row's
+     background. The tree itself is transparent over its panel, so the marker
+     paints the panel's surface instead; hover and selection still add their
+     overlay on top. */
+  [data-type="item"] {
+    --truncate-marker-background-color: var(--wuu-workspace-file-tree-background, var(--paper));
+  }
+
+  /* A middle-truncated name keeps its extension whole and shortens only the
+     stem. The library lets the extension take a sliver of the shrink, which
+     wraps its break-all measuring copy and shows a second ellipsis over the
+     extension. */
+  [data-truncate-group-container="middle"] > div[data-truncate-segment-priority="1"] {
+    flex-shrink: 0;
+  }
 `;
 
 export type WorkspaceFileDirtyState = {

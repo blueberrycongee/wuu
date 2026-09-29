@@ -33,6 +33,7 @@ export function ConversationSplitPane({
   draft,
   viewSwitchPending,
   stopState,
+  submitting,
   queryHistory,
   requestedHandoffIntent,
   editingMessage,
@@ -70,6 +71,7 @@ export function ConversationSplitPane({
   draft: ComposerDraftState;
   viewSwitchPending: boolean;
   stopState?: "pending" | "retry";
+  submitting?: boolean;
   queryHistory: string[];
   requestedHandoffIntent?: string;
   editingMessage?: { turnID: string; itemID: string; submitting: boolean };
@@ -234,6 +236,7 @@ export function ConversationSplitPane({
           images={draft.images}
           running={(paneRunning && !activeTurnIsAnswerReady(thread)) || viewSwitchPending}
           sendDisabled={viewSwitchPending}
+          submitting={submitting}
           stopState={stopState}
           readOnly={false}
           status={paneStatus}

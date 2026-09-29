@@ -220,6 +220,7 @@ function gitStatusResult(
   const branch = branchName || head;
   const branches = gitOutput(root, [
     "for-each-ref",
+    "--sort=-committerdate",
     "--format=%(refname:short)",
     "refs/heads",
   ])

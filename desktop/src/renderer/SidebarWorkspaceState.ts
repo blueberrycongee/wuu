@@ -370,6 +370,10 @@ export function useSidebarWorkspaceState({
   }, [workspaceIdentityRevision]);
 
   useEffect(() => {
+    // As in reconcileSidebarSectionOrder, an empty list means the projects
+    // have not loaded yet; pruning against it would persist every project's
+    // fold as gone on each launch and renderer reload.
+    if (workspaceIDs.length === 0) return;
     const validWorkspaceIDs = new Set(workspaceIDs);
     const validSectionIDs = new Set([
       ...validWorkspaceIDs,

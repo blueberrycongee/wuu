@@ -38,3 +38,17 @@ When the user asks to compile or update the local CLI to the latest source:
 - GitHub Releases contain only the unsigned arm64 macOS Desktop preview. Do not publish standalone CLI archives or describe artifacts as signed, notarized, or Gatekeeper-ready.
 - Release notes and README must state the unsigned preview status and trusted-download quarantine workaround.
 - Do not push tags, publish releases, or upload assets unless the user explicitly requests that external action.
+
+## Agent-run release workflow
+
+When the user asks to publish a release, carry it through in this order and stop only where noted:
+
+1. Work in a clean detached worktree from the latest `origin/main`; leave the user's checkout alone.
+2. On a `chore/release-<version>` branch, run `make release-prepare` (UTC CalVer), then rewrite the dated `CHANGELOG.md` section in the short Contributors + Highlights format from `docs/en/project/release.md`. Check that `node scripts/release-version.mjs notes <version>` prints the intended notes and `make version-check` passes.
+3. Before writing highlights, confirm with the user that each headline feature is visible in production builds; hide immature features behind a production flag in the same PR rather than advertising them.
+4. Commit only the release files, push the branch, and open a `chore(release): prepare <version>` PR.
+5. If CI fails, read the failed log. Rerun the failed job only when the failure is unrelated to the PR and shown to be flaky; otherwise fix it on the branch. Report the cause either way.
+6. Ask the user to confirm the merge. After approval, squash-merge, tag the merged main commit `v<version>` with `make tag-release` or an equivalent annotated tag, and push only that tag.
+7. Watch the Release workflow to completion and report the merge commit, tag, release URL, and assets.
+
+A local-only package follows steps 1–2 with a local commit, then the release workflow's build and verification commands with the same environment; it is not pushed.

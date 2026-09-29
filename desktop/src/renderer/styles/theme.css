@@ -59,7 +59,6 @@
   --rule: var(--hairline-strong);
   --control-boundary: var(--wuu-color-border-strong, var(--gray-450));
   --slider-thumb-bg: var(--wuu-color-text, var(--gray-900));
-  --interaction-accent: var(--wuu-color-accent, #a1bedb);
   --selection-surface: var(--wuu-color-surface-elevated, var(--gray-200));
   --field-bg: var(--wuu-control-field-background, var(--surface-1));
   --field-hover-bg: var(--wuu-control-field-background, var(--surface-2));
@@ -110,14 +109,8 @@
   --danger-soft: #341c18;
   --danger-border: #562f29;
   --info: var(--wuu-color-info, #58a6ff);
-  --accent-warm: var(--wuu-color-accent, #ff7a3d);
 
-  /* Brand vermillion lifts a step to hold against the dark ground.
-     --sidebar-accent inherits var(--wuu-accent) from base. */
-  --wuu-accent: var(--wuu-color-accent, #ff5a26);
-  --wuu-accent-press: var(--wuu-color-accent-pressed, #ff6d3f);
-
-  --menu-bg: var(--wuu-color-surface-elevated, rgba(30, 33, 37, 0.98));
+  --menu-bg: var(--wuu-color-surface-elevated, rgb(30, 33, 37));
   --menu-hover: var(--wuu-color-surface-muted, #2b2f34);
 
   --sidebar-glass-bg: linear-gradient(180deg, rgba(26, 29, 32, 0.94), rgba(20, 22, 24, 0.9));
@@ -464,7 +457,7 @@
   color: var(--ink);
 }
 
-.theme-segmented button[aria-pressed="true"] {
+.theme-segmented button:is([aria-pressed="true"], [aria-selected="true"]) {
   background: var(--paper);
   color: var(--ink);
   font-weight: var(--weight-medium);

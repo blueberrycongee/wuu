@@ -85,9 +85,10 @@ export function ComposerAttachmentStrip({
   );
 }
 
-export function ComposerStopIcon({ state }: { state?: "pending" | "retry" }): JSX.Element {
+export function ComposerStopIcon({ state, submitting = false }: { state?: "pending" | "retry"; submitting?: boolean }): JSX.Element {
   if (state === "pending") return <LoaderCircle className="composer-stop-progress is-spinning" aria-hidden="true" />;
   if (state === "retry") return <RotateCw className="composer-stop-progress" aria-hidden="true" />;
+  if (submitting) return <LoaderCircle className="composer-stop-progress control-busy-icon" aria-hidden="true" />;
   return <Square aria-hidden="true" />;
 }
 
@@ -103,6 +104,7 @@ export function SplitPaneComposer({
   readOnly,
   sendDisabled: requestedSendDisabled = false,
   stopState,
+  submitting = false,
   status,
   statusLiveProgress,
   queryHistorySessionID,
@@ -127,6 +129,7 @@ export function SplitPaneComposer({
    * allow a send/stop against the previous pane's thread. */
   sendDisabled?: boolean;
   stopState?: "pending" | "retry";
+  submitting?: boolean;
   status: string;
   statusLiveProgress?: boolean;
   queryHistorySessionID?: string;
@@ -160,7 +163,7 @@ export function SplitPaneComposer({
   // Match the dock composer: the button is a stop control only while running
   // with an empty input. Once there is a draft, it flips to send (queuing
   // mid-turn) so a typed follow-up is never blocked by the stop state.
-  const showStop = Boolean(stopState) || (running && !sendDisabled && !hasDraft);
+  const showStop = Boolean(stopState) || ((running || submitting) && !sendDisabled && !hasDraft);
   const sendLabel = running ? t("composer.queueSend") : t("composer.send");
   const statusText = composerStatusText(status);
   const statusIsLiveProgress = composerStatusIsLiveProgress(statusLiveProgress);
@@ -439,11 +442,12 @@ export function SplitPaneComposer({
                         type="button"
                         onClick={onInterrupt}
                         disabled={stopState === "pending" || !connected}
-                        aria-busy={stopState === "pending" || undefined}
+                        data-wuu-state={stopState ?? (submitting ? "submitting" : "stop")}
+                        aria-busy={stopState === "pending" || submitting || undefined}
                         aria-label={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pause")}
                         title={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pauseShortcut")}
                       >
-                        <ComposerStopIcon state={stopState} />
+                        <ComposerStopIcon state={stopState} submitting={submitting} />
                       </button>
                     ) : (
                       <button

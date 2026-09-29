@@ -1,22 +1,25 @@
 import { hostSupports } from "./HostCapabilities";
 import { isTouchWebShell } from "./ComposerFocus";
 import {
+  AlertCircle,
+  AlertTriangle,
   ArrowLeft,
   Archive,
   BarChart3,
   Bot,
   Check,
-  ChevronRight,
+  Copy,
   Folder,
   Gauge,
   KeyRound,
   LayoutDashboard,
+  Loader2,
   LogOut,
   Monitor,
   Plug,
   PlugZap,
-  Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Settings,
   Smartphone,
@@ -32,13 +35,11 @@ import type {
 } from "../shared/protocol";
 import {
   type CSSProperties,
-  type FormEvent as ReactFormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type RefObject,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -56,7 +57,6 @@ import type {
   InitializeResult,
   MCPAuthStartResult,
   MCPServerStatus,
-  ProviderSummary,
   RemoteControlSnapshot,
   RuntimeConnectionUpdate,
   SettingsUsageDay,
@@ -75,14 +75,14 @@ export type ArchivedSessionView = {
   archive_project_id?: string;
   archive_project_name?: string;
 };
-import { normalizedVariantForProviderModel, providerModelReasoningMode, providerModelVariantOptions, variantLabel } from "./RuntimeHelpers";
-import { ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
+import { ENABLE_PTC_SETTINGS, ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
 import { BackgroundSettings } from "./background/BackgroundSettings";
 import { SettingsRow } from "./SettingsRow";
-import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsStatus, type SettingsStatusTone } from "./SettingsSection";
+import { SettingsGroup, SettingsPageHeader, SettingsSection, type SettingsStatusTone } from "./SettingsSection";
 import { toastErrorMessage } from "./Toast";
 import { EngineSettingsSection } from "./EngineSettingsSection";
+import { ModelServicesPage } from "./ModelServicesPage";
 import { SubscriptionDashboard } from "./SubscriptionDashboard";
 import { SettingsRemotePage } from "./SettingsRemotePage";
 import { ThemePreferenceControl } from "./ThemePreferenceSection";
@@ -261,27 +261,6 @@ export function SettingsView({
     () => new Set((runningProviderNames ?? []).map((name) => name.trim()).filter(Boolean)),
     [runningProviderNames],
   );
-  const [providerDraft, setProviderDraft] = useState(initialized?.provider ?? "");
-  const [modelDraft, setModelDraft] = useState(initialized?.model ?? "");
-  const [variantDraft, setVariantDraft] = useState(initialized?.variant ?? initialized?.effort ?? "");
-  const [baseURLDraft, setBaseURLDraft] = useState(initialized?.providers?.find((item) => item.name === initialized.provider)?.base_url ?? "");
-  const [apiKeyDraft, setAPIKeyDraft] = useState("");
-  // Draft for the protocol type of a brand-new provider (only used while
-  // addingProvider is true). Defaults to "openai-compatible" to preserve
-  // the historical behavior; the user can switch to "anthropic" before
-  // saving.
-  const [providerTypeDraft, setProviderTypeDraft] = useState("openai-compatible");
-  const [addingProvider, setAddingProvider] = useState(false);
-  // The selected service's editor opens under its row; collapsing it keeps
-  // the selection so reopening restores the same service.
-  const [providerEditorOpen, setProviderEditorOpen] = useState(true);
-  const [error, setError] = useState("");
-  const [xaiLogin, setXAILogin] = useState<{
-    loginId: string;
-    userCode: string;
-    url: string;
-  } | null>(null);
-  const [xaiLoginBusy, setXAILoginBusy] = useState(false);
   const [desktopBuild, setDesktopBuild] = useState<DesktopBuildInfo | undefined>();
   const [activePage, setActivePage] = useState<SettingsPage>(() =>
     availableSettingsPage(initialPage),
@@ -326,7 +305,7 @@ export function SettingsView({
   const [compactKeepRecentDraft, setCompactKeepRecentDraft] = useState("");
   const [providerContextWindowDraft, setProviderContextWindowDraft] = useState("");
   const [maxContextTokensDraft, setMaxContextTokensDraft] = useState("");
-  const [maxStepsDraft, setMaxStepsDraft] = useState("0");
+  const [maxStepsDraft, setMaxStepsDraft] = useState("");
   const [temperatureDraft, setTemperatureDraft] = useState("");
   // Runtime errors stay beside the field that failed to validate or save.
   const [advancedError, setAdvancedError] = useState<{ field: AdvancedField; message: string } | null>(null);
@@ -395,25 +374,6 @@ export function SettingsView({
   }, []);
 
   const core = initialized?.core;
-  const selectedProvider = addingProvider ? undefined : providers.find((item) => item.name === providerDraft);
-  const providerLabels = useMemo(() => providerDisplayLabels(providers, t), [providers, t]);
-  const connectionLocked = !addingProvider && (selectedProvider?.connection_locked ?? false);
-  const variantOptions = providerModelVariantOptions(selectedProvider, modelDraft, variantDraft);
-  const providerNameTaken = addingProvider && providers.some((item) => item.name === providerDraft.trim());
-
-  useEffect(() => {
-    // Inventory refreshes and session notifications must not reset the editor.
-    if (addingProvider || providers.some((item) => item.name === providerDraft)) return;
-    const summary = providers.find((item) => item.name === initialized?.provider) ?? providers[0];
-    setProviderDraft(summary?.name ?? "");
-    setModelDraft(summary?.model ?? "");
-    setVariantDraft(normalizedVariantForProviderModel("", summary, summary?.model ?? ""));
-    setBaseURLDraft(summary?.base_url ?? "");
-    setAPIKeyDraft("");
-    setAddingProvider(false);
-    setError("");
-  }, [initialized?.provider, initialized?.model, initialized?.variant, initialized?.effort, initialized?.providers, addingProvider, providerDraft]);
-
   useEffect(() => {
     const advanced = initialized?.advanced_settings;
     const synced = {
@@ -421,7 +381,7 @@ export function SettingsView({
       compactKeepRecent: formatOptionalNumberDraft(advanced?.compact_keep_recent_tokens),
       providerContextWindow: formatOptionalNumberDraft(advanced?.provider_context_window),
       maxContextTokens: formatOptionalNumberDraft(advanced?.max_context_tokens),
-      maxSteps: String(advanced?.max_steps ?? 0),
+      maxSteps: formatOptionalNumberDraft(advanced?.max_steps),
       temperature: formatTemperatureDraft(advanced?.temperature)
     };
     setAutoCompactDraft(!(advanced?.disable_auto_compact ?? false));
@@ -434,267 +394,6 @@ export function SettingsView({
     advancedCommittedRef.current = synced;
     setAdvancedError(null);
   }, [initialized?.advanced_settings, initialized?.provider, initialized?.model]);
-
-  // Browsing providers is local UI state; it never changes a session or defaults.
-  function selectProvider(provider: string): void {
-    setAddingProvider(false);
-    // Reset the type draft: it is only meaningful when creating a provider,
-    // and leaving add mode via card click should drop any pending type pick.
-    setProviderTypeDraft("openai-compatible");
-    setError("");
-    const summary = providers.find((item) => item.name === provider);
-    if (!summary) {
-      return;
-    }
-    const variant = normalizedVariantForProviderModel(
-      initialized?.variant ?? initialized?.effort ?? "",
-      summary,
-      summary.model,
-    );
-    setProviderDraft(provider);
-    setModelDraft(summary.model);
-    setVariantDraft(variant);
-    setBaseURLDraft(summary.base_url ?? "");
-    setAPIKeyDraft("");
-  }
-
-  function toggleProvider(provider: string): void {
-    if (!addingProvider && provider === providerDraft && providerEditorOpen) {
-      setProviderEditorOpen(false);
-      return;
-    }
-    selectProvider(provider);
-    setProviderEditorOpen(true);
-  }
-
-  function startAddingProvider(): void {
-    setAddingProvider(true);
-    setProviderDraft(nextCustomProviderName(providers));
-    setProviderTypeDraft("openai-compatible");
-    setModelDraft("");
-    setVariantDraft("");
-    setBaseURLDraft("");
-    setAPIKeyDraft("");
-    setXAILogin(null);
-    setError("");
-  }
-
-  function changeProviderTypeDraft(type: string): void {
-    setProviderTypeDraft(type);
-    if (isGrokBuildType(type)) {
-      if (!providerDraft.trim() || providerDraft.startsWith("custom-")) {
-        setProviderDraft(providers.some((item) => item.name === "grok-build") ? nextCustomProviderName(providers) : "grok-build");
-      }
-      setModelDraft("grok-4.5");
-      setBaseURLDraft("https://cli-chat-proxy.grok.com/v1");
-      setAPIKeyDraft("");
-      return;
-    }
-    if (!isXAISubscriptionType(type)) {
-      return;
-    }
-    if (!providerDraft.trim() || providerDraft.startsWith("custom-")) {
-      setProviderDraft(providers.some((item) => item.name === "xai-subscription") ? nextCustomProviderName(providers) : "xai-subscription");
-    }
-    if (!modelDraft.trim()) {
-      setModelDraft("grok-4.7");
-    }
-    setBaseURLDraft("https://api.x.ai/v1");
-    setAPIKeyDraft("");
-  }
-
-  async function startXAILogin(): Promise<void> {
-    if (xaiLoginBusy || typeof window.wuu.startXAILogin !== "function") {
-      return;
-    }
-    setError("");
-    setXAILoginBusy(true);
-    try {
-      const start = await window.wuu.startXAILogin();
-      const url = start.verification_uri_complete || start.verification_uri;
-      setXAILogin({ loginId: start.login_id, userCode: start.user_code, url });
-      if (url) {
-        await window.wuu.openExternal(url);
-      }
-      const deadline = Date.now() + Math.max(30, start.expires_in || 300) * 1000;
-      let interval = Math.max(1000, start.interval_ms || 5000);
-      while (Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, interval));
-        const poll = await window.wuu.pollXAILogin(start.login_id);
-        if (poll.status === "pending") {
-          interval = Math.max(1000, poll.interval_ms || interval);
-          continue;
-        }
-        if (poll.status !== "success") {
-          throw new Error(poll.error || t("error.oauthFailed"));
-        }
-        setXAILogin(null);
-        if (addingProvider) {
-          const connection: RuntimeConnectionUpdate = {
-            base_url: baseURLDraft.trim() || "https://api.x.ai/v1",
-            type: "xai-subscription",
-            create_provider: true
-          };
-          await onSave(providerDraft.trim() || "xai-subscription", modelDraft.trim() || "grok-4.7", undefined, connection, variantDraft);
-          setAddingProvider(false);
-        } else {
-          await onSave(providerDraft, modelDraft, undefined, undefined, variantDraft);
-        }
-        return;
-      }
-      throw new Error(t("error.oauthFailed"));
-    } catch (loginError) {
-      setXAILogin(null);
-      setError(loginError instanceof Error ? loginError.message : t("error.oauthFailed"));
-    } finally {
-      setXAILoginBusy(false);
-    }
-  }
-
-  function cancelAddingProvider(): void {
-    setAddingProvider(false);
-    setXAILogin(null);
-    setProviderDraft(initialized?.provider ?? "");
-    setProviderTypeDraft("openai-compatible");
-    setModelDraft(initialized?.model ?? "");
-    setVariantDraft(initialized?.variant ?? initialized?.effort ?? "");
-    const summary = initialized?.providers?.find((item) => item.name === initialized.provider);
-    setBaseURLDraft(summary?.base_url ?? "");
-    setAPIKeyDraft("");
-    setError("");
-  }
-
-  // Field edits persist against the selected provider, independently and
-  // instantly: text inputs commit on blur or Enter, the effort select on
-  // change. An emptied required field snaps back to the persisted value;
-  // an empty API key field means "keep the current secret" and never
-  // round-trips.
-  async function commitModelName(selection?: string): Promise<void> {
-    if (addingProvider) {
-      return;
-    }
-    const model = (selection ?? modelDraft).trim();
-    if (selection !== undefined) setModelDraft(model);
-    if (!model) {
-      setModelDraft(selectedProvider?.model ?? "");
-      return;
-    }
-    if (model === (selectedProvider?.model ?? "")) {
-      return;
-    }
-    const variant = normalizedVariantForProviderModel(variantDraft, selectedProvider, model);
-    const previousVariant = variantDraft;
-    setVariantDraft(variant);
-    setError("");
-    try {
-      await onSave(providerDraft, model, undefined, undefined, variant);
-    } catch (saveError) {
-      setModelDraft(selectedProvider?.model ?? "");
-      setVariantDraft(previousVariant);
-      setError(saveError instanceof Error ? saveError.message : t("provider.saveFailed"));
-    }
-  }
-
-  async function changeVariant(variant: string): Promise<void> {
-    const previous = variantDraft;
-    setVariantDraft(variant);
-    if (addingProvider) {
-      return;
-    }
-    setError("");
-    try {
-      await onSave(providerDraft, modelDraft, undefined, undefined, variant);
-    } catch (saveError) {
-      setVariantDraft(previous);
-      setError(saveError instanceof Error ? saveError.message : t("provider.saveFailed"));
-    }
-  }
-
-  async function commitBaseURL(): Promise<void> {
-    if (addingProvider || connectionLocked) {
-      return;
-    }
-    const baseURL = baseURLDraft.trim();
-    if (!baseURL) {
-      setBaseURLDraft(selectedProvider?.base_url ?? "");
-      return;
-    }
-    if (baseURL === (selectedProvider?.base_url ?? "")) {
-      return;
-    }
-    setError("");
-    try {
-      await onSave(providerDraft, modelDraft, undefined, { base_url: baseURL }, variantDraft);
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : t("provider.saveFailed"));
-    }
-  }
-
-  async function commitAPIKey(): Promise<void> {
-    if (addingProvider || connectionLocked) {
-      return;
-    }
-    const apiKey = apiKeyDraft.trim();
-    if (!apiKey) {
-      return;
-    }
-    const connection: RuntimeConnectionUpdate = {
-      base_url: baseURLDraft.trim() || selectedProvider?.base_url || ""
-    };
-    connection.api_key = apiKey;
-    setError("");
-    try {
-      await onSave(providerDraft, modelDraft, undefined, connection, variantDraft);
-      setAPIKeyDraft("");
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : t("provider.saveFailed"));
-    }
-  }
-
-  async function submit(event: ReactFormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (!addingProvider) {
-      return;
-    }
-    setError("");
-    try {
-      const connection: RuntimeConnectionUpdate = {
-        base_url: baseURLDraft.trim(),
-        type: providerTypeDraft,
-        create_provider: true
-      };
-      if (!isXAISubscriptionType(providerTypeDraft) && !isGrokBuildType(providerTypeDraft)) {
-        connection.api_key = apiKeyDraft.trim();
-      }
-      await onSave(providerDraft, modelDraft, undefined, connection, variantDraft);
-      setAddingProvider(false);
-      setProviderEditorOpen(true);
-      setAPIKeyDraft("");
-      setXAILogin(null);
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : t("provider.saveFailed"));
-    }
-  }
-
-  async function requestRemoveProvider(name: string): Promise<void> {
-    if (running || !name) {
-      return;
-    }
-    setError("");
-    try {
-      await onRemoveProvider(name);
-      // The parent's state update will refresh initialized.providers
-      // and active provider/model; sync the local drafts so the form
-      // does not show the now-deleted provider as selected.
-      setAddingProvider(false);
-    } catch (removeError) {
-      setError(
-        removeError instanceof Error
-          ? removeError.message
-          : t("provider.removeFailed"),
-      );
-    }
-  }
 
   async function runMCPAction(name: string, action: "connect" | "disconnect" | "refresh"): Promise<void> {
     setMCPBusyServer(name);
@@ -876,17 +575,6 @@ export function SettingsView({
     }
   }
 
-  // The create-transaction submit is the only explicit action left: every
-  // other field on the page applies instantly on commit.
-  const addingCredentiallessProvider = addingProvider &&
-    (isXAISubscriptionType(providerTypeDraft) || isGrokBuildType(providerTypeDraft));
-  const addSubmitDisabled =
-    running ||
-    !providerDraft.trim() ||
-    providerNameTaken ||
-    !modelDraft.trim() ||
-    !baseURLDraft.trim() ||
-    (!addingCredentiallessProvider && !apiKeyDraft.trim());
   const shellStyle = {
     // Same variables as the main app shell (`--sidebar-width` collapses to 0,
     // `--sidebar-open-width` remembers the open width for the hover drawer)
@@ -1079,7 +767,7 @@ export function SettingsView({
             {activePluginSettingsRecord ? (
               <>
                 <SettingsPageHeader title={activePluginSettingsRecord.name} />
-                <PluginSettingsEditor plugin={activePluginSettingsRecord} variant="page" />
+                <PluginSettingsEditor plugin={activePluginSettingsRecord} />
               </>
             ) : activeCustomPluginPage ? (
               <>
@@ -1100,46 +788,13 @@ export function SettingsView({
                 onSelectBuiltinModel={(provider, model) => onSave(provider, model)}
               />
             ) : activePage === "providers" ? (
-              <SettingsProvidersPage
-                providers={providers}
-                providerLabels={providerLabels}
+              <ModelServicesPage
+                initialized={initialized}
                 running={running}
-                providerDraft={providerDraft}
-                providerTypeDraft={providerTypeDraft}
-                modelDraft={modelDraft}
-                variantDraft={variantDraft}
-                baseURLDraft={baseURLDraft}
-                apiKeyDraft={apiKeyDraft}
-                addingProvider={addingProvider}
-                editorOpen={providerEditorOpen}
-                error={error}
-                selectedProvider={selectedProvider}
-                connectionLocked={connectionLocked}
-                variantOptions={variantOptions}
-                providerNameTaken={Boolean(providerNameTaken)}
-                onProviderToggle={toggleProvider}
-                onStartAddingProvider={startAddingProvider}
-                onCancelAddingProvider={cancelAddingProvider}
-                onProviderDraftChange={setProviderDraft}
-                onProviderTypeDraftChange={changeProviderTypeDraft}
-                onModelDraftChange={(value) => {
-                  setModelDraft(value);
-                  setVariantDraft("");
-                }}
-                onVariantDraftChange={changeVariant}
-                onBaseURLDraftChange={setBaseURLDraft}
-                onAPIKeyDraftChange={setAPIKeyDraft}
-                onCommitModel={commitModelName}
-                onCommitBaseURL={commitBaseURL}
-                onCommitAPIKey={commitAPIKey}
-                onSubmit={submit}
-                onRemoveProvider={requestRemoveProvider}
-                onRefreshModelCatalog={onRefreshModelCatalog}
                 runningProviderNames={runningProviderNameSet}
-                disabled={addSubmitDisabled}
-                xaiLogin={xaiLogin}
-                xaiLoginBusy={xaiLoginBusy}
-                onStartXAILogin={() => void startXAILogin()}
+                onSave={onSave}
+                onRemoveProvider={onRemoveProvider}
+                onRefreshModelCatalog={onRefreshModelCatalog}
               />
             ) : activePage === "agents" ? (
               <EngineSettingsSection
@@ -1179,9 +834,6 @@ export function SettingsView({
               />
             ) : activePage === "general" ? (
               <SettingsGeneralPage
-                initialized={initialized}
-                running={running}
-                onGeneralSave={onGeneralSave}
                 desktopBuild={desktopBuild}
                 codexPets={codexPets}
                 codexPetsLoading={codexPetsLoading}
@@ -1236,7 +888,7 @@ export function SettingsView({
       availablePages={availablePages}
       runningProviderNames={runningProviderNames}
       busy={running || usageLoading || mcpLoading || codexPetsLoading || Boolean(mcpBusyServer)}
-      hasError={Boolean(error || advancedError || usageError || mcpError || codexPetsError)}
+      hasError={Boolean(advancedError || usageError || mcpError || codexPetsError)}
       fallback={nativeSettings}
       onOpenPage={(pageId) => setActivePage(pageId as SettingsPage)}
       onAdvancedSave={onAdvancedSave}
@@ -1272,393 +924,6 @@ function SettingsNavItem({
       {icon}
       <span>{children}</span>
     </button>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/*  Providers page                                                             */
-/* -------------------------------------------------------------------------- */
-
-function SettingsProvidersPage({
-  providers,
-  providerLabels,
-  running,
-  providerDraft,
-  providerTypeDraft,
-  modelDraft,
-  variantDraft,
-  baseURLDraft,
-  apiKeyDraft,
-  addingProvider,
-  editorOpen,
-  error,
-  selectedProvider,
-  connectionLocked,
-  variantOptions,
-  providerNameTaken,
-  onProviderToggle,
-  onStartAddingProvider,
-  onCancelAddingProvider,
-  onProviderDraftChange,
-  onProviderTypeDraftChange,
-  onModelDraftChange,
-  onVariantDraftChange,
-  onBaseURLDraftChange,
-  onAPIKeyDraftChange,
-  onCommitModel,
-  onCommitBaseURL,
-  onCommitAPIKey,
-  onSubmit,
-  onRemoveProvider,
-  onRefreshModelCatalog,
-  runningProviderNames,
-  disabled,
-  xaiLogin,
-  xaiLoginBusy,
-  onStartXAILogin
-}: {
-  providers: ProviderSummary[];
-  providerLabels: Map<string, string>;
-  running: boolean;
-  providerDraft: string;
-  providerTypeDraft: string;
-  modelDraft: string;
-  variantDraft: string;
-  baseURLDraft: string;
-  apiKeyDraft: string;
-  addingProvider: boolean;
-  editorOpen: boolean;
-  error: string;
-  selectedProvider: ProviderSummary | undefined;
-  connectionLocked: boolean;
-  variantOptions: string[];
-  providerNameTaken: boolean;
-  onProviderToggle: (provider: string) => void;
-  onStartAddingProvider: () => void;
-  onCancelAddingProvider: () => void;
-  onProviderDraftChange: (value: string) => void;
-  onProviderTypeDraftChange: (value: string) => void;
-  onModelDraftChange: (value: string) => void;
-  onVariantDraftChange: (value: string) => void;
-  onBaseURLDraftChange: (value: string) => void;
-  onAPIKeyDraftChange: (value: string) => void;
-  onCommitModel: (selection?: string) => void;
-  onCommitBaseURL: () => void;
-  onCommitAPIKey: () => void;
-  onSubmit: (event: ReactFormEvent<HTMLFormElement>) => Promise<void>;
-  onRemoveProvider?: (provider: string) => Promise<void> | void;
-  onRefreshModelCatalog: () => Promise<void>;
-  runningProviderNames: ReadonlySet<string>;
-  disabled: boolean;
-  xaiLogin: { loginId: string; userCode: string; url: string } | null;
-  xaiLoginBusy: boolean;
-  onStartXAILogin: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const editorID = useId();
-  const [catalogRefreshing, setCatalogRefreshing] = useState(false);
-  function modelIDs(provider: ProviderSummary | undefined): string[] {
-    // Provider summaries put the selected model first; keep button positions stable when selection changes.
-    return [...new Set([provider?.model ?? "", ...(provider?.models ?? []).map((model) => model.id)].filter(Boolean))]
-      .sort((left, right) => left.toLowerCase().localeCompare(right.toLowerCase()) || left.localeCompare(right));
-  }
-  const reasoningMode = providerModelReasoningMode(selectedProvider, modelDraft);
-  const authFieldLabel = t("provider.apiKey");
-  const xaiType = addingProvider
-    ? isXAISubscriptionType(providerTypeDraft)
-    : isXAISubscriptionType(selectedProvider?.type);
-  const grokBuildType = addingProvider
-    ? isGrokBuildType(providerTypeDraft)
-    : isGrokBuildType(selectedProvider?.type);
-  const oauthLocked = connectionLocked || xaiType || grokBuildType;
-  const removable = Boolean(onRemoveProvider) && selectedProvider !== undefined && !selectedProvider.auto_discovered
-    && (!selectedProvider.connection_locked || isXAISubscriptionType(selectedProvider.type) || isGrokBuildType(selectedProvider.type));
-  // Text fields commit on blur, or on Enter — except while creating a
-  // provider, where Enter submits the create transaction instead.
-  const commitOnEnter =
-    (commit: () => void) =>
-    (event: ReactKeyboardEvent<HTMLInputElement>): void => {
-      if (event.key !== "Enter" || addingProvider) {
-        return;
-      }
-      event.preventDefault();
-      commit();
-      event.currentTarget.blur();
-    };
-
-  function requestRemove(provider: ProviderSummary): void {
-    if (!onRemoveProvider) return;
-    if (runningProviderNames.has(provider.name.trim())) {
-      window.alert(t("provider.inUse"));
-      return;
-    }
-    if (
-      typeof window !== "undefined" &&
-      typeof window.confirm === "function" &&
-      !window.confirm(t("provider.removeConfirm", { name: providerServiceLabel(provider, t) }))
-    ) {
-      return;
-    }
-    void onRemoveProvider(provider.name);
-  }
-
-  const editor = (
-    <form className="settings-provider-editor" id={editorID} onSubmit={onSubmit}>
-      {addingProvider ? (
-        <div className="settings-provider-model-fields">
-          <SettingsRow title={t("provider.type")} block>
-            <SelectMenu
-              triggerClassName="settings-select-trigger"
-              ariaLabel={t("provider.type")}
-              dataTestid="settings-provider-type-select"
-              value={providerTypeDraft}
-              onChange={onProviderTypeDraftChange}
-              disabled={running}
-              options={[
-                { value: "openai-compatible", label: t("provider.openaiCompatible") },
-                { value: "anthropic", label: t("provider.anthropicCompatible") },
-                { value: "xai-subscription", label: t("provider.xaiSubscription") },
-                { value: "grok-build", label: t("provider.grokBuild") }
-              ]}
-            />
-          </SettingsRow>
-          <SettingsRow
-            title={t("provider.identifier")}
-            description={providerNameTaken ? t("provider.nameExists") : undefined}
-            block
-          >
-            <input
-              className="settings-input"
-              aria-label={t("provider.identifier")}
-              value={providerDraft}
-              onChange={(event) => onProviderDraftChange(event.target.value)}
-              disabled={running}
-            />
-          </SettingsRow>
-        </div>
-      ) : null}
-      {!addingProvider && modelIDs(selectedProvider).length > 0 ? (
-        <SettingsRow title={t("provider.availableModels")} block>
-          <div className="settings-provider-model-list" role="group" aria-label={t("provider.availableModels")}>
-            {modelIDs(selectedProvider).map((model) => <button
-              key={model}
-              type="button"
-              className="settings-button"
-              aria-pressed={modelDraft === model}
-              disabled={running}
-              onClick={() => onCommitModel(model)}
-            >{model}</button>)}
-          </div>
-        </SettingsRow>
-      ) : null}
-      <div className="settings-provider-model-fields">
-        <SettingsRow title={t("provider.modelName")} block>
-          <input
-            className="settings-input"
-            aria-label={t("provider.modelName")}
-            value={modelDraft}
-            onChange={(event) => onModelDraftChange(event.target.value)}
-            onBlur={() => onCommitModel()}
-            onKeyDown={commitOnEnter(onCommitModel)}
-            disabled={running}
-          />
-        </SettingsRow>
-        <SettingsRow
-          title={t("provider.reasoningEffort")}
-          description={reasoningMode === "off" ? t("provider.reasoningUnsupported") : undefined}
-          block
-        >
-          <SelectMenu
-            triggerClassName="settings-select-trigger"
-            ariaLabel={t("provider.reasoningEffort")}
-            value={variantDraft}
-            onChange={onVariantDraftChange}
-            disabled={running || reasoningMode === "off"}
-            options={variantOptions.map((variant) => ({
-              value: variant,
-              label: variantLabel(variant)
-            }))}
-          />
-        </SettingsRow>
-      </div>
-      <SettingsRow title={t("settings.baseURL")} block>
-        {oauthLocked ? (
-          <span className="settings-managed-value">{baseURLDraft || (xaiType ? t("provider.xaiOAuthManaged") : grokBuildType ? t("provider.grokBuildManaged") : t("provider.oauthManaged"))}</span>
-        ) : (
-          <input
-            className="settings-input"
-            aria-label={t("settings.baseURL")}
-            value={baseURLDraft}
-            placeholder="https://api.openai.com/v1"
-            onChange={(event) => onBaseURLDraftChange(event.target.value)}
-            onBlur={() => onCommitBaseURL()}
-            onKeyDown={commitOnEnter(onCommitBaseURL)}
-            disabled={running}
-          />
-        )}
-      </SettingsRow>
-      {xaiType ? (
-        <SettingsRow title={t("provider.xaiLogin")} hint={t("provider.xaiLoginHint")} block>
-          <div className="settings-xai-login">
-            <button
-              className="settings-button settings-button-primary"
-              type="button"
-              onClick={onStartXAILogin}
-              disabled={running || xaiLoginBusy}
-            >
-              {xaiLoginBusy ? t("provider.xaiLoggingIn") : selectedProvider?.api_key_configured ? t("provider.xaiLoggedIn") : t("provider.xaiLogin")}
-            </button>
-            {xaiLogin ? (
-              <p className="settings-hint">
-                {t("provider.xaiLoginCode", { code: xaiLogin.userCode })}
-              </p>
-            ) : null}
-          </div>
-        </SettingsRow>
-      ) : grokBuildType ? (
-        (addingProvider || !selectedProvider?.api_key_configured) && !isTouchWebShell() ? (
-          <p className="settings-hint">{t("provider.grokBuildLoginHint")}</p>
-        ) : null
-      ) : connectionLocked ? null : (
-        <SettingsRow title={authFieldLabel} block>
-          <input
-            className="settings-input"
-            aria-label={authFieldLabel}
-            value={apiKeyDraft}
-            type="password"
-            autoComplete="new-password"
-            placeholder={
-              !addingProvider && selectedProvider?.api_key_configured
-                ? t("provider.keepCurrentAuth")
-                : t("provider.enterAuth", { field: authFieldLabel })
-            }
-            onChange={(event) => onAPIKeyDraftChange(event.target.value)}
-            onBlur={() => onCommitAPIKey()}
-            onKeyDown={commitOnEnter(onCommitAPIKey)}
-            disabled={running}
-          />
-        </SettingsRow>
-      )}
-      {addingProvider ? (
-        <div className="settings-provider-editor-footer">
-          {error ? <div className="settings-error" role="alert">{error}</div> : null}
-          <button
-            className="settings-button settings-button-ghost"
-            type="button"
-            onClick={onCancelAddingProvider}
-            disabled={running}
-          >
-            {t("common.cancel")}
-          </button>
-          <button
-            className="settings-button settings-button-primary"
-            type="submit"
-            disabled={disabled}
-          >
-            {t("provider.addAction")}
-          </button>
-        </div>
-      ) : error || removable ? (
-        <div className="settings-provider-editor-footer">
-          {error ? <div className="settings-error" role="alert">{error}</div> : null}
-          {removable && selectedProvider ? (
-            <button
-              className="settings-button settings-button-ghost settings-provider-remove"
-              type="button"
-              aria-label={t("provider.removeNamed", { name: providerServiceLabel(selectedProvider, t) })}
-              disabled={running}
-              onClick={() => requestRemove(selectedProvider)}
-            >
-              {t("provider.removeAction")}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-    </form>
-  );
-
-  return (
-    <>
-      <SettingsPageHeader
-        title={t("settings.providers")}
-        description={t("settings.providersDescription")}
-        actions={<>
-          <button
-            className="settings-button settings-button-ghost"
-            type="button"
-            data-testid="settings-model-catalog-refresh"
-            disabled={catalogRefreshing}
-            onClick={() => {
-              setCatalogRefreshing(true);
-              void onRefreshModelCatalog().finally(() => setCatalogRefreshing(false));
-            }}
-          >
-            <RefreshCw className={`icon${catalogRefreshing ? " settings-spin" : ""}`} />
-            {catalogRefreshing ? t("settings.modelCatalogUpdating") : t("settings.modelCatalogUpdate")}
-          </button>
-          <button
-            className="settings-button"
-            type="button"
-            data-testid="settings-provider-add-card"
-            disabled={running || addingProvider}
-            onClick={onStartAddingProvider}
-          >
-            <Plus className="icon" />
-            {t("provider.add")}
-          </button>
-        </>}
-      />
-      <SettingsSection testID="settings-providers">
-        <div
-          className="settings-group settings-provider-list"
-          data-testid="settings-provider-overview"
-          role="group"
-          aria-label={t("settings.providerServices")}
-        >
-          {addingProvider ? (
-            <div className="settings-provider-item open">
-              <div className="settings-provider-heading">
-                <span className="settings-provider-mark" aria-hidden="true"><Plus className="icon" /></span>
-                <span className="settings-provider-copy"><strong>{t("provider.add")}</strong></span>
-              </div>
-              {editor}
-            </div>
-          ) : null}
-          {providers.map((provider) => {
-            const label = providerLabels.get(provider.name) ?? providerServiceLabel(provider, t);
-            const open = !addingProvider && editorOpen && providerDraft === provider.name;
-            const modelCount = modelIDs(provider).length;
-            return (
-              <div className={`settings-provider-item${open ? " open" : ""}`} key={provider.name}>
-                <button
-                  className="settings-provider-button"
-                  type="button"
-                  aria-expanded={open}
-                  aria-controls={open ? editorID : undefined}
-                  disabled={running}
-                  onClick={() => onProviderToggle(provider.name)}
-                >
-                  <span className="settings-provider-mark" aria-hidden="true">{providerMonogram(label)}</span>
-                  <span className="settings-provider-copy">
-                    <strong>{label}</strong>
-                    <small>
-                      {provider.model || t("provider.noModel")}
-                      {modelCount > 1 ? ` · ${t("provider.modelCount", { count: modelCount })}` : ""}
-                    </small>
-                  </span>
-                  <SettingsStatus tone={providerConnectionTone(provider)}>{providerConnectionStatus(provider, t)}</SettingsStatus>
-                  <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
-                </button>
-                {open ? editor : null}
-              </div>
-            );
-          })}
-          {providers.length === 0 && !addingProvider ? (
-            <p className="settings-group-empty">{t("provider.none")}</p>
-          ) : null}
-        </div>
-      </SettingsSection>
-    </>
   );
 }
 
@@ -1722,6 +987,18 @@ function SettingsRuntimePage({
   onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
+  const ptc = initialized?.general_settings?.ptc ?? { enabled: false };
+  const [ptcBusy, setPTCBusy] = useState(false);
+  const [ptcError, setPTCError] = useState("");
+  const [ptcFamily, setPTCFamily] = useState("gpt");
+  const ptcFamilyValue = ptc.families?.[ptcFamily];
+  async function savePTC(next: NonNullable<RuntimeGeneralSettingsUpdate["ptc"]>): Promise<void> {
+    setPTCBusy(true);
+    setPTCError("");
+    try { await onGeneralSave({ ptc: next }); }
+    catch (error) { setPTCError(error instanceof Error ? error.message : t("settings.saveFailed")); }
+    finally { setPTCBusy(false); }
+  }
   const [gitAttributionBusy, setGitAttributionBusy] = useState(false);
   const [gitAttributionError, setGitAttributionError] = useState("");
   const gitAttributionEnabled = initialized?.general_settings?.git_attribution_enabled ?? true;
@@ -1749,31 +1026,40 @@ function SettingsRuntimePage({
 
   // Enter and blur both commit through onCommitField; the ref-guard inside
   // makes the blur that follows Enter a no-op, so there is one effective
-  // commit per edit.
+  // commit per edit. A unit inside the field replaces a description line
+  // that only named it.
   const numericInput = (
     field: AdvancedNumericField,
     value: string,
     onChange: (value: string) => void,
-    options: { label: string; placeholder?: string; inputMode?: "numeric" | "decimal" },
-  ): JSX.Element => (
-    <input
-      className="settings-input settings-input-num"
-      aria-label={options.label}
-      value={value}
-      aria-invalid={error?.field === field || undefined}
-      inputMode={options.inputMode ?? "numeric"}
-      placeholder={options.placeholder}
-      onChange={(event) => onChange(event.target.value)}
-      onBlur={() => onCommitField(field)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          onCommitField(field);
-          event.currentTarget.blur();
-        }
-      }}
-      disabled={fieldsDisabled}
-    />
-  );
+    options: { label: string; placeholder?: string; inputMode?: "numeric" | "decimal"; unit?: string },
+  ): JSX.Element => {
+    const input = (
+      <input
+        className="settings-input settings-input-num"
+        aria-label={options.label}
+        value={value}
+        aria-invalid={error?.field === field || undefined}
+        inputMode={options.inputMode ?? "numeric"}
+        placeholder={options.placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        onBlur={() => onCommitField(field)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            onCommitField(field);
+            event.currentTarget.blur();
+          }
+        }}
+        disabled={fieldsDisabled}
+      />
+    );
+    // A numeric placeholder (the default) keeps its unit; a word ("Auto") does not.
+    return options.unit ? (
+      <span className="settings-input-unit" data-unit={options.unit}
+        data-unit-placeholder={/^[\d.,\s]+$/.test(options.placeholder ?? "") || undefined}
+        style={{ "--settings-unit-chars": options.unit.length } as CSSProperties}>{input}</span>
+    ) : input;
+  };
 
   return (
     <>
@@ -1782,7 +1068,6 @@ function SettingsRuntimePage({
         <SettingsGroup>
           <SettingsRow
             title={t("settings.autoCompact")}
-            hint={t("settings.autoCompactDescription")}
             error={fieldError("autoCompact")}
           >
             <button
@@ -1799,22 +1084,22 @@ function SettingsRuntimePage({
           </SettingsRow>
           <SettingsRow
             title={t("settings.compactThreshold")}
-            hint={t("settings.compactThresholdDescription")}
             error={fieldError("compactThreshold")}
           >
             {numericInput("compactThreshold", compactThreshold, onCompactThresholdChange, {
               label: t("settings.compactThreshold"),
               placeholder: t("settings.automatic"),
+              unit: "%",
             })}
           </SettingsRow>
           <SettingsRow
             title={t("settings.keepRecentContext")}
-            hint={t("settings.keepRecentContextDescription")}
             error={fieldError("compactKeepRecent")}
           >
             {numericInput("compactKeepRecent", compactKeepRecent, onCompactKeepRecentChange, {
               label: t("settings.keepRecentContext"),
               placeholder: "20,000",
+              unit: t("settings.unitTokens"),
             })}
           </SettingsRow>
         </SettingsGroup>
@@ -1831,6 +1116,7 @@ function SettingsRuntimePage({
             {numericInput("providerContextWindow", providerContextWindow, onProviderContextWindowChange, {
               label: t("settings.providerContextLimit"),
               placeholder: t("settings.detectAutomatically"),
+              unit: t("settings.unitTokens"),
             })}
           </SettingsRow>
           <SettingsRow
@@ -1841,6 +1127,7 @@ function SettingsRuntimePage({
             {numericInput("maxContextTokens", maxContextTokens, onMaxContextTokensChange, {
               label: t("settings.unknownModelLimit"),
               placeholder: t("settings.automatic"),
+              unit: t("settings.unitTokens"),
             })}
           </SettingsRow>
         </SettingsGroup>
@@ -1849,10 +1136,9 @@ function SettingsRuntimePage({
         <SettingsGroup>
           <SettingsRow
             title={t("settings.maxSteps")}
-            hint={t("settings.unlimitedAtZero")}
             error={fieldError("maxSteps")}
           >
-            {numericInput("maxSteps", maxSteps, onMaxStepsChange, { label: t("settings.maxSteps") })}
+            {numericInput("maxSteps", maxSteps, onMaxStepsChange, { label: t("settings.maxSteps"), placeholder: t("settings.unlimited") })}
           </SettingsRow>
           <SettingsRow title={t("settings.temperature")} hint={t("settings.temperatureRange")} error={fieldError("temperature")}>
             {numericInput("temperature", temperature, onTemperatureChange, {
@@ -1863,6 +1149,43 @@ function SettingsRuntimePage({
           </SettingsRow>
         </SettingsGroup>
       </SettingsSection>
+      {ENABLE_PTC_SETTINGS && <SettingsSection title={t("settings.ptcTitle")} testID="settings-ptc">
+        <SettingsGroup>
+          <SettingsRow title={t("settings.ptcEnabled")} description={t("settings.ptcDescription")}>
+            <button className="settings-switch" type="button" role="switch"
+              aria-label={t("settings.ptcEnabled")} aria-checked={ptc.enabled}
+              data-testid="settings-ptc-enabled" disabled={!initialized || running || ptcBusy}
+              onClick={() => void savePTC({ ...ptc, enabled: !ptc.enabled })}>
+              <span className="settings-switch-thumb" aria-hidden="true" />
+            </button>
+          </SettingsRow>
+          <SettingsRow title={t("settings.ptcFamily")} description={t("settings.ptcFamilyHint")}>
+            <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={t("settings.ptcFamily")}
+              value={ptcFamily} onChange={setPTCFamily}
+              options={[
+                ["gpt", "GPT"], ["codex", "Codex"], ["claude", "Claude"], ["gemini", "Gemini"],
+                ["deepseek", "DeepSeek"], ["kimi", "Kimi"], ["qwen", "Qwen"],
+                ["local", t("settings.ptcLocal")], ["portable", t("settings.ptcOther")],
+              ].map(([value, label]) => ({ value, label }))} />
+            <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={t("settings.ptcFamilyMode")}
+              dataTestid="settings-ptc-family-mode"
+              value={ptcFamilyValue === undefined ? "inherit" : ptcFamilyValue ? "on" : "off"}
+              disabled={!initialized || running || ptcBusy}
+              onChange={(value) => {
+                const families = { ...ptc.families };
+                if (value === "inherit") delete families[ptcFamily];
+                else families[ptcFamily] = value === "on";
+                void savePTC({ ...ptc, families });
+              }}
+              options={[
+                { value: "inherit", label: t("settings.ptcInherit") },
+                { value: "on", label: t("settings.ptcOn") },
+                { value: "off", label: t("settings.ptcOff") },
+              ]} />
+          </SettingsRow>
+          {ptcError ? <p className="settings-error" role="alert">{ptcError}</p> : null}
+        </SettingsGroup>
+      </SettingsSection>}
       <SettingsSection title={t("settings.sectionGit")} testID="settings-git">
         <SettingsGroup>
           <SettingsRow
@@ -1896,9 +1219,6 @@ function SettingsRuntimePage({
 /* -------------------------------------------------------------------------- */
 
 function SettingsGeneralPage({
-  initialized,
-  running,
-  onGeneralSave,
   desktopBuild,
   codexPets,
   codexPetsLoading,
@@ -1908,9 +1228,6 @@ function SettingsGeneralPage({
   copyState,
   onCopyVersion
 }: {
-  initialized: InitializeResult | undefined;
-  running: boolean;
-  onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
   desktopBuild: DesktopBuildInfo | undefined;
   codexPets: CodexPetsSnapshot | undefined;
   codexPetsLoading: boolean;
@@ -1921,18 +1238,6 @@ function SettingsGeneralPage({
   onCopyVersion: () => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
-  const ptc = initialized?.general_settings?.ptc ?? { enabled: false };
-  const [ptcBusy, setPTCBusy] = useState(false);
-  const [ptcError, setPTCError] = useState("");
-  const [ptcFamily, setPTCFamily] = useState("gpt");
-  const ptcFamilyValue = ptc.families?.[ptcFamily];
-  async function savePTC(next: NonNullable<RuntimeGeneralSettingsUpdate["ptc"]>): Promise<void> {
-    setPTCBusy(true);
-    setPTCError("");
-    try { await onGeneralSave({ ptc: next }); }
-    catch (error) { setPTCError(error instanceof Error ? error.message : t("settings.saveFailed")); }
-    finally { setPTCBusy(false); }
-  }
   const [codexPetBusy, setCodexPetBusy] = useState(false);
   const [codexPetLocalError, setCodexPetLocalError] = useState("");
   const codexPetOptions = codexPets?.pets ?? [];
@@ -1973,10 +1278,7 @@ function SettingsGeneralPage({
             <LanguagePreferenceControl />
           </SettingsRow>
           {hostSupports("listCodexPets") ? <>
-          <SettingsRow
-            title={t("settings.codexPet")}
-            description={isTouchWebShell() ? undefined : t("settings.petSource", { path: codexPets?.home ?? "~/.wuu/pets" })}
-          >
+          <SettingsRow title={t("settings.codexPet")}>
             {codexPetOptions.length > 0 ? (
               <SelectMenu
                 className="settings-codex-pet-select"
@@ -1994,10 +1296,11 @@ function SettingsGeneralPage({
             ) : (
               <span className="settings-row-control-value">{t("settings.noLocalPets")}</span>
             )}
+            {/* The folder it reads belongs with the action that reads it. */}
             <button
               className="settings-button settings-button-ghost settings-icon-button"
               type="button"
-              title={t("settings.refreshPets")}
+              title={isTouchWebShell() ? t("settings.refreshPets") : t("settings.petSource", { path: codexPets?.home ?? "~/.wuu/pets" })}
               aria-label={t("settings.refreshPets")}
               disabled={codexPetsLoading || codexPetBusy}
               onClick={() => void refreshCodexPets()}
@@ -2040,44 +1343,6 @@ function SettingsGeneralPage({
         </SettingsGroup>
       </SettingsSection>
 
-      <SettingsSection title={t("settings.ptcTitle")} testID="settings-ptc">
-        <SettingsGroup>
-          <SettingsRow title={t("settings.ptcEnabled")} description={t("settings.ptcDescription")}>
-            <button className="settings-switch" type="button" role="switch"
-              aria-label={t("settings.ptcEnabled")} aria-checked={ptc.enabled}
-              data-testid="settings-ptc-enabled" disabled={!initialized || running || ptcBusy}
-              onClick={() => void savePTC({ ...ptc, enabled: !ptc.enabled })}>
-              <span className="settings-switch-thumb" aria-hidden="true" />
-            </button>
-          </SettingsRow>
-          <SettingsRow title={t("settings.ptcFamily")} description={t("settings.ptcFamilyHint")}>
-            <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={t("settings.ptcFamily")}
-              value={ptcFamily} onChange={setPTCFamily}
-              options={[
-                ["gpt", "GPT"], ["codex", "Codex"], ["claude", "Claude"], ["gemini", "Gemini"],
-                ["deepseek", "DeepSeek"], ["kimi", "Kimi"], ["qwen", "Qwen"],
-                ["local", t("settings.ptcLocal")], ["portable", t("settings.ptcOther")],
-              ].map(([value, label]) => ({ value, label }))} />
-            <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={t("settings.ptcFamilyMode")}
-              dataTestid="settings-ptc-family-mode"
-              value={ptcFamilyValue === undefined ? "inherit" : ptcFamilyValue ? "on" : "off"}
-              disabled={!initialized || running || ptcBusy}
-              onChange={(value) => {
-                const families = { ...ptc.families };
-                if (value === "inherit") delete families[ptcFamily];
-                else families[ptcFamily] = value === "on";
-                void savePTC({ ...ptc, families });
-              }}
-              options={[
-                { value: "inherit", label: t("settings.ptcInherit") },
-                { value: "on", label: t("settings.ptcOn") },
-                { value: "off", label: t("settings.ptcOff") },
-              ]} />
-          </SettingsRow>
-          {ptcError ? <p className="settings-error" role="alert">{ptcError}</p> : null}
-        </SettingsGroup>
-      </SettingsSection>
-
       <SettingsSection title={t("settings.about")} testID="settings-about">
         <SettingsGroup>
           <SettingsRow title={t("settings.version")}>
@@ -2085,13 +1350,14 @@ function SettingsGeneralPage({
               {desktopBuild ? versionLabel(desktopBuild.version) : t("settings.loading")}
             </span>
             <button
-              className="settings-button"
+              className="settings-button settings-button-ghost settings-icon-button"
               type="button"
               aria-label={t("settings.copyVersion")}
+              title={t(copyState === "copied" ? "settings.copied" : "settings.copyVersion")}
               onClick={() => void onCopyVersion()}
               disabled={!desktopBuild || copyState === "copying"}
             >
-              {copyState === "copied" ? t("settings.copied") : t("settings.copy")}
+              {copyState === "copied" ? <Check className="icon" aria-hidden="true" /> : <Copy className="icon" aria-hidden="true" />}
             </button>
           </SettingsRow>
         </SettingsGroup>
@@ -2109,14 +1375,15 @@ function SettingsAppearancePage(): JSX.Element {
   return (
     <>
       <SettingsPageHeader title={t("settings.appearance")} />
+      {/* The background image is part of the look the theme sets. */}
       <SettingsSection title={t("settings.sectionTheme")} testID="settings-appearance">
         <ThemePreferenceControl />
+        {isTouchWebShell() ? null : (
+          <div className="settings-theme-background" data-testid="settings-background">
+            <SettingsGroup><BackgroundSettings /></SettingsGroup>
+          </div>
+        )}
       </SettingsSection>
-      {isTouchWebShell() ? null : (
-        <SettingsSection title={t("settings.sectionBackground")} testID="settings-background">
-          <SettingsGroup><BackgroundSettings /></SettingsGroup>
-        </SettingsSection>
-      )}
       <AppearanceTypography section="text" />
       <AppearanceTypography section="motion" />
     </>
@@ -2229,8 +1496,8 @@ function SettingsMCPPage({
                   title={name}
                   description={server ? (
                     <>
-                      <SettingsStatus tone={mcpStateTone(server.state)}>{mcpStateLabel(server.state, t)}</SettingsStatus>
-                      {` · ${formatMCPServerMeta(server, t)}`}
+                      <MCPStateMark state={server.state} />
+                      {formatMCPServerMeta(server, t)}
                     </>
                   ) : undefined}
                   error={server?.error}
@@ -2449,8 +1716,11 @@ function SettingsArchivePage({
                     <Folder className="icon" aria-hidden="true" />
                     <span>{group.projectName}</span>
                   </div>
-                  <span className="settings-archive-group-count">
-                    {t("settings.conversationCount", { count: group.threads.length })}
+                  <span
+                    className="settings-archive-group-count"
+                    aria-label={t("settings.conversationCount", { count: group.threads.length })}
+                  >
+                    {group.threads.length}
                   </span>
                 </header>
                 <div className="settings-group settings-archive-list">
@@ -2466,11 +1736,12 @@ function SettingsArchivePage({
                         </div>
                         <button
                           type="button"
-                          className="settings-button settings-archive-restore"
+                          className="settings-button settings-button-ghost settings-icon-button settings-archive-restore"
                           aria-label={t("settings.restoreConversation", { title })}
+                          title={t("settings.restore")}
                           onClick={() => onUnarchiveThread(thread)}
                         >
-                          {t("settings.restore")}
+                          <RotateCcw className="icon" aria-hidden="true" />
                         </button>
                       </div>
                     );
@@ -2506,8 +1777,9 @@ function formatArchiveTime(
   if (Number.isNaN(date.getTime())) {
     return iso;
   }
+  // The year only appears once it differs from this one.
   return formatter(date, {
-    year: "numeric",
+    ...(date.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
     month: "long",
     day: "numeric",
     hour: "2-digit",
@@ -3066,59 +2338,6 @@ function advancedContextSourceLabel(source: string | undefined, t: Translate): s
   }
 }
 
-function providerConnectionStatus(provider: ProviderSummary, t: Translate): string {
-  if (isGrokBuildType(provider.type)) {
-    return provider.api_key_configured ? t("provider.grokBuildLoggedIn") : t("provider.grokBuildLoginRequired");
-  }
-  if (isXAISubscriptionType(provider.type)) {
-    return provider.api_key_configured ? t("provider.xaiLoggedIn") : t("provider.xaiLogin");
-  }
-  if (provider.connection_locked) {
-    return "OAuth";
-  }
-  const label = isAnthropicProviderType(provider.type)
-    ? t("provider.authToken")
-    : t("provider.apiKey");
-  return provider.api_key_configured
-    ? t("provider.authConfigured", { field: label })
-    : t("provider.authMissing", { field: label });
-}
-
-function providerConnectionTone(provider: ProviderSummary): SettingsStatusTone {
-  if (provider.api_key_configured) {
-    return "success";
-  }
-  // OpenAI OAuth services keep their credentials outside the key field.
-  if (provider.connection_locked && !isXAISubscriptionType(provider.type) && !isGrokBuildType(provider.type)) {
-    return "neutral";
-  }
-  return "warning";
-}
-
-function providerMonogram(label: string): string {
-  return Array.from(label.trim())[0]?.toLocaleUpperCase() ?? "";
-}
-
-function isAnthropicProviderType(type: string | undefined): boolean {
-  const normalized = (type ?? "").trim().toLowerCase().replaceAll("_", "-");
-  return normalized === "anthropic" || normalized === "claude" || normalized === "anthropic-official";
-}
-
-function isXAISubscriptionType(type: string | undefined): boolean {
-  const normalized = (type ?? "").trim().toLowerCase().replaceAll("_", "-");
-  return (
-    normalized === "xai-subscription" ||
-    normalized === "xai-oauth" ||
-    normalized === "grok-subscription" ||
-    normalized === "supergrok"
-  );
-}
-
-function isGrokBuildType(type: string | undefined): boolean {
-  const normalized = (type ?? "").trim().toLowerCase().replaceAll("_", "-");
-  return normalized === "grok-build" || normalized === "xai-grok-build" || normalized === "grok-cli";
-}
-
 function formatTokenCount(value: number): string {
   return formatCurrentNumber(Math.max(0, value));
 }
@@ -3231,6 +2450,24 @@ function formatMCPServerMeta(server: MCPServerStatus, t: Translate): string {
   return pieces.join(" · ");
 }
 
+// A connected or idle server shows only its tools; the connect control and
+// the switch already say whether it runs. Work in progress and states that
+// need a look get one mark named by the state.
+function MCPStateMark({ state }: { state: string }): JSX.Element | null {
+  const { t } = useI18n();
+  const tone = mcpStateTone(state);
+  const busy = state === "starting" || state === "connecting" || state === "reconnecting";
+  if (!busy && tone !== "danger" && tone !== "warning") return null;
+  const label = mcpStateLabel(state, t);
+  return (
+    <span className="settings-row-attention" data-tone={busy ? "neutral" : tone} role="img" aria-label={label} title={label}>
+      {busy ? <Loader2 className="icon-sm settings-spin" aria-hidden="true" />
+        : tone === "danger" ? <AlertCircle className="icon-sm" aria-hidden="true" />
+        : <AlertTriangle className="icon-sm" aria-hidden="true" />}
+    </span>
+  );
+}
+
 function mcpStateLabel(state: string, t: Translate): string {
   switch (state) {
     case "ready":
@@ -3286,87 +2523,6 @@ function mcpAuthLabel(status: string, t: Translate): string {
       return "OAuth";
     default:
       return status;
-  }
-}
-
-function providerDisplayLabels(providers: ProviderSummary[], t: Translate): Map<string, string> {
-  const baseLabels = new Map<string, string>();
-  const counts = new Map<string, number>();
-  providers.forEach((provider) => {
-    const label = providerServiceLabel(provider, t);
-    baseLabels.set(provider.name, label);
-    counts.set(label, (counts.get(label) ?? 0) + 1);
-  });
-  return new Map(
-    providers.map((provider) => {
-      const label = baseLabels.get(provider.name) ?? provider.name;
-      if ((counts.get(label) ?? 0) > 1) {
-        return [provider.name, `${label} · ${provider.name}`];
-      }
-      return [provider.name, label];
-    })
-  );
-}
-
-function nextCustomProviderName(providers: ProviderSummary[]): string {
-  const existing = new Set(providers.map((provider) => provider.name));
-  let index = 1;
-  while (existing.has(`custom-${index}`)) {
-    index += 1;
-  }
-  return `custom-${index}`;
-}
-
-function providerServiceLabel(provider: ProviderSummary, t: Translate): string {
-  const type = provider.type.trim().toLowerCase().replaceAll("_", "-");
-  if (isXAISubscriptionType(type)) {
-    return t("provider.xaiSubscription");
-  }
-  if (isGrokBuildType(type)) {
-    return t("provider.grokBuild");
-  }
-  if (provider.connection_locked || type === "openai-codex" || type === "codex-subscription" || type === "chatgpt-codex") {
-    return "OpenAI OAuth";
-  }
-  const baseURLLabel = serviceLabelFromBaseURL(provider.base_url, t);
-  if (baseURLLabel) {
-    return baseURLLabel;
-  }
-  if (isAnthropicProviderType(type)) {
-    return "Anthropic";
-  }
-  if (type === "openai" || type === "codex") {
-    return "OpenAI API";
-  }
-  if (type === "openai-compatible") {
-    return serviceLabelFromBaseURL(provider.base_url, t) || "OpenAI-compatible";
-  }
-  return type || t("provider.genericService");
-}
-
-function serviceLabelFromBaseURL(baseURL: string | undefined, t: Translate): string {
-  const host = hostFromBaseURL(baseURL);
-  if (!host) return "";
-  if (host.includes("api.openai.com")) return "OpenAI API";
-  if (host.includes("api.anthropic.com")) return "Anthropic";
-  if (host.includes("openrouter.ai")) return "OpenRouter";
-  if (host.includes("moonshot") || host.includes("kimi")) return "Kimi";
-  if (host.includes("bigmodel") || host.includes("zhipu")) return t("provider.zhipu");
-  if (host.includes("deepseek")) return "DeepSeek";
-  if (host.includes("generativelanguage.googleapis.com") || host.includes("googleapis.com")) return "Google Gemini";
-  if (host.includes("dashscope") || host.includes("aliyuncs.com")) return t("provider.alibabaBailian");
-  if (host.includes("volces") || host.includes("ark.cn-beijing.volces.com")) return t("provider.volcengineArk");
-  if (host.includes("siliconflow")) return t("provider.siliconFlow");
-  if (host === "localhost" || host === "127.0.0.1" || host === "::1") return t("provider.localService");
-  return host;
-}
-
-function hostFromBaseURL(baseURL?: string): string {
-  if (!baseURL) return "";
-  try {
-    return new URL(baseURL).hostname.replace(/^www\./, "");
-  } catch {
-    return "";
   }
 }
 

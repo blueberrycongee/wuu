@@ -55,7 +55,8 @@
   --sidebar-primary-icon-size: round(nearest, calc(var(--font-ui) * 16 / 14), 2px);
   --sidebar-nav-icon-col: round(nearest, calc(var(--font-ui) * 18 / 14), 2px);
   --sidebar-tree-icon-col: round(nearest, calc(var(--font-ui) * 16 / 14), 2px);
-  --sidebar-row-action-size: max(28px, round(nearest, calc(var(--font-ui) * 1.4 + 8px), 2px));
+  /* Row accessories stay inside the row with a visible inset. */
+  --sidebar-row-action-size: max(24px, round(nearest, calc(var(--font-ui) * 1.4 + 4px), 2px));
   font-size: var(--font-ui);
 }
 /* Reading labels and chrome share the UI size.
@@ -68,7 +69,7 @@
 .sidebar :is(.nav-item, .project-row, .thread-row), .settings-sidebar :is(.nav-item, .settings-nav-item) {
   min-height: var(--sidebar-row-height, 2.5em);
   height: auto;
-  padding-block: 0.35em;
+  padding-block: 0.2em;
 }
 :where(button, a, label) > :is(svg.wuu-icon, svg.lucide) {
   width: var(--icon-size);
@@ -102,8 +103,9 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
 .composer textarea, .workspace-markdown-reading {
   font-family: var(--appearance-ui-font, system-ui, sans-serif);
   font-size: var(--font-ui);
-  line-height: 1.625;
 }
+/* Composer drafts take the conversation reading line from composer.css. */
+.workspace-markdown-reading { line-height: 1.625; }
 @media (pointer: coarse) {
   :root[data-host-kind="web"] :is(
     input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]),

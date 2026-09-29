@@ -6,11 +6,12 @@ import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { useI18n } from "./i18n";
 
 export function CompactConversationActions({
-  canStartNewThread, onStartNewThread, environmentToggleRef,
+  canStartNewThread, onStartNewThread, environmentAvailable, environmentToggleRef,
   environmentPanelVisible, onToggleEnvironmentPanel, rightPanelOpen, onToggleRightPanel,
 }: {
   canStartNewThread: boolean;
   onStartNewThread: () => void;
+  environmentAvailable: boolean;
   environmentToggleRef: RefObject<HTMLButtonElement | null>;
   environmentPanelVisible: boolean;
   onToggleEnvironmentPanel: () => void;
@@ -55,7 +56,14 @@ export function CompactConversationActions({
         disabled={!canStartNewThread} onClick={onStartNewThread}>
         <SquarePen size={18} aria-hidden="true" />
       </button>
-      {showPanelActions && <button ref={environmentToggleRef} type="button" className="icon-button" aria-label={t("shell.moreActions")}
+      {/* Without the environment panel one action remains, which needs no menu. */}
+      {showPanelActions && !environmentAvailable && <button type="button" className="icon-button"
+        aria-label={t(rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar")}
+        title={t(rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar")}
+        aria-pressed={rightPanelOpen} onClick={onToggleRightPanel}>
+        <SidePanelToggleIcon side="right" open={rightPanelOpen} size={18} />
+      </button>}
+      {showPanelActions && environmentAvailable && <button ref={environmentToggleRef} type="button" className="icon-button" aria-label={t("shell.moreActions")}
         title={t("shell.moreActions")} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuID : undefined}
         onClick={() => { initialFocus.current = 0; setOpen(!open); }}
         onKeyDown={(event) => {
@@ -67,7 +75,7 @@ export function CompactConversationActions({
         }}>
         <Ellipsis size={18} aria-hidden="true" />
       </button>}
-      {showPanelActions && open && <FloatingMenuPortal anchorRef={environmentToggleRef} owner="conversation-actions" placement="below" align="right" width={224}>
+      {showPanelActions && environmentAvailable && open && <FloatingMenuPortal anchorRef={environmentToggleRef} owner="conversation-actions" placement="below" align="right" width={224}>
         <div ref={menuRef} id={menuID} role="menu" aria-label={t("shell.moreActions")} className="conversation-actions-menu"
           onKeyDown={(event) => {
             const buttons = items();

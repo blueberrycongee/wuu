@@ -808,6 +808,8 @@ export class RemoteDesktopBridge {
 
       listEngines: () => this.call("engine/list"),
       refreshModelCatalog: () => this.call("config/model-catalog/refresh"),
+      listCatalogProviders: (provider?: string) =>
+        this.call("config/model-catalog/providers", provider ? { provider } : {}),
       listMCPServers: () => this.call("mcp/list"),
       startXAILogin: () => this.call("auth/xai/login/start"),
       readSkillContent: (params) => this.call("desktop/skill/content",params),

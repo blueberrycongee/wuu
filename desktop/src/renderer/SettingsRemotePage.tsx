@@ -59,9 +59,11 @@ export function SettingsRemotePage({
     <div className="settings-remote-page" data-testid="settings-remote-page">
       {statusError ? <div className="settings-error">{statusError}</div> : null}
 
-      <SettingsSection title={t("remote.access")} description={t(status?.account_server ? "remote.accountDescription" : "remote.lanDescription")}>
+      {/* The page header already names phone access; the row names what
+        * the switch allows, and the switch alone shows whether it is on. */}
+      <SettingsSection>
         <SettingsGroup>
-          <SettingsRow title={hostRunning ? t("remote.hostRunning") : t("remote.hostStopped")}>
+          <SettingsRow title={t("remote.allowAccess")} description={t(status?.account_server ? "remote.accountDescription" : "remote.lanDescription")}>
             <button className="settings-switch" type="button" role="switch" aria-checked={hostEnabled}
               disabled={busy} onClick={() => onToggleHost(!hostEnabled)}>
               <span className="settings-switch-thumb" aria-hidden="true" />

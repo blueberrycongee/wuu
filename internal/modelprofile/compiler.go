@@ -266,12 +266,13 @@ func addWebTools(b *surfaceBuilder) {
 	b.addVisible("web_fetch", capability.CapabilityWebFetch)
 }
 
-// addBrowserTools exposes the embedded browser tool on every profile. The
-// compiler stays pure and never reads the environment. Runtime opt-out still
+// addBrowserTools defers the embedded browser tool on every profile. Flat
+// loading promotes it back to a direct tool. The compiler stays pure and never
+// reads the environment. Runtime opt-out still
 // lives in the toolkit's disabledTools, flipped by SetBrowserEnabled, so a
 // session can hide the tool without changing the compiled surface.
 func addBrowserTools(b *surfaceBuilder) {
-	b.addVisible("wuu_browser", capability.CapabilityBrowser)
+	b.addDeferred("wuu_browser", capability.CapabilityBrowser)
 }
 
 func addSessionTools(b *surfaceBuilder) {

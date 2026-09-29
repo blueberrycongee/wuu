@@ -1,11 +1,13 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type {
+  CatalogProviderSummary,
   CodexPetsSnapshot,
   EngineListResult,
   InitializeResult,
   MCPServerStatus,
   ProviderSummary,
+  RuntimeConnectionUpdate,
   SettingsUsageDay,
   SettingsUsageResponse,
   WuuDesktopApi,
@@ -24,18 +26,47 @@ const empty = params.has("empty");
 const long = params.has("long");
 const date = "2026-09-17T08:30:00Z";
 
+const gptModels = ["gpt-5.5", "gpt-5.5-fast", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra", "gpt-6-astra-fast", "gpt-6-luna", "gpt-6-sol"];
 const providers: ProviderSummary[] = empty ? [] : [
   {
-    name: "anthropic", type: "anthropic", model: "claude-sonnet-5", base_url: "https://api.anthropic.com/v1", api_key_configured: true,
-    models: ["claude-sonnet-5", "claude-opus-5-5", "claude-haiku-4-5"].map((id) => ({ id, supported_efforts: ["low", "medium", "high"] })),
+    name: "openai-codex", type: "openai-codex", model: "gpt-6-astra", base_url: "https://chatgpt.com/backend-api/codex",
+    api_key_configured: true, connection_locked: true, reuse_codex_credentials: true, codex_credential_source: "codex-cli",
+    models: gptModels.map((id) => ({ id, display_name: id.replace(/^gpt-/, "GPT-").replace(/-(\w)/g, (_, c: string) => ` ${c.toUpperCase()}`), supported_efforts: ["low", "medium", "high", "xhigh"], capabilities: { chat: true, tools: true, structured_output: true, streaming: true, system_role: true, reasoning: true, context_window: 1_050_000 } })),
+  },
+  {
+    name: "grok-build", type: "grok-build", model: "grok-4.5", base_url: "https://cli-chat-proxy.grok.com/v1", api_key_configured: true, connection_locked: true,
+    models: ["grok-4.5", "grok-4.6", "grok-build-0.1"].map((id) => ({ id })),
+  },
+  {
+    name: "deepseek", type: "openai-compatible", model: "deepseek-v4-pro", base_url: "https://api.deepseek.com", api_key_configured: true,
+    catalog_id: "deepseek", catalog_name: "DeepSeek", hidden_models: ["deepseek-v4-flash-vision-exp"],
+    models: [
+      { id: "deepseek-v4-pro", display_name: "DeepSeek V4 Pro", capabilities: { chat: true, tools: true, structured_output: true, streaming: true, system_role: true, reasoning: true, context_window: 1_000_000 } },
+      { id: "deepseek-v4-flash", display_name: "DeepSeek V4 Flash", capabilities: { chat: true, tools: true, structured_output: true, streaming: true, system_role: true, reasoning: true, context_window: 1_000_000 } },
+      { id: "deepseek-flash", display_name: "DeepSeek V4.1 Flash", capabilities: { chat: true, tools: true, structured_output: true, streaming: true, system_role: true, reasoning: true, context_window: 1_000_000 } },
+    ],
   },
   {
     name: "openrouter", type: "openai-compatible", model: long ? "provider/an-exceptionally-long-model-identifier-for-truncation-review" : "deepseek/deepseek-v4",
-    base_url: "https://openrouter.ai/api/v1", api_key_configured: false,
+    base_url: "https://openrouter.ai/api/v1", api_key_configured: false, catalog_id: "openrouter", catalog_name: "OpenRouter",
     models: [{ id: "deepseek/deepseek-v4" }, { id: "qwen/qwen3-coder" }],
   },
-  { name: "local", type: "openai-compatible", model: "qwen3-32b", base_url: "http://localhost:11434/v1", api_key_configured: true },
 ];
+
+const catalogProviders: CatalogProviderSummary[] = [
+  ["deepseek", "DeepSeek", "openai-compatible", "https://api.deepseek.com", 4, "deepseek-v4-pro"],
+  ["moonshotai-cn", "Moonshot AI (China)", "openai-compatible", "https://api.moonshot.cn/v1", 4, "kimi-k3"],
+  ["zhipuai", "Zhipu AI", "openai-compatible", "https://open.bigmodel.cn/api/paas/v4", 16, "glm-5.3"],
+  ["alibaba-cn", "Alibaba (China)", "openai-compatible", "https://dashscope.aliyuncs.com/compatible-mode/v1", 90, "qwen3.8-max"],
+  ["volcengine", "Volcengine Ark", "openai-compatible", "https://ark.cn-beijing.volces.com/api/v3", 16, "deepseek-v4-pro-ga-260813"],
+  ["siliconflow-cn", "SiliconFlow (China)", "openai-compatible", "https://api.siliconflow.cn/v1", 47, "zai-org/GLM-5.2"],
+  ["minimax-cn", "MiniMax (minimaxi.com)", "anthropic", "https://api.minimaxi.com/anthropic/v1", 7, "MiniMax-M3"],
+  ["openrouter", "OpenRouter", "openai-compatible", "https://openrouter.ai/api/v1", 372, "z-ai/glm-5.3"],
+  ["openai", "OpenAI", "openai", "https://api.openai.com/v1", 49, "gpt-6-astra"],
+  ["anthropic", "Anthropic", "anthropic", "https://api.anthropic.com", 16, "claude-fable-5-1"],
+  ["xai", "xAI", "openai-compatible", "https://api.x.ai/v1", 10, "grok-4.6"],
+  ["lmstudio", "LMStudio", "openai-compatible", "http://127.0.0.1:1234/v1", 3, "qwen3-32b"],
+].map(([id, name, type, base_url, model_count, default_model]) => ({ id, name, type, base_url, model_count, default_model } as CatalogProviderSummary));
 
 const engines: EngineListResult = {
   settings: { default_engine: "wuu" },
@@ -114,6 +145,14 @@ window.wuu = {
   disconnectMCPServer: async (name: string) => ({ status: { ...mcpServers.find((server) => server.name === name)!, state: "configured", connected: false } }),
   refreshMCPServer: async (name: string) => ({ status: mcpServers.find((server) => server.name === name)! }),
   listEngines: async () => structuredClone(engines),
+  listCatalogProviders: async (provider?: string) => ({
+    providers: provider
+      ? catalogProviders.filter((item) => item.id === provider).map((item) => ({
+        ...item,
+        models: [item.default_model, `${item.default_model}-fast`, `${item.default_model}-mini`].map((id, index) => ({ id, tool_call: true, context_window: 1_000_000 / (index + 1) })),
+      }))
+      : catalogProviders,
+  }),
   listEngineAuthMethods: async () => ({ methods: [], authenticated: true }),
   openExternal: async () => undefined,
   getRemoteControlSnapshot: async () => ({ status: { fingerprint: "AB12-CD34", store: "", devices: [] }, host_running: false }),
@@ -132,13 +171,45 @@ function Fixture(): JSX.Element {
     document.documentElement.dataset.platform = "darwin";
     applyMessageFlowFontSize(Number(params.get("size")) || 14.5);
   }, []);
-  const save = async (provider: string, model: string) => {
-    setState((current) => ({
-      ...current,
-      provider,
-      model,
-      providers: current.providers?.map((item) => (item.name === provider ? { ...item, model } : item)),
-    }));
+  // Mirrors the core's settings contract closely enough to review flows:
+  // keep_selection edits a service without choosing it.
+  const save = async (provider: string, model: string, _effort?: string, connection?: RuntimeConnectionUpdate, variant?: string) => {
+    setState((current) => {
+      const keep = connection?.keep_selection === true;
+      let list = current.providers ?? [];
+      if (connection?.create_provider) {
+        const entry = catalogProviders.find((item) => item.base_url === connection.base_url);
+        list = [...list, {
+          name: provider, type: connection.type ?? "openai-compatible", model, base_url: connection.base_url,
+          api_key_configured: Boolean(connection.api_key) || connection.type === "grok-build" || connection.type === "xai-subscription",
+          connection_locked: connection.type === "grok-build" || connection.type === "xai-subscription",
+          catalog_id: entry?.id, catalog_name: entry?.name, models: [{ id: model }],
+        }];
+      }
+      list = list.map((item) => {
+        if (item.name !== provider) return item;
+        let models = item.models ?? [];
+        let hidden = item.hidden_models ?? [];
+        if (connection?.remove_model) {
+          models = models.filter((entry) => entry.id !== connection.remove_model);
+          hidden = [...hidden, connection.remove_model].sort();
+        }
+        if (connection?.add_model && !models.some((entry) => entry.id === connection.add_model)) {
+          models = [...models, { id: connection.add_model }];
+          hidden = hidden.filter((entry) => entry !== connection.add_model);
+        }
+        return {
+          ...item, model, models, hidden_models: hidden,
+          ...(connection?.base_url ? { base_url: connection.base_url } : {}),
+          ...(connection?.api_key ? { api_key_configured: true } : {}),
+        };
+      });
+      return {
+        ...current,
+        providers: list,
+        ...(keep ? {} : { provider, model, variant: variant ?? current.variant }),
+      };
+    });
   };
   return (
     <div style={{ height: "100vh" }}>
@@ -158,7 +229,7 @@ function Fixture(): JSX.Element {
         shellRef={shellRef}
         onBack={() => undefined}
         onSave={save}
-        onRemoveProvider={async () => undefined}
+        onRemoveProvider={async (name) => setState((current) => ({ ...current, providers: current.providers?.filter((item) => item.name !== name) }))}
         onRefreshModelCatalog={async () => undefined}
         onRefreshEngineInventory={async () => engines}
         onUpdateEngineInventory={async () => engines}

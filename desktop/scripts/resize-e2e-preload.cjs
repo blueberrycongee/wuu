@@ -241,6 +241,9 @@ contextBridge.exposeInMainWorld("wuu", {
   },
   initialize: async () => ({
     protocol_version: "e2e",
+    features: process.argv.includes("--project-agent-e2e-enabled")
+      ? { project_agent: true }
+      : process.argv.includes("--project-agent-e2e-disabled") ? { project_agent: false } : undefined,
     general_settings: generalSettings,
     provider: "e2e",
     model: "mock-resize",

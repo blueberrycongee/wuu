@@ -33,7 +33,7 @@ func newWorktreeExecFixture(t *testing.T) (kit *Toolkit, parent, worktree string
 		t.Fatalf("tools.New: %v", err)
 	}
 	kit.SetStateDir(filepath.Join(base, "state"))
-	return kit, parent, worktree, toolctx.WithWorktreePath(context.Background(), worktree)
+	return kit, parent, worktree, toolctx.WithWorktreeBinding(context.Background(), kit.RootDir(), worktree)
 }
 
 func executeToolForWorktreeTest(t *testing.T, kit *Toolkit, ctx context.Context, name, args string) string {
@@ -230,7 +230,7 @@ func TestWorktreeBoundFileScopeRootsPassThrough(t *testing.T) {
 func TestWorktreeNotReadyFailsInsteadOfParentFallback(t *testing.T) {
 	kit, parent, _, _ := newWorktreeExecFixture(t)
 	missing := filepath.Join(t.TempDir(), "gone", "checkout")
-	ctx := toolctx.WithWorktreePath(context.Background(), missing)
+	ctx := toolctx.WithWorktreeBinding(context.Background(), kit.RootDir(), missing)
 
 	if _, err := kit.Execute(ctx, providers.ToolCall{
 		Name:      "write_file",
@@ -245,10 +245,53 @@ func TestWorktreeNotReadyFailsInsteadOfParentFallback(t *testing.T) {
 
 func TestWorktreeBindingEqualToRootIsNoop(t *testing.T) {
 	kit, parent, _, _ := newWorktreeExecFixture(t)
-	ctx := toolctx.WithWorktreePath(context.Background(), parent)
+	ctx := toolctx.WithWorktreeBinding(context.Background(), kit.RootDir(), parent)
 
 	executeToolForWorktreeTest(t, kit, ctx, "write_file", `{"path":"same-root.txt","content":"ok\n"}`)
 	if _, err := os.Stat(filepath.Join(parent, "same-root.txt")); err != nil {
 		t.Fatalf("binding equal to the root must behave exactly like today: %v", err)
+	}
+}
+
+// Workers are cloned from the parent toolkit and run with the parent turn's
+// context. The parent's binding describes the parent's root only.
+func TestWorktreeWorkerCloneWritesInItsOwnWorktree(t *testing.T) {
+	kit, _, parentCheckout, _ := newWorktreeExecFixture(t)
+	parentKit, err := kit.CloneForRoot(parentCheckout)
+	if err != nil {
+		t.Fatalf("CloneForRoot parent: %v", err)
+	}
+	ctx := toolctx.WithWorktreeBinding(context.Background(), parentKit.RootDir(), parentCheckout)
+	workerCheckout := filepath.Join(filepath.Dir(parentCheckout), "worker")
+	if err := os.MkdirAll(workerCheckout, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	worker, err := parentKit.CloneForRoot(workerCheckout)
+	if err != nil {
+		t.Fatalf("CloneForRoot worker: %v", err)
+	}
+
+	executeToolForWorktreeTest(t, worker, ctx, "write_file", `{"path":"worker.txt","content":"worker\n"}`)
+	if _, err := os.Stat(filepath.Join(workerCheckout, "worker.txt")); err != nil {
+		t.Fatalf("worker write must land in its own worktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(parentCheckout, "worker.txt")); !os.IsNotExist(err) {
+		t.Fatalf("worker write must not land in the parent's worktree, stat err=%v", err)
+	}
+}
+
+func TestWorktreeInplaceWorkerKeepsParentBinding(t *testing.T) {
+	kit, parent, worktree, ctx := newWorktreeExecFixture(t)
+	worker, err := kit.CloneForRoot(parent)
+	if err != nil {
+		t.Fatalf("CloneForRoot: %v", err)
+	}
+
+	executeToolForWorktreeTest(t, worker, ctx, "write_file", `{"path":"inplace.txt","content":"isolated\n"}`)
+	if _, err := os.Stat(filepath.Join(worktree, "inplace.txt")); err != nil {
+		t.Fatalf("in-place worker must stay in the bound worktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(parent, "inplace.txt")); !os.IsNotExist(err) {
+		t.Fatalf("in-place worker must not write to the parent repo, stat err=%v", err)
 	}
 }

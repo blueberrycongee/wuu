@@ -1,0 +1,261 @@
+/* Plugins catalog. Plugins and skills are separate tabs; plugins group by
+ * what they need from you (attention, on, off) as a grid of cards, and a
+ * card opens the plugin's own page. */
+
+/* The switch is a segmented control: its track is always visible, so its
+ * box starts on the column edge like the search field above and the groups
+ * below, whichever tab is selected. The track matches the field height. */
+.catalog-tabs {
+  align-self: flex-start;
+  margin-block-end: calc(var(--settings-gap) * -0.5);
+}
+
+/* Label and count differ in size, so they share a baseline, not a center.
+ * The height comes from the field height less the track's 2px inset. */
+.catalog-tabs .catalog-tab {
+  display: inline-grid;
+  min-height: calc(var(--control-field-height) - 4px);
+  grid-auto-flow: column;
+  align-content: center;
+  align-items: baseline;
+  gap: var(--space-2);
+  line-height: 1.4;
+  padding-block: 0;
+}
+
+.catalog-tab-count {
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Attention ------------------------------------------------------------ */
+
+.plugin-attention-reason {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+.plugin-attention-reason svg {
+  flex: none;
+  color: var(--warning);
+}
+
+.plugin-attention-reason[data-tone="danger"] svg {
+  color: var(--danger);
+}
+
+/* --- Cards ----------------------------------------------------------------- */
+
+.plugin-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 20em), 1fr));
+  gap: var(--space-3);
+}
+
+/* Mark on the left, name over a two-line tagline, the switch on the name's
+ * line. The switch sits above the card's open target, so the copy reserves
+ * its footprint instead of running under it. */
+.plugin-card {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+}
+
+.plugin-card:hover {
+  border-color: var(--hairline-strong);
+  background: var(--surface-1);
+}
+
+.plugin-card-main {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: start;
+  column-gap: var(--space-3);
+  row-gap: 2px;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--ink);
+  padding: var(--card-padding);
+  padding-inline-end: calc(var(--card-padding) + var(--switch-target-width) + var(--space-2));
+  text-align: left;
+}
+
+/* The page's row mark, so card copy starts on the same axis as the rows in
+ * the attention group above. It centers on the name and the first tagline
+ * line, which keeps marks level across cards with one- and two-line
+ * taglines. */
+.plugin-card-main > .skill-artwork {
+  grid-row: 1 / 3;
+  margin-top: max(0px, calc((var(--font-ui) * 1.4 + 2px + var(--font-sm) * 1.5 - var(--settings-mark-size)) / 2));
+}
+
+.plugin-card-name {
+  overflow: hidden;
+  color: var(--ink-strong);
+  font-size: var(--font-ui);
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-card-description {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* Centered on the name line. The switch's end margin puts its track's right
+ * edge on the card padding, mirroring the mark on the left. */
+.plugin-card > .plugin-card-switch {
+  position: absolute;
+  top: calc(var(--card-padding) + (var(--font-ui) * 1.4 - var(--control-field-height)) / 2);
+  right: var(--card-padding);
+}
+
+/* Off plugins keep their place but step back. */
+.plugin-card:not([data-on]) .skill-artwork {
+  color: var(--ink-tertiary);
+}
+
+/* --- Plugin page ------------------------------------------------------------- */
+
+.plugin-page-hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: calc(var(--settings-gap) * -0.5);
+}
+
+.plugin-page-hero > .skill-artwork {
+  --settings-mark-size: 56px;
+  border-radius: var(--radius-sm);
+}
+
+.plugin-page-hero > .skill-artwork svg {
+  width: 26px;
+  height: 26px;
+}
+
+.plugin-page-hero-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.plugin-page-hero h1 {
+  overflow: hidden;
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: var(--font-heading);
+  font-weight: var(--weight-semibold);
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-page-hero p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
+  line-height: 1.5;
+}
+
+.plugin-page-about {
+  max-width: 65ch;
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--font-ui);
+  line-height: 1.6;
+}
+
+.plugin-page-footnote {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+}
+
+/* What the plugin adds: one row per page, command, skill, or theme. Rows
+ * that open nothing keep the chevron's column (its box less the tip inset),
+ * so every kind label ends on one axis. */
+.plugin-contribution {
+  display: grid;
+  min-width: 0;
+  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  grid-template-columns: auto minmax(0, 1fr) auto calc(var(--icon-size) * (1 - var(--chevron-tip-inset)));
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--hairline-soft);
+  padding: var(--space-3) 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+}
+
+.plugin-contribution:last-child {
+  border-bottom: 0;
+}
+
+.plugin-contribution-icon {
+  display: grid;
+  color: var(--ink-soft);
+  place-items: center;
+}
+
+.plugin-contribution-title {
+  overflow: hidden;
+  font-size: var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-contribution-kind {
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  white-space: nowrap;
+}
+
+button.plugin-contribution:hover .settings-disclosure-chevron {
+  color: var(--ink);
+}
+
+/* Shown only while deciding whether to trust a plugin. The label shares the
+ * first baseline of a value that may wrap; the line pair stays centered in
+ * the row. */
+.plugin-permission-row {
+  display: grid;
+  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  grid-template-columns: minmax(7em, max-content) minmax(0, 1fr);
+  align-content: center;
+  align-items: baseline;
+  gap: var(--space-4);
+  border-bottom: 1px solid var(--hairline-soft);
+  padding-block: var(--space-3);
+}
+
+.plugin-permission-row:last-child {
+  border-bottom: 0;
+}
+
+.plugin-permission-values {
+  color: var(--ink);
+  font-size: var(--font-ui);
+}

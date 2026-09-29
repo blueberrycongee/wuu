@@ -56,7 +56,7 @@ export async function activate(api) {
         height: 14px;
       }
       .plugin-todo-item[data-status="in_progress"] .plugin-todo-marker {
-        color: var(--wuu-color-accent, currentColor);
+        color: var(--wuu-color-text, currentColor);
       }
       .plugin-todo-item[data-status="completed"] {
         color: var(--wuu-color-text-muted, currentColor);

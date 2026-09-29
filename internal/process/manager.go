@@ -1498,10 +1498,13 @@ func (m *Manager) ReserveProcessLog() (id, logPath string) {
 // AdoptOptions describes an already-running command being promoted to a
 // managed background process.
 type AdoptOptions struct {
-	Command        string
-	CWD            string
-	OwnerKind      OwnerKind
-	OwnerID        string
+	Command   string
+	CWD       string
+	OwnerKind OwnerKind
+	OwnerID   string
+	// RootThreadID identifies the conversation that owns the promoted
+	// command. It is host-supplied and is retained for lifecycle recovery.
+	RootThreadID   string
 	Lifecycle      Lifecycle
 	CompletionMode CompletionMode
 	StartedAt      time.Time
@@ -1555,19 +1558,21 @@ func (m *Manager) Adopt(id string, cmd *exec.Cmd, handle *CommandHandle, logf *o
 		startedAt = now
 	}
 	p := &Process{
-		ID:             id,
-		OwnerKind:      opt.OwnerKind,
-		OwnerID:        opt.OwnerID,
-		Lifecycle:      opt.Lifecycle,
-		CompletionMode: opt.CompletionMode,
-		Status:         StatusRunning,
-		Command:        opt.Command,
-		CWD:            opt.CWD,
-		LogPath:        filepath.Join(m.logDir, id+".log"),
-		StartedAt:      startedAt,
-		UpdatedAt:      now,
-		ExitCode:       -1,
-		SandboxMode:    opt.SandboxMode,
+		ID:               id,
+		OwnerKind:        opt.OwnerKind,
+		OwnerID:          opt.OwnerID,
+		RootThreadID:     strings.TrimSpace(opt.RootThreadID),
+		HostGenerationID: m.hostGenerationID,
+		Lifecycle:        opt.Lifecycle,
+		CompletionMode:   opt.CompletionMode,
+		Status:           StatusRunning,
+		Command:          opt.Command,
+		CWD:              opt.CWD,
+		LogPath:          filepath.Join(m.logDir, id+".log"),
+		StartedAt:        startedAt,
+		UpdatedAt:        now,
+		ExitCode:         -1,
+		SandboxMode:      opt.SandboxMode,
 	}
 	if opt.RecheckMinutes > 0 {
 		p.RecheckMinutes = opt.RecheckMinutes

@@ -3034,3 +3034,31 @@ func TestFastModeSendsSpeedAndRequiredBeta(t *testing.T) {
 		})
 	}
 }
+
+func TestHaiku45PreservesNativeToolReferences(t *testing.T) {
+	req := providers.ChatRequest{Model: "claude-haiku-4-5-20251001", NativeDeferredToolDiscovery: true,
+		Messages: []providers.ChatMessage{
+			{Role: "user", Content: "find docs"},
+			{Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "s1", Name: "tool_search", Arguments: `{"query":"docs"}`}}},
+			{Role: "tool", Name: "tool_search", ToolCallID: "s1", Content: `{"loadable_tools":[{"name":"docs_search","input_schema":{"type":"object"}}]}`},
+		},
+		Tools: []providers.ToolDefinition{
+			{Name: "tool_search", InputSchema: map[string]any{"type": "object"}},
+			{Name: "docs_search", InputSchema: map[string]any{"type": "object"}, DeferLoading: true},
+		},
+	}
+	payload, err := buildAnthropicRequestWithSupport(req, 1024, false, anthropicToolSearchSupport{BaseURL: "https://api.anthropic.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !payload.Tools[1].DeferLoading {
+		t.Fatal("Haiku 4.5 schema was eagerly loaded")
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"tool_reference"`) {
+		t.Fatalf("missing tool reference: %s", body)
+	}
+}

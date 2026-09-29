@@ -249,6 +249,56 @@ describe("workspace file tabs", () => {
     vi.useRealTimers();
   });
 
+  it("keeps the project overview on the selected coordinator or managed session", async () => {
+    vi.mocked(window.wuu.initialize).mockResolvedValue({
+      ...initialized(),
+      features: { project_agent: true },
+    });
+    const first = { ...completedThread(), id: "project-a", source: "project", preview: "Project Alpha" };
+    const second = { ...completedThread(), id: "project-b", source: "project", preview: "Project Beta" };
+    const workerA = { ...completedThread(), id: "worker-a", source: "project-session", project_id: first.id, preview: "Alpha worker" };
+    const workerB = { ...completedThread(), id: "worker-b", source: "project-session", project_id: second.id, preview: "Beta worker" };
+    const ordinary = completedThread();
+    const threads = [first, second, workerA, workerB, ordinary];
+    vi.mocked(window.wuu.listThreads).mockResolvedValue({ threads });
+    vi.mocked(window.wuu.resumeThread).mockImplementation(async (id) => ({ thread: threads.find((thread) => thread.id === id)! }));
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+    await flushAsync();
+    const select = async (title: string) => {
+      const button = Array.from(container.querySelectorAll<HTMLButtonElement>(".sidebar button"))
+        .find((entry) => entry.textContent === title);
+      expect(button, title).toBeDefined();
+      await act(async () => button!.click());
+      await flushAsync();
+    };
+    await select("Project Alpha");
+    await act(async () => container.querySelector<HTMLButtonElement>(".project-status-capsule")!.click());
+    await flushAsync();
+    expect(container.querySelector(".project-panel")?.textContent).toContain("Alpha worker");
+    await select("Project Beta");
+    expect(container.querySelector(".project-panel h2")?.textContent).toBe("Project Beta");
+    expect(container.querySelector(".project-panel")?.textContent).toContain("Beta worker");
+    expect(container.querySelector(".project-panel")?.textContent).not.toContain("Alpha worker");
+    await act(async () => container.querySelector<HTMLButtonElement>(".project-panel-row-main")!.click());
+    await flushAsync();
+    expect(container.querySelector(".conversation-title-heading h1")?.textContent).toBe("Beta worker");
+    expect(container.querySelector(".project-panel h2")?.textContent).toBe("Project Beta");
+    await select("Project Alpha");
+    expect(container.querySelector(".project-panel h2")?.textContent).toBe("Project Alpha");
+    // A file stays selected when the project changes; only the overview follows.
+    await act(async () => container.querySelector<HTMLButtonElement>(".rich-file-link")!.click());
+    await flushAsync();
+    await select("Project Beta");
+    expect(container.querySelector(".workspace-tool-tab.active")?.textContent).toContain("README.md");
+    await select("artifact conversation");
+    expect(container.querySelector(".project-panel")).toBeNull();
+    expect(container.querySelector(".workspace-tool-tab.active")?.textContent).toContain("README.md");
+    expect(container.querySelector(".workspace-right-panel")?.textContent).not.toContain("Project Beta");
+  });
+
   async function openSelectionDocument(): Promise<void> {
     await act(async () => {
       root = createRoot(container);

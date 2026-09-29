@@ -5,9 +5,9 @@ Automations send a task prompt on a schedule. Use them for a recurring project c
 ## Create a task
 
 1. Open **Automations** and choose the workspace. This selects the task's workspace without changing your open conversation.
-2. Choose **New automation**, or start from a suggestion. Enter a name and clear instructions.
+2. Choose **New automation**, or start from a suggestion when nothing is scheduled. Enter a name and clear instructions.
 3. Under **Runs in**, choose **New chat each run** or an existing chat.
-4. Set a daily, weekday, weekly, or custom schedule. **More settings** contains timezone, **Run once**, and **Isolated run**.
+4. Set a daily, weekday, weekly, or custom schedule, and turn on **Run once** for a single run. **More settings** contains timezone and **Isolated run**.
 5. Choose **Create**. Later edits require **Save changes**.
 
 Include limits in the prompt, not just the desired action:
@@ -39,9 +39,9 @@ A one-shot task leaves the schedule when dispatched, even if execution later fai
 
 ## Manage tasks and results
 
-Pause and resume control future triggers. Delete removes the schedule, not conversations it already created, and does not stop work already running. Stop that work from its conversation. Closing the editor or selecting another task discards unsaved edits.
+Scheduled tasks are listed by next run. The switch on a task's row, or **Enabled** in its editor, pauses and resumes future triggers; a paused task keeps its place. Delete removes the schedule, not conversations it already created, and does not stop work already running. Stop that work from its conversation. Closing the editor or selecting another task discards unsaved edits.
 
-The detail panel shows recent runs and their errors. The Completed filter shows retained snapshots of successful one-shot tasks; a successful recurring run does not complete its schedule. A workspace retains up to 100 tasks and 500 run records.
+The detail panel shows recent runs and their errors, and a task whose last run failed is marked in the list. The **Completed** section after the scheduled tasks shows retained snapshots of successful one-shot tasks; a successful recurring run does not complete its schedule. A workspace retains up to 100 tasks and 500 run records.
 
 If a run is missing, check that Wuu was awake and running, the plugin was enabled, the task was active, and the selected workspace and target chat still exist. Then check its timezone, next run, and errors. Provider access, quotas, network failures, and permissions can all prevent execution.
 

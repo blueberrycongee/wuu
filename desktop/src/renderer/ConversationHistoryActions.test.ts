@@ -168,7 +168,8 @@ function buildActions({
   const sendComposerMessageToThread = vi
     .fn()
     .mockImplementation(
-      async (message: QueuedComposerMessage, targetThread: Thread) => {
+      async (message: QueuedComposerMessage, targetThread: Thread, prepareThread?: () => Promise<Thread>) => {
+        if (prepareThread) targetThread = await prepareThread();
         if (sendResult) {
           const sentTurn = turn("sent-turn", [
             { id: "sent-item", type: "user_message", text: message.text },
@@ -501,7 +502,11 @@ describe("createConversationHistoryActions", () => {
     let rejectSend!: (sent: boolean) => void;
     let sending!: () => void;
     const started = new Promise<void>(resolve => { sending = resolve; });
-    harness.sendComposerMessageToThread.mockImplementationOnce(() => { sending(); return new Promise<boolean>(resolve => { rejectSend = resolve; }); });
+    harness.sendComposerMessageToThread.mockImplementationOnce(async (_message, _thread, prepareThread) => {
+      await prepareThread?.();
+      sending();
+      return new Promise<boolean>(resolve => { rejectSend = resolve; });
+    });
     const selection = { id: "quote", text: "Answer", source: { thread_id: source.id, turn_id: "turn", item_id: "answer", start_offset: 0, end_offset: 6 } };
     const parts = [{ type: "response_selection" as const, text: "Context\n", selection }, { type: "text" as const, text: "Question" }];
     const submission = harness.actions.submitEditedThreadMessageFromHistory(source, "turn", userItem(), "Context\nQuestion", [], [], parts, pane);

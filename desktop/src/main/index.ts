@@ -1,4 +1,5 @@
 import { saveArtifactFile } from "./artifactSave";
+import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
 import { readCatalogSkill } from "./remoteSkills";
 import { inheritSystemProxy } from "./systemProxy";
 import { RemoteAppServerBridge } from "./remoteAppServerBridge";
@@ -36,6 +37,7 @@ import type {
   ConfigAdvancedUpdateResult,
   ConfigGeneralUpdateResult,
   ConfigCodexModelsResult,
+  ConfigModelCatalogProvidersResult,
   ConfigModelCatalogRefreshResult,
   ConfigModelUpdateResult,
   EngineListResult,
@@ -713,6 +715,19 @@ function persistMainWindowBoundsNow(win: BrowserWindow): void {
 }
 
 function loadRenderer(window: BrowserWindow): void {
+  // Shell windows only: browser and observation surfaces keep their own zoom.
+  window.webContents.on("before-input-event", (event, input) => {
+    const modifier = process.platform === "darwin" ? input.meta : input.control;
+    if (!modifier || input.alt || (process.platform === "darwin" && input.control)) return;
+    let action: DesktopZoomAction;
+    if (input.key === "+" || input.key === "=") action = "in";
+    else if (input.key === "-" || input.code === "NumpadSubtract") action = "out";
+    else if (input.key === "0" && !input.shift) action = "reset";
+    else return;
+    // Consume both phases so native menu accelerators and editors cannot also zoom.
+    event.preventDefault();
+    if (input.type === "keyDown") window.webContents.send("wuu:desktop-zoom", action);
+  });
   if (!app.isPackaged) {
     window.webContents.on("console-message", (_event, _level, message) => {
       if (message) {
@@ -1634,6 +1649,13 @@ app.whenReady().then(async () => {
       provider: provider ?? "",
     }),
   );
+  ipcMain.handle("wuu:config-model-catalog-providers", (event, provider?: string) =>
+    appServerRequest<ConfigModelCatalogProvidersResult>(
+      event,
+      "config/model-catalog/providers",
+      provider ? { provider } : {},
+    ),
+  );
   ipcMain.handle("wuu:config-model-catalog-refresh", (event) =>
     appServerRequest<ConfigModelCatalogRefreshResult>(
       event,
@@ -1654,6 +1676,8 @@ app.whenReady().then(async () => {
         type?: string;
         create_provider?: boolean;
         remove_model?: string;
+        add_model?: string;
+        keep_selection?: boolean;
         reuse_codex_credentials?: boolean;
         approve_for_me?: boolean;
       },
@@ -1683,6 +1707,8 @@ app.whenReady().then(async () => {
         ...(connection?.type === undefined ? {} : { type: connection.type }),
         ...(connection?.create_provider ? { create_provider: true } : {}),
         ...(connection?.remove_model ? { remove_model: connection.remove_model } : {}),
+        ...(connection?.add_model ? { add_model: connection.add_model } : {}),
+        ...(connection?.keep_selection ? { keep_selection: true } : {}),
         ...(connection?.reuse_codex_credentials === undefined
           ? {}
           : { reuse_codex_credentials: connection.reuse_codex_credentials }),

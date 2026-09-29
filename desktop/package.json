@@ -1,6 +1,6 @@
 {
   "name": "@blueberrycongee/wuu-desktop",
-  "version": "2026.9.25",
+  "version": "2026.9.29",
   "description": "Desktop app for the Wuu AI coding agent",
   "author": "Andy wu <lpageo@163.com>",
   "private": true,
@@ -36,6 +36,7 @@
     "test:e2e:composer-worktree": "npm run build:core && npm run build && electron scripts/composer-worktree-e2e.cjs",
     "test:e2e:permission-mode": "npm run build && electron scripts/permission-mode-e2e.cjs",
     "test:e2e:streaming": "npm run build && electron scripts/streaming-e2e.cjs",
+    "test:e2e:image-layout": "npm run build && electron scripts/image-layout-e2e.cjs",
     "test:e2e:conversation-scroll": "npm run build && electron scripts/conversation-scroll-e2e.cjs",
     "test:e2e:artifact-preview": "npm run build && electron scripts/artifact-preview-e2e.cjs",
     "test:e2e:process-handoff": "npm run build && electron scripts/process-handoff-e2e.cjs",
@@ -47,10 +48,14 @@
     "test:e2e:composer-height": "npm run build && electron scripts/composer-height-e2e.cjs",
     "test:e2e:sidebar-touch": "npm run build && electron scripts/sidebar-touch-e2e.cjs",
     "test:e2e:sidebar-status": "electron scripts/sidebar-status-e2e.cjs",
+    "test:e2e:sidebar-hover-card": "npm run build && electron scripts/sidebar-hover-card-e2e.cjs",
     "test:e2e:sidebar-collapse": "electron scripts/sidebar-collapse-e2e.cjs",
     "test:e2e:sidebar-scroll-fade": "npm run build && electron scripts/sidebar-scroll-fade-e2e.cjs",
     "test:e2e:background-image": "electron-vite build && electron scripts/background-image-e2e.cjs",
-    "test:e2e:ptc-settings": "electron-vite build && electron scripts/ptc-settings-e2e.cjs",
+    "test:e2e:desktop-zoom": "npm run build:core && electron-vite build && electron scripts/desktop-zoom-e2e.cjs",
+    "test:e2e:ptc-settings": "VITE_ENABLE_PTC=true electron-vite build && electron scripts/ptc-settings-e2e.cjs",
+    "test:e2e:model-services": "npm run build:core && electron-vite build && electron scripts/model-services-e2e.cjs",
+    "test:e2e:project-agent": "electron-vite build && electron scripts/project-agent-gate-e2e.cjs",
     "test:e2e:settings-sidebar-hit": "npm run build && electron scripts/settings-sidebar-hit-e2e.cjs",
     "test:e2e:browser-pip": "node scripts/browser-pip-e2e.cjs",
     "typecheck": "tsc --noEmit",
@@ -134,13 +139,13 @@
       "iconTextSize": 14,
       "contents": [
         {
-          "x": 170,
-          "y": 262,
+          "x": 180,
+          "y": 250,
           "type": "file"
         },
         {
-          "x": 530,
-          "y": 262,
+          "x": 540,
+          "y": 250,
           "type": "link",
           "path": "/Applications"
         }

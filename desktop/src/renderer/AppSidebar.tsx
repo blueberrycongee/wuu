@@ -72,6 +72,7 @@ import {
   type PendingConversation,
 } from "./ThreadSidebar";
 import { SidebarCollapseBody, SidebarSection } from "./SidebarSection";
+import { SidebarHoverFactsContext, type SidebarHoverFacts } from "./SidebarHoverCard";
 import { SidebarNameDialog } from "./SidebarNameDialog";
 import { ThreadContextMenu } from "./ThreadContextMenu";
 import {
@@ -1072,6 +1073,9 @@ export function AppSidebar({
     () => projectDirectory(allSidebarThreads, state.lastViewedTurnByThreadID, activeThreadID),
     [activeThreadID, allSidebarThreads, state.lastViewedTurnByThreadID],
   );
+  const visibleFunctionalGroupOrder = useMemo(() => functionalGroupOrder.filter(
+    (id) => id !== "projects" || onCreateProject || projectIndex.projects.length > 0,
+  ), [functionalGroupOrder, onCreateProject, projectIndex]);
   // Projects list apart from workspaces unless the user pinned or filed them.
   const projectRows = useMemo(() => projectIndex.projects
     .filter((thread) => !thread.pinned && !organization.folderByThreadID[thread.id])
@@ -1097,6 +1101,27 @@ export function AppSidebar({
     }
     return next;
   }, [allSidebarThreads, organization.folderByThreadID, projectIndex, workspaceThreadsByWorkspaceID, sidebarWorkspaces]);
+  const hoverFacts = useMemo<SidebarHoverFacts>(() => {
+    const byID = new Map(allSidebarThreads.map((thread) => [thread.id, thread]));
+    const threadsByWorkspaceID: Record<string, ThreadSummary[]> = {};
+    for (const [workspaceID, threads] of Object.entries(workspaceThreadsByWorkspaceID)) {
+      threadsByWorkspaceID[workspaceID] = threads.map((thread) => byID.get(thread.id) ?? thread);
+    }
+    return {
+      workspaces: sidebarWorkspaces.filter((project) => project.id !== SCRATCH_PSEUDO_PROJECT_ID),
+      threadsByWorkspaceID,
+      sessionsByProjectID: projectIndex.sessionsByProjectID,
+      activeThreadID,
+      lastViewedTurnByThreadID: state.lastViewedTurnByThreadID,
+    };
+  }, [
+    activeThreadID,
+    allSidebarThreads,
+    projectIndex,
+    sidebarWorkspaces,
+    state.lastViewedTurnByThreadID,
+    workspaceThreadsByWorkspaceID,
+  ]);
   const folderThreadsByID = useMemo(() => {
     const next: Record<string, ThreadSummary[]> = {};
     for (const folder of organization.folders) next[folder.id] = [];
@@ -1690,7 +1715,7 @@ export function AppSidebar({
         }
       }
     }
-    for (const groupID of functionalGroupOrder) {
+    for (const groupID of visibleFunctionalGroupOrder) {
       nodes.push(...functionalGroupNodes[groupID]);
     }
     nodes.push({
@@ -1711,7 +1736,7 @@ export function AppSidebar({
     onTogglePinned, pendingThreadID, pinnedHasRunning,
     pinnedHasUnread, pinnedRows, validPinnedItems,
     projectRows, projectIndex, visibleWorkspaceThreadsByWorkspaceID,
-    folderThreadsByID, functionalGroupOrder, organization.folders, pinnedFolderIDs,
+    folderThreadsByID, visibleFunctionalGroupOrder, organization.folders, pinnedFolderIDs,
     sidebarWorkspaces, sidebarScratchPseudoActive, visibleWorkspaceSectionOrder,
     state.activeProjectId, state.initialized, state.lastViewedTurnByThreadID, t,
   ]);
@@ -1838,42 +1863,30 @@ export function AppSidebar({
             <PluginBlocksIcon className="icon-lg" />
             <span>{t("skills.sectionSkills")}</span>
           </button>
+          {/* Plugin pages are destinations beside the catalog that lists
+              their plugins, so they continue this list instead of opening a
+              second group headed with the catalog's own name. */}
+          {pluginNavigationEntries.map((entry) => {
+            const active = activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId;
+            return (
+              <button
+                key={`${entry.pluginId}:${entry.id}`}
+                type="button"
+                className={`nav-item plugin-navigation-item${active ? " active" : ""}`}
+                data-wuu-component="plugin-navigation-item"
+                data-wuu-plugin={entry.pluginId}
+                aria-current={active ? "page" : undefined}
+                title={entry.description || entry.title}
+                onClick={() => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId)}
+              >
+                <PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />
+                <span>{entry.title}</span>
+              </button>
+            );
+          })}
         </nav>
 
         <div className="sidebar-main scrollbar-hidden" data-scroll-fade="">
-          {pluginNavigationEntries.length > 0 ? (
-            <section
-              className="sidebar-functional-group plugin-navigation-group"
-              aria-label={t("skills.sectionPlugins")}
-              data-wuu-component="plugin-navigation"
-            >
-              <div className="sidebar-functional-heading">
-                <span className="sidebar-functional-heading-label">{t("skills.sectionPlugins")}</span>
-              </div>
-              <div className="sidebar-functional-group-collapse">
-                <div className="sidebar-functional-group-body">
-                  {pluginNavigationEntries.map((entry) => {
-                    const active = activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId;
-                    return (
-                      <button
-                        key={`${entry.pluginId}:${entry.id}`}
-                        type="button"
-                        className={`nav-item plugin-navigation-item${active ? " active" : ""}`}
-                        data-wuu-component="plugin-navigation-item"
-                        data-wuu-plugin={entry.pluginId}
-                        aria-current={active ? "page" : undefined}
-                        title={entry.description || entry.title}
-                        onClick={() => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId)}
-                      >
-                        <PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />
-                        <span>{entry.title}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </section>
-          ) : null}
           <DndContext
             sensors={sensors}
             collisionDetection={sidebarCollisionDetection}
@@ -1884,10 +1897,10 @@ export function AppSidebar({
             onDragCancel={handleSidebarDragCancel}
           >
             <SortableContext
-              items={functionalGroupOrder}
+              items={visibleFunctionalGroupOrder}
               strategy={verticalListSortingStrategy}
             >
-              {functionalGroupOrder.map((groupID) => groupID === "projects" ? (
+              {visibleFunctionalGroupOrder.map((groupID) => groupID === "projects" ? (
                 <SortableFunctionalGroup
                   key={groupID}
                   id={groupID}
@@ -2285,7 +2298,9 @@ export function AppSidebar({
         onCreateWorkspace={onCreateWorkspace}
         onOpenWorkspaceFolder={onOpenWorkspaceFolder}
         commands={[...primaryNavigationNodes, ...pluginNavigationNodes, ...navigationNodes]}
-      /> : nativeSidebar}
+      /> : (
+        <SidebarHoverFactsContext.Provider value={hoverFacts}>{nativeSidebar}</SidebarHoverFactsContext.Provider>
+      )}
     </SessionOrganizationProvider>
   );
   return (

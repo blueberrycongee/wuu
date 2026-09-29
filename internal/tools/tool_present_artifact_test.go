@@ -96,7 +96,7 @@ func TestPresentArtifactUsesBoundWorktree(t *testing.T) {
 	if err := os.MkdirAll(worktree, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	ctx = toolctx.WithWorktreePath(ctx, worktree)
+	ctx = toolctx.WithWorktreeBinding(ctx, kit.RootDir(), worktree)
 	worktree, err := filepath.EvalSymlinks(worktree)
 	if err != nil {
 		t.Fatal(err)

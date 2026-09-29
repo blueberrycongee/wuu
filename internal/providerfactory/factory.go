@@ -75,6 +75,15 @@ func SupportsNativeToolDiscoveryByDefault(provider config.ProviderConfig, model 
 		return false
 	}
 	switch profile.Wire {
+	case wireOpenAIChat:
+		if !openai.SupportsDynamicToolLoading(model) {
+			return false
+		}
+		if enabled, ok := nativeToolSearchOption(providerOptions); ok {
+			return enabled
+		}
+		endpoint := strings.TrimRight(strings.ToLower(strings.TrimSpace(provider.BaseURL)), "/")
+		return endpoint == "https://api.moonshot.ai/v1" || endpoint == "https://api.moonshot.cn/v1"
 	case wireOpenAIResponses:
 		// Per-model config wins over the first-party base_url default, the
 		// same override contract the anthropic wire honors: vendor protocol
@@ -99,6 +108,11 @@ func SupportsNativeToolDiscovery(provider config.ProviderConfig, model string, p
 		return false
 	}
 	switch profile.Wire {
+	case wireOpenAIChat:
+		if enabled, ok := nativeToolSearchOption(providerOptions); ok && !enabled {
+			return false
+		}
+		return openai.SupportsDynamicToolLoading(model)
 	case wireOpenAIResponses:
 		if enabled, ok := nativeToolSearchOption(providerOptions); ok && !enabled {
 			return false
@@ -141,6 +155,11 @@ func nativeToolSearchOption(options map[string]any) (bool, bool) {
 func openAIModelSupportsNativeToolSearch(model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
 	if !strings.HasPrefix(model, "gpt-") {
+		return false
+	}
+	// Nano shares the 5.4 version but does not implement tool search.
+	// https://developers.openai.com/api/docs/models/gpt-5.4-nano
+	if model == "gpt-5.4-nano" || strings.HasPrefix(model, "gpt-5.4-nano-") {
 		return false
 	}
 	version := strings.TrimPrefix(model, "gpt-")

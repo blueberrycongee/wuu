@@ -25,6 +25,9 @@ type projectSessionView struct {
 
 // projectActor resolves the live team and rejects actions after human takeover.
 func (s *Server) projectActor(id string) (session.Session, session.Session, *session.Control, error) {
+	if !projectAgentEnabled {
+		return session.Session{}, session.Session{}, nil, errProjectAgentDisabled
+	}
 	if project, live := s.projectCoordinator(id); live {
 		return project, project, nil, nil
 	}
@@ -313,6 +316,9 @@ func (s *Server) sendProjectSession(ctx context.Context, project, actor session.
 }
 
 func (s *Server) handleProjectSession(req Request) error {
+	if !projectAgentEnabled {
+		return s.writeResponse(req.ID, nil, errProjectAgentDisabled)
+	}
 	var p ProjectSessionParams
 	if err := decodeParams(req.Params, &p); err != nil {
 		return s.writeResponse(req.ID, nil, err)

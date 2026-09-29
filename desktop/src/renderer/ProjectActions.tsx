@@ -18,7 +18,7 @@ export type ProjectActions = {
 
 const ProjectActionsContext = createContext<ProjectActions | null>(null);
 
-export function ProjectActionsProvider({ value, children }: { value: ProjectActions; children: ReactNode }): JSX.Element {
+export function ProjectActionsProvider({ value, children }: { value: ProjectActions | null; children: ReactNode }): JSX.Element {
   return <ProjectActionsContext.Provider value={value}>{children}</ProjectActionsContext.Provider>;
 }
 

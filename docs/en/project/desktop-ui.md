@@ -27,6 +27,17 @@ The [mascot lab](../../../desktop/dev/mascot/README.md) uses `npm --prefix deskt
 
 ## Conversation image previews
 
+Message and inline tool images reserve a responsive 4:3 preview area before
+loading. The complete image fits inside without cropping or upscaling; portrait
+and panoramic images may leave space around them. Loading failures keep the same
+area, so switching conversations does not shift text when an image finishes.
+Opening a preview still shows the original image. Workspace document images keep
+their natural proportions.
+
+Run `npm --prefix desktop run test:e2e:image-layout` to check cold loads, failed
+loads, cached session switches, and bottom following in Electron. It saves
+geometry logs and screenshots under `desktop/out/image-layout-e2e/`.
+
 Image previews group the current conversation's displayed uploads, tool-result
 images, and message images in display order. Previous/next buttons and the left
 and right arrow keys move through the group; the counter shows the position.
@@ -76,6 +87,18 @@ branch and the worktree toggle share a second group of the same height. Hover
 fills a segment edge to edge, and the toggle's on state uses the interaction
 accent like Fast mode. A folder outside Git shows only the project group.
 
+Both groups open compact menu cards. The project card lists **Conversation**
+first, as the sidebar does, then projects in sidebar order; opening a folder and
+creating a blank workspace follow a divider. The branch card needs no heading
+outside a worktree: the checked-out branch comes first with a count of its
+uncommitted files, then the local default branch, then the rest most recently
+committed first. A shared prefix such as `codex/` is muted so the branch's own
+name carries the row. The search field doubles as the new branch name: a name
+that matches no branch adds a create row, and Enter creates it only when no
+branch matches, so a partial match never becomes a branch. While the draft starts
+in its own worktree, the card is headed **Start from**, choosing a branch changes
+nothing in the project, and it offers no new branch.
+
 Run `npm --prefix desktop run test:e2e:composer-worktree` to start a real
 conversation in a worktree through Electron and the Go core with a disposable
 profile, Git fixture, and local provider. It checks that choosing a start branch
@@ -87,19 +110,27 @@ visible, so the pointer's position can add a hover surface to a capture.
 
 Settings groups pages by task: **Agents & models** (model providers, agents, runtime), **App** (general, appearance), **Extensions** (MCP servers and plugin pages), and **Data** (usage, archive). Page IDs are part of the plugin settings snapshot, so they stay stable when a label or group changes; the runtime page keeps the `advanced` ID.
 
-Every page shares one column measured in UI text, so the title stays in place while navigating and a label stays within a glance of its control at large sizes. A page opens with its title, an optional line that states a non-obvious scope, and page actions beside the title. Section titles are the only other semibold text; rows stay regular inside one bordered group. Keep a row description only for units, constraints, or consequences the title does not already state.
+Every page shares one column measured in UI text, so the title stays in place while navigating and a label stays within a glance of its control at large sizes. A page opens with its title, an optional line that states a non-obvious scope, and page actions beside the title; a refresh action is an icon button whose tooltip names it. Section titles are the only other semibold text; rows stay regular inside one bordered group. Keep a row description only for constraints or consequences the title does not already state. A unit belongs inside its numeric field instead: a numeric placeholder keeps the unit, while a word such as "Auto" appears alone.
 
-Status labels carry their meaning in text; the dot beside them repeats the tone for scanning. Model providers and agents expand in place under their own row. Rows without a disclosure reserve its footprint so status labels end on one axis. The titlebar gains its hairline only after content scrolls beneath it.
+A row that works says nothing about it. Only a state that needs a look gets a symbol — a warning triangle for a missing credential or a pending decision, a circled mark for a failure — and the symbol's accessible name and tooltip carry the reason, so the meaning never rests on color. The Agent page lists detected agents in the default radio group; agents Wuu cannot find wait under **Not installed**, each with an install action and its path override, instead of repeating why on every row. Agents expand in place under their own row. Rows without a disclosure reserve its footprint so trailing controls end on one axis. The titlebar gains its hairline only after content scrolls beneath it.
+
+**Model services** is built for bring-your-own-key use and reads by how often each part is used. The default model comes first as one filled card whose model name is the picker, with the reasoning effort beside it; new conversations start there. Connected services follow as bordered cards with their vendor mark, a **Default** badge, and a warning when a key or sign-in is missing. Providers to add are quieter tiles: likely vendors for the interface language, subscription sign-ins, **More providers** for the whole model catalog, and **Custom endpoint** for any OpenAI- or Anthropic-compatible URL. The page carries no explanatory lines; a service's name, mark, and model count say what it is. Connecting asks only for the key — the catalog supplies the endpoint and a suggested model — and becomes the default only when switched on, which it is when the current default cannot answer. A service card opens its own page with a way back: its connection (key, Base URL, or sign-in), edited in place without changing the row's height, and its models, whose names share the row labels' edge while a trailing check marks the model the service uses. Hidden choices wait under a disclosure, and **Add model** takes an unlisted model ID. Dialogs put their mark, title, and close button on one row, and each dropdown lines its options up under the text of its trigger. Editing a service never changes the default; **Make default** does. Vendor marks are the bundled models.dev logos, so no artwork is fetched.
+
+`npm --prefix desktop run test:e2e:model-services` drives these flows through Electron and the Go core with a disposable profile, credential store, and local provider: it connects a catalog provider without moving the default, chooses and hides its models, makes a custom endpoint the default, removes a service with its key, and sends a turn that must reach the new default with the saved key. Screenshots and `evidence.json` go to `artifacts/model-services-e2e/`.
+
+Programmatic tool calling is agent runtime behavior, so it sits on the runtime page; **General** keeps app-level choices and **About**. Archive groups show the project with a bare conversation count, rows show the year only when it differs from this one, and restoring is an icon button named for the conversation.
 
 Preview `/dev/settings/` with `page` set to a page ID, and optional `theme=dark`, `size=20`, `lang=en`, `rail=` (sidebar width), `collapsed`, `long`, and `empty` parameters. Providers, agents, MCP servers, usage, and archive rows are synthetic; nothing is saved.
 
-## Extensions catalog
+## Plugins catalog
 
-The Extensions page uses the settings page column, header, and groups. Plugins come first because their runtime and approval state may need a decision; official skills and your skills follow. Every row shows a mark, the name over a one-line description, and a trailing status or owning plugin, then a chevron that opens the plugin detail or skill preview. A search hides every group it leaves empty. In a narrow column the trailing label moves under the description.
+The Plugins page, named **Plugins** like its sidebar entry, uses the settings page column. The titlebar already names it, so the page opens on a toolbar: search, then reload and local install. **Plugins** and **Skills** are separate tabs with their counts; a catalog without plugins opens on Skills. A search hides every group it leaves empty.
 
-The plugin detail repeats the row's status label, followed by source and grant scope. Permissions are grouped by capability, and all groups share one label column.
+Plugins are grouped by what they need from you. **Needs attention** is a list: each row names the plugin and the one most serious reason — it failed to start or misses a requirement, then a staged update, a changed or unapproved package, or a conflict — and opens the plugin's page, where that decision is made. **On** and **Off** are grids of cards: the mark, the name over a two-line tagline, and a switch on the name's line that turns a trusted plugin on or off in place. Turning on a plugin that is not approved yet opens its page when it asks for permissions and approves it directly otherwise. Cards show the manifest's display name and tagline, not the plugin ID. Skill rows end in the owning plugin's name, when there is one, and a chevron that opens the preview.
 
-Preview `/dev/extensions/` with optional `theme=dark`, `size=20`, `lang=en`, `long`, and `empty` parameters. Skills and plugin packages are synthetic and cover every status tone; actions in the detail dialog change only the preview's state.
+A plugin opens as its own page, with a back link to the catalog. The header holds the mark, name, and tagline, and either the switch or the decision the plugin waits for (approve, or approve an update); rejecting, revoking, and removing live in the more menu. Notices follow: why approval is needed, an update being ready, the runtime error, or a missing or conflicting plugin. Below come the manifest's long description, **In Wuu** (the sidebar pages, workspace tools, settings pages, commands, skills, and themes it adds), and the plugin's settings as ordinary settings rows. Permissions appear only while approving. Versions, fingerprints, paths, grant scopes, and agent tools stay off the page.
+
+Preview `/dev/extensions/` with optional `theme=dark`, `size=20`, `lang=en`, `long`, and `empty` parameters. Skills and plugin packages are synthetic and cover every plugin state; switches and detail actions change only the preview's state.
 
 ## Shared typography and geometry
 
@@ -166,12 +197,14 @@ list, or closing the project group clears the corresponding retention. Selected,
 switching, running, and unread conversations remain candidates independently of
 that limit.
 
-Expand includes all history; Collapse returns to that recent range without
-closing the project. Both ranges, including conversations still being created,
+Show more reveals the next five hidden conversations in sidebar order, or the
+remaining conversations when fewer than five remain. It disappears when all are
+shown. Already visible status rows do not consume the batch. Collapse returns to
+the recent range without closing the project. All ranges, including conversations still being created,
 use their full content height within the shared sidebar scroll area. Scrolling
 over a project conversation moves the outer sidebar; expanding history moves
 following groups down. The history controls follow the rows. Add `mode=history` to the preview URL for the real project
-component. The same Electron check covers history expansion, read transitions,
+component. The same Electron check covers batched expansion through 1,003 conversations, read transitions,
 outer sidebar scrolling, creating rows, and live font changes, and writes geometry JSON
 and light/dark, 14/20px, wide/narrow screenshots under `desktop/out/sidebar-collapse-e2e-*`.
 

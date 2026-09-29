@@ -15,6 +15,10 @@ localStorage.setItem(CLEAR_UNREAD_HINT_SEEN_KEY, "true");
 const date = "2026-09-17T00:00:00Z";
 const params = new URLSearchParams(location.search);
 const project = { id: "preview", name: "wuu", path: "/preview", created_at: date, updated_at: date };
+// `full` adds sibling workspaces and the project group, matching a populated rail.
+const full = params.has("full");
+const siblings = full ? ["dsh-TUI", "sglang-omni", "infra", "简历"].map(name => ({ ...project, id: name, name, path: `/${name}` })) : [];
+const workspaces = [...siblings, project];
 const threads: ThreadSummary[] = [
   ["idle", "普通会话：长标题应该在操作区域之前省略"],
   ["running", "正在运行的会话"],
@@ -42,18 +46,19 @@ function Fixture() {
   const visible = empty ? [] : threads;
   return <WuuUIRoot><div className="app-shell" style={{ height: "100dvh", gridTemplateColumns: "var(--sidebar-open-width) 1fr", "--sidebar-open-width": `${Number(params.get("width")) || 296}px` } as React.CSSProperties}>
     <AppSidebar
-      state={{ ...initialState, projects: [project], threads: visible.map(thread => ({ ...thread, turns: [] })),
+      state={{ ...initialState, projects: workspaces, threads: visible.map(thread => ({ ...thread, turns: [] })),
         initialized: { protocol_version: "wuu-app-server/v0.1", provider: "preview", model: "preview", workspace_root: "/preview" },
         activeContext: { kind: "project", project_id: project.id, cwd: project.path },
         lastViewedTurnByThreadID: { idle: "done", running: "done", fork: "done", "fork-running": "done" },
       }}
-      sidebarWorkspaces={[project]} pinnedThreads={empty ? [] : [threads[0]]}
+      sidebarWorkspaces={workspaces} pinnedThreads={empty ? [] : [threads[0]]}
       activeThreadID={active} activeWorkspaceID={project.id}
       collapsedSidebarSectionIDs={new Set()} expandedSidebarSectionIDs={expanded}
       collapsedFolderIDs={collapsedFolderIDs} setCollapsedFolderIDs={setCollapsedFolderIDs}
       workspaceThreadsByWorkspaceID={{ [project.id]: visible }}
+      onCreateProject={full ? noop : undefined}
       workspaceMenuOpen={false} workspaceMenuRef={createRef()} searchOpen={false}
-      sectionOrder={[project.id]} onStartNewThread={noop} onOpenSkillsTab={noop}
+      sectionOrder={workspaces.map(workspace => workspace.id)} onStartNewThread={noop} onOpenSkillsTab={noop}
       onToggleConversationSearch={noop} onSelectThread={setActive}
       onTogglePinned={noop} onArchiveThread={noop} onDeleteThread={noop} onRenameThread={noop}
       onToggleWorkspaceMenu={noop} onCreateWorkspace={noop} onOpenWorkspaceFolder={noop}

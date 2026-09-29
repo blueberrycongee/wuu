@@ -1,20 +1,26 @@
 // Real Electron/main/preload/Go round trips against disposable synthetic data.
 // Build Electron and the core first; WUU_DESKTOP_CORE selects the tested binary.
-// No inference is sent. Timings are diagnostic, not hardware-dependent gates.
+// No external inference is sent. Timings are diagnostic, not hardware-dependent gates.
 // WUU_SWITCH_TURNS=3000 stresses history; WUU_SWITCH_VARIANT=narrow checks dark/20px.
 // WUU_SWITCH_SAFE_MODE=0 includes plugin startup; default 1 isolates transport costs.
 // WUU_SWITCH_MAIN may select a separately built baseline main-process bundle.
+// WUU_SWITCH_STREAM=1 also streams 128 KiB from a local synthetic SSE provider
+// across workspace switches, through the real core, IPC, and renderer.
 // WUU_SWITCH_ROUNDS controls warm repeats. Defaults live in the budget fixture.
 // WUU_SWITCH_INIT_DELAY_MS injects a readiness fault; never pool it with baseline.
 // WUU_SWITCH_CHECK_BUDGET=1 checks settled work counters, never wall-clock time.
 // WUU_SWITCH_TRACE=1 records a Chromium trace; exclude traced runs from baselines.
+// WUU_SWITCH_CPU_PROFILE=1 records renderer CPU samples; exclude from baselines.
 // WUU_SWITCH_OUTPUT selects an evidence directory separate from fixture data.
+// WUU_SWITCH_SUBSCRIPTION_TURNS=30000 adds ~2 GiB of unrelated subscription
+// history, two built-in services, and cross-project new-draft regression checks.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
+const http = require('node:http');
 const childProcess = require('node:child_process');
 const { syncBuiltinESMExports } = require('node:module');
 const originalSpawn = childProcess.spawn;
@@ -39,6 +45,8 @@ const rounds = Number(process.env.WUU_SWITCH_ROUNDS || budget.fixture.rounds);
 const variant = process.env.WUU_SWITCH_VARIANT || budget.fixture.variant;
 const safeMode = process.env.WUU_SWITCH_SAFE_MODE || budget.fixture.safeMode;
 const initDelayMs = Number(process.env.WUU_SWITCH_INIT_DELAY_MS || 0);
+const subscriptionTurns = Number(process.env.WUU_SWITCH_SUBSCRIPTION_TURNS || 0);
+assert.ok(Number.isInteger(subscriptionTurns) && subscriptionTurns >= 0 && subscriptionTurns % 2 === 0);
 assert.ok(Number.isInteger(rounds) && rounds > 0, 'Rounds must be a positive integer');
 assert.ok(Number.isInteger(turns) && turns > 0, 'Turns must be a positive integer');
 assert.ok(Number.isFinite(initDelayMs) && initDelayMs >= 0, 'Invalid readiness delay');
@@ -46,26 +54,46 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-session-switch-'));
 const output = process.env.WUU_SWITCH_OUTPUT || fixture;
 fs.mkdirSync(output, { recursive: true });
 const traceEnabled = process.env.WUU_SWITCH_TRACE === '1';
+const cpuProfileEnabled = process.env.WUU_SWITCH_CPU_PROFILE === '1';
 const checkBudget = process.env.WUU_SWITCH_CHECK_BUDGET === '1';
 if (checkBudget) {
+  assert.equal(subscriptionTurns, 0, 'Subscription history is a separate diagnostic workload');
   assert.deepEqual({ turns, rounds, variant, safeMode }, budget.fixture);
   assert.equal(initDelayMs, 0, 'Fault injection is not a comparable budget workload');
   assert.equal(traceEnabled, false, 'Tracing is not a comparable budget workload');
+  assert.equal(cpuProfileEnabled, false, 'CPU profiling is not a comparable budget workload');
 }
 const home = path.join(fixture, 'home');
 fs.mkdirSync(home);
 app.setPath('userData', path.join(fixture, 'profile'));
 process.env.WUU_HOME = home;
+if (subscriptionTurns) {
+  // Never discover real subscription credentials or start installed engines.
+  process.env.HOME = path.join(fixture, 'user-home');
+  fs.mkdirSync(process.env.HOME);
+  process.env.CODEX_HOME = path.join(process.env.HOME, '.codex');
+  process.env.GROK_HOME = path.join(process.env.HOME, '.grok');
+}
 process.env.WUU_DESKTOP_CORE ||= path.join(desktop, 'build/bin/wuu-core');
 process.env.WUU_ENABLE_BROWSER = '0';
 process.env.WUU_SAFE_MODE = safeMode;
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
+// A shell inherited from make dev must still exercise this checkout's build.
+delete process.env.ELECTRON_RENDERER_URL;
 const projects = Array.from({ length: 6 }, (_, i) => {
   const cwd = path.join(fixture, `project-${i}`);
   fs.mkdirSync(cwd);
   return { id: `project-${i}`, name: `Switch project ${i}`, path: cwd, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
 });
 fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ default_provider: 'fixture', providers: { fixture: { type: 'openai-compatible', base_url: 'http://127.0.0.1:1/v1', api_key: 'fixture-only', model: 'fixture' } } }));
+if (subscriptionTurns) {
+  const configPath = path.join(home, 'config.json');
+  const config = JSON.parse(fs.readFileSync(configPath));
+  config.providers['subscription-grok'] = { type: 'grok-build', model: 'grok-4.5' };
+  config.providers['subscription-codex'] = { type: 'openai-codex', model: 'gpt-5', reuse_codex_credentials: true };
+  config.engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
+  fs.writeFileSync(configPath, JSON.stringify(config));
+}
 fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects, active_context: { kind: 'project', project_id: projects[0].id, cwd: projects[0].path } }));
 fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en', theme: process.env.WUU_SWITCH_VARIANT === 'narrow' ? 'dark' : 'light' }));
 const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--safe-mode', '--workdir', projects[0].path], {
@@ -86,22 +114,39 @@ for i,p in enumerate(projects):
         for r,role in enumerate(('user','assistant')):
             text=('Session '+str(i)+' question '+str(t)) if r==0 else ('## Result '+str(t)+'\\n\\nA realistic paragraph with **formatting** and code.\\n\\n'+('Example content for history measurement. '*30)+'\\n\\n')*3
             db.execute('INSERT INTO session_messages (session_id,seq,role,content,at) VALUES (?,?,?,?,?)',(sid,t*2+r+1,role,text,'2026-01-01T00:00:00Z'))
+if int(sys.argv[3]):
+    sid='unrelated-subscription-history'
+    db.execute('INSERT INTO sessions (id,created_at,updated_at,title,cwd,provider,model) VALUES (?,?,?,?,?,?,?)', (sid,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','Unrelated history','/synthetic-unrelated','subscription-grok','fixture'))
+    for t in range(int(sys.argv[3])):
+        provider='subscription-grok' if t%2==0 else 'subscription-codex'
+        for r,(role,content,tokens) in enumerate([('user','Synthetic request',0),('assistant','Synthetic historical content. '*2300,0),('meta','token_usage',7),('meta','turn_terminal',7)]):
+            db.execute('INSERT INTO session_messages (session_id,seq,role,content,at,provider,model,input_tokens,stop_reason) VALUES (?,?,?,?,?,?,?,?,?)', (sid,t*4+r+1,role,content,'2026-01-01T00:00:00Z',provider,'fixture',tokens,'completed' if r==3 else ''))
 db.commit()
-`, home, String(turns)], { encoding: 'utf8' });
+`, home, String(turns), String(subscriptionTurns)], { encoding: 'utf8' });
 assert.equal(seed.status, 0, seed.stderr);
 const timings = [];
 const originalHandle = ipcMain.handle.bind(ipcMain);
 let archiveGate;
 let archiveBlocked = false;
 let measuring = false;
+let subscriptionGate;
+let subscriptionEntered = false;
+let failSubscription = false;
 ipcMain.handle = (channel, listener) => originalHandle(channel, async (...args) => {
   const start = performance.now();
   // Insert at invocation, not completion, so overlapping RPCs keep attribution.
   const timing = { channel, startedAt: start, ms: null };
   timings.push(timing);
+  const subscriptionRead = channel === 'wuu:engines-list' && args[1]?.include_quota === true;
+  if (subscriptionRead) subscriptionEntered = true;
   const delayInitialization = measuring && channel === 'wuu:initialize' && initDelayMs > 0;
   try {
     const result = await listener(...args);
+    if (subscriptionRead) {
+      timing.historyResponseMs = +(performance.now() - start).toFixed(1);
+      if (subscriptionGate) await subscriptionGate;
+      if (failSubscription) throw new Error('Synthetic subscription refresh failure');
+    }
     if (delayInitialization) await delay(initDelayMs);
     if (channel === 'wuu:thread-list-archived' && archiveGate) {
       archiveBlocked = true;
@@ -130,9 +175,193 @@ async function waitFor(win, fn, arg, timeout = 30000) {
   throw new Error(`Timed out: ${fn}`);
 }
 const results = [];
+const subscriptionResults = [];
+let startup;
+async function checkSubscriptionNavigation(win) {
+  if (!subscriptionTurns) return;
+  async function newDraft(index, scenario) {
+    await showSessionSidebar(win);
+    const point = await evaluate(win, async index => {
+      await document.fonts.ready;
+      await Promise.all(document.getAnimations().filter(a => Number.isFinite(a.effect.getComputedTiming().endTime)).map(a => a.finished.catch(() => {})));
+      const button = [...document.querySelectorAll('.project-row-new-thread')].find(node => node.getAttribute('aria-label')?.includes(`Switch project ${index}`));
+      if (!button) throw new Error('Missing project new conversation button');
+      button.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const rect = button.getBoundingClientRect();
+      return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+    }, index);
+    const rpcStart = timings.length;
+    const spawnStart = coreSpawns;
+    const start = performance.now();
+    await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
+    await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...point });
+    await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...point });
+    await waitFor(win, index => {
+      const input = document.querySelector('.composer textarea');
+      const workspace = document.querySelector('.composer-workspace-bar');
+      return workspace?.textContent.includes(`Switch project ${index}`) && input && !input.disabled && !input.readOnly && !input.closest('[inert]') && !document.querySelector('.cached-conversation-pane[data-active="true"]') && document.activeElement === input;
+    }, index);
+    win.webContents.insertText('subscription navigation probe');
+    await waitFor(win, () => {
+      const input = document.querySelector('.composer textarea');
+      const send = document.querySelector('.composer-send-button');
+      return input?.value === 'subscription navigation probe' && send && !send.disabled;
+    });
+    await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const readyMs = +(performance.now() - start).toFixed(1);
+    const initialized = await evaluate(win, () => window.wuu.initialize());
+    assert.ok(initialized.workspace_root.endsWith(`project-${index}`), 'Draft opened in the wrong project');
+    for (const provider of initialized.providers) {
+      assert.equal(provider.latest_request, undefined, 'Initialize loaded request history');
+      assert.equal(provider.local_usage, undefined, 'Initialize loaded usage history');
+    }
+    const result = { scenario, index, readyMs, coreSpawns: coreSpawns - spawnStart, rpc: timings.slice(rpcStart).map(t => ({ ...t })) };
+    subscriptionResults.push(result);
+    console.log('SUBSCRIPTION', JSON.stringify(result));
+    await evaluate(win, () => document.querySelector('.composer textarea').select());
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' });
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' });
+    await waitFor(win, () => document.querySelector('.composer textarea')?.value === '');
+  }
+  await newDraft(2, 'first-project-visit-new-draft');
+  let release;
+  subscriptionGate = new Promise(resolve => { release = resolve; });
+  await evaluate(win, () => {
+    window.__subscriptionResult = undefined;
+    void window.wuu.listEngines({ include_quota: true }).then(result => { window.__subscriptionResult = { result }; }, error => { window.__subscriptionResult = { error: String(error) }; });
+  });
+  while (!subscriptionEntered) await delay(10);
+  await newDraft(0, 'history-pending-running-project');
+  await newDraft(2, 'history-pending-return-to-requesting-project');
+  assert.equal(await evaluate(win, () => window.__subscriptionResult), undefined, 'Statistics gate was not held through navigation');
+  release();
+  subscriptionGate = undefined;
+  await waitFor(win, () => window.__subscriptionResult);
+  const snapshot = await evaluate(win, () => window.__subscriptionResult);
+  assert.equal(snapshot.error, undefined);
+  assert.equal(snapshot.result.subscription_providers.length, 2);
+  for (const provider of snapshot.result.subscription_providers) {
+    assert.equal(provider.local_usage.input_tokens, subscriptionTurns / 2 * 7);
+    assert.equal(provider.local_usage.reported_turns, subscriptionTurns / 2);
+    assert.equal(provider.latest_request.status, 'completed');
+    assert.equal(provider.latest_request.input_tokens, 7);
+  }
+  failSubscription = true;
+  assert.match(await evaluate(win, async () => {
+    try { await window.wuu.listEngines({ include_quota: true }); return 'unexpected success'; }
+    catch (error) { return String(error); }
+  }), /Synthetic subscription refresh failure/);
+  await newDraft(0, 'history-failed-running-project');
+  failSubscription = false;
+  fs.writeFileSync(path.join(output, 'subscription-navigation.png'), (await win.webContents.capturePage()).toPNG());
+  // Return to a persisted conversation for the ordinary switching scenarios.
+  await showSessionSidebar(win);
+  await evaluate(win, () => {
+    const row = [...document.querySelectorAll('.thread-row')].find(n => n.textContent.includes('Switch session 0'));
+    (row.querySelector('.thread-row-main') || row).click();
+  });
+  await waitFor(win, () => document.querySelector('.cached-conversation-pane[data-active="true"][data-thread-id="switch-thread-0"]'));
+}
+async function showSessionSidebar(win) {
+  await evaluate(win, () => {
+    document.querySelector('.conversation-pane [data-wuu-component="sidebar-toggle"][aria-pressed="false"]')?.click();
+  });
+}
+let providerServer;
+let providerResponse;
+let receiveProviderRequest;
+const providerRequest = new Promise(resolve => { receiveProviderRequest = resolve; });
+async function startFixtureProvider() {
+  if (process.env.WUU_SWITCH_STREAM !== '1') return;
+  providerServer = http.createServer((req, res) => {
+    if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
+      res.writeHead(404).end();
+      return;
+    }
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      providerResponse = res;
+      receiveProviderRequest();
+    });
+  });
+  await new Promise(resolve => providerServer.listen(0, '127.0.0.1', resolve));
+  const configPath = path.join(home, 'config.json');
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  config.providers.fixture.base_url = `http://127.0.0.1:${providerServer.address().port}/v1`;
+  fs.writeFileSync(configPath, JSON.stringify(config));
+}
+async function checkStreaming(win) {
+  if (!providerServer) return;
+  // Streaming switches check recovery separately from the idle draft benchmark.
+  async function switchStreamingTo(index) {
+    await showSessionSidebar(win);
+    await evaluate(win, index => {
+      const row = [...document.querySelectorAll('.thread-row')].find(n => n.textContent.includes(`Switch session ${index}`));
+      (row.querySelector('.thread-row-main') || row).click();
+    }, index);
+    await waitFor(win, index => !!document.querySelector(`.cached-conversation-pane[data-active="true"][data-thread-id="switch-thread-${index}"]`), index);
+    await waitFor(win, index => window.wuu.initialize().then(r => r.workspace_root.endsWith(`project-${index}`)), index);
+  }
+  await switchStreamingTo(5);
+  const text = 'ISSUE429-STREAM:' + '0123456789abcdef'.repeat(8191);
+  const startedAt = performance.now();
+  await evaluate(win, async () => {
+    window.streamFixture = { deltas: 0, completed: false };
+    window.stopStreamFixture = window.wuu.onServerEvent(event => {
+      if (event.kind !== 'notification') return;
+      const { method, params } = event.message;
+      if (params?.thread_id !== 'switch-thread-5') return;
+      if (method === 'item/agentMessage/delta') window.streamFixture.deltas++;
+      if (method === 'turn/completed') window.streamFixture.completed = true;
+    });
+    await window.wuu.startTurn('switch-thread-5', 'Run the local streaming fixture.');
+  });
+  await providerRequest;
+  async function sendUntil(start, end) {
+    for (let offset = start; offset < end; offset += 16) {
+      providerResponse.write(`data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: text.slice(offset, offset + 16) }, finish_reason: null }] })}\n\n`);
+      if (offset % 1024 === 0) await new Promise(setImmediate);
+    }
+  }
+  await sendUntil(0, 4096);
+  await waitFor(win, () => document.querySelector('.conversation-pane')?.textContent.includes('ISSUE429-STREAM:'));
+  const readText = () => evaluate(win, async () => {
+    const result = await window.wuu.resumeThread('switch-thread-5');
+    const turn = result.thread.turns.at(-1);
+    return { status: turn.status, texts: turn.items.filter(item => item.type === 'agent_message').map(item => item.text) };
+  });
+  await waitFor(win, async () => {
+    const result = await window.wuu.resumeThread('switch-thread-5');
+    return result.thread.turns.at(-1).items.some(item => item.type === 'agent_message' && item.text?.length === 4096);
+  });
+  assert.deepEqual((await readText()).texts, [text.slice(0, 4096)]);
+  await switchStreamingTo(0);
+  await sendUntil(4096, 65536);
+  await switchStreamingTo(5);
+  await waitFor(win, async () => {
+    const result = await window.wuu.resumeThread('switch-thread-5');
+    return result.thread.turns.at(-1).items.some(item => item.type === 'agent_message' && item.text?.length === 65536);
+  });
+  assert.deepEqual((await readText()).texts, [text.slice(0, 65536)]);
+  await sendUntil(65536, text.length);
+  providerResponse.end(`data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
+  await waitFor(win, () => window.streamFixture.completed);
+  const final = await readText();
+  assert.equal(final.status, 'completed');
+  assert.deepEqual(final.texts, [text]);
+  await waitFor(win, () => document.querySelector('.conversation-pane')?.textContent.includes('ISSUE429-STREAM:'));
+  const deltas = await evaluate(win, () => { window.stopStreamFixture(); return window.streamFixture.deltas; });
+  const result = { bytes: text.length, providerChunkBytes: 16, rendererDeltaEvents: deltas, elapsedMs: +(performance.now() - startedAt).toFixed(1), snapshots: [4096, 65536, text.length] };
+  fs.writeFileSync(path.join(output, 'stream-results.json'), JSON.stringify(result, null, 2));
+  console.log('STREAM', JSON.stringify(result));
+  providerServer.close();
+}
 // Startup automatically restores project 0 before the first measured click.
 const seen = new Set([0]);
 async function switchTo(win, index, scenario) {
+  await showSessionSidebar(win);
   await waitFor(win, index => {
     const row = [...document.querySelectorAll('.thread-row')].find(n => n.textContent.includes(`Switch session ${index}`));
     if (!row) return false;
@@ -293,6 +522,19 @@ async function switchTo(win, index, scenario) {
   }
   console.log(JSON.stringify(result));
   assert.equal(await evaluate(win, () => document.querySelector('.composer textarea')?.value), draft, 'Runtime refresh lost the typed draft');
+  // Check history recall and draft restoration outside the timing window.
+  await evaluate(win, () => document.querySelector('.composer textarea').setSelectionRange(0, 0));
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Up' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Up' });
+  const lastQuestion = `Session ${index} question ${(index === 1 || index === 5 ? turns : 3) - 1}`;
+  await waitFor(win, text => document.querySelector('.composer textarea')?.value === text, lastQuestion);
+  await evaluate(win, () => {
+    const input = document.querySelector('.composer textarea');
+    input.setSelectionRange(input.value.length, input.value.length);
+  });
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Down' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Down' });
+  await waitFor(win, text => document.querySelector('.composer textarea')?.value === text, draft);
   // Clear without submitting; the fixture never invokes inference.
   await evaluate(win, () => document.querySelector('.composer textarea').select());
   win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' });
@@ -301,8 +543,9 @@ async function switchTo(win, index, scenario) {
 }
 let main;
 app.on('browser-window-created', (_event, win) => { main ||= win; });
-const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.exit(1); }, 120000 + rounds * 15000);
-import(pathToFileURL(mainBundle).href).then(async () => {
+const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.exit(1); }, 120000 + rounds * 15000 + (process.env.WUU_SWITCH_STREAM === '1' ? 60000 : 0));
+const launchStart = performance.now();
+startFixtureProvider().then(() => import(pathToFileURL(mainBundle).href)).then(async () => {
   while (!main) await delay(25);
   main.webContents.on('console-message', (_e, level, message) => { if (level >= 3) console.error(message); });
   await waitFor(main, () => document.querySelector('.composer textarea'));
@@ -318,6 +561,15 @@ import(pathToFileURL(mainBundle).href).then(async () => {
   });
   console.log('FIXTURE', fixture);
   await waitFor(main, () => document.querySelector('.cached-conversation-pane[data-active="true"][data-thread-id="switch-thread-0"]'));
+  if (subscriptionTurns) {
+    await evaluate(main, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    startup = {
+      conversationFrameMs: +(performance.now() - launchStart).toFixed(1),
+      coreSpawns,
+      rpc: timings.map(t => ({ ...t })),
+    };
+    console.log('STARTUP', JSON.stringify(startup));
+  }
   await evaluate(main, () => { for (const group of document.querySelectorAll('.project-group')) { const button = group.querySelector('button[aria-expanded="false"]'); button?.click(); } });
   const startupDeadline = Date.now() + 30000;
   while (timings.some(t => t.ms === null)) {
@@ -328,6 +580,11 @@ import(pathToFileURL(mainBundle).href).then(async () => {
     included_categories: ['devtools.timeline', 'blink.user_timing', 'v8', 'disabled-by-default-devtools.timeline.stack'],
     recording_mode: 'record-until-full', trace_buffer_size_in_kb: 256 * 1024,
   });
+  if (cpuProfileEnabled) {
+    await main.webContents.debugger.sendCommand('Profiler.enable');
+    await main.webContents.debugger.sendCommand('Profiler.start');
+  }
+  await checkSubscriptionNavigation(main);
   for (const index of [1, 5, 0]) await switchTo(main, index, 'initial-pass');
   for (let round = 0; round < rounds; round++) {
     for (const index of [1, 5, 0]) await switchTo(main, index, 'repeat');
@@ -369,6 +626,11 @@ import(pathToFileURL(mainBundle).href).then(async () => {
     await contentTracing.stopRecording(path.join(output, 'trace.json'));
     assert.ok(usage.percentage < 1, 'Trace buffer filled; recording is incomplete');
   }
+  if (cpuProfileEnabled) {
+    const { profile } = await main.webContents.debugger.sendCommand('Profiler.stop');
+    fs.writeFileSync(path.join(output, 'renderer.cpuprofile'), JSON.stringify(profile));
+    await main.webContents.debugger.sendCommand('Profiler.disable');
+  }
   const groups = {};
   for (const result of results) {
     const key = `${result.scenario}/${result.history}/${result.firstOpen ? 'first' : 'revisit'}/spawn-${result.coreSpawns}`;
@@ -393,8 +655,10 @@ import(pathToFileURL(mainBundle).href).then(async () => {
     schemaVersion: 3, recordedAt: new Date().toISOString(), sourceCommit: git(['rev-parse', 'HEAD']),
     sourceChanges: git(['status', '--short']), platform: process.platform, arch: process.arch,
     osRelease: os.release(), cpu: os.cpus()[0].model, cpuCount: os.cpus().length,
-    versions: process.versions, turns, rounds, safeMode, variant, initDelayMs,
-    traceEnabled, checkBudget, budget: checkBudget ? budget : null,
+    versions: process.versions, turns, rounds, safeMode, variant, initDelayMs, subscriptionTurns,
+    databaseBytes: fs.statSync(path.join(home, 'sessions/sessions.sqlite3')).size,
+    subscriptionEndpoint: 'Host CDP mouse dispatch to target workspace draft, focused editable input, inserted text and enabled Send plus two frames. Includes dispatch, polling and probe IPC overhead. Startup is measured separately from main import to the initial conversation frame, excluding fixture creation.',
+    traceEnabled, cpuProfileEnabled, checkBudget, budget: checkBudget ? budget : null,
     zoomFactor: main.webContents.getZoomFactor(), windowSize: main.getSize(),
     coreSha256: hash(process.env.WUU_DESKTOP_CORE), harnessSha256: hash(__filename),
     mainSha256: hash(mainBundle),
@@ -403,21 +667,22 @@ import(pathToFileURL(mainBundle).href).then(async () => {
     endpoint: 'Native mousedown timestamp to target pane intersecting viewport for two animation frames; then native draft insertion, focus and enabled Send for two frames. Includes probe IPC overhead; frames do not prove physical display presentation.',
     attribution: 'RPC durations are main handler envelopes (overlapping, not additive). Core stdout bytes include all clients/background work. Disk and network are not separately measured. No inference; safe mode excludes normal plugin startup. Interaction-window CDP counters are diagnostic. Settled work counters additionally cover background resume and two frames; only repeated large-fixture samples use the opt-in budget gate. Both include observer and draft-probe work.',
   };
-  fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ metadata, summary, results, timings }, null, 2));
+  fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ metadata, summary, results, startup, subscriptionResults, timings }, null, 2));
   const report = [
     '# Session switch baseline', '',
     `Source: ${metadata.sourceCommit}. ${metadata.platform}/${metadata.arch}; Electron ${process.versions.electron}; ${metadata.turns} turns; safe mode ${metadata.safeMode}; delay ${initDelayMs}ms.`, '',
     metadata.endpoint, '', metadata.attribution, '',
-    `Work budget: ${checkBudget ? 'enforced' : 'diagnostic only'}. Trace: ${traceEnabled ? 'enabled; exclude from timing baselines' : 'disabled'}.`, '',
+    `Work budget: ${checkBudget ? 'enforced' : 'diagnostic only'}. Trace: ${traceEnabled ? 'enabled; exclude from timing baselines' : 'disabled'}. CPU profile: ${cpuProfileEnabled ? 'enabled; exclude from timing baselines' : 'disabled'}.`, '',
     '| Repeated large-fixture work | Observed maximum | Configured ceiling |',
     '| --- | ---: | ---: |',
     ...Object.entries(budget.ceilings).map(([counter, ceiling]) => `| ${counter} | ${Math.max(...results.filter(r => r.scenario === 'repeat' && r.history === 'large').map(r => r.work[counter]))} | ${ceiling} |`), '',
     '| Scenario / history / first visit / observed spawns | n | Content P50 / P75 (ms) | Interactive P50 / P75 (ms) |',
     '| --- | ---: | ---: | ---: |',
     ...Object.entries(summary).map(([key, s]) => `| ${key} | ${s.n} | ${s.contentFrameMs.p50.toFixed(1)} / ${s.contentFrameMs.p75.toFixed(1)} | ${s.interactiveFrameMs.p50.toFixed(1)} / ${s.interactiveFrameMs.p75.toFixed(1)} |`),
-    '', 'Wall-clock samples are diagnostic, not thresholds. Do not pool scenarios, runtimes, or traced runs, or compare against the old paintMs/readyMs definition. Full samples and build hashes are in results.json.', '',
+    '', 'Wall-clock samples are diagnostic, not thresholds. Do not pool scenarios, runtimes, or profiled/traced runs, or compare against the old paintMs/readyMs definition. Full samples and build hashes are in results.json.', '',
   ].join('\n');
   fs.writeFileSync(path.join(output, 'report.md'), report);
+  await checkStreaming(main);
   fs.writeFileSync(path.join(output, 'final.png'), (await main.webContents.capturePage()).toPNG());
   console.log('RESULTS', path.join(output, 'results.json'));
   clearTimeout(timeout);
@@ -434,6 +699,6 @@ import(pathToFileURL(mainBundle).href).then(async () => {
     fs.writeFileSync(path.join(output, 'failure-state.json'), JSON.stringify(state, null, 2));
     fs.writeFileSync(path.join(output, 'failure.png'), (await main.webContents.capturePage()).toPNG());
   }
-  fs.writeFileSync(path.join(output, 'failure.json'), JSON.stringify({ error: String(error.stack || error), results, timings }, null, 2));
+  fs.writeFileSync(path.join(output, 'failure.json'), JSON.stringify({ error: String(error.stack || error), results, subscriptionResults, timings }, null, 2));
   console.error(error, 'FIXTURE', fixture); app.exit(1);
 });

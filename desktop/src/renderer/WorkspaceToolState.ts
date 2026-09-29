@@ -34,6 +34,7 @@ export function useWorkspaceToolState({
   openWorkspaceFileTab: (input: { context: RuntimeContext; path: string }) => void;
   openWorkspaceArtifactTab: (input: ArtifactPreviewRequest) => void;
   openWorkspaceProjectTab: (projectID: string, title: string) => void;
+  syncWorkspaceProjectTab: (project: { id: string; title: string } | undefined) => void;
   showWorkspaceToolPicker: () => void;
   focusWorkspaceViewTab: (id: string | undefined) => void;
   closeWorkspaceViewTab: (id: string) => void;
@@ -50,6 +51,7 @@ export function useWorkspaceToolState({
     closeTab,
     closeTabsWhere,
     reorderTabs,
+    syncProjectTab,
   } = useWorkspaceViewTabs();
 
   function ensureWorkspaceToolTab(view: WorkspacePanelView): void {
@@ -143,6 +145,7 @@ export function useWorkspaceToolState({
     openWorkspaceFileTab,
     openWorkspaceArtifactTab,
     openWorkspaceProjectTab,
+    syncWorkspaceProjectTab: syncProjectTab,
     showWorkspaceToolPicker,
     focusWorkspaceViewTab: focusTab,
     closeWorkspaceViewTab,

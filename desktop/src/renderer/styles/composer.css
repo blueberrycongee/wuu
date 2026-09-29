@@ -346,6 +346,24 @@
   margin-top: 16px;
 }
 
+.user-question-submit,
+.user-question-cancel,
+.user-question-skip {
+  position: relative;
+}
+
+:is(.user-question-submit, .user-question-cancel, .user-question-skip)[aria-busy="true"] > span {
+  opacity: 0;
+}
+
+:is(.user-question-submit, .user-question-cancel, .user-question-skip) > .control-busy-icon {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
 .user-question-actions button {
   display: inline-flex;
   align-items: center;
@@ -405,6 +423,10 @@
   opacity: 0.28;
 }
 
+.user-question-card button[aria-busy="true"]:disabled {
+  opacity: 1;
+}
+
 .user-question-error {
   margin-right: auto;
   color: var(--danger);
@@ -445,9 +467,9 @@
   grid-column: 1;
   grid-row: 2;
   align-self: end;
-  /* Keep the bottom inset stable across viewport widths and composer states. */
-  padding-block: clamp(12px, calc(0.833333vw + 8.666667px), 16px)
-    var(--composer-dock-bottom-space);
+  /* Keep the bottom inset stable across viewport widths and composer states.
+     The top space belongs to the latest-turn clearance (conversation-shell.css). */
+  padding-block: var(--conversation-dock-top-space) var(--composer-dock-bottom-space);
   /* Mirror the scroll region's reserved gutter. That region keeps its stable
      gutter on BOTH edges (see .scroll-region) so the message flow is centered
      on the pane's own centerline; matching it with an equal inset on each side
@@ -560,50 +582,61 @@
   width: 100%;
 }
 
-/* Two outlined groups sit on the canvas: the project the conversation belongs
- * to, and where in its repository the work starts. Segments share their
- * group's border, so hover surfaces fill the group edge to edge. */
+/* A quiet context line above the input: where the conversation will run,
+ * read as a path (project / branch) followed by the worktree mode. It is
+ * secondary to the input, so controls are borderless like the composer
+ * toolbar and their glyphs start on the input's text column. */
 .composer-workspace-bar {
+  --composer-context-height: 28px;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
   min-width: 0;
-  margin: 0 var(--space-3) var(--space-2);
+  margin: 0 var(--space-3) var(--space-1) calc(var(--card-padding) - var(--space-2));
+}
+
+@media (pointer: coarse) {
+  .composer-workspace-bar {
+    --composer-context-height: var(--control-row-height);
+  }
 }
 
 .composer-workspace-group {
   display: inline-flex;
-  align-items: stretch;
+  align-items: center;
+  gap: var(--space-1);
   min-width: 0;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-pill);
-}
-
-.composer-workspace-group :focus-visible {
-  z-index: 1;
 }
 
 .composer-workspace-bar .hero-project-pill-anchor {
   max-width: 100%;
 }
 
-.composer-workspace-bar .hero-project-pill {
-  height: auto;
-  /* The group border completes the shared control row height. */
-  min-height: calc(var(--control-row-height) - 2px);
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-pill);
+.composer-workspace-bar .hero-project-pill,
+.composer-worktree-toggle {
+  height: var(--composer-context-height);
+  gap: 6px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-xs);
+  color: var(--ink-soft);
   font-size: var(--font-sm);
+}
+
+.composer-workspace-bar .hero-project-pill:hover:not(:disabled),
+.composer-workspace-bar .hero-project-pill[aria-expanded="true"] {
+  color: var(--ink);
 }
 
 .composer-git-controls {
   max-width: 50%;
 }
 
-.composer-git-controls .hero-project-pill {
-  border-start-end-radius: 0;
-  border-end-end-radius: 0;
+/* The branch belongs to the project before it. */
+.composer-git-controls::before {
+  flex: none;
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  content: "/" / "";
 }
 
 .composer-worktree-toggle {
@@ -611,15 +644,8 @@
   display: inline-flex;
   flex: none;
   align-items: center;
-  gap: var(--space-2);
-  min-height: calc(var(--control-row-height) - 2px);
-  padding: var(--space-1) var(--space-3);
   border: 0;
-  border-inline-start: 1px solid var(--hairline);
-  border-start-end-radius: var(--radius-pill);
-  border-end-end-radius: var(--radius-pill);
   background: transparent;
-  color: var(--ink-soft);
   font: inherit;
   font-size: var(--font-sm);
   white-space: nowrap;
@@ -700,8 +726,13 @@
 
 .composer-expand-button {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  /* Centered on the first text line, never closer to the corner than the
+   * send circle; the text's own leading sets the axis at every size. */
+  top: max(
+    var(--composer-corner-inset),
+    calc(var(--composer-text-padding-top) + var(--conversation-reading-line-height) / 2 - 14px)
+  );
+  right: var(--composer-corner-inset);
   width: 28px;
   height: 28px;
   z-index: 3;
@@ -782,7 +813,13 @@
   /* Text and toolbar glyphs share the card inset used by code blocks and
    * bubbles; the toolbar subtracts its 32px buttons' glyph offset. */
   --composer-text-start: var(--card-padding);
+  /* The draft keeps the query bubble's framed-text inset, so typed and sent
+   * text sit the same distance from their frames. */
+  --composer-text-padding-top: var(--conversation-framed-text-inset-block);
   --composer-control-icon-inset: calc((32px - var(--icon-size)) / 2);
+  /* Filled corner controls keep their visible edge this far from the frame
+   * on both sides, so the send circle and the expand button share an axis. */
+  --composer-corner-inset: var(--space-2);
   position: relative;
   width: 100%;
   min-height: var(--composer-collapsed-min-height);
@@ -810,6 +847,7 @@
 
 .hero-composer-wrap .composer {
   --composer-text-start: var(--card-padding);
+  --composer-text-padding-top: 16px;
   min-height: var(--composer-collapsed-min-height);
 }
 
@@ -940,7 +978,7 @@
   min-height: var(--composer-input-header-row-height, 36px);
   padding: 4px var(--composer-input-header-inline-padding, 8px);
   color: var(--ink);
-  font-size: 13.5px;
+  font-size: var(--font-sm);
   line-height: 1.5;
   transition: background-color var(--motion-fast) var(--ease-out);
 }
@@ -1005,7 +1043,7 @@
 }
 
 .composer-queue-action.edit:hover {
-  color: var(--accent-warm);
+  color: var(--wuu-accent);
 }
 
 .composer-queue-action.danger:hover {
@@ -1041,7 +1079,9 @@
 .composer-accessory-drawer {
   --composer-drawer-row-height: 32px;
   --composer-drawer-max-height: min(34dvh, 280px);
-  font-size: 13.5px;
+  /* Compact composer chrome: the same step as the toolbar chips, following
+   * the UI size preference. */
+  font-size: var(--font-sm);
   line-height: 1.5;
 }
 
@@ -1146,8 +1186,7 @@
 
 .composer-pending-drawer.expanded .composer-pending-preview {
   color: var(--ink-muted);
-  font-size: 12.5px;
-  font-weight: 500;
+  font-weight: var(--weight-medium);
 }
 
 .composer-pending-drawer.expanded.is-held .composer-pending-preview {
@@ -1169,22 +1208,20 @@
   border: 0;
   outline: 0;
   background: transparent;
-  padding: 10px 44px 8px var(--composer-text-start);
+  padding: var(--composer-text-padding-top) 44px 8px var(--composer-text-start);
   color: var(--ink);
   font-size: var(--font-body);
-  line-height: 24px;
+  /* Drafts read at the message rhythm: typed text keeps its leading once
+   * it is sent. */
+  line-height: var(--conversation-reading-line-height);
 }
 
+/* The hero keeps a roomier top inset than the dock composer; its expand
+   control follows the first line through --composer-text-padding-top. */
 .hero-composer-wrap .composer textarea {
   height: 78px;
   min-height: 78px;
-  padding: 16px 52px 8px var(--composer-text-start);
-}
-
-/* The hero keeps a roomier top inset than the dock composer. Move its
-   expand control by the same amount so both still share one first-row axis. */
-.hero-composer-wrap .composer-expand-button {
-  top: 14px;
+  padding-right: 52px;
 }
 
 .document-composer-wrap .composer-stack {
@@ -1219,12 +1256,15 @@
   box-shadow: var(--shadow-tray);
 }
 
+/* One line of text plus the dock's top inset, so the first row keeps the
+   dock's axis and a single line never scrolls at large text sizes. */
 .document-composer-wrap .composer-stack .composer textarea {
-  height: 44px;
-  min-height: 44px;
-  /* Match the canonical dock first-row axis: 10px + half of the 24px line
-     height equals the 22px center of the 28px button positioned at top: 8px. */
-  padding-top: 10px;
+  --composer-document-input-height: max(
+    44px,
+    calc(var(--composer-text-padding-top) + var(--conversation-reading-line-height) + 4px)
+  );
+  height: var(--composer-document-input-height);
+  min-height: var(--composer-document-input-height);
   padding-bottom: 4px;
 }
 
@@ -1251,7 +1291,10 @@
   align-items: center;
   gap: 8px;
   overflow: hidden;
-  padding: 0 calc(var(--composer-text-start) - var(--composer-control-icon-inset)) 4px;
+  /* The leading glyph aligns with the text; the trailing send circle, drawn
+   * 2px inside its button, aligns with the corner instead. */
+  padding: 0 calc(var(--composer-corner-inset) - 2px) 4px
+    calc(var(--composer-text-start) - var(--composer-control-icon-inset));
   container: composer-toolbar / inline-size;
 }
 
@@ -1717,6 +1760,14 @@
   background: transparent;
 }
 
+.composer-send-button[aria-busy="true"]:disabled {
+  color: var(--paper);
+}
+
+.composer-send-button[aria-busy="true"]:disabled::before {
+  background: var(--ink);
+}
+
 .composer-stop-button::before {
   background: var(--ink);
 }
@@ -1767,10 +1818,10 @@
   max-height: min(400px, var(--floating-menu-available-height, calc(100vh - 120px)));
   overflow: hidden;
   border: 1px solid var(--menu-border);
-  border-radius: calc(var(--radius-sm) + var(--space-2));
+  border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
-  padding: var(--space-2);
+  padding: var(--menu-inset);
   transform-origin: bottom left;
   --menu-enter-y: 4px;
   animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
@@ -2022,38 +2073,31 @@
   display: grid;
   min-height: 0;
   flex: 0 1 auto;
-  max-height: 240px;
+  /* A half row at the bottom shows that the list scrolls. */
+  max-height: calc((var(--control-row-height) + 1px) * 7.5 + var(--menu-inset));
   overflow: auto;
-  gap: 2px;
-  padding-block: var(--space-1);
+  gap: 1px;
+  padding-block: var(--menu-inset);
 }
 
+/* The pickers are compact menus: the same row, corner, and label roles as
+ * select panels, with one icon column that lines up with the search icon. */
 .composer-project-menu button {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--icon-size-sm) minmax(0, 1fr) auto;
   flex-shrink: 0;
   height: auto;
   min-height: var(--control-row-height);
   align-items: center;
   gap: var(--menu-item-gap);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
   font-size: var(--font-menu);
-  font-weight: 400;
+  font-weight: var(--weight-medium);
   line-height: var(--line-ui);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
-}
-
-.composer-project-menu > button,
-.project-picker-list > button {
-  display: grid;
-  grid-template-columns: var(--icon-size-sm) minmax(0, 1fr) var(--icon-size-sm);
-  padding: var(--space-2) var(--space-1);
-}
-
-.composer-project-menu > button {
-  font-weight: var(--weight-medium);
 }
 
 .composer-project-menu button:hover:not(:disabled) {
@@ -2083,10 +2127,12 @@
 }
 
 .composer-project-menu .menu-search {
-  padding: var(--space-2) var(--space-1);
-  border-bottom: 0;
   font-weight: 400;
   line-height: var(--line-ui);
+}
+
+.composer-project-menu .menu-search + button {
+  margin-top: var(--menu-inset);
 }
 
 .composer-project-menu .menu-search input {
@@ -2095,10 +2141,11 @@
 
 .project-picker-heading {
   flex-shrink: 0;
-  padding: var(--space-2) var(--space-1) var(--space-1);
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  font-weight: 400;
+  padding: var(--menu-inset) var(--menu-item-padding-inline) 0;
+  color: var(--codex-menu-label-text);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
 }
 
 .composer-project-menu .menu-search svg {
@@ -2108,15 +2155,16 @@
 
 .project-picker-empty {
   color: var(--ink-muted);
-  padding: 8px 9px;
-  font-size: var(--font-sm);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
+  font-size: var(--font-menu);
+  line-height: var(--line-ui);
 }
 
 .project-picker-divider {
   height: 1px;
   flex-shrink: 0;
   background: var(--hairline-soft);
-  margin: var(--space-1);
+  margin: 0 var(--menu-item-padding-inline) var(--menu-inset);
 }
 
 /* Right-click edit menu for the composer textarea (ComposerContextMenu
@@ -2407,35 +2455,40 @@
   max-width: 100%;
 }
 
-.composer-branch-menu small {
-  display: block;
-  margin-top: 2px;
+/* A shared prefix such as codex/ steps back so the part people scan for,
+ * the branch's own name, carries the row. */
+.composer-branch-prefix {
+  color: var(--ink-muted);
+  font-weight: var(--weight-regular);
+}
+
+.composer-branch-trailing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.composer-branch-dirty {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   color: var(--ink-muted);
   font-size: var(--font-xs);
-  font-weight: 400;
+  font-weight: var(--weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-project-menu .composer-branch-dirty svg {
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
 }
 
 .composer-branch-menu button:disabled {
   cursor: default;
 }
 
-.composer-branch-create {
-  display: flex;
-  gap: 6px;
-  padding: 4px;
-}
-
-.composer-branch-create input {
-  min-width: 0;
-  flex: 1;
-  border: 1px solid var(--menu-border);
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--ink);
-  padding: 6px 8px;
-}
-
-.composer-branch-menu button[aria-checked="true"] {
+.composer-project-menu button[aria-checked="true"] {
+  background: var(--menu-hover);
   opacity: 1;
 }
 

@@ -59,6 +59,7 @@ const (
 	MethodAuthXAILoginPoll                = "auth/xai/login/poll"
 	MethodAuthXAILoginCancel              = "auth/xai/login/cancel"
 	MethodConfigCatalogRefresh            = "config/model-catalog/refresh"
+	MethodConfigCatalogProviders          = "config/model-catalog/providers"
 	MethodConfigProviderRemove            = "config/provider/remove"
 	MethodSkillList                       = "skill/list"
 	MethodThreadStart                     = "thread/start"
@@ -299,6 +300,8 @@ type InitializeResult struct {
 }
 
 type FeatureFlags struct {
+	// ProjectAgent is a build-time capability; clients must treat absence as off.
+	ProjectAgent bool `json:"project_agent"`
 	// Browser advertises that this client can host the embedded browser
 	// backend (hidden WebContentsView + CDP bridge). Mirrored by
 	// desktop/src/shared/protocol.ts. Filled by config_handlers.handleInitialize.
@@ -422,6 +425,36 @@ type ConfigReadResult struct {
 	Providers          []ProviderSummary            `json:"providers,omitempty"`
 	AdvancedSettings   AdvancedSettingsSummary      `json:"advanced_settings"`
 	GeneralSettings    GeneralSettingsSummary       `json:"general_settings"`
+}
+
+type ConfigModelCatalogProvidersParams struct {
+	// Provider limits the result to one catalog provider and includes its
+	// models. Empty lists every connectable provider without models.
+	Provider string `json:"provider,omitempty"`
+}
+
+// CatalogProviderSummary is a catalog service Wuu can connect with a key.
+type CatalogProviderSummary struct {
+	ID           string                `json:"id"`
+	Name         string                `json:"name"`
+	Type         string                `json:"type"`
+	BaseURL      string                `json:"base_url"`
+	APIKeyEnv    string                `json:"api_key_env,omitempty"`
+	ModelCount   int                   `json:"model_count"`
+	DefaultModel string                `json:"default_model"`
+	Models       []CatalogModelSummary `json:"models,omitempty"`
+}
+
+type CatalogModelSummary struct {
+	ID            string `json:"id"`
+	Name          string `json:"name,omitempty"`
+	ReleaseDate   string `json:"release_date,omitempty"`
+	ContextWindow int    `json:"context_window,omitempty"`
+	ToolCall      bool   `json:"tool_call,omitempty"`
+}
+
+type ConfigModelCatalogProvidersResult struct {
+	Providers []CatalogProviderSummary `json:"providers"`
 }
 
 type ConfigModelCatalogRefreshResult struct {
@@ -708,9 +741,15 @@ type ExtensionPluginActivationIssue struct {
 }
 
 type ExtensionInventoryRecord struct {
-	ID                   string                           `json:"id"`
-	Name                 string                           `json:"name"`
-	Description          string                           `json:"description,omitempty"`
+	ID string `json:"id"`
+	// Name and Description are what people see: a plugin manifest's
+	// interface displayName and shortDescription, then its name and
+	// description, and the id when it names nothing.
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// LongDescription and Developer come from the plugin manifest's interface.
+	LongDescription      string                           `json:"long_description,omitempty"`
+	Developer            string                           `json:"developer,omitempty"`
 	Icon                 *ExtensionIconDescriptor         `json:"icon,omitempty"`
 	Kind                 extensions.Kind                  `json:"kind"`
 	Provenance           extensions.Provenance            `json:"provenance"`
@@ -934,9 +973,17 @@ type ConfigModelUpdateParams struct {
 	// Accepted values: "openai", "openai-compatible", "anthropic", "claude",
 	// "anthropic-official", "xai-subscription", "grok-build". Codex OAuth types remain
 	// excluded because they require a separate connection flow.
-	Type           *string `json:"type,omitempty"`
-	RemoveModel    string  `json:"remove_model,omitempty"`
-	CreateProvider bool    `json:"create_provider,omitempty"`
+	Type        *string `json:"type,omitempty"`
+	RemoveModel string  `json:"remove_model,omitempty"`
+	// AddModel re-enables a removed choice or adds a model ID the catalog
+	// does not list. It applies to an existing provider only.
+	AddModel       string `json:"add_model,omitempty"`
+	CreateProvider bool   `json:"create_provider,omitempty"`
+	// KeepSelection saves the provider's connection, model, and choices
+	// without making it the workspace default. It cannot be combined with a
+	// conversation, a variant, an effort, or a permission change; on the
+	// default provider it cannot move the workspace model either.
+	KeepSelection bool `json:"keep_selection,omitempty"`
 	// ReuseCodexCredentials opts a Codex subscription provider into reading
 	// the local Codex CLI auth store. An explicit false is persisted so
 	// legacy defaults cannot re-enable reuse after the user declined it.
@@ -1199,16 +1246,22 @@ type CodexModelSummary struct {
 }
 
 type ProviderSummary struct {
-	Name                  string                 `json:"name"`
-	Type                  string                 `json:"type"`
-	Model                 string                 `json:"model"`
-	BaseURL               string                 `json:"base_url,omitempty"`
-	APIKeyConfigured      bool                   `json:"api_key_configured,omitempty"`
-	ConnectionLocked      bool                   `json:"connection_locked,omitempty"`
-	AutoDiscovered        bool                   `json:"auto_discovered,omitempty"`
-	ReuseCodexCredentials bool                   `json:"reuse_codex_credentials,omitempty"`
-	CodexCredentialSource string                 `json:"codex_credential_source,omitempty"`
-	Models                []ProviderModelSummary `json:"models,omitempty"`
+	Name                  string `json:"name"`
+	Type                  string `json:"type"`
+	Model                 string `json:"model"`
+	BaseURL               string `json:"base_url,omitempty"`
+	APIKeyConfigured      bool   `json:"api_key_configured,omitempty"`
+	ConnectionLocked      bool   `json:"connection_locked,omitempty"`
+	AutoDiscovered        bool   `json:"auto_discovered,omitempty"`
+	ReuseCodexCredentials bool   `json:"reuse_codex_credentials,omitempty"`
+	CodexCredentialSource string `json:"codex_credential_source,omitempty"`
+	// CatalogID and CatalogName identify the model catalog service the
+	// endpoint belongs to; both are empty for unrecognized endpoints.
+	CatalogID   string                 `json:"catalog_id,omitempty"`
+	CatalogName string                 `json:"catalog_name,omitempty"`
+	Models      []ProviderModelSummary `json:"models,omitempty"`
+	// HiddenModels are choices removed from this provider, sorted by ID.
+	HiddenModels []string `json:"hidden_models,omitempty"`
 	// LatestRequest is the newest settled request recorded for this built-in
 	// model service. It stays on the provider because these credentials are
 	// not the external engine's credentials.

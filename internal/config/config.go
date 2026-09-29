@@ -335,7 +335,7 @@ type AgentConfig struct {
 	// is used.
 	CatwalkAutoupdate bool `json:"catwalk_autoupdate,omitempty"`
 	// ToolLoading controls how Wuu exposes large/deferred tool surfaces.
-	// Empty means "auto": first-party native provider paths use provider
+	// Empty means "auto": supported first-party models use their native
 	// deferred-loading protocol; every other path uses a flat tool list.
 	// Valid: auto, flat, native.
 	//
@@ -1184,26 +1184,43 @@ func UpdateProviderModel(configPath, providerName, newModel string) error {
 	return securefs.WriteFileAtomic(configPath, append(out, '\n'))
 }
 
-// UpdateProviderSelection changes the default provider and the selected
-// provider's model in the config file at configPath.
-func UpdateProviderSelection(configPath, providerName, newModel string) error {
-	return updateProviderSelection(configPath, providerName, newModel, nil, nil, nil, nil, nil, nil, nil, false, nil)
+// ProviderChange is one atomic write of a provider's editable fields. Nil
+// pointers keep the saved value; an empty APIKey or AuthToken removes the
+// inline secret. Model is the provider's own model and is always written.
+type ProviderChange struct {
+	// Create adds the provider; Type is written verbatim and defaults to
+	// "openai-compatible". The caller whitelists allowed types.
+	Create bool
+	Type   string
+	Model  string
+
+	BaseURL               *string
+	APIKey                *string
+	AuthToken             *string
+	ReuseCodexCredentials *bool
+
+	// RemovedModels disable choices so catalog refreshes cannot restore them;
+	// they cannot include Model. AddedModels re-enable removed choices or add
+	// model IDs the catalog does not list.
+	RemovedModels []string
+	AddedModels   []string
+
+	// Select makes the provider the default and writes the agent selection
+	// fields below. Without it the default provider and agent settings stay
+	// untouched, and the selection fields must be nil.
+	Select         bool
+	Effort         *string
+	Variant        *string
+	PermissionMode *string
 }
 
-// UpdateProviderRuntime changes the default provider and editable connection
-// fields for that provider. A nil apiKey keeps the existing key configuration.
-// Removed models are disabled in the same atomic write and cannot include newModel.
-func UpdateProviderRuntime(configPath, providerName, newModel string, baseURL, apiKey, authToken, effort, variant, permissionMode *string, reuseCodexCredentials *bool, removedModels ...string) error {
-	return updateProviderSelection(configPath, providerName, newModel, baseURL, apiKey, authToken, effort, variant, permissionMode, reuseCodexCredentials, false, nil, removedModels...)
-}
-
-// CreateProviderRuntime creates a new provider with the requested type
-// (e.g. "openai-compatible", "anthropic"), selects it, and persists its
-// editable runtime fields. A nil or empty providerType defaults to
-// "openai-compatible". The caller is responsible for whitelisting allowed
-// type values before invocation; this function writes the type verbatim.
-func CreateProviderRuntime(configPath, providerName string, providerType *string, newModel string, baseURL, apiKey, authToken, effort, variant, permissionMode *string, reuseCodexCredentials *bool) error {
-	return updateProviderSelection(configPath, providerName, newModel, baseURL, apiKey, authToken, effort, variant, permissionMode, reuseCodexCredentials, true, providerType)
+// UpdateProvider applies change to the provider named providerName in the
+// config file at configPath.
+func UpdateProvider(configPath, providerName string, change ProviderChange) error {
+	if !change.Select && (change.Effort != nil || change.Variant != nil || change.PermissionMode != nil) {
+		return errors.New("agent selection fields require selecting the provider")
+	}
+	return updateProviderSelection(configPath, providerName, change)
 }
 
 // AddProviderIfMissing saves a provider without changing the default provider
@@ -1712,7 +1729,7 @@ func setOptionalBool(target map[string]any, key string, value *bool) {
 	target[key] = true
 }
 
-func updateProviderSelection(configPath, providerName, newModel string, baseURL, apiKey, authToken, effort, variant, permissionMode *string, reuseCodexCredentials *bool, createProvider bool, providerType *string, removedModels ...string) error {
+func updateProviderSelection(configPath, providerName string, change ProviderChange) error {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return fmt.Errorf("read config: %w", err)
@@ -1727,22 +1744,19 @@ func updateProviderSelection(configPath, providerName, newModel string, baseURL,
 	if !ok {
 		return fmt.Errorf("providers section not found")
 	}
+	newModel := change.Model
+	baseURL := change.BaseURL
 	provider, ok := providers[providerName].(map[string]any)
-	if createProvider {
+	if change.Create {
 		if ok {
 			return fmt.Errorf("provider %q already exists", providerName)
 		}
 		if strings.TrimSpace(providerName) == "" {
 			return fmt.Errorf("provider name is required")
 		}
-		// Resolve the requested type. Nil or empty defaults to
-		// "openai-compatible" to preserve the legacy behavior for
-		// callers that have not been updated to send a type yet.
 		providerTypeValue := "openai-compatible"
-		if providerType != nil {
-			if requested := strings.ToLower(strings.TrimSpace(*providerType)); requested != "" {
-				providerTypeValue = requested
-			}
+		if requested := strings.ToLower(strings.TrimSpace(change.Type)); requested != "" {
+			providerTypeValue = requested
 		}
 		if baseURL == nil || strings.TrimSpace(*baseURL) == "" {
 			if !IsGrokBuildProvider(providerTypeValue) {
@@ -1773,19 +1787,21 @@ func updateProviderSelection(configPath, providerName, newModel string, baseURL,
 		if IsXAISubscriptionProvider(providerTypeValue) {
 			provider["wire_api"] = "responses"
 		}
-		if apiKey != nil && strings.TrimSpace(*apiKey) != "" {
-			provider["api_key"] = strings.TrimSpace(*apiKey)
+		if change.APIKey != nil && strings.TrimSpace(*change.APIKey) != "" {
+			provider["api_key"] = strings.TrimSpace(*change.APIKey)
 		}
-		if authToken != nil && strings.TrimSpace(*authToken) != "" {
-			provider["auth_token"] = strings.TrimSpace(*authToken)
+		if change.AuthToken != nil && strings.TrimSpace(*change.AuthToken) != "" {
+			provider["auth_token"] = strings.TrimSpace(*change.AuthToken)
 		}
 		providers[providerName] = provider
 	} else if !ok {
 		return fmt.Errorf("provider %q not found", providerName)
 	}
-	raw["default_provider"] = providerName
+	if change.Select {
+		raw["default_provider"] = providerName
+	}
 	provider["model"] = newModel
-	for _, id := range removedModels {
+	for _, id := range change.RemovedModels {
 		id = strings.TrimSpace(id)
 		if id == "" {
 			continue
@@ -1793,23 +1809,22 @@ func updateProviderSelection(configPath, providerName, newModel string, baseURL,
 		if id == strings.TrimSpace(newModel) {
 			return fmt.Errorf("select another model before removing %q", id)
 		}
-		models, _ := provider["models"].(map[string]any)
-		if models == nil {
-			models = make(map[string]any)
-			provider["models"] = models
-		}
-		model, _ := models[id].(map[string]any)
-		if model == nil {
-			model = make(map[string]any)
-			models[id] = model
-		}
+		model := providerModelEntry(provider, id)
 		// Keep an override so catalog refreshes cannot resurrect the choice.
 		model["disabled"] = true
+	}
+	for _, id := range change.AddedModels {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		// An entry of its own keeps an ID the catalog does not list.
+		delete(providerModelEntry(provider, id), "disabled")
 	}
 	if baseURL != nil {
 		provider["base_url"] = strings.TrimSpace(*baseURL)
 	}
-	if apiKey != nil {
+	if apiKey := change.APIKey; apiKey != nil {
 		if key := strings.TrimSpace(*apiKey); key != "" {
 			provider["api_key"] = key
 		}
@@ -1818,7 +1833,7 @@ func updateProviderSelection(configPath, providerName, newModel string, baseURL,
 		}
 		delete(provider, "api_key_env")
 	}
-	if authToken != nil {
+	if authToken := change.AuthToken; authToken != nil {
 		if token := strings.TrimSpace(*authToken); token != "" {
 			provider["auth_token"] = token
 		}
@@ -1827,7 +1842,7 @@ func updateProviderSelection(configPath, providerName, newModel string, baseURL,
 		}
 		delete(provider, "auth_token_env")
 	}
-	if effort != nil {
+	if effort := change.Effort; effort != nil {
 		agent, _ := raw["agent"].(map[string]any)
 		if agent == nil {
 			agent = make(map[string]any)
@@ -1839,7 +1854,7 @@ func updateProviderSelection(configPath, providerName, newModel string, baseURL,
 			agent["effort"] = strings.TrimSpace(*effort)
 		}
 	}
-	if variant != nil {
+	if variant := change.Variant; variant != nil {
 		agent, _ := raw["agent"].(map[string]any)
 		if agent == nil {
 			agent = make(map[string]any)
@@ -1851,10 +1866,10 @@ func updateProviderSelection(configPath, providerName, newModel string, baseURL,
 			agent["variant"] = strings.TrimSpace(*variant)
 		}
 	}
-	if reuseCodexCredentials != nil {
-		provider["reuse_codex_credentials"] = *reuseCodexCredentials
+	if change.ReuseCodexCredentials != nil {
+		provider["reuse_codex_credentials"] = *change.ReuseCodexCredentials
 	}
-	if permissionMode != nil {
+	if permissionMode := change.PermissionMode; permissionMode != nil {
 		mode := NormalizePermissionMode(*permissionMode)
 		if err := validatePermissionMode(mode); err != nil {
 			return err
@@ -1876,6 +1891,20 @@ func updateProviderSelection(configPath, providerName, newModel string, baseURL,
 		return fmt.Errorf("marshal config: %w", err)
 	}
 	return securefs.WriteFileAtomic(configPath, append(out, '\n'))
+}
+
+func providerModelEntry(provider map[string]any, id string) map[string]any {
+	models, _ := provider["models"].(map[string]any)
+	if models == nil {
+		models = make(map[string]any)
+		provider["models"] = models
+	}
+	model, _ := models[id].(map[string]any)
+	if model == nil {
+		model = make(map[string]any)
+		models[id] = model
+	}
+	return model
 }
 
 func applyDefaults(cfg *Config) {

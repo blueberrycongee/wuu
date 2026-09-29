@@ -688,8 +688,9 @@ func (e *Env) NormalizeDisplayPath(absPath string) string {
 //
 // A thread forked with mode "worktree" persists the checkout path in its
 // session metadata; the turn entry injects it into the tool execution
-// context via toolctx.WithWorktreePath. The helpers below apply that
-// binding STRICTLY AFTER the ordinary sandbox / whitelist checks:
+// context via toolctx.WithWorktreeBinding, keyed to the root of the toolkit
+// running the turn. The helpers below apply that binding only while RootDir
+// is that root, and STRICTLY AFTER the ordinary sandbox / whitelist checks:
 //
 //   - the sandbox keeps judging the model-visible workspace paths against
 //     RootDir / FileScopeRoots exactly as before (nothing is loosened, and
@@ -704,15 +705,18 @@ func (e *Env) NormalizeDisplayPath(absPath string) string {
 //
 // When the toolkit is already rooted at the checkout (the normal thread
 // runtime path), the binding equals RootDir and every helper is a no-op.
+// Workers cloned for their own directory and a root moved mid-turn by
+// set_session_workspace no longer match the bound root, so they execute in
+// their own RootDir.
 // ---------------------------------------------------------------------------
 
 // worktreeExecRoot returns the ctx-bound worktree checkout when one is
-// bound and differs from RootDir. A bound checkout that is missing on disk
+// bound for this RootDir and differs from it. A bound checkout that is missing on disk
 // is an error — tools must fail loudly instead of silently falling back to
 // the parent repo the user believes is isolated.
 func (e *Env) worktreeExecRoot(ctx context.Context) (string, bool, error) {
-	path, ok := toolctx.WorktreePath(ctx)
-	if !ok {
+	boundRoot, path, ok := toolctx.WorktreeBinding(ctx)
+	if !ok || filepath.Clean(boundRoot) != filepath.Clean(e.RootDir) {
 		return "", false, nil
 	}
 	abs, err := filepath.Abs(path)

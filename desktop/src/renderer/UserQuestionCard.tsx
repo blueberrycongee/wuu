@@ -1,4 +1,4 @@
-import { ArrowRight, Circle, CircleDot, Pencil, Square, SquareCheck, X } from "./WuuIcons";
+import { ArrowRight, Circle, CircleDot, LoaderCircle, Pencil, Square, SquareCheck, X } from "./WuuIcons";
 import { useEffect, useMemo, useState } from "react";
 import type {
   UserQuestionAnswer,
@@ -84,7 +84,8 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
   const { t } = useI18n();
   const [selected, setSelected] = useState<Record<string, string[]>>({});
   const [custom, setCustom] = useState<Record<string, string>>({});
-  const [submitting, setSubmitting] = useState(false);
+  const [pendingAction, setPendingAction] = useState<"answer" | "custom" | "close" | "skip" | null>(null);
+  const submitting = pendingAction !== null;
   const [error, setError] = useState("");
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const [drafting, setDrafting] = useState(false);
@@ -162,7 +163,7 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
       (nextSelected[question.id]?.length ?? 0) > 0 ||
       (question.allow_custom && (custom[question.id]?.trim().length ?? 0) > 0));
     if (!ready) return;
-    setSubmitting(true);
+    setPendingAction("answer");
     setError("");
     try {
       await onAnswer(answersFrom(nextSelected));
@@ -170,7 +171,7 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
       setError(
         cause instanceof Error ? cause.message : t("userQuestion.sendFailed"),
       );
-      setSubmitting(false);
+      setPendingAction(null);
     }
   }
 
@@ -182,10 +183,10 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
   }
 
   async function submitOfferCustom(): Promise<void> {
-    if (!offer || !offerQuestion) return;
+    if (!offer || !offerQuestion || submitting) return;
     const value = (custom[offerQuestion.id] ?? "").trim();
     if (!value) return;
-    setSubmitting(true);
+    setPendingAction("custom");
     setError("");
     try {
       keepOffer();
@@ -194,7 +195,7 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
       setError(
         cause instanceof Error ? cause.message : t("userQuestion.sendFailed"),
       );
-      setSubmitting(false);
+      setPendingAction(null);
     }
   }
 
@@ -205,14 +206,15 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
     void onCustom?.();
   }
 
-  function cancelQuestion(): void {
-    setSubmitting(true);
+  function cancelQuestion(action: "close" | "skip"): void {
+    if (submitting) return;
+    setPendingAction(action);
     setError("");
     void onCancel().catch((cause) => {
       setError(
         cause instanceof Error ? cause.message : t("userQuestion.cancelFailed"),
       );
-      setSubmitting(false);
+      setPendingAction(null);
     });
   }
 
@@ -233,11 +235,12 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
           <button
             aria-label={t("userQuestion.cancel")}
             className="user-question-close"
+            aria-busy={pendingAction === "close"}
             disabled={submitting}
-            onClick={cancelQuestion}
+            onClick={() => cancelQuestion("close")}
             type="button"
           >
-            <X />
+            {pendingAction === "close" ? <LoaderCircle className="control-busy-icon" aria-hidden="true" /> : <X />}
           </button>
         </div>
         {header ? <p className="user-question-body">{prompt}</p> : null}
@@ -254,6 +257,7 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
               return (
                 <button
                   aria-checked={active}
+                  aria-busy={pendingAction === "answer" && active}
                   className="user-question-option user-question-option-offer"
                   data-active={active || undefined}
                   disabled={submitting}
@@ -271,7 +275,9 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
                       </span>
                     ) : null}
                   </span>
-                  <ArrowRight className="user-question-option-go" aria-hidden="true" />
+                  {pendingAction === "answer" && active
+                    ? <LoaderCircle className="user-question-option-go control-busy-icon" aria-hidden="true" />
+                    : <ArrowRight className="user-question-option-go" aria-hidden="true" />}
                 </button>
               );
             })}
@@ -317,20 +323,24 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
           {drafting ? (
             <button
               className="user-question-submit"
+              aria-busy={pendingAction === "custom"}
               disabled={submitting || !(custom[offerQuestion.id]?.trim())}
               onClick={() => void submitOfferCustom()}
               type="button"
             >
-              {submitting ? t("userQuestion.sending") : t("userQuestion.submit")}
+              {pendingAction === "custom" && <LoaderCircle className="control-busy-icon" aria-hidden="true" />}
+              <span>{t("userQuestion.submit")}</span>
             </button>
           ) : (
             <button
               className="user-question-skip"
+              aria-busy={pendingAction === "skip"}
               disabled={submitting}
-              onClick={cancelQuestion}
+              onClick={() => cancelQuestion("skip")}
               type="button"
             >
-              {countdown ?? t("userQuestion.skip")}
+              {pendingAction === "skip" && <LoaderCircle className="control-busy-icon" aria-hidden="true" />}
+              <span>{countdown ?? t("userQuestion.skip")}</span>
             </button>
           )}
         </div>
@@ -373,6 +383,7 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
                       className="user-question-option"
                       data-active={active || undefined}
                       data-multi={question.multi_select ? "true" : "false"}
+                      disabled={submitting}
                       key={option.label}
                       onClick={() => void chooseOption(question.id, option.label, Boolean(question.multi_select))}
                       role={question.multi_select ? "checkbox" : "radio"}
@@ -404,6 +415,7 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
               <input
                 aria-label={t("userQuestion.customAriaLabel", { question: lead })}
                 className="user-question-custom"
+                disabled={submitting}
                 onChange={(event) => {
                   const value = event.currentTarget.value;
                   setCustom((current) => ({ ...current, [question.id]: value }));
@@ -419,19 +431,23 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
         {error ? <span className="user-question-error" role="alert">{error}</span> : null}
         <button
           className="user-question-cancel"
+          aria-busy={pendingAction === "close"}
           disabled={submitting}
-          onClick={cancelQuestion}
+          onClick={() => cancelQuestion("close")}
           type="button"
         >
-          {t("userQuestion.cancel")}
+          {pendingAction === "close" && <LoaderCircle className="control-busy-icon" aria-hidden="true" />}
+          <span>{t("userQuestion.cancel")}</span>
         </button>
         <button
           className="user-question-submit"
+          aria-busy={pendingAction === "answer"}
           disabled={!complete || submitting}
           onClick={() => void submit()}
           type="button"
         >
-          {submitting ? t("userQuestion.sending") : t("userQuestion.continue")}
+          {pendingAction === "answer" && <LoaderCircle className="control-busy-icon" aria-hidden="true" />}
+          <span>{t("userQuestion.continue")}</span>
         </button>
       </div>
     </section>

@@ -594,7 +594,7 @@ func TestTurnToolRuntimeFinalizesBeforeDurableSettlement(t *testing.T) {
 	}
 }
 
-type historyAwareRuntimeTools struct{}
+type historyAwareRuntimeTools struct{ streaming bool }
 
 func (historyAwareRuntimeTools) Definitions() []providers.ToolDefinition {
 	return []providers.ToolDefinition{{Name: "barrier_tool"}}
@@ -607,8 +607,8 @@ func (historyAwareRuntimeTools) Execute(ctx context.Context, _ providers.ToolCal
 	return "history available", nil
 }
 
-func (historyAwareRuntimeTools) ToolMetadata(_ providers.ToolCall) (ToolMetadata, bool) {
-	return ToolMetadata{ReadOnly: true, ConcurrencySafe: false}, true
+func (h historyAwareRuntimeTools) ToolMetadata(_ providers.ToolCall) (ToolMetadata, bool) {
+	return ToolMetadata{ReadOnly: true, ConcurrencySafe: h.streaming}, true
 }
 
 func TestTurnToolRuntimeFinalOnlyToolUsesFinalHistoryContext(t *testing.T) {
@@ -708,4 +708,30 @@ func benchmarkTurnToolRuntimeOverlap(b *testing.B, streaming bool) {
 	}
 	b.StopTimer()
 	b.ReportMetric(float64(totalToolExecs)/float64(b.N), "tool_execs/op")
+}
+
+func TestStreamRunnerProvidesHistoryToStreamStartedTools(t *testing.T) {
+	call := providers.ToolCall{ID: "call-history", Name: "barrier_tool", Arguments: `{}`}
+	client := &mockStreamClient{attempts: []mockStreamAttempt{
+		{events: []providers.StreamEvent{
+			{Type: providers.EventToolUseStart, ToolCall: &call},
+			{Type: providers.EventToolUseEnd, ToolCall: &call},
+			{Type: providers.EventDone, FinishReason: providers.FinishReasonToolCalls},
+		}},
+		{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "done"}, {Type: providers.EventDone, FinishReason: providers.FinishReasonStop}}},
+	}}
+	runner := StreamRunner{Client: client, Tools: historyAwareRuntimeTools{streaming: true}, Model: "test", MaxSteps: 3, StreamingToolExecution: true}
+	result, err := runner.RunWithCallback(context.Background(), []providers.ChatMessage{{Role: "user", Content: "resume"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, msg := range result.NewMessages {
+		if msg.Role == "tool" {
+			if msg.Content != "history available" {
+				t.Fatalf("stream-started tool lost history: %s", msg.Content)
+			}
+			return
+		}
+	}
+	t.Fatal("missing tool result")
 }

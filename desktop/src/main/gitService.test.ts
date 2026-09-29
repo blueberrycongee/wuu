@@ -359,6 +359,26 @@ describe("GitService file previews", () => {
   });
 });
 
+describe("GitService branches", () => {
+  it("lists local branches most recently committed first", () => {
+    const root = makeRepository();
+    const commitOn = (branch: string, date: string) => {
+      execFileSync("git", ["-C", root, "checkout", "-qb", branch]);
+      execFileSync("git", ["-C", root, "commit", "-q", "--allow-empty", "-m", branch], {
+        env: { ...process.env, GIT_COMMITTER_DATE: date, GIT_AUTHOR_DATE: date },
+      });
+    };
+    commitOn("aaa/older", "2026-01-01T00:00:00Z");
+    commitOn("zzz/newest", "2026-03-01T00:00:00Z");
+    commitOn("mmm/middle", "2026-02-01T00:00:00Z");
+    execFileSync("git", ["-C", root, "checkout", "-q", "zzz/newest"]);
+
+    // The initial branch keeps the fixture's real-time commit, so leave it out.
+    expect(serviceFor(root).status().branches?.filter((branch) => branch.includes("/")))
+      .toEqual(["zzz/newest", "mmm/middle", "aaa/older"]);
+  });
+});
+
 describe("GitService commit", () => {
   function headMessage(root: string): string {
     return execFileSync("git", ["-C", root, "log", "-1", "--pretty=%s"], {

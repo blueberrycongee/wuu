@@ -72,7 +72,8 @@ function main() {
   ].join(" ");
 
   if (!pluginsOnly) {
-    run("go", ["build", "-ldflags", ldflags, "-o", outPath, "./cmd/wuu"], {
+    const tags = process.argv.includes("--project-agent") ? ["-tags", "project_agent"] : [];
+    run("go", ["build", ...tags, "-ldflags", ldflags, "-o", outPath, "./cmd/wuu"], {
       cwd: repoRoot,
       env: {
         ...process.env,

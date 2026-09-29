@@ -62,12 +62,16 @@ func (s *Server) handleEngineList(req Request) error {
 		Settings: s.engineSettingsFromConfig(),
 	}
 	if params.IncludeQuota {
-		s.attachSubscriptionQuotas(result.Engines)
 		for _, provider := range s.providerSummaries() {
 			if builtInSubscriptionProvider(provider) {
 				result.SubscriptionProviders = append(result.SubscriptionProviders, provider)
 			}
 		}
+		// Historical statistics belong to the opt-in dashboard request, not
+		// navigation or the composer inventory. Copy providers before enriching
+		// them so cached configuration summaries remain history-free.
+		s.attachSubscriptionActivity(result.Engines, result.SubscriptionProviders)
+		s.attachSubscriptionQuotas(result.Engines)
 	}
 	return s.writeResponse(req.ID, result, nil)
 }
@@ -166,7 +170,6 @@ func (s *Server) engineInventory() []EngineInfo {
 		}
 		out = append(out, info)
 	}
-	s.attachLatestEngineRequests(out)
 	if len(probes) == 0 {
 		return out
 	}
@@ -191,11 +194,11 @@ func (s *Server) engineInventory() []EngineInfo {
 	return out
 }
 
-// attachLatestEngineRequests fills the newest settled request each external
-// engine has already recorded. A store read failure leaves the field empty:
+// attachSubscriptionActivity reads all dashboard sources together. A store
+// read failure leaves the fields empty:
 // the inventory itself is still usable, and the dashboard says the request is
 // unknown rather than inventing a status.
-func (s *Server) attachLatestEngineRequests(engines []EngineInfo) {
+func (s *Server) attachSubscriptionActivity(engines []EngineInfo, providers []ProviderSummary) {
 	if s == nil || s.rt == nil || strings.TrimSpace(s.rt.SessionDir) == "" {
 		return
 	}
@@ -205,6 +208,9 @@ func (s *Server) attachLatestEngineRequests(engines []EngineInfo) {
 			continue
 		}
 		keys = append(keys, session.SubscriptionActivityKey{EngineID: engine.ID})
+	}
+	for _, provider := range providers {
+		keys = append(keys, session.SubscriptionActivityKey{Provider: provider.Name})
 	}
 	if len(keys) == 0 {
 		return
@@ -220,6 +226,14 @@ func (s *Server) attachLatestEngineRequests(engines []EngineInfo) {
 		}
 		engines[i].LatestRequest = engineLatestRequest(record)
 		engines[i].LocalUsage = &record.LocalUsage
+	}
+	for i := range providers {
+		record, ok := activity[session.SubscriptionActivityKey{Provider: providers[i].Name}]
+		if !ok {
+			continue
+		}
+		providers[i].LatestRequest = engineLatestRequest(record)
+		providers[i].LocalUsage = &record.LocalUsage
 	}
 }
 

@@ -164,15 +164,13 @@
      existing public focus and strong-border contract. */
   --focus-ring: var(--wuu-color-focus, var(--info));
   --control-boundary: var(--wuu-color-border-strong, var(--gray-500));
-  /* Navigation and reading surfaces stay neutral; only the slider uses color. */
-  --interaction-accent: var(--wuu-color-accent, #496d93);
+  --interaction-accent: var(--wuu-accent);
   /* Selection is opaque so sidebar material cannot tint or darken it. */
   --selection-surface: var(--wuu-color-surface-elevated, var(--gray-200));
   --slider-thumb-bg: var(--wuu-color-surface-elevated, var(--paper));
   --field-bg: var(--wuu-control-field-background, var(--paper));
   --field-hover-bg: var(--wuu-control-field-background, var(--surface-1));
   --field-border: var(--hairline-strong);
-  --accent-warm: var(--wuu-color-accent, #ef5b18);
   --selection-bg: rgba(64, 133, 216, 0.3);
 
                                                                   
@@ -182,8 +180,9 @@
   --wuu-ink-soft: var(--ink-soft);
   --wuu-hairline: var(--hairline);
   --wuu-surface-muted: var(--surface-1);
-  --wuu-accent: var(--wuu-color-accent, #ff3d00);
-  --wuu-accent-press: var(--wuu-color-accent-pressed, #e53600);
+  /* Neutral emphasis follows the theme's ink; extensions can supply a pair. */
+  --wuu-accent: var(--wuu-color-accent, var(--ink-strong));
+  --wuu-accent-press: var(--wuu-color-accent-pressed, color-mix(in srgb, var(--wuu-accent) 85%, var(--paper)));
   --sidebar-accent: var(--wuu-accent);
 
                                                                      
@@ -249,7 +248,7 @@
   --line-ui: 1.35;
   --line-body: var(--wuu-line-height-body, 1.55);
   --line-meta: 1.6;
-  --menu-bg: var(--wuu-color-surface-elevated, rgba(255, 255, 255, 0.98));
+  --menu-bg: var(--wuu-color-surface-elevated, #fff);
   --menu-border: var(--hairline);
   --menu-hover: var(--wuu-color-surface-muted, #f2f3f0);
   --menu-shadow: var(--shadow-pop);

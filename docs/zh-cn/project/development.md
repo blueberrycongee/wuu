@@ -20,6 +20,16 @@ macOS LaunchServices 启动器也会转发该设置。
 
 `make dev` 运行桌面启动器，在启动 Electron 前构建共享 Web 资源、适用平台的原生辅助程序，以及当前 Go 核心和插件辅助程序。应用使用该检出目录的私有 `wuu-core`，不是 `PATH` 中另行安装的 `wuu`。renderer 修改通过 Vite 更新；修改 Go、原生辅助程序或进程启动代码后，应重启启动器，让运行中的进程使用新构建。
 
+Project Agent 尚属实验功能，默认构建和发布构建均关闭，没有可供用户开启的设置。
+已有项目会话仍可阅读，但不能运行，也不会恢复队列中的任务。开发此功能时，运行
+`npm --prefix desktop run dev -- --project-agent`，或使用
+`go build -tags project_agent -o bin/wuu ./cmd/wuu` 构建 CLI。
+`go test -tags project_agent ./internal/appserver` 验证开启后的行为；普通 Go 测试
+验证发布构建的关闭行为。打包发布时必须省略此构建标签。
+
+`npm --prefix desktop run test:e2e:project-agent` 验证后端能力字段缺省、关闭和开启时
+的界面，将截图与结果保存到 `desktop/out/e2e/project-agent-gate/`。
+
 只开发 CLI 时可以运行：
 
 ```bash
@@ -77,6 +87,14 @@ CI 检查大历史样本的重复切换，恢复调用、布局及样式重算�
 与墙钟基线混合统计。`WUU_SWITCH_OUTPUT` 指定证据目录，不包含临时 profile 和数据库。
 `WUU_SWITCH_MAIN` 可选择另一个已构建的 main bundle 及相邻 preload/renderer 进行 A/B
 验证。结果记录实际加载工件的哈希；仅凭 checkout 提交不能确定外部构建的版本。
+
+诊断订阅历史对导航的影响时，设置 `WUU_SWITCH_SUBSCRIPTION_TURNS=30000`，并去掉
+`WUU_SWITCH_CHECK_BUDGET`。夹具会增加约 2 GiB 的临时历史和两个订阅服务，隔离凭据，
+禁用外部引擎。它在 IPC 层挂起按需统计响应、随后注入 IPC 失败，检查跨项目新建对话，
+并核对真实后端的请求归属和 token 总量。`results.json` 单独记录启动到会话画面的耗时，包含 `subscriptionResults`、
+数据库大小、观察到的进程启动次数、导航 RPC 耗时和挂起前的统计响应耗时。
+这些是 RPC 整体耗时，不是独立 SQL 计时；首次进入项目不一定启动新进程，应与冷启动区分。
+夹具还保存 `subscription-navigation.png`。挂起响应验证导航独立性，不模拟数据库锁或账户服务故障。
 
 ## 原生手机与远程服务
 

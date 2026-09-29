@@ -66,6 +66,9 @@ func TestProcessUpdateScheduleLifecycle(t *testing.T) {
 	if record.CompletionMode != proc.CompletionModeResume {
 		t.Fatalf("background commands should default to resume mode: %+v", record)
 	}
+	if record.Lifecycle != proc.LifecycleManaged || record.RootThreadID != "thread-update-background" {
+		t.Fatalf("background command must retain its owner for automatic wake-up: %+v", record)
+	}
 	if _, err := kit.Execute(context.Background(), providers.ToolCall{
 		Name:      "process",
 		Arguments: `{"action":"update","process_id":"` + started.ID + `","completion_mode":"detached"}`,
@@ -84,6 +87,7 @@ func TestProcessUpdateScheduleLifecycle(t *testing.T) {
 func TestBashRunTimeoutPromotesToBackground(t *testing.T) {
 	root := t.TempDir()
 	kit := newShellTestToolkit(t, root)
+	kit.SetSessionID("thread-promoted-background")
 	manager, err := proc.NewManager(root, filepath.Join(t.TempDir(), "runtime"))
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -117,6 +121,9 @@ func TestBashRunTimeoutPromotesToBackground(t *testing.T) {
 	}
 	if record.Status != proc.StatusRunning {
 		t.Fatalf("promoted process should keep running: %+v", record)
+	}
+	if record.Lifecycle != proc.LifecycleManaged || record.RootThreadID != "thread-promoted-background" {
+		t.Fatalf("promoted process must retain its owner for automatic wake-up: %+v", record)
 	}
 	if record.RecheckMinutes != defaultPromotedRecheckMinutes || record.NextRecheckAt.IsZero() {
 		t.Fatalf("promoted process should carry the safety-net recheck: %+v", record)

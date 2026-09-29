@@ -1,4 +1,5 @@
 @import "./styles/base.css";
+@import "./styles/desktop-zoom.css";
 @import "./styles/spacing.css";
 @import "./styles/tooltip.css";
 @import "./styles/session.css";
@@ -12,6 +13,7 @@
 @import "./styles/side-thread.css";
 @import "./styles/environment.css";
 @import "./styles/workspace.css";
+@import "./styles/plugins-catalog.css";
 @import "./styles/turns.css";
 @import "./styles/projects.css";
 @import "./styles/message-reading.css";
@@ -20,6 +22,7 @@
 @import "./styles/composer-token-gauge.css";
 @import "./styles/composer-context-meter.css";
 @import "./styles/select-menu.css";
+@import "./styles/model-services.css";
 @import "./styles/image-preview.css";
 @import "./styles/archive-tip.css";
 @import "./styles/responsive-design.css";

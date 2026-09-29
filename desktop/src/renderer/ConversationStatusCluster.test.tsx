@@ -111,9 +111,9 @@ describe("ConversationStatusCluster", () => {
     const card = container.querySelector(".conversation-status-todo-card");
     expect(trigger?.textContent).toBe("TODO1/3");
     expect([...card?.querySelectorAll("li") ?? []].map((item) => item.textContent)).toEqual([
-      "✓Inspect the current task",
-      "2Keep the current task in view",
-      "3Write the follow-up",
+      "Inspect the current task",
+      "Keep the current task in view",
+      "Write the follow-up",
     ]);
   });
 });

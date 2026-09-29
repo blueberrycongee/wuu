@@ -176,7 +176,7 @@ describe("AppSidebar layout", () => {
     window.localStorage.setItem("wuu.desktop.sidebarFunctionalGroupOrder", JSON.stringify(saved));
     const order = () => [...container.querySelectorAll<HTMLElement>(".sidebar-main > .sidebar-functional-group")]
       .map((element) => element.dataset.functionalGroupId ?? element.dataset.sectionId);
-    renderSidebar();
+    renderSidebar({ onCreateProject: vi.fn() });
     expect(order()).toEqual(expected);
   });
 
@@ -375,6 +375,7 @@ describe("AppSidebar layout", () => {
     ];
     const chat = sidebarThread("chat", "Ordinary conversation");
     const renderThreads = (threads: ThreadSummary[]) => renderSidebar({
+      onCreateProject: vi.fn(),
       expandedSidebarSectionIDs: new Set(["project-1"]),
       workspaceThreadsByWorkspaceID: { "project-1": threads },
     });
@@ -509,6 +510,18 @@ describe("AppSidebar layout", () => {
     expect(first?.textContent).toBe("新建项目");
     act(() => first!.click());
     expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("omits an unavailable project section but keeps existing projects accessible", () => {
+    renderSidebar({});
+    expect(container.querySelector('[data-functional-group-id="projects"]')).toBeNull();
+    renderSidebar({
+      workspaceThreadsByWorkspaceID: {
+        "project-1": [sidebarThread("old-project", "Existing project", { source: "project", read_only: true })],
+      },
+    });
+    expect(projectsGroup().textContent).toContain("Existing project");
+    expect(projectsGroup().querySelector(".sidebar-functional-action")).toBeNull();
   });
 
   it("renders only scratch and projects in the workspace order", () => {

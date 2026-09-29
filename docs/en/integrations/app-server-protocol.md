@@ -218,7 +218,29 @@ including outstanding workers or a cross-process execution lease.
 
 Provider connection changes belong to workspace configuration. Save them separately
 from targeted conversation selection: a request combining those operations is
-rejected. The update response includes workspace model summaries; consume the
+rejected.
+
+A workspace request normally makes `provider` the default. With
+`keep_selection: true` it saves that provider's connection, model, and choices
+without changing the default: the response reports the unchanged workspace
+selection, and idle conversations using the provider pick up the new
+connection. It cannot be combined with `thread_id`, `variant`, `effort`, or
+`permission_mode`, and on the default provider it cannot change the workspace
+model. `remove_model` hides a model choice so catalog refreshes cannot restore
+it; `add_model` restores a hidden choice or adds a model ID the catalog does not
+list. Provider summaries report hidden choices as `hidden_models`, and
+`catalog_id` / `catalog_name` when the endpoint belongs to a model catalog
+service.
+
+```json
+{"id":"21","method":"config/model/update","params":{"provider":"deepseek","base_url":"https://api.deepseek.com","api_key":"sk-...","keep_selection":true}}
+```
+
+`config/model-catalog/providers` lists catalog services that can be connected
+with an endpoint and a key, ordered by name, each with its `type`, `base_url`,
+`model_count`, and a suggested `default_model`. Services that need an account
+template or an unsupported SDK are left out. With `provider`, the result holds
+that service alone, including its `models`. The update response includes workspace model summaries; consume the
 `thread/updated` snapshot for the target conversation's effective selection rather
 than treating the top-level response model as its new model.
 
@@ -248,7 +270,14 @@ and includes `subscription_providers` for built-in subscription services. Engine
 Missing quota is unsupported or not queried, never unlimited. Clients must not
 infer account allowance from ACP context usage or local tokens, and should mark
 old snapshots as needing refresh rather than refill them at the reset time.
-Engines and subscription providers may also contain `local_usage`, the reported
+Only this opt-in subscription response reads historical statistics. `initialize`,
+configuration responses, ordinary `engine/list`, and `engine/update` omit
+`latest_request` and `local_usage`; clients needing them must load the subscription
+snapshot separately without blocking navigation. All requested sources share one
+history scan. A failed scan leaves those fields absent, not zero, while retaining
+the service inventory.
+
+Engines and subscription providers in this response may contain `local_usage`, the reported
 input/output/cache token totals and `reported_turns` in retained Wuu history.
 These values exclude unreported and external activity and are not billing totals.
 The optional `latest_request` contains the newest recorded request's `status`,

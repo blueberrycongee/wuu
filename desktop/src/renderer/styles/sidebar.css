@@ -337,16 +337,18 @@
   --sidebar-selected-weight: 500;
   --sidebar-label-size: var(--font-ui);
   --sidebar-heading-size: max(12px, round(nearest, calc(var(--sidebar-label-size) - 2px), 1px));
-  --sidebar-row-height: max(32px, round(nearest, calc(var(--sidebar-label-size) * 2.25), 4px));
+  /* Dense rows, clear groups: rows sit two label heights tall, and the
+   * separation between functional groups carries the structure. */
+  --sidebar-row-height: max(28px, round(nearest, calc(var(--sidebar-label-size) * 2), 4px));
+  /* Labels sit one step below conversation ink so the rail reads as quiet
+   * chrome next to the message flow; icons stay on --ink-soft below them. */
+  --sidebar-label-ink: color-mix(in srgb, var(--ink) 84%, var(--paper));
   /* One icon and text axis for navigation, plugins, projects, and account
-   * controls. Avatars occupy this same glyph slot. */
-  --sidebar-primary-icon-size: 16px;
-  --sidebar-nav-icon-col: 18px;
-  --sidebar-nav-column-gap: 10px;
+   * controls. Avatars occupy this same glyph slot. Icon, column, and row
+   * action sizes scale with the UI font in appearance.css. */
+  --sidebar-nav-column-gap: 8px;
   --sidebar-tree-toggle-col: 14px;
-  --sidebar-tree-icon-col: 16px;
   --sidebar-tree-column-gap: 4px;
-  --sidebar-row-action-size: 24px;
   --sidebar-accessory-gap: 8px;
   --sidebar-fork-icon-size: var(--sidebar-primary-icon-size);
   --sidebar-fork-slot-inset: calc((var(--sidebar-row-action-size) - var(--sidebar-fork-icon-size)) / 2);
@@ -358,7 +360,7 @@
    * row itself instead of stretching the space between related items. */
   --sidebar-functional-row-gap: var(--sidebar-row-gap);
   --sidebar-functional-heading-gap: var(--space-1);
-  --sidebar-functional-group-gap: var(--space-3);
+  --sidebar-functional-group-gap: var(--space-4);
   /* Parent and child rows belong to one tree: use the same separation as
    * sibling rows. The collapse body owns this gap; lists add no outer inset. */
   --sidebar-section-body-gap: var(--sidebar-row-gap);
@@ -824,15 +826,15 @@
   grid-template-columns: minmax(0, 1fr) 32px;
   align-items: center;
   column-gap: 8px;
-  min-height: 44px;
-  padding: 0 var(--sidebar-row-pad-x) 8px;
+  min-height: 36px;
+  padding: 0 var(--sidebar-row-pad-x) var(--space-1);
   color: var(--sidebar-brand-wordmark-color);
 }
 
 .sidebar-brand-wordmark {
   grid-column: 1;
   font-family: var(--empty-home-title-font);
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 650;
   letter-spacing: 0.4px;
   line-height: 1;
@@ -880,7 +882,7 @@
   position: absolute;
   inset: -2px;
   border-radius: calc(var(--radius-sm) + 2px);
-  border: 1.5px solid color-mix(in srgb, var(--accent-warm) 55%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--wuu-accent) 55%, transparent);
   content: "";
   opacity: 0;
   pointer-events: none;
@@ -908,7 +910,7 @@
 
 .sidebar-notifications-button[data-holding="true"] {
   background: var(--wuu-nav-item-hover-background, var(--sidebar-glass-hover));
-  color: var(--accent-warm);
+  color: var(--wuu-accent);
   transform: scale(0.94);
 }
 
@@ -958,8 +960,8 @@
   }
 
   to {
-    background: color-mix(in srgb, var(--accent-warm) 16%, transparent);
-    box-shadow: inset 0 0 0 1px var(--accent-warm);
+    background: color-mix(in srgb, var(--wuu-accent) 16%, transparent);
+    box-shadow: inset 0 0 0 1px var(--wuu-accent);
   }
 }
 
@@ -1241,7 +1243,16 @@
   .nav-item > span,
   .project-row-name,
   .thread-row-title,
-  .sidebar-settings-button > span
+  .sidebar-settings-button > span,
+  .settings-nav-item > span
+) {
+  color: var(--sidebar-label-ink);
+}
+
+.sidebar-content :is(
+  .thread-row.active .thread-row-title,
+  .nav-item[aria-current="page"] > span,
+  .settings-nav-item.active > span
 ) {
   color: var(--ink);
 }
@@ -1393,11 +1404,22 @@ html[data-focus-modality="keyboard"] :is(
   margin: 0;
   flex: 0 0 auto;
   color: var(--ink-muted);
-  transition: transform var(--section-fold-ms) var(--section-fold-ease);
+  transition:
+    transform var(--section-fold-ms) var(--section-fold-ease),
+    opacity var(--motion-fast) var(--ease-out);
 }
 
 .sidebar-functional-heading-chevron[data-expanded="true"] {
   transform: rotate(90deg);
+}
+
+/* An open group shows its contents; the chevron only returns as the toggle
+ * affordance under the pointer or keyboard focus. A collapsed group keeps it
+ * as the cue that content is hidden. Touch keeps it visible: no hover. */
+@media (hover: hover) {
+  .sidebar-functional-heading:not(:hover, :focus-within) .sidebar-functional-heading-chevron[data-expanded="true"] {
+    opacity: 0;
+  }
 }
 
 .sidebar-functional-heading-action {
@@ -2826,4 +2848,129 @@ html[data-focus-modality="keyboard"] :is(
   pointer-events: none;
   transform: scale(1.025);
   box-shadow: inset 0 0 0 1px var(--sidebar-glass-overlay-bright), var(--shadow-pop);
+}
+
+/* Sidebar hover card: a visual-only description of a sidebar row, placed
+ * beside the sidebar. It is a richer tooltip, not a menu: one type step
+ * below reading text throughout, with the title set apart by weight and
+ * ink. It never takes the pointer. */
+.sidebar-hover-card {
+  position: fixed;
+  /* Below context menus, which dismiss it anyway. */
+  z-index: 2147481900;
+  display: flex;
+  width: max-content;
+  /* In em so the card widens with the UI font size instead of wrapping more. */
+  min-width: 14em;
+  max-width: min(22em, calc(100vw - 16px));
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--radius-sm);
+  background: var(--menu-bg);
+  box-shadow: var(--menu-shadow);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: var(--line-ui);
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  --enter-x: -2px;
+}
+
+/* Starting the entrance while the first layout is still hidden lets
+ * Chromium replay it on the first visible frame: a full-opacity flash,
+ * then a fade. */
+.sidebar-hover-card[data-placed="true"] {
+  animation: wuu-enter var(--motion-fast) var(--ease-out) both;
+}
+
+.sidebar-hover-card-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-hover-card-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.sidebar-hover-card-title {
+  display: -webkit-box;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: var(--weight-medium);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.sidebar-hover-card-time {
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sidebar-hover-card-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebar-hover-card-status[data-tone="unread"]::before {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-circle);
+  background: var(--info);
+  content: "";
+}
+
+.sidebar-hover-card-status[data-tone="failed"] {
+  color: var(--danger);
+}
+
+.sidebar-hover-card-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sidebar-hover-card-fact {
+  display: grid;
+  grid-template-columns: var(--icon-size-sm) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-2);
+}
+
+.sidebar-hover-card-fact-icon {
+  display: grid;
+  /* One text line tall, so the icon centers on the first line of a
+   * wrapped path. */
+  height: calc(1em * var(--line-ui));
+  place-items: center;
+  color: var(--ink-muted);
+}
+
+.sidebar-hover-card-fact-icon > svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+}
+
+.sidebar-hover-card-count {
+  white-space: nowrap;
+}
+
+.sidebar-hover-card-fact[data-tone="warning"],
+.sidebar-hover-card-fact[data-tone="warning"] .sidebar-hover-card-fact-icon {
+  color: var(--warning);
 }

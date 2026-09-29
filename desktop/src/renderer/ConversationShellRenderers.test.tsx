@@ -34,6 +34,7 @@ import {
   ConversationTitleContent,
   ConversationTitleActions,
 } from "./ConversationShellRenderers";
+import { translateCurrent as t } from "./i18n";
 import { PluginHost } from "./plugins/PluginHost";
 import { WorkbenchController } from "./plugins/Workbench";
 
@@ -388,5 +389,18 @@ describe("compact conversation actions", () => {
     act(() => root?.render(<ConversationTitleActions {...props} compactNavigation={false} />));
     expect(document.querySelector('[role="menu"]')).toBeNull();
     expect(container.querySelectorAll("button")).toHaveLength(2);
+  });
+
+  it("drops the covered conversation's environment action on a plugin page", () => {
+    const props = setup();
+    act(() => root?.render(<ConversationTitleActions {...props} pluginPageVisible />));
+    expect(props.environmentToggleRef.current).toBeNull();
+    const panel = container.querySelector<HTMLButtonElement>(`button[aria-label="${t("shell.openRightSidebar")}"]`)!;
+    act(() => panel.click());
+    expect(props.onToggleRightPanel).toHaveBeenCalledOnce();
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    act(() => root?.render(<ConversationTitleActions {...props} pluginPageVisible compactNavigation={false} />));
+    expect(props.environmentToggleRef.current).toBeNull();
+    expect(container.querySelectorAll("button")).toHaveLength(1);
   });
 });

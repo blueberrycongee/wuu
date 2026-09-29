@@ -246,6 +246,7 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 		}
 	}
 
+	applyDynamicToolLoading(&payload, req)
 	body, err := marshalChatCompletionsRequest(payload)
 	if err != nil {
 		return providers.ChatResponse{}, fmt.Errorf("marshal request: %w", err)
@@ -398,6 +399,7 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		}
 	}
 
+	applyDynamicToolLoading(&payload, req)
 	body, err := marshalChatCompletionsRequest(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -1103,7 +1105,7 @@ func mergeChatProviderOptions(object map[string]any, options map[string]any, for
 func chatProviderOptionIsAISDKOnly(key string) bool {
 	switch key {
 	case "toolStreaming", "toolChoiceAutoOnly", "omitStore", "omitPromptCacheKey", "thinkingConfig", "reasoningConfig", "modelParams", "gateway",
-		"temperatureSupported", "temperature_supported", "promptCacheKeySupported":
+		"temperatureSupported", "temperature_supported", "promptCacheKeySupported", "native_tool_search", "nativeToolSearch":
 		return true
 	default:
 		return false
@@ -1164,12 +1166,13 @@ type streamOptions struct {
 }
 
 type chatMessage struct {
-	Role             string     `json:"role"`
-	Content          any        `json:"content,omitempty"`
-	Name             string     `json:"name,omitempty"`
-	ToolCallID       string     `json:"tool_call_id,omitempty"`
-	ReasoningContent *string    `json:"reasoning_content,omitempty"`
-	ToolCalls        []toolCall `json:"tool_calls,omitempty"`
+	Tools            []toolDefinition `json:"tools,omitempty"`
+	Role             string           `json:"role"`
+	Content          any              `json:"content,omitempty"`
+	Name             string           `json:"name,omitempty"`
+	ToolCallID       string           `json:"tool_call_id,omitempty"`
+	ReasoningContent *string          `json:"reasoning_content,omitempty"`
+	ToolCalls        []toolCall       `json:"tool_calls,omitempty"`
 }
 
 type chatContentPart struct {
@@ -1195,6 +1198,7 @@ type toolDefinition struct {
 }
 
 type toolFunctionDefinition struct {
+	Strict      *bool          `json:"strict,omitempty"`
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	Parameters  map[string]any `json:"parameters"`

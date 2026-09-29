@@ -1321,6 +1321,7 @@ func NewStreamStep(client providers.Client) Step {
 }
 
 func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (StepResult, error) {
+	ctx = ContextWithHistory(ctx, req.Messages)
 	var err error
 	req, err = providers.EnsureInferenceExecutionContext(ctx, req, providers.InferenceOperationAgentRound, providers.InferenceProfileInteractive)
 	if err != nil {

@@ -7,9 +7,27 @@ The [release workflow](../../../.github/workflows/release.yml) publishes the mac
 `VERSION` is the product version source. Prepare a release in a clean checkout with the required [development tools](development.md):
 
 1. Add the user-visible changes to `CHANGELOG.md` under `[Unreleased]`.
-2. Run `make release-prepare` for the next UTC CalVer, or set an explicit version with `make release-prepare RELEASE_VERSION=2026.9.3`. Review the generated changes to `VERSION`, the desktop manifest and lockfile, native iOS/Android metadata, and the dated changelog section.
+2. Run `make release-prepare` for the next UTC CalVer, or set an explicit version with `make release-prepare RELEASE_VERSION=2026.9.3`. Review the generated changes to `VERSION`, the desktop manifest and lockfile, native iOS/Android metadata, and the dated changelog section. Then condense the dated section into the published release-note format below.
 3. Run `make ci release-check` on macOS and complete the relevant app-level acceptance. Commit the reviewed release change and land it on `main` through the normal review process.
 4. From that clean release checkout, run `make tag-release`. It validates the version and release notes, creates an annotated tag, and prints the exact push command. Push that tag when publication is authorized.
+
+### Release-note format
+
+The dated changelog section becomes the GitHub Release notes verbatim, so keep it short. `[Unreleased]` can stay detailed while work lands; `release-prepare` moves it into the dated section, where it is replaced with:
+
+```markdown
+## [2026.9.29] - 2026-09-29
+
+### Contributors
+
+@maintainer, @contributor
+
+### Highlights
+
+- One line per user-visible theme, at most about six bullets.
+```
+
+List the GitHub logins of authors of PRs merged since the previous tag (`gh pr list --state merged --search "merged:>=<previous tag date>"`), maintainer first. Group changes by user-visible theme instead of listing commits, name the most important fixes in one bullet, and omit test, CI, and refactor-only work. Leave out features hidden from production builds.
 
 `make tag-release` does not push anything and rejects a dirty tree or an existing local tag. The workflow independently requires the tag commit to be an ancestor of `origin/main`, all generated product versions to match the tag, and a nonempty matching changelog section. A successful local build does not bypass these checks.
 
@@ -34,11 +52,18 @@ Before publication, the workflow verifies the app's signature and bundle identit
 The DMG window layout is configured in `desktop/package.json`.
 `desktop/scripts/generate-dmg-background.cjs` draws the background around the
 icon positions in `dmg.contents`, using the face and colours in
-`assets/app-icon-source.json`. After changing any of these, run
-`npm --prefix desktop run dmg-background:generate` on macOS, so the text uses
-the system fonts Finder users see, and commit both the 1x and 2x PNGs.
+`assets/app-icon-source.json` and the product's Blobatar agent renderer. After
+changing any of these, run `npm --prefix desktop run dmg-background:generate`
+and commit both the 1x and 2x PNGs.
 Packaging consumes those committed images and combines them into a HiDPI TIFF,
 without requiring artwork regeneration on release machines.
+
+The background is a wordless drag cue on white: a slingshot beside the app
+fires Wuu on a dotted arc that splits into its colourful agents, and they dive
+into a block fort built around Applications. Finder does not scale the picture
+when the window is resized; it anchors it at the top left and fills the rest
+with white in Light Mode, so the picture stays white to its edges and no
+artwork touches them.
 
 Finder imposes four constraints on the artwork, which the script encodes. The
 window takes the size of the 1x background, and `dmg.window` is ignored while a

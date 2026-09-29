@@ -11,3 +11,5 @@ Inspect task selection, creating from a suggestion, editing schedules, searching
 chat targets, pausing, deleting, dragging the editor divider (including its minimum
 widths and keyboard arrows), and widths above and below 760px. Use `?theme=dark` for dark mode, `?font=18` for large text, and `?reference`
 to show an actual Wuu SettingsRow and SelectMenu alongside the plugin.
+`?region=primary` mounts the page under the production titlebar; add `compact`
+for its narrow-window actions. Back returns to a placeholder conversation pane.

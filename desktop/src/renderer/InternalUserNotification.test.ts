@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_NOTIFICATION_NAME,
   PROCESS_NOTIFICATION_NAME,
+  isAgentNotificationText,
   isInternalUserNotificationItem,
   isProcessNotificationItem,
   isProcessNotificationText,
@@ -10,6 +11,35 @@ import {
 
 const processNotificationText =
   '<process_notification>{"process_id":"proc-1"}</process_notification>';
+
+describe("legacy agent notification classification", () => {
+  const notification = '<subagent_notification>{"status":"completed"}</subagent_notification>';
+
+  it("recognizes padded XML, routed objects and nested content envelopes", () => {
+    for (const text of [
+      notification,
+      JSON.stringify({ author: "/root/worker", recipient: "/root", content: "Done" }),
+      JSON.stringify({ content: notification }),
+      JSON.stringify({ content: JSON.stringify({ content: notification }) }),
+    ]) {
+      expect(isAgentNotificationText(` \n${text}\t `)).toBe(true);
+    }
+  });
+
+  it("keeps ordinary text, non-object JSON and malformed envelopes visible", () => {
+    for (const text of [
+      undefined, "", "真实用户消息", "Explain {this} code",
+      "null", "true", "123", "[]", JSON.stringify(notification),
+      JSON.stringify([{ content: notification }]),
+      "{not valid JSON}", '{"content":',
+      JSON.stringify({ content: "Ordinary user text" }),
+      JSON.stringify({ author: "/root/worker", recipient: "/user" }),
+      '<subagent_notification>{"status":"completed"}',
+    ]) {
+      expect(isAgentNotificationText(text)).toBe(false);
+    }
+  });
+});
 
 describe("process notification classification", () => {
   it.each(["host", "plugin"])("keeps %s session messages visible even when they quote internal envelopes", (origin) => {

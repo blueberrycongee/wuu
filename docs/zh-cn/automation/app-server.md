@@ -48,7 +48,7 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 每个对话保留自己的模型和权限选择。应在对话空闲时，用带 `thread_id` 的
 `config/model/update` 修改；这不会改变工作区默认值。对话忙时返回 `thread_busy`，客户端可
 等待后重试。不带 `thread_id` 的请求修改未来
-对话的默认设置。不要通过 `turn/start` 临时覆盖单个回合的权限模式。
+对话的默认设置；加上 `keep_selection: true` 则只保存服务的连接，不把它设为默认。不要通过 `turn/start` 临时覆盖单个回合的权限模式。
 
 ## 运行项目
 
@@ -121,7 +121,9 @@ UTF-16 列号均从 1 开始，结束位置不包含在选区内。`revision` �
 
 `engine/list` 可选参数 `{ "include_quota": true }` 通过支持的本地 CLI（目前为 Codex）读取账户额度，并返回内置订阅来源 `subscription_providers`。`quota` 包含 `status`（`available` 或 `unavailable`）、`checked_at` 和可选 `windows`；窗口提供 `id`、`label`、`used_percent`、`window_minutes`、`resets_at`。缺失额度表示未支持或未查询，不代表无限额度。过期快照应提示刷新，不能在重置时间自行补满。
 
-引擎及订阅来源的 `local_usage` 汇总本地保留历史中已上报的输入、输出、缓存 token 和 `reported_turns`，不含未上报或 Wuu 外用量，也不是账单。可选 `latest_request` 提供最近请求的 `status`、`error`、`at`、`model`、`usage_reported`，有上报时附带 token 计数。新旧顺序按请求时间判断，来源按持久记录归属；对话编辑和供应商切换不改变历史归属，旧请求用量不得填充到新请求。
+只有上述按需订阅响应读取历史统计。`initialize`、配置响应、普通 `engine/list` 和 `engine/update` 不附带 `latest_request` 与 `local_usage`；需要统计的客户端应独立加载订阅快照，不阻塞导航。所有请求来源共用一次历史扫描；扫描失败时保留服务清单，统计字段缺失而非零值。
+
+该响应中引擎及订阅来源的 `local_usage` 汇总本地保留历史中已上报的输入、输出、缓存 token 和 `reported_turns`，不含未上报或 Wuu 外用量，也不是账单。可选 `latest_request` 提供最近请求的 `status`、`error`、`at`、`model`、`usage_reported`，有上报时附带 token 计数。新旧顺序按请求时间判断，来源按持久记录归属；对话编辑和供应商切换不改变历史归属，旧请求用量不得填充到新请求。
 
 ## 查询用量概览
 

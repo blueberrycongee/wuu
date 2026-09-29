@@ -111,9 +111,13 @@ function renderShell({ inventory: available }: { inventory?: ExtensionInventoryR
   </>));
 }
 
-function button(label: string): HTMLButtonElement {
-  const result = [...container.querySelectorAll<HTMLButtonElement>("button")]
+function findButton(label: string): HTMLButtonElement | undefined {
+  return [...container.querySelectorAll<HTMLButtonElement>("button")]
     .find((item) => item.getAttribute("aria-label") === label || item.textContent === label);
+}
+
+function button(label: string): HTMLButtonElement {
+  const result = findButton(label);
   expect(result, `button ${label}`).toBeDefined();
   return result!;
 }
@@ -159,21 +163,24 @@ describe("primary plugin navigation without a tab strip", () => {
     expectPage("Detail", "Detail content");
     await click(t("workspace.closeTab", { label: "Detail" }));
     expectPage("Automation", "Catalog content");
+    // The sidebar destination outlives its page, so Back is its only exit.
+    expect(findButton(t("workspace.closeTab", { label: "Automation" }))).toBeUndefined();
     await register("two", "Updated catalog");
     expectPage("Updated catalog", "Catalog content");
     await click(t("common.back"));
     expectPage("Original conversation");
-    await click("Updated catalog");
-    await click(t("workspace.closeTab", { label: "Updated catalog" }));
-    expectPage("Original conversation");
     expect(document.activeElement).toBe(container.querySelector("main header h1"));
-    expect(controller.getSnapshot().views).toEqual([]);
+    await click("Updated catalog");
+    expect(controller.getSnapshot().activeViewByRegion.primary).toBe(first);
+    expect(findButton(t("workspace.closeTab", { label: "Updated catalog" }))).toBeUndefined();
+    await click(t("common.back"));
+    expectPage("Original conversation");
     expect(state.sessionTabs[0].prompt).toBe("Unsent draft");
 
     await click("Updated catalog");
     act(() => host.unload(pluginId));
     expectPage("Original conversation");
-    expect(container.querySelector('[data-wuu-component="plugin-navigation"]')).toBeNull();
+    expect(container.querySelector('[data-wuu-component="plugin-navigation-item"]')).toBeNull();
     await register("three");
     expectPage("Original conversation");
   });
@@ -256,7 +263,8 @@ describe("primary plugin navigation without a tab strip", () => {
     await act(async () => { await presentation!.invoke("header.navigate-back"); });
     expectPage("Original conversation");
     await click("Automation");
-    await click(t("workspace.closeTab", { label: "Automation" }));
-    expectPage("Original conversation");
+    await act(async () => { await controller.openPluginView(pluginId, "detail"); });
+    await click(t("workspace.closeTab", { label: "Detail" }));
+    expectPage("Automation", "Catalog content");
   });
 });

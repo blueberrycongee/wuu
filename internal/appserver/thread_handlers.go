@@ -887,6 +887,7 @@ func (s *Server) handleThreadEditMessage(req Request) error {
 	th.agentStream = nil
 	th.activeReasoningItemID = ""
 	th.toolItems = make(map[string]string)
+	th.streamText = nil
 	thread := th.snapshotLocked()
 	releaseThreadMutationLease(th.ID, mutationLease)
 	th.mu.Unlock()
@@ -1060,7 +1061,7 @@ func (s *Server) handleThreadList(req Request) error {
 		if thread.Ephemeral {
 			continue
 		}
-		if thread.ReadOnly {
+		if thread.ReadOnly && !projectExecutionDisabled(thread.Source) {
 			continue
 		}
 		if thread.Archived {
@@ -1141,7 +1142,7 @@ func (s *Server) handleThreadListAll(req Request) error {
 			entry.pinnedAt = persisted.pinnedAt
 			thread = entry.thread
 		}
-		if visibility == pluginhost.SessionVisibilityPlugin || thread.Ephemeral || thread.ReadOnly || thread.Archived {
+		if visibility == pluginhost.SessionVisibilityPlugin || thread.Ephemeral || (thread.ReadOnly && !projectExecutionDisabled(thread.Source)) || thread.Archived {
 			delete(entries, thread.ID)
 			continue
 		}
@@ -1200,7 +1201,7 @@ func (s *Server) handleThreadListArchived(req Request) error {
 		if thread.Ephemeral {
 			continue
 		}
-		if thread.ReadOnly {
+		if thread.ReadOnly && !projectExecutionDisabled(thread.Source) {
 			continue
 		}
 		if !thread.Archived {
@@ -1530,6 +1531,7 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 		thread: Thread{
 			ID:                    sess.ID,
 			Source:                sess.Source,
+			ReadOnly:              projectExecutionDisabled(sess.Source),
 			ProjectID:             projectIDForSession(sess),
 			ProjectRole:           projectRoleForSession(sess),
 			Preview:               firstNonEmpty(sess.Title, sess.Summary),

@@ -1197,19 +1197,23 @@ func (t *Toolkit) ExecuteResult(ctx context.Context, call providers.ToolCall) (t
 
 func (t *Toolkit) ensureToolAvailableForExecution(ctx context.Context, name string) error {
 	surface := t.activeCompiledSurface()
+	exposure := t.toolExposure(name)
 	if surface.ProfileName != "" {
 		if !activeSurfaceAllowsKnownTool(surface, t.LookupTool(name)) {
 			return fmt.Errorf("tool %q is not available in the active model surface", name)
 		}
-		if activeSurfaceToolExposure(surface, name) == ToolExposureDeferred && !t.isDeferredToolLoaded(name) && !toolctx.IsNestedCall(ctx) {
-			return fmt.Errorf("tool %q is deferred; call tool_search first to load it", name)
-		}
+		exposure = activeSurfaceToolExposure(surface, name)
+	}
+	if exposure != ToolExposureDeferred || t.isDeferredToolLoaded(name) || toolctx.IsNestedCall(ctx) {
 		return nil
 	}
-	if t.toolExposure(name) == ToolExposureDeferred && !t.isDeferredToolLoaded(name) && !toolctx.IsNestedCall(ctx) {
-		return fmt.Errorf("tool %q is deferred; call tool_search first to load it", name)
+	// A rebuilt runtime starts with no loaded tools, but the resumed conversation
+	// can already contain their schemas, including compacted discovery metadata.
+	if _, loaded := providers.DiscoveredToolNamesFromMessages(agent.HistoryFromContext(ctx))[name]; loaded {
+		t.markDeferredToolsLoaded(name)
+		return nil
 	}
-	return nil
+	return fmt.Errorf("tool %q is deferred; call tool_search first to load it", name)
 }
 
 func activeSurfaceAllowsDynamicTool(surface capability.Surface, name string) bool {

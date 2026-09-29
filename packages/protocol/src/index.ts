@@ -171,6 +171,8 @@ export type InitializeResult = {
 };
 
 export type FeatureFlags = {
+  // Build-time Project Agent capability. Absence means disabled.
+  project_agent?: boolean;
   // Advertises that this client can host the embedded browser backend
   // (hidden WebContentsView + CDP bridge). Mirrors appserver.FeatureFlags.
   browser?: boolean;
@@ -449,8 +451,12 @@ export type ExtensionProvenance = {
 
 export type ExtensionInventoryRecord = {
   id: string;
+  // What people see: a plugin manifest's interface displayName and
+  // shortDescription, then its name and description, then the id.
   name: string;
   description?: string;
+  long_description?: string;
+  developer?: string;
   icon?: ExtensionIconDescriptor;
   kind: ExtensionKind;
   provenance: ExtensionProvenance;
@@ -661,6 +667,11 @@ export type ProviderSummary = {
   connection_locked?: boolean;
   auto_discovered?: boolean;
   reuse_codex_credentials?: boolean;
+  // Model catalog service the endpoint belongs to; absent when unrecognized.
+  catalog_id?: string;
+  catalog_name?: string;
+  // Choices removed from this provider, sorted by ID.
+  hidden_models?: string[];
   // Present when a local ChatGPT/Codex OAuth session exists. "wuu-auth-store"
   // is Wuu's own login; "codex-cli" is a read-only Codex CLI login on this
   // machine. Discovery does not imply Wuu is allowed to use it yet.
@@ -946,6 +957,11 @@ export type BrowserTabAdopted = {
 export type RuntimeConnectionUpdate = {
   // Remove a model from this provider's choices, including future catalog refreshes.
   remove_model?: string;
+  // Restore a removed choice or add a model ID the catalog does not list.
+  add_model?: string;
+  // Save the provider without making it the workspace default. Settings edit
+  // services this way; choosing the default is a separate update.
+  keep_selection?: boolean;
   base_url?: string;
   api_key?: string;
   auth_token?: string;
@@ -1131,6 +1147,31 @@ export type ConfigCodexModelsResult = {
   effort?: string;
   variant?: string;
   models: CodexModelSummary[];
+};
+
+/** A catalog service Wuu can connect with a key. */
+export type CatalogProviderSummary = {
+  id: string;
+  name: string;
+  type: string;
+  base_url: string;
+  api_key_env?: string;
+  model_count: number;
+  default_model: string;
+  /** Present only when a single provider was requested. */
+  models?: CatalogModelSummary[];
+};
+
+export type CatalogModelSummary = {
+  id: string;
+  name?: string;
+  release_date?: string;
+  context_window?: number;
+  tool_call?: boolean;
+};
+
+export type ConfigModelCatalogProvidersResult = {
+  providers: CatalogProviderSummary[];
 };
 
 export type ConfigModelCatalogRefreshResult = {
@@ -2641,6 +2682,8 @@ export type WuuDesktopApi = {
   useCodexCredentials: (provider: string) => Promise<{ providers: ProviderSummary[] }>;
   loadCodexModels: (provider?: string) => Promise<ConfigCodexModelsResult>;
   refreshModelCatalog: () => Promise<ConfigModelCatalogRefreshResult>;
+  // Without a provider, lists connectable services without their models.
+  listCatalogProviders: (provider?: string) => Promise<ConfigModelCatalogProvidersResult>;
   // provider/model may be omitted when threadId is set: the server inherits
   // omitted selection fields from the target thread and leaves the workspace
   // defaults for them untouched.

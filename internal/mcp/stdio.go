@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,15 +18,18 @@ import (
 // StdioTransport runs an MCP server as a subprocess and communicates over
 // stdin/stdout. This is the most common transport for local MCP servers.
 type StdioTransport struct {
-	cmd       *exec.Cmd
-	stdin     io.WriteCloser
-	stdout    io.ReadCloser
-	stderr    io.ReadCloser
-	mu        sync.Mutex
-	enc       *json.Encoder
-	dec       *json.Decoder
-	closeOnce sync.Once
-	closeErr  error
+	cmd          *exec.Cmd
+	processGroup *processGroup
+	stdin        io.WriteCloser
+	stdout       io.ReadCloser
+	stderr       io.ReadCloser
+	mu           sync.Mutex
+	enc          *json.Encoder
+	reader       *bufio.Reader
+	stderrMu     sync.Mutex
+	stderrBuf    bytes.Buffer
+	closeOnce    sync.Once
+	closeErr     error
 }
 
 // NewStdioTransport starts command as an MCP stdio server.
@@ -37,39 +41,80 @@ func NewStdioTransport(command string, args ...string) (*StdioTransport, error) 
 // additional environment variables overlaid on the current process env.
 func NewStdioTransportWithEnv(command string, args []string, env map[string]string) (*StdioTransport, error) {
 	cmd := exec.Command(command, args...)
+	processGroup := configureProcessGroup(cmd)
 	cmd.Env = mergeProcessEnv(os.Environ(), env)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		_ = closeProcessGroup(processGroup)
 		return nil, fmt.Errorf("stdin pipe: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		_ = stdin.Close()
+		_ = closeProcessGroup(processGroup)
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		_ = stdin.Close()
 		_ = stdout.Close()
+		_ = closeProcessGroup(processGroup)
 		return nil, fmt.Errorf("stderr pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
 		_ = stdout.Close()
 		_ = stderr.Close()
+		_ = closeProcessGroup(processGroup)
 		return nil, fmt.Errorf("start command: %w", err)
 	}
-	// Drain stderr so it cannot fill the child process pipe and block it.
-	go func() { _, _ = io.Copy(io.Discard, stderr) }()
-	t := &StdioTransport{
-		cmd:    cmd,
-		stdin:  stdin,
-		stdout: stdout,
-		stderr: stderr,
-		enc:    json.NewEncoder(stdin),
-		dec:    json.NewDecoder(bufio.NewReader(stdout)),
+	if err := startProcessGroup(cmd, processGroup); err != nil {
+		_ = killProcessTree(cmd, processGroup)
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		_ = stdin.Close()
+		_ = stdout.Close()
+		_ = stderr.Close()
+		_ = closeProcessGroup(processGroup)
+		return nil, fmt.Errorf("start process group: %w", err)
 	}
+	t := &StdioTransport{
+		cmd:          cmd,
+		processGroup: processGroup,
+		stdin:        stdin,
+		stdout:       stdout,
+		stderr:       stderr,
+		enc:          json.NewEncoder(stdin),
+		reader:       bufio.NewReader(stdout),
+	}
+	go t.captureStderr()
 	return t, nil
+}
+
+func (t *StdioTransport) captureStderr() {
+	buf := make([]byte, 4096)
+	for {
+		n, err := t.stderr.Read(buf)
+		if n > 0 {
+			t.stderrMu.Lock()
+			t.stderrBuf.Write(buf[:n])
+			if t.stderrBuf.Len() > maxMCPBodyExcerptBytes {
+				data := append([]byte(nil), t.stderrBuf.Bytes()[t.stderrBuf.Len()-maxMCPBodyExcerptBytes:]...)
+				t.stderrBuf.Reset()
+				_, _ = t.stderrBuf.Write(data)
+			}
+			t.stderrMu.Unlock()
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+func (t *StdioTransport) stderrTail() string {
+	t.stderrMu.Lock()
+	defer t.stderrMu.Unlock()
+	return strings.TrimSpace(t.stderrBuf.String())
 }
 
 func mergeProcessEnv(base []string, overlay map[string]string) []string {
@@ -124,8 +169,16 @@ func (t *StdioTransport) Receive(ctx context.Context) (Response, error) {
 	}
 	ch := make(chan result, 1)
 	go func() {
+		data, err := readStdioMessage(t.reader)
 		var resp Response
-		err := t.dec.Decode(&resp)
+		if err == nil {
+			err = json.Unmarshal(data, &resp)
+		}
+		if err != nil {
+			if detail := t.stderrTail(); detail != "" {
+				err = fmt.Errorf("%w; server stderr: %s", err, detail)
+			}
+		}
 		ch <- result{resp, err}
 	}()
 	select {
@@ -133,6 +186,26 @@ func (t *StdioTransport) Receive(ctx context.Context) (Response, error) {
 		return Response{}, ctx.Err()
 	case r := <-ch:
 		return r.resp, r.err
+	}
+}
+
+func readStdioMessage(reader *bufio.Reader) ([]byte, error) {
+	var message []byte
+	for {
+		part, err := reader.ReadSlice('\n')
+		if len(part) > 0 {
+			if len(message)+len(part) > maxMCPMessageBytes {
+				return nil, fmt.Errorf("stdio MCP message exceeds %d bytes", maxMCPMessageBytes)
+			}
+			message = append(message, part...)
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return bytes.TrimSpace(message), nil
 	}
 }
 
@@ -146,10 +219,15 @@ func (t *StdioTransport) Close() error {
 		}()
 		done := make(chan error, 1)
 		go func() { done <- t.cmd.Wait() }()
+		defer func() {
+			if err := closeProcessGroup(t.processGroup); err != nil && t.closeErr == nil {
+				t.closeErr = err
+			}
+		}()
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
-			if err := t.cmd.Process.Kill(); err != nil {
+			if err := killProcessTree(t.cmd, t.processGroup); err != nil {
 				if !errors.Is(err, os.ErrProcessDone) {
 					t.closeErr = err
 					return

@@ -37,6 +37,18 @@ for (let index = 0; index < Number(process.env.WUU_STREAM_E2E_SIDEBAR_THREADS ||
   threads.set(thread.id, thread);
 }
 
+if (process.env.WUU_PROJECT_PANEL_E2E) {
+  for (const [id, preview, source, projectID] of [
+    ["project-a", "Project Alpha", "project"],
+    ["project-b", "Project Beta", "project"],
+    ["worker-a", "Alpha worker", "project-session", "project-a"],
+    ["worker-b", "Beta worker", "project-session", "project-b"],
+    ["ordinary", "Ordinary conversation"],
+  ]) {
+    threads.set(id, { ...mockThread(id, source), preview, project_id: projectID });
+  }
+}
+
 contextBridge.exposeInMainWorld("wuu", {
   listProjects: async () => projectList(),
   createBlankProject: async () => projectList(),
@@ -77,6 +89,7 @@ contextBridge.exposeInMainWorld("wuu", {
   }),
   initialize: async () => ({
     protocol_version: "e2e",
+    features: { project_agent: Boolean(process.env.WUU_PROJECT_PANEL_E2E) },
     provider: "e2e",
     model: "mock-stream",
     workspace_root: cwd,
@@ -101,7 +114,13 @@ contextBridge.exposeInMainWorld("wuu", {
   },
   resumeThread: async (id) => ({ thread: threads.get(id) ?? null }),
   forkThread: async () => ({ thread: null }),
-  listThreads: async () => ({ threads: process.env.WUU_STREAM_E2E_SIDEBAR_THREADS ? [...threads.values()] : [] }),
+  editThreadMessage: async (threadId) => {
+    await ipcRenderer.invoke("test:request-lifecycle", "thread/edit-message", { threadId });
+    const thread = { ...threads.get(threadId), turns: [], status: "idle" };
+    threads.set(threadId, thread);
+    return { thread };
+  },
+  listThreads: async () => ({ threads: process.env.WUU_STREAM_E2E_SIDEBAR_THREADS || process.env.WUU_PROJECT_PANEL_E2E ? [...threads.values()] : [] }),
   listArchivedThreads: async () => ({ threads: [] }),
   queueTurn: async (threadId, text, _images, id, _files, _permission, _document, _parts, _context, hold) => {
     ipcRenderer.send("test:queued-input", { threadId, text, id, hold });
@@ -112,11 +131,12 @@ contextBridge.exposeInMainWorld("wuu", {
     return { turn_id: turnId };
   },
   startTurn: async (threadId, text, images = [], _files, _permission, _document, _parts, _context, clientId) => {
-    if (process.env.WUU_REQUEST_LIFECYCLE_E2E) await ipcRenderer.invoke("test:request-lifecycle", "turn/start", { threadId, text, clientId });
+    const turnId = process.env.WUU_REQUEST_LIFECYCLE_E2E ? `turn-${clientId}` : `turn-${threadId}`;
+    if (process.env.WUU_REQUEST_LIFECYCLE_E2E) await ipcRenderer.invoke("test:request-lifecycle", "turn/start", { threadId, turnId, text, clientId });
     const now = new Date().toISOString();
     return {
       turn: {
-        id: `turn-${threadId}`,
+        id: turnId,
         items: [
           {
             id: `user-${threadId}`,

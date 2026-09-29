@@ -34,6 +34,9 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState) (bool, er
 	if th == nil {
 		return false, errors.New("thread is required")
 	}
+	if projectExecutionDisabled(th.Source) {
+		return false, errProjectAgentDisabled
+	}
 	if s != nil && s.pluginGenerationMutation.Load() {
 		return false, nil
 	}
@@ -106,6 +109,9 @@ func (s *Server) refreshDurableThreadHistoryLocked(th *threadState) error {
 	loaded, err := s.loadPersistedThreadSnapshot(th.ID)
 	if err != nil {
 		return fmt.Errorf("refresh durable state for thread %q: %w", th.ID, err)
+	}
+	if projectExecutionDisabled(loaded.metadata.Source) {
+		return errProjectAgentDisabled
 	}
 	if loaded.repairNeeded {
 		if err := s.rewriteChatHistoryUnderExecutionLease(s.rt.SessionDir, th.ID, loaded.repairedHistory, loaded.baselineSeq); err != nil {

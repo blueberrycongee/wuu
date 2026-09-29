@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -796,7 +797,26 @@ func modelSupportsAnthropicToolReference(model string) bool {
 	if normalized == "" {
 		return false
 	}
-	return !strings.Contains(normalized, "haiku")
+	// Compatible endpoints may use their own model IDs when explicitly enabled.
+	if !strings.HasPrefix(normalized, "claude-") {
+		return !strings.Contains(normalized, "haiku")
+	}
+	// Model generation alone is not a capability: Opus 4.1 and earlier do not
+	// support tool references. Keep Claude IDs tied to the documented families.
+	// https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool
+	if index := strings.LastIndexByte(normalized, '-'); index >= 0 && len(normalized[index+1:]) == 8 {
+		if _, err := strconv.Atoi(normalized[index+1:]); err == nil {
+			normalized = normalized[:index]
+		}
+	}
+	switch normalized {
+	case "claude-haiku-4-5", "claude-sonnet-4-5", "claude-sonnet-4-6",
+		"claude-opus-4-5", "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8",
+		"claude-opus-5", "claude-opus-5-5", "claude-fable-5", "claude-fable-5-1",
+		"claude-mythos-5", "claude-mythos-5-1":
+		return true
+	}
+	return false
 }
 
 func isFirstPartyAnthropicBaseURL(raw string) bool {

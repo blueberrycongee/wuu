@@ -3,7 +3,7 @@
      Light-theme values; the dark theme overrides these in base.css theme blocks. */
   --token-gauge-idle: var(--ink-muted);
   --token-gauge-mid: #d48345;
-  --token-gauge-high: var(--accent-warm);
+  --token-gauge-high: var(--warning);
   --token-gauge-track: rgba(138, 142, 145, 0.24);
   --token-gauge-tooltip-bg: var(--paper);
   --token-gauge-tooltip-border: var(--wuu-border-subtle, rgba(15, 17, 21, 0.08));

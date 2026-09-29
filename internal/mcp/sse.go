@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -15,18 +17,24 @@ import (
 
 // SSETransport communicates with an MCP server over Server-Sent Events.
 type SSETransport struct {
-	endpoint  string
-	client    *http.Client
-	headers   map[string]string
-	reader    *bufio.Reader
-	resp      *http.Response
-	ctx       context.Context
-	cancel    context.CancelFunc
-	closeOnce sync.Once
-	closeErr  error
+	endpoint        string
+	messageEndpoint string
+	client          *http.Client
+	headers         map[string]string
+	authProvider    TokenProvider
+	reader          *bufio.Reader
+	resp            *http.Response
+	ctx             context.Context
+	cancel          context.CancelFunc
+	closeOnce       sync.Once
+	closeErr        error
 }
 
 func newSSETransport(ctx context.Context, endpoint string, headers map[string]string) (*SSETransport, error) {
+	return newSSETransportWithAuth(ctx, endpoint, headers, nil)
+}
+
+func newSSETransportWithAuth(ctx context.Context, endpoint string, headers map[string]string, authProvider TokenProvider) (*SSETransport, error) {
 	client := newSSEHTTPClient()
 	transportCtx, cancel := context.WithCancel(context.Background())
 	stopCallerCancel := context.AfterFunc(ctx, cancel)
@@ -44,6 +52,11 @@ func newSSETransport(ctx context.Context, endpoint string, headers map[string]st
 			continue
 		}
 		req.Header.Set(key, value)
+	}
+	if err := applyToken(req, authProvider, ctx, false); err != nil {
+		stopCallerCancel()
+		cancel()
+		return nil, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -65,15 +78,35 @@ func newSSETransport(ctx context.Context, endpoint string, headers map[string]st
 		resp.Body.Close()
 		return nil, fmt.Errorf("sse connect GET %s: %w", endpoint, ctx.Err())
 	}
-	return &SSETransport{
-		endpoint: endpoint,
-		client:   client,
-		headers:  cloneStringMap(headers),
-		reader:   bufio.NewReader(resp.Body),
-		resp:     resp,
-		ctx:      transportCtx,
-		cancel:   cancel,
-	}, nil
+	transport := &SSETransport{
+		endpoint:     endpoint,
+		client:       client,
+		headers:      cloneStringMap(headers),
+		authProvider: authProvider,
+		reader:       bufio.NewReader(resp.Body),
+		resp:         resp,
+		ctx:          transportCtx,
+		cancel:       cancel,
+	}
+	// Legacy SSE servers announce the POST target in the first endpoint
+	// event. Waiting here is important: deriving /message loses session query
+	// parameters and breaks servers hosted behind a different route.
+	event, err := readSSEEvent(transport.reader)
+	if err != nil {
+		_ = transport.Close()
+		return nil, fmt.Errorf("sse endpoint event: %w", err)
+	}
+	if event.event != "endpoint" || strings.TrimSpace(event.data) == "" {
+		_ = transport.Close()
+		return nil, errors.New("sse stream did not declare an endpoint event")
+	}
+	messageEndpoint, err := resolveSSEEndpoint(endpoint, event.data)
+	if err != nil {
+		_ = transport.Close()
+		return nil, fmt.Errorf("sse endpoint event: %w", err)
+	}
+	transport.messageEndpoint = messageEndpoint
+	return transport, nil
 }
 
 func newSSEHTTPClient() *http.Client {
@@ -90,42 +123,64 @@ func newSSEHTTPClient() *http.Client {
 }
 
 func (t *SSETransport) Send(ctx context.Context, req Request) error {
-	// SSE transport typically POSTs to a message endpoint.
 	body, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
-	// Derive message endpoint from SSE endpoint: replace /sse with /message.
-	msgURL := strings.TrimSuffix(t.endpoint, "/sse") + "/message"
+	msgURL := t.messageEndpoint
 	requestCtx, cancelRequest := context.WithCancel(t.ctx)
 	stopCallerCancel := context.AfterFunc(ctx, cancelRequest)
 	defer func() {
 		stopCallerCancel()
 		cancelRequest()
 	}()
-	hreq, err := http.NewRequestWithContext(requestCtx, "POST", msgURL, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	hreq.Header.Set("Content-Type", "application/json")
-	for key, value := range t.headers {
-		key = strings.TrimSpace(key)
-		if key == "" {
+	for attempt := 0; attempt < 2; attempt++ {
+		hreq, err := http.NewRequestWithContext(requestCtx, "POST", msgURL, bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		hreq.Header.Set("Content-Type", "application/json")
+		for key, value := range t.headers {
+			key = strings.TrimSpace(key)
+			if key == "" {
+				continue
+			}
+			hreq.Header.Set(key, value)
+		}
+		if err := applyToken(hreq, t.authProvider, ctx, attempt == 1); err != nil {
+			return err
+		}
+		resp, err := t.client.Do(hreq)
+		if err != nil {
+			if contextErr := ctx.Err(); contextErr != nil {
+				return contextErr
+			}
+			return err
+		}
+		if resp.StatusCode == http.StatusUnauthorized && attempt == 0 && t.authProvider != nil {
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxMCPBodyExcerptBytes))
+			_ = resp.Body.Close()
 			continue
 		}
-		hreq.Header.Set(key, value)
-	}
-	resp, err := t.client.Do(hreq)
-	if err != nil {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return contextErr
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			return fmt.Errorf("sse post %d: %s", resp.StatusCode, readBodyExcerpt(resp.Body))
 		}
-		return err
+		return nil
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("sse post %d: %s", resp.StatusCode, string(b))
+	return errors.New("sse post authentication retry exhausted")
+}
+
+func applyToken(req *http.Request, provider TokenProvider, ctx context.Context, forceRefresh bool) error {
+	if provider == nil {
+		return nil
+	}
+	token, err := provider(ctx, forceRefresh)
+	if err != nil {
+		return fmt.Errorf("MCP OAuth token: %w", err)
+	}
+	if strings.TrimSpace(token) != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	return nil
 }
@@ -143,26 +198,34 @@ func cloneStringMap(in map[string]string) map[string]string {
 
 func (t *SSETransport) Receive(ctx context.Context) (Response, error) {
 	for {
-		line, err := t.reader.ReadString('\n')
+		event, err := readSSEEvent(t.reader)
 		if err != nil {
 			return Response{}, err
 		}
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
-		if data == "" {
+		if strings.TrimSpace(event.data) == "" {
 			continue
 		}
 		var resp Response
-		if err := json.Unmarshal([]byte(data), &resp); err != nil {
-			// Some SSE endpoints wrap notifications differently.
-			// Try parsing as raw JSON-RPC response.
-			continue
+		if err := json.Unmarshal([]byte(event.data), &resp); err != nil {
+			return Response{}, fmt.Errorf("decode sse JSON-RPC event: %w", err)
 		}
 		return resp, nil
 	}
+}
+
+func resolveSSEEndpoint(streamURL, announced string) (string, error) {
+	base, err := url.Parse(strings.TrimSpace(streamURL))
+	if err != nil {
+		return "", err
+	}
+	target, err := url.Parse(strings.TrimSpace(announced))
+	if err != nil {
+		return "", err
+	}
+	if !target.IsAbs() && target.Path == "" && target.RawQuery == "" {
+		return "", errors.New("endpoint event is empty")
+	}
+	return base.ResolveReference(target).String(), nil
 }
 
 func (t *SSETransport) Close() error {

@@ -286,6 +286,8 @@ func executeShellCommandInDir(ctx context.Context, env *Env, command string, tim
 				CWD:            workDir,
 				OwnerKind:      proc.OwnerKind(defaultProcessOwnerKind(env, "")),
 				OwnerID:        defaultProcessOwnerID(env),
+				RootThreadID:   processRootThreadID(env),
+				Lifecycle:      proc.LifecycleManaged,
 				StartedAt:      startedAt,
 				RecheckMinutes: defaultPromotedRecheckMinutes,
 				SandboxMode: func() processsandbox.Mode {

@@ -3727,3 +3727,113 @@ func TestResponsesChatGeneratedImagesAndReplay(t *testing.T) {
 		})
 	}
 }
+
+func TestKimiDynamicToolsPreserveRequestPrefix(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%v", stream), func(t *testing.T) {
+			requests := make(chan map[string]any, 8)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+					return
+				}
+				requests <- body
+				if stream {
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+				} else {
+					fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}`)
+				}
+			}))
+			defer server.Close()
+			client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			schema := map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "string"}}}
+			loaded := providers.LoadableToolDefinition{Name: "docs_search", Description: "Search docs", InputSchema: schema}
+			req := providers.ChatRequest{Model: "kimi-k3", NativeDeferredToolDiscovery: true,
+				Messages: []providers.ChatMessage{{Role: "system", Content: "fixed"}, {Role: "user", Content: "find docs"}},
+				Tools:    []providers.ToolDefinition{{Name: "tool_search", InputSchema: schema}, {Name: "read_file", InputSchema: schema}, {Name: "docs_search", InputSchema: schema, DeferLoading: true}},
+			}
+			call := func() map[string]any {
+				t.Helper()
+				if stream {
+					events, e := client.StreamChat(context.Background(), req)
+					if e != nil {
+						t.Fatal(e)
+					}
+					for ev := range events {
+						if ev.Type == providers.EventError {
+							t.Fatal(ev.Error)
+						}
+					}
+				} else {
+					if _, e := client.Chat(context.Background(), req); e != nil {
+						t.Fatal(e)
+					}
+				}
+				return <-requests
+			}
+			first := call()
+			tools := first["tools"].([]any)
+			if len(tools) != 2 || tools[0].(map[string]any)["function"].(map[string]any)["name"] != "tool_search" {
+				t.Fatalf("deferred schema leaked: %v", tools)
+			}
+			raw, _ := json.Marshal(map[string]any{"loadable_tools": []providers.LoadableToolDefinition{loaded}})
+			req.Messages = append(req.Messages,
+				providers.ChatMessage{Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "s1", Name: "tool_search", Arguments: `{"query":"docs"}`}, {ID: "r1", Name: "read_file", Arguments: `{"path":"README.md"}`}}},
+				providers.ChatMessage{Role: "tool", Name: "tool_search", ToolCallID: "s1", Content: string(raw), DiscoveredTools: []providers.LoadableToolDefinition{loaded}},
+				providers.ChatMessage{Role: "tool", Name: "read_file", ToolCallID: "r1", Content: "readme"},
+			)
+			second := call()
+			if !reflect.DeepEqual(first["tools"], second["tools"]) {
+				t.Fatal("top-level tools changed after discovery")
+			}
+			messages := second["messages"].([]any)
+			if !reflect.DeepEqual(messages[:2], first["messages"]) {
+				t.Fatal("existing prefix changed")
+			}
+			if len(messages) != 6 {
+				t.Fatalf("expected one declaration after tool batch, got %v", messages)
+			}
+			declaration := messages[5].(map[string]any)
+			if declaration["role"] != "system" || declaration["content"] != nil {
+				t.Fatalf("invalid dynamic declaration: %v", declaration)
+			}
+			defs := declaration["tools"].([]any)
+			if len(defs) != 1 {
+				t.Fatalf("schemas duplicated: %v", defs)
+			}
+			function := defs[0].(map[string]any)["function"].(map[string]any)
+			if function["name"] != "docs_search" || function["strict"] != false {
+				t.Fatalf("wrong tool declaration: %v", function)
+			}
+			if strings.Contains(messages[3].(map[string]any)["content"].(string), "input_schema") {
+				t.Fatal("search result duplicates full schema")
+			}
+			req.Messages = append(req.Messages, providers.ChatMessage{Role: "assistant", Content: "found"}, providers.ChatMessage{Role: "user", Content: "continue"})
+			third := call()
+			if !reflect.DeepEqual(third["messages"].([]any)[:len(messages)], messages) {
+				t.Fatal("discovery replay rewrites prefix")
+			}
+			req.Messages = []providers.ChatMessage{{Role: "system", Content: "checkpoint", DiscoveredTools: []providers.LoadableToolDefinition{loaded}}, {Role: "user", Content: "continue"}}
+			recovered := call()
+			recoveryMessages := recovered["messages"].([]any)
+			if len(recoveryMessages) != 3 || recoveryMessages[1].(map[string]any)["tools"] == nil {
+				t.Fatal("compaction lost loaded tool")
+			}
+			req.NativeDeferredToolDiscovery = false
+			flat := call()
+			if len(flat["tools"].([]any)) != 3 {
+				t.Fatal("flat mode lost tool definitions")
+			}
+			for _, m := range flat["messages"].([]any) {
+				if m.(map[string]any)["tools"] != nil {
+					t.Fatal("native fields leaked into flat mode")
+				}
+			}
+		})
+	}
+}

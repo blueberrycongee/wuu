@@ -1,0 +1,17 @@
+.desktop-zoom-readout {
+  position: fixed;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2147483647;
+  pointer-events: none;
+  padding: 16px 24px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-3);
+  color: var(--ink);
+  box-shadow: var(--shadow-card);
+  font-size: calc(var(--font-ui) * 1.7);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}

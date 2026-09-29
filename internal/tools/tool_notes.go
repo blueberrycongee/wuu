@@ -35,17 +35,17 @@ func (*NotesTool) Classify(arguments string) ToolClassification {
 func (*NotesTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        toolNotes,
-		Description: "Maintain persistent working notes for this session. Save objectives, constraints, decisions, progress, checks and next steps as work proceeds and before new_context. Read notes after a context switch; use history_read/history_search for exact facts. These virtual files survive resets, restarts and model changes; they do not write workspace files. Actions: list, read, search (literal substring), write (replace), append. Paths are relative. Reads/search use Unicode character offsets and bounded pages. Writes require the revision returned by list/read/search (use the empty revision for a new collection); conflicts require rereading. Total stored JSON is limited to 1 MB per session. No background model maintains these notes.",
+		Description: "Session-local virtual files for recovery checkpoints, preserved across context resets, restarts and model changes. They do not write workspace files. Read a known path directly; use list to discover paths or search to locate text, then read the needed range. Search excerpts are locators, not complete notes. Total stored JSON is limited to 1 MB per session.",
 		InputSchema: map[string]any{
 			"type": "object", "additionalProperties": false,
 			"required": []string{"action"},
 			"properties": map[string]any{
-				"action":   map[string]any{"type": "string", "enum": []string{"list", "read", "search", "write", "append"}},
-				"path":     map[string]any{"type": "string", "description": "Virtual note path, required for read/write/append; prefix for list/search."},
+				"action":   map[string]any{"type": "string", "enum": []string{"list", "read", "search", "write", "append"}, "description": "write replaces the file; append adds content verbatim."},
+				"path":     map[string]any{"type": "string", "description": "Relative virtual path, required for read/write/append; optional prefix for list/search."},
 				"content":  map[string]any{"type": "string", "description": "Text for write or append."},
-				"query":    map[string]any{"type": "string", "description": "Literal case-sensitive search text."},
-				"revision": map[string]any{"type": "string", "description": "Collection revision. Required for mutations; optional on reads to reject stale pagination."},
-				"offset":   map[string]any{"type": "integer", "minimum": 0, "description": "Character offset for read; item offset for list/search."},
+				"query":    map[string]any{"type": "string", "description": "Case-sensitive literal substring in note contents. Matches return a path, character offset and excerpt."},
+				"revision": map[string]any{"type": "string", "description": "Required for write/append: reuse the latest result's revision, or an empty string for a new collection. On conflict, reread before retrying. Optional on reads to reject stale pagination."},
+				"offset":   map[string]any{"type": "integer", "minimum": 0, "description": "Zero-based Unicode character offset for read; item offset for list/search. Use next_offset to continue a page."},
 				"limit":    map[string]any{"type": "integer", "minimum": 1, "maximum": 16000, "description": "Read characters (default 8000) or list/search items (default 20, max 100)."},
 			},
 		},
@@ -122,7 +122,7 @@ func (t *NotesTool) Execute(ctx context.Context, arguments string) (string, erro
 	switch input.Action {
 	case "write", "append":
 		if input.Revision == nil {
-			return "", errors.New("write and append require a revision from a prior read or list")
+			return "", errors.New("write and append require revision; use the latest returned revision, or an empty string for a new collection")
 		}
 		if !validNotePath(input.Path) || !utf8.ValidString(input.Content) {
 			return "", errors.New("invalid note path or UTF-8 content")

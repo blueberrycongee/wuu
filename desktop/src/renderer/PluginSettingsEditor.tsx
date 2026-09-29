@@ -6,6 +6,7 @@ import type {
   ExtensionSettingDescriptor,
 } from "../shared/protocol";
 import { useI18n } from "./i18n";
+import { SelectMenu } from "./SelectMenu";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import type { PluginContributionConflict, PluginGenerationDiagnostic } from "./plugins/PluginHost";
 
@@ -14,11 +15,9 @@ const EMPTY_DIAGNOSTICS: readonly PluginGenerationDiagnostic[] = Object.freeze([
 
 export function PluginSettingsEditor({
   plugin,
-  variant = "card",
   title,
 }: {
   plugin: ExtensionInventoryRecord;
-  variant?: "card" | "page";
   title?: string;
 }): JSX.Element | null {
   const settings = plugin.contributions?.settings ?? [];
@@ -60,12 +59,13 @@ export function PluginSettingsEditor({
 
   return (
     <section
-      className={`plugin-settings-editor plugin-settings-editor-${variant}`}
+      className="plugin-settings-editor"
       data-wuu-component="plugin-settings"
       data-wuu-plugin={plugin.id}
       aria-label={title ?? `${plugin.name} settings`}
     >
       {title ? <h3 className="plugin-settings-editor-title">{title}</h3> : null}
+      <div className="plugin-settings-editor-body">
       {conflicts.map((conflict) => (
         <PluginConflictControl key={conflict.key} conflict={conflict} />
       ))}
@@ -90,6 +90,7 @@ export function PluginSettingsEditor({
           setting={setting}
         />
       ))}
+      </div>
     </section>
   );
 }
@@ -236,22 +237,28 @@ function PluginSettingControl({
 
   return (
     <div
-      className="plugin-setting settings-row settings-row-block"
+      className="plugin-setting settings-row"
       data-wuu-component="settings-row"
       data-setting-key={setting.id}
+      data-setting-type={setting.type}
     >
       <div className="plugin-setting-heading settings-row-label">
         <label className="settings-row-label-title" htmlFor={controlId}>{setting.title}</label>
-        <span className="settings-row-label-description">
-          {t(setting.scope === "workspace" ? "skills.pluginSettingWorkspace" : "skills.pluginSettingUser")}
-        </span>
+        {showDescription ? (
+          <span id={descriptionId} className="settings-row-label-description">{setting.description}</span>
+        ) : null}
+        {/* User scope is the default; only a narrower reach is worth saying. */}
+        {setting.scope === "workspace" ? (
+          <span className="settings-row-label-description">{t("skills.pluginSettingWorkspace")}</span>
+        ) : null}
       </div>
-      {showDescription && <p id={descriptionId}>{setting.description}</p>}
-      <div className="plugin-setting-control settings-row-control-block">
+      <div className="plugin-setting-control settings-row-control">
         {setting.type === "boolean" ? (
           <input
             id={controlId}
+            className="plugin-setting-switch"
             type="checkbox"
+            role="switch"
             checked={Boolean(draft)}
             disabled={loading || saving}
             aria-describedby={describedBy}
@@ -262,22 +269,23 @@ function PluginSettingControl({
             }}
           />
         ) : setting.type === "enum" ? (
-          <select
+          <SelectMenu
             id={controlId}
+            className="plugin-setting-select"
             value={String(draft)}
             disabled={loading || saving}
-            aria-describedby={describedBy}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
+            ariaLabel={setting.title}
+            align="right"
+            options={(setting.enum ?? []).map((option) => ({ value: option, label: option }))}
+            onChange={(value) => {
               setDraft(value);
               void save(value);
             }}
-          >
-            {(setting.enum ?? []).map((option) => <option key={option} value={option}>{option}</option>)}
-          </select>
+          />
         ) : (
           <input
             id={controlId}
+            className="settings-input"
             type={setting.type === "number" ? "number" : "text"}
             value={String(draft)}
             disabled={loading || saving}
@@ -290,9 +298,6 @@ function PluginSettingControl({
             onBlur={() => void save(draft)}
           />
         )}
-        <span className="plugin-setting-default">
-          {t("skills.pluginSettingDefault", { value: String(setting.default) })}
-        </span>
       </div>
       <div id={statusId} className={`plugin-setting-status${error ? " is-error" : ""}`} aria-live="polite">
         {error ? (
@@ -304,7 +309,7 @@ function PluginSettingControl({
           </>
         ) : saving ? t("skills.pluginSettingSaving") : setting.apply === "restart" ? (
           saved ? t("skills.pluginSettingRestartSaved") : t("skills.pluginSettingRestart")
-        ) : saved ? t("skills.pluginSettingLiveSaved") : t("skills.pluginSettingLive")}
+        ) : saved ? t("skills.pluginSettingLiveSaved") : null}
       </div>
     </div>
   );

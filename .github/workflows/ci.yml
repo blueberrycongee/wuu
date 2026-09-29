@@ -67,6 +67,9 @@ jobs:
       - name: Test
         run: make test-go
 
+      - name: Test experimental Project Agent
+        run: go test -tags project_agent ./internal/appserver
+
       - name: Build
         if: github.event_name == 'push'
         run: make build-go
@@ -100,6 +103,28 @@ jobs:
 
       - name: Build
         run: make build-desktop
+
+      - name: Guard image layout stability
+        shell: bash
+        env:
+          WUU_E2E_HIDDEN: "true"
+          WUU_IMAGE_LAYOUT_OUTPUT: ${{ runner.temp }}/wuu-image-layout-evidence
+        run: |
+          mkdir -p "$WUU_IMAGE_LAYOUT_OUTPUT"
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/image-layout-e2e.cjs 2>&1 | tee "$WUU_IMAGE_LAYOUT_OUTPUT/run.log"
+
+      - name: Upload image layout evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-layout-evidence
+          path: |
+            ${{ runner.temp }}/wuu-image-layout-evidence/*.json
+            ${{ runner.temp }}/wuu-image-layout-evidence/*.png
+            ${{ runner.temp }}/wuu-image-layout-evidence/*.log
+            ${{ runner.temp }}/wuu-image-layout-evidence/*.txt
+          if-no-files-found: ignore
+          retention-days: 14
 
       - uses: actions/setup-go@v5
         with:
@@ -252,6 +277,7 @@ jobs:
       - name: Test Windows-native runtime boundaries
         run: |
           go test ./internal/process -run '^Test(VerifyProcessGroupRejectsMismatchedRecords|LookupProcessGroupIsPid|PTYUnsupported|TaskkillTreeIgnoresInvalidPids|ProcessExistsSelf)$'
+          go test ./internal/mcp -run '^TestStdioTransportCloseTerminatesWindowsDescendants$' -count=1
           go test ./internal/session -run '^TestInferenceRuntimeProcessAliveWindows$'
           go test ./internal/tools -run '^TestProcessSandbox(PolicyMapsWorkspaceBoundary|TempRejectsSymlink|PolicyFailsClosedWithoutBackend)$'
 

@@ -84,6 +84,7 @@ export type ConversationHistoryActionsDeps = {
   sendComposerMessageToThread: (
     message: QueuedComposerMessage,
     targetThread: Thread,
+    prepareThread?: () => Promise<Thread>,
   ) => Promise<boolean>;
   worktreeForkNonGitReason: string;
 };
@@ -388,44 +389,40 @@ deps.rememberConversationScrollForEdit();
         : current,
     );
     
-    deps.setAppState((current) => ({
-      ...current,
-      status: localizedText("history.sendingEdit"),
-    }));
     try {
-      const result = await window.wuu.editThreadMessage(
-        sourceThread.id,
-        turnID,
-        item.id,
-      );
-      const thread = requireThread(
-        { thread: result.thread },
-        "thread/edit-message did not return a thread",
-      );
-      // The sender owns placement of the new user message. Enabling follow
-      // here lets the history truncation jump to bottom before it mounts.
-      deps.setHistoryMessageEdit(undefined);
-      deps.appStateRef.current = updateThreadByID(
-        deps.appStateRef.current,
-        thread.id,
-        (currentThread) => ({
-          ...thread,
-          child_agents: thread.child_agents ?? currentThread.child_agents,
-        }),
-        { status: localizedText("app.sendingRequest") },
-      );
-      deps.setAppState((current) =>
-        updateThreadByID(
+      let preparedThread: Thread | undefined;
+      const sent = await deps.sendComposerMessageToThread(message, sourceThread, async () => {
+        // Editing mutates persisted history. Even after Stop, wait for its
+        // authoritative result before the sender settles the interrupted turn.
+        const result = await window.wuu.editThreadMessage(sourceThread.id, turnID, item.id);
+        const thread = requireThread(
+          { thread: result.thread },
+          "thread/edit-message did not return a thread",
+        );
+        // The sender owns placement of the replacement user message.
+        deps.setHistoryMessageEdit(undefined);
+        const adopt = (current: AppState) => updateThreadByID(
           current,
           thread.id,
           (currentThread) => ({
             ...thread,
             child_agents: thread.child_agents ?? currentThread.child_agents,
           }),
-          { status: localizedText("app.sendingRequest") },
-        ),
-      );
-      const sent = await deps.sendComposerMessageToThread(message, thread);
+        );
+        deps.appStateRef.current = adopt(deps.appStateRef.current);
+        deps.setAppState(adopt);
+        preparedThread = thread;
+        return thread;
+      });
+      if (!preparedThread) {
+        deps.setHistoryMessageEdit((current) =>
+          current?.threadID === sourceThread.id && current.turnID === turnID && current.itemID === item.id
+            ? { ...current, submitting: false }
+            : current,
+        );
+        return;
+      }
+      const thread = preparedThread;
       if (sent) {
         const editIndex = thread.turns.length;
         const reordered = (latest: Thread): Thread => {

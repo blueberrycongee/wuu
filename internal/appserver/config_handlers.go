@@ -89,7 +89,7 @@ func (s *Server) handleInitialize(req Request) error {
 		Providers:          s.providerSummaries(),
 		AdvancedSettings:   s.currentAdvancedSettingsSummary(),
 		GeneralSettings:    s.currentGeneralSettingsSummary(),
-		Features:           FeatureFlags{Browser: s.supportsBrowserClient(), SafeMode: s.rt.SafeMode},
+		Features:           FeatureFlags{Browser: s.supportsBrowserClient(), SafeMode: s.rt.SafeMode, ProjectAgent: projectAgentEnabled},
 	}, nil)
 }
 
@@ -484,12 +484,15 @@ func (s *Server) currentExtensionInventory() []ExtensionInventoryRecord {
 		navigation := viewEntries(item.Navigation)
 		workspaceTools := viewEntries(item.WorkspaceTools)
 		settingsPages := viewEntries(item.SettingsPages)
+		presentation := pluginPresentation(item.Manifest)
 		packageRecord := ExtensionInventoryRecord{
-			ID:          item.SubjectID,
-			Name:        item.ID,
-			Description: item.Description,
-			Icon:        extensionIconDescriptor(item.Icon),
-			Kind:        extensions.KindPlugin,
+			ID:              item.SubjectID,
+			Name:            presentation.DisplayName,
+			Description:     presentation.ShortDescription,
+			LongDescription: presentation.LongDescription,
+			Developer:       presentation.DeveloperName,
+			Icon:            extensionIconDescriptor(item.Icon),
+			Kind:            extensions.KindPlugin,
 			Provenance: extensions.Provenance{
 				Kind:     extensions.KindPlugin,
 				Source:   pluginSource,
@@ -634,6 +637,37 @@ func (s *Server) currentExtensionInventory() []ExtensionInventoryRecord {
 		return records[i].ID < records[j].ID
 	})
 	return records
+}
+
+type pluginInterface struct {
+	DisplayName      string `json:"displayName"`
+	ShortDescription string `json:"shortDescription"`
+	LongDescription  string `json:"longDescription"`
+	DeveloperName    string `json:"developerName"`
+}
+
+// pluginPresentation resolves what people see for a plugin. An interface
+// block that does not parse falls back to the manifest fields rather than
+// hiding the plugin.
+func pluginPresentation(manifest pluginpkg.Manifest) pluginInterface {
+	var presentation pluginInterface
+	if len(manifest.Interface) > 0 {
+		_ = json.Unmarshal(manifest.Interface, &presentation)
+	}
+	first := func(values ...string) string {
+		for _, value := range values {
+			if value = strings.TrimSpace(value); value != "" {
+				return value
+			}
+		}
+		return ""
+	}
+	return pluginInterface{
+		DisplayName:      first(presentation.DisplayName, manifest.Name, manifest.ID),
+		ShortDescription: first(presentation.ShortDescription, manifest.Description),
+		LongDescription:  first(presentation.LongDescription),
+		DeveloperName:    first(presentation.DeveloperName),
+	}
 }
 
 func extensionIconDescriptor(icon *pluginpkg.IconSpec) *ExtensionIconDescriptor {
@@ -1149,8 +1183,16 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 	providerName := strings.TrimSpace(params.Provider)
 	model := strings.TrimSpace(params.Model)
 	threadID := strings.TrimSpace(params.ThreadID)
+	keepSelection := params.KeepSelection
+	if keepSelection && (threadID != "" || params.Effort != nil || params.Variant != nil || params.PermissionMode != nil || params.ApproveForMe != nil || params.Speed != nil) {
+		return s.writeResponse(req.ID, nil, errors.New("keep_selection saves a provider without changing a selection"))
+	}
+	addedModel := strings.TrimSpace(params.AddModel)
+	if addedModel != "" && (params.CreateProvider || threadID != "" || addedModel == strings.TrimSpace(params.RemoveModel)) {
+		return s.writeResponse(req.ID, nil, errors.New("model choices change on an existing provider, one direction per model"))
+	}
 	// A conversation selection must never persist workspace defaults.
-	if threadID != "" && params.BaseURL == nil && params.APIKey == nil && params.AuthToken == nil && params.Type == nil && !params.CreateProvider && params.RemoveModel == "" && params.ReuseCodexCredentials == nil {
+	if threadID != "" && params.BaseURL == nil && params.APIKey == nil && params.AuthToken == nil && params.Type == nil && !params.CreateProvider && params.RemoveModel == "" && addedModel == "" && params.ReuseCodexCredentials == nil {
 		return s.handleThreadModelSelection(req, params)
 	}
 	if threadID != "" && (providerName != "" || model != "" || params.Variant != nil || params.Effort != nil || params.PermissionMode != nil || params.ApproveForMe != nil) {
@@ -1159,9 +1201,9 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 	if params.Speed != nil {
 		return s.writeResponse(req.ID, nil, errors.New("speed is a conversation setting; provide thread_id without provider configuration changes"))
 	}
-	explicitSelection := providerName != "" || model != "" ||
-		params.Effort != nil || params.Variant != nil || params.PermissionMode != nil
-	if model == "" && (threadID == "" || params.CreateProvider) {
+	explicitSelection := !keepSelection && (providerName != "" || model != "" ||
+		params.Effort != nil || params.Variant != nil || params.PermissionMode != nil)
+	if model == "" && (params.CreateProvider || (threadID == "" && !keepSelection)) {
 		return s.writeResponse(req.ID, nil, errors.New("model is required"))
 	}
 	if providerName == "" {
@@ -1272,6 +1314,10 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 			return s.writeResponse(req.ID, nil, errors.New("model is required"))
 		}
 	}
+	// The workspace model is the default provider's model.
+	if keepSelection && resolvedName == s.rt.ProviderName && model != strings.TrimSpace(s.rt.Model) {
+		return s.writeResponse(req.ID, nil, errors.New("keep_selection cannot change the workspace model"))
+	}
 	previousProviderCfg := providerCfg
 	previousModel := strings.TrimSpace(providerCfg.Model)
 	providerCfg.Model = model
@@ -1286,6 +1332,15 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 		entry := providerCfg.Models[removed]
 		entry.Disabled = true
 		providerCfg.Models[removed] = entry
+	}
+	if addedModel != "" {
+		providerCfg.Models = cloneProviderModelConfigs(providerCfg.Models)
+		if providerCfg.Models == nil {
+			providerCfg.Models = make(map[string]config.ProviderModelConfig)
+		}
+		entry := providerCfg.Models[addedModel]
+		entry.Disabled = false
+		providerCfg.Models[addedModel] = entry
 	}
 	connectionChanged := creatingProvider
 	connectionLocked := isCodexProviderType(providerCfg.Type)
@@ -1433,17 +1488,41 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 	// again while (or just after) this handler is applying it itself.
 	s.configRefreshMu.Lock()
 	defer s.configRefreshMu.Unlock()
-	if creatingProvider {
-		baseURLForCreate := params.BaseURL
-		if createBaseURL != nil {
-			baseURLForCreate = createBaseURL
-		}
-		err = config.CreateProviderRuntime(s.rt.ConfigPath, resolvedName, &providerTypeValue, model, baseURLForCreate, apiKeyForConfig, authTokenForConfig, effortForConfig, variantForConfig, params.PermissionMode, params.ReuseCodexCredentials)
-	} else {
-		err = config.UpdateProviderRuntime(s.rt.ConfigPath, resolvedName, model, params.BaseURL, apiKeyForConfig, authTokenForConfig, effortForConfig, variantForConfig, params.PermissionMode, params.ReuseCodexCredentials, params.RemoveModel)
+	change := config.ProviderChange{
+		Create:                creatingProvider,
+		Type:                  providerTypeValue,
+		Model:                 model,
+		BaseURL:               params.BaseURL,
+		APIKey:                apiKeyForConfig,
+		AuthToken:             authTokenForConfig,
+		ReuseCodexCredentials: params.ReuseCodexCredentials,
+		Select:                !keepSelection,
+		Effort:                effortForConfig,
+		Variant:               variantForConfig,
+		PermissionMode:        params.PermissionMode,
 	}
-	if err != nil {
+	if creatingProvider && createBaseURL != nil {
+		change.BaseURL = createBaseURL
+	}
+	if removed := strings.TrimSpace(params.RemoveModel); removed != "" {
+		change.RemovedModels = []string{removed}
+	}
+	if addedModel != "" {
+		change.AddedModels = []string{addedModel}
+	}
+	if err := config.UpdateProvider(s.rt.ConfigPath, resolvedName, change); err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if keepSelection && resolvedName != s.rt.ProviderName {
+		// The default runtime keeps its client; roles and idle conversations
+		// that use the edited provider pick up the saved connection.
+		if err := s.refreshRuntimeAfterProviderEdit(connectionChanged); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if fingerprint, fingerprintErr := s.effectiveConfigFingerprint(); fingerprintErr == nil {
+			s.configFingerprint = fingerprint
+		}
+		return s.writeResponse(req.ID, s.currentConfigModelUpdateResult(), nil)
 	}
 	previousRuntimeProvider := s.rt.ProviderName
 	roleSelections, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{
@@ -1476,6 +1555,9 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 		providers.DebugLogf("record model update config fingerprint: %v", fingerprintErr)
 	}
 
+	if keepSelection {
+		return s.writeResponse(req.ID, s.currentConfigModelUpdateResult(), nil)
+	}
 	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
 	return s.writeResponse(req.ID, ConfigModelUpdateResult{
 		Provider:         resolvedName,
@@ -1491,6 +1573,33 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 		Providers:        s.providerSummaries(),
 		AdvancedSettings: s.currentAdvancedSettingsSummary(),
 	}, nil)
+}
+
+// refreshRuntimeAfterProviderEdit re-resolves model roles for the unchanged
+// workspace selection after another provider's saved configuration changed.
+func (s *Server) refreshRuntimeAfterProviderEdit(connectionChanged bool) error {
+	cfg, _, err := s.rt.LoadEffectiveConfig()
+	if err != nil {
+		return err
+	}
+	providerCfg, resolvedName, err := cfg.ResolveProvider(s.rt.ProviderName)
+	if err != nil {
+		return err
+	}
+	model := strings.TrimSpace(s.rt.Model)
+	ruleProviderName, ruleProviderCfg := modelcatalog.EnrichProvider(resolvedName, providerCfg, model)
+	selection := modelvariant.ResolveForProvider(ruleProviderName, ruleProviderCfg, model, s.currentVariant(), s.currentEffort())
+	roleSelections, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{
+		ProviderName:   resolvedName,
+		ProviderConfig: providerCfg,
+		Model:          model,
+		Effort:         selection.LegacyEffort,
+		Variant:        selection.Variant,
+	})
+	if err != nil {
+		return err
+	}
+	return s.applyModelSelectionToRuntime(cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, false, s.rt.ProviderName, nil, false)
 }
 
 // applyModelSelectionToRuntime swaps the workspace runtime onto a resolved
@@ -2375,40 +2484,8 @@ func (s *Server) providerSummaries() []ProviderSummary {
 			}
 		}
 	}
-	s.attachLatestProviderRequests(summaries)
 	s.lastProviderSummaries = summaries
 	return summaries
-}
-
-// attachLatestProviderRequests records the newest settled request for
-// built-in subscription providers only. Ordinary API-key providers stay out
-// of this read; their credentials are not the subscription dashboard.
-func (s *Server) attachLatestProviderRequests(summaries []ProviderSummary) {
-	if s == nil || s.rt == nil || strings.TrimSpace(s.rt.SessionDir) == "" {
-		return
-	}
-	keys := make([]session.SubscriptionActivityKey, 0, len(summaries))
-	for _, summary := range summaries {
-		if !builtInSubscriptionProvider(summary) {
-			continue
-		}
-		keys = append(keys, session.SubscriptionActivityKey{Provider: summary.Name})
-	}
-	if len(keys) == 0 {
-		return
-	}
-	activity, err := session.LatestSubscriptionActivity(s.rt.SessionDir, keys)
-	if err != nil {
-		return
-	}
-	for index := range summaries {
-		record, ok := activity[session.SubscriptionActivityKey{Provider: summaries[index].Name}]
-		if !ok {
-			continue
-		}
-		summaries[index].LatestRequest = engineLatestRequest(record)
-		summaries[index].LocalUsage = &record.LocalUsage
-	}
 }
 
 func builtInSubscriptionProvider(summary ProviderSummary) bool {
@@ -2469,6 +2546,15 @@ func providerSummariesFromConfig(cfg config.Config, home string) []ProviderSumma
 			ConnectionLocked: isCodexProviderType(provider.Type) || config.IsXAISubscriptionProvider(provider.Type) || config.IsGrokBuildProvider(provider.Type),
 			Models:           providerModelSummaries(name, provider),
 		}
+		if matched, ok := modelcatalog.MatchProvider(name, provider); ok {
+			summary.CatalogID, summary.CatalogName = matched.ID, matched.Name
+		}
+		for id, model := range provider.Models {
+			if model.Disabled && strings.TrimSpace(id) != "" {
+				summary.HiddenModels = append(summary.HiddenModels, strings.TrimSpace(id))
+			}
+		}
+		sort.Strings(summary.HiddenModels)
 		if isCodexProviderType(provider.Type) {
 			summary.ReuseCodexCredentials = provider.ReuseCodexCredentials
 			if explicitProviderAPIKey(provider) != "" {

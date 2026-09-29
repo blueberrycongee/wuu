@@ -350,541 +350,230 @@ describe("SettingsView shell", () => {
   });
 });
 
-describe("SettingsView provider configuration", () => {
-  it("renders provider configuration in English", () => {
-    installBuildInfoStub({
-      core: undefined,
-      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
-    });
-    const { rootText } = renderSettings({
-      locale: "en-US",
-      initialPage: "providers",
-      initialized: baseInitialized({
-        provider: "local",
-        model: "",
-        providers: [{
-          name: "local",
-          type: "openai-compatible",
-          model: "",
-          base_url: "http://127.0.0.1:11434/v1",
-          api_key_configured: false,
-        }],
-      }),
-    });
+function servicesInitialized(): InitializeResult {
+  return baseInitialized({
+    provider: "openai-codex",
+    model: "gpt-6-astra",
+    variant: "low",
+    providers: [
+      {
+        name: "openai-codex", type: "openai-codex", model: "gpt-6-astra", base_url: "https://chatgpt.com/backend-api/codex",
+        api_key_configured: true, connection_locked: true,
+        models: [{ id: "gpt-6-astra", display_name: "GPT-6 Astra", supported_efforts: ["low", "high"] }, { id: "gpt-6-sol", display_name: "GPT-6 Sol" }],
+      },
+      {
+        name: "deepseek", type: "openai-compatible", model: "deepseek-v4-pro", base_url: "https://api.deepseek.com",
+        api_key_configured: true, catalog_id: "deepseek", catalog_name: "DeepSeek", hidden_models: ["deepseek-old"],
+        models: [{ id: "deepseek-v4-pro", display_name: "DeepSeek V4 Pro" }, { id: "deepseek-v4-flash", display_name: "DeepSeek V4 Flash" }],
+      },
+      {
+        name: "openrouter", type: "openai-compatible", model: "qwen/qwen3-coder", base_url: "https://openrouter.ai/api/v1",
+        api_key_configured: false, catalog_id: "openrouter", catalog_name: "OpenRouter", models: [{ id: "qwen/qwen3-coder" }],
+      },
+    ],
+  });
+}
 
-    expect(rootText()).toContain("Model providers");
-    expect(rootText()).toContain("Local model provider");
-    expect(rootText()).toContain("No model selected");
-    expect(rootText()).toContain("Missing API key");
-    expect(rootText()).toContain("Reasoning effort");
-    expect(rootText()).not.toContain("模型服务");
+const catalogProviders = [
+  { id: "moonshotai-cn", name: "Moonshot AI (China)", type: "openai-compatible", base_url: "https://api.moonshot.cn/v1", model_count: 2, default_model: "kimi-k3" },
+  { id: "deepseek", name: "DeepSeek", type: "openai-compatible", base_url: "https://api.deepseek.com", model_count: 4, default_model: "deepseek-v4-pro" },
+];
+
+function installServicesStub(): WuuDesktopApi {
+  installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "today" } });
+  const listCatalogProviders = vi.fn(async (provider?: string) => ({
+    providers: provider
+      ? catalogProviders.filter((item) => item.id === provider).map((item) => ({ ...item, models: [{ id: "kimi-k3", name: "Kimi K3", tool_call: true }, { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", tool_call: true }] }))
+      : catalogProviders,
+  }));
+  Object.assign(window.wuu, { listCatalogProviders });
+  return window.wuu;
+}
+
+async function flush(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+function click(element: Element | null | undefined): void {
+  if (!element) throw new Error("missing element");
+  act(() => {
+    (element as HTMLElement).click();
+  });
+}
+
+describe("SettingsView model services", () => {
+  it("leads with the default model and names connected services by vendor", async () => {
+    installServicesStub();
+    renderSettings({ initialized: servicesInitialized(), initialPage: "providers", locale: "en-US" });
+    await flush();
+
+    const defaultCard = container.querySelector('[data-testid="settings-default-model"]');
+    expect(defaultCard?.textContent).toContain("GPT-6 Astra");
+    expect(defaultCard?.textContent).toContain("ChatGPT");
+    const cards = [...container.querySelectorAll('[data-testid="settings-provider-card"]')];
+    expect(cards.map((card) => card.getAttribute("aria-label"))).toEqual(["ChatGPT", "DeepSeek", "OpenRouter"]);
+    expect(cards[0]?.textContent).toContain("Default");
+    expect(cards[2]?.textContent).toContain("API key missing");
+    // A connected vendor is not offered again.
+    const tiles = [...container.querySelectorAll('[data-testid="settings-provider-tiles"] [data-catalog]')];
+    expect(tiles.map((tile) => tile.getAttribute("data-catalog"))).not.toContain("deepseek");
+    expect(container.querySelector('[data-testid="settings-provider-custom"]')).not.toBeNull();
   });
 
-  it("shows BYOK provider controls as a first-class settings page", async () => {
-    installBuildInfoStub({
-      core: undefined,
-      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
+  it("saves another service's key without changing the default", async () => {
+    installServicesStub();
+    const onSave = vi.fn(async () => {});
+    renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onSave });
+    await flush();
+
+    click(container.querySelector('[data-provider="deepseek"]'));
+    click(container.querySelector('[data-testid="settings-provider-key-edit"]'));
+    const input = container.querySelector<HTMLInputElement>('[data-testid="settings-provider-key-input"]')!;
+    expect(input.type).toBe("password");
+    act(() => setInputValue(input, "sk-rotated"));
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-key-save"]')!.click();
     });
-    const { rootText } = renderSettings({
-      initialPage: "providers",
-      initialized: baseInitialized({
-        provider: "openrouter",
-        model: "openai/gpt-5.5",
-        providers: [
-          {
-            name: "openrouter",
-            type: "openai-compatible",
-            model: "openai/gpt-5.5",
-            base_url: "https://openrouter.ai/api/v1",
-            api_key_configured: true,
-          },
-        ],
-      }),
+
+    expect(onSave).toHaveBeenCalledWith("deepseek", "deepseek-v4-pro", undefined, {
+      base_url: "https://api.deepseek.com",
+      api_key: "sk-rotated",
+      keep_selection: true,
+    });
+    expect(container.querySelector('[data-testid="settings-provider-key-input"]')).toBeNull();
+  });
+
+  it("chooses a service model in place and makes the service default only on request", async () => {
+    installServicesStub();
+    const onSave = vi.fn(async () => {});
+    renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onSave });
+    await flush();
+    click(container.querySelector('[data-provider="deepseek"]'));
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-model="deepseek-v4-flash"]')!.click();
+    });
+    expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-flash", undefined, { keep_selection: true });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-make-default"]')!.click();
+    });
+    // The default carries the model and a variant the model accepts.
+    expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-pro", undefined, undefined, "");
+  });
+
+  it("hides and restores model choices", async () => {
+    installServicesStub();
+    const onSave = vi.fn(async () => {});
+    renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onSave });
+    await flush();
+    click(container.querySelector('[data-provider="deepseek"]'));
+
+    // The service's own model cannot be hidden; its row keeps the slot empty.
+    expect(container.querySelector('[aria-label="隐藏 DeepSeek V4 Pro"]')).toBeNull();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="隐藏 DeepSeek V4 Flash"]')!.click();
+    });
+    expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-pro", undefined, { remove_model: "deepseek-v4-flash", keep_selection: true });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="恢复 deepseek-old"]')!.click();
+    });
+    expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-pro", undefined, { add_model: "deepseek-old", keep_selection: true });
+  });
+
+  it("connects a catalog provider with its endpoint and suggested model", async () => {
+    installServicesStub();
+    const onSave = vi.fn(async () => {});
+    renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onSave });
+    await flush();
+
+    click(container.querySelector('[data-catalog="moonshotai-cn"]'));
+    await flush();
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const connect = dialog.querySelector<HTMLButtonElement>('[data-testid="settings-provider-connect"]')!;
+    expect(connect.disabled).toBe(true);
+    // The current default works, so connecting another service keeps it.
+    expect(dialog.querySelector('[data-testid="settings-provider-connect-default"]')?.getAttribute("aria-checked")).toBe("false");
+    act(() => setInputValue(dialog.querySelector<HTMLInputElement>('[data-testid="settings-provider-connect-key"]')!, "sk-kimi"));
+    expect(connect.disabled).toBe(false);
+    await act(async () => {
+      connect.click();
+    });
+
+    expect(onSave).toHaveBeenCalledWith("moonshotai-cn", "kimi-k3", undefined, {
+      type: "openai-compatible",
+      create_provider: true,
+      keep_selection: true,
+      base_url: "https://api.moonshot.cn/v1",
+      api_key: "sk-kimi",
+    });
+  });
+
+  it("makes the first working connection the default", async () => {
+    installServicesStub();
+    const onSave = vi.fn(async () => {});
+    renderSettings({ initialized: baseInitialized({ provider: "", model: "", providers: [] }), initialPage: "providers", onSave });
+    await flush();
+
+    expect(container.querySelector('[data-testid="settings-providers-empty"]')).not.toBeNull();
+    click(container.querySelector('[data-testid="settings-provider-custom"]'));
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.querySelector('[data-testid="settings-provider-connect-default"]')?.getAttribute("aria-checked")).toBe("true");
+    act(() => {
+      setInputValue(dialog.querySelector<HTMLInputElement>('[data-testid="settings-provider-connect-base-url"]')!, "https://gateway.example.test/v1");
+      setInputValue(dialog.querySelector<HTMLInputElement>('[data-testid="settings-provider-connect-key"]')!, "sk-gw");
+      setInputValue(dialog.querySelector<HTMLInputElement>('[data-testid="settings-provider-connect-model"]')!, "team-model");
     });
     await act(async () => {
-      await Promise.resolve();
+      dialog.querySelector<HTMLButtonElement>('[data-testid="settings-provider-connect"]')!.click();
     });
-    expect(container.querySelector("[data-testid=\"settings-providers\"]")).not.toBeNull();
-    expect(rootText()).toContain("模型服务");
-    expect(container.querySelector<HTMLInputElement>('input[aria-label="Base URL"]')?.value).toBe("https://openrouter.ai/api/v1");
-    expect(rootText()).toContain("Base URL");
-    expect(rootText()).toContain("API key 已配置");
-    expect(rootText()).toContain("新增服务");
+
+    expect(onSave).toHaveBeenCalledWith("custom", "team-model", undefined, {
+      type: "openai-compatible",
+      create_provider: true,
+      keep_selection: false,
+      base_url: "https://gateway.example.test/v1",
+      api_key: "sk-gw",
+    });
   });
 
-  it("edits the provider selected from the service list", async () => {
-    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "1970-01-01" } });
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    renderSettings({
-      initialPage: "providers",
-      onSave,
-      initialized: baseInitialized({
-        provider: "first",
-        model: "first-model",
-        providers: [
-          { name: "first", type: "openai-compatible", model: "first-model", base_url: "https://api.openai.com/v1" },
-          { name: "second", type: "openai-compatible", model: "second-model", base_url: "https://api.deepseek.com/v1" },
-        ],
-      }),
-    });
-    const options = container.querySelectorAll<HTMLButtonElement>(".settings-provider-button");
-    await act(async () => { options[1].click(); });
-    expect(onSave).not.toHaveBeenCalled();
-    expect(options[1].getAttribute("aria-expanded")).toBe("true");
-    expect(options[0].getAttribute("aria-expanded")).toBe("false");
-    const model = container.querySelector<HTMLInputElement>('input[aria-label="模型名称"]')!;
-    expect(model.value).toBe("second-model");
-    await act(async () => { setInputValue(model, "updated-model"); });
-    await act(async () => { model.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
-    expect(onSave.mock.calls.at(-1)?.slice(0, 2)).toEqual(["second", "updated-model"]);
-  });
+  it("refuses to remove a service a running turn uses, and confirms other removals", async () => {
+    installServicesStub();
+    const onRemoveProvider = vi.fn(async () => {});
+    renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onRemoveProvider, runningProviderNames: ["deepseek"] });
+    await flush();
+    click(container.querySelector('[data-provider="deepseek"]'));
+    click(container.querySelector('[aria-label="deepseek 的更多操作"], [aria-label="DeepSeek 的更多操作"]'));
+    click([...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent?.includes("删除服务")));
+    expect(container.textContent).toContain("这个模型服务正在被运行中的会话使用");
+    expect(onRemoveProvider).not.toHaveBeenCalled();
 
-  it("keeps the service editor selected across runtime inventory refreshes", async () => {
-    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "1970-01-01" } });
-    const onSave = vi.fn();
-    const initial = baseInitialized({
-      provider: "grok", model: "grok-4.6",
-      providers: [
-        { name: "grok", type: "grok-build", model: "grok-4.6" },
-        { name: "kimi", type: "anthropic", model: "k3" },
-      ],
+    renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onRemoveProvider, runningProviderNames: [] });
+    click(container.querySelector('[aria-label="DeepSeek 的更多操作"]'));
+    click([...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent?.includes("删除服务")));
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.click();
     });
-    renderSettings({ initialized: initial, initialPage: "providers", onSave, runningProviderNames: ["grok"] });
-    await act(async () => { container.querySelectorAll<HTMLButtonElement>(".settings-provider-button")[1].click(); });
-    const model = container.querySelector<HTMLInputElement>('input[aria-label="模型名称"]')!;
-    await act(async () => { setInputValue(model, "draft-model"); });
-    renderSettings({ initialized: { ...initial, providers: initial.providers?.map((p) => ({ ...p })) }, initialPage: "providers", onSave, runningProviderNames: ["grok"] });
-    expect(container.querySelectorAll(".settings-provider-button")[1].getAttribute("aria-expanded")).toBe("true");
-    expect(model.value).toBe("draft-model");
-    expect(onSave).not.toHaveBeenCalled();
+    expect(onRemoveProvider).toHaveBeenCalledWith("deepseek");
   });
 
   it("refreshes the model catalog with a button-only loading state", async () => {
-    installBuildInfoStub({
-      core: undefined,
-      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
-    });
-    let finishRefresh: (() => void) | undefined;
-    const onRefreshModelCatalog = vi.fn(
-      () => new Promise<void>((resolve) => { finishRefresh = resolve; }),
-    );
-    renderSettings({
-      initialPage: "providers",
-      initialized: baseInitialized(),
-      onRefreshModelCatalog,
-    });
-
-    const button = container.querySelector(
-      '[data-testid="settings-model-catalog-refresh"]',
-    ) as HTMLButtonElement;
-    expect(button.textContent).toContain("更新模型目录");
-    expect(button.disabled).toBe(false);
-
-    act(() => {
-      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(onRefreshModelCatalog).toHaveBeenCalledTimes(1);
-    expect(button.disabled).toBe(true);
-    expect(button.textContent).toContain("正在更新");
-
-    await act(async () => {
-      finishRefresh?.();
-      await Promise.resolve();
-    });
-    expect(button.disabled).toBe(false);
-    expect(button.textContent).toContain("更新模型目录");
-  });
-
-  it("submits a new OpenAI-compatible provider with editable connection fields", async () => {
-    installBuildInfoStub({
-      core: undefined,
-      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
-    });
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    renderSettings({
-      initialPage: "providers",
-      initialized: baseInitialized({
-        provider: "openai",
-        model: "gpt-5.5",
-        providers: [
-          {
-            name: "openai",
-            type: "openai",
-            model: "gpt-5.5",
-            base_url: "https://api.openai.com/v1",
-            api_key_configured: true,
-          },
-        ],
-      }),
-      onSave,
-    });
-    const addButton = Array.from(container.querySelectorAll("button")).find((button) =>
-      button.textContent?.includes("新增服务"),
-    );
-    expect(addButton).not.toBeUndefined();
-    await act(async () => {
-      addButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-
-    const providerInput = container.querySelector<HTMLInputElement>('input[aria-label="服务标识"]')!;
-    const modelInput = container.querySelector<HTMLInputElement>('input[aria-label="模型名称"]')!;
-    const baseURLInput = container.querySelector<HTMLInputElement>('input[aria-label="Base URL"]')!;
-    const apiKeyInput = container.querySelector<HTMLInputElement>('input[type="password"]')!;
-    await act(async () => {
-      setInputValue(providerInput, "openrouter");
-      setInputValue(modelInput, "openai/gpt-5.5");
-      setInputValue(baseURLInput, "https://openrouter.ai/api/v1");
-      setInputValue(apiKeyInput, "sk-test");
-    });
-
-    const submitButton = Array.from(container.querySelectorAll("button")).find((button) =>
-      button.textContent?.includes("添加服务"),
-    ) as HTMLButtonElement | undefined;
-    expect(submitButton?.disabled).toBe(false);
-    await act(async () => {
-      submitButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-    });
-
-    expect(onSave).toHaveBeenCalledWith(
-      "openrouter",
-      "openai/gpt-5.5",
-      undefined,
-      {
-        base_url: "https://openrouter.ai/api/v1",
-        api_key: "sk-test",
-        type: "openai-compatible",
-        create_provider: true,
-      },
-      "",
-    );
-  });
-
-  it("shows SuperGrok login instead of an API key field", async () => {
-    installBuildInfoStub({
-      core: undefined,
-      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
-    });
-    renderSettings({
-      initialPage: "providers",
-      initialized: baseInitialized({
-        provider: "xai-subscription",
-        model: "grok-4.6",
-        providers: [
-          {
-            name: "xai-subscription",
-            type: "xai-subscription",
-            model: "grok-4.6",
-            base_url: "https://api.x.ai/v1",
-            api_key_configured: false,
-            connection_locked: true,
-          },
-        ],
-      }),
-    });
-    expect(container.textContent).toContain("使用 SuperGrok 登录");
-    expect(container.querySelector("input[type='password']")).toBeNull();
-  });
-
-  it("adds Grok Build with CLI-managed credentials and model defaults", async () => {
-    installBuildInfoStub({
-      core: undefined,
-      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
-    });
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    renderSettings({
-      initialPage: "providers",
-      initialized: baseInitialized({
-        provider: "openai",
-        model: "gpt-5.5",
-        providers: [{
-          name: "openai", type: "openai", model: "gpt-5.5",
-          base_url: "https://api.openai.com/v1", api_key_configured: true,
-        }],
-      }),
-      onSave,
-    });
-    const addButton = Array.from(container.querySelectorAll("button")).find((button) =>
-      button.textContent?.includes("新增服务"),
-    );
-    await act(async () => addButton?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    const typeTrigger = container.querySelector('[data-testid="settings-provider-type-select"]') as HTMLButtonElement;
-    await act(async () => typeTrigger.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    const option = Array.from(document.querySelectorAll<HTMLButtonElement>(".select-menu-panel .select-menu-item"))
-      .find((item) => item.getAttribute("data-value") === "grok-build");
-    expect(option).toBeDefined();
-    await act(async () => option?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-
-    expect(container.textContent).toContain("grok login");
-    expect(container.querySelector("input[type='password']")).toBeNull();
-    expect(container.querySelector<HTMLInputElement>('input[aria-label="服务标识"]')?.value).toBe("grok-build");
-    expect(container.querySelector<HTMLInputElement>('input[aria-label="模型名称"]')?.value).toBe("grok-4.5");
-    expect(container.querySelector(".settings-managed-value")?.textContent).toBe("https://cli-chat-proxy.grok.com/v1");
-    const submit = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
-      .find((button) => button.textContent?.includes("添加服务"));
-    expect(submit?.disabled).toBe(false);
-    await act(async () => {
-      submit?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-    });
-    expect(onSave).toHaveBeenCalledWith(
-      "grok-build", "grok-4.5", undefined,
-      { base_url: "https://cli-chat-proxy.grok.com/v1", type: "grok-build", create_provider: true },
-      "",
-    );
-  });
-
-  it("uses an auto-discovered local Grok login without an add or login step", () => {
-    installBuildInfoStub({
-      core: undefined,
-      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
-    });
-    renderSettings({
-      initialPage: "providers",
-      initialized: baseInitialized({
-        provider: "grok-build",
-        model: "grok-4.6",
-        providers: [{
-          name: "grok-build",
-          type: "grok-build",
-          model: "grok-4.6",
-          base_url: "https://cli-chat-proxy.grok.com/v1",
-          api_key_configured: true,
-          connection_locked: true,
-          auto_discovered: true,
-          models: [{
-            id: "grok-4.6",
-            supported_efforts: ["low", "medium", "high", "xhigh"],
-            default_variant: "high",
-          }],
-        }],
-      }),
-    });
-
-    expect(container.textContent).toContain("已找到 Grok Build CLI 登录");
-    expect(container.textContent).not.toContain("当前模型不支持思考");
-    const reasoning = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
-      .find((button) => button.getAttribute("aria-label") === "思考强度");
-    expect(reasoning?.disabled).toBe(false);
-    expect(container.querySelector(".settings-provider-remove")).toBeNull();
-  });
-
-  it("keeps model buttons in the same order when the selected model changes", async () => {
-    installBuildInfoStub({
-      core: undefined,
-      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
-    });
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    const provider = {
-      name: "grok-build",
-      type: "grok-build",
-      model: "grok-4.7",
-      models: [
-        { id: "grok-4.7" },
-        { id: "grok-4.5" },
-        { id: "grok-4.6" },
-      ],
-    };
-    const modelButtons = () => Array.from(container.querySelectorAll<HTMLButtonElement>(
-      ".settings-provider-model-list > .settings-button",
-    ));
-    renderSettings({
-      initialPage: "providers",
-      initialized: baseInitialized({ provider: provider.name, model: provider.model, providers: [provider] }),
-      onSave,
-    });
-    expect(modelButtons().map((button) => button.textContent)).toEqual(["grok-4.5", "grok-4.6", "grok-4.7"]);
-    expect(modelButtons().map((button) => button.getAttribute("aria-pressed"))).toEqual(["false", "false", "true"]);
-
-    await act(async () => {
-      modelButtons()[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-    });
-    expect(onSave).toHaveBeenCalledWith("grok-build", "grok-4.5", undefined, undefined, expect.any(String));
-    renderSettings({
-      initialPage: "providers",
-      initialized: baseInitialized({
-        provider: provider.name,
-        model: "grok-4.5",
-        providers: [{ ...provider, model: "grok-4.5", models: [provider.models[1], provider.models[0], provider.models[2]] }],
-      }),
-      onSave,
-    });
-    expect(modelButtons().map((button) => button.textContent)).toEqual(["grok-4.5", "grok-4.6", "grok-4.7"]);
-    expect(modelButtons().map((button) => button.getAttribute("aria-pressed"))).toEqual(["true", "false", "false"]);
-  });
-
-  it("shows an alert instead of removing a provider used by a running turn", async () => {
-    installBuildInfoStub({
-      core: undefined,
-      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
-    });
-    const alert = vi.spyOn(window, "alert").mockImplementation(() => {});
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-    const onRemoveProvider = vi.fn().mockResolvedValue(undefined);
-    renderSettings({
-      initialPage: "providers",
-      runningProviderNames: ["drop"],
-      initialized: baseInitialized({
-        provider: "keep",
-        model: "keep-model",
-        providers: [
-          {
-            name: "keep",
-            type: "openai-compatible",
-            model: "keep-model",
-            base_url: "https://keep.example.test/v1",
-            api_key_configured: true,
-          },
-          {
-            name: "drop",
-            type: "openai-compatible",
-            model: "drop-model",
-            base_url: "https://drop.example.test/v1",
-            api_key_configured: true,
-          },
-        ],
-      }),
-      onRemoveProvider,
-    });
-
-    // Removal lives in the open service's editor, so open "drop" first.
-    await act(async () => {
-      container.querySelectorAll<HTMLButtonElement>(".settings-provider-button")[1].click();
-    });
-    const removeButtons = Array.from(container.querySelectorAll<HTMLButtonElement>(".settings-provider-remove"));
-    expect(removeButtons).toHaveLength(1);
-    await act(async () => {
-      removeButtons[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-    });
-
-    expect(alert).toHaveBeenCalledWith("这个模型服务正在被运行中的会话使用，等当前回复结束后再删除。");
-    expect(confirm).not.toHaveBeenCalled();
-    expect(onRemoveProvider).not.toHaveBeenCalled();
-  });
-
-  it("submits a new Anthropic-compatible provider with API key auth", async () => {
-    installBuildInfoStub({
-      core: undefined,
-      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
-    });
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    renderSettings({
-      initialPage: "providers",
-      initialized: baseInitialized({
-        provider: "openai",
-        model: "gpt-5.5",
-        providers: [
-          {
-            name: "openai",
-            type: "openai",
-            model: "gpt-5.5",
-            base_url: "https://api.openai.com/v1",
-            api_key_configured: true,
-          },
-        ],
-      }),
-      onSave,
-    });
-    const addButton = Array.from(container.querySelectorAll("button")).find((button) =>
-      button.textContent?.includes("新增服务"),
-    );
-    await act(async () => {
-      addButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-
-    const providerTypeTrigger = container.querySelector("[data-testid=\"settings-provider-type-select\"]") as HTMLButtonElement;
-    await act(async () => {
-      providerTypeTrigger.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    const anthropicOption = Array.from(
-      document.querySelectorAll<HTMLButtonElement>(".select-menu-panel .select-menu-item"),
-    ).find((item) => item.getAttribute("data-value") === "anthropic");
-    await act(async () => {
-      anthropicOption?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-
-    const providerInput = container.querySelector<HTMLInputElement>('input[aria-label="服务标识"]')!;
-    const modelInput = container.querySelector<HTMLInputElement>('input[aria-label="模型名称"]')!;
-    const baseURLInput = container.querySelector<HTMLInputElement>('input[aria-label="Base URL"]')!;
-    const apiKeyInput = container.querySelector<HTMLInputElement>('input[type="password"]')!;
-    await act(async () => {
-      setInputValue(providerInput, "anthropic-gateway");
-      setInputValue(modelInput, "claude-sonnet-4-6[1M]");
-      setInputValue(baseURLInput, "https://anthropic-gateway.example.test/");
-      setInputValue(apiKeyInput, "sk-token");
-    });
-
-    const submitButton = Array.from(container.querySelectorAll("button")).find((button) =>
-      button.textContent?.includes("添加服务"),
-    ) as HTMLButtonElement | undefined;
-    expect(submitButton?.disabled).toBe(false);
-    await act(async () => {
-      submitButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-    });
-
-    expect(onSave).toHaveBeenCalledWith(
-      "anthropic-gateway",
-      "claude-sonnet-4-6[1M]",
-      undefined,
-      {
-        base_url: "https://anthropic-gateway.example.test/",
-        api_key: "sk-token",
-        type: "anthropic",
-        create_provider: true,
-      },
-      "",
-    );
-  });
-});
-
-describe("SettingsView provider model catalog", () => {
-  it("resets incompatible effort on model changes and restores selection after a failed save", async () => {
-    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "1970-01-01T00:00:00Z" } });
-    const onSave = vi.fn().mockRejectedValue(new Error("connection unavailable"));
-    renderSettings({ initialPage: "providers", onSave, initialized: baseInitialized({
-      provider: "kimi", model: "k3", variant: "max", providers: [
-        { name: "kimi", type: "openai", model: "k3", models: [
-          { id: "k3", variants: [{ id: "max" }] }, { id: "kimi-for-coding-highspeed" },
-        ] },
-      ],
-    }) });
-    const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>('form button[aria-pressed]'));
-    await act(async () => { buttons[1].click(); });
-    expect(onSave).toHaveBeenCalledWith("kimi", "kimi-for-coding-highspeed", undefined, undefined, "");
-    expect(buttons[0].getAttribute("aria-pressed")).toBe("true");
-    expect(buttons[1].getAttribute("aria-pressed")).toBe("false");
-    expect(container.textContent).toContain("connection unavailable");
-  });
-
-  it("shows all known models, preserves an unlisted selection, and saves a catalog choice", async () => {
-    installBuildInfoStub({
-      core: undefined,
-      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
-    });
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    renderSettings({
-      initialPage: "providers",
-      initialized: baseInitialized({
-        provider: "kimi",
-        model: "custom-k3",
-        providers: [{ name: "kimi", type: "openai", model: "custom-k3", models: [
-          { id: "k2" }, { id: "p7" }, { id: "k2" },
-        ] }],
-      }),
-      onSave,
-    });
-    const modelButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('form button[aria-pressed]'));
-    expect(modelButtons.map((button) => button.textContent)).toEqual(["custom-k3", "k2", "p7"]);
-    expect(container.querySelectorAll(".settings-provider-model-list button")).toHaveLength(3);
-    expect(modelButtons[0].getAttribute("aria-pressed")).toBe("true");
-    await act(async () => {
-      modelButtons[1].click();
-    });
-    expect(onSave).toHaveBeenCalledWith("kimi", "k2", undefined, undefined, expect.any(String));
-    expect(modelButtons[1].getAttribute("aria-pressed")).toBe("true");
+    installServicesStub();
+    let finish: () => void = () => {};
+    const onRefreshModelCatalog = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onRefreshModelCatalog });
+    await flush();
+    const refresh = container.querySelector<HTMLButtonElement>('[data-testid="settings-model-catalog-refresh"]')!;
+    click(refresh);
+    expect(refresh.disabled).toBe(true);
+    expect(refresh.getAttribute("aria-busy")).toBe("true");
+    await act(async () => finish());
+    expect(refresh.disabled).toBe(false);
+    expect(window.wuu.listCatalogProviders).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -1334,10 +1023,9 @@ describe("SettingsView About section", () => {
     expect(text()).toContain("关于");
     expect(text()).toContain("v0.0.0-test");
     expect(text()).not.toContain("更新于");
-    // 版本与复制合并为一行；按钮语义在 aria-label 上，行内只显示「复制」。
-    expect(about?.querySelector('button[aria-label="复制版本信息"]')).not.toBeNull();
-    const button = about?.querySelector("button.settings-button");
-    expect(button?.textContent).toBe("复制");
+    // 版本与复制合并为一行；复制是图标按钮，语义在 aria-label 上。
+    const button = about?.querySelector<HTMLButtonElement>('button[aria-label="复制版本信息"]');
+    expect(button).not.toBeNull();
     await act(async () => {
       button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
@@ -1368,9 +1056,33 @@ describe("SettingsView About section", () => {
     });
     expect(rootText()).toContain("MCP");
     expect(rootText()).toContain("docs");
-    expect(rootText()).toContain("已连接");
     expect(rootText()).toContain("3 个工具");
     expect(rootText()).toContain("Header 认证");
+    // A connected server needs no status mark; its connect control says it.
+    expect(container.querySelector(".settings-row-attention")).toBeNull();
+  });
+
+  it("marks MCP servers that need a look with their state as the accessible name", async () => {
+    installBuildInfoStub({
+      core: undefined,
+      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
+    });
+    (window as unknown as GlobalWindow).wuu.listMCPServers = vi.fn().mockResolvedValue({
+      servers: [
+        { name: "broken", state: "error", connected: false, tool_count: 0, error: "connect ECONNREFUSED" },
+        { name: "linear", state: "needs_auth", connected: false, tool_count: 0, auth_status: "not_logged_in" },
+      ],
+    });
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp" });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const marks = Array.from(container.querySelectorAll(".settings-row-attention")).map((mark) => [
+      mark.getAttribute("data-tone"),
+      mark.getAttribute("aria-label"),
+    ]);
+    expect(marks).toEqual([["danger", "连接失败"], ["warning", "需要认证"]]);
   });
 
   it("opens MCP OAuth and completes the authorization code flow inline", async () => {
@@ -1700,10 +1412,12 @@ describe("SettingsView archive page", () => {
 
     const groups = container.querySelectorAll(".settings-archive-group");
     expect(groups).toHaveLength(2);
+    const count = (group: Element | undefined) => group?.querySelector(".settings-archive-group-count");
     expect(groups[0]?.textContent).toContain("wuu");
-    expect(groups[0]?.textContent).toContain("2 个会话");
+    expect(count(groups[0])?.textContent).toBe("2");
+    expect(count(groups[0])?.getAttribute("aria-label")).toBe("2 个会话");
     expect(groups[1]?.textContent).toContain("网站");
-    expect(groups[1]?.textContent).toContain("1 个会话");
+    expect(count(groups[1])?.textContent).toBe("1");
   });
 
   it("filters archived threads by workspace", () => {

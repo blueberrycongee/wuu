@@ -61,9 +61,9 @@ Success, warning, and danger tints are `--success-soft`, `--warning-soft`, and `
 
 ### Current implementation accents
 
-The renderer currently defines `--wuu-accent` and `--wuu-accent-press` with vermillion defaults, plus `--interaction-accent` for sliders. These describe existing implementation, not a requirement that Wuu's brand be red. The boards retain their computed values in a compact implementation reference, separate from the neutral foundation and status palette.
+The renderer defaults to neutral emphasis: `--wuu-accent` follows the theme's strong text color (dark in light mode, light in dark mode), and `--wuu-accent-press` mixes it toward the canvas. Sliders use the same accent through `--interaction-accent`. Extension themes can still override the public accent, pressed, and on-accent tokens.
 
-Existing accent uses include status indicators as well as controls. Review each use by purpose before changing it; do not globally replace red with gray or repurpose status tokens as brand colors. This specification does not change product styles or theme overrides.
+Keep status semantics separate from emphasis. TODO progress uses text colors and distinct marks, while high context usage uses warning color. Success, warning, danger, links, and focus retain their semantic colors rather than becoming neutral merely because the accent is neutral.
 
 ## Typography
 
@@ -84,7 +84,7 @@ The current runtime defaults are **14.5px UI** and **11px code**. Ratios in `app
 
 Derived roles round to whole pixels. The saved UI size may be a half step, but fractional derived sizes would put line boxes and 1px edges between device pixels.
 
-Use 400 for ordinary text, 500 for compact menu items, and 500 or 600 selectively for headings and emphasis. Reserve 700 for occasional strong emphasis. Base line-height roles are 1.35 for UI, 1.55 for body, and 1.6 for metadata; individual reading surfaces may have semantic overrides, not one forced line height for every component. Conversation reading and process leading are whole-pixel lengths derived from the message size (1.8 and 1.6, rounded to 2px), so stacked rows and cards share edges. Message headings step to 1.5, 1.25, and 1.1 times the body size, rounded to whole pixels, so hierarchy does not rest on weight alone. Preserve natural letter spacing instead of shrinking type or tightening tracking to repair layout.
+Use 400 for ordinary text, 500 for compact menu items, and 500 or 600 selectively for headings and emphasis. Reserve 700 for occasional strong emphasis. Base line-height roles are 1.35 for UI, 1.55 for body, and 1.6 for metadata; individual reading surfaces may have semantic overrides, not one forced line height for every component. Conversation reading and process leading are whole-pixel lengths derived from the message size (1.8 and 1.6, rounded to 2px), so stacked rows and cards share edges. Composer drafts use the same reading leading as sent queries and answers, so text keeps its rhythm when it is sent. Message headings step to 1.5, 1.25, and 1.1 times the body size, rounded to whole pixels, so hierarchy does not rest on weight alone. Preserve natural letter spacing instead of shrinking type or tightening tracking to repair layout.
 
 ## Spacing and layout
 
@@ -94,7 +94,7 @@ The standard unit is 4px, multiplied by density to form `--space-1`. The existin
 | --- | --- | --- |
 | Pane edge to first and last glyph | `--pane-inset` | 20px |
 | Page inset | `--page-padding` | 32px |
-| Between groups | `--section-gap` | 32px |
+| Between groups, including the latest turn and the input | `--section-gap` | 32px |
 | Heading to content | `--section-heading-gap` | 16px |
 | Card and panel insets | `--card-padding`, `--panel-padding` | 16px, 20px |
 | Compact block/inline padding | `--compact-padding-block`, `--compact-padding-inline` | 8px, 12px |
@@ -109,7 +109,7 @@ Every edge that reads as aligned must come from one shared role, not from separa
 
 - **Pane inset.** In chrome rows such as sidebar rows, titlebars, and tab bars, the first and last visible glyph sits `--pane-inset` from the pane edge. Align ink, not button boxes: a control whose box is larger than its glyph subtracts its optical offset, such as `--control-toolbar-glyph-offset` for toolbar buttons.
 - **Reading column.** Unframed content (paragraphs, headings, lists, process rows, answer actions) shares the column's leading edge. Message tables have no side frame, so their outer cell text also starts on that edge.
-- **Framed content.** Code blocks, the composer, message bubbles, and cards place text and icon glyphs `--card-padding` from the outer edge; a frame's border is part of that measurement. A code block's language label, its code, and the composer's text therefore share one axis.
+- **Framed content.** Code blocks, the composer, message bubbles, and cards place text and icon glyphs `--card-padding` from the outer edge; a frame's border is part of that measurement. A code block's language label, its code, and the composer's text therefore share one axis. The query bubble and the composer draft keep that inset above and below their text as well: their block padding subtracts the line's half-leading, with an 8px floor, so glyphs sit the same distance from the frame at every text size.
 - **Accessory columns.** Sidebar trailing accessories of different sizes share one center axis. Headings reserve their accessory's footprint whether or not the section has one, so group spacing does not depend on which headings offer an action.
 
 Align peer labels, icon columns, and trailing actions. Indentation expresses hierarchy, independent of running or unread status. Reserve the real footprint of indicators and actions plus a reading gap. Give each spacing relationship one owner rather than accumulating wrapper gaps, child margins, and invisible drag targets. Use appropriate reading-width roles such as `--content-column-width`, not one mandatory width for every page.

@@ -293,13 +293,15 @@ describe("RichContent code block", () => {
     expect(resolveWorkspaceFileReferenceMock).not.toHaveBeenCalled();
   });
 
-  it("hides Markdown images that fail to load", () => {
+  it("keeps a non-interactive fallback when a Markdown image fails to load", () => {
     renderWithImagePreview(<RichContent text="![饿鹅骑自行车](missing.svg)" />);
 
     const image = container.querySelector<HTMLImageElement>("img.rich-image");
     expect(image).not.toBeNull();
     act(() => image?.dispatchEvent(new Event("error")));
     expect(container.querySelector("img.rich-image")).toBeNull();
+    expect(container.querySelector(".rich-image-block [role=img]")).not.toBeNull();
+    expect(container.querySelector(".rich-image-block [role=button]")).toBeNull();
   });
 
   it("decorates web links with an inline site icon", () => {

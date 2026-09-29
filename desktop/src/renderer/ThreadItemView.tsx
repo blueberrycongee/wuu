@@ -10,7 +10,7 @@ import {
   useRef,
   useState
 } from "react";
-import { ChevronDown, ChevronUp, FileText, Info, MessagesSquare, Plus, Send } from "./WuuIcons";
+import { ArrowUp, ChevronDown, ChevronUp, FileText, Info, LoaderCircle, MessagesSquare, Plus } from "./WuuIcons";
 import type { InputFile, InputImage, MessageContentPart, ThreadItem, Turn } from "../shared/protocol";
 import { CollapsedComposerPromptCard, collapsedComposerPromptTitle } from "./ComposerCollapsedPrompt";
 import { FileSelectionCards } from "./FileSelectionCards";
@@ -898,9 +898,10 @@ function UserMessageInlineEditor({
             aria-label={t("composer.send")}
             title={t("composer.send")}
             disabled={!canSubmit || submitting}
+            aria-busy={submitting}
             onClick={submit}
           >
-            <Send aria-hidden="true" />
+            {submitting ? <LoaderCircle className="control-busy-icon" aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
           </button>
         </div>
       </div>
