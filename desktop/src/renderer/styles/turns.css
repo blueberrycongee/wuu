@@ -3009,9 +3009,7 @@
 :root[data-renderer-hidden] .turn-process-live-dot,
 :root[data-renderer-hidden] .tool-activity-marker.is-running,
 :root[data-renderer-hidden] .turn-source-avatar[data-load-state="loading"]::before,
-:root[data-renderer-hidden] .wuu-launch-mark::after,
-:root[data-renderer-hidden] .wuu-launch-mark span,
-:root[data-renderer-hidden] .wuu-launch-rail::after,
+:root[data-renderer-hidden] .loading-rail::after,
 .cached-conversation-pane[data-active="false"] .turn-process-live-dot,
 .cached-conversation-pane[data-active="false"] .tool-activity-marker.is-running,
 .cached-conversation-pane[data-active="false"] .turn-source-avatar[data-load-state="loading"]::before {
@@ -4629,7 +4627,7 @@ pre {
   box-shadow: var(--shadow-modal);
   --enter-y: 8px;
   --enter-scale: 0.96;
-  animation: wuu-enter 620ms var(--ease-out) both;
+  animation: wuu-enter var(--motion-slower) var(--ease-out) both;
 }
 
 .wuu-launch-mascot {
@@ -4642,62 +4640,37 @@ pre {
   -webkit-user-drag: none;
 }
 
-.wuu-launch-mark {
+/* The one indeterminate rail for loading that covers a region: a
+ * conversation switch, the settings view, a workspace panel. It is a rhythm
+ * like a spinner's, so it keeps moving under reduced motion: it reports
+ * ongoing work. */
+.loading-rail {
   position: relative;
-  display: inline-flex;
-  align-items: baseline;
-  gap: 3px;
-  color: var(--ink);
-  font-size: 40px;
-  font-weight: var(--weight-bold);
-  line-height: 1;
-}
-
-.wuu-launch-mark::after {
-  display: inline-block;
-  width: 8px;
-  height: 32px;
-  margin-left: 6px;
-  border-radius: var(--radius-xs);
-  background: var(--success);
-  content: "";
-  transform: translateY(4px);
-  animation: wuu-caret 900ms steps(1, end) infinite;
-}
-
-.wuu-launch-mark span {
-  display: inline-block;
-  letter-spacing: 0;
-  transform-origin: 50% 100%;
-  animation: wuu-mark-rise 1400ms cubic-bezier(0.2, 0, 0, 1) infinite;
-}
-
-.wuu-launch-mark span:nth-child(2) {
-  animation-delay: 100ms;
-}
-
-.wuu-launch-mark span:nth-child(3) {
-  animation-delay: 200ms;
-}
-
-.wuu-launch-rail {
-  position: relative;
-  width: 148px;
+  width: 96px;
   height: 3px;
   overflow: hidden;
   border-radius: var(--radius-pill);
   background: var(--surface-3);
 }
 
-.wuu-launch-rail::after {
+.loading-rail::after {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 46px;
+  inset: 0 auto 0 0;
+  width: 40%;
   border-radius: inherit;
-  background: linear-gradient(90deg, transparent, var(--success) 48%, var(--ink));
+  background: var(--ink-soft);
   content: "";
-  animation: wuu-rail-scan 1200ms cubic-bezier(0.2, 0, 0, 1) infinite;
+  animation: loading-rail-scan 1200ms linear infinite;
+}
+
+/* From just outside the start to just outside the end, whatever the width. */
+@keyframes loading-rail-scan {
+  from {
+    translate: -100% 0;
+  }
+  to {
+    translate: 250% 0;
+  }
 }
 
 .view-switch-loading,
@@ -4706,7 +4679,6 @@ pre {
   display: grid;
   align-content: center;
   justify-items: center;
-  gap: 18px;
 }
 
 .view-switch-loading {
@@ -4731,78 +4703,6 @@ pre {
 
 .conversation-pane.environment-panel-reserved .view-switch-loading-conversation {
   padding-right: var(--environment-panel-content-inset);
-}
-
-.view-switch-mark {
-  gap: 3px;
-  color: var(--ink);
-  font-size: 40px;
-}
-
-.view-switch-mark::after {
-  width: 8px;
-  height: 32px;
-  margin-left: 6px;
-  transform: translateY(4px);
-}
-
-.view-switch-rail {
-  width: 148px;
-  height: 3px;
-}
-
-.view-switch-rail::after {
-  width: 46px;
-}
-
-@keyframes wuu-mark-rise {
-  0%,
-  100% {
-    opacity: 0.64;
-    transform: translateY(0);
-  }
-  38% {
-    opacity: 1;
-    transform: translateY(-8px);
-  }
-  70% {
-    opacity: 0.86;
-    transform: translateY(0);
-  }
-}
-
-@keyframes wuu-caret {
-  0%,
-  45% {
-    opacity: 1;
-  }
-  46%,
-  100% {
-    opacity: 0;
-  }
-}
-
-@keyframes wuu-rail-scan {
-  from {
-    transform: translateX(-56px);
-  }
-  to {
-    transform: translateX(158px);
-  }
-}
-
-@container style(--motion-reduced: 1) {
-  .wuu-launch-glass,
-  .wuu-launch-mark::after,
-  .wuu-launch-mark span,
-  .wuu-launch-rail::after {
-    animation: none;
-  }
-
-  .wuu-launch-mark span {
-    opacity: 1;
-    transform: none;
-  }
 }
 
 .project-empty-actions {

@@ -31,7 +31,7 @@ export function WorkspacePanelLoading(): JSX.Element {
   const { t } = useI18n();
   return (
     <div className="workspace-panel-loading" role="status" aria-label={t("workspace.terminal.status.starting")}>
-      <div className="workspace-panel-loading-rail" aria-hidden="true" />
+      <div className="loading-rail" aria-hidden="true" />
     </div>
   );
 }
@@ -50,12 +50,7 @@ export function ViewSwitchLoading({
   const { t } = useI18n();
   const indicator = (
     <div className={VIEW_SWITCH_LOADING_CLASS[placement]} role="status" aria-label={t("loading.switching")}>
-      <div className="wuu-launch-mark view-switch-mark" aria-hidden="true">
-        <span>w</span>
-        <span>u</span>
-        <span>u</span>
-      </div>
-      <div className="wuu-launch-rail view-switch-rail" aria-hidden="true" />
+      <div className="loading-rail" aria-hidden="true" />
     </div>
   );
   // Connection cards embed the mark beside recovery controls, and conversation
