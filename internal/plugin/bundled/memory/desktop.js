@@ -4,94 +4,78 @@ export async function activate(api) {
   const { Page, Section, Stack, Row, Button, TextArea, EmptyState } = api.ui;
 
   api.registerLocale({ id: "memory-en", locale: "en-US", entries: {
-    "memory.subtitle": "Durable preferences, feedback, references, and reusable lessons.",
-    "memory.overview": "Memory overview", "memory.refresh": "Refresh", "memory.refreshing": "Refreshing…",
-    "memory.raw": "Notebook files", "memory.rawHelp": "The MEMORY.md index and every topic file, verbatim.",
+    "memory.overview": "Overview", "memory.refresh": "Regenerate", "memory.refreshing": "Regenerating…",
+    "memory.raw": "Notebook files",
     "memory.empty": "The memory notebook is empty.",
-    "memory.chat": "Update memory with the Agent", "memory.chatHelp": "Ask the Agent to add, correct, or forget durable information.",
-    "memory.message": "What should the Agent remember or change?", "memory.send": "Send",
+    "memory.chat": "Update memory",
+    "memory.message": "What should the Agent remember, correct, or forget?", "memory.send": "Send",
     "memory.changed": "Changed files", "memory.failed": "Memory task failed",
     "memory.thinking": "Updating memory…",
     "memory.loadFailed": "Memory overview could not be generated. Try again.", "memory.errorDetails": "Error details"
   }});
   api.registerLocale({ id: "memory-zh", locale: "zh-CN", entries: {
-    "memory.subtitle": "管理长期偏好、反馈、参考信息和可复用经验。",
-    "memory.overview": "记忆概览", "memory.refresh": "刷新", "memory.refreshing": "刷新中…",
-    "memory.raw": "笔记本原文", "memory.rawHelp": "MEMORY.md 索引与全部主题文件的原始内容。",
+    "memory.overview": "概览", "memory.refresh": "重新生成", "memory.refreshing": "正在生成…",
+    "memory.raw": "笔记本原文",
     "memory.empty": "记忆笔记本还是空的。",
-    "memory.chat": "通过 Agent 更新记忆", "memory.chatHelp": "让 Agent 添加、修正或忘记需要长期保留的信息。",
-    "memory.message": "希望 Agent 记住或修改什么？", "memory.send": "发送",
+    "memory.chat": "更新记忆",
+    "memory.message": "希望 Agent 记住、修正或忘记什么？", "memory.send": "发送",
     "memory.changed": "变更文件", "memory.failed": "记忆任务失败",
     "memory.thinking": "正在更新记忆…",
     "memory.loadFailed": "暂时无法生成记忆概览，请重试。", "memory.errorDetails": "错误详情"
   }});
   api.registerStyle({ id: "memory-settings", css: `
-    /* The panel speaks the settings-surface language: quiet 12px group
-     * labels, content sitting on the canvas, hairlines as separators. */
+    /* The page speaks the settings language: section titles from the kit,
+     * prose on the canvas, one hairline group for the notebook files, and
+     * the host's entrance, pulse and radius roles. */
     .plugin-memory { min-width:0; }
-    .plugin-memory-header { justify-content:space-between; align-items:flex-start; gap:16px; }
-    .plugin-memory-intro { margin:0; max-width:52ch; color:var(--wuu-color-text-muted,var(--ink-soft)); font-size:var(--font-ui,13px); line-height:1.5; }
-    .plugin-memory-refresh { flex:none; }
-    .plugin-memory-refresh[data-busy="true"] { pointer-events:none; }
-    .plugin-memory-refresh[data-busy="true"] .plugin-memory-refresh-dot { animation:plugin-memory-spin .9s linear infinite; }
-    .plugin-memory-refresh-dot { display:inline-block; margin-right:6px; }
-    @keyframes plugin-memory-spin { to { transform:rotate(360deg); } }
-
-    /* Overview renders as typeset prose, not a monospace dump: the tiny
-     * line parser below promotes "##" leads and "-" items into structure. */
-    .plugin-memory-overview { overflow-wrap:anywhere; max-height:360px; overflow:auto; display:flex; flex-direction:column; gap:12px; animation:plugin-memory-fade-up var(--motion-base,160ms) ease both; }
-    .plugin-memory-overview h3 { margin:8px 0 0; color:var(--wuu-color-text,var(--ink)); font-size:var(--font-ui,13px); font-weight:var(--weight-semibold,600); line-height:1.4; }
+    .plugin-memory-overview { display:flex; flex-direction:column; gap:var(--space-3); overflow-wrap:anywhere; --enter-y:2px; animation:wuu-enter var(--motion-base) var(--ease-out) both; }
+    .plugin-memory-overview h3 { margin:var(--space-2) 0 0; color:var(--ink); font-size:var(--font-ui); font-weight:var(--weight-semibold); line-height:1.4; }
     .plugin-memory-overview h3:first-child { margin-top:0; }
-    .plugin-memory-overview p { margin:0; max-width:68ch; color:var(--wuu-color-text,var(--ink)); font-size:var(--font-ui,13px); line-height:1.6; }
-    .plugin-memory-overview ul { display:flex; flex-direction:column; gap:4px; margin:0; padding-left:18px; }
-    .plugin-memory-overview li { color:var(--wuu-color-text,var(--ink)); font-size:var(--font-ui,13px); line-height:1.55; }
-    .plugin-memory-overview li::marker { color:var(--wuu-color-text-muted,var(--ink-muted)); }
+    .plugin-memory-overview p { margin:0; max-width:68ch; color:var(--ink); font-size:var(--font-ui); line-height:1.6; }
+    .plugin-memory-overview ul { display:flex; flex-direction:column; gap:var(--space-1); margin:0; padding-left:1.25em; }
+    .plugin-memory-overview li { color:var(--ink); font-size:var(--font-ui); line-height:1.55; }
+    .plugin-memory-overview li::marker { color:var(--ink-muted); }
+    .plugin-memory-overview code { font-family:var(--wuu-font-family-mono, ui-monospace, monospace); font-size:0.92em; }
+    .plugin-memory-overview-actions { justify-content:flex-start; }
+    .plugin-memory-overview-actions .plugin-ui-button { margin-inline-start:calc(var(--control-padding-inline) * -1); }
 
-    /* Skeleton: quiet gray bars with a slow shimmer while the overview job runs. */
-    .plugin-memory-skeleton { display:flex; flex-direction:column; gap:10px; padding:4px 0; }
-    .plugin-memory-skeleton-bar { height:10px; border-radius:5px; background:linear-gradient(90deg,var(--surface-2) 25%,var(--surface-3) 50%,var(--surface-2) 75%); background-size:200% 100%; animation:plugin-memory-shimmer 1.4s linear infinite; }
+    .plugin-memory-skeleton { display:flex; flex-direction:column; gap:var(--space-3); padding:var(--space-1) 0; --pulse-opacity:0.55; animation:wuu-pulse 2.4s ease-in-out infinite; }
+    .plugin-memory-skeleton-bar { height:10px; border-radius:var(--radius-xs); background:var(--surface-2); }
     .plugin-memory-skeleton-bar:nth-child(2) { width:82%; }
     .plugin-memory-skeleton-bar:nth-child(3) { width:64%; }
     .plugin-memory-skeleton-bar:nth-child(4) { width:74%; }
-    @keyframes plugin-memory-shimmer { from { background-position:180% 0; } to { background-position:-20% 0; } }
+    @container style(--motion-reduced: 1) { .plugin-memory-skeleton { animation:none; } }
 
-    /* Chat: entries fade up as they land; the user's own messages stay
-     * text-only on the right, agent replies read as prose on the left. */
-    .plugin-memory-chat-log { max-height:360px; overflow:auto; display:flex; flex-direction:column; gap:12px; }
-    .plugin-memory-chat-entry { display:flex; animation:plugin-memory-fade-up var(--motion-base,160ms) ease both; }
-    @keyframes plugin-memory-fade-up { from { opacity:0; transform:translateY(2px); } to { opacity:1; transform:none; } }
+    .plugin-memory-chat-log { display:flex; flex-direction:column; gap:var(--space-3); }
+    .plugin-memory-chat-entry { display:flex; --enter-y:2px; animation:wuu-enter var(--motion-base) var(--ease-out) both; }
     .plugin-memory-chat-entry.user { justify-content:flex-end; }
-    .plugin-memory-chat-bubble { max-width:min(72%,420px); padding:8px 12px; border-radius:var(--radius-md,12px); background:var(--wuu-color-surface-muted,var(--surface-2)); color:var(--wuu-color-text,var(--ink)); font-size:var(--font-ui,13px); line-height:1.55; white-space:pre-wrap; overflow-wrap:anywhere; }
-    .plugin-memory-chat-reply { max-width:68ch; margin:0; color:var(--wuu-color-text,var(--ink)); font-size:var(--font-ui,13px); line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
-    .plugin-memory-chat-pending { color:var(--wuu-color-text-muted,var(--ink-muted)); font-size:var(--font-sm,12px); }
-    .plugin-memory-changes { color:var(--wuu-color-text-muted,var(--ink-muted)); font-size:var(--font-sm,12px); }
+    .plugin-memory-chat-bubble { max-width:min(72%, 420px); padding:var(--compact-padding-block) var(--compact-padding-inline); border-radius:var(--message-flow-card-radius); background:var(--wuu-color-surface-muted, var(--surface-2)); color:var(--ink); font-size:var(--font-ui); line-height:1.55; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .plugin-memory-chat-reply { max-width:68ch; margin:0; color:var(--ink); font-size:var(--font-ui); line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .plugin-memory-chat-pending, .plugin-memory-changes { color:var(--ink-muted); font-size:var(--font-sm); }
     .plugin-memory-changes summary { cursor:pointer; }
-    .plugin-memory-changes ul { margin:4px 0 0; padding-left:16px; }
-    .plugin-memory-changes code { font-size:var(--font-sm,12px); }
-    .plugin-memory-composer { flex-direction:column; align-items:stretch; gap:8px; }
+    .plugin-memory-changes ul { margin:var(--space-1) 0 0; padding-left:1.25em; }
+    .plugin-memory-changes code { font-size:var(--font-sm); }
+    .plugin-memory-composer { flex-direction:column; align-items:stretch; gap:var(--space-2); }
     .plugin-memory-composer .plugin-ui-field { flex:1; min-width:0; }
+    .plugin-memory-composer .plugin-ui-field-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
     .plugin-memory-composer textarea { min-height:96px; max-height:200px; }
     .plugin-memory-composer .plugin-ui-button { flex:none; align-self:flex-end; }
 
-    /* Raw notebook: one file per group, separated by full-width hairlines;
-     * the verbatim content stays monospace but quiet. */
-    .plugin-memory-files { padding:0 16px; border:1px solid var(--hairline); border-radius:var(--session-composer-radius); display:flex; flex-direction:column; animation:plugin-memory-fade-up var(--motion-base,160ms) ease both; }
-    .plugin-memory-file { min-width:0; padding:14px 0; border-bottom:1px solid var(--hairline-soft,var(--hairline)); }
+    .plugin-memory-files { display:flex; flex-direction:column; border:1px solid var(--hairline); border-radius:var(--radius-sm); padding:0 var(--card-padding); }
+    .plugin-memory-file { min-width:0; padding:var(--space-3) 0; border-bottom:1px solid var(--hairline-soft); }
     .plugin-memory-file:last-child { border-bottom:0; }
-
-    .plugin-memory-file-head { cursor:pointer; display:flex; flex-wrap:wrap; align-items:baseline; gap:8px; min-width:0; }
-    .plugin-memory-file-head::before { content:"›"; color:var(--wuu-color-text-muted); }
-    .plugin-memory-file[open] .plugin-memory-file-head::before { transform:rotate(90deg); }
+    .plugin-memory-file-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:var(--space-2); min-width:0; cursor:pointer; list-style:none; }
     .plugin-memory-file-head::-webkit-details-marker { display:none; }
-    .plugin-memory-file-name { color:var(--wuu-color-text,var(--ink)); font-size:var(--font-ui,13px); font-weight:var(--weight-medium,500); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .plugin-memory-file-type { flex:none; padding:1px 8px; border-radius:var(--radius-pill,999px); background:var(--wuu-color-surface-muted,var(--surface-2)); color:var(--wuu-color-text-muted,var(--ink-muted)); font-size:11px; font-weight:var(--weight-medium,500); line-height:1.6; }
-    .plugin-memory-file-desc { color:var(--wuu-color-text-muted,var(--ink-muted)); font-size:var(--font-sm,12px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .plugin-memory-file pre { max-height:300px; margin:12px 0 0; padding:10px 12px; overflow:auto; border-radius:var(--radius-sm,8px); background:var(--wuu-color-surface,var(--surface-1)); color:var(--wuu-color-text-muted,var(--ink-soft)); white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.6 var(--wuu-font-mono,ui-monospace,monospace); }
+    .plugin-memory-file-head::before { content:"›"; color:var(--ink-muted); transition:transform var(--motion-fast) var(--ease-out); }
+    .plugin-memory-file[open] .plugin-memory-file-head::before { transform:rotate(90deg); }
+    .plugin-memory-file-name { overflow:hidden; color:var(--ink); font-size:var(--font-ui); text-overflow:ellipsis; white-space:nowrap; }
+    .plugin-memory-file-type { flex:none; padding:0 var(--space-2); border-radius:var(--radius-xs); background:var(--wuu-color-surface-muted, var(--surface-2)); color:var(--ink-muted); font-size:var(--font-xs); line-height:1.6; }
+    .plugin-memory-file-desc { overflow:hidden; color:var(--ink-muted); font-size:var(--font-sm); text-overflow:ellipsis; white-space:nowrap; }
+    .plugin-memory-file pre { max-height:300px; margin:var(--space-3) 0 0; padding:var(--compact-padding-block) var(--compact-padding-inline); overflow:auto; border-radius:var(--radius-sm); background:var(--surface-1); color:var(--ink-soft); white-space:pre-wrap; overflow-wrap:anywhere; font:var(--font-sm)/1.6 var(--wuu-font-family-mono, ui-monospace, monospace); }
 
-    .plugin-memory-muted { color:var(--wuu-color-text-muted,var(--ink-muted)); font-size:var(--font-sm,12px); }
-    .plugin-memory-error { display:grid; gap:6px; padding:10px 12px; border:1px solid color-mix(in srgb,var(--wuu-color-danger,#b42318) 28%,transparent); border-radius:var(--radius-sm,8px); color:var(--wuu-color-danger,#b42318); background:color-mix(in srgb,var(--wuu-color-danger,#b42318) 7%,transparent); font-size:var(--font-ui,13px); overflow-wrap:anywhere; }
-    .plugin-memory-error summary { cursor:pointer; color:var(--wuu-color-text-muted,var(--ink-soft)); font-size:var(--font-sm,12px); }
-    .plugin-memory-error pre { max-height:160px; margin:4px 0 0; overflow:auto; white-space:pre-wrap; color:var(--wuu-color-text-muted,var(--ink-soft)); font:12px/1.5 var(--wuu-font-mono,ui-monospace,monospace); }
+    .plugin-memory-error { display:grid; gap:var(--space-1); padding:var(--compact-padding-block) var(--compact-padding-inline); border-radius:var(--radius-sm); background:var(--danger-soft); color:var(--ink); font-size:var(--font-ui); overflow-wrap:anywhere; }
+    .plugin-memory-error summary { cursor:pointer; color:var(--ink-soft); font-size:var(--font-sm); }
+    .plugin-memory-error pre { max-height:160px; margin:var(--space-1) 0 0; overflow:auto; white-space:pre-wrap; color:var(--ink-soft); font:var(--font-sm)/1.5 var(--wuu-font-family-mono, ui-monospace, monospace); }
   ` });
 
   const terminalStates = new Set(["completed", "failed", "interrupted", "discarded"]);
@@ -115,10 +99,19 @@ export async function activate(api) {
     }
     flushList();
     return h("div", { className: "plugin-memory-overview" }, blocks.map((block, index) => {
-      if (block.kind === "h3") return h("h3", { key: index }, block.text);
-      if (block.kind === "ul") return h("ul", { key: index }, block.items.map((item, itemIndex) => h("li", { key: itemIndex }, item)));
-      return h("p", { key: index }, block.text);
+      if (block.kind === "h3") return h("h3", { key: index }, inline(block.text));
+      if (block.kind === "ul") return h("ul", { key: index }, block.items.map((item, itemIndex) => h("li", { key: itemIndex }, inline(item))));
+      return h("p", { key: index }, inline(block.text));
     }));
+  }
+
+  // **strong** and `code` spans, so emphasis reads as emphasis instead of
+  // literal asterisks.
+  function inline(text) {
+    return String(text).split(/(\*\*[^*]+\*\*|`[^`]+`)/).filter(Boolean).map((part, index) =>
+      part.startsWith("**") && part.endsWith("**") && part.length > 4 ? h("strong", { key: index }, part.slice(2, -2))
+        : part.startsWith("`") && part.endsWith("`") && part.length > 2 ? h("code", { key: index }, part.slice(1, -1))
+        : part);
   }
 
   function OverviewSkeleton() {
@@ -190,14 +183,12 @@ export async function activate(api) {
     if (raw.index_raw) files.push({ name: "MEMORY.md", content: raw.index_raw });
     files.push(...raw.files);
     return h(Page, { className: "plugin-memory" }, h(Stack, { gap: "large" },
-      h(Row, { className: "plugin-memory-header" },
-        h("p", { className: "plugin-memory-intro" }, tr("memory.subtitle")),
-        h(Button, { className: "plugin-memory-refresh", variant: "ghost", disabled: busy, "data-busy": busy ? "true" : "false", onClick: () => { void refreshRaw(); void refreshOverview(); } },
-          h("span", { className: "plugin-memory-refresh-dot", "aria-hidden": true }, "↻"),
-          tr(busy ? "memory.refreshing" : "memory.refresh"))),
       h(Section, { title: tr("memory.overview") },
-        busy && !overview ? h(OverviewSkeleton) : h(OverviewProse, { text: overview || tr("memory.empty") })),
-      h(Section, { title: tr("memory.chat"), description: tr("memory.chatHelp") }, h(Stack, null,
+        busy && !overview ? h(OverviewSkeleton) : h(OverviewProse, { text: overview || tr("memory.empty") }),
+        h(Row, { className: "plugin-memory-overview-actions" },
+          h(Button, { variant: "ghost", disabled: busy, onClick: () => { void refreshRaw(); void refreshOverview(); } },
+            tr(busy ? "memory.refreshing" : "memory.refresh")))),
+      h(Section, { title: tr("memory.chat") }, h(Stack, null,
         messages.length || chatBusy ? h("div", { className: "plugin-memory-chat-log" },
           messages.map((entry, index) => h("div", { key: index, className: `plugin-memory-chat-entry ${entry.role}` },
             entry.role === "user"
@@ -209,10 +200,10 @@ export async function activate(api) {
                   h("ul", null, entry.changed.map((item, itemIndex) => h("li", { key: itemIndex }, h("code", null, item.path))))) : null))),
           chatBusy ? h("div", { className: "plugin-memory-chat-entry" }, h("span", { className: "plugin-memory-chat-pending" }, tr("memory.thinking"))) : null) : null,
         h(Row, { className: "plugin-memory-composer" },
-          h(TextArea, { label: tr("memory.message"), value: draft, disabled: chatBusy, onChange: (event) => setDraft(event.target.value), onKeyDown: (event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void send(); } }),
+          h(TextArea, { label: tr("memory.message"), placeholder: tr("memory.message"), value: draft, disabled: chatBusy, onChange: (event) => setDraft(event.target.value), onKeyDown: (event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void send(); } }),
           h(Button, { variant: "primary", disabled: chatBusy || !draft.trim(), onClick: () => void send() }, tr("memory.send"))))),
       error ? h("div", { className: "plugin-memory-error", role: "alert" }, h("strong", null, tr("memory.loadFailed")), h("details", null, h("summary", null, tr("memory.errorDetails")), h("pre", null, error))) : null,
-      h(Section, { title: tr("memory.raw"), description: tr("memory.rawHelp") },
+      h(Section, { title: tr("memory.raw") },
         files.length ? h("div", { className: "plugin-memory-files" }, files.map((file) => h("details", { className: "plugin-memory-file", key: file.name },
           h("summary", { className: "plugin-memory-file-head" },
             h("span", { className: "plugin-memory-file-name" }, file.name),

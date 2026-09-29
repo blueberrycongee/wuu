@@ -146,14 +146,41 @@
   gap: var(--section-gap);
 }
 
+/* In Settings a kit section reads like a native settings section: the
+ * semibold title, the quieter scope line, the same heading gap. */
 .settings-scroll .plugin-ui-section {
-  gap: var(--section-heading-gap);
+  gap: var(--space-3);
+}
+
+.settings-scroll .plugin-ui-section-header {
+  gap: 2px;
 }
 
 .settings-scroll .plugin-ui-section-header h2 {
   color: var(--ink-strong);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-semibold);
+}
+
+.settings-scroll .plugin-ui-section-header p {
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+}
+
+/* An empty section there is one quiet line at a row's height, like a
+ * settings group with nothing in it, not a centred poster. */
+.settings-scroll .plugin-ui-state {
+  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  place-content: center start;
+  justify-items: start;
+  padding: 0;
+  text-align: start;
+}
+
+.settings-scroll .plugin-ui-state strong {
+  color: var(--ink-muted);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
 }
 
 .plugin-ui-page[data-wuu-density="compact"] {
