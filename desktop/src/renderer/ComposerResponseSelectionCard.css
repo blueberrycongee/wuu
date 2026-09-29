@@ -120,12 +120,6 @@
   color: var(--danger);
 }
 
-.composer-response-selection-source:focus-visible,
-.composer-response-selection-remove:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
 @container style(--motion-reduced: 1) {
   .composer-response-selection-popover {
     animation: none;

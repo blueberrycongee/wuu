@@ -90,11 +90,6 @@
   background: var(--surface-3);
 }
 
-.user-question-option:focus-visible {
-  outline: 1px solid var(--ink);
-  outline-offset: 1px;
-}
-
 .user-question-option-indicator {
   display: grid;
   place-items: center;
@@ -411,11 +406,6 @@
   background: var(--ink-strong);
 }
 
-.user-question-actions button:focus-visible {
-  outline: 1px solid var(--ink);
-  outline-offset: 2px;
-}
-
 .user-question-actions .user-question-submit:disabled,
 .user-question-offer-footer .user-question-submit:disabled {
   color: var(--paper);
@@ -711,6 +701,18 @@
   box-shadow: inset 0 0 0 1px var(--ink-overlay-18);
 }
 
+/* The frame clips its contents, so the draft's keyboard ring would show only
+ * as a line under the text. The frame's edge, drawn above the input, becomes
+ * the ring instead; it stays inside the frame, clear of trays tucked behind. */
+html[data-focus-modality="keyboard"] .composer-frame:has(> .composer > textarea:focus-visible)::after {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
+  outline: none;
+}
+
 .hero-composer-wrap .composer-frame {
   border-radius: var(--session-composer-radius, var(--radius-md));
   background: var(--composer-surface-bg);
@@ -782,11 +784,6 @@
 .composer-expand-button:active:not(:disabled) {
   color: var(--ink);
   transform: scale(0.96);
-}
-
-.composer-expand-button:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
 }
 
 .composer-expand-button:disabled {
@@ -957,11 +954,6 @@
   color: var(--ink);
 }
 
-.composer-input-header-action:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
-}
-
 .composer-queue-list {
   display: flex;
   flex-direction: column;
@@ -1033,8 +1025,6 @@
 }
 
 .composer-queue-preview:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
   border-radius: var(--radius-xs);
 }
 
@@ -1119,9 +1109,9 @@
   cursor: pointer;
 }
 
-.composer-drawer-summary-select:focus-visible {
-  border-radius: var(--radius-sm);
-  outline: 2px solid var(--conversation-floating-surface-focus);
+/* The summary row fills the drawer's clipped top edge, so its ring sits inside. */
+html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visible {
+  border-radius: var(--radius-xs);
   outline-offset: -2px;
 }
 
@@ -1304,11 +1294,14 @@
   min-width: 0;
   align-items: center;
   gap: 8px;
+  /* Clip a toolbar squeezed past its controls, but leave room for their
+   * keyboard rings (2px ring at a 2px offset). */
+  overflow: clip;
+  overflow-clip-margin: 4px;
 }
 
 .composer-bar-left {
   flex: 1 1 auto;
-  overflow: hidden;
 }
 
 .composer-plugin-toolbar {
@@ -1361,7 +1354,6 @@
 .composer-bar-right {
   flex: 0 1 auto;
   justify-content: flex-end;
-  overflow: hidden;
   margin-left: auto;
 }
 
@@ -1376,14 +1368,7 @@
   color: var(--ink-muted);
 }
 
-                                                                       
-                                                              
-.composer-bar > svg,
-.composer-bar svg,
-.composer-context-bar > svg,
-.composer-context-bar svg,
-.split-composer-bar > svg,
-.split-composer-bar svg {
+.composer-bar svg {
   width: var(--icon-size);
   height: var(--icon-size);
   flex: 0 0 auto;
@@ -1421,11 +1406,6 @@
   transform: scale(0.96);
 }
 
-                                                                    
-                                                                   
-                                                                   
-                                                                   
-                                                                       
 .composer-tool-button:disabled {
   cursor: not-allowed;
 }
@@ -1433,16 +1413,6 @@
 .composer-tool-button:disabled:hover {
   background: transparent;
   color: var(--ink-muted);
-}
-
-                                                                     
-                                                                    
-.composer-context-bar svg + svg,
-.permission-chip svg + svg,
-.context-project-button svg + svg,
-.context-branch-chip svg + svg {
-  width: var(--icon-size-sm);
-  height: var(--icon-size-sm);
 }
 
 .composer-plus-menu-anchor {
@@ -1580,8 +1550,6 @@
 }
 
 .composer-stop-button {
-                                                                      
-                                                                       
   background: var(--ink);
   color: var(--paper);
 }
@@ -1639,11 +1607,6 @@
 .hero-project-pill[aria-expanded="true"] {
   background: var(--surface-2);
   color: var(--ink);
-}
-
-.hero-project-pill:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
 }
 
 .hero-project-pill-icon {
@@ -1710,6 +1673,27 @@
 .composer-stop-button::before {
   /* Reduce visual weight without shrinking the button's hit target. */
   inset: 2px;
+}
+
+/* The keyboard ring follows the surface drawn on ::before, not the taller hit
+ * box around it. */
+html[data-focus-modality="keyboard"] :is(
+  .composer-tool-button,
+  .permission-chip,
+  .codex-runtime-trigger,
+  .composer-action-button
+):focus-visible {
+  outline: none;
+}
+
+html[data-focus-modality="keyboard"] :is(
+  .composer-tool-button,
+  .permission-chip,
+  .codex-runtime-trigger,
+  .composer-action-button
+):focus-visible::before {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .composer-tool-button:hover:not(:disabled)::before,
@@ -1924,6 +1908,11 @@
   background: var(--menu-hover);
 }
 
+/* Menu rows sit 1px apart, so a row's ring stays inside it. */
+html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-project-menu, .codex-runtime-menu) button:focus-visible {
+  outline-offset: -2px;
+}
+
 .composer-context-menu button:disabled {
   opacity: 0.52;
 }
@@ -2030,11 +2019,6 @@
   width: var(--icon-size-sm);
   height: var(--icon-size-sm);
   stroke-width: 1.75;
-}
-
-.composer-plus-menu button:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: -2px;
 }
 
 .composer-plus-button[aria-expanded="true"]::before {
