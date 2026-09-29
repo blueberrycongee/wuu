@@ -52,11 +52,18 @@ Before publication, the workflow verifies the app's signature and bundle identit
 The DMG window layout is configured in `desktop/package.json`.
 `desktop/scripts/generate-dmg-background.cjs` draws the background around the
 icon positions in `dmg.contents`, using the face and colours in
-`assets/app-icon-source.json`. After changing any of these, run
-`npm --prefix desktop run dmg-background:generate` on macOS, so the text uses
-the system fonts Finder users see, and commit both the 1x and 2x PNGs.
+`assets/app-icon-source.json` and the product's Blobatar agent renderer. After
+changing any of these, run `npm --prefix desktop run dmg-background:generate`
+and commit both the 1x and 2x PNGs.
 Packaging consumes those committed images and combines them into a HiDPI TIFF,
 without requiring artwork regeneration on release machines.
+
+The background is a wordless drag cue on white: a slingshot beside the app
+fires Wuu on a dotted arc that splits into its colourful agents, and they dive
+into a block fort built around Applications. Finder does not scale the picture
+when the window is resized; it anchors it at the top left and fills the rest
+with white in Light Mode, so the picture stays white to its edges and no
+artwork touches them.
 
 Finder imposes four constraints on the artwork, which the script encodes. The
 window takes the size of the 1x background, and `dmg.window` is ignored while a
