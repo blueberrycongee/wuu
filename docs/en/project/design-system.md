@@ -118,14 +118,14 @@ Align peer labels, icon columns, and trailing actions. Indentation expresses hie
 
 | Role | Variables | Default |
 | --- | --- | --- |
-| Inner highlights, compact chips, media | `--radius-xs`, `--radius-media` | 8px |
-| Controls and small cards | `--radius-sm` | 12px |
-| Panels and composer surfaces | `--radius-md`, `--radius-lg` | 22px; lg aliases md |
-| Compact menu shell | `--menu-shell-radius` | Inner radius + menu inset; 14px at standard density |
+| Inner highlights, menu rows, compact chips, media | `--radius-xs`, `--radius-media` | 6px |
+| Controls and small cards | `--radius-sm` | 8px |
+| Panels, dialogs and the composer | `--radius-md`, `--radius-lg` | 16px; lg aliases md |
+| Compact menu shell | `--menu-shell-radius` | Inner radius + menu inset; 12px at standard density |
 | Panel overlays and dialogs | `--menu-radius` | Follows panel by default; theme-overridable |
 | Pills and circles | `--radius-pill`, `--radius-circle` | 999px, 50% |
 
-Relate nested corners through their inset instead of assigning the same radius to every layer. Pills suit elongated controls; circles suit square avatars, dots, and knobs.
+Corners stay tight so a control reads as a control: a 32px field or button with an 8px corner is a rectangle, not a pill. Relate nested corners through their inset instead of assigning the same radius to every layer: a 16px panel holds 8px controls at 8px padding, and a menu shell is a 6px row plus its 6px inset. Pills are for switch tracks, badges, and capsules; circles suit avatars, dots, knobs, and icon-only close buttons. Do not round a text field or button into a pill for style.
 
 Choose elevation by purpose: `--shadow-soft` for light controls, `--shadow-card` for cards, `--shadow-composer` for the composer, `--shadow-pop` for popovers, and `--shadow-modal` for dialogs. Attached trays and edge drawers use directional roles. Light mode uses restrained ambient shadows. Dark mode defines surfaces with inset highlights while overlays retain black ambient shadows. Hover, focus, and expansion do not automatically increase elevation; ordinary content does not need shadows everywhere.
 
