@@ -31,18 +31,6 @@
   --sidebar-thread-row-dot-hover: var(--ink-overlay-18);
   --sidebar-thread-row-dot-active: var(--ink-overlay-18);
   --sidebar-thread-spinner-notch: rgba(17, 19, 21, 0.18);
-  --sidebar-thread-child-agent-separator: var(--ink-overlay-8);
-  --sidebar-thread-child-agent-hover-bg: rgba(95, 126, 104, 0.08);
-  --sidebar-thread-child-agent-focus-shadow: rgba(95, 126, 104, 0.18);
-  --sidebar-thread-child-agent-active-bg: rgba(95, 126, 104, 0.13);
-  --sidebar-thread-child-agent-active-ring: rgba(95, 126, 104, 0.12);
-  --sidebar-thread-child-agent-pending-bg: rgba(95, 126, 104, 0.08);
-  --sidebar-thread-child-agent-branch-color: rgba(95, 126, 104, 0.42);
-  /* Completed child-agent status used to be a green-leaning hue which read
-   * as a second forest tone against the sage highlights; route it through
-   * --ink-tertiary so the hierarchy stays the same neutral as the rest. */
-  --sidebar-thread-child-agent-completed-status: var(--ink-tertiary);
-  --sidebar-thread-child-agent-cancelled-status: #94745f;
   --sidebar-settings-button-hover-ring: rgba(255, 255, 255, 0.42);
   /* Collapsed-drawer chrome. */
   --sidebar-drawer-edge: rgba(17, 19, 21, 0.09);
@@ -315,6 +303,8 @@
   /* Labels sit one step below conversation ink so the rail reads as quiet
    * chrome next to the message flow; icons stay on --ink-soft below them. */
   --sidebar-label-ink: color-mix(in srgb, var(--ink) 84%, var(--paper));
+  /* Group labels and list-footer actions: quieter than labels, still 4.5:1. */
+  --sidebar-heading-ink: var(--ink-tertiary);
   /* One icon and text axis for navigation, plugins, projects, and account
    * controls. Avatars occupy this same glyph slot. Icon, column, and row
    * action sizes scale with the UI font in appearance.css. */
@@ -984,26 +974,25 @@
   overscroll-behavior: contain;
 }
 
+/* Attention sections are sidebar groups: their headings take the functional
+ * heading's metrics (see .sidebar-functional-heading) and count in plain
+ * tabular text rather than a capsule. */
 .sidebar-unread-heading {
-  display: flex;
-  min-height: 30px;
-  align-items: center;
-  gap: 7px;
-  padding: 0 var(--sidebar-row-pad-x);
-  color: var(--ink-muted);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-semibold);
+  justify-content: space-between;
+}
+
+/* The action's last glyph, not its padding, ends on the pane inset. */
+.sidebar-unread-heading > .sidebar-heading-text-action {
+  margin-inline-end: calc(-1 * var(--sidebar-row-control-pad-x));
+}
+
+.sidebar-unread-heading-label {
+  margin: 0;
 }
 
 .sidebar-unread-count {
-  min-width: 18px;
-  border-radius: var(--radius-pill);
-  padding: 1px 5px;
-  background: var(--sidebar-row-hover-bg);
-  color: var(--ink-tertiary);
-  font-size: 10px;
-  line-height: 16px;
-  text-align: center;
+  margin-inline-start: 0.5em;
+  font-variant-numeric: tabular-nums;
 }
 
 .sidebar-unread-list {
@@ -1011,6 +1000,7 @@
   min-width: 0;
   flex-direction: column;
   gap: var(--sidebar-functional-row-gap);
+  margin-top: var(--sidebar-functional-heading-gap);
 }
 
 /* Bell view rows have no leading icon. Pin the title to the same inset as
@@ -1030,98 +1020,16 @@
 }
 
 .sidebar-attention-section + .sidebar-attention-section {
-  margin-top: 8px;
+  margin-top: var(--sidebar-functional-group-gap);
 }
 
 .sidebar-unread-empty {
-  display: flex;
-  min-height: 160px;
-  flex: 1 1 auto;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-}
-
-.sidebar-unread-empty svg {
-  width: 20px;
-  height: 20px;
-  opacity: 0.52;
-}
-
-.sidebar-clear-unread-hint {
-  position: fixed;
-  z-index: 2147483000;
-  display: grid;
-  max-width: min(220px, calc(100vw - 16px));
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 4px;
-  border: 1px solid var(--menu-border);
-  border-radius: var(--radius-xs);
-  padding: 5px 5px 5px 9px;
-  background: var(--menu-bg);
-  box-shadow: var(--shadow-card);
-  color: var(--ink-soft);
-  pointer-events: auto;
-  --enter-y: 2px;
-  animation: wuu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
-}
-
-.sidebar-clear-unread-hint::before {
-  content: "";
-  position: absolute;
-  left: var(--hint-anchor-x);
-  top: var(--hint-arrow-top);
-  width: 7px;
-  height: 7px;
-  border-top: 1px solid var(--menu-border);
-  border-left: 1px solid var(--menu-border);
-  background: var(--menu-bg);
-  transform: translateX(-50%) rotate(var(--hint-arrow-rotation));
-  pointer-events: none;
-}
-
-.sidebar-clear-unread-hint-copy {
   margin: 0;
-  font-size: var(--font-xs);
-  line-height: 16px;
+  padding: var(--space-1) var(--sidebar-row-pad-x);
+  color: var(--sidebar-heading-ink);
 }
 
-.sidebar-clear-unread-hint-dismiss {
-  display: grid;
-  width: 20px;
-  height: 20px;
-  place-items: center;
-  border-radius: var(--radius-xs);
-  padding: 0;
-  background: transparent;
-  color: var(--ink-muted);
-  cursor: pointer;
-  line-height: 0;
-}
-
-.sidebar-clear-unread-hint-dismiss:hover,
-.sidebar-clear-unread-hint-dismiss:focus-visible {
-  background: var(--menu-hover);
-  color: var(--ink-strong);
-}
-
-.sidebar-clear-unread-hint-dismiss:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
-}
-
-.sidebar-clear-unread-hint-dismiss svg {
-  width: 12px;
-  height: 12px;
-  stroke-width: 2;
-}
-
-.primary-nav,
-.project-list {
+.primary-nav {
   display: flex;
   flex-direction: column;
   gap: var(--sidebar-functional-row-gap);
@@ -1129,12 +1037,6 @@
 
 .primary-nav {
   flex: 0 0 auto;
-}
-
-.section-label {
-  color: var(--ink-muted);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-semibold);
 }
 
 /* Shared navigation and thread row spec. */
@@ -1221,10 +1123,9 @@
 
 .sidebar-content :is(
   .sidebar-functional-heading-label,
-  .thread-list-more,
-  .thread-list-collapse-btn
+  .sidebar-unread-heading-label
 ) {
-  color: var(--ink-muted);
+  color: var(--sidebar-heading-ink);
 }
 
 .nav-item:hover,
@@ -1309,7 +1210,8 @@ html[data-focus-modality="keyboard"] :is(
   gap: var(--sidebar-functional-row-gap);
 }
 
-.sidebar-functional-heading {
+.sidebar-functional-heading,
+.sidebar-unread-heading {
   display: flex;
   column-gap: var(--sidebar-action-gap);
   min-width: 0;
@@ -1320,11 +1222,11 @@ html[data-focus-modality="keyboard"] :is(
   padding: 0 var(--sidebar-row-pad-x);
 }
 
-.sidebar-functional-heading-label {
+.sidebar-functional-heading-label,
+.sidebar-unread-heading-label {
   min-width: 0;
   flex: 0 1 auto;
   overflow: hidden;
-  color: var(--ink-muted);
   font-size: var(--sidebar-heading-size, var(--font-sm));
   font-weight: var(--weight-medium);
   line-height: var(--line-ui);
@@ -1365,7 +1267,7 @@ html[data-focus-modality="keyboard"] :is(
   height: var(--icon-size-xs);
   margin: 0;
   flex: 0 0 auto;
-  color: var(--ink-muted);
+  color: var(--sidebar-heading-ink);
   transition:
     transform var(--section-fold-ms) var(--section-fold-ease),
     opacity var(--motion-fast) var(--ease-out);
@@ -1628,11 +1530,6 @@ html[data-focus-modality="keyboard"] :is(
   height: var(--icon-size-xs);
 }
 
-.project-list {
-  min-height: 0;
-}
-
-.session-organization-group + .session-organization-group,
 .session-folder-list .project-section + .project-section {
   margin-top: 4px;
 }
@@ -1652,23 +1549,6 @@ html[data-focus-modality="keyboard"] :is(
 .session-folder-list[data-folder-dragging="true"] .session-folder-drop-target.drop-active {
   background: color-mix(in srgb, var(--sidebar-accent) 10%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sidebar-accent) 42%, transparent);
-}
-
-.session-organization-group-heading {
-  overflow: hidden;
-  padding: 4px calc(var(--sidebar-row-pad-x) + 26px) 1px;
-  color: var(--ink-muted);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-semibold);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-organization-empty {
-  padding: 4px var(--sidebar-row-pad-x) 8px;
-  color: var(--ink-muted);
-  font-size: var(--font-xs);
-  line-height: 1.4;
 }
 
 .project-add-menu {
@@ -2035,7 +1915,8 @@ html[data-focus-modality="keyboard"] :is(
 }
 
 .thread-list-more,
-.thread-list-collapse-btn {
+.thread-list-collapse-btn,
+.sidebar-heading-text-action {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -2043,7 +1924,7 @@ html[data-focus-modality="keyboard"] :is(
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--ink-muted);
+  color: var(--sidebar-heading-ink);
   cursor: pointer;
   font: inherit;
   font-size: var(--sidebar-heading-size, var(--font-sm));
@@ -2057,13 +1938,15 @@ html[data-focus-modality="keyboard"] :is(
 }
 
 .thread-list-more:hover,
-.thread-list-collapse-btn:hover {
+.thread-list-collapse-btn:hover,
+.sidebar-heading-text-action:hover {
   background: var(--sidebar-thread-list-button-hover-bg);
   color: var(--ink);
 }
 
 .thread-list-more:focus-visible,
-.thread-list-collapse-btn:focus-visible {
+.thread-list-collapse-btn:focus-visible,
+.sidebar-heading-text-action:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
   background: var(--sidebar-thread-list-button-hover-bg);
@@ -2212,110 +2095,6 @@ html[data-focus-modality="keyboard"] :is(
 .thread-row.has-unread .thread-row-title {
   color: var(--ink);
   font-weight: var(--weight-semibold);
-}
-
-.thread-child-agent-list {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin: -1px 0 3px 14px;
-  padding-left: 12px;
-}
-
-.thread-child-agent-list::before {
-  position: absolute;
-  top: -4px;
-  bottom: 8px;
-  left: 1px;
-  width: 1px;
-  border-radius: var(--radius-pill);
-  background: var(--sidebar-thread-child-agent-separator);
-  content: "";
-}
-
-.thread-child-agent-row {
-  display: flex;
-  height: 25px;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--ink-soft);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 12px;
-  line-height: var(--line-ui);
-  padding: 0 8px 0 2px;
-  text-align: left;
-  transition:
-    background-color var(--motion-fast) var(--ease-out),
-    box-shadow var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out);
-}
-
-.thread-child-agent-row:hover {
-  background: var(--sidebar-thread-child-agent-hover-bg);
-  color: var(--ink);
-}
-
-.thread-child-agent-row:focus-visible {
-  outline: 0;
-  box-shadow: inset 0 0 0 2px var(--sidebar-thread-child-agent-focus-shadow);
-}
-
-.thread-child-agent-row.active {
-  background: var(--sidebar-thread-child-agent-active-bg);
-  color: var(--ink);
-  box-shadow: inset 0 0 0 1px var(--sidebar-thread-child-agent-active-ring);
-}
-
-.thread-child-agent-row.pending-switch {
-  background: var(--sidebar-thread-child-agent-pending-bg);
-  color: var(--ink);
-}
-
-.thread-child-agent-branch {
-  flex: 0 0 auto;
-  color: var(--sidebar-thread-child-agent-branch-color);
-}
-
-.thread-child-agent-name {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thread-child-agent-nested,
-.thread-child-agent-status {
-  flex: 0 0 auto;
-  color: var(--ink-muted);
-  font-size: 11px;
-}
-
-.thread-child-agent-nested {
-  min-width: 22px;
-  text-align: right;
-}
-
-.thread-child-agent-row.running .thread-child-agent-status {
-  color: var(--success);
-}
-
-.thread-child-agent-row.completed .thread-child-agent-status {
-  color: var(--sidebar-thread-child-agent-completed-status);
-}
-
-.thread-child-agent-row.failed .thread-child-agent-status {
-  color: var(--danger);
-}
-
-.thread-child-agent-row.cancelled .thread-child-agent-status {
-  color: var(--sidebar-thread-child-agent-cancelled-status);
 }
 
 .thread-row.pending-switch::before {
@@ -2472,12 +2251,6 @@ html[data-focus-modality="keyboard"] :is(
   .thread-row-main > .thread-row-title[data-title-swap] {
     animation: none;
   }
-}
-
-.thread-child-agent-loading {
-  width: 10px;
-  height: 10px;
-  margin-left: 0;
 }
 
 .thread-row-actions {
@@ -2764,7 +2537,7 @@ html[data-focus-modality="keyboard"] :is(
 
 /* Unified empty-note row for sections that have no children. */
 .sidebar-section-empty-note {
-  color: var(--ink-muted);
+  color: var(--sidebar-heading-ink);
   font-size: var(--sidebar-heading-size, var(--font-sm));
   line-height: 1.4;
   padding: 4px var(--sidebar-row-pad-x) 4px
@@ -2878,7 +2651,7 @@ html[data-focus-modality="keyboard"] :is(
 
 .sidebar-hover-card-time {
   flex: 0 0 auto;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }

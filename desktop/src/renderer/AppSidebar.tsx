@@ -2,8 +2,6 @@ import { hostSupports } from "./HostCapabilities";
 import { SidebarAccountMenu } from "./SidebarAccountMenu";
 import { MobileSidebar } from "./MobileSidebar";
 import {
-  Archive,
-  Bell,
   ChevronRight,
   Folder,
   FolderMinus,
@@ -1766,7 +1764,8 @@ export function AppSidebar({
         </div>
         <SidebarBrand
           unreadViewOpen={unreadViewOpen}
-          unreadCount={attentionCount}
+          attentionCount={attentionCount}
+          hasUnread={unreadThreads.length > 0}
           onToggleUnreadView={onToggleUnreadView}
           onClearUnread={() => onMarkThreadsViewed(unreadThreads)}
         />
@@ -1799,6 +1798,16 @@ export function AppSidebar({
                 headingID="sidebar-unread-heading"
                 title={t("sidebar.unreadConversations")}
                 count={unreadThreads.length}
+                action={(
+                  <button
+                    className="sidebar-heading-text-action"
+                    type="button"
+                    data-attention-action="mark-read"
+                    onClick={() => onMarkThreadsViewed(unreadThreads)}
+                  >
+                    {t("sidebar.markAllRead")}
+                  </button>
+                )}
               >
                 {unreadThreads.map((thread) => (
                   <AttentionThreadRow
@@ -1828,10 +1837,7 @@ export function AppSidebar({
               </AttentionSection>
             ) : null}
             {runningThreads.length === 0 && unreadThreads.length === 0 && recentThreads.length === 0 ? (
-              <div className="sidebar-unread-empty" role="status">
-                <Bell aria-hidden="true" />
-                <span>{t("sidebar.attentionEmpty")}</span>
-              </div>
+              <p className="sidebar-unread-empty" role="status">{t("sidebar.attentionEmpty")}</p>
             ) : null}
           </section>
         ) : (
@@ -2532,20 +2538,23 @@ function AttentionSection({
   headingID,
   title,
   count,
+  action,
   children,
 }: {
   headingID: string;
   title: string;
   count: number;
+  action?: ReactNode;
   children: ReactNode;
 }): JSX.Element {
   return (
     <section className="sidebar-attention-section" aria-labelledby={headingID}>
-      <header className="sidebar-unread-heading" id={headingID}>
-        <span>{title}</span>
-        <span className="sidebar-unread-count" aria-live="polite">
-          {count}
-        </span>
+      <header className="sidebar-unread-heading">
+        <h2 className="sidebar-unread-heading-label" id={headingID}>
+          {title}
+          <span className="sidebar-unread-count" aria-live="polite">{count}</span>
+        </h2>
+        {action}
       </header>
       <div className="sidebar-unread-list">{children}</div>
     </section>

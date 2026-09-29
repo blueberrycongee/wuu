@@ -248,7 +248,7 @@ describe("AppSidebar layout", () => {
     };
     renderSidebar(options);
     act(() => container.querySelector<HTMLButtonElement>(".sidebar-notifications-button")!.click());
-    expect(container.querySelector("#sidebar-unread-heading")?.nextElementSibling?.textContent).toContain(unread.title);
+    expect(container.querySelector('[aria-labelledby="sidebar-unread-heading"] .sidebar-unread-list')?.textContent).toContain(unread.title);
     expect(container.querySelector("#sidebar-recent-heading")).toBeNull();
 
     renderSidebar({
@@ -266,7 +266,7 @@ describe("AppSidebar layout", () => {
       },
     });
     expect(container.querySelector("#sidebar-unread-heading")).toBeNull();
-    expect(container.querySelector("#sidebar-recent-heading")?.nextElementSibling?.textContent).toContain(unread.title);
+    expect(container.querySelector('[aria-labelledby="sidebar-recent-heading"] .sidebar-unread-list')?.textContent).toContain(unread.title);
     expect(container.querySelector('[aria-current="page"] .thread-row-title')?.textContent).toBe(unread.title);
     expect(container.querySelector(".sidebar-unread-view")?.textContent).not.toContain(idle.title);
     expect(container.querySelector<HTMLElement>(".sidebar-notifications-button")?.dataset.hasUnread).toBeUndefined();
@@ -447,7 +447,7 @@ describe("AppSidebar layout", () => {
     renderSidebar(viewedOptions);
     expect(hasProjectUnread()).toBe(false);
     act(() => container.querySelector<HTMLButtonElement>(".sidebar-notifications-button")!.click());
-    const unreadList = container.querySelector("#sidebar-unread-heading")?.nextElementSibling;
+    const unreadList = container.querySelector('[aria-labelledby="sidebar-unread-heading"] .sidebar-unread-list');
     expect(unreadList?.textContent).toContain(member.title);
     expect(unreadList?.textContent).not.toContain(project.title);
     act(() => container.querySelector<HTMLButtonElement>(".sidebar-notifications-button")!.click());

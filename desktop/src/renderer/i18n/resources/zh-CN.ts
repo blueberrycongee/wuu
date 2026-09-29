@@ -371,7 +371,7 @@ export const zhCN = {
   "sidebar.recentActivity": "最近",
   "sidebar.unreadEmpty": "没有未读会话",
   "sidebar.attentionEmpty": "没有需要关注的会话",
-  "sidebar.clearUnreadHint": "长按铃铛，可一次清除全部未读",
+  "sidebar.markAllRead": "全部已读",
   "sidebar.recentConversations": "最近对话",
   "sidebar.conversations": "对话",
   "sidebar.settings": "设置",

@@ -374,7 +374,7 @@ export const enUS = {
   "sidebar.recentActivity": "Recent",
   "sidebar.unreadEmpty": "No unread conversations",
   "sidebar.attentionEmpty": "No conversations need attention",
-  "sidebar.clearUnreadHint": "Press and hold the bell to clear all unread",
+  "sidebar.markAllRead": "Mark all read",
   "sidebar.recentConversations": "Recent conversations",
   "sidebar.conversations": "Conversations",
   "sidebar.settings": "Settings",
