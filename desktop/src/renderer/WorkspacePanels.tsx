@@ -6,6 +6,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -26,6 +27,7 @@ import { restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useDropAnimation, useSortableTransition } from "./SortableMotion";
+import { motionDurationMs } from "./motion";
 import {
   createWindowResizeSettleScheduler,
   isWindowResizing,
@@ -318,6 +320,31 @@ export function WorkspaceRightPanel({
     visibleTabs.map((tab) => tab.id),
     addButtonRef,
   );
+
+  // Tabs shrink before the strip scrolls; once it does, the active tab is
+  // brought into view, again after a newcomer has grown to its width.
+  useLayoutEffect(() => {
+    const strip = tabListRef.current;
+    if (!strip || !activeTabID) {
+      return undefined;
+    }
+    const reveal = (): void => {
+      const tab = strip.querySelector<HTMLElement>(".workspace-tool-tab.active");
+      if (!tab) {
+        return;
+      }
+      const stripBox = strip.getBoundingClientRect();
+      const tabBox = tab.getBoundingClientRect();
+      if (tabBox.left < stripBox.left) {
+        strip.scrollLeft -= stripBox.left - tabBox.left;
+      } else if (tabBox.right > stripBox.right) {
+        strip.scrollLeft += tabBox.right - stripBox.right;
+      }
+    };
+    reveal();
+    const timer = window.setTimeout(reveal, motionDurationMs("--motion-base", 180));
+    return () => window.clearTimeout(timer);
+  }, [activeTabID, tabListRef, visibleTabs.length]);
 
   useEffect(() => {
     if (!prewarm && !open) {
@@ -709,6 +736,7 @@ export function WorkspaceRightPanel({
               role="tablist"
               aria-label={t("workspace.artifactsAndTools")}
               data-enter-ready={enterReady ? "" : undefined}
+              data-scroll-fade="inline"
               onKeyDown={handleTabListKeyDown}
             >
               {tabEntries.map((entry) => {
@@ -1158,7 +1186,8 @@ function SortableWorkspaceViewTab({
       data-wuu-active={active ? "true" : "false"}
       data-wuu-state={isDragging ? "dragging" : undefined}
     >
-      <Tooltip content={tooltip} disabled={tooltip === label}>
+      {/* A narrow tab may show only its icon, so the name is always a hover away. */}
+      <Tooltip content={tooltip}>
         <button
           ref={setActivatorNodeRef}
           className="workspace-tool-tab-main"

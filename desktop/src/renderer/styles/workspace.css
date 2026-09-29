@@ -2,11 +2,6 @@
    theme overrides these in base.css theme blocks. */
 :root {
   --workspace-panel-title-icon: var(--wuu-color-text-muted, #6d7378);
-  --workspace-tool-tab-text: var(--wuu-color-text-muted, #666d72);
-  --workspace-tab-highlight: rgba(255, 255, 255, 0.72);
-  --workspace-tab-active-bg: var(--surface-3);
-  --workspace-tab-close-icon: var(--wuu-color-text-muted, #8b9095);
-  --workspace-tab-focus-ring: var(--focus-ring);
   --workspace-menu-item-hover-bg: #ebebe8;
   --workspace-bottom-title-text: var(--wuu-color-text-muted, #747a7f);
   --workspace-tool-card-text: var(--wuu-color-text, #272b2f);
@@ -527,12 +522,16 @@
   display: none;
 }
 
+/* Tabs share the strip and shrink to their icon before it scrolls: a narrow
+ * inactive tab gives up its close button, then its label (queries below).
+ * The active tab keeps room for its name and close button. */
 .workspace-tool-tab {
+  container: workspace-tab / inline-size;
   display: flex;
   position: relative;
-  min-width: 88px;
+  min-width: calc(var(--icon-size) + var(--space-3) * 2);
   max-width: 200px;
-  height: 32px;
+  height: var(--control-size-toolbar);
   /* Uniform widths, matching the session strip. Also load-bearing for drag
    * reorder: horizontalListSortingStrategy assumes equal-size items, and the
    * old content-width tabs (flex: 0 1 auto) made mid-drag sibling offsets
@@ -540,9 +539,9 @@
   flex: 1 1 0%;
   align-items: center;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--workspace-tool-tab-text);
+  color: var(--ink-soft);
   overflow: hidden;
   /* Inherits -webkit-app-region: drag from .workspace-panel-tabbar so the
    * 8px strip above/below the tab (and the 2px gap between tabs) stays
@@ -630,8 +629,10 @@
 .workspace-tool-tab.active,
 .workspace-tool-tab.active:hover,
 .workspace-tool-tab.active:focus-within {
-  /* Share the session strip selection treatment. */
-  background: var(--workspace-tab-active-bg);
+  /* Share the session strip selection treatment. Room for the icon, a short
+   * name (about four characters) and the close button. */
+  min-width: calc(var(--space-3) + var(--icon-size) + 4em + var(--control-size-inline) + var(--space-3));
+  background: var(--surface-3);
   color: var(--ink-strong);
 }
 
@@ -646,7 +647,8 @@
   background: transparent;
   color: inherit;
   cursor: inherit;
-  padding: 0 3px 0 10px;
+  /* With the strip's own inset, the first icon sits on the pane inset. */
+  padding: 0 var(--space-1) 0 var(--space-3);
   text-align: left;
 }
 
@@ -679,13 +681,11 @@
 
 .workspace-tool-tab-close {
   display: grid;
-  width: 24px;
-  height: 24px;
   flex: 0 0 auto;
   place-items: center;
   border-radius: var(--radius-pill);
   background: transparent;
-  color: var(--workspace-tab-close-icon);
+  color: var(--ink-tertiary);
   cursor: pointer;
   margin-right: 2px;
   opacity: 0;
@@ -703,8 +703,25 @@
 
 .workspace-tool-tab-main:focus-visible,
 .workspace-tool-tab-close:focus-visible {
-  outline: 2px solid var(--workspace-tab-focus-ring);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
+}
+
+@container workspace-tab (max-width: 84px) {
+  .workspace-tool-tab:not(.active) .workspace-tool-tab-close {
+    display: none;
+  }
+}
+
+@container workspace-tab (max-width: 56px) {
+  .workspace-tool-tab-main {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .workspace-tool-tab-main > span:not(.workspace-tab-dirty-indicator) {
+    display: none;
+  }
 }
 
 .workspace-tool-tab:hover .workspace-tool-tab-close,
@@ -731,7 +748,6 @@
 
 @container (min-width: 720px) {
   .workspace-tool-tab {
-    min-width: 96px;
     max-width: 248px;
   }
 }
@@ -1378,7 +1394,7 @@ html.resizing-workspace-file-split * {
 
 .workspace-tool-menu-item:focus-visible {
   background: var(--workspace-menu-item-hover-bg);
-  outline: 2px solid var(--workspace-tab-focus-ring);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
