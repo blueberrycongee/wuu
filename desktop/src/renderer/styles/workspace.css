@@ -2800,28 +2800,11 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   text-align: right;
 }
 
-/* Monaco draws its own scrollbars instead of using the browser's native
-   pseudo-elements, so mirror the renderer-wide scrollbar tokens here. */
-.workspace-monaco-editor .monaco-scrollable-element > .scrollbar {
-  background: var(--scrollbar-track-bg);
-}
-
-.workspace-monaco-editor .monaco-scrollable-element > .scrollbar > .slider {
+/* Monaco draws its own scrollbars; the editor theme colours the thumb from the
+   scrollbar tokens and keeps it visible, since scroll position is part of what
+   an editor shows. Only the thumb's shape needs the product radius. */
+:is(.workspace-monaco-editor, .workspace-monaco-diff-editor) .monaco-scrollable-element > .scrollbar > .slider {
   border-radius: var(--scrollbar-radius);
-  background: transparent;
-  transition: background-color var(--motion-base) var(--ease-out);
-}
-
-.workspace-monaco-editor:hover .monaco-scrollable-element > .scrollbar > .slider {
-  background: var(--scrollbar-thumb);
-}
-
-.workspace-monaco-editor .monaco-scrollable-element > .scrollbar > .slider:hover {
-  background: var(--scrollbar-thumb-hover);
-}
-
-.workspace-monaco-editor .monaco-scrollable-element > .scrollbar > .slider.active {
-  background: var(--scrollbar-thumb-active);
 }
 
 .workspace-monaco-editor {
