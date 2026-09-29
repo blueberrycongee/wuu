@@ -22,6 +22,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/securefs"
+	"github.com/blueberrycongee/wuu/internal/storelock"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
@@ -227,6 +228,17 @@ func (e *Environment) prepare(ctx context.Context) ([]string, error) {
 }
 
 func (e *Environment) prepareDocker(ctx context.Context) error {
+	// Shared conversations and independent host processes use one provisioning
+	// transaction for the same environment identity.
+	lock, err := storelock.Acquire(filepath.Join(e.stateDir, e.identity))
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	inspect := exec.CommandContext(ctx, "docker", "inspect", "--format", `{{index .Config.Labels "wuu.execution.identity"}} {{.State.Running}}`, e.identity)
 	data, err := inspect.Output()
 	if err == nil {

@@ -3,7 +3,9 @@ package executionworker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -270,4 +272,46 @@ esac
 		t.Fatal(err)
 	}
 	t.Log("verified: terminal readiness, raw mode, large authenticated request and clean shutdown")
+}
+
+func TestDockerSharedProvisioningEndToEnd(t *testing.T) {
+	image := os.Getenv("WUU_EXECUTION_E2E_IMAGE")
+	if image == "" {
+		t.Skip("set WUU_EXECUTION_E2E_IMAGE")
+	}
+	p := executionenv.Profile{Backend: "docker", Image: image, Shared: true, Workspace: "/workspace"}
+	store := t.TempDir()
+	identity := executionenv.Identity(store, "first", "test", p)
+	defer func() {
+		if out, err := exec.Command("docker", "rm", "--force", identity).CombinedOutput(); err != nil {
+			t.Errorf("cleanup shared container: %v %s", err, out)
+		}
+	}()
+	first := executionenv.NewEnvironment(p, identity, "first", store)
+	defer first.Close()
+	second := executionenv.NewEnvironment(p, identity, "second", store)
+	defer second.Close()
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	for i, environment := range []*executionenv.Environment{first, second} {
+		go func(i int, environment *executionenv.Environment) {
+			<-start
+			args, _ := json.Marshal(map[string]string{"path": fmt.Sprintf("shared-%d", i), "content": "shared"})
+			_, err := environment.Execute(ctx, executionenv.ToolRequest{Actor: "writer", PermissionMode: "standard", Call: providers.ToolCall{Name: "write_file", Arguments: string(args)}})
+			results <- err
+		}(i, environment)
+	}
+	close(start)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := first.Execute(ctx, executionenv.ToolRequest{Actor: "reader", PermissionMode: "read_only", Call: providers.ToolCall{Name: "read_file", Arguments: `{"path":"shared-1"}`}})
+	if err != nil || !strings.Contains(result.TextProjection(), "shared") {
+		t.Fatalf("shared workspace: %v %s", err, result.TextProjection())
+	}
+	t.Log("verified: concurrent shared provisioning and cross-conversation file visibility")
 }
