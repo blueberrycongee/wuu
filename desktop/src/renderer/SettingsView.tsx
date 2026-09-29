@@ -1664,7 +1664,8 @@ function SettingsArchivePage({
     <>
       <SettingsPageHeader title={t("settings.archive")} />
       <div className="settings-archive-page">
-        <div className="settings-archive-toolbar" role="search" aria-label={t("settings.archiveFilter")}>
+        {/* Nothing archived means nothing to search or filter. */}
+        {sortedThreads.length > 0 ? <div className="settings-archive-toolbar" role="search" aria-label={t("settings.archiveFilter")}>
           <label className="settings-archive-search">
             <Search className="icon" aria-hidden="true" />
             <span className="sr-only">{t("settings.archiveSearch")}</span>
@@ -1684,18 +1685,15 @@ function SettingsArchivePage({
             options={[{ value: "all", label: t("settings.allWorkspaces") }, ...workspaceOptions]}
             flip
           />
-        </div>
+        </div> : null}
         {sortedThreads.length === 0 || noMatches ? (
-          <div className="settings-archive-empty" role="status">
-            <Archive className="settings-archive-empty-icon" aria-hidden="true" />
-            <p className="settings-archive-empty-title">
-              {noMatches ? t("settings.noArchiveMatches") : t("settings.noArchivedItems")}
-            </p>
-            {noMatches || isTouchWebShell() ? null : (
-              <p className="settings-archive-empty-hint">
-                {t("settings.archiveHint")}
-              </p>
-            )}
+          <div className="settings-group">
+            <div className="settings-group-empty settings-archive-empty" role="status">
+              <span>{noMatches ? t("settings.noArchiveMatches") : t("settings.noArchivedItems")}</span>
+              {noMatches || isTouchWebShell() ? null : (
+                <span className="settings-archive-empty-hint">{t("settings.archiveHint")}</span>
+              )}
+            </div>
           </div>
         ) : (
           <div className="settings-archive-groups" aria-label={t("settings.archivedList")}>
