@@ -13,7 +13,6 @@ import {
   Settings,
   Sparkles,
   Terminal,
-  Wrench,
 } from "./WuuIcons";
 import { PluginBlocksIcon } from "./PluginBlocksIcon";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -180,6 +179,18 @@ export function SkillsCatalog({
     () => extensionInventory.filter((record) => record.kind === "plugin"),
     [extensionInventory],
   );
+  // A plugin keeps the group it was listed in until the catalog is entered
+  // again, so its switch turns it on or off without moving the row away
+  // from the pointer.
+  const [listedPlacement, setListedPlacement] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  useEffect(() => {
+    const unlisted = plugins.filter((record) => !listedPlacement.has(record.id));
+    if (unlisted.length === 0) return;
+    setListedPlacement((current) => new Map([
+      ...current,
+      ...unlisted.map((record) => [record.id, pluginToggle(record).on] as const),
+    ]));
+  }, [listedPlacement, plugins]);
 
   const visiblePlugins = useMemo(() => {
     const query = filter.trim().toLowerCase();
@@ -355,11 +366,10 @@ export function SkillsCatalog({
     return attention ? [{ record, attention }] : [];
   });
   const quietPlugins = visiblePlugins.filter((record) => !attentionPlugins.some((entry) => entry.record === record));
-  const enabledPlugins = quietPlugins.filter((record) => pluginToggle(record).on);
-  const disabledPlugins = quietPlugins.filter((record) => !pluginToggle(record).on);
-  const cardGroups = [
-    { key: "enabled", title: t("skills.groupEnabled"), records: enabledPlugins },
-    { key: "disabled", title: t("skills.groupDisabled"), records: disabledPlugins },
+  const listedOn = (record: ExtensionInventoryRecord) => listedPlacement.get(record.id) ?? pluginToggle(record).on;
+  const pluginGroups = [
+    { key: "enabled", title: t("skills.groupEnabled"), records: quietPlugins.filter(listedOn) },
+    { key: "disabled", title: t("skills.groupDisabled"), records: quietPlugins.filter((record) => !listedOn(record)) },
   ].filter((group) => group.records.length > 0);
   const activeTab = plugins.length === 0 ? "skills" : chosenTab;
   const pluginSkills = (record: ExtensionInventoryRecord) =>
@@ -375,7 +385,11 @@ export function SkillsCatalog({
           packageMutation={packageMutation}
           canUpdate={Boolean(onUpdateExtensionPackage)}
           canRemove={Boolean(onRemovePluginPackage)}
-          onBack={() => setSelectedPluginID("")}
+          onBack={() => {
+            // Coming back is entering the catalog again: rows regroup by state.
+            setListedPlacement(new Map());
+            setSelectedPluginID("");
+          }}
           onToggle={() => void updateExtensionPackage(selectedPlugin, pluginToggle(selectedPlugin).action)}
           onPrimaryAction={(action) => void updateExtensionPackage(selectedPlugin, action)}
           onPreviewSkill={setPreviewSkill}
@@ -465,13 +479,13 @@ export function SkillsCatalog({
 
       {state.error ? <div className="skills-catalog-error">{state.error}</div> : null}
 
-      {/* What needs a decision reads as a list of reasons, apart from the
-       * cards below that only turn plugins on and off. */}
+      {/* A plugin that needs a decision shows the reason instead of its
+       * tagline; the decision is made on its page. */}
       {activeTab === "plugins" && attentionPlugins.length > 0 ? (
         <SettingsSection title={t("skills.groupAttention")}>
           <SettingsGroup>
             {attentionPlugins.map(({ record, attention }) => (
-              <PluginAttentionRow
+              <PluginRow
                 key={record.id}
                 record={record}
                 attention={attention}
@@ -482,11 +496,11 @@ export function SkillsCatalog({
         </SettingsSection>
       ) : null}
 
-      {activeTab === "plugins" ? cardGroups.map((group) => (
+      {activeTab === "plugins" ? pluginGroups.map((group) => (
         <SettingsSection key={group.key} title={group.title}>
-          <div className="plugin-card-grid" data-group={group.key}>
+          <SettingsGroup>
             {group.records.map((record) => (
-              <PluginCard
+              <PluginRow
                 key={record.id}
                 record={record}
                 toggleDisabled={Boolean(packageMutation)}
@@ -494,7 +508,7 @@ export function SkillsCatalog({
                 onToggle={onUpdateExtensionPackage ? () => togglePlugin(record) : undefined}
               />
             ))}
-          </div>
+          </SettingsGroup>
         </SettingsSection>
       )) : null}
 
@@ -523,14 +537,9 @@ export function SkillsCatalog({
       ) : null}
 
       {!state.loading && (activeTab === "plugins" ? visiblePlugins.length === 0 : visibleSkills.length === 0) ? (
-        filter.trim() ? (
-          <p className="settings-group-empty">{t("skills.noMatches")}</p>
-        ) : (
-          <div className="skills-empty">
-            <Wrench className="icon-xl" />
-            <strong>{activeTab === "plugins" ? t("skills.noPlugins") : t("skills.empty")}</strong>
-          </div>
-        )
+        <p className="settings-group-empty">
+          {filter.trim() ? t("skills.noMatches") : activeTab === "plugins" ? t("skills.noPlugins") : t("skills.empty")}
+        </p>
       ) : null}
 
       {packageActionMenu ? (
@@ -836,7 +845,7 @@ function PluginDetailPage({
       </nav>
 
       <header className="plugin-page-hero">
-        <PluginArtwork record={record} />
+        <PluginMark record={record} className="skill-artwork skill-artwork-plugin-brand" />
         <div className="plugin-page-hero-copy">
           <h1>{record.name}</h1>
           {record.description ? <p>{record.description}</p> : null}
@@ -940,57 +949,31 @@ function PluginDetailPage({
   );
 }
 
-function PluginArtwork({ record }: { record: ExtensionInventoryRecord }): JSX.Element {
+function PluginMark({ record, className = "catalog-row-mark" }: {
+  record: ExtensionInventoryRecord;
+  className?: string;
+}): JSX.Element {
   return (
-    <span className="skill-artwork skill-artwork-plugin-brand" aria-hidden="true">
+    <span className={className} aria-hidden="true">
       <PluginIcon icon={record.icon} pluginId={record.id} fingerprint={record.fingerprint ?? ""} />
     </span>
   );
 }
 
-// A row for a plugin that needs a decision: its name over the reason, and
-// the page where that decision is made.
-function PluginAttentionRow({
+// One plugin per row: its mark, the name over the tagline or the one reason
+// it needs a look, and a chevron to its page. The whole row opens the page;
+// a trusted plugin's switch sits over it in a column of its own and turns
+// the plugin on or off in place.
+function PluginRow({
   record,
   attention,
-  onOpen,
-}: {
-  record: ExtensionInventoryRecord;
-  attention: PluginAttention;
-  onOpen: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  return (
-    <button
-      className="catalog-row plugin-attention-row"
-      type="button"
-      data-plugin={record.provenance.plugin_id ?? record.id}
-      aria-label={t("skills.pluginDetailLabel", { name: record.name })}
-      onClick={onOpen}
-    >
-      <PluginArtwork record={record} />
-      <span className="catalog-row-copy">
-        <span className="catalog-row-title">{record.name}</span>
-        <span className="plugin-attention-reason" data-tone={attention.tone}>
-          {attention.tone === "danger" ? <AlertCircle className="icon-sm" aria-hidden="true" /> : <AlertTriangle className="icon-sm" aria-hidden="true" />}
-          {attention.label}
-        </span>
-      </span>
-      <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
-    </button>
-  );
-}
-
-// A plugin card opens its page from anywhere but the switch, which turns the
-// plugin on or off in place.
-function PluginCard({
-  record,
-  toggleDisabled,
+  toggleDisabled = false,
   onOpen,
   onToggle,
 }: {
   record: ExtensionInventoryRecord;
-  toggleDisabled: boolean;
+  attention?: PluginAttention;
+  toggleDisabled?: boolean;
   onOpen: () => void;
   /** Omitted when the catalog cannot change packages. */
   onToggle?: () => void;
@@ -999,21 +982,35 @@ function PluginCard({
   const toggle = pluginToggle(record);
   // A grant or change needs the fingerprint it approves.
   const toggleUnavailable = toggle.action === "grant" && !toggle.review && !record.fingerprint;
+  const showSwitch = !attention && Boolean(onToggle);
   return (
-    <div className="plugin-card" data-plugin={record.provenance.plugin_id ?? record.id} data-on={toggle.on ? "" : undefined}>
+    <div
+      className="catalog-row plugin-row"
+      data-plugin={record.provenance.plugin_id ?? record.id}
+      data-on={toggle.on ? "" : undefined}
+      data-switch={showSwitch ? "" : undefined}
+    >
       <button
-        className="plugin-card-main"
+        className="catalog-row-open"
         type="button"
         aria-label={t("skills.pluginDetailLabel", { name: record.name })}
         onClick={onOpen}
       >
-        <PluginArtwork record={record} />
-        <span className="plugin-card-name">{record.name}</span>
-        {record.description ? <span className="plugin-card-description">{record.description}</span> : null}
+        <PluginMark record={record} />
+        <span className="catalog-row-title">{record.name}</span>
+        {attention ? (
+          <span className="catalog-row-description plugin-attention-reason" data-tone={attention.tone}>
+            {attention.tone === "danger" ? <AlertCircle className="icon-sm" aria-hidden="true" /> : <AlertTriangle className="icon-sm" aria-hidden="true" />}
+            {attention.label}
+          </span>
+        ) : record.description ? (
+          <span className="catalog-row-description" title={record.description}>{record.description}</span>
+        ) : null}
+        <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
       </button>
-      {onToggle ? (
+      {showSwitch ? (
         <button
-          className="settings-switch plugin-card-switch"
+          className="settings-switch catalog-row-switch"
           type="button"
           role="switch"
           aria-checked={toggle.on}
@@ -1028,8 +1025,8 @@ function PluginCard({
   );
 }
 
-// Skill rows: a mark, the name over a one-line description, the owning
-// plugin when there is one, and a chevron that opens the preview.
+// Skill rows: a mark, the name over its first sentence, the owning plugin
+// when there is one, and a chevron that opens the preview.
 function CatalogRow({
   label,
   artwork,
@@ -1048,10 +1045,8 @@ function CatalogRow({
   return (
     <button className="catalog-row" type="button" aria-label={label} onClick={onOpen}>
       {artwork}
-      <span className="catalog-row-copy">
-        <span className="catalog-row-title">{title}</span>
-        {description ? <span className="catalog-row-description">{description}</span> : null}
-      </span>
+      <span className="catalog-row-title">{title}</span>
+      {description ? <span className="catalog-row-description" title={description}>{description}</span> : null}
       {trailing}
       <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
     </button>
@@ -1078,7 +1073,7 @@ function SkillsList({
             key={`${skill.source}:${skill.name}`}
             label={t("skills.previewSkill", { name: skill.name })}
             artwork={
-              <span className="skill-artwork" aria-hidden="true">
+              <span className="catalog-row-mark" aria-hidden="true">
                 <CapabilityMark motif={skillCapability(skill.name)} />
               </span>
             }

@@ -60,7 +60,7 @@ describe("SkillsCatalog", () => {
 
     expect(onInstallPluginPackage).toHaveBeenCalledOnce();
     expect(container.querySelector(".skills-catalog-error")).toBeNull();
-    expect(container.textContent).toContain("暂无 Skills");
+    expect(container.querySelector(".settings-group-empty")).toBeTruthy();
   });
 
   it("shows install errors as a toast instead of inline catalog state", async () => {
@@ -325,7 +325,7 @@ describe("SkillsCatalog", () => {
     expect(container.textContent).toContain("Control macOS apps through Accessibility.");
     // A catalog without package actions lists plugins read-only.
     expect(container.querySelector('[role="switch"]')).toBeNull();
-    expect(container.querySelector(".skill-artwork-plugin-brand [data-icon=\"layout-grid\"]")).toBeTruthy();
+    expect(container.querySelector(".plugin-row .catalog-row-mark [data-icon=\"layout-grid\"]")).toBeTruthy();
     // A plugin's skill names its plugin the way the plugin card does.
     await selectTab("skills");
     expect(container.querySelector(".catalog-row-meta")?.textContent).toBe("Computer Use for Mac");
@@ -356,7 +356,7 @@ describe("SkillsCatalog", () => {
     expect(loadPluginIcon).toHaveBeenCalledWith({
       id: "plugin:user:brand-artwork", fingerprint: "brand-revision", path: "assets/brand.svg",
     });
-    const image = container.querySelector(".skill-artwork img");
+    const image = container.querySelector(".catalog-row-mark img");
     expect(image?.getAttribute("src")).toBe("data:image/svg+xml,%3Csvg/%3E");
     expect(image?.getAttribute("alt")).toBe("");
   });
@@ -704,6 +704,17 @@ describe("SkillsCatalog", () => {
     expect(pluginSwitch("dream")?.disabled).toBe(true);
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     await act(async () => finish());
+    // The switch changes the plugin, not the row's place under the pointer.
+    await act(async () => {
+      root!.render(
+        <SkillsCatalog
+          extensionInventory={[plugin("dream", false), plugin("todo", false)]}
+          onUpdateExtensionPackage={onUpdateExtensionPackage}
+        />,
+      );
+    });
+    expect(pluginSwitch("todo")?.getAttribute("aria-checked")).toBe("false");
+    expect(pluginGroup("todo")).toBe("已启用");
     await act(async () => {
       pluginSwitch("dream")!.click();
     });
@@ -712,6 +723,19 @@ describe("SkillsCatalog", () => {
       fingerprint: "sha256:dream",
       action: "enable",
     });
+    // Entering the catalog again groups plugins by their current state.
+    await act(async () => {
+      root!.unmount();
+      root = createRoot(container);
+      root.render(
+        <SkillsCatalog
+          extensionInventory={[plugin("dream", true), plugin("todo", false)]}
+          onUpdateExtensionPackage={onUpdateExtensionPackage}
+        />,
+      );
+    });
+    expect(pluginGroup("todo")).toBe("未启用");
+    expect(pluginGroup("dream")).toBe("已启用");
   });
 
   it("grants a pending plugin that asks for no permissions from its page", async () => {
@@ -871,13 +895,17 @@ function skillButton(name: string): HTMLButtonElement | undefined {
 }
 
 function pluginSwitch(name: string): HTMLButtonElement | undefined {
-  return Array.from(container.querySelectorAll<HTMLButtonElement>('.plugin-card [role="switch"]')).find(
-    (button) => button.closest(".plugin-card")?.querySelector(".plugin-card-name")?.textContent === name,
+  return Array.from(container.querySelectorAll<HTMLButtonElement>('.plugin-row [role="switch"]')).find(
+    (button) => button.closest(".plugin-row")?.querySelector(".catalog-row-title")?.textContent === name,
   );
 }
 
+function pluginGroup(name: string): string | undefined {
+  return pluginSwitch(name)?.closest("section")?.querySelector(".settings-section-title")?.textContent ?? undefined;
+}
+
 function attentionLabels(): string[] {
-  return Array.from(container.querySelectorAll(".plugin-attention-row .plugin-attention-reason")).map(
+  return Array.from(container.querySelectorAll(".plugin-row .plugin-attention-reason")).map(
     (reason) => reason.textContent ?? "",
   );
 }

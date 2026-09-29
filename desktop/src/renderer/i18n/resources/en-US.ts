@@ -1821,7 +1821,7 @@ export const enUS = {
   "skills.pluginRemoveTitle": "Remove plugin “{name}”?",
   "skills.pluginRemoveConfirm": "Its installed files will be deleted from Wuu.",
   "skills.pluginRemoveFailed": "Could not remove the plugin",
-  "skills.empty": "No Skills",
+  "skills.empty": "No skills yet",
   "skills.noMatches": "No matches",
   "skills.previewSkill": "Preview {name}",
   "skills.previewLabel": "{name} Skill preview",

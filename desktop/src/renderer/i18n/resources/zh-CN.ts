@@ -1818,7 +1818,7 @@ export const zhCN = {
   "skills.pluginRemoveTitle": "移除插件“{name}”？",
   "skills.pluginRemoveConfirm": "已安装的插件文件会从 Wuu 中删除。",
   "skills.pluginRemoveFailed": "无法移除插件",
-  "skills.empty": "暂无 Skills",
+  "skills.empty": "还没有技能",
   "skills.noMatches": "没有匹配项",
   "skills.previewSkill": "预览 {name}",
   "skills.previewLabel": "{name} 技能预览",

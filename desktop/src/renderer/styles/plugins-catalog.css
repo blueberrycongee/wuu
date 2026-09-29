@@ -1,6 +1,6 @@
 /* Plugins catalog. Plugins and skills are separate tabs; plugins group by
- * what they need from you (attention, on, off) as a grid of cards, and a
- * card opens the plugin's own page. */
+ * what they need from you (attention, on, off) into settings groups, and a
+ * row opens the plugin's own page. */
 
 .skills-scroll-region {
   background: var(--paper);
@@ -34,21 +34,31 @@
   padding: var(--compact-padding-block) var(--compact-padding-inline);
 }
 
-/* Skill rows match the settings service rows: mark, name over a one-line
- * description, the owning plugin, and a disclosure chevron. The chevron owns
- * the last column, so trailing labels end on one axis. */
-.catalog-row {
+/* Plugin and skill rows share the settings row grammar: the mark, the name
+ * over a tagline (or the reason a plugin needs a look), a trailing control,
+ * and a chevron. Columns: mark, copy, trailing control, chevron; the
+ * chevron column less its tip inset lets every row end on the padding edge.
+ * The mark sits on the name's line, so it stays put when a tagline wraps. */
+.catalog-row,
+.catalog-row-open {
   display: grid;
   width: 100%;
   min-width: 0;
-  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns:
+    var(--icon-size-lg) minmax(0, 1fr) var(--catalog-row-trailing, auto)
+    calc(var(--icon-size) * (1 - var(--chevron-tip-inset)));
   align-items: center;
-  gap: var(--space-3);
+  column-gap: var(--space-3);
+  color: var(--ink);
+}
+
+button.catalog-row,
+.catalog-row-open {
+  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  align-content: center;
   border: 0;
   padding: var(--space-3) 0;
   background: transparent;
-  color: var(--ink);
   cursor: pointer;
   font: inherit;
   text-align: left;
@@ -58,37 +68,66 @@
   border-top: 1px solid var(--hairline-soft);
 }
 
-.catalog-row > .settings-disclosure-chevron {
-  grid-column: 4;
-}
-
-.catalog-row:hover .settings-disclosure-chevron {
-  color: var(--ink);
-}
-
-.catalog-row-copy {
+.catalog-row-mark {
   display: grid;
-  min-width: 0;
-  gap: 2px;
+  width: var(--icon-size-lg);
+  height: var(--icon-size-lg);
+  grid-column: 1;
+  grid-row: 1;
+  place-items: center;
+  color: var(--ink-soft);
 }
 
-.catalog-row-title,
-.catalog-row-description {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.catalog-row-mark svg,
+.catalog-row-mark .plugin-icon-themed {
+  width: var(--icon-size-lg);
+  height: var(--icon-size-lg);
+}
+
+.catalog-row-mark .plugin-icon-asset {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .catalog-row-title {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
   color: var(--ink);
   font-size: var(--font-ui);
   line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
+/* Two lines still say what a plugin does at large text in a narrow window;
+ * the full text stays in the tooltip. */
 .catalog-row-description {
+  display: -webkit-box;
+  min-width: 0;
+  grid-column: 2;
+  grid-row: 2;
+  margin-top: 2px;
+  overflow: hidden;
   color: var(--ink-soft);
   font-size: var(--font-sm);
   line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.catalog-row > :is(.catalog-row-meta, .catalog-row-switch) {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+}
+
+:is(.catalog-row, .catalog-row-open) > .settings-disclosure-chevron {
+  grid-column: 4;
+  grid-row: 1 / span 2;
+}
+
+:is(button.catalog-row, .catalog-row-open):hover > .settings-disclosure-chevron {
+  color: var(--ink);
 }
 
 .catalog-row-meta {
@@ -101,47 +140,43 @@
   white-space: nowrap;
 }
 
-/* The mark tile takes the settings row mark footprint, so plugin glyphs,
- * skill marks, and package artwork sit in one column at any size. */
-.skill-artwork {
-  display: grid;
-  width: var(--settings-mark-size);
-  height: var(--settings-mark-size);
-  flex: 0 0 auto;
-  place-items: center;
-  overflow: hidden;
-  border-radius: var(--radius-xs);
-  background: var(--surface-2);
-  color: var(--ink);
+/* A plugin row is one open target across the row with the switch stacked
+ * above it in the trailing column. Both grids fix that column to the
+ * switch's footprint (its target less the overhang it gives back), so the
+ * copy ends before the switch instead of running under it. */
+.plugin-row {
+  align-items: stretch;
 }
 
-.skill-artwork svg {
-  width: var(--icon-size);
-  height: var(--icon-size);
+.plugin-row[data-switch] {
+  --catalog-row-trailing: calc((var(--switch-target-width) + var(--switch-track-width)) / 2);
 }
 
-.skill-artwork-plugin-brand .plugin-icon-asset {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
+.plugin-row > .catalog-row-open {
+  grid-column: 1 / -1;
+  grid-row: 1;
 }
 
-/* In a narrow column the trailing label moves under the description, so
- * the name keeps the width it needs. */
+.plugin-row > .catalog-row-switch {
+  position: relative;
+  z-index: 1;
+  grid-row: 1;
+  align-self: center;
+}
+
+/* Off plugins keep their place but step back. */
+.plugin-row:not([data-on]) .catalog-row-mark {
+  color: var(--ink-tertiary);
+}
+
+/* In a narrow column the owning plugin moves under the description, so the
+ * name keeps the width it needs. */
 @container settings-page (max-width: 32em) {
-  .catalog-row {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    row-gap: var(--space-1);
-  }
-
-  .catalog-row > :is(.settings-status, .catalog-row-meta) {
+  .catalog-row > .catalog-row-meta {
     grid-column: 2;
-    grid-row: 2;
+    grid-row: 3;
     justify-self: start;
-  }
-
-  .catalog-row > .settings-disclosure-chevron {
-    grid-column: 3;
+    margin-top: var(--space-1);
   }
 }
 
@@ -306,30 +341,6 @@
   }
 }
 
-.skills-empty {
-  display: grid;
-  min-height: 260px;
-  place-content: center;
-  justify-items: center;
-  gap: 9px;
-  color: var(--ink);
-  text-align: center;
-}
-
-.skills-empty svg {
-  color: var(--ink-tertiary);
-}
-
-.skills-empty strong {
-  font-size: var(--font-title);
-  font-weight: var(--weight-semibold);
-}
-
-.skills-empty span {
-  color: var(--ink-muted);
-  font-size: var(--font-body);
-}
-
 .environment-modal-backdrop:has(.skill-preview-dialog) {
   align-items: center;
   justify-items: center;
@@ -449,104 +460,22 @@
 
 /* --- Attention ------------------------------------------------------------ */
 
-.plugin-attention-reason {
+/* The reason takes the tagline's line, led by its symbol so the tone never
+ * rests on color alone. The symbol centers on the first line if it wraps. */
+.catalog-row-description.plugin-attention-reason {
   display: flex;
-  min-width: 0;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-1);
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  line-height: 1.5;
 }
 
 .plugin-attention-reason svg {
   flex: none;
+  margin-top: calc((var(--font-sm) * 1.5 - var(--icon-size-sm)) / 2);
   color: var(--warning);
 }
 
 .plugin-attention-reason[data-tone="danger"] svg {
   color: var(--danger);
-}
-
-/* --- Cards ----------------------------------------------------------------- */
-
-.plugin-card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 20em), 1fr));
-  gap: var(--space-3);
-}
-
-/* Mark on the left, name over a two-line tagline, the switch on the name's
- * line. The switch sits above the card's open target, so the copy reserves
- * its footprint instead of running under it. */
-.plugin-card {
-  position: relative;
-  display: grid;
-  min-width: 0;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
-}
-
-.plugin-card:hover {
-  border-color: var(--hairline-strong);
-  background: var(--surface-1);
-}
-
-.plugin-card-main {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-content: start;
-  column-gap: var(--space-3);
-  row-gap: 2px;
-  border-radius: inherit;
-  background: transparent;
-  color: var(--ink);
-  padding: var(--card-padding);
-  padding-inline-end: calc(var(--card-padding) + var(--switch-target-width) + var(--space-2));
-  text-align: left;
-}
-
-/* The page's row mark, so card copy starts on the same axis as the rows in
- * the attention group above. It centers on the name and the first tagline
- * line, which keeps marks level across cards with one- and two-line
- * taglines. */
-.plugin-card-main > .skill-artwork {
-  grid-row: 1 / 3;
-  margin-top: max(0px, calc((var(--font-ui) * 1.4 + 2px + var(--font-sm) * 1.5 - var(--settings-mark-size)) / 2));
-}
-
-.plugin-card-name {
-  overflow: hidden;
-  color: var(--ink-strong);
-  font-size: var(--font-ui);
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.plugin-card-description {
-  display: -webkit-box;
-  overflow: hidden;
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  line-height: 1.5;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-/* Centered on the name line. The switch's end margin puts its track's right
- * edge on the card padding, mirroring the mark on the left. */
-.plugin-card > .plugin-card-switch {
-  position: absolute;
-  top: calc(var(--card-padding) + (var(--font-ui) * 1.4 - var(--control-field-height)) / 2);
-  right: var(--card-padding);
-}
-
-/* Off plugins keep their place but step back. */
-.plugin-card:not([data-on]) .skill-artwork {
-  color: var(--ink-tertiary);
 }
 
 /* --- Plugin page ------------------------------------------------------------- */
