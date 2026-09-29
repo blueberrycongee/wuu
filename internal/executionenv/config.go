@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -19,10 +20,14 @@ type Config struct {
 // Profile describes the environment in which workspace tools execute. Shared
 // opts conversations into one filesystem; their tool state remains separate.
 type Profile struct {
+	Python          string   `json:"python,omitempty"`
+	HostWorkspace   string   `json:"host_workspace,omitempty"`
+	MountReadOnly   bool     `json:"mount_read_only,omitempty"`
 	Backend         string   `json:"backend"`
 	Image           string   `json:"image,omitempty"`
 	Host            string   `json:"host,omitempty"`
 	Port            int      `json:"port,omitempty"`
+	KnownHostsFile  string   `json:"known_hosts_file,omitempty"`
 	IdentityFile    string   `json:"identity_file,omitempty"`
 	Workspace       string   `json:"workspace,omitempty"`
 	Worker          string   `json:"worker,omitempty"`
@@ -58,6 +63,21 @@ func (c Config) Validate() error {
 }
 
 func (p Profile) Validate() error {
+	if p.HostWorkspace != "" {
+		if p.Backend != "docker" && p.Backend != "singularity" {
+			return fmt.Errorf("host workspace mounts require a local container backend")
+		}
+		if !filepath.IsAbs(p.HostWorkspace) || strings.ContainsAny(p.HostWorkspace, ",:\n\r\x00") {
+			return fmt.Errorf("host workspace must be an absolute path without mount separators")
+		}
+	}
+	if (p.Backend == "daytona" || p.Backend == "vercel_sandbox") && p.CPUs != float64(int(p.CPUs)) {
+		return fmt.Errorf("this backend requires a whole number of CPU cores")
+	}
+
+	if p.Backend == "ssh" && (p.CPUs > 0 || p.MemoryMB > 0) {
+		return fmt.Errorf("SSH resource limits must be configured on the remote server")
+	}
 	switch p.Backend {
 	case "docker", "singularity":
 		if strings.TrimSpace(p.Image) == "" || strings.HasPrefix(p.Image, "-") {
@@ -67,9 +87,16 @@ func (p Profile) Validate() error {
 		if p.Host == "" || strings.HasPrefix(p.Host, "-") || strings.ContainsAny(p.Host, " \t\r\n\x00") {
 			return fmt.Errorf("SSH requires a host or configured host alias")
 		}
-	case "modal", "daytona", "vercel_sandbox", "command":
+	case "modal", "daytona", "vercel_sandbox":
+		if len(p.Command) == 0 && strings.TrimSpace(p.Image) == "" {
+			return fmt.Errorf("%s requires an image containing the execution worker", p.Backend)
+		}
+		if p.Backend == "vercel_sandbox" && p.MemoryMB > 0 {
+			return fmt.Errorf("this backend derives memory from CPU allocation")
+		}
+	case "command":
 		if len(p.Command) == 0 || strings.TrimSpace(p.Command[0]) == "" {
-			return fmt.Errorf("%s requires an installed execution transport command", p.Backend)
+			return fmt.Errorf("command backend requires an execution transport command")
 		}
 	default:
 		return fmt.Errorf("unknown execution backend %q", p.Backend)

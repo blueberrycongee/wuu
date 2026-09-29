@@ -183,6 +183,7 @@ type OutputSnapshot struct {
 }
 
 type Manager struct {
+	remote  RemoteTransport
 	rootDir string
 	// hostGenerationID is shared by Managers belonging to one top-level
 	// app-server lifetime and stamped on every command they start. The handles
@@ -322,6 +323,9 @@ func (m *Manager) SetRootDir(rootDir string) {
 // bind a SessionID before using it; internal callers may use it for legitimate
 // non-thread work and provide RootThreadID when they own that association.
 func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error) {
+	if m.remote != nil {
+		return nil, errors.New("remote commands must start through the execution environment")
+	}
 	if strings.TrimSpace(opt.Command) == "" {
 		return nil, errors.New("command is required")
 	}
@@ -679,6 +683,11 @@ func (m *Manager) finishWait(id string, cmd *exec.Cmd, err error, discardedLogBy
 }
 
 func (m *Manager) List() ([]Process, error) {
+	if m.remote != nil {
+		var result []Process
+		err := m.remoteRequest("list", nil, &result)
+		return result, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	files, err := filepath.Glob(filepath.Join(m.registryDir, "*.json"))
@@ -706,6 +715,11 @@ func (m *Manager) List() ([]Process, error) {
 }
 
 func (m *Manager) Get(id string) (*Process, error) {
+	if m.remote != nil {
+		var result Process
+		err := m.remoteRequest("get", map[string]any{"id": id}, &result)
+		return &result, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.load(id)
@@ -720,6 +734,11 @@ func (m *Manager) ReadOutput(id string, maxBytes int) (string, bool, error) {
 }
 
 func (m *Manager) ReadOutputSnapshot(ctx context.Context, id string, opt OutputReadOptions) (OutputSnapshot, error) {
+	if m.remote != nil {
+		var result OutputSnapshot
+		err := m.remote.Request(ctx, "read", map[string]any{"id": id, "options": opt}, &result)
+		return result, err
+	}
 	started := time.Now()
 	if ctx == nil {
 		ctx = context.Background()
@@ -849,6 +868,11 @@ func isLiveStatus(status Status) bool {
 }
 
 func (m *Manager) WriteStdin(id string, input string) (*Process, error) {
+	if m.remote != nil {
+		var result Process
+		err := m.remoteRequest("write", map[string]any{"id": id, "input": input}, &result)
+		return &result, err
+	}
 	m.mu.Lock()
 	p, err := m.load(id)
 	if err != nil {
@@ -873,6 +897,11 @@ func (m *Manager) WriteStdin(id string, input string) (*Process, error) {
 }
 
 func (m *Manager) InputAvailable(id string) bool {
+	if m.remote != nil {
+		var result bool
+		_ = m.remoteRequest("input_available", map[string]any{"id": id}, &result)
+		return result
+	}
 	m.mu.Lock()
 	handle := m.handles[id]
 	m.mu.Unlock()
@@ -880,6 +909,11 @@ func (m *Manager) InputAvailable(id string) bool {
 }
 
 func (m *Manager) ResizeTTY(id string, cols, rows int) (*Process, error) {
+	if m.remote != nil {
+		var result Process
+		err := m.remoteRequest("resize", map[string]any{"id": id, "cols": cols, "rows": rows}, &result)
+		return &result, err
+	}
 	if cols < 1 || rows < 1 {
 		return nil, errors.New("terminal size must be positive")
 	}
@@ -911,6 +945,11 @@ func (m *Manager) ResizeTTY(id string, cols, rows int) (*Process, error) {
 }
 
 func (m *Manager) Stop(id string) (*Process, error) {
+	if m.remote != nil {
+		var result Process
+		err := m.remoteRequest("stop", map[string]any{"id": id}, &result)
+		return &result, err
+	}
 	m.mu.Lock()
 	p, err := m.load(id)
 	if err != nil {
@@ -1243,6 +1282,11 @@ func (m *Manager) PendingCompletions() ([]Process, error) {
 }
 
 func (m *Manager) CompletionPending(id string) (bool, error) {
+	if m.remote != nil {
+		var result bool
+		err := m.remoteRequest("completion_pending", map[string]any{"id": id}, &result)
+		return result, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p, err := m.load(id)
@@ -1253,6 +1297,11 @@ func (m *Manager) CompletionPending(id string) (bool, error) {
 }
 
 func (m *Manager) MarkCompletionDelivered(id, consumer string) (*Process, error) {
+	if m.remote != nil {
+		var result Process
+		err := m.remoteRequest("completion_delivered", map[string]any{"id": id, "consumer": consumer}, &result)
+		return &result, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p, err := m.load(id)
@@ -1395,6 +1444,11 @@ func (m *Manager) signalRecheckScheduler() {
 // SetRecheck updates a live process's recheck schedule. Zero minutes cancels
 // the schedule and drops any fired-but-undelivered recheck.
 func (m *Manager) SetRecheck(id string, minutes int) (*Process, error) {
+	if m.remote != nil {
+		var result Process
+		err := m.remoteRequest("recheck", map[string]any{"id": id, "minutes": minutes}, &result)
+		return &result, err
+	}
 	if minutes < 0 || minutes > MaxRecheckMinutes {
 		return nil, fmt.Errorf("recheck_minutes must be between 0 and %d", MaxRecheckMinutes)
 	}
@@ -1429,6 +1483,11 @@ func (m *Manager) SetRecheck(id string, minutes int) (*Process, error) {
 // conversation. A process started in resume mode keeps the owning turn (and
 // wuu exec) waiting; switching a long-lived service to detached releases it.
 func (m *Manager) SetCompletionMode(id string, mode CompletionMode) (*Process, error) {
+	if m.remote != nil {
+		var result Process
+		err := m.remoteRequest("completion_mode", map[string]any{"id": id, "mode": mode}, &result)
+		return &result, err
+	}
 	if mode != CompletionModeResume && mode != CompletionModeDetached {
 		return nil, fmt.Errorf("completion_mode must be %q or %q", CompletionModeResume, CompletionModeDetached)
 	}
@@ -1470,6 +1529,11 @@ func (m *Manager) PendingRechecks() ([]Process, error) {
 // been queued for the owning thread. Rechecks are periodic, so a delivery
 // lost after this point self-heals at the next interval.
 func (m *Manager) MarkRecheckDelivered(id string) (*Process, error) {
+	if m.remote != nil {
+		var result Process
+		err := m.remoteRequest("recheck_delivered", map[string]any{"id": id}, &result)
+		return &result, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p, err := m.load(id)
@@ -1522,6 +1586,9 @@ type AdoptOptions struct {
 // completion delivery, and Stop all go through the manager from here. On
 // error the caller retains the command and should stop it itself.
 func (m *Manager) Adopt(id string, cmd *exec.Cmd, handle *CommandHandle, logf *os.File, opt AdoptOptions) (*Process, error) {
+	if m.remote != nil {
+		return nil, errors.New("cannot adopt a host process into a remote environment")
+	}
 	if cmd == nil || cmd.Process == nil {
 		return nil, errors.New("running command is required")
 	}
@@ -1614,6 +1681,11 @@ func (m *Manager) CleanupSession() error {
 }
 
 func (m *Manager) CleanupSessionWithResult() (CleanupResult, error) {
+	if m.remote != nil {
+		var result CleanupResult
+		err := m.remoteRequest("cleanup", nil, &result)
+		return result, err
+	}
 	result := CleanupResult{}
 	list, err := m.List()
 	if err != nil {

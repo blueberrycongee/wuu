@@ -1075,6 +1075,11 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	// StreamRunner: the engine session drives the turn in the external
 	// process. Only the engine stamp is needed on the runtime handle.
 	if agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
+		if remote, err := s.rt.RemoteProcesses(th.ID); err != nil {
+			return nil, err
+		} else if remote != nil {
+			return nil, errors.New("selected execution environment requires the built-in engine")
+		}
 		th.mu.Lock()
 		if th.execRuntime != nil {
 			rt := th.execRuntime

@@ -239,6 +239,9 @@ func (s *Server) handleThreadStart(req Request) error {
 	} else {
 		id = "ephemeral-" + id
 	}
+	if err := s.rt.PinExecutionEnvironment(id, ""); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	history := make([]providers.ChatMessage, 0, 1)
 	if prompt := strings.TrimSpace(s.rt.StreamRunner.SystemPrompt); prompt != "" {
 		history = append(history, providers.ChatMessage{Role: "system", Content: prompt})
@@ -747,6 +750,11 @@ func (s *Server) handleThreadFork(req Request) error {
 		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, stateDirErr)
+	}
+	if err := s.rt.PinExecutionEnvironment(sess.ID, source.thread.ID); err != nil {
+		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
+		cleanupWorktree()
+		return s.writeResponse(req.ID, nil, err)
 	}
 	if err := preserveForkArtifacts(stateDir, source.thread.ID, sess.ID, history); err != nil {
 		_, _ = session.Delete(s.rt.SessionDir, sess.ID)

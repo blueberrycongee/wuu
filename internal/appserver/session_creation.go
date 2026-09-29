@@ -226,6 +226,9 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 			records = append(records, historyRecordFromPersistedMessage(persistedMessageFromChatMessage(handoffLaunchUserMessage(params.RequestID, launch.Input.Prompt))))
 		}
 	}
+	if err := s.rt.PinExecutionEnvironment(id, params.ParentSessionID); err != nil {
+		return nil, err
+	}
 	created, err := session.CreateInitializedWithLaunch(s.rt.SessionDir, initial, records, seed, launch)
 	if err != nil {
 		if artifactStateDir != "" {

@@ -274,7 +274,35 @@ export type PTCSettings = {
   families?: Record<string, boolean>;
 };
 
+export type ExecutionEnvironmentProfile = {
+ python?: string;
+ known_hosts_file?: string;
+ host_workspace?: string;
+ mount_read_only?: boolean;
+  backend: "docker" | "ssh" | "singularity" | "modal" | "daytona" | "vercel_sandbox" | "command";
+  image?: string;
+  host?: string;
+  port?: number;
+  identity_file?: string;
+  workspace?: string;
+  worker?: string;
+  shared?: boolean;
+  persistent?: boolean;
+  network?: "enabled" | "none";
+  cpus?: number;
+  memory_mb?: number;
+  lifetime_seconds?: number;
+  forward_env?: string[];
+  command?: string[];
+};
+
+export type ExecutionEnvironmentSettings = {
+  default?: string;
+  profiles?: Record<string, ExecutionEnvironmentProfile>;
+};
+
 export type GeneralSettingsSummary = {
+  execution_environments?: ExecutionEnvironmentSettings;
   ptc?: PTCSettings;
   git_attribution_enabled?: boolean;
   mcp_server_enabled: Record<string, boolean>;
@@ -1011,6 +1039,7 @@ export type ConfigAdvancedUpdateResult = {
 };
 
 export type RuntimeGeneralSettingsUpdate = {
+  execution_environments?: ExecutionEnvironmentSettings;
   ptc?: PTCSettings;
   git_attribution_enabled?: boolean;
   mcp_enabled_toggles?: Record<string, boolean>;

@@ -19,6 +19,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/capability"
 	"github.com/blueberrycongee/wuu/internal/codemode"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	proc "github.com/blueberrycongee/wuu/internal/process"
@@ -162,6 +163,12 @@ func (t *Toolkit) RefreshAuthorityFrom(parent *Toolkit) {
 	t.reviewer = parent.reviewer
 }
 
+func (t *Toolkit) ExecutionEnvironment() executionenv.Executor { return t.env.ExecutionEnvironment }
+
+func (t *Toolkit) SetExecutionEnvironment(executor executionenv.Executor) {
+	t.env.ExecutionEnvironment = executor
+}
+
 func (t *Toolkit) SetProcessSandboxProvider(provider processsandbox.Provider) {
 	t.env.ProcessSandboxProvider = provider
 }
@@ -257,6 +264,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 	// webState, toolTelemetry, gitAttributionShell) stay zero so each cloned session
 	// owns independent mutable state, matching the original intent.
 	env := Env{
+		ExecutionEnvironment:        t.env.ExecutionEnvironment,
 		RootDir:                     abs,
 		WorkspaceID:                 t.env.WorkspaceID,
 		StateDir:                    t.env.StateDir,
@@ -1734,4 +1742,44 @@ func buildRGGrepCommand(ctx context.Context, pattern, searchRoot, include string
 		args = append(args, ".")
 	}
 	return rgCommand(ctx, name, args...)
+}
+
+// ExecuteEnvironmentResult checks worker authority and preserves the raw result.
+// The host owns the durable ledger, output budget and model-facing projection.
+func (t *Toolkit) ExecuteEnvironmentResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+	if !executionenv.WorkspaceTool(call.Name) {
+		return toolresult.Result{}, fmt.Errorf("tool %q is not an environment tool", call.Name)
+	}
+	tool := t.registry.Lookup(call.Name)
+	if tool == nil {
+		return toolresult.Result{}, fmt.Errorf("unknown environment tool %q", call.Name)
+	}
+	if err := validateToolArgumentsJSON(call.Arguments); err != nil {
+		return toolresult.Result{}, err
+	}
+	if err := t.checkPermission(ctx, buildToolInfoForArgs(tool, t.toolExposure(call.Name), call.Arguments), call); err != nil {
+		return toolresult.Result{}, err
+	}
+	return executeToolResult(ctx, tool, call)
+}
+
+func executeToolResult(ctx context.Context, tool Tool, call providers.ToolCall) (toolresult.Result, error) {
+	if aware, ok := tool.(CallAwareRichTool); ok {
+		return aware.ExecuteResultCall(ctx, call)
+	}
+	if rich, ok := tool.(RichTool); ok {
+		return rich.ExecuteResult(ctx, call.Arguments)
+	}
+	text, err := tool.Execute(ctx, call.Arguments)
+	return toolresult.FromText(text), err
+}
+
+// RunEnvironmentCode keeps native program effects in the selected filesystem;
+// nested tools go back through the host's execution scope and permission checks.
+func (t *Toolkit) RunEnvironmentCode(ctx context.Context, service *codemode.Service, request codemode.RunRequest, executor toolctx.NestedExecutor) (codemode.RunResult, error) {
+	policy, _, err := t.env.processSandboxPolicy(ctx)
+	if err != nil {
+		return codemode.RunResult{}, err
+	}
+	return service.Run(ctx, request, codemode.RunOptions{CWD: t.env.RootDir, Executor: executor, Sandbox: policy})
 }

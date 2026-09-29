@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"io"
 	"os"
 	"os/exec"
@@ -117,7 +118,11 @@ func (t *Toolkit) executeKnownToolResultAllowRepeated(ctx context.Context, call 
 func (t *Toolkit) executeKnownToolResultWithRepeatPolicy(ctx context.Context, call providers.ToolCall, tool Tool, allowRepeated bool) (toolresult.Result, error) {
 	info := buildToolInfoForArgs(tool, t.toolExposure(call.Name), call.Arguments)
 	startedAt := time.Now()
-	revisionBefore := workspaceRevision(ctx, t.env.RootDir)
+	remoteWorkspace := t.env.ExecutionEnvironment != nil && (executionenv.WorkspaceTool(call.Name) || call.Name == codeModeExecToolName)
+	revisionBefore := ""
+	if !remoteWorkspace {
+		revisionBefore = workspaceRevision(ctx, t.env.RootDir)
+	}
 	// Hand the freshly computed revision to the tool so read-only tools can
 	// reuse it instead of re-running git for the same root.
 	ctx = toolctx.WithWorkspaceRevision(ctx, t.env.RootDir, revisionBefore)
@@ -141,7 +146,7 @@ func (t *Toolkit) executeKnownToolResultWithRepeatPolicy(ctx context.Context, ca
 		return toolresult.Result{}, err
 	}
 
-	if priorRepeats := t.repeatedToolInputCount(call, revisionBefore); !allowRepeated && priorRepeats >= repeatedToolInputPriorLimit {
+	if priorRepeats := t.repeatedToolInputCount(call, revisionBefore); !remoteWorkspace && !allowRepeated && priorRepeats >= repeatedToolInputPriorLimit {
 		err := repeatedToolInputError{
 			ToolName:        call.Name,
 			ArgumentsSHA256: toolArgumentsSHA256(call.Arguments),
@@ -155,15 +160,12 @@ func (t *Toolkit) executeKnownToolResultWithRepeatPolicy(ctx context.Context, ca
 
 	var result toolresult.Result
 	var err error
-	if callAware, ok := tool.(CallAwareRichTool); ok {
-		result, err = callAware.ExecuteResultCall(ctx, call)
-	} else if richTool, ok := tool.(RichTool); ok {
-		result, err = richTool.ExecuteResult(ctx, call.Arguments)
+	if t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(call.Name) {
+		result, err = t.env.ExecutionEnvironment.Execute(ctx, executionenv.ToolRequest{GitAttributionEnabled: !t.env.GitAttributionDisabled, Call: call, PermissionMode: t.env.PermissionMode, Actor: t.env.AgentID})
 	} else {
-		var text string
-		text, err = tool.Execute(ctx, call.Arguments)
-		result = toolresult.FromText(text)
+		result, err = executeToolResult(ctx, tool, call)
 	}
+
 	if err != nil {
 		result.IsError = true
 	}
@@ -190,7 +192,7 @@ func (t *Toolkit) executeKnownToolResultWithRepeatPolicy(ctx context.Context, ca
 	}
 
 	revisionAfter := revisionBefore
-	if !info.ReadOnly {
+	if !info.ReadOnly && !remoteWorkspace {
 		// A mutating tool may have changed the workspace; recompute so the
 		// telemetry record shows the post-execution state. Read-only tools
 		// cannot mutate, so their before/after revisions are identical and

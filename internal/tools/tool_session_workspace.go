@@ -45,6 +45,9 @@ func (t *SetSessionWorkspaceTool) Definition() providers.ToolDefinition {
 }
 
 func (t *SetSessionWorkspaceTool) Execute(_ context.Context, argsJSON string) (string, error) {
+	if t != nil && t.env != nil && t.env.ExecutionEnvironment != nil {
+		return "", errors.New("execution environment workspaces are pinned; use paths inside the selected environment")
+	}
 	if t == nil || t.env == nil || t.env.OnSessionWorkspaceChanged == nil {
 		return "", errors.New("session workspace rebinding is unavailable")
 	}

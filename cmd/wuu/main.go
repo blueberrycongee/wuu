@@ -18,6 +18,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	wuuexec "github.com/blueberrycongee/wuu/internal/exec"
 	"github.com/blueberrycongee/wuu/internal/execution"
+	"github.com/blueberrycongee/wuu/internal/executionworker"
 	"github.com/blueberrycongee/wuu/internal/gitattribution"
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -46,6 +47,22 @@ func run(args []string) error {
 	if len(args) == 0 {
 		printUsage()
 		return nil
+	}
+
+	if args[0] == "execution-worker" || args[0] == "execution-connect" {
+		fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
+		socket := fs.String("socket", "", "session worker socket")
+		idle := fs.Int("idle-seconds", 600, "idle worker lifetime")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if args[0] == "execution-connect" {
+			return executionworker.Connect(context.Background(), *socket, *idle, os.Stdin, os.Stdout)
+		}
+		if *socket != "" {
+			return executionworker.ServeSocket(context.Background(), *socket, *idle)
+		}
+		return executionworker.Serve(context.Background(), os.Stdin, os.Stdout)
 	}
 
 	// Pre-launch installs left credential-bearing files at 0o644 / 0o755.

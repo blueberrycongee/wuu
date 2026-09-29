@@ -11,6 +11,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/capability"
 	"github.com/blueberrycongee/wuu/internal/codemode"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
@@ -66,6 +67,15 @@ func (e *CodeModeExecTool) ExecuteResultCall(ctx context.Context, call providers
 	definitions, err := e.toolkit.CodeModeNestedSurface()
 	if err != nil {
 		return toolresult.Result{}, err
+	}
+	if remote, ok := e.toolkit.env.ExecutionEnvironment.(interface {
+		RunCode(context.Context, executionenv.CodeRequest, toolctx.NestedExecutor) (codemode.RunResult, error)
+	}); ok {
+		result, err := remote.RunCode(ctx, executionenv.CodeRequest{GitAttributionEnabled: !e.toolkit.env.GitAttributionDisabled, Program: codemode.RunRequest{Code: args.Code, Tools: definitions}, TimeoutMS: args.TimeoutMS, Actor: e.toolkit.env.AgentID, PermissionMode: e.toolkit.env.PermissionMode}, executor)
+		if err != nil {
+			return toolresult.Result{}, err
+		}
+		return codeModeResponseResult(result), nil
 	}
 	policy, _, err := e.toolkit.env.processSandboxPolicy(ctx)
 	if err != nil {

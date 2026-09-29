@@ -9,6 +9,7 @@ import (
 	"io"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -17,34 +18,42 @@ const ProtocolVersion = 1
 const MaxFrameBytes = 16 * 1024 * 1024
 
 type Request struct {
+	Token  string          `json:"token,omitempty"`
 	ID     string          `json:"id"`
 	Method string          `json:"method"`
 	Data   json.RawMessage `json:"data,omitempty"`
 }
 
 type Response struct {
-	ID    string          `json:"id"`
-	Data  json.RawMessage `json:"data,omitempty"`
-	Error string          `json:"error,omitempty"`
+	Method   string          `json:"method,omitempty"`
+	ParentID string          `json:"parent_id,omitempty"`
+	ID       string          `json:"id"`
+	Data     json.RawMessage `json:"data,omitempty"`
+	Error    string          `json:"error,omitempty"`
 }
 
 // Client multiplexes a private stdio connection. A transport failure is terminal:
 // tools with unknown outcomes must never be replayed automatically.
 type Client struct {
-	argv     []string
-	env      []string
-	mu       sync.Mutex
-	writeMu  sync.Mutex
-	cmd      *exec.Cmd
-	stdin    io.WriteCloser
-	pending  map[string]chan Response
-	sequence uint64
-	failed   error
-	done     chan struct{}
+	closeGrace time.Duration
+	event      func(json.RawMessage)
+	handlers   map[string]func(context.Context, json.RawMessage) (json.RawMessage, error)
+	contexts   map[string]context.Context
+	token      string
+	argv       []string
+	env        []string
+	mu         sync.Mutex
+	writeMu    sync.Mutex
+	cmd        *exec.Cmd
+	stdin      io.WriteCloser
+	pending    map[string]chan Response
+	sequence   uint64
+	failed     error
+	done       chan struct{}
 }
 
 func NewClient(argv, env []string) *Client {
-	return &Client{argv: append([]string(nil), argv...), env: append([]string(nil), env...), pending: make(map[string]chan Response)}
+	return &Client{argv: append([]string(nil), argv...), env: append([]string(nil), env...), pending: make(map[string]chan Response), handlers: make(map[string]func(context.Context, json.RawMessage) (json.RawMessage, error)), contexts: make(map[string]context.Context)}
 }
 
 func (c *Client) startLocked() error {
@@ -60,6 +69,8 @@ func (c *Client) startLocked() error {
 	cmd := exec.Command(c.argv[0], c.argv[1:]...)
 	cmd.Env = c.env
 	cmd.WaitDelay = 2 * time.Second
+	diagnostic := &transportDiagnostic{}
+	cmd.Stderr = diagnostic
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -84,6 +95,35 @@ func (c *Client) startLocked() error {
 				c.fail(fmt.Errorf("invalid execution response: %w", err))
 				break
 			}
+			if response.Method == "process" {
+				if c.event != nil {
+					c.event(response.Data)
+				}
+				continue
+			}
+			if response.Method == "tool" {
+				c.mu.Lock()
+				handler := c.handlers[response.ParentID]
+				callCtx := c.contexts[response.ParentID]
+				c.mu.Unlock()
+				go func(callback Response) {
+					reply := Response{ID: callback.ID}
+					if handler == nil {
+						reply.Error = "parent execution scope is closed"
+					} else {
+						var err error
+						reply.Data, err = handler(callCtx, callback.Data)
+						if err != nil {
+							reply.Error = err.Error()
+						}
+					}
+					data, _ := json.Marshal(reply)
+					if err := c.write(Request{ID: callback.ID, Method: "callback", Data: data}); err != nil {
+						c.fail(err)
+					}
+				}(response)
+				continue
+			}
 			c.mu.Lock()
 			ch := c.pending[response.ID]
 			delete(c.pending, response.ID)
@@ -92,14 +132,25 @@ func (c *Client) startLocked() error {
 				ch <- response
 			}
 		}
-		err := scan.Err()
-		if err == nil {
-			err = io.ErrUnexpectedEOF
-		}
-		c.fail(fmt.Errorf("execution transport disconnected; the last operation may have completed: %w", err))
+		scanErr := scan.Err()
 		_ = in.Close()
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		if scanErr != nil {
+			_ = cmd.Process.Kill()
+		}
+		exited := make(chan error, 1)
+		go func() { exited <- cmd.Wait() }()
+		var waitErr error
+		select {
+		case waitErr = <-exited:
+		case <-time.After(c.closeTimeout()):
+			_ = cmd.Process.Kill()
+			waitErr = <-exited
+		}
+		if waitErr == nil {
+			waitErr = io.ErrUnexpectedEOF
+		}
+		c.fail(fmt.Errorf("execution transport disconnected; the last operation may have completed: %w: %s", waitErr, diagnostic.String()))
+
 		close(c.done)
 	}()
 	return nil
@@ -118,6 +169,7 @@ func (c *Client) fail(err error) {
 }
 
 func (c *Client) write(request Request) error {
+	request.Token = c.token
 	data, err := json.Marshal(request)
 	if err != nil {
 		return err
@@ -132,9 +184,15 @@ func (c *Client) write(request Request) error {
 }
 
 func (c *Client) Call(ctx context.Context, method string, data any) (json.RawMessage, error) {
+	return c.CallWithHandler(ctx, method, data, nil)
+}
+
+func (c *Client) CallWithHandler(ctx context.Context, method string, data any, handler func(context.Context, json.RawMessage) (json.RawMessage, error)) (json.RawMessage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	ctx, cancelScope := context.WithCancel(ctx)
+	defer cancelScope()
 	payload, err := json.Marshal(data)
 	if err != nil {
 		return nil, err
@@ -148,8 +206,19 @@ func (c *Client) Call(ctx context.Context, method string, data any) (json.RawMes
 	id := strconv.FormatUint(c.sequence, 10)
 	ch := make(chan Response, 1)
 	c.pending[id] = ch
+	c.handlers[id] = handler
+	c.contexts[id] = ctx
 	c.mu.Unlock()
-	if err = c.write(Request{ID: id, Method: method, Data: payload}); err != nil {
+	defer func() { c.mu.Lock(); delete(c.handlers, id); delete(c.contexts, id); c.mu.Unlock() }()
+	written := make(chan error, 1)
+	go func() { written <- c.write(Request{ID: id, Method: method, Data: payload}) }()
+	select {
+	case err = <-written:
+	case <-ctx.Done():
+		_ = c.stdin.Close()
+		err = ctx.Err()
+	}
+	if err != nil {
 		c.fail(err)
 		return nil, err
 	}
@@ -186,9 +255,43 @@ func (c *Client) Close() error {
 	_ = in.Close()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(c.closeTimeout()):
 		_ = cmd.Process.Kill()
 		<-done
 	}
 	return nil
+}
+
+func (c *Client) closeTimeout() time.Duration {
+	if c.closeGrace > 0 {
+		return c.closeGrace
+	}
+	return 3 * time.Second
+}
+
+func (c *Client) Failed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.failed != nil
+}
+
+// Keep startup diagnostics bounded even when a backend continuously logs.
+type transportDiagnostic struct {
+	mu   sync.Mutex
+	tail string
+}
+
+func (d *transportDiagnostic) Write(p []byte) (int, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.tail += string(p)
+	if len(d.tail) > 8192 {
+		d.tail = d.tail[len(d.tail)-8192:]
+	}
+	return len(p), nil
+}
+func (d *transportDiagnostic) String() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return strings.TrimSpace(d.tail)
 }

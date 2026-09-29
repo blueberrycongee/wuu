@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/capability"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/grokbuildspec"
 	"github.com/blueberrycongee/wuu/internal/securefs"
@@ -91,11 +92,12 @@ type MCPToolOverride struct {
 
 // Config holds CLI runtime settings.
 type Config struct {
-	DefaultProvider string                    `json:"default_provider"`
-	Providers       map[string]ProviderConfig `json:"providers"`
-	Agent           AgentConfig               `json:"agent"`
-	Hooks           map[string][]HookEntry    `json:"hooks,omitempty"`
-	Instructions    InstructionFilesConfig    `json:"instructions,omitempty"`
+	ExecutionEnvironments executionenv.Config       `json:"execution_environments,omitempty"`
+	DefaultProvider       string                    `json:"default_provider"`
+	Providers             map[string]ProviderConfig `json:"providers"`
+	Agent                 AgentConfig               `json:"agent"`
+	Hooks                 map[string][]HookEntry    `json:"hooks,omitempty"`
+	Instructions          InstructionFilesConfig    `json:"instructions,omitempty"`
 	// MCPServers maps server name to connection config. When present, wuu
 	// connects to each server at startup (in the background) and exposes
 	// its tools to the agent.
@@ -403,6 +405,7 @@ type AdvancedRuntimeUpdate struct {
 }
 
 type GeneralSettingsUpdate struct {
+	ExecutionEnvironments *executionenv.Config `json:"execution_environments,omitempty"`
 	PTC                   *PTCConfig
 	GitAttributionEnabled *bool
 	MCPEnabledToggles     map[string]*bool // server name → enabled; nil = skip
@@ -681,6 +684,9 @@ func (c Config) ResolveProvider(name string) (ProviderConfig, string, error) {
 
 // Validate performs semantic checks.
 func (c Config) Validate() error {
+	if err := c.ExecutionEnvironments.Validate(); err != nil {
+		return err
+	}
 	if len(c.Providers) == 0 {
 		return errors.New("providers is required")
 	}
@@ -1545,6 +1551,11 @@ func UpdateAdvancedRuntime(configPath, providerName string, update AdvancedRunti
 }
 
 func UpdateGeneralSettings(configPath string, update GeneralSettingsUpdate) error {
+	if update.ExecutionEnvironments != nil {
+		if err := update.ExecutionEnvironments.Validate(); err != nil {
+			return err
+		}
+	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return err
@@ -1554,6 +1565,9 @@ func UpdateGeneralSettings(configPath string, update GeneralSettingsUpdate) erro
 		return err
 	}
 
+	if update.ExecutionEnvironments != nil {
+		raw["execution_environments"] = update.ExecutionEnvironments
+	}
 	if update.PTC != nil {
 		delete(raw, "code_mode")
 		ptc, _ := raw["ptc"].(map[string]any)

@@ -452,7 +452,7 @@ func (s *Server) sendSideThreadMessageWhenReady(mainID, prompt string, start <-c
 			return nil, err
 		}
 	}
-	runner, err := s.rt.NewSideThreadRunner(sideThreadID, s.mainThreadRoot(mainID), s.mainThreadModelSelection(mainID))
+	runner, err := s.rt.NewSideThreadRunner(sideThreadID, s.mainThreadRoot(mainID), s.mainThreadModelSelection(mainID), mainID)
 	if err != nil {
 		return nil, err
 	}

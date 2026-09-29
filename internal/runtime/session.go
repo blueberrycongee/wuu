@@ -26,6 +26,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/codexengine"
 	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/instructions"
@@ -182,12 +183,14 @@ type Session struct {
 	codexHost *codexengine.Host
 	// DefaultEngine is the engine id used for new threads when the caller
 	// does not request one explicitly (settings default; empty = wuu).
-	DefaultEngine      agentengine.EngineID
-	pluginGenerationMu sync.Mutex
-	pluginGeneration   *PluginGeneration
-	workerOrientation  string
-	threadProcessMu    sync.Mutex
-	threadProcesses    *threadProcessManagers
+	DefaultEngine              agentengine.EngineID
+	pluginGenerationMu         sync.Mutex
+	pluginGeneration           *PluginGeneration
+	workerOrientation          string
+	threadProcessMu            sync.Mutex
+	threadProcesses            *threadProcessManagers
+	executionEnvironments      *executionenv.Manager
+	executionEnvironmentConfig executionenv.Config
 }
 
 // MaxParallel returns the worker concurrency configured for this session.
@@ -237,6 +240,8 @@ func (s *Session) cloneForThreadModel() *Session {
 		AgentControl:                s.AgentControl,
 		ProcessManager:              s.ProcessManager,
 		threadProcesses:             s.threadProcessManagerPool(),
+		executionEnvironments:       s.executionEnvironmentManager(),
+		executionEnvironmentConfig:  s.executionEnvironmentConfig,
 		Toolkit:                     s.Toolkit,
 		CodeMode:                    s.CodeMode,
 		ActivityRegistry:            s.ActivityRegistry,
@@ -705,6 +710,8 @@ func NewSession(opts Options) (*Session, error) {
 		WorkspaceID:                 workspaceID,
 		StateDir:                    workspaceStateDir,
 		ConfigPath:                  opts.ConfigPath,
+		executionEnvironments:       executionenv.NewManager(),
+		executionEnvironmentConfig:  opts.Config.ExecutionEnvironments,
 		HomeDir:                     opts.HomeDir,
 		ConfigLoadMode:              configLoadMode,
 		SessionDir:                  sessionDir,
@@ -1260,6 +1267,13 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		// inherited the parent session's roots): thread root + registered
 		// workspaces + temp + artifact extras.
 		kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), wuuHome, fileScopeExtras...))
+		if err := s.configureExecutionEnvironment(kit, id, artifactDir); err != nil {
+			return nil, err
+		}
+		if remote, ok := kit.ExecutionEnvironment().(*environmentToolExecutor); ok {
+			threadProcessManager = remote.ProcessManager()
+			kit.SetProcessManager(threadProcessManager)
+		}
 	}
 
 	toolLedger, err := toolledger.New(s.SessionDir, id)
@@ -1325,6 +1339,12 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				HarnessDir:                     filepath.Join(artifactDir, "harness"),
 				WorkerSysPrompt:                workerBaseSystemPrompt,
 				WorkerPrompt: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata, isolation agentcontrol.IsolationMode) (string, error) {
+					if environment, ok := kit.ExecutionEnvironment().(*environmentToolExecutor); ok {
+						if isolation == agentcontrol.IsolationWorktree {
+							return "", errors.New("execution environments require inplace subagents; create Git worktrees inside the environment explicitly")
+						}
+						workerRoot = environment.Root()
+					}
 					skills := s.Skills
 					if generation != nil {
 						skills = generation.skills
@@ -1406,6 +1426,15 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	runner := cloneStreamRunnerForThread(s.StreamRunner, toolExecutor)
 	runner.ToolLedger = toolLedger
 	runner.SystemPrompt, runner.SystemPromptSections = systemPromptForThreadRoot(runner.SystemPrompt, runner.SystemPromptSections, threadRoot, s.SessionDate)
+	if kit != nil {
+		if environment, ok := kit.ExecutionEnvironment().(interface {
+			Root() string
+			Backend() string
+		}); ok {
+			runner.SystemPrompt, runner.SystemPromptSections = systemPromptForThreadRoot(runner.SystemPrompt, runner.SystemPromptSections, environment.Root(), s.SessionDate)
+			runner.SystemPrompt += "\n\nWorkspace tools execute in the selected " + environment.Backend() + " environment. Paths refer to that environment. Read its AGENTS.md before editing. Host integration tools retain their own scope."
+		}
+	}
 	runner.PromptCacheKey = strings.TrimSpace(id)
 	runner.InferenceJournal = s.InferenceJournalForOwner(id)
 	runner.DriverCheckpointStore = sessionDriverCheckpointStore{sessDir: s.SessionDir, sessionID: id}
@@ -1827,6 +1856,15 @@ func (s *Session) SetSessionID(id string) error {
 		s.Toolkit.SetSessionID(id)
 		s.Toolkit.SetAgentIdentity(id, agentthread.RootPath)
 		s.Toolkit.SetSessionDir(artifactDir)
+		if err := s.configureExecutionEnvironment(s.Toolkit, id, artifactDir); err != nil {
+			return err
+		}
+		if environment, ok := s.Toolkit.ExecutionEnvironment().(*environmentToolExecutor); ok {
+			s.Toolkit.SetProcessManager(environment.ProcessManager())
+			if s.StreamRunner != nil {
+				s.StreamRunner.SystemPrompt, s.StreamRunner.SystemPromptSections = systemPromptForThreadRoot(s.StreamRunner.SystemPrompt, s.StreamRunner.SystemPromptSections, environment.Root(), s.SessionDate)
+			}
+		}
 	}
 	if s.AgentControl != nil {
 		if err := s.AgentControl.SetSessionInfo(
@@ -1943,6 +1981,9 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 		cleaned, err := manager.CleanupSessionWithResult()
 		result.Cleaned = append(result.Cleaned, cleaned.Cleaned...)
 		cleanupErr = errors.Join(cleanupErr, err)
+	}
+	if s.executionEnvironments != nil {
+		cleanupErr = errors.Join(cleanupErr, s.executionEnvironments.Close())
 	}
 	return result, cleanupErr
 }
@@ -2605,6 +2646,7 @@ func (s *Session) ApplyGeneralConfig(cfg config.Config, homeDir string) string {
 	if strings.TrimSpace(homeDir) == "" {
 		homeDir = os.Getenv("HOME")
 	}
+	s.executionEnvironmentConfig = cfg.ExecutionEnvironments
 	s.InstructionFiles = discoverInstructions(s.RootDir, homeDir, cfg.Instructions)
 	if s.Toolkit != nil {
 		s.Toolkit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())

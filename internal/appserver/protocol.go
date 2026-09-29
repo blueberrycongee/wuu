@@ -9,6 +9,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/capability"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/execution"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/insight"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
@@ -1091,9 +1092,10 @@ type ConfigAdvancedUpdateResult struct {
 }
 
 type ConfigGeneralUpdateParams struct {
-	PTC                   *config.PTCConfig `json:"ptc,omitempty"`
-	GitAttributionEnabled *bool             `json:"git_attribution_enabled,omitempty"`
-	MCPEnabledToggles     map[string]*bool  `json:"mcp_enabled_toggles,omitempty"`
+	ExecutionEnvironments *executionenv.Config `json:"execution_environments,omitempty"`
+	PTC                   *config.PTCConfig    `json:"ptc,omitempty"`
+	GitAttributionEnabled *bool                `json:"git_attribution_enabled,omitempty"`
+	MCPEnabledToggles     map[string]*bool     `json:"mcp_enabled_toggles,omitempty"`
 }
 
 type ConfigGeneralUpdateResult struct {
@@ -1101,9 +1103,10 @@ type ConfigGeneralUpdateResult struct {
 }
 
 type GeneralSettingsSummary struct {
-	PTC                   config.PTCConfig `json:"ptc"`
-	GitAttributionEnabled bool             `json:"git_attribution_enabled"`
-	MCPServerEnabled      map[string]bool  `json:"mcp_server_enabled"`
+	ExecutionEnvironments executionenv.Config `json:"execution_environments"`
+	PTC                   config.PTCConfig    `json:"ptc"`
+	GitAttributionEnabled bool                `json:"git_attribution_enabled"`
+	MCPServerEnabled      map[string]bool     `json:"mcp_server_enabled"`
 }
 
 type AdvancedSettingsSummary struct {
