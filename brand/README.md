@@ -11,10 +11,10 @@ website or the documentation site is separate work that needs its own review.
 
 | Path | Contents |
 | --- | --- |
-| `tokens/tokens.json` | Source of truth: colours, type, motion, ball, wordmark, lockup and app icon geometry |
+| `tokens/tokens.json` | Source of truth: colours, type, motion, ball, wordmark and lockup geometry |
 | `tokens/wuu-brand.css` | Generated CSS custom properties (`--wuu-brand-*`) |
-| `src/geometry.mjs` | Construction of the ball, wordmark, lockups and app icon (SVG and PNG) |
-| `src/build-assets.mjs` | Writes `assets/logo`, `assets/app-icon`, `assets/favicon` and the CSS |
+| `src/geometry.mjs` | Construction of the ball, wordmark and lockups (SVG and PNG), plus the icon studies shown in the exploration pages |
+| `src/build-assets.mjs` | Writes `assets/logo`, `assets/favicon` and the CSS |
 | `src/templates.mjs` | Social image, README banner, release card and installer background templates |
 | `src/manual/` | Manual pages; `src/build-manual.mjs` writes `manual/index.html` |
 | `scripts/render.cjs` | Renders the PDF, page images, documentation previews and template PNGs |
@@ -28,7 +28,7 @@ Use the Node version in [`.node-version`](../.node-version).
 
 ```bash
 npm ci --prefix brand
-npm --prefix brand run build      # logo, app icon, favicon, CSS tokens, manual HTML
+npm --prefix brand run build      # logo, favicon, CSS tokens, manual HTML
 npm ci --prefix desktop           # provides Electron for rendering
 npm --prefix brand run render     # PDF and pages in artifacts/brand/, docs previews, template PNGs
 ```
@@ -46,6 +46,10 @@ The manual draws UI icons from `desktop/src/shared/iconArtwork.ts`, so it needs 
 `file://`; `src/geometry.mjs` refuses to build when that copy differs from `tokens.json`.
 
 ## Choosing an asset
+
+- App icon: keep the approved artwork in `assets/app-icon-source.*` at the repository root and
+  its generated files (`assets/app-icon.png`, `desktop/build/icon.*`). The brand does not redraw
+  it; the manual references those files directly.
 
 - Horizontal lockup: `wuu-lockup-horizontal-*.svg` above a 28 px x-height, `-small-` from 15 to
   28 px, `-micro-` at 14 px and below.
@@ -70,6 +74,6 @@ The manual draws UI icons from `desktop/src/shared/iconArtwork.ts`, so it needs 
 
 ## Not verified
 
-No trademark search, user research, on-device check of the app icon in the macOS Dock or macOS
-26 tinted appearances, print proofing or CMYK values, rendering on Windows or macOS (checked in
+No trademark search, user research, review of whether the kept app icon needs a variant below
+32 px (its motion marks get dense there), print proofing or CMYK values, rendering on Windows or macOS (checked in
 Chromium on Linux with Noto Sans CJK SC), or colour-vision simulation of the agent colours.

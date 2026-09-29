@@ -1,6 +1,6 @@
 // Writes the brand assets under brand/assets and tokens/wuu-brand.css from tokens.json.
 // Run: npm --prefix brand run build (templates such as social images are rendered by scripts/render.cjs).
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as G from "./geometry.mjs";
@@ -39,19 +39,8 @@ for (const [name, cw] of Object.entries(COLOURWAYS)) {
 }
 for (const px of [512, 256, 128, 64]) out(`assets/logo/png/wuu-symbol-ink-${px}.png`, G.ballPNG({ px }));
 
-// App icon: three appearances, a PNG ladder, and separate layers for icon tools.
-for (const variant of Object.keys(T.appIcon.variants)) out(`assets/app-icon/wuu-app-icon-${variant}.svg`, svgFile(G.appIconSVG({ variant })));
-for (const px of [1024, 512, 256, 128, 64, 32, 16]) out(`assets/app-icon/png/wuu-app-icon-light-${px}.png`, G.appIconPNG({ px }));
-for (const variant of ["dark", "mono"]) out(`assets/app-icon/png/wuu-app-icon-${variant}-1024.png`, G.appIconPNG({ variant, px: 1024 }));
-{
-  const I = T.appIcon, D = I.ballDiameter, bx = I.ballCenter[0] - D / 2, by = I.ballCenter[1] - D / 2, k = D / 100;
-  const body = G.squirclePath(I.inset, I.inset, I.body, I.radius);
-  const p = G.ballPaths("display", T.ball.brandPose);
-  const wrap = (inner) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><defs><clipPath id="body"><path d="${body}"/></clipPath></defs>${inner}</svg>`;
-  out("assets/app-icon/layers/1-ground.svg", wrap(`<path d="${body}" fill="${I.variants.light.ground}"/>`));
-  out("assets/app-icon/layers/2-ball.svg", wrap(`<g clip-path="url(#body)"><path transform="translate(${bx} ${by}) scale(${k})" d="${p.body}" fill="${I.variants.light.ball}"/></g>`));
-  out("assets/app-icon/layers/3-eyes.svg", wrap(`<path transform="translate(${bx} ${by}) scale(${k})" d="${p.eyes}" fill="${I.variants.light.eye}"/>`));
-}
+// The app icon itself is the approved artwork in assets/app-icon-source.* at the repository
+// root; the brand does not redraw it.
 
 // Favicon: micro optical size, no ground, follows the browser colour scheme.
 {
@@ -59,7 +48,8 @@ for (const variant of ["dark", "mono"]) out(`assets/app-icon/png/wuu-app-icon-${
   out("assets/favicon/favicon.svg", `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><style>.b{fill:${C.light.ball}}.e{fill:${C.light["ball-eye"]}}@media (prefers-color-scheme:dark){.b{fill:${C.dark.ball}}.e{fill:${C.dark["ball-eye"]}}}</style><path class="b" d="${p.body}"/><path class="e" d="${p.eyes}"/></svg>`);
   out("assets/favicon/favicon-16.png", G.ballPNG({ px: 16 }));
   out("assets/favicon/favicon-32.png", G.ballPNG({ px: 32 }));
-  out("assets/favicon/apple-touch-icon-180.png", G.appIconPNG({ px: 180 }));
+  // Apple touch icons are opaque squares; the platform applies its own mask.
+  out("assets/favicon/apple-touch-icon-180.png", G.scalePNG(readFileSync(path.join(root, "../assets/app-icon-source.png")), 180));
 }
 
 // CSS custom properties. Brand-scoped names so they never collide with product roles.

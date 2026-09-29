@@ -159,7 +159,8 @@ export function lockupSVG({ kind = "horizontal", xh = 40, ink = tokens.color.bra
 }
 
 // ---------------------------------------------------------------------------
-// App icon: Apple's 1024 grid, 824 body with continuous-corner radius.
+// Icon studies on Apple's 1024 grid (824 body, continuous corners). The shipped app icon
+// is the approved artwork in assets/app-icon-source.*; these functions only draw explorations.
 
 export function squirclePath(x, y, size, radius) {
   // Continuous corner approximated with the smoothing used by macOS icon templates.
@@ -171,8 +172,8 @@ export function squirclePath(x, y, size, radius) {
     `V${y + e}C${x} ${y + e - e * k} ${x + e - e * k} ${y} ${x + e} ${y}Z`;
 }
 
-export function appIconSVG({ variant = "light", px = 1024, grid = false, geometry = {} } = {}) {
-  const I = { ...tokens.appIcon, ...geometry };
+export function appIconSVG(spec, { variant = "light", px = 1024, grid = false } = {}) {
+  const I = spec;
   const v = I.variants[variant];
   const body = squirclePath(I.inset, I.inset, I.body, I.radius);
   const D = I.ballDiameter, bx = I.ballCenter[0] - D / 2, by = I.ballCenter[1] - D / 2;
@@ -226,32 +227,16 @@ export function ballPNG({ px, size, body = tokens.color.brand.ink, eye = tokens.
   return Buffer.from(bytes);
 }
 
-/** PNG of the app icon at px, rendered from the same geometry as appIconSVG. */
-export function appIconPNG({ variant = "light", px = 1024 } = {}) {
-  const I = tokens.appIcon, v = I.variants[variant];
+/** Rescale an existing PNG (for example the approved app icon) to px × px. */
+export function scalePNG(bytes, px) {
+  const image = ck.MakeImageFromEncoded(bytes);
   const surface = ck.MakeSurface(px, px);
   const canvas = surface.getCanvas();
   canvas.clear(ck.TRANSPARENT);
-  const k = px / 1024, m = [k, 0, 0, 0, k, 0, 0, 0, 1];
-  const body = squirclePath(I.inset, I.inset, I.body, I.radius);
-  paintPath(canvas, body, v.ground, m);
-  if (v.edge) {
-    const paint = new ck.Paint();
-    paint.setAntiAlias(true);
-    paint.setStyle(ck.PaintStyle.Stroke);
-    paint.setStrokeWidth(2 * k);
-    paint.setColor(ck.parseColorString(v.edge));
-    canvas.drawPath(transform(P(body), m), paint);
-    paint.delete();
-  }
-  canvas.save();
-  canvas.clipPath(transform(P(body), m), ck.ClipOp.Intersect, true);
-  const D = I.ballDiameter, s = (D / 100) * k, bx = (I.ballCenter[0] - D / 2) * k, by = (I.ballCenter[1] - D / 2) * k;
-  const p = ballPaths(opticalSize((D / 1024) * px), tokens.ball.brandPose);
-  paintPath(canvas, p.body, v.ball, [s, 0, bx, 0, s, by, 0, 0, 1]);
-  paintPath(canvas, p.eyes, v.eye, [s, 0, bx, 0, s, by, 0, 0, 1]);
-  canvas.restore();
-  const bytes = surface.makeImageSnapshot().encodeToBytes();
-  surface.delete();
-  return Buffer.from(bytes);
+  const paint = new ck.Paint();
+  paint.setAntiAlias(true);
+  canvas.drawImageRectCubic(image, [0, 0, image.width(), image.height()], [0, 0, px, px], 1 / 3, 1 / 3, paint);
+  const out = Buffer.from(surface.makeImageSnapshot().encodeToBytes());
+  paint.delete(); image.delete(); surface.delete();
+  return out;
 }

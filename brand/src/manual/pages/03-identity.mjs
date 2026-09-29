@@ -1,5 +1,5 @@
 // Identity: the ball, the wordmark, lockups and their rules.
-import { page, title, ball, lockup, wordmark, icon, C, G, T, staticBall, agentBall, cr, pngURI } from "../kit.mjs";
+import { page, title, ball, lockup, wordmark, C, G, T, staticBall, agentBall, cr, pngURI } from "../kit.mjs";
 
 const pct = (n) => `${+(n).toFixed(1)}%`;
 const f2 = (n) => String(+n.toFixed(2));
@@ -46,7 +46,7 @@ export const roles = page({
     </div>
     <div class="span-7 start-6">
       ${[
-        ["品牌符号", "Brand symbol", "标识、应用图标、网站和物料中的 Wuu。形状、颜色、眼睛姿态全部固定。", `${ball(88)}<div style="margin-left:18px">${lockup(20)}</div>`, "只用第 03 章的资产，不重画、不做表情。"],
+        ["品牌符号", "Brand symbol", "标识、网站、文档和物料中的 Wuu。形状、颜色、眼睛姿态全部固定。应用图标沿用自己的已批准原稿，见第 08 章。", `${ball(88)}<div style="margin-left:18px">${lockup(20)}</div>`, "只用第 03 章的资产，不重画、不做表情。"],
         ["会话中的 Wuu", "Wuu at work", "对话里 Wuu 自己的头像。颜色固定为墨色（暗色主题为纸色），眼睛随活动状态变化。", `<div class="row" style="--g:14px">${["rest", "think", "work", "wait", "failed"].map((s) => staticBall(56, s)).join("")}</div>`, "状态只由眼睛表达，见第 07 章。"],
         ["其他 agent", "Other agents", "子 agent、项目 agent、外部模型与服务商。同一张脸，换 agent 色；可以换形体与配饰。", `<div class="row" style="--g:12px">${["sky", "peach", "leaf", "iris", "rose"].map((a) => agentBall(52, a)).join("")}</div>`, "Wuu 自己永远不用 agent 色。"],
       ].map(([zh, en, d, fig, rule]) => `
@@ -197,7 +197,7 @@ export const wordmarkPage = page({
       <p class="lead">“wuu” 由同一个碗形画成：w 是两只碗共用一根更短、更细的中笔，u 是同一只碗加一根到基线的尾笔。</p>
       <div class="rule-list" style="margin-top:36px;--rl:1fr">
         <div class="body"><strong>全小写。</strong>标识里只有 “wuu” 这一种写法；正文里的名称见“名称的写法”。</div>
-        <div class="body"><strong>方圆的碗底。</strong>碗形介于圆和方之间，和应用图标的连续圆角属于同一族形状。</div>
+        <div class="body"><strong>方圆的碗底。</strong>碗形介于圆和方之间，和界面里的圆角卡片、输入框属于同一族形状。</div>
         <div class="body"><strong>平切的笔端。</strong>小球已经足够圆，字标用平切笔端保持清楚和克制。</div>
         <div class="body"><strong>自绘，不是字体。</strong>不要用任何字体重新排 “wuu”；需要文字时用 Hanken Grotesk 写 “Wuu”。</div>
       </div>

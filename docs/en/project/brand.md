@@ -10,7 +10,7 @@ These guidelines define the identity and show proposed applications. They do not
 
 | Use | Colour | Eyes |
 | --- | --- | --- |
-| Brand symbol: logo, app icon, website, documentation | Ink (paper on dark grounds) | Fixed brand pose, looking up and to the right |
+| Brand symbol: logo, website, documentation, materials | Ink (paper on dark grounds) | Fixed brand pose, looking up and to the right |
 | Wuu at work: its own avatar in a conversation | Ink (paper in dark theme) | Follow the activity state |
 | Other agents: subagents, project agents, models, providers | One of seven agent colours | Follow the activity state; ink eyes |
 
@@ -77,7 +77,7 @@ The product's 15 activities map to eight poses: rest, listen, think, work, wait,
 
 ## Applications
 
-The app icon seats the ball on the bottom edge of the icon body, so only its dome and eyes show. This is the only crop allowed at small sizes. At large formats (covers, website heroes, social images) the ball may be cropped by one or two edges if both eyes stay fully visible and text never overlaps it.
+The app icon keeps its approved artwork in `assets/app-icon-source.*`; the brand does not redraw it. Its charcoal gradient, 28° eyes and motion marks belong to the icon only: do not carry them into the logo, avatars or illustrations, and do not use the app icon in place of the logo. At large formats (covers, website heroes, social images) the ball may be cropped by one or two edges if both eyes stay fully visible and text never overlaps it.
 
 ![App icon](../assets/brand/manual-app-icon.png)
 
@@ -89,4 +89,4 @@ The app icon seats the ball on the bottom edge of the icon body, so only its dom
 
 Every value is defined once, in `brand/tokens/tokens.json`. Change it there, run `npm --prefix brand run build` and `npm --prefix brand run render` (see [`brand/README.md`](../../../brand/README.md)), and review the regenerated manual and previews. Do not edit exported files. The product's own design foundations remain in [the design system](design-system.md); product tokens change only through that process.
 
-Not yet verified: trademark availability, user research, the app icon in a real macOS Dock, print colours, rendering on Windows and macOS, and colour-vision simulation of the agent colours.
+Not yet verified: trademark availability, user research, whether the app icon needs a variant below 32 px, print colours, rendering on Windows and macOS, and colour-vision simulation of the agent colours.

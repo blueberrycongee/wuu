@@ -1,5 +1,5 @@
 // Graphic language: icons, illustration, imagery, large-format crops.
-import { page, title, ball, lockup, icon, C, G, T, staticBall, agentBall, AGENTS } from "../kit.mjs";
+import { page, title, ball, lockup, appIcon, C, G, T, staticBall, agentBall, AGENTS } from "../kit.mjs";
 // Product icon artwork is the single source for UI icons; the manual draws from it.
 import { iconArtwork } from "../../../../desktop/src/shared/iconArtwork.ts";
 
@@ -40,7 +40,7 @@ export const icons = page({
         <div class="plate" style="padding:24px;flex:0 0 auto">${iconGrid("Terminal", 216)}<div class="cap" style="margin-top:10px">Terminal · 24 网格，2 单位留边</div></div>
         <div class="plate stack" style="padding:24px 28px;flex:1;--s:18px">
           <div class="h4">三种“图标”不要混用</div>
-          <div class="row" style="--g:18px">${icon(56)}<div><div class="small" style="color:var(--text)">应用图标</div><div class="cap">程序坞、安装包、网站下载按钮</div></div></div>
+          <div class="row" style="--g:18px">${appIcon(56)}<div><div class="small" style="color:var(--text)">应用图标</div><div class="cap">程序坞、安装包、网站下载按钮</div></div></div>
           <div class="row" style="--g:18px"><div style="width:56px" class="center">${ball(32)}</div><div><div class="small" style="color:var(--text)">小球</div><div class="cap">品牌符号、头像、网站图标</div></div></div>
           <div class="row" style="--g:18px"><div style="width:56px" class="center">${ico("Terminal", 24, C.brand.ink)}</div><div><div class="small" style="color:var(--text)">界面图标</div><div class="cap">按钮、菜单、状态；来自 iconArtwork</div></div></div>
           <div class="row" style="--g:10px;padding-top:12px;border-top:1px solid var(--line-1)">${ico("CircleCheck", 18, C.status.success.light)}<span class="small" style="color:${C.status.success.light}">测试通过</span>${ico("TriangleAlert", 18, C.status.warning.light)}<span class="small" style="color:${C.status.warning.light}">需要确认</span>${ico("CircleAlert", 18, C.status.danger.light)}<span class="small" style="color:${C.status.danger.light}">命令失败</span></div>
@@ -163,7 +163,7 @@ export const crop = page({
           <tr><td>方向</td><td>品牌姿态的眼睛在右上，所以通常裁左边和下边；裁右边时只裁掉很少一部分</td></tr>
         </tbody>
       </table>
-      <p class="body" style="margin-top:18px">应用图标只裁底边，是这条规则在小画幅上的唯一例外，见第 08 章。</p>
+      <p class="body" style="margin-top:18px">应用图标有自己已批准的构图，不适用这条规则，也不作为它的依据，见第 08 章。</p>
     </div>
     <div class="span-7 start-6">
       <div class="grid" style="grid-template-columns:1.6fr 1fr;column-gap:24px">

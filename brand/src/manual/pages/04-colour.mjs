@@ -1,5 +1,5 @@
 // Colour: roles, neutral ramps, agent colours, status colours, proportions.
-import { page, title, ball, lockup, icon, C, G, T, staticBall, agentBall, AGENTS, cr, contrast } from "../kit.mjs";
+import { page, title, ball, lockup, C, G, T, staticBall, agentBall, AGENTS, cr, contrast } from "../kit.mjs";
 
 const L = C.light, D = C.dark;
 const chip = (hex, w = 64, h = 64, r = 8) => `<div class="sw" style="width:${w}px;height:${h}px;border-radius:${r}px;background:${hex}"></div>`;

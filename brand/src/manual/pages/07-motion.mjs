@@ -1,5 +1,5 @@
 // Motion: character, states, identity vs feedback, reduced motion.
-import { page, title, ball, lockup, icon, C, G, T, staticBall, agentBall } from "../kit.mjs";
+import { page, title, ball, lockup, C, G, T, staticBall, agentBall } from "../kit.mjs";
 
 const W = G.WuuBall;
 const M = T.motion;

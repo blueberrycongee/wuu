@@ -1,5 +1,16 @@
 // Three directions compared on the same touchpoints, a stress test, and the decision.
-import { page, title, ball, lockup, icon, C, G, staticBall, agentBall, AGENTS } from "../kit.mjs";
+import { page, title, ball, lockup, appIcon, C, G, staticBall, agentBall, AGENTS } from "../kit.mjs";
+
+// Direction A's icon study: the ball seated on the bottom edge. Not adopted; the app keeps
+// its approved icon.
+const DOME = {
+  inset: 100, body: 824, radius: 185, ballDiameter: 660, ballCenter: [512, 650],
+  variants: {
+    light: { ground: "#F7F7F4", ball: C.brand.ink, eye: C.brand.paper, edge: "rgba(20,20,17,.08)" },
+    dark: { ground: "#262523", ball: C.dark.ball, eye: C.dark["ball-eye"] },
+  },
+};
+const icon = (px, variant = "light") => G.appIconSVG(DOME, { px, variant });
 
 const bp = (size = "display") => G.ballPaths(size, {});
 const ballG = (D, cx, cy, body, eye, size = "display") => { const p = bp(size); return `<g transform="translate(${cx - D / 2} ${cy - D / 2}) scale(${D / 100})"><path d="${p.body}" fill="${body}"/><path d="${p.eyes}" fill="${eye}"/></g>`; };
@@ -191,9 +202,10 @@ export const decision = page({
     <div class="span-7 start-6">
       <div class="rule-list" style="--rl:150px 1fr">
         <div><span class="h4">保留自 A</span><span class="body">平面墨色的完整小球；偏向右上的眼睛；纸与墨的中性色；自绘的 “wuu” 字标。</span></div>
-        <div><span class="h4">借用自 B</span><span class="body">大尺寸裁切构图：只用于封面、官网首屏、社交图等大幅面，且两只眼睛必须完整留在画面内。应用图标只裁底边。<strong>头像、标识和小尺寸永远用完整的球。</strong></span></div>
+        <div><span class="h4">借用自 B</span><span class="body">大尺寸裁切构图：只用于封面、官网首屏、社交图等大幅面，且两只眼睛必须完整留在画面内。<strong>头像、标识和小尺寸永远用完整的球。</strong></span></div>
         <div><span class="h4">放弃 B 的</span><span class="body">朱红色场。它和错误状态同色相，放进产品就会误读。</span></div>
         <div><span class="h4">放弃 C 的</span><span class="body">渐变、高光、投影和圆头字标。它们无法缩小、无法单色，也不适合审查代码的场景。</span></div>
+        <div><span class="h4">应用图标</span><span class="body">保留现有的已批准图标，不重画。方向 A 中“小球坐在底边”的图标方案经评审未采用。</span></div>
         <div><span class="h4">新增</span><span class="body">agent 色：七个明度相同的浅色，只用在其他 agent 的球身和插画里。Wuu 自己永远是墨色。</span></div>
       </div>
     </div>
@@ -203,7 +215,7 @@ export const decision = page({
     <div style="display:grid;grid-template-columns:400px 400px 280px 1fr;gap:16px;height:210px">
       <div class="plate center">${lockup(34)}</div>
       <div class="plate ink center">${lockup(34, { ink: C.dark.ball, eye: C.dark["ball-eye"] })}</div>
-      <div class="plate two center" style="gap:20px">${icon(120)}${icon(120, "dark")}</div>
+      <div class="plate two center">${appIcon(150)}</div>
       <div class="plate center" style="gap:10px">${staticBall(52, "rest")}${["sky", "peach", "leaf", "iris", "butter"].map((a) => agentBall(38, a)).join("")}</div>
     </div>
   </div>`,

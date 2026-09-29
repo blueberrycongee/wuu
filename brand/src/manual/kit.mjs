@@ -37,7 +37,8 @@ export const staticBall = (px, state, o = {}) => G.WuuBall.staticSVG({ px, state
 export const agentBall = (px, name, dark = false, state = "rest") => G.WuuBall.staticSVG({ px, state, body: C.agent[name][dark ? "dark" : "light"], eye: C.brand.ink });
 export const lockup = (xh, o = {}) => G.lockupSVG({ xh, ...o });
 export const wordmark = (xh, o = {}) => G.wordmarkSVG({ xh, ...o });
-export const icon = (px, variant = "light", o = {}) => G.appIconSVG({ px, variant, ...o });
+// The approved app icon (repository assets/), referenced rather than redrawn.
+export const appIcon = (px, extra = "") => `<img src="../../assets/app-icon.png" width="${px}" height="${px}" alt="Wuu" style="display:block;${extra}">`;
 
 export const AGENTS = Object.keys(C.agent).filter((k) => !k.startsWith("$"));
 

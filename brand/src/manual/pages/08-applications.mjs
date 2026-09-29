@@ -1,5 +1,5 @@
 // Applications: app icon, product UI (light/dark), website, docs, social, installer.
-import { page, title, ball, lockup, icon, C, G, T, staticBall, agentBall, pngURI } from "../kit.mjs";
+import { page, title, ball, lockup, appIcon, C, G, T, staticBall, agentBall } from "../kit.mjs";
 import { iconArtwork } from "../../../../desktop/src/shared/iconArtwork.ts";
 import { ogImage, readmeBanner, releaseCard, socialAvatar, dmgBackground } from "../../templates.mjs";
 
@@ -8,38 +8,44 @@ const scaled = (w, h, s, inner) => `<div style="width:${w * s}px;height:${h * s}
 const tpl = (t, s, extra = "") => `<div style="width:${t.width * s}px;height:${t.height * s}px;overflow:hidden;border-radius:10px;box-shadow:0 0 0 1px var(--line-2);${extra}"><div style="width:${t.width}px;height:${t.height}px;transform:scale(${s});transform-origin:0 0">${t.html}</div></div>`;
 
 // ---------------------------------------------------------------------------
-export const appIcon = page({
+export const appIconPage = page({
   chapter: 7, id: "app-icon",
   body: `
   <div class="grid">
     <div class="span-4">${title("应用图标", "App icon")}
-      <p class="lead">一只墨色的小球坐在图标底边上，只露出上半身和眼睛。它在程序坞里是一个穹顶形，和圆形、方形的图标都不一样。</p>
+      <p class="lead">应用图标保留现有的已批准图标，本次不重画。它代表应用本身，出现在程序坞、安装窗口、下载按钮和应用列表里。</p>
       <table class="spec" style="margin-top:32px">
-        <thead><tr><th>参数</th><th>值（1024 网格）</th></tr></thead>
+        <thead><tr><th style="width:180px">文件</th><th>用途</th></tr></thead>
         <tbody>
-          <tr><td>图标主体</td><td class="num">${T.appIcon.body} × ${T.appIcon.body}，内缩 ${T.appIcon.inset}，连续圆角 ${T.appIcon.radius}</td></tr>
-          <tr><td>小球</td><td class="num">直径 ${T.appIcon.ballDiameter}，中心 (${T.appIcon.ballCenter.join(", ")})，被底边裁去 ${Math.round(T.appIcon.ballCenter[1] + T.appIcon.ballDiameter / 2 - T.appIcon.inset - T.appIcon.body)}</td></tr>
-          <tr><td>眼睛</td><td>品牌姿态；按渲染尺寸选择光学版本</td></tr>
-          <tr><td>变体</td><td>亮色（默认）· 暗色 · 单色</td></tr>
+          <tr><td class="mono" style="font-size:12px">assets/app-icon-source.*</td><td>原稿（SVG、PNG 与参数 JSON）</td></tr>
+          <tr><td class="mono" style="font-size:12px">assets/app-icon.png</td><td>桌面成品：内缩 1/16、圆角遮罩</td></tr>
+          <tr><td class="mono" style="font-size:12px">desktop/build/icon.*</td><td>macOS、Windows 平台文件，由 <span class="mono">npm --prefix desktop run icon:generate</span> 生成</td></tr>
         </tbody>
       </table>
-      <p class="body" style="margin-top:18px">分层源文件（底板、小球、眼睛）在 <span class="mono">brand/assets/app-icon/</span>，可以导入 Icon Composer 等工具。替换产品里的图标需要另行评审。</p>
+      <div class="rule-list" style="margin-top:28px;--rl:1fr">
+        <div class="body"><strong>不重画，不改色。</strong>炭灰渐变、28° 倾斜的眼睛和三道动势线都是图标原稿的一部分。</div>
+        <div class="body"><strong>图标和品牌小球各用各的。</strong>两者共用胶囊形的眼睛；渐变、倾斜和动势线只属于图标，不用在标识、头像或插画上。</div>
+        <div class="body"><strong>不当作标识使用。</strong>网站导航、文档和物料用组合标识或小球，不用应用图标代替。</div>
+      </div>
     </div>
     <div class="span-7 start-6">
       <div class="row" style="--g:24px;--a:stretch">
-        <div class="plate center" style="padding:24px">${icon(270, "light", { grid: true })}</div>
-        <div class="stack" style="--s:24px">
-          <div class="plate center" style="padding:20px 24px;gap:20px">${icon(104)}${icon(104, "dark")}${icon(104, "mono")}</div>
-          <div class="plate" style="padding:20px 24px;display:flex;gap:22px;align-items:flex-end">${[128, 64, 48, 32, 16].map((px) => `<div style="text-align:center"><img src="${pngURI(G.appIconPNG({ px: px * 2 }))}" width="${px}" height="${px}"><div class="cap num" style="margin-top:8px">${px}</div></div>`).join("")}</div>
+        <div class="plate center" style="padding:28px">${appIcon(280)}</div>
+        <div class="stack" style="--s:24px;flex:1">
+          <div class="plate" style="padding:22px 26px;display:flex;gap:24px;align-items:flex-end">${[128, 64, 32].map((px) => `<div style="text-align:center">${appIcon(px)}<div class="cap num" style="margin-top:8px">${px}</div></div>`).join("")}</div>
+          <div class="plate" style="padding:22px 26px">
+            <div class="h4">图标与品牌小球</div>
+            <div class="row" style="--g:22px;margin-top:14px">${appIcon(72)}${ball(56)}<span class="cap" style="flex:1">同一种胶囊眼睛。图标有自己的配色与构图；品牌小球是平面墨色、眼睛看向右上。</span></div>
+          </div>
         </div>
       </div>
       <div class="row" style="--g:24px;margin-top:24px">
-        ${[["linear-gradient(135deg,#dfe6ee,#c7d1dc)", "light"], ["linear-gradient(135deg,#1c2330,#2b2a33)", "dark"]].map(([bg, v]) => `<div style="flex:1;height:170px;border-radius:14px;background:${bg};position:relative;overflow:hidden">
-          <div class="abs" style="left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:14px;padding:10px 14px;border-radius:22px;background:${v === "light" ? "rgba(255,255,255,.45)" : "rgba(30,30,30,.45)"};backdrop-filter:blur(8px);box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)">
-            ${["#3478F6", "#F2F2F2", "icon", "#1E1E1E", "#34C759"].map((c) => c === "icon" ? `<div>${icon(64, v)}</div>` : `<div style="width:64px;height:64px;padding:6px"><div style="width:52px;height:52px;border-radius:12px;background:${c}"></div></div>`).join("")}
+        ${[["linear-gradient(135deg,#dfe6ee,#c7d1dc)", "rgba(255,255,255,.45)"], ["linear-gradient(135deg,#1c2330,#2b2a33)", "rgba(30,30,30,.45)"]].map(([bg, glass]) => `<div style="flex:1;height:150px;border-radius:14px;background:${bg};position:relative;overflow:hidden">
+          <div class="abs" style="left:50%;bottom:14px;transform:translateX(-50%);display:flex;gap:14px;padding:10px 14px;border-radius:22px;background:${glass};backdrop-filter:blur(8px);box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)">
+            ${["#3478F6", "#F2F2F2", "icon", "#1E1E1E", "#34C759"].map((c) => c === "icon" ? appIcon(64) : `<div style="width:64px;height:64px;padding:6px"><div style="width:52px;height:52px;border-radius:12px;background:${c}"></div></div>`).join("")}
           </div></div>`).join("")}
       </div>
-      <div class="cap" style="margin-top:8px">程序坞中的亮色与暗色外观；两侧为占位图标</div>
+      <div class="cap" style="margin-top:8px">程序坞示意（亮 / 暗壁纸）；两侧为占位图标</div>
     </div>
   </div>`,
 });
@@ -257,7 +263,7 @@ export const installer = page({
       <div style="width:760px;border-radius:12px;overflow:hidden;box-shadow:0 0 0 1px var(--line-2),0 20px 60px rgba(20,20,17,.12)">
         <div style="height:28px;background:#ECECEA;display:flex;align-items:center;gap:7px;padding:0 12px;border-bottom:1px solid #DADAD6">${["#FF5F57", "#FEBC2E", "#28C840"].map((c) => `<span style="width:10px;height:10px;border-radius:5px;background:${c}"></span>`).join("")}<span style="margin:0 auto;font:500 12px var(--brand);color:#555">Wuu</span></div>
         <div style="position:relative;width:720px;height:420px;margin:0 20px">${dmgBackground().html}
-          <div class="abs" style="left:116px;top:186px;text-align:center">${icon(128)}<div style="font:400 13px var(--brand);margin-top:2px">Wuu</div></div>
+          <div class="abs" style="left:116px;top:186px;text-align:center">${appIcon(128)}<div style="font:400 13px var(--brand);margin-top:2px">Wuu</div></div>
           <div class="abs" style="left:476px;top:186px;text-align:center"><svg width="128" height="128" viewBox="0 0 128 128"><path d="M14 34a8 8 0 0 1 8-8h28l10 10h46a8 8 0 0 1 8 8v54a8 8 0 0 1-8 8H22a8 8 0 0 1-8-8Z" fill="#8FBDEB"/><path d="M14 48a8 8 0 0 1 8-8h84a8 8 0 0 1 8 8v50a8 8 0 0 1-8 8H22a8 8 0 0 1-8-8Z" fill="#A9CDF1"/></svg><div style="font:400 13px var(--brand);margin-top:2px">Applications</div></div>
         </div>
       </div>
@@ -270,4 +276,4 @@ export const installer = page({
   </div>`,
 });
 
-export default [appIcon, productLight, productDark, productHome, web, docs, social, installer];
+export default [appIconPage, productLight, productDark, productHome, web, docs, social, installer];

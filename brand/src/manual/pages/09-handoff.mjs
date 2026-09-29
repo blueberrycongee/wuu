@@ -1,5 +1,5 @@
 // Handoff: tokens, product mapping, assets, licences and open items.
-import { page, title, ball, lockup, icon, C, G, T, staticBall } from "../kit.mjs";
+import { page, title, ball, lockup, C, G, T, staticBall } from "../kit.mjs";
 
 export const tokensPage = page({
   chapter: 8, id: "tokens",
@@ -46,15 +46,15 @@ export const assets = page({
             ["assets/logo/wuu-wordmark-*.svg", "文字标识", "SVG"],
             ["assets/logo/wuu-lockup-horizontal[-small|-micro]-*.svg", "横式组合；X ≤ 28 px 用 small，X ≤ 14 px 用 micro", "SVG"],
             ["assets/logo/wuu-lockup-stacked-*.svg", "竖式组合", "SVG"],
-            ["assets/app-icon/", "亮 / 暗 / 单色图标；1024–16 px；分层源文件", "SVG · PNG"],
-            ["assets/favicon/", "网站图标（随系统明暗）、16 / 32 px、Apple Touch 180 px", "SVG · PNG"],
+            ["/assets/app-icon*", "应用图标沿用仓库现有的已批准原稿与成品；本次未改动", "SVG · PNG"],
+            ["assets/favicon/", "网站图标（随系统明暗）、16 / 32 px；Apple Touch 180 px 由现有应用图标缩放", "SVG · PNG"],
             ["assets/social/", "分享图（中 / 英）、README 横幅（亮 / 暗）、发布卡片、头像", "PNG"],
             ["assets/installer/", "macOS 安装窗口背景 720 × 420 与 @2x", "PNG"],
             ["assets/motion/", "动效参考实现与交互演示", "JS · HTML"],
             ["tokens/", "设计变量源文件与生成的 CSS", "JSON · CSS"],
             ["fonts/", "Hanken Grotesk、Fragment Mono 与授权文件", "TTF · OFL"],
             ["manual/index.html", "本手册；浏览器中打开即可阅读", "HTML"],
-          ].map(([p, d, f]) => `<tr><td class="mono" style="font-size:11.5px">brand/${p}</td><td>${d}</td><td>${f}</td></tr>`).join("")}
+          ].map(([p, d, f]) => `<tr><td class="mono" style="font-size:11.5px">${p.startsWith("/") ? p.slice(1) : `brand/${p}`}</td><td>${d}</td><td>${f}</td></tr>`).join("")}
         </tbody>
       </table>
     </div>
@@ -84,7 +84,7 @@ export const open = page({
       <div class="rule-list" style="margin-top:10px;--rl:1fr">
         <div class="body"><strong>商标。</strong>“Wuu”名称与小球图形没有做商标检索。</div>
         <div class="body"><strong>用户研究。</strong>第 01 章的假设没有访谈或数据支持。</div>
-        <div class="body"><strong>真机图标。</strong>没有在 macOS 程序坞、Finder 和 macOS 26 的着色外观下实机检查；本手册中的程序坞为示意。</div>
+        <div class="body"><strong>图标小尺寸。</strong>保留的应用图标在 32 px 以下动势线较密；是否需要小尺寸变体尚未评估。</div>
         <div class="body"><strong>印刷。</strong>只定义了屏幕色值，没有 CMYK 或专色值，也没有打样。</div>
         <div class="body"><strong>跨平台字体。</strong>手册在 Linux 的 Chromium 中配合 Noto Sans CJK SC 渲染检查；Windows 与 macOS 上的效果未检查。</div>
         <div class="body"><strong>色觉差异。</strong>七个 agent 色明度相同，灰度下无法区分；规则要求配名字，但没有做色觉模拟测试。</div>
