@@ -2802,7 +2802,7 @@
   box-sizing: border-box;
   padding: 12px 14px;
   border: 1px solid var(--hairline);
-  border-radius: 12px;
+  border-radius: var(--message-flow-card-radius);
   background: var(--surface-1);
   color: var(--ink);
   font-size: var(--conversation-process-font-size);

@@ -191,19 +191,22 @@
                                                                   
                                                                         
   /* Product radius scale. Use roles, not one-off pixels:
-   *   xs     inner hover, nested highlights, compact chips
-   *   sm     controls (buttons, fields, avatars, small cards)
-   *   md/lg  panels and composer-sized surfaces (lg is an alias of md)
+   *   xs     inner hover, nested highlights, compact chips, menu rows
+   *   sm     controls (buttons, fields, small cards)
+   *   md/lg  panels, dialogs and the composer (lg is an alias of md)
    *   overlay menus/dialogs (defaults to panel; themes may separate it)
-   *   pill   capsules, tracks, badges
+   *   pill   switch tracks, badges, capsules
    *   circle avatars, dots, knobs
+   * Corners stay tight so a control reads as a control: a 32px field with an
+   * 8px corner is a rectangle, not a pill. Nested corners follow their inset
+   * (panel 16 = control 8 + 8px padding; menu shell = row 6 + 6px inset).
    * Geometry that is not a product role stays explicit: 0, inherit,
    * mixed speech-bubble tails, and parent-minus-padding concentric calcs. */
-  --radius-xs: var(--wuu-radius-inner, 8px);
+  --radius-xs: var(--wuu-radius-inner, 6px);
   /* Media keeps shallow corners to preserve image content at thumbnail sizes. */
   --radius-media: var(--radius-xs);
-  --radius-sm: var(--wuu-radius-control, 12px);
-  --radius-md: var(--wuu-radius-panel, 22px);
+  --radius-sm: var(--wuu-radius-control, 8px);
+  --radius-md: var(--wuu-radius-panel, 16px);
   --radius-lg: var(--radius-md);
   --radius-pill: 999px;
   --radius-circle: 50%;

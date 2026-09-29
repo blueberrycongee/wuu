@@ -1865,7 +1865,7 @@ html.resizing-workspace-file-split * {
   min-width: 0;
   padding: 0 10px 0 12px;
   height: 28px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: transparent;
   border: 0;
   color: var(--ink-soft);
