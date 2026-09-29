@@ -49,6 +49,7 @@ type Client struct {
 	pending    map[string]chan Response
 	sequence   uint64
 	failed     error
+	exitErr    error
 	done       chan struct{}
 }
 
@@ -146,6 +147,11 @@ func (c *Client) startLocked() error {
 			_ = cmd.Process.Kill()
 			waitErr = <-exited
 		}
+		c.mu.Lock()
+		if waitErr != nil {
+			c.exitErr = fmt.Errorf("execution transport cleanup: %w: %s", waitErr, diagnostic.String())
+		}
+		c.mu.Unlock()
 		if waitErr == nil {
 			waitErr = io.ErrUnexpectedEOF
 		}
@@ -259,7 +265,9 @@ func (c *Client) Close() error {
 		_ = cmd.Process.Kill()
 		<-done
 	}
-	return nil
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.exitErr
 }
 
 func (c *Client) closeTimeout() time.Duration {

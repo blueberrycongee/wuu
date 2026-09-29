@@ -20,6 +20,7 @@ type Config struct {
 // Profile describes the environment in which workspace tools execute. Shared
 // opts conversations into one filesystem; their tool state remains separate.
 type Profile struct {
+	User            string   `json:"user,omitempty"`
 	Python          string   `json:"python,omitempty"`
 	HostWorkspace   string   `json:"host_workspace,omitempty"`
 	MountReadOnly   bool     `json:"mount_read_only,omitempty"`

@@ -22,16 +22,22 @@ func socketPath(session string) (string, error) {
 	if session == "" || filepath.Base(session) != session || session == "." || session == ".." {
 		return "", errors.New("invalid execution session")
 	}
-	home, err := os.UserHomeDir()
+	// Unix socket addresses have a short platform limit. Keep them independent
+	// of the workspace and home path, inside a private per-user directory.
+	dir := filepath.Join("/tmp", "wuu-execution-"+strconv.Itoa(os.Getuid()))
+	if err := os.Mkdir(dir, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+		return "", err
+	}
+	info, err := os.Lstat(dir)
 	if err != nil {
 		return "", err
 	}
-	digest := sha256.Sum256([]byte(session))
-	dir := filepath.Join(home, ".wuu-execution", fmt.Sprintf("socket-%x", digest[:8]))
-	if err = os.MkdirAll(dir, 0700); err != nil {
-		return "", err
+	owner, ok := info.Sys().(*syscall.Stat_t)
+	if !info.IsDir() || info.Mode().Perm()&0077 != 0 || !ok || owner.Uid != uint32(os.Getuid()) {
+		return "", errors.New("execution socket directory is not private")
 	}
-	return filepath.Join(dir, "worker.sock"), nil
+	digest := sha256.Sum256([]byte(session))
+	return filepath.Join(dir, fmt.Sprintf("worker-%x.sock", digest[:12])), nil
 }
 
 // Connect starts a detached session worker when necessary, then relays a private

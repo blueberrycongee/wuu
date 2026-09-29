@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -225,4 +226,48 @@ func TestDockerMountAndEnvironmentBoundaryEndToEnd(t *testing.T) {
 		t.Fatal("worker accepted an unauthenticated connection")
 	}
 	t.Log("verified: explicit host mount, read-only mount rejection, allowlisted variable forwarding, authenticated worker boundary")
+}
+
+// The CLI fixture exercises a real terminal and worker; it does not emulate a
+// cloud account or claim provider provisioning coverage.
+func TestPTYTransportEndToEnd(t *testing.T) {
+	worker := os.Getenv("WUU_EXECUTION_E2E_WORKER")
+	if worker == "" || runtime.GOOS == "windows" {
+		t.Skip("set WUU_EXECUTION_E2E_WORKER to the current Unix worker")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	bin := t.TempDir()
+	script := `#!/bin/sh
+case "$1" in
+ create|stop|remove) exit 0 ;;
+ exec) shift; while [ "$1" != "--" ]; do shift; done; shift; exec "$@" ;;
+ *) exit 2 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "sandbox"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	p := executionenv.Profile{Backend: "vercel_sandbox", Image: "fixture", Worker: worker, Workspace: t.TempDir(), LifetimeSeconds: 1}
+	store := t.TempDir()
+	id := executionenv.Identity(store, "terminal", "test", p)
+	environment := executionenv.NewEnvironment(p, id, "terminal", store)
+	defer environment.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	content := strings.Repeat("payload", 32768)
+	args, _ := json.Marshal(map[string]string{"path": "large.txt", "content": content})
+	_, err := environment.Execute(ctx, executionenv.ToolRequest{Actor: "terminal", PermissionMode: "standard", Call: providers.ToolCall{Name: "write_file", Arguments: string(args)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(p.Workspace, "large.txt"))
+	if err != nil || string(data) != content {
+		t.Fatalf("terminal frame was truncated: %v, bytes=%d", err, len(data))
+	}
+	if err := environment.Close(); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("verified: terminal readiness, raw mode, large authenticated request and clean shutdown")
 }

@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -253,6 +254,14 @@ func (e *Environment) prepareDocker(ctx context.Context) error {
 	}
 	args := []string{"run", "--detach", "--init", "--name", e.identity, "--label", "wuu.execution.identity=" + e.identity, "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=512"}
 	p := e.profile
+	user := p.User
+	if user == "" && p.HostWorkspace != "" && runtime.GOOS == "linux" {
+		user = strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid())
+	}
+	if user != "" {
+		args = append(args, "--user", user)
+	}
+	args = append(args, "--env", "HOME=/tmp/wuu-home")
 	if p.HostWorkspace != "" {
 		mount := "type=bind,source=" + p.HostWorkspace + ",target=" + p.WorkingDirectory()
 		if p.MountReadOnly {
@@ -269,7 +278,7 @@ func (e *Environment) prepareDocker(ctx context.Context) error {
 	if p.MemoryMB > 0 {
 		args = append(args, "--memory", strconv.Itoa(p.MemoryMB)+"m")
 	}
-	args = append(args, "--workdir", p.WorkingDirectory(), "--entrypoint", "/bin/sh", p.Image, "-c", "exec sleep infinity")
+	args = append(args, "--workdir", p.WorkingDirectory(), "--entrypoint", "/bin/sh", p.Image, "-c", `mkdir -p -m 700 "$HOME" && exec sleep infinity`)
 	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("create execution container: %w: %s", err, out)
 	}
@@ -281,20 +290,21 @@ func (e *Environment) Close() error {
 	e.closed = true
 	client := e.client
 	e.mu.Unlock()
+	var closeErr error
 	if client != nil {
-		_ = client.Close()
+		closeErr = client.Close()
 	}
 	if e.profile.Backend == "docker" && !e.profile.Persistent && !e.profile.Shared && e.prepared {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if out, err := exec.CommandContext(ctx, "docker", "rm", "--force", e.identity).CombinedOutput(); err != nil {
-			return fmt.Errorf("remove execution container: %w: %s", err, out)
+			return errors.Join(closeErr, fmt.Errorf("remove execution container: %w: %s", err, out))
 		}
 	}
 	if e.profile.Backend == "singularity" && !e.profile.Persistent && !e.profile.Shared && e.prepared {
-		return os.RemoveAll(filepath.Join(e.stateDir, e.identity))
+		return errors.Join(closeErr, os.RemoveAll(filepath.Join(e.stateDir, e.identity)))
 	}
-	return nil
+	return closeErr
 }
 
 func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
@@ -386,6 +396,14 @@ func (e *Environment) ProcessManager() *process.Manager {
 }
 
 func (e *Environment) Request(ctx context.Context, method string, params, result any) error {
+	// Inspecting an unused conversation must not provision a paid environment.
+	if method == "list" {
+		if _, err := os.Stat(filepath.Join(e.stateDir, e.identity, "provisioned")); errors.Is(err, os.ErrNotExist) {
+			return json.Unmarshal([]byte("[]"), result)
+		} else if err != nil {
+			return err
+		}
+	}
 	client, err := e.connect(ctx)
 	if err != nil {
 		return err

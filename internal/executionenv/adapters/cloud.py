@@ -174,13 +174,22 @@ def terminal_transport(argv):
     selector.register(master, selectors.EVENT_READ)
     selector.register(sys.stdin.fileno(), selectors.EVENT_READ)
     pending = b""
+    queued_input = b""
+    ready = False
+    input_closed = False
     try:
         while child.poll() is None:
             for key, _ in selector.select(timeout=1):
                 if key.fd == sys.stdin.fileno():
                     data = os.read(key.fd, 65536)
                     if not data:
+                        input_closed = True
                         return
+                    if not ready:
+                        queued_input += data
+                        if len(queued_input) > 16 * 1024 * 1024:
+                            raise RuntimeError("cloud transport request exceeds limit")
+                        continue
                     view = memoryview(data)
                     while view:
                         count = os.write(master, view)
@@ -197,6 +206,14 @@ def terminal_transport(argv):
                         raise RuntimeError("cloud transport frame exceeds limit")
                     while b"\n" in pending:
                         line, pending = pending.split(b"\n", 1)
+                        if line.strip() == b"WUU_EXECUTION_READY":
+                            ready = True
+                            view = memoryview(queued_input)
+                            while view:
+                                count = os.write(master, view)
+                                view = view[count:]
+                            queued_input = b""
+                            continue
                         try:
                             message = json.loads(line.strip())
                         except (ValueError, UnicodeDecodeError):
@@ -211,7 +228,9 @@ def terminal_transport(argv):
         os.close(master)
         if child.poll() is None:
             child.terminate()
-        child.wait(timeout=10)
+        status = child.wait(timeout=10)
+        if status and not input_closed:
+            raise RuntimeError("interactive execution transport exited with status " + str(status))
 
 
 def vercel_backend():
@@ -227,7 +246,7 @@ def vercel_backend():
             subprocess.run(argv, check=True, stdout=subprocess.DEVNULL)
             save({"sandbox": identity})
     try:
-        terminal_transport(["sandbox", "exec", "--interactive", identity, "--", "/bin/sh", "-c", "stty raw -echo; exec " + shlex.join(command)])
+        terminal_transport(["sandbox", "exec", "--interactive", identity, "--", "/bin/sh", "-c", "stty raw -echo; printf 'WUU_EXECUTION_READY\\n'; exec " + shlex.join(command)])
     finally:
         if not shared:
             subprocess.run(["sandbox", "stop", identity], check=True, stdout=subprocess.DEVNULL)

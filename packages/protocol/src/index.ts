@@ -275,6 +275,7 @@ export type PTCSettings = {
 };
 
 export type ExecutionEnvironmentProfile = {
+ user?: string;
  python?: string;
  known_hosts_file?: string;
  host_workspace?: string;

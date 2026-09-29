@@ -33,6 +33,11 @@ jobs:
         run: |
           set -o pipefail
           go test ./internal/executionworker -run TestDocker -count=1 -v | tee execution-environments.log
+      - name: Exercise terminal transport
+        run: |
+          set -o pipefail
+          go build -o "$RUNNER_TEMP/wuu-worker" ./cmd/wuu
+          WUU_EXECUTION_E2E_WORKER="$RUNNER_TEMP/wuu-worker" go test ./internal/executionworker -run TestPTYTransportEndToEnd -count=1 -v | tee -a execution-environments.log
       - name: Install the Linux container runtime
         env:
           GH_TOKEN: ${{ github.token }}
