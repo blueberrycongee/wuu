@@ -1241,6 +1241,7 @@ function SettingsGeneralPage({
   const codexPetSelectedID = codexPets?.selected_id ?? "";
   const codexPetEnabled = Boolean(codexPets?.enabled);
   const codexPetStatus = codexPetLocalError || codexPetsError;
+  const codexPetsHome = codexPets?.home ?? "~/.wuu/pets";
 
   async function refreshCodexPets(): Promise<void> {
     setCodexPetBusy(true);
@@ -1274,69 +1275,53 @@ function SettingsGeneralPage({
           <SettingsRow title={t("settings.language")}>
             <LanguagePreferenceControl />
           </SettingsRow>
-          {hostSupports("listCodexPets") ? <>
-          <SettingsRow title={t("settings.codexPet")}>
-            {codexPetOptions.length > 0 ? (
-              <SelectMenu
-                className="settings-codex-pet-select"
-                triggerClassName="settings-select-trigger"
-                ariaLabel={t("settings.selectPet")}
-                dataTestid="settings-codex-pet-select"
-                value={codexPetSelectedID}
-                disabled={codexPetsLoading || codexPetBusy || !codexPetEnabled}
-                onChange={(next) => void updateCodexPets({ selected_id: next })}
-                options={codexPetOptions.map((pet) => ({
-                  value: pet.id,
-                  label: pet.display_name
-                }))}
-              />
-            ) : (
-              <span className="settings-row-control-value">{t("settings.noLocalPets")}</span>
-            )}
-            {/* The folder it reads belongs with the action that reads it. */}
-            <button
-              className="settings-button settings-button-ghost settings-icon-button"
-              type="button"
-              title={isTouchWebShell() ? t("settings.refreshPets") : t("settings.petSource", { path: codexPets?.home ?? "~/.wuu/pets" })}
-              aria-label={t("settings.refreshPets")}
-              disabled={codexPetsLoading || codexPetBusy}
-              onClick={() => void refreshCodexPets()}
+          {hostSupports("listCodexPets") ? (
+            // The row names what it has found and where to add more; the
+            // refresh action rereads that folder.
+            <SettingsRow
+              title={t("settings.codexPet")}
+              description={!codexPetsLoading && codexPetOptions.length === 0 ? t("settings.petsNotFound", { path: codexPetsHome }) : undefined}
+              error={codexPetStatus || codexPets?.errors[0]}
             >
-              <RefreshCw className="icon" aria-hidden="true" />
-            </button>
-            <button
-              className="settings-switch"
-              type="button"
-              role="switch"
-              aria-checked={codexPetEnabled}
-              data-testid="settings-codex-pet-enabled"
-              disabled={codexPetsLoading || codexPetBusy || codexPetOptions.length === 0}
-              onClick={() => void updateCodexPets({ enabled: !codexPetEnabled })}
-            >
-              <span className="settings-switch-thumb" aria-hidden="true" />
-              <span className="sr-only">{codexPetEnabled ? t("settings.disablePet") : t("settings.enablePet")}</span>
-            </button>
-          </SettingsRow>
-          {codexPetsLoading ||
-          codexPetOptions.length === 0 ||
-          codexPets?.errors.length ||
-          codexPetStatus ? (
-            <div className="settings-row settings-row-block settings-row-note">
-              {codexPetsLoading ? <small className="settings-muted-line">{t("settings.loadingPets")}</small> : null}
-              {!codexPetsLoading && codexPetOptions.length === 0 ? (
-                <small className="settings-muted-line">
-                  {t("settings.petInstallHint")}
-                </small>
+              {codexPetOptions.length > 0 ? (
+                <SelectMenu
+                  className="settings-codex-pet-select"
+                  triggerClassName="settings-select-trigger"
+                  ariaLabel={t("settings.selectPet")}
+                  dataTestid="settings-codex-pet-select"
+                  value={codexPetSelectedID}
+                  disabled={codexPetsLoading || codexPetBusy || !codexPetEnabled}
+                  onChange={(next) => void updateCodexPets({ selected_id: next })}
+                  options={codexPetOptions.map((pet) => ({
+                    value: pet.id,
+                    label: pet.display_name
+                  }))}
+                />
               ) : null}
-              {codexPets?.errors.length ? (
-                <small className="settings-muted-line settings-error">
-                  {codexPets.errors[0]}
-                </small>
-              ) : null}
-              {codexPetStatus ? <small className="settings-muted-line settings-error">{codexPetStatus}</small> : null}
-            </div>
+              <button
+                className="settings-button settings-button-ghost settings-icon-button"
+                type="button"
+                title={isTouchWebShell() ? t("settings.refreshPets") : t("settings.petSource", { path: codexPetsHome })}
+                aria-label={t("settings.refreshPets")}
+                disabled={codexPetsLoading || codexPetBusy}
+                onClick={() => void refreshCodexPets()}
+              >
+                <RefreshCw className="icon" aria-hidden="true" />
+              </button>
+              <button
+                className="settings-switch"
+                type="button"
+                role="switch"
+                aria-checked={codexPetEnabled}
+                data-testid="settings-codex-pet-enabled"
+                disabled={codexPetsLoading || codexPetBusy || codexPetOptions.length === 0}
+                onClick={() => void updateCodexPets({ enabled: !codexPetEnabled })}
+              >
+                <span className="settings-switch-thumb" aria-hidden="true" />
+                <span className="sr-only">{codexPetEnabled ? t("settings.disablePet") : t("settings.enablePet")}</span>
+              </button>
+            </SettingsRow>
           ) : null}
-          </> : null}
         </SettingsGroup>
       </SettingsSection>
 

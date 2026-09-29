@@ -502,17 +502,6 @@
   gap: var(--space-2);
 }
 
-/* A supporting row (hints, load state) under the row it explains. */
-.settings-row-note {
-  min-height: 0;
-  gap: var(--space-1);
-  padding-top: 0;
-}
-
-.settings-row:has(+ .settings-row-note) {
-  border-bottom: 0;
-}
-
 .settings-row-label {
   display: flex;
   flex-direction: column;
