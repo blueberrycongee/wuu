@@ -142,15 +142,6 @@
   padding-block: 4px 0;
 }
 
-.side-thread-panel__error {
-  padding: 8px 12px;
-  font-size: var(--font-sm);
-  line-height: 1.5;
-  color: var(--turn-warning-text, #b1271b);
-  background: var(--surface-2, rgba(177, 39, 27, 0.05));
-  border-top: 1px solid var(--hairline-soft);
-}
-
 .side-thread-panel__footer {
   z-index: 5;
   grid-column: 1;

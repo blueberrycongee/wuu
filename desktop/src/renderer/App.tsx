@@ -5360,6 +5360,7 @@ export function App(): JSX.Element {
                 draft={sideThread.entry.draft}
                 running={sideThread.entry.streaming}
                 disabledReason={sideThread.sendDisabledReason}
+                error={sideThread.requestError}
                 queryHistorySessionID={
                   sideThread.entry.summary?.side_thread_id ?? `side:${activeThreadID}`
                 }

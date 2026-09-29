@@ -45,6 +45,19 @@ export function createInitialSideThreadStore(
   };
 }
 
+// A failed reply already shows its error in the transcript. Only failures no
+// reply carries (loading history, sending, resetting) are reported beside the
+// composer.
+export function sideThreadRequestError(
+  entry: SideThreadEntryState
+): string | undefined {
+  const error = entry.lastError;
+  const latestReply = entry.messages.findLast((message) => message.role === "assistant");
+  return latestReply?.status === "failed" && latestReply.error_message === error
+    ? undefined
+    : error;
+}
+
 export function clampSideThreadWidth(value: number): number {
   if (!Number.isFinite(value)) {
     return SIDE_THREAD_DEFAULT_WIDTH;

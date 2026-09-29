@@ -172,12 +172,6 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
         </div>
 
         <div ref={footerRef} className="side-thread-panel__footer">
-          {entry.lastError ? (
-            <div className="side-thread-panel__error" role="alert">
-              {entry.lastError}
-            </div>
-          ) : null}
-
           <div ref={composerHostRef} className="side-thread-panel__composer-host">
             {composer}
           </div>
