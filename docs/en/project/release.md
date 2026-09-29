@@ -7,9 +7,27 @@ The [release workflow](../../../.github/workflows/release.yml) publishes the mac
 `VERSION` is the product version source. Prepare a release in a clean checkout with the required [development tools](development.md):
 
 1. Add the user-visible changes to `CHANGELOG.md` under `[Unreleased]`.
-2. Run `make release-prepare` for the next UTC CalVer, or set an explicit version with `make release-prepare RELEASE_VERSION=2026.9.3`. Review the generated changes to `VERSION`, the desktop manifest and lockfile, native iOS/Android metadata, and the dated changelog section.
+2. Run `make release-prepare` for the next UTC CalVer, or set an explicit version with `make release-prepare RELEASE_VERSION=2026.9.3`. Review the generated changes to `VERSION`, the desktop manifest and lockfile, native iOS/Android metadata, and the dated changelog section. Then condense the dated section into the published release-note format below.
 3. Run `make ci release-check` on macOS and complete the relevant app-level acceptance. Commit the reviewed release change and land it on `main` through the normal review process.
 4. From that clean release checkout, run `make tag-release`. It validates the version and release notes, creates an annotated tag, and prints the exact push command. Push that tag when publication is authorized.
+
+### Release-note format
+
+The dated changelog section becomes the GitHub Release notes verbatim, so keep it short. `[Unreleased]` can stay detailed while work lands; `release-prepare` moves it into the dated section, where it is replaced with:
+
+```markdown
+## [2026.9.29] - 2026-09-29
+
+### Contributors
+
+@maintainer, @contributor
+
+### Highlights
+
+- One line per user-visible theme, at most about six bullets.
+```
+
+List the GitHub logins of authors of PRs merged since the previous tag (`gh pr list --state merged --search "merged:>=<previous tag date>"`), maintainer first. Group changes by user-visible theme instead of listing commits, name the most important fixes in one bullet, and omit test, CI, and refactor-only work. Leave out features hidden from production builds.
 
 `make tag-release` does not push anything and rejects a dirty tree or an existing local tag. The workflow independently requires the tag commit to be an ancestor of `origin/main`, all generated product versions to match the tag, and a nonempty matching changelog section. A successful local build does not bypass these checks.
 
