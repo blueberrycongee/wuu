@@ -392,13 +392,38 @@
 }
 
 /* Section actions are compact; negative block margins keep them from
- * growing the header, so every section's heading-to-group gap matches. */
+ * growing the header, so every section's heading-to-group gap matches. They
+ * sit on the title line, above a description rather than beside it. */
 .settings-section-actions {
   display: flex;
   flex: 0 0 auto;
+  align-self: flex-start;
   align-items: center;
   gap: var(--space-2);
   margin-block: calc((var(--font-ui) * 1.4 - var(--control-field-height)) / 2);
+}
+
+/* An inline form: its rows, then the actions that commit or discard them,
+ * ending on the group's edge like a dialog footer. */
+.settings-form {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.settings-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* Text fields and pickers share one width, so their edges line up down the
+ * form; numbers keep their narrower field. */
+.settings-form .settings-row-control > :is(.settings-input:not(.settings-input-num), .select-menu) {
+  width: calc(var(--font-ui) * 16);
+  max-width: 100%;
 }
 
 /* Notes below a group: font loading, save failures, list errors. */
@@ -2466,6 +2491,11 @@ button.settings-engine-expand:hover {
 
   .settings-row-control {
     justify-content: flex-start;
+  }
+
+  /* Stacked form fields span the row like other stacked pickers. */
+  .settings-form .settings-row-control > :is(.settings-input:not(.settings-input-num), .select-menu) {
+    width: 100%;
   }
 }
 

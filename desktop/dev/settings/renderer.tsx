@@ -128,7 +128,17 @@ const initialized: InitializeResult = {
   provider: providers[0]?.name ?? "", model: providers[0]?.model ?? "",
   providers,
   advanced_settings: { max_steps: 0, max_context_tokens: 0, temperature: 0, disable_auto_compact: false, context_window_tokens: 200_000, context_window_source: "provider_model_limit" },
-  general_settings: { git_attribution_enabled: true, mcp_server_enabled: Object.fromEntries(mcpServers.map((server) => [server.name, true])) },
+  general_settings: {
+    git_attribution_enabled: true,
+    mcp_server_enabled: Object.fromEntries(mcpServers.map((server) => [server.name, true])),
+    execution_environments: empty ? {} : {
+      default: "isolated",
+      profiles: {
+        isolated: { backend: "docker", image: "wuu-execution:local", workspace: "/workspace", network: "none", cpus: 2, memory_mb: 2048 },
+        [long ? "remote-build-machine-with-an-unusually-long-profile-name" : "build-box"]: { backend: "ssh", host: "build.example.test", workspace: "/srv/wuu" },
+      },
+    },
+  },
 };
 
 window.wuu = {

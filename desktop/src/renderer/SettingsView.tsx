@@ -79,7 +79,7 @@ import { ENABLE_PTC_SETTINGS, ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from
 import { AppearanceTypography } from "./AppearanceTypography";
 import { BackgroundSettings } from "./background/BackgroundSettings";
 import { ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
-import { SettingsRow } from "./SettingsRow";
+import { SettingsInputUnit, SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection, type SettingsStatusTone } from "./SettingsSection";
 import { toastErrorMessage } from "./Toast";
 import { EngineSettingsSection } from "./EngineSettingsSection";
@@ -1054,12 +1054,7 @@ function SettingsRuntimePage({
         disabled={fieldsDisabled}
       />
     );
-    // A numeric placeholder (the default) keeps its unit; a word ("Auto") does not.
-    return options.unit ? (
-      <span className="settings-input-unit" data-unit={options.unit}
-        data-unit-placeholder={/^[\d.,\s]+$/.test(options.placeholder ?? "") || undefined}
-        style={{ "--settings-unit-chars": options.unit.length } as CSSProperties}>{input}</span>
-    ) : input;
+    return options.unit ? <SettingsInputUnit unit={options.unit} placeholder={options.placeholder}>{input}</SettingsInputUnit> : input;
   };
 
   return (
