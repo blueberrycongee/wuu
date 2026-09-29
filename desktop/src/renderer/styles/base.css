@@ -144,7 +144,9 @@
   --modal-backdrop-bg: var(--wuu-color-overlay-backdrop, rgba(38, 42, 46, 0.24));
 
                                                                           
-  --success: var(--wuu-color-success, #1f9d55);
+  /* Text-safe: 5.4:1 on white, 4.8:1 on --success-soft. Additions, added files and
+     success marks all read from this one green. */
+  --success: var(--wuu-color-success, #137a3d);
   --success-soft: #eaf4e8;
   --warning: var(--wuu-color-warning, #8a5b10);
   --warning-soft: #fff3dc;
