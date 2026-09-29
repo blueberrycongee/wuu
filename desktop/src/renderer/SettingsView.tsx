@@ -78,6 +78,7 @@ export type ArchivedSessionView = {
 import { ENABLE_PTC_SETTINGS, ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
 import { BackgroundSettings } from "./background/BackgroundSettings";
+import { ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection, type SettingsStatusTone } from "./SettingsSection";
 import { toastErrorMessage } from "./Toast";
@@ -1149,6 +1150,7 @@ function SettingsRuntimePage({
           </SettingsRow>
         </SettingsGroup>
       </SettingsSection>
+      <ExecutionEnvironmentSettings value={initialized?.general_settings?.execution_environments ?? {}} disabled={fieldsDisabled} onSave={onGeneralSave} />
       {ENABLE_PTC_SETTINGS && <SettingsSection title={t("settings.ptcTitle")} testID="settings-ptc">
         <SettingsGroup>
           <SettingsRow title={t("settings.ptcEnabled")} description={t("settings.ptcDescription")}>
