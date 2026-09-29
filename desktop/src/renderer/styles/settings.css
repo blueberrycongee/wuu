@@ -2494,6 +2494,12 @@ button.settings-engine-expand:hover {
     justify-content: flex-start;
   }
 
+  /* Switches and icon actions are narrow enough to stay beside their label. */
+  .settings-row:not(:has(> .settings-row-control > :not(.settings-switch, .settings-row-actions, .settings-icon-button))) {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
   /* Stacked form fields span the row like other stacked pickers. */
   .settings-form .settings-row-control > :is(.settings-input:not(.settings-input-num), .select-menu) {
     width: 100%;
