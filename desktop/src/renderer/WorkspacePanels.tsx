@@ -61,7 +61,6 @@ import {
   WorkspaceFileTree,
   type WorkspaceFileDirtyState,
 } from "./WorkspaceFiles";
-import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
 import { WorkspaceReviewPanel } from "./WorkspaceReviewPanels";
 import { ProjectPanel } from "./ProjectPanels";
 import { confirmAction } from "./ConfirmDialog";
@@ -120,7 +119,9 @@ const WORKSPACE_TOOL_ITEMS: Array<{
 export const WORKSPACE_FILE_TREE_DEFAULT_WIDTH = 320;
 export const WORKSPACE_FILE_TREE_MIN_WIDTH = 180;
 export const WORKSPACE_FILE_TREE_MAX_WIDTH = 480;
-export const WORKSPACE_FILE_CONTENT_MIN_WIDTH = 240;
+// Code and prose need this much beside the tree; a narrower panel gives the
+// document the whole width and keeps the tree one step away.
+export const WORKSPACE_FILE_CONTENT_MIN_WIDTH = 360;
 const WORKSPACE_FILE_TREE_COLLAPSE_THRESHOLD = 140;
 const WORKSPACE_FILE_TREE_WIDTH_STEP = 24;
 const WORKSPACE_FILE_TREE_WIDTH_KEY = "wuu.desktop.fileTreeWidth";
@@ -293,6 +294,10 @@ export function WorkspaceRightPanel({
   const stackedFileView = !compactNavigation && fileSplitStacked && activeTab?.kind === "file";
   // The saved visibility is untouched; a stacked document only sets it aside.
   const fileTreeDocked = fileTreeVisible && !stackedFileView;
+  // The Files tab is the tree itself; beside a document the tree follows the
+  // saved choice.
+  const fileTreeShown = compactNavigation || activeTab?.kind === "files" || fileTreeDocked;
+  const fileTreeBesideDocument = activeTab?.kind === "file" && fileTreeDocked && !compactNavigation;
   const [draggingFileTree, setDraggingFileTree] = useState(false);
   const [fileTreeDropSide, setFileTreeDropSide] = useState<WorkspaceFileTreeSide | undefined>(undefined);
   const [bodyPrewarmed, setBodyPrewarmed] = useState(false);
@@ -830,7 +835,7 @@ export function WorkspaceRightPanel({
         <>
           <div className={`workspace-panel-body${activeTab ? "" : " picker"}`}>
             <div
-              className={`workspace-files-split${resizingFileSplit ? " resizing" : ""}${fileTreeDocked ? "" : " tree-hidden"}${draggingFileTree ? " tree-dragging" : ""}`}
+              className={`workspace-files-split${resizingFileSplit ? " resizing" : ""}${fileTreeShown ? "" : " tree-hidden"}${draggingFileTree ? " tree-dragging" : ""}`}
               data-wuu-component="workspace-files"
               data-tree-drop-side={fileTreeDropSide}
               data-tree-side={fileTreeSide}
@@ -860,9 +865,6 @@ export function WorkspaceRightPanel({
                       }
                     />
                   ))}
-                  {activeTab?.kind === "files" ? (
-                    <WorkspacePanelEmpty title={t("workspace.selectFile")} />
-                  ) : null}
                 </div>
                 {focusedComposer && activeTab?.kind === "file" ? (
                   <div className="workspace-document-composer" data-testid="workspace-document-composer">
@@ -872,7 +874,7 @@ export function WorkspaceRightPanel({
               </section>
               <div
                 className="workspace-files-resizer"
-                hidden={!fileTreeDocked}
+                hidden={!fileTreeBesideDocument}
                 role="separator"
                 aria-label={t("workspace.resizeFileContentTree")}
                 aria-orientation="vertical"
@@ -885,37 +887,40 @@ export function WorkspaceRightPanel({
                 onKeyDown={handleFileSplitKeyDown}
               />
               <section
-                className="workspace-files-tree"
+                className={`workspace-files-tree${fileTreeBesideDocument ? " dockable" : ""}`}
                 data-wuu-component="workspace-file-tree"
                 aria-label={t("workspace.fileTree")}
-                hidden={!compactNavigation && !fileTreeDocked}
+                hidden={!fileTreeShown}
                 ref={fileTreeRef}
               >
-                <div
-                  className="workspace-file-tree-drag-handle"
-                  role="button"
-                  tabIndex={0}
-                  draggable
-                  aria-label={t("workspace.dragFileTree")}
-                  title={t("workspace.dragFileTree")}
-                  onDragStart={startFileTreeDockDrag}
-                  onDragEnd={finishFileTreeDockDrag}
-                  onKeyDown={handleFileTreeDockKeyDown}
-                >
-                  <GripHorizontal size={15} strokeWidth={1.8} />
-                </div>
+                {/* Docking sides only mean something beside a document. */}
+                {fileTreeBesideDocument ? (
+                  <div
+                    className="workspace-file-tree-drag-handle"
+                    role="button"
+                    tabIndex={0}
+                    draggable
+                    aria-label={t("workspace.dragFileTree")}
+                    title={t("workspace.dragFileTree")}
+                    onDragStart={startFileTreeDockDrag}
+                    onDragEnd={finishFileTreeDockDrag}
+                    onKeyDown={handleFileTreeDockKeyDown}
+                  >
+                    <GripHorizontal className="icon-sm" />
+                  </div>
+                ) : null}
                 <WorkspaceFileTree
                   activeContext={workspaceContext}
                   open={
                     open &&
-                    (compactNavigation || fileTreeVisible) &&
+                    fileTreeShown &&
                     (activeTab?.kind === "files" || activeTab?.kind === "file")
                   }
                   selectedFilePath={selectedFilePath}
                   onOpenFile={onOpenFile}
                 />
               </section>
-              {!fileTreeDocked ? (
+              {activeTab?.kind === "file" && !fileTreeDocked ? (
                 <button
                   className={`icon-button workspace-file-tree-reveal ${fileTreeSide}`}
                   type="button"

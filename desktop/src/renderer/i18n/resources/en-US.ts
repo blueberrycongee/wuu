@@ -1606,7 +1606,7 @@ export const enUS = {
   "workspace.files.empty": "No files",
   "workspace.files.truncated": "This directory has too many items; only some are shown",
   "workspace.files.readDirectoryFailed": "Failed to read folder",
-  "workspace.files.searchPlaceholder": "Search…",
+  "workspace.files.searchPlaceholder": "Search files…",
   "workspace.files.options": "Options",
   "workspace.files.copyPath": "Copy path",
   "workspace.files.copyRelativePath": "Copy relative path",

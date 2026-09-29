@@ -669,7 +669,7 @@ describe("WorkspaceRightPanel", () => {
   it("clamps the tree width so the file content keeps usable space", () => {
     expect(clampWorkspaceFileTreeWidth(100)).toBe(WORKSPACE_FILE_TREE_MIN_WIDTH);
     expect(clampWorkspaceFileTreeWidth(900)).toBe(WORKSPACE_FILE_TREE_MAX_WIDTH);
-    expect(clampWorkspaceFileTreeWidth(480, 600)).toBe(360);
+    expect(clampWorkspaceFileTreeWidth(480, 600)).toBe(240);
   });
 
   it("temporarily shrinks the file tree when the panel gets narrow", async () => {
@@ -714,7 +714,7 @@ describe("WorkspaceRightPanel", () => {
       expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe("180px");
       expect(window.localStorage.getItem("wuu.desktop.fileTreeWidth")).toBe("320");
 
-      panelWidth = 600;
+      panelWidth = 700;
       act(() => resizeCallback?.([], {} as ResizeObserver));
       expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe("320px");
     } finally {
@@ -822,11 +822,11 @@ describe("WorkspaceRightPanel", () => {
       const split = container!.querySelector<HTMLElement>(".workspace-files-split")!;
       Object.defineProperty(split, "getBoundingClientRect", {
         configurable: true,
-        value: () => ({ width: 479 }),
+        value: () => ({ width: 600 }),
       });
       act(() => resizeCallback?.([], {} as ResizeObserver));
       expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe(
-        `${479 - WORKSPACE_FILE_CONTENT_MIN_WIDTH}px`,
+        `${600 - WORKSPACE_FILE_CONTENT_MIN_WIDTH}px`,
       );
     } finally {
       if (originalResizeObserver) {

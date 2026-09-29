@@ -1603,7 +1603,7 @@ export const zhCN = {
   "workspace.files.empty": "没有文件",
   "workspace.files.truncated": "此目录内容过多，仅显示部分条目",
   "workspace.files.readDirectoryFailed": "读取文件夹失败",
-  "workspace.files.searchPlaceholder": "搜索…",
+  "workspace.files.searchPlaceholder": "搜索文件…",
   "workspace.files.options": "选项",
   "workspace.files.copyPath": "复制路径",
   "workspace.files.copyRelativePath": "复制相对路径",

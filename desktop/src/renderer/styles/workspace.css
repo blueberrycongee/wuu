@@ -896,11 +896,6 @@
   padding: 10px 0;
 }
 
-.workspace-right-panel.compact-navigation[data-wuu-view="files"]
-  .workspace-file-tree-drag-handle {
-  display: none;
-}
-
 .workspace-right-panel.compact-navigation[data-wuu-view="file"]
   .workspace-files-content {
   grid-column: 1;
@@ -996,7 +991,7 @@
   position: absolute;
   inset: 0 auto 0 0;
   width: 1px;
-  background: var(--surface-2);
+  background: var(--hairline-soft);
   content: "";
   transition:
     background var(--motion-fast) var(--ease-out),
@@ -1042,33 +1037,31 @@ html.resizing-workspace-file-split * {
   margin-right: 0;
 }
 
+/* Beside a document the tree can move to the other side: the handle ends the
+ * search row, in the column the field leaves free for it. */
 .workspace-file-tree-drag-handle {
   display: grid;
   position: absolute;
   z-index: 1;
-  inset-block-start: 11px;
-  inset-inline-end: 8px;
-  width: 32px;
-  height: 26px;
+  inset-block-start: 10px;
+  inset-inline-end: 4px;
+  width: var(--control-size-toolbar);
+  height: var(--control-field-height);
   place-items: center;
-  border-radius: var(--radius-xs);
-  color: var(--ink-muted);
+  border-radius: var(--radius-sm);
+  color: var(--ink-tertiary);
   cursor: grab;
-  opacity: 0.52;
-  outline: 0;
   user-select: none;
   -webkit-app-region: no-drag;
   transition:
     background var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out),
-    opacity var(--motion-fast) var(--ease-out);
+    color var(--motion-fast) var(--ease-out);
 }
 
 .workspace-file-tree-drag-handle:hover,
 .workspace-file-tree-drag-handle:focus-visible {
-  background: var(--ink-overlay-5);
+  background: var(--ink-overlay-4);
   color: var(--ink);
-  opacity: 1;
 }
 
 .workspace-file-tree-drag-handle:active {
@@ -2489,30 +2482,28 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   background: var(--paper);
 }
 
+/* The side inset follows the panel, not the window. */
 .workspace-markdown-reading {
   width: min(100%, 820px);
   min-height: 100%;
   color: var(--ink);
   margin: 0 auto;
-  padding: 26px clamp(18px, 4vw, 44px) 56px;
+  padding: var(--space-6) clamp(var(--pane-inset), 6cqi, 44px) 56px;
 }
 
 .workspace-markdown-reading .rich-content {
   gap: 13px;
-  font-size: 15px;
   line-height: 1.68;
 }
 
 .workspace-markdown-reading .rich-heading {
   color: var(--ink);
-  font-size: 19px;
   font-weight: var(--weight-semibold);
   line-height: 1.35;
 }
 
 /* Heading hierarchy: h1 = page title, h2 = section, h3+ = sub-head. */
 .workspace-markdown-reading .rich-heading--h1 {
-  font-size: 28px;
   font-weight: var(--weight-bold);
   letter-spacing: -0.01em;
   padding-bottom: 8px;
@@ -2520,23 +2511,15 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 }
 
 .workspace-markdown-reading .rich-heading--h2 {
-  font-size: 21px;
   font-weight: var(--weight-semibold);
   letter-spacing: -0.005em;
   padding-bottom: 4px;
   border-bottom: 1px solid var(--rule);
 }
 
-.workspace-markdown-reading .rich-heading--h3 {
-  font-size: 17px;
-  font-weight: var(--weight-semibold);
-}
-
 .workspace-markdown-reading .rich-heading--h4,
 .workspace-markdown-reading .rich-heading--h5,
 .workspace-markdown-reading .rich-heading--h6 {
-  font-size: 15px;
-  font-weight: var(--weight-semibold);
   color: var(--ink-soft);
 }
 
@@ -2604,7 +2587,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   --rich-code-line-height: 1.55;
   margin: 14px 0;
   border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
+  border-radius: var(--message-flow-card-radius);
   background: var(--surface-2);
   overflow: hidden;
 }
@@ -2615,7 +2598,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   background: transparent;
   color: var(--ink);
   font-family: var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", monospace);
-  font-size: 12.5px;
   line-height: var(--rich-code-line-height);
   white-space: pre;
   overflow-x: auto;
@@ -2671,13 +2653,12 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   margin: 14px 0;
   overflow-x: auto;
   border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
+  border-radius: var(--message-flow-card-radius);
 }
 
 .workspace-markdown-reading .rich-table-wrap table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 14px;
 }
 
 .workspace-markdown-reading .rich-table-wrap th,
