@@ -383,6 +383,7 @@ export function SkillsCatalog({
           skills={pluginSkills(selectedPlugin)}
           pluginName={pluginName}
           packageMutation={packageMutation}
+          reloading={state.loading}
           canUpdate={Boolean(onUpdateExtensionPackage)}
           canRemove={Boolean(onRemovePluginPackage)}
           onBack={() => {
@@ -392,6 +393,7 @@ export function SkillsCatalog({
           }}
           onToggle={() => void updateExtensionPackage(selectedPlugin, pluginToggle(selectedPlugin).action)}
           onPrimaryAction={(action) => void updateExtensionPackage(selectedPlugin, action)}
+          onReload={() => void refreshSkills()}
           onPreviewSkill={setPreviewSkill}
           onMoreActions={(button) => {
             const bounds = button.getBoundingClientRect();
@@ -661,67 +663,26 @@ function extensionPackageActionLabel(
   return t("skills.pluginDisable");
 }
 
-type PluginPermissionGroup = {
-  key: string;
-  labelKey: TranslationKey;
-  permissions: { code: string; labelKey: TranslationKey }[];
-};
-
-// Mirrors the closed permission catalog owned by the runtime. Groups turn
-// raw manifest codes into scannable, human-language rows; unknown codes fall
-// back to a raw "other" group so the detail view never hides a grant.
-const PLUGIN_PERMISSION_GROUPS: readonly PluginPermissionGroup[] = [
-  {
-    key: "files",
-    labelKey: "skills.permissionGroupFiles",
-    permissions: [
-      { code: "files.read", labelKey: "skills.permissionFilesRead" },
-      { code: "files.write", labelKey: "skills.permissionFilesWrite" },
-    ],
-  },
-  {
-    key: "network",
-    labelKey: "skills.permissionGroupNetwork",
-    permissions: [
-      { code: "network.connect", labelKey: "skills.permissionNetworkConnect" },
-    ],
-  },
-  {
-    key: "session",
-    labelKey: "skills.permissionGroupSession",
-    permissions: [
-      { code: "session.read", labelKey: "skills.permissionSessionRead" },
-      { code: "session.write", labelKey: "skills.permissionSessionWrite" },
-    ],
-  },
-  {
-    key: "tools",
-    labelKey: "skills.permissionGroupTools",
-    permissions: [
-      { code: "tools.define", labelKey: "skills.permissionToolsDefine" },
-      { code: "tools.intercept", labelKey: "skills.permissionToolsIntercept" },
-      { code: "commands.execute", labelKey: "skills.permissionCommandsExecute" },
-    ],
-  },
-  {
-    key: "system",
-    labelKey: "skills.permissionGroupSystem",
-    permissions: [
-      { code: "process.spawn", labelKey: "skills.permissionProcessSpawn" },
-      { code: "shell.env", labelKey: "skills.permissionShellEnv" },
-    ],
-  },
-  {
-    key: "desktop",
-    labelKey: "skills.permissionGroupDesktop",
-    permissions: [
-      { code: "accessibility.read", labelKey: "skills.permissionAccessibilityRead" },
-      { code: "accessibility.control", labelKey: "skills.permissionAccessibilityControl" },
-      { code: "screen.capture", labelKey: "skills.permissionScreenCapture" },
-      { code: "app.activate", labelKey: "skills.permissionAppActivate" },
-      { code: "input.synthesize", labelKey: "skills.permissionInputSynthesize" },
-    ],
-  },
+// Mirrors the closed permission catalog owned by the runtime, in an order
+// that keeps related grants together. Each label names its own object, so
+// no category column is needed; unknown codes show as the raw code so the
+// page never hides a grant.
+const PLUGIN_PERMISSIONS: readonly { code: string; labelKey: TranslationKey }[] = [
+  { code: "files.read", labelKey: "skills.permissionFilesRead" },
+  { code: "files.write", labelKey: "skills.permissionFilesWrite" },
+  { code: "network.connect", labelKey: "skills.permissionNetworkConnect" },
+  { code: "session.read", labelKey: "skills.permissionSessionRead" },
+  { code: "session.write", labelKey: "skills.permissionSessionWrite" },
+  { code: "tools.define", labelKey: "skills.permissionToolsDefine" },
+  { code: "tools.intercept", labelKey: "skills.permissionToolsIntercept" },
+  { code: "commands.execute", labelKey: "skills.permissionCommandsExecute" },
+  { code: "process.spawn", labelKey: "skills.permissionProcessSpawn" },
+  { code: "shell.env", labelKey: "skills.permissionShellEnv" },
+  { code: "accessibility.read", labelKey: "skills.permissionAccessibilityRead" },
+  { code: "accessibility.control", labelKey: "skills.permissionAccessibilityControl" },
+  { code: "screen.capture", labelKey: "skills.permissionScreenCapture" },
+  { code: "app.activate", labelKey: "skills.permissionAppActivate" },
+  { code: "input.synthesize", labelKey: "skills.permissionInputSynthesize" },
 ];
 
 // Trust follows source identity, so the origin is the one provenance fact
@@ -777,17 +738,20 @@ function pluginContributions(
 }
 
 // The plugin page answers what it does, whether it runs, and what it adds.
-// Permissions appear only while someone is deciding whether to trust it.
+// Permissions appear only while someone is deciding whether to trust it,
+// right under the notice that asks for that decision.
 function PluginDetailPage({
   record,
   skills,
   pluginName,
   packageMutation,
+  reloading,
   canUpdate,
   canRemove,
   onBack,
   onToggle,
   onPrimaryAction,
+  onReload,
   onPreviewSkill,
   onMoreActions,
 }: {
@@ -795,11 +759,13 @@ function PluginDetailPage({
   skills: readonly SkillSummary[];
   pluginName: (id: string) => string;
   packageMutation: string;
+  reloading: boolean;
   canUpdate: boolean;
   canRemove: boolean;
   onBack: () => void;
   onToggle: () => void;
   onPrimaryAction: (action: ExtensionPackageAction) => void;
+  onReload: () => void;
   onPreviewSkill: (skill: SkillSummary) => void;
   onMoreActions: (button: HTMLButtonElement) => void;
 }): JSX.Element {
@@ -816,16 +782,35 @@ function PluginDetailPage({
   const requestedPermissions = (primaryAction === "promote_update"
     ? record.pending_update?.requested_permissions
     : record.requested_permissions) ?? [];
-  const groupedPermissions = PLUGIN_PERMISSION_GROUPS
-    .map((group) => ({ group, present: group.permissions.filter((permission) => requestedPermissions.includes(permission.code)) }))
-    .filter(({ present }) => present.length > 0);
-  const unknownPermissions = requestedPermissions.filter(
-    (permission) => !PLUGIN_PERMISSION_GROUPS.some((group) => group.permissions.some((candidate) => candidate.code === permission)),
-  );
-  const notices: { key: string; tone: "warning" | "error"; text: string }[] = [
+  const permissionRows = [
+    ...PLUGIN_PERMISSIONS
+      .filter((permission) => requestedPermissions.includes(permission.code))
+      .map((permission) => ({ code: permission.code, label: t(permission.labelKey) })),
+    ...requestedPermissions
+      .filter((code) => !PLUGIN_PERMISSIONS.some((permission) => permission.code === code))
+      .map((code) => ({ code, label: code })),
+  ];
+  const notices: { key: string; tone: "warning" | "error"; text: string; detail?: string; action?: ReactNode }[] = [
     ...(approval ? [{ key: "approval", tone: "warning" as const, text: record.provenance.official ? approval : `${pluginSourceLabel(record, t)} · ${approval}` }] : []),
     ...(record.pending_update ? [{ key: "update", tone: "warning" as const, text: t("skills.pluginUpdateReady") }] : []),
-    ...(record.runtime_state === "failed" && record.last_error ? [{ key: "failed", tone: "error" as const, text: record.last_error }] : []),
+    // A start failure says what happened in words, keeps the process's own
+    // message as the detail, and offers the reload that starts it again.
+    ...(record.runtime_state === "failed" ? [{
+      key: "failed",
+      tone: "error" as const,
+      text: t("skills.pluginStatusFailed"),
+      detail: record.last_error,
+      action: (
+        <button
+          type="button"
+          className="settings-button"
+          disabled={reloading || Boolean(packageMutation)}
+          onClick={onReload}
+        >
+          {t("skills.pluginRetryStart")}
+        </button>
+      ),
+    }] : []),
     ...(record.activation_issues ?? []).map((issue) => ({
       key: `${issue.kind}:${issue.related_plugin_id}`,
       tone: issue.kind === "missing_requirement" ? "error" as const : "warning" as const,
@@ -844,12 +829,10 @@ function PluginDetailPage({
         </button>
       </nav>
 
-      <header className="plugin-page-hero">
-        <PluginMark record={record} className="skill-artwork skill-artwork-plugin-brand" />
-        <div className="plugin-page-hero-copy">
-          <h1>{record.name}</h1>
-          {record.description ? <p>{record.description}</p> : null}
-        </div>
+      <header className="plugin-page-header">
+        <PluginMark record={record} className="plugin-page-mark" />
+        <h1 className="plugin-page-title">{record.name}</h1>
+        {record.description ? <p className="plugin-page-tagline">{record.description}</p> : null}
         <div className="settings-detail-actions">
           {hasMoreActions ? (
             <button
@@ -893,10 +876,24 @@ function PluginDetailPage({
           {notices.map((notice) => (
             <div key={notice.key} className={`plugin-detail-notice is-${notice.tone}`} role={notice.tone === "error" ? "alert" : "status"}>
               {notice.tone === "error" ? <AlertCircle className="icon-sm" aria-hidden="true" /> : <AlertTriangle className="icon-sm" aria-hidden="true" />}
-              <span>{notice.text}</span>
+              <span className="plugin-detail-notice-text">{notice.text}</span>
+              {notice.detail ? <span className="plugin-detail-notice-detail">{notice.detail}</span> : null}
+              {notice.action}
             </div>
           ))}
         </div>
+      ) : null}
+
+      {deciding && permissionRows.length > 0 ? (
+        <SettingsSection title={t("skills.pluginPermissions")}>
+          <SettingsGroup>
+            {permissionRows.map((permission) => (
+              <div className="catalog-row plugin-permission-row" key={permission.code} title={permission.code}>
+                <span className="catalog-row-title">{permission.label}</span>
+              </div>
+            ))}
+          </SettingsGroup>
+        </SettingsSection>
       ) : null}
 
       {record.long_description ? <p className="plugin-page-about">{record.long_description}</p> : null}
@@ -907,16 +904,16 @@ function PluginDetailPage({
             {contributions.map((item) => {
               const content = (
                 <>
-                  <span className="plugin-contribution-icon">{item.icon}</span>
-                  <span className="plugin-contribution-title">{item.title}</span>
-                  <span className="plugin-contribution-kind">{item.kind}</span>
+                  <span className="catalog-row-mark">{item.icon}</span>
+                  <span className="catalog-row-title">{item.title}</span>
+                  <span className="catalog-row-meta">{item.kind}</span>
                   {item.onOpen ? <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" /> : null}
                 </>
               );
               return item.onOpen ? (
-                <button key={item.key} type="button" className="plugin-contribution" onClick={item.onOpen}>{content}</button>
+                <button key={item.key} type="button" className="catalog-row" onClick={item.onOpen}>{content}</button>
               ) : (
-                <div key={item.key} className="plugin-contribution">{content}</div>
+                <div key={item.key} className="catalog-row plugin-contribution">{content}</div>
               );
             })}
           </SettingsGroup>
@@ -924,25 +921,6 @@ function PluginDetailPage({
       ) : null}
 
       <PluginSettingsEditor plugin={record} title={t("skills.pluginSettingsLabel")} />
-
-      {deciding && requestedPermissions.length > 0 ? (
-        <SettingsSection title={t("skills.pluginPermissions")}>
-          <SettingsGroup>
-            {groupedPermissions.map(({ group, present }) => (
-              <div className="plugin-permission-row" key={group.key}>
-                <span className="plugin-permission-group-label">{t(group.labelKey)}</span>
-                <span className="plugin-permission-values">{present.map((permission) => t(permission.labelKey)).join("、")}</span>
-              </div>
-            ))}
-            {unknownPermissions.length > 0 ? (
-              <div className="plugin-permission-row">
-                <span className="plugin-permission-group-label">{t("skills.permissionGroupOther")}</span>
-                <span className="plugin-permission-values">{unknownPermissions.join("、")}</span>
-              </div>
-            ) : null}
-          </SettingsGroup>
-        </SettingsSection>
-      ) : null}
 
       {record.developer ? <p className="plugin-page-footnote">{t("skills.pluginDeveloper", { name: record.developer })}</p> : null}
     </>

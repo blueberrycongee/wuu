@@ -336,7 +336,7 @@ function PluginSettingControl({
           </>
         ) : saving ? t("skills.pluginSettingSaving") : setting.apply === "restart" ? (
           saved ? t("skills.pluginSettingRestartSaved") : t("skills.pluginSettingRestart")
-        ) : saved ? t("skills.pluginSettingLiveSaved") : null}
+        ) : null}
       </div>
     </div>
   );

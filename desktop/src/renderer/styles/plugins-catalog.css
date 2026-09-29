@@ -180,53 +180,58 @@ button.catalog-row,
   }
 }
 
-/* Alerts are the one boxed element in this panel: they carry a state, not a
- * grouping, so a soft tone plus an icon replaces bare colored text. */
+/* Notices carry a state, not a grouping: a soft status tint with the
+ * symbol, the message, an optional detail such as a process's own error,
+ * and the action that recovers when there is one. */
 .plugin-detail-notices {
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .plugin-detail-notice {
-  display: flex;
+  display: grid;
   min-width: 0;
-  align-items: flex-start;
-  gap: 8px;
-  border: 1px solid color-mix(in srgb, var(--warning) 32%, transparent);
+  grid-template-columns: var(--icon-size-sm) minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-2);
   border-radius: var(--radius-sm);
-  padding: 10px 12px;
+  padding: var(--compact-padding-block) var(--compact-padding-inline);
   background: var(--warning-soft);
   color: var(--ink);
-  font-size: var(--font-sm);
+  font-size: var(--font-ui);
   line-height: 1.5;
 }
 
 .plugin-detail-notice.is-error {
-  border-color: color-mix(in srgb, var(--danger) 32%, transparent);
   background: var(--danger-soft);
 }
 
-/* Centered on the first line, wherever the text wraps. */
-.plugin-detail-notice svg {
-  flex: none;
-  margin-top: calc((var(--font-sm) * 1.5 - var(--icon-size-sm)) / 2);
+.plugin-detail-notice > svg {
+  grid-column: 1;
+  grid-row: 1;
   color: var(--warning);
 }
 
-.plugin-detail-notice.is-error svg {
+.plugin-detail-notice.is-error > svg {
   color: var(--danger);
 }
 
-.plugin-detail-notice span {
+.plugin-detail-notice-text,
+.plugin-detail-notice-detail {
+  grid-column: 2;
   min-width: 0;
   overflow-wrap: anywhere;
   user-select: text;
 }
 
-.plugin-permission-group-label {
-  color: var(--ink-muted);
+.plugin-detail-notice-detail {
+  color: var(--ink-soft);
   font-size: var(--font-sm);
-  line-height: 1.6;
+}
+
+.plugin-detail-notice > .settings-button {
+  grid-column: 3;
+  grid-row: 1 / span 2;
 }
 
 /* Plugin settings read as one settings group: label and description on the
@@ -480,46 +485,74 @@ button.catalog-row,
 
 /* --- Plugin page ------------------------------------------------------------- */
 
-.plugin-page-hero {
+/* The page's title row: the plugin's glyph (the same mark as its catalog
+ * row, without a tile), the name, and the switch or the decision on the
+ * name's line; the tagline sits under the name. */
+.plugin-page-header {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--space-4);
+  column-gap: var(--space-3);
   margin-top: calc(var(--settings-gap) * -0.5);
 }
 
-.plugin-page-hero > .skill-artwork {
-  --settings-mark-size: 56px;
-  border-radius: var(--radius-sm);
-}
-
-.plugin-page-hero > .skill-artwork svg {
-  width: 26px;
-  height: 26px;
-}
-
-.plugin-page-hero-copy {
+.plugin-page-mark {
   display: grid;
-  min-width: 0;
-  gap: 2px;
+  width: var(--icon-size-xl);
+  height: var(--icon-size-xl);
+  grid-column: 1;
+  grid-row: 1;
+  place-items: center;
+  color: var(--ink-soft);
 }
 
-.plugin-page-hero h1 {
-  overflow: hidden;
+.plugin-page-mark svg,
+.plugin-page-mark .plugin-icon-themed {
+  width: var(--icon-size-xl);
+  height: var(--icon-size-xl);
+}
+
+.plugin-page-mark .plugin-icon-asset {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.plugin-page-title {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
   margin: 0;
   color: var(--ink-strong);
   font-size: var(--font-heading);
   font-weight: var(--weight-semibold);
   line-height: 1.3;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
-.plugin-page-hero p {
-  margin: 0;
+.plugin-page-tagline {
+  grid-column: 2 / -1;
+  grid-row: 2;
+  max-width: 60ch;
+  margin: var(--space-1) 0 0;
   color: var(--ink-soft);
   font-size: var(--font-ui);
   line-height: 1.5;
+}
+
+.plugin-page-header > .settings-detail-actions {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+/* A text decision takes its own line under the tagline in a narrow column
+ * (the shared detail-actions rule); the switch and icons stay beside the
+ * name. */
+@container settings-page (max-width: 32em) {
+  .plugin-page-header > .settings-detail-actions:has(> .settings-button:not(.settings-icon-button)) {
+    grid-row: 3;
+    margin-top: var(--space-3);
+  }
 }
 
 .plugin-page-about {
@@ -536,72 +569,14 @@ button.catalog-row,
   font-size: var(--font-sm);
 }
 
-/* What the plugin adds: one row per page, command, skill, or theme. Rows
- * that open nothing keep the chevron's column (its box less the tip inset),
- * so every kind label ends on one axis. */
-.plugin-contribution {
-  display: grid;
-  min-width: 0;
+/* What the plugin adds and what it asks to do are rows without an open
+ * target unless they open something; they keep the row height. */
+.catalog-row:is(.plugin-contribution, .plugin-permission-row) {
   min-height: calc(var(--control-field-height) + var(--space-3) * 2);
-  grid-template-columns: auto minmax(0, 1fr) auto calc(var(--icon-size) * (1 - var(--chevron-tip-inset)));
-  align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-  border: 0;
-  border-bottom: 1px solid var(--hairline-soft);
   padding: var(--space-3) 0;
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-  text-align: left;
+  cursor: default;
 }
 
-.plugin-contribution:last-child {
-  border-bottom: 0;
-}
-
-.plugin-contribution-icon {
-  display: grid;
-  color: var(--ink-soft);
-  place-items: center;
-}
-
-.plugin-contribution-title {
-  overflow: hidden;
-  font-size: var(--font-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.plugin-contribution-kind {
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  white-space: nowrap;
-}
-
-button.plugin-contribution:hover .settings-disclosure-chevron {
-  color: var(--ink);
-}
-
-/* Shown only while deciding whether to trust a plugin. The label shares the
- * first baseline of a value that may wrap; the line pair stays centered in
- * the row. */
-.plugin-permission-row {
-  display: grid;
-  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
-  grid-template-columns: minmax(7em, max-content) minmax(0, 1fr);
-  align-content: center;
-  align-items: baseline;
-  gap: var(--space-4);
-  border-bottom: 1px solid var(--hairline-soft);
-  padding-block: var(--space-3);
-}
-
-.plugin-permission-row:last-child {
-  border-bottom: 0;
-}
-
-.plugin-permission-values {
-  color: var(--ink);
-  font-size: var(--font-ui);
+.plugin-permission-row > .catalog-row-title {
+  grid-column: 1 / -1;
 }

@@ -64,7 +64,8 @@ describe("PluginSettingsEditor", () => {
       key: "feature.enabled",
       value: true,
     });
-    expect(field("feature.enabled").textContent).toContain("已保存并立即生效");
+    // A live setting already shows its new value; only a pending restart is worth a line.
+    expect(field("feature.enabled").querySelector(".plugin-setting-status")?.textContent).toBe("");
 
     const numberInput = field("retry.count").querySelector<HTMLInputElement>("input")!;
     await changeInput(numberInput, "8");
@@ -102,7 +103,7 @@ describe("PluginSettingsEditor", () => {
       value: "Unsaved draft",
     }));
     expect(input.value).toBe("Unsaved draft");
-    expect(field("display.name").textContent).toContain("已保存并立即生效");
+    expect(field("display.name").querySelector(".plugin-setting-status")?.textContent).toBe("");
   });
 
   it("shows read API errors with a retry action", async () => {
