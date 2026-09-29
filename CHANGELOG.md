@@ -22,8 +22,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   start conversations in isolated worktrees, and keep pasted attachments in a tray.
 - Faster long sessions: less restore and streaming overhead, steadier scrolling,
   and cheaper session switching.
-- Optional programmatic tool calling, on-demand browser tools, and a process tool
-  for background commands.
+- On-demand browser tools and a process tool for background commands.
 - Fixes for automation dispatch after restart, image attachments across compaction,
   Git status paths, worktree binding, remote relay auth, and safe mode.
 

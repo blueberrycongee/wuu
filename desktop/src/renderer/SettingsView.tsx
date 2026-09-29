@@ -75,7 +75,7 @@ export type ArchivedSessionView = {
   archive_project_id?: string;
   archive_project_name?: string;
 };
-import { ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
+import { ENABLE_PTC_SETTINGS, ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
 import { BackgroundSettings } from "./background/BackgroundSettings";
 import { SettingsRow } from "./SettingsRow";
@@ -1149,7 +1149,7 @@ function SettingsRuntimePage({
           </SettingsRow>
         </SettingsGroup>
       </SettingsSection>
-      <SettingsSection title={t("settings.ptcTitle")} testID="settings-ptc">
+      {ENABLE_PTC_SETTINGS && <SettingsSection title={t("settings.ptcTitle")} testID="settings-ptc">
         <SettingsGroup>
           <SettingsRow title={t("settings.ptcEnabled")} description={t("settings.ptcDescription")}>
             <button className="settings-switch" type="button" role="switch"
@@ -1185,7 +1185,7 @@ function SettingsRuntimePage({
           </SettingsRow>
           {ptcError ? <p className="settings-error" role="alert">{ptcError}</p> : null}
         </SettingsGroup>
-      </SettingsSection>
+      </SettingsSection>}
       <SettingsSection title={t("settings.sectionGit")} testID="settings-git">
         <SettingsGroup>
           <SettingsRow
