@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MarkdownContent } from "./RichContent";
-import { fileSelectionModelRange, fileSelectionRevision, fileSelectionSource, findFileSelectionDOMAnchor, mapFileDOMSelection } from "./FileSelectionMapping";
+import { fileSelectionLineIndex, fileSelectionModelRange, fileSelectionRevision, fileSelectionSource, findFileSelectionDOMAnchor, mapFileDOMSelection } from "./FileSelectionMapping";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -58,10 +58,15 @@ describe("file source mapping", () => {
 
   it("maps Monaco's normalized coordinates back to mixed line endings and a hidden BOM", () => {
     const text = "\uFEFFfirst\r\nsecond\nthird\rfourth";
-    const range = fileSelectionModelRange(text, { startLineNumber: 1, startColumn: 1, endLineNumber: 4, endColumn: 3 })!;
-    const source = fileSelectionSource("/repo", "mixed.txt", text, range)!;
+    const modelRange = { startLineNumber: 1, startColumn: 1, endLineNumber: 4, endColumn: 3 };
+    const index = fileSelectionLineIndex(text);
+    const range = fileSelectionModelRange(text, modelRange, index)!;
+    const source = fileSelectionSource("/repo", "mixed.txt", text, range, fileSelectionRevision(text), index)!;
+    expect(range).toEqual(fileSelectionModelRange(text, modelRange));
+    expect(source).toEqual(fileSelectionSource("/repo", "mixed.txt", text, range));
     expect(source.quote).toBe("first\r\nsecond\nthird\rfo");
     expect(source).toMatchObject({ start_line: 1, start_column: 2, end_line: 4, end_column: 3 });
+    expect(fileSelectionModelRange(text, { ...modelRange, endLineNumber: 2, endColumn: 20 }, index)).toBeNull();
   });
 
   it("rejects selections crossing outside the preview and unmapped controls", () => {

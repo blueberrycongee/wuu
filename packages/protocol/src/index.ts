@@ -1776,6 +1776,7 @@ export type SideThreadMessage = {
   side_thread_id: string;
   role: "user" | "assistant";
   text: string;
+  selection?: SideThreadSelection;
   // Canonical assistant/process items rendered by the shared TurnView.
   // Absent on legacy text-only side-thread records.
   items?: ThreadItem[];
@@ -1784,6 +1785,10 @@ export type SideThreadMessage = {
   error_message?: string;
   created_at: string;
 };
+
+export type SideThreadSelection =
+  | { type: "response"; response: ResponseSelection }
+  | { type: "file"; file: FileSelectionSource };
 
 // Opening a side thread is lazy: if no side thread exists for this main
 // thread yet, `openSideThread` returns `summary: null` and the side panel
@@ -1802,6 +1807,7 @@ export type SideThreadSendParams = {
   main_thread_id: string;
   // The user's prompt. Empty prompts are rejected by the IPC layer.
   prompt: string;
+  selection?: SideThreadSelection;
 };
 
 export type SideThreadSendResult = {

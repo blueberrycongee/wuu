@@ -391,7 +391,7 @@ describe("workspace file tabs", () => {
     ]);
     expect(textarea.value).toBe("Discuss this section");
     expect(selectionActions!.comments).toHaveLength(1);
-    expect(container.querySelector(".file-selection-tag")).not.toBeNull();
+    expect(container.querySelector(".composer-selection-chip")).not.toBeNull();
   });
 
   it("submits a selection edit without consuming the main draft or pending comments", async () => {

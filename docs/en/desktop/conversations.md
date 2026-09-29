@@ -42,7 +42,7 @@ Use Stop to interrupt a task. Stopping does not undo commands or file edits, and
 
 ## Quote part of a response
 
-Select text in a completed assistant response, then choose **Add to conversation**. Choose **Comment** to add an optional comment beside the selected passage first. Each quote waits as a card in that conversation's input tray, including in split view. Open a card to read the full quote, edit its comment, or view the source; remove a quote from its card or from the open panel. You can send a quote without typing another message. Sending, queuing, and steering include both the quoted text and your comment in the model's input.
+Select text in a completed assistant response, then choose **Add to conversation**. Choose **Comment** to add an optional comment beside the selected passage first. Selections appear as a tag in that conversation's input, including in split view. Hover, focus, or click the tag to preview the passages, edit comments, remove a selection, or open its source. You can send a selection without typing another message. Sending, queuing, and steering include both the quoted text and your comment in the model's input.
 
 Selected passages stay with their draft when switching tabs or leaving split view. Failed sends and editing held messages restore the quotes separately from the editable prompt. **View source** highlights the exact selected passage when the original response is loaded and visible. If it is hidden, unloaded, or changed, Wuu reports that the source is unavailable rather than highlighting another occurrence. Open the source conversation and load its response before trying again.
 
@@ -69,7 +69,7 @@ A fork copies history through the selected message. It does **not** restore file
 
 ## Ask a side question
 
-Use `/side` for questions about progress, output, or alternatives without adding those messages to the main conversation. Availability depends on the engine. For a separate task you want to develop over time, start another conversation or fork instead.
+Use `/side` for questions about progress, output, or alternatives without adding those messages to the main conversation. You can also select text in a completed assistant reply and choose **Ask in side chat**. The side composer shows the same selected-text tag; sending a question includes the passage as source context. Availability depends on the engine. For a separate task you want to develop over time, start another conversation or fork instead.
 
 ## Use saved sessions from the CLI
 

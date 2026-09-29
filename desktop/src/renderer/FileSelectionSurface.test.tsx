@@ -35,7 +35,7 @@ function select() {
   const range = document.createRange(); range.setStart(container.querySelector("pre")!.firstChild!, 11); range.setEnd(container.querySelector("pre")!.firstChild!, 24);
   act(() => { window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range); document.dispatchEvent(new Event("selectionchange")); });
 }
-function button(name: string) { return Array.from(document.querySelectorAll("button")).find(button => button.textContent === name)!; }
+function button(name: string) { return Array.from(document.querySelectorAll("button")).find(button => button.textContent === name || button.getAttribute("aria-label") === name)!; }
 function click(name: string) { act(() => button(name).click()); }
 function type(value: string) {
   const input = document.querySelector("textarea")!;
@@ -61,10 +61,12 @@ describe("file selection surface", () => {
   });
 
   it("keeps the selection while typing a comment and submits that captured source", () => {
-    render(); select(); click("Comment"); type("Explain this line");
+    render(); select(); click("Comment");
+    expect(document.activeElement).toBe(document.querySelector(".selection-action-comment-input"));
+    type("Explain this line");
     act(() => { window.getSelection()!.removeAllRanges(); document.dispatchEvent(new Event("selectionchange")); });
     expect(controls.persistentSelection).toEqual(source);
-    click("Save comment");
+    act(() => document.querySelector("textarea")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
     expect(state.actions!.addComment).toHaveBeenCalledWith(source, "Explain this line", undefined);
   });
 
@@ -85,6 +87,27 @@ describe("file selection surface", () => {
     expect(document.querySelector("textarea")).toBeNull();
   });
 
+  it("dismisses the file edit composer on an outside pointer press", () => {
+    render(); select(); click("Edit"); type("A draft");
+    const input = document.querySelector<HTMLTextAreaElement>(".file-selection-edit-composer textarea")!;
+    expect(document.activeElement).toBe(input);
+    act(() => input.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+    expect(document.querySelector(".file-selection-edit-composer")).not.toBeNull();
+    act(() => document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+    expect(document.querySelector(".file-selection-edit-composer")).toBeNull();
+    expect(state.actions!.edit).not.toHaveBeenCalled();
+  });
+
+  it("dismisses an unfinished file comment on an outside pointer press", () => {
+    render(); select(); click("Comment"); type("Unsent comment");
+    const input = document.querySelector<HTMLTextAreaElement>(".selection-action-comment-input")!;
+    act(() => input.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+    expect(document.querySelector(".selection-action-comment-input")).not.toBeNull();
+    act(() => document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+    expect(document.querySelector(".selection-action-comment-input")).toBeNull();
+    expect(state.actions!.addComment).not.toHaveBeenCalled();
+  });
+
   it("marks changed revisions stale and blocks edit submission without overwriting the draft", () => {
     render(); select(); click("Edit"); type("Change it"); render("note.md", `${text}!`);
     expect(document.querySelector("textarea")!.value).toBe("Change it");
@@ -97,6 +120,9 @@ describe("file selection surface", () => {
     render(); select(); click("Comment");
     act(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); document.dispatchEvent(new KeyboardEvent("keyup", { key: "Escape" })); });
     expect(document.querySelector("textarea")).toBeNull();
+    expect(document.querySelector('[role="toolbar"]')).not.toBeNull();
+    expect(document.activeElement).toBe(button("Comment"));
+    act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
     expect(document.querySelector('[role="toolbar"]')).toBeNull();
     select(); click("Comment"); render("other.md");
     expect(document.querySelector("textarea")).toBeNull();
@@ -110,7 +136,7 @@ describe("file selection surface", () => {
     state.actions!.comments = [part, { ...part, id: "two", source: { ...source, path: "else.md" }, comment: "Other" }];
     render();
     expect(container.querySelectorAll(".file-selection-comment")).toHaveLength(1);
-    click("Edit comment"); type("Updated"); click("Save comment");
+    click("Edit comment"); type("Updated"); click("Comment");
     expect(state.actions!.addComment).toHaveBeenCalledWith(source, "Updated", "one");
     click("Remove"); expect(state.actions!.removeComment).toHaveBeenCalledWith("one");
   });
@@ -130,7 +156,7 @@ describe("file selection surface", () => {
     expect(document.querySelector("textarea")).toBeNull();
     expect(controls.persistentSelection).toBeUndefined();
     expect(state.actions.addComment).not.toHaveBeenCalled();
-    select(); click("Comment"); type("Second thread"); click("Save comment");
+    select(); click("Comment"); type("Second thread"); click("Comment");
     expect(state.actions.addComment).toHaveBeenCalledWith(source, "Second thread", undefined);
     expect(original.addComment).not.toHaveBeenCalled();
   });

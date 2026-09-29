@@ -45,6 +45,8 @@ comment tag in the composer; hover, focus, or click the tag to inspect the locat
 quoted text, and comment. You can edit or remove comments before sending several
 comments together with your message.
 
+Choose **Ask in side chat** from a file selection to attach the passage to a side question. This requires an existing main conversation; the side composer shows the same selected-text tag.
+
 **Edit** opens a small instruction box at the selection. Submitting it sends an
 independent request to the current conversation without consuming your existing
 draft or attachments. A running task queues the request. The request instructs the agent

@@ -10,6 +10,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 - Added selection actions to Markdown, code, and text previews: attach selected text as context, add comments, or request an inline edit.
+- Selected text from a file or completed assistant reply can be sent with a question in side chat. Selection chips in the main and side composers share a compact preview and editable comments.
 
 - Select text in completed assistant responses to quote passages or comment beside
   them. Quotes wait as cards in the composer tray and follow drafts, send/queue/steer, held-message

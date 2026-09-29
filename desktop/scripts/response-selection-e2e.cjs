@@ -13,7 +13,7 @@ const report = { scene: "response-selection-v2", boundary: "Real Electron render
 if (ipcMain) ipcMain.on("selection:bridge-call", (_event, call) => report.calls.push(call));
 let win;
 const surface = '[data-thread-id="selection-main"] article[data-response-item-id="selection-main-answer"][data-response-settled="true"] .agent-text';
-const card = '.composer-response-selection-card .composer-document-card-main';
+const card = '[data-main-conversation-composer] .composer-selection-chip';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function evaluate(fn, ...args) {
   const result = await win.webContents.executeJavaScript(`(async()=>{try{return {value:await (${fn})(${args.map(arg => JSON.stringify(arg)).join(",")})}}catch(e){return {error:String(e.stack||e)}}})()`, true);
@@ -64,9 +64,9 @@ async function screenshot(name) {
 }
 function measureGeometry() {
   const selectors = {
-    toolbar: ".response-selection-toolbar", card: ".composer-response-selection-card",
+    toolbar: ".response-selection-toolbar", card: "[data-main-conversation-composer] .composer-selection-chip",
     frame: "[data-main-conversation-composer] .composer-frame",
-    popover: ".composer-response-selection-popover", sourceComment: ".response-selection-comment-input",
+    popover: ".composer-selection-panel", sourceComment: ".response-selection-toolbar .selection-action-comment-input",
   };
   const regions = {};
   for (const [name, selector] of Object.entries(selectors)) {
@@ -75,7 +75,7 @@ function measureGeometry() {
       return { selector, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height,
         fontSize: css.fontSize, fontFamily: css.fontFamily, lineHeight: css.lineHeight,
         scrollWidth: node.scrollWidth, clientWidth: node.clientWidth, scrollHeight: node.scrollHeight, clientHeight: node.clientHeight,
-        insideTray: name === "card" ? !!node.closest(".composer-attachment-tray") : null,
+        insideComposer: name === "card" ? !!node.closest(".composer") : null,
         contained: rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1 };
     });
   }
@@ -120,6 +120,7 @@ async function select(text, last = false, physical = false) {
   }, surface, text, last);
   if (physical) {
     await evaluate(() => window.getSelection().removeAllRanges());
+    win.webContents.focus();
     win.webContents.sendInputEvent({ type: "mouseDown", ...selected.from, button: "left", clickCount: 1 });
     for (let step = 1; step <= 10; step++) {
       win.webContents.sendInputEvent({ type: "mouseMove", x: Math.round(selected.from.x + (selected.to.x - selected.from.x) * step / 10), y: selected.from.y, button: "left" });
@@ -133,21 +134,21 @@ async function select(text, last = false, physical = false) {
 async function add(text, last = false, physical = false, comment = "") {
   const result = await select(text, last, physical);
   if (comment) {
-    await click(".response-selection-comment-toggle");
-    await input(".response-selection-comment-input", comment);
+    await click(".response-selection-toolbar .selection-action-comment-toggle");
+    await input(".response-selection-toolbar .selection-action-comment-input", comment);
   }
-  await click(".response-selection-add");
+  await click(comment ? ".response-selection-toolbar .selection-action-comment-submit" : ".response-selection-toolbar .selection-action-menu-controls > button:first-child");
   await until(selector => !!document.querySelector(selector), "quote card", card);
   return result;
 }
 async function closeQuotePanel() {
-  await evaluate(() => document.querySelector(".composer-response-selection-popover").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
-  await until(() => !document.querySelector(".composer-response-selection-popover"), "quote panel closed");
+  await evaluate(() => document.querySelector(".composer-selection-panel").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  await until(() => !document.querySelector(".composer-selection-panel"), "quote panel closed");
 }
 async function checkSource(expected) {
   await settle();
   await click(card);
-  await click(".composer-response-selection-source");
+  await click(".composer-selection-quote");
   const actual = await until(() => {
     const highlight = CSS.highlights.get("wuu-response-source");
     const range = highlight && [...highlight][0];
@@ -162,9 +163,9 @@ async function checkSource(expected) {
 }
 async function send(expected, comment, prompt) {
   const before = report.calls.length;
-  await input('[data-main-conversation-composer] .composer textarea:not(.composer-response-selection-comment)', prompt);
+  await input('[data-main-conversation-composer] .composer textarea', prompt);
   await click('[data-main-conversation-composer] .composer-send-button');
-  await until(() => !document.querySelector('.composer-response-selection-card'), "submitted quote clears");
+  await until(() => !document.querySelector(card), "submitted quote clears");
   for (let retry = 0; report.calls.length === before && retry < 100; retry++) await sleep(20);
   if (report.calls.length !== before + 1) throw new Error("Expected exactly one bridge call");
   const call = report.calls.at(-1);
@@ -193,19 +194,19 @@ async function run() {
   await checkSource(drag);
   await screenshot("physical-drag-source");
   await click(card);
-  await click(".composer-response-selection-remove");
+  await click(".composer-selection-actions button:last-child");
   report.cases.push("physical mouse drag -> toolbar -> card -> exact source -> remove");
 
   const comment = 'Explain "this" 😀\n第二行';
   const repeated = await select("Repeated 😀 café 中文 target.", true);
   await screenshot("toolbar-actions");
-  await click(".response-selection-comment-toggle");
+  await click(".response-selection-toolbar .selection-action-comment-toggle");
   // Real Chromium input insertion, not a React setter, protects the restored-Range
   // focus contract: typing must enter the comment rather than replace the quote.
   await win.webContents.insertText(comment);
-  await until(value => document.querySelector('.response-selection-comment-input')?.value === value, "native source comment typing", comment);
+  await until(value => document.querySelector('.response-selection-toolbar .selection-action-comment-input')?.value === value, "native source comment typing", comment);
   await screenshot("comment-expanded");
-  await click(".response-selection-add");
+  await click(".response-selection-toolbar .selection-action-comment-submit");
   await until(selector => !!document.querySelector(selector), "source comment added", card);
   await checkSource(repeated);
   await send(repeated, comment, "Please explain the selected passage.");
@@ -226,7 +227,7 @@ async function run() {
     await settle();
     await click(card);
     await until(() => {
-      const node = document.querySelector(".composer-response-selection-popover");
+      const node = document.querySelector(".composer-selection-panel");
       if (!node) return false;
       const rect = node.getBoundingClientRect();
       return rect.width > 0 && rect.left >= 0 && rect.right <= innerWidth + 1 && rect.top >= 0 && rect.bottom <= innerHeight + 1;
@@ -268,7 +269,7 @@ function servePreview() {
     function trace(event){const node=event.target;report.eventTrace.push({time:performance.now(),type:event.type,target:node?.className||node?.nodeName||'window',active:document.activeElement?.className,toolbar:!!document.querySelector('.response-selection-toolbar'),commenting:!!document.querySelector('.response-selection-commenting'),selection:window.getSelection()?.toString(),scrollTop:node?.scrollTop,visibility:document.visibilityState,viewport:{width:innerWidth,height:innerHeight,dpr:devicePixelRatio},detail:event.detail&&typeof event.detail==='object'?event.detail:undefined});if(report.eventTrace.length>500)report.eventTrace.shift()}
     for(const type of ['scroll','blur','focusin','focusout','pointerdown','pointerup','input','selectionchange','visibilitychange'])document.addEventListener(type,trace,true);
     for(const type of ['blur','resize','selection-fixture-step'])window.addEventListener(type,trace);
-    document.addEventListener('input',event=>{if(event.target.matches('.response-selection-comment-input'))report.nativeInput.push({type:event.type,isTrusted:event.isTrusted,value:event.target.value,active:document.activeElement?.className,selection:window.getSelection()?.toString()})});
+    document.addEventListener('input',event=>{if(event.target.matches('.response-selection-toolbar .selection-action-comment-input'))report.nativeInput.push({type:event.type,isTrusted:event.isTrusted,value:event.target.value,active:document.activeElement?.className,selection:window.getSelection()?.toString()})});
     document.addEventListener('keyup',event=>{if(event.key==='Escape')requestAnimationFrame(()=>{report.escapeFocus=document.activeElement?.className})});
     const style=document.createElement('style'); style.textContent='#selection-fixture-controls{position:fixed;top:36px;right:8px;max-width:calc(100% - 16px);z-index:2147483647;display:flex;flex-wrap:wrap;gap:4px;font:11px sans-serif;background:#eee;color:#111;padding:4px}';document.head.append(style);
     const controls=document.createElement('div');controls.id='selection-fixture-controls';document.body.append(controls);
@@ -310,7 +311,7 @@ function servePreview() {
         const quote=await add(text,true);await send(quote,'','');report.cases.push('quote-only wire payload');
       }else if(scene==='toolbar'||scene==='comment'||scene==='typing'){
         await select(text,true);
-        if(scene==='comment'||scene==='typing'){await click('.response-selection-comment-toggle');if(scene==='comment')await input('.response-selection-comment-input','Explain "this" 😀\\n第二行')}
+        if(scene==='comment'||scene==='typing'){await click('.response-selection-toolbar .selection-action-comment-toggle');if(scene==='comment')await input('.response-selection-toolbar .selection-action-comment-input','Explain "this" 😀\\n第二行')}
       }else{
         const expected=await add(text,true,false,'Explain "this" 😀\\n第二行');
         if(params.get('long')!=='1'){await checkSource(expected);report.cases.push({name:'repeated Unicode exact source highlight',expected})}
@@ -318,13 +319,13 @@ function servePreview() {
         for(let index=1;index<count;index++)await add('Native drag selection',false,false,'Comment '+(index+1));
         if(scene==='manager'||scene==='aggregate')await click(card);
         if(scene==='aggregate'){
-          const cards=()=>[...document.querySelectorAll('.composer-response-selection-card')].filter(node=>!node.closest('[data-exiting]'));
-          await until(()=>cards().length===2,'two quote cards in the tray');
-          if(cards().some(node=>!node.closest('.composer-attachment-tray')))throw new Error('Quote card rendered outside the attachment tray');
-          cards()[1].querySelector('.composer-attachment-card-remove').click();
-          await until(()=>cards().length===1,'remove only the second quote card');
+          const entries=()=>[...document.querySelectorAll('.composer-selection-panel .composer-selection-entry')];
+          await until(()=>entries().length===2,'two selections in the chip');
+          if(!document.querySelector(card)?.closest('.composer'))throw new Error('Selection chip rendered outside the composer');
+          entries()[1].querySelector('.composer-selection-actions button:last-child').click();
+          await until(()=>entries().length===1,'remove only the second selection');
           await closeQuotePanel();
-          await checkSource(expected);await click(card);report.cases.push('two tray cards; removing the second preserves the first exact source');
+          await checkSource(expected);await click(card);report.cases.push('two selections in one chip; removing the second preserves the first exact source');
         }
       }
       report.measurements.push({name:scene,...measureGeometry()});

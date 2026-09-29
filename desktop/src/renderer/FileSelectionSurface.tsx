@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useFileSelectionActions } from "./FileSelectionContext";
-import { fileSelectionRevision, fileSelectionSource, findFileSelectionDOMAnchor, mapFileDOMSelection, type FileSelectionRange, type FileSelectionSource } from "./FileSelectionMapping";
+import { fileSelectionLineIndex, fileSelectionRevision, fileSelectionSource, findFileSelectionDOMAnchor, mapFileDOMSelection, type FileSelectionRange, type FileSelectionSource } from "./FileSelectionMapping";
 import { useI18n } from "./i18n";
+import { SelectionActionMenu } from "./SelectionActionMenu";
+import { ArrowUp } from "./WuuIcons";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import "./FileSelectionSurface.css";
 
@@ -23,22 +25,24 @@ type Form = { kind: "comment" | "edit"; value: string; id?: string };
 const copy = {
   en: {
     tools: "Selection actions", quote: "Add to conversation", comment: "Comment", edit: "Edit",
-    save: "Save comment", submit: "Send edit request", cancel: "Cancel", remove: "Remove",
+    submit: "Send edit request", cancel: "Cancel", remove: "Remove",
     editComment: "Edit comment", comments: "Comments", instruction: "Describe the change",
-    commentLabel: "Comment on selection", block: "Source block selected; rendered text cannot be mapped exactly.",
+    commentLabel: "Add an optional comment…", block: "Source block selected; rendered text cannot be mapped exactly.",
     stale: "The file has changed. Select the text again before sending an edit request.",
     close: "Close selection actions",
     sending: "Sending…", failed: "The edit request was not sent. Your instruction is kept; try again.",
     locate: "Locate selection",
+    askSide: "Ask in side chat", sideUnavailable: "Start a main conversation to use side chat",
   },
   zh: {
     tools: "选区操作", quote: "添加到对话", comment: "评论", edit: "编辑",
-    save: "保存评论", submit: "发送修改请求", cancel: "取消", remove: "删除",
+    submit: "发送修改请求", cancel: "取消", remove: "删除",
     editComment: "编辑评论", comments: "评论", instruction: "描述需要的修改",
-    commentLabel: "评论选区", block: "已选取源码块；渲染内容无法精确映射。",
+    commentLabel: "添加可选评论…", block: "已选取源码块；渲染内容无法精确映射。",
     stale: "文件已更新。发送修改请求前，请重新选择文本。", close: "关闭选区操作",
     sending: "发送中…", failed: "修改请求未发送。指令已保留，可以重试。",
     locate: "定位原文",
+    askSide: "在侧边聊天中提问", sideUnavailable: "先开始主对话，才能使用侧聊",
   },
 };
 
@@ -56,8 +60,11 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
   const content = useRef<HTMLDivElement>(null);
   const popup = useRef<HTMLDivElement>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const commentToggle = useRef<HTMLButtonElement>(null);
+  const returnToComment = useRef(false);
   const highlightID = `file-selection-${useId().replace(/:/g, "")}`;
   const revision = useMemo(() => fileSelectionRevision(text), [text]);
+  const lineIndex = useMemo(() => fileSelectionLineIndex(text), [text]);
   const [capture, setCapture] = useState<Capture | null>(null);
   const [form, setForm] = useState<Form | null>(null);
   const [sending, setSending] = useState(false);
@@ -65,7 +72,7 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
   const [revealSelection, setRevealSelection] = useState<FileSelectionControls["revealSelection"]>();
   const submissionRef = useRef(0);
   const sendingRef = useRef(false);
-  const [position, setPosition] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const [position, setPosition] = useState<{ left: number; top: number; width: number; height: number; markerPlacement: "before" | "after" } | null>(null);
   const formRef = useRef(form);
   formRef.current = form;
   const enabled = Boolean(actions && active);
@@ -87,13 +94,15 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
 
   const onSelectionChange = useCallback((range: FileEditorSelection | null) => {
     if (!enabled || !ownerKey || formRef.current) return;
-    const source = range && fileSelectionSource(workspace, path, text, range, revision);
+    const source = range && fileSelectionSource(workspace, path, text, range, revision, lineIndex);
     setCapture(source && range ? { ownerKey, source, blockFallback: false, getRect: range.getRect } : null);
-  }, [enabled, ownerKey, workspace, path, text, revision]);
+  }, [enabled, ownerKey, workspace, path, text, revision, lineIndex]);
 
   useEffect(() => {
     if (!enabled || !ownerKey) return;
+    let dragging = false;
     const readSelection = (event: Event) => {
+      if (dragging) return;
       if (event instanceof KeyboardEvent && event.key === "Escape") return;
       if (event.target instanceof Node && popup.current?.contains(event.target)) return;
       if (formRef.current || popup.current?.contains(document.activeElement)) return;
@@ -104,22 +113,28 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
       const parent = range.startContainer.nodeType === Node.ELEMENT_NODE ? range.startContainer as Element : range.startContainer.parentElement;
       if (parent?.closest(".monaco-editor")) return;
       const mapped = mapFileDOMSelection(content.current, range, text);
-      const source = mapped && fileSelectionSource(workspace, path, text, mapped, revision);
+      const source = mapped && fileSelectionSource(workspace, path, text, mapped, revision, lineIndex);
       if (!source || !mapped) { setCapture(null); return; }
       const saved = range.cloneRange();
       setCapture(previous => previous?.ownerKey === ownerKey && previous?.source.revision === source.revision && previous.source.start_line === source.start_line
         && previous.source.start_column === source.start_column && previous.source.end_line === source.end_line && previous.source.end_column === source.end_column
         ? previous : { ownerKey, source, blockFallback: mapped.blockFallback, domRange: saved, getRect: () => saved.getBoundingClientRect() });
     };
+    const down = (event: PointerEvent) => { if (event.button === 0 && content.current?.contains(event.target as Node)) dragging = true; };
+    const up = (event: PointerEvent) => { if (!dragging) return; dragging = false; readSelection(event); };
     document.addEventListener("selectionchange", readSelection);
-    document.addEventListener("pointerup", readSelection);
+    document.addEventListener("pointerdown", down);
+    document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", up);
     document.addEventListener("keyup", readSelection);
     return () => {
       document.removeEventListener("selectionchange", readSelection);
-      document.removeEventListener("pointerup", readSelection);
+      document.removeEventListener("pointerdown", down);
+      document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", up);
       document.removeEventListener("keyup", readSelection);
     };
-  }, [enabled, ownerKey, workspace, path, text, revision]);
+  }, [enabled, ownerKey, workspace, path, text, revision, lineIndex]);
 
   useEffect(() => {
     if (!enabled || !current) return;
@@ -127,12 +142,26 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
+      if (formRef.current?.kind === "comment") {
+        returnToComment.current = true;
+        setForm(null);
+        return;
+      }
       close();
       content.current?.focus({ preventScroll: true });
     };
     document.addEventListener("keydown", escape, true);
     return () => document.removeEventListener("keydown", escape, true);
   }, [enabled, current, close]);
+
+  useEffect(() => {
+    if (!enabled || !current || !form) return;
+    const dismiss = (event: PointerEvent) => {
+      if (event.target instanceof Node && !popup.current?.contains(event.target)) close();
+    };
+    document.addEventListener("pointerdown", dismiss, true);
+    return () => document.removeEventListener("pointerdown", dismiss, true);
+  }, [enabled, current, form?.kind, close]);
 
   useLayoutEffect(() => {
     if (!enabled || !current || !host.current) { setPosition(null); return; }
@@ -152,9 +181,14 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
       const width = Math.min(form ? 360 : 400, right - left);
       const height = bottom - top;
       const popupHeight = Math.min(popup.current?.offsetHeight || (form ? 260 : 44), height);
+      const placeAbove = Boolean(anchor && anchor.top - popupHeight - 8 >= top);
+      const anchorTop = placeAbove && anchor
+        ? anchor.top - popupHeight - 8
+        : (anchor?.bottom ?? top) + 8;
       setPosition({
         left: Math.max(left, Math.min(anchor?.left ?? left, right - width)),
-        top: Math.max(top, Math.min((anchor?.bottom ?? top) + 8, bottom - popupHeight)), width, height,
+        top: Math.max(top, Math.min(anchorTop, bottom - popupHeight)), width, height,
+        markerPlacement: placeAbove ? "after" : "before",
       });
     };
     place();
@@ -168,6 +202,12 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
   }, [enabled, current, form?.kind, Boolean(position), stale]);
 
   useEffect(() => { if (form) textarea.current?.focus({ preventScroll: true }); }, [form?.kind, form?.id, Boolean(position)]);
+  useLayoutEffect(() => {
+    if (!form && returnToComment.current) {
+      commentToggle.current?.focus({ preventScroll: true });
+      returnToComment.current = false;
+    }
+  }, [form]);
 
   useEffect(() => {
     // Custom highlights retain the reading selection while focus is in a form.
@@ -210,14 +250,13 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
       </div>)}
     </aside>}
     {enabled && current && position && <UILayerPortal layer="popover">
-      <div ref={popup} className="file-selection-popup" data-wuu-component="popover" data-wuu-layer="popover"
+      {form?.kind === "edit" ? <div ref={popup} className="file-selection-popup" data-wuu-component="popover" data-wuu-layer="popover"
         style={{ left: position.left, top: position.top, maxWidth: position.width, maxHeight: position.height }}
         onPointerDown={event => { if ((event.target as Element).closest("button")) event.preventDefault(); }}>
-        {form ? <form onSubmit={async event => {
+        <form onSubmit={async event => {
           event.preventDefault();
           const value = form.value.trim();
-          if (!value || sendingRef.current || (form.kind === "edit" && stale)) return;
-          if (form.kind === "comment") { actions!.addComment(current.source, value, form.id); close(); return; }
+          if (!value || sendingRef.current || stale) return;
           const submission = ++submissionRef.current;
           sendingRef.current = true; setSending(true); setSendFailed(false);
           try {
@@ -231,28 +270,41 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
             if (submission === submissionRef.current) { sendingRef.current = false; setSending(false); }
           }
         }}>
-          <label htmlFor={`${highlightID}-input`}>{form.kind === "comment" ? labels.commentLabel : labels.instruction}</label>
-          <blockquote>{current.source.quote}</blockquote>
-          <textarea ref={textarea} id={`${highlightID}-input`} rows={3} value={form.value} readOnly={sending}
-            onChange={event => setForm({ ...form, value: event.target.value })} />
+          <div className="file-selection-edit-composer">
+            <textarea ref={textarea} id={`${highlightID}-input`} rows={1} wrap="soft" value={form.value} readOnly={sending}
+              aria-label={labels.instruction} placeholder={labels.instruction}
+              onChange={event => setForm({ ...form, value: event.target.value })}
+              onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
+            <button type="submit" aria-label={labels.submit} title={labels.submit} disabled={sending || !form.value.trim() || stale}>
+              <ArrowUp className="icon" aria-hidden="true" />
+            </button>
+          </div>
           {current.blockFallback && <p role="status">{labels.block}</p>}
           {stale && <p role="status">{labels.stale}</p>}
           {sendFailed && <p role="alert">{labels.failed}</p>}
-          <div className="file-selection-form-actions">
-            <button type="button" onClick={close}>{labels.cancel}</button>
-            <button type="submit" disabled={sending || !form.value.trim() || (form.kind === "edit" && stale)}>{sending ? labels.sending : form.kind === "comment" ? labels.save : labels.submit}</button>
-          </div>
-        </form> : <>
-          <div role="toolbar" aria-label={labels.tools}>
-            <button type="button" onClick={() => { actions!.addQuote(current.source); close(); }}>{labels.quote}</button>
-            <button type="button" onClick={() => startForm("comment")}>{labels.comment}</button>
-            <button type="button" disabled={stale} onClick={() => startForm("edit")}>{labels.edit}</button>
-            <button type="button" aria-label={labels.close} onClick={close}>×</button>
-          </div>
-          {current.blockFallback && <p role="status">{labels.block}</p>}
-          {stale && <p role="status">{labels.stale}</p>}
+          {sending && <p role="status">{labels.sending}</p>}
+        </form>
+      </div> : <SelectionActionMenu ref={popup} className="file-selection-action-menu"
+        style={{ left: position.left, top: position.top, maxWidth: position.width, maxHeight: position.height, overflow: form?.kind === "comment" ? "visible" : "auto" }}
+        label={labels.tools} addLabel={labels.quote} commentLabel={labels.comment} commentPlaceholder={labels.commentLabel}
+        commenting={form?.kind === "comment"} comment={form?.kind === "comment" ? form.value : ""}
+        allowEmptyComment={!form?.id}
+        commentMarkerPlacement={position.markerPlacement}
+        onCommentChange={value => setForm(previous => previous?.kind === "comment" ? { ...previous, value } : previous)}
+        onAdd={() => { actions!.addQuote(current.source); close(); }} onCommentStart={() => startForm("comment")}
+        onCommentCancel={() => { returnToComment.current = true; setForm(null); }}
+        onCommentSubmit={() => { if (form?.kind !== "comment") return; if (form.value.trim()) actions!.addComment(current.source, form.value.trim(), form.id); else if (!form.id) actions!.addQuote(current.source); else return; close(); }}
+        commentToggleRef={commentToggle} commentInputRef={textarea}
+        extraActions={<>
+          <button type="button" disabled={!actions!.askSide || stale} title={!actions!.askSide ? labels.sideUnavailable : undefined}
+            onPointerDown={event => event.preventDefault()} onClick={() => { actions!.askSide?.(current.source); close(); }}>{labels.askSide}</button>
+          <button type="button" disabled={stale} onPointerDown={event => event.preventDefault()} onClick={() => startForm("edit")}>{labels.edit}</button>
+          <button type="button" aria-label={labels.close} onPointerDown={event => event.preventDefault()} onClick={close}>×</button>
         </>}
-      </div>
+        status={<>
+          {current.blockFallback && <p className="selection-action-menu-status" role="status">{labels.block}</p>}
+          {stale && <p className="selection-action-menu-status" role="status">{labels.stale}</p>}
+        </>} />}
     </UILayerPortal>}
   </div>;
 }

@@ -132,6 +132,18 @@ describe("file selections in message history", () => {
     expect(onSubmit.mock.calls[0][2]).toBe(submitted.map((part) => part.text).join(""));
   });
 
+  it("drops an unfinished comment edit when clicking outside the selection panel", () => {
+    render(true);
+    click(".file-selection-tag");
+    click(".file-selection-card .file-selection-action");
+    input(".file-selection-comment-editor textarea", "Unsent change");
+    act(() => document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+    expect(document.querySelector(".file-selection-comment-editor")).toBeNull();
+    click(".file-selection-tag");
+    expect(document.querySelector(".file-selection-comment-editor")).toBeNull();
+    expect(document.querySelector(".file-selection-comment")?.textContent).toBe(selection.comment);
+  });
+
   it("removes only the selected file block and allows a file-only historical message", () => {
     const { onSubmit } = render(true, { ...item, text: selection.text, content_parts: [selection] });
     const send = document.querySelector<HTMLButtonElement>(".composer-send-button")!;

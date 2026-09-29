@@ -19,7 +19,7 @@ export type FileSelectionCardsProps = {
 export function FileSelectionCards({ parts, onRemove, onEdit, onOpenFile }: FileSelectionCardsProps): JSX.Element | null {
   if (parts.length === 0) return null;
   return <div className="file-selection-groups">
-    <FileSelectionCardGroup parts={parts.filter((part) => part.intent === "quote")} onRemove={onRemove} />
+    <FileSelectionCardGroup parts={parts.filter((part) => part.intent === "quote")} onRemove={onRemove} onOpenFile={onOpenFile} />
     <FileSelectionCardGroup parts={parts.filter((part) => part.intent !== "quote")} onRemove={onRemove} onEdit={onEdit} onOpenFile={onOpenFile} />
   </div>;
 }
@@ -64,6 +64,12 @@ function FileSelectionCardGroup({ parts, onRemove, onEdit, onOpenFile }: FileSel
     clearTimeout(closeTimer.current);
   }
 
+  function close(): void {
+    cancelClose();
+    setOpen(false);
+    setEditing(null);
+  }
+
   function contains(target: EventTarget | null): boolean {
     return target instanceof Node && Boolean(chipRef.current?.contains(target) || panelRef.current?.contains(target));
   }
@@ -72,7 +78,7 @@ function FileSelectionCardGroup({ parts, onRemove, onEdit, onOpenFile }: FileSel
     cancelClose();
     // Bridge the gap between the trigger and its portaled panel.
     closeTimer.current = setTimeout(() => {
-      if (!contains(document.activeElement)) setOpen(false);
+      if (!contains(document.activeElement)) close();
     }, 180);
   }
 
@@ -80,14 +86,14 @@ function FileSelectionCardGroup({ parts, onRemove, onEdit, onOpenFile }: FileSel
   useEffect(() => {
     if (!open) return;
     const dismiss = (event: PointerEvent): void => {
-      if (!contains(event.target)) setOpen(false);
+      if (!contains(event.target)) close();
     };
     const escape = (event: KeyboardEvent): void => {
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
       if (panelRef.current?.contains(document.activeElement)) anchorRef.current?.focus({ preventScroll: true });
-      setOpen(false);
+      close();
     };
     document.addEventListener("pointerdown", dismiss, true);
     document.addEventListener("keydown", escape, true);
@@ -111,7 +117,7 @@ function FileSelectionCardGroup({ parts, onRemove, onEdit, onOpenFile }: FileSel
         onPointerEnter={(event) => { if (event.pointerType !== "touch") { cancelClose(); setOpen(true); } }}
         onPointerLeave={scheduleClose}
         onFocus={() => { cancelClose(); setOpen(true); }}
-        onBlur={(event) => { if (!contains(event.relatedTarget)) setOpen(false); }}
+        onBlur={(event) => { if (!contains(event.relatedTarget)) close(); }}
         onClick={() => { cancelClose(); setOpen(true); }}
         onKeyDown={(event) => {
           if (event.key === "Tab" && !event.shiftKey && open) {
@@ -120,8 +126,13 @@ function FileSelectionCardGroup({ parts, onRemove, onEdit, onOpenFile }: FileSel
           }
         }}
       >
-        <MessageSquare aria-hidden="true" />
-        <span>{label}</span>
+        {allQuotes ? <>
+          <span className="file-selection-quote-icon" aria-hidden="true"><MessageSquare /></span>
+          <span className="file-selection-quote-summary">
+            <strong>{parts.length === 1 ? parts[0].source.quote.replace(/\s+/g, " ").trim() : label}</strong>
+            <small>{label}</small>
+          </span>
+        </> : <><MessageSquare aria-hidden="true" /><span>{label}</span></>}
       </button>
       {allQuotes && onRemove ? <button
         type="button"
@@ -142,10 +153,13 @@ function FileSelectionCardGroup({ parts, onRemove, onEdit, onOpenFile }: FileSel
             onPointerEnter={cancelClose}
             onPointerLeave={scheduleClose}
             onFocus={cancelClose}
-            onBlur={(event) => { if (!contains(event.relatedTarget)) setOpen(false); }}
+            onBlur={(event) => { if (!contains(event.relatedTarget)) close(); }}
           >
             {allQuotes ? parts.map((part) => <div className="file-selection-quote-entry" key={part.id}>
               <p className="file-selection-quote-text">{part.source.quote}</p>
+              {onOpenFile ? <button type="button" className="file-selection-location" onClick={() => void openFile(part)}>
+                {part.source.path}:{part.source.start_line}
+              </button> : null}
               {parts.length > 1 && onRemove ? <button type="button" className="file-selection-action"
                 aria-label={`${t("common.remove")} ${part.source.path}:${part.source.start_line}`}
                 onClick={() => onRemove(part.id)}><X aria-hidden="true" /></button> : null}
@@ -154,7 +168,7 @@ function FileSelectionCardGroup({ parts, onRemove, onEdit, onOpenFile }: FileSel
               <span>{label}</span>
               <button type="button" className="file-selection-action" aria-label={t("common.close")} onClick={() => {
                 anchorRef.current?.focus({ preventScroll: true });
-                setOpen(false);
+                close();
               }}><X aria-hidden="true" /></button>
             </div>
             {parts.map((part) => {
@@ -178,6 +192,7 @@ function FileSelectionCardGroup({ parts, onRemove, onEdit, onOpenFile }: FileSel
                     <div className="file-selection-comment-editor">
                       <textarea
                         autoFocus
+                        wrap="soft"
                         aria-label={locale === "zh-CN" ? "评论" : "Comment"}
                         value={editing.comment}
                         onChange={(event) => setEditing({ id: part.id, comment: event.target.value })}

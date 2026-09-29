@@ -642,7 +642,7 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
   }
 
   function openComments(): void {
-    act(() => container.querySelector<HTMLButtonElement>(".file-selection-tag")!.click());
+    act(() => container.querySelector<HTMLButtonElement>(".composer-selection-chip")!.click());
   }
 
   const render = variant === "main" ? renderStatefulComposer : renderStatefulSplitPaneComposer;
@@ -655,9 +655,9 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     render({ initialPrompt: quoted.text, queryHistorySessionID: owner, onSend });
     const input = container.querySelector<HTMLTextAreaElement>("textarea")!;
     expect(input.value).toBe("");
-    expect(document.querySelector(".file-selection-quote-text")).toBeNull();
-    act(() => container.querySelector(".file-selection-tag")!.dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
-    expect(document.querySelector(".file-selection-quote-text")?.textContent).toBe(quoted.source.quote);
+    expect(document.querySelector(".composer-selection-quote")).toBeNull();
+    act(() => container.querySelector(".composer-selection-chip")!.dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
+    expect(document.querySelector(".composer-selection-quote")?.textContent).toBe(quoted.source.quote);
     expect(document.querySelector(".file-selection-original")).toBeNull();
     act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
     expect(onSend).toHaveBeenCalledWith(quoted.text, [quoted]);
@@ -672,10 +672,12 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     rememberCollapsedPromptParts(owner, prompt, [first, second, comment]);
     const onSend = vi.fn();
     render({ initialPrompt: prompt, queryHistorySessionID: owner, onSend });
-    expect(container.querySelectorAll(".file-selection-tag")).toHaveLength(2);
-    act(() => container.querySelector<HTMLButtonElement>(".file-selection-quote-remove")!.click());
-    expect(container.querySelector(".file-selection-quote-chip")).toBeNull();
-    expect(container.querySelectorAll(".file-selection-tag")).toHaveLength(1);
+    expect(container.querySelectorAll(".composer-selection-chip")).toHaveLength(1);
+    openComments();
+    expect(document.querySelectorAll(".composer-selection-entry")).toHaveLength(3);
+    act(() => document.querySelector<HTMLButtonElement>(".composer-selection-entry .composer-selection-actions button:last-child")!.click());
+    act(() => document.querySelector<HTMLButtonElement>(".composer-selection-entry .composer-selection-actions button:last-child")!.click());
+    expect(document.querySelectorAll(".composer-selection-entry")).toHaveLength(1);
     const input = container.querySelector<HTMLTextAreaElement>("textarea")!;
     expect(input.value).toBe("Keep this question");
     act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
@@ -689,7 +691,7 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     const onSend = vi.fn();
     render({ initialPrompt: file.text.trim(), queryHistorySessionID: owner, onSend });
     const input = container.querySelector<HTMLTextAreaElement>("textarea")!;
-    expect(container.querySelector(".file-selection-tag")).not.toBeNull();
+    expect(container.querySelector(".composer-selection-chip")).not.toBeNull();
     expect(input.value).toBe("");
     if (followUp) act(() => setTextareaValue(input, followUp));
     act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
@@ -713,12 +715,12 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     rememberCollapsedPromptParts(owner, prompt, parts);
     const onSend = vi.fn();
     render({ initialPrompt: prompt, queryHistorySessionID: owner, onSend });
-    expect(container.querySelectorAll(".file-selection-tag")).toHaveLength(1);
+    expect(container.querySelectorAll(".composer-selection-chip")).toHaveLength(1);
     expect(container.querySelectorAll(".composer-collapsed-prompt-card")).toHaveLength(1);
     const input = container.querySelector<HTMLTextAreaElement>("textarea")!;
     expect(input.value).toBe("Follow up");
     openComments();
-    expect(document.querySelectorAll(".file-selection-card")).toHaveLength(2);
+    expect(document.querySelectorAll(".composer-selection-entry")).toHaveLength(2);
     act(() => {
       input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     });
@@ -733,19 +735,17 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     render({ initialPrompt: prompt, queryHistorySessionID: owner });
     const input = container.querySelector<HTMLTextAreaElement>("textarea")!;
     openComments();
-    act(() => document.querySelector<HTMLButtonElement>(".file-selection-card-heading button")!.click());
-    const editor = document.querySelector<HTMLTextAreaElement>(".file-selection-comment-editor textarea")!;
+    act(() => document.querySelector<HTMLButtonElement>(".composer-selection-actions button")!.click());
+    const editor = document.querySelector<HTMLTextAreaElement>(".composer-selection-comment-input")!;
     expect(editor.value).toBe(file.comment);
     act(() => setTextareaValue(editor, "Check the fallback too"));
-    act(() => document.querySelector<HTMLButtonElement>(".file-selection-comment-actions button:last-child")!.click());
     const edited = buildFileSelectionPart(file.source, file.intent, "Check the fallback too", file.id);
     expect(readCollapsedPromptParts(owner, edited.text + "Keep this follow-up")).toEqual([
       edited, { type: "text", text: "Keep this follow-up" },
     ]);
     expect(input.value).toBe("Keep this follow-up");
-    openComments();
-    act(() => document.querySelector<HTMLButtonElement>(".file-selection-card-heading button:last-child")!.click());
-    expect(container.querySelector(".file-selection-tag")).toBeNull();
+    act(() => document.querySelector<HTMLButtonElement>(".composer-selection-actions button:last-child")!.click());
+    expect(container.querySelector(".composer-selection-chip")).toBeNull();
     expect(readCollapsedPromptParts(owner, edited.text)).toBeUndefined();
     expect(input.value).toBe("Keep this follow-up");
   });
@@ -756,8 +756,8 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     rememberCollapsedPromptParts(owner, file.text, [file]);
     render({ initialPrompt: file.text, queryHistorySessionID: owner, readOnly: true });
     openComments();
-    expect(document.querySelector(".file-selection-comment")?.textContent).toBe(file.comment);
-    expect(document.querySelectorAll(".file-selection-card-heading button")).toHaveLength(0);
+    expect(document.querySelector(".composer-selection-comment")?.textContent).toContain(file.comment);
+    expect(document.querySelectorAll(".composer-selection-actions button")).toHaveLength(0);
     expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("");
   });
 });

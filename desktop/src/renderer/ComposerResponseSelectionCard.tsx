@@ -67,7 +67,7 @@ export function ComposerResponseSelectionCard({ selection, onChange, onRemove }:
           if (event.key === "Escape") { event.preventDefault(); close(); }
         }}>
         <blockquote className="composer-response-selection-quote">{selection.text}</blockquote>
-        <textarea className="composer-response-selection-comment" rows={1}
+        <textarea className="composer-response-selection-comment" rows={1} wrap="soft"
           aria-label={t("responseSelection.optionalComment")} placeholder={t("responseSelection.optionalComment")}
           value={selection.comment ?? ""} readOnly={!onChange}
           onChange={(event) => onChange?.({ ...selection, comment: event.target.value })} />

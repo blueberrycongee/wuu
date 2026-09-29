@@ -7,20 +7,32 @@ export type FileSelectionRange = {
   blockFallback: boolean;
 };
 
+export type FileSelectionLineIndex = { starts: number[]; ends: number[] };
+
+/** Build once per file revision so cursor movement never rescans earlier lines. */
+export function fileSelectionLineIndex(text: string): FileSelectionLineIndex {
+  const starts = [text.startsWith("\uFEFF") ? 1 : 0];
+  const ends: number[] = [];
+  for (let index = starts[0]; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    if (code !== 10 && code !== 13) continue;
+    ends.push(index);
+    if (code === 13 && text.charCodeAt(index + 1) === 10) index++;
+    starts.push(index + 1);
+  }
+  ends.push(text.length);
+  return { starts, ends };
+}
+
 /** Monaco normalizes mixed line endings and hides a leading BOM. Map its
  * coordinates against the original source so quoted bytes remain unchanged. */
 export function fileSelectionModelRange(text: string, range: {
   startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number;
-}): FileSelectionRange | null {
+}, index = fileSelectionLineIndex(text)): FileSelectionRange | null {
   const offset = (line: number, column: number) => {
-    let start = text.startsWith("\uFEFF") ? 1 : 0;
-    let currentLine = 1;
-    for (const match of text.matchAll(/\r\n|\r|\n/g)) {
-      if (currentLine === line) break;
-      start = match.index! + match[0].length;
-      currentLine++;
-    }
-    if (currentLine !== line) return null;
+    const start = index.starts[line - 1];
+    const end = index.ends[line - 1];
+    if (start === undefined || end === undefined || !Number.isInteger(column) || column < 1 || column > end - start + 1) return null;
     return start + column - 1;
   };
   const start = offset(range.startLineNumber, range.startColumn);
@@ -43,14 +55,21 @@ export function fileSelectionRevision(text: string): string {
 export function fileSelectionSource(
   workspace: string, path: string, text: string, range: FileSelectionRange,
   revision = fileSelectionRevision(text),
+  index = fileSelectionLineIndex(text),
 ): FileSelectionSource | null {
   const { start, end } = range;
   if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > text.length || start >= end) return null;
   const position = (offset: number) => {
-    const preceding = text.slice(0, offset);
-    const line = preceding.split(/\r\n|\r|\n/).length;
-    const lastBreak = Math.max(preceding.lastIndexOf("\n"), preceding.lastIndexOf("\r"));
-    return { line, column: offset - lastBreak };
+    let low = 0;
+    let high = index.starts.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (index.starts[middle] <= offset) low = middle + 1;
+      else high = middle;
+    }
+    const lineIndex = Math.max(0, low - 1);
+    if (text[offset - 1] === "\r" && text[offset] === "\n") return { line: lineIndex + 2, column: 1 };
+    return { line: lineIndex + 1, column: offset - index.starts[lineIndex] + 1 + (lineIndex === 0 && text.startsWith("\uFEFF") ? 1 : 0) };
   };
   const from = position(start);
   const to = position(end);

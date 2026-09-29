@@ -36,6 +36,7 @@ import type {
   InputImage,
   MessageContentPart,
   ResponseSelection,
+  SideThreadSelection,
   PopOutInitResult,
   PluginPackageInstallResult,
   PluginPackageRemoveResult,
@@ -1327,6 +1328,7 @@ export function App(): JSX.Element {
     activeContext: state.activeContext,
   });
   const sideThreadPanelRef = useRef<SideThreadPanelHandle>(null);
+  const pendingSideSelectionRef = useRef<{ threadID: string; selection: SideThreadSelection } | null>(null);
   const activeTurn = activeTurnForThread(activeThread);
   useEffect(() => {
     const syncVisibleCUAThread = () => {
@@ -2942,6 +2944,13 @@ export function App(): JSX.Element {
     }
   }
 
+  function openSideThreadWithSelection(selection: SideThreadSelection): void {
+    if (!activeThreadID) return;
+    openSideThreadPanel();
+    sideThread.setDraftSelection(selection);
+    requestAnimationFrame(() => sideThreadPanelRef.current?.focusComposer());
+  }
+
   // Blocking questions stay in the conversation stream. Offers float above the composer.
   const pendingUserQuestion = userQuestionApiAvailable
     ? userQuestions.find((request) => request.thread_id === activeThreadID && request.mode !== "offer")
@@ -3510,6 +3519,29 @@ export function App(): JSX.Element {
     isCurrentViewSwitchRequest,
     selectRuntimeContext,
   });
+
+  useEffect(() => {
+    const ask = (event: Event) => {
+      const selection = (event as CustomEvent<ResponseSelection>).detail;
+      if (!selection?.source?.thread_id) return;
+      const reference: SideThreadSelection = { type: "response", response: selection };
+      if (selection.source.thread_id === activeThreadID) {
+        openSideThreadWithSelection(reference);
+      } else {
+        pendingSideSelectionRef.current = { threadID: selection.source.thread_id, selection: reference };
+        void activateThread(selection.source.thread_id).catch(() => { pendingSideSelectionRef.current = null; });
+      }
+    };
+    window.addEventListener("wuu:ask-side-selection", ask);
+    return () => window.removeEventListener("wuu:ask-side-selection", ask);
+  }, [activeThreadID, activateThread, sideThread.open, sideThread.setDraftSelection]);
+
+  useEffect(() => {
+    const pending = pendingSideSelectionRef.current;
+    if (!pending || pending.threadID !== activeThreadID) return;
+    pendingSideSelectionRef.current = null;
+    openSideThreadWithSelection(pending.selection);
+  }, [activeThreadID]);
 
   useEffect(() => {
     const subscribe = window.wuu.onBrowserDock;
@@ -4940,6 +4972,7 @@ export function App(): JSX.Element {
         getPrompt={() => selectionUsesSplitDraft ? splitComposerDrafts[appStateRef.current.activePane].prompt : currentPrimaryComposerDraft().prompt}
         setPrompt={(value) => selectionUsesSplitDraft ? setSplitComposerPrompt(appStateRef.current.activePane, value) : setPrompt(value)}
         onEdit={submitFileSelectionEdit}
+        onAskSide={activeThreadID ? (source) => openSideThreadWithSelection({ type: "file", file: source }) : undefined}
         onOpenFile={openWorkspaceFile}
         disabled={Boolean(selectionThread?.read_only) || viewSwitchPending || !state.initialized}
       >
@@ -5290,6 +5323,9 @@ export function App(): JSX.Element {
             composer={
               <SideThreadComposer
                 draft={sideThread.entry.draft}
+                selection={sideThread.entry.draftSelection}
+                onRemoveSelection={() => sideThread.setDraftSelection(undefined)}
+                onOpenFile={openWorkspaceFile}
                 running={sideThread.entry.streaming}
                 disabledReason={sideThread.sendDisabledReason}
                 queryHistorySessionID={

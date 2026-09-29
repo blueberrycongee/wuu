@@ -8,7 +8,7 @@ import JsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
 import TsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
 import { useEffect, useMemo, useRef } from "react";
 import type { WorkspaceFileSelection } from "./LinkTargets";
-import { fileSelectionModelRange, type FileSelectionSource } from "./FileSelectionMapping";
+import { fileSelectionLineIndex, fileSelectionModelRange, type FileSelectionSource } from "./FileSelectionMapping";
 import type { FileEditorSelection, FileSelectionControls } from "./FileSelectionSurface";
 import { useI18n } from "./i18n";
 import { currentAppliedTheme, observeAppliedTheme, type AppliedTheme } from "./Theme";
@@ -76,6 +76,9 @@ export function WorkspaceMonacoEditor({
   const modelRef = useRef<monaco.editor.ITextModel | null>(null);
   const textRef = useRef(text);
   textRef.current = text;
+  const lineIndex = useMemo(() => fileSelectionLineIndex(text), [text]);
+  const lineIndexRef = useRef(lineIndex);
+  lineIndexRef.current = lineIndex;
   const onChangeRef = useRef(onChange);
   const onSaveRef = useRef(onSave);
   const onViewStateChangeRef = useRef(onViewStateChange);
@@ -145,7 +148,7 @@ export function WorkspaceMonacoEditor({
     const reportSelection = () => {
       const range = editor.getSelection();
       if (!range || range.isEmpty()) { onSelectionChangeRef.current?.(null); return; }
-      const mapped = fileSelectionModelRange(textRef.current, range);
+      const mapped = fileSelectionModelRange(textRef.current, range, lineIndexRef.current);
       if (!mapped) { onSelectionChangeRef.current?.(null); return; }
       onSelectionChangeRef.current?.({
         ...mapped,
@@ -160,7 +163,13 @@ export function WorkspaceMonacoEditor({
         },
       });
     };
-    const selectionDisposable = editor.onDidChangeCursorSelection(reportSelection);
+    let dragging = false;
+    const down = (event: PointerEvent) => { if (event.button === 0) dragging = true; };
+    const up = () => { if (!dragging) return; dragging = false; reportSelection(); };
+    host.addEventListener("pointerdown", down, true);
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", up, true);
+    const selectionDisposable = editor.onDidChangeCursorSelection(() => { if (!dragging) reportSelection(); });
     const scrollDisposable = editor.onDidScrollChange(() => document.dispatchEvent(new Event("file-selection-layout")));
     decorationRef.current = editor.createDecorationsCollection();
     editor.addCommand(
@@ -181,6 +190,9 @@ export function WorkspaceMonacoEditor({
       stopObservingAppearance();
       changeDisposable.dispose();
       selectionDisposable.dispose();
+      host.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", up, true);
       scrollDisposable.dispose();
       decorationRef.current?.clear();
       decorationRef.current = null;

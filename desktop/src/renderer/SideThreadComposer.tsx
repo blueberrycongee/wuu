@@ -1,4 +1,5 @@
 import { useMemo, useRef } from "react";
+import { ComposerSelectionChip, type ComposerSelectionItem } from "./ComposerSelectionChip";
 import { buildSideThreadSlashCommands } from "./ComposerSlashCommands";
 import {
   Composer,
@@ -6,6 +7,7 @@ import {
   type ComposerVariant,
 } from "./ComposerView";
 import { useI18n } from "./i18n";
+import type { SideThreadSelection } from "../shared/protocol";
 
 const EMPTY_MODEL_STATE: CodexModelLoadState = {
   loading: false,
@@ -19,6 +21,9 @@ export type SideThreadComposerProps = {
   variant?: ComposerVariant;
   placeholder?: string;
   draft: string;
+  selection?: SideThreadSelection;
+  onRemoveSelection?: () => void;
+  onOpenFile?: (path: string) => void;
   running: boolean;
   disabledReason?: string;
   queryHistorySessionID: string;
@@ -36,6 +41,9 @@ export function SideThreadComposer({
   variant = "dock",
   placeholder,
   draft,
+  selection,
+  onRemoveSelection,
+  onOpenFile,
   running,
   disabledReason,
   queryHistorySessionID,
@@ -55,11 +63,20 @@ export function SideThreadComposer({
   // focusable. Sending stays disabled until the current side turn settles.
   const visibleDraft = draft;
 
-  return (
-    <Composer
+  const selectionItems: ComposerSelectionItem[] = selection
+    ? [selection.type === "file" ? { type: "side-file", source: selection.file } : { type: "response", selection: selection.response }]
+    : [];
+
+  return <Composer
       variant={variant}
       hideRuntimeControls
       textOnly
+      inlineSelection={selectionItems.length > 0 ? <ComposerSelectionChip
+        items={selectionItems}
+        onRemoveResponse={onRemoveSelection ? () => onRemoveSelection() : undefined}
+        onRemoveSideFile={onRemoveSelection}
+        onOpenFile={onOpenFile}
+      /> : undefined}
       placeholder={placeholder ?? t("composer.sideThreadPlaceholder")}
       prompt={visibleDraft}
       setPrompt={onChangeDraft}
@@ -122,6 +139,5 @@ export function SideThreadComposer({
       onResetSideThread={onReset}
       queryHistorySessionID={queryHistorySessionID}
       queryHistory={queryHistory}
-    />
-  );
+    />;
 }

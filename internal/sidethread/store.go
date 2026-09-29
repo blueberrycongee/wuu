@@ -205,6 +205,10 @@ func (s *Store) BeginTurn(mainThreadID, prompt, userMessageID, assistantMessageI
 // record. Existing records retain their durable id. This lets callers finish
 // all model/context validation before committing the first message.
 func (s *Store) BeginTurnWithSideThreadID(mainThreadID, sideThreadID, prompt, userMessageID, assistantMessageID string) (*SideThread, error) {
+	return s.BeginTurnWithSelection(mainThreadID, sideThreadID, prompt, userMessageID, assistantMessageID, nil)
+}
+
+func (s *Store) BeginTurnWithSelection(mainThreadID, sideThreadID, prompt, userMessageID, assistantMessageID string, selection *SelectionReference) (*SideThread, error) {
 	if s == nil || s.dir == "" {
 		return nil, errors.New("sidethread.Store: nil or unconfigured store")
 	}
@@ -274,6 +278,7 @@ func (s *Store) BeginTurnWithSideThreadID(mainThreadID, sideThreadID, prompt, us
 			SideThreadID: st.SideThreadID,
 			Role:         RoleUser,
 			Text:         prompt,
+			Selection:    selection,
 			CreatedAt:    now,
 		},
 		Message{

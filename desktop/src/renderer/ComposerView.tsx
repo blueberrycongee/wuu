@@ -71,6 +71,7 @@ import {
 import { useFileSelectionActions } from "./FileSelectionContext";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
+import { ComposerSelectionChip, type ComposerSelectionItem } from "./ComposerSelectionChip";
 import {
   WORKSPACE_FILE_DRAG_MIME,
   appendWorkspacePathToPrompt,
@@ -139,6 +140,7 @@ export function Composer({
   canSelectWorkspace = variant === "hero",
   mainConversation = false,
   topAccessory,
+  inlineSelection,
   permissionLocked = false,
   containerRef,
   prompt: committedPrompt,
@@ -243,6 +245,7 @@ export function Composer({
   canSelectWorkspace?: boolean;
   mainConversation?: boolean;
   topAccessory?: ReactNode;
+  inlineSelection?: ReactNode;
   // The conversation's permission mode cannot change, as for a project coordinator.
   permissionLocked?: boolean;
   containerRef?: Ref<HTMLElement>;
@@ -542,6 +545,10 @@ export function Composer({
   const fileSelectionActions = useFileSelectionActions();
   const fileSelectionParts = activeCollapsedPromptBlocks.flatMap((block) =>
     block.part?.type === "file_selection" ? [block.part] : []);
+  const selectionItems: ComposerSelectionItem[] = [
+    ...selections.map((selection) => ({ type: "response" as const, selection })),
+    ...fileSelectionParts.map((part) => ({ type: "file" as const, part })),
+  ];
   const composerPlaceholder = placeholder ?? (readOnly
     ? t("composer.readOnly")
     : hasCollapsedPromptBlocks
@@ -1248,9 +1255,9 @@ export function Composer({
             <ComposerAttachmentTray
               images={textOnly ? [] : images}
               files={textOnly ? [] : files}
-              selections={textOnly ? [] : selections}
+              selections={[]}
               pastedTexts={activeCollapsedPromptBlocks.filter((block) => block.part?.type !== "file_selection")}
-              fileSelections={fileSelectionParts}
+              fileSelections={[]}
               onRemoveFileSelection={readOnly ? undefined : removeFileSelection}
               onEditFileSelection={readOnly ? undefined : (part, comment) => updateFileComment(part.id, comment)}
               onOpenSelectedFile={fileSelectionActions ? (path) => fileSelectionActions.openFile(path) : undefined}
@@ -1273,6 +1280,14 @@ export function Composer({
           >
             {topAccessory ? <div className="composer-cover-accessory">{topAccessory}</div> : null}
           <div className="composer" hidden={Boolean(topAccessory)}>
+            {inlineSelection ?? (selectionItems.length > 0 ? <ComposerSelectionChip
+              items={selectionItems}
+              onChangeResponse={readOnly ? undefined : onChangeSelection}
+              onRemoveResponse={readOnly ? undefined : onRemoveSelection}
+              onEditFile={readOnly ? undefined : (part, comment) => updateFileComment(part.id, comment)}
+              onRemoveFile={readOnly ? undefined : removeFileSelection}
+              onOpenFile={fileSelectionActions ? (path) => fileSelectionActions.openFile(path) : undefined}
+            /> : null)}
             {textOnly ? null : (
               <>
                 <input

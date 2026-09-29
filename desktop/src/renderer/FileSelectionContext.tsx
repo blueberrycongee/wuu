@@ -36,6 +36,7 @@ type FileSelectionActions = {
   addComment: (source: FileSelectionSource, comment: string, id?: string) => void;
   removeComment: (id: string) => void;
   edit: (source: FileSelectionSource, instruction: string) => Promise<boolean>;
+  askSide?: (source: FileSelectionSource) => void;
   openFile: (path: string) => void;
 };
 
@@ -43,13 +44,14 @@ const FileSelectionContext = createContext<FileSelectionActions | null>(null);
 export const useFileSelectionActions = () => useContext(FileSelectionContext);
 
 export function FileSelectionProvider({
-  ownerKey, interactionOwnerKey, getPrompt, setPrompt, onEdit, onOpenFile, disabled, children,
+  ownerKey, interactionOwnerKey, getPrompt, setPrompt, onEdit, onAskSide, onOpenFile, disabled, children,
 }: {
   ownerKey?: string;
   interactionOwnerKey?: string;
   getPrompt: () => string;
   setPrompt: (value: string) => void;
   onEdit: (part: FileSelectionPart) => Promise<boolean>;
+  onAskSide?: (source: FileSelectionSource) => void;
   onOpenFile: (path: string) => void;
   disabled?: boolean;
   children: ReactNode;
@@ -97,6 +99,7 @@ export function FileSelectionProvider({
       updateParts((current) => current.filter((part) => part.type !== "file_selection" || part.id !== id));
     },
     edit: (source, instruction) => connected ? onEdit(buildFileSelectionPart(source, "edit", instruction.trim())) : Promise.resolve(false),
+    askSide: onAskSide,
     openFile: onOpenFile,
   }}>{children}</FileSelectionContext.Provider>;
 }

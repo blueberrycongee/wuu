@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 func newTempStore(t *testing.T) *Store {
@@ -60,6 +62,25 @@ func TestStoreRoundtrip(t *testing.T) {
 	}
 	if loaded.Revision == 0 {
 		t.Fatal("persisted record is missing a revision")
+	}
+}
+
+func TestStoreRoundtripSelectionReference(t *testing.T) {
+	s := newTempStore(t)
+	st := sampleSideThread("main_selection")
+	st.Messages[0].Selection = &SelectionReference{
+		Type: "file",
+		File: &providers.FileSelectionSource{Workspace: "/repo", Path: "notes.md", StartLine: 2, StartColumn: 1, EndLine: 2, EndColumn: 8, Quote: "selected", Revision: "rev-1"},
+	}
+	if err := s.Save(st); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := s.Load("main_selection")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Messages[0].Selection; got == nil || got.File == nil || got.File.Quote != "selected" || got.File.Revision != "rev-1" {
+		t.Fatalf("selection reference lost in roundtrip: %+v", got)
 	}
 }
 

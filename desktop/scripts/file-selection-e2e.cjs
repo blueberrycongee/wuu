@@ -82,22 +82,23 @@ async function run() {
       phase = `${label}: quote`;
       await selectFile(file, quote);
       await screenshot(`${label}-toolbar`);
-      await clickButton(".file-selection-popup", "Add to conversation");
-      await waitFor(() => Boolean(document.querySelector("[data-main-conversation-composer] .file-selection-quote-chip")), "selected text tag");
+      await clickButton(".file-selection-action-menu", "Add to conversation");
+      await waitFor(() => Boolean(document.querySelector("[data-main-conversation-composer] .composer-selection-chip")), "selected text tag");
       assert.equal(await evaluate(composerValue), draft, "Selected text must remain folded instead of expanding into the draft");
       assert.equal(await evaluate(() => Boolean(document.querySelector(".file-selection-comments"))), false, "A quote must not create a document comment");
       await frame();
-      const tag = await visibleGeometry("[data-main-conversation-composer] .file-selection-quote-chip .file-selection-tag");
-      win.webContents.sendInputEvent({ type: "mouseMove", x: Math.round(tag.x + tag.width / 2), y: Math.round(tag.y + tag.height / 2) });
-      await waitFor(expected => document.querySelector(".file-selection-quote-text")?.textContent === expected, "hovered original text", quote);
-      await visibleGeometry(".file-selection-quote-panel");
+      await visibleGeometry("[data-main-conversation-composer] .composer-selection-chip");
+      await click("[data-main-conversation-composer] .composer-selection-chip");
+      await waitFor(expected => document.querySelector(".composer-selection-quote")?.textContent === expected.replace(/\s+/g, " ").trim(), "opened original text", quote);
+      await visibleGeometry(".composer-selection-panel");
       await screenshot(`${label}-quote-tag`);
       await press("Escape");
-      await click("[data-main-conversation-composer] .file-selection-quote-remove");
-      await waitFor(() => !document.querySelector("[data-main-conversation-composer] .file-selection-quote-chip"), "quote removed");
+      await click("[data-main-conversation-composer] .composer-selection-chip");
+      await click(".composer-selection-actions button:last-child");
+      await waitFor(() => !document.querySelector("[data-main-conversation-composer] .composer-selection-chip"), "quote removed");
       assert.equal(await evaluate(composerValue), draft, "Removing a quote must preserve typed text");
       await selectFile(file, quote);
-      await clickButton(".file-selection-popup", "Add to conversation");
+      await clickButton(".file-selection-action-menu", "Add to conversation");
       assert.equal((await snapshot()).submissions.length, initial.submissions.length, "Adding a quote must not submit a turn");
       await click("[data-main-conversation-composer] .composer-send-button");
       await waitFor(count => window.selectionE2E.snapshot().submissions.length === count, "quoted text submission", initial.submissions.length + 1);
@@ -112,12 +113,12 @@ async function run() {
 
       phase = `${label}: comment`;
       await selectFile(file, quote);
-      await clickButton(".file-selection-popup", "Comment");
+      await clickButton(".file-selection-action-menu", "Comment");
       const comment = `Explain this selection (${label}).`;
-      await fill(".file-selection-popup textarea", comment);
+      await fill(".file-selection-action-menu textarea", comment);
       await screenshot(`${label}-comment-form`);
-      await clickButton(".file-selection-popup", "Save comment");
-      await waitFor(() => Boolean(document.querySelector("[data-main-conversation-composer] .file-selection-tag")), "comment chip");
+      await clickButton(".file-selection-action-menu", "Comment");
+      await waitFor(() => Boolean(document.querySelector("[data-main-conversation-composer] .composer-selection-chip")), "comment chip");
       assert.equal(await evaluate(composerValue), draft, "Comment attachment must not replace the visible draft");
       phase = `${label}: document comment visibility`;
       const commentLayout = await evaluate(() => {
@@ -136,16 +137,15 @@ async function run() {
       for (const target of commentLayout) assert.ok(target.inViewport && target.reachable,
         `Document comment content must be visible and hit-testable: ${JSON.stringify(target)}`);
       await screenshot(`${label}-document-comment`);
-      await click("[data-main-conversation-composer] .file-selection-tag");
-      await waitFor(expected => document.querySelector(".file-selection-panel")?.textContent.includes(expected), "comment chip details", comment);
-      await click(".file-selection-panel details summary");
-      assert.equal(await evaluate(() => document.querySelector(".file-selection-panel pre")?.textContent), quote);
+      await click("[data-main-conversation-composer] .composer-selection-chip");
+      await waitFor(expected => document.querySelector(".composer-selection-panel")?.textContent.includes(expected), "comment chip details", comment);
+      assert.equal(await evaluate(() => document.querySelector(".composer-selection-panel .composer-selection-quote")?.textContent), quote.replace(/\s+/g, " ").trim());
       await screenshot(`${label}-comment-chip`);
       await press("Escape");
 
       phase = `${label}: inline edit preserving draft and comment`;
       await selectFile(file, quote);
-      await clickButton(".file-selection-popup", "Edit");
+      await clickButton(".file-selection-action-menu", "Edit");
       const instruction = `Replace the selected content (${label}).`;
       await fill(".file-selection-popup textarea", instruction);
       await screenshot(`${label}-edit-form`);
@@ -157,7 +157,7 @@ async function run() {
       assert.equal(edit.activeDocument?.path, file, "Inline edit should target the selected document");
       assert.ok(!edit.prompt.includes(draft), "Inline edit must not consume the unrelated draft");
       assert.equal(await evaluate(composerValue), draft);
-      assert.ok(await evaluate(() => Boolean(document.querySelector("[data-main-conversation-composer] .file-selection-tag"))), "Pending comment must survive inline edit");
+      assert.ok(await evaluate(() => Boolean(document.querySelector("[data-main-conversation-composer] .composer-selection-chip"))), "Pending comment must survive inline edit");
 
       phase = `${label}: completion refresh`;
       const updated = text.replace(file.endsWith(".md") ? quote : text.split("\n")[0], "Updated selection after completion.");
@@ -184,7 +184,7 @@ async function run() {
       verifySource(parts[0], file, text, quote, "comment", comment);
       assert.ok(sent.prompt.includes(draft), "Normal send must include the main draft");
       await evaluate(() => window.selectionE2E.complete());
-      await waitFor(() => composerValue() === "" && !document.querySelector("[data-main-conversation-composer] .file-selection-tag"), "sent composer cleared");
+      await waitFor(() => composerValue() === "" && !document.querySelector("[data-main-conversation-composer] .composer-selection-chip"), "sent composer cleared");
       report.cases.push({ variant, file, quote, quoted, edit, sent, checks: ["toolbar", "quote-payload", "document-comment-hit-tests", "comment-chip", "inline-edit-preserves-draft-and-comment", "completion-refresh", "comment-payload"] });
       writeReport();
       console.log(`PASS ${label}`);
@@ -266,8 +266,8 @@ async function selectFile(file, quote) {
     await click(".workspace-file-resource.active .monaco-editor .view-line");
     await press("A", [process.platform === "darwin" ? "meta" : "control"]);
   }
-  await waitFor(() => Boolean(document.querySelector(".file-selection-popup [role=toolbar]")), "selection toolbar");
-  await visibleGeometry(".file-selection-popup");
+  await waitFor(() => Boolean(document.querySelector(".file-selection-action-menu[role=toolbar]")), "selection toolbar");
+  await visibleGeometry(".file-selection-action-menu");
 }
 
 async function clickButton(scope, text, selector = "button") {

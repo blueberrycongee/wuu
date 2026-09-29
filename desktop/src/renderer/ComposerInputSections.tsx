@@ -26,6 +26,7 @@ import {
 } from "./ComposerCollapsedPrompt";
 import { useFileSelectionActions } from "./FileSelectionContext";
 import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
+import { ComposerSelectionChip, type ComposerSelectionItem } from "./ComposerSelectionChip";
 import {
   WORKSPACE_FILE_DRAG_MIME,
   appendWorkspacePathToPrompt,
@@ -208,6 +209,10 @@ export function SplitPaneComposer({
   const fileSelectionActions = useFileSelectionActions();
   const fileSelectionParts = collapsedPromptBlocks.flatMap((block) =>
     block.part?.type === "file_selection" ? [block.part] : []);
+  const selectionItems: ComposerSelectionItem[] = [
+    ...selections.map((selection) => ({ type: "response" as const, selection })),
+    ...fileSelectionParts.map((part) => ({ type: "file" as const, part })),
+  ];
 
   const { resetQueryHistoryNavigation, handleQueryHistoryKeyDown } = useComposerQueryHistory({
     disabled: readOnly || hasAttachments || hasCollapsedPromptBlocks,
@@ -319,9 +324,9 @@ export function SplitPaneComposer({
             <ComposerAttachmentTray
               images={images}
               files={files}
-              selections={selections}
+              selections={[]}
               pastedTexts={collapsedPromptBlocks.filter((block) => block.part?.type !== "file_selection")}
-              fileSelections={fileSelectionParts}
+              fileSelections={[]}
               onRemoveFileSelection={readOnly ? undefined : removeFileSelection}
               onEditFileSelection={readOnly ? undefined : (part, comment) => updateFileComment(part.id, comment)}
               onOpenSelectedFile={fileSelectionActions ? (path) => fileSelectionActions.openFile(path) : undefined}
@@ -341,6 +346,14 @@ export function SplitPaneComposer({
               onDrop={handleDrop}
             >
               <div className="composer">
+                {selectionItems.length > 0 ? <ComposerSelectionChip
+                  items={selectionItems}
+                  onChangeResponse={readOnly ? undefined : onChangeSelection}
+                  onRemoveResponse={readOnly ? undefined : onRemoveSelection}
+                  onEditFile={readOnly ? undefined : (part, comment) => updateFileComment(part.id, comment)}
+                  onRemoveFile={readOnly ? undefined : removeFileSelection}
+                  onOpenFile={fileSelectionActions ? (path) => fileSelectionActions.openFile(path) : undefined}
+                /> : null}
                 <input
                   ref={attachmentInputRef}
                   className="composer-file-input"

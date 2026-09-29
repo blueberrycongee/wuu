@@ -16,6 +16,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/sidethread"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -1537,14 +1538,15 @@ type SideThreadWireSummary struct {
 }
 
 type SideThreadWireMessage struct {
-	ID           string       `json:"id"`
-	SideThreadID string       `json:"side_thread_id"`
-	Role         string       `json:"role"`
-	Text         string       `json:"text"`
-	Items        []ThreadItem `json:"items,omitempty"`
-	Status       string       `json:"status,omitempty"`
-	ErrorMessage string       `json:"error_message,omitempty"`
-	CreatedAt    time.Time    `json:"created_at"`
+	ID           string                         `json:"id"`
+	SideThreadID string                         `json:"side_thread_id"`
+	Role         string                         `json:"role"`
+	Text         string                         `json:"text"`
+	Selection    *sidethread.SelectionReference `json:"selection,omitempty"`
+	Items        []ThreadItem                   `json:"items,omitempty"`
+	Status       string                         `json:"status,omitempty"`
+	ErrorMessage string                         `json:"error_message,omitempty"`
+	CreatedAt    time.Time                      `json:"created_at"`
 }
 
 type SideThreadMainTaskSummary struct {
@@ -1553,8 +1555,9 @@ type SideThreadMainTaskSummary struct {
 }
 
 type SideThreadSendParams struct {
-	MainThreadID string `json:"main_thread_id"`
-	Prompt       string `json:"prompt"`
+	MainThreadID string                         `json:"main_thread_id"`
+	Prompt       string                         `json:"prompt"`
+	Selection    *sidethread.SelectionReference `json:"selection,omitempty"`
 }
 
 type SideThreadSendResult struct {
