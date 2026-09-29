@@ -13,6 +13,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Desktop app zoom shortcuts (Command/Ctrl + plus, minus, and zero), with a
   centered percentage indicator, saved zoom, and a 50%–200% range.
 
+### Changed
+
+- The macOS DMG installer background is wordless and white, so a resized
+  Finder window shows no picture edge. A slingshot beside the app fires Wuu
+  along a dotted arc that splits into its colourful agents, and they dive into
+  a toy-block fort built around the Applications folder.
+
 ### Fixed
 
 - Harden MCP transport compatibility, request timeouts, OAuth refresh recovery,
