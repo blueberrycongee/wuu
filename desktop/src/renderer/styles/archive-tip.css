@@ -22,12 +22,13 @@
   gap: 12px;
   max-width: calc(100vw - 48px);
   padding: 10px 12px 10px 14px;
-  background: var(--paper, #ffffff);
-  color: var(--ink, #1c2024);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-pop);
-  font-size: var(--font-ui, 13px);
+  /* Transient layers share the menu material and shell corner. */
+  background: var(--menu-bg);
+  color: var(--ink);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-shell-radius);
+  box-shadow: var(--menu-shadow);
+  font-size: var(--font-ui);
   line-height: 1.4;
   transform: translate(-50%, 0);
   pointer-events: auto;
@@ -45,13 +46,13 @@
 
 .archive-tip-icon {
   flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
-  color: var(--ink-soft, #5c6165);
+  width: var(--icon-size);
+  height: var(--icon-size);
+  color: var(--ink-soft);
 }
 
 .archive-tip.is-error .archive-tip-icon {
-  color: var(--danger, #d93025);
+  color: var(--danger);
 }
 
 .archive-tip-message {
@@ -62,13 +63,13 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--ink, #1c2024);
+  color: var(--ink);
 }
 
 .archive-tip-message strong {
-  font-weight: var(--weight-medium, 500);
-  color: var(--ink-strong, #1c2024);
-  max-width: 220px;
+  font-weight: var(--weight-medium);
+  color: var(--ink-strong);
+  max-width: 16em;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -81,22 +82,15 @@
   padding: 4px 6px;
   margin: -4px -2px;
   font: inherit;
-  font-weight: var(--weight-medium, 500);
-  color: var(--info, #1a73e8);
+  font-weight: var(--weight-medium);
+  color: var(--info);
   cursor: pointer;
   border-radius: var(--radius-sm);
   transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }
 
 .archive-tip-action:hover {
-  background: var(--ink-overlay-8, rgba(20, 24, 28, 0.08));
-  color: var(--info, #1a73e8);
-  text-decoration: underline;
-}
-
-.archive-tip-action:focus-visible {
-  outline: 2px solid var(--info, #1a73e8);
-  outline-offset: 2px;
+  background: var(--ink-overlay-8);
 }
 
 .archive-tip-dismiss {
@@ -104,25 +98,21 @@
   appearance: none;
   background: transparent;
   border: 0;
-  padding: 4px;
-  margin: -4px -4px -4px 0;
+  /* A 24px target around the 14px glyph. */
+  padding: 5px;
+  margin: -5px -5px -5px 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--ink-tertiary, #6d7378);
+  color: var(--ink-tertiary);
   cursor: pointer;
   border-radius: var(--radius-pill);
   transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }
 
 .archive-tip-dismiss:hover {
-  background: var(--ink-overlay-8, rgba(20, 24, 28, 0.08));
-  color: var(--ink, #1c2024);
-}
-
-.archive-tip-dismiss:focus-visible {
-  outline: 2px solid var(--info, #1a73e8);
-  outline-offset: 2px;
+  background: var(--ink-overlay-8);
+  color: var(--ink);
 }
 
 @media (max-width: 480px) {

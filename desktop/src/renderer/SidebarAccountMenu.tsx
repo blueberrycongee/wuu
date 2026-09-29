@@ -93,8 +93,12 @@ export function SidebarAccountMenu({ disabled, localOnly = false, onOpenSettings
           if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); return; }
           moveMenuFocus(event, panel.current);
         }}>
-        <div className="sidebar-account-profile">{avatar}<div><strong>{account.display_name || account.username || "Wuu"}</strong><span>{account.username ? account.server : t("account.localMode")}</span></div></div>
-        <div className="sidebar-account-divider" role="separator" />
+        {/* Without an account the trigger already says local use; a profile
+            header would only repeat it. */}
+        {account.username ? <>
+          <div className="sidebar-account-profile">{avatar}<div><strong>{account.display_name || account.username}</strong><span>{account.server}</span></div></div>
+          <div className="sidebar-account-divider" role="separator" />
+        </> : null}
         {accountEnabled && phoneNavigation && <button role="menuitem" className="select-menu-item" onClick={() => { close(); phoneNavigation.openDevices(); }}><UserRound size={18} aria-hidden="true" /><span>{t('account.computersAndAccount')}</span></button>}
         <button role="menuitem" className="select-menu-item" onClick={() => navigate("usage")}><BarChart3 size={18} aria-hidden="true" /><span>{t("settings.usage")}</span></button>
         {driver && onOpenAccount && <button role="menuitem" className="select-menu-item" onClick={() => { close(); onOpenAccount(); }}><Smartphone size={18} aria-hidden="true" /><span>{t(account.username ? "account.manage" : "account.linkDevices")}</span></button>}
