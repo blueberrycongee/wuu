@@ -18,17 +18,18 @@ import (
 // StdioTransport runs an MCP server as a subprocess and communicates over
 // stdin/stdout. This is the most common transport for local MCP servers.
 type StdioTransport struct {
-	cmd       *exec.Cmd
-	stdin     io.WriteCloser
-	stdout    io.ReadCloser
-	stderr    io.ReadCloser
-	mu        sync.Mutex
-	enc       *json.Encoder
-	reader    *bufio.Reader
-	stderrMu  sync.Mutex
-	stderrBuf bytes.Buffer
-	closeOnce sync.Once
-	closeErr  error
+	cmd          *exec.Cmd
+	processGroup *processGroup
+	stdin        io.WriteCloser
+	stdout       io.ReadCloser
+	stderr       io.ReadCloser
+	mu           sync.Mutex
+	enc          *json.Encoder
+	reader       *bufio.Reader
+	stderrMu     sync.Mutex
+	stderrBuf    bytes.Buffer
+	closeOnce    sync.Once
+	closeErr     error
 }
 
 // NewStdioTransport starts command as an MCP stdio server.
@@ -40,36 +41,51 @@ func NewStdioTransport(command string, args ...string) (*StdioTransport, error) 
 // additional environment variables overlaid on the current process env.
 func NewStdioTransportWithEnv(command string, args []string, env map[string]string) (*StdioTransport, error) {
 	cmd := exec.Command(command, args...)
-	configureProcessGroup(cmd)
+	processGroup := configureProcessGroup(cmd)
 	cmd.Env = mergeProcessEnv(os.Environ(), env)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		_ = closeProcessGroup(processGroup)
 		return nil, fmt.Errorf("stdin pipe: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		_ = stdin.Close()
+		_ = closeProcessGroup(processGroup)
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		_ = stdin.Close()
 		_ = stdout.Close()
+		_ = closeProcessGroup(processGroup)
 		return nil, fmt.Errorf("stderr pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
 		_ = stdout.Close()
 		_ = stderr.Close()
+		_ = closeProcessGroup(processGroup)
 		return nil, fmt.Errorf("start command: %w", err)
 	}
+	if err := startProcessGroup(cmd, processGroup); err != nil {
+		_ = killProcessTree(cmd, processGroup)
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		_ = stdin.Close()
+		_ = stdout.Close()
+		_ = stderr.Close()
+		_ = closeProcessGroup(processGroup)
+		return nil, fmt.Errorf("start process group: %w", err)
+	}
 	t := &StdioTransport{
-		cmd:    cmd,
-		stdin:  stdin,
-		stdout: stdout,
-		stderr: stderr,
-		enc:    json.NewEncoder(stdin),
-		reader: bufio.NewReader(stdout),
+		cmd:          cmd,
+		processGroup: processGroup,
+		stdin:        stdin,
+		stdout:       stdout,
+		stderr:       stderr,
+		enc:          json.NewEncoder(stdin),
+		reader:       bufio.NewReader(stdout),
 	}
 	go t.captureStderr()
 	return t, nil
@@ -203,10 +219,15 @@ func (t *StdioTransport) Close() error {
 		}()
 		done := make(chan error, 1)
 		go func() { done <- t.cmd.Wait() }()
+		defer func() {
+			if err := closeProcessGroup(t.processGroup); err != nil && t.closeErr == nil {
+				t.closeErr = err
+			}
+		}()
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
-			if err := killProcessTree(t.cmd); err != nil {
+			if err := killProcessTree(t.cmd, t.processGroup); err != nil {
 				if !errors.Is(err, os.ErrProcessDone) {
 					t.closeErr = err
 					return
