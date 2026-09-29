@@ -1125,11 +1125,7 @@ function ThreadRows({
         onSubmit={submitRenameDialog}
         onClose={closeRenameDialog}
         dialogTitle={t("threadSidebar.rename")}
-        dialogTitleId="thread-rename-title"
         fieldLabel={t("threadSidebar.title")}
-        fieldAriaLabel={t("threadSidebar.title")}
-        placeholder={t("threadSidebar.title")}
-        icon={MessageSquare}
         submitLabel={t("common.save")}
         cancelLabel={t("common.cancel")}
       />

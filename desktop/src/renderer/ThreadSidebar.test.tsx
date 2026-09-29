@@ -356,41 +356,23 @@ describe("WorkspaceList", () => {
       button?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
 
-    const overlay = document.body.querySelector(
-      ".app-modal-backdrop.conversation-search-overlay.sidebar-name-dialog-overlay",
-    );
-    expect(overlay).not.toBeNull();
-    expect(container.querySelector(".sidebar-name-dialog")).toBeNull();
-    const dialog = document.body.querySelector(".sidebar-name-dialog");
-    expect(dialog?.getAttribute("role")).toBe("dialog");
-    expect(dialog?.firstElementChild?.classList.contains("sidebar-name-dialog-header")).toBe(true);
-    expect(dialog?.querySelector(".sidebar-name-dialog-title")?.textContent).toBe("重命名对话");
-
-    const input = document.body.querySelector<HTMLInputElement>(
-      ".sidebar-name-dialog-input",
-    );
+    // The dialog renders outside the list, prefilled and focused.
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(container.contains(dialog)).toBe(false);
+    const input = dialog!.querySelector<HTMLInputElement>("input");
     expect(input?.value).toBe("Old title");
-    const field = dialog?.querySelector(".sidebar-name-dialog-field");
-    expect(field?.querySelector(".sidebar-name-dialog-label")?.textContent).toBe("会话标题");
-    expect(field?.contains(input)).toBe(true);
-    const actions = dialog?.lastElementChild;
-    expect(actions?.classList.contains("sidebar-name-dialog-actions")).toBe(true);
-    expect(actions?.classList.contains("conversation-search-status")).toBe(false);
-    expect(actions?.textContent?.replace(/\s/g, "")).toBe("取消保存");
+    expect(document.activeElement).toBe(input);
 
     act(() => {
       changeInput(input!, "New title");
     });
-    const save = Array.from(document.body.querySelectorAll("button")).find(
-      (el) => el.textContent === "保存",
-    );
-    expect(save).not.toBeUndefined();
     act(() => {
-      save?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      dialog!.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
     });
 
     expect(onRename).toHaveBeenCalledWith(thread, "New title");
-    expect(document.body.querySelector(".sidebar-name-dialog")).toBeNull();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it("opens the same rename dialog from the context menu instead of window.prompt", () => {
@@ -436,7 +418,7 @@ describe("WorkspaceList", () => {
 
       const item = Array.from(
         document.body.querySelectorAll(".thread-row-context-menu-item"),
-      ).find((el) => el.textContent === "重命名对话");
+      ).find((el) => el.textContent === translateCurrent("threadSidebar.rename"));
       expect(item).not.toBeUndefined();
       act(() => {
         item?.dispatchEvent(
@@ -444,25 +426,14 @@ describe("WorkspaceList", () => {
         );
       });
 
-      const overlay = document.body.querySelector(
-        ".app-modal-backdrop.conversation-search-overlay.sidebar-name-dialog-overlay",
-      );
-      expect(overlay).not.toBeNull();
-      expect(container.querySelector(".sidebar-name-dialog")).toBeNull();
-      const dialog = document.body.querySelector(".sidebar-name-dialog");
-      expect(dialog?.getAttribute("role")).toBe("dialog");
-      const input = document.body.querySelector<HTMLInputElement>(
-        ".sidebar-name-dialog-input",
-      );
+      const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]');
+      const input = dialog?.querySelector<HTMLInputElement>("input");
       expect(input?.value).toBe("Old title");
       act(() => {
         changeInput(input!, "New title");
       });
-      const save = Array.from(document.body.querySelectorAll("button")).find(
-        (el) => el.textContent === "保存",
-      );
       act(() => {
-        save?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        dialog!.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
       });
 
       expect(onRename).toHaveBeenCalledWith(thread, "New title");

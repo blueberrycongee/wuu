@@ -1154,14 +1154,15 @@
   gap: 10px;
 }
 
-/* Confirmation: the question, its consequence, and the two answers. Sized in
- * em so larger UI text keeps the same line breaks instead of wrapping more. */
-.environment-dialog.confirm-dialog {
+/* Small decisions — a confirmation or a single name: the question, what it
+ * needs, and the two answers. Sized in em so larger UI text keeps the same
+ * line breaks instead of wrapping more. */
+.environment-dialog:is(.confirm-dialog, .name-dialog) {
   --environment-dialog-max-width: 26em;
   gap: var(--space-2);
 }
 
-.confirm-dialog h2 {
+:is(.confirm-dialog, .name-dialog) h2 {
   display: -webkit-box;
   overflow: hidden;
   font-size: var(--font-title);
@@ -1177,127 +1178,8 @@
   line-height: var(--line-body);
 }
 
-.confirm-dialog > .environment-dialog-footer {
+:is(.confirm-dialog, .name-dialog) > .environment-dialog-footer {
   margin-top: var(--space-4);
-}
-
-/* Shared floating name dialog used by rename actions. It sits on top of
-   .conversation-search-overlay/-dialog so the motion and panel shell stay
-   consistent with other sidebar modals. */
-.sidebar-name-dialog-overlay {
-  align-items: center;
-  padding: 24px;
-}
-
-.sidebar-name-dialog {
-  width: min(520px, calc(100vw - 48px));
-  max-height: calc(100vh - 48px);
-  grid-template-rows: auto auto auto;
-  gap: var(--space-3);
-  padding: var(--panel-padding);
-  transform-origin: center;
-}
-
-.sidebar-name-dialog-header {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
-  padding: 2px 2px 0;
-}
-
-.sidebar-name-dialog-icon {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--ink);
-}
-
-.sidebar-name-dialog-title {
-  min-width: 0;
-  margin: 0;
-  color: var(--ink);
-  font-size: var(--font-heading);
-  font-weight: var(--weight-semibold);
-  line-height: 1.25;
-  overflow-wrap: anywhere;
-}
-
-.sidebar-name-dialog-field {
-  display: grid;
-  gap: 8px;
-}
-
-.sidebar-name-dialog-label {
-  color: var(--ink-tertiary);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
-}
-
-.sidebar-name-dialog-input {
-  box-sizing: border-box;
-  width: 100%;
-  min-width: 0;
-  height: 46px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  outline: 0;
-  background: var(--surface-2);
-  color: var(--ink);
-  font-size: var(--font-title);
-  font-weight: var(--weight-medium);
-  letter-spacing: 0;
-  padding: 0 12px;
-}
-
-.sidebar-name-dialog-input::placeholder {
-  color: var(--env-search-input-placeholder);
-}
-
-.sidebar-name-dialog-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  padding-top: 2px;
-}
-
-.sidebar-name-dialog-actions button {
-  min-width: 72px;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink);
-  cursor: pointer;
-  font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
-  padding: 7px 12px;
-  transition:
-    opacity var(--motion-fast) var(--ease-out),
-    transform var(--motion-fast) var(--ease-out);
-}
-
-.sidebar-name-dialog-actions button:hover {
-  background: var(--surface-2);
-  transform: translate3d(0, -1px, 0);
-}
-
-.sidebar-name-dialog-actions button[type="submit"] {
-  background: var(--ink);
-  color: var(--paper);
-}
-
-.sidebar-name-dialog-actions button[type="submit"]:hover,
-.sidebar-name-dialog-actions button[type="submit"]:focus-visible {
-  background: var(--ink);
-}
-
-.sidebar-name-dialog-actions button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-  transform: none;
 }
 
 /* Fork-from-earlier picker. Reuses the .environment-dialog shell while

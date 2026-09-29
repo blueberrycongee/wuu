@@ -2308,11 +2308,8 @@ export function AppSidebar({
           dialogTitle={groupNameDialog?.action === "rename"
             ? t("sidebar.renameFolder")
             : t("sidebar.newFolder")}
-          dialogTitleId="session-organization-name-title"
           fieldLabel={t("sidebar.folderNamePrompt")}
-          fieldAriaLabel={t("sidebar.folderNamePrompt")}
           placeholder={t("sidebar.folderNamePrompt")}
-          icon={Folder}
           submitLabel={t(groupNameDialog?.action === "rename" ? "common.save" : "common.create")}
           cancelLabel={t("common.cancel")}
           submitDisabled={groupNamePending || groupName.trim().length === 0 || (
