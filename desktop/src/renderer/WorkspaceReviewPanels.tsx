@@ -1,22 +1,29 @@
 import {
+  ArrowDown,
+  ArrowUp,
+  ChevronDown,
   ChevronRight,
   FileText,
   Folder,
   FolderOpen,
-  Search
 } from "./WuuIcons";
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type RefObject,
   Suspense,
   lazy,
   useEffect,
+  useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState
 } from "react";
 import type { GitChangeFile, GitChangesResult, GitFileDiffResult, GitStatusResult } from "../shared/protocol";
+import { TruncatedText } from "./TruncatedText";
 import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
 import {
   buildGitChangeTree,
@@ -24,9 +31,8 @@ import {
   desktopApiSupportsGitReview,
   expandedGitChangeTreePathsForSelection,
   filterGitChangeFiles,
-  gitChangeFilePathLabel,
-  gitChangeStatusDescription,
   gitChangeStatusLabel,
+  gitChangeStatusText,
   gitDiffDisplayLines,
   gitPathAncestors,
   selectGitChangePath,
@@ -43,6 +49,11 @@ const WORKSPACE_REVIEW_TREE_DEFAULT_WIDTH = 280;
 const WORKSPACE_REVIEW_TREE_MIN_WIDTH = 220;
 const WORKSPACE_REVIEW_TREE_MAX_WIDTH = 360;
 const WORKSPACE_REVIEW_DIFF_MIN_WIDTH = 420;
+const WORKSPACE_REVIEW_RESIZER_WIDTH = 8;
+// Narrower than this, the diff and the change list cannot both stay readable
+// side by side: the list folds into a switcher above a full-width diff.
+const WORKSPACE_REVIEW_SPLIT_MIN_WIDTH =
+  WORKSPACE_REVIEW_TREE_MIN_WIDTH + WORKSPACE_REVIEW_RESIZER_WIDTH + WORKSPACE_REVIEW_DIFF_MIN_WIDTH;
 const WORKSPACE_REVIEW_TREE_STEP = 24;
 const WORKSPACE_REVIEW_TREE_WIDTH_KEY = "wuu.desktop.reviewTreeWidth";
 
@@ -69,6 +80,22 @@ function clampWorkspaceReviewTreeWidth(width: number, panelWidth = Number.POSITI
   return clamp(width, WORKSPACE_REVIEW_TREE_MIN_WIDTH, maxForPanel);
 }
 
+// Files in the order the change list shows them, for stepping.
+function gitChangeTreeFilePaths(nodes: GitChangeTreeNode[]): string[] {
+  return nodes.flatMap((node) => (node.kind === "file" ? [node.path] : gitChangeTreeFilePaths(node.children)));
+}
+
+type ReviewSwitcher = {
+  open: boolean;
+  listID: string;
+  triggerRef: RefObject<HTMLButtonElement | null>;
+  onToggle: () => void;
+  onClose: (restoreFocus: boolean) => void;
+  onPrevious?: () => void;
+  onNext?: () => void;
+  list: ReactNode;
+};
+
 export function WorkspaceReviewPanel({
   gitStatus,
   workspaceRoot,
@@ -77,8 +104,11 @@ export function WorkspaceReviewPanel({
   workspaceRoot?: string;
 }): JSX.Element {
   const { locale, t } = useI18n();
-  const panelRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const switcherRef = useRef<HTMLButtonElement>(null);
   const splitResizeRef = useRef<{ startX: number; startTreeWidth: number } | null>(null);
+  const listID = useId();
+  const [panelNode, setPanelNode] = useState<HTMLDivElement | null>(null);
   const [changes, setChanges] = useState<GitChangesResult | undefined>(undefined);
   const [selectedPath, setSelectedPath] = useState<string | undefined>(undefined);
   const [fileDiff, setFileDiff] = useState<GitFileDiffResult | undefined>(undefined);
@@ -89,11 +119,16 @@ export function WorkspaceReviewPanel({
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
   const [treePaneWidth, setTreePaneWidth] = useState(initialWorkspaceReviewTreeWidth);
   const [resizingSplit, setResizingSplit] = useState(false);
+  const [compact, setCompact] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
   const files = changes?.files ?? [];
   const filteredFiles = useMemo(() => filterGitChangeFiles(files, treeQuery), [files, treeQuery]);
   const treeNodes = useMemo(() => buildGitChangeTree(filteredFiles), [filteredFiles]);
+  const orderedPaths = useMemo(() => gitChangeTreeFilePaths(buildGitChangeTree(files)), [files]);
   const selectedFile = files.find((file) => file.path === selectedPath);
   const singleFileReview = Boolean(selectedFile && files.length === 1);
+  const switcherLayout = compact && Boolean(selectedFile) && !singleFileReview;
+  const sheetOpen = switcherLayout && listOpen;
   const panelStyle = {
     "--workspace-review-tree-width": `${treePaneWidth}px`
   } as CSSProperties;
@@ -192,6 +227,28 @@ export function WorkspaceReviewPanel({
     window.localStorage.setItem(WORKSPACE_REVIEW_TREE_WIDTH_KEY, String(treePaneWidth));
   }, [treePaneWidth]);
 
+  // The layout follows the panel's own width, so a docked, resized or
+  // full-window panel each gets the arrangement that fits it.
+  useLayoutEffect(() => {
+    if (!panelNode) {
+      return undefined;
+    }
+    const measure = (): void => {
+      const narrow = panelNode.getBoundingClientRect().width < WORKSPACE_REVIEW_SPLIT_MIN_WIDTH;
+      setCompact(narrow);
+      if (!narrow) {
+        setListOpen(false);
+      }
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      return undefined;
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(panelNode);
+    return () => observer.disconnect();
+  }, [panelNode]);
+
   useEffect(() => {
     const root = document.documentElement;
     root.classList.toggle("resizing-review-split", resizingSplit);
@@ -271,6 +328,21 @@ export function WorkspaceReviewPanel({
     }
   }
 
+  function closeList(restoreFocus: boolean): void {
+    setListOpen(false);
+    setTreeQuery("");
+    if (restoreFocus) {
+      switcherRef.current?.focus();
+    }
+  }
+
+  function selectFile(path: string): void {
+    setSelectedPath(path);
+    if (sheetOpen) {
+      closeList(true);
+    }
+  }
+
   if (loadingChanges && !changes) {
     return <WorkspacePanelEmpty title={t("workspaceReview.readingChanges")} />;
   }
@@ -287,17 +359,36 @@ export function WorkspaceReviewPanel({
     return <WorkspacePanelEmpty title={t("workspaceReview.clean")} />;
   }
 
+  const selectedIndex = selectedPath ? orderedPaths.indexOf(selectedPath) : -1;
+  const changeList = (
+    <GitChangeTreePanel
+      branch={gitStatus?.is_repo ? gitStatus.branch : undefined}
+      files={filteredFiles}
+      nodes={treeNodes}
+      selectedPath={selectedPath}
+      expandedPaths={expandedPaths}
+      query={treeQuery}
+      autoFocusFilter={sheetOpen}
+      onQueryChange={setTreeQuery}
+      onSelectFile={selectFile}
+      onTogglePath={toggleTreePath}
+    />
+  );
+
   return (
     <div
       className={`workspace-review-panel${selectedFile ? " has-diff" : ""}${
         singleFileReview ? " single-file" : ""
-      }${
+      }${switcherLayout ? " compact" : ""}${
         resizingSplit ? " resizing-split" : ""
       }`}
       aria-label={t("workspaceReview.reviewChanges")}
       data-wuu-component="workspace-review"
       data-wuu-state={selectedFile ? "detail" : "navigation"}
-      ref={panelRef}
+      ref={(node) => {
+        panelRef.current = node;
+        setPanelNode(node);
+      }}
       style={panelStyle}
     >
       {selectedFile ? (
@@ -306,10 +397,21 @@ export function WorkspaceReviewPanel({
           fileDiff={fileDiff}
           loading={loadingDiff}
           error={error}
-          branch={gitStatus?.branch}
+          switcher={switcherLayout ? {
+            open: sheetOpen,
+            listID,
+            triggerRef: switcherRef,
+            onToggle: () => (sheetOpen ? closeList(false) : setListOpen(true)),
+            onClose: closeList,
+            onPrevious: selectedIndex > 0 ? () => setSelectedPath(orderedPaths[selectedIndex - 1]) : undefined,
+            onNext: selectedIndex >= 0 && selectedIndex < orderedPaths.length - 1
+              ? () => setSelectedPath(orderedPaths[selectedIndex + 1])
+              : undefined,
+            list: changeList,
+          } : undefined}
         />
       ) : null}
-      {selectedFile && !singleFileReview ? (
+      {selectedFile && !singleFileReview && !switcherLayout ? (
         <div
           className="workspace-review-resizer"
           role="separator"
@@ -323,18 +425,9 @@ export function WorkspaceReviewPanel({
           onKeyDown={handleReviewSplitKeyDown}
         />
       ) : null}
-      {!singleFileReview ? (
+      {!singleFileReview && !switcherLayout ? (
         <div className="workspace-review-tree-pane">
-          <GitChangeTreePanel
-            files={filteredFiles}
-            nodes={treeNodes}
-            selectedPath={selectedPath}
-            expandedPaths={expandedPaths}
-            query={treeQuery}
-            onQueryChange={setTreeQuery}
-            onSelectFile={setSelectedPath}
-            onTogglePath={toggleTreePath}
-          />
+          {changeList}
           {error && !selectedFile ? <div className="workspace-review-overlay error">{error}</div> : null}
         </div>
       ) : null}
@@ -347,26 +440,98 @@ function WorkspaceReviewDiffPeekPanel({
   fileDiff,
   loading,
   error,
-  branch
+  switcher,
 }: {
   file: GitChangeFile;
   fileDiff?: GitFileDiffResult;
   loading: boolean;
   error?: string;
-  branch?: string;
+  switcher?: ReviewSwitcher;
 }): JSX.Element {
   const { t } = useI18n();
+  const headerRef = useRef<HTMLDivElement>(null);
+  const open = switcher?.open ?? false;
+  const onClose = switcher?.onClose;
+
+  // The list sheet closes like a menu: a press outside it or the switcher.
+  useEffect(() => {
+    if (!open || !onClose) {
+      return undefined;
+    }
+    function handlePointerDown(event: PointerEvent): void {
+      if (event.target instanceof Node && headerRef.current?.contains(event.target)) {
+        return;
+      }
+      onClose?.(false);
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [open, onClose]);
+
   return (
     <section
       className="workspace-review-diff-panel workspace-diff-detail"
       data-wuu-component="workspace-review-content"
       aria-label={t("workspaceReview.codeDiffFor", { path: file.path })}
     >
-      <div className="workspace-diff-detail-header" data-wuu-component="workspace-review-content-header">
-        <div>
-          <strong>{gitChangeFilePathLabel(file)}</strong>
-          <WorkspaceDiffFileMeta file={file} prefix={branch ?? t("workspaceReview.currentBranch")} />
-        </div>
+      <div
+        className="workspace-diff-detail-header"
+        data-wuu-component="workspace-review-content-header"
+        ref={headerRef}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && open) {
+            event.preventDefault();
+            event.stopPropagation();
+            switcher?.onClose(true);
+          }
+        }}
+      >
+        {switcher ? (
+          <>
+            <button
+              ref={switcher.triggerRef}
+              className="workspace-review-switcher"
+              type="button"
+              aria-expanded={switcher.open}
+              aria-controls={switcher.listID}
+              onClick={switcher.onToggle}
+            >
+              <WorkspaceReviewFileTitle file={file} />
+              <ChevronDown className="icon-sm workspace-review-switcher-chevron" aria-hidden="true" />
+            </button>
+            <div className="workspace-review-stepper">
+              <button
+                className="icon-button"
+                type="button"
+                aria-label={t("workspaceReview.previousFile")}
+                title={t("workspaceReview.previousFile")}
+                disabled={!switcher.onPrevious}
+                onClick={switcher.onPrevious}
+              >
+                <ArrowUp className="icon" />
+              </button>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label={t("workspaceReview.nextFile")}
+                title={t("workspaceReview.nextFile")}
+                disabled={!switcher.onNext}
+                onClick={switcher.onNext}
+              >
+                <ArrowDown className="icon" />
+              </button>
+            </div>
+            {switcher.open ? (
+              <div className="workspace-review-sheet" id={switcher.listID} data-wuu-layer="menu">
+                {switcher.list}
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <div className="workspace-review-file-row">
+            <WorkspaceReviewFileTitle file={file} />
+          </div>
+        )}
       </div>
       <WorkspaceDiffBody fileDiff={fileDiff} loading={loading} error={error} />
       {fileDiff?.truncated ? (
@@ -378,24 +543,43 @@ function WorkspaceReviewDiffPeekPanel({
   );
 }
 
-function WorkspaceDiffFileMeta({
-  file,
-  prefix,
-}: {
-  file: GitChangeFile;
-  prefix?: string;
-}): JSX.Element {
+/**
+ * The file a diff shows: its name first and whole, its folder (or former
+ * path) as quieter context that gives way first, then status and counts.
+ */
+function WorkspaceReviewFileTitle({ file }: { file: GitChangeFile }): JSX.Element {
+  const { t } = useI18n();
+  const separator = file.path.lastIndexOf("/");
+  const name = file.path.slice(separator + 1);
+  const renamed = Boolean(file.old_path && file.old_path !== file.path);
+  const context = renamed
+    ? t("workspaceReview.renamedFrom", { path: file.old_path ?? "" })
+    : separator > 0 ? file.path.slice(0, separator) : "";
+  return (
+    <>
+      <span className="workspace-review-file">
+        <TruncatedText as="strong" className="workspace-review-file-name" text={name} />
+        {context ? (
+          <TruncatedText
+            className={`workspace-review-file-context${renamed ? "" : " is-folder"}`}
+            text={context}
+          />
+        ) : null}
+      </span>
+      <span className="workspace-review-file-meta">
+        <span>{gitChangeStatusText(file.status)}</span>
+        {file.binary ? null : <GitChangeCounts additions={file.additions} deletions={file.deletions} />}
+      </span>
+    </>
+  );
+}
+
+function GitChangeCounts({ additions, deletions }: { additions: number; deletions: number }): JSX.Element {
   const { formatNumber } = useI18n();
   return (
-    <span className="workspace-diff-file-meta">
-      {prefix ? <span>{prefix}</span> : null}
-      <span>{gitChangeStatusDescription(file)}</span>
-      {file.binary ? null : (
-        <>
-          <span className="additions">+{formatNumber(file.additions)}</span>
-          <span className="deletions">-{formatNumber(file.deletions)}</span>
-        </>
-      )}
+    <span className="workspace-change-counts">
+      <span className="additions">+{formatNumber(additions)}</span>
+      <span className="deletions">−{formatNumber(deletions)}</span>
     </span>
   );
 }
@@ -453,27 +637,64 @@ export function GitPatchLines({ patch, label }: { patch: string; label: string }
 }
 
 function GitChangeTreePanel({
+  branch,
   files,
   nodes,
   selectedPath,
   expandedPaths,
   query,
+  autoFocusFilter,
   onQueryChange,
   onSelectFile,
   onTogglePath
 }: {
+  branch?: string;
   files: GitChangeFile[];
   nodes: GitChangeTreeNode[];
   selectedPath?: string;
   expandedPaths: Set<string>;
   query: string;
+  autoFocusFilter: boolean;
   onQueryChange: (value: string) => void;
   onSelectFile: (path: string) => void;
   onTogglePath: (path: string) => void;
 }): JSX.Element {
   const { t, formatNumber } = useI18n();
+  const listRef = useRef<HTMLDivElement>(null);
+  const filterRef = useRef<HTMLInputElement>(null);
   const forceExpanded = query.trim().length > 0;
   const totals = summarizeGitChangeFiles(files);
+
+  useEffect(() => {
+    if (autoFocusFilter) {
+      filterRef.current?.focus();
+    }
+  }, [autoFocusFilter]);
+
+  // Rows move like a tree: arrows walk the visible rows, Right and Left open
+  // and close folders.
+  function handleListKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    const rows = Array.from(listRef.current?.querySelectorAll<HTMLButtonElement>(".workspace-diff-tree-row") ?? []);
+    const index = rows.indexOf(document.activeElement as HTMLButtonElement);
+    const row = rows[index];
+    const target =
+      event.key === "ArrowDown" ? rows[index + 1]
+        : event.key === "ArrowUp" ? rows[index - 1]
+          : event.key === "Home" ? rows[0]
+            : event.key === "End" ? rows.at(-1)
+              : undefined;
+    if (target) {
+      event.preventDefault();
+      target.focus();
+      return;
+    }
+    const expanded = row?.getAttribute("aria-expanded");
+    if ((event.key === "ArrowRight" && expanded === "false") || (event.key === "ArrowLeft" && expanded === "true")) {
+      event.preventDefault();
+      row.click();
+    }
+  }
+
   return (
     <aside
       className="workspace-diff-tree"
@@ -481,9 +702,8 @@ function GitChangeTreePanel({
       aria-label={t("workspaceReview.changeFileTree")}
     >
       <div className="workspace-diff-tree-header">
-        <div>
-          <strong>{t("workspaceReview.files")}</strong>
-          <span>
+        <span className="workspace-diff-tree-summary">
+          <strong>
             {t(
               forceExpanded
                 ? files.length === 1
@@ -494,31 +714,34 @@ function GitChangeTreePanel({
                   : "environment.fileCount",
               { count: formatNumber(files.length) },
             )}
-            {files.length > 0 ? (
-              <>
-                {" "}
-                <span className="additions">+{formatNumber(totals.additions)}</span>{" "}
-                <span className="deletions">-{formatNumber(totals.deletions)}</span>
-              </>
-            ) : null}
-          </span>
-        </div>
+          </strong>
+          {files.length > 0 ? <GitChangeCounts additions={totals.additions} deletions={totals.deletions} /> : null}
+        </span>
+        {branch ? <TruncatedText className="workspace-diff-tree-branch" text={branch} /> : null}
       </div>
-      <label className="menu-search workspace-diff-search" data-wuu-component="workspace-review-search">
-        <Search className="icon-sm" aria-hidden="true" />
-        <input
-          value={query}
-          placeholder={t("workspaceReview.filterFiles")}
-          onChange={(event) => onQueryChange(event.currentTarget.value)}
-        />
-      </label>
+      <input
+        ref={filterRef}
+        className="workspace-diff-search"
+        data-wuu-component="workspace-review-search"
+        type="search"
+        value={query}
+        placeholder={t("workspaceReview.filterFiles")}
+        aria-label={t("workspaceReview.filterFiles")}
+        onChange={(event) => onQueryChange(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            listRef.current?.querySelector<HTMLButtonElement>(".workspace-diff-tree-row")?.focus();
+          }
+        }}
+      />
       <div className="workspace-diff-tree-scroll">
         {nodes.length === 0 ? (
           <div className="workspace-diff-tree-empty">
             {t("workspaceReview.noMatchingFiles")}
           </div>
         ) : (
-          <div className="workspace-diff-tree-list">
+          <div className="workspace-diff-tree-list" ref={listRef} onKeyDown={handleListKeyDown}>
             {nodes.map((node) => (
               <GitChangeTreeNodeView
                 key={node.id}
@@ -555,10 +778,9 @@ function GitChangeTreeNodeView({
   onSelectFile: (path: string) => void;
   onTogglePath: (path: string) => void;
 }): JSX.Element {
-  // Per-level indent (12px) matches the file tree's visual density so the
-  // two trees read as the same component family. Root gets a 10px base
-  // so the chevron has breathing room from the tree's left edge.
-  const indentation = { paddingLeft: `${10 + depth * 12}px` } as CSSProperties;
+  const { formatNumber } = useI18n();
+  // One indent step per level; the row's own inset lives in the stylesheet.
+  const indentation = { "--workspace-diff-tree-depth": depth } as CSSProperties;
   if (node.kind === "directory") {
     const expanded = forceExpanded || expandedPaths.has(node.path);
     return (
@@ -572,10 +794,10 @@ function GitChangeTreeNodeView({
           aria-expanded={expanded}
           onClick={() => onTogglePath(node.path)}
         >
-          <ChevronRight className="workspace-diff-tree-chevron icon" />
-          {expanded ? <FolderOpen className="icon" /> : <Folder className="icon" />}
+          <ChevronRight className="workspace-diff-tree-chevron icon-sm" />
+          {expanded ? <FolderOpen className="icon-sm" /> : <Folder className="icon-sm" />}
           <span className="workspace-diff-tree-name">{node.name}</span>
-          <span className="workspace-diff-tree-count">{node.fileCount}</span>
+          <span className="workspace-diff-tree-count">{formatNumber(node.fileCount)}</span>
         </button>
         {expanded ? (
           <div className="workspace-diff-tree-children">
@@ -615,7 +837,7 @@ function GitChangeTreeNodeView({
       }}
     >
       <span className="workspace-diff-tree-spacer" />
-      <FileText className="icon" />
+      <FileText className="icon-sm" />
       <span className="workspace-diff-tree-name">{node.name}</span>
       {file ? <GitChangeFileStats file={file} /> : null}
     </button>
@@ -623,18 +845,17 @@ function GitChangeTreeNodeView({
 }
 
 function GitChangeFileStats({ file }: { file: GitChangeFile }): JSX.Element {
-  const { t, formatNumber } = useI18n();
+  const { t } = useI18n();
   return (
     <span className="workspace-diff-tree-stats">
-      <span className={`workspace-diff-file-status ${file.status}`}>{gitChangeStatusLabel(file.status)}</span>
       {file.binary ? (
-        <span className="workspace-diff-tree-binary">{t("workspace.review.binary")}</span>
+        <span>{t("workspace.review.binary")}</span>
       ) : (
-        <>
-          <span className="additions">+{formatNumber(file.additions)}</span>
-          <span className="deletions">-{formatNumber(file.deletions)}</span>
-        </>
+        <GitChangeCounts additions={file.additions} deletions={file.deletions} />
       )}
+      <span className={`workspace-diff-file-status ${file.status}`} title={gitChangeStatusText(file.status)}>
+        {gitChangeStatusLabel(file.status)}
+      </span>
     </span>
   );
 }

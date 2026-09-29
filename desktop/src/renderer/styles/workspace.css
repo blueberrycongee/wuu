@@ -2815,264 +2815,265 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   color: var(--hljs-meta);
 }
 
-.workspace-diff-review {
+/* Review: the diff beside its change list. Below the split width
+ * (WorkspaceReviewPanels.tsx) the list folds into a switcher above a
+ * full-width diff. */
+.workspace-review-panel {
   display: grid;
   height: 100%;
+  min-width: 0;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
-  background: var(--paper);
-}
-
-.workspace-diff-header {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  border-bottom: 1px solid var(--hairline-soft);
-  min-height: 42px;
-  padding: 0 14px 0 18px;
-}
-
-.workspace-diff-header div,
-.workspace-diff-detail-header div {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-}
-
-.workspace-diff-header strong,
-.workspace-diff-detail-header strong,
-.workspace-diff-header span,
-.workspace-diff-detail-header span {
-  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  /* Fill the panel's height; a lone auto row would only take its content's. */
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.workspace-diff-header strong,
-.workspace-diff-detail-header strong {
-  color: var(--ink);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
+.workspace-review-panel.has-diff:not(.single-file, .compact) {
+  grid-template-columns:
+    minmax(0, 1fr)
+    8px
+    minmax(220px, min(var(--workspace-review-tree-width, 280px), calc(100% - 428px)));
 }
 
-.workspace-diff-header span,
-.workspace-diff-detail-header span {
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-}
-
-.workspace-diff-header .icon-button {
-  width: 30px;
-  height: 30px;
-  flex: 0 0 auto;
-}
-
-.workspace-diff-title span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.workspace-diff-branch-arrow {
-  color: var(--diff-branch-arrow);
-}
-
-.workspace-diff-summary {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 9px;
-  color: var(--ink-muted);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-}
-
-.workspace-diff-content {
-  display: grid;
+.workspace-review-resizer {
+  position: relative;
+  z-index: 2;
   min-width: 0;
   min-height: 0;
-  grid-template-columns: minmax(0, 1fr) minmax(270px, 320px);
+  cursor: col-resize;
+  outline: 0;
 }
 
-.workspace-diff-files {
+.workspace-review-resizer::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--hairline-soft);
+  content: "";
+  transform: translateX(-50%);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.workspace-review-resizer:hover::before,
+.workspace-review-resizer:focus-visible::before,
+.workspace-review-panel.resizing-split .workspace-review-resizer::before {
+  background: var(--sidebar-resizer-hover-bg);
+  box-shadow: 0 0 0 1px var(--sidebar-resizer-hover-ring);
+}
+
+.workspace-review-tree-pane {
+  position: relative;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-right: 1px solid var(--hairline-soft);
-  background: transparent;
 }
 
-.workspace-diff-file-scroll,
-.workspace-diff-code-scroll {
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  overflow: auto;
-}
-
-/* Pin the code-scroll into the 1fr row of .workspace-diff-detail. Without
-   this it auto-flows into the second `auto` row whenever the error row is
-   empty (almost always), so the scroll container collapses to its content
-   height instead of filling the remaining vertical space. */
-.workspace-diff-code-scroll {
-  grid-row: 3;
-}
-
-.workspace-diff-file-scroll {
+.workspace-review-overlay {
+  position: absolute;
+  inset: 70px 12px 12px;
   display: grid;
-  gap: 4px;
-  padding: 10px;
-}
-
-.workspace-diff-file {
-  display: grid;
-  min-width: 0;
-  min-height: 40px;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--diff-file-text);
-  padding: 6px 8px;
-  text-align: left;
-}
-
-.workspace-diff-file:hover,
-.workspace-diff-file.active {
-  background: var(--surface-3);
-}
-
-.workspace-diff-file-status {
-  display: grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--diff-status-bg);
-  color: var(--diff-status-fg);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-semibold);
-}
-
-.workspace-diff-file-status.added,
-.workspace-diff-file-status.untracked {
-  background: var(--diff-added-bg);
-  color: var(--diff-added-fg);
-}
-
-.workspace-diff-file-status.deleted {
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-
-.workspace-diff-file-status.renamed,
-.workspace-diff-file-status.copied {
-  background: var(--diff-renamed-bg);
-  color: var(--info);
-}
-
-.workspace-diff-file-path {
-  min-width: 0;
-  overflow: hidden;
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-diff-file-stats {
-  display: inline-flex;
-  min-width: 0;
-  flex: 0 0 auto;
-  gap: 5px;
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
-}
-
-.workspace-diff-detail {
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-  /* Propagate the parent container's height down to the inner grid so the
-     `minmax(0, 1fr)` row can actually expand. In the bottom review panel
-     this matches the previous stretch behavior; in the right side panel
-     it's required because .workspace-review-diff-panel is a plain block
-     (no grid stretch) and the diff would otherwise collapse. */
-  height: 100%;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
-  background: var(--paper);
-  border-right: 1px solid var(--hairline-soft);
-}
-
-.workspace-diff-detail-header {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 46px;
-  border-bottom: 1px solid var(--hairline-soft);
-  padding: 0 14px 0 18px;
-}
-
-.workspace-diff-file-meta {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 7px;
-}
-
-.workspace-diff-file-meta > span:not(.additions):not(.deletions) + span:not(.additions):not(.deletions)::before {
-  margin-right: 7px;
-  color: var(--ink-faint);
-  content: "·";
-}
-
-.workspace-diff-error,
-.workspace-diff-truncated {
-  border-bottom: 1px solid var(--diff-error-border);
-  background: var(--danger-soft);
-  color: var(--danger);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  padding: 9px 18px;
-}
-
-.workspace-diff-truncated {
-  /* Keep the truncated banner anchored to the last row of
-     .workspace-diff-detail (below the 1fr code-scroll), regardless of
-     whether the error row above is populated. */
-  grid-row: 4;
-  border-top: 1px solid var(--diff-truncated-border);
-  border-bottom: 0;
-  background: var(--warning-soft);
-  color: var(--diff-truncated-text);
-}
-
-.workspace-diff-empty {
-  display: grid;
-  min-height: 220px;
   place-content: center;
-  color: var(--ink-muted);
+  border-radius: var(--radius-sm);
+  background: var(--review-overlay-bg);
+  color: var(--ink-soft);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  padding: 20px;
   text-align: center;
 }
 
+.workspace-review-overlay.error {
+  color: var(--danger);
+}
+
+.workspace-review-diff-panel {
+  display: grid;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  background: var(--paper);
+}
+
+/* The file row is a chrome row: its first glyph sits on the pane inset and
+ * the stepper's last glyph on the toolbar inset. */
+.workspace-diff-detail-header {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: calc(var(--control-size-toolbar) + var(--space-2) * 2);
+  align-items: center;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--hairline-soft);
+  padding: var(--space-2) var(--control-toolbar-inset) var(--space-2) var(--pane-inset);
+}
+
+.workspace-review-file-row,
+.workspace-review-switcher {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.workspace-review-switcher {
+  min-height: var(--control-size-toolbar);
+  margin-inline-start: calc(var(--control-padding-inline) * -1);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--control-padding-inline);
+  text-align: start;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.workspace-review-switcher:hover,
+.workspace-review-switcher[aria-expanded="true"] {
+  background: var(--ink-overlay-4);
+}
+
+.workspace-review-switcher-chevron {
+  align-self: center;
+  flex: 0 0 auto;
+  color: var(--ink-tertiary);
+  transition: transform var(--motion-base) var(--ease-out);
+}
+
+.workspace-review-switcher[aria-expanded="true"] .workspace-review-switcher-chevron {
+  transform: rotate(180deg);
+}
+
+.workspace-review-file {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.workspace-review-file-name,
+.workspace-review-file-context {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The name keeps its width; the context gives way first. */
+.workspace-review-file-name {
+  flex: 0 1 auto;
+  color: var(--ink);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+}
+
+.workspace-review-file-context {
+  flex: 0 10000 auto;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+}
+
+/* A folder path loses its start first, keeping the folder nearest the file. */
+.workspace-review-file-context.is-folder {
+  direction: rtl;
+  text-align: left;
+}
+
+.workspace-review-file-meta {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  white-space: nowrap;
+}
+
+.workspace-change-counts {
+  display: inline-flex;
+  gap: var(--space-1);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.workspace-review-stepper {
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.workspace-review-stepper .icon-button {
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
+}
+
+/* The folded change list opens as a menu card under the file row. */
+.workspace-review-sheet {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + var(--space-1));
+  right: var(--space-2);
+  left: var(--space-2);
+  display: flex;
+  max-height: min(60vh, 520px);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-shell-radius);
+  background: var(--menu-bg);
+  box-shadow: var(--menu-shadow);
+  --enter-y: -4px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
+}
+
+.workspace-review-sheet .workspace-diff-tree {
+  flex: 1 1 auto;
+}
+
+.workspace-diff-error,
+.workspace-diff-empty {
+  display: grid;
+  min-height: 0;
+  place-content: center;
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
+  line-height: var(--line-body);
+  padding: var(--panel-padding);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.workspace-diff-error {
+  color: var(--danger);
+}
+
+/* A notice, not an alarm: the preview stops, the change itself is intact. */
+.workspace-diff-truncated {
+  border-top: 1px solid var(--hairline-soft);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: var(--line-body);
+  padding: var(--space-2) var(--pane-inset);
+}
+
 .workspace-monaco-diff-editor {
-  grid-row: 3;
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   background: var(--paper);
+}
+
+.workspace-diff-code-scroll {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
 }
 
 .workspace-diff-code {
@@ -3084,11 +3085,11 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   border-radius: 0;
   background: var(--paper);
   color: var(--ink);
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 12px;
-  line-height: 1.58;
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+  line-height: 1.6;
   margin: 0;
-  padding: 12px 0 40px;
+  padding: var(--space-3) 0 var(--space-8);
   white-space: normal;
 }
 
@@ -3096,29 +3097,25 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   display: block;
   position: relative;
   min-width: 0;
-  min-height: 19px;
   box-sizing: border-box;
-  padding: 0 18px 0 104px;
+  padding: 0 var(--space-5) 0 104px;
 }
 
 .workspace-diff-line.meta {
-  color: var(--diff-line-meta-text);
+  color: var(--ink-soft);
 }
 
 .workspace-diff-line.hunk {
-  background: var(--diff-hunk-bg);
-  color: var(--info);
-  font-weight: var(--weight-semibold);
+  background: var(--surface-2);
+  color: var(--ink-soft);
 }
 
 .workspace-diff-line.add {
-  background: var(--diff-add-bg);
-  color: var(--diff-add-text);
+  background: color-mix(in srgb, var(--success) 8%, transparent);
 }
 
 .workspace-diff-line.delete {
-  background: var(--diff-delete-bg);
-  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
 .workspace-diff-line-number {
@@ -3127,10 +3124,10 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   bottom: 0;
   width: 52px;
   box-sizing: border-box;
-  border-right: 1px solid var(--hairline-soft);
-  color: var(--diff-line-number-text);
+  color: var(--ink-tertiary);
   padding: 0 10px;
   text-align: right;
+  font-variant-numeric: tabular-nums;
   user-select: none;
 }
 
@@ -3151,47 +3148,70 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   word-break: break-word;
 }
 
+/* Change list. Rows share the file tree's height and type size so the two
+ * trees read as one family; the text axis starts one step in from the list
+ * edge and the trailing counts end on the pane inset. */
 .workspace-diff-tree {
   display: grid;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   grid-template-rows: auto auto minmax(0, 1fr);
-  background: transparent;
+  overflow: hidden;
+  container: workspace-review-list / inline-size;
 }
 
 .workspace-diff-tree-header {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 12px 12px 7px;
-}
-
-.workspace-diff-tree-header div {
   display: grid;
   min-width: 0;
-  gap: 3px;
+  gap: 2px;
+  padding: var(--space-3) var(--pane-inset) var(--space-2) var(--space-4);
 }
 
-.workspace-diff-tree-header strong,
-.workspace-diff-tree-header span {
+.workspace-diff-tree-summary {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--font-sm);
+}
+
+.workspace-diff-tree-summary strong {
+  color: var(--ink);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.workspace-diff-tree-branch {
   min-width: 0;
   overflow: hidden;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.workspace-diff-tree-header strong {
+.workspace-diff-search {
+  min-width: 0;
+  min-height: var(--control-field-height);
+  margin: 0 var(--space-2) var(--space-2);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+  background: var(--field-bg);
   color: var(--ink);
-  font-size: var(--font-title);
-  font-weight: var(--weight-semibold);
+  font: inherit;
+  font-size: var(--font-ui);
+  padding: var(--control-padding-block) var(--space-2);
+  transition: background-color var(--motion-fast) var(--ease-out);
 }
 
-.workspace-diff-tree-header span {
-  color: var(--diff-tree-header-text);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
+.workspace-diff-search:hover {
+  background: var(--field-hover-bg);
+}
+
+.workspace-diff-search::placeholder {
+  color: var(--placeholder-ink);
 }
 
 .workspace-diff-tree-scroll {
@@ -3203,8 +3223,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 .workspace-diff-tree-list {
   display: grid;
   min-width: 0;
-  gap: 1px;
-  padding: 2px 5px 12px;
+  padding: 0 var(--space-2) var(--space-3);
 }
 
 .workspace-diff-tree-node,
@@ -3215,59 +3234,38 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 
 .workspace-diff-tree-row {
   display: grid;
+  width: 100%;
   min-width: 0;
-  /* Row height + font size mirror the file tree (pierre/trees, itemHeight
-     24 + --trees-font-size-override: --font-sm) so the two trees read as
-     the same component family. Active keeps its accent fill (see below) so
-     "selected diff" is still distinguishable from "hover". */
-  min-height: 24px;
-  /* Tightened chevron / icon columns (was 18px 18px) so the file name has
-     more room before the stat badge. Together with the narrower tree
-     indentation spacer below this stops common file names from getting
-     ellipsised inside the 280px review tree pane at deep paths. */
-  grid-template-columns: 14px 14px minmax(0, 1fr) auto;
+  min-height: var(--control-row-height);
+  grid-template-columns: var(--icon-size-sm) var(--icon-size-sm) minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
-  font-size: var(--font-sm);
-  padding-right: 8px;
+  font-size: var(--font-ui);
+  padding-block: 0;
+  padding-inline:
+    calc(var(--space-2) + var(--workspace-diff-tree-depth, 0) * var(--space-3))
+    var(--space-3);
   text-align: left;
+  transition: background-color var(--motion-fast) var(--ease-out);
 }
 
 .workspace-diff-tree-row:hover {
-  background: var(--surface-2);
+  background: var(--ink-overlay-4);
 }
 
 .workspace-diff-tree-row.active {
-  /* The active row is the file whose diff is shown in the diff pane, so it
-     needs to read as clearly distinct from a hover — using the same neutral
-     surface tint as hover (the old behavior) made it impossible to tell
-     which file's diff was on screen at a glance. */
-  background: var(--surface-3);
-  color: var(--ink);
+  background: var(--selection-surface);
 }
 
-.workspace-diff-tree-row.active svg {
-  color: var(--ink);
-}
-
-.workspace-diff-tree-row.active .workspace-diff-tree-count {
-  color: var(--ink-muted);
+html[data-focus-modality="keyboard"] .workspace-diff-tree-row:focus-visible {
+  outline-offset: -2px;
 }
 
 .workspace-diff-tree-row svg {
-  color: var(--diff-tree-row-icon);
-}
-
-.workspace-diff-tree-row.directory {
-  font-weight: var(--weight-semibold);
-}
-
-.workspace-diff-tree-row.file {
-  grid-template-columns: 14px 14px minmax(0, 1fr) auto;
-  color: var(--diff-tree-file-text);
+  color: var(--ink-tertiary);
 }
 
 .workspace-diff-tree-chevron {
@@ -3285,41 +3283,56 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   white-space: nowrap;
 }
 
-.workspace-diff-tree-count {
-  color: var(--diff-tree-count-text);
+.workspace-diff-tree-count,
+.workspace-diff-tree-stats {
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
 }
 
-.workspace-diff-tree-spacer {
-  /* Spacer that mirrors the chevron column so the file icon lines up
-     under the folder icon in directory rows. The per-level indent step
-     lives in WorkspaceReviewPanels.tsx. */
-  width: 12px;
-}
-
+/* Counts first, the status letter last in a fixed column, so letters line
+ * up down the list whatever the counts' width. */
 .workspace-diff-tree-stats {
   display: inline-flex;
   min-width: 0;
-  align-items: center;
-  gap: 5px;
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
+  align-items: baseline;
+  gap: var(--space-2);
 }
 
-.workspace-diff-tree-binary {
-  color: var(--ink-muted);
+.workspace-diff-file-status {
+  width: 1.2em;
+  color: var(--ink-soft);
+  font-weight: var(--weight-medium);
+  text-align: center;
+}
+
+.workspace-diff-file-status:is(.added, .untracked) {
+  color: var(--success);
+}
+
+.workspace-diff-file-status.deleted {
+  color: var(--danger);
+}
+
+.workspace-diff-tree-spacer {
+  width: var(--icon-size-sm);
+}
+
+/* A narrow list keeps the names and the status letter; per-file counts
+ * return once there is room, and the open file's header always has them. */
+@container workspace-review-list (max-width: 319px) {
+  .workspace-diff-tree-stats > :not(.workspace-diff-file-status) {
+    display: none;
+  }
 }
 
 .workspace-diff-tree-empty {
   display: grid;
-  min-height: 140px;
+  min-height: 120px;
   place-content: center;
-  color: var(--ink-muted);
+  color: var(--ink-soft);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  padding: 18px;
+  padding: var(--space-4);
   text-align: center;
 }
 
