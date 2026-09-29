@@ -891,17 +891,6 @@ html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
   font-weight: 600;
 }
 
-.composer-input-header {
-  --composer-input-header-inline-padding: 8px;
-  --composer-input-header-row-height: 36px;
-  --composer-input-header-action-size: 28px;
-  border-bottom: 1px solid var(--hairline-soft);
-}
-
-.composer-input-header > * + * {
-  border-top: 1px solid var(--hairline-soft);
-}
-
 .composer-input-header-actions {
   display: flex;
   flex: 0 0 auto;
@@ -909,25 +898,11 @@ html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
   gap: 1px;
 }
 
-.composer-input-header-label {
-  width: 36px;
-  overflow: hidden;
-  color: var(--ink-muted);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0;
-  line-height: 1;
-  text-overflow: clip;
-  text-transform: uppercase;
-  user-select: none;
-  white-space: nowrap;
-}
-
 .composer-input-header-action {
   display: grid;
-  width: var(--composer-input-header-action-size, 28px);
-  height: var(--composer-input-header-action-size, 28px);
-  flex: 0 0 var(--composer-input-header-action-size, 28px);
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
   place-items: center;
   padding: 0;
   border: 0;
@@ -956,8 +931,8 @@ html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
   grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
-  min-height: var(--composer-input-header-row-height, 36px);
-  padding: 4px var(--composer-input-header-inline-padding, 8px);
+  min-height: 36px;
+  padding: 4px 8px;
   color: var(--ink);
   font-size: var(--font-sm);
   line-height: 1.5;
@@ -987,8 +962,8 @@ html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
 
 .composer-queue-index {
   color: var(--ink-tertiary);
-  font-size: 11px;
-  font-weight: 500;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
   font-variant-numeric: tabular-nums;
   text-align: center;
   user-select: none;
@@ -1164,7 +1139,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 }
 
 .composer-pending-drawer.expanded .composer-pending-preview {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-weight: var(--weight-medium);
 }
 
