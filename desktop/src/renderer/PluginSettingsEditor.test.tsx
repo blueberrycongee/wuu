@@ -159,13 +159,10 @@ describe("PluginSettingsEditor", () => {
     }
 
     await renderEditor({ ...pluginRecord(), id: "alpha-conflict", contributions: {} });
-    const select = container.querySelector<HTMLSelectElement>("[data-conflict-key='surface:conversation.timeline'] select")!;
-    expect(select.value).toBe("zeta-conflict");
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
-      setter?.call(select, "alpha-conflict");
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    const trigger = container.querySelector<HTMLButtonElement>("[data-conflict-key='surface:conversation.timeline'] .select-menu-trigger")!;
+    expect(trigger.textContent).toContain("zeta-conflict");
+    await act(async () => trigger.click());
+    await act(async () => document.querySelector<HTMLElement>('[role="menuitemradio"][data-value="alpha-conflict"]')?.click());
     expect(setPluginConflictPreference).toHaveBeenCalledWith("surface:conversation.timeline", "alpha-conflict");
     expect(desktopPluginHost.getSurfaceSnapshot("conversation.timeline").at(-1)?.pluginId).toBe("alpha-conflict");
   });

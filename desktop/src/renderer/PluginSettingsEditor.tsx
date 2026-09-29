@@ -20,6 +20,7 @@ export function PluginSettingsEditor({
   plugin: ExtensionInventoryRecord;
   title?: string;
 }): JSX.Element | null {
+  const { t } = useI18n();
   const settings = plugin.contributions?.settings ?? [];
   const approved = plugin.approval_state === "official" || plugin.approval_state === "granted";
   const fingerprint = plugin.fingerprint;
@@ -48,7 +49,7 @@ export function PluginSettingsEditor({
     void window.wuu.getPluginDiagnostics({ id: plugin.id, fingerprint }).then((result) => {
       if (!cancelled) setRuntimeDiagnostics(result.diagnostics);
     }).catch((loadError: unknown) => {
-      if (!cancelled) setRuntimeDiagnosticError(errorMessage(loadError, "无法读取插件诊断"));
+      if (!cancelled) setRuntimeDiagnosticError(errorMessage(loadError, t("skills.pluginDiagnosticsFailed")));
     });
     return () => { cancelled = true; };
   }, [approved, fingerprint, plugin.enabled, plugin.id]);
@@ -62,7 +63,7 @@ export function PluginSettingsEditor({
       className="plugin-settings-editor"
       data-wuu-component="plugin-settings"
       data-wuu-plugin={plugin.id}
-      aria-label={title ?? `${plugin.name} settings`}
+      aria-label={title ?? t("skills.pluginSettingsNamed", { name: plugin.name })}
     >
       {title ? <h3 className="plugin-settings-editor-title">{title}</h3> : null}
       <div className="plugin-settings-editor-body">
@@ -71,14 +72,14 @@ export function PluginSettingsEditor({
       ))}
       {runtimeDiagnostics.map((diagnostic) => (
         <div className="plugin-contribution-warning" role="status" key={`runtime:${diagnostic.contribution}`}>
-          <strong>插件贡献已被隔离</strong>
-          <span>{diagnostic.contribution}：{diagnostic.message}</span>
+          <strong>{t("skills.pluginContributionIsolated")}</strong>
+          <span>{t("skills.pluginContributionDetail", { contribution: diagnostic.contribution, message: diagnostic.message })}</span>
         </div>
       ))}
       {runtimeDiagnosticError ? <div className="plugin-contribution-warning" role="alert">{runtimeDiagnosticError}</div> : null}
       {rendererDiagnostics.map((diagnostic, index) => (
         <div className="plugin-contribution-warning" role="status" key={`${diagnostic.message}:${index}`}>
-          <strong>插件贡献已被隔离</strong>
+          <strong>{t("skills.pluginContributionIsolated")}</strong>
           <span>{diagnostic.message}</span>
         </div>
       ))}
@@ -96,6 +97,7 @@ export function PluginSettingsEditor({
 }
 
 function PluginConflictControl({ conflict }: { conflict: PluginContributionConflict }): JSX.Element {
+  const { t } = useI18n();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const candidates = Array.from(new Map(
@@ -110,7 +112,7 @@ function PluginConflictControl({ conflict }: { conflict: PluginContributionConfl
       const preferences = await window.wuu.setPluginConflictPreference(conflict.key, pluginId);
       desktopPluginHost.setConflictPreferences(preferences);
     } catch (saveError) {
-      setError(errorMessage(saveError, "无法保存插件冲突选择"));
+      setError(errorMessage(saveError, t("skills.pluginConflictSaveFailed")));
     } finally {
       setSaving(false);
     }
@@ -119,23 +121,27 @@ function PluginConflictControl({ conflict }: { conflict: PluginContributionConfl
   return (
     <div className="plugin-contribution-conflict" data-conflict-key={conflict.key}>
       <div>
-        <strong>插件贡献冲突</strong>
-        <span>{conflict.kind === "surface" ? "界面区域" : "内容呈现"}：{conflict.target}</span>
+        <strong>{t("skills.pluginConflictTitle")}</strong>
+        <span>{t("skills.pluginConflictTarget", {
+          kind: conflict.kind === "surface" ? t("skills.pluginConflictSurface") : t("skills.pluginConflictRenderer"),
+          target: conflict.target,
+        })}</span>
       </div>
-      <label>
-        使用
-        <select
+      <div>
+        <span>{t("skills.pluginConflictUse")}</span>
+        <SelectMenu
+          triggerClassName="settings-select-trigger"
+          ariaLabel={t("skills.pluginConflictUse")}
           value={conflict.winnerPluginId}
           disabled={saving}
-          onChange={(event) => void choose(event.currentTarget.value)}
-        >
-          {candidates.map((candidate) => (
-            <option value={candidate.pluginId} key={candidate.pluginId}>
-              {candidate.title ? `${candidate.title} (${candidate.pluginId})` : candidate.pluginId}
-            </option>
-          ))}
-        </select>
-      </label>
+          align="right"
+          options={candidates.map((candidate) => ({
+            value: candidate.pluginId,
+            label: candidate.title ? `${candidate.title} (${candidate.pluginId})` : candidate.pluginId,
+          }))}
+          onChange={(pluginId) => void choose(pluginId)}
+        />
+      </div>
       {error ? <span role="alert">{error}</span> : null}
     </div>
   );
@@ -272,6 +278,7 @@ function PluginSettingControl({
           <SelectMenu
             id={controlId}
             className="plugin-setting-select"
+            triggerClassName="settings-select-trigger"
             value={String(draft)}
             disabled={loading || saving}
             ariaLabel={setting.title}
@@ -285,7 +292,7 @@ function PluginSettingControl({
         ) : (
           <input
             id={controlId}
-            className="settings-input"
+            className={setting.type === "number" ? "settings-input settings-input-num" : "settings-input"}
             type={setting.type === "number" ? "number" : "text"}
             value={String(draft)}
             disabled={loading || saving}
@@ -303,7 +310,7 @@ function PluginSettingControl({
         {error ? (
           <>
             <span>{error}</span>
-            <button type="button" className="text-button" onClick={retry} disabled={loading || saving}>
+            <button type="button" className="settings-button settings-button-ghost" onClick={retry} disabled={loading || saving}>
               {t("skills.pluginSettingRetry")}
             </button>
           </>

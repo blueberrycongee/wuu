@@ -4,6 +4,7 @@ import type {
   CatalogProviderSummary,
   CodexPetsSnapshot,
   EngineListResult,
+  ExtensionInventoryRecord,
   InitializeResult,
   MCPServerStatus,
   ProviderSummary,
@@ -124,12 +125,33 @@ const archivedThreads: ArchivedSessionView[] = empty ? [] : [
   { id: "a3", title: "整理发布说明", updated_at: "2026-08-30T10:00:00Z" },
 ];
 
+// One configurable plugin covers the generated settings page: every setting
+// type, a narrower scope, a restart-applied value and a read that fails once.
+const pluginSettingValues: Record<string, boolean | string | number> = {
+  "feature.enabled": true, "display.name": "Wuu", "retry.count": 3, "display.mode": "roomy",
+};
+const settingsPlugin: ExtensionInventoryRecord = {
+  id: "demo.settings", name: long ? "A plugin with an unusually long display name" : "Reading helper", kind: "plugin",
+  provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "demo.settings" },
+  state: "granted", approval_state: "granted", enabled: true, fingerprint: "sha256:preview",
+  contributions: {
+    settings: [
+      { id: "feature.enabled", type: "boolean", title: "Highlight answers", description: "Marks the paragraph an answer starts from.", default: true, scope: "user", apply: "live" },
+      { id: "display.name", type: "string", title: "Signature", default: "Wuu", scope: "user", apply: "live" },
+      { id: "retry.count", type: "number", title: "Retry count", default: 3, scope: "workspace", apply: "restart" },
+      { id: "display.mode", type: "enum", title: "Density", default: "compact", enum: ["compact", "roomy"], scope: "user", apply: "live" },
+    ],
+  },
+};
+let pluginReadFailed = false;
+
 const initialized: InitializeResult = {
   status: "ready", protocol_version: "1", workspace_root: "/preview",
   core: { version: "2026.9.25" },
   provider: providers[0]?.name ?? "", model: providers[0]?.model ?? "",
   providers,
   advanced_settings: { max_steps: 0, max_context_tokens: 0, temperature: 0, disable_auto_compact: false, context_window_tokens: 200_000, context_window_source: "provider_model_limit" },
+  extension_inventory: empty ? [] : [settingsPlugin],
   general_settings: {
     git_attribution_enabled: true,
     mcp_server_enabled: Object.fromEntries(mcpServers.map((server) => [server.name, true])),
@@ -169,6 +191,18 @@ window.wuu = {
   openExternal: async () => undefined,
   getRemoteControlSnapshot: async () => ({ status: { fingerprint: "AB12-CD34", store: "", devices: [] }, host_running: false }),
   onRemoteControlEvent: () => () => undefined,
+  getPluginSetting: async ({ id, key }: { id: string; key: string }) => {
+    if (key === "retry.count" && !pluginReadFailed) {
+      pluginReadFailed = true;
+      throw new Error("Plugin settings are unavailable while the plugin restarts.");
+    }
+    return { id, key, scope: key === "retry.count" ? "workspace" : "user", value: pluginSettingValues[key] };
+  },
+  setPluginSetting: async ({ id, key, value }: { id: string; key: string; value: boolean | string | number }) => {
+    pluginSettingValues[key] = value;
+    return { id, key, scope: key === "retry.count" ? "workspace" : "user", value };
+  },
+  getPluginDiagnostics: async ({ id }: { id: string }) => ({ id, diagnostics: [] }),
   unsupportedMethods: [],
 } as unknown as WuuDesktopApi;
 
