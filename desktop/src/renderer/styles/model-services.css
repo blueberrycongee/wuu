@@ -683,7 +683,7 @@
 }
 
 .model-browse-copy > small {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
 }
 

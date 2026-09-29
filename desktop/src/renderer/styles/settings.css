@@ -429,7 +429,7 @@
 /* Notes below a group: font loading, save failures, list errors. */
 .settings-section-note {
   margin: 0;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   line-height: 1.5;
 }
@@ -458,7 +458,7 @@
   min-height: calc(var(--control-field-height) + var(--space-3) * 2);
   align-items: center;
   margin: 0;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-ui);
 }
 
@@ -725,7 +725,7 @@
   position: absolute;
   top: 50%;
   right: var(--control-padding-inline);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   line-height: 1;
   pointer-events: none;
@@ -951,7 +951,7 @@
   display: flex;
   align-items: center;
   min-height: 48px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-ui);
   padding: 8px 0;
 }
@@ -959,7 +959,7 @@
 .settings-muted-line {
   display: block;
   width: 100%;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   line-height: 1.5;
 }
@@ -1708,7 +1708,7 @@ button.settings-engine-expand:hover {
 }
 
 .settings-model-chart-label small {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
 }
 
@@ -2108,7 +2108,7 @@ button.settings-engine-expand:hover {
 }
 
 .settings-usage-model small {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   font-weight: 400;
 }
@@ -2192,7 +2192,7 @@ button.settings-engine-expand:hover {
   /* The column header is hidden here, so each value carries its own label. */
   .settings-usage-table tbody td[data-label]::before {
     content: attr(data-label);
-    color: var(--ink-muted);
+    color: var(--ink-tertiary);
     font-size: var(--font-xs);
     font-weight: var(--weight-semibold);
   }
@@ -2425,7 +2425,7 @@ button.settings-engine-expand:hover {
 .settings-archive-empty-hint {
   margin: 0;
   max-width: 46ch;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   line-height: 1.5;
 }
