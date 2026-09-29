@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Selectable execution environments for workspace tools, with isolated or shared
+  filesystems, retained profiles, remote process controls, artifact transfer,
+  and desktop configuration.
+
 - Desktop app zoom shortcuts (Command/Ctrl + plus, minus, and zero), with a
   centered percentage indicator, saved zoom, and a 50%–200% range.
 
