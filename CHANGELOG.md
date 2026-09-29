@@ -26,6 +26,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Stopping a background command now kills remaining child processes after its
+  parent exits, including children that could leave a promoted command's stop
+  request waiting indefinitely for output pipes to close.
+
 - Harden MCP transport compatibility, request timeouts, OAuth refresh recovery,
   local server cleanup, bounded reads, catalog refreshes, and oversized results.
 
