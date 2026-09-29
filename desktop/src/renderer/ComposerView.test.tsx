@@ -3029,6 +3029,203 @@ describe("Composer permission menu", () => {
   });
 });
 
+describe("Composer menu keyboard", () => {
+  const project: DesktopProject = {
+    id: "project-1",
+    name: "wuu",
+    path: "/repo/wuu",
+    created_at: "2026-06-26T00:00:00.000Z",
+    updated_at: "2026-06-26T00:00:00.000Z",
+  };
+
+  // The app owns the project, branch and permission menus' open state; the
+  // harness holds it the same way so opening and closing run the real paths.
+  function renderMenuComposer(): void {
+    function Harness(): JSX.Element {
+      const [menuOpen, setMenuOpen] = useState(false);
+      const [accessMenuOpen, setAccessMenuOpen] = useState(false);
+      const [branchMenuOpen, setBranchMenuOpen] = useState(false);
+      const [workspaceFilter, setWorkspaceFilter] = useState("");
+      const menuRef = React.useRef<HTMLDivElement>(null);
+      const accessMenuRef = React.useRef<HTMLDivElement>(null);
+      const codexRuntimeRef = React.useRef<HTMLDivElement>(null);
+      return (
+        <ImagePreviewProvider>
+          <Composer
+            variant="hero"
+            canSelectWorkspace
+            prompt=""
+            setPrompt={() => {}}
+            files={[]}
+            images={[]}
+            queuedMessages={[]}
+            guideMessages={[]}
+            running={false}
+            status="ready"
+            readOnly={false}
+            initialized={initialized({ mode: "standard" })}
+            projects={[project]}
+            activeContext={{ kind: "project", project_id: project.id, cwd: project.path }}
+            activeWorkspace={project}
+            gitStatus={{ is_repo: true, branch: "main", dirty_count: 0, branches: ["main", "feature/menus"] }}
+            codexModels={{ loading: false, error: "", models: [] }}
+            codexRuntimeMenu={null}
+            codexRuntimeRef={codexRuntimeRef}
+            menuOpen={menuOpen}
+            accessMenuOpen={accessMenuOpen}
+            branchMenuOpen={branchMenuOpen}
+            menuRef={menuRef}
+            accessMenuRef={accessMenuRef}
+            workspaceFilter={workspaceFilter}
+            setWorkspaceFilter={setWorkspaceFilter}
+            onToggleMenu={() => setMenuOpen((open) => !open)}
+            onToggleAccessMenu={() => setAccessMenuOpen((open) => !open)}
+            onToggleBranchMenu={() => setBranchMenuOpen((open) => !open)}
+            onToggleCodexRuntimeMenu={() => {}}
+            onSelectRuntimeModel={() => {}}
+            onSelectRuntimeEffort={() => {}}
+            onSelectPermissionMode={() => {}}
+            onOpenSettings={() => {}}
+            onOpenSkillsCatalog={() => {}}
+            onSelectWorkspace={() => {}}
+            onSelectNoProject={() => {}}
+            onSelectGitBranch={() => {}}
+            onCreateWorkspace={() => {}}
+            onOpenWorkspace={() => {}}
+            onStartNewThread={() => {}}
+            onOpenWorkspaceTool={() => {}}
+            onPasteAttachmentFiles={() => {}}
+            onRemoveFile={() => {}}
+            onRemoveImage={() => {}}
+            onRemoveQueuedMessage={() => {}}
+            onRemoveGuideMessage={() => {}}
+            onGuideQueuedMessage={() => {}}
+            onEditQueuedMessage={() => {}}
+            onEditGuideMessage={() => {}}
+            onSend={() => {}}
+            onInterrupt={() => {}}
+          />
+        </ImagePreviewProvider>
+      );
+    }
+    act(() => {
+      root = createRoot(container);
+      root.render(<Harness />);
+    });
+  }
+
+  function press(key: string, target: Element | null = document.activeElement): void {
+    act(() => {
+      target?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    });
+  }
+
+  async function openFrom(trigger: HTMLButtonElement): Promise<void> {
+    act(() => trigger.click());
+    // Menus take focus once the floating layer has been positioned and shown.
+    await act(async () => nextAnimationFrame());
+  }
+
+  function menuItems(owner: string): HTMLButtonElement[] {
+    return Array.from(document.body.querySelectorAll<HTMLButtonElement>(
+      `[data-floating-menu-owner="${owner}"] [role^="menuitem"]:not(:disabled)`,
+    ));
+  }
+
+  it("moves through the plus menu with the arrow keys and returns to its button", async () => {
+    renderMenuComposer();
+    const plus = container.querySelector<HTMLButtonElement>(".composer-plus-button")!;
+    await openFrom(plus);
+
+    const items = menuItems("composer-plus");
+    expect(items.length).toBeGreaterThan(2);
+    expect(document.activeElement).toBe(items[0]);
+    press("ArrowDown");
+    expect(document.activeElement).toBe(items[1]);
+    press("End");
+    expect(document.activeElement).toBe(items.at(-1));
+    press("ArrowDown");
+    expect(document.activeElement).toBe(items[0]);
+    press("ArrowUp");
+    expect(document.activeElement).toBe(items.at(-1));
+
+    press("Escape");
+    expect(document.body.querySelector('[data-floating-menu-owner="composer-plus"]')).toBeNull();
+    expect(document.activeElement).toBe(plus);
+  });
+
+  it("opens the plus menu from its button with the arrow keys", async () => {
+    renderMenuComposer();
+    const plus = container.querySelector<HTMLButtonElement>(".composer-plus-button")!;
+    plus.focus();
+    press("ArrowUp", plus);
+    await act(async () => nextAnimationFrame());
+
+    expect(plus.getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement).toBe(menuItems("composer-plus").at(-1));
+  });
+
+  it("leaves the plus menu on Tab from its button instead of the end of the document", async () => {
+    renderMenuComposer();
+    const plus = container.querySelector<HTMLButtonElement>(".composer-plus-button")!;
+    await openFrom(plus);
+
+    press("Tab");
+    expect(document.body.querySelector('[data-floating-menu-owner="composer-plus"]')).toBeNull();
+    expect(document.activeElement).toBe(plus);
+  });
+
+  it("starts the permission menu on the current mode and closes it with Escape", async () => {
+    renderMenuComposer();
+    const chip = container.querySelector<HTMLButtonElement>(".permission-chip")!;
+    await openFrom(chip);
+
+    const items = menuItems("composer-access");
+    const checked = items.find((item) => item.getAttribute("aria-checked") === "true");
+    expect(checked).toBeDefined();
+    expect(document.activeElement).toBe(checked);
+    press("ArrowDown");
+    expect(document.activeElement).toBe(items[items.indexOf(checked!) + 1]);
+
+    press("Escape");
+    expect(document.body.querySelector('[data-floating-menu-owner="composer-access"]')).toBeNull();
+    expect(chip.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(chip);
+  });
+
+  it("types into the project search as soon as the project menu opens", async () => {
+    renderMenuComposer();
+    const pill = container.querySelector<HTMLButtonElement>(".composer-workspace-bar .hero-project-pill")!;
+    await openFrom(pill);
+
+    const menu = document.body.querySelector<HTMLElement>(".composer-project-menu:not(.composer-branch-menu)")!;
+    const search = menu.querySelector<HTMLInputElement>("input")!;
+    expect(document.activeElement).toBe(search);
+    press("ArrowDown");
+    expect(document.activeElement).toBe(menu.querySelector('[role="menuitemradio"]'));
+
+    press("Escape");
+    expect(document.body.querySelector(".composer-project-menu")).toBeNull();
+    expect(document.activeElement).toBe(pill);
+  });
+
+  it("types into the branch search as soon as the branch menu opens", async () => {
+    renderMenuComposer();
+    const pill = container.querySelector<HTMLButtonElement>(".composer-branch-control .hero-project-pill")!;
+    await openFrom(pill);
+
+    const menu = document.body.querySelector<HTMLElement>(".composer-branch-menu")!;
+    expect(document.activeElement).toBe(menu.querySelector("input"));
+    // The checked-out branch cannot be chosen again, so the arrows pass it.
+    press("ArrowDown");
+    expect(document.activeElement?.getAttribute("title")).toBe("feature/menus");
+
+    press("Escape");
+    expect(document.body.querySelector(".composer-branch-menu")).toBeNull();
+    expect(document.activeElement).toBe(pill);
+  });
+});
+
 describe("ComposerTokenGauge", () => {
   // The gauge is temporarily hidden from the composer toolbar (see
   // ComposerRuntimeMeters), so these tests mount the component directly

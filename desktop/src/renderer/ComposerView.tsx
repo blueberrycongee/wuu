@@ -72,7 +72,7 @@ import {
   type ComposerImage,
   type QueuedComposerMessage
 } from "./ComposerMessages";
-import { FloatingMenuPortal } from "./ComposerFloatingMenu";
+import { FloatingMenuPortal, handleFloatingMenuKeyDown, menuOpeningKey } from "./ComposerFloatingMenu";
 import { ComposerBranchPicker } from "./ComposerBranchPicker";
 import { ComposerContextMenu } from "./ComposerContextMenu";
 import { ComposerQueueStrip, ComposerStopIcon } from "./ComposerInputSections";
@@ -453,6 +453,8 @@ export function Composer({
       : t("composer.send");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerFrameRef = useRef<HTMLDivElement>(null);
+  const workspacePillRef = useRef<HTMLButtonElement>(null);
+  const permissionChipRef = useRef<HTMLButtonElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const photosInputRef = useRef<HTMLInputElement>(null);
   const submitAfterCompositionRef = useRef(false);
@@ -1165,6 +1167,7 @@ export function Composer({
                   disabled={workspacePillTitle === workspacePillLabel}
                 >
                   <button
+                    ref={workspacePillRef}
                     className="hero-project-pill"
                     type="button"
                     aria-haspopup="menu"
@@ -1172,6 +1175,9 @@ export function Composer({
                     aria-label={t("composer.switchWorkspace", { workspace: workspacePillLabel })}
                     onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
                     onClick={onToggleMenu}
+                    onKeyDown={(event) => {
+                      if (!menuOpen && menuOpeningKey(event)) onToggleMenu();
+                    }}
                   >
                     <span className="hero-project-pill-icon" aria-hidden="true">
                       <WorkspacePillIcon />
@@ -1197,6 +1203,7 @@ export function Composer({
                       onSelectNoProject={onSelectNoProject}
                       onCreateWorkspace={onCreateWorkspace}
                       onOpenWorkspace={onOpenWorkspace}
+                      onKeyDown={(event) => handleFloatingMenuKeyDown(event, onToggleMenu, workspacePillRef.current)}
                     />
                   </FloatingMenuPortal>
                 ) : null}
@@ -1358,6 +1365,7 @@ export function Composer({
                 {!textOnly ? (
                   <div className="permission-menu-anchor" ref={accessMenuRef}>
                     <button
+                      ref={permissionChipRef}
                       className={`permission-chip tone-${permissionOption.tone}`}
                       type="button"
                       aria-haspopup="menu"
@@ -1366,6 +1374,9 @@ export function Composer({
                       disabled={!initialized || readOnly || running || permissionLocked}
                       onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
                       onClick={onToggleAccessMenu}
+                      onKeyDown={(event) => {
+                        if (!accessMenuOpen && menuOpeningKey(event)) onToggleAccessMenu();
+                      }}
                     >
                       <PermissionChipIcon aria-hidden="true" />
                       <span>{permissionChipLabel}</span>
@@ -1386,7 +1397,11 @@ export function Composer({
                           engine={activeEngine}
                           permissionModes={enginePermissionModes}
                           disabled={!initialized || readOnly || running}
-                          onSelect={onSelectPermissionMode}
+                          onSelect={(mode, approveForMe) => {
+                            permissionChipRef.current?.focus();
+                            onSelectPermissionMode(mode, approveForMe);
+                          }}
+                          onKeyDown={(event) => handleFloatingMenuKeyDown(event, onToggleAccessMenu, permissionChipRef.current)}
                         />
                       </FloatingMenuPortal>
                     ) : null}

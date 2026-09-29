@@ -54,7 +54,14 @@ import type {
   RuntimeContext
 } from "../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
-import { FloatingMenuPortal, isInsideFloatingMenu } from "./ComposerFloatingMenu";
+import {
+  FloatingMenuPortal,
+  handleFloatingMenuKeyDown,
+  isInsideFloatingMenu,
+  menuOpeningKey,
+  moveFloatingMenuFocus,
+  useFloatingMenuFocus
+} from "./ComposerFloatingMenu";
 import type { ComposerSlashCommand } from "./ComposerSlashCommands";
 import type {
   CodexModelLoadState,
@@ -182,25 +189,6 @@ function runtimePanelStyle(rows: number, width?: number): CSSProperties {
   } as CSSProperties;
 }
 
-// Panels opened from the composer trigger take focus so the keyboard can
-// drive them: each page focuses its search field, its checked row, or its
-// primary row. Touch shells skip this so a phone keyboard does not pop up.
-function useRuntimePanelFocus(panelRef: RefObject<HTMLElement | null>, pageKey: string, enabled: boolean): void {
-  useEffect(() => {
-    if (!enabled || isTouchWebShell()) return undefined;
-    // The floating layer reveals the panel after its first measurement.
-    const frame = requestAnimationFrame(() => {
-      const page = panelRef.current;
-      const target = page?.querySelector<HTMLElement>("input[type='search']")
-        ?? page?.querySelector<HTMLElement>("[aria-checked='true']:not(:disabled)")
-        ?? page?.querySelector<HTMLElement>(".runtime-panel-model")
-        ?? page?.querySelector<HTMLElement>("button:not(:disabled)");
-      target?.focus({ preventScroll: true });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [enabled, pageKey, panelRef]);
-}
-
 // Arrow keys move between the current page's rows; the effort slider keeps
 // them for its own steps. Escape on a drill-in page returns to the summary
 // and marks the event handled so the picker does not also close.
@@ -215,19 +203,7 @@ function handleRuntimePanelKeyDown(
     showSummary();
     return;
   }
-  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-  const target = event.target as HTMLElement;
-  if (target instanceof HTMLInputElement && target.type === "range") return;
-  const items = Array.from(
-    event.currentTarget.querySelectorAll<HTMLElement>("input[type='search'], button:not(:disabled)")
-  );
-  if (items.length === 0) return;
-  event.preventDefault();
-  const index = items.indexOf(target);
-  const next = index < 0
-    ? event.key === "ArrowDown" ? 0 : items.length - 1
-    : Math.min(items.length - 1, Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1)));
-  items[next]?.focus();
+  moveFloatingMenuFocus(event);
 }
 
 function RuntimePanelHeader({ title, onBack }: { title: string; onBack: () => void }): JSX.Element {
@@ -338,7 +314,7 @@ function RuntimePanelSummary({
           onClick={() => { void changeSpeed(""); }}
         ><RotateCcw aria-hidden="true" /></button> : null}
       </div>
-      <button type="button" className="runtime-panel-model" onClick={onOpenModels}>
+      <button type="button" className="runtime-panel-model" data-menu-autofocus onClick={onOpenModels}>
         <span className="runtime-panel-model-name">{model}</span>
         <span key={previewEffort} className="runtime-panel-effort-value">{variantLabel(previewEffort)}</span>
         <ChevronRight aria-hidden="true" />
@@ -618,6 +594,13 @@ export function RuntimePicker({
   useEffect(() => {
     if (!open) return undefined;
     function handleKeyDown(event: KeyboardEvent): void {
+      // Tab leaves the panel from its trigger, not from the portal at the
+      // end of the document.
+      if (event.key === "Tab" && event.target instanceof Node && isInsideFloatingMenu(event.target, "codex-runtime")) {
+        triggerRef.current?.focus();
+        onToggleMenu("model");
+        return;
+      }
       // Pages handle Escape first when it only steps back to the summary.
       if (event.key !== "Escape" || event.defaultPrevented) return;
       event.preventDefault();
@@ -768,7 +751,7 @@ function EngineRuntimeMenu({
   const [direction, setDirection] = useState<RuntimePanelDirection>("forward");
   const [query, setQuery] = useState("");
   const [optimistic, setOptimistic] = useState<{ model: string; effort: string } | null>(null);
-  useRuntimePanelFocus(panelRef, `${engine?.id ?? "engine"}:${view}`, true);
+  useFloatingMenuFocus(panelRef, `${engine?.id ?? "engine"}:${view}`);
   useEffect(() => {
     setOptimistic(null);
   }, [selectedModel, selectedEffort]);
@@ -1001,7 +984,7 @@ export function RuntimeModelMenu({
     setView(forcedView);
   }, [forcedView]);
 
-  useRuntimePanelFocus(panelRef, view, autoFocus);
+  useFloatingMenuFocus(panelRef, view, autoFocus);
 
   const openView = (nextView: RuntimePanelView): void => {
     setDirection("forward");
@@ -1487,7 +1470,11 @@ export function ComposerPlusButton({
 }): JSX.Element {
   const { t } = useI18n();
   const triggerRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  const [openedFromEnd, setOpenedFromEnd] = useState(false);
+  useFloatingMenuFocus(menuRef, "", open, openedFromEnd);
 
   useEffect(() => {
     if (!open) {
@@ -1522,6 +1509,7 @@ export function ComposerPlusButton({
   return (
     <div className="composer-plus-menu-anchor" ref={triggerRef}>
       <button
+        ref={buttonRef}
         className="composer-tool-button composer-plus-button"
         type="button"
         aria-haspopup="menu"
@@ -1530,7 +1518,16 @@ export function ComposerPlusButton({
         title={t("composer.plusMenu")}
         disabled={disabled}
         onPointerDown={(event) => { if (isTouchWebShell()) event.preventDefault(); }}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          setOpenedFromEnd(false);
+          setOpen((current) => !current);
+        }}
+        onKeyDown={(event) => {
+          const side = open ? undefined : menuOpeningKey(event);
+          if (!side) return;
+          setOpenedFromEnd(side === "end");
+          setOpen(true);
+        }}
       >
         <Plus aria-hidden="true" />
       </button>
@@ -1545,7 +1542,13 @@ export function ComposerPlusButton({
           matchAnchorWidth
           mobileSheet={{ label: t("composer.plusMenu"), onClose: () => setOpen(false) }}
         >
-          <div className="composer-context-menu composer-plus-menu" role="menu" aria-label={t("composer.plusMenu")}>
+          <div
+            ref={menuRef}
+            className="composer-context-menu composer-plus-menu"
+            role="menu"
+            aria-label={t("composer.plusMenu")}
+            onKeyDown={(event) => handleFloatingMenuKeyDown(event, () => setOpen(false), buttonRef.current)}
+          >
             <div className="composer-plus-menu-section" role="presentation">{t("composer.plusSectionAdd")}</div>
             {mobileAttachments ? (
               <ComposerMobileAttachmentChoices
@@ -1700,20 +1703,24 @@ export function AccessMenu({
   engine,
   permissionModes,
   disabled,
-  onSelect
+  onSelect,
+  onKeyDown
 }: {
   permissions?: PermissionSummary;
   engine?: string;
   permissionModes?: readonly EnginePermissionModeInfo[];
   disabled: boolean;
   onSelect: (mode: PermissionMode, approveForMe?: boolean) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
 }): JSX.Element {
   useI18n();
+  const menuRef = useRef<HTMLDivElement>(null);
+  useFloatingMenuFocus(menuRef);
   const mode = permissionModeFromSummary(permissions);
   const approveForMeOn = mode === "standard" && Boolean(permissions?.approve_for_me);
   const showApproveForMe = (engine || "wuu") === "wuu";
   return (
-    <div className="composer-context-menu access-menu" role="menu">
+    <div ref={menuRef} className="composer-context-menu access-menu" role="menu" onKeyDown={onKeyDown}>
       {accessOptions(engine, showApproveForMe, permissionModes).map((option) => {
         const selected = mode === option.mode && option.approveForMe === approveForMeOn;
         return (
@@ -1785,6 +1792,7 @@ export function WorkspacePickerMenu({
   onSelectNoProject,
   onCreateWorkspace,
   onOpenWorkspace,
+  onKeyDown,
 }: {
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
@@ -1794,8 +1802,11 @@ export function WorkspacePickerMenu({
   onSelectNoProject: () => void;
   onCreateWorkspace: () => void;
   onOpenWorkspace: () => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const menuRef = useRef<HTMLDivElement>(null);
+  useFloatingMenuFocus(menuRef);
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filteredWorkspaces = normalizedQuery
     ? projects.filter((project) => project.name.toLocaleLowerCase().includes(normalizedQuery) || project.path.toLocaleLowerCase().includes(normalizedQuery))
@@ -1806,11 +1817,11 @@ export function WorkspacePickerMenu({
   const noProject = activeContext?.kind === "no_project";
 
   return (
-    <div className="composer-project-menu" role="menu"
+    <div ref={menuRef} className="composer-project-menu" role="menu" onKeyDown={onKeyDown}
       style={{ "--composer-project-menu-width": `${COMPOSER_PROJECT_MENU_WIDTH}px` } as CSSProperties}>
       <label className="menu-search project-search">
         <Search className="icon-sm" aria-hidden="true" />
-        <input autoFocus={!isTouchWebShell()} value={query} aria-label={t("runtime.searchWorkspaces")} placeholder={t("runtime.searchWorkspaces")}
+        <input value={query} aria-label={t("runtime.searchWorkspaces")} placeholder={t("runtime.searchWorkspaces")}
           onChange={(event) => setQuery(event.target.value)} />
       </label>
       <div className="project-picker-list">

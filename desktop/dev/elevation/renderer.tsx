@@ -2,6 +2,7 @@ import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Folder, ChevronDown, Plus } from "../../src/renderer/WuuIcons";
 import { WorkspacePickerMenu } from "../../src/renderer/ComposerRuntimeMenus";
+import { handleFloatingMenuKeyDown } from "../../src/renderer/ComposerFloatingMenu";
 import { startFocusModality } from "../../src/renderer/FocusModality";
 import "../../src/renderer/styles.css";
 import "./fixture.css";
@@ -42,7 +43,8 @@ function Fixture() {
           {open && <WorkspacePickerMenu projects={projects}
             activeContext={{ kind: "project", project_id: workspace, cwd: `/projects/${workspace}` }}
             query={query} setQuery={setQuery} onSelectWorkspace={setWorkspace}
-            onSelectNoProject={() => setWorkspace("")} onCreateWorkspace={() => {}} onOpenWorkspace={() => {}} />}
+            onSelectNoProject={() => setWorkspace("")} onCreateWorkspace={() => {}} onOpenWorkspace={() => {}}
+            onKeyDown={(event) => handleFloatingMenuKeyDown(event, () => setOpen(false), undefined)} />}
         </div>
         <div className="composer-workspace-bar">
           <button className="hero-project-pill" onClick={() => setOpen(!open)}><Folder size={16} />{workspace || "无工作区"}<ChevronDown size={14} /></button>
