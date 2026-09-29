@@ -239,6 +239,7 @@ import {
   statusMessageForError,
 } from "./UserFacingErrors";
 import { scrollToUserMessage, TurnView } from "./TurnView";
+import { OPEN_SETTINGS_EVENT, type OpenSettingsDetail } from "./TurnNotice";
 import { ConversationTurnRail } from "./ConversationTurnRail";
 import {
   WorkspaceRightPanel,
@@ -519,6 +520,14 @@ export function App(): JSX.Element {
     window.addEventListener("wuu:add-response-selection", addSelection);
     return () => window.removeEventListener("wuu:add-response-selection", addSelection);
   }, [setComposerSelections, setSplitComposerDrafts]);
+  // Conversation notices link to a settings page, such as Model services
+  // after a rejected credential. The handler only calls state setters, so
+  // the first render's copy stays valid.
+  useEffect(() => {
+    const open = (event: Event): void => openSettingsPage((event as CustomEvent<OpenSettingsDetail>).detail.page);
+    window.addEventListener(OPEN_SETTINGS_EVENT, open);
+    return () => window.removeEventListener(OPEN_SETTINGS_EVENT, open);
+  }, []);
   const [historyMessageEdit, setHistoryMessageEdit] =
     useState<HistoryMessageEditState | undefined>(undefined);
   const composerDraftsRef = useRef({ primary: currentPrimaryComposerDraft, split: splitComposerDrafts });
@@ -3360,9 +3369,9 @@ export function App(): JSX.Element {
     );
   }
 
-  function openProviderSettings(): void {
+  function openSettingsPage(page: SettingsPage): void {
     closeWorkspaceMenus();
-    setSettingsInitialPage("providers");
+    setSettingsInitialPage(page);
     setSettingsOpen(true);
   }
 
@@ -3373,7 +3382,7 @@ export function App(): JSX.Element {
       dedupeKey: "composer:no-model-configured",
       action: {
         label: t("common.goConfigure"),
-        onClick: openProviderSettings,
+        onClick: () => openSettingsPage("providers"),
       },
     });
   }

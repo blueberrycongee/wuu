@@ -2796,28 +2796,42 @@
   color: var(--conversation-process-control-color, var(--process-control-color-fallback));
 }
 
-.stream-event-card {
-  width: 100%;
+/* The turn's answer did not arrive. The retrying state and the settled
+ * failure share one frame, so the card that counts down to a retry is the
+ * card that later explains what went wrong and offers the next step. The
+ * symbol keeps its own column: a wrapped title, the explanation and the
+ * actions all start on one text edge, --card-padding inside the frame. */
+.turn-failure {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--space-3);
   min-width: 0;
   box-sizing: border-box;
-  padding: 12px 14px;
-  border: 1px solid var(--hairline);
+  padding: var(--card-padding);
+  border: 1px solid var(--message-flow-card-border);
   border-radius: var(--message-flow-card-radius);
-  background: var(--surface-1);
+  background: var(--message-flow-card-bg);
   color: var(--ink);
-  font-size: var(--conversation-process-font-size);
+  font-size: var(--conversation-message-font-size);
   line-height: var(--conversation-process-line-height);
 }
 
-.stream-reconnect-notice {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
+.turn-failure > :not(.turn-failure-icon) {
+  grid-column: 2;
 }
 
-.stream-reconnect-diagnostics {
-  grid-column: 1 / -1;
+/* Centered on the title's first line. The status colour pairs with the
+ * symbol and the title; it is never the only signal. */
+.turn-failure-icon {
+  grid-row: 1;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  margin-top: calc((var(--conversation-process-line-height) - var(--icon-size)) / 2);
+  color: var(--danger);
+}
+
+.turn-failure.is-retrying .turn-failure-icon {
+  color: var(--warning);
 }
 
 /*
@@ -2827,72 +2841,115 @@
  * rest. After a user bubble, subtract the bubble's trailing gap so the
  * visible band stays 16px rather than 24px.
  */
-.turn > .stream-reconnect-notice {
+.turn > .turn-failure {
   margin-top: calc(
     var(--conversation-process-answer-gap) - var(--conversation-turn-item-gap)
   );
 }
 
-.turn > .user-message-block + .stream-reconnect-notice {
+.turn > .user-message-block + .turn-failure {
   margin-top: calc(
     var(--conversation-process-answer-gap) - var(--conversation-turn-item-gap) -
       var(--conversation-user-message-trailing-gap)
   );
 }
 
-.stream-reconnect-title {
+.turn-failure-head {
+  display: flex;
   min-width: 0;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.turn-failure-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: var(--weight-medium);
+}
+
+.turn-failure-code,
+.turn-failure-status {
+  flex: none;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The countdown owns the trailing edge, so the title never moves while the
+ * seconds change width. */
+.turn-failure-status {
+  margin-inline-start: auto;
+}
+
+.turn-failure-body {
+  margin: var(--space-1) 0 0;
+  color: var(--ink-soft);
   overflow-wrap: anywhere;
 }
 
-.stream-reconnect-status,
-.stream-reconnect-retry,
-.stream-reconnect-stopped {
-  position: relative;
-  overflow: hidden;
-  padding: 3px 10px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--surface-2);
-  color: inherit;
-  font: inherit;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  min-height: 26px;
-  display: inline-flex;
+.turn-failure-actions {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
 }
 
-.stream-reconnect-status {
-  min-width: 84px;
-  text-align: center;
-}
-
-.stream-reconnect-progress {
-  position: absolute;
-  inset: 0;
-  background: color-mix(in srgb, var(--ink) 14%, transparent);
-  transform-origin: left center;
-  /* One step per countdown tick (TurnNotice updates every 100ms), so the
-   * bar reads as continuous travel rather than a ladder transition. */
-  transition: transform 100ms linear;
-}
-
-.stream-reconnect-status-text { position: relative; }
-.stream-reconnect-retry { cursor: pointer; }
-.stream-reconnect-retry:disabled { cursor: default; }
-.stream-reconnect-retry:hover:not(:disabled) { background: var(--surface-3); }
-.stream-reconnect-retry:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: 2px;
-}
-
-.stream-reconnect-stopped {
+/* A text disclosure, not a third button: the technical record is for the
+ * reader who asks for it. Its ink starts on the text edge when it stands
+ * alone and keeps a group gap after the actions. */
+.turn-failure-details-toggle {
+  display: inline-flex;
+  min-height: var(--control-field-height);
+  align-items: center;
+  gap: var(--space-1);
+  border: 0;
+  background: transparent;
   color: var(--ink-muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  transition: color var(--motion-fast) var(--ease-out);
 }
 
-@container style(--motion-reduced: 1) {
-  .stream-reconnect-progress { transition: none; }
+.settings-button + .turn-failure-details-toggle {
+  margin-inline-start: var(--space-2);
+}
+
+.turn-failure-details-toggle:hover {
+  color: var(--ink-soft);
+}
+
+.turn-failure-details-toggle > .turn-failure-details-chevron {
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
+  transition: rotate var(--motion-base) var(--ease-out);
+}
+
+.turn-failure-details-toggle[aria-expanded="true"] > .turn-failure-details-chevron {
+  rotate: 90deg;
+}
+
+.turn-failure-details > .collapsible-details-inner {
+  display: grid;
+  row-gap: var(--space-2);
+  padding-top: var(--space-3);
+}
+
+.turn-failure-recovery {
+  margin: 0;
+  color: var(--ink-soft);
+  white-space: pre-line;
+}
+
+.turn-failure-diagnostic {
+  margin: 0;
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Retain the actual wrapping notice height after settlement. */
