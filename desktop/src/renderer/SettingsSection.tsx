@@ -11,7 +11,7 @@ export function SettingsPageHeader({
   actions,
 }: {
   title: string;
-  description?: string;
+  description?: ReactNode;
   actions?: ReactNode;
 }): JSX.Element {
   return (

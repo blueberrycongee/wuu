@@ -329,6 +329,13 @@
   line-height: 1.5;
 }
 
+/* A path or config key in the scope line reads as code. */
+.settings-page-description code {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
 /* Controls are taller than the title line; centering them on it keeps the
  * description directly under the title. */
 .settings-page-actions {

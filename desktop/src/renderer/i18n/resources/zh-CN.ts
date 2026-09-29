@@ -312,7 +312,7 @@ export const zhCN = {
   "settings.mcpServers": "MCP 服务器",
   "settings.loading": "加载中…",
   "settings.noMcpServers": "暂无 MCP 服务器",
-  "settings.mcpDescription": "为 Agent 提供额外工具的服务器。",
+  "settings.mcpDescription": "在 {file} 的 {key} 中添加服务器，然后重启 Wuu。",
   "settings.about": "关于",
   "settings.version": "版本",
   "settings.copyVersion": "复制版本信息",
