@@ -6,6 +6,7 @@ import { writeDraftRuntimeMemory } from "./DraftRuntimeMemory";
 import { permissionModeOption, RuntimePicker } from "./ComposerRuntimeMenus";
 import type { CodexRuntimeMenu } from "./ComposerTypes";
 import { setActiveLocale } from "./i18n";
+import { variantLabel } from "./RuntimeHelpers";
 
 describe("RuntimePicker", () => {
   let container: HTMLDivElement;
@@ -147,7 +148,7 @@ describe("RuntimePicker", () => {
     const trigger = document.querySelector<HTMLButtonElement>(".codex-runtime-trigger");
     expect(trigger?.getAttribute("aria-expanded")).toBe("false");
     expect(trigger?.textContent).toContain("Claude Sonnet");
-    expect(trigger?.textContent).toContain("Medium");
+    expect(trigger?.textContent).toContain(variantLabel("medium"));
     expect(trigger?.textContent).not.toContain("Wuu");
     expect(trigger?.getAttribute("aria-label")).toContain("Wuu");
 
@@ -164,7 +165,7 @@ describe("RuntimePicker", () => {
 
     const trigger = document.querySelector<HTMLButtonElement>(".codex-runtime-trigger");
     expect(trigger?.querySelector(".codex-runtime-effort")).toBeNull();
-    expect(trigger?.getAttribute("aria-label")).not.toContain("Default");
+    expect(trigger?.getAttribute("aria-label")).not.toContain(variantLabel(""));
   });
 
   it("shows the level stored in effort when the variant column is empty", () => {
@@ -174,7 +175,7 @@ describe("RuntimePicker", () => {
     renderPicker(null, initialized);
 
     const trigger = document.querySelector<HTMLButtonElement>(".codex-runtime-trigger");
-    expect(trigger?.textContent).toContain("Max");
+    expect(trigger?.textContent).toContain(variantLabel("max"));
   });
 
   it("uses the configured inventory even when stale discovery contains a removed model", () => {
@@ -202,11 +203,11 @@ describe("RuntimePicker", () => {
     expect(menu?.textContent).toContain("Wuu");
     expect(menu?.textContent).toContain("work");
     expect(menu?.textContent).toContain("Claude Sonnet");
-    expect(menu?.textContent).toContain("Medium");
+    expect(menu?.textContent).toContain(variantLabel("medium"));
     expect(menu?.querySelector(".select-menu-search input")).toBeNull();
     const effortSlider = menu?.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]');
     expect(effortSlider?.value).toBe("2");
-    expect(effortSlider?.getAttribute("aria-valuetext")).toBe("Medium");
+    expect(effortSlider?.getAttribute("aria-valuetext")).toBe(variantLabel("medium"));
     expect(menu?.querySelector(".codex-effort-slider")?.textContent).toBe("");
 
     act(() => menu?.querySelector<HTMLButtonElement>(".runtime-panel-model")?.click());
@@ -655,8 +656,8 @@ describe("RuntimePicker", () => {
     const slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
     expect(slider.max).toBe("4");
     expect(slider.value).toBe("4");
-    expect(slider.getAttribute("aria-valuetext")).toBe("Extra high");
-    expect(document.querySelector(".runtime-panel-model .runtime-panel-effort-value")?.textContent).toBe("Extra high");
+    expect(slider.getAttribute("aria-valuetext")).toBe(variantLabel("xhigh"));
+    expect(document.querySelector(".runtime-panel-model .runtime-panel-effort-value")?.textContent).toBe(variantLabel("xhigh"));
   });
 
   it("selects a discrete effort by dragging the unlabeled slider", () => {
@@ -669,7 +670,7 @@ describe("RuntimePicker", () => {
       slider.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
-    expect(document.querySelector(".runtime-panel-model .runtime-panel-effort-value")?.textContent).toBe("High");
+    expect(document.querySelector(".runtime-panel-model .runtime-panel-effort-value")?.textContent).toBe(variantLabel("high"));
     expect(document.querySelector(".codex-effort-slider + .runtime-panel-effort-value")).toBeNull();
     expect(onSelectEffort).not.toHaveBeenCalled();
 
@@ -678,7 +679,7 @@ describe("RuntimePicker", () => {
     expect(onSelectEffort).toHaveBeenCalledTimes(1);
     expect(onSelectEffort).toHaveBeenCalledWith("high");
     expect(slider.value).toBe("3");
-    expect(slider.getAttribute("aria-valuetext")).toBe("High");
+    expect(slider.getAttribute("aria-valuetext")).toBe(variantLabel("high"));
   });
 
   it("maps pointer spans and cancels a drag without saving", () => {
@@ -828,7 +829,7 @@ describe("RuntimePicker", () => {
     // model's own default before the stream round-trip.
     expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe("Model B");
     const selectedEffort = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]');
-    expect(selectedEffort?.getAttribute("aria-valuetext")).toBe("Medium");
+    expect(selectedEffort?.getAttribute("aria-valuetext")).toBe(variantLabel("medium"));
   });
 
   it("restores the last effort when selecting a previously used model", () => {
