@@ -2,6 +2,423 @@
  * what they need from you (attention, on, off) as a grid of cards, and a
  * card opens the plugin's own page. */
 
+.skills-scroll-region {
+  background: var(--paper);
+}
+
+/* The plugins catalog is a .settings-page: the same UI-text column and
+ * section rhythm as Settings. The titlebar names the page, so it opens on a
+ * toolbar: search first, then the page's tools. */
+.catalog-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.catalog-toolbar > .catalog-search {
+  flex: 1 1 auto;
+}
+
+/* The search gives up width first; the actions keep their labels. */
+.catalog-toolbar > .settings-button {
+  flex: none;
+}
+
+.skills-catalog-error {
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: var(--font-ui);
+  line-height: 1.45;
+  padding: var(--compact-padding-block) var(--compact-padding-inline);
+}
+
+/* Skill rows match the settings service rows: mark, name over a one-line
+ * description, the owning plugin, and a disclosure chevron. The chevron owns
+ * the last column, so trailing labels end on one axis. */
+.catalog-row {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  border: 0;
+  padding: var(--space-3) 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.catalog-row + .catalog-row {
+  border-top: 1px solid var(--hairline-soft);
+}
+
+.catalog-row > .settings-disclosure-chevron {
+  grid-column: 4;
+}
+
+.catalog-row:hover .settings-disclosure-chevron {
+  color: var(--ink);
+}
+
+.catalog-row-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.catalog-row-title,
+.catalog-row-description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalog-row-title {
+  color: var(--ink);
+  font-size: var(--font-ui);
+  line-height: 1.4;
+}
+
+.catalog-row-description {
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+.catalog-row-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+/* The mark tile takes the settings row mark footprint, so plugin glyphs,
+ * skill marks, and package artwork sit in one column at any size. */
+.skill-artwork {
+  display: grid;
+  width: var(--settings-mark-size);
+  height: var(--settings-mark-size);
+  flex: 0 0 auto;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.skill-artwork svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.skill-artwork-plugin-brand .plugin-icon-asset {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* In a narrow column the trailing label moves under the description, so
+ * the name keeps the width it needs. */
+@container settings-page (max-width: 32em) {
+  .catalog-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    row-gap: var(--space-1);
+  }
+
+  .catalog-row > :is(.settings-status, .catalog-row-meta) {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+  }
+
+  .catalog-row > .settings-disclosure-chevron {
+    grid-column: 3;
+  }
+}
+
+/* Alerts are the one boxed element in this panel: they carry a state, not a
+ * grouping, so a soft tone plus an icon replaces bare colored text. */
+.plugin-detail-notices {
+  display: grid;
+  gap: 8px;
+}
+
+.plugin-detail-notice {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--warning) 32%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--warning-soft);
+  color: var(--ink);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+.plugin-detail-notice.is-error {
+  border-color: color-mix(in srgb, var(--danger) 32%, transparent);
+  background: var(--danger-soft);
+}
+
+/* Centered on the first line, wherever the text wraps. */
+.plugin-detail-notice svg {
+  flex: none;
+  margin-top: calc((var(--font-sm) * 1.5 - var(--icon-size-sm)) / 2);
+  color: var(--warning);
+}
+
+.plugin-detail-notice.is-error svg {
+  color: var(--danger);
+}
+
+.plugin-detail-notice span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.plugin-permission-group-label {
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  line-height: 1.6;
+}
+
+/* Plugin settings read as one settings group: label and description on the
+ * left, the control pinned right, and a status line only when there is
+ * something to say (saving, an error, or a restart the change still needs). */
+.plugin-settings-editor {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+.plugin-settings-editor-title {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-semibold);
+  line-height: 1.4;
+}
+
+.plugin-settings-editor-body {
+  display: grid;
+  min-width: 0;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  padding-inline: var(--card-padding);
+}
+
+.plugin-settings-editor-body > .plugin-contribution-conflict,
+.plugin-settings-editor-body > .plugin-contribution-warning {
+  margin-block: var(--space-3);
+}
+
+.plugin-setting.settings-row {
+  row-gap: 0;
+}
+
+.plugin-setting:last-child {
+  border-bottom: 0;
+}
+
+.plugin-setting .settings-input {
+  width: min(15em, 100%);
+}
+
+.plugin-setting-select {
+  min-width: min(10em, 100%);
+}
+
+.plugin-contribution-conflict,
+.plugin-contribution-warning {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  background: var(--warning-soft);
+  color: var(--ink);
+  font-size: var(--font-sm);
+}
+
+.plugin-contribution-conflict > div,
+.plugin-contribution-conflict > label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.plugin-contribution-conflict span,
+.plugin-contribution-warning span {
+  color: var(--ink-secondary);
+}
+
+.plugin-contribution-conflict select {
+  min-width: 180px;
+}
+
+.plugin-setting-status {
+  display: flex;
+  min-width: 0;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.plugin-setting-status:not(:empty) {
+  margin-top: var(--space-1);
+}
+
+.plugin-setting-status.is-error {
+  color: var(--danger);
+}
+
+.plugin-setting-status button {
+  min-height: auto;
+  padding: 0;
+}
+
+@container settings-page (max-width: 32em) {
+  .plugin-setting[data-setting-type="string"],
+  .plugin-setting[data-setting-type="number"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .plugin-setting .settings-input {
+    width: 100%;
+  }
+}
+
+.skills-empty {
+  display: grid;
+  min-height: 260px;
+  place-content: center;
+  justify-items: center;
+  gap: 9px;
+  color: var(--ink);
+  text-align: center;
+}
+
+.skills-empty svg {
+  color: var(--ink-tertiary);
+}
+
+.skills-empty strong {
+  font-size: var(--font-title);
+  font-weight: var(--weight-semibold);
+}
+
+.skills-empty span {
+  color: var(--ink-muted);
+  font-size: var(--font-body);
+}
+
+.environment-modal-backdrop:has(.skill-preview-dialog) {
+  align-items: center;
+  justify-items: center;
+  overflow: hidden;
+  padding: 32px;
+  background: var(--modal-backdrop-bg);
+}
+
+.skill-preview-dialog {
+  --environment-dialog-max-width: 760px;
+  display: grid;
+  width: min(760px, calc(100vw - 64px));
+  height: min(78vh, 820px);
+  max-height: calc(100vh - 64px);
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.skill-preview-dialog .environment-dialog-header {
+  padding-bottom: 12px;
+}
+
+.skill-preview-dialog .environment-dialog-icon {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: transparent;
+}
+
+.skill-preview-icon-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-semibold);
+  line-height: 1.2;
+}
+
+.skill-preview-icon-title svg {
+  width: 18px;
+  height: 18px;
+}
+
+.skill-preview-dialog h2 {
+  margin: 0;
+}
+
+.skill-preview-dialog .environment-dialog-subtitle {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--font-body);
+  line-height: 1.45;
+}
+
+.skill-preview-body {
+  min-height: 0;
+  border-top: 1px solid var(--hairline);
+  overflow: auto;
+  padding: 18px 6px 0 0;
+  overscroll-behavior: contain;
+}
+
+.skill-preview-body .rich-content {
+  color: var(--ink);
+  font-size: var(--font-body);
+  line-height: 1.55;
+}
+
+.skill-preview-body .rich-content > :first-child {
+  margin-top: 0;
+}
+
+.skill-preview-loading,
+.skill-preview-error {
+  color: var(--ink-muted);
+  font-size: var(--font-ui);
+  line-height: 1.45;
+  margin: 0 0 12px;
+}
+
+.skill-preview-error {
+  color: var(--danger);
+}
+
+.skill-preview-dialog .environment-dialog-footer {
+  margin-top: 18px;
+}
+
 /* The switch is a segmented control: its track is always visible, so its
  * box starts on the column edge like the search field above and the groups
  * below, whichever tab is selected. The track matches the field height. */
