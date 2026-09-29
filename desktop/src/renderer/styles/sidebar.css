@@ -745,7 +745,9 @@
 
 .traffic-spacer {
   /* Match the conversation/settings row, including its zoom-aware minimum
-   * height, so sidebar controls never outgrow their reserved chrome. */
+   * height, so sidebar controls never outgrow their reserved chrome. It
+   * keeps that height while empty: a drawer slides under the titlebar's
+   * lifted toggle, which would otherwise cover the wordmark. */
   position: relative;
   display: flex;
   height: var(--window-titlebar-height);
@@ -761,12 +763,6 @@
   position: relative;
   z-index: 1;
   -webkit-app-region: no-drag;
-}
-
-:root[data-platform="linux"] .traffic-spacer:empty,
-:root[data-platform="win32"] .traffic-spacer:empty,
-:root[data-host-kind="web"] .traffic-spacer:empty {
-  height: 12px;
 }
 
 
@@ -2118,6 +2114,25 @@ html[data-focus-modality="keyboard"] :is(
    * line-height: 1 would re-clip descenders in the ellipsized title. */
   padding: 0;
   text-align: left;
+}
+
+/* The title button owns the whole row surface: the row's block padding would
+ * otherwise leave a band that highlights on hover but ignores the click. Row
+ * actions sit above it (z-index 1), and keyboard focus rings the row the way
+ * it rings a navigation item. */
+.thread-row-main::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  content: "";
+}
+
+html[data-focus-modality="keyboard"] .thread-row-main:focus-visible {
+  outline: none;
+}
+
+html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-visible) {
+  box-shadow: inset 0 0 0 2px var(--sidebar-nav-item-focus-shadow);
 }
 
 /* Sessions inside a folder/workspace remain one level below their container.

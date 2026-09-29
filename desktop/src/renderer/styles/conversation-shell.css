@@ -808,10 +808,11 @@
   height: calc(var(--window-titlebar-height) + env(safe-area-inset-top, 0px));
   column-gap: 6px;
   /* Compact navigation moves this control to the window corner. Share the
-   * collapsed leading slot with settings and the globalized workspace. */
+   * collapsed leading slot with settings and the globalized workspace. The
+   * trailing edge clears the Windows overlay and Linux's drawn caption. */
   padding:
     env(safe-area-inset-top, 0px)
-    max(10px, var(--window-controls-inset-right))
+    max(10px, var(--window-controls-inset-right), var(--linux-caption-width, 0px))
     0;
   padding-left: var(--window-titlebar-leading-inset);
 }

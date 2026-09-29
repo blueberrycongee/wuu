@@ -606,6 +606,9 @@ export function AppSidebar({
     (view) => view.id === workbenchSnapshot.activeViewByRegion.primary,
   );
   const activeThreadID = activePluginMainView ? undefined : nativeActiveThreadID;
+  const pluginCatalogActive = !activePluginMainView && state.sessionTabs.some(
+    (tab) => tab.id === state.activeSessionTabID && tab.kind === "skills",
+  );
   const pluginNavigationEntries = useMemo(
     () => primaryViewNavigation(declaredPluginNavigationEntries, workbenchSnapshot),
     [declaredPluginNavigationEntries, workbenchSnapshot],
@@ -1025,6 +1028,11 @@ export function AppSidebar({
   }
   const pinnedRows = pinnedThreads;
   const hasPinnedRows = validPinnedItems.length > 0;
+  // An empty Pinned group has nothing to say until something that can be
+  // pinned is picked up; then it appears as the drop target.
+  const pinnedGroupShown = hasPinnedRows
+    || folderDragThreadID !== undefined
+    || draggingSectionID !== undefined;
   const pinnedHeadingDropTargetID = pinnedItemSortableIDs[0] ?? PINNED_APPEND_DROP_ID;
   const pinnedHasRunning = pinnedRows.some((thread) => isThreadExecuting(thread));
   const pinnedHasUnread = pinnedRows.some((thread) =>
@@ -1082,8 +1090,9 @@ export function AppSidebar({
     [activeThreadID, allSidebarThreads, state.lastViewedTurnByThreadID],
   );
   const visibleFunctionalGroupOrder = useMemo(() => functionalGroupOrder.filter(
-    (id) => id !== "projects" || onCreateProject || projectIndex.projects.length > 0,
-  ), [functionalGroupOrder, onCreateProject, projectIndex]);
+    (id) => (id !== "projects" || onCreateProject || projectIndex.projects.length > 0)
+      && (id !== "pinned" || pinnedGroupShown),
+  ), [functionalGroupOrder, onCreateProject, pinnedGroupShown, projectIndex]);
   // Projects list apart from workspaces unless the user pinned or filed them.
   const projectRows = useMemo(() => projectIndex.projects
     .filter((thread) => !thread.pinned && !organization.folderByThreadID[thread.id])
@@ -1873,6 +1882,7 @@ export function AppSidebar({
           </button>
           <button
             className="nav-item"
+            aria-current={pluginCatalogActive ? "page" : undefined}
             onClick={() => activateNative(onOpenSkillsTab)}
             disabled={!hasRuntimeContext}
           >
