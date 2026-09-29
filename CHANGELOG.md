@@ -26,6 +26,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Respect named `@@` context in file patches so edits cannot silently target
+  matching code before that context; reject missing or ambiguous context before writing.
+
 - Harden MCP transport compatibility, request timeouts, OAuth refresh recovery,
   local server cleanup, bounded reads, catalog refreshes, and oversized results.
 
