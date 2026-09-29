@@ -1206,7 +1206,7 @@ export const enUS = {
   "search.noMatches": "No matching conversations",
   "search.noConversations": "No conversations",
   "search.preview": "Conversation preview",
-  "search.selectForPreview": "Select a conversation to preview",
+  "search.currentConversation": "Current",
   "search.loadingPreview": "Loading preview…",
   "search.noPreview": "No preview available",
   "time.justNow": "Just now",

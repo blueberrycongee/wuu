@@ -1949,8 +1949,7 @@ function conversationSearchContextLabel(
   thread: Thread,
   projects: DesktopProject[],
 ): string {
-  const projectPath = threadWorkspacePath(thread);
-  const project = projects.find((candidate) => candidate.path === projectPath);
+  const project = projects.find((candidate) => threadBelongsToWorkspace(thread, candidate));
   return project?.name ?? t("appState.noWorkspace");
 }
 

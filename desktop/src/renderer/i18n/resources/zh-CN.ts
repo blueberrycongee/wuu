@@ -1203,7 +1203,7 @@ export const zhCN = {
   "search.noMatches": "没有匹配的会话",
   "search.noConversations": "暂无会话",
   "search.preview": "会话预览",
-  "search.selectForPreview": "选择一个会话查看预览",
+  "search.currentConversation": "当前",
   "search.loadingPreview": "加载预览中…",
   "search.noPreview": "暂无预览",
   "time.justNow": "刚刚",

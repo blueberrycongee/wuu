@@ -134,10 +134,12 @@ export function ConversationSearchOverlay({
               const active = thread.id === activeThreadID;
               const pending = pendingThreadID === thread.id;
               const selected = state.selectedIndex === resultIndex;
+              // Only the selection is a surface. The open conversation says so
+              // in words, where its shortcut would go: jumping to it opens nothing.
               return (
                 <button
                   key={thread.id}
-                  className={`conversation-search-result${active ? " active" : ""}${pending ? " pending" : ""}${selected ? " selected" : ""}`}
+                  className={`conversation-search-result${pending ? " pending" : ""}${selected ? " selected" : ""}`}
                   type="button"
                   aria-current={active ? "page" : undefined}
                   aria-selected={selected}
@@ -147,19 +149,26 @@ export function ConversationSearchOverlay({
                   <span className="conversation-search-result-title">
                     <SearchMatchText text={title} query={state.query} />
                   </span>
-                  <span
-                    className={`conversation-search-result-shortcut${resultIndex < 9 ? "" : " empty"}`}
-                    aria-hidden={resultIndex >= 9 ? true : undefined}
-                  >
-                    {resultIndex < 9
-                      ? primaryShortcutLabel(resultIndex + 1)
-                      : ""}
-                  </span>
+                  {active ? (
+                    <span className="conversation-search-result-current">{t("search.currentConversation")}</span>
+                  ) : (
+                    <span
+                      className={`conversation-search-result-shortcut${resultIndex < 9 ? "" : " empty"}`}
+                      aria-hidden={resultIndex >= 9 ? true : undefined}
+                    >
+                      {resultIndex < 9
+                        ? primaryShortcutLabel(resultIndex + 1)
+                        : ""}
+                    </span>
+                  )}
                 </button>
               );
             })}
             {results.length === 0 ? (
-              <div className="conversation-search-empty">
+              <div
+                className="conversation-search-empty"
+                data-loading={state.loading || undefined}
+              >
                 {state.loading
                   ? t("search.searching")
                   : state.query.trim()
@@ -168,17 +177,20 @@ export function ConversationSearchOverlay({
               </div>
             ) : null}
           </div>
-          <ConversationSearchPreview
-            results={results}
-            threads={threads}
-            projects={projects}
-            selectedIndex={state.selectedIndex}
-            previewThreadID={state.previewedThreadID}
-            previewTurns={state.previewedTurns}
-            previewLoading={state.previewLoading}
-            previewError={state.previewError}
-            query={state.query}
-          />
+          {/* Without a result there is nothing to preview. */}
+          {results.length > 0 ? (
+            <ConversationSearchPreview
+              results={results}
+              threads={threads}
+              projects={projects}
+              selectedIndex={state.selectedIndex}
+              previewThreadID={state.previewedThreadID}
+              previewTurns={state.previewedTurns}
+              previewLoading={state.previewLoading}
+              previewError={state.previewError}
+              query={state.query}
+            />
+          ) : null}
         </div>
       </div>
     </div>
@@ -188,8 +200,8 @@ export function ConversationSearchOverlay({
 // ConversationSearchPreview renders the right pane: a one-glance view of the
 // currently-selected thread so the user can pick the right result without
 // having to open each candidate and bounce out of the search. The pane stays
-// in sync with the result list: arrow keys / mouse hover update both. Empty
-// / loading / error states are handled inline so the layout never jumps.
+// in sync with the result list: arrow keys / mouse hover update both. It is
+// only rendered for a selected result; loading and error states stay inline.
 function ConversationSearchPreview({
   results,
   threads,
@@ -214,95 +226,79 @@ function ConversationSearchPreview({
   const { t } = useI18n();
   const idx = Math.max(0, Math.min(selectedIndex, results.length - 1));
   const selectedResult = results[idx];
-  const thread = selectedResult?.thread;
-  const title = thread ? threadDisplayTitle(thread, threads, t("search.untitledConversation")) : "";
-  const contextLabel = thread
-    ? conversationSearchContextLabel(thread, projects)
-    : "";
-  const meta = thread ? conversationSearchThreadMeta(thread) : "";
-  const snippet = selectedResult
-    ? conversationSearchVisibleSnippet({
-        query,
-        snippet: selectedResult.snippet,
-        title,
-      })
-    : "";
+  const thread = selectedResult.thread;
+  const title = threadDisplayTitle(thread, threads, t("search.untitledConversation"));
+  const contextLabel = conversationSearchContextLabel(thread, projects);
+  const meta = conversationSearchThreadMeta(thread);
+  const snippet = conversationSearchVisibleSnippet({
+    query,
+    snippet: selectedResult.snippet,
+    title,
+  });
 
   // The preview state can briefly describe a thread that the user has already
   // navigated away from (a stale response, or selection moved mid-fetch).
-  // Treat any state where previewThreadID no longer matches the selection as
-  // "not for this thread" so the pane never paints the wrong content.
-  const selectedThreadID = thread?.id ?? "";
-  const previewIsForSelection = previewThreadID === selectedThreadID;
-  const loadingForSelection =
-    previewIsForSelection && previewLoading && previewTurns.length === 0;
+  // Until it describes the selection, the pane is loading, never "no preview".
+  const previewIsForSelection = previewThreadID === thread.id;
   const errorForSelection = previewIsForSelection ? previewError : "";
   const turnsForSelection = previewIsForSelection ? previewTurns : [];
   const hasTurns = turnsForSelection.length > 0;
+  const loadingForSelection =
+    !errorForSelection && !hasTurns && (!previewIsForSelection || previewLoading);
 
   return (
     <aside
       className="conversation-search-preview"
       aria-label={t("search.preview")}
       data-state={
-        !thread
-          ? "empty"
-          : loadingForSelection
-            ? "loading"
-            : errorForSelection
-              ? "error"
-              : hasTurns
-                ? "ready"
-                : "no-turns"
+        loadingForSelection
+          ? "loading"
+          : errorForSelection
+            ? "error"
+            : hasTurns
+              ? "ready"
+              : "no-turns"
       }
     >
-      {!thread ? (
-        <div className="conversation-search-preview-empty">
-          {t("search.selectForPreview")}
+      <header className="conversation-search-preview-header">
+        <TruncatedText as="h2" className="conversation-search-preview-title" text={title} />
+        <div className="conversation-search-preview-meta">
+          <span className="conversation-search-preview-context">
+            {contextLabel}
+          </span>
+          <span aria-hidden="true" className="conversation-search-preview-sep">
+            ·
+          </span>
+          <span className="conversation-search-preview-time">{meta}</span>
         </div>
-      ) : (
-        <>
-          <header className="conversation-search-preview-header">
-            <TruncatedText as="h2" className="conversation-search-preview-title" text={title} />
-            <div className="conversation-search-preview-meta">
-              <span className="conversation-search-preview-context">
-                {contextLabel}
-              </span>
-              <span aria-hidden="true" className="conversation-search-preview-sep">
-                ·
-              </span>
-              <span className="conversation-search-preview-time">{meta}</span>
-            </div>
-          </header>
-          {snippet ? (
-            <div className="conversation-search-preview-snippet">
-              <RichContent text={snippet} />
-            </div>
-          ) : null}
-          {errorForSelection ? (
-            <div className="conversation-search-preview-error">
-              {errorForSelection}
-            </div>
-          ) : null}
-          {loadingForSelection ? (
-            <div className="conversation-search-preview-loading">
-              {t("search.loadingPreview")}
-            </div>
-          ) : null}
-          {!loadingForSelection && !errorForSelection && !hasTurns ? (
-            <div className="conversation-search-preview-empty">
-              {t("search.noPreview")}
-            </div>
-          ) : null}
-          {hasTurns ? (
-            <div className="conversation-search-preview-turns">
-              {turnsForSelection.map((turn) => (
-                <PreviewTurnGroup key={turn.id} turn={turn} />
-              ))}
-            </div>
-          ) : null}
-        </>
-      )}
+      </header>
+      {snippet ? (
+        <div className="conversation-search-preview-snippet">
+          <RichContent text={snippet} />
+        </div>
+      ) : null}
+      {errorForSelection ? (
+        <div className="conversation-search-preview-error">
+          {errorForSelection}
+        </div>
+      ) : null}
+      {loadingForSelection ? (
+        <div className="conversation-search-preview-loading">
+          {t("search.loadingPreview")}
+        </div>
+      ) : null}
+      {!loadingForSelection && !errorForSelection && !hasTurns ? (
+        <div className="conversation-search-preview-empty">
+          {t("search.noPreview")}
+        </div>
+      ) : null}
+      {hasTurns ? (
+        <div className="conversation-search-preview-turns">
+          {turnsForSelection.map((turn) => (
+            <PreviewTurnGroup key={turn.id} turn={turn} />
+          ))}
+        </div>
+      ) : null}
     </aside>
   );
 }

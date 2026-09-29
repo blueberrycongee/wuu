@@ -10,7 +10,6 @@
   --env-search-error-text: var(--wuu-color-danger, #a74431);
   --env-search-result-text: var(--ink);
   --env-search-result-hover-bg: var(--surface-2);
-  --env-search-result-active-bg: var(--surface-3);
   --env-search-result-shortcut-bg: var(--surface-3);
   --env-search-result-shortcut-text: var(--ink-soft);
   --env-dialog-summary-text: var(--ink-soft);
@@ -730,22 +729,17 @@
     transform var(--motion-fast) var(--ease-out);
 }
 
-.conversation-search-result:hover {
-  /* No hover treatment on purpose: hover and selected previously shared
-   * the same background (they were a single combined rule), so the row
-   * you were about to click and the row that was actually selected
-   * looked identical. The cursor: pointer on the row above is enough
-   * to signal clickability; the persistent .selected state below is
-   * the only row-level highlight. */
-}
-
+/* One highlight: the selection, which the pointer also moves. The open
+ * conversation is marked in words instead of a second surface. */
 .conversation-search-result.selected {
   background: var(--env-search-result-hover-bg);
-  transform: translate3d(0, -1px, 0);
 }
 
-.conversation-search-result.active {
-  background: var(--env-search-result-active-bg);
+.conversation-search-result-current {
+  grid-column: 2;
+  color: var(--ink-tertiary);
+  font-size: var(--font-xs);
+  white-space: nowrap;
 }
 
 .conversation-search-result.pending {
@@ -798,10 +792,15 @@
   min-height: 72px;
   display: grid;
   place-items: center;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-body);
-  font-weight: var(--weight-medium);
   animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
+}
+
+/* Loading lines wait out a fast answer, like the view-switch indicator
+ * (ViewSwitchState.ts), instead of flashing for one request. */
+:is(.conversation-search-empty[data-loading], .conversation-search-preview-loading) {
+  animation: wuu-fade-in var(--motion-base) var(--ease-out) 180ms both;
 }
 
 /* Two-pane body — result list on the left, preview pane on the right. The
@@ -816,6 +815,11 @@
   gap: 16px;
 }
 
+/* Without results there is no preview; the message spans the palette. */
+.conversation-search-body:not(:has(> .conversation-search-preview)) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 /* Keep the preview in the same flat surface as the result list. Spacing,
  * rather than another card outline, separates navigation from detail. */
 .conversation-search-preview {
@@ -826,12 +830,6 @@
   gap: 14px;
   padding: 4px 10px 10px 0;
   overflow-y: auto;
-}
-
-.conversation-search-preview[data-state="empty"],
-.conversation-search-preview[data-state="no-turns"] {
-  align-items: stretch;
-  justify-content: flex-start;
 }
 
 .conversation-search-preview > * {

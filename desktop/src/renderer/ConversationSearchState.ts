@@ -228,9 +228,12 @@ export function useConversationSearch({
       previewLoading: false,
       previewError: "",
     }));
-    window.requestAnimationFrame(() =>
-      conversationSearchInputRef.current?.focus(),
-    );
+    // The last query comes back selected: typing replaces it, and the
+    // arrow keys can still pick up where the previous search left off.
+    window.requestAnimationFrame(() => {
+      conversationSearchInputRef.current?.focus();
+      conversationSearchInputRef.current?.select();
+    });
   }
 
   function closeConversationSearch(
@@ -400,19 +403,15 @@ export function useConversationSearch({
     queryRef.current = { query, composing };
     setComposing(composing);
     // Invalidate before debounce: old responses cannot become selectable
-    // under a new query, even before its request has been sent.
+    // under a new query, even before its request has been sent. The previous
+    // results stay on screen until the new ones arrive, so each keystroke
+    // does not collapse the palette to a loading line and back.
     conversationSearchRequestRef.current += 1;
-    conversationSearchPreviewRequestRef.current += 1;
     setConversationSearch((current) => ({
       ...current,
       query,
       loading: true,
       error: "",
-      results: [],
-      previewedThreadID: "",
-      previewedTurns: [],
-      previewLoading: false,
-      previewError: "",
       selectedIndex: 0,
     }));
   }
