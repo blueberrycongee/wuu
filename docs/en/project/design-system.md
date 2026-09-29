@@ -41,7 +41,7 @@ These are internal renderer roles, not all public API promises. Extensions use t
 
 ### Identity and emphasis
 
-Wuu's identity is monochrome-first, with paper, ink, and neutral surfaces rather than a mandatory signature hue. The black-and-white app icon, consistent shapes, typography, and space provide recognition. Neutral does not mean a flat gray interface: use readable tonal contrast and clear hierarchy, with light and dark themes expressing the same roles.
+Wuu's identity is monochrome-first, with paper, ink, and neutral surfaces rather than a mandatory signature hue. The black-and-white app icon, consistent shapes, typography, and space provide recognition. The [brand guidelines](brand.md) define the ball, wordmark, and brand colours for communication; product tokens change only through this specification. Neutral does not mean a flat gray interface: use readable tonal contrast and clear hierarchy, with light and dark themes expressing the same roles.
 
 Brand identity, action emphasis, and status are separate concerns. Primary actions can use strong foreground/background contrast without a saturated brand fill. Links, keyboard focus, and selection need recognizable interaction cues; success, warning, and danger need distinct meanings. Color supports these purposes rather than decorating every heading or selected item. Never rely on color alone for an essential distinction.
 
