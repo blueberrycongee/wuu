@@ -20,9 +20,9 @@ Use **Read only** for investigation and **Standard** for ordinary changes. Uncon
 
 ## System permissions and isolation
 
-The process sandbox controls filesystem writes, not all reads, network access, process visibility, or inherited environment variables. In particular, read-only does not mean that commands cannot disclose data. Dedicated file-tool boundaries and subprocess confinement are separate protections.
+The process sandbox restricts file-content writes and filesystem creation/removal, not all reads, network access, process visibility, or inherited environment variables. Linux Landlock does not restrict all metadata operations, such as changing file modes or timestamps. In particular, read-only does not mean that commands cannot disclose data. Dedicated file-tool boundaries and subprocess confinement are separate protections.
 
-The built-in backend is available on macOS. On other platforms, or when that backend cannot run, confined commands require a configured `sandbox.process@1` extension. A missing, failed, or partially enforcing backend causes execution to fail; Wuu does not silently retry unconfined.
+The built-in backend uses Seatbelt on macOS and Landlock on Linux (ABI 3 or later). Linux kernels without Landlock fail closed. On other platforms, or when that backend cannot run, confined commands require a configured `sandbox.process@1` extension. A missing, failed, or partially enforcing backend causes execution to fail; Wuu does not silently retry unconfined.
 
 This is not a sandbox for all installed code. Plugins, hooks, MCP servers, external engines, and commands typed manually into the desktop terminal have their own execution paths. Use an isolated environment or separate OS account for untrusted repositories and dependencies. See the [security model](security-model.md).
 
