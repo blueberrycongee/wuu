@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -36,6 +37,7 @@ func TestSSETransportCloseCancelsActiveSend(t *testing.T) {
 		case "/sse":
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "event: endpoint\ndata: /message\n\n")
 			w.(http.Flusher).Flush()
 			<-r.Context().Done()
 		case "/message":

@@ -73,14 +73,15 @@ func (r *readLoop) run() {
 				return
 			}
 		}
-		// Notifications have no ID and carry a method.
-		if resp.ID == 0 && resp.Method != "" {
+		// Notifications have no ID and carry a method. IDs may be either
+		// numbers or strings; do not use zero as the presence check.
+		if !resp.hasID && resp.ID == 0 && resp.StringID == "" && resp.Method != "" {
 			if r.onNotify != nil {
 				r.onNotify(resp.Method, resp.Params)
 			}
 			continue
 		}
-		if resp.ID != 0 && resp.Method != "" {
+		if (resp.hasID || resp.ID != 0 || resp.StringID != "") && resp.Method != "" {
 			r.handleServerRequest(resp)
 			continue
 		}
@@ -102,10 +103,12 @@ func (r *readLoop) handleServerRequest(req Response) {
 		result = json.RawMessage(`{}`)
 	}
 	_ = r.transport.Send(context.Background(), Request{
-		JSONRPC: "2.0",
-		ID:      req.ID,
-		Result:  result,
-		Error:   rpcErr,
+		JSONRPC:  "2.0",
+		ID:       req.ID,
+		StringID: req.StringID,
+		hasID:    req.hasID,
+		Result:   result,
+		Error:    rpcErr,
 	})
 }
 
@@ -146,7 +149,7 @@ func callWithProtocol(ctx context.Context, t Transport, f *inFlight, method stri
 	req := Request{JSONRPC: "2.0", ID: id, Method: method, Params: rawParams}
 	ch := f.register(id)
 	if err := t.Send(ctx, req); err != nil {
-		f.resolve(id, Response{Error: &RPCError{Code: -32000, Message: err.Error()}})
+		f.resolve(id, Response{Error: &RPCError{Code: -32000, Message: err.Error()}, ID: id, hasID: true})
 		return nil, err
 	}
 	select {

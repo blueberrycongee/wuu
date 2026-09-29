@@ -8,6 +8,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Fixed
+
+- Harden MCP transport compatibility, request timeouts, OAuth refresh recovery,
+  local server cleanup, bounded reads, catalog refreshes, and oversized results.
+
 ## [2026.9.29] - 2026-09-29
 
 ### Contributors

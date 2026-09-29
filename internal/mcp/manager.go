@@ -123,8 +123,8 @@ func (m *Manager) Add(ctx context.Context, cfg ServerConfig) error {
 		return nil
 	}
 	m.recordStatus(ServerStatus{Name: cfg.Name, State: MCPServerStateConnecting, AuthStatus: authStatusForConfig(cfg)})
+	oauth := m.oauthManager()
 	if cfg.URL != "" {
-		oauth := m.oauthManager()
 		if oauth == nil && cfg.OAuth != nil {
 			m.recordStatus(ServerStatus{Name: cfg.Name, State: MCPServerStateAuthRequired, AuthStatus: MCPAuthStatusNotLoggedIn, Error: ErrOAuthRequired.Error()})
 			return ErrOAuthRequired
@@ -156,8 +156,18 @@ func (m *Manager) Add(ctx context.Context, cfg ServerConfig) error {
 		}
 	}
 	var client *Client
+	var tokenProvider TokenProvider
 	if cfg.URL != "" {
-		client, err = ConnectRemote(ctx, cfg)
+		if oauth != nil && cfg.OAuth != nil {
+			serverName := cfg.Name
+			tokenProvider = func(tokenCtx context.Context, forceRefresh bool) (string, error) {
+				if forceRefresh {
+					return oauth.RefreshAccessToken(tokenCtx, serverName)
+				}
+				return oauth.AccessToken(tokenCtx, serverName)
+			}
+		}
+		client, err = connectRemoteWithTokenProvider(ctx, cfg, tokenProvider)
 	} else {
 		client, err = ConnectStdio(ctx, cfg)
 	}

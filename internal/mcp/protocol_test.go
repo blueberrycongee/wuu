@@ -23,3 +23,30 @@ func TestToolProtocolTypesPreserveSchemasAnnotationsAndMetadata(t *testing.T) {
 		t.Fatalf("tool protocol fields lost: %+v", tool)
 	}
 }
+
+func TestJSONRPCAcceptsAndEchoesStringIDs(t *testing.T) {
+	var incoming Response
+	if err := json.Unmarshal([]byte(`{"jsonrpc":"2.0","id":"server-request","method":"sampling/create","params":{}}`), &incoming); err != nil {
+		t.Fatal(err)
+	}
+	if incoming.StringID != "server-request" || !incoming.hasID {
+		t.Fatalf("string request ID was not preserved: %+v", incoming)
+	}
+	out, err := json.Marshal(Request{JSONRPC: "2.0", StringID: incoming.StringID, Result: json.RawMessage(`{"ok":true}`), hasID: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != `{"id":"server-request","jsonrpc":"2.0","result":{"ok":true}}` {
+		t.Fatalf("server request response changed its ID: %s", out)
+	}
+}
+
+func TestResolveSSEEndpointPreservesAnnouncedQuery(t *testing.T) {
+	got, err := resolveSSEEndpoint("https://example.test/api/sse?stream=1", "/api/message?session=abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "https://example.test/api/message?session=abc" {
+		t.Fatalf("resolved endpoint = %q", got)
+	}
+}
