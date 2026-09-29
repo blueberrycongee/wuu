@@ -939,6 +939,7 @@
 /* A missing agent's whole row is its disclosure. */
 .settings-engine-row-toggle {
   min-height: var(--control-field-height);
+  border-radius: var(--radius-xs);
   background: transparent;
   padding: 0;
   text-align: left;
