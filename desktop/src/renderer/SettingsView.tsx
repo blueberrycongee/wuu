@@ -912,7 +912,7 @@ function SettingsNavItem({
   icon: ReactNode;
   active: boolean;
   onClick: () => void;
-  children: ReactNode;
+  children: string;
 }): JSX.Element {
   return (
     <button
@@ -923,7 +923,8 @@ function SettingsNavItem({
       onClick={onClick}
     >
       {icon}
-      <span>{children}</span>
+      {/* Plugin page names can outgrow the rail; a clipped one shows in full on hover. */}
+      <TruncatedText className="settings-nav-label" text={children} />
     </button>
   );
 }

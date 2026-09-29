@@ -99,7 +99,7 @@
 }
 
 .settings-back-button > span,
-.settings-nav-item > span {
+.settings-nav-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -119,8 +119,11 @@
   padding-bottom: 12px;
 }
 
+/* The column may not grow past the rail, so a long plugin page name
+ * ellipsizes (and shows in full on hover) instead of being clipped. */
 .settings-nav-group {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 2px;
 }
 
