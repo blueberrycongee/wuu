@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionInventoryRecord, SkillSummary, WuuDesktopApi } from "../shared/protocol";
+import { ConfirmDialogHost } from "./ConfirmDialog";
 import { SkillsCatalog } from "./SkillsCatalog";
 
 const toastMocks = vi.hoisted(() => ({
@@ -469,7 +470,6 @@ describe("SkillsCatalog", () => {
 
   it("renders Remove only for user-installed plugins and removes by plugin ID after confirmation", async () => {
     installSkillList([]);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const onRemovePluginPackage = vi.fn().mockResolvedValue({
       id: "community-tools",
       removed: true,
@@ -518,10 +518,13 @@ describe("SkillsCatalog", () => {
     await act(async () => {
       root = createRoot(container);
       root.render(
-        <SkillsCatalog
-          extensionInventory={extensionInventory}
-          onRemovePluginPackage={onRemovePluginPackage}
-        />,
+        <>
+          <SkillsCatalog
+            extensionInventory={extensionInventory}
+            onRemovePluginPackage={onRemovePluginPackage}
+          />
+          <ConfirmDialogHost />
+        </>,
       );
     });
 
@@ -537,9 +540,20 @@ describe("SkillsCatalog", () => {
       buttonByText("移除")?.click();
     });
 
-    expect(confirm).toHaveBeenCalledWith(
-      "确定移除用户插件 community-tools？Wuu 中已安装的插件文件将被删除。",
-    );
+    // Declining keeps the plugin; nothing is removed until it is confirmed.
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[role="dialog"] [data-confirm-action="cancel"]')?.click();
+    });
+    expect(onRemovePluginPackage).not.toHaveBeenCalled();
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[aria-label="community-tools 的更多操作"]')?.click();
+    });
+    await act(async () => {
+      buttonByText("移除")?.click();
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[role="dialog"] [data-confirm-action="confirm"]')?.click();
+    });
     expect(onRemovePluginPackage).toHaveBeenCalledWith("community-tools");
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[data-testid="plugin-page-back"]')?.click();

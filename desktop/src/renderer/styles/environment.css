@@ -1154,6 +1154,33 @@
   gap: 10px;
 }
 
+/* Confirmation: the question, its consequence, and the two answers. Sized in
+ * em so larger UI text keeps the same line breaks instead of wrapping more. */
+.environment-dialog.confirm-dialog {
+  --environment-dialog-max-width: 26em;
+  gap: var(--space-2);
+}
+
+.confirm-dialog h2 {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: var(--font-title);
+  line-height: var(--line-ui);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.confirm-dialog-message {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: var(--line-body);
+}
+
+.confirm-dialog > .environment-dialog-footer {
+  margin-top: var(--space-4);
+}
+
 /* Shared floating name dialog used by rename actions. It sits on top of
    .conversation-search-overlay/-dialog so the motion and panel shell stay
    consistent with other sidebar modals. */

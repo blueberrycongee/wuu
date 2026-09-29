@@ -2699,6 +2699,12 @@ html[data-focus-modality="keyboard"] :is(
   white-space: nowrap;
 }
 
+/* Destructive items also end their menu after a separator and name the
+ * confirmation that follows with an ellipsis; color is the last cue. */
+.thread-row-context-menu-item[data-tone="danger"] {
+  color: var(--danger);
+}
+
 .thread-row-context-menu-item:disabled {
   color: var(--ink-muted);
   cursor: default;

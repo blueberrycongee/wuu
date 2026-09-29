@@ -143,7 +143,7 @@ export function ThreadContextMenu({
               type="button"
               className="thread-row-context-menu-item"
               disabled={item.disabled}
-              style={item.danger ? { color: "var(--danger)" } : undefined}
+              data-tone={item.danger ? "danger" : undefined}
               onClick={() => {
                 if (item.disabled) return;
                 void item.onSelect();

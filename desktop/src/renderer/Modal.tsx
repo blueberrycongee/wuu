@@ -145,7 +145,7 @@ export function Modal({
 
   const panelBody = (
     <>
-      {title || icon || (onClose && showCloseButton) ? (
+      {icon || (onClose && showCloseButton) ? (
         <div className="environment-dialog-header">
           {icon ? <span className="environment-dialog-icon">{icon}</span> : <span />}
           {onClose && showCloseButton ? (

@@ -20,9 +20,12 @@ import {
   type WorkspaceViewTab,
 } from "./WorkspaceViewTabs";
 import { hoverTooltipText, unhoverTooltip } from "./tooltipTestUtils";
+import { confirmAction } from "./ConfirmDialog";
 import type { HeaderSnapshotV1, PresentationHost } from "../shared/workbench";
 import { PluginHost } from "./plugins/PluginHost";
 import { WorkbenchController } from "./plugins/Workbench";
+
+vi.mock("./ConfirmDialog", () => ({ confirmAction: vi.fn() }));
 
 // Renders the cwd it received so tests can assert which context prop
 // (activeContext vs workspaceContext) actually reached the terminal panel,
@@ -948,7 +951,6 @@ describe("WorkspaceRightPanel", () => {
   it("closes a readonly file without dirty-state confirmation", async () => {
     const onCloseTab = vi.fn();
     const onDirtyFileTabsChange = vi.fn();
-    const confirmDiscard = vi.spyOn(window, "confirm");
     const fileTab = workspaceFileViewTab({
       context: {
         kind: "project",
@@ -977,7 +979,7 @@ describe("WorkspaceRightPanel", () => {
       container?.querySelector<HTMLButtonElement>(".workspace-tool-tab-close")?.click();
     });
 
-    expect(confirmDiscard).not.toHaveBeenCalled();
+    expect(confirmAction).not.toHaveBeenCalled();
     expect(onCloseTab).toHaveBeenCalledWith(fileTab.id);
   });
 

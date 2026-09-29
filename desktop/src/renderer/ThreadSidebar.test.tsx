@@ -5,7 +5,8 @@ import { ThreadContextMenu } from "./ThreadContextMenu";
 import { PinnedThreadList, WorkspaceGroup, WorkspaceList } from "./ThreadSidebar";
 import type { DesktopProject, Thread } from "../shared/protocol";
 import { SCRATCH_PSEUDO_PROJECT_ID, summarizeThreadsForSidebar } from "./AppState";
-import { setActiveLocale } from "./i18n";
+import { setActiveLocale, translateCurrent } from "./i18n";
+import { ConfirmDialogHost } from "./ConfirmDialog";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -471,6 +472,51 @@ describe("WorkspaceList", () => {
     }
   });
 
+  it("deletes a conversation only after the in-app confirmation is accepted", async () => {
+    const [thread] = summarizeThreadsForSidebar([
+      makeWorkspaceThread("thread-delete", "/repo/wuu", "Scratch notes"),
+    ]);
+    const onDelete = vi.fn();
+    act(() => {
+      root = createRoot(container);
+      root.render(
+        <>
+          <PinnedThreadList
+            threads={[thread]}
+            lastViewedTurnByThreadID={{}}
+            onSelect={() => {}}
+            onTogglePinned={() => {}}
+            onArchive={() => {}}
+            onDelete={onDelete}
+          />
+          <ConfirmDialogHost />
+        </>,
+      );
+    });
+    async function chooseDelete(): Promise<void> {
+      act(() => {
+        container.querySelector(".thread-row")?.dispatchEvent(
+          new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }),
+        );
+      });
+      const item = Array.from(document.body.querySelectorAll<HTMLButtonElement>(".thread-row-context-menu-item"))
+        .find((el) => el.textContent === translateCurrent("threadSidebar.delete"));
+      await act(async () => item?.click());
+    }
+    const answer = (name: "confirm" | "cancel") => act(async () => {
+      document.body.querySelector<HTMLButtonElement>(`[role="dialog"] [data-confirm-action="${name}"]`)?.click();
+    });
+
+    await chooseDelete();
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain("Scratch notes");
+    await answer("cancel");
+    expect(onDelete).not.toHaveBeenCalled();
+
+    await chooseDelete();
+    await answer("confirm");
+    expect(onDelete).toHaveBeenCalledWith(thread);
+  });
+
   it("never auto-expands the active section — expansion is header-toggle only", () => {
     // Mental model regression: selecting a session (which makes its project
     // or the 对话 pseudo section "active") must not expand anything. Both
@@ -744,7 +790,7 @@ describe("WorkspaceGroup remove workspace", () => {
     expect(document.body.querySelector(".thread-row-context-menu")).not.toBeNull();
     const item = Array.from(
       document.body.querySelectorAll(".thread-row-context-menu-item"),
-    ).find((el) => el.textContent === "移除工作区");
+    ).find((el) => el.textContent === translateCurrent("threadSidebar.removeWorkspace"));
     expect(item).not.toBeUndefined();
 
     act(() => {

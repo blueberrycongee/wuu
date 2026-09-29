@@ -64,6 +64,7 @@ import {
 } from "./WorkspaceFiles";
 import { WorkspaceReviewPanel } from "./WorkspaceReviewPanels";
 import { ProjectPanel } from "./ProjectPanels";
+import { confirmAction } from "./ConfirmDialog";
 import { WorkspacePanelLoading } from "./LoadingViews";
 import type { WorkspaceFileViewTab, WorkspaceViewTab } from "./WorkspaceViewTabs";
 import { handleTabListKeyDown, useTabCloseFocusRestoration } from "./TabKeyboardNavigation";
@@ -573,11 +574,16 @@ export function WorkspaceRightPanel({
     });
   }, []);
 
-  function requestCloseTab(tab: WorkspaceViewTab): void {
+  async function requestCloseTab(tab: WorkspaceViewTab): Promise<void> {
     if (
       tab.kind === "file" &&
       dirtyFileTabIDs.has(tab.id) &&
-      !window.confirm(t("workspace.unsavedCloseConfirm"))
+      !(await confirmAction({
+        title: t("workspace.unsavedCloseTitle"),
+        message: t("workspace.unsavedCloseConfirm", { name: workspaceViewTabLabel(tab) }),
+        confirmLabel: t("workspace.discardChanges"),
+        tone: "danger",
+      }))
     ) {
       return;
     }
@@ -655,7 +661,7 @@ export function WorkspaceRightPanel({
           onSelectTab={compactNavigation ? undefined : onSelectTab}
           onCloseTab={compactNavigation ? undefined : (tabId) => {
             const tab = tabs.find((candidate) => candidate.id === tabId);
-            if (tab) requestCloseTab(tab);
+            if (tab) void requestCloseTab(tab);
           }}
           fallback={compactNavigation ? (
             <>
@@ -730,8 +736,8 @@ export function WorkspaceRightPanel({
                     open={open}
                     reorderable={visibleTabs.length > 1}
                     onSelect={() => onSelectTab(tab.id)}
-                    onClose={() => requestCloseTab(tab)}
-                    onDoubleClick={() => requestCloseTab(tab)}
+                    onClose={() => void requestCloseTab(tab)}
+                    onDoubleClick={() => void requestCloseTab(tab)}
                   />
                 );
               })}
@@ -812,7 +818,7 @@ export function WorkspaceRightPanel({
             type="button"
             aria-label={t("workspace.closeTab", { label: workspaceViewTabLabel(activeTab) })}
             disabled={!open}
-            onClick={() => requestCloseTab(activeTab)}
+            onClick={() => void requestCloseTab(activeTab)}
           >
             <X className="icon" />
           </button>

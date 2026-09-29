@@ -74,6 +74,7 @@ import {
 import { SidebarCollapseBody, SidebarSection } from "./SidebarSection";
 import { SidebarHoverFactsContext, type SidebarHoverFacts } from "./SidebarHoverCard";
 import { SidebarNameDialog } from "./SidebarNameDialog";
+import { confirmAction } from "./ConfirmDialog";
 import { ThreadContextMenu } from "./ThreadContextMenu";
 import {
   SessionOrganizationProvider,
@@ -2238,12 +2239,18 @@ export function AppSidebar({
               { separator: true },
               {
                 label: t("sidebar.deleteGroup"),
-                onSelect: () => {
-                  if (!window.confirm(t("sidebar.deleteGroupConfirmation"))) return;
-                  if (groupContextMenu.pinned) {
-                    unpinContainer({ kind: "folder", id: groupContextMenu.group.id });
-                  }
-                  organization.deleteFolder(groupContextMenu.group.id);
+                danger: true,
+                onSelect: async () => {
+                  const { group, pinned } = groupContextMenu;
+                  const confirmed = await confirmAction({
+                    title: t("sidebar.deleteGroupTitle", { name: group.name }),
+                    message: t("sidebar.deleteGroupConfirmation"),
+                    confirmLabel: t("common.delete"),
+                    tone: "danger",
+                  });
+                  if (!confirmed) return;
+                  if (pinned) unpinContainer({ kind: "folder", id: group.id });
+                  organization.deleteFolder(group.id);
                 },
               },
             ]}

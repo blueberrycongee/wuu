@@ -29,6 +29,7 @@ import type {
 } from "../shared/protocol";
 import { CatalogSearchField } from "./CatalogSearchField";
 import { CapabilityMark, skillCapability } from "./CapabilityMark";
+import { confirmAction } from "./ConfirmDialog";
 import { translateCurrent, useI18n } from "./i18n";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { Modal } from "./Modal";
@@ -297,7 +298,13 @@ export function SkillsCatalog({
     if (!onRemovePluginPackage || !pluginID || mutationInFlight.current) {
       return;
     }
-    if (!window.confirm(t("skills.pluginRemoveConfirm", { name: record.name }))) {
+    const confirmed = await confirmAction({
+      title: t("skills.pluginRemoveTitle", { name: record.name }),
+      message: t("skills.pluginRemoveConfirm"),
+      confirmLabel: t("skills.pluginRemove"),
+      tone: "danger",
+    });
+    if (!confirmed || mutationInFlight.current) {
       return;
     }
     const requestedContextKey = contextKey;
@@ -335,6 +342,7 @@ export function SkillsCatalog({
         label: packageMutation === `${record.id}:remove`
           ? t("skills.pluginRemoving")
           : t("skills.pluginRemove"),
+        danger: true,
         disabled: Boolean(packageMutation),
         onSelect: () => removePluginPackage(record),
       });

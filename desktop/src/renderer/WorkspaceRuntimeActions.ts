@@ -16,6 +16,7 @@ import {
 } from "./AppState";
 import { seedDraftRuntimeFromMemory } from "./DraftRuntimeMemory";
 import { loadRuntime as defaultLoadRuntime } from "./RuntimeLoadState";
+import { confirmAction } from "./ConfirmDialog";
 import { translateCurrent } from "./i18n";
 import { showErrorToast } from "./Toast";
 
@@ -367,18 +368,21 @@ export function createWorkspaceRuntimeActions(
   }
 
   async function removeProject(projectId: string): Promise<void> {
-    const currentState = deps.getAppState();
-    const removedWorkspace = currentState.projects.find(
+    const removedWorkspace = deps.getAppState().projects.find(
       (project) => project.id === projectId,
     );
     if (
       !removedWorkspace ||
-      !window.confirm(
-        translateCurrent("workspace.removeConfirm", { name: removedWorkspace.name }),
-      )
+      !(await confirmAction({
+        title: translateCurrent("workspace.removeTitle", { name: removedWorkspace.name }),
+        message: translateCurrent("workspace.removeConfirm"),
+        confirmLabel: translateCurrent("common.remove"),
+      }))
     ) {
       return;
     }
+    // Read the state the removal applies to after the answer, not before it.
+    const currentState = deps.getAppState();
     const requestID = deps.beginViewSwitch("runtime", "remove-project");
     const outgoingDraft = deps.getPrimaryComposerDraft();
     try {

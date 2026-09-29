@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { SidebarNameDialog } from "./SidebarNameDialog";
+import { confirmAction } from "./ConfirmDialog";
 import type { DesktopProject, RuntimeContext } from "../shared/protocol";
 import {
   copyToClipboard,
@@ -1097,15 +1098,20 @@ function ThreadRows({
             { separator: true },
             {
               label: t("threadSidebar.delete"),
+              danger: true,
               // A running thread cannot be deleted (the server also rejects
               // it); disable the entry so the confirm dialog never promises
               // a deletion that will fail.
               disabled: isThreadRunning(contextMenu.thread),
-              onSelect: () => {
-                if (!window.confirm(t("threadSidebar.deleteConfirmation"))) {
-                  return;
-                }
-                onDelete(contextMenu.thread);
+              onSelect: async () => {
+                const thread = contextMenu.thread;
+                const confirmed = await confirmAction({
+                  title: t("threadSidebar.deleteTitle", { title: rowState(thread).title }),
+                  message: t("threadSidebar.deleteConfirmation"),
+                  confirmLabel: t("common.delete"),
+                  tone: "danger",
+                });
+                if (confirmed) onDelete(thread);
               },
             },
           ]}
