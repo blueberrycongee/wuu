@@ -1235,6 +1235,7 @@ func (t *EditFileTool) Definition() providers.ToolDefinition {
 			"Usage:\n" +
 			"- Use old_text copied from current file evidence; if it no longer matches, read the relevant range and retry\n" +
 			"- In numbered reads and error snippets, discard the line number and first |; preserve all whitespace after | exactly (tabs and spaces differ)\n" +
+			"- For files using CRLF throughout, LF excerpts and replacement lines are converted to CRLF; mixed line endings require exact bytes\n" +
 			"- Provide old_text (must match exactly once) and new_text\n" +
 			"- Use replace_all=true to replace every occurrence instead of requiring unique match\n" +
 			"- The edit will FAIL if old_text is not unique — provide more context or use replace_all\n" +
@@ -1339,6 +1340,16 @@ func (t *EditFileTool) executeResolvedEdit(ctx context.Context, resolved, displa
 	oldSHA := sha256Hex(content)
 
 	text := string(content)
+	// read_file presents LF excerpts. Adapt edit inputs to uniform CRLF files
+	// without normalizing the file itself or changing mixed-ending matching.
+	crlf := strings.Count(text, "\r\n")
+	if crlf > 0 && crlf == strings.Count(text, "\n") && crlf == strings.Count(text, "\r") {
+		oldText = strings.ReplaceAll(strings.ReplaceAll(oldText, "\r\n", "\n"), "\n", "\r\n")
+		newText = strings.ReplaceAll(strings.ReplaceAll(newText, "\r\n", "\n"), "\n", "\r\n")
+		if oldText == newText {
+			return "", errors.New("old_text and new_text are identical, no changes needed")
+		}
+	}
 	count := strings.Count(text, oldText)
 	if count == 0 {
 		return "", editTextMatchError{

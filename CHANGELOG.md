@@ -26,6 +26,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Fix multi-line `edit_file` replacements copied from `read_file` on CRLF files,
+  preserving CRLF endings and exact unique-match checks.
+
 - Harden MCP transport compatibility, request timeouts, OAuth refresh recovery,
   local server cleanup, bounded reads, catalog refreshes, and oversized results.
 
