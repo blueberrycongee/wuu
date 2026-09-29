@@ -25,19 +25,71 @@ func TestToolProtocolTypesPreserveSchemasAnnotationsAndMetadata(t *testing.T) {
 }
 
 func TestJSONRPCAcceptsAndEchoesStringIDs(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		id   string
+	}{
+		{name: "nonempty", id: "server-request"},
+		{name: "empty", id: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			wireID, err := json.Marshal(test.id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			incomingWire := []byte(`{"jsonrpc":"2.0","id":` + string(wireID) + `,"method":"sampling/create","params":{}}`)
+			var incoming Response
+			if err := json.Unmarshal(incomingWire, &incoming); err != nil {
+				t.Fatal(err)
+			}
+			if incoming.StringID != test.id || !incoming.hasID {
+				t.Fatalf("string request ID was not preserved: %+v", incoming)
+			}
+			out, err := json.Marshal(Request{JSONRPC: "2.0", StringID: incoming.StringID, stringID: incoming.stringID, Result: json.RawMessage(`{"ok":true}`), hasID: incoming.hasID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var response map[string]json.RawMessage
+			if err := json.Unmarshal(out, &response); err != nil {
+				t.Fatal(err)
+			}
+			if string(response["id"]) != string(wireID) {
+				t.Fatalf("server request response changed its ID: %s", out)
+			}
+		})
+	}
+}
+
+func TestJSONRPCPreservesNumericZeroAndOmittedIDs(t *testing.T) {
 	var incoming Response
-	if err := json.Unmarshal([]byte(`{"jsonrpc":"2.0","id":"server-request","method":"sampling/create","params":{}}`), &incoming); err != nil {
+	if err := json.Unmarshal([]byte(`{"jsonrpc":"2.0","id":0,"result":{}}`), &incoming); err != nil {
 		t.Fatal(err)
 	}
-	if incoming.StringID != "server-request" || !incoming.hasID {
-		t.Fatalf("string request ID was not preserved: %+v", incoming)
+	if incoming.ID != 0 || !incoming.hasID {
+		t.Fatalf("numeric zero ID was not preserved: %+v", incoming)
 	}
-	out, err := json.Marshal(Request{JSONRPC: "2.0", StringID: incoming.StringID, Result: json.RawMessage(`{"ok":true}`), hasID: true})
+	out, err := json.Marshal(Request{JSONRPC: "2.0", ID: incoming.ID, hasID: incoming.hasID, Result: json.RawMessage(`{}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(out) != `{"id":"server-request","jsonrpc":"2.0","result":{"ok":true}}` {
-		t.Fatalf("server request response changed its ID: %s", out)
+	var response map[string]json.RawMessage
+	if err := json.Unmarshal(out, &response); err != nil {
+		t.Fatal(err)
+	}
+	if string(response["id"]) != "0" {
+		t.Fatalf("numeric zero ID changed: %s", out)
+	}
+
+	notification, err := json.Marshal(Response{JSONRPC: "2.0", Method: "notifications/initialized"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = nil
+	if err := json.Unmarshal(notification, &response); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := response["id"]; ok {
+		t.Fatalf("notification unexpectedly gained an ID: %s", notification)
 	}
 }
 

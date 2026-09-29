@@ -63,6 +63,7 @@ type Request struct {
 	Result   json.RawMessage `json:"result,omitempty"`
 	Error    *RPCError       `json:"error,omitempty"`
 	StringID string          `json:"-"`
+	stringID bool
 	hasID    bool
 }
 
@@ -75,6 +76,7 @@ type Response struct {
 	Result   json.RawMessage `json:"result,omitempty"`
 	Error    *RPCError       `json:"error,omitempty"`
 	StringID string          `json:"-"`
+	stringID bool
 	hasID    bool
 }
 
@@ -82,11 +84,11 @@ type Response struct {
 // string IDs from servers. String IDs are required to be echoed byte-for-byte
 // when replying to a server-initiated request.
 func (r Request) MarshalJSON() ([]byte, error) {
-	return marshalRPCMessage(r.JSONRPC, r.ID, r.StringID, r.hasID || r.ID != 0, r.Method, r.Params, r.Result, r.Error)
+	return marshalRPCMessage(r.JSONRPC, r.ID, r.StringID, r.stringID, r.hasID || r.ID != 0, r.Method, r.Params, r.Result, r.Error)
 }
 
 func (r Response) MarshalJSON() ([]byte, error) {
-	return marshalRPCMessage(r.JSONRPC, r.ID, r.StringID, r.hasID || r.ID != 0, r.Method, r.Params, r.Result, r.Error)
+	return marshalRPCMessage(r.JSONRPC, r.ID, r.StringID, r.stringID, r.hasID || r.ID != 0, r.Method, r.Params, r.Result, r.Error)
 }
 
 func (r *Request) UnmarshalJSON(data []byte) error {
@@ -94,7 +96,7 @@ func (r *Request) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	*r = Request{JSONRPC: message.JSONRPC, ID: message.ID, StringID: message.StringID, hasID: message.hasID, Method: message.Method, Params: message.Params, Result: message.Result, Error: message.Error}
+	*r = Request{JSONRPC: message.JSONRPC, ID: message.ID, StringID: message.StringID, stringID: message.stringID, hasID: message.hasID, Method: message.Method, Params: message.Params, Result: message.Result, Error: message.Error}
 	return nil
 }
 
@@ -103,7 +105,7 @@ func (r *Response) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	*r = Response{JSONRPC: message.JSONRPC, ID: message.ID, StringID: message.StringID, hasID: message.hasID, Method: message.Method, Params: message.Params, Result: message.Result, Error: message.Error}
+	*r = Response{JSONRPC: message.JSONRPC, ID: message.ID, StringID: message.StringID, stringID: message.stringID, hasID: message.hasID, Method: message.Method, Params: message.Params, Result: message.Result, Error: message.Error}
 	return nil
 }
 
@@ -111,6 +113,7 @@ type rpcMessage struct {
 	JSONRPC  string
 	ID       int64
 	StringID string
+	stringID bool
 	hasID    bool
 	Method   string
 	Params   json.RawMessage
@@ -118,10 +121,10 @@ type rpcMessage struct {
 	Error    *RPCError
 }
 
-func marshalRPCMessage(jsonrpc string, id int64, stringID string, hasID bool, method string, params, result json.RawMessage, rpcErr *RPCError) ([]byte, error) {
+func marshalRPCMessage(jsonrpc string, id int64, stringID string, stringIDPresent, hasID bool, method string, params, result json.RawMessage, rpcErr *RPCError) ([]byte, error) {
 	message := map[string]any{"jsonrpc": jsonrpc}
 	if hasID {
-		if stringID != "" {
+		if stringIDPresent {
 			message["id"] = stringID
 		} else {
 			message["id"] = id
@@ -160,6 +163,7 @@ func unmarshalRPCMessage(data []byte) (rpcMessage, error) {
 	}
 	message.hasID = true
 	if raw.ID[0] == '"' {
+		message.stringID = true
 		if err := json.Unmarshal(raw.ID, &message.StringID); err != nil {
 			return rpcMessage{}, fmt.Errorf("decode JSON-RPC string id: %w", err)
 		}

@@ -401,7 +401,7 @@ func (t *StreamableHTTPTransport) applyHeaders(hreq *http.Request, session, vers
 // request to record the negotiated protocol version (echoed on subsequent
 // requests via MCP-Protocol-Version) and start the GET listening stream.
 func (t *StreamableHTTPTransport) observeInitialize(origin Request, msg Response) {
-	if origin.Method != "initialize" || !msg.hasID || msg.ID != origin.ID || msg.StringID != origin.StringID || msg.Error != nil {
+	if origin.Method != "initialize" || !msg.hasID || msg.ID != origin.ID || msg.StringID != origin.StringID || msg.stringID != origin.stringID || msg.Error != nil {
 		return
 	}
 	var result struct {

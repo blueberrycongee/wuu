@@ -106,6 +106,7 @@ func (r *readLoop) handleServerRequest(req Response) {
 		JSONRPC:  "2.0",
 		ID:       req.ID,
 		StringID: req.StringID,
+		stringID: req.stringID,
 		hasID:    req.hasID,
 		Result:   result,
 		Error:    rpcErr,
