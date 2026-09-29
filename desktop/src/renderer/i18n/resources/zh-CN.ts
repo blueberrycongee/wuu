@@ -1874,6 +1874,7 @@ export const zhCN = {
   "composer.attachment.addFailed": "附件添加失败",
   "turn.orchestrationPaused": "已暂停回答",
   "common.select": "请选择",
+  "common.noOptions": "没有可选项",
   "thread.untitled": "未命名对话",
   "thread.forkTitle": "{title} · 分叉",
   "queryHistory.index": "历史输入索引",

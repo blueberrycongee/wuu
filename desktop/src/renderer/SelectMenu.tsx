@@ -73,7 +73,7 @@ export function SelectMenu({
   align = "left",
   searchable = false,
   searchPlaceholder,
-  emptyMessage = "没有可选项",
+  emptyMessage,
   // When true, the floating menu flips to the opposite side of the
   // trigger if the requested placement doesn't have enough viewport
   // room (e.g. a long provider × model list inside a centered modal).
@@ -342,7 +342,7 @@ export function SelectMenu({
             ) : null}
             <div className="select-menu-options">
               {flatOptions.length === 0 ? (
-                <div className="select-menu-empty">{emptyMessage}</div>
+                <div className="select-menu-empty">{emptyMessage ?? t("common.noOptions")}</div>
               ) : null}
               {resolvedGroups.map((group, groupIndex) => (
                 <div className="select-menu-group" key={group.label ?? `group-${groupIndex}`}>

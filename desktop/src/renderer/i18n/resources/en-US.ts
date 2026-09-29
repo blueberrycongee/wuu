@@ -1877,6 +1877,7 @@ export const enUS = {
   "composer.attachment.addFailed": "Failed to add attachment",
   "turn.orchestrationPaused": "Response paused",
   "common.select": "Select",
+  "common.noOptions": "No options",
   "thread.untitled": "Untitled conversation",
   "thread.forkTitle": "{title} · Fork",
   "queryHistory.index": "Past input index",
