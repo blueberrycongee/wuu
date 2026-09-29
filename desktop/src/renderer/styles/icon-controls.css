@@ -1,15 +1,10 @@
 /* Shared icon-button optics. Load after appearance.css so utility sizes do not
  * override these role-based sizes. Business colors and activation stay local. */
+
+/* The glyph of an action in flight. Like every spinner it keeps turning under
+ * reduced motion, because it reports ongoing work. */
 .control-busy-icon {
-  animation: control-busy-spin 1s linear infinite;
-}
-
-@keyframes control-busy-spin {
-  to { transform: rotate(360deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .control-busy-icon { animation: none; }
+  animation: wuu-spin var(--motion-spin) linear infinite;
 }
 
 :root {
