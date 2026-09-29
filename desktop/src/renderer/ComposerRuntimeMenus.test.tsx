@@ -200,7 +200,6 @@ describe("RuntimePicker", () => {
     expect(document.querySelector(".codex-main-menu")).toBeNull();
 
     expect(menu?.classList.contains("is-summary")).toBe(true);
-    expect(menu?.textContent).toContain("Wuu");
     expect(menu?.textContent).toContain("work");
     expect(menu?.textContent).toContain("Claude Sonnet");
     expect(menu?.textContent).toContain(variantLabel("medium"));
@@ -255,6 +254,26 @@ describe("RuntimePicker", () => {
       search.dispatchEvent(new Event("input", { bubbles: true }));
     });
     expect(rows()).toBe("1");
+  });
+
+  it("reaches the effort slider and the rows below it with the arrow keys", async () => {
+    const initialized = runtimeWithEffort();
+    initialized.providers![0].models![0].fast_mode = true;
+    renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), createRef(), { onSelectSpeed: vi.fn().mockResolvedValue(true) });
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    const press = (key: string): void => {
+      act(() => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); });
+    };
+
+    expect(document.activeElement).toBe(document.querySelector(".runtime-panel-model"));
+    press("ArrowDown");
+    const slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
+    expect(document.activeElement).toBe(slider);
+    const level = slider.value;
+    // Up and Down leave the slider; Left and Right stay its own steps.
+    press("ArrowDown");
+    expect(document.activeElement).toBe(document.querySelector(".runtime-panel-fast"));
+    expect(slider.value).toBe(level);
   });
 
   it("steps back with Escape before closing the panel", () => {
@@ -404,7 +423,21 @@ describe("RuntimePicker", () => {
     expect(items).toEqual(["Grok 4.6", "Grok 4.5"]);
   });
 
-  it("keeps every engine visible when the current conversation locks engine switching", () => {
+  it("names the engine only when another one can be chosen", () => {
+    renderPicker("model", runtimeWithEffort(), vi.fn(), vi.fn(), vi.fn(), createRef<HTMLDivElement>(), {
+      engines: [{ id: "wuu", enabled: true, binary_ok: true }],
+    });
+    expect(document.querySelector('.runtime-panel-context [aria-label*="Wuu"]')).toBeNull();
+
+    renderPicker("model", runtimeWithEffort(), vi.fn(), vi.fn(), vi.fn(), createRef<HTMLDivElement>(), {
+      engines: [{ id: "wuu", enabled: true, binary_ok: true }, { id: "codex", enabled: true, binary_ok: true }],
+      onSelectEngine: vi.fn(),
+    });
+    act(() => document.querySelector<HTMLButtonElement>('.runtime-panel-context button[aria-label*="Wuu"]')?.click());
+    expect(document.querySelectorAll(".runtime-engine-option")).toHaveLength(2);
+  });
+
+  it("explains a bound engine instead of opening choices it cannot take", () => {
     renderPicker(
       "model",
       runtimeWithEffort(),
@@ -422,16 +455,11 @@ describe("RuntimePicker", () => {
       }
     );
 
-    const engineContext = document.querySelector<HTMLButtonElement>(".runtime-panel-context button");
-    act(() => engineContext?.click());
-    const choices = Array.from(
-      document.querySelectorAll<HTMLButtonElement>(".runtime-engine-option")
-    );
-    expect(choices.map((choice) => choice.querySelector(".runtime-engine-option-name")?.textContent)).toEqual([
-      "Wuu",
-      "Codex"
-    ]);
-    expect(choices.every((choice) => choice.disabled)).toBe(true);
+    const context = document.querySelector<HTMLElement>(".runtime-panel-context")!;
+    expect(context.querySelector("button")).toBeNull();
+    expect(context.querySelector("[aria-label]")?.getAttribute("aria-label"))
+      .toContain(translateCurrent("runtime.engineLockedDescription"));
+    expect(document.querySelector(".runtime-engine-option")).toBeNull();
   });
 
   it("builds permission labels in the active language", () => {
@@ -669,7 +697,7 @@ describe("RuntimePicker", () => {
     expect(slider.max).toBe("4");
     expect(slider.value).toBe("4");
     expect(slider.getAttribute("aria-valuetext")).toBe(variantLabel("xhigh"));
-    expect(document.querySelector(".runtime-panel-model .runtime-panel-effort-value")?.textContent).toBe(variantLabel("xhigh"));
+    expect(document.querySelector(".runtime-panel-effort .runtime-panel-effort-value")?.textContent).toBe(variantLabel("xhigh"));
   });
 
   it("selects a discrete effort by dragging the unlabeled slider", () => {
@@ -682,7 +710,7 @@ describe("RuntimePicker", () => {
       slider.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
-    expect(document.querySelector(".runtime-panel-model .runtime-panel-effort-value")?.textContent).toBe(variantLabel("high"));
+    expect(document.querySelector(".runtime-panel-effort .runtime-panel-effort-value")?.textContent).toBe(variantLabel("high"));
     expect(document.querySelector(".codex-effort-slider + .runtime-panel-effort-value")).toBeNull();
     expect(onSelectEffort).not.toHaveBeenCalled();
 
@@ -694,7 +722,7 @@ describe("RuntimePicker", () => {
     expect(slider.getAttribute("aria-valuetext")).toBe(variantLabel("high"));
   });
 
-  it("maps pointer spans and cancels a drag without saving", () => {
+  it("snaps the pointer to the nearest level and cancels a drag without saving", () => {
     const onSelectEffort = vi.fn();
     renderPicker("model", runtimeWithEffort(), vi.fn(), onSelectEffort);
     const slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;

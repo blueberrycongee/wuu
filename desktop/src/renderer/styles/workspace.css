@@ -106,8 +106,6 @@
   --provider-pill-bg: var(--wuu-color-surface-muted, #f2f2ef);
   --provider-pill-text: var(--wuu-color-text-muted, #555a5f);
   --codex-runtime-effort-text: var(--wuu-color-text-muted, #74797d);
-  --codex-effort-sheen: rgba(255, 255, 255, 0.22);
-  --codex-effort-sheen-soft: rgba(255, 255, 255, 0.1);
   --codex-runtime-trigger-icon: var(--wuu-color-text-muted, #707579);
   --codex-menu-label-text: var(--wuu-color-text-muted, #9a9ea2);
   --grid-guide-border: rgba(228, 0, 43, 0.42);
@@ -3793,41 +3791,37 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   background: var(--menu-hover);
 }
 
+/* The one control in the panel that is dragged, so it is the one with weight:
+ * a capsule that fills with ink as the level rises, a dot for every level the
+ * model offers, and a knob inset in the capsule that snaps to them. */
 .codex-effort-slider {
+  --effort-knob: 20px;
+  --effort-track: 24px;
+  --effort-edge: 2px;
+  --effort-at: calc(var(--effort-edge) + var(--effort-knob) / 2 + (100% - var(--effort-knob) - var(--effort-edge) * 2) * var(--effort-ratio, 0));
   position: relative;
-  height: 30px;
+  height: 28px;
   touch-action: none;
 }
 
 .codex-effort-track {
   position: absolute;
-  top: 3px;
+  top: calc(50% - var(--effort-track) / 2);
   left: 0;
   right: 0;
-  height: 24px;
-  border-radius: var(--radius-pill);
-  pointer-events: none;
-  background: var(--surface-2);
-  box-shadow: inset 0 0 0 1px var(--hairline);
-  /* Clips the fill to the track's rounded ends, so the fill's square
-   * right edge still reads as a clean cap at 100% and the snap
-   * animation cannot overshoot past the track. */
+  height: var(--effort-track);
   overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--surface-4);
+  pointer-events: none;
 }
 
 .codex-effort-fill {
   position: absolute;
-  top: 0;
-  left: 0;
-  height: 100%;
-  width: var(--effort-progress);
-  /* Square right end: a rounded cap would peek out above and below the
-   * knob at interior stops. The opaque knob covers this edge instead,
-   * and the track clips it into a rounded cap at 100%. */
-  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+  inset: 0 auto 0 0;
+  width: var(--effort-at);
   background: var(--interaction-accent);
-  pointer-events: none;
-  transition: width var(--motion-base) var(--ease-bounce);
+  transition: width var(--motion-base) var(--ease-out);
 }
 
 .codex-effort-stops {
@@ -3838,11 +3832,12 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 
 .codex-effort-stops > span {
   position: absolute;
-  top: 13px;
-  width: 3px;
+  top: calc(50% - 2px);
+  left: calc(var(--effort-edge) + var(--effort-knob) / 2 + (100% - var(--effort-knob) - var(--effort-edge) * 2) * var(--effort-stop));
+  width: 4px;
   height: 4px;
-  border-radius: var(--radius-pill);
-  background: var(--ink-tertiary);
+  border-radius: var(--radius-circle);
+  background: var(--ink-muted);
   transform: translateX(-50%);
   transition: background-color var(--motion-fast) var(--ease-out);
 }
@@ -3853,37 +3848,38 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 
 .codex-effort-knob {
   position: absolute;
-  top: 2px;
-  left: clamp(13px, var(--effort-progress), calc(100% - 13px));
-  width: 26px;
-  height: 26px;
-  transform: translateX(-50%);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-pill);
+  top: calc(50% - var(--effort-knob) / 2);
+  left: var(--effort-at);
+  width: var(--effort-knob);
+  height: var(--effort-knob);
+  box-sizing: border-box;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-circle);
   background: var(--slider-thumb-bg);
   box-shadow: var(--shadow-soft);
+  transform: translateX(-50%);
   pointer-events: none;
-  transition: left var(--motion-base) var(--ease-bounce), transform var(--motion-fast) var(--ease-out);
+  transition: left var(--motion-base) var(--ease-out), scale var(--motion-fast) var(--ease-out);
 }
 
 /* The knob gives under the pointer while a level is being chosen. */
 .codex-effort-slider:not(.is-disabled):active .codex-effort-knob {
-  transform: translateX(-50%) scale(0.92);
+  scale: 0.9;
 }
 
 .codex-effort-slider input[type="range"] {
   position: absolute;
   inset: 0;
   width: 100%;
-  height: 30px;
+  height: 100%;
+  margin: 0;
   opacity: 0;
   cursor: pointer;
-  margin: 0;
 }
 
 html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visible) .codex-effort-knob {
-  border-color: var(--focus-ring);
-  box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--focus-ring);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visible) input {
@@ -3951,16 +3947,22 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
    at the bottom; the popover still morphs in place as pages change.
    Row metrics are drawn for the default 14.5px UI size and grow with larger
    UI text, the same proportion the panel width follows in
-   ComposerRuntimeMenus.tsx. --runtime-rows is the row count of the current
-   page, set on the panel.
-   Summary stack: 1px border, --menu-inset, 2px gap, context row, model row.
-   With slider: +6px group gap (2px row gap + 4px slider margin) and 30px control. */
+   ComposerRuntimeMenus.tsx. --runtime-rows is the row count of a list page;
+   the summary reports its context line, effort block and full rows, which
+   stack 2px apart inside the menu inset and the 1px border. */
 .codex-model-menu.runtime-panel {
   --runtime-row: max(36px, calc(var(--font-ui) * 36 / 14.5));
   --runtime-context-row: max(22px, calc(var(--font-ui) * 22 / 14.5));
   --runtime-header: max(40px, calc(var(--font-ui) * 40 / 14.5));
+  --runtime-effort-block: calc(var(--runtime-context-row) + 28px);
   --runtime-list: calc(var(--runtime-rows, 1) * (var(--runtime-row) + 1px) - 1px);
-  --runtime-summary: calc(2px + var(--menu-inset) * 2 + var(--runtime-context-row) + 2px + var(--runtime-row));
+  --runtime-summary: calc(
+    2px + var(--menu-inset) * 2
+    + var(--runtime-summary-context, 1) * var(--runtime-context-row)
+    + var(--runtime-summary-rows, 1) * var(--runtime-row)
+    + var(--runtime-summary-effort, 0) * var(--runtime-effort-block)
+    + (var(--runtime-summary-context, 1) + var(--runtime-summary-rows, 1) + var(--runtime-summary-effort, 0) - 1) * 2px
+  );
   position: relative;
   display: block;
   width: min(var(--runtime-panel-width, 224px), calc(100vw - 16px));
@@ -3975,10 +3977,6 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   border-color: var(--hairline-soft);
   box-shadow: var(--menu-shadow);
   transition: height var(--motion-base) var(--ease-out);
-}
-
-.codex-model-menu.runtime-panel.is-summary:has(.codex-effort-slider) {
-  height: calc(var(--runtime-summary) + 36px);
 }
 
 .codex-model-menu.runtime-panel.is-engines {
@@ -4033,6 +4031,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   padding: var(--menu-inset);
 }
 
+/* Where the model comes from, as a quiet path above it. */
 .runtime-panel-context {
   display: flex;
   min-width: 0;
@@ -4040,24 +4039,36 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   flex: 0 0 auto;
   align-items: center;
   gap: 4px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
 }
 
-.codex-runtime-menu .runtime-panel-context button {
+.codex-runtime-menu .runtime-panel-context button,
+.runtime-panel-context-item {
+  display: inline-flex;
   width: auto;
   height: var(--runtime-context-row);
+  min-width: 0;
   flex: 0 1 auto;
+  align-items: center;
   gap: 4px;
   padding: 0 4px;
+  border-radius: var(--radius-xs);
   color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-medium);
   transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
 }
 
+.runtime-panel-context-item > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Engine names are a word long; the provider beside them can be any length,
  * so it alone gives way when the row runs short. */
-.codex-runtime-menu .runtime-panel-context button:has(> .engine-icon) {
+.runtime-panel-context :is(button, .runtime-panel-context-item):has(> .engine-icon) {
   flex-shrink: 0;
 }
 
@@ -4065,13 +4076,10 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   color: var(--ink);
 }
 
-.codex-runtime-menu .runtime-panel-context button > svg {
+.runtime-panel-context :is(button, .runtime-panel-context-item) > svg {
   width: var(--icon-size-xs);
   height: var(--icon-size-xs);
-  color: var(--ink-tertiary);
-}
-
-.runtime-panel-context button > svg.engine-icon {
+  flex: 0 0 auto;
   color: inherit;
 }
 
@@ -4095,28 +4103,38 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   flex: 1 1 auto !important;
 }
 
-.runtime-panel-effort-value {
-  flex: 0 0 auto !important;
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
-  --enter-opacity: 0.4;
-  --enter-y: 3px;
-  animation: wuu-enter var(--motion-base) var(--ease-out);
-}
-
 .runtime-panel-model > svg:last-child {
   color: var(--ink-tertiary);
 }
 
-.runtime-panel-handoff {
-  width: 100%;
-  max-width: 100%;
-  margin-top: 6px;
-  overflow: hidden;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* The effort control names itself and shows its level, which follows the
+ * knob while it is dragged. */
+.runtime-panel-effort {
+  display: grid;
+  height: var(--runtime-effort-block);
+  flex: 0 0 auto;
+  grid-template-rows: var(--runtime-context-row) 28px;
+  align-content: start;
+  padding: 0 4px;
+}
+
+.runtime-panel-effort-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ink-tertiary);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+}
+
+.runtime-panel-effort-value {
+  color: var(--ink);
+  font-size: var(--font-sm);
+  --enter-opacity: 0.4;
+  --enter-y: 3px;
+  animation: wuu-enter var(--motion-base) var(--ease-out);
 }
 
 .runtime-panel-header {
@@ -4198,11 +4216,6 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   gap: 1px;
 }
 
-.runtime-panel .codex-effort-slider {
-  flex: 0 0 auto;
-  margin: 4px 4px 0;
-}
-
 @container style(--motion-reduced: 1) {
   .codex-model-menu.runtime-panel {
     transition: none;
@@ -4217,6 +4230,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
 
   .codex-runtime-trigger,
   .codex-runtime-trigger > svg.icon,
+  .codex-effort-fill,
   .codex-effort-knob {
     transition: none;
   }
@@ -4428,21 +4442,43 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   scrollbar-gutter: stable both-edges;
 }
 
-/* Speed is independent of the model and reasoning slider. */
-.codex-runtime-menu .runtime-panel-context .runtime-panel-fast,
-.codex-runtime-menu .runtime-panel-context .runtime-panel-speed-reset {
+/* Speed is independent of the model and the effort slider: a row that shows
+ * its state with a check, like the checked rows of the list pages. */
+.runtime-panel-fast-row {
+  display: flex;
+  height: var(--runtime-row);
   flex: 0 0 auto;
-  width: var(--runtime-context-row);
-  padding: 0;
+  align-items: center;
+  gap: 2px;
+}
+
+.codex-runtime-menu .runtime-panel-fast {
+  height: 100%;
+  flex: 1 1 auto;
+  gap: 8px;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  font-size: var(--font-menu);
+  font-weight: var(--weight-medium);
+}
+
+.codex-runtime-menu .runtime-panel-fast > svg {
+  color: var(--ink-soft);
+}
+
+.runtime-panel-fast .runtime-panel-fast-check {
+  visibility: hidden;
+}
+
+.runtime-panel-fast[aria-pressed="true"] .runtime-panel-fast-check {
+  visibility: visible;
+}
+
+.codex-runtime-menu .runtime-panel-fast-row .runtime-panel-speed-reset {
+  width: var(--runtime-row);
+  height: 100%;
+  flex: 0 0 auto;
   justify-content: center;
-}
-.codex-runtime-menu .runtime-panel-context .runtime-panel-speed-reset {
-  margin-left: auto;
-}
-.codex-runtime-menu .runtime-panel-fast[aria-pressed="true"],
-.codex-runtime-menu .runtime-panel-fast[aria-pressed="true"] > svg {
-  color: var(--interaction-accent);
-}
-.codex-runtime-menu .runtime-panel-fast[aria-pressed="true"] > svg {
-  fill: currentColor;
+  padding: 0;
+  color: var(--ink-tertiary);
 }

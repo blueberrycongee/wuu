@@ -22,7 +22,7 @@ export function isInsideFloatingMenu(target: Node, owner: FloatingMenuOwner): bo
   return Boolean(element?.closest('[data-floating-menu-owner="' + owner + '"]'));
 }
 
-const MENU_FOCUS_TARGETS = "input:not([type='range']), button:not(:disabled)";
+const MENU_FOCUS_TARGETS = "input:not(:disabled), button:not(:disabled)";
 
 /**
  * Moves focus into a click-open menu once the floating layer has revealed it
@@ -53,15 +53,16 @@ export function useFloatingMenuFocus(
 }
 
 /**
- * Arrows, Home and End move between a menu's search field and enabled rows,
- * wrapping at the ends. A slider keeps the arrows for its own steps, and a
- * search field keeps Home and End for its caret. Returns whether it moved.
+ * ArrowUp and ArrowDown, Home and End move between a menu's fields and enabled
+ * rows, wrapping at the ends. A slider is one more row: it keeps Left, Right,
+ * Home and End for its own steps, as a search field keeps Home and End for its
+ * caret. Returns whether focus moved.
  */
 export function moveFloatingMenuFocus(event: ReactKeyboardEvent<HTMLElement>): boolean {
   const { key } = event;
   if (key !== "ArrowDown" && key !== "ArrowUp" && key !== "Home" && key !== "End") return false;
   const target = event.target as HTMLElement;
-  if (target instanceof HTMLInputElement && (target.type === "range" || key === "Home" || key === "End")) return false;
+  if (target instanceof HTMLInputElement && (key === "Home" || key === "End")) return false;
   const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(MENU_FOCUS_TARGETS));
   if (items.length === 0) return false;
   event.preventDefault();

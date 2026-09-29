@@ -220,13 +220,16 @@ function RuntimePanelHeader({ title, onBack }: { title: string; onBack: () => vo
   );
 }
 
+// The summary reads top down: where the model comes from (engine and model
+// service, when there is a choice to show), the model, how hard it thinks,
+// then the optional speed row.
 function RuntimePanelSummary({
   engine,
   engineId,
   provider,
+  showEngine,
   engineLocked,
-  hideEngine = false,
-  compactSummary = false,
+  lockedDescription,
   model,
   effortOptions,
   selectedEffort,
@@ -238,15 +241,14 @@ function RuntimePanelSummary({
   onOpenEngines,
   onOpenProviders,
   onOpenModels,
-  onHandoff,
   onSelectEffort
 }: {
   engine: string;
   engineId: string;
   provider?: string;
+  showEngine: boolean;
   engineLocked: boolean;
-  hideEngine?: boolean;
-  compactSummary?: boolean;
+  lockedDescription?: string;
   model: string;
   effortOptions: string[];
   selectedEffort: string;
@@ -256,9 +258,9 @@ function RuntimePanelSummary({
   speedDisabled?: boolean;
   onSelectSpeed?: (speed: string) => void | Promise<boolean>;
   onOpenEngines: () => void;
+  // Absent when the engine offers a single model service.
   onOpenProviders?: () => void;
   onOpenModels: () => void;
-  onHandoff?: () => void;
   onSelectEffort: (effort: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -282,63 +284,104 @@ function RuntimePanelSummary({
     setPreviewEffort(selectedEffort);
   }, [selectedEffort]);
 
+  const engineName = engineLabel(engine);
+  // A bound conversation cannot switch engines, so the engine is a label that
+  // says why rather than a way into a list of choices it cannot take.
+  const engineItem = engineLocked ? (
+    <Tooltip content={lockedDescription}>
+      <span className="runtime-panel-context-item" aria-label={lockedDescription ? `${engineName} · ${lockedDescription}` : engineName}>
+        <EngineIcon engine={engineId} />
+        <span>{engineName}</span>
+        <Lock aria-hidden="true" />
+      </span>
+    </Tooltip>
+  ) : (
+    <Tooltip content={t("runtime.engineNamed", { engine: engineName })}>
+      <button type="button" aria-label={t("runtime.engineNamed", { engine: engineName })} onClick={onOpenEngines}>
+        <EngineIcon engine={engineId} />
+        <span>{engineName}</span>
+      </button>
+    </Tooltip>
+  );
+  const providerItem = provider ? (onOpenProviders ? (
+    <Tooltip content={t("runtime.providerNamed", { provider })}>
+      <button type="button" aria-label={t("runtime.providerNamed", { provider })} onClick={onOpenProviders}>
+        <span>{provider}</span>
+        <ChevronDown aria-hidden="true" />
+      </button>
+    </Tooltip>
+  ) : (
+    <span className="runtime-panel-context-item"><span>{provider}</span></span>
+  )) : null;
+
   return (
     <div className="runtime-panel-summary">
-      <div className="runtime-panel-context">
-        {onSelectSpeed ? <button
-          type="button"
-          className="runtime-panel-fast"
-          aria-label={t("runtime.fastMode")}
-          aria-pressed={displayedSpeed ? displayedSpeed === "fast" : "mixed"}
-          title={t(displayedSpeed === "fast" ? "runtime.fastModeOn" : displayedSpeed === "standard" ? "runtime.fastModeOff" : "runtime.fastModeDefault")}
-          disabled={speedDisabled || speedSaving}
-          onClick={() => { void changeSpeed(displayedSpeed === "fast" ? "standard" : "fast"); }}
-        ><Zap aria-hidden="true" /></button> : null}
-        {!hideEngine ? <button type="button" onClick={onOpenEngines}>
-          <EngineIcon engine={engineId} />
-          <span>{engineLabel(engine)}</span>
-          {engineLocked ? <Lock aria-hidden="true" /> : null}
-        </button> : null}
-        {provider && onOpenProviders ? (
-          <>
-            {!hideEngine ? <span className="runtime-panel-context-separator" aria-hidden="true">/</span> : null}
-            <button type="button" onClick={onOpenProviders}>
-              <span>{provider}</span>
-            </button>
-          </>
-        ) : null}
-        {onSelectSpeed ? <button
-          className="runtime-panel-speed-reset"
-          type="button"
-          aria-label={t("runtime.resetSpeed")}
-          title={t("runtime.resetSpeed")}
-          disabled={speedDisabled || speedSaving || !requestedSpeed}
-          onClick={() => { void changeSpeed(""); }}
-        ><RotateCcw aria-hidden="true" /></button> : null}
-      </div>
+      {showEngine || providerItem ? (
+        <div className="runtime-panel-context">
+          {showEngine ? engineItem : null}
+          {showEngine && providerItem ? <span className="runtime-panel-context-separator" aria-hidden="true">/</span> : null}
+          {providerItem}
+        </div>
+      ) : null}
       <button type="button" className="runtime-panel-model" data-menu-autofocus onClick={onOpenModels}>
         <span className="runtime-panel-model-name">{model}</span>
-        <span key={previewEffort} className="runtime-panel-effort-value">{variantLabel(previewEffort)}</span>
         <ChevronRight aria-hidden="true" />
       </button>
       {effortOptions.length > 1 ? (
-        <div className={compactSummary ? "runtime-panel-effort-row" : undefined} style={compactSummary ? undefined : { display: "contents" }}>
-        <EffortSelector
-          options={effortOptions}
-          selectedVariant={selectedEffort}
-          disabled={effortDisabled}
-          onPreviewEffort={setPreviewEffort}
-          onSelectEffort={onSelectEffort}
-        />
+        <div className="runtime-panel-effort">
+          <div className="runtime-panel-effort-heading" aria-hidden="true">
+            <span>{t("runtime.reasoningEffort")}</span>
+            <span key={previewEffort} className="runtime-panel-effort-value">{variantLabel(previewEffort)}</span>
+          </div>
+          <EffortSelector
+            options={effortOptions}
+            selectedVariant={selectedEffort}
+            disabled={effortDisabled}
+            onPreviewEffort={setPreviewEffort}
+            onSelectEffort={onSelectEffort}
+          />
         </div>
       ) : null}
-      {onHandoff ? (
-        <button type="button" className="runtime-panel-handoff" onClick={onHandoff}>
-          {t("runtime.handoffToNewSession")}
-        </button>
+      {onSelectSpeed ? (
+        <div className="runtime-panel-fast-row">
+          <button
+            type="button"
+            className="runtime-panel-fast"
+            aria-label={t("runtime.fastMode")}
+            aria-pressed={displayedSpeed ? displayedSpeed === "fast" : "mixed"}
+            title={t(displayedSpeed === "fast" ? "runtime.fastModeOn" : displayedSpeed === "standard" ? "runtime.fastModeOff" : "runtime.fastModeDefault")}
+            disabled={speedDisabled || speedSaving}
+            onClick={() => { void changeSpeed(displayedSpeed === "fast" ? "standard" : "fast"); }}
+          >
+            <Zap aria-hidden="true" />
+            <span>{t("runtime.fastMode")}</span>
+            <Check className="runtime-panel-fast-check" aria-hidden="true" />
+          </button>
+          {/* Only an explicit choice can be reset to the configured default. */}
+          {requestedSpeed ? (
+            <button
+              className="runtime-panel-speed-reset"
+              type="button"
+              aria-label={t("runtime.resetSpeed")}
+              title={t("runtime.resetSpeed")}
+              disabled={speedDisabled || speedSaving}
+              onClick={() => { void changeSpeed(""); }}
+            ><RotateCcw aria-hidden="true" /></button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
+}
+
+// The shell morphs between pages, so the summary's height comes from the rows
+// it shows rather than from its content.
+function runtimeSummaryStyle({ context, effort, rows }: { context: boolean; effort: boolean; rows: number }): CSSProperties {
+  return {
+    "--runtime-summary-context": context ? "1" : "0",
+    "--runtime-summary-effort": effort ? "1" : "0",
+    "--runtime-summary-rows": String(rows),
+  } as CSSProperties;
 }
 
 type PermissionModeState = PermissionMode;
@@ -492,7 +535,6 @@ export function RuntimePicker({
   onSelectEngineEffort,
   onToggleMenu,
   onSelectModel,
-  onHandoffModel,
   onSelectEffort,
   handoff
 }: {
@@ -513,7 +555,6 @@ export function RuntimePicker({
   onSelectEngineEffort?: (effort: string) => void;
   onToggleMenu: (menu: Exclude<CodexRuntimeMenu, null>) => void;
   onSelectModel: (provider: string, model: string, variant?: string) => void | Promise<boolean>;
-  onHandoffModel?: (provider: string, model: string) => void;
   onSelectEffort: (variant: string) => void | Promise<boolean>;
   handoff?: HandoffRuntimePicker;
 }): JSX.Element {
@@ -546,13 +587,13 @@ export function RuntimePicker({
   const triggerEngineName = engineLabel(selectedEngine, externalEngineInfo);
   const triggerLabel = handoff
     ? handoff.model
-      ? runtimeTriggerLabel(initialized, currentProviderModel, currentCodexModel, handoff.model)
+      ? runtimeTriggerLabel(handoff.model, codexProvider, currentProviderModel, currentCodexModel)
       : handoff.provider
         ? `${handoff.provider} · ${t("runtime.selectModel")}`
         : t("runtime.selectModel")
     : externalEngine
       ? externalModelInfo?.display_name || engineModel || t("runtime.engineDefaultModel")
-      : runtimeTriggerLabel(initialized, currentProviderModel, currentCodexModel, targetModel);
+      : runtimeTriggerLabel(targetModel, codexProvider, currentProviderModel, currentCodexModel);
   // A level is only worth naming when the model offers a choice; a lone
   // "Default" next to a model without levels reads as a setting it lacks.
   const effortLevels = externalEngine
@@ -657,7 +698,6 @@ export function RuntimePicker({
               selectedModel={targetModel}
               selectedVariant={targetVariant}
               onSelectModel={handoff?.onSelectModel ?? onSelectModel}
-              onHandoffModel={handoff ? undefined : onHandoffModel}
               onSelectEffort={handoff?.onSelectEffort ?? onSelectEffort}
               onSelectSpeed={handoff ? undefined : onSelectSpeed}
               engineOptions={engineOptions}
@@ -670,7 +710,6 @@ export function RuntimePicker({
               }}
               filterQuery={handoff?.filterQuery ?? ""}
               forcedView={handoff?.forcedView}
-              hideHandoff={Boolean(handoff)}
               onSelectProvider={handoff?.onSelectProvider}
               width={panelWidth}
               autoFocus
@@ -778,7 +817,14 @@ function EngineRuntimeMenu({
       ref={panelRef}
       className={`codex-runtime-menu codex-model-menu runtime-panel is-${view}`}
       role="menu"
-      style={runtimePanelStyle(view === "models" ? filteredModels.length : engineOptions.length, width)}
+      style={{
+        ...runtimePanelStyle(view === "models" ? filteredModels.length : engineOptions.length, width),
+        ...runtimeSummaryStyle({
+          context: true,
+          effort: effortOptions.length > 1,
+          rows: 1 + (effectiveModel?.fast_mode && onSelectSpeed ? 1 : 0),
+        }),
+      }}
       onKeyDown={(event) => handleRuntimePanelKeyDown(event, view, showSummary)}
     >
       <div key={`${engine?.id ?? "engine"}:${view}`} className={`runtime-panel-page is-${direction}`}>
@@ -786,7 +832,9 @@ function EngineRuntimeMenu({
           <RuntimePanelSummary
             engine={engineLabel(selectedEngine, engine)}
             engineId={selectedEngine}
+            showEngine
             engineLocked={engineLocked}
+            lockedDescription={lockedDescription}
             model={effectiveModel?.display_name || effectiveModelID || t("runtime.engineDefaultModel")}
             effortOptions={effortOptions}
             selectedEffort={effectiveEffort}
@@ -895,7 +943,6 @@ export function RuntimeModelMenu({
   selectedModel,
   selectedVariant,
   onSelectModel,
-  onHandoffModel,
   onSelectEffort,
   onSelectSpeed,
   engineOptions,
@@ -906,10 +953,6 @@ export function RuntimeModelMenu({
   onSelectEngine,
   filterQuery = "",
   forcedView,
-  hideHandoff = false,
-  embedded = false,
-  hideEngine = false,
-  compactSummary = false,
   onSelectProvider,
   width,
   autoFocus = false,
@@ -920,7 +963,6 @@ export function RuntimeModelMenu({
   selectedModel: string;
   selectedVariant: string;
   onSelectModel: (provider: string, model: string, variant?: string) => void | Promise<boolean>;
-  onHandoffModel?: (provider: string, model: string) => void;
   onSelectEffort: (variant: string) => void | Promise<boolean>;
   onSelectSpeed?: (speed: string) => void | Promise<boolean>;
   engineOptions: EngineOption[];
@@ -931,10 +973,6 @@ export function RuntimeModelMenu({
   onSelectEngine: (id: string) => void;
   filterQuery?: string;
   forcedView?: RuntimePanelView;
-  hideHandoff?: boolean;
-  embedded?: boolean;
-  hideEngine?: boolean;
-  compactSummary?: boolean;
   onSelectProvider?: (providerId: string) => void;
   width?: number;
   // Only a panel the user opened from its trigger takes focus; the handoff
@@ -1037,6 +1075,8 @@ export function RuntimeModelMenu({
         .filter((group) => group.models.length > 0)
     : scopedGroups;
 
+  // The engine is worth naming only when there is another one to pick.
+  const showEngine = engineOptions.length > 1 || selectedEngine !== "wuu";
   const effectiveCodex = providerIsCodex(initialized, effectiveProviderName);
   const effortOptions = providerModelVariantOptions(effectiveProvider, effectiveModelID, effectiveVariant);
   const effectiveModel = scopedGroups
@@ -1059,9 +1099,16 @@ export function RuntimeModelMenu({
   return (
     <div
       ref={panelRef}
-      className={`codex-runtime-menu codex-model-menu runtime-panel is-${view}${embedded ? " is-embedded" : ""}`}
+      className={`codex-runtime-menu codex-model-menu runtime-panel is-${view}`}
       role="menu"
-      style={runtimePanelStyle(pageRows, width)}
+      style={{
+        ...runtimePanelStyle(pageRows, width),
+        ...runtimeSummaryStyle({
+          context: showEngine || Boolean(effectiveProviderName),
+          effort: effortOptions.length > 1,
+          rows: 1 + (effectiveModel?.fast_mode && onSelectSpeed ? 1 : 0),
+        }),
+      }}
       onKeyDown={(event) => handleRuntimePanelKeyDown(event, view, showSummary)}
     >
       <div key={view} className={`runtime-panel-page is-${direction}`}>
@@ -1070,9 +1117,9 @@ export function RuntimeModelMenu({
             engine={selectedEngine}
             engineId={selectedEngine}
             provider={effectiveProviderName}
+            showEngine={showEngine}
             engineLocked={engineLocked}
-            hideEngine={hideEngine}
-            compactSummary={compactSummary}
+            lockedDescription={lockedDescription}
             model={effectiveModel ? providerModelDisplayName(effectiveModel) : effectiveModelID || t("runtime.selectModel")}
             effortOptions={effortOptions}
             selectedEffort={effectiveVariant}
@@ -1082,9 +1129,8 @@ export function RuntimeModelMenu({
             speedDisabled={running}
             onSelectSpeed={effectiveModel?.fast_mode ? onSelectSpeed : undefined}
             onOpenEngines={() => openView("engines")}
-            onOpenProviders={() => openView("providers")}
+            onOpenProviders={providers.length > 1 ? () => openView("providers") : undefined}
             onOpenModels={() => openView("models")}
-            onHandoff={hideHandoff || !onHandoffModel ? undefined : () => onHandoffModel(effectiveProviderName, effectiveModelID)}
             onSelectEffort={(variant) => {
               setOptimistic((current) =>
                 current ? { ...current, variant } : { provider: selectedProvider, model: selectedModel, variant }
@@ -1208,6 +1254,10 @@ export function RuntimeModelMenu({
   );
 }
 
+// A discrete slider over the levels the model offers, weakest on the left.
+// Dragging previews the level in the heading above; the choice commits once on
+// release (or on a keyboard step) instead of once per intermediate position,
+// so tuning never spams the runtime stream.
 function EffortSelector({
   options,
   selectedVariant,
@@ -1229,6 +1279,7 @@ function EffortSelector({
   const activePointer = useRef<number | null>(null);
   const sliderRef = useRef<HTMLDivElement>(null);
   const displayIndex = previewIndex ?? selectedIndex;
+  const lastIndex = Math.max(orderedOptions.length - 1, 1);
 
   useEffect(() => {
     setPreviewIndex(null);
@@ -1255,33 +1306,36 @@ function EffortSelector({
     if (next !== undefined && index !== selectedIndex) onSelectEffort(next);
   };
 
-  // The capsule assigns an equal span to each discrete level. Handle pointer
-  // coordinates directly so the hit regions match the visible segments;
-  // native range events continue to provide keyboard interaction.
+  // Stops sit at the two ends of the capsule and evenly between them; a pointer
+  // snaps to the nearest one. The knob travels inside the capsule's edge.
   const previewPointer = (clientX: number): void => {
-    const rect = sliderRef.current?.getBoundingClientRect();
-    if (!rect || rect.width <= 0) return;
-    const ratio = (clientX - rect.left) / rect.width;
+    const slider = sliderRef.current;
+    const rect = slider?.getBoundingClientRect();
+    if (!slider || !rect || rect.width <= 0) return;
+    const style = getComputedStyle(slider);
+    const knob = Number.parseFloat(style.getPropertyValue("--effort-knob")) || 0;
+    const edge = Number.parseFloat(style.getPropertyValue("--effort-edge")) || 0;
+    const ratio = (clientX - rect.left - edge - knob / 2) / Math.max(rect.width - knob - edge * 2, 1);
     if (!Number.isFinite(ratio)) return;
-    previewTo(Math.min(orderedOptions.length - 1, Math.max(0, Math.floor(ratio * orderedOptions.length))));
+    previewTo(Math.min(orderedOptions.length - 1, Math.max(0, Math.round(ratio * lastIndex))));
   };
-  const progress = `${((displayIndex + 1) / orderedOptions.length) * 100}%`;
+  const stop = (index: number): string => String(index / lastIndex);
 
   return (
     <div
       ref={sliderRef}
       className={`codex-effort-slider${disabled ? " is-disabled" : ""}`}
-      style={{ "--effort-progress": progress } as CSSProperties}
+      style={{ "--effort-ratio": stop(displayIndex) } as CSSProperties}
     >
       <span className="codex-effort-track" aria-hidden="true">
         <span className="codex-effort-fill" />
       </span>
       <span className="codex-effort-stops" aria-hidden="true">
-        {orderedOptions.slice(0, -1).map((variant, index) => (
+        {orderedOptions.map((variant, index) => (
           <span
             key={variant || `default-${index}`}
-            className={index < displayIndex ? "is-filled" : ""}
-            style={{ left: `${((index + 1) / orderedOptions.length) * 100}%` }}
+            className={index <= displayIndex ? "is-filled" : ""}
+            style={{ "--effort-stop": stop(index) } as CSSProperties}
           />
         ))}
       </span>
@@ -1363,16 +1417,18 @@ function rememberedVariantForRuntimeModel(provider: ProviderSummary, model: Prov
   return lastEffortForRuntimeModel(provider.name, model.id) ?? defaultVariantForRuntimeModel(provider, model);
 }
 
+// Codex subscription slugs drop their shared "gpt-" prefix; every other model
+// keeps its own name, so "GPT-5.2" is not cut to "5.2".
 function runtimeTriggerLabel(
-  initialized: InitializeResult,
+  modelId: string,
+  codexProvider: boolean,
   providerModel?: ProviderModelSummary,
   codexModel?: CodexModelSummary,
-  fallbackModelId = initialized.model
 ): string {
   if (codexModel) {
     return shortCodexModelLabel(codexModel.slug);
   }
-  return shortCodexModelLabel(providerModel?.display_name || fallbackModelId);
+  return codexProvider ? shortCodexModelLabel(modelId) : providerModel?.display_name || modelId;
 }
 
 function configuredRuntimeModelForProvider(

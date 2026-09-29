@@ -98,7 +98,7 @@ describe("providerModelVariantOptions", () => {
       supported_efforts: [],
       capabilities: { chat: true, tools: true, structured_output: true, streaming: true, system_role: true, reasoning: true }
     });
-    expect(providerModelVariantOptions(provider, "no-levels", "")).toEqual(["", "none"]);
+    expect(providerModelVariantOptions(provider, "no-levels", "")).toEqual(["none", ""]);
   });
 
   it("does not append the 'none' toggle when the model cannot reason", () => {

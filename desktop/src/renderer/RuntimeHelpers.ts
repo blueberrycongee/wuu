@@ -42,9 +42,10 @@ export function variantLabel(variant: string): string {
   return key ? t(key) : variant;
 }
 
+// Thinking off is the weakest choice; the provider's default sits above it.
 const EFFORT_RANK: Record<string, number> = {
-  "": 0,
-  none: 1,
+  none: 0,
+  "": 1,
   minimal: 2,
   low: 3,
   medium: 4,

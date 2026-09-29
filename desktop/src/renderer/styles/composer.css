@@ -544,15 +544,6 @@
   display: none;
 }
 
-.runtime-panel-handoff {
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--paper);
-  font-size: 12px;
-}
-
 /* Hero (welcome) composer inherits the same dialog width as the dock composer
    so the input box stays the same width whether or not a turn has been sent. */
 

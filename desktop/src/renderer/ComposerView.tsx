@@ -1442,11 +1442,6 @@ export function Composer({
                         onSelectEngineEffort={onSelectEngineEffort}
                         onToggleMenu={onToggleCodexRuntimeMenu}
                         onSelectModel={onSelectRuntimeModel}
-                        onHandoffModel={(provider, model) => {
-                          if (codexRuntimeMenu === "model") onToggleCodexRuntimeMenu("model");
-                          setPrompt(handoffPromptFromSelection(provider, model, ""));
-                          focusComposerAtEndSoon();
-                        }}
                         onSelectEffort={onSelectRuntimeEffort}
 
                       />
@@ -1510,7 +1505,6 @@ export function Composer({
               engineLocked
               running={false}
               onSelectEngine={() => {}}
-              hideHandoff
               filterQuery={canSubmitHandoffDraft(handoffDraft) ? "" : handoffDraft.filterQuery}
               forcedView={canSubmitHandoffDraft(handoffDraft) ? "summary" : handoffDraft.pickerView}
               onSelectProvider={(provider) => {
