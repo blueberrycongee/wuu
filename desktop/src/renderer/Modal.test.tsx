@@ -276,6 +276,28 @@ describe("Modal", () => {
     expect(focused?.getAttribute("data-testid")).toBe("first-input");
   });
 
+  it("returns focus to the control that opened it when it closes", () => {
+    const opener = document.createElement("button");
+    document.body.appendChild(opener);
+    opener.focus();
+    mount(
+      createElement(Modal, {
+        ariaLabel: "focus return",
+        title: "t",
+        onClose: () => undefined,
+        children: createElement("input", { type: "text" }),
+      }),
+    );
+    expect(document.activeElement).not.toBe(opener);
+
+    act(() => {
+      root?.unmount();
+    });
+    root = null;
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+
   it("does not move focus when initialFocus is 'none'", () => {
     const beforeActive = document.activeElement;
     mount(

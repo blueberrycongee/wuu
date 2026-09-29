@@ -7,7 +7,8 @@ import { Modal } from "./Modal";
  * `window.confirm`, whose native sheet cannot follow the product's type,
  * theme, or copy. Callers await the answer the way they awaited the native
  * prompt; `ConfirmDialogHost` (mounted once beside the toast viewport)
- * renders one request at a time and answers later ones in order.
+ * renders one request at a time and answers later ones in order. The shared
+ * Modal returns focus to the control that asked, when it is still on the page.
  */
 export type ConfirmRequest = {
   /** The question, naming the object: “删除“X”？”. */
@@ -23,7 +24,6 @@ export type ConfirmRequest = {
 type PendingConfirm = ConfirmRequest & {
   id: number;
   resolve: (confirmed: boolean) => void;
-  opener: HTMLElement | null;
 };
 
 let nextID = 1;
@@ -41,13 +41,7 @@ function currentRequest(): PendingConfirm | null {
 
 export function confirmAction(request: ConfirmRequest): Promise<boolean> {
   return new Promise((resolve) => {
-    const focused = document.activeElement;
-    queue = [...queue, {
-      ...request,
-      id: nextID++,
-      resolve,
-      opener: focused instanceof HTMLElement && focused !== document.body ? focused : null,
-    }];
+    queue = [...queue, { ...request, id: nextID++, resolve }];
     for (const listener of listeners) listener();
   });
 }
@@ -57,9 +51,6 @@ function settle(id: number, confirmed: boolean): void {
   if (!entry) return;
   queue = queue.filter((candidate) => candidate.id !== id);
   for (const listener of listeners) listener();
-  // A confirmed action usually removes its opener (a row, a tab); only a
-  // control that is still on the page takes focus back.
-  if (entry.opener?.isConnected) entry.opener.focus({ preventScroll: true });
   entry.resolve(confirmed);
 }
 

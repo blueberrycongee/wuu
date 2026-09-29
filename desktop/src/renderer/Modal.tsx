@@ -6,7 +6,9 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
+  useState,
 } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "./i18n";
@@ -23,6 +25,10 @@ import { useUILayerHost } from "./ui/layers/UILayerHost";
  * - Omit `onClose` to render a non-dismissible dialog.
  * - `closeDisabled` temporarily locks down every close affordance
  *   while an in-flight promise is still resolving.
+ *
+ * Focus model:
+ * - Focus moves into the panel on open (see `initialFocus`) and returns to
+ *   the control that held it before, if that control is still on the page.
  *
  * Form model:
  * - By default the panel is a `<div>`. Set `asForm` to render a
@@ -66,6 +72,15 @@ export function Modal({
   const layerHost = useUILayerHost();
   const panelRef = useRef<HTMLElement | null>(null);
   const dismissible = typeof onClose === "function" && !closeDisabled;
+  // Captured while rendering, before the panel or an autoFocus child takes
+  // focus in the commit.
+  const [opener] = useState(() => {
+    const focused = document.activeElement;
+    return focused instanceof HTMLElement && focused !== document.body ? focused : null;
+  });
+  useLayoutEffect(() => () => {
+    if (opener?.isConnected) opener.focus({ preventScroll: true });
+  }, [opener]);
 
   const setPanelRef = useCallback((node: HTMLElement | null) => {
     panelRef.current = node;
