@@ -170,6 +170,9 @@
   /* Selection is opaque so sidebar material cannot tint or darken it. */
   --selection-surface: var(--wuu-color-surface-elevated, var(--gray-150));
   --slider-thumb-bg: var(--wuu-color-surface-elevated, var(--paper));
+  /* Placeholder text must read as an example, never as a filled value, and still
+     clear 4.5:1. Distinct from entered text (--ink) and from --ink-soft labels. */
+  --placeholder-ink: var(--gray-600);
   --field-bg: var(--wuu-control-field-background, var(--paper));
   --field-hover-bg: var(--wuu-control-field-background, var(--surface-1));
   --field-border: var(--hairline-strong);
