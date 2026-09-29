@@ -2,10 +2,16 @@
  * distinguish editable controls; selection uses fill, never a border. */
 
 :root {
-  --settings-heatmap-level-1: #bad0f0;
-  --settings-heatmap-level-2: #7aaae0;
-  --settings-heatmap-level-3: #3d74cc;
-  --settings-heatmap-level-4: #1a4fa8;
+  /* Usage charts and the home overview share one ramp: a single blue stepped
+   * in lightness, so the four levels and an empty day each read at a glance
+   * (neighbouring steps differ by about 1.6:1 in luminance, and the lightest
+   * is well clear of an empty cell). Values are not derived from the canvas,
+   * because mixing a hue into paper drains its saturation; theme.css sets the
+   * dark theme's steps. */
+  --settings-heatmap-level-1: #b7d3fc;
+  --settings-heatmap-level-2: #81aded;
+  --settings-heatmap-level-3: #427fd8;
+  --settings-heatmap-level-4: #1351a6;
   /* Theme preview swatches render miniature copies of each theme, so
      their values are content: they must not follow the active theme. */
   --settings-preview-light-canvas: #ffffff;
@@ -478,6 +484,10 @@
   font-size: var(--font-ui);
 }
 
+.settings-group-empty[data-error] {
+  color: var(--danger);
+}
+
 /* --- Row -------------------------------------------------------------------
  * Two columns: a growing label on the left, a natural-width control pinned
  * right. Every row reserves a control's height plus its padding, so rows
@@ -914,15 +924,6 @@
   color: var(--ink-soft);
   font-size: var(--font-sm);
   line-height: 1.5;
-}
-
-.settings-empty {
-  display: flex;
-  align-items: center;
-  min-height: 48px;
-  color: var(--ink-tertiary);
-  font-size: var(--font-ui);
-  padding: 8px 0;
 }
 
 .settings-muted-line {
@@ -1574,15 +1575,6 @@ button.settings-engine-expand:hover {
   gap: var(--settings-gap);
 }
 
-/* Section headers on this page pair a title with a scope note. */
-.settings-section-meta {
-  flex: 0 0 auto;
-  color: var(--ink-tertiary);
-  font-size: var(--font-sm);
-  line-height: 1.4;
-  font-variant-numeric: tabular-nums;
-}
-
 .settings-usage-card {
   padding-block: var(--card-padding);
 }
@@ -1617,7 +1609,6 @@ button.settings-engine-expand:hover {
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-variant-numeric: tabular-nums;
 }
 
 .settings-usage-stat-label {
@@ -1643,19 +1634,25 @@ button.settings-engine-expand:hover {
   }
 }
 
+/* The peak's value labels the plot's top edge; the baseline is the bottom
+ * edge. Nothing between them pretends to be a scale. */
+.settings-usage-chart-scale {
+  display: block;
+  min-height: 1lh;
+  margin-bottom: var(--space-1);
+  color: var(--ink-tertiary);
+  font-size: var(--font-xs);
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
 .settings-usage-trend {
   display: grid;
   grid-template-columns: repeat(30, minmax(2px, 1fr));
   align-items: end;
   gap: 4px;
   height: 132px;
-  border-bottom: 1px solid var(--hairline-soft);
-  background: repeating-linear-gradient(
-    to top,
-    transparent 0,
-    transparent 32px,
-    var(--hairline-soft) 33px
-  );
+  border-block: 1px solid var(--hairline-soft);
 }
 
 .settings-usage-trend-day {
@@ -1688,45 +1685,6 @@ button.settings-engine-expand:hover {
   font-variant-numeric: tabular-nums;
 }
 
-.settings-model-chart-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.settings-model-chart-row {
-  display: grid;
-  grid-template-columns: minmax(120px, 0.8fr) minmax(120px, 1.7fr) 44px;
-  align-items: center;
-  gap: var(--space-4);
-}
-
-.settings-model-chart-label {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.settings-model-chart-label strong,
-.settings-model-chart-label small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-model-chart-label strong {
-  color: var(--ink);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-regular);
-}
-
-.settings-model-chart-label small {
-  color: var(--ink-tertiary);
-  font-size: var(--font-xs);
-}
-
-.settings-model-chart-bar,
 .settings-skill-usage-bar {
   height: 6px;
   overflow: hidden;
@@ -1734,21 +1692,12 @@ button.settings-engine-expand:hover {
   background: var(--surface-2);
 }
 
-.settings-model-chart-bar span,
 .settings-skill-usage-bar span {
   display: block;
   height: 100%;
   border-radius: inherit;
   background: var(--settings-heatmap-level-3);
   transition: width var(--motion-base) var(--ease-out);
-}
-
-.settings-model-chart-share {
-  display: block;
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
 }
 
 .settings-usage-loading,
@@ -1793,19 +1742,12 @@ button.settings-engine-expand:hover {
   border-radius: 3px;
 }
 
-.settings-usage-skeleton-period {
-  width: 72px;
-  height: 10px;
-  border-radius: 3px;
-}
-
 .settings-usage-skeleton-trend {
   display: flex;
   align-items: flex-end;
   gap: 4px;
   height: 132px;
-  border-bottom: 1px solid var(--hairline-soft);
-  background: repeating-linear-gradient(to top, transparent 0, transparent 32px, var(--hairline-soft) 33px);
+  border-block: 1px solid var(--hairline-soft);
 }
 
 .settings-usage-skeleton-trend-day {
@@ -1921,25 +1863,12 @@ button.settings-engine-expand:hover {
 }
 
 .settings-skill-usage-label {
-  display: flex;
-  align-items: center;
   min-width: 0;
-  gap: var(--space-2);
-}
-
-.settings-skill-usage-label strong {
   overflow: hidden;
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-regular);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.settings-skill-usage-rank {
-  color: var(--ink-tertiary);
-  font-size: var(--font-xs);
-  font-variant-numeric: tabular-nums;
 }
 
 .settings-skill-usage-value {
@@ -2046,15 +1975,6 @@ button.settings-engine-expand:hover {
   background: var(--hairline-soft);
 }
 
-/* The usage empty state reads as one quiet module, not a bare line. */
-.settings-usage-page > .settings-empty {
-  justify-content: center;
-  min-height: 0;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  padding: 48px 16px;
-}
-
 .settings-usage-table-wrap {
   min-width: 0;
   overflow: visible;
@@ -2091,10 +2011,12 @@ button.settings-engine-expand:hover {
   border-bottom: 0;
 }
 
+/* Model names are text: tabular figures would widen their hyphens. */
 .settings-usage-table th:first-child,
 .settings-usage-table td:first-child {
   padding-left: 0;
   text-align: left;
+  font-variant-numeric: normal;
 }
 
 .settings-usage-table .settings-usage-num {
@@ -2144,11 +2066,6 @@ button.settings-engine-expand:hover {
     height: 112px;
   }
 
-  .settings-model-chart-row {
-    grid-template-columns: minmax(100px, 1fr) minmax(80px, 1.3fr) 40px;
-    gap: 10px;
-  }
-
   .settings-usage-table {
     display: block;
     table-layout: auto;
@@ -2169,7 +2086,7 @@ button.settings-engine-expand:hover {
 
   .settings-usage-table tbody tr {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 10px 16px;
     border-bottom: 1px solid var(--hairline-soft);
     padding: 16px 0;

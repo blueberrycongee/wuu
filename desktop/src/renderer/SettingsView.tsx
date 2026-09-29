@@ -1791,7 +1791,7 @@ function SettingsUsagePage({
   loading: boolean;
   error: string;
 }): JSX.Element {
-  const { locale, t, formatNumber } = useI18n();
+  const { locale, t, formatNumber, formatDate } = useI18n();
   const formatUsageValue = (value: number, options?: Intl.NumberFormatOptions): string =>
     Number.isFinite(value) ? formatNumber(value, options) : "—";
   const formatCompactUsageValue = (value: number): string => formatCompactUsageNumber(value, locale);
@@ -1805,15 +1805,9 @@ function SettingsUsagePage({
   }, 0);
   const usageTrend = buildUsageTrend(usage?.days ?? []);
   const maxTrendTotal = usageTrend.reduce((max, day) => Math.max(max, usageTokenTotal(day)), 0);
-  const modelChart = (usage?.model_breakdowns ?? []).slice(0, 6).map((model) => ({
-    ...model,
-    total: model.input_tokens + model.output_tokens + model.cache_creation_tokens + model.cache_read_tokens,
-  }));
-  const maxModelTotal = modelChart.reduce((max, model) => Math.max(max, model.total), 0);
-  const allModelTotal = (usage?.model_breakdowns ?? []).reduce(
-    (total, model) => total + model.input_tokens + model.output_tokens + model.cache_creation_tokens + model.cache_read_tokens,
-    0,
-  );
+  const modelTotal = (model: SettingsUsageResponse["model_breakdowns"][number]): number =>
+    model.input_tokens + model.output_tokens + model.cache_creation_tokens + model.cache_read_tokens;
+  const allModelTotal = (usage?.model_breakdowns ?? []).reduce((total, model) => total + modelTotal(model), 0);
   const heatmapCols = heatmap.length > 0 ? Math.ceil(heatmap.length / 7) : 12;
 
   // Keep grid height = 7 × cell-size so cells stay square as panel resizes
@@ -1860,6 +1854,9 @@ function SettingsUsagePage({
     }
   }
   const header = <SettingsPageHeader title={t("settings.usage")} />;
+  // The totals cover every recorded day, so the page says since when.
+  const firstDay = usage?.metrics.date_range[0];
+  const since = firstDay ? t("settings.usageSince", { date: formatUsageSinceDate(firstDay, formatDate) }) : undefined;
   if (loading) {
     return (
       <>
@@ -1875,8 +1872,10 @@ function SettingsUsagePage({
       <>
         {header}
         <div className="settings-usage-page" data-testid="settings-usage">
-          <div className="settings-empty" role={error ? "alert" : undefined}>
-            {error || t("settings.noUsage")}
+          <div className="settings-group">
+            <p className="settings-group-empty" role={error ? "alert" : undefined} data-error={error ? "" : undefined}>
+              {error || t("settings.noUsage")}
+            </p>
           </div>
         </div>
       </>
@@ -1884,7 +1883,7 @@ function SettingsUsagePage({
   }
   return (
     <>
-    {header}
+    <SettingsPageHeader title={t("settings.usage")} description={since} />
     <div className="settings-usage-page" data-testid="settings-usage">
       <div className="settings-group settings-usage-stats">
         <UsageStat
@@ -1908,11 +1907,14 @@ function SettingsUsagePage({
       <section className="settings-section settings-usage-chart" aria-labelledby="settings-usage-trend-title">
         <header className="settings-section-header">
           <h2 id="settings-usage-trend-title" className="settings-section-title">
-            {t("settings.usageTrend")}
+            {t("settings.last30Days")}
           </h2>
-          <span className="settings-section-meta">{t("settings.last30Days")}</span>
         </header>
         <div className="settings-group settings-usage-card">
+          {/* The plot's top edge is the busiest day; its value is the scale. */}
+          <span className="settings-usage-chart-scale" aria-hidden="true">
+            {maxTrendTotal > 0 ? formatCompactUsageValue(maxTrendTotal) : null}
+          </span>
           <div className="settings-usage-trend" role="list" aria-label={t("settings.usageTrend")}>
             {usageTrend.map((day) => {
               const total = usageTokenTotal(day);
@@ -1940,7 +1942,7 @@ function SettingsUsagePage({
       <section className="settings-section" aria-labelledby="settings-usage-heatmap-title">
         <header className="settings-section-header">
           <h2 id="settings-usage-heatmap-title" className="settings-section-title">
-            {t("settings.usageHeatmap")}
+            {t("settings.pastYear")}
           </h2>
         </header>
         <div className="settings-group settings-usage-card settings-heatmap-panel">
@@ -1990,75 +1992,9 @@ function SettingsUsagePage({
         </div>
       </section>
 
-      <section className="settings-section settings-skill-usage" aria-labelledby="settings-skill-usage-title">
-        <header className="settings-section-header">
-          <h2 id="settings-skill-usage-title" className="settings-section-title">
-            {t("settings.skillUsage")}
-          </h2>
-          <span className="settings-section-meta">{t("settings.skillUsageCount")}</span>
-        </header>
-        <div className="settings-group settings-usage-card">
-          {skillUsage.length ? (
-            <div className="settings-skill-usage-list">
-              {skillUsage.slice(0, 8).map((skill, index) => {
-                const count = Number.isFinite(skill.count) ? Math.max(0, skill.count) : undefined;
-                const width = count !== undefined && maxSkillCount > 0 ? Math.max(6, (count / maxSkillCount) * 100) : 0;
-                return (
-                  <div className="settings-skill-usage-row" key={skill.name}>
-                    <div className="settings-skill-usage-label">
-                      <span className="settings-skill-usage-rank">{String(index + 1).padStart(2, "0")}</span>
-                      <strong>{skill.name}</strong>
-                    </div>
-                    <div className="settings-skill-usage-bar" aria-hidden="true">
-                      <span style={{ width: `${width}%` }} />
-                    </div>
-                    <span className="settings-skill-usage-value">{formatUsageNumber(count, formatNumber)}</span>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="settings-group-empty">{t("settings.noSkillUsage")}</p>
-          )}
-        </div>
-      </section>
-
-      {modelChart.length > 0 ? (
-        <section className="settings-section settings-model-chart" aria-labelledby="settings-model-chart-title">
-          <header className="settings-section-header">
-            <h2 id="settings-model-chart-title" className="settings-section-title">
-              {t("settings.modelDistribution")}
-            </h2>
-            <span className="settings-section-meta">{t("settings.tokenShare")}</span>
-          </header>
-          <div className="settings-group settings-usage-card">
-            <div className="settings-model-chart-list">
-              {modelChart.map((model) => {
-                const width = maxModelTotal > 0 ? Math.max(2, (model.total / maxModelTotal) * 100) : 0;
-                const share = allModelTotal > 0 ? model.total / allModelTotal : 0;
-                return (
-                  <div className="settings-model-chart-row" key={`${model.provider}\n${model.model}`}>
-                    <div className="settings-model-chart-label">
-                      <strong>{model.model || t("settings.unknownModel")}</strong>
-                      <small>{model.provider || t("settings.unknownProvider")}</small>
-                    </div>
-                    <div className="settings-model-chart-bar" aria-hidden="true">
-                      <span style={{ width: `${width}%` }} />
-                    </div>
-                    <Tooltip content={formatCompactUsageValue(model.total)}>
-                      <span className="settings-model-chart-share">{formatPercent(share)}</span>
-                    </Tooltip>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-      ) : null}
-
       <section className="settings-section" aria-labelledby="settings-model-usage-title">
         <header className="settings-section-header">
-          <h2 id="settings-model-usage-title" className="settings-section-title">{t("settings.modelUsage")}</h2>
+          <h2 id="settings-model-usage-title" className="settings-section-title">{t("settings.usageByModel")}</h2>
         </header>
         {usage.model_breakdowns.length > 0 ? (
           <div className="settings-group settings-usage-table-wrap">
@@ -2066,6 +2002,7 @@ function SettingsUsagePage({
               <thead>
                 <tr>
                   <th scope="col">{t("settings.model")}</th>
+                  <th scope="col" className="settings-usage-num">{t("settings.tokenShare")}</th>
                   <th scope="col" className="settings-usage-num">{t("settings.usageInput")}</th>
                   <th scope="col" className="settings-usage-num">{t("settings.usageOutput")}</th>
                   <th scope="col" className="settings-usage-num">{t("settings.hitRate")}</th>
@@ -2075,13 +2012,21 @@ function SettingsUsagePage({
                 {usage.model_breakdowns.map((b) => {
                   const prompt = b.input_tokens + b.cache_read_tokens;
                   const rate = prompt > 0 ? b.cache_read_tokens / prompt : undefined;
+                  const total = modelTotal(b);
                   return (
                     <tr key={`${b.provider}\n${b.model}`}>
                       <td>
                         <div className="settings-usage-model">
-                          <strong>{b.provider || t("settings.unknownProvider")}</strong>
-                          <small>{b.model || t("settings.unknownModel")}</small>
+                          <strong>{b.model || t("settings.unknownModel")}</strong>
+                          <small>{b.provider || t("settings.unknownProvider")}</small>
                         </div>
+                      </td>
+                      <td className="settings-usage-num" data-label={t("settings.tokenShare")}>
+                        <Tooltip content={formatCompactUsageValue(total)}>
+                          <span className="settings-usage-number settings-usage-share">
+                            {formatPercent(allModelTotal > 0 ? total / allModelTotal : undefined)}
+                          </span>
+                        </Tooltip>
                       </td>
                       <td className="settings-usage-num" data-label={t("settings.usageInput")}>
                         <Tooltip content={formatUsageValue(b.input_tokens)}>
@@ -2112,6 +2057,35 @@ function SettingsUsagePage({
           </div>
         )}
       </section>
+
+      <section className="settings-section settings-skill-usage" aria-labelledby="settings-skill-usage-title">
+        <header className="settings-section-header">
+          <h2 id="settings-skill-usage-title" className="settings-section-title">
+            {t("settings.skillCalls")}
+          </h2>
+        </header>
+        <div className="settings-group settings-usage-card">
+          {skillUsage.length ? (
+            <div className="settings-skill-usage-list">
+              {skillUsage.slice(0, 8).map((skill) => {
+                const count = Number.isFinite(skill.count) ? Math.max(0, skill.count) : undefined;
+                const width = count !== undefined && maxSkillCount > 0 ? Math.max(6, (count / maxSkillCount) * 100) : 0;
+                return (
+                  <div className="settings-skill-usage-row" key={skill.name}>
+                    <span className="settings-skill-usage-label">{skill.name}</span>
+                    <div className="settings-skill-usage-bar" aria-hidden="true">
+                      <span style={{ width: `${width}%` }} />
+                    </div>
+                    <span className="settings-skill-usage-value">{formatUsageNumber(count, formatNumber)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="settings-group-empty">{t("settings.noSkillUsage")}</p>
+          )}
+        </div>
+      </section>
     </div>
     </>
   );
@@ -2131,9 +2105,9 @@ function SettingsUsageSkeleton(): JSX.Element {
       <section className="settings-section" aria-hidden="true">
         <div className="settings-section-header">
           <span className="settings-usage-skeleton-line settings-usage-skeleton-heading" />
-          <span className="settings-usage-skeleton-line settings-usage-skeleton-period" />
         </div>
         <div className="settings-group settings-usage-card">
+          <span className="settings-usage-chart-scale" />
           <div className="settings-usage-skeleton-trend">
             {[24, 28, 34, 30, 38, 44, 50, 46, 40, 34, 38, 46, 54, 62, 56, 48, 42, 46, 52, 60, 68, 62, 54, 48, 42, 46, 54, 60, 56, 50].map((height, index) => (
               <i className="settings-usage-skeleton-trend-day" key={index} style={{ height: `${height}%` }} />
@@ -2161,7 +2135,6 @@ function SettingsUsageSkeleton(): JSX.Element {
       <section className="settings-section" aria-hidden="true">
         <div className="settings-section-header">
           <span className="settings-usage-skeleton-line settings-usage-skeleton-heading" />
-          <span className="settings-usage-skeleton-line settings-usage-skeleton-period" />
         </div>
         <div className="settings-group settings-usage-card settings-usage-skeleton-list">
           {[0, 1, 2, 3].map((item) => (
@@ -2344,6 +2317,19 @@ function formatPercent(value: number | undefined): string {
     return "—";
   }
   return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+}
+
+function formatUsageSinceDate(
+  date: string,
+  formatDate: (value: Date | number | string, options?: Intl.DateTimeFormatOptions) => string,
+): string {
+  const day = new Date(`${date}T12:00:00`);
+  if (Number.isNaN(day.getTime())) return date;
+  return formatDate(day, {
+    ...(day.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
+    month: "long",
+    day: "numeric",
+  });
 }
 
 function formatUsageChartDate(date: string | undefined, locale: string): string {

@@ -1242,7 +1242,6 @@ describe("SettingsView About section", () => {
     expect(rootText()).toContain("12.3M");
     expect(rootText()).toContain("1M");
     expect(rootText()).toContain("1.2k");
-    expect(rootText()).toContain("Skills 使用分析");
     expect(rootText()).toContain("review");
     expect(rootText()).toContain("4");
     expect(rootText()).toContain("unknown-count");
@@ -1253,13 +1252,9 @@ describe("SettingsView About section", () => {
       container.querySelectorAll<HTMLElement>(".settings-usage-stat-value"),
     ).find((element) => element.textContent === "12.3M");
     expect(await hoverTooltipText(totalInput ?? null)).toBe("12,345,678");
-    const modelInput = container.querySelector(".settings-usage-number");
+    const modelInput = container.querySelector(".settings-usage-table td:nth-child(3) .settings-usage-number");
     expect(modelInput?.textContent).toBe("1k");
     expect(await hoverTooltipText(modelInput)).toBe("1,000");
-    expect(rootText()).toContain("模型使用");
-    expect(rootText()).toContain("Token 用量趋势");
-    expect(rootText()).toContain("最近 30 天");
-    expect(rootText()).toContain("模型用量构成");
     expect(rootText()).toContain("缓存命中率");
     expect(rootText()).toContain("5%");
     expect(container.querySelectorAll(".settings-usage-stat")).toHaveLength(4);
@@ -1272,13 +1267,13 @@ describe("SettingsView About section", () => {
     expect(
       trend?.querySelector<HTMLElement>(`[aria-label^="${heatmapDates.at(-1)}"]`)?.getAttribute("aria-label"),
     ).toContain("总计 470k");
-    const modelChartRows = container.querySelectorAll(".settings-model-chart-row");
-    expect(modelChartRows).toHaveLength(1);
-    expect(modelChartRows[0]?.textContent).toContain("fake-model");
-    expect(modelChartRows[0]?.textContent).toContain("100%");
-    expect(
-      await hoverTooltipText(modelChartRows[0]?.querySelector<HTMLElement>(".settings-model-chart-share") ?? null),
-    ).toBe("1.3k");
+    const modelRows = container.querySelectorAll(".settings-usage-table tbody tr");
+    expect(modelRows).toHaveLength(1);
+    expect(modelRows[0]?.textContent).toContain("fake-model");
+    // A model's share keeps its token total in a hover tooltip.
+    const modelShare = modelRows[0]?.querySelector<HTMLElement>(".settings-usage-share") ?? null;
+    expect(modelShare?.textContent).toBe("100%");
+    expect(await hoverTooltipText(modelShare)).toBe("1.3k");
     const heatmap = container.querySelector(".settings-usage-heatmap");
     expect(heatmap).not.toBeNull();
     expect(heatmap?.getAttribute("aria-label")).toBe("每日用量热力图");

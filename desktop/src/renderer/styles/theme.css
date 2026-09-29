@@ -282,10 +282,10 @@
 
   /* settings.css */
   --settings-button-primary-hover: #ffffff;
-  --settings-heatmap-level-1: #1f3a5e;
-  --settings-heatmap-level-2: #2c568c;
-  --settings-heatmap-level-3: #3d74cc;
-  --settings-heatmap-level-4: #6ea3e8;
+  --settings-heatmap-level-1: #2d4870;
+  --settings-heatmap-level-2: #426fb1;
+  --settings-heatmap-level-3: #5d98f0;
+  --settings-heatmap-level-4: #91c6ff;
 
   /* responsive-design.css
      (image-preview.css is a dark overlay in both themes — no override) */
