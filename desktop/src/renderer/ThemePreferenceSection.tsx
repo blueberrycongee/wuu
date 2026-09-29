@@ -3,7 +3,7 @@ import type { ThemePreference } from "../shared/protocol";
 import { applyThemePreference } from "./Theme";
 import { useI18n } from "./i18n";
 
-function ThemePreviewWindow({ theme }: { theme: ThemePreference }): JSX.Element {
+function ThemePreviewWindow({ theme }: { theme: "light" | "dark" }): JSX.Element {
   return (
     <span className={`settings-theme-preview-window settings-theme-preview-window-${theme}`}>
       <span className="settings-theme-preview-sidebar" />
@@ -17,10 +17,12 @@ function ThemePreviewWindow({ theme }: { theme: ThemePreference }): JSX.Element 
 }
 
 /**
- * 外观 row body: visual radio cards with a tiny window preview per option
- * (system splits light/dark). Reads and persists through window.wuu
- * directly, and applies the choice to <html data-theme> immediately so
- * the user sees the switch without a save step.
+ * 外观 row body: visual radio cards with a tiny window preview per option.
+ * System lays the dark window over the light one and clips it at the middle,
+ * so both halves share one skeleton and meet at a single seam. Reads and
+ * persists through window.wuu directly, and applies the choice to
+ * <html data-theme> immediately so the user sees the switch without a save
+ * step.
  */
 export function ThemePreferenceControl(): JSX.Element {
   const { t } = useI18n();
@@ -81,9 +83,19 @@ export function ThemePreferenceControl(): JSX.Element {
           onClick={() => choose(option.value)}
         >
           <span className={`settings-theme-preview settings-theme-preview-${option.value}`} aria-hidden="true">
-            <ThemePreviewWindow theme={option.value} />
+            {option.value === "system" ? (
+              <>
+                <ThemePreviewWindow theme="light" />
+                <ThemePreviewWindow theme="dark" />
+              </>
+            ) : (
+              <ThemePreviewWindow theme={option.value} />
+            )}
           </span>
-          <span className="settings-theme-card-label">{option.label}</span>
+          <span className="settings-theme-card-label">
+            <span className="settings-theme-card-radio" aria-hidden="true" />
+            {option.label}
+          </span>
         </button>
       ))}
     </div>

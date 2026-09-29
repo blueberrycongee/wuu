@@ -9,10 +9,10 @@
   /* Theme preview swatches render miniature copies of each theme, so
      their values are content: they must not follow the active theme. */
   --settings-preview-light-canvas: #ffffff;
-  --settings-preview-light-sidebar: #f7f7f5;
-  --settings-preview-light-line: #e5e5e1;
+  --settings-preview-light-sidebar: #f3f3f4;
+  --settings-preview-light-line: #e3e3e6;
   --settings-preview-dark-canvas: #1d2024;
-  --settings-preview-dark-sidebar: #141618;
+  --settings-preview-dark-sidebar: #23262a;
   --settings-preview-dark-line: #3a4046;
   /* The remote-control QR keeps a white quiet zone so phones can scan
      it in dark theme too. */
@@ -1374,43 +1374,43 @@ button.settings-engine-expand:hover {
 }
 
 /* --- Theme picker ------------------------------------------------------------
- * Visual radio cards, each a miniature window of the theme. "System" uses
- * the same geometry and splits its surfaces into light/dark. Selection is a
- * ring on the preview plus a stronger label, so the choice reads without a
- * fill across the card. Preview colors are fixed local colors, never theme
- * tokens.
+ * Visual radio cards, each a miniature window of the theme. "System" stacks the
+ * dark window over the light one and clips it at the middle, so one skeleton
+ * meets itself at a single seam. Selection is a radio mark beside the label
+ * and an ink edge on the preview, so it never rests on a heavy frame alone.
+ * Preview colors are fixed local colors, never theme tokens.
  * ----------------------------------------------------------------------------- */
 
 .settings-theme-options {
   display: flex;
-  flex-wrap: wrap;
   gap: var(--space-4);
   min-width: 0;
 }
 
+/* Cards shrink together in a narrow column instead of wrapping one away. */
 .settings-theme-card {
   display: flex;
-  width: calc(var(--font-ui) * 9);
+  min-width: 0;
+  flex: 0 1 calc(var(--font-ui) * 9);
   flex-direction: column;
   align-items: stretch;
   gap: var(--space-2);
-  min-width: 0;
   padding: 0;
   background: transparent;
   border-radius: var(--radius-sm);
 }
 
+/* The preview is a container so its skeleton scales with the card. */
 .settings-theme-preview {
   position: relative;
   display: block;
   overflow: hidden;
   width: 100%;
   aspect-ratio: 16 / 10;
+  container-type: inline-size;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
-  transition:
-    border-color var(--motion-fast) var(--ease-out),
-    box-shadow var(--motion-fast) var(--ease-out);
+  transition: border-color var(--motion-fast) var(--ease-out);
 }
 
 .settings-theme-card:hover .settings-theme-preview {
@@ -1419,27 +1419,50 @@ button.settings-engine-expand:hover {
 
 .settings-theme-card.active .settings-theme-preview {
   border-color: var(--ink-strong);
-  box-shadow: 0 0 0 1px var(--ink-strong);
 }
 
 .settings-theme-card-label {
-  max-width: 100%;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
   color: var(--ink-soft);
   font-size: var(--font-sm);
   line-height: 1.35;
   overflow-wrap: anywhere;
-  text-align: center;
 }
 
 .settings-theme-card.active .settings-theme-card-label {
   color: var(--ink);
-  font-weight: var(--weight-medium);
+}
+
+/* Drawn like the native radios on the Agent page: a boundary ring at rest, a
+ * thick ink ring around a paper center when chosen. */
+.settings-theme-card-radio {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  flex: 0 0 auto;
+  border-radius: var(--radius-circle);
+  background: var(--paper);
+  box-shadow: inset 0 0 0 1px var(--control-boundary);
+  transition: box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.settings-theme-card.active .settings-theme-card-radio {
+  box-shadow: inset 0 0 0 calc(var(--icon-size-sm) * 0.3) var(--ink-strong);
 }
 
 .settings-theme-preview-window {
   display: flex;
   width: 100%;
   height: 100%;
+}
+
+.settings-theme-preview-system > .settings-theme-preview-window-dark {
+  position: absolute;
+  inset: 0;
+  clip-path: inset(0 0 0 50%);
 }
 
 .settings-theme-preview-sidebar {
@@ -1450,20 +1473,20 @@ button.settings-engine-expand:hover {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 5px;
-  padding: 10px 12px;
+  gap: 3.5cqi;
+  padding: 7.5cqi 9cqi;
 }
 
 .settings-theme-preview-line {
   display: block;
   width: 100%;
-  height: 4px;
-  border-radius: 2px;
+  height: 3cqi;
+  border-radius: var(--radius-pill);
 }
 
 .settings-theme-preview-line-title {
   width: 60%;
-  height: 5px;
+  height: 4cqi;
 }
 
 .settings-theme-preview-line-short {
@@ -1492,19 +1515,6 @@ button.settings-engine-expand:hover {
 
 .settings-theme-preview-window-dark .settings-theme-preview-line {
   background: var(--settings-preview-dark-line);
-}
-
-.settings-theme-preview-window-system {
-  background: linear-gradient(90deg, var(--settings-preview-light-canvas) 0 50%, var(--settings-preview-dark-canvas) 50% 100%);
-}
-
-.settings-theme-preview-window-system .settings-theme-preview-sidebar {
-  background: var(--settings-preview-light-sidebar);
-}
-
-.settings-theme-preview-window-system .settings-theme-preview-line {
-  /* The body starts after the 26% sidebar, so 32.5% is the window midpoint. */
-  background: linear-gradient(90deg, var(--settings-preview-light-line) 0 32.5%, var(--settings-preview-dark-line) 32.5% 100%);
 }
 
 /* --- MCP servers + pets --------------------------------------------------------- */
