@@ -53,8 +53,10 @@
   --activity-toggle-hover-svg-color: var(--gray-550);
   --activity-toggle-hover-color-alt: var(--wuu-color-text-muted, var(--gray-600));
   --activity-detail-color: var(--wuu-color-text-muted, var(--gray-550));
-  --diff-insert-color: var(--wuu-color-success, #12a150);
-  --diff-delete-color: var(--wuu-color-danger, #cf2e2e);
+  /* Diff counts are status text: the status roles already pass contrast on
+   * the canvas, where the brighter diff greens did not. */
+  --diff-insert-color: var(--success);
+  --diff-delete-color: var(--danger);
   --rich-link-color: var(--wuu-color-link, #0969da);
   --rich-link-hover-color: var(--wuu-color-link-hover, #0550ae);
   /* Prose surfaces share the neutral ramp: blocks recede, inline code
