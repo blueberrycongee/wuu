@@ -403,13 +403,8 @@
   text-align: left;
 }
 
-.model-choice-main.is-static,
-.model-choice-main.is-action {
+.model-choice-main.is-static {
   color: var(--ink-soft);
-}
-
-.model-choice-main.is-action:hover:not(:disabled) {
-  color: var(--ink-strong);
 }
 
 .model-choice-check {

@@ -505,6 +505,7 @@
   padding: var(--space-3) 0;
 }
 
+/* `block` rows stack the label over a full-width control. */
 .settings-row-block {
   display: flex;
   flex-direction: column;
@@ -566,8 +567,7 @@
 /* In a block control (input + trailing action button) the input grows to
  * fill the row rather than claim 100% width — that would push the button
  * onto its own line. `min-width: 0` lets a long placeholder ellipsize. */
-.settings-row-control-block .settings-input,
-.settings-row-control-block .settings-select {
+.settings-row-control-block .settings-input {
   flex: 1;
   min-width: 0;
   width: auto;
@@ -616,8 +616,7 @@
 
 /* --- Inputs (32px, the one control height) --------------------------------- */
 
-.settings-input,
-.settings-select {
+.settings-input {
   width: 100%;
   min-height: var(--control-field-height);
   height: auto;
@@ -639,38 +638,14 @@
   color: var(--placeholder-ink);
 }
 
-.settings-input:hover:not(:disabled),
-.settings-select:hover:not(:disabled) {
+.settings-input:hover:not(:disabled) {
   background: var(--field-hover-bg);
 }
 
-.settings-select:focus,
-.settings-select:focus-visible {
-  background: var(--field-hover-bg);
-}
-
-.settings-input:disabled,
-.settings-select:disabled {
+.settings-input:disabled {
   background: var(--surface-1);
   opacity: 0.55;
   cursor: default;
-}
-
-.settings-select {
-  appearance: none;
-  -webkit-appearance: none;
-  background-image:
-    linear-gradient(45deg, transparent 50%, var(--ink-tertiary) 50%),
-    linear-gradient(135deg, var(--ink-tertiary) 50%, transparent 50%);
-  background-position:
-    calc(100% - 16px) 50%,
-    calc(100% - 11px) 50%;
-  background-size:
-    5px 5px,
-    5px 5px;
-  background-repeat: no-repeat;
-  padding-right: calc(var(--control-padding-inline) + 16px);
-  text-overflow: ellipsis;
 }
 
 /* Compact numeric input for small-value rows (thresholds, limits): sits
@@ -737,38 +712,8 @@
   opacity: 1;
 }
 
-.settings-voice-permission {
-  display: inline-flex;
-  min-height: 24px;
-  align-items: center;
-  padding: 0 8px;
-  border-radius: var(--radius-pill);
-  background: var(--surface-1);
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
-}
-
-.settings-voice-permission.status-granted {
-  background: color-mix(in srgb, var(--success) 12%, transparent);
-  color: var(--success);
-}
-
-.settings-voice-permission.status-denied,
-.settings-voice-permission.status-restricted {
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-  color: var(--danger);
-}
-
 .settings-spin {
   animation: wuu-spin var(--motion-spin) linear infinite;
-}
-
-.settings-textarea {
-  min-height: 112px;
-  resize: vertical;
-  line-height: var(--line-body);
-  padding: var(--compact-padding-block) var(--control-padding-inline);
 }
 
 /* --- Buttons (32px, same rhythm as inputs) ---------------------------------- */
@@ -916,14 +861,8 @@
   color: var(--danger);
 }
 
-.settings-page :is(p.settings-error, .settings-hint) {
+.settings-page p.settings-error {
   margin-block: 0;
-}
-
-.settings-hint {
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  line-height: 1.5;
 }
 
 .settings-muted-line {
@@ -2228,51 +2167,6 @@ button.settings-engine-expand:hover {
   }
 }
 
-/* --- Usage entries (recent list) ------------------------------------------------- */
-
-.settings-usage-entries {
-  display: flex;
-  flex-direction: column;
-}
-
-.settings-usage-entry {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  border-bottom: 1px solid var(--hairline-soft);
-  padding: 12px 0;
-}
-
-.settings-usage-entry:last-child {
-  border-bottom: 0;
-}
-
-.settings-usage-entry-label {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.settings-usage-entry-label strong {
-  color: var(--ink);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-}
-
-.settings-usage-entry-label small {
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-}
-
-.settings-usage-entry-value {
-  color: var(--ink-soft);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  font-variant-numeric: tabular-nums;
-}
-
 /* --- Archive page ------------------------------------------------------------------ */
 
 .settings-archive-page,
@@ -2533,127 +2427,10 @@ button.settings-engine-expand:hover {
   }
 }
 
-/* Model aliases ------------------------------------------------------------ */
-
-.settings-alias-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 24px;
-}
-
-.settings-alias-heading {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.settings-alias-heading .settings-section-title {
-  flex: 0 0 auto;
-}
-
-.settings-alias-heading .settings-section-description {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-alias-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.settings-alias-row {
-  display: grid;
-  grid-template-columns: minmax(120px, 1fr) minmax(140px, 1fr) minmax(140px, 1fr) 140px 32px;
-  align-items: start;
-  gap: 8px;
-}
-
-@media (max-width: 800px) {
-  .settings-alias-row {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .settings-alias-row .settings-alias-field:first-child {
-    grid-column: 1 / -1;
-  }
-
-  .settings-alias-remove {
-    justify-self: end;
-  }
-}
-
-.settings-alias-row .settings-input,
-.settings-alias-row .settings-select-trigger {
-  width: 100%;
-  min-width: 0;
-}
-
-.settings-alias-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.settings-alias-field-error {
-  color: var(--error);
-  font-size: var(--font-sm);
-  line-height: 1.4;
-}
-
-.settings-alias-remove {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink-muted);
-  cursor: pointer;
-}
-
-.settings-alias-remove:hover:not(:disabled),
-.settings-alias-remove:focus-visible {
-  background: var(--fill-danger);
-  color: var(--error);
-}
-
-.settings-alias-remove:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.settings-alias-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: nowrap;
-}
-
-@container settings-page (max-width: 520px) {
-  .settings-alias-toolbar {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-  }
-
-  .settings-alias-actions {
-    flex-wrap: wrap;
-  }
-}
-
 @container style(--motion-reduced: 1) {
   .settings-button,
   .settings-input,
   .settings-nav-item,
-  .settings-select,
   .settings-switch,
   .settings-switch-thumb,
   .settings-usage-heatmap-cell {
