@@ -26,6 +26,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Editing a message after context compaction now retracts the selected message
+  and following messages, preserving the correct conversation on resume and fork.
+
 - Harden MCP transport compatibility, request timeouts, OAuth refresh recovery,
   local server cleanup, bounded reads, catalog refreshes, and oversized results.
 
