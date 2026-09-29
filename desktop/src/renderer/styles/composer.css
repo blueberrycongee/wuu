@@ -291,7 +291,7 @@
 }
 
 .user-question-offer-input::placeholder {
-  color: var(--ink-tertiary);
+  color: var(--placeholder-ink);
 }
 
 .user-question-skip {
@@ -330,7 +330,7 @@
 }
 
 .user-question-custom::placeholder {
-  color: var(--ink-tertiary);
+  color: var(--placeholder-ink);
 }
 
 .user-question-actions {
@@ -430,7 +430,6 @@
      legible against the message canvas instead of reading as a wider haze. */
   --composer-frame-shadow: var(--shadow-composer);
   --composer-surface-bg: var(--wuu-color-surface, #fdfdfe);
-  --composer-textarea-placeholder: var(--ink-muted);
   --composer-textarea-disabled: var(--wuu-color-text-muted, #6d7471);
   --composer-send-button-disabled-text: rgba(255, 255, 255, 0.86);
   --composer-slash-menu-bg: rgba(255, 255, 255, 0.96);
@@ -1264,7 +1263,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 }
 
 .composer textarea::placeholder {
-  color: var(--composer-textarea-placeholder);
+  color: var(--placeholder-ink);
 }
 
 .composer textarea:disabled {
