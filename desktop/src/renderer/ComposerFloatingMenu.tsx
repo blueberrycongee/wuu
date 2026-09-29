@@ -13,6 +13,7 @@ import type {
   FloatingMenuOwner,
   FloatingMenuPlacement
 } from "./ComposerTypes";
+import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { isTouchWebShell } from "./ComposerFocus";
 import { ComposerMobileSheet } from "./ComposerMobileSheet";
@@ -20,6 +21,15 @@ import { ComposerMobileSheet } from "./ComposerMobileSheet";
 export function isInsideFloatingMenu(target: Node, owner: FloatingMenuOwner): boolean {
   const element = target instanceof Element ? target : target.parentElement;
   return Boolean(element?.closest('[data-floating-menu-owner="' + owner + '"]'));
+}
+
+// Composer menus are drawn for the default UI size and widen with larger UI
+// text so their labels keep the same room. The floating layer positions a menu
+// from this number, so it is resolved here rather than in CSS.
+export function composerMenuWidth(base: number): number {
+  const uiSize = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--font-ui"));
+  const defaultSize = MESSAGE_FLOW_FONT_SIZE_RANGE.default;
+  return uiSize > defaultSize ? Math.round((base * uiSize) / defaultSize) : base;
 }
 
 const MENU_FOCUS_TARGETS = "input:not(:disabled), button:not(:disabled)";

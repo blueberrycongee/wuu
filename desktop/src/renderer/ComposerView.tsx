@@ -2,10 +2,11 @@ import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
 import { effectiveModelSpeed } from "./RuntimeHelpers";
 import {
   ChevronDown,
-  ChevronUp,
   Folder,
   FolderOpen,
+  Maximize2,
   MessageSquare,
+  Minimize2,
   ArrowUp,
   ShieldCheck,
   Split,
@@ -73,7 +74,7 @@ import {
   type ComposerImage,
   type QueuedComposerMessage
 } from "./ComposerMessages";
-import { FloatingMenuPortal, handleFloatingMenuKeyDown, menuOpeningKey } from "./ComposerFloatingMenu";
+import { FloatingMenuPortal, composerMenuWidth, handleFloatingMenuKeyDown, menuOpeningKey } from "./ComposerFloatingMenu";
 import { ComposerBranchPicker } from "./ComposerBranchPicker";
 import { ComposerContextMenu } from "./ComposerContextMenu";
 import { ComposerQueueStrip, ComposerStopIcon } from "./ComposerInputSections";
@@ -87,7 +88,6 @@ import {
   AccessMenu,
   ComposerPlusButton,
   PERMISSION_MENU_WIDTH,
-  composerMenuWidth,
   WorkspacePickerMenu,
   RuntimePicker,
   RuntimeModelMenu,
@@ -1195,7 +1195,7 @@ export function Composer({
                     owner="composer-runtime"
                     placement="above"
                     align="left"
-                    width={COMPOSER_PROJECT_MENU_WIDTH}
+                    width={composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}
                     mobileSheet={{ label: t("composer.switchWorkspace", { workspace: workspacePillLabel }), onClose: onToggleMenu }}
                   >
                     <WorkspacePickerMenu
@@ -1339,7 +1339,7 @@ export function Composer({
                 disabled={readOnly}
                 onClick={toggleComposerExpansion}
               >
-                {isComposerExpanded ? <ChevronDown aria-hidden="true" /> : <ChevronUp aria-hidden="true" />}
+                {isComposerExpanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
               </button>
             ) : null}
             <div
@@ -1425,6 +1425,7 @@ export function Composer({
                       fallbackContextUsage={contextUsage}
                       activeEngine={activeEngine}
                     />
+                    {/* Until the runtime reports, there is no model to name. */}
                     {initialized ? (
                       <RuntimePicker
                         initialized={initialized}
@@ -1447,16 +1448,7 @@ export function Composer({
                         onSelectEffort={onSelectRuntimeEffort}
 
                       />
-                    ) : (
-                      <>
-                        <button className="provider-pill" type="button" onClick={onOpenSettings}>
-                          provider
-                        </button>
-                        <button className="model-label" type="button" onClick={onOpenSettings}>
-                          model
-                        </button>
-                      </>
-                    )}
+                    ) : null}
                   </>
                 )}
                 <button

@@ -52,9 +52,9 @@ import type {
   ProviderSummary,
   RuntimeContext
 } from "../shared/protocol";
-import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
 import {
   FloatingMenuPortal,
+  composerMenuWidth,
   handleFloatingMenuKeyDown,
   isInsideFloatingMenu,
   menuOpeningKey,
@@ -163,15 +163,6 @@ function EngineOptionsMenu({
 
 export type RuntimePanelView = "summary" | "engines" | "providers" | "models";
 type RuntimePanelDirection = "forward" | "back";
-
-// Composer menus are drawn for the default UI size and widen with larger UI
-// text so their labels keep the same room. The floating layer positions a menu
-// from this number, so it is resolved here rather than in CSS.
-export function composerMenuWidth(base: number): number {
-  const uiSize = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--font-ui"));
-  const defaultSize = MESSAGE_FLOW_FONT_SIZE_RANGE.default;
-  return uiSize > defaultSize ? Math.round((base * uiSize) / defaultSize) : base;
-}
 
 const RUNTIME_PANEL_WIDTH = 224;
 export const PERMISSION_MENU_WIDTH = 264;
@@ -1842,7 +1833,7 @@ export function WorkspacePickerMenu({
 
   return (
     <div ref={menuRef} className="composer-project-menu" role="menu" onKeyDown={onKeyDown}
-      style={{ "--composer-project-menu-width": `${COMPOSER_PROJECT_MENU_WIDTH}px` } as CSSProperties}>
+      style={{ "--composer-project-menu-width": `${composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}px` } as CSSProperties}>
       <label className="menu-search project-search">
         <Search className="icon-sm" aria-hidden="true" />
         <input value={query} aria-label={t("runtime.searchWorkspaces")} placeholder={t("runtime.searchWorkspaces")}

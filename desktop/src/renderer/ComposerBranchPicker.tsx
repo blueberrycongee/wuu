@@ -1,7 +1,7 @@
 import { Check, FileDiff, GitBranch, Plus, Search } from "./WuuIcons";
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, useRef, useState } from "react";
 import type { GitStatusResult } from "../shared/protocol";
-import { FloatingMenuPortal, handleFloatingMenuKeyDown, menuOpeningKey, useFloatingMenuFocus } from "./ComposerFloatingMenu";
+import { FloatingMenuPortal, composerMenuWidth, handleFloatingMenuKeyDown, menuOpeningKey, useFloatingMenuFocus } from "./ComposerFloatingMenu";
 import { COMPOSER_PROJECT_MENU_WIDTH } from "./ComposerTypes";
 import { hostSupports } from "./HostCapabilities";
 import { useI18n } from "./i18n";
@@ -38,7 +38,7 @@ export function ComposerBranchPicker({
         <span className="hero-project-pill-text">{branch}</span>
       </button>
       {open && !disabled ? (
-        <FloatingMenuPortal anchorRef={anchorRef} owner="composer-runtime" placement="above" align="left" width={COMPOSER_PROJECT_MENU_WIDTH}
+        <FloatingMenuPortal anchorRef={anchorRef} owner="composer-runtime" placement="above" align="left" width={composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}
           mobileSheet={{ label: t(worktreeStart ? "composer.worktreeStartBranch" : "git.branch"), onClose: onToggle }}>
           <ComposerBranchMenu gitStatus={gitStatus} selectedBranch={worktreeStart ? branch : gitStatus.branch}
             checkout={!worktreeStart} onSelect={onSelect} onCreate={onCreate}
@@ -108,7 +108,7 @@ function ComposerBranchMenu({ gitStatus, selectedBranch, checkout, onSelect, onC
   return (
     <div ref={menuRef} className="composer-project-menu composer-branch-menu" role="menu" onKeyDown={onKeyDown}
       aria-label={t(checkout ? "git.branch" : "composer.worktreeStartBranch")} aria-busy={pending}
-      style={{ "--composer-project-menu-width": `${COMPOSER_PROJECT_MENU_WIDTH}px` } as CSSProperties}>
+      style={{ "--composer-project-menu-width": `${composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}px` } as CSSProperties}>
       <label className="menu-search">
         <Search className="icon-sm" aria-hidden="true" />
         <input value={query} aria-label={searchLabel} placeholder={searchLabel}

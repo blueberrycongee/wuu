@@ -47,12 +47,6 @@
 }
 
 @media (max-width: 1120px) {
-  .composer-bar {
-    gap: 6px;
-    padding-right: 8px;
-    padding-left: calc(var(--composer-text-start) - var(--composer-control-icon-inset));
-  }
-
   .hero-project-pill-anchor {
     /* Width follows content; no fixed minimum at narrow widths. */
     flex: 0 1 auto;

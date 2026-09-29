@@ -431,7 +431,6 @@
   --composer-frame-shadow: var(--shadow-composer);
   --composer-surface-bg: var(--wuu-color-surface, #fdfdfe);
   --composer-textarea-disabled: var(--wuu-color-text-muted, #6d7471);
-  --composer-send-button-disabled-text: rgba(255, 255, 255, 0.86);
   --composer-slash-menu-bg: rgba(255, 255, 255, 0.96);
   --composer-slash-menu-shadow: var(--shadow-pop);
   --composer-project-menu-icon: var(--wuu-color-text-muted, #6b7176);
@@ -1415,7 +1414,8 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   position: relative;
   display: inline-flex;
   min-width: 0;
-  max-width: 160px;
+  /* Grows with UI text like the model picker's cap. */
+  max-width: max(160px, calc(var(--font-ui) * 160 / 14.5));
   flex: 0 1 auto;
 }
 
@@ -1428,7 +1428,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   gap: 6px;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--ink-muted);
+  color: var(--ink-soft);
   /* Compact composer chrome matches the model picker and workspace bar, not
      the reading-size --font-ui used for menus and body copy. */
   font-size: var(--font-sm);
@@ -1529,14 +1529,11 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   background: var(--ink-strong);
 }
 
+/* Waiting for a draft: the same disc, muted, with its arrow still legible so
+ * it reads as Send not yet available rather than an empty circle. */
 .composer-send-button:disabled {
   cursor: default;
-  background: var(--surface-4);
-  color: var(--composer-send-button-disabled-text);
-}
-
-.composer-send-button:disabled:hover {
-  background: var(--surface-4);
+  color: var(--ink-muted);
 }
 
 .composer-stop-button {
@@ -1686,12 +1683,17 @@ html[data-focus-modality="keyboard"] :is(
   outline-offset: 2px;
 }
 
+/* Toolbar controls share one hover surface and a firmer one while their
+ * menu is open. */
 .composer-tool-button:hover:not(:disabled)::before,
 .permission-chip:hover::before,
-.permission-chip[aria-expanded="true"]::before,
-.hero-project-pill:hover::before,
-.hero-project-pill[aria-expanded="true"]::before {
+.codex-runtime-trigger:hover::before,
+.hero-project-pill:hover::before {
   background: var(--surface-2);
+}
+
+:is(.composer-tool-button, .permission-chip, .codex-runtime-trigger, .hero-project-pill)[aria-expanded="true"]::before {
+  background: var(--surface-3);
 }
 
 .composer-tool-button:hover:not(:disabled),
@@ -1700,11 +1702,6 @@ html[data-focus-modality="keyboard"] :is(
 .hero-project-pill:hover,
 .hero-project-pill[aria-expanded="true"] {
   background: transparent;
-}
-
-.codex-runtime-trigger:hover::before,
-.codex-runtime-trigger[aria-expanded="true"]::before {
-  background: var(--surface-3);
 }
 
 .codex-runtime-trigger:hover,
@@ -1726,7 +1723,7 @@ html[data-focus-modality="keyboard"] :is(
 
 .composer-send-button:disabled::before,
 .composer-send-button:disabled:hover::before {
-  background: var(--surface-4);
+  background: var(--surface-3);
 }
 
 .composer-send-button:disabled,
@@ -1968,11 +1965,6 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   max-width: 50%;
 }
 
-.composer-plus-button[aria-expanded="true"]::before {
-  border-radius: var(--radius-pill);
-  background: var(--ink-overlay-4);
-}
-
 .composer-menu-note,
 .composer-menu-empty {
   display: grid;
@@ -2073,7 +2065,7 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
 .project-picker-heading {
   flex-shrink: 0;
   padding: var(--menu-inset) var(--menu-item-padding-inline) 0;
-  color: var(--codex-menu-label-text);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-medium);
   line-height: var(--line-ui);
@@ -2423,12 +2415,14 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   opacity: 1;
 }
 
+/* The context line uses the compact icon step of the toolbar chips, which
+ * grows with UI text. */
 @media (pointer: fine) {
   .composer-workspace-bar .hero-project-pill-icon,
   .composer-workspace-bar .hero-project-pill-icon svg {
-    width: 14px;
-    height: 14px;
-    flex-basis: 14px;
+    width: var(--icon-size-sm);
+    height: var(--icon-size-sm);
+    flex-basis: var(--icon-size-sm);
   }
 }
 

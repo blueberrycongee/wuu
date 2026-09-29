@@ -103,9 +103,6 @@
   --diff-tree-count-text: var(--wuu-color-text-muted, #94999d);
   --review-resizer-hover-bg: #aeb4b9;
   --review-overlay-bg: rgba(251, 251, 250, 0.92);
-  --provider-pill-bg: var(--wuu-color-surface-muted, #f2f2ef);
-  --provider-pill-text: var(--wuu-color-text-muted, #555a5f);
-  --codex-runtime-effort-text: var(--wuu-color-text-muted, #74797d);
   --codex-runtime-trigger-icon: var(--wuu-color-text-muted, #707579);
   --codex-menu-label-text: var(--wuu-color-text-muted, #9a9ea2);
   --grid-guide-border: rgba(228, 0, 43, 0.42);
@@ -3548,37 +3545,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   padding-top: 10px;
 }
 
-.provider-pill {
-  display: inline-flex;
-  height: 28px;
-  align-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--provider-pill-bg);
-  color: var(--provider-pill-text);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
-  padding: 0 10px;
-}
-
-.provider-pill:hover,
-.model-label:hover {
-  background: var(--surface-3);
-  color: var(--ink);
-}
-
-.model-label {
-  max-width: 220px;
-  overflow: hidden;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-  padding: 4px 8px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .codex-runtime-anchor {
   position: relative;
   display: inline-flex;
@@ -3631,14 +3597,8 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 /* Secondary to the model beside it: quieter ink, never a heavier weight. */
 .codex-runtime-effort {
   flex: 0 0 auto;
-  color: var(--codex-runtime-effort-text);
+  color: var(--ink-soft);
   font-weight: inherit;
-}
-
-.codex-runtime-trigger:hover,
-.codex-runtime-trigger[aria-expanded="true"] {
-  background: var(--surface-3);
-  color: var(--ink);
 }
 
 .codex-runtime-trigger:disabled {
@@ -3899,13 +3859,6 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   bottom: auto;
   transform-origin: top right;
   --menu-enter-y: -4px;
-}
-
-.codex-menu-label {
-  color: var(--codex-menu-label-text);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-medium);
-  padding: 4px 8px 6px;
 }
 
 .codex-runtime-menu button {
