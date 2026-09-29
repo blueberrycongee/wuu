@@ -69,11 +69,13 @@ const catalogProviders: CatalogProviderSummary[] = [
 ].map(([id, name, type, base_url, model_count, default_model]) => ({ id, name, type, base_url, model_count, default_model } as CatalogProviderSummary));
 
 const engines: EngineListResult = {
-  settings: { default_engine: "wuu" },
+  settings: { default_engine: "wuu", claude: { enabled: false } },
   engines: empty ? [] : [
     { id: "codex", display_name: "Codex", enabled: true, binary_ok: true, binary_path: "/usr/local/bin/codex" },
-    { id: "claude", display_name: "Claude Code", enabled: true, binary_ok: true, binary_path: "/usr/local/bin/claude" },
-    { id: "cursor", display_name: "Cursor", protocol: "acp", enabled: true, binary_ok: false, error: "cursor-agent not found in PATH", install_url: "https://cursor.com/cli" },
+    { id: "claude", display_name: "Claude Code", enabled: false, binary_ok: true, binary_path: "/usr/local/bin/claude" },
+    { id: "cursor", display_name: "Cursor", protocol: "acp", enabled: true, binary_ok: false, error: "Cursor executable \"cursor-agent\" not found; install it or configure its executable path (https://cursor.com/docs/cli/acp)", install_url: "https://cursor.com/cli" },
+    { id: "opencode", display_name: "OpenCode", protocol: "acp", enabled: true, binary_ok: false, install_url: "https://opencode.ai" },
+    { id: "hermes", display_name: "Hermes", protocol: "acp", enabled: true, binary_ok: false },
   ],
 };
 

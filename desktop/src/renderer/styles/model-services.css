@@ -168,15 +168,6 @@
   .model-default-effort {
     grid-column: 2;
   }
-
-  /* One icon action stays beside the title instead of taking a line. */
-  .model-services > .settings-page-header {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .model-services > .settings-page-header .settings-page-actions {
-    margin-block: calc((var(--settings-title-line) - var(--control-field-height)) / 2);
-  }
 }
 
 /* --- Connected services ----------------------------------------------------- */

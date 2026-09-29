@@ -348,6 +348,15 @@
     flex-wrap: wrap;
     margin-block: 0;
   }
+
+  /* One icon action stays beside the title instead of taking a line. */
+  .settings-page-header:has(> .settings-page-actions > .settings-icon-button:only-child) {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .settings-page-actions:has(> .settings-icon-button:only-child) {
+    margin-block: calc((var(--settings-title-line) - var(--control-field-height)) / 2);
+  }
 }
 
 /* --- Section --------------------------------------------------------------
@@ -574,42 +583,6 @@
   font-size: var(--font-ui);
   text-align: right;
   font-variant-numeric: tabular-nums;
-}
-
-/* --- Status ----------------------------------------------------------------
- * The label carries the meaning; the dot repeats it for scanning.
- * ------------------------------------------------------------------------- */
-
-.settings-status {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  line-height: 1.5;
-  white-space: nowrap;
-}
-
-.settings-status::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border-radius: var(--radius-circle);
-  background: var(--ink-faint);
-}
-
-.settings-status[data-tone="success"]::before {
-  background: var(--success);
-}
-
-.settings-status[data-tone="warning"]::before {
-  background: var(--warning);
-}
-
-.settings-status[data-tone="danger"]::before {
-  background: var(--danger);
 }
 
 /* Disclosure rows (services, agents) turn one chevron. */
@@ -965,11 +938,11 @@
 }
 
 /* --- Agent page ---------------------------------------------------------------
- * One row per agent: the radio picks the default, and path overrides and
- * enable/disable live behind the row's own disclosure. Only a turned-off
- * agent carries a status label; agents Wuu cannot find wait in their own
- * group. Rows without a disclosure keep its footprint so trailing controls
- * end on the same axis.
+ * One row per agent: the radio picks the default, the switch turns a detected
+ * agent on or off, and the path override opens under the row's disclosure.
+ * Agents Wuu cannot find wait in their own group, where the whole row opens.
+ * Rows without a disclosure keep its footprint so trailing controls end on the
+ * same axis.
  * ----------------------------------------------------------------------------- */
 
 .settings-engine-item + .settings-engine-item {
@@ -985,8 +958,8 @@
 }
 
 .settings-engine-radio {
-  width: 14px;
-  height: 14px;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
   margin: 0;
   flex: 0 0 auto;
   accent-color: var(--ink);
@@ -1014,9 +987,35 @@
   cursor: default;
 }
 
-.settings-engine-radio:disabled ~ .settings-engine-row-main .settings-engine-row-icon,
-.settings-engine-radio:disabled ~ .settings-engine-row-main .settings-engine-row-name {
-  color: var(--ink-muted);
+/* An agent that is off or missing steps back to the soft ink, still readable;
+ * its switch or its group says why. */
+:is(.settings-engine-radio:disabled ~ .settings-engine-row-main, .settings-engine-row-toggle) .settings-engine-row-name {
+  color: var(--ink-soft);
+}
+
+:is(.settings-engine-radio:disabled ~ .settings-engine-row-main, .settings-engine-row-toggle) .settings-engine-row-icon {
+  color: var(--ink-tertiary);
+}
+
+/* A missing agent's whole row is its disclosure. */
+.settings-engine-row-toggle {
+  min-height: var(--control-field-height);
+  background: transparent;
+  padding: 0;
+  text-align: left;
+}
+
+.settings-engine-row-toggle > .settings-engine-expand {
+  margin-inline-start: auto;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+
+.settings-engine-row-toggle:hover > .settings-engine-expand {
+  background: var(--ink-overlay-6);
+}
+
+.settings-engine-row-toggle:hover .settings-engine-row-name {
+  color: var(--ink);
 }
 
 .settings-engine-row-icon {
@@ -1065,7 +1064,13 @@ button.settings-engine-expand:hover {
   display: grid;
   justify-items: start;
   gap: var(--space-3);
-  padding: 0 0 var(--space-4) calc(14px + var(--icon-size) + var(--space-3) * 2);
+  padding: 0 0 var(--space-4) calc(var(--icon-size-sm) + var(--icon-size) + var(--space-3) * 2);
+}
+
+/* The switch sits before the disclosure, so chevrons end every row of both
+ * groups on one axis. */
+.settings-engine-row > .settings-switch {
+  order: 0;
 }
 
 .settings-engine-path-row {
@@ -1081,7 +1086,20 @@ button.settings-engine-expand:hover {
   min-width: 0;
 }
 
+.settings-engine-path-row > .settings-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .settings-engine-detail {
+  overflow-wrap: anywhere;
+}
+
+.settings-engine-reason {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
