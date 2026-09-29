@@ -1,9 +1,7 @@
 import { useActiveContextMenu } from "./ActiveContextMenu";
-import { isTouchWebShell } from "./ComposerFocus";
 import { hostSupports } from "./HostCapabilities";
 import { preparePresortedFileTreeInput } from "@pierre/trees";
 import { FileTree, useFileTree } from "@pierre/trees/react";
-import { AlertCircle, FileText, FolderOpen, FolderX } from "./WuuIcons";
 import { type CSSProperties, Suspense, lazy, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   RuntimeContext,
@@ -22,6 +20,7 @@ import { desktopPlatform } from "./platform";
 import { FilePreviewPresentation } from "./plugins/FilePreviewPresentation";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { VideoPreview } from "./VideoPreview";
+import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
 
 // monaco-editor is several MB of JS; a static import here would drag it into
 // the eager startup chunk. Load it only when a code editor actually mounts.
@@ -151,11 +150,11 @@ export function WorkspaceFileTree({
   }, [open, workspaceRoot, locale]);
 
   if (!workspaceRoot) {
-    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} hint={t("workspace.files.noWorkspaceDescription")} />;
+    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} />;
   }
 
   if (loading && !directories[""]) {
-    return <WorkspacePanelEmpty title={t("workspace.files.reading")} hint={t("workspace.files.readingDescription")} />;
+    return <WorkspacePanelEmpty title={t("workspace.files.reading")} />;
   }
 
   if (error) {
@@ -581,34 +580,6 @@ function parentDirectoryPathsForFile(path: string): string[] {
   return segments.slice(0, -1).map((_, index) => segments.slice(0, index + 1).join("/"));
 }
 
-export function WorkspacePanelEmpty({
-  title,
-  description,
-  hint,
-  icon,
-  className
-}: {
-  title: string;
-  description?: string;
-  hint?: string;
-  icon?: JSX.Element;
-  className?: string;
-}): JSX.Element {
-  return (
-    <div
-      className={className ? `workspace-panel-empty ${className}` : "workspace-panel-empty"}
-      data-wuu-component="workspace-empty-state"
-    >
-      <div className="workspace-panel-empty-icon" data-wuu-component="workspace-empty-icon">
-        {icon ?? <FolderOpen size={24} />}
-      </div>
-      <strong>{title}</strong>
-      {description && <span>{description}</span>}
-      {hint && !isTouchWebShell() && <span>{hint}</span>}
-    </div>
-  );
-}
-
 export function formatWorkspaceRoot(root: string): string {
   const segments = root.split(/[\\/]/).filter(Boolean);
   return segments.at(-1) ?? root;
@@ -622,7 +593,6 @@ export function WorkspaceFilePreview({
   selection,
   anchor,
   refreshKey,
-  onOpenRightPanel,
   onOpenFile,
   onDirtyChange
 }: {
@@ -633,7 +603,6 @@ export function WorkspaceFilePreview({
   selection?: WorkspaceFileSelection;
   anchor?: string;
   refreshKey?: string;
-  onOpenRightPanel: () => void;
   onOpenFile?: (path: string) => void;
   onDirtyChange?: (state: WorkspaceFileDirtyState) => void;
 }): JSX.Element {
@@ -729,46 +698,19 @@ export function WorkspaceFilePreview({
   }, [activeContext?.cwd, dirtyStatePath, onDirtyChange]);
 
   if (!activeContext) {
-    return (
-      <div className="workspace-main-empty">
-        <FolderX size={36} />
-        <strong>{t("workspace.files.noWorkspace")}</strong>
-        {!isTouchWebShell() && <span>{t("workspace.files.previewNoWorkspaceDescription")}</span>}
-      </div>
-    );
+    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} />;
   }
 
   if (!selectedWorkspaceFilePath) {
-    return (
-      <div className="workspace-main-empty">
-        <FolderOpen size={38} />
-        <strong>{t("workspace.files.openFile")}</strong>
-        {!isTouchWebShell() && <span>{t("workspace.files.openFileDescription")}</span>}
-        <button type="button" onClick={onOpenRightPanel}>
-          {t("workspace.files.showTree")}
-        </button>
-      </div>
-    );
+    return <WorkspacePanelEmpty title={t("workspace.files.noContent")} />;
   }
 
   const fallback = loading ? (
-      <div className="workspace-main-empty">
-        <FileText size={36} />
-        <strong>{t("workspace.files.opening")}</strong>
-        <span>{selectedWorkspaceFilePath}</span>
-      </div>
+      <WorkspacePanelEmpty title={t("workspace.files.opening")} />
     ) : error ? (
-      <div className="workspace-main-empty">
-        <AlertCircle size={36} />
-        <strong>{t("workspace.files.openFailedTitle")}</strong>
-        <span>{error}</span>
-      </div>
+      <WorkspacePanelEmpty title={t("workspace.files.openFailedTitle")} description={error} />
     ) : !file ? (
-      <div className="workspace-main-empty">
-        <FileText size={36} />
-        <strong>{t("workspace.files.noContent")}</strong>
-        <span>{selectedWorkspaceFilePath}</span>
-      </div>
+      <WorkspacePanelEmpty title={t("workspace.files.noContent")} />
     ) : file.renderable_url ? (
       file.renderable_kind === "video" ? (
         <article className="workspace-file-preview readonly">
@@ -788,11 +730,19 @@ export function WorkspaceFilePreview({
       </article>
       )
     ) : file.binary ? (
-      <div className="workspace-main-empty">
-        <FileText size={36} />
-        <strong>{t("workspace.files.cannotPreview")}</strong>
-        <span>{t("workspace.files.binary", { path: file.path })}</span>
-      </div>
+      <WorkspacePanelEmpty
+        title={t("workspace.files.cannotPreview")}
+        description={t("workspace.files.binary")}
+        action={hostSupports("revealWorkspaceItem") ? (
+          <button
+            className="settings-button"
+            type="button"
+            onClick={() => void window.wuu.revealWorkspaceItem(`${activeContext.cwd}/${file.path}`)}
+          >
+            {t("workspace.files.revealInFileManager")}
+          </button>
+        ) : undefined}
+      />
     ) : (
       <article className="workspace-file-preview readonly">
         <div className={`workspace-file-editor-scroll ${isMarkdownReadingMode ? "markdown-reading" : "code"}`}>

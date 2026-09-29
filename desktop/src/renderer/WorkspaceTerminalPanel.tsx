@@ -2,7 +2,7 @@ import { isTouchWebShell } from "./ComposerFocus";
 import { hostSupports } from "./HostCapabilities";
 import type { FitAddon as XtermFitAddon } from "@xterm/addon-fit";
 import type { Terminal as XtermTerminal, ITerminalOptions, ITheme } from "@xterm/xterm";
-import { Square, Terminal } from "./WuuIcons";
+import { Square } from "./WuuIcons";
 import {
   useCallback,
   useEffect,
@@ -25,7 +25,7 @@ import {
   type AgentRunRecord,
 } from "./TerminalRuns";
 import { WorkspacePanelLoading } from "./LoadingViews";
-import { WorkspacePanelEmpty } from "./WorkspaceFiles";
+import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
 import { desktopApiErrorMessage } from "./WorkspaceReviewHelpers";
 import { translateCurrent, useI18n } from "./i18n";
 import { TruncatedText } from "./TruncatedText";
@@ -378,7 +378,7 @@ export function WorkspaceTerminalPanel({
   }, [activeContext?.cwd, managedInventoryReady, requestedRun, runs.length, userTerminal]);
 
   if (!activeContext?.cwd) {
-    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} hint={t("workspace.terminal.noWorkspaceDescription")} icon={<Terminal size={24} />} />;
+    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} />;
   }
 
   return (
@@ -408,8 +408,7 @@ export function WorkspaceTerminalPanel({
         ) : (
           <WorkspacePanelEmpty
             title={t("workspace.terminal.noRuns")}
-            hint={t("workspace.terminal.noRunsDescription")}
-            icon={<Terminal size={24} />}
+            description={t("workspace.terminal.noRunsDescription")}
           />
         )}
       </div>
@@ -1012,7 +1011,7 @@ function UserTerminalPane({
   }, [onShellChange, resourceID, restartKey, workspaceRoot]);
 
   if (!workspaceRoot) {
-    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} hint={t("workspace.terminal.noWorkspaceDescription")} icon={<Terminal size={24} />} />;
+    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} />;
   }
 
   return (

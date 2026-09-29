@@ -12,8 +12,6 @@
   --workspace-tool-card-text: var(--wuu-color-text, #272b2f);
   --file-icon-code: #2563a8;
   --file-icon-data: #6f3aa3;
-  --workspace-empty-icon-bg: var(--wuu-color-surface-muted, #f1f1ef);
-  --workspace-empty-icon-fg: var(--wuu-color-text-muted, #70767a);
   --workspace-terminal-restart-hover-bg: #e2e2df;
   --browser-nav-disabled: var(--wuu-color-text-muted, #c1c5c8);
   --browser-url-border: var(--wuu-color-border-subtle, var(--hairline));
@@ -1609,38 +1607,35 @@ html.resizing-workspace-file-split * {
   outline: none;
 }
 
+/* The panel's one empty state: the missing thing, a reason only when the
+ * title does not say it, and at most one action. */
 .workspace-panel-empty {
   display: grid;
   height: 100%;
-  min-height: 180px;
+  min-height: 160px;
   place-content: center;
   justify-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   color: var(--ink);
-  padding: 22px;
+  padding: var(--panel-padding);
   text-align: center;
 }
 
-.workspace-panel-empty-icon {
-  display: grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--workspace-empty-icon-bg);
-  color: var(--workspace-empty-icon-fg);
-}
-
 .workspace-panel-empty strong {
-  font-size: var(--font-title);
-  font-weight: var(--weight-semibold);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
 }
 
 .workspace-panel-empty span {
-  max-width: 230px;
-  color: var(--ink-muted);
-  font-size: var(--font-ui);
-  line-height: 1.45;
+  max-width: 32em;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: var(--line-body);
+  overflow-wrap: anywhere;
+}
+
+.workspace-panel-empty > .settings-button {
+  margin-top: var(--space-2);
 }
 
 .workspace-terminal-workspace {
@@ -1968,31 +1963,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   animation: workspace-browser-pulse 1s ease-in-out infinite;
 }
 
-.workspace-browser-home {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  background: var(--paper);
-  padding: 24px 12px;
-}
-
-.workspace-browser-home .workspace-panel-empty-icon {
-  width: auto;
-  height: auto;
-  background: transparent;
-  color: var(--ink-muted);
-}
-
-.workspace-browser-home strong {
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-}
-
-.workspace-browser-home span {
-  max-width: none;
-  font-size: var(--font-ui);
-}
-
 .workspace-browser-status {
   position: absolute;
   inset: 0;
@@ -2076,48 +2046,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   border-radius: var(--radius-sm);
   background: var(--surface-3);
   color: var(--ink);
-}
-
-.workspace-main-empty {
-  display: grid;
-  height: 100%;
-  min-height: 360px;
-  place-content: center;
-  justify-items: center;
-  gap: 10px;
-  color: var(--ink);
-  padding: 28px;
-  text-align: center;
-}
-
-.workspace-main-empty svg {
-  color: var(--ink-tertiary);
-}
-
-.workspace-main-empty strong {
-  font-size: var(--font-heading);
-  font-weight: var(--weight-semibold);
-}
-
-.workspace-main-empty span {
-  max-width: 360px;
-  color: var(--ink-muted);
-  font-size: var(--font-body);
-  font-weight: var(--weight-medium);
-  line-height: 1.45;
-}
-
-.workspace-main-empty button {
-  height: 34px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-3);
-  color: var(--ink);
-  font-weight: var(--weight-semibold);
-  padding: 0 12px;
-}
-
-.workspace-main-empty button:hover {
-  background: var(--surface-4);
 }
 
 .skills-scroll-region {

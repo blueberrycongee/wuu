@@ -59,9 +59,9 @@ import { WorkspaceBrowserPanel } from "./WorkspaceBrowserPanel";
 import {
   WorkspaceFilePreview,
   WorkspaceFileTree,
-  WorkspacePanelEmpty,
   type WorkspaceFileDirtyState,
 } from "./WorkspaceFiles";
+import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
 import { WorkspaceReviewPanel } from "./WorkspaceReviewPanels";
 import { ProjectPanel } from "./ProjectPanels";
 import { confirmAction } from "./ConfirmDialog";
@@ -861,11 +861,7 @@ export function WorkspaceRightPanel({
                     />
                   ))}
                   {activeTab?.kind === "files" ? (
-                    <WorkspacePanelEmpty
-                      title={t("workspace.selectFile")}
-                      hint={t("workspace.selectFileDescription")}
-                      icon={<FileText size={24} />}
-                    />
+                    <WorkspacePanelEmpty title={t("workspace.selectFile")} />
                   ) : null}
                 </div>
                 {focusedComposer && activeTab?.kind === "file" ? (
@@ -1104,7 +1100,6 @@ function WorkspaceFileResource({
         selection={tab.selection}
         refreshKey={refreshKey}
         selectedFilePath={tab.path}
-        onOpenRightPanel={() => {}}
         onOpenFile={handleOpenFile}
         onDirtyChange={handleDirtyChange}
       />

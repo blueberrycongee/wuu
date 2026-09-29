@@ -2,7 +2,6 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUpRight,
-  Globe,
   RotateCw,
   X
 } from "./WuuIcons";
@@ -22,7 +21,7 @@ import {
   useWorkspaceBrowserNavigationConsumer,
   type WorkspaceBrowserNavigationRequest,
 } from "./WorkspaceBrowserNavigation";
-import { WorkspacePanelEmpty } from "./WorkspaceFiles";
+
 
 const HOME_PAGE_URL = "wuu://new-tab";
 const SEARCH_FALLBACK_URL = "https://www.google.com/search?igu=1&q=";
@@ -371,14 +370,6 @@ export function WorkspaceBrowserPanel({
       </div>
       <div className="workspace-browser-frame" data-wuu-component="workspace-browser-content">
         <div className="workspace-browser-host" />
-        {!showChromePage ? (
-          <WorkspacePanelEmpty
-            className="workspace-browser-home"
-            title={t("workspace.browser.startBrowsing")}
-            hint={t("workspace.browser.startBrowsingHint")}
-            icon={<Globe size={28} strokeWidth={1.6} />}
-          />
-        ) : null}
         {status === "error" && errorMessage ? (
           <div className="workspace-browser-error" role="alert">
             <strong>{t("workspace.browser.cannotOpen")}</strong>

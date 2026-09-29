@@ -160,10 +160,8 @@ describe("WorkspaceBrowserPanel", () => {
     });
   });
 
-  it("shows the empty browsing surface before a URL is submitted", () => {
+  it("keeps page actions off before a URL is submitted", () => {
     render({});
-    expect(container.querySelector(".workspace-browser-home")?.textContent).toContain("开始浏览");
-    expect(container.querySelector(".workspace-browser-home")?.textContent).toContain("输入 URL 以打开页面");
     expect(
       container.querySelector<HTMLButtonElement>(".workspace-browser-open-external")?.disabled,
     ).toBe(true);

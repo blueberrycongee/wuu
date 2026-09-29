@@ -1,13 +1,8 @@
 import {
-  AlertCircle,
-  Check,
   ChevronRight,
   FileText,
   Folder,
   FolderOpen,
-  FolderX,
-  GitBranch,
-  RefreshCw,
   Search
 } from "./WuuIcons";
 import {
@@ -21,8 +16,8 @@ import {
   useRef,
   useState
 } from "react";
-import type { GitChangeFile, GitChangesResult, GitFileDiffResult, GitStatusResult, RuntimeContext } from "../shared/protocol";
-import { formatWorkspaceRoot } from "./WorkspaceFiles";
+import type { GitChangeFile, GitChangesResult, GitFileDiffResult, GitStatusResult } from "../shared/protocol";
+import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
 import {
   buildGitChangeTree,
   desktopApiErrorMessage,
@@ -277,43 +272,19 @@ export function WorkspaceReviewPanel({
   }
 
   if (loadingChanges && !changes) {
-    return (
-      <div className="workspace-main-empty">
-        <GitBranch size={36} />
-        <strong>{t("workspaceReview.readingChanges")}</strong>
-        <span>{t("workspaceReview.checkingLocalDiff")}</span>
-      </div>
-    );
+    return <WorkspacePanelEmpty title={t("workspaceReview.readingChanges")} />;
   }
 
   if (error && !changes) {
-    return (
-      <div className="workspace-main-empty">
-        <AlertCircle size={36} />
-        <strong>{t("workspaceReview.readFailed")}</strong>
-        <span>{error}</span>
-      </div>
-    );
+    return <WorkspacePanelEmpty title={t("workspaceReview.readFailed")} description={error} />;
   }
 
   if (changes && !changes.is_repo) {
-    return (
-      <div className="workspace-main-empty">
-        <FolderX size={36} />
-        <strong>{t("workspaceReview.notGitRepository")}</strong>
-        <span>{t("workspaceReview.noGitChanges")}</span>
-      </div>
-    );
+    return <WorkspacePanelEmpty title={t("workspaceReview.notGitRepository")} />;
   }
 
   if (changes && files.length === 0) {
-    return (
-      <div className="workspace-main-empty">
-        <Check size={36} />
-        <strong>{t("workspaceReview.clean")}</strong>
-        <span>{t("workspaceReview.noReviewDiff")}</span>
-      </div>
-    );
+    return <WorkspacePanelEmpty title={t("workspaceReview.clean")} />;
   }
 
   return (
@@ -404,260 +375,6 @@ function WorkspaceReviewDiffPeekPanel({
         </div>
       ) : null}
     </section>
-  );
-}
-
-export function WorkspaceDiffReview({
-  activeContext,
-  gitStatus
-}: {
-  activeContext?: RuntimeContext;
-  gitStatus?: GitStatusResult;
-}): JSX.Element {
-  const { locale, t, formatNumber } = useI18n();
-  const [changes, setChanges] = useState<GitChangesResult | undefined>(undefined);
-  const [selectedPath, setSelectedPath] = useState<string | undefined>(undefined);
-  const [fileDiff, setFileDiff] = useState<GitFileDiffResult | undefined>(undefined);
-  const [loadingChanges, setLoadingChanges] = useState(false);
-  const [loadingDiff, setLoadingDiff] = useState(false);
-  const [error, setError] = useState<string | undefined>(undefined);
-  const [refreshVersion, setRefreshVersion] = useState(0);
-  const [treeQuery, setTreeQuery] = useState("");
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
-  const workspaceRoot = activeContext?.cwd;
-  const files = changes?.files ?? [];
-  const totals = useMemo(() => summarizeGitChangeFiles(files), [files]);
-  const filteredFiles = useMemo(() => filterGitChangeFiles(files, treeQuery), [files, treeQuery]);
-  const treeNodes = useMemo(() => buildGitChangeTree(filteredFiles), [filteredFiles]);
-  const selectedFile = files.find((file) => file.path === selectedPath);
-  const branchLabel = gitStatus?.is_repo
-    ? gitStatus.branch ?? "detached"
-    : t("environment.notGitRepository");
-  const upstreamLabel = gitStatus?.upstream;
-
-  useEffect(() => {
-    if (!workspaceRoot) {
-      setChanges(undefined);
-      setSelectedPath(undefined);
-      setFileDiff(undefined);
-      setError(undefined);
-      setLoadingChanges(false);
-      return;
-    }
-
-    let cancelled = false;
-    setChanges(undefined);
-    setSelectedPath(undefined);
-    setFileDiff(undefined);
-    if (!desktopApiSupportsGitReview()) {
-      setError(t("workspaceReview.apiUnavailable"));
-      setLoadingChanges(false);
-      return;
-    }
-    setLoadingChanges(true);
-    setError(undefined);
-    void window.wuu
-      .listGitChanges()
-      .then((result) => {
-        if (cancelled) {
-          return;
-        }
-        const nextSelectedPath = selectGitChangePath(result.files, selectedPath);
-        setChanges(result);
-        setSelectedPath(nextSelectedPath);
-        setExpandedPaths(expandedGitChangeTreePathsForSelection(nextSelectedPath));
-      })
-      .catch((nextError) => {
-        if (!cancelled) {
-          setError(desktopApiErrorMessage(nextError, t("workspaceReview.readChangesFailed")));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoadingChanges(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceRoot, refreshVersion, locale]);
-
-  useEffect(() => {
-    if (!selectedPath) {
-      return;
-    }
-    setExpandedPaths((current) => {
-      const next = new Set(current);
-      for (const ancestor of gitPathAncestors(selectedPath)) {
-        next.add(ancestor);
-      }
-      return next;
-    });
-  }, [selectedPath]);
-
-  useEffect(() => {
-    if (!workspaceRoot || !selectedPath) {
-      setFileDiff(undefined);
-      setLoadingDiff(false);
-      return;
-    }
-
-    let cancelled = false;
-    setFileDiff(undefined);
-    if (!desktopApiSupportsGitReview()) {
-      setError(t("workspaceReview.apiUnavailable"));
-      setLoadingDiff(false);
-      return;
-    }
-    setLoadingDiff(true);
-    setError(undefined);
-    void window.wuu
-      .readGitFileDiff(selectedPath)
-      .then((result) => {
-        if (!cancelled) {
-          setFileDiff(result);
-        }
-      })
-      .catch((nextError) => {
-        if (!cancelled) {
-          setError(desktopApiErrorMessage(nextError, t("workspaceReview.readDiffFailed")));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoadingDiff(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceRoot, selectedPath, refreshVersion, locale]);
-
-  function toggleTreePath(path: string): void {
-    setExpandedPaths((current) => {
-      const next = new Set(current);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
-  }
-
-  if (!activeContext) {
-    return (
-      <div className="workspace-main-empty">
-        <FolderX size={36} />
-        <strong>{t("workspaceReview.noWorkspace")}</strong>
-        <span>{t("workspaceReview.openWorkspaceFirst")}</span>
-      </div>
-    );
-  }
-
-  if (loadingChanges && !changes) {
-    return (
-      <div className="workspace-main-empty">
-        <GitBranch size={36} />
-        <strong>{t("workspaceReview.readingChanges")}</strong>
-        <span>{formatWorkspaceRoot(workspaceRoot ?? "")}</span>
-      </div>
-    );
-  }
-
-  if (error && !changes) {
-    return (
-      <div className="workspace-main-empty">
-        <AlertCircle size={36} />
-        <strong>{t("workspaceReview.readFailed")}</strong>
-        <span>{error}</span>
-      </div>
-    );
-  }
-
-  if (changes && !changes.is_repo) {
-    return (
-      <div className="workspace-main-empty">
-        <FolderX size={36} />
-        <strong>{t("workspaceReview.notGitRepository")}</strong>
-        <span>{t("workspaceReview.noGitChanges")}</span>
-      </div>
-    );
-  }
-
-  if (changes && files.length === 0) {
-    return (
-      <div className="workspace-main-empty">
-        <Check size={36} />
-        <strong>{t("workspaceReview.clean")}</strong>
-        <span>{t("workspaceReview.noUncommittedDiff")}</span>
-        <button type="button" onClick={() => setRefreshVersion((version) => version + 1)}>
-          {t("common.refresh")}
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <article className="workspace-diff-review">
-      <header className="workspace-diff-header">
-        <div className="workspace-diff-title">
-          <strong>{t("workspaceReview.review")}</strong>
-          <span>
-            {branchLabel}
-            {upstreamLabel ? (
-              <>
-                <span className="workspace-diff-branch-arrow">-&gt;</span>
-                {upstreamLabel}
-              </>
-            ) : null}
-          </span>
-        </div>
-        <div className="workspace-diff-summary">
-          <span>{t(files.length === 1 ? "environment.fileCountOne" : "environment.fileCount", { count: formatNumber(files.length) })}</span>
-          <span className="additions">+{formatNumber(totals.additions)}</span>
-          <span className="deletions">-{formatNumber(totals.deletions)}</span>
-          <button
-            className="icon-button"
-            type="button"
-            aria-label={t("workspaceReview.refreshChanges")}
-            title={t("workspaceReview.refreshChanges")}
-            disabled={loadingChanges || loadingDiff}
-            onClick={() => setRefreshVersion((version) => version + 1)}
-          >
-            <RefreshCw className="icon" />
-          </button>
-        </div>
-      </header>
-      <div className="workspace-diff-content">
-        <section className="workspace-diff-detail">
-          <div className="workspace-diff-detail-header">
-            <div>
-              <strong>{selectedFile ? gitChangeFilePathLabel(selectedFile) : t("workspaceReview.selectFile")}</strong>
-              {selectedFile ? (
-                <WorkspaceDiffFileMeta file={selectedFile} />
-              ) : (
-                <span>{t("workspaceReview.selectFromLeft")}</span>
-              )}
-            </div>
-          </div>
-          <WorkspaceDiffBody fileDiff={fileDiff} loading={loadingDiff} error={error} />
-          {fileDiff?.truncated ? <div className="workspace-diff-truncated">{t("workspaceReview.diffTruncated")}</div> : null}
-        </section>
-        <GitChangeTreePanel
-          files={filteredFiles}
-          nodes={treeNodes}
-          selectedPath={selectedPath}
-          expandedPaths={expandedPaths}
-          query={treeQuery}
-          onQueryChange={setTreeQuery}
-          onSelectFile={setSelectedPath}
-          onTogglePath={toggleTreePath}
-        />
-      </div>
-    </article>
   );
 }
 
