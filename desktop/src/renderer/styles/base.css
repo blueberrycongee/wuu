@@ -166,7 +166,7 @@
   --control-boundary: var(--wuu-color-border-strong, var(--gray-500));
   --interaction-accent: var(--wuu-accent);
   /* Selection is opaque so sidebar material cannot tint or darken it. */
-  --selection-surface: var(--wuu-color-surface-elevated, var(--gray-200));
+  --selection-surface: var(--wuu-color-surface-elevated, var(--gray-150));
   --slider-thumb-bg: var(--wuu-color-surface-elevated, var(--paper));
   --field-bg: var(--wuu-control-field-background, var(--paper));
   --field-hover-bg: var(--wuu-control-field-background, var(--surface-1));
