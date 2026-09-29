@@ -1189,48 +1189,43 @@
 }
 
 /* Fork-from-earlier picker. Reuses the .environment-dialog shell while
-   keeping the dialog body focused on the two fork choices. */
+   keeping the dialog body on the two fork choices, which are its actions:
+   Cancel is the only footer control. */
 .fork-dialog {
-  width: min(100%, clamp(360px, 34vw, 480px));
-  max-height: min(440px, calc(100dvh - 48px));
-  gap: var(--space-2);
-  padding: var(--compact-padding-block);
-}
-
-.fork-dialog .environment-dialog-header {
-  align-items: flex-start;
-}
-
-.fork-dialog .environment-dialog-icon {
-  width: 42px;
-  height: 42px;
+  --environment-dialog-max-width: 440px;
 }
 
 .fork-dialog h2 {
-  font-size: 21px;
-  line-height: 1.2;
+  font-size: var(--font-title);
+  line-height: var(--line-ui);
 }
 
+/* Rows reach into the panel padding so their glyphs start on the title's
+   edge; the row corner is the panel corner minus that remaining inset. */
 .fork-dialog-options {
   display: grid;
-  gap: 4px;
+  gap: 2px;
+  margin-inline: calc(-1 * var(--compact-padding-inline));
 }
 
 .fork-dialog-option {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: var(--icon-size) minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--space-3);
+  row-gap: 2px;
   width: 100%;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
-  text-align: left;
-  padding: var(--compact-padding-inline);
+  text-align: start;
+  padding: var(--compact-padding-block) var(--compact-padding-inline);
   cursor: pointer;
-  transition: background var(--motion-fast) var(--ease-out);
+  transition: background-color var(--motion-fast) var(--ease-out);
 }
 
-.fork-dialog-option:hover:not(:disabled) {
+.fork-dialog-option:hover:not(:disabled),
+.fork-dialog-option[aria-busy="true"] {
   background: var(--surface-2);
 }
 
@@ -1238,83 +1233,58 @@
   background: var(--surface-3);
 }
 
-.fork-dialog-option:focus-visible {
-  outline: 2px solid var(--info);
-  outline-offset: 1px;
-}
-
+/* The shared disabled fade would also dim the reason an option gives. */
 .fork-dialog-option:disabled {
-  opacity: 0.55;
   cursor: default;
+  opacity: 1;
 }
 
-.fork-dialog-option.is-busy {
-  background: var(--surface-2);
+/* Inside the row, like menu items, so the ring stays clear of its neighbour. */
+html[data-focus-modality="keyboard"] .fork-dialog-option:focus-visible {
+  outline-offset: -2px;
 }
 
 .fork-dialog-option-icon {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-sm);
-  background: var(--wuu-control-icon-background, var(--surface-2));
-  color: var(--ink);
-  flex-shrink: 0;
+  grid-row: 1;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  /* Centered on the title's first line at every text size. */
+  margin-block-start: calc((var(--font-ui) * var(--line-ui) - var(--icon-size)) / 2);
+  color: var(--ink-soft);
 }
 
-.fork-dialog-option-text {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.fork-dialog-option-text strong {
-  color: var(--ink);
-  font-size: var(--font-body);
-  font-weight: var(--weight-semibold);
-}
-
-.fork-dialog-option-text span {
-  color: var(--ink-tertiary);
+.fork-dialog-option-title {
+  grid-column: 2;
   font-size: var(--font-ui);
-  line-height: 1.45;
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
 }
 
-.fork-dialog-option-spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid color-mix(in srgb, var(--ink-strong) 65%, transparent);
-  border-right-color: transparent;
-  border-radius: var(--radius-circle);
-  margin-left: auto;
+.fork-dialog-option-description {
+  grid-column: 2;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: var(--line-ui);
+}
+
+.fork-dialog-option-busy {
+  grid-column: 3;
+  grid-row: 1 / span 2;
   align-self: center;
-  animation: wuu-spin var(--motion-spin) linear infinite;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  color: var(--ink-soft);
+}
+
+/* An option that cannot run recedes by its name and glyph (inactive, so
+   exempt from text contrast); the reason it gives stays readable. */
+.fork-dialog-option:disabled:not([aria-busy="true"]) :is(.fork-dialog-option-icon, .fork-dialog-option-title) {
+  color: var(--ink-muted);
 }
 
 @media (max-width: 720px) {
   .modal-backdrop {
     padding: 12px;
-  }
-
-  .fork-dialog {
-    width: 100%;
-    max-height: calc(100dvh - 24px);
-    gap: 12px;
-    padding: var(--compact-padding-block);
-  }
-
-  .fork-dialog h2 {
-    font-size: 20px;
-  }
-
-  .fork-dialog-option {
-    padding: var(--compact-padding-inline);
-  }
-
-  .fork-dialog-option-icon {
-    width: 36px;
-    height: 36px;
   }
 }
 
