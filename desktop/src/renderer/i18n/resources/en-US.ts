@@ -595,7 +595,7 @@ export const enUS = {
   "provider.defaultBadge": "Default",
   "provider.keyMissing": "API key missing",
   "provider.loginRequired": "Sign-in required",
-  "provider.emptyTitle": "No providers connected yet",
+  "provider.emptyTitle": "No model service connected yet. Add one below.",
   "provider.makeDefault": "Make default",
   "provider.moreActions": "More actions for {name}",
   "provider.connectionSection": "Connection",

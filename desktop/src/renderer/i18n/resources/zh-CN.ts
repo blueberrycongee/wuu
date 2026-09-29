@@ -592,7 +592,7 @@ export const zhCN = {
   "provider.defaultBadge": "默认",
   "provider.keyMissing": "缺少 API key",
   "provider.loginRequired": "需要登录",
-  "provider.emptyTitle": "还没有连接模型服务",
+  "provider.emptyTitle": "还没有连接模型服务，在下方添加一个",
   "provider.makeDefault": "设为默认",
   "provider.moreActions": "{name} 的更多操作",
   "provider.connectionSection": "连接",

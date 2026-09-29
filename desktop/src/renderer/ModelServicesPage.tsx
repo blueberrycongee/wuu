@@ -416,9 +416,13 @@ function ServicesOverview({
       {providers.length > 0 ? (
         <DefaultModelCard providers={providers} labels={labels} initialized={initialized} running={running} onSave={onSave} />
       ) : (
-        <div className="model-services-empty" data-testid="settings-providers-empty">
-          <strong>{t("provider.emptyTitle")}</strong>
-        </div>
+        // The default model's place says what is missing; the services to
+        // add follow directly below.
+        <SettingsSection title={t("provider.defaultModel")}>
+          <SettingsGroup>
+            <p className="settings-group-empty" data-testid="settings-providers-empty">{t("provider.emptyTitle")}</p>
+          </SettingsGroup>
+        </SettingsSection>
       )}
 
       {providers.length > 0 ? (
@@ -1363,7 +1367,7 @@ function ConnectServiceDialog({
         {target.kind === "custom" ? (
           <div className="model-connect-field">
             <span>{t("provider.protocol")}</span>
-            <div className="model-connect-segments" role="group" aria-label={t("provider.protocol")}>
+            <div className="theme-segmented" role="group" aria-label={t("provider.protocol")}>
               {(["openai-compatible", "anthropic"] as const).map((value) => (
                 <button key={value} type="button" aria-pressed={protocol === value} onClick={() => setProtocol(value)}>
                   {value === "anthropic" ? t("provider.anthropicCompatible") : t("provider.openaiCompatible")}
