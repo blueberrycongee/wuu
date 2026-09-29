@@ -298,6 +298,30 @@ describe("Modal", () => {
     opener.remove();
   });
 
+  it("keeps Tab and Shift+Tab inside the dialog", () => {
+    mount(
+      createElement(Modal, {
+        ariaLabel: "focus trap",
+        title: "t",
+        onClose: () => undefined,
+        showCloseButton: false,
+        children: createElement("input", { type: "text", "data-testid": "first" }),
+        footer: createElement("button", { type: "button", "data-testid": "last" }, "OK"),
+      }),
+    );
+    const first = document.querySelector<HTMLElement>('[data-testid="first"]')!;
+    const last = document.querySelector<HTMLElement>('[data-testid="last"]')!;
+    const tab = (target: HTMLElement, shiftKey = false) => act(() => {
+      target.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey, bubbles: true, cancelable: true }));
+    });
+
+    last.focus();
+    tab(last);
+    expect(document.activeElement).toBe(first);
+    tab(first, true);
+    expect(document.activeElement).toBe(last);
+  });
+
   it("does not move focus when initialFocus is 'none'", () => {
     const beforeActive = document.activeElement;
     mount(

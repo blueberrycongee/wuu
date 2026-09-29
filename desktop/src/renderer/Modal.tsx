@@ -27,8 +27,9 @@ import { useUILayerHost } from "./ui/layers/UILayerHost";
  *   while an in-flight promise is still resolving.
  *
  * Focus model:
- * - Focus moves into the panel on open (see `initialFocus`) and returns to
- *   the control that held it before, if that control is still on the page.
+ * - Focus moves into the panel on open (see `initialFocus`), Tab and
+ *   Shift+Tab wrap inside it, and on close it returns to the control that
+ *   held it before, if that control is still on the page.
  *
  * Form model:
  * - By default the panel is a `<div>`. Set `asForm` to render a
@@ -145,11 +146,39 @@ export function Modal({
     // Keep dialog keystrokes away from app-level shortcuts, but handle Escape
     // before stopping propagation so a focused input can still dismiss.
     event.stopPropagation();
+    if (event.key === "Tab") {
+      wrapTabFocus(event);
+      return;
+    }
     if (event.key !== "Escape" || !dismissible) {
       return;
     }
     event.preventDefault();
     onClose?.();
+  }
+
+  // aria-modal says the page behind is unavailable; Tab must agree.
+  function wrapTabFocus(event: ReactKeyboardEvent<HTMLElement>): void {
+    const focusable = Array.from(
+      panelRef.current?.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), [href], input:not([type="hidden"]):not(:disabled), ' +
+          'select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+      ) ?? [],
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (!first || !last) {
+      event.preventDefault();
+      return;
+    }
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || active === panelRef.current)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   const panelClass = ["environment-dialog", panelClassName]
