@@ -20,10 +20,11 @@ import (
 )
 
 type OAuthManager struct {
-	store   credentialstore.Store
-	client  *http.Client
-	mu      sync.Mutex
-	pending map[string]pendingOAuth
+	store     credentialstore.Store
+	client    *http.Client
+	mu        sync.Mutex
+	pending   map[string]pendingOAuth
+	refreshMu map[string]*sync.Mutex
 }
 
 type OAuthStartOptions struct {
@@ -108,7 +109,7 @@ func NewOAuthManager(store credentialstore.Store, client *http.Client) *OAuthMan
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &OAuthManager{store: store, client: client, pending: map[string]pendingOAuth{}}
+	return &OAuthManager{store: store, client: client, pending: map[string]pendingOAuth{}, refreshMu: map[string]*sync.Mutex{}}
 }
 
 func (m *OAuthManager) Start(ctx context.Context, options OAuthStartOptions) (OAuthStartResult, error) {
@@ -227,11 +228,24 @@ func (m *OAuthManager) Status(ctx context.Context, serverID string) (OAuthStatus
 }
 
 func (m *OAuthManager) AccessToken(ctx context.Context, serverID string) (string, error) {
+	return m.accessToken(ctx, serverID, false)
+}
+
+// RefreshAccessToken forces a fresh read and refresh when the server rejected
+// a token that still looked valid locally.
+func (m *OAuthManager) RefreshAccessToken(ctx context.Context, serverID string) (string, error) {
+	return m.accessToken(ctx, serverID, true)
+}
+
+func (m *OAuthManager) accessToken(ctx context.Context, serverID string, forceRefresh bool) (string, error) {
+	refreshLock := m.refreshLock(serverID)
+	refreshLock.Lock()
+	defer refreshLock.Unlock()
 	token, err := m.loadToken(ctx, serverID)
 	if err != nil {
 		return "", err
 	}
-	if token.ExpiresAt.IsZero() || time.Now().Before(token.ExpiresAt) {
+	if !forceRefresh && (token.ExpiresAt.IsZero() || time.Now().Before(token.ExpiresAt)) {
 		return token.AccessToken, nil
 	}
 	if strings.TrimSpace(token.RefreshToken) == "" {
@@ -243,6 +257,14 @@ func (m *OAuthManager) AccessToken(ctx context.Context, serverID string) (string
 	}
 	response, err := m.exchangeToken(ctx, token.TokenEndpoint, token.ClientSecret, token.TokenAuthMode, form)
 	if err != nil {
+		// Another process may have rotated the refresh token while this
+		// request was in flight. Prefer the credential now in the store over
+		// reporting the stale refresh failure.
+		if latest, loadErr := m.loadToken(ctx, serverID); loadErr == nil &&
+			latest.AccessToken != token.AccessToken &&
+			(latest.ExpiresAt.IsZero() || time.Now().Before(latest.ExpiresAt)) {
+			return latest.AccessToken, nil
+		}
 		return "", err
 	}
 	token.AccessToken = response.AccessToken
@@ -256,6 +278,21 @@ func (m *OAuthManager) AccessToken(ctx context.Context, serverID string) (string
 		return "", err
 	}
 	return token.AccessToken, nil
+}
+
+func (m *OAuthManager) refreshLock(serverID string) *sync.Mutex {
+	key := strings.TrimSpace(serverID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.refreshMu == nil {
+		m.refreshMu = make(map[string]*sync.Mutex)
+	}
+	if lock := m.refreshMu[key]; lock != nil {
+		return lock
+	}
+	lock := &sync.Mutex{}
+	m.refreshMu[key] = lock
+	return lock
 }
 
 func (m *OAuthManager) Remove(ctx context.Context, serverID string) error {

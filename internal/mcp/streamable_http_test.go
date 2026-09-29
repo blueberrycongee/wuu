@@ -412,6 +412,7 @@ func newLegacySSEServer(t *testing.T) *legacySSEServer {
 		flusher := w.(http.Flusher)
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "event: endpoint\ndata: /message\n\n")
 		flusher.Flush()
 		for {
 			select {

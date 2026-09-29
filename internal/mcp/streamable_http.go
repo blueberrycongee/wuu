@@ -107,9 +107,10 @@ func (e *streamableHTTPError) fallbackToSSE() bool {
 // StreamableHTTPTransport communicates with an MCP server over the
 // streamable HTTP transport (MCP spec revision 2025-03-26 and later).
 type StreamableHTTPTransport struct {
-	endpoint string
-	client   *http.Client
-	headers  map[string]string
+	endpoint     string
+	client       *http.Client
+	headers      map[string]string
+	authProvider TokenProvider
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -128,14 +129,21 @@ type StreamableHTTPTransport struct {
 // NewStreamableHTTPTransport creates a transport for the given MCP endpoint.
 // No network traffic happens until the first Send.
 func NewStreamableHTTPTransport(endpoint string, headers map[string]string) *StreamableHTTPTransport {
+	return NewStreamableHTTPTransportWithAuth(endpoint, headers, nil)
+}
+
+// NewStreamableHTTPTransportWithAuth creates a transport whose bearer token is
+// resolved for each request instead of being captured at connection time.
+func NewStreamableHTTPTransportWithAuth(endpoint string, headers map[string]string, authProvider TokenProvider) *StreamableHTTPTransport {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &StreamableHTTPTransport{
-		endpoint: endpoint,
-		client:   newStreamableHTTPClient(),
-		headers:  cloneStringMap(headers),
-		ctx:      ctx,
-		cancel:   cancel,
-		inbox:    make(chan Response, 32),
+		endpoint:     endpoint,
+		client:       newStreamableHTTPClient(),
+		headers:      cloneStringMap(headers),
+		authProvider: authProvider,
+		ctx:          ctx,
+		cancel:       cancel,
+		inbox:        make(chan Response, 32),
 	}
 }
 
@@ -158,9 +166,17 @@ func (t *StreamableHTTPTransport) Send(ctx context.Context, req Request) error {
 	if err != nil {
 		return fmt.Errorf("marshal message: %w", err)
 	}
-	err = t.post(ctx, req, body)
+	err = t.post(ctx, req, body, false)
 	if err == nil {
 		return nil
+	}
+	var authErr *streamableHTTPError
+	if errors.As(err, &authErr) && authErr.status == http.StatusUnauthorized && t.authProvider != nil {
+		if retryErr := t.post(ctx, req, body, true); retryErr == nil {
+			return nil
+		} else {
+			err = retryErr
+		}
 	}
 	// Session expiry (spec, Session Management #3-4): a 404 for a request
 	// that carried the session ID means the server terminated the session;
@@ -171,7 +187,7 @@ func (t *StreamableHTTPTransport) Send(ctx context.Context, req Request) error {
 		if rerr := t.reinitialize(ctx); rerr != nil {
 			return fmt.Errorf("streamable HTTP session at %s expired (HTTP 404) and re-initialize failed: %w", t.endpoint, rerr)
 		}
-		if err := t.post(ctx, req, body); err != nil {
+		if err := t.post(ctx, req, body, false); err != nil {
 			return fmt.Errorf("streamable HTTP retry after session re-initialize: %w", err)
 		}
 		return nil
@@ -181,7 +197,7 @@ func (t *StreamableHTTPTransport) Send(ctx context.Context, req Request) error {
 
 // post performs one JSON-RPC POST and dispatches whatever comes back (202,
 // single JSON message, or SSE stream) into the inbox.
-func (t *StreamableHTTPTransport) post(ctx context.Context, req Request, body []byte) error {
+func (t *StreamableHTTPTransport) post(ctx context.Context, req Request, body []byte, forceRefresh bool) error {
 	t.mu.Lock()
 	if t.closed {
 		t.mu.Unlock()
@@ -213,6 +229,10 @@ func (t *StreamableHTTPTransport) post(ctx context.Context, req Request, body []
 		return fmt.Errorf("streamable HTTP POST %s: %w", t.endpoint, err)
 	}
 	t.applyHeaders(hreq, session, version)
+	if err := applyToken(hreq, t.authProvider, ctx, forceRefresh); err != nil {
+		cancelReq()
+		return err
+	}
 	if version == PreferredProtocolVersion && req.Method != "" {
 		hreq.Header.Set(headerMethod, req.Method)
 		if name := requestPrincipalName(req.Method, req.Params); name != "" {
@@ -265,11 +285,11 @@ func (t *StreamableHTTPTransport) post(ctx context.Context, req Request, body []
 	// isCall: only JSON-RPC requests demand a JSON-RPC reply. Notifications
 	// (no ID) and our responses to server requests (no method) may be
 	// answered with any empty-ish 2xx.
-	isCall := req.ID != 0 && req.Method != ""
+	isCall := (req.hasID || req.ID != 0) && req.Method != ""
 	contentType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	switch contentType {
 	case "application/json":
-		data, err := io.ReadAll(resp.Body)
+		data, err := readLimitedBody(resp.Body, maxMCPMessageBytes)
 		resp.Body.Close()
 		finish()
 		if err != nil {
@@ -381,7 +401,7 @@ func (t *StreamableHTTPTransport) applyHeaders(hreq *http.Request, session, vers
 // request to record the negotiated protocol version (echoed on subsequent
 // requests via MCP-Protocol-Version) and start the GET listening stream.
 func (t *StreamableHTTPTransport) observeInitialize(origin Request, msg Response) {
-	if origin.Method != "initialize" || msg.ID != origin.ID || msg.Error != nil {
+	if origin.Method != "initialize" || !msg.hasID || msg.ID != origin.ID || msg.StringID != origin.StringID || msg.stringID != origin.stringID || msg.Error != nil {
 		return
 	}
 	var result struct {
@@ -469,6 +489,9 @@ func (t *StreamableHTTPTransport) reinitialize(ctx context.Context) error {
 		return err
 	}
 	t.applyHeaders(hreq, "", "")
+	if err := applyToken(hreq, t.authProvider, ctx, false); err != nil {
+		return err
+	}
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("Accept", acceptStreamableHTTP)
 	resp, err := t.client.Do(hreq)
@@ -501,7 +524,7 @@ func (t *StreamableHTTPTransport) reinitialize(ctx context.Context) error {
 
 	note := Request{JSONRPC: "2.0", Method: "notifications/initialized"}
 	noteBody, _ := json.Marshal(note)
-	if err := t.post(ctx, note, noteBody); err != nil {
+	if err := t.post(ctx, note, noteBody, false); err != nil {
 		return fmt.Errorf("notifications/initialized: %w", err)
 	}
 	return nil
@@ -513,7 +536,7 @@ func readSingleResponse(resp *http.Response, id int64) (Response, error) {
 	contentType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	switch contentType {
 	case "application/json":
-		data, err := io.ReadAll(resp.Body)
+		data, err := readLimitedBody(resp.Body, maxMCPMessageBytes)
 		if err != nil {
 			return Response{}, err
 		}
@@ -575,6 +598,9 @@ func (t *StreamableHTTPTransport) listen() {
 		session, version := t.sessionID, t.protocolVersion
 		t.mu.Unlock()
 		t.applyHeaders(hreq, session, version)
+		if err := applyToken(hreq, t.authProvider, t.ctx, false); err != nil {
+			return
+		}
 		hreq.Header.Set("Accept", "text/event-stream")
 		if lastEventID != "" {
 			// Resumability (spec, Resumability and Redelivery #2): resume the
@@ -678,6 +704,7 @@ func (t *StreamableHTTPTransport) Close() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if hreq, err := http.NewRequestWithContext(ctx, http.MethodDelete, t.endpoint, nil); err == nil {
 			t.applyHeaders(hreq, session, version)
+			_ = applyToken(hreq, t.authProvider, ctx, false)
 			if resp, err := t.client.Do(hreq); err == nil {
 				drainAndClose(resp.Body)
 			}
@@ -701,27 +728,46 @@ type sseEvent struct {
 // event-stream format: "data:" lines accumulate (joined by newlines), "id:"
 // sets the event ID, lines starting with ":" are comments.
 func readSSEEvent(r *bufio.Reader) (sseEvent, error) {
+	return readSSEEventLimited(r, maxMCPEventBytes)
+}
+
+func readSSEEventLimited(r *bufio.Reader, limit int) (sseEvent, error) {
 	var ev sseEvent
 	var data []string
 	seenField := false
+	totalBytes := 0
 	for {
-		line, err := r.ReadString('\n')
-		if err != nil {
-			return sseEvent{}, err
+		var line []byte
+		for {
+			part, err := r.ReadSlice('\n')
+			if len(part) > 0 {
+				if totalBytes+len(part) > limit {
+					return sseEvent{}, fmt.Errorf("SSE event exceeds %d bytes", limit)
+				}
+				totalBytes += len(part)
+				line = append(line, part...)
+			}
+			if err == bufio.ErrBufferFull {
+				continue
+			}
+			if err != nil {
+				return sseEvent{}, err
+			}
+			break
 		}
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
+		line = bytes.TrimRight(line, "\r\n")
+		if len(line) == 0 {
 			if !seenField {
 				continue // skip leading blank lines between events
 			}
 			ev.data = strings.Join(data, "\n")
 			return ev, nil
 		}
-		if strings.HasPrefix(line, ":") {
+		if bytes.HasPrefix(line, []byte(":")) {
 			continue
 		}
 		seenField = true
-		field, value, _ := strings.Cut(line, ":")
+		field, value, _ := strings.Cut(string(line), ":")
 		value = strings.TrimPrefix(value, " ")
 		switch field {
 		case "data":
@@ -740,9 +786,20 @@ func drainAndClose(body io.ReadCloser) {
 }
 
 func readBodyExcerpt(body io.ReadCloser) string {
-	data, _ := io.ReadAll(io.LimitReader(body, 512))
+	data, _ := io.ReadAll(io.LimitReader(body, maxMCPBodyExcerptBytes))
 	_ = body.Close()
 	return strings.TrimSpace(string(data))
+}
+
+func readLimitedBody(body io.Reader, limit int) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, int64(limit)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > limit {
+		return nil, fmt.Errorf("HTTP MCP message exceeds %d bytes", limit)
+	}
+	return data, nil
 }
 
 func minDuration(a, b time.Duration) time.Duration {

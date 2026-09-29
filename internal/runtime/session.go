@@ -2364,6 +2364,9 @@ func startMCPManager(cfg config.Config, plugins []pluginpkg.Plugin, requiredPlug
 	}
 	go func() {
 		ctx := context.Background()
+		const maxBackgroundMCPConnections = 4
+		semaphore := make(chan struct{}, maxBackgroundMCPConnections)
+		var wait sync.WaitGroup
 		for name, serverCfg := range serverConfigs {
 			if requiredServers[name] {
 				continue
@@ -2372,12 +2375,19 @@ func startMCPManager(cfg config.Config, plugins []pluginpkg.Plugin, requiredPlug
 				providers.DebugLogf("mcp server %q disabled", name)
 				continue
 			}
-			if err := mcpMgr.Add(ctx, serverCfg); err != nil {
-				providers.DebugLogf("mcp server %q failed to connect: %v", name, err)
-			} else {
-				providers.DebugLogf("mcp server %q connected (%d tools)", name, mcpMgr.Status()[name].ToolCount)
-			}
+			wait.Add(1)
+			go func(name string, serverCfg mcp.ServerConfig) {
+				defer wait.Done()
+				semaphore <- struct{}{}
+				defer func() { <-semaphore }()
+				if err := mcpMgr.Add(ctx, serverCfg); err != nil {
+					providers.DebugLogf("mcp server %q failed to connect: %v", name, err)
+				} else {
+					providers.DebugLogf("mcp server %q connected (%d tools)", name, mcpMgr.Status()[name].ToolCount)
+				}
+			}(name, serverCfg)
 		}
+		wait.Wait()
 	}()
 	return mcpMgr, nil
 }

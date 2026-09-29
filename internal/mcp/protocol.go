@@ -22,6 +22,15 @@ const (
 	PreferredLegacyProtocolVersion = "2025-11-25"
 )
 
+const (
+	// These limits are enforced while reading transport data, before JSON is
+	// decoded into Go values. Tool/result limits are stricter at the model
+	// boundary, but cannot protect a transport from an oversized message.
+	maxMCPMessageBytes     = 8 * 1024 * 1024
+	maxMCPEventBytes       = 4 * 1024 * 1024
+	maxMCPBodyExcerptBytes = 4 * 1024
+)
+
 var acceptedProtocolVersions = map[string]struct{}{
 	"2026-07-28": {},
 	"2026-06-30": {},
@@ -47,22 +56,123 @@ type DiscoverResult struct {
 
 // Request is a JSON-RPC request.
 type Request struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      int64           `json:"id,omitempty"`
-	Method  string          `json:"method,omitempty"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *RPCError       `json:"error,omitempty"`
+	JSONRPC  string          `json:"jsonrpc"`
+	ID       int64           `json:"-"`
+	Method   string          `json:"method,omitempty"`
+	Params   json.RawMessage `json:"params,omitempty"`
+	Result   json.RawMessage `json:"result,omitempty"`
+	Error    *RPCError       `json:"error,omitempty"`
+	StringID string          `json:"-"`
+	stringID bool
+	hasID    bool
 }
 
 // Response is a JSON-RPC response.
 type Response struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      int64           `json:"id,omitempty"`
-	Method  string          `json:"method,omitempty"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *RPCError       `json:"error,omitempty"`
+	JSONRPC  string          `json:"jsonrpc"`
+	ID       int64           `json:"-"`
+	Method   string          `json:"method,omitempty"`
+	Params   json.RawMessage `json:"params,omitempty"`
+	Result   json.RawMessage `json:"result,omitempty"`
+	Error    *RPCError       `json:"error,omitempty"`
+	StringID string          `json:"-"`
+	stringID bool
+	hasID    bool
+}
+
+// MarshalJSON keeps numeric IDs convenient for the client while accepting
+// string IDs from servers. String IDs are required to be echoed byte-for-byte
+// when replying to a server-initiated request.
+func (r Request) MarshalJSON() ([]byte, error) {
+	return marshalRPCMessage(r.JSONRPC, r.ID, r.StringID, r.stringID, r.hasID || r.ID != 0, r.Method, r.Params, r.Result, r.Error)
+}
+
+func (r Response) MarshalJSON() ([]byte, error) {
+	return marshalRPCMessage(r.JSONRPC, r.ID, r.StringID, r.stringID, r.hasID || r.ID != 0, r.Method, r.Params, r.Result, r.Error)
+}
+
+func (r *Request) UnmarshalJSON(data []byte) error {
+	message, err := unmarshalRPCMessage(data)
+	if err != nil {
+		return err
+	}
+	*r = Request{JSONRPC: message.JSONRPC, ID: message.ID, StringID: message.StringID, stringID: message.stringID, hasID: message.hasID, Method: message.Method, Params: message.Params, Result: message.Result, Error: message.Error}
+	return nil
+}
+
+func (r *Response) UnmarshalJSON(data []byte) error {
+	message, err := unmarshalRPCMessage(data)
+	if err != nil {
+		return err
+	}
+	*r = Response{JSONRPC: message.JSONRPC, ID: message.ID, StringID: message.StringID, stringID: message.stringID, hasID: message.hasID, Method: message.Method, Params: message.Params, Result: message.Result, Error: message.Error}
+	return nil
+}
+
+type rpcMessage struct {
+	JSONRPC  string
+	ID       int64
+	StringID string
+	stringID bool
+	hasID    bool
+	Method   string
+	Params   json.RawMessage
+	Result   json.RawMessage
+	Error    *RPCError
+}
+
+func marshalRPCMessage(jsonrpc string, id int64, stringID string, stringIDPresent, hasID bool, method string, params, result json.RawMessage, rpcErr *RPCError) ([]byte, error) {
+	message := map[string]any{"jsonrpc": jsonrpc}
+	if hasID {
+		if stringIDPresent {
+			message["id"] = stringID
+		} else {
+			message["id"] = id
+		}
+	}
+	if method != "" {
+		message["method"] = method
+	}
+	if len(params) > 0 {
+		message["params"] = params
+	}
+	if len(result) > 0 {
+		message["result"] = result
+	}
+	if rpcErr != nil {
+		message["error"] = rpcErr
+	}
+	return json.Marshal(message)
+}
+
+func unmarshalRPCMessage(data []byte) (rpcMessage, error) {
+	var raw struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Method  string          `json:"method,omitempty"`
+		Params  json.RawMessage `json:"params,omitempty"`
+		Result  json.RawMessage `json:"result,omitempty"`
+		Error   *RPCError       `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return rpcMessage{}, err
+	}
+	message := rpcMessage{JSONRPC: raw.JSONRPC, Method: raw.Method, Params: raw.Params, Result: raw.Result, Error: raw.Error}
+	if len(raw.ID) == 0 || string(raw.ID) == "null" {
+		return message, nil
+	}
+	message.hasID = true
+	if raw.ID[0] == '"' {
+		message.stringID = true
+		if err := json.Unmarshal(raw.ID, &message.StringID); err != nil {
+			return rpcMessage{}, fmt.Errorf("decode JSON-RPC string id: %w", err)
+		}
+		return message, nil
+	}
+	if err := json.Unmarshal(raw.ID, &message.ID); err != nil {
+		return rpcMessage{}, fmt.Errorf("decode JSON-RPC numeric id: %w", err)
+	}
+	return message, nil
 }
 
 // RPCError is a JSON-RPC error object.

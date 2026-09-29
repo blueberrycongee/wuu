@@ -15,6 +15,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   along a dotted arc that splits into its colourful agents, and they dive into
   a toy-block fort built around the Applications folder.
 
+### Fixed
+
+- Harden MCP transport compatibility, request timeouts, OAuth refresh recovery,
+  local server cleanup, bounded reads, catalog refreshes, and oversized results.
+
 ## [2026.9.29] - 2026-09-29
 
 ### Contributors

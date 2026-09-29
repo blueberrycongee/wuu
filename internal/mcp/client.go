@@ -71,6 +71,10 @@ type OAuthConfig struct {
 	RedirectURI  string   `json:"redirect_uri,omitempty"`
 }
 
+// TokenProvider supplies the current bearer token immediately before a
+// request. forceRefresh is used once after an HTTP 401 response.
+type TokenProvider func(ctx context.Context, forceRefresh bool) (string, error)
+
 func (c ServerConfig) IsEnabled() bool {
 	return c.Enabled == nil || *c.Enabled
 }
@@ -99,6 +103,9 @@ type Client struct {
 	closed                   bool
 	closeOnce                sync.Once
 	closeErr                 error
+	toolRefreshMu            sync.Mutex
+	toolRefreshRunning       bool
+	toolRefreshPending       bool
 }
 
 // Connect establishes an MCP session with the given transport.
@@ -200,13 +207,17 @@ func ConnectStdio(ctx context.Context, cfg ServerConfig) (*Client, error) {
 
 // ConnectSSE connects to a remote MCP server over SSE.
 func ConnectSSE(ctx context.Context, cfg ServerConfig) (*Client, error) {
+	return connectSSEWithTokenProvider(ctx, cfg, nil)
+}
+
+func connectSSEWithTokenProvider(ctx context.Context, cfg ServerConfig, tokenProvider TokenProvider) (*Client, error) {
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("mcp server %q: url is required for sse transport", cfg.Name)
 	}
 	ctx, cancel := withDefaultConnectionTimeout(ctx)
 	defer cancel()
 
-	t, err := newSSETransport(ctx, cfg.URL, cfg.Headers)
+	t, err := newSSETransportWithAuth(ctx, cfg.URL, cfg.Headers, tokenProvider)
 	if err != nil {
 		return nil, fmt.Errorf("mcp server %q: %w", cfg.Name, err)
 	}
@@ -221,10 +232,14 @@ func ConnectSSE(ctx context.Context, cfg ServerConfig) (*Client, error) {
 // ConnectStreamableHTTP connects to a remote MCP server over the streamable
 // HTTP transport (MCP spec revision 2025-03-26+).
 func ConnectStreamableHTTP(ctx context.Context, cfg ServerConfig) (*Client, error) {
+	return connectStreamableHTTPWithTokenProvider(ctx, cfg, nil)
+}
+
+func connectStreamableHTTPWithTokenProvider(ctx context.Context, cfg ServerConfig, tokenProvider TokenProvider) (*Client, error) {
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("mcp server %q: url is required for streamable HTTP transport", cfg.Name)
 	}
-	t := NewStreamableHTTPTransport(cfg.URL, cfg.Headers)
+	t := NewStreamableHTTPTransportWithAuth(cfg.URL, cfg.Headers, tokenProvider)
 	c, err := Connect(ctx, cfg.Name, t)
 	if err != nil {
 		// Connect already closed the transport via c.Close().
@@ -249,6 +264,10 @@ func ConnectStreamableHTTP(ctx context.Context, cfg ServerConfig) (*Client, erro
 //     configs keep working without changes. Network-level failures do not
 //     fall back — SSE against the same unreachable endpoint would fail too.
 func ConnectRemote(ctx context.Context, cfg ServerConfig) (*Client, error) {
+	return connectRemoteWithTokenProvider(ctx, cfg, nil)
+}
+
+func connectRemoteWithTokenProvider(ctx context.Context, cfg ServerConfig, tokenProvider TokenProvider) (*Client, error) {
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("mcp server %q: url is required for a remote transport", cfg.Name)
 	}
@@ -261,9 +280,9 @@ func ConnectRemote(ctx context.Context, cfg ServerConfig) (*Client, error) {
 	}
 	switch transport {
 	case TransportSSE:
-		return ConnectSSE(ctx, cfg)
+		return connectSSEWithTokenProvider(ctx, cfg, tokenProvider)
 	case TransportStreamableHTTP:
-		c, err := ConnectStreamableHTTP(ctx, cfg)
+		c, err := connectStreamableHTTPWithTokenProvider(ctx, cfg, tokenProvider)
 		if err != nil {
 			return nil, fmt.Errorf("%w (transport %q explicitly configured; not falling back to SSE)", err, strings.TrimSpace(cfg.Transport))
 		}
@@ -271,7 +290,7 @@ func ConnectRemote(ctx context.Context, cfg ServerConfig) (*Client, error) {
 	}
 	// Auto: streamable HTTP first, SSE fallback for "not a streamable HTTP
 	// endpoint" failures.
-	c, httpErr := ConnectStreamableHTTP(ctx, cfg)
+	c, httpErr := connectStreamableHTTPWithTokenProvider(ctx, cfg, tokenProvider)
 	if httpErr == nil {
 		return c, nil
 	}
@@ -279,7 +298,7 @@ func ConnectRemote(ctx context.Context, cfg ServerConfig) (*Client, error) {
 	if !errors.As(httpErr, &serr) || !serr.fallbackToSSE() {
 		return nil, httpErr
 	}
-	c, sseErr := ConnectSSE(ctx, cfg)
+	c, sseErr := connectSSEWithTokenProvider(ctx, cfg, tokenProvider)
 	if sseErr != nil {
 		return nil, fmt.Errorf("%v; SSE fallback also failed: %w", httpErr, sseErr)
 	}
@@ -403,10 +422,37 @@ func (c *Client) handleReadLoopExit(err error) {
 func (c *Client) handleNotification(method string, _ json.RawMessage) {
 	switch method {
 	case "notifications/tools/list_changed", "tools/list_changed":
-		go func() {
-			_, _ = c.DiscoverTools(context.Background())
-		}()
+		c.scheduleToolRefresh()
 	}
+}
+
+func (c *Client) scheduleToolRefresh() {
+	c.toolRefreshMu.Lock()
+	c.toolRefreshPending = true
+	if c.toolRefreshRunning {
+		c.toolRefreshMu.Unlock()
+		return
+	}
+	c.toolRefreshRunning = true
+	c.toolRefreshMu.Unlock()
+	go func() {
+		for {
+			c.toolRefreshMu.Lock()
+			c.toolRefreshPending = false
+			c.toolRefreshMu.Unlock()
+			refreshCtx, cancel := context.WithTimeout(context.Background(), defaultConnectionTimeout)
+			_, _ = c.DiscoverTools(refreshCtx)
+			cancel()
+			c.toolRefreshMu.Lock()
+			if !c.toolRefreshPending {
+				c.toolRefreshRunning = false
+				c.toolRefreshMu.Unlock()
+				return
+			}
+			c.toolRefreshPending = false
+			c.toolRefreshMu.Unlock()
+		}
+	}()
 }
 
 func (c *Client) handleRequest(method string, _ json.RawMessage) (json.RawMessage, *RPCError) {

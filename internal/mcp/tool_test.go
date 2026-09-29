@@ -62,6 +62,22 @@ func TestMapCallToolResultPreservesRichMCPContent(t *testing.T) {
 	}
 }
 
+func TestMapCallToolResultDowngradesOversizedPartsWithoutError(t *testing.T) {
+	result, err := mapCallToolResult(&CallToolResult{
+		Content: []ToolContent{
+			{Type: "text", Text: strings.Repeat("text ", toolresult.MaxStructuredJSONSize)},
+			{Type: "image", Data: strings.Repeat("A", toolresult.MaxInlineDataBytes*2), MIMEType: "image/png"},
+		},
+		StructuredContent: json.RawMessage(`{"payload":"` + strings.Repeat("x", toolresult.MaxStructuredJSONSize) + `"}`),
+	})
+	if err != nil {
+		t.Fatalf("oversized valid MCP result became an error: %v", err)
+	}
+	if result.TextProjection() == "" || result.SizeBytes() > toolresult.MaxResultBytes {
+		t.Fatalf("oversized result has no bounded readable projection: size=%d result=%+v", result.SizeBytes(), result)
+	}
+}
+
 func TestMCPToolCallErrorPreservesServerDetail(t *testing.T) {
 	err := mcpToolCallError(toolresult.FromErrorText("invalid_arguments: app is required for click"))
 	if got := err.Error(); got != "mcp tool error: invalid_arguments: app is required for click" {
