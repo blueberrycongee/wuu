@@ -154,7 +154,8 @@ it("refreshes completed usage when settlement arrives after the terminal event",
     await vi.advanceTimersByTimeAsync(1500);
     await Promise.resolve();
   });
-  expect(ui.container.textContent).toContain("4014 tokens");
+  // Settled usage reaches the card, grouped like other counts in the locale.
+  expect(ui.container.textContent).toContain("4,014");
 });
 
 it("discards stale reads and shows runtime errors even when collapsed", async () => {

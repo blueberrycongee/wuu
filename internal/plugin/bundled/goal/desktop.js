@@ -2,7 +2,34 @@ export async function activate(api) {
   const React = api.react;
   const h = React.createElement;
   const { Button, TextArea, ComposerDrawer } = api.ui;
-  const labels = { active: "进行中", paused: "已暂停", blocked: "受阻", complete: "已完成" };
+  api.registerLocale({ id: "goal-en", locale: "en-US", entries: {
+    "goal.status.active": "Active", "goal.status.paused": "Paused", "goal.status.blocked": "Blocked", "goal.status.complete": "Complete",
+    "goal.label": "Session goal", "goal.expand": "Show goal", "goal.collapse": "Hide goal", "goal.set": "Set a goal",
+    "goal.pause": "Pause", "goal.resume": "Resume", "goal.clear": "Clear goal", "goal.end": "End goal",
+    "goal.objective": "Goal", "goal.next": "Next goal", "goal.start": "Start goal",
+    "goal.usage": "{tokens} tokens · {duration}",
+    "goal.duration.second": "{count}s", "goal.duration.minute": "{count}m", "goal.duration.hour": "{count}h",
+  } });
+  api.registerLocale({ id: "goal-zh", locale: "zh-CN", entries: {
+    "goal.status.active": "进行中", "goal.status.paused": "已暂停", "goal.status.blocked": "受阻", "goal.status.complete": "已完成",
+    "goal.label": "会话目标", "goal.expand": "展开目标", "goal.collapse": "收起目标", "goal.set": "设置目标",
+    "goal.pause": "暂停", "goal.resume": "继续", "goal.clear": "清除目标", "goal.end": "结束目标",
+    "goal.objective": "目标", "goal.next": "新目标", "goal.start": "开始目标",
+    "goal.usage": "{tokens} tokens · 用时 {duration}",
+    "goal.duration.second": "{count} 秒", "goal.duration.minute": "{count} 分", "goal.duration.hour": "{count} 小时",
+  } });
+  // The two largest units, as the host words turn durations: 9 秒, 1 分 30 秒, 2 小时 5 分.
+  function formatDuration(seconds, tr) {
+    const total = Math.max(0, Math.floor(seconds));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const rest = total % 60;
+    const unit = (count, name) => tr(`goal.duration.${name}`, { count });
+    if (hours > 0) return [unit(hours, "hour"), minutes > 0 ? unit(minutes, "minute") : ""].filter(Boolean).join(" ");
+    if (minutes > 0) return [unit(minutes, "minute"), rest > 0 ? unit(rest, "second") : ""].filter(Boolean).join(" ");
+    return unit(rest, "second");
+  }
+  const statusKeys = new Set(["active", "paused", "blocked", "complete"]);
   const empty = Object.freeze({ goal: null, error: "", loaded: false });
   const cache = new Map();
   const listeners = new Map();
@@ -48,14 +75,14 @@ export async function activate(api) {
     }
   });
   function GoalIcon() {
-    return h("svg", { width: 16, height: 16, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, "aria-hidden": true },
+    return h("svg", { width: 16, height: 16, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.75, "aria-hidden": true },
       h("circle", { cx: 12, cy: 12, r: 9 }), h("circle", { cx: 12, cy: 12, r: 4 }), h("circle", { cx: 12, cy: 12, r: 1, fill: "currentColor", stroke: "none" }));
   }
   function ActionIcon({ kind }) {
     const paths = { send: "M12 19V5m-6 6 6-6 6 6", pause: "M9 5v14M15 5v14", resume: "m8 5 11 7-11 7Z", end: "m6 6 12 12M18 6 6 18" };
-    return h("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true }, h("path", { d: paths[kind] }));
+    return h("svg", { width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.75, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true }, h("path", { d: paths[kind] }));
   }
-  function Controls({ threadId, readOnly }) {
+  function Controls({ threadId, readOnly, tr, locale }) {
     const state = React.useSyncExternalStore(
       React.useCallback((listener) => subscribe(threadId, listener), [threadId]),
       React.useCallback(() => cache.get(threadId) || empty, [threadId]),
@@ -88,33 +115,33 @@ export async function activate(api) {
     if (!goal && !open) return null;
     return h(ComposerDrawer, {
       className: "plugin-goal",
-      "aria-label": "会话目标",
+      "aria-label": tr("goal.label"),
       expanded: open,
       onExpandedChange: setOpen,
-      toggleLabel: open ? "收起目标" : "展开目标",
+      toggleLabel: tr(open ? "goal.collapse" : "goal.expand"),
       tone: !goal || goal.status === "paused" || goal.status === "complete" ? "muted" : goal.status === "blocked" ? "warning" : "default",
       icon: h(GoalIcon),
       notice: visibleError ? h("p", { className: "plugin-goal-error", role: "alert" }, visibleError) : null,
       summary: h(React.Fragment, null,
-        h("span", { className: "plugin-goal-label", "data-status": goal?.status }, goal ? labels[goal.status] || goal.status : "设置目标"),
+        h("span", { className: "plugin-goal-label", "data-status": goal?.status }, goal ? (statusKeys.has(goal.status) ? tr(`goal.status.${goal.status}`) : goal.status) : tr("goal.set")),
         goal && !open ? h("span", { className: "plugin-goal-summary", title: goal.objective }, goal.objective) : null,
-        goal && !open ? h("span", { className: "plugin-goal-status" }, `· ${Math.floor(goal.time_used_seconds)} 秒`) : null,
+        goal && !open ? h("span", { className: "plugin-goal-status" }, `· ${formatDuration(goal.time_used_seconds, tr)}`) : null,
       ),
       actions: h(React.Fragment, null,
-        goal && !canCreate ? h(Button, { variant: "ghost", className: "plugin-goal-icon-button", "aria-label": active ? "暂停" : "继续", title: active ? "暂停" : "继续", disabled, onClick: () => void act(active ? "pause" : "resume") }, h(ActionIcon, { kind: active ? "pause" : "resume" })) : null,
-        goal ? h(Button, { variant: "ghost", className: "plugin-goal-icon-button", "aria-label": canCreate ? "清除目标" : "结束目标", title: canCreate ? "清除目标" : "结束目标", disabled, onClick: () => void act("clear") }, h(ActionIcon, { kind: "end" })) : null,
+        goal && !canCreate ? h(Button, { variant: "ghost", className: "plugin-goal-icon-button", "aria-label": tr(active ? "goal.pause" : "goal.resume"), title: tr(active ? "goal.pause" : "goal.resume"), disabled, onClick: () => void act(active ? "pause" : "resume") }, h(ActionIcon, { kind: active ? "pause" : "resume" })) : null,
+        goal ? h(Button, { variant: "ghost", className: "plugin-goal-icon-button", "aria-label": tr(canCreate ? "goal.clear" : "goal.end"), title: tr(canCreate ? "goal.clear" : "goal.end"), disabled, onClick: () => void act("clear") }, h(ActionIcon, { kind: "end" })) : null,
       ),
     },
       open ? h("div", { className: "plugin-goal-details" },
         goal ? h("div", { className: "plugin-goal-progress" },
           h("p", { className: "plugin-goal-objective" }, goal.objective),
-          h("p", { className: "plugin-goal-usage" }, `${goal.tokens_used} tokens · ${Math.floor(goal.time_used_seconds)} 秒`),
+          h("p", { className: "plugin-goal-usage" }, tr("goal.usage", { tokens: new Intl.NumberFormat(locale).format(goal.tokens_used || 0), duration: formatDuration(goal.time_used_seconds, tr) })),
         ) : null,
         canCreate ? h("form", { onSubmit: (event) => {
           event.preventDefault();
           if (!disabled && state.loaded && objective.trim()) void act("create_goal");
         } },
-          h(TextArea, { label: goal ? "新目标" : "目标", className: "plugin-goal-input", "aria-label": goal ? "新目标" : "目标", value: objective, rows: 2, autoFocus: true, disabled,
+          h(TextArea, { label: tr(goal ? "goal.next" : "goal.objective"), className: "plugin-goal-input", "aria-label": tr(goal ? "goal.next" : "goal.objective"), value: objective, rows: 2, autoFocus: true, disabled,
             onChange: (event) => setObjective(event.target.value),
             onKeyDown: (event) => {
               if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) {
@@ -124,7 +151,7 @@ export async function activate(api) {
           }),
           h("div", { className: "plugin-goal-footer" },
             h("span", { className: "plugin-goal-spacer" }),
-            h(Button, { variant: "primary", type: "submit", className: "plugin-goal-icon-button", "aria-label": "开始目标", title: "开始目标", disabled: disabled || !state.loaded || !objective.trim() }, h(ActionIcon, { kind: "send" })),
+            h(Button, { variant: "primary", type: "submit", className: "plugin-goal-submit", "aria-label": tr("goal.start"), title: tr("goal.start"), disabled: disabled || !state.loaded || !objective.trim() }, h(ActionIcon, { kind: "send" })),
           ),
         ) : null,
       ) : null,
@@ -132,29 +159,32 @@ export async function activate(api) {
   }
   api.registerSlot("composer.above", {
     id: "goal-controls", title: "目标", order: 20,
-    render: ({ threadId, mainConversation, readOnly }) => threadId && mainConversation
-      ? h(Controls, { key: threadId, threadId, readOnly }) : null,
+    render: ({ threadId, mainConversation, readOnly, translate, locale }) => threadId && mainConversation
+      ? h(Controls, { key: threadId, threadId, readOnly, tr: translate, locale }) : null,
   });
   api.registerStyle({ id: "goal-controls", css: `
-    .plugin-goal-label { font-weight:500; flex-shrink:0; }
-    .plugin-goal-label[data-status="blocked"] { color:var(--warning); }
+    /* The drawer's tone already marks a blocked goal on its symbol, so the
+     * label stays ink; status color on small text would miss contrast. */
+    .plugin-goal-label { flex-shrink:0; font-weight:var(--weight-medium); }
     .plugin-goal-summary { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink-soft); }
-    .plugin-goal-status { flex-shrink:0; font-size:var(--font-sm,12px); color:var(--ink-muted); }
-    .plugin-goal-details { display:grid; gap:10px; padding:4px 12px 12px; }
-    .plugin-goal-progress { display:grid; gap:6px; }
+    .plugin-goal-status { flex-shrink:0; color:var(--ink-muted); font-variant-numeric:tabular-nums; }
+    .plugin-goal-details { display:grid; gap:var(--space-2); padding:var(--space-1) var(--space-3) var(--space-3); }
+    .plugin-goal-progress { display:grid; gap:var(--space-1); }
     .plugin-goal-objective { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }
-    .plugin-goal-usage { margin:0; color:var(--ink-soft); font-size:var(--font-sm,12px); }
-    .plugin-goal-details form { display:grid; gap:10px; }
+    .plugin-goal-usage { margin:0; color:var(--ink-soft); font-variant-numeric:tabular-nums; }
+    .plugin-goal-details form { display:grid; gap:var(--space-2); }
     .plugin-goal-details .plugin-ui-field-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
-    .plugin-goal .plugin-goal-input { field-sizing:content; min-height:48px; max-height:160px; resize:none; padding:8px 0; border:0; border-radius:0; background:transparent; box-shadow:none; }
+    .plugin-goal .plugin-goal-input { field-sizing:content; min-height:48px; max-height:160px; resize:none; padding:var(--space-2) 0; border:0; border-radius:0; background:transparent; box-shadow:none; }
     .plugin-goal .plugin-goal-input:focus-visible { outline:none; box-shadow:none; }
-    .plugin-goal-footer .plugin-ui-button { min-height:30px; border-radius:16px; font-size:var(--font-sm,12px); }
-    .plugin-goal .plugin-goal-icon-button { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; width:28px; height:28px; min-height:28px; padding:0; border-radius:50%; }
-    .plugin-goal-footer { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+    /* Drawer actions match the host's composer drawer actions; the submit
+     * echoes the composer's round send button. */
+    .plugin-goal .plugin-goal-icon-button { display:inline-grid; place-items:center; flex-shrink:0; width:28px; height:28px; min-height:28px; padding:0; border-radius:var(--radius-sm); color:var(--ink-muted); }
+    .plugin-goal .plugin-goal-icon-button:not(:disabled):hover { color:var(--ink); }
+    .plugin-goal .plugin-goal-submit { display:inline-grid; place-items:center; width:28px; height:28px; min-height:28px; padding:0; border-radius:var(--radius-circle); }
+    .plugin-goal-footer { display:flex; align-items:center; gap:var(--space-2); }
     .plugin-goal-spacer { flex:1; }
-    .plugin-goal-error { margin:0; padding:8px 16px 12px; color:var(--danger); overflow-wrap:anywhere; }
+    .plugin-goal-error { margin:0; padding:var(--space-2) var(--space-3) var(--space-3); color:var(--danger); overflow-wrap:anywhere; }
     @media (max-width:480px) { .plugin-goal-status { display:none; } }
-    @media (pointer:coarse) { .plugin-goal .plugin-ui-button { min-height:44px; } }
-    @media (pointer:coarse) { .plugin-goal .plugin-goal-icon-button { width:44px; height:44px; } }
+    @media (pointer:coarse) { .plugin-goal .plugin-goal-icon-button, .plugin-goal .plugin-goal-submit { width:44px; height:44px; } }
   ` });
 }
