@@ -1581,9 +1581,10 @@
 .agent-block-with-action-slot > .agent-message-actions {
   min-height: calc(var(--conversation-message-action-size) + var(--conversation-answer-hover-action-gap));
   position: relative;
-  /* Inset the icon slightly from the prose axis for optical alignment while
-   * keeping the full button target and custom theme offset available. */
-  margin-inline-start: var(--wuu-message-actions-inline-offset, calc((var(--conversation-message-action-icon-size, 15px) - var(--conversation-message-action-size)) / 2 + 2px));
+  /* The first glyph's icon box sits on the prose edge, as toolbar glyphs do
+   * on the pane inset; the button's larger target reaches past it. Themes
+   * can still set their own offset. */
+  margin-inline-start: var(--wuu-message-actions-inline-offset, calc((var(--conversation-message-action-icon-size, 15px) - var(--conversation-message-action-size)) / 2));
   padding-top: var(--conversation-answer-hover-action-gap);
 }
 
