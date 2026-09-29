@@ -3,7 +3,7 @@ import { X } from "./WuuIcons";
 
 /**
  * The card for attachments without a visual thumbnail — folded long pastes,
- * PDFs and quoted passages: a glyph tile, a title, and one meta line. The
+ * PDFs and quoted passages: a glyph, a title, and one meta line. The
  * title always reserves the remove control's footprint, so revealing it on
  * hover never rewraps the text.
  */
