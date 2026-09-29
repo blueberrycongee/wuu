@@ -69,7 +69,7 @@ import type {
   FloatingMenuPlacement,
   PermissionMode
 } from "./ComposerTypes";
-import { COMPOSER_PROJECT_MENU_WIDTH } from "./ComposerTypes";
+import { COMPOSER_COMMAND_MENU_WIDTH, COMPOSER_PROJECT_MENU_WIDTH } from "./ComposerTypes";
 import { lastEffortForEngineModel } from "./DraftEngineMemory";
 import { engineLabel } from "./EngineDisplay";
 import { EngineIcon } from "./EngineIcons";
@@ -1510,6 +1510,13 @@ export function ComposerPlusButton({
   const [open, setOpen] = useState(false);
   const [openedFromEnd, setOpenedFromEnd] = useState(false);
   useFloatingMenuFocus(menuRef, "", open, openedFromEnd);
+  const menuWidth = open ? composerMenuWidth(COMPOSER_COMMAND_MENU_WIDTH) : COMPOSER_COMMAND_MENU_WIDTH;
+  const builtInCommands = commands.filter((command) => command.kind !== "skill");
+  const skillCommands = commands.filter((command) => command.kind === "skill");
+  const selectCommand = (command: ComposerSlashCommand): void => {
+    setOpen(false);
+    onSelectCommand(command);
+  };
 
   useEffect(() => {
     if (!open) {
@@ -1573,8 +1580,7 @@ export function ComposerPlusButton({
           placement="above"
           align="left"
           offset={4}
-          width={320}
-          matchAnchorWidth
+          width={menuWidth}
           mobileSheet={{ label: t("composer.plusMenu"), onClose: () => setOpen(false) }}
         >
           <div
@@ -1582,9 +1588,9 @@ export function ComposerPlusButton({
             className="composer-context-menu composer-plus-menu"
             role="menu"
             aria-label={t("composer.plusMenu")}
+            style={{ "--composer-menu-width": `${menuWidth}px` } as CSSProperties}
             onKeyDown={(event) => handleFloatingMenuKeyDown(event, () => setOpen(false), buttonRef.current)}
           >
-            <div className="composer-plus-menu-section" role="presentation">{t("composer.plusSectionAdd")}</div>
             {mobileAttachments ? (
               <ComposerMobileAttachmentChoices
                 onTakePhoto={() => {
@@ -1614,32 +1620,50 @@ export function ComposerPlusButton({
                 <span className="composer-plus-menu-item-desc">{t("composer.addAttachmentHint")}</span>
               </button>
             )}
-            <div className="composer-plus-menu-section" role="presentation">{t("composer.plusSectionCommands")}</div>
-            {commands.map((command) => (
-              <Tooltip content={command.disabledReason} key={command.id}>
-                <button
-                  role="menuitem"
-                  type="button"
-                  disabled={Boolean(command.disabledReason)}
-                  onClick={() => {
-                    setOpen(false);
-                    onSelectCommand(command);
-                  }}
-                >
-                  <SlashCommandIcon command={command} />
-                  <span className="composer-plus-menu-item-title">
-                    {command.kind === "skill" ? command.description : command.title}
-                  </span>
-                  <span className="composer-plus-menu-item-desc">
-                    {command.kind === "skill" ? command.title : command.description}
-                  </span>
-                </button>
-              </Tooltip>
-            ))}
+            <PlusMenuCommands label={t("composer.plusSectionCommands")} commands={builtInCommands} onSelect={selectCommand} />
+            <PlusMenuCommands label={t("composer.plusSectionSkills")} commands={skillCommands} onSelect={selectCommand} />
           </div>
         </FloatingMenuPortal>
       ) : null}
     </div>
+  );
+}
+
+// One group of the plus menu. A command's title leads and the slash command
+// that runs it trails like a shortcut; a skill is its name, which is already
+// what one types. The longer description waits in the tooltip.
+function PlusMenuCommands({
+  label,
+  commands,
+  onSelect
+}: {
+  label: string;
+  commands: ComposerSlashCommand[];
+  onSelect: (command: ComposerSlashCommand) => void;
+}): JSX.Element | null {
+  if (commands.length === 0) return null;
+  return (
+    <>
+      <div className="composer-plus-menu-section" role="presentation">{label}</div>
+      {commands.map((command) => (
+        <Tooltip content={command.disabledReason ?? command.description} key={command.id}>
+          <button
+            role="menuitem"
+            type="button"
+            disabled={Boolean(command.disabledReason)}
+            onClick={() => onSelect(command)}
+          >
+            <SlashCommandIcon command={command} />
+            <span className="composer-plus-menu-item-title">
+              {command.kind === "skill" ? command.name : command.title}
+            </span>
+            {command.kind === "skill" ? null : (
+              <span className="composer-plus-menu-item-desc">/{command.name}</span>
+            )}
+          </button>
+        </Tooltip>
+      ))}
+    </>
   );
 }
 

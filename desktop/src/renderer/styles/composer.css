@@ -1837,13 +1837,6 @@ html[data-focus-modality="keyboard"] :is(
   background: var(--menu-hover);
 }
 
-.slash-command-meta {
-  color: var(--ink-tertiary);
-  font-size: var(--font-xs);
-  letter-spacing: 0.03em;
-  white-space: nowrap;
-}
-
 .slash-command-empty {
   color: var(--ink-muted);
   font-size: var(--font-menu);
@@ -1913,11 +1906,12 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   flex: 0 0 auto;
 }
 
-/* The add panel is a continuation of the input card, with quiet rows. */
+/* The plus and slash menus are one compact card above the input: rows of a
+ * symbol, the command, and one quieter piece of text on the same line. */
 .composer-context-menu.composer-plus-menu {
-  width: 100%;
+  width: var(--composer-menu-width);
   max-height: min(
-    320px,
+    360px,
     var(--floating-menu-available-height, calc(100vh - 180px))
   );
   gap: 0;
@@ -1926,49 +1920,52 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
 }
 
 .composer-plus-menu-section {
-  padding: 6px 8px 4px;
-  color: var(--ink-muted);
+  padding: var(--space-3) var(--menu-item-padding-inline) var(--space-1);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-medium);
   line-height: var(--line-ui);
   user-select: none;
 }
 
-.composer-plus-menu-section:not(:first-child) {
-  padding-top: 10px;
-}
-
 .composer-context-menu.composer-plus-menu button {
   height: auto;
   min-height: var(--control-row-height);
-  gap: 8px;
+  gap: var(--menu-item-gap);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   line-height: var(--line-ui);
   border-radius: var(--radius-xs);
-  color: var(--ink-soft);
+  color: var(--ink);
   font-weight: var(--weight-medium);
 }
 
+.composer-plus-menu button > svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  color: var(--ink-soft);
+  stroke-width: 1.75;
+}
+
 .composer-plus-menu button .composer-plus-menu-item-title {
-  flex: 0 1 auto;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  overflow: visible;
-  color: inherit;
-  font-weight: inherit;
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .composer-plus-menu button .composer-plus-menu-item-desc {
   flex: 1 1 0%;
-  color: color-mix(in srgb, var(--ink-soft) 55%, var(--paper));
-  font-size: var(--font-xs);
+  color: var(--ink-tertiary);
   font-weight: var(--weight-regular);
 }
 
-.composer-plus-menu button svg {
-  width: var(--icon-size-sm);
-  height: var(--icon-size-sm);
-  stroke-width: 1.75;
+/* In the plus menu the title leads and gives way first, and the command that
+ * runs it trails at the row's end like a shortcut. */
+.composer-plus-menu:not(.slash-command-menu) button .composer-plus-menu-item-title {
+  flex: 1 1 auto;
+}
+
+.composer-plus-menu:not(.slash-command-menu) button .composer-plus-menu-item-desc {
+  flex: 0 0 auto;
+  max-width: 50%;
 }
 
 .composer-plus-button[aria-expanded="true"]::before {

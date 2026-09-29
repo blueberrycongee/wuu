@@ -14,6 +14,7 @@ import {
 import { ImagePreviewProvider } from "./ImagePreview";
 import { ConversationSplitPane } from "./ConversationSplitPane";
 import { permissionModeOption } from "./ComposerRuntimeMenus";
+import { COMPOSER_COMMAND_MENU_WIDTH } from "./ComposerTypes";
 import { translateCurrent } from "./i18n";
 import { WorkbenchConnectionContext } from "./WorkbenchConnectionContext";
 import { ComposerTokenGauge } from "./ComposerTokenGauge";
@@ -1757,7 +1758,8 @@ describe("Composer send control", () => {
     const menuBottom = window.innerHeight - parseFloat(slashLayer!.style.bottom);
     expect(menuBottom).toBeGreaterThan(shell.getBoundingClientRect().top);
     expect(menuBottom).toBeLessThanOrEqual(frame.getBoundingClientRect().top);
-    expect(slashLayer!.style.width).toBe(`${frame.getBoundingClientRect().width}px`);
+    expect(slashLayer!.querySelector<HTMLElement>(".slash-command-menu")?.style.getPropertyValue("--composer-menu-width"))
+      .toBe(`${COMPOSER_COMMAND_MENU_WIDTH}px`);
     expect(slashLayer!.style.left).toBe(`${frame.getBoundingClientRect().left}px`);
   });
 
@@ -1924,18 +1926,19 @@ describe("Composer send control", () => {
     });
     expect(plusButton?.getAttribute("aria-expanded")).toBe("true");
 
+    // A compact card on the input's leading edge, not a band as wide as the input.
     const menu = document.body.querySelector<HTMLElement>('[data-floating-menu-owner="composer-plus"]');
-    expect(menu?.style.width).toBe("640px");
+    expect(menu?.style.width).toBe("");
+    expect(menu?.querySelector<HTMLElement>(".composer-plus-menu")?.style.getPropertyValue("--composer-menu-width"))
+      .toBe(`${COMPOSER_COMMAND_MENU_WIDTH}px`);
     expect(menu?.style.left).toBe("80px");
     expect(menu?.style.bottom).toBe(`${window.innerHeight - 400 + 4}px`);
     expect(menu?.style.getPropertyValue("--floating-menu-available-height")).toBe("388px");
-    expect(menu?.querySelectorAll(".composer-plus-menu-section")).toHaveLength(2);
-    expect(menu?.textContent).toContain("添加");
-    expect(menu?.textContent).toContain("添加附件");
-    expect(menu?.textContent).toContain("图片或 PDF");
-    expect(menu?.textContent).toContain("命令");
-    expect(menu?.textContent).toContain("审查当前更改");
-    expect(menu?.textContent).not.toContain("打开斜杠命令");
+    // Every command row names the slash command that runs it.
+    const reviewRow = Array.from(menu?.querySelectorAll("button") ?? []).find(
+      (button) => button.textContent?.includes(translateCurrent("slash.review.title")),
+    );
+    expect(reviewRow?.querySelector(".composer-plus-menu-item-desc")?.textContent).toBe("/review");
 
     const attachmentItem = Array.from(menu?.querySelectorAll("button") ?? []).find(
       (button) => button.textContent?.includes("添加附件"),

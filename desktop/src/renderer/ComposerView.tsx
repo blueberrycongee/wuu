@@ -11,6 +11,7 @@ import {
   Split,
 } from "./WuuIcons";
 import {
+  type CSSProperties,
   type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -103,7 +104,7 @@ import type {
   ComposerWorktreeControl,
   PermissionMode
 } from "./ComposerTypes";
-import { COMPOSER_PROJECT_MENU_WIDTH, composerStatusIsLiveProgress, composerStatusText } from "./ComposerTypes";
+import { COMPOSER_COMMAND_MENU_WIDTH, COMPOSER_PROJECT_MENU_WIDTH, composerStatusIsLiveProgress, composerStatusText } from "./ComposerTypes";
 import type { WorkspacePanelView } from "./WorkspacePanels";
 import { ComposerRuntimeMeters } from "./ComposerRuntimeMeters";
 import { ComposerPresentation } from "./plugins/ComposerPresentation";
@@ -651,6 +652,7 @@ export function Composer({
     && slashDismissedValue !== prompt
   );
   const selectedSlashCommand = slashMenuOpen ? visibleSlashCommands[selectedSlashIndex] : undefined;
+  const commandMenuWidth = slashMenuOpen ? composerMenuWidth(COMPOSER_COMMAND_MENU_WIDTH) : COMPOSER_COMMAND_MENU_WIDTH;
   const slashMenuID = `composer-slash-commands-${variant}`;
   const { resetQueryHistoryNavigation, handleQueryHistoryKeyDown } = useComposerQueryHistory({
     disabled: readOnly || hasAttachments || hasCollapsedPromptBlocks,
@@ -1084,14 +1086,14 @@ export function Composer({
             placement="above"
             align="left"
             offset={variant === "hero" ? 10 : 8}
-            width={320}
-            matchAnchorWidth
+            width={commandMenuWidth}
           >
             <div
               className="composer-context-menu composer-plus-menu slash-command-menu"
               id={slashMenuID}
               role="listbox"
               aria-label={t("composer.slashCommands")}
+              style={{ "--composer-menu-width": `${commandMenuWidth}px` } as CSSProperties}
             >
               {visibleSlashCommands.length > 0 ? (
                 <div className="slash-command-list scrollbar-hidden">
