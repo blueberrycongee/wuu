@@ -31,7 +31,7 @@ export function ExecutionEnvironmentSettings({ value, disabled, onSave }: {
     const next = profiles[id] ?? { backend: "docker" as const, workspace: "/workspace" };
     setEditing(id); setName(id); setProfile({ ...next }); setCommand(JSON.stringify(next.command ?? [])); setError("");
   }
-  function field(key: "image" | "host" | "identity_file" | "workspace" | "worker" | "known_hosts_file" | "python" | "host_workspace", label: string): JSX.Element {
+  function field(key: "image" | "host" | "identity_file" | "workspace" | "worker" | "known_hosts_file" | "python" | "host_workspace" | "user", label: string): JSX.Element {
     return <SettingsRow title={label}><input className="settings-input" aria-label={label} disabled={locked}
       value={profile[key] ?? ""} onChange={(event) => setProfile({ ...profile, [key]: event.target.value })} /></SettingsRow>;
   }
@@ -79,6 +79,7 @@ export function ExecutionEnvironmentSettings({ value, disabled, onSave }: {
         <SettingsRow title={t("execution.port")}><input className="settings-input settings-input-num" aria-label={t("execution.port")} type="number" min={1} max={65535} disabled={locked} value={profile.port || ""} onChange={(event) => setProfile({ ...profile, port: Number(event.target.value) || undefined })} /></SettingsRow></> : null}
       {profile.backend === "docker" || profile.backend === "singularity" ? <>{field("host_workspace", t("execution.mount"))}{toggle("mount_read_only", t("execution.mountReadOnly"), t("execution.mountHint"))}</> : null}
       {profile.backend === "modal" || profile.backend === "daytona" || profile.backend === "vercel_sandbox" ? field("python", t("execution.python")) : null}
+      {profile.backend === "docker" ? field("user", t("execution.user")) : null}
       {field("workspace", t("execution.workspace"))}
       {field("worker", t("execution.worker"))}
       {toggle("shared", t("execution.shared"), t("execution.sharedHint"))}
@@ -86,8 +87,8 @@ export function ExecutionEnvironmentSettings({ value, disabled, onSave }: {
       {profile.backend !== "ssh" ? <SettingsRow title={t("execution.network")}><SelectMenu triggerClassName="settings-select-trigger" ariaLabel={t("execution.network")}
         value={profile.network || "enabled"} disabled={locked} onChange={(network) => setProfile({ ...profile, network: network as "enabled" | "none" })}
         options={[{ value: "enabled", label: t("execution.networkEnabled") }, { value: "none", label: t("execution.networkNone") }]} /></SettingsRow> : null}
-      {(["cpus", "memory_mb", "lifetime_seconds"] as const).filter((key) => key === "lifetime_seconds" || (profile.backend !== "ssh" && (key !== "memory_mb" || profile.backend !== "vercel_sandbox"))).map((key) => <SettingsRow key={key} title={t(`execution.${key}`)}>
-        <input className="settings-input settings-input-num" aria-label={t(`execution.${key}`)} type="number" min={0} disabled={locked} value={profile[key] || ""}
+      {([["cpus", "execution.cpus"], ["memory_mb", "execution.memoryMB"], ["lifetime_seconds", "execution.lifetimeSeconds"]] as const).filter(([key]) => key === "lifetime_seconds" || (profile.backend !== "ssh" && (key !== "memory_mb" || profile.backend !== "vercel_sandbox"))).map(([key, label]) => <SettingsRow key={key} title={t(label)}>
+        <input className="settings-input settings-input-num" aria-label={t(label)} type="number" min={0} disabled={locked} value={profile[key] || ""}
           onChange={(event) => setProfile({ ...profile, [key]: Number(event.target.value) || undefined })} />
       </SettingsRow>)}
       <SettingsRow title={t("execution.env")} description={t("execution.envHint")}><input className="settings-input" aria-label={t("execution.env")} disabled={locked}

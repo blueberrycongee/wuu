@@ -16,7 +16,7 @@ docker build -f containers/execution/Dockerfile -t wuu-execution:local .
 
 创建 Docker 配置，镜像填写 `wuu-execution:local`，工作目录填写 `/workspace`。镜像包含 Wuu、Git、ripgrep、Python 和 Node.js。项目所需的其他依赖可以添加到派生镜像。Docker 服务需要预先启动。
 
-工作目录初始为空，可以在环境中克隆仓库，也可以显式挂载本机目录。使用同一挂载目录的会话会共享其中的文件，即使容器彼此独立。只读挂载可以阻止容器修改该目录。本机项目与执行环境不会自动同步。桌面编辑器、终端和 Git 面板仍对应本机项目；请通过代理的文件、Git 和进程工具查看执行环境，通过展示产物预览结果。
+工作目录初始为空，可以在环境中克隆仓库，也可以显式挂载本机目录。使用同一挂载目录的会话会共享其中的文件，即使容器彼此独立。只读挂载可以阻止容器修改该目录。Linux 上挂载目录默认使用宿主用户和用户组，以保留文件归属；可通过容器用户字段覆盖。本机项目与执行环境不会自动同步。桌面编辑器、终端和 Git 面板仍对应本机项目；请通过代理的文件、Git 和进程工具查看执行环境，通过展示产物预览结果。
 
 ## 后端
 
@@ -73,7 +73,7 @@ Linux 命令写入限制需要 Landlock ABI 3 或更新版本。若不可用，�
 }
 ```
 
-可选字段包括 `shared`、`host_workspace`、`mount_read_only`、`forward_env`、`worker`、`lifetime_seconds`、`python`，以及 SSH 的 `host`、`port`、`identity_file`、`known_hosts_file`。命令适配器在 `command` 中填写可执行程序及参数组成的数组。适配器是受信任的本机程序，拥有 Wuu 的宿主权限。
+可选字段包括 `shared`、`user`、`host_workspace`、`mount_read_only`、`forward_env`、`worker`、`lifetime_seconds`、`python`，以及 SSH 的 `host`、`port`、`identity_file`、`known_hosts_file`。命令适配器在 `command` 中填写可执行程序及参数组成的数组。适配器是受信任的本机程序，拥有 Wuu 的宿主权限。
 
 ## 可重复验证
 

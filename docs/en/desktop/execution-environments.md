@@ -16,7 +16,7 @@ docker build -f containers/execution/Dockerfile -t wuu-execution:local .
 
 Create a Docker profile with image `wuu-execution:local` and workspace `/workspace`. The image includes Wuu, Git, ripgrep, Python and Node.js. Dependencies needed by your project can be added in a derived image. The Docker service must already be running.
 
-The workspace starts empty. Clone a repository inside it or explicitly mount a host workspace directory. A mounted directory is shared between every conversation that uses that directory, even when their containers are separate. Use the read-only mount option to prevent container writes to it. Nothing is copied automatically between the local project and the environment. Desktop editor, terminal and Git panels continue to refer to the local project; use the agent’s file, Git and process tools to inspect the environment, and publish artifacts to preview results.
+The workspace starts empty. Clone a repository inside it or explicitly mount a host workspace directory. A mounted directory is shared between every conversation that uses that directory, even when their containers are separate. Use the read-only mount option to prevent container writes to it. On Linux, mounted workspaces default to the host user and group to preserve file ownership; the optional container user overrides this choice. Nothing is copied automatically between the local project and the environment. Desktop editor, terminal and Git panels continue to refer to the local project; use the agent’s file, Git and process tools to inspect the environment, and publish artifacts to preview results.
 
 ## Backends
 
@@ -75,7 +75,7 @@ Profiles are user-owned. Project configuration cannot install or override execut
 }
 ```
 
-Optional fields include `shared`, `host_workspace`, `mount_read_only`, `forward_env`, `worker`, `lifetime_seconds`, `python`, and SSH `host`, `port`, `identity_file`, `known_hosts_file`. A command adapter uses an executable-and-arguments array in `command`. Adapters are trusted local programs; selecting one grants it the host permissions of Wuu.
+Optional fields include `shared`, `user`, `host_workspace`, `mount_read_only`, `forward_env`, `worker`, `lifetime_seconds`, `python`, and SSH `host`, `port`, `identity_file`, `known_hosts_file`. A command adapter uses an executable-and-arguments array in `command`. Adapters are trusted local programs; selecting one grants it the host permissions of Wuu.
 
 ## Reproducible validation
 
