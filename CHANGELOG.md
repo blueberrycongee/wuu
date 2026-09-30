@@ -31,6 +31,19 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Editing a message after context compaction now retracts the selected message
   and following messages, preserving the correct conversation on resume and fork.
+- Honor PreCompact and PostCompact hooks when resetting context windows, and
+  preserve the active history when a hook rejects overflow recovery.
+
+- Recover Responses WebSocket follow-ups when the provider loses the cached
+  previous response, resending full conversation history within existing retry
+  limits and tool replay safeguards.
+
+- Stop reasoning and partial-answer streaming indicators when a turn ends,
+  retaining received text and discarding unfinished tool drafts.
+
+- Keep desktop text diffs readable when file contents mention Git binary markers.
+- Show Git patches for oversized text previews and submodule changes instead of
+  comparing incomplete or unavailable file contents.
 
 - Harden MCP transport compatibility, request timeouts, OAuth refresh recovery,
   local server cleanup, bounded reads, catalog refreshes, and oversized results.

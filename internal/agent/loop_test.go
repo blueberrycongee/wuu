@@ -1926,6 +1926,61 @@ func TestRunToolLoop_CompactLifecycleCallbacksWrapProactiveAndReactive(t *testin
 	}
 }
 
+func TestRunToolLoop_OverflowCompactHookRejectionStopsRecovery(t *testing.T) {
+	for _, stage := range []string{"pre", "post", "post-summary-failure", "summary-failure-control"} {
+		t.Run(stage, func(t *testing.T) {
+			overflow := providers.NewProviderStreamError("context_length_exceeded", "")
+			step := &fakeStep{results: []StepResult{{}, {Content: "must not run"}}, errs: []error{overflow, nil}}
+			hookErr := errors.New("checkpoint must remain active")
+			var summaryErr error
+			if stage == "post-summary-failure" || stage == "summary-failure-control" {
+				summaryErr = errors.New("summary unavailable")
+			}
+			var attempts []CompactAttemptInfo
+			compactCalls := 0
+			cfg := LoopConfig{
+				Model: "test",
+				Compact: func(_ context.Context, messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
+					compactCalls++
+					return messages[len(messages)-1:], summaryErr
+				},
+				BeforeCompact: func(context.Context, CompactReason) error {
+					if stage == "pre" {
+						return hookErr
+					}
+					return nil
+				},
+				AfterCompact: func(_ context.Context, _ CompactReason, err error) error {
+					if !errors.Is(err, summaryErr) {
+						t.Fatalf("post hook received %v, want %v", err, summaryErr)
+					}
+					if stage == "summary-failure-control" {
+						return nil
+					}
+					return hookErr
+				},
+				OnCompactAttempt: func(info CompactAttemptInfo) { attempts = append(attempts, info) },
+			}
+			history := append(fallbackHistory(), userMsg("continue"))
+			result, err := RunToolLoop(context.Background(), history, cfg, step)
+			if stage == "summary-failure-control" {
+				if err != nil || len(step.calls) != 2 || !result.HistoryRewritten || len(step.calls[1].Messages) >= len(history) {
+					t.Fatalf("summary failure did not recover: err=%v requests=%d rewritten=%v", err, len(step.calls), result.HistoryRewritten)
+				}
+			} else if !errors.Is(err, hookErr) || len(step.calls) != 1 || result.HistoryRewritten || len(result.NewMessages) != 0 {
+				t.Fatalf("hook rejection was bypassed: err=%v requests=%d rewritten=%v new=%d", err, len(step.calls), result.HistoryRewritten, len(result.NewMessages))
+			}
+			wantCompactCalls := 1
+			if stage == "pre" {
+				wantCompactCalls = 0
+			}
+			if compactCalls != wantCompactCalls || len(attempts) != 1 || attempts[0].Status != CompactAttemptFailed {
+				t.Fatalf("compact calls=%d attempts=%+v", compactCalls, attempts)
+			}
+		})
+	}
+}
+
 func TestRunToolLoop_OverflowCompactFailureEmitsAttempt(t *testing.T) {
 	overflow := &providers.HTTPError{StatusCode: 400, Body: "context_length_exceeded", ContextOverflow: true}
 	step := &fakeStep{results: []StepResult{{}}, errs: []error{overflow}}
