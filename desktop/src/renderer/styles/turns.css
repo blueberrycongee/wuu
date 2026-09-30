@@ -77,10 +77,8 @@
   --project-empty-content-color: var(--wuu-color-text-muted, var(--gray-600));
   --project-empty-actions-border: var(--wuu-border-subtle, var(--hairline));
   --project-empty-actions-hover-bg: var(--gray-50);
-  --diff-insert-bg: rgba(18, 161, 80, 0.08);
-  --diff-insert-text-color: var(--wuu-color-success, #0a6b34);
-  --diff-delete-bg: rgba(207, 46, 46, 0.08);
-  --diff-delete-text-color: var(--wuu-color-danger, #a82525);
+  --diff-insert-bg: color-mix(in srgb, var(--success) 8%, transparent);
+  --diff-delete-bg: color-mix(in srgb, var(--danger) 8%, transparent);
   --artifact-preview-overlay-bg: rgba(8, 10, 12, 0.78);
   --artifact-preview-shell-border: rgba(255, 255, 255, 0.14);
   --artifact-preview-frame-bg: #fff;
@@ -4732,7 +4730,7 @@ pre {
 }
 
 .tool-diff-line-insert .tool-diff-line-content {
-  color: var(--diff-insert-text-color);
+  color: var(--diff-insert-color);
 }
 
 .tool-diff-line-delete {
@@ -4740,7 +4738,7 @@ pre {
 }
 
 .tool-diff-line-delete .tool-diff-line-content {
-  color: var(--diff-delete-text-color);
+  color: var(--diff-delete-color);
 }
 
 .tool-diff-line-equal {

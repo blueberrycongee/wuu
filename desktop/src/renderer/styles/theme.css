@@ -159,7 +159,6 @@
   --hljs-tag: var(--wuu-syntax-tag, #e39aa0);
   --hljs-literal: var(--wuu-syntax-literal, #b0a0e8);
   --hljs-meta: var(--wuu-syntax-meta, #98a1a9);
-  --diff-delete-bg: #2c1a18;
   --review-overlay-bg: rgba(18, 20, 22, 0.92);
   --codex-runtime-trigger-icon: var(--wuu-color-text-muted, #8f959a);
 
@@ -180,7 +179,6 @@
 
   /* environment.css */
   /* Dialog text follows the shared ink ladder. */
-  --env-deletions-text: var(--wuu-color-danger, #f0705f);
   --env-create-branch-btn-bg: var(--surface-2);
   --env-search-clear-btn-text: var(--ink-soft);
   --env-search-clear-btn-hover-bg: var(--surface-2);
@@ -255,8 +253,8 @@
   --activity-toggle-hover-color: var(--gray-700);
   --activity-toggle-hover-color-alt: var(--wuu-color-text-muted, var(--gray-650));
   --activity-detail-color: var(--wuu-color-text-muted, #989ea3);
-  --diff-insert-color: var(--wuu-color-success, #3fb970);
-  --diff-delete-color: var(--wuu-color-danger, #ef6a5e);
+  --diff-insert-color: var(--success);
+  --diff-delete-color: var(--danger);
   --rich-link-color: var(--wuu-color-link, #60a5fa);
   --rich-link-hover-color: var(--wuu-color-link-hover, #79b8ff);
   --message-flow-card-bg: var(--surface-1);
@@ -274,10 +272,8 @@
   --project-empty-content-color: var(--wuu-color-text-muted, #989ea3);
   --project-empty-actions-border: var(--wuu-border-subtle, var(--hairline));
   --project-empty-actions-hover-bg: #24282c;
-  --diff-insert-bg: rgba(63, 185, 112, 0.12);
-  --diff-insert-text-color: var(--wuu-color-success, #4cc38a);
-  --diff-delete-bg: rgba(239, 106, 94, 0.12);
-  --diff-delete-text-color: var(--wuu-color-danger, #f0857a);
+  --diff-insert-bg: color-mix(in srgb, var(--success) 12%, transparent);
+  --diff-delete-bg: color-mix(in srgb, var(--danger) 12%, transparent);
   /* conversation-shell.css */
   --shell-process-control-color: var(--ink-tertiary);
   --shell-session-tab-active-bg: var(--surface-3);

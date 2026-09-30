@@ -2,7 +2,6 @@
    overrides these in base.css theme blocks. */
 :root {
   /* Dialog text follows the shared ink ladder. */
-  --env-deletions-text: var(--wuu-color-danger, #c42020);
   --env-create-branch-btn-bg: var(--surface-2);
   --env-search-clear-btn-text: var(--ink-soft);
   --env-search-clear-btn-hover-bg: var(--surface-2);
@@ -386,7 +385,7 @@
 }
 
 .deletions {
-  color: var(--env-deletions-text);
+  color: var(--danger);
 }
 
 /* The past-query list is a shared menu panel. The rail keeps focus, so the
