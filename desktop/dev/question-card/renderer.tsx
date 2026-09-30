@@ -1,8 +1,8 @@
 // Production UserQuestionCard with synthetic requests; nothing is sent. It covers
 // the real Composer as an offer, or sits in the reading flow with `inline`.
 // Params: theme=dark, size=20, lang=en, width=560, inline, two (a second
-// question, inline only), approval (an engine command approval), long, multi,
-// expires (a 45 s offer countdown).
+// question), approval (an engine command approval), long, multi, expires (a
+// 45 s offer countdown).
 import { createRoot } from "react-dom/client";
 import { Composer, type CodexModelLoadState } from "../../src/renderer/ComposerView";
 import { useComposerDraftState } from "../../src/renderer/ComposerDraftState";
@@ -64,7 +64,7 @@ const request: UserQuestionRequest = {
   mode: inline ? "ask" : "offer",
   created_at: new Date().toISOString(),
   expires_at: params.has("expires") && !approval ? new Date(Date.now() + 45_000).toISOString() : undefined,
-  questions: approval ? [approvalQuestion] : inline && params.has("two") ? [scopeQuestion, toneQuestion] : [scopeQuestion],
+  questions: approval ? [approvalQuestion] : params.has("two") ? [scopeQuestion, toneQuestion] : [scopeQuestion],
 };
 const card = <UserQuestionCard request={request} onAnswer={async () => {}} onCancel={async () => {}} onHold={async () => {}} onCustom={noop} />;
 
