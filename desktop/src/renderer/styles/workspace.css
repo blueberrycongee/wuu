@@ -1909,6 +1909,19 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   min-height: 0;
   place-items: center;
   overflow: auto;
+  background: var(--paper);
+  padding: var(--space-6);
+}
+
+/* The transparency grid sits behind the image only, where it tells
+ * transparent pixels apart; the panel around it stays paper. */
+.workspace-file-image-preview img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: 100%;
+  object-fit: contain;
   background:
     linear-gradient(45deg, var(--surface-2) 25%, transparent 25%),
     linear-gradient(-45deg, var(--surface-2) 25%, transparent 25%),
@@ -1921,17 +1934,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
     10px -10px,
     -10px 0;
   background-size: 20px 20px;
-  padding: 24px;
-}
-
-.workspace-file-image-preview img {
-  display: block;
-  width: auto;
-  max-width: 100%;
-  height: auto;
-  max-height: 100%;
-  object-fit: contain;
-  box-shadow: var(--shadow-card);
 }
 
 .workspace-file-pdf-preview {
