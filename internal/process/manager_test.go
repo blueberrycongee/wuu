@@ -5,9 +5,11 @@ package process
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -340,6 +342,129 @@ func TestStopStopsProcessGroup(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 		if err := proc.Signal(syscall.Signal(0)); err == nil {
 			t.Fatal("process still alive after stop")
+		}
+	}
+}
+
+func TestStopKillsDescendantsAfterLeaderExit(t *testing.T) {
+	for _, mode := range []string{"pipe", "tty", "adopted"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			m, err := NewManager(root, filepath.Join(root, "runtime"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The child announces readiness only after installing its signal
+			// handlers. It also inherits stdout to exercise adopted pipe readers.
+			command := `
+trap 'printf cleaned > cleanup; exit 0' TERM
+sh -c 'trap "" TERM HUP; echo $$ > child.pid; touch ready; while :; do sleep 1; done' &
+wait
+`
+			var p *Process
+			if mode == "adopted" {
+				id, logPath := m.ReserveProcessLog()
+				logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = logf.Close() })
+				cmd := mustManagedCommand(t, command, root)
+				cmd.Stdout = io.MultiWriter(io.Discard, logf)
+				cmd.Stderr = logf
+				handle, err := StartCommand(cmd)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					_ = handle.tree.Kill()
+					_ = handle.Wait()
+				})
+				p, err = m.Adopt(id, cmd, handle, logf, AdoptOptions{
+					Command: command, CWD: root, OwnerKind: OwnerMainAgent, OwnerID: "main", Lifecycle: LifecycleManaged,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				p, err = m.Start(context.Background(), StartOptions{
+					Command: command, OwnerKind: OwnerMainAgent, OwnerID: "main", Lifecycle: LifecycleManaged, TTY: mode == "tty",
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			m.mu.Lock()
+			monitor := m.handles[p.ID]
+			m.mu.Unlock()
+			t.Cleanup(func() {
+				_ = ProcessTreeFromID(p.PGID).Kill()
+				waitForProcessMonitor(monitor)
+			})
+			waitForTestFile(t, filepath.Join(root, "ready"))
+			childText, err := os.ReadFile(filepath.Join(root, "child.pid"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			childPID, err := strconv.Atoi(strings.TrimSpace(string(childText)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if pgid, err := syscall.Getpgid(childPID); err != nil || pgid != p.PGID {
+				t.Fatalf("child process group = %d, want %d: %v", pgid, p.PGID, err)
+			}
+
+			stopDone := make(chan error, 1)
+			started := time.Now()
+			go func() {
+				_, err := m.Stop(p.ID)
+				stopDone <- err
+			}()
+			select {
+			case err := <-stopDone:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("stop did not finish after the leader exited; a descendant may still hold stdout open")
+			}
+			stopped, err := m.Get(p.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stopped.Status != StatusStopped || stopped.TerminalCause != EventCauseRequestedStop || stopped.ExitCode != 0 {
+				t.Fatalf("TERM-aware leader did not exit cleanly after stop: %+v", stopped)
+			}
+			if _, err := os.Stat(filepath.Join(root, "cleanup")); err != nil {
+				t.Fatalf("leader's SIGTERM cleanup did not run: %v", err)
+			}
+			waitForProcessExit(t, childPID)
+			t.Logf("stop completed in %s; leader %d and descendant %d exited", time.Since(started), p.PID, childPID)
+		})
+	}
+}
+
+func TestStopDoesNotSignalTerminalRecords(t *testing.T) {
+	root := t.TempDir()
+	m, err := NewManager(root, filepath.Join(root, "runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd, pgid, _ := startExternalProcessGroup(t, root)
+	identity, _, _, err := readProcessIdentity(cmd.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []Status{StatusStopped, StatusFailed} {
+		record := &Process{ID: "proc-terminal", Status: status, PID: cmd.Process.Pid, PGID: pgid, ProcessStartTime: identity}
+		if err := m.save(record); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.Stop(record.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+			t.Fatalf("stopping a %s record signaled a live process: %v", status, err)
 		}
 	}
 }

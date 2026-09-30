@@ -28,6 +28,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Respect named `@@` context in file patches so edits cannot silently target
   matching code before that context; reject missing or ambiguous context before
   writing.
+- Stopping a background command now kills remaining child processes after its
+  parent exits, including children that could leave a promoted command's stop
+  request waiting indefinitely for output pipes to close.
 
 - Editing a message after context compaction now retracts the selected message
   and following messages, preserving the correct conversation on resume and fork.
