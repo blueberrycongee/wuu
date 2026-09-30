@@ -24,7 +24,7 @@ Wuu 桌面端把界面外观收敛为一组公开的 CSS 自定义属性（desig
 ## Token 一览
 
 合同共定义 **82 个公开 token**（其中 **7 个**
-旧名称兼容别名）与 **16 个语法高亮 token**；当前 **53 个**
+旧名称兼容别名）与 **16 个语法高亮 token**；当前 **54 个**
 已接入宿主界面。「已接入」表示宿主样式已在引用该 token，覆盖会立即生效；
 「未接入（预留）」表示 token 已声明但宿主尚未引用，覆盖暂不改变任何界面。
 
@@ -62,7 +62,7 @@ Wuu 桌面端把界面外观收敛为一组公开的 CSS 自定义属性（desig
 | `--wuu-control-secondary-background` | 次级控件背景 | 已接入 |
 | `--wuu-control-field-background` | 输入域背景 | 已接入 |
 | `--wuu-control-icon-background` | 图标按钮背景 | 已接入 |
-| `--wuu-badge-neutral-background` | 中性徽标背景 | 已接入 |
+| `--wuu-badge-neutral-background` | 中性徽标背景 | 未接入（预留） |
 | `--wuu-inline-code-background` | 行内代码背景 | 已接入 |
 | `--wuu-message-user-background` | 用户消息气泡背景 | 已接入 |
 | `--wuu-message-user-color` | 用户消息文字颜色 | 已接入 |
@@ -93,8 +93,8 @@ Wuu 桌面端把界面外观收敛为一组公开的 CSS 自定义属性（desig
 | --- | --- | --- |
 | `--wuu-font-family-ui` | 界面字体族 | 未接入（预留） |
 | `--wuu-font-family-mono` | 等宽字体族（代码） | 未接入（预留） |
-| `--wuu-font-size-ui` | 界面字号 | 未接入（预留） |
-| `--wuu-font-size-body` | 正文（消息等大段文字）字号 | 未接入（预留） |
+| `--wuu-font-size-ui` | 界面字号 | 已接入 |
+| `--wuu-font-size-body` | 正文（消息等大段文字）字号 | 已接入 |
 | `--wuu-line-height-body` | 正文行高 | 未接入（预留） |
 
 ### 间距
