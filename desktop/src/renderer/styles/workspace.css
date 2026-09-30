@@ -954,7 +954,7 @@ html.resizing-workspace-file-split * {
   margin-right: 0;
 }
 
-/* Beside a document the tree can move to the other side: the handle ends the
+/* Beside a document the tree can move to the other side: the button ends the
  * search row, in the column the field leaves free for it. */
 .workspace-file-tree-drag-handle {
   display: grid;
@@ -966,9 +966,8 @@ html.resizing-workspace-file-split * {
   height: var(--control-field-height);
   place-items: center;
   border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--ink-tertiary);
-  cursor: grab;
-  user-select: none;
   -webkit-app-region: no-drag;
   transition:
     background var(--motion-fast) var(--ease-out),
@@ -979,10 +978,6 @@ html.resizing-workspace-file-split * {
 .workspace-file-tree-drag-handle:focus-visible {
   background: var(--ink-overlay-4);
   color: var(--ink);
-}
-
-.workspace-file-tree-drag-handle:active {
-  cursor: grabbing;
 }
 
 .workspace-file-tree-drag-preview {

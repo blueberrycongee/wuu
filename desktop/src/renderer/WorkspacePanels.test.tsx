@@ -633,6 +633,13 @@ describe("WorkspaceRightPanel", () => {
     expect(split.dataset.treeSide).toBe("left");
     expect(window.localStorage.getItem("wuu.desktop.fileTreeSide")).toBe("left");
 
+    // The same control moves the tree across without a drag.
+    act(() => tree.querySelector<HTMLButtonElement>(".workspace-file-tree-drag-handle")!.click());
+    expect(split.dataset.treeSide).toBe("right");
+    expect(window.localStorage.getItem("wuu.desktop.fileTreeSide")).toBe("right");
+    act(() => tree.querySelector<HTMLButtonElement>(".workspace-file-tree-drag-handle")!.click());
+    expect(split.dataset.treeSide).toBe("left");
+
     act(() => {
       separator.dispatchEvent(
         new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 320 }),

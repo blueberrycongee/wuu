@@ -41,7 +41,9 @@ import {
   GripHorizontal,
   Maximize2,
   Minimize2,
+  PanelLeft,
   PanelLeftOpen,
+  PanelRight,
   PanelRightOpen,
   Plus,
   ShieldCheck,
@@ -299,6 +301,7 @@ export function WorkspaceRightPanel({
   // saved choice.
   const fileTreeShown = compactNavigation || activeTab?.kind === "files" || fileTreeDocked;
   const fileTreeBesideDocument = activeTab?.kind === "file" && fileTreeDocked && !compactNavigation;
+  const moveFileTreeLabel = t(fileTreeSide === "right" ? "workspace.moveFileTreeLeft" : "workspace.moveFileTreeRight");
   const [draggingFileTree, setDraggingFileTree] = useState(false);
   const [fileTreeDropSide, setFileTreeDropSide] = useState<WorkspaceFileTreeSide | undefined>(undefined);
   const [bodyPrewarmed, setBodyPrewarmed] = useState(false);
@@ -514,7 +517,7 @@ export function WorkspaceRightPanel({
     setFileTreeVisible(visible);
   }
 
-  function startFileTreeDockDrag(event: ReactDragEvent<HTMLDivElement>): void {
+  function startFileTreeDockDrag(event: ReactDragEvent<HTMLElement>): void {
     const dragPreview = fileTreeDragPreviewRef.current;
     if (!dragPreview) {
       return;
@@ -560,7 +563,7 @@ export function WorkspaceRightPanel({
     finishFileTreeDockDrag();
   }
 
-  function handleFileTreeDockKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+  function handleFileTreeDockKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       event.preventDefault();
       moveFileTree(event.key === "ArrowLeft" ? "left" : "right");
@@ -920,21 +923,23 @@ export function WorkspaceRightPanel({
                 hidden={!fileTreeShown}
                 ref={fileTreeRef}
               >
-                {/* Docking sides only mean something beside a document. */}
+                {/* Docking sides only mean something beside a document: the
+                    button moves the tree across, and can also be dragged. */}
                 {fileTreeBesideDocument ? (
-                  <div
-                    className="workspace-file-tree-drag-handle"
-                    role="button"
-                    tabIndex={0}
-                    draggable
-                    aria-label={t("workspace.dragFileTree")}
-                    title={t("workspace.dragFileTree")}
-                    onDragStart={startFileTreeDockDrag}
-                    onDragEnd={finishFileTreeDockDrag}
-                    onKeyDown={handleFileTreeDockKeyDown}
-                  >
-                    <GripHorizontal className="icon-sm" />
-                  </div>
+                  <Tooltip content={moveFileTreeLabel} side="bottom">
+                    <button
+                      className="workspace-file-tree-drag-handle"
+                      type="button"
+                      draggable
+                      aria-label={moveFileTreeLabel}
+                      onClick={() => moveFileTree(fileTreeSide === "right" ? "left" : "right")}
+                      onDragStart={startFileTreeDockDrag}
+                      onDragEnd={finishFileTreeDockDrag}
+                      onKeyDown={handleFileTreeDockKeyDown}
+                    >
+                      {fileTreeSide === "right" ? <PanelLeft className="icon" /> : <PanelRight className="icon" />}
+                    </button>
+                  </Tooltip>
                 ) : null}
                 <WorkspaceFileTree
                   activeContext={workspaceContext}
