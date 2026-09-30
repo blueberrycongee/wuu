@@ -11,9 +11,12 @@ describe("video attachments", () => {
     const pasted = clipboardAttachmentFiles(event);
     expect(pasted).toEqual([file]);
     const attached = vi.fn();
-    await buildComposerAttachments(pasted, vi.fn(), vi.fn(), attached);
+    await buildComposerAttachments(pasted, {
+      onImagePlaceholder: vi.fn(), onImageEncoded: vi.fn(),
+      onFilePlaceholder: vi.fn(), onFileEncoded: attached,
+    });
     expect(attached).toHaveBeenCalledOnce();
-    expect(attached.mock.calls[0][0]).toMatchObject({ filename: "clip.mp4", media_type: "video/mp4", data: "AAECAw==" });
+    expect(attached.mock.calls[0][1]).toMatchObject({ filename: "clip.mp4", media_type: "video/mp4", data: "AAECAw==" });
   });
 
   it("rejects oversized video before allocating its byte buffer", async () => {

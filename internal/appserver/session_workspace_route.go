@@ -82,3 +82,26 @@ func sessionWorkspacePath(root string) string {
 	}
 	return filepath.Clean(root)
 }
+
+// Relocation follows only an exact former project root. Linked worktrees and
+// deliberately different execution directories retain their own binding.
+func relocatedSessionMetadata(m session.Session, registered []workspaces.Workspace) session.Session {
+	if m.WorkspaceID == "" {
+		return m
+	}
+	for _, workspace := range registered {
+		if workspace.ID != m.WorkspaceID {
+			continue
+		}
+		for _, previous := range workspace.PreviousPaths {
+			if m.WorktreePath == "" && filepath.Clean(m.CWD) == filepath.Clean(previous) {
+				m.CWD = workspace.Root
+			}
+			if m.WorktreeBaseRepo != "" && filepath.Clean(m.WorktreeBaseRepo) == filepath.Clean(previous) {
+				m.WorktreeBaseRepo = workspace.Root
+			}
+		}
+		break
+	}
+	return m
+}
