@@ -232,19 +232,17 @@ describe("FirstRunOnboarding", () => {
     expect(container.textContent).not.toContain("正在准备随包插件");
     const selectedPlugins = () => [...container.querySelectorAll(".onboarding-plugin[aria-pressed=true] strong")]
       .map((node) => node.textContent);
-    expect(selectedPlugins()).toEqual(["todo", "automation"]);
+    expect(selectedPlugins()).toEqual(["automation"]);
     expect(container.querySelector(".onboarding-presets .is-selected")?.textContent).toBe("推荐");
     await clickButton("全部");
     expect(selectedPlugins()).toHaveLength(6);
     await clickButton("推荐");
-    expect(selectedPlugins()).toEqual(["todo", "automation"]);
+    expect(selectedPlugins()).toEqual(["automation"]);
     expect(props.onUpdateExtensionPackage).not.toHaveBeenCalled();
     await clickButton("继续");
     expect(props.onUpdateExtensionPackage).toHaveBeenCalledTimes(6);
-    for (const id of ["todo", "automation"]) {
-      expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: `plugin:bundled:${id}`, action: "enable" });
-    }
-    for (const id of ["ask-user", "subagent", "peers", "memory"]) {
+    expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: "plugin:bundled:automation", action: "enable" });
+    for (const id of ["ask-user", "todo", "subagent", "peers", "memory"]) {
       expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: `plugin:bundled:${id}`, action: "disable" });
     }
   });
