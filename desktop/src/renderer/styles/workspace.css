@@ -2932,7 +2932,8 @@ html[data-focus-modality="keyboard"] .workspace-diff-tree-row:focus-visible {
 .codex-effort-fill {
   position: absolute;
   inset: 0 auto 0 0;
-  width: var(--effort-at);
+  /* Extend beneath the knob so the maximum level fills the rounded end. */
+  width: calc(var(--effort-at) + (var(--effort-knob) / 2 + var(--effort-edge)) * var(--effort-ratio, 0));
   background: var(--interaction-accent);
   transition: width var(--motion-base) var(--ease-out);
 }
