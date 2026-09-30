@@ -1,16 +1,19 @@
+/* In the reading flow the card is framed like the other conversation cards;
+ * covering the composer, the composer's frame is its frame. */
 .user-question-card {
   box-sizing: border-box;
   margin: 4px 0 24px;
   padding: var(--card-padding);
-  border: 0;
+  border: 1px solid var(--message-flow-card-border);
   border-radius: var(--radius-lg);
-  background: var(--surface-1);
+  background: var(--message-flow-card-bg);
 }
 
 .composer-cover-accessory .user-question-card,
 .composer-top-accessory .user-question-card {
   margin: 0;
   width: 100%;
+  border: 0;
 }
 
 .user-question-after-turn {
@@ -37,26 +40,42 @@
   border-top: 1px solid var(--hairline-soft);
 }
 
+/* A short header labels the question; the question itself carries the
+ * card, and the options below read as body text. */
+.user-question-header {
+  margin: 0;
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+  line-height: 1.5;
+}
+
 .user-question-prompt {
   margin: 0;
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-medium);
   line-height: 1.5;
 }
 
-.user-question-body {
-  margin: 4px 0 0;
+:is(.user-question-header, .user-question-offer-title) + .user-question-prompt {
+  margin-top: var(--space-1);
+}
+
+.user-question-detail {
+  margin: var(--space-1) 0 0;
   color: var(--ink-soft);
   font-size: var(--font-ui);
   line-height: 1.55;
 }
 
-.user-question-detail {
-  margin: 4px 0 0;
-  color: var(--ink-soft);
-  font-size: var(--font-ui);
-  line-height: 1.55;
+.user-question-detail.is-code {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .user-question-options {
@@ -65,16 +84,20 @@
   margin-top: 10px;
 }
 
+/* Option marks sit on the card's text edge; the hover and selection fill
+ * reaches past it into the card padding. */
 .user-question-option {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   column-gap: 10px;
   align-items: start;
-  width: 100%;
+  width: calc(100% + 2 * var(--space-2));
   box-sizing: border-box;
-  padding: 9px 10px;
+  margin-inline: calc(-1 * var(--space-2));
+  padding: var(--space-2);
   border: 0;
-  border-radius: var(--radius-xs);
+  /* Concentric with the card: its corner less the fill's inset from it. */
+  border-radius: var(--radius-sm);
   color: var(--ink);
   background: transparent;
   text-align: left;
@@ -118,12 +141,7 @@
 
 .user-question-option-label {
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
   line-height: 1.45;
-}
-
-.user-question-option[data-active] .user-question-option-label {
-  font-weight: var(--weight-semibold);
 }
 
 .user-question-option-description {
@@ -143,7 +161,7 @@
   gap: 12px;
 }
 
-.user-question-offer-title .user-question-prompt {
+.user-question-offer-title > p {
   flex: 1;
   min-width: 0;
 }
@@ -181,9 +199,6 @@
 .user-question-option-offer {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  padding: 10px 8px 10px 6px;
-  border-radius: var(--radius-sm);
-  background: transparent;
 }
 
 .user-question-option-offer:hover,
@@ -194,8 +209,8 @@
 .user-question-option-index {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: max(24px, round(up, calc(var(--font-sm) * 1.75), 2px));
+  height: max(24px, round(up, calc(var(--font-sm) * 1.75), 2px));
   border-radius: var(--radius-circle);
   color: var(--ink-soft);
   background: var(--surface-2);
@@ -229,11 +244,12 @@
   margin-top: 8px;
 }
 
+/* The draft row is a field holding its submit button, its corner the
+ * button's plus the inset between them. */
 .user-question-offer-footer.is-drafting {
-  min-height: 40px;
-  padding: 4px 4px 4px 8px;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: calc(var(--radius-sm) + var(--space-1));
   background: var(--surface-2);
 }
 
@@ -257,7 +273,7 @@
   gap: 8px;
   min-width: 0;
   flex: 1;
-  padding: 8px 4px;
+  padding: var(--space-2) 0;
   border: 0;
   color: var(--ink-tertiary);
   background: transparent;
@@ -295,23 +311,8 @@
 }
 
 .user-question-skip {
-  display: inline-flex;
-  align-items: center;
   flex: none;
-  padding: 7px 14px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-pill);
-  color: var(--ink-soft);
-  background: var(--paper);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
   font-variant-numeric: tabular-nums;
-  cursor: pointer;
-}
-
-.user-question-skip:hover:not(:disabled) {
-  color: var(--ink);
-  background: var(--surface-2);
 }
 
 .user-question-custom {
@@ -359,60 +360,6 @@
   height: var(--icon-size);
 }
 
-.user-question-actions button {
-  display: inline-flex;
-  align-items: center;
-  padding: 7px 16px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-  cursor: pointer;
-  transition:
-    background-color var(--motion-fast) var(--ease-out),
-    opacity var(--motion-fast) var(--ease-out);
-}
-
-.user-question-actions button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.user-question-actions .user-question-cancel {
-  color: var(--ink-soft);
-  background: transparent;
-}
-
-.user-question-actions .user-question-cancel:hover:not(:disabled) {
-  color: var(--ink);
-  background: var(--ink-overlay-6);
-}
-
-.user-question-actions .user-question-submit,
-.user-question-offer-footer .user-question-submit {
-  color: var(--paper);
-  background: var(--ink);
-}
-
-.user-question-offer-footer .user-question-submit {
-  min-height: 32px;
-  padding: 0 14px;
-  border-radius: var(--radius-pill);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-}
-
-.user-question-actions .user-question-submit:hover:not(:disabled) {
-  background: var(--ink-strong);
-}
-
-.user-question-actions .user-question-submit:disabled,
-.user-question-offer-footer .user-question-submit:disabled {
-  color: var(--paper);
-  background: var(--ink);
-  opacity: 0.28;
-}
-
 .user-question-card button[aria-busy="true"]:disabled {
   opacity: 1;
 }
@@ -420,7 +367,7 @@
 .user-question-error {
   margin-right: auto;
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--font-xs);
 }
 
 :root {
