@@ -605,10 +605,6 @@
   white-space: nowrap;
 }
 
-.workspace-tool-tab.active .workspace-tool-tab-main > span:not(.workspace-tab-dirty-indicator) {
-  font-weight: var(--weight-semibold);
-}
-
 .workspace-tab-dirty-indicator {
   width: 6px;
   height: 6px;
