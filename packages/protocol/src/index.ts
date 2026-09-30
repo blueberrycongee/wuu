@@ -1766,6 +1766,8 @@ export type ThreadHandoffParams = {
 export type ThreadSearchResultItem = {
   thread: Thread;
   snippet?: string;
+  /** Stable address of the winning history message; absent for title and empty-query matches. */
+  message_seq?: number;
 };
 
 export type ThreadSearchResult = {

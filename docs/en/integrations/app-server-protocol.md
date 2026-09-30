@@ -54,6 +54,15 @@ remain invalid; this is recovery behavior, not downgrade compatibility.
 | `thread/list`, `thread/listAll`, `thread/listArchived`, `thread/search` | Method-specific filters | Session metadata |
 | `thread/rename`, `thread/pin`, `thread/archive`, `thread/delete` | Target and method-specific changes | Updated state or operation result |
 
+`thread/search` accepts `query` and `limit` (at most 100). Its `results` contain
+thread metadata, a `snippet`, and an optional `message_seq` identifying the
+matching persisted message. Multiple rendered items may share that sequence;
+clients should use the query to distinguish them. Title and empty-query results
+omit the address. Older hosts may omit it for all results. A nonempty query
+includes archived conversations without changing their archive state; an empty
+query returns only unarchived suggestions. Plugin-private sessions and hidden
+messages are excluded.
+
 `thread/start` persists by default. `ephemeral: true` creates an in-memory session
 that cannot be restored after the server exits. Engine binding is fixed at
 creation. New external-engine sessions default to `unconfined` when permission
