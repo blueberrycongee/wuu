@@ -1124,7 +1124,7 @@ describe("WorkspaceRightPanel", () => {
     );
   });
 
-  it("shows the tool picker when there is no active tab, and marks open tools active", () => {
+  it("shows the tool picker when there is no active tab", () => {
     const onOpenTool = vi.fn();
     const filesTab = workspaceToolViewTab("files");
 
@@ -1141,12 +1141,36 @@ describe("WorkspaceRightPanel", () => {
     expect(panel).toBeTruthy();
     const picker = panel?.querySelector(".workspace-tool-menu");
     expect(picker).toBeTruthy();
-    expect(picker?.querySelector(".workspace-tool-menu-item.active")?.textContent).toContain("文件");
-
     act(() => {
       picker?.querySelectorAll<HTMLButtonElement>(".workspace-tool-menu-item")[1]?.click();
     });
     expect(onOpenTool).toHaveBeenCalledWith("review");
+  });
+
+  it("walks the tool picker with arrow keys, wrapping at the ends", () => {
+    mount(<WorkspaceRightPanel {...baseProps()} tabs={[]} activeTabID={undefined} />);
+
+    const items = Array.from(
+      container?.querySelectorAll<HTMLButtonElement>(".workspace-tool-menu-item") ?? [],
+    );
+    expect(items.length).toBeGreaterThan(2);
+    const press = (key: string): void => {
+      act(() => {
+        document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      });
+    };
+
+    items[0].focus();
+    press("ArrowDown");
+    expect(document.activeElement).toBe(items[1]);
+    press("End");
+    expect(document.activeElement).toBe(items.at(-1));
+    press("ArrowDown");
+    expect(document.activeElement).toBe(items[0]);
+    press("ArrowUp");
+    expect(document.activeElement).toBe(items.at(-1));
+    press("Home");
+    expect(document.activeElement).toBe(items[0]);
   });
 });
 

@@ -1,10 +1,6 @@
 /* Component color tokens for workspace.css. Light-theme values; the dark
    theme overrides these in base.css theme blocks. */
 :root {
-  --workspace-panel-title-icon: var(--wuu-color-text-muted, #6d7378);
-  --workspace-menu-item-hover-bg: #ebebe8;
-  --workspace-bottom-title-text: var(--wuu-color-text-muted, #747a7f);
-  --workspace-tool-card-text: var(--wuu-color-text, #272b2f);
   --file-icon-code: #2563a8;
   --file-icon-data: #6f3aa3;
   --workspace-terminal-restart-hover-bg: #e2e2df;
@@ -112,10 +108,6 @@
     opacity var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease),
     transform var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
   pointer-events: none;
-}
-
-.bottom-panel-open .workspace-right-panel {
-  bottom: auto;
 }
 
 .right-panel-open .workspace-right-panel {
@@ -435,37 +427,6 @@
   word-break: break-word;
 }
 
-.workspace-panel-header,
-.workspace-bottom-header {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--hairline-soft);
-  padding: 0 14px;
-}
-
-.workspace-panel-title {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 9px;
-  color: var(--ink);
-  font-size: var(--font-body);
-  font-weight: var(--weight-semibold);
-}
-
-.workspace-panel-title svg {
-  color: var(--workspace-panel-title-icon);
-  flex: 0 0 auto;
-}
-
-.workspace-panel-title span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .workspace-panel-back {
   width: 28px;
   height: 28px;
@@ -473,7 +434,6 @@
 }
 
 .workspace-panel-close,
-.workspace-panel-sidebar,
 .workspace-panel-add,
 .workspace-panel-globalize {
   width: var(--control-size-toolbar);
@@ -740,8 +700,6 @@
 }
 
 .workspace-panel-body.picker {
-  position: absolute;
-  inset: 0;
   padding: 0;
 }
 
@@ -1289,27 +1247,22 @@ html.resizing-workspace-file-split * {
   padding-bottom: 180px;
 }
 
-/* Tool picker: the right panel with no open tab. Rows are a left-aligned
- * icon+label list, vertically centered as a group. There is no shortcut
- * column — these tools have no keybindings — so the list hugs content
- * instead of reserving a trailing gutter. Fill still marks hover, active,
- * and keyboard focus only. */
+/* Tool picker: the right panel with no open tab. A plain list on the file
+ * tree's axis, top-aligned, so the tree a choice opens appears where the
+ * list was. Fill marks hover, press and keyboard focus only. */
 .workspace-tool-menu {
   display: grid;
   height: 100%;
   min-width: 0;
-  justify-items: center;
-  align-content: safe center;
+  align-content: start;
   overflow-y: auto;
-  padding: var(--panel-padding);
+  padding: var(--space-3) var(--space-2);
 }
 
 .workspace-tool-menu-list {
   display: grid;
-  width: max-content;
-  max-width: 100%;
-  justify-items: stretch;
-  /* Same list rhythm as navigation rows: the row box separates items. */
+  width: 100%;
+  max-width: 32em;
   gap: 2px;
 }
 
@@ -1320,7 +1273,7 @@ html.resizing-workspace-file-split * {
   min-width: 0;
   min-height: var(--control-row-height);
   align-items: center;
-  column-gap: var(--space-2);
+  column-gap: var(--space-3);
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
@@ -1331,19 +1284,16 @@ html.resizing-workspace-file-split * {
     color var(--motion-fast) var(--ease-out);
 }
 
-.workspace-tool-menu-item:hover,
-.workspace-tool-menu-item.active {
-  background: var(--workspace-menu-item-hover-bg);
-}
-
-.workspace-tool-menu-item:focus-visible {
-  background: var(--workspace-menu-item-hover-bg);
-  outline: 2px solid var(--focus-ring);
-  outline-offset: -2px;
+.workspace-tool-menu-item:hover {
+  background: var(--ink-overlay-4);
 }
 
 .workspace-tool-menu-item:active {
-  background: var(--surface-3);
+  background: var(--ink-overlay-8);
+}
+
+html[data-focus-modality="keyboard"] .workspace-tool-menu-item:focus-visible {
+  outline-offset: -2px;
 }
 
 .workspace-tool-menu-icon {
@@ -1356,7 +1306,6 @@ html.resizing-workspace-file-split * {
 }
 
 .workspace-tool-menu-item:hover .workspace-tool-menu-icon,
-.workspace-tool-menu-item.active .workspace-tool-menu-icon,
 .workspace-tool-menu-item:focus-visible .workspace-tool-menu-icon {
   color: var(--ink);
 }
@@ -1371,6 +1320,7 @@ html.resizing-workspace-file-split * {
 .workspace-tool-menu-copy strong,
 .workspace-tool-menu-copy span {
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1383,101 +1333,8 @@ html.resizing-workspace-file-split * {
 }
 
 .workspace-tool-menu-copy span {
-  color: var(--ink-tertiary);
+  color: var(--ink-soft);
   font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
-}
-
-.workspace-bottom-panel {
-  grid-column: 2;
-  grid-row: 2;
-  display: grid;
-  margin-right: 0;
-  min-width: 0;
-  min-height: 0;
-  grid-template-rows: 42px minmax(0, 1fr);
-  overflow: hidden;
-  border-top: 1px solid transparent;
-  background: var(--paper);
-  opacity: 0;
-  transform: translateY(14px);
-  transition:
-    border-color var(--motion-base) var(--ease-out),
-    opacity var(--motion-base) var(--ease-out),
-    transform var(--motion-base) var(--ease-out);
-  pointer-events: none;
-}
-
-.right-panel-open .workspace-bottom-panel {
-  margin-right: 0;
-}
-
-.bottom-panel-open .workspace-bottom-panel {
-  border-top-color: var(--hairline-soft);
-  opacity: 1;
-  transform: translateY(0);
-  pointer-events: auto;
-}
-
-.workspace-bottom-header {
-  border-bottom: 0;
-  padding: 0 12px;
-}
-
-.workspace-bottom-title {
-  color: var(--workspace-bottom-title-text);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-}
-
-.workspace-tool-grid {
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-  grid-auto-columns: minmax(148px, 1fr);
-  grid-auto-flow: column;
-  gap: 12px;
-  padding: 8px 40px 24px;
-}
-
-.workspace-tool-card {
-  display: grid;
-  min-width: 0;
-  height: 142px;
-  align-content: center;
-  justify-items: center;
-  gap: 8px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--workspace-tool-card-text);
-  padding: 16px 12px;
-  text-align: center;
-}
-
-.workspace-tool-card:hover,
-.workspace-tool-card.active {
-  background: var(--surface-3);
-}
-
-.workspace-tool-card svg {
-  color: var(--ink-tertiary);
-}
-
-.workspace-tool-card-icon {
-  width: 25px;
-  height: 25px;
-}
-
-.workspace-tool-card strong {
-  font-size: var(--font-title);
-  font-weight: var(--weight-semibold);
-}
-
-.workspace-tool-card span {
-  color: var(--ink-muted);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
 }
 
 .workspace-file-panel {
@@ -1989,16 +1846,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 .workspace-scroll-region .scroll-region-content {
   height: 100%;
   min-height: 0;
-}
-
-.workspace-title-icon {
-  display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--surface-3);
-  color: var(--ink);
 }
 
 /* Catalog search fields: plugins and skills, model services. */

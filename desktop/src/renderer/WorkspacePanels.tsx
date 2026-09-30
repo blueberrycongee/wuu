@@ -110,12 +110,11 @@ export type WorkspacePanelView = "files" | "review" | "terminal" | "browser";
 const WORKSPACE_TOOL_ITEMS: Array<{
   id: WorkspacePanelView;
   titleKey: TranslationKey;
-  subtitleKey: TranslationKey;
 }> = [
-  { id: "files", titleKey: "workspace.tool.files", subtitleKey: "workspace.tool.filesDescription" },
-  { id: "review", titleKey: "workspace.tool.review", subtitleKey: "workspace.tool.reviewDescription" },
-  { id: "terminal", titleKey: "workspace.tool.terminal", subtitleKey: "workspace.tool.terminalDescription" },
-  { id: "browser", titleKey: "workspace.tool.browser", subtitleKey: "workspace.tool.browserDescription" },
+  { id: "files", titleKey: "workspace.tool.files" },
+  { id: "review", titleKey: "workspace.tool.review" },
+  { id: "terminal", titleKey: "workspace.tool.terminal" },
+  { id: "browser", titleKey: "workspace.tool.browser" },
 ];
 
 export const WORKSPACE_FILE_TREE_DEFAULT_WIDTH = 320;
@@ -1016,7 +1015,6 @@ export function WorkspaceRightPanel({
               >
                 {!activeTab ? (
                   <WorkspaceToolPicker
-                    tabs={tabs}
                     pluginTools={pluginTools}
                     onSelectTool={onOpenTool}
                     onSelectPluginTool={onOpenPluginTool}
@@ -1258,28 +1256,41 @@ function WorkspaceViewTabPreview({
 }
 
 function WorkspaceToolPicker({
-  tabs,
   pluginTools,
   onSelectTool,
   onSelectPluginTool,
 }: {
-  tabs: WorkspaceViewTab[];
   pluginTools: readonly RegisteredPluginViewEntry[];
   onSelectTool: (view: WorkspacePanelView) => void;
   onSelectPluginTool: (entry: RegisteredPluginViewEntry) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  // The list moves like a menu: arrows walk the tools, Home and End jump.
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>(".workspace-tool-menu-item"));
+    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    const target =
+      event.key === "ArrowDown" ? items[(index + 1) % items.length]
+        : event.key === "ArrowUp" ? items[(index - 1 + items.length) % items.length]
+          : event.key === "Home" ? items[0]
+            : event.key === "End" ? items.at(-1)
+              : undefined;
+    if (target) {
+      event.preventDefault();
+      target.focus();
+    }
+  }
   return (
     <div
       className="workspace-tool-menu"
       aria-label={t("workspace.tools")}
       data-wuu-component="workspace-tool-picker"
     >
-      <div className="workspace-tool-menu-list">
+      <div className="workspace-tool-menu-list" onKeyDown={handleKeyDown}>
         {WORKSPACE_TOOL_ITEMS.map((item) => (
           <button
             key={item.id}
-            className={`workspace-tool-menu-item${tabs.some((tab) => tab.kind === item.id) ? " active" : ""}`}
+            className="workspace-tool-menu-item"
             data-wuu-component="workspace-tool"
             type="button"
             onClick={() => onSelectTool(item.id)}
@@ -1297,7 +1308,7 @@ function WorkspaceToolPicker({
           return (
             <button
               key={tabID}
-              className={`workspace-tool-menu-item${tabs.some((tab) => tab.id === tabID) ? " active" : ""}`}
+              className="workspace-tool-menu-item"
               data-wuu-component="workspace-tool"
               data-wuu-plugin={item.pluginId}
               type="button"
@@ -1315,56 +1326,6 @@ function WorkspaceToolPicker({
         })}
       </div>
     </div>
-  );
-}
-
-export function WorkspaceBottomPanel({
-  open,
-  selectedView,
-  onSelectTool,
-  onClose
-}: {
-  open: boolean;
-  selectedView: WorkspacePanelView;
-  onSelectTool: (view: WorkspacePanelView) => void;
-  onClose: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  return (
-    <section className="workspace-bottom-panel" aria-hidden={!open}>
-      <div className="workspace-bottom-header">
-        <div className="workspace-bottom-title">{t("workspace.toolsShort")}</div>
-        <button
-          className="icon-button workspace-panel-close"
-          type="button"
-          aria-label={t("workspace.closeBottomPanel")}
-          disabled={!open}
-          onClick={onClose}
-        >
-          <X className="icon" />
-        </button>
-      </div>
-      {open ? (
-        <div
-          className="workspace-tool-grid"
-          aria-label={t("workspace.tools")}
-        >
-          {WORKSPACE_TOOL_ITEMS.map((item) => (
-            <button
-              key={item.id}
-              className={`workspace-tool-card${item.id === selectedView ? " active" : ""}`}
-              data-wuu-component="workspace-tool"
-              type="button"
-              onClick={() => onSelectTool(item.id)}
-            >
-              <WorkspaceToolIcon view={item.id} className="workspace-tool-card-icon" />
-              <strong>{t(item.titleKey)}</strong>
-              <span>{t(item.subtitleKey)}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </section>
   );
 }
 
