@@ -97,7 +97,7 @@ worktree 改动留在成员的 worktree 里。`thread/control/take` 和 `thread/
 
 ## 查询用量概览
 
-`usage/overview` 汇总本地保留历史中已记录的 token 用量：`total_sessions`（至少有一条用量记录的会话数）、`metrics`（与 `settings/usage` 相同的汇总对象，含 `active_days`）和 `days`（每个活跃日一条，按日期升序）。它只读取用量记录，不读取对话内容。可选参数 `{ "timezone": "America/Los_Angeles" }` 按 IANA 时区划分日期；省略时使用 UTC，未知时区返回请求错误。没有记录时返回零值和空的 `days`。与 `local_usage` 一样，这些值不含未上报或 Wuu 外的用量，也不是账单。
+`usage/overview` 汇总本地保留历史中已记录的 token 用量：`total_sessions`（至少有一条用量记录的会话数）、`metrics`（与 `settings/usage` 相同的汇总对象，含 `active_days`）和 `days`（每个活跃日一条，按日期升序）。它只读取用量记录，不读取对话内容。可选参数 `{ "timezone": "America/Los_Angeles" }` 按 IANA 时区划分日期；省略时使用 UTC，未知时区返回请求错误。没有记录时返回零值和空的 `days`。与 `local_usage` 一样，这些值不含未上报或 Wuu 外的用量，也不是账单。桌面「用量」页使用的完整快照 `settings/usage` 接受同样的可选 `timezone`；桌面端会带上自己的时区，让每天的柱子落在日历对应的那一天。
 
 ## 探查协议
 

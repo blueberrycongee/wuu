@@ -4835,7 +4835,23 @@ func (s *Server) persistFailedTurnResultLocked(th *threadState, res agent.LoopRe
 
 type settingsUsageCacheEntry struct {
 	response  SettingsUsageResponse
+	zone      string
 	expiresAt time.Time
+}
+
+// usageLocation resolves the IANA time zone a usage request buckets days in.
+// Empty means UTC; an unknown zone is an error rather than a silent UTC
+// fallback.
+func usageLocation(zone string) (*time.Location, error) {
+	zone = strings.TrimSpace(zone)
+	if zone == "" {
+		return time.UTC, nil
+	}
+	loc, err := time.LoadLocation(zone)
+	if err != nil {
+		return nil, fmt.Errorf("invalid timezone: %w", err)
+	}
+	return loc, nil
 }
 
 func (s *Server) invalidateSettingsUsage() {
@@ -4853,11 +4869,19 @@ func (s *Server) invalidateSettingsUsage() {
 // long-running sessions and migrated history contribute their real
 // totals.
 func (s *Server) handleSettingsUsage(req Request) error {
+	var params SettingsUsageQuery
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	loc, err := usageLocation(params.TimeZone)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	sessDir := s.rt.SessionDir
 	now := time.Now().UTC()
 	s.settingsUsageMu.Lock()
 	defer s.settingsUsageMu.Unlock()
-	if cached := s.settingsUsageCache; cached != nil && now.Before(cached.expiresAt) {
+	if cached := s.settingsUsageCache; cached != nil && cached.zone == loc.String() && now.Before(cached.expiresAt) {
 		return s.writeResponse(req.ID, cached.response, nil)
 	}
 
@@ -4867,7 +4891,7 @@ func (s *Server) handleSettingsUsage(req Request) error {
 	}
 	rows := scan.TokenRows
 
-	metrics, days := aggregateUsageRows(rows, time.UTC)
+	metrics, days := aggregateUsageRows(rows, loc)
 
 	response := SettingsUsageResponse{
 		TotalSessions:   countUsageSessions(rows),
@@ -4879,7 +4903,7 @@ func (s *Server) handleSettingsUsage(req Request) error {
 	}
 	// Usage analytics is an approximate convenience view, not a live meter.
 	// Keep the full-history scan out of the normal interaction path for two hours.
-	s.settingsUsageCache = &settingsUsageCacheEntry{response: response, expiresAt: now.Add(2 * time.Hour)}
+	s.settingsUsageCache = &settingsUsageCacheEntry{response: response, zone: loc.String(), expiresAt: now.Add(2 * time.Hour)}
 	return s.writeResponse(req.ID, response, nil)
 }
 
@@ -4892,12 +4916,9 @@ func (s *Server) handleUsageOverview(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	loc := time.UTC
-	if zone := strings.TrimSpace(params.TimeZone); zone != "" {
-		var err error
-		if loc, err = time.LoadLocation(zone); err != nil {
-			return s.writeResponse(req.ID, nil, fmt.Errorf("invalid timezone: %w", err))
-		}
+	loc, err := usageLocation(params.TimeZone)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
 	rows, err := session.ListTokenUsage(s.rt.SessionDir)
 	if err != nil {

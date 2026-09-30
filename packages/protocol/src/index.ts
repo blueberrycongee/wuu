@@ -2338,9 +2338,12 @@ export type ModelUsage = {
   sessions: number;
 };
 
-// SettingsUsageQuery is the input for the settings/usage RPC. It takes
-// no parameters: the snapshot always covers the full recorded history.
-export type SettingsUsageQuery = Record<string, never>;
+// SettingsUsageQuery is the input for the settings/usage RPC. The snapshot
+// always covers the full recorded history. `timezone` optionally names the IANA
+// zone (such as "America/Los_Angeles") whose calendar days bucket `days`, so
+// they line up with the calendar the desktop draws; omitted means UTC and an
+// unknown zone is a request error.
+export type SettingsUsageQuery = { timezone?: string };
 
 // SettingsUsageMetrics is the headline number block shown at the top of
 // the desktop usage page. Every number is summed across the full

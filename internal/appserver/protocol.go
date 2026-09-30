@@ -2577,9 +2577,14 @@ type WorkflowSnapshotPayload struct {
 	EstimatedOutputTokens      int    `json:"estimated_output_tokens"`
 }
 
-// SettingsUsageQuery is the input for the settings/usage RPC. It carries
-// no parameters: the snapshot always covers the full recorded history.
-type SettingsUsageQuery struct{}
+// SettingsUsageQuery is the input for the settings/usage RPC. The snapshot
+// always covers the full recorded history. TimeZone optionally names the IANA
+// zone, such as "America/Los_Angeles", whose calendar days bucket the daily
+// series so they line up with the calendar the desktop draws. Empty means UTC;
+// an unknown zone is an error rather than a silent UTC fallback.
+type SettingsUsageQuery struct {
+	TimeZone string `json:"timezone,omitempty"`
+}
 
 // SettingsUsageMetrics is the headline number block shown at the top of the
 // desktop usage page. Totals are weighted by token count across every
@@ -2602,9 +2607,9 @@ type SettingsUsageMetrics struct {
 }
 
 // SettingsUsageDay is one calendar day of token activity, bucketed by the
-// token_usage row's At timestamp (UTC for settings/usage, the requested zone
-// for usage/overview). Days are emitted in ascending date order; gaps in the
-// visible window are filled in by the desktop.
+// token_usage row's At timestamp in the requested zone (UTC when the request
+// names none). Days are emitted in ascending date order; gaps in the visible
+// window are filled in by the desktop.
 type SettingsUsageDay struct {
 	Date                string  `json:"date"`
 	InputTokens         int     `json:"input_tokens"`
