@@ -176,12 +176,24 @@ async function run() {
 
   // Explicit selection must beat the built-in control command and use this checkout.
   await waitFor(main, () => document.querySelector('.composer-send-button[data-wuu-state="send"]'));
+  main.focus();
   await evaluate(main, () => {
     const input = document.querySelector('.composer textarea');
+    input.focus();
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, '/compact');
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await waitFor(main, () => document.querySelector('.slash-command-item[id$="-skill:compact"]'));
+  await waitFor(main, () => {
+    const row = document.querySelector('.slash-command-item[id$="-skill:compact"]');
+    if (!row || row.disabled) return false;
+    const rect = row.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0 || rect.left < 0 || rect.top < 0 || rect.right > innerWidth || rect.bottom > innerHeight) return false;
+    for (let element = row; element; element = element.parentElement) {
+      const style = getComputedStyle(element);
+      if (style.display === 'none' || style.visibility !== 'visible' || Number(style.opacity) < 0.99) return false;
+    }
+    return row.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2));
+  });
   await capture(main, '07-explicit-skill-menu.png');
   await evaluate(main, () => document.querySelector('.slash-command-item[id$="-skill:compact"]').click());
   await waitFor(main, () => document.querySelector('.composer textarea').value.startsWith('/skill '));
