@@ -25,9 +25,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   a toy-block fort built around the Applications folder.
 
 ### Fixed
-
 - Fix multi-line `edit_file` replacements copied from `read_file` on CRLF files,
   preserving CRLF endings and exact unique-match checks.
+
+- Editing a message after context compaction now retracts the selected message
+  and following messages, preserving the correct conversation on resume and fork.
 
 - Harden MCP transport compatibility, request timeouts, OAuth refresh recovery,
   local server cleanup, bounded reads, catalog refreshes, and oversized results.
