@@ -868,6 +868,7 @@ Brainstorm options.
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
+	defer rt.Cleanup()
 	if !runtimeHasPlugin(rt.Plugins, "compose-kit") {
 		t.Fatalf("plugins not discovered: %+v", rt.Plugins)
 	}
@@ -875,6 +876,35 @@ Brainstorm options.
 	if !ok || skill.Source != "plugin:compose-kit" {
 		t.Fatalf("plugin skill not discovered with source: %+v", skill)
 	}
+	// A different checkout must retain the plugin generation's skill contents,
+	// including when an ordinary project skill shadows that plugin locally.
+	writeSessionTestFile(t, filepath.Join(pluginRoot, "skills", "brainstorm.md"), `---
+name: brainstorm
+description: Changed on disk.
+---
+Unactivated plugin edit.
+`)
+	for _, override := range []bool{false, true} {
+		checkout := t.TempDir()
+		want := "Brainstorm options."
+		if override {
+			want = "Checkout-specific brainstorming."
+			writeSessionTestFile(t, filepath.Join(checkout, ".agents", "skills", "brainstorm", "SKILL.md"), "---\nname: brainstorm\ndescription: Checkout brainstorming\n---\n"+want)
+		}
+		thread, err := rt.NewThreadRuntimeForRoot(fmt.Sprintf("plugin-guidance-%t", override), checkout)
+		if err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := thread.Toolkit.Execute(context.Background(), providers.ToolCall{Name: "load_skill", Arguments: `{"name":"brainstorm"}`})
+		if err != nil || !strings.Contains(loaded, want) || strings.Contains(loaded, "Unactivated plugin edit.") {
+			t.Errorf("wrong checkout/plugin skill: %s %v", loaded, err)
+		}
+		if thread.AgentControl != nil {
+			thread.AgentControl.Close()
+		}
+		rt.ReleasePluginGeneration(thread.PluginGeneration)
+	}
+
 }
 
 func runtimeHasPlugin(items []pluginpkg.Plugin, id string) bool {

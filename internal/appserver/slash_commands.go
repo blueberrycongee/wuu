@@ -1,9 +1,18 @@
 package appserver
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io/fs"
+	"path/filepath"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/skills"
+	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 type slashCommandTemplate struct {
@@ -163,4 +172,106 @@ func renderSlashTemplate(template slashCommandTemplate, args string) string {
 		return strings.TrimSpace(template.PromptNoArg)
 	}
 	return strings.TrimSpace(strings.ReplaceAll(template.Prompt, "{{args}}", args))
+}
+
+// Explicit skill drafts carry a catalog identity, never a path to read directly.
+// Resolving at submission freezes the instructions for queued turns and retries.
+func (s *Server) renderExplicitSkillPrompt(threadID, prompt string) (string, bool, error) {
+	command, value, ok := splitSlashCommand(strings.TrimSpace(prompt))
+	if !strings.HasPrefix(strings.TrimSpace(prompt), "/") || !ok || command != "skill" {
+		return prompt, false, nil
+	}
+	var identity struct {
+		Name    string                `json:"name"`
+		Source  string                `json:"source"`
+		Path    *string               `json:"path"`
+		Project *SkillProjectIdentity `json:"project"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(value))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&identity); err != nil {
+		return "", true, fmt.Errorf("invalid skill selection: %w", err)
+	}
+	arguments := strings.TrimSpace(value[decoder.InputOffset():])
+	if identity.Project != nil && (identity.Path != nil || identity.Source != "project" ||
+		identity.Project.Root != sessionWorkspacePath(s.rt.RootDir) || !validProjectSkillPath(identity.Project.Path)) {
+		return "", true, fmt.Errorf("invalid project skill selection")
+	}
+	catalog, root, err := s.skillCatalog(threadID)
+	if err != nil {
+		return "", true, err
+	}
+	for _, skill := range catalog {
+		if skill.Name != identity.Name || skill.Source != identity.Source {
+			continue
+		}
+		if identity.Project != nil {
+			project := projectSkillIdentity(skill, root, s.rt.RootDir)
+			if project == nil || *project != *identity.Project {
+				continue
+			}
+		} else {
+			selectedPath := ""
+			if identity.Path != nil {
+				selectedPath = *identity.Path
+			}
+			if skill.Path != selectedPath {
+				continue
+			}
+		}
+		if !skill.UserInvocable {
+			return "", true, fmt.Errorf("skill %q cannot be invoked by the user", identity.Name)
+		}
+		env := tools.Env{SessionID: threadID}
+		body := env.ProcessSkillBody(context.Background(), skill, arguments)
+		content := tools.SkillContentBlock(skill, body)
+		if arguments != "" {
+			content += "\n\n" + arguments
+		}
+		return content, true, nil
+	}
+	return "", true, fmt.Errorf("selected skill %q is no longer available; select it again", identity.Name)
+}
+
+func validProjectSkillPath(value string) bool {
+	return value != "." && fs.ValidPath(value) && !strings.Contains(value, `\`) && filepath.IsLocal(filepath.FromSlash(value))
+}
+
+// Project identities bind a workspace while selecting its destination-checkout version.
+// Only discovered files owned by the skill discovery boundary receive this form.
+func projectSkillIdentity(skill skills.Skill, checkoutRoot, workspaceRoot string) *SkillProjectIdentity {
+	if skill.Source != "project" || skill.Path == "" {
+		return nil
+	}
+	checkout := skillDiscoveryRoot(checkoutRoot)
+	if checkout == "" {
+		return nil
+	}
+	instruction, err := filepath.EvalSymlinks(skill.Path)
+	if err != nil {
+		return nil
+	}
+	relative, err := filepath.Rel(checkout, instruction)
+	if err != nil {
+		return nil
+	}
+	relative = filepath.ToSlash(relative)
+	if !validProjectSkillPath(relative) {
+		return nil
+	}
+	return &SkillProjectIdentity{Root: sessionWorkspacePath(workspaceRoot), Path: relative}
+}
+
+func skillDiscoveryRoot(root string) string {
+	if root == "" {
+		return ""
+	}
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return ""
+	}
+	if boundary := runtime.SkillProjectRoot(canonical); boundary != "" {
+		return boundary
+	}
+	return canonical
 }

@@ -17,6 +17,10 @@ import (
 
 func TestResponsesStreamErrorsRecoverOrStop(t *testing.T) {
 	for _, transport := range []providers.StreamTransportMode{providers.StreamTransportSSE, providers.StreamTransportWebSocket} {
+		cacheMissCategory, cacheMissRetry := providers.FailureUnknown, false
+		if transport == providers.StreamTransportWebSocket {
+			cacheMissCategory, cacheMissRetry = providers.FailureIncompleteStream, true
+		}
 		for _, tc := range []struct {
 			name, payload, code, message string
 			category                     providers.FailureCategory
@@ -37,6 +41,7 @@ func TestResponsesStreamErrorsRecoverOrStop(t *testing.T) {
 			{"nested precedence", `{"type":"error","code":"server_error","error":{"code":"invalid_api_key","message":"Rejected"}}`, "invalid_api_key", "Rejected", providers.FailureAuthentication, false},
 			{"quota", `{"type":"error","code":"insufficient_quota","message":"No credits"}`, "insufficient_quota", "No credits", providers.FailureQuota, false},
 			{"invalid request", `{"type":"error","code":"invalid_request_error","message":"Unsupported timeout parameter"}`, "invalid_request_error", "Unsupported timeout parameter", providers.FailureInvalidRequest, false},
+			{"previous response missing", `{"type":"error","code":"previous_response_not_found","message":"Previous response not found"}`, "previous_response_not_found", "Previous response not found", cacheMissCategory, cacheMissRetry},
 			{"unknown code", `{"type":"error","code":"custom_failure","message":"Diagnostic detail"}`, "custom_failure", "Diagnostic detail", providers.FailureUnknown, false},
 			{"unknown shape", `{"type":"error","opaque":{"content":"private response content"}}`, "", "Responses error event", providers.FailureUnknown, false},
 			{"invalid final message", `{"type":"response.output_item.done","item":{"id":"msg_1","type":"message","content":{"text":"private response content"}}}`, "", "invalid Responses message content", providers.FailureUnknown, false},

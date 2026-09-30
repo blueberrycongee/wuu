@@ -800,6 +800,11 @@ export type ProviderModelVariantSummary = {
   options?: Record<string, JsonValue>;
 };
 
+export type SkillProjectIdentity = {
+  root: string;
+  path: string;
+};
+
 export type SkillSummary = {
   name: string;
   description?: string;
@@ -807,6 +812,7 @@ export type SkillSummary = {
   trigger_condition?: string;
   source: string;
   path?: string;
+  project?: SkillProjectIdentity;
   argument_hint?: string;
   model?: string;
   context?: string;
@@ -821,6 +827,10 @@ export type SkillSummary = {
   paths?: string[];
   effort?: string;
   version?: string;
+};
+
+export type SkillListParams = {
+  thread_id?: string;
 };
 
 export type SkillListResult = {
@@ -2746,7 +2756,7 @@ export type WuuDesktopApi = {
   takeoverActivity: (threadId: string, activityId: string) => Promise<ActivityActionResult>;
   releaseActivity: (threadId: string, activityId: string) => Promise<ActivityReleaseResult>;
   stopActivity: (threadId: string, activityId: string) => Promise<ActivityActionResult>;
-  listSkills: () => Promise<SkillListResult>;
+  listSkills: (params?: SkillListParams) => Promise<SkillListResult>;
   readSkillContent: (params: SkillContentParams) => Promise<SkillContentResult>;
   returnManagedSession: (params: { thread_id: string; revision: number }) => Promise<{ control: NonNullable<Thread["session_control"]> }>;
   takeOverManagedSession?: (params: { thread_id: string; revision: number }) => Promise<{ control: NonNullable<Thread["session_control"]> }>;

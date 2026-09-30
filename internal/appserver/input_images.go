@@ -23,7 +23,18 @@ const inputImageRetention = 7 * 24 * time.Hour
 // files the user or model has moved or deleted. Vision history stays separate.
 func (s *Server) userMessageWithInputImages(threadID, prompt string, images []providers.InputImage, files []providers.InputFile, received []TurnStartImage, parts ...[]providers.MessageContentPart) (msg providers.ChatMessage, err error) {
 	msg, err = userMessageFromPrompt(prompt, images, files, parts...)
-	if err != nil || len(received) == 0 {
+	if err != nil {
+		return msg, err
+	}
+	content, selected, err := s.renderExplicitSkillPrompt(threadID, prompt)
+	if err != nil {
+		return msg, err
+	}
+	if selected {
+		msg.Content = content
+		msg.DisplayContent = strings.TrimSpace(prompt)
+	}
+	if len(received) == 0 {
 		return msg, err
 	}
 	if threadID == "." || !filepath.IsLocal(threadID) || filepath.Base(threadID) != threadID {

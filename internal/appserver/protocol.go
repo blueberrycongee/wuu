@@ -1137,27 +1137,39 @@ type ConfigCodexModelsResult struct {
 	Models    []CodexModelSummary `json:"models"`
 }
 
+// SkillProjectIdentity binds an originating workspace to a discovered instruction
+// file relative to its skill-discovery repository boundary.
+type SkillProjectIdentity struct {
+	Root string `json:"root"`
+	Path string `json:"path"`
+}
+
 type SkillSummary struct {
-	Name                  string   `json:"name"`
-	Description           string   `json:"description,omitempty"`
-	WhenToUse             string   `json:"when_to_use,omitempty"`
-	TriggerCondition      string   `json:"trigger_condition,omitempty"`
-	Source                string   `json:"source"`
-	Path                  string   `json:"path,omitempty"`
-	ArgumentHint          string   `json:"argument_hint,omitempty"`
-	Model                 string   `json:"model,omitempty"`
-	Context               string   `json:"context,omitempty"`
-	Agent                 string   `json:"agent,omitempty"`
-	AllowedTools          []string `json:"allowed_tools,omitempty"`
-	RequiredContext       []string `json:"required_context,omitempty"`
-	Examples              []string `json:"examples,omitempty"`
-	VerificationChecklist []string `json:"verification_checklist,omitempty"`
-	ProgressiveDisclosure string   `json:"progressive_disclosure,omitempty"`
-	UserInvocable         bool     `json:"user_invocable"`
-	DisableModelInvoke    bool     `json:"disable_model_invoke"`
-	Paths                 []string `json:"paths,omitempty"`
-	Effort                string   `json:"effort,omitempty"`
-	Version               string   `json:"version,omitempty"`
+	Name                  string                `json:"name"`
+	Description           string                `json:"description,omitempty"`
+	WhenToUse             string                `json:"when_to_use,omitempty"`
+	TriggerCondition      string                `json:"trigger_condition,omitempty"`
+	Source                string                `json:"source"`
+	Path                  string                `json:"path,omitempty"`
+	Project               *SkillProjectIdentity `json:"project,omitempty"`
+	ArgumentHint          string                `json:"argument_hint,omitempty"`
+	Model                 string                `json:"model,omitempty"`
+	Context               string                `json:"context,omitempty"`
+	Agent                 string                `json:"agent,omitempty"`
+	AllowedTools          []string              `json:"allowed_tools,omitempty"`
+	RequiredContext       []string              `json:"required_context,omitempty"`
+	Examples              []string              `json:"examples,omitempty"`
+	VerificationChecklist []string              `json:"verification_checklist,omitempty"`
+	ProgressiveDisclosure string                `json:"progressive_disclosure,omitempty"`
+	UserInvocable         bool                  `json:"user_invocable"`
+	DisableModelInvoke    bool                  `json:"disable_model_invoke"`
+	Paths                 []string              `json:"paths,omitempty"`
+	Effort                string                `json:"effort,omitempty"`
+	Version               string                `json:"version,omitempty"`
+}
+
+type SkillListParams struct {
+	ThreadID string `json:"thread_id,omitempty"`
 }
 
 type SkillListResult struct {

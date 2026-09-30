@@ -224,6 +224,7 @@ export function Composer({
   tokenSpeedSource,
   contextUsage,
   queryHistorySessionID,
+  skillThreadID,
   queryHistory = [],
   requestedHandoffIntent,
   hideRuntimeControls = false,
@@ -338,6 +339,8 @@ export function Composer({
   // undefined and the meter hides entirely.
   contextUsage?: TurnContextUsage | null;
   queryHistorySessionID?: string;
+  // Draft tabs have local history IDs but no server thread to query yet.
+  skillThreadID?: string;
   queryHistory?: string[];
   requestedHandoffIntent?: string;
   // Suppress the model/context/token runtime chrome on the bar's right edge.
@@ -673,7 +676,7 @@ export function Composer({
 
     async function loadSlashSkills(): Promise<void> {
       try {
-        const result = await window.wuu.listSkills();
+        const result = await window.wuu.listSkills(skillThreadID ? { thread_id: skillThreadID } : undefined);
         if (!cancelled) {
           setSlashSkills(result.skills);
         }
@@ -683,7 +686,7 @@ export function Composer({
         }
       }
     }
-  }, [readOnly, slashRuntimeReady, slashSkillContextKey, slashSkillCountKey, textOnly]);
+  }, [readOnly, slashRuntimeReady, slashSkillContextKey, slashSkillCountKey, textOnly, skillThreadID]);
 
   useEffect(() => {
     if (readOnly) {

@@ -668,7 +668,7 @@ func TestStartTTYProvidesTerminalSemantics(t *testing.T) {
 	root := t.TempDir()
 	m, _ := NewManager(root, filepath.Join(root, "state", "runtime"))
 	ttyProc, err := m.Start(context.Background(), StartOptions{
-		Command:   "if test -t 1; then echo MODE_TTY; else echo MODE_PIPE; fi; printf 'ENV=%s|%s|%s|%s\\n' \"$TERM\" \"$COLORTERM\" \"$CLICOLOR\" \"$FORCE_COLOR\"; printf '\\033[31mCOLOR_RED\\033[0m\\n'; sleep 1",
+		Command:   "if test -t 1; then echo MODE_TTY; else echo MODE_PIPE; fi; printf 'ENV=%s|%s|%s|%s\\n' \"$TERM\" \"$COLORTERM\" \"$CLICOLOR\" \"$FORCE_COLOR\"; printf '\\033[31mCOLOR_RED\\033[0m\\n'; read -r done",
 		OwnerKind: OwnerMainAgent,
 		OwnerID:   "main",
 		Lifecycle: LifecycleSession,
@@ -679,7 +679,7 @@ func TestStartTTYProvidesTerminalSemantics(t *testing.T) {
 	}
 	defer m.Stop(ttyProc.ID)
 	pipeProc, err := m.Start(context.Background(), StartOptions{
-		Command:   "if test -t 1; then echo MODE_TTY; else echo MODE_PIPE; fi; sleep 1",
+		Command:   "if test -t 1; then echo MODE_TTY; else echo MODE_PIPE; fi; read -r done",
 		OwnerKind: OwnerMainAgent,
 		OwnerID:   "main",
 		Lifecycle: LifecycleSession,
@@ -690,10 +690,25 @@ func TestStartTTYProvidesTerminalSemantics(t *testing.T) {
 	defer m.Stop(pipeProc.ID)
 
 	ttyOffset := int64(0)
-	ttyOut, err := m.ReadOutputSnapshot(context.Background(), ttyProc.ID, OutputReadOptions{OffsetBytes: &ttyOffset, Wait: 2 * time.Second})
-	if err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(2 * time.Second)
+	var ttyOut OutputSnapshot
+	var output strings.Builder
+	// A snapshot can end between writes; wait for the final line before checking all output.
+	for time.Now().Before(deadline) {
+		ttyOut, err = m.ReadOutputSnapshot(context.Background(), ttyProc.ID, OutputReadOptions{
+			OffsetBytes: &ttyOffset,
+			Wait:        time.Until(deadline),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		output.WriteString(ttyOut.Output)
+		ttyOffset = ttyOut.EndOffset
+		if strings.Contains(output.String(), "\x1b[31mCOLOR_RED\x1b[0m") {
+			break
+		}
 	}
+	ttyOut.Output = output.String()
 	if !ttyOut.Process.TTY || !strings.Contains(ttyOut.Output, "MODE_TTY") {
 		t.Fatalf("expected tty process output, got %+v output=%q", ttyOut.Process, ttyOut.Output)
 	}

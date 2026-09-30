@@ -157,6 +157,12 @@ contextBridge.exposeInMainWorld("wuu", {
     if (process.env.WUU_REQUEST_LIFECYCLE_E2E) await ipcRenderer.invoke("test:request-lifecycle", "turn/interrupt");
     return { ok: true };
   },
+  ...(process.env.WUU_REQUEST_LIFECYCLE_E2E ? {
+    listUserQuestions: async () => ({ questions: [] }),
+    answerUserQuestion: (requestId, answer) => ipcRenderer.invoke("test:request-lifecycle", "user-question/respond", { requestId, answer }),
+    cancelUserQuestion: (requestId) => ipcRenderer.invoke("test:request-lifecycle", "user-question/cancel", { requestId }),
+    holdUserQuestion: (requestId) => ipcRenderer.invoke("test:request-lifecycle", "user-question/hold", { requestId }),
+  } : {}),
   respondToServerRequest: async () => undefined,
   rejectServerRequest: async () => undefined,
   onServerEvent: (handler) => {

@@ -74,7 +74,7 @@ describe("FirstRunOnboarding", () => {
     ]);
   });
 
-  it.each(["goal", "peers"])("allows enabling %s from the bundled onboarding choices", async (id) => {
+  it.each(["ask-user", "todo", "goal", "subagent", "peers", "memory", "dream"])("allows enabling %s from the bundled onboarding choices", async (id) => {
     const update = vi.fn(async () => undefined);
     await act(async () => root.render(
       <I18nProvider><FirstRunOnboarding
@@ -232,18 +232,17 @@ describe("FirstRunOnboarding", () => {
     expect(container.textContent).not.toContain("正在准备随包插件");
     const selectedPlugins = () => [...container.querySelectorAll(".onboarding-plugin[aria-pressed=true] strong")]
       .map((node) => node.textContent);
-    expect(selectedPlugins()).toEqual(["todo", "automation"]);
+    expect(selectedPlugins()).toEqual(["automation"]);
     expect(container.querySelector(".onboarding-presets .is-selected")?.textContent).toBe("推荐");
     await clickButton("全部");
     expect(selectedPlugins()).toHaveLength(6);
     await clickButton("推荐");
-    expect(selectedPlugins()).toEqual(["todo", "automation"]);
+    expect(selectedPlugins()).toEqual(["automation"]);
     expect(props.onUpdateExtensionPackage).not.toHaveBeenCalled();
     await clickButton("继续");
-    expect(props.onUpdateExtensionPackage).toHaveBeenCalledTimes(6);
-    for (const id of ["todo", "automation"]) {
-      expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: `plugin:bundled:${id}`, action: "enable" });
-    }
+    expect(props.onUpdateExtensionPackage).toHaveBeenCalledTimes(5);
+    expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: "plugin:bundled:automation", action: "enable" });
+    expect(props.onUpdateExtensionPackage).not.toHaveBeenCalledWith({ id: "plugin:bundled:todo", action: "disable" });
     for (const id of ["ask-user", "subagent", "peers", "memory"]) {
       expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: `plugin:bundled:${id}`, action: "disable" });
     }

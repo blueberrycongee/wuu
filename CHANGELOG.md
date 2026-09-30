@@ -19,6 +19,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Recommend only the Automation plugin during first-run setup; other bundled
+  plugins remain available for manual selection.
+
 - The macOS DMG installer background is wordless and white, so a resized
   Finder window shows no picture edge. A slingshot beside the app fires Wuu
   along a dotted arc that splits into its colourful agents, and they dive into
@@ -28,6 +31,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Edit conversation titles from the desktop title bar with a double click, while
   preserving keyboard rename and the surrounding window drag area.
 
+- Load explicitly selected skills deterministically through `/skill` drafts, preserving
+  source identity, thread checkout, queued instructions, and built-in command behavior.
+  Resolve project-local selections to the chosen checkout, including the first turn
+  of a new worktree; reject stale or cross-project selections without silent fallback.
+
 - Respect named `@@` context in file patches so edits cannot silently target
   matching code before that context; reject missing or ambiguous context before
   writing.
@@ -35,8 +43,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   parent exits, including children that could leave a promoted command's stop
   request waiting indefinitely for output pipes to close.
 
+- Stop reasoning and partial-answer streaming indicators when a turn ends,
+  retaining received text and discarding unfinished tool drafts.
+
 - Fix multi-line `edit_file` replacements copied from `read_file` on CRLF files,
   preserving CRLF endings and exact unique-match checks.
+
+- Honor PreCompact and PostCompact hooks when resetting context windows, and
+  preserve the active history when a hook rejects overflow recovery.
 
 - Editing a message after context compaction now retracts the selected message
   and following messages, preserving the correct conversation on resume and fork.
@@ -46,8 +60,16 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep queued input the Core rejected or lost: a message refused at admission
   (for example by a `UserPromptSubmit` hook) is held with the reason, and queued
   messages survive a Core restart as paused input instead of being removed.
+
+- Show every question of a multi-question offer as one form, collecting all answers
+  and free text before submitting, and start each follow-up offer with fresh state
+  instead of the previous card's submitting state. Keep cancellation
+  labeled while an offer counts down and clear its timer when the offer is held.
 - Keep ordinary project conversations rooted in the selected folder after project
   relocation, while preserving custom directories and linked worktrees.
+
+- Worktree conversations now load project instructions and skills from their actual
+  checkout, including restored conversations and their workers.
 - Keep attachments in their original conversation draft when file preparation
   finishes after switching conversations or closing a split pane. Pending files
   remain removable, and sends wait for their bytes before submitting.
@@ -69,6 +91,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Provider keys or tokens saved in settings now outrank the provider type's
   implicit default environment variable during credential resolution. Explicit
   `api_key_env` and `auth_token_env` settings continue to take priority.
+
+- Recover Responses WebSocket follow-ups when the provider loses the cached
+  previous response, resending full conversation history within existing retry
+  limits and tool replay safeguards.
 
 ## [2026.9.29] - 2026-09-29
 
