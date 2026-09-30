@@ -316,14 +316,13 @@ function RuntimePanelSummary({
       ) : null}
       <button type="button" className="runtime-panel-model" data-menu-autofocus onClick={onOpenModels}>
         <span className="runtime-panel-model-name">{model}</span>
+        {effortOptions.length > 1 ? (
+          <span key={previewEffort} className="runtime-panel-effort-value">{variantLabel(previewEffort)}</span>
+        ) : null}
         <ChevronRight aria-hidden="true" />
       </button>
       {effortOptions.length > 1 ? (
         <div className="runtime-panel-effort">
-          <div className="runtime-panel-effort-heading" aria-hidden="true">
-            <span>{t("runtime.reasoningEffort")}</span>
-            <span key={previewEffort} className="runtime-panel-effort-value">{variantLabel(previewEffort)}</span>
-          </div>
           <EffortSelector
             options={effortOptions}
             selectedVariant={selectedEffort}

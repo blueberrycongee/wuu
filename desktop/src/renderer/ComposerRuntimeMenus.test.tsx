@@ -697,7 +697,7 @@ describe("RuntimePicker", () => {
     expect(slider.max).toBe("4");
     expect(slider.value).toBe("4");
     expect(slider.getAttribute("aria-valuetext")).toBe(variantLabel("xhigh"));
-    expect(document.querySelector(".runtime-panel-effort .runtime-panel-effort-value")?.textContent).toBe(variantLabel("xhigh"));
+    expect(document.querySelector(".runtime-panel-model .runtime-panel-effort-value")?.textContent).toBe(variantLabel("xhigh"));
   });
 
   it("selects a discrete effort by dragging the unlabeled slider", () => {
@@ -710,7 +710,7 @@ describe("RuntimePicker", () => {
       slider.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
-    expect(document.querySelector(".runtime-panel-effort .runtime-panel-effort-value")?.textContent).toBe(variantLabel("high"));
+    expect(document.querySelector(".runtime-panel-model .runtime-panel-effort-value")?.textContent).toBe(variantLabel("high"));
     expect(document.querySelector(".codex-effort-slider + .runtime-panel-effort-value")).toBeNull();
     expect(onSelectEffort).not.toHaveBeenCalled();
 

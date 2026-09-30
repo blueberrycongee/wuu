@@ -3062,7 +3062,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   --runtime-row: max(36px, calc(var(--font-ui) * 36 / 14.5));
   --runtime-context-row: max(22px, calc(var(--font-ui) * 22 / 14.5));
   --runtime-header: max(40px, calc(var(--font-ui) * 40 / 14.5));
-  --runtime-effort-block: calc(var(--runtime-context-row) + 28px);
+  --runtime-effort-block: 28px;
   --runtime-list: calc(var(--runtime-rows, 1) * (var(--runtime-row) + 1px) - 1px);
   --runtime-summary: calc(
     2px + var(--menu-inset) * 2
@@ -3215,29 +3215,15 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   color: var(--ink-tertiary);
 }
 
-/* The effort control names itself and shows its level, which follows the
- * knob while it is dragged. */
+/* The model row shows the live effort value above the slider. */
 .runtime-panel-effort {
-  display: grid;
   height: var(--runtime-effort-block);
   flex: 0 0 auto;
-  grid-template-rows: var(--runtime-context-row) 28px;
-  align-content: start;
   padding: 0 4px;
 }
 
-.runtime-panel-effort-heading {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--ink-tertiary);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-medium);
-}
-
-.runtime-panel-effort-value {
+.codex-runtime-menu .runtime-panel-effort-value {
+  flex: 0 0 auto;
   color: var(--ink);
   font-size: var(--font-sm);
   --enter-opacity: 0.4;
