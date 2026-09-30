@@ -116,6 +116,16 @@ const initialPlugins: ExtensionInventoryRecord[] = empty ? [] : [
   }),
 ];
 
+// A skill file opens with its own title and summary; `long` makes it scroll.
+const skillSection = "## 步骤\n\n1. 读取改动涉及的文件和调用方。\n2. 对照仓库约定逐项检查。\n3. 只报告能复现或有证据的问题。\n";
+const skillContent = [
+  "---\nname: code-review\n---",
+  "# 代码审查",
+  "按仓库约定审查当前改动，只报告有证据的缺陷。",
+  "## 何时使用\n\n- 提交前检查自己的改动\n- 审查他人的分支",
+  ...Array.from({ length: long ? 6 : 1 }, () => skillSection),
+].join("\n\n");
+
 window.wuu = {
   initialLanguagePreference: params.get("lang") === "en" ? "en-US" : "zh-CN",
   initialThemePreference: params.get("theme") === "dark" ? "dark" : "light",
@@ -125,7 +135,7 @@ window.wuu = {
   getMessageFlowFontSize: async () => Number(params.get("size")) || 14.5,
   setMessageFlowFontSize: async () => undefined,
   listSkills: async () => ({ skills: structuredClone(skills) }),
-  readSkillContent: async ({ name }: { name: string }) => ({ content: `# ${name}\n\n示例技能内容，仅用于预览。` }),
+  readSkillContent: async () => ({ content: skillContent }),
   getPluginSetting: async ({ key }: { key: string }) => ({ value: ({ autosave: true, recall: "相关时", limit: 200 } as Record<string, boolean | string | number>)[key] }),
   setPluginSetting: async ({ value }: { value: boolean | string | number }) => ({ value }),
   getPluginDiagnostics: async () => ({ diagnostics: [] }),

@@ -1120,17 +1120,14 @@ function SkillPreviewDialog({
   }, [skill.name, skill.source]);
 
   return (
+    // The mark, the name and close share one row like the Model services
+    // dialogs; the file follows. Its own opening states what the catalog row
+    // already showed, so the dialog repeats no description.
     <Modal
       ariaLabel={t("skills.previewLabel", { name: skill.name })}
-      icon={
-        <span className="skill-preview-icon-title">
-          <CapabilityMark motif={skillCapability(skill.name)} className="icon" />
-          <span>{t("skills.skillLabel")}</span>
-        </span>
-      }
+      icon={<CapabilityMark motif={skillCapability(skill.name)} className="icon" />}
       title={skill.name}
-      subtitle={skill.description || skill.when_to_use || skill.trigger_condition}
-      panelClassName="skill-preview-dialog"
+      panelClassName="model-dialog skill-preview-dialog"
       onClose={onClose}
       footer={skill.user_invocable ? (
         <button className="settings-button settings-button-primary" type="button" onClick={onTry}>
@@ -1138,7 +1135,7 @@ function SkillPreviewDialog({
         </button>
       ) : undefined}
     >
-      <div className="skill-preview-body">
+      <div className="skill-preview-body" data-scroll-fade="">
         {contentState.loading ? (
           <p className="skill-preview-loading">{t("skills.loadingContent")}</p>
         ) : null}

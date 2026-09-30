@@ -1816,7 +1816,6 @@ export const zhCN = {
   "skills.model": "模型",
   "skills.agent": "Agent",
   "skills.path": "路径",
-  "skills.skillLabel": "Skill",
   "skills.loadingContent": "正在加载 Skill 内容…",
   "skills.contentUnavailable": "无法加载 Skill 内容",
   "skills.contentFallback": "无法读取完整 Skill 文件，暂时展示摘要内容。",

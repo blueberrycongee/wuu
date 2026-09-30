@@ -1819,7 +1819,6 @@ export const enUS = {
   "skills.model": "Model",
   "skills.agent": "Agent",
   "skills.path": "Path",
-  "skills.skillLabel": "Skill",
   "skills.loadingContent": "Loading Skill content…",
   "skills.contentUnavailable": "Skill content unavailable",
   "skills.contentFallback": "Could not read the full Skill file. Showing the summary instead.",
