@@ -1245,10 +1245,14 @@
      so the flow's centerline is the pane's own centerline. The pill shares it
      by centering in the same inset box, with no gutter term. */
   right: var(--conversation-visible-inset-right);
+  /* The width fits between the insets like the composer's does; a wider
+     box would be pinned to the left inset and leave the centreline. */
   --jump-to-latest-max-width: min(
     var(--session-composer-width),
     calc(
-      100% - var(--session-outer-padding-inline) -
+      100% - var(--conversation-visible-inset-left) -
+        var(--conversation-visible-inset-right) -
+        var(--session-outer-padding-inline) -
         var(--session-outer-padding-inline)
     )
   );
