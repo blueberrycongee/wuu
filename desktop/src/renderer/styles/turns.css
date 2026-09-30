@@ -1139,13 +1139,13 @@
 .plugin-conversation-card {
   width: 100%;
   max-width: none;
-  margin: 2px 0 22px;
+  margin: 0 0 var(--conversation-turn-boundary-gap);
 }
 
-.conversation-split-width .context-composition-card,
-.conversation-split-width .instruction-files-card,
-.conversation-split-width .plugin-conversation-card {
-  width: 100%;
+/* The latest turn leaves its trailing gap to the composer clearance, so a
+ * card placed after it takes the turn boundary itself. */
+.conversation-width .turn[data-latest-turn="true"] + :is(.context-composition-card, .instruction-files-card, .plugin-conversation-card) {
+  margin-top: var(--conversation-turn-boundary-gap);
 }
 
 .plugin-conversation-card-shell {
@@ -1194,22 +1194,21 @@
   font-size: var(--font-sm);
 }
 
+/* Slash-command results are content cards in the reading flow, framed like
+ * code blocks and the failure card rather than like a panel. */
 .context-composition-card-inner,
 .instruction-files-card-inner {
   position: relative;
   display: grid;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-lg);
-  background: var(--surface-1);
-  padding: 16px 18px;
+  border: 1px solid var(--message-flow-card-border);
+  border-radius: var(--message-flow-card-radius);
+  background: var(--message-flow-card-bg);
+  padding: var(--card-padding);
 }
 
-.context-composition-card-inner {
-  gap: 16px;
-}
-
+.context-composition-card-inner,
 .instruction-files-card-inner {
-  gap: 14px;
+  gap: var(--space-4);
 }
 
 .context-composition-dismiss,
@@ -1277,9 +1276,8 @@
 }
 
 .context-composition-headline strong {
-  font-size: 24px;
+  font-size: var(--font-display);
   font-weight: var(--weight-semibold);
-  letter-spacing: -0.02em;
   line-height: 1.05;
   color: var(--ink-strong);
   font-variant-numeric: tabular-nums;
@@ -1364,7 +1362,7 @@
 
 .context-composition-meta-item {
   font-size: var(--font-xs);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   white-space: nowrap;
 }
 
@@ -1377,7 +1375,7 @@
 .context-composition-runtime {
   margin-left: auto;
   font-size: var(--font-xs);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -1399,7 +1397,7 @@
 
 .context-category-row.is-excluded .context-category-label,
 .context-category-row.is-excluded .context-category-tokens {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
 }
 
 .context-category-row.is-excluded .context-category-swatch {
@@ -1408,9 +1406,9 @@
 
 .context-category-swatch {
   flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
-  border-radius: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-circle);
   background: var(--ink-overlay-18);
 }
 
@@ -1421,20 +1419,19 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
   color: var(--ink);
 }
 
+/* Badge recipe shared with the model services Default badge. */
 .context-category-tag {
   flex-shrink: 0;
-  margin-left: -2px;
-  padding: 0 7px;
+  padding: 0 var(--space-2);
   border-radius: var(--radius-pill);
-  background: var(--ink-overlay-6);
-  font-size: 10px;
+  background: var(--selection-surface);
+  font-size: var(--font-xs);
   font-weight: var(--weight-medium);
-  line-height: 16px;
-  color: var(--ink-muted);
+  line-height: 1.6;
+  color: var(--ink);
 }
 
 .context-category-tokens {
@@ -1442,7 +1439,7 @@
   min-width: 3.5em;
   text-align: right;
   font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-medium);
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
@@ -1452,7 +1449,7 @@
   min-width: 2.8em;
   text-align: right;
   font-size: var(--font-xs);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -1461,19 +1458,18 @@
 
 .instruction-files-groups {
   display: grid;
-  gap: 14px;
+  gap: var(--space-4);
 }
 
 .instruction-files-group {
   display: grid;
-  gap: 3px;
+  gap: var(--space-1);
 }
 
 .instruction-files-group-label {
   font-size: var(--font-xs);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.05em;
-  color: var(--ink-muted);
+  font-weight: var(--weight-medium);
+  color: var(--ink-tertiary);
 }
 
 .instruction-files-list {
@@ -1491,7 +1487,7 @@
   margin: 0 -8px;
   padding: 7px 8px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
   font: inherit;
@@ -1513,7 +1509,7 @@
 .instruction-file-chevron {
   width: 13px;
   height: 13px;
-  color: var(--ink-faint);
+  color: var(--ink-muted);
   transition: transform var(--motion-base) var(--ease-out);
 }
 
@@ -1535,13 +1531,12 @@
   white-space: nowrap;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
 }
 
 .instruction-file-size {
   flex-shrink: 0;
   font-size: var(--font-xs);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-variant-numeric: tabular-nums;
 }
 
