@@ -1184,7 +1184,7 @@
   right: 10px;
   width: 24px;
   height: 24px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   opacity: 0;
   transition:
     opacity var(--motion-base) var(--ease-out),
@@ -3604,7 +3604,7 @@
 
 .fork-worktree-copy {
   background: transparent;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
 }
 
 .fork-worktree-copy:hover,

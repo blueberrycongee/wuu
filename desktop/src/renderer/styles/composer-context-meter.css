@@ -113,7 +113,7 @@
 }
 
 .composer-context-meter-tooltip-label {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
 }
 
 .composer-context-meter-tooltip-value {

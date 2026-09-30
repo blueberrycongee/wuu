@@ -361,7 +361,7 @@
 
 .select-menu-empty {
   padding: var(--compact-padding-block) var(--menu-item-padding-inline);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   line-height: 1.38;
 }

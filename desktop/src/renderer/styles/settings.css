@@ -1234,7 +1234,7 @@ button.settings-engine-expand:hover {
 }
 
 .settings-subscription-reset {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
 }
 
 .settings-subscription-window[data-exhausted="true"] {
@@ -1591,7 +1591,7 @@ button.settings-engine-expand:hover {
 
 .settings-row-attention {
   display: inline-flex;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
 }
 
 .settings-row-attention[data-tone="warning"] {
@@ -2373,7 +2373,7 @@ button.settings-engine-expand:hover {
 
 .settings-remote-pair-hint {
   margin: 0;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
 }
 

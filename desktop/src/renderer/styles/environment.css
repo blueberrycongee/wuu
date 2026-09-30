@@ -117,7 +117,7 @@
 
 .environment-panel-header h2 {
   margin: 0;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-title);
   font-weight: var(--weight-semibold);
 }
@@ -273,7 +273,7 @@
 }
 
 .environment-panel .plugin-todo-item[data-status="completed"] {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
 }
 
 .plugin-inspector-section-error {
@@ -411,7 +411,7 @@
   height: 30px;
   border-top: 1px solid var(--hairline-soft);
   border-radius: 0;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-title);
   font-weight: var(--weight-semibold);
   margin-top: 4px;
@@ -512,7 +512,7 @@
 .environment-side-note,
 .environment-side-error,
 .environment-empty {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   line-height: 1.4;
   padding: 7px 9px;
@@ -844,7 +844,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   font-weight: var(--weight-medium);
 }
@@ -882,7 +882,7 @@
   align-items: center;
   justify-content: center;
   min-height: 80px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   font-weight: var(--weight-medium);
 }

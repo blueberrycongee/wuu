@@ -108,7 +108,7 @@
 .sidebar-account-profile { display: flex; align-items: center; gap: 10px; padding: 10px 9px; }
 .sidebar-account-profile > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .sidebar-account-profile strong { color: var(--ink); font-weight: var(--weight-semibold); }
-.sidebar-account-profile span:not(.sidebar-account-avatar) { color: var(--ink-muted); font-size: var(--font-sm); }
+.sidebar-account-profile span:not(.sidebar-account-avatar) { color: var(--ink-tertiary); font-size: var(--font-sm); }
 .sidebar-account-profile strong,
 .sidebar-account-profile span:not(.sidebar-account-avatar) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-account-divider { height: 1px; flex-shrink: 0; margin: 4px 9px; background: var(--menu-border); }

@@ -443,7 +443,7 @@
 }
 
 .design-tokens-hint {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-variant-numeric: tabular-nums;
 }

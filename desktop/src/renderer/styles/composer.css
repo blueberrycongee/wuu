@@ -988,7 +988,7 @@ html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
 
 .composer-accessory-drawer[data-tone="muted"] {
   background: var(--surface-1);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
 }
 
 .composer-accessory-drawer[data-tone="warning"] {
@@ -1757,7 +1757,7 @@ html[data-focus-modality="keyboard"] :is(
 }
 
 .slash-command-empty {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-menu);
   line-height: var(--line-ui);
   padding: 14px 12px 15px;
@@ -1892,7 +1892,7 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   display: grid;
   gap: 4px;
   padding: 8px 9px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   line-height: 1.38;
 }
@@ -1999,7 +1999,7 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
 }
 
 .project-picker-empty {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   font-size: var(--font-menu);
   line-height: var(--line-ui);
@@ -2303,7 +2303,7 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
 /* A shared prefix such as codex/ steps back so the part people scan for,
  * the branch's own name, carries the row. */
 .composer-branch-prefix {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-weight: var(--weight-regular);
 }
 
@@ -2317,7 +2317,7 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-regular);
   font-variant-numeric: tabular-nums;

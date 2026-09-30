@@ -182,7 +182,7 @@
 }
 
 .workspace-panel-compact-heading span {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
 }
 
@@ -227,7 +227,7 @@
 }
 
 .turn-file-diff-kicker {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-semibold);
 }
@@ -248,7 +248,7 @@
   min-width: 0;
   align-items: center;
   gap: 8px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   font-weight: var(--weight-semibold);
 }
@@ -291,7 +291,7 @@
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   padding: 5px 9px;
   font: inherit;
   font-size: var(--font-sm);
@@ -310,7 +310,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
 }
 
@@ -368,7 +368,7 @@
   justify-content: center;
   flex-direction: column;
   gap: 8px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-family: inherit;
   font-size: var(--font-sm);
   text-align: center;
@@ -1301,7 +1301,7 @@ html[data-focus-modality="keyboard"] .workspace-tool-menu-item:focus-visible {
 
 .workspace-file-tree-limit {
   flex: 0 0 auto;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   font-weight: var(--weight-medium);
   padding: 0 5px 6px;
@@ -1781,7 +1781,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   border: 1px solid var(--field-border);
   border-radius: var(--radius-sm);
   background: var(--field-bg);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   padding: 0 var(--control-padding-inline);
   transition: background var(--motion-fast) var(--ease-out);
 }
@@ -1845,7 +1845,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 }
 
 .workspace-file-preview-header span {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
 }
 
