@@ -3097,6 +3097,7 @@ export function App(): JSX.Element {
         hideExpandButton={composerNavigation}
         topAccessory={pendingUserQuestionOffer ? (
           <UserQuestionCard
+            key={pendingUserQuestionOffer.request_id}
             request={pendingUserQuestionOffer}
             onAnswer={async (answer) => {
               const prompt = formatUserQuestionSteerPrompt(pendingUserQuestionOffer, answer);
@@ -3337,6 +3338,7 @@ export function App(): JSX.Element {
           else void interrupt();
         }}
         queryHistorySessionID={activeThread?.id ?? currentSessionTab?.id}
+        skillThreadID={activeThread?.id}
         queryHistory={composerQueryHistory}
         requestedHandoffIntent={requestedHandoffIntentForThread(activeThread)}
       />

@@ -28,6 +28,12 @@ function setVisualTheme(theme, font) {
       .filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity)
       .map(animation => animation.finished.catch(() => {}))));
 }
+// Chromium activates a focused button on the character event, not on keyDown alone.
+function pressEnter(win) {
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Return" });
+  win.webContents.sendInputEvent({ type: "char", keyCode: "\r" });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
+}
 async function until(read, label) {
   const deadline = Date.now() + 10000;
   while (Date.now() < deadline) { const value = await read(); if (value) return value; await sleep(25); }
@@ -35,6 +41,11 @@ async function until(read, label) {
 }
 async function run() {
   fs.mkdirSync(evidence, { recursive: true });
+  if (process.argv.includes("--offers-only")) {
+    await verifyQuestionOffers();
+    app.quit();
+    return;
+  }
   const win = new BrowserWindow({ width: 1100, height: 820, show: false, webPreferences: {
     contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false,
     preload: path.join(__dirname, "streaming-e2e-preload.cjs"),
@@ -146,6 +157,7 @@ async function run() {
   console.log("PASS: immediate queue, event-first timing, graphical Stop, terminal-before-RPC, ordered held inputs, two rendered layouts");
   win.destroy();
   await verifyHistoryEdits();
+  await verifyQuestionOffers();
   app.quit();
 }
 
@@ -235,5 +247,131 @@ async function verifyHistoryEdits() {
     win.destroy();
   }
   console.log("PASS: history preparation, edit/send failures preserve input, Stop prevents admission, success, two rendered layouts");
+}
+async function verifyQuestionOffers() {
+  for (const action of ["answer", "cancel", "multiple"]) {
+    gates.clear();
+    queued.length = 0;
+    const win = new BrowserWindow({ width: 1100, height: 820, show: false, webPreferences: {
+      contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false,
+      preload: path.join(__dirname, "streaming-e2e-preload.cjs"),
+    } });
+    const evaluate = (fn, ...args) => win.webContents.executeJavaScript(`(${fn.toString()})(...${JSON.stringify(args)})`);
+    // A hidden window only paints on request; wait for React to commit and paint before each capture.
+    const paint = () => evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const capture = async (name) => {
+      await paint();
+      fs.writeFileSync(path.join(evidence, name), (await win.webContents.capturePage()).toPNG());
+    };
+    await win.loadFile(path.join(desktopRoot, "out/renderer/index.html"));
+    await until(() => evaluate(() => Boolean(document.querySelector(".composer textarea"))), "offer composer");
+    await evaluate(() => {
+      const input = document.querySelector(".composer textarea");
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(input, "Ask for implementation choices");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await evaluate(() => document.querySelector(".composer textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    (await until(() => gates.get("thread/start"), "offer thread")).resolve();
+    const admission = await until(() => gates.get("turn/start"), "offer turn");
+    admission.resolve();
+    await until(() => evaluate(() => Boolean(document.querySelector('[data-wuu-state="stop"]'))), "running offer turn");
+    const questions = action === "multiple" ? [
+      { id: "language", question: "Which language?", options: [{ label: "Go" }, { label: "Rust" }] },
+      { id: "tests", question: "Which verification should accompany this change?", allow_custom: true },
+    ] : [{ id: "path", question: "Which path?", options: [{ label: "Safe" }] }];
+    for (const [id, items] of [["first", questions], ["second", [{ id: "next", question: "Next independent offer", options: [{ label: "Proceed" }] }]]]) {
+      win.webContents.send("test:server-event", { kind: "notification", workdir: repoRoot, message: {
+        method: "user-question/requested", params: { request: {
+          request_id: id, plugin_id: "ask-user", execution_id: `exec-${id}`, thread_id: admission.params.threadId,
+          turn_id: admission.params.turnId, mode: "offer", created_at: new Date().toISOString(),
+          ...(action === "multiple" && id === "first" ? { expires_at: new Date(Date.now() + 60_000).toISOString() } : {}),
+          questions: items,
+        } },
+      } });
+    }
+    await until(() => evaluate(() => Boolean(document.querySelector('.user-question-card [role="radio"]'))), "first offer");
+    if (action === "multiple") {
+      assert.equal(await evaluate(() => document.querySelectorAll(".user-question-field").length), 2, "all offered questions are rendered");
+      await until(() => evaluate(() => Boolean(document.querySelector('.user-question-card [role="timer"]'))), "offer countdown");
+      for (const [theme, width, font] of [["light", 1100, 14], ["dark", 760, 20]]) {
+        win.setSize(width, 820);
+        await evaluate(setVisualTheme, theme, font);
+        await capture(`offer-countdown-${theme}-${width}.png`);
+      }
+      await evaluate(() => document.querySelector('.user-question-card [role="radio"]').click());
+      assert.equal(gates.has("user-question/respond"), false, "partial answers are not submitted");
+      (await until(() => gates.get("user-question/hold"), "hold while answering")).resolve();
+      await until(() => evaluate(() => !document.querySelector('.user-question-card [role="timer"]')), "held offer clears countdown");
+      await evaluate(() => {
+        const input = document.querySelector(".user-question-card input");
+        input.focus();
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, "Integration tests");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      for (const [theme, width, font] of [["light", 1100, 14], ["dark", 760, 20]]) {
+        win.setSize(width, 820);
+        await evaluate(setVisualTheme, theme, font);
+        await capture(`offer-multiple-${theme}-${width}.png`);
+        assert(await evaluate(() => {
+          const card = document.querySelector(".user-question-card").getBoundingClientRect();
+          return card.top >= 0 && card.bottom <= innerHeight && card.left >= 0 && card.right <= innerWidth;
+        }), "multi-question card fits viewport");
+      }
+      await evaluate(() => document.querySelector(".user-question-submit").focus());
+      pressEnter(win);
+    } else {
+      await evaluate(action => document.querySelector(action === "answer" ? '.user-question-card [role="radio"]' : ".user-question-skip").click(), action);
+    }
+    const method = action === "cancel" ? "user-question/cancel" : "user-question/respond";
+    const response = await until(() => gates.get(method), `${action} first offer`);
+    assert.equal(response.params.requestId, "first");
+    if (action === "multiple") assert.deepEqual(response.params.answer.answers, [
+      { id: "language", selected: ["Go"] }, { id: "tests", selected: [], custom: "Integration tests" },
+    ]);
+    assert(await evaluate(() => [...document.querySelectorAll(".user-question-card button")].every(button => button.disabled)), "pending offer disables repeat actions");
+    await capture(`offer-${action}-pending.png`);
+    response.resolve({ request_id: "first", resolved: true });
+    await until(() => evaluate(() => document.querySelector(".user-question-card")?.textContent.includes("Next independent offer")), "next offer");
+    assert(await evaluate(() => !document.querySelector('.user-question-card [role="radio"]').disabled), "next offer must not inherit submitting state");
+    if (action !== "cancel") await until(() => queued.length === 1, "first answer steered");
+    if (action === "multiple") assert(queued[0].text.includes("Integration tests") && queued[0].text.includes("Go"));
+    gates.delete("user-question/respond");
+    await evaluate(() => document.querySelector('.user-question-card [role="radio"]').focus());
+    pressEnter(win);
+    const next = await until(() => gates.get("user-question/respond"), "keyboard answer next offer");
+    assert.deepEqual(next.params, { requestId: "second", answer: { answers: [{ id: "next", selected: ["Proceed"] }] } });
+    next.resolve({ request_id: "second", resolved: true });
+    await until(() => evaluate(() => !document.querySelector(".user-question-card")), "offers cleared");
+    assert(await evaluate(() => Boolean(document.querySelector(".composer textarea"))), "composer restored");
+    if (action === "multiple") {
+      win.webContents.send("test:server-event", { kind: "notification", workdir: repoRoot, message: {
+        method: "user-question/requested", params: { request: {
+          request_id: "long", plugin_id: "ask-user", execution_id: "exec-long", thread_id: admission.params.threadId,
+          turn_id: admission.params.turnId, mode: "offer", created_at: new Date().toISOString(),
+          questions: Array.from({ length: 8 }, (_, index) => ({ id: `q${index}`, allow_custom: true,
+            question: `Question ${index + 1}: Explain the verification approach for this implementation, including recovery when the operation fails.` })),
+        } },
+      } });
+      await until(() => evaluate(() => document.querySelectorAll(".user-question-card input").length === 8), "eight-question offer");
+      assert(await evaluate(() => {
+        const card = document.querySelector(".user-question-card");
+        const rect = card.getBoundingClientRect();
+        return card.scrollHeight > card.clientHeight && rect.top >= 0 && rect.bottom <= innerHeight;
+      }), "long offer is bounded and scrollable");
+      await evaluate(() => {
+        const inputs = [...document.querySelectorAll(".user-question-card input")];
+        inputs.at(-1).focus();
+      });
+      await until(() => evaluate(() => document.querySelector(".user-question-card").scrollTop > 0), "keyboard focus scrolls final question into view");
+      assert(await evaluate(() => {
+        const rect = document.activeElement.getBoundingClientRect();
+        return rect.top >= 0 && rect.bottom <= innerHeight;
+      }), "last input remains reachable");
+      await capture("offer-eight-questions-focus.png");
+      gates.get("user-question/hold")?.resolve();
+    }
+    console.log(`PASS: ${action} offer, pending feedback, next offer keyboard answer, composer restored`);
+    win.destroy();
+  }
 }
 app.whenReady().then(run).catch((error) => { console.error(error); app.exit(1); });

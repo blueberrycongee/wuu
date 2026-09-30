@@ -269,11 +269,16 @@ func settleCoordinator(t *testing.T, srv *Server, calls *projectCalls, coordinat
 			call.response <- providersResponse(answer)
 			continue
 		}
+		// Observe delivery before idle so a concurrent admission cannot pair
+		// an old idle snapshot with input that it has just persisted.
+		if !hasClientIDs(t, srv.rt, coordinatorID, clientIDs) {
+			continue
+		}
 		th := srv.thread(coordinatorID)
 		th.mu.Lock()
 		idle := !th.running
 		th.mu.Unlock()
-		if idle && hasClientIDs(t, srv.rt, coordinatorID, clientIDs) {
+		if idle {
 			return
 		}
 	}

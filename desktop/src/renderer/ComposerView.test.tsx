@@ -472,6 +472,7 @@ function renderStatefulComposer(props: {
   textOnly?: boolean;
   onPasteAttachmentFiles?: (files: File[]) => void;
   queryHistorySessionID?: string;
+  skillThreadID?: string;
   initialized?: InitializeResult;
   running?: boolean;
   handoffDisabledReason?: string;
@@ -564,6 +565,7 @@ function renderStatefulComposer(props: {
           onInterrupt={() => {}}
           tokensPerSecond={0}
           queryHistorySessionID={props.queryHistorySessionID}
+          skillThreadID={props.skillThreadID}
         />
       </ImagePreviewProvider>
     );
@@ -2047,10 +2049,24 @@ describe("Composer send control", () => {
     expect(runtimeButton?.disabled).toBe(false);
   });
 
+  it.each([
+    { draftID: "draft-tab", threadID: undefined, expected: undefined },
+    { draftID: "draft-tab", threadID: "persisted-thread", expected: { thread_id: "persisted-thread" } },
+  ])("loads skill catalogs using the real thread identity: $threadID", async ({ draftID, threadID, expected }) => {
+    installSkillList([]);
+    renderStatefulComposer({
+      activeContext: { kind: "project", project_id: "repo", cwd: "/repo" },
+      queryHistorySessionID: draftID,
+      skillThreadID: threadID,
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(window.wuu.listSkills).toHaveBeenCalledWith(expected);
+  });
+
   it.each(["review", "commit", "audit", "compact", "release-check"])("preserves explicitly selected %s skill identity", async (name) => {
     const setPrompt = vi.fn();
     const path = `/synthetic/skills/${name}/SKILL.md`;
-    installSkillList([{ name, path, source: "user", user_invocable: true, disable_model_invoke: true }]);
+    installSkillList([{ name, path, source: "user", description: "Run the selected workflow", user_invocable: true, disable_model_invoke: true }]);
     renderComposer({
       prompt: `/${name}`,
       setPrompt,
@@ -2059,10 +2075,10 @@ describe("Composer send control", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    const skillButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>(
-      `.slash-command-item[data-command-name="${name}"]`,
-    )).find(button => button.textContent?.includes("Skill"));
-    expect(skillButton).toBeDefined();
+    const skillButton = document.body.querySelector<HTMLButtonElement>(
+      `.slash-command-item[id$="-skill:${name}"]`,
+    );
+    expect(skillButton).not.toBeNull();
     act(() => {
       skillButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });

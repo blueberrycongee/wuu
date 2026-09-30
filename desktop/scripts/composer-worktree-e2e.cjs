@@ -117,7 +117,7 @@ async function run() {
     ],
     active_context: { kind: 'project', project_id: 'repo', cwd: project },
   }));
-  fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'zh-CN', theme: 'light' }));
+  fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en', theme: 'light' }));
   await import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href);
   while (!main) await delay(25);
   main.setSize(1280, 820);
@@ -181,9 +181,9 @@ async function run() {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, '/compact');
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await waitFor(main, () => [...document.querySelectorAll('.slash-command-item[data-command-name="compact"]')].some(node => node.textContent.includes('Skill')));
+  await waitFor(main, () => document.querySelector('.slash-command-item[id$="-skill:compact"]'));
   await capture(main, '07-explicit-skill-menu.png');
-  await evaluate(main, () => [...document.querySelectorAll('.slash-command-item[data-command-name="compact"]')].find(node => node.textContent.includes('Skill')).click());
+  await evaluate(main, () => document.querySelector('.slash-command-item[id$="-skill:compact"]').click());
   await waitFor(main, () => document.querySelector('.composer textarea').value.startsWith('/skill '));
   const selectedDraft = await evaluate(main, () => document.querySelector('.composer textarea').value);
   assert.deepEqual(JSON.parse(selectedDraft.split('\n')[0].slice('/skill '.length)), {
@@ -291,7 +291,17 @@ run().then(() => {
   clearTimeout(timeout);
   server.close();
   app.quit();
-}).catch(error => {
+}).catch(async error => {
+  if (main && !main.isDestroyed()) {
+    try {
+      await capture(main, 'failure.png');
+      const state = await evaluate(main, () => ({
+        draft: document.querySelector('.composer textarea')?.value,
+        commands: [...document.querySelectorAll('.slash-command-item')].map(node => ({ id: node.id, text: node.textContent, disabled: node.disabled })),
+      }));
+      fs.writeFileSync(path.join(output, 'failure.json'), JSON.stringify(state, null, 2));
+    } catch (captureError) { console.error('Could not capture failure state', captureError); }
+  }
   console.error(error, 'FIXTURE', fixture);
   server.close();
   app.exit(1);
