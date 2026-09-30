@@ -1,17 +1,6 @@
 /* Component color tokens for workspace.css. Light-theme values; the dark
    theme overrides these in base.css theme blocks. */
 :root {
-  --file-icon-code: #2563a8;
-  --file-icon-data: #6f3aa3;
-  --browser-nav-disabled: var(--wuu-color-text-muted, #c1c5c8);
-  --browser-url-border: var(--wuu-color-border-subtle, var(--hairline));
-  --browser-url-focus-border: var(--focus-ring);
-  --browser-url-focus-ring: var(--focus-ring);
-  --browser-url-error-ring: rgba(243, 167, 160, 0.32);
-  --browser-url-icon: var(--wuu-color-text-muted, #9099a0);
-  --browser-url-error-icon: var(--wuu-color-danger, #c33b2e);
-  --browser-url-placeholder: var(--wuu-color-text-muted, #a4a9ad);
-  --browser-home-bg: var(--wuu-color-canvas, #fcfcfb);
   --browser-status-overlay-bg: rgba(255, 255, 255, 0.86);
   --browser-error-text: var(--wuu-color-danger, #5d1f17);
   --browser-error-span-text: var(--wuu-color-danger, #6e2a22);
@@ -740,7 +729,8 @@
 }
 
 .workspace-right-panel.files .workspace-panel-body,
-.workspace-right-panel.terminal .workspace-panel-body {
+.workspace-right-panel.terminal .workspace-panel-body,
+.workspace-right-panel.browser .workspace-panel-body {
   padding: 0;
 }
 
@@ -1581,13 +1571,16 @@ html[data-focus-modality="keyboard"] .workspace-tool-menu-item:focus-visible {
   background: var(--paper);
 }
 
+/* A chrome row: the first and last glyphs sit on the pane inset and the
+ * hairline runs edge to edge. */
 .workspace-browser-toolbar {
   position: relative;
   display: grid;
+  min-height: calc(var(--control-size-toolbar) + var(--space-2) * 2);
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  column-gap: 8px;
-  padding: 6px 10px;
+  column-gap: var(--space-2);
+  padding: var(--space-2) var(--control-toolbar-inset);
   border-bottom: 1px solid var(--hairline-soft);
   background: transparent;
 }
@@ -1599,20 +1592,20 @@ html[data-focus-modality="keyboard"] .workspace-tool-menu-item:focus-visible {
 }
 
 .workspace-browser-nav {
-  width: 28px;
-  height: 28px;
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
   border-radius: var(--radius-sm);
   color: var(--ink-tertiary);
 }
 
 .workspace-browser-nav:hover:not(:disabled) {
-  background: var(--surface-3);
+  background: var(--ink-overlay-4);
   color: var(--ink);
 }
 
 .workspace-browser-nav:disabled {
-  color: var(--browser-nav-disabled);
-  cursor: not-allowed;
+  color: var(--ink-faint);
+  cursor: default;
 }
 
 .workspace-browser-url-form {
@@ -1667,7 +1660,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 }
 
 .workspace-browser-url-input::placeholder {
-  color: var(--browser-url-placeholder);
+  color: var(--placeholder-ink);
 }
 
 .workspace-browser-url-input.has-error {
