@@ -119,6 +119,76 @@ describe("UserQuestionCard", () => {
     });
   });
 
+  it("keeps cancellation identifiable during an offer countdown and clears a held deadline", async () => {
+    vi.useFakeTimers();
+    const now = new Date("2026-09-13T12:00:00.000Z");
+    vi.setSystemTime(now);
+    const onCancel = vi.fn(async () => undefined);
+    let request = offerRequest({ questions: [
+      { id: "language", question: "Which language?", options: [{ label: "Go" }] },
+      { id: "tests", question: "Which tests?", allow_custom: true },
+    ] });
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const renderCard = async (): Promise<void> => {
+      await act(async () => {
+        root?.render(<I18nProvider><UserQuestionCard request={request}
+          onAnswer={async () => undefined} onCancel={onCancel} /></I18nProvider>);
+      });
+    };
+    await renderCard();
+    const cancel = container.querySelector<HTMLButtonElement>(".user-question-cancel")!;
+    const actionLabel = cancel.textContent;
+    request = { ...request, expires_at: new Date(now.getTime() + 20_000).toISOString() };
+    await renderCard();
+    expect(cancel.textContent).toBe(actionLabel);
+    expect(container.querySelector('[role="timer"]')).not.toBeNull();
+    request = { ...request, expires_at: undefined };
+    await renderCard();
+    expect(container.querySelector('[role="timer"]')).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(20_000); });
+    expect(onCancel).not.toHaveBeenCalled();
+    await act(async () => cancel.click());
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("collects every offer answer before submitting, including free text", async () => {
+    const onAnswer = vi.fn(async () => undefined);
+    const onHold = vi.fn(async () => undefined);
+    const request = offerRequest({ questions: [
+      { id: "language", question: "Which language?", options: [{ label: "Go" }, { label: "Rust" }] },
+      { id: "tests", question: "Which tests?", allow_custom: true },
+    ] });
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(<I18nProvider><UserQuestionCard request={request} onAnswer={onAnswer}
+        onCancel={async () => undefined} onHold={onHold} /></I18nProvider>);
+    });
+    const option = container.querySelector<HTMLButtonElement>('[role="radio"]')!;
+    await act(async () => option.click());
+    expect(onAnswer).not.toHaveBeenCalled();
+    const input = container.querySelector<HTMLInputElement>("input");
+    expect(input, "Every offered question must have an answer control").not.toBeNull();
+    const submit = container.querySelector<HTMLButtonElement>(".user-question-submit")!;
+    expect(submit.disabled).toBe(true);
+    await act(async () => {
+      input!.focus();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "Integration tests");
+      input!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(onHold).toHaveBeenCalled();
+    expect(submit.disabled).toBe(false);
+    expect(onAnswer).not.toHaveBeenCalled();
+    await act(async () => submit.click());
+    expect(onAnswer).toHaveBeenCalledExactlyOnceWith({ answers: [
+      { id: "language", selected: ["Go"] },
+      { id: "tests", selected: [], custom: "Integration tests" },
+    ] });
+  });
+
   it("steers an offer option immediately", async () => {
     const onAnswer = vi.fn(async () => undefined);
     const request: UserQuestionRequest = {

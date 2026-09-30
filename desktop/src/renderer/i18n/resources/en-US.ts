@@ -2111,6 +2111,7 @@ export const enUS = {
   "userQuestion.cancel": "Cancel",
   "userQuestion.customPlaceholder": "Type another answer",
   "userQuestion.custom": "None of these — tell Wuu",
+  "userQuestion.countdown": "({seconds}s)",
   "userQuestion.skipCountdown": "Skip in {seconds}s",
   "userQuestion.skip": "Skip",
   "userQuestion.customAriaLabel": "Custom answer for {question}",

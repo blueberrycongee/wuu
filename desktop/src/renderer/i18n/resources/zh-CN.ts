@@ -2108,6 +2108,7 @@ export const zhCN = {
   "userQuestion.cancel": "取消",
   "userQuestion.customPlaceholder": "输入其他答案",
   "userQuestion.custom": "都不是，直接告诉 Wuu",
+  "userQuestion.countdown": "({seconds}s)",
   "userQuestion.skipCountdown": "{seconds} 秒后跳过",
   "userQuestion.skip": "跳过",
   "userQuestion.customAriaLabel": "{question} 的自定义答案",

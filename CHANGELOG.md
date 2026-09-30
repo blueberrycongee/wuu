@@ -83,6 +83,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep queued input the Core rejected or lost: a message refused at admission
   (for example by a `UserPromptSubmit` hook) is held with the reason, and queued
   messages survive a Core restart as paused input instead of being removed.
+
+- Show every question of a multi-question offer as one form, collecting all answers
+  and free text before submitting, and start each follow-up offer with fresh state
+  instead of the previous card's submitting state. Keep cancellation
+  labeled while an offer counts down and clear its timer when the offer is held.
 - Keep ordinary project conversations rooted in the selected folder after project
   relocation, while preserving custom directories and linked worktrees.
 

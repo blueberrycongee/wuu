@@ -104,6 +104,24 @@ jobs:
       - name: Build
         run: make build-desktop
 
+      - name: Guard request lifecycle
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WUU_REQUEST_LIFECYCLE_OUTPUT: ${{ runner.temp }}/wuu-request-lifecycle-evidence
+        run: |
+          mkdir -p "$WUU_REQUEST_LIFECYCLE_OUTPUT"
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/request-lifecycle-e2e.cjs 2>&1 | tee "$WUU_REQUEST_LIFECYCLE_OUTPUT/run.log"
+
+      - name: Upload request lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: request-lifecycle-evidence
+          path: ${{ runner.temp }}/wuu-request-lifecycle-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Guard image layout stability
         shell: bash
         env:
