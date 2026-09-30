@@ -163,7 +163,7 @@ async function flushAsync(): Promise<void> {
 
 function conversationSectionHeader(): HTMLButtonElement | null {
   return container.querySelector<HTMLButtonElement>(
-    'button[aria-label="收起 对话 的会话"], button[aria-label="展开 对话 的会话"]',
+    'button[aria-label="收起 对话 的对话"], button[aria-label="展开 对话 的对话"]',
   );
 }
 
@@ -225,7 +225,7 @@ describe("sidebar collapse-state independence", () => {
     ['folder', '[data-section-id="__wuu_folder_sort__:folder-collapse"] button[aria-expanded]'],
     ['pinned', '[data-functional-group-id="pinned"] button[aria-expanded]'],
     ['workspace', '[data-functional-group-id="workspace"] button[aria-expanded]'],
-    ['scratch', 'button[aria-label="收起 对话 的会话"], button[aria-label="展开 对话 的会话"]'],
+    ['scratch', 'button[aria-label="收起 对话 的对话"], button[aria-label="展开 对话 的对话"]'],
   ])("preserves the %s fold across settings visits and theme changes", async (_section, selector) => {
     installWuuApi();
     await act(async () => {

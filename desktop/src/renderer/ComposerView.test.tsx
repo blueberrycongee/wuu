@@ -2617,7 +2617,7 @@ describe("Composer queue strip", () => {
     });
 
     expect(container.querySelector(".composer-pending-preview")?.textContent).toBe(
-      "当前回复已中断；这些 Steer 和 Queue 不会自动执行。",
+      translateCurrent("composer.heldNotice"),
     );
     expect(container.querySelector(".composer-pending-title")).toBeNull();
     expect(container.querySelector(".composer-pending-drawer")?.classList.contains("expanded")).toBe(true);
@@ -3421,7 +3421,7 @@ describe("Composer expand button", () => {
     const button = container.querySelector<HTMLButtonElement>(".composer-expand-button");
     expect(button).not.toBeNull();
     expect(button?.disabled).toBe(true);
-    expect(button?.getAttribute("title")).toBe("只读会话不可展开");
+    expect(button?.getAttribute("title")).toBe("只读对话不可展开");
     expect(stack?.classList.contains("is-expanded")).toBe(false);
   });
 });

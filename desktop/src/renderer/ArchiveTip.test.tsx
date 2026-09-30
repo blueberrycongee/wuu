@@ -59,16 +59,16 @@ describe("ArchiveTip", () => {
     const tip = container.querySelector(".archive-tip");
     // 强标签不应被渲染，提示只显示通用文案，避免出现空白标题
     expect(tip?.querySelector("strong")).toBeNull();
-    expect(tip?.textContent).toContain("会话已归档");
+    expect(tip?.textContent).toContain("对话已归档");
   });
 
   it("shows an error instead of archive success when the mutation fails", () => {
-    renderTip({ errorMessage: "会话仍在运行，结束后再归档" });
+    renderTip({ errorMessage: "对话仍在运行，结束后再归档" });
 
     const tip = container.querySelector(".archive-tip");
     expect(tip?.classList.contains("is-error")).toBe(true);
     expect(tip?.getAttribute("role")).toBe("alert");
-    expect(tip?.textContent).toContain("会话仍在运行，结束后再归档");
+    expect(tip?.textContent).toContain("对话仍在运行，结束后再归档");
     expect(tip?.textContent).not.toContain("已归档");
     expect(tip?.querySelector(".archive-tip-action")).toBeNull();
   });

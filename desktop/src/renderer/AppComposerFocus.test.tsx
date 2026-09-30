@@ -570,7 +570,7 @@ describe("main composer focus continuity", () => {
   it("focuses the dock composer from a project's new-conversation button", async () => {
     await renderApp(true);
     const button = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="在 Focus Project 中新建会话"]',
+      'button[aria-label="在 Focus Project 中新建对话"]',
     );
     if (!button) throw new Error("project new-conversation button not rendered");
     button.focus();
@@ -613,7 +613,7 @@ describe("main composer focus continuity", () => {
   it("waits for the destination dock before focusing across projects", async () => {
     await renderApp(false, { deferWorkspaceSelection: true });
     const button = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="在 Focus Project 中新建会话"]',
+      'button[aria-label="在 Focus Project 中新建对话"]',
     );
     if (!button) throw new Error("project new-conversation button not rendered");
     button.focus();
@@ -633,7 +633,7 @@ describe("main composer focus continuity", () => {
   it("does not focus the old dock when project selection fails", async () => {
     await renderApp(false, { rejectWorkspaceSelection: true });
     const button = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="在 Focus Project 中新建会话"]',
+      'button[aria-label="在 Focus Project 中新建对话"]',
     );
     if (!button) throw new Error("project new-conversation button not rendered");
     button.focus();
@@ -647,7 +647,7 @@ describe("main composer focus continuity", () => {
   it("does not focus the old dock when no-project selection fails", async () => {
     await renderApp(false, { rejectNoProjectSelection: true });
     const button = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="在 对话 中新建会话"]',
+      'button[aria-label="在 对话 中新建对话"]',
     );
     if (!button) throw new Error("scratch new-conversation button not rendered");
     button.focus();
@@ -661,7 +661,7 @@ describe("main composer focus continuity", () => {
   it("does not steal focus changed during an asynchronous project switch", async () => {
     await renderApp(false, { deferWorkspaceSelection: true });
     const button = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="在 Focus Project 中新建会话"]',
+      'button[aria-label="在 Focus Project 中新建对话"]',
     );
     if (!button) throw new Error("project new-conversation button not rendered");
     button.focus();
@@ -683,7 +683,7 @@ describe("main composer focus continuity", () => {
   it("does not steal focus after a non-focusable user interaction", async () => {
     await renderApp(false, { deferWorkspaceSelection: true });
     const button = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="在 Focus Project 中新建会话"]',
+      'button[aria-label="在 Focus Project 中新建对话"]',
     );
     if (!button) throw new Error("project new-conversation button not rendered");
     button.focus();

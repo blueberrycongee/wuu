@@ -549,7 +549,7 @@ describe("SettingsView model services", () => {
     click(container.querySelector('[data-provider="deepseek"]'));
     click(container.querySelector('[aria-label="deepseek 的更多操作"], [aria-label="DeepSeek 的更多操作"]'));
     click([...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent?.includes("删除服务")));
-    expect(container.textContent).toContain("这个模型服务正在被运行中的会话使用");
+    expect(container.textContent).toContain("这个模型服务正在被运行中的对话使用");
     expect(onRemoveProvider).not.toHaveBeenCalled();
 
     renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onRemoveProvider, runningProviderNames: [] });
@@ -1357,7 +1357,7 @@ describe("SettingsView archive page", () => {
       archivedThreads: [],
     });
 
-    expect(container.textContent).toContain("暂无已归档的会话或群聊");
+    expect(container.textContent).toContain("暂无已归档的对话或群聊");
     expect(container.querySelector(".settings-archive-empty")).not.toBeNull();
     expect(container.querySelector(".settings-archive-list")).toBeNull();
   });
@@ -1410,7 +1410,7 @@ describe("SettingsView archive page", () => {
     const count = (group: Element | undefined) => group?.querySelector(".settings-archive-group-count");
     expect(groups[0]?.textContent).toContain("wuu");
     expect(count(groups[0])?.textContent).toBe("2");
-    expect(count(groups[0])?.getAttribute("aria-label")).toBe("2 个会话");
+    expect(count(groups[0])?.getAttribute("aria-label")).toBe("2 个对话");
     expect(groups[1]?.textContent).toContain("网站");
     expect(count(groups[1])?.textContent).toBe("1");
   });

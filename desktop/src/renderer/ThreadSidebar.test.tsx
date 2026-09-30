@@ -613,7 +613,7 @@ describe("WorkspaceList", () => {
 
     const workspaceRow = container.querySelector(".project-row");
     expect(workspaceRow?.classList.contains("has-unread")).toBe(true);
-    expect(workspaceRow?.getAttribute("aria-label")).toContain("有未读会话");
+    expect(workspaceRow?.getAttribute("aria-label")).toContain("有未读对话");
     expect(workspaceRow?.querySelector(".project-row-unread")).not.toBeNull();
   });
 
@@ -672,9 +672,9 @@ describe("WorkspaceList", () => {
       '.thread-row-main[aria-label^="Middle session"]',
     );
     const leafRow = container.querySelector(
-      '.thread-row-main[aria-label^="Middle session，分叉自其他会话"]',
+      '.thread-row-main[aria-label^="Middle session，分叉自其他对话"]',
     );
-    expect(middleRow?.getAttribute("aria-label")).not.toContain("分叉自其他会话");
+    expect(middleRow?.getAttribute("aria-label")).not.toContain("分叉自其他对话");
     expect(leafRow).not.toBeNull();
   });
 });
@@ -739,8 +739,8 @@ describe("WorkspaceGroup remove workspace", () => {
       );
     });
 
-    expect(container.textContent).toContain("正在加载会话");
-    expect(container.textContent).not.toContain("还没有会话");
+    expect(container.textContent).toContain("正在加载对话");
+    expect(container.textContent).not.toContain("还没有对话");
     expect(container.querySelector(".project-row-loading")).not.toBeNull();
   });
 
@@ -854,7 +854,7 @@ describe("WorkspaceGroup missing workspace", () => {
     missing,
   });
 
-  it("dims a missing workspace and disables its 新建会话 button", () => {
+  it("dims a missing workspace and disables its 新建对话 button", () => {
     renderWorkspace(makeWorkspace(true));
     expect(container.querySelector(".project-group-missing")).not.toBeNull();
     const newThread = container.querySelector<HTMLButtonElement>(

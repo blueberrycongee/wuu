@@ -268,7 +268,7 @@ export function WorkspaceGroup({
   const pendingWorkspace = pendingWorkspaceID === project.id;
   const loadingWorkspaceThreads = loadingWorkspaceThreadIDs?.has(project.id) ?? false;
   const isScratchPseudo = project.id === scratchPseudoWorkspaceID;
-  // A real workspace whose directory was moved away or deleted. Its "新建会话"
+  // A real workspace whose directory was moved away or deleted. Its "新建对话"
   // affordance is disabled so no session can be created in a cwd that is gone.
   const isMissing = !isScratchPseudo && project.missing === true;
   const workspaceSelectionMode =
