@@ -745,6 +745,14 @@ func (s *Server) handleTurnSteer(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	// Skill resolution can acquire the thread runtime; keep it outside the admission lock.
+	var steerMsg providers.ChatMessage
+	if !isHeld {
+		steerMsg, err = s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+	}
 	if err := s.takeSessionControlForInput(params.ThreadID); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -797,7 +805,6 @@ func (s *Server) handleTurnSteer(req Request) error {
 			return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID}, nil)
 		}
 	}
-	var steerMsg providers.ChatMessage
 	var remaining []queuedTurn
 	var removedTurn queuedTurn
 	if isHeld {
@@ -812,12 +819,6 @@ func (s *Server) handleTurnSteer(req Request) error {
 			return s.writeResponse(req.ID, nil, errors.New("held message no longer exists"))
 		}
 		steerMsg = removedTurn.msg
-	} else {
-		steerMsg, err = s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
-		if err != nil {
-			th.mu.Unlock()
-			return s.writeResponse(req.ID, nil, err)
-		}
 	}
 	steerMsg.ClientID = clientID
 	steerMsg.Steered = true

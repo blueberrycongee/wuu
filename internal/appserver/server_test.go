@@ -4906,6 +4906,56 @@ func TestServerTurnStartRendersLightweightSlashCommandForModel(t *testing.T) {
 	}
 }
 
+func TestServerTurnStartLoadsExplicitSkillIdentity(t *testing.T) {
+	for _, method := range []string{MethodTurnStart, MethodTurnQueue} {
+		for _, name := range []string{"review", "commit", "audit", "compact", "release-check"} {
+			t.Run(method+"/"+name, func(t *testing.T) {
+				client := &fakeClient{response: providers.ChatResponse{Content: "done"}}
+				rt := newTestRuntime(t, client)
+				skill := skills.Skill{Name: name, Source: "user", Path: filepath.Join(t.TempDir(), "quoted \"技能\"", "SKILL.md"), UserInvocable: true, DisableModelInvoke: true, Content: "selected instructions ${ARGUMENTS}"}
+				rt.Skills = []skills.Skill{skill}
+				out := &lockedBuffer{}
+				srv := New(rt, out)
+				if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
+					t.Fatal(err)
+				}
+				threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread.ID
+				identity, _ := json.Marshal(map[string]string{"name": name, "source": skill.Source, "path": skill.Path})
+				prompt := "/skill " + string(identity) + "\n\nquarterly roadmap"
+				raw, _ := json.Marshal(map[string]any{"id": "2", "method": method, "params": TurnStartParams{ThreadID: threadID, Prompt: prompt}})
+				if err := srv.handleLine(context.Background(), raw); err != nil {
+					t.Fatal(err)
+				}
+				if method == MethodTurnStart {
+					started := remarshal[TurnStartResult](t, responseByID(t, parseOutput(t, out.String()), "2")["result"])
+					if len(started.Turn.Items) != 1 || started.Turn.Items[0].Text != prompt {
+						t.Fatalf("lost selected identity: %+v", started.Turn.Items)
+					}
+				} else {
+					queued := remarshal[TurnQueueResult](t, responseByID(t, parseOutput(t, out.String()), "2")["result"])
+					if queued.Queued.ThreadID != threadID || queued.Queued.Preview != prompt {
+						t.Fatalf("queued skill lost selected identity: %+v", queued)
+					}
+				}
+				_ = waitForMethod(t, out, NotificationTurnCompleted)
+				client.mu.Lock()
+				defer client.mu.Unlock()
+				if len(client.requests) != 1 || len(client.requests[0].Messages) < 2 {
+					t.Fatalf("expected a model turn, got %d requests", len(client.requests))
+				}
+				modelPrompt := client.requests[0].Messages[1].Content
+				if !strings.Contains(modelPrompt, "selected instructions quarterly roadmap") || strings.HasPrefix(modelPrompt, "/skill ") {
+					t.Fatalf("selected instructions were not loaded: %s", modelPrompt)
+				}
+				persisted, err := loadChatMessages(rt.SessionDir, threadID)
+				if err != nil || len(persisted) == 0 || persisted[0].DisplayContent != prompt || persisted[0].Content != modelPrompt {
+					t.Fatalf("skill identity and loaded instructions must survive persistence: %+v, %v", persisted, err)
+				}
+			})
+		}
+	}
+}
+
 func TestServerTurnStartForwardsStreamingUsage(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StreamRunner.Client = usageStreamClient{events: []providers.StreamEvent{

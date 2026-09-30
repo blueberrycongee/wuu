@@ -44,6 +44,7 @@ export type ComposerSlashCommand = {
   pluginId?: string;
   pluginCommandId?: string;
   promptTemplate?: string;
+  skill?: SkillSummary;
 };
 
 export type ComposerSlashDraft = {
@@ -382,7 +383,7 @@ export function buildComposerSlashCommands({
   ];
   const skillCommands = buildSkillSlashCommands(skills, needsRuntime);
   const reservedNames = new Set(
-    [...commands, ...skillCommands].flatMap((command) => [command.name, ...(command.aliases ?? [])]),
+    ["skill", ...[...commands, ...skillCommands].flatMap((command) => [command.name, ...(command.aliases ?? [])])],
   );
   const pluginCommands = registerPluginPromptCommands(
     pluginCommandPackagesFromInventory(initialized?.extension_inventory ?? []),
@@ -472,7 +473,18 @@ function composerSlashCommandSearchText(command: ComposerSlashCommand): string {
     .toLowerCase();
 }
 
+export function composerSkillPrompt(skill: Pick<SkillSummary, "name" | "source" | "path" | "project">, args = ""): string {
+  // Persist the catalog identity so dispatch never depends on model interpretation.
+  const identity = skill.project
+    ? { name: skill.name, source: skill.source, project: skill.project }
+    : { name: skill.name, source: skill.source, path: skill.path ?? "" };
+  return `/skill ${JSON.stringify(identity)}\n\n${args.trim()}`;
+}
+
 export function composerSlashPrompt(command: ComposerSlashCommand, args: string): string {
+  if (command.skill) {
+    return composerSkillPrompt(command.skill, args);
+  }
   if (command.promptTemplate) {
     return renderPluginPromptTemplate(command.promptTemplate, args);
   }
@@ -504,6 +516,7 @@ function buildSkillSlashCommands(skills: SkillSummary[], disabledReason?: string
       description: summary,
       tag: "Skill",
       kind: "skill",
+      skill,
       aliases: skill.examples?.slice(0, 3),
       keywords: [
         "skill",

@@ -74,7 +74,7 @@ describe("FirstRunOnboarding", () => {
     ]);
   });
 
-  it.each(["goal", "peers"])("allows enabling %s from the bundled onboarding choices", async (id) => {
+  it.each(["ask-user", "todo", "goal", "subagent", "peers", "memory", "dream"])("allows enabling %s from the bundled onboarding choices", async (id) => {
     const update = vi.fn(async () => undefined);
     await act(async () => root.render(
       <I18nProvider><FirstRunOnboarding
@@ -234,18 +234,17 @@ describe("FirstRunOnboarding", () => {
     const selectedPlugins = () => [...container.querySelectorAll(".onboarding-plugin")]
       .filter((row) => row.querySelector("[role=switch]")?.getAttribute("aria-checked") === "true")
       .map((row) => row.querySelector(".catalog-row-title")?.textContent);
-    expect(selectedPlugins()).toEqual(["todo", "automation"]);
+    expect(selectedPlugins()).toEqual(["automation"]);
     expect(container.querySelector(".onboarding-presets [aria-pressed=true]")?.textContent).toBe("推荐");
     await clickButton("全部");
     expect(selectedPlugins()).toHaveLength(6);
     await clickButton("推荐");
-    expect(selectedPlugins()).toEqual(["todo", "automation"]);
+    expect(selectedPlugins()).toEqual(["automation"]);
     expect(props.onUpdateExtensionPackage).not.toHaveBeenCalled();
     await clickButton("继续");
-    expect(props.onUpdateExtensionPackage).toHaveBeenCalledTimes(6);
-    for (const id of ["todo", "automation"]) {
-      expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: `plugin:bundled:${id}`, action: "enable" });
-    }
+    expect(props.onUpdateExtensionPackage).toHaveBeenCalledTimes(5);
+    expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: "plugin:bundled:automation", action: "enable" });
+    expect(props.onUpdateExtensionPackage).not.toHaveBeenCalledWith({ id: "plugin:bundled:todo", action: "disable" });
     for (const id of ["ask-user", "subagent", "peers", "memory"]) {
       expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: `plugin:bundled:${id}`, action: "disable" });
     }
@@ -504,7 +503,7 @@ describe("FirstRunOnboarding", () => {
       root.render(
         <I18nProvider>
           <FirstRunOnboarding
-            inventory={[plugin("todo", false)]}
+            inventory={[plugin("automation", false)]}
             providers={[]}
             onUpdateExtensionPackage={update}
             onSaveProvider={vi.fn(async () => undefined)}
@@ -524,7 +523,7 @@ describe("FirstRunOnboarding", () => {
     expect(container.querySelector(".onboarding-stage-plugins")).not.toBeNull();
     expect(document.activeElement).toBe(title());
     await pressEnter();
-    expect(update).toHaveBeenCalledWith({ id: "plugin:bundled:todo", action: "enable" });
+    expect(update).toHaveBeenCalledWith({ id: "plugin:bundled:automation", action: "enable" });
     expect(container.querySelector(".onboarding-stage-runtime")).not.toBeNull();
     expect(document.activeElement).toBe(title());
   });

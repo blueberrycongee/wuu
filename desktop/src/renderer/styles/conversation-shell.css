@@ -299,6 +299,7 @@
 .conversation-title-heading {
   --conversation-title-field-inset: calc(var(--space-1) * 1.5);
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
   align-items: center;
   gap: 8px;
@@ -307,7 +308,7 @@
 .conversation-title-heading h1 {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 100%;
+  max-width: 60%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

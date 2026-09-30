@@ -65,7 +65,7 @@ func (t *LoadSkillTool) Execute(ctx context.Context, argsJSON string) (string, e
 	}
 
 	body := t.env.ProcessSkillBody(ctx, skill, args.Arguments)
-	output := skillContentBlock(skill, body)
+	output := SkillContentBlock(skill, body)
 
 	result := map[string]any{
 		"action": "load_skill",
@@ -80,7 +80,8 @@ func (t *LoadSkillTool) Execute(ctx context.Context, argsJSON string) (string, e
 	return mustJSON(result)
 }
 
-func skillContentBlock(skill skills.Skill, body string) string {
+// SkillContentBlock formats loaded instructions and their relative resource base.
+func SkillContentBlock(skill skills.Skill, body string) string {
 	dir := strings.TrimSpace(skill.Dir)
 	files := sampleSkillFiles(dir, 10)
 	return strings.Join([]string{

@@ -370,7 +370,13 @@ function ConversationTitleText({
           className="conversation-title-rename"
           aria-label={t("thread.rename.editNamed", { title })}
           title={t("threadSidebar.rename")}
-          onClick={() => {
+          onClick={(event) => {
+            // Keyboard activation has detail 0; pointer clicks wait for a double click.
+            if (event.detail !== 0) return;
+            setDraft(title);
+            setEditing(true);
+          }}
+          onDoubleClick={() => {
             setDraft(title);
             setEditing(true);
           }}
