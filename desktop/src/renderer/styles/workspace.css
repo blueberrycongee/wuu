@@ -74,27 +74,6 @@
   --hljs-tag: var(--wuu-syntax-tag, #9a4f55);
   --hljs-literal: var(--wuu-syntax-literal, #6f5ca7);
   --hljs-meta: var(--wuu-syntax-meta, #5f6870);
-  --diff-branch-arrow: var(--wuu-color-text-muted, #b2b6ba);
-  --diff-file-text: var(--wuu-color-text, #2c3034);
-  --diff-status-bg: #ecefec;
-  --diff-status-fg: #58615b;
-  --diff-added-bg: #e7f4eb;
-  --diff-added-fg: var(--wuu-color-success, #17813b);
-  --diff-renamed-bg: #eef2f7;
-  --diff-error-border: #f5ddd9;
-  --diff-truncated-border: #eee6d6;
-  --diff-truncated-text: var(--wuu-color-warning, #8a5a00);
-  --diff-line-meta-text: var(--wuu-color-text-muted, #6f7780);
-  --diff-hunk-bg: var(--wuu-color-surface-muted, #f1f4f7);
-  --diff-add-bg: #eef9f1;
-  --diff-add-text: var(--wuu-color-success, #146c34);
-  --diff-delete-bg: #fff1f0;
-  --diff-line-number-text: var(--wuu-color-text-muted, #8d949a);
-  --diff-tree-header-text: var(--wuu-color-text-muted, #868c91);
-  --diff-tree-row-icon: var(--wuu-color-text-muted, #7b8287);
-  --diff-tree-file-text: var(--wuu-color-text, #373b3f);
-  --diff-tree-count-text: var(--wuu-color-text-muted, #94999d);
-  --review-resizer-hover-bg: #aeb4b9;
   --review-overlay-bg: rgba(251, 251, 250, 0.92);
   --codex-runtime-trigger-icon: var(--wuu-color-text-muted, #707579);
   --codex-menu-label-text: var(--wuu-color-text-muted, #9a9ea2);
@@ -2568,6 +2547,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   gap: var(--space-2);
   border-bottom: 1px solid var(--hairline-soft);
   padding: var(--space-2) var(--control-toolbar-inset) var(--space-2) var(--pane-inset);
+  container: review-file-header / inline-size;
 }
 
 .workspace-review-file-row,
@@ -2657,6 +2637,54 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   gap: var(--space-1);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* A narrow row (a small panel or large text) gives the name its own line and
+ * moves the folder, status and counts under it. The threshold follows the
+ * row's width in text, never the file, so stepping files keeps the height. */
+@container review-file-header (max-width: 26em) {
+  .workspace-review-file-row,
+  .workspace-review-switcher {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "name name chevron"
+      "context meta chevron";
+    align-items: baseline;
+    gap: 0 var(--space-3);
+  }
+
+  .workspace-review-file {
+    display: contents;
+  }
+
+  .workspace-review-file-name {
+    grid-area: name;
+  }
+
+  .workspace-review-file-context {
+    grid-area: context;
+  }
+
+  .workspace-review-file-meta {
+    grid-area: meta;
+  }
+
+  .workspace-review-switcher-chevron {
+    grid-area: chevron;
+  }
+}
+
+/* Narrower still, a folder could show only a letter or two: leave it to the
+ * change list. */
+@container review-file-header (max-width: 17em) {
+  .workspace-review-file-context {
+    display: none;
+  }
+
+  .workspace-review-file-meta {
+    grid-column: 1 / 3;
+  }
 }
 
 .workspace-review-stepper {
@@ -2992,139 +3020,6 @@ html[data-focus-modality="keyboard"] .workspace-diff-tree-row:focus-visible {
   font-size: var(--font-ui);
   padding: var(--space-4);
   text-align: center;
-}
-
-.workspace-review-panel {
-  display: grid;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  --workspace-review-tree-width: 280px;
-  grid-template-columns: minmax(0, 1fr);
-  /* Fill the panel's vertical space. Without this the single grid row
-     defaults to auto and only takes the tallest child's content height,
-     leaving the bottom of the side panel empty. */
-  grid-template-rows: minmax(0, 1fr);
-  overflow: hidden;
-}
-
-.workspace-review-panel.has-diff {
-  grid-template-columns:
-    minmax(0, 1fr)
-    8px
-    minmax(220px, min(var(--workspace-review-tree-width), calc(100% - 420px)));
-}
-
-.workspace-review-panel.single-file.has-diff {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.workspace-review-panel.single-file .workspace-review-tree-pane {
-  display: none;
-}
-
-.workspace-review-panel.single-file .workspace-review-resizer {
-  display: none;
-}
-
-.workspace-review-resizer {
-  position: relative;
-  z-index: 2;
-  min-width: 0;
-  min-height: 0;
-  cursor: col-resize;
-  outline: 0;
-}
-
-.workspace-review-resizer::before {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 1px;
-  background: var(--surface-3);
-  content: "";
-  transform: translateX(-50%);
-  transition:
-    background-color var(--motion-fast) var(--ease-out),
-    box-shadow var(--motion-fast) var(--ease-out);
-}
-
-.workspace-review-resizer:hover::before,
-.workspace-review-resizer:focus-visible::before,
-.workspace-review-panel.resizing-split .workspace-review-resizer::before {
-  background: var(--review-resizer-hover-bg);
-  box-shadow:
-    -3px 0 0 var(--ink-overlay-4),
-    3px 0 0 var(--ink-overlay-4);
-}
-
-.workspace-review-tree-pane {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  border-left: 1px solid var(--hairline-soft);
-}
-
-.workspace-review-panel.has-diff .workspace-review-tree-pane {
-  border-left: 0;
-}
-
-.workspace-review-panel:not(.has-diff) .workspace-review-tree-pane {
-  border-left: 0;
-}
-
-.workspace-review-tree-pane .workspace-diff-tree {
-  height: 100%;
-  overflow: hidden;
-  background: transparent;
-}
-
-.workspace-review-tree-pane .workspace-diff-tree-header {
-  padding: 12px 12px 7px;
-}
-
-.workspace-review-tree-pane .workspace-diff-tree-scroll {
-  height: 100%;
-}
-
-.workspace-review-tree-pane .workspace-diff-tree-list {
-  padding: 2px 5px 12px;
-}
-
-.workspace-review-overlay {
-  position: absolute;
-  inset: 70px 12px 12px;
-  display: grid;
-  place-content: center;
-  border-radius: var(--radius-sm);
-  background: var(--review-overlay-bg);
-  color: var(--ink-muted);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  text-align: center;
-}
-
-.workspace-review-overlay.error {
-  color: var(--danger);
-}
-
-.workspace-review-diff-panel {
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  overflow: hidden;
-  border-radius: 0;
-  background: var(--paper);
-}
-
-.workspace-review-diff-panel.workspace-diff-detail {
-  border-right: 0;
-}
-
-.workspace-review-diff-panel .workspace-diff-code {
-  padding-top: 10px;
 }
 
 .codex-runtime-anchor {
