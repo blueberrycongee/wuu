@@ -139,7 +139,7 @@ func (e *Environment) connect(ctx context.Context) (*Client, error) {
 	}
 	if err = json.Unmarshal(data, &hello); err != nil || hello.Version != ProtocolVersion {
 		_ = client.Close()
-		return nil, errors.New("execution worker protocol mismatch")
+		return nil, fmt.Errorf("execution worker protocol mismatch: expected version %d, received %d; update the environment worker", ProtocolVersion, hello.Version)
 	}
 	if err := securefs.WriteFileAtomic(filepath.Join(e.stateDir, e.identity, "provisioned"), []byte("1\n")); err != nil {
 		_ = client.Close()

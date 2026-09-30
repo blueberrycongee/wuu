@@ -1855,18 +1855,18 @@ func TestReconfigureToolLoadingClearsNativeDiscoveryForCompatibleProvider(t *tes
 	if err := rt.ReconfigureToolLoading(config.AgentConfig{}, kimi, "k3", nil); err != nil {
 		t.Fatalf("ReconfigureToolLoading: %v", err)
 	}
-	if rt.ToolLoadingMode != config.ToolLoadingFlat || rt.ToolSearchEnabled || rt.NativeDeferredToolDiscovery {
-		t.Fatalf("compatible provider should reset to flat loading, mode=%q search=%v native=%v", rt.ToolLoadingMode, rt.ToolSearchEnabled, rt.NativeDeferredToolDiscovery)
+	if rt.ToolLoadingMode != config.ToolLoadingClient || !rt.ToolSearchEnabled || rt.NativeDeferredToolDiscovery {
+		t.Fatalf("compatible provider should reset to client discovery loading, mode=%q search=%v native=%v", rt.ToolLoadingMode, rt.ToolSearchEnabled, rt.NativeDeferredToolDiscovery)
 	}
-	if rt.Toolkit.ToolSearchEnabled() || rt.Toolkit.NativeDeferredToolDiscovery() || rt.StreamRunner.NativeDeferredToolDiscovery {
+	if !rt.Toolkit.ToolSearchEnabled() || rt.Toolkit.NativeDeferredToolDiscovery() || rt.StreamRunner.NativeDeferredToolDiscovery {
 		t.Fatal("toolkit and runner retained native discovery after provider switch")
 	}
-	if rt.DeferredToolCatalogPrompt != "" {
-		t.Fatalf("flat loading retained deferred catalog: %q", rt.DeferredToolCatalogPrompt)
+	if rt.DeferredToolCatalogPrompt == "" {
+		t.Fatalf("client loading omitted deferred catalog: %q", rt.DeferredToolCatalogPrompt)
 	}
 }
 
-func TestNewSessionAutoFallsBackToFlatForUnsupportedFirstPartyOpenAIResponsesModel(t *testing.T) {
+func TestNewSessionAutoUsesClientDiscoveryForUnsupportedFirstPartyOpenAIResponsesModel(t *testing.T) {
 	root := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
@@ -1891,25 +1891,21 @@ func TestNewSessionAutoFallsBackToFlatForUnsupportedFirstPartyOpenAIResponsesMod
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
-	if rt.ToolLoadingMode != config.ToolLoadingFlat {
-		t.Fatalf("ToolLoadingMode = %q, want flat", rt.ToolLoadingMode)
+	if rt.ToolLoadingMode != config.ToolLoadingClient {
+		t.Fatalf("ToolLoadingMode = %q, want client", rt.ToolLoadingMode)
 	}
-	if rt.Toolkit == nil || rt.Toolkit.ToolSearchEnabled() || rt.Toolkit.NativeDeferredToolDiscovery() {
-		t.Fatalf("unsupported OpenAI model should declare tools flat, tool_search=%v native=%v", rt.Toolkit.ToolSearchEnabled(), rt.Toolkit.NativeDeferredToolDiscovery())
+	if rt.Toolkit == nil || !rt.Toolkit.ToolSearchEnabled() || rt.Toolkit.NativeDeferredToolDiscovery() {
+		t.Fatalf("unsupported OpenAI model should use client discovery, tool_search=%v native=%v", rt.Toolkit.ToolSearchEnabled(), rt.Toolkit.NativeDeferredToolDiscovery())
 	}
 	if rt.StreamRunner == nil || rt.StreamRunner.NativeDeferredToolDiscovery {
 		t.Fatal("unsupported OpenAI model must not mark provider requests as native deferred")
 	}
-	// A flat surface declares every tool up front, so the deferred catalog
-	// prompt that Wuu progressive loading needed must not be emitted at all.
-	for _, unwanted := range []string{"# Deferred Tool Catalog", "<available-deferred-tools>"} {
-		if strings.Contains(rt.BaseSystemPrompt, unwanted) {
-			t.Fatalf("flat fallback must not ship the deferred catalog prompt, found %q:\n%s", unwanted, rt.BaseSystemPrompt)
-		}
+	if !strings.Contains(rt.BaseSystemPrompt, "<available-deferred-tools>") {
+		t.Fatal("client discovery omitted the bounded catalog")
 	}
 	defs := rt.Toolkit.Definitions()
-	if _, ok := sessionToolDefByName(defs, "tool_search"); ok {
-		t.Fatalf("flat fallback must not expose tool_search, got %+v", defs)
+	if _, ok := sessionToolDefByName(defs, "tool_search"); !ok {
+		t.Fatalf("client fallback must expose tool_search, got %+v", defs)
 	}
 	for _, block := range rt.Toolkit.ContextBlocks() {
 		if block.Kind == wuucontext.BlockAvailableDeferred {
@@ -1918,7 +1914,7 @@ func TestNewSessionAutoFallsBackToFlatForUnsupportedFirstPartyOpenAIResponsesMod
 	}
 }
 
-func TestNewSessionAutoFlattensCompatibleOpenAIResponses(t *testing.T) {
+func TestNewSessionAutoProgressivelyLoadsCompatibleOpenAIResponses(t *testing.T) {
 	root := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
@@ -1943,24 +1939,24 @@ func TestNewSessionAutoFlattensCompatibleOpenAIResponses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
-	if rt.ToolLoadingMode != config.ToolLoadingFlat {
-		t.Fatalf("ToolLoadingMode = %q, want flat", rt.ToolLoadingMode)
+	if rt.ToolLoadingMode != config.ToolLoadingClient {
+		t.Fatalf("ToolLoadingMode = %q, want client", rt.ToolLoadingMode)
 	}
 	if rt.Toolkit == nil {
 		t.Fatal("expected toolkit")
 	}
-	if rt.Toolkit.ToolSearchEnabled() || rt.Toolkit.NativeDeferredToolDiscovery() {
-		t.Fatalf("compatible OpenAI Responses auto mode should use flat tools, tool_search=%v native=%v", rt.Toolkit.ToolSearchEnabled(), rt.Toolkit.NativeDeferredToolDiscovery())
+	if !rt.Toolkit.ToolSearchEnabled() || rt.Toolkit.NativeDeferredToolDiscovery() {
+		t.Fatalf("compatible OpenAI Responses auto mode should use client discovery, tool_search=%v native=%v", rt.Toolkit.ToolSearchEnabled(), rt.Toolkit.NativeDeferredToolDiscovery())
 	}
 	if rt.StreamRunner == nil || rt.StreamRunner.NativeDeferredToolDiscovery {
 		t.Fatal("compatible OpenAI Responses auto mode should not mark provider requests as native deferred")
 	}
 	defs := rt.Toolkit.Definitions()
-	if _, ok := sessionToolDefByName(defs, "tool_search"); ok {
-		t.Fatalf("compatible OpenAI Responses flat mode should hide tool_search, got %+v", defs)
+	if _, ok := sessionToolDefByName(defs, "tool_search"); !ok {
+		t.Fatalf("compatible OpenAI Responses client mode should expose tool_search, got %+v", defs)
 	}
 	if _, ok := sessionToolDefByName(defs, "send_message"); ok {
-		t.Fatalf("compatible OpenAI Responses flat mode must not expose plugin-owned send_message in the core toolkit, got %+v", defs)
+		t.Fatalf("compatible OpenAI Responses client mode must not expose plugin-owned send_message in the core toolkit, got %+v", defs)
 	}
 }
 
@@ -2050,7 +2046,7 @@ func captureUnsupportedNativeWarnings(t *testing.T, buf *bytes.Buffer) func() {
 	}
 }
 
-func TestNewSessionExplicitNativeFallsBackToFlatForUnsupportedOpenAIResponsesModel(t *testing.T) {
+func TestNewSessionExplicitNativeFallsBackToClientForUnsupportedOpenAIResponsesModel(t *testing.T) {
 	root := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
@@ -2080,19 +2076,18 @@ func TestNewSessionExplicitNativeFallsBackToFlatForUnsupportedOpenAIResponsesMod
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
-	if rt.ToolLoadingMode != config.ToolLoadingFlat {
-		t.Fatalf("ToolLoadingMode = %q, want flat", rt.ToolLoadingMode)
+	if rt.ToolLoadingMode != config.ToolLoadingClient {
+		t.Fatalf("ToolLoadingMode = %q, want client", rt.ToolLoadingMode)
 	}
-	if rt.Toolkit == nil || rt.Toolkit.ToolSearchEnabled() || rt.Toolkit.NativeDeferredToolDiscovery() {
-		t.Fatalf("unsupported explicit OpenAI native should fall back to flat, tool_search=%v native=%v", rt.Toolkit.ToolSearchEnabled(), rt.Toolkit.NativeDeferredToolDiscovery())
+	if rt.Toolkit == nil || !rt.Toolkit.ToolSearchEnabled() || rt.Toolkit.NativeDeferredToolDiscovery() {
+		t.Fatalf("unsupported explicit OpenAI native should fall back to client discovery, tool_search=%v native=%v", rt.Toolkit.ToolSearchEnabled(), rt.Toolkit.NativeDeferredToolDiscovery())
 	}
 	if rt.StreamRunner == nil || rt.StreamRunner.NativeDeferredToolDiscovery {
 		t.Fatal("unsupported explicit OpenAI native should not mark provider requests as native deferred")
 	}
-	// The user asked for deferred tools and is not getting them, so the
-	// downgrade has to be visible rather than silent.
+	// A change in discovery protocol must be visible to an explicit opt-in.
 	notice := warnings.String()
-	for _, want := range []string{"native", "flat", "gpt-test"} {
+	for _, want := range []string{"native", "client", "gpt-test"} {
 		if !strings.Contains(notice, want) {
 			t.Fatalf("fallback notice missing %q, got %q", want, notice)
 		}
@@ -2151,23 +2146,22 @@ func TestNewSessionTreatsRetiredWuuToolSearchConfigAsAuto(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
-	// A generic compatible endpoint has no native discovery, so auto lands on
-	// flat — the retired value no longer selects a loading strategy of its own.
+	// Retired spellings follow auto rather than choosing a separate strategy.
 	if rt.ToolLoadingPreference != config.ToolLoadingAuto {
 		t.Fatalf("ToolLoadingPreference = %q, want auto", rt.ToolLoadingPreference)
 	}
-	if rt.ToolLoadingMode != config.ToolLoadingFlat {
-		t.Fatalf("ToolLoadingMode = %q, want flat", rt.ToolLoadingMode)
+	if rt.ToolLoadingMode != config.ToolLoadingClient {
+		t.Fatalf("ToolLoadingMode = %q, want client", rt.ToolLoadingMode)
 	}
 	if rt.Toolkit == nil {
 		t.Fatal("expected toolkit")
 	}
-	if rt.Toolkit.ToolSearchEnabled() || rt.Toolkit.NativeDeferredToolDiscovery() {
-		t.Fatalf("retired mode must not resurrect progressive loading, tool_search=%v native=%v", rt.Toolkit.ToolSearchEnabled(), rt.Toolkit.NativeDeferredToolDiscovery())
+	if !rt.Toolkit.ToolSearchEnabled() || rt.Toolkit.NativeDeferredToolDiscovery() {
+		t.Fatalf("retired mode must resolve to client discovery, tool_search=%v native=%v", rt.Toolkit.ToolSearchEnabled(), rt.Toolkit.NativeDeferredToolDiscovery())
 	}
 	defs := rt.Toolkit.Definitions()
-	if _, ok := sessionToolDefByName(defs, "tool_search"); ok {
-		t.Fatalf("retired mode must not expose tool_search, got %+v", defs)
+	if _, ok := sessionToolDefByName(defs, "tool_search"); !ok {
+		t.Fatalf("retired mode must expose tool_search, got %+v", defs)
 	}
 	if _, ok := sessionToolDefByName(defs, "send_message"); ok {
 		t.Fatalf("retired mode must not expose plugin-owned send_message in the core toolkit, got %+v", defs)
@@ -3039,7 +3033,7 @@ func TestNewSessionAutoUsesNativeDeferredForKimiK3(t *testing.T) {
 	}
 }
 
-func TestUnsupportedNativeToolModelsUseFlatRuntime(t *testing.T) {
+func TestUnsupportedNativeToolModelsUseClientRuntime(t *testing.T) {
 	for _, tc := range []struct {
 		provider config.ProviderConfig
 		model    string
@@ -3059,11 +3053,11 @@ func TestUnsupportedNativeToolModelsUseFlatRuntime(t *testing.T) {
 					t.Fatal(err)
 				}
 				t.Cleanup(func() { rt.Cleanup() })
-				if rt.ToolLoadingMode != config.ToolLoadingFlat || rt.StreamRunner.NativeDeferredToolDiscovery || rt.Toolkit.ToolSearchEnabled() {
-					t.Fatalf("unsupported model did not fall back to flat: mode=%s", rt.ToolLoadingMode)
+				if rt.ToolLoadingMode != config.ToolLoadingClient || rt.StreamRunner.NativeDeferredToolDiscovery || !rt.Toolkit.ToolSearchEnabled() {
+					t.Fatalf("unsupported model did not use client discovery: mode=%s", rt.ToolLoadingMode)
 				}
 				for _, def := range rt.Toolkit.Definitions() {
-					if def.DeferLoading || def.Name == "tool_search" {
+					if def.DeferLoading {
 						t.Fatalf("native declaration leaked: %s", def.Name)
 					}
 				}

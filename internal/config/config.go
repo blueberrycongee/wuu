@@ -38,6 +38,7 @@ const (
 	ToolLoadingAuto   ToolLoadingMode = "auto"
 	ToolLoadingFlat   ToolLoadingMode = "flat"
 	ToolLoadingNative ToolLoadingMode = "native"
+	ToolLoadingClient ToolLoadingMode = "client"
 )
 
 // ErrConfigNotFound is returned by LoadFrom when none of the candidate
@@ -343,19 +344,10 @@ type AgentConfig struct {
 	// disabled, only the embedded data ships with each wuu binary
 	// is used.
 	CatwalkAutoupdate bool `json:"catwalk_autoupdate,omitempty"`
-	// ToolLoading controls how Wuu exposes large/deferred tool surfaces.
-	// Empty means "auto": supported first-party models use their native
-	// deferred-loading protocol; every other path uses a flat tool list.
-	// Valid: auto, flat, native.
-	//
-	// The retired "wuu_tool_search" / "tool_search" values still parse, but
-	// resolve to auto and print a one-time deprecation notice. Wuu's own
-	// progressive loading rewrote the top-level tools array mid-conversation,
-	// which invalidated the provider prompt cache after the insertion point.
+	// ToolLoading selects native discovery when supported, otherwise client
+	// discovery. Explicit flat declares all tools. Valid: auto, client, flat, native.
 	ToolLoading ToolLoadingMode `json:"tool_loading,omitempty"`
-	// ToolSearch is a legacy alias kept for older config files. New configs
-	// should use tool_loading. true now means auto, not Wuu progressive
-	// loading, which no longer exists.
+	// ToolSearch is a legacy alias: true selects auto and false selects flat.
 	ToolSearch *bool `json:"tool_search,omitempty"`
 	// ExperimentalCoordinatorMode exposes the old coordinator slash mode
 	// for local experimentation. Disabled by default because the mode's
@@ -800,7 +792,7 @@ func (c Config) Validate() error {
 		return errors.New("agent.compact_keep_recent_tokens cannot be negative (use 0 for default)")
 	}
 	if strings.TrimSpace(string(c.Agent.ToolLoading)) != "" && NormalizeToolLoadingMode(c.Agent.ToolLoading) == "" {
-		return errors.New("agent.tool_loading must be one of auto, flat, or native")
+		return errors.New("agent.tool_loading must be one of auto, client, flat, or native")
 	}
 	if err := validatePermissionConfig(c.Agent); err != nil {
 		return err
@@ -1070,7 +1062,7 @@ func (a AgentConfig) ToolLoadingPreference() ToolLoadingMode {
 		if mode := NormalizeToolLoadingMode(a.ToolLoading); mode != "" {
 			if isRetiredToolLoadingMode(a.ToolLoading) {
 				warnRetiredToolLoadingOnce(raw, fmt.Sprintf(
-					"wuu: agent.tool_loading = %q was removed and now behaves as %q. Wuu's own progressive tool loading rewrote the tools array mid-conversation and invalidated the provider prompt cache. Set agent.tool_loading to auto, flat, or native to silence this notice.",
+					"wuu: agent.tool_loading = %q was removed and now behaves as %q. Set agent.tool_loading to auto, client, flat, or native to silence this notice.",
 					raw, ToolLoadingAuto))
 			}
 			return mode
@@ -1105,6 +1097,8 @@ func NormalizeToolLoadingMode(mode ToolLoadingMode) ToolLoadingMode {
 		return ToolLoadingFlat
 	case string(ToolLoadingNative):
 		return ToolLoadingNative
+	case string(ToolLoadingClient):
+		return ToolLoadingClient
 	case "wuu_tool_search", "tool_search":
 		return ToolLoadingAuto
 	default:

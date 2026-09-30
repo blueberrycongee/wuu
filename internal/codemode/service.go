@@ -3,10 +3,13 @@ package codemode
 import (
 	"context"
 	"crypto/rand"
-	_ "embed"
+	"crypto/sha256"
+	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -24,6 +27,65 @@ import (
 
 //go:embed runtime.mjs
 var bootstrap string
+
+//go:embed vendor/quickjs/*
+var runtimeAssets embed.FS
+
+// Reconstruct only a complete, integrity-verified embedded interpreter image.
+func loadRuntimeWasm(assets fs.FS) ([]byte, error) {
+	const chunkSize = 64 * 1024
+	manifest, err := fs.ReadFile(assets, "vendor/quickjs/wasm.json")
+	if err != nil {
+		return nil, fmt.Errorf("read interpreter manifest: %w", err)
+	}
+	var metadata struct {
+		Size   int    `json:"size"`
+		SHA256 string `json:"sha256"`
+	}
+	if err := json.Unmarshal(manifest, &metadata); err != nil {
+		return nil, fmt.Errorf("decode interpreter manifest: %w", err)
+	}
+	if metadata.Size <= 0 || metadata.Size > maxFrameBytes {
+		return nil, errors.New("invalid interpreter image size")
+	}
+	expectedHash, err := hex.DecodeString(metadata.SHA256)
+	if err != nil || len(expectedHash) != sha256.Size {
+		return nil, errors.New("invalid interpreter image digest")
+	}
+	count := (metadata.Size + chunkSize - 1) / chunkSize
+	chunks, err := fs.Glob(assets, "vendor/quickjs/quickjs.wasm.*")
+	if err != nil {
+		return nil, err
+	}
+	if len(chunks) != count {
+		return nil, errors.New("interpreter chunk count mismatch")
+	}
+	image := make([]byte, 0, metadata.Size)
+	for index := 0; index < count; index++ {
+		name := fmt.Sprintf("vendor/quickjs/quickjs.wasm.%03d", index)
+		expectedSize := min(chunkSize, metadata.Size-len(image))
+		info, err := fs.Stat(assets, name)
+		if err != nil {
+			return nil, fmt.Errorf("read interpreter chunk: %w", err)
+		}
+		if info.Size() != int64(expectedSize) {
+			return nil, errors.New("interpreter chunk size mismatch")
+		}
+		chunk, err := fs.ReadFile(assets, name)
+		if err != nil {
+			return nil, fmt.Errorf("read interpreter chunk: %w", err)
+		}
+		if len(chunk) != expectedSize {
+			return nil, errors.New("interpreter chunk size mismatch")
+		}
+		image = append(image, chunk...)
+	}
+	digest := sha256.Sum256(image)
+	if hex.EncodeToString(digest[:]) != metadata.SHA256 {
+		return nil, errors.New("interpreter image digest mismatch")
+	}
+	return image, nil
+}
 
 const DefaultTimeoutMS = 120000
 const MaxTimeoutMS = 600000
@@ -83,11 +145,15 @@ func (s *Service) Close() error {
 }
 
 // Run retains only printed/returned values and media; nested calls go through
-// the caller's policy, scheduler and durable ledger. Direct Node effects use
-// exactly the caller's process sandbox. The deadline includes tool/approval waits.
+// the caller's policy, scheduler and durable ledger. The interpreter has no native
+// capabilities. The deadline includes tool and approval waits.
 func (s *Service) Run(parent context.Context, request RunRequest, opts RunOptions) (result RunResult, err error) {
 	if strings.TrimSpace(request.Code) == "" {
 		return result, errors.New("PTC requires code")
+	}
+	catalog, catalogErr := newToolCatalog(request.Tools)
+	if catalogErr != nil {
+		return result, catalogErr
 	}
 	timeout := request.TimeoutMS
 	if timeout == 0 {
@@ -133,7 +199,19 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 	stopAccept := context.AfterFunc(ctx, func() { _ = listener.Close() })
 	defer stopAccept()
 	secret := rand.Text()
-	boot, err := json.Marshal(map[string]any{"address": listener.Addr().String(), "secret": secret, "code": request.Code, "tools": request.Tools, "maxOutputBytes": outputLimit})
+	modules := make(map[string]string)
+	for _, name := range []string{"index.js", "wasi-shim.js", "extensions.js", "version.js"} {
+		data, readErr := runtimeAssets.ReadFile("vendor/quickjs/" + name)
+		if readErr != nil {
+			return result, readErr
+		}
+		modules[name] = string(data)
+	}
+	wasm, readErr := loadRuntimeWasm(runtimeAssets)
+	if readErr != nil {
+		return result, readErr
+	}
+	boot, err := json.Marshal(map[string]any{"address": listener.Addr().String(), "secret": secret, "code": request.Code, "tools": catalog.Names(), "maxOutputBytes": outputLimit, "modules": modules, "wasm": wasm})
 	if err != nil {
 		return result, err
 	}
@@ -237,6 +315,12 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 			}
 			return result, fmt.Errorf("Node PTC control channel: %w", readErr)
 		}
+		if frame.Type == "call" || frame.Type == "search" || frame.Type == "describe" {
+			if frame.ID != nextID || len(frame.Args) == 0 || !json.Valid(frame.Args) {
+				return result, errors.New("invalid PTC request")
+			}
+			nextID++
+		}
 		switch frame.Type {
 		case "log":
 			_, _ = output.Write([]byte(frame.Text))
@@ -248,11 +332,28 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 				result.Error = frame.Error
 			}
 			return result, nil
-		case "call":
-			if frame.ID != nextID || len(frame.Args) == 0 || !json.Valid(frame.Args) {
-				return result, errors.New("invalid PTC tool call")
+		case "search", "describe":
+			var value any
+			var lookupErr error
+			if frame.Type == "describe" {
+				value, lookupErr = catalog.Describe(frame.Name)
+			} else {
+				var query struct {
+					Query  string `json:"query"`
+					Limit  int    `json:"limit"`
+					Offset int    `json:"offset"`
+				}
+				lookupErr = json.Unmarshal(frame.Args, &query)
+				if lookupErr == nil {
+					value, lookupErr = catalog.Search(ctx, query.Query, query.Limit, query.Offset)
+				}
 			}
-			nextID++
+			message := ""
+			if lookupErr != nil {
+				message = lookupErr.Error()
+			}
+			send(map[string]any{"id": frame.ID, "value": value, "error": message})
+		case "call":
 			if _, ok := allowed[frame.Name]; !ok {
 				return result, errors.New("PTC requested an unavailable tool")
 			}

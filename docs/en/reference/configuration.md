@@ -65,15 +65,18 @@ are not enabled by this rule.
 
 Native loading keeps deferred schemas out of the initial model context and
 loads them through `tool_search`. The embedded browser is deferred when enabled.
-Other paths use `flat`, which exposes available tools up front and keeps the tool
-list stable during a run. Ordinary tool calling or an OpenAI/Anthropic-compatible
-URL alone does not establish support for native loading.
+Other paths use `client`: ordinary `tool_search` results load schemas on demand
+without requiring a provider-specific protocol. The initial catalog preview is
+bounded to 8 KiB; tools beyond it remain searchable. Loaded schemas are appended
+to the direct-tool prefix, so discovery can change provider cache reuse. Ordinary
+tool calling or a compatible URL alone does not establish native support.
 
-Set `agent.tool_loading` to `flat` to disable discovery, or `native` to opt into an
-implemented protocol on a compatible endpoint. Models Wuu identifies as unsupported still fall back
-to flat; this is a configuration-time choice, not a retry after an API rejection. A model's `providers.<name>.models.<model>.options.native_tool_search`
-can explicitly enable a compatible endpoint in auto mode, or disable discovery
-with `false`. Only enable it when the endpoint implements the model's native
+Set `agent.tool_loading` to `client` to always use ordinary discovery, `flat` to
+intentionally declare every tool, or `native` to opt into an implemented protocol
+on a compatible endpoint. Unsupported native paths use client discovery and
+report the change; this is a configuration-time choice, not an API retry. A model's `providers.<name>.models.<model>.options.native_tool_search`
+can explicitly enable a compatible endpoint in auto mode, or disable native
+discovery with `false` while keeping client discovery. Only enable it when the endpoint implements the model's native
 protocol; accepting unknown fields is not sufficient.
 
 ## Instructions and plugin settings

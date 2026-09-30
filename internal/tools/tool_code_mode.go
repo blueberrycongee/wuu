@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/capability"
@@ -20,13 +19,13 @@ import (
 const codeModeExecToolName = "run_code"
 
 // CodeModeExecTool orchestrates tools without occupying a leaf execution slot.
-// Direct Node effects are confined by the same session policy as shell commands.
+// All effects pass through nested tool authorization and execution.
 type CodeModeExecTool struct{ toolkit *Toolkit }
 
 func NewCodeModeExecTool(t *Toolkit) *CodeModeExecTool { return &CodeModeExecTool{t} }
 func (*CodeModeExecTool) Name() string                 { return codeModeExecToolName }
 func (e *CodeModeExecTool) IsReadOnly() bool {
-	// Native APIs can mutate unless the process sandbox forbids writes.
+	// Preserve the program-level review gate as well as per-call authorization.
 	return e.toolkit.boundary.Enforce && !e.toolkit.boundary.AllowMutations
 }
 func (*CodeModeExecTool) IsConcurrencySafe() bool    { return false }
@@ -37,7 +36,7 @@ func (*CodeModeExecTool) Execute(context.Context, string) (string, error) {
 func (*CodeModeExecTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        codeModeExecToolName,
-		Description: "Execute the body of an async TypeScript function in a fresh Node process. Use await tools[name](args) for the SDK bindings below. Calls return Wuu ToolResult objects: content contains text/media, and structured_content may carry JSON. Failed calls reject with ToolCallError (toolName and message); catch failures explicitly. Return a JSON value and/or console.log only the information needed for the next step. Intermediate tool values stay out of the conversation; successful image/audio results are attached automatically. Node APIs are available through await import(...); process.env starts empty. Direct filesystem writes obey this session's process sandbox. There is no retained state, yield or wait. Use bounded Promise.all for independent reads; await dependent work and writes sequentially. The elapsed deadline includes tool and approval waits. Inspect completed effects before retrying; programs are never replayed automatically.",
+		Description: "Execute an async JavaScript or erasable TypeScript function body in a fresh tool-only interpreter. No filesystem, network, process, module imports, or timers are available. Discover bindings with await searchTools(query, {limit:8, offset:0}); it returns {tools:[{name,description}],total,next_offset?}. An empty query pages through the catalog. Read exact arguments with await describeTool(name), returning {name,description,input_schema}. Invoke await tools[name](args). Names are exact; bracket access handles punctuation. Calls return tool-result objects with content and optional structured_content. Failures reject with ToolCallError (toolName and message). Return JSON and/or console.log only what is needed; intermediate values stay out of the conversation. Successful image/audio results are attached automatically. Await writes and dependent calls sequentially; use bounded Promise.all for independent reads. There is no retained state or continuation. The elapsed deadline includes approval/tool waits. Cancellation stops active calls but cannot undo completed effects. Never blindly replay a failed program.",
 		InputSchema: map[string]any{"type": "object", "additionalProperties": false, "required": []string{"code", "description"}, "properties": map[string]any{
 			"code":        map[string]any{"type": "string", "description": "Async function body. Type annotations are erased; enum and namespaces are unsupported."},
 			"description": map[string]any{"type": "string", "description": "Short description of this program."},
@@ -136,18 +135,29 @@ func (t *Toolkit) codeModeEntryDefinitions() []providers.ToolDefinition {
 	return out
 }
 func (t *Toolkit) codeModeToolCatalog() string {
-	nested, err := t.CodeModeNestedSurface()
-	if err != nil {
-		return "\nTool catalog unavailable: " + err.Error()
-	}
+	nested := t.codeModeNestedDefinitions()
 	sort.Slice(nested, func(i, j int) bool { return nested[i].Name < nested[j].Name })
 	var b strings.Builder
-	b.WriteString("\n\nProgram-only tool bindings (names are exact; use bracket access for punctuation):\n")
+	fmt.Fprintf(&b, "\n\nAvailable bindings: %d. Preview only; use searchTools and describeTool for complete discovery and schemas.\n", len(nested))
+	shown := 0
 	for _, tool := range nested {
-		fmt.Fprintf(&b, "\n### tools[%s]\n%s\nArguments JSON Schema: %s\n", strconv.Quote(tool.Name), tool.Description, tool.InputSchema)
+		summary := []rune(strings.Join(strings.Fields(tool.Description), " "))
+		if len(summary) > 120 {
+			summary = append(summary[:119], '…')
+		}
+		line := fmt.Sprintf("- %s: %s\n", tool.Name, string(summary))
+		if b.Len()+len(line) > 6*1024 {
+			continue
+		}
+		b.WriteString(line)
+		shown++
+	}
+	if shown < len(nested) {
+		fmt.Fprintf(&b, "%d more bindings available through searchTools.\n", len(nested)-shown)
 	}
 	return b.String()
 }
+
 func (t *Toolkit) SetCodeModeAdditionalTools(provider func() []providers.ToolDefinition) {
 	t.codeModeMu.Lock()
 	t.codeModeAdditionalTools = provider
@@ -157,36 +167,44 @@ func (t *Toolkit) SetCodeModeAdditionalTools(provider func() []providers.ToolDef
 // CodeModeNestedSurface preserves the active model family's edit primitives,
 // restrictions and live extension tools without recursively exposing run_code.
 func (t *Toolkit) CodeModeNestedSurface() ([]codemode.ToolDefinition, error) {
-	t.refreshMCPToolSnapshot(false)
-	all := t.registry.Definitions()
-	for _, tool := range t.mcpToolsSnapshot() {
-		all = append(all, tool.Definition())
-	}
-	out := make([]codemode.ToolDefinition, 0, len(all))
-	for _, d := range all {
-		if d.Name == codeModeExecToolName || d.Name == newContextToolName || !t.SupportsTool(d.Name) {
-			continue
-		}
+	definitions := t.codeModeNestedDefinitions()
+	out := make([]codemode.ToolDefinition, 0, len(definitions))
+	for _, d := range definitions {
 		definition, err := codeModeToolDefinition(d)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, definition)
 	}
+	return out, nil
+}
+
+func (t *Toolkit) codeModeNestedDefinitions() []providers.ToolDefinition {
+	t.refreshMCPToolSnapshot(false)
+	all := t.registry.Definitions()
+	for _, tool := range t.mcpToolsSnapshot() {
+		all = append(all, tool.Definition())
+	}
+	out := make([]providers.ToolDefinition, 0, len(all))
+	for _, d := range all {
+		if d.Name == codeModeExecToolName || d.Name == newContextToolName || d.Name == "tool_search" || !t.SupportsTool(d.Name) {
+			continue
+		}
+		out = append(out, d)
+	}
 	t.codeModeMu.RLock()
 	additional := t.codeModeAdditionalTools
 	t.codeModeMu.RUnlock()
 	if additional != nil {
-		for _, d := range additional() {
-			definition, err := codeModeToolDefinition(d)
-			if err != nil {
-				return nil, err
+		for _, definition := range additional() {
+			if definition.Name != codeModeExecToolName && definition.Name != newContextToolName && definition.Name != "tool_search" && !t.isToolDisabled(definition.Name) {
+				out = append(out, definition)
 			}
-			out = append(out, definition)
 		}
 	}
-	return out, nil
+	return out
 }
+
 func codeModeToolDefinition(d providers.ToolDefinition) (codemode.ToolDefinition, error) {
 	schema, err := json.Marshal(d.InputSchema)
 	if err != nil {

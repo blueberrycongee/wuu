@@ -16,6 +16,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolerrors"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -221,6 +222,23 @@ func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
 	if err != nil || len(messages) != 1 || !client.executed || !strings.Contains(messages[0].Content, "changed") {
 		t.Fatalf("plugin bridge: %+v %v", messages, err)
 	}
+
+	kit.DisableTools(name)
+	nested, err = kit.CodeModeNestedSurface()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, definition := range nested {
+		if definition.Name == name {
+			t.Fatal("disabled plugin remained discoverable")
+		}
+	}
+	client.executed = false
+	_, err = executor.(agent.RichToolExecutor).ExecuteResult(toolctx.WithNestedCall(ctx), providers.ToolCall{ID: "stale-binding", Name: name, Arguments: "{}"})
+	if err == nil || client.executed {
+		t.Fatalf("disabled plugin bypassed live authorization: %v", err)
+	}
+	kit.EnableTools(name)
 
 	executor = replacePluginToolHost(executor, pluginhost.New(), "thread", root)
 	nested, err = kit.CodeModeNestedSurface()

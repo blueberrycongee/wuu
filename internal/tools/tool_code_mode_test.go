@@ -94,17 +94,16 @@ func runPTCProgram(t *testing.T, kit *Toolkit, code string) toolresult.Result {
 	return *messages[0].ToolResult
 }
 
-func TestPTCProgramReviewBeforeNativeEffects(t *testing.T) {
-	// Denial and missing-reviewer cases must stop before Node starts. An allow
+func TestPTCProgramReviewBeforeNestedEffects(t *testing.T) {
+	// Denial and missing-reviewer cases must stop before execution. An allow
 	// must execute the program without exempting nested commands from review.
 	for _, tc := range []struct {
 		name, outcome, code string
 		wantCalls           int
 		wantError           bool
 	}{
-		{"denied", approvefor.OutcomeDeny, `await (await import('node:fs/promises')).writeFile('marker.txt', 'done')`, 1, true},
-		{"missing reviewer", "", `await (await import('node:fs/promises')).writeFile('marker.txt', 'done')`, 0, true},
-		{"allowed native", approvefor.OutcomeAllow, `await (await import('node:fs/promises')).writeFile('marker.txt', 'done')`, 1, false},
+		{"denied", approvefor.OutcomeDeny, `await tools.bash({command: 'printf done > marker.txt'})`, 1, true},
+		{"missing reviewer", "", `await tools.bash({command: 'printf done > marker.txt'})`, 0, true},
 		{"allowed nested", approvefor.OutcomeAllow, `await tools.bash({command: 'printf done > marker.txt'})`, 2, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -160,9 +159,8 @@ func TestPTCReadOnlyProgramKeepsSandbox(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(kit.RootDir(), "input.txt"), []byte("PTC_READ_ONLY"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	result := runPTCProgram(t, kit, `const fs = await import('node:fs/promises');
-console.log(await fs.readFile('input.txt', 'utf8'));
-await fs.writeFile('marker.txt', 'forbidden');`)
+	result := runPTCProgram(t, kit, `console.log((await tools.read_file({path:'input.txt'})).content[0].text);
+await tools.bash({command:'printf forbidden > marker.txt'});`)
 	if !result.IsError || !strings.Contains(result.TextProjection(), "PTC_READ_ONLY") {
 		t.Fatalf("read-only program failed to read or was allowed to write: %+v", result)
 	}
@@ -178,4 +176,19 @@ func contains(name string, defs []providers.ToolDefinition) bool {
 		}
 	}
 	return false
+}
+
+func TestPTCDiscoveryThenExactInvocation(t *testing.T) {
+	kit := newCodeModeTestToolkit(t)
+	if err := os.WriteFile(filepath.Join(kit.RootDir(), "fixture.txt"), []byte("DISCOVERED_READ_OK"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result := runPTCProgram(t, kit, `const page = await searchTools('read_file');
+const name = page.tools.find(t => t.name === 'read_file').name;
+const detail = await describeTool(name);
+if (!detail.input_schema.properties.path) throw new Error('missing schema');
+return (await tools[name]({path:'fixture.txt'})).content[0].text;`)
+	if result.IsError || !strings.Contains(result.TextProjection(), "DISCOVERED_READ_OK") {
+		t.Fatalf("discovery and invocation failed: %+v", result)
+	}
 }

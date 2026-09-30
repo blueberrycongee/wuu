@@ -663,6 +663,7 @@ func RunToolLoop(
 				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
 			}
 		}
+		req.NativeDeferredToolDiscovery = nativeDiscoveryForTools(req.NativeDeferredToolDiscovery, req.Tools)
 		if freshContextApplied {
 			targetTokens := cfg.FreshContextTokens
 			if targetTokens <= 0 {

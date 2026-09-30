@@ -14,7 +14,8 @@ import (
 	"time"
 )
 
-const ProtocolVersion = 1
+// Version 2 requires tool-only program execution; older workers must fail closed.
+const ProtocolVersion = 2
 const MaxFrameBytes = 16 * 1024 * 1024
 
 type Request struct {

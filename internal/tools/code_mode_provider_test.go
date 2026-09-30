@@ -15,8 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers/openai"
 )
 
-// Exercise discovery in the first provider request, before the model runs exec.
-// The aggregate description exceeds the former 16 KiB Wuu validation limit.
+// Large catalogs must not inflate the first request on any supported wire API.
 func TestCodeModeLargeCatalogCanStreamAcrossProviders(t *testing.T) {
 	for _, tc := range []struct{ name, model, wire string }{
 		{"grok", "grok-4.6", "chat"},
@@ -81,14 +80,14 @@ func TestCodeModeLargeCatalogCanStreamAcrossProviders(t *testing.T) {
 						execDescription = tool.Description
 					}
 				}
-				if len(execDescription) <= 16*1024 {
-					t.Errorf("exec catalog missing or truncated: %d bytes", len(execDescription))
+				t.Logf("catalog metadata=%d bytes; initial entry=%d bytes", len(catalog), len(execDescription))
+				if len(execDescription) == 0 || len(execDescription) > 10*1024 {
+					t.Errorf("unbounded entry description: %d bytes", len(execDescription))
 				}
-				for _, tool := range nested {
-					if !strings.Contains(execDescription, tool.Name) || !strings.Contains(execDescription, tool.Description) {
-						t.Errorf("request omitted name, description or input schema for %s", tool.Name)
-					}
+				if strings.Contains(execDescription, `"properties"`) || strings.Contains(execDescription, strings.Repeat("Search indexed documents. ", 10)) {
+					t.Error("full tool metadata leaked into the initial request")
 				}
+
 				w.Header().Set("Content-Type", "text/event-stream")
 				switch tc.wire {
 				case "chat":

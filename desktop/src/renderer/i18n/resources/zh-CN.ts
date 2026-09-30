@@ -316,7 +316,7 @@ export const zhCN = {
   "settings.copied": "已复制",
   "settings.ptcTitle": "程序化工具调用",
   "settings.ptcEnabled": "启用 PTC",
-  "settings.ptcDescription": "用 Node 程序组合工具调用；程序可使用 Node API，文件写入遵守会话沙箱。",
+  "settings.ptcDescription": "在隔离解释器中组合工具调用；所有操作均通过已授权的工具执行。",
   "settings.ptcFamily": "模型家族",
   "settings.ptcFamilyHint": "家族设置优先于全局开关，下次运行生效。",
   "settings.ptcFamilyMode": "此模型家族的 PTC 设置",

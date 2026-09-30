@@ -109,16 +109,21 @@ image for the model. External agent engines use their own file and image tools.
 
 ## Optional programmatic tool calling
 
-In **Settings → General → Programmatic tool calling**, enable PTC to let the
-built-in engine compose tool calls in a JavaScript or erasable TypeScript
-program. It is off by default. Each model family can follow the global switch,
+PTC is experimental and off by default. Development builds, or builds made with
+`VITE_ENABLE_PTC=true`, expose **Settings → Runtime → Programmatic tool calling**.
+It lets the built-in engine compose tool calls in JavaScript or erasable
+TypeScript. Other builds still honor saved user configuration.
+Each model family can follow the global switch,
 enable PTC, or disable it. An explicit family choice wins over the global
 switch; switching models resolves the setting again. Changes require idle
 turns and apply to the next turn. External engines keep their own tools.
 
 When enabled, the model calls `run_code` with `code`, a short `description`,
-and an optional `timeout_ms`. Its description lists the current tool bindings
-and argument schemas. The program uses `await tools[name](args)`; the result is
+and an optional `timeout_ms`. Its description contains a bounded preview, never
+the complete schema catalog. Use `await searchTools(query, {limit: 8, offset: 0})`
+to discover bindings; an empty query lists tools in pages. The result contains
+`tools`, `total`, and optional `next_offset`. Use `await describeTool(name)`
+for the exact description and `input_schema`, then `await tools[name](args)`; the result is
 a Wuu tool-result object with `content` and optional `structured_content`.
 Unavailable and disabled tools are excluded. Family-specific editing tools
 remain available through the bindings. Context reset, when available, remains
@@ -131,16 +136,23 @@ the normal permission, scheduling, event, and recording pipeline. Catch
 `ToolCallError` to handle a failed binding. Await writes and dependent work in
 order; use bounded parallel batches for independent reads.
 
-Each program starts a fresh Node process with an empty environment. Native
-APIs are available through `await import(...)`. Filesystem writes use the same
-session process sandbox as command tools; network access and all file reads
-are not isolated by that sandbox. See the [security model](../reference/security-model.md).
+Each program runs inside a fresh isolated interpreter in a separately killable
+process. The program has no native APIs, module imports, filesystem, network,
+process environment, or timers, including in Unconfined mode. Effects are only
+available through authorized tools. The interpreter has a 128 MiB memory limit;
+the host process retains the session process sandbox as defense in depth.
+See the [security model](../reference/security-model.md).
 The default elapsed deadline is 120 seconds, including tool and approval
 waits, with a 600-second maximum. Programs have no persistent state or
 `yield`/`wait` continuation. Cancellation stops the program and its active
 nested calls; completed effects are not rolled back or automatically replayed.
 Printed/returned text is limited to 1 MiB; media also obeys the shared rich
-result limits.
+result limits. Discovery returns at most 20 summaries per page; exact tool
+details are limited to 256 KiB and oversized details fail visibly rather than
+returning an incomplete schema. The per-program catalog supports up to 10,000
+tools and 32 MiB of metadata. Catalogs are snapshots; invocation still checks
+live permissions and availability. Remote execution requires a matching worker
+with protocol version 2; update older workers before using them.
 
 Desktop uses its bundled runtime. CLI use requires Node.js 22.19 or later on
 `PATH`, or a user-configured `ptc.node_executable`. In user configuration:

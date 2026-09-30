@@ -352,3 +352,8 @@ func shortRequestShapeHash(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:requestShapeHashBytes])
 }
+
+// Native discovery must not replay schemas after the exposed surface changes.
+func nativeDiscoveryForTools(enabled bool, definitions []providers.ToolDefinition) bool {
+	return enabled && requestHasTool(definitions, "tool_search")
+}

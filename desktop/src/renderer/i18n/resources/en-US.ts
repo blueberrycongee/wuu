@@ -319,7 +319,7 @@ export const enUS = {
   "settings.copied": "Copied",
   "settings.ptcTitle": "Programmatic tool calling",
   "settings.ptcEnabled": "Enable PTC",
-  "settings.ptcDescription": "Compose tool calls in a Node program. Programs can use native APIs; filesystem writes follow the session sandbox.",
+  "settings.ptcDescription": "Compose tool calls in an isolated interpreter. All effects go through authorized tools.",
   "settings.ptcFamily": "Model family",
   "settings.ptcFamilyHint": "Family choices override the global switch. Changes apply on the next turn.",
   "settings.ptcFamilyMode": "PTC for this model family",

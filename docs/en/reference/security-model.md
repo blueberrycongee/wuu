@@ -16,16 +16,18 @@ The built-in Wuu engine has Standard, Read only, and Unconfined modes. Dedicated
 
 That sandbox restricts filesystem writes. It does not isolate network access, all file reads, process visibility, or inherited environment variables. Read only is useful for investigation, but is not a data-loss-prevention boundary. Unconfined removes the command sandbox and gives commands the authority of the user running Wuu.
 
-Optional PTC programs have full Node APIs and start with an empty environment.
-Their direct filesystem writes use the session command sandbox, including Read
-only and Unconfined behavior. Direct APIs do not pass through individual tool
-checks; nested `tools` calls do. With **Approve for me** enabled in Standard
-mode, every PTC program is reviewed before launch, and nested calls retain
-their own checks. Enabling PTC therefore grants broader API
-access than a runtime limited to tool bindings. PTC is user-controlled and off
-by default; normal project configuration cannot enable it or replace its
-executable. The program control channel is authenticated and listens only on
-loopback for that invocation.
+Optional PTC programs run inside an isolated, memory-bounded interpreter.
+The program cannot access native APIs, import modules, read the environment, or
+perform direct filesystem/network operations. This boundary also applies in
+Unconfined mode. All effects use nested tools and their normal permission,
+scheduling, and audit pipeline. With **Approve for me** enabled in Standard
+mode, programs retain pre-launch review and each nested call retains its own
+checks. The host process keeps the session command sandbox as defense in depth.
+Cancellation stops the program and active calls without undoing completed effects.
+PTC is user-controlled and off by default; project configuration cannot enable
+it or replace its executable. The control channel is authenticated and listens
+only on loopback for that invocation. Execution-worker protocol version 2
+rejects older workers, preventing a downgrade to native program authority.
 
 **Approve for me** adds model review in Standard mode. It does not expand permissions or replace isolation. External Codex and Claude Code sessions use their own execution controls. See [permission modes](permissions.md) for the exact scope and adapter settings.
 

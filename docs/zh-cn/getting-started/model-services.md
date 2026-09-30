@@ -93,13 +93,17 @@ await tools.read_file({path: "screenshots/settings.png"});
 
 ## 可选的程序化工具调用
 
-在**设置 → 常规 → 程序化工具调用**中启用 PTC，内置引擎就能通过 JavaScript
-或可擦除类型标注的 TypeScript 程序组合工具调用。默认关闭。每个模型家族可以
+PTC 仍处于实验阶段，默认关闭。开发构建或设置 `VITE_ENABLE_PTC=true` 的构建
+会显示**设置 → 运行 → 程序化工具调用**，让内置引擎通过 JavaScript 或可擦除
+类型标注的 TypeScript 组合工具调用。其他构建仍遵守已保存的用户配置。每个模型家族可以
 跟随全局开关、开启或关闭；明确的家族设置优先于全局开关，切换模型时重新判断。
 只能在没有运行中回合时修改，下个回合生效。外部引擎仍使用自身的工具。
 
 启用后，模型调用 `run_code`，传入 `code`、简短的 `description` 和可选的
-`timeout_ms`。工具描述列出当前可用绑定及参数 schema。程序通过
+`timeout_ms`。工具描述仅包含有界预览，不注入完整 schema 目录。程序通过
+`await searchTools(query, {limit: 8, offset: 0})` 发现工具；空查询可分页列出全部工具。
+返回值包含 `tools`、`total` 和可选的 `next_offset`。通过
+`await describeTool(name)` 获取完整描述与 `input_schema`，再用
 `await tools[name](args)` 调用，得到含 `content` 和可选 `structured_content`
 的 Wuu 工具结果对象。禁用或不可用的工具不会出现在绑定中；各模型家族原有的
 编辑工具仍通过绑定使用。上下文重置在可用时保留为独立的顶层控制。
@@ -109,12 +113,17 @@ await tools.read_file({path: "screenshots/settings.png"});
 中间工具调用仍经过原有权限、调度、事件与记录流水线。绑定失败可通过
 `ToolCallError` 捕获。写入及有依赖的操作应依次等待；独立读取可分批并行。
 
-每次程序使用新的 Node 进程，环境变量初始为空。可通过 `await import(...)`
-使用原生 API。文件写入使用与命令工具相同的会话进程沙箱；该沙箱不隔离网络
-或所有文件读取，详见[安全模型](../reference/security-model.md)。默认总时限
+每次程序使用独立可终止进程中的全新隔离解释器。程序没有原生 API、模块导入、
+文件系统、网络、进程环境或计时器，即使在 Unconfined 模式下也如此。所有副作用
+只能通过获准工具产生。解释器内存上限为 128 MiB；宿主进程仍保留会话进程沙箱
+作为额外保护。详见[安全模型](../reference/security-model.md)。默认总时限
 120 秒，最多 600 秒，包含工具和权限等待时间。没有持久状态或 `yield`/`wait`
 续执行。取消会停止程序及其活动中的嵌套调用；已经完成的副作用不会回滚，程序
 也不会自动重放。打印和返回的文本上限为 1 MiB；媒体还受共享富结果限额约束。
+发现结果每页最多 20 个摘要；单个工具详情最多 256 KiB，超限会明确失败，不会
+返回残缺 schema。每次程序的目录最多包含 10,000 个工具和 32 MiB 元数据。目录
+使用快照，实际调用仍检查最新权限和可用性。远程执行要求匹配的协议版本 2 worker；
+旧 worker 必须先升级。
 
 桌面版使用随应用打包的运行时。CLI 需要 `PATH` 上的 Node.js 22.19 或更新版本，
 也可以在用户配置中设置 `ptc.node_executable`。用户配置示例：

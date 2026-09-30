@@ -19,6 +19,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Keep optional programmatic tool calling inside a tool-only interpreter, with
+  bounded discovery, exact schema lookup, and unchanged per-tool authorization.
+  It remains off by default. Remote execution requires worker protocol version 2.
+- Use client-side tool discovery when native discovery is unavailable, keeping
+  initial catalogs bounded. Explicit flat loading remains available.
+
 - The macOS DMG installer background is wordless and white, so a resized
   Finder window shows no picture edge. A slingshot beside the app fires Wuu
   along a dotted arc that splits into its colourful agents, and they dive into

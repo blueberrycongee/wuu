@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/codemode"
 	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -52,10 +54,52 @@ func TestWorkerFilesystemAndPermissionBoundary(t *testing.T) {
 }
 
 func TestWorkerRejectsProtocolMismatch(t *testing.T) {
+	for _, version := range []int{executionenv.ProtocolVersion - 1, executionenv.ProtocolVersion + 1} {
+		s := New()
+		data, _ := json.Marshal(executionenv.Init{Version: version, Root: t.TempDir(), Session: "test"})
+		if _, err := s.Handle(context.Background(), "initialize", data); err == nil {
+			t.Fatal("protocol mismatch accepted")
+		}
+		s.Close()
+	}
+}
+
+func TestWorkerProgramUsesToolOnlyAuthority(t *testing.T) {
+	t.Setenv("WUU_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
 	s := New()
 	defer s.Close()
-	data, _ := json.Marshal(executionenv.Init{Version: executionenv.ProtocolVersion + 1, Root: t.TempDir(), Session: "test"})
-	if _, err := s.Handle(context.Background(), "initialize", data); err == nil {
-		t.Fatal("protocol mismatch accepted")
+	initData, _ := json.Marshal(executionenv.Init{Version: executionenv.ProtocolVersion, Root: root, Session: "code-test"})
+	if _, err := s.Handle(context.Background(), "initialize", initData); err != nil {
+		t.Fatal(err)
+	}
+	invoked := 0
+	ctx := toolctx.WithNestedExecutor(context.Background(), callbackExecutor{invoke: func(_ context.Context, call providers.ToolCall) (toolresult.Result, error) {
+		invoked++
+		return toolresult.FromText(call.Name), nil
+	}})
+	for _, test := range []struct {
+		code   string
+		failed bool
+	}{
+		{`return (await tools.read_file({path:'file.txt'})).content[0].text`, false},
+		{`await import('node:fs/promises')`, true},
+	} {
+		data, _ := json.Marshal(executionenv.CodeRequest{Actor: "a", PermissionMode: "unconfined", Program: codemode.RunRequest{Code: test.code, Tools: []codemode.ToolDefinition{{Name: "read_file"}}}})
+		raw, err := s.Handle(ctx, "run_code", data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result codemode.RunResult
+		if err = json.Unmarshal(raw, &result); err != nil {
+			t.Fatal(err)
+		}
+		if (result.Error != "") != test.failed {
+			t.Fatalf("program result=%+v", result)
+		}
+	}
+	if invoked != 1 {
+		t.Fatalf("unexpected nested calls: %d", invoked)
 	}
 }

@@ -124,8 +124,8 @@ func testEnvironmentEndToEnd(t *testing.T, profile executionenv.Profile) {
 	run("process", string(args), "standard")
 
 	code, err := environment.RunCode(ctx, executionenv.CodeRequest{Actor: "a", PermissionMode: "standard", Program: codemode.RunRequest{
-		Code:  `const fs=await import("node:fs/promises"); await fs.writeFile("program.txt","program output"); return await tools.read_file({path:"marker.txt"});`,
-		Tools: []codemode.ToolDefinition{{Name: "read_file", InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`)}},
+		Code:  `await tools.write_file({path:"program.txt",content:"program output"}); return await tools.read_file({path:"marker.txt"});`,
+		Tools: []codemode.ToolDefinition{{Name: "write_file"}, {Name: "read_file", InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`)}},
 	}}, callbackExecutor{invoke: func(callCtx context.Context, call providers.ToolCall) (toolresult.Result, error) {
 		return environment.Execute(callCtx, executionenv.ToolRequest{Call: call, Actor: "a", PermissionMode: "standard"})
 	}})

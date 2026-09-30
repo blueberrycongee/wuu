@@ -176,6 +176,9 @@ func (t *Toolkit) SetProcessSandboxProvider(provider processsandbox.Provider) {
 func (t *Toolkit) SetPermissionMode(mode string) { t.env.PermissionMode = strings.TrimSpace(mode) }
 
 func (t *Toolkit) AuthorizeTool(ctx context.Context, call providers.ToolCall, metadata agent.ToolMetadata) error {
+	if t.isToolDisabled(call.Name) {
+		return fmt.Errorf("tool %q is disabled", call.Name)
+	}
 	return t.checkPermission(ctx, ToolInfo{
 		Name: call.Name, Kind: ToolKindPlugin, Exposure: ToolExposureDirect,
 		Risk: ToolRisk(metadata.Risk), ReadOnly: metadata.ReadOnly,
@@ -1043,6 +1046,7 @@ func (t *Toolkit) exposedSurfaceLocked() capability.Surface {
 		}
 		delete(surface.NestedTools, codeModeExecToolName)
 		delete(surface.NestedTools, newContextToolName)
+		delete(surface.NestedTools, "tool_search")
 		surface.Tools = map[string]capability.Capability{codeModeExecToolName: capability.CapabilityCodeMode}
 		if hasContextControl {
 			surface.Tools[newContextToolName] = capability.CapabilityContextWindow
@@ -1774,8 +1778,8 @@ func executeToolResult(ctx context.Context, tool Tool, call providers.ToolCall) 
 	return toolresult.FromText(text), err
 }
 
-// RunEnvironmentCode keeps native program effects in the selected filesystem;
-// nested tools go back through the host's execution scope and permission checks.
+// RunEnvironmentCode runs the isolated interpreter in the selected environment;
+// nested tools return through the host execution scope and permission checks.
 func (t *Toolkit) RunEnvironmentCode(ctx context.Context, service *codemode.Service, request codemode.RunRequest, executor toolctx.NestedExecutor) (codemode.RunResult, error) {
 	policy, _, err := t.env.processSandboxPolicy(ctx)
 	if err != nil {
