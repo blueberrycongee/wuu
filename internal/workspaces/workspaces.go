@@ -15,9 +15,11 @@ import (
 
 // Workspace is one registered workspace root.
 type Workspace struct {
-	ID   string `json:"id,omitempty"`
-	Name string `json:"name"`
-	Root string `json:"path"`
+	ID string `json:"id,omitempty"`
+	// PreviousPaths identifies former project roots, not arbitrary session CWDs.
+	PreviousPaths []string `json:"previous_paths,omitempty"`
+	Name          string   `json:"name"`
+	Root          string   `json:"path"`
 }
 
 type projectStore struct {
@@ -54,9 +56,10 @@ func List(wuuHome string) ([]Workspace, error) {
 			continue
 		}
 		out = append(out, Workspace{
-			ID:   strings.TrimSpace(project.ID),
-			Name: strings.TrimSpace(project.Name),
-			Root: root,
+			ID:            strings.TrimSpace(project.ID),
+			PreviousPaths: project.PreviousPaths,
+			Name:          strings.TrimSpace(project.Name),
+			Root:          root,
 		})
 	}
 	return out, nil

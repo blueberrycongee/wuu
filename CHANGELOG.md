@@ -40,6 +40,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Bound MCP call cleanup: a cancelled call no longer waits on the server's answer
   to `notifications/cancelled`, and a stdio send stops when its call ends instead of
   blocking on a full pipe, closing the connection because a frame may be half written.
+- Keep ordinary project conversations rooted in the selected folder after project
+  relocation, while preserving custom directories and linked worktrees.
 - Keep attachments in their original conversation draft when file preparation
   finishes after switching conversations or closing a split pane. Pending files
   remain removable, and sends wait for their bytes before submitting.
