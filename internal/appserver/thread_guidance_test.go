@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -74,6 +75,17 @@ func TestWorktreeProtocolGuidanceUsesSelectedCheckout(t *testing.T) {
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	defer srv.Close()
+	dispatchPayload(t, srv, "initial-catalog", MethodSkillList, SkillListParams{})
+	initialCatalog := remarshal[SkillListResult](t, responseByID(t, parseOutput(t, out.String()), "initial-catalog")["result"])
+	var initialSkill SkillSummary
+	for _, item := range initialCatalog.Skills {
+		if item.Name == "release-check" {
+			initialSkill = item
+		}
+	}
+	if initialSkill.Project == nil || initialSkill.Project.Root != sessionWorkspacePath(repo) || initialSkill.Project.Path != ".agents/skills/release-check/SKILL.md" {
+		t.Fatalf("draft catalog did not supply a bound project identity: %+v", initialSkill)
+	}
 
 	for _, tc := range []struct {
 		name, cwd    string
@@ -129,8 +141,61 @@ func TestWorktreeProtocolGuidanceUsesSelectedCheckout(t *testing.T) {
 		if !strings.Contains(prompt, rule) {
 			t.Errorf("%s: missing checkout instruction %s", tc.name, rule)
 		}
-		if !strings.Contains(result, skill) || !strings.Contains(result, canonical) {
+		var loadedSkill struct {
+			Metadata struct {
+				Dir string `json:"dir"`
+			} `json:"metadata"`
+			Output string `json:"output"`
+		}
+		if err := json.Unmarshal([]byte(result), &loadedSkill); err != nil {
+			t.Fatalf("%s decode loaded skill: %v", tc.name, err)
+		}
+		// Discovery may preserve a symlink alias for the same checkout.
+		resourceDir, err := filepath.EvalSymlinks(loadedSkill.Metadata.Dir)
+		if err != nil {
+			t.Fatalf("%s resolve skill resource directory: %v", tc.name, err)
+		}
+		if !strings.Contains(loadedSkill.Output, skill) ||
+			!strings.Contains(loadedSkill.Output, "Resource base: "+loadedSkill.Metadata.Dir) ||
+			resourceDir != filepath.Join(canonical, ".agents", "skills", "release-check") {
 			t.Errorf("%s: wrong skill content or resource root: %s", tc.name, result)
+		}
+		listID := "skills-" + tc.name
+		dispatchPayload(t, srv, listID, MethodSkillList, SkillListParams{ThreadID: started.Thread.ID})
+		catalog := remarshal[SkillListResult](t, responseByID(t, parseOutput(t, out.String()), listID)["result"])
+		var selected SkillSummary
+		for _, item := range catalog.Skills {
+			if item.Name == "release-check" {
+				selected = item
+			}
+		}
+		selectedPath, err := filepath.EvalSymlinks(selected.Path)
+		if err != nil {
+			t.Fatalf("%s resolve catalog skill path: %v", tc.name, err)
+		}
+		if selectedPath != filepath.Join(canonical, ".agents", "skills", "release-check", "SKILL.md") {
+			t.Fatalf("%s catalog used the wrong checkout: %+v", tc.name, selected)
+		}
+		identity, _ := json.Marshal(map[string]any{"name": initialSkill.Name, "source": initialSkill.Source, "project": initialSkill.Project})
+		explicit := "/skill " + string(identity) + "\n\nrelease notes"
+		queueID := "explicit-" + tc.name
+		dispatchPayload(t, srv, queueID, MethodTurnQueue, TurnQueueParams{
+			ThreadID: started.Thread.ID, ClientID: queueID, Prompt: explicit, Hold: true,
+			Images:       []TurnStartImage{{MediaType: "image/jpeg", Data: base64.StdEncoding.EncodeToString(encodeTestJPEG(t, 2, 2, 90))}},
+			ContentParts: []providers.MessageContentPart{{Type: "text", Text: explicit}},
+		})
+		held, found, err := srv.findHeldUserTurn(started.Thread.ID, queueID)
+		if err != nil || !found {
+			t.Fatalf("explicit skill queue failed: %v", err)
+		}
+		if !strings.Contains(held.msg.Content, skill) || held.msg.DisplayContent != explicit || len(held.msg.Images) != 1 || len(held.msg.ContentParts) != 1 || held.msg.ContentParts[0].Text != explicit {
+			t.Fatalf("%s queued skill lost instructions or presentation: %+v", tc.name, held.msg)
+		}
+		if tc.wantSelected {
+			wrong, _ := json.Marshal(map[string]string{"name": selected.Name, "source": selected.Source, "path": filepath.Join(repo, ".agents", "skills", "release-check", "SKILL.md")})
+			if _, err := srv.userMessageWithInputImages(started.Thread.ID, "/skill "+string(wrong), nil, nil, nil); err == nil {
+				t.Fatal("worktree invocation accepted workspace-root identity")
+			}
 		}
 		if strings.Count(prompt, "GLOBAL_GUIDANCE_MARKER") != 1 {
 			t.Errorf("global instructions missing or duplicated")

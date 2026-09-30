@@ -1,3 +1,4 @@
+import { composerSkillPrompt } from "./ComposerSlashCommands";
 import { forgetLocalTurnTiming } from "./LocalTurnTiming";
 import { subscribeServerEvents } from "./ServerEvents";
 import { PhoneNavigationContext } from "./PhoneNavigationContext";
@@ -3337,6 +3338,7 @@ export function App(): JSX.Element {
           else void interrupt();
         }}
         queryHistorySessionID={activeThread?.id ?? currentSessionTab?.id}
+        skillThreadID={activeThread?.id}
         queryHistory={composerQueryHistory}
         requestedHandoffIntent={requestedHandoffIntentForThread(activeThread)}
       />
@@ -3796,7 +3798,7 @@ export function App(): JSX.Element {
     }
   }
 
-  function trySkillFromCatalog(skill: { name: string }): void {
+  function trySkillFromCatalog(skill: SkillSummary): void {
     const origin = document.activeElement;
     const context = appStateRef.current.activeContext;
     if (!context) {
@@ -3807,7 +3809,7 @@ export function App(): JSX.Element {
       setComposerImages([]);
       setComposerFiles([]);
       setComposerSelections([]);
-      setPrompt(`/${skill.name} `);
+      setPrompt(composerSkillPrompt(skill));
       requestMainComposerFocus("hero", origin);
     });
   }

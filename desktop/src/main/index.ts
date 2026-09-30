@@ -81,6 +81,7 @@ import type {
   SkillContentParams,
   SkillContentResult,
   SkillListResult,
+  SkillListParams,
   RuntimeContext,
   RuntimeAdvancedSettingsUpdate,
   RuntimeGeneralSettingsUpdate,
@@ -1851,8 +1852,8 @@ app.whenReady().then(async () => {
         },
       ),
   );
-  ipcMain.handle("wuu:skill-list", (event) =>
-    appServerRequest(event, "skill/list"),
+  ipcMain.handle("wuu:skill-list", (event, params?: SkillListParams) =>
+    appServerRequest(event, "skill/list", params),
   );
   ipcMain.handle("wuu:skill-content", async (event, params: SkillContentParams): Promise<SkillContentResult> => {
     return readCatalogSkill(await appServerRequest<SkillListResult>(event, "skill/list"),params);

@@ -104,6 +104,32 @@ jobs:
       - name: Build
         run: make build-desktop
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Build desktop fixture core
+        run: go build -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
+
+      - name: Verify worktree skill selection
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WUU_WORKTREE_OUTPUT: ${{ runner.temp }}/wuu-composer-worktree-evidence
+          WUU_WORKTREE_CORE: ${{ runner.temp }}/wuu-session-switch-core
+        run: |
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/composer-worktree-e2e.cjs 2>&1 | tee "$WUU_WORKTREE_OUTPUT.log"
+
+      - name: Upload worktree skill evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: composer-worktree-skill-evidence
+          path: ${{ runner.temp }}/wuu-composer-worktree-evidence*
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Guard request lifecycle
         timeout-minutes: 5
         shell: bash
@@ -144,11 +170,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache-dependency-path: go.sum
-
       - name: Check session switch budget ratchet
         env:
           PERF_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -165,7 +186,6 @@ jobs:
           WUU_SWITCH_OUTPUT: ${{ runner.temp }}/wuu-session-switch-evidence
           WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
         run: |
-          go build -o "$WUU_DESKTOP_CORE" ./cmd/wuu
           mkdir -p "$WUU_SWITCH_OUTPUT"
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/session-switch-e2e.cjs 2>&1 | tee "$WUU_SWITCH_OUTPUT/run.log"
 

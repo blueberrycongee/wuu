@@ -472,6 +472,7 @@ function renderStatefulComposer(props: {
   textOnly?: boolean;
   onPasteAttachmentFiles?: (files: File[]) => void;
   queryHistorySessionID?: string;
+  skillThreadID?: string;
   initialized?: InitializeResult;
   running?: boolean;
   handoffDisabledReason?: string;
@@ -564,6 +565,7 @@ function renderStatefulComposer(props: {
           onInterrupt={() => {}}
           tokensPerSecond={0}
           queryHistorySessionID={props.queryHistorySessionID}
+          skillThreadID={props.skillThreadID}
         />
       </ImagePreviewProvider>
     );
@@ -2047,37 +2049,43 @@ describe("Composer send control", () => {
     expect(runtimeButton?.disabled).toBe(false);
   });
 
-  it("inserts a selected skill slash command into the composer", async () => {
+  it.each([
+    { draftID: "draft-tab", threadID: undefined, expected: undefined },
+    { draftID: "draft-tab", threadID: "persisted-thread", expected: { thread_id: "persisted-thread" } },
+  ])("loads skill catalogs using the real thread identity: $threadID", async ({ draftID, threadID, expected }) => {
+    installSkillList([]);
+    renderStatefulComposer({
+      activeContext: { kind: "project", project_id: "repo", cwd: "/repo" },
+      queryHistorySessionID: draftID,
+      skillThreadID: threadID,
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(window.wuu.listSkills).toHaveBeenCalledWith(expected);
+  });
+
+  it.each(["review", "commit", "audit", "compact", "release-check"])("preserves explicitly selected %s skill identity", async (name) => {
     const setPrompt = vi.fn();
-    installSkillList([
-      {
-        name: "slides",
-        description: "Create slide decks",
-        source: "bundled",
-        user_invocable: true,
-        disable_model_invoke: false,
-      },
-    ]);
+    const path = `/synthetic/skills/${name}/SKILL.md`;
+    installSkillList([{ name, path, source: "user", description: "Run the selected workflow", user_invocable: true, disable_model_invoke: true }]);
     renderComposer({
-      prompt: "/sli",
+      prompt: `/${name}`,
       setPrompt,
       activeContext: { kind: "project", project_id: "repo", cwd: "/repo" },
     });
-
     await act(async () => {
       await Promise.resolve();
     });
-
     const skillButton = document.body.querySelector<HTMLButtonElement>(
-      '.slash-command-item[data-command-name="slides"]',
+      `.slash-command-item[id$="-skill:${name}"]`,
     );
-    expect(skillButton).not.toBeUndefined();
-
+    expect(skillButton).not.toBeNull();
     act(() => {
       skillButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
-
-    expect(setPrompt).toHaveBeenCalledWith("/slides ");
+    const prompt = setPrompt.mock.calls.at(-1)?.[0];
+    expect(prompt).toContain(name);
+    expect(prompt).toContain(path);
+    expect(JSON.parse(prompt.split("\n")[0].slice("/skill ".length))).toEqual({ name, source: "user", path });
   });
 
   it("shows both the command name and the description on a skill row", async () => {

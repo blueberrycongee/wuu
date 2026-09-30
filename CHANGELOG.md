@@ -27,12 +27,20 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Use client-side tool discovery when native discovery is unavailable, keeping
   initial catalogs bounded. Explicit flat loading remains available.
 
+- Recommend only the Automation plugin during first-run setup; other bundled
+  plugins remain available for manual selection.
+
 - The macOS DMG installer background is wordless and white, so a resized
   Finder window shows no picture edge. A slingshot beside the app fires Wuu
   along a dotted arc that splits into its colourful agents, and they dive into
   a toy-block fort built around the Applications folder.
 
 ### Fixed
+- Load explicitly selected skills deterministically through `/skill` drafts, preserving
+  source identity, thread checkout, queued instructions, and built-in command behavior.
+  Resolve project-local selections to the chosen checkout, including the first turn
+  of a new worktree; reject stale or cross-project selections without silent fallback.
+
 - Respect named `@@` context in file patches so edits cannot silently target
   matching code before that context; reject missing or ambiguous context before
   writing.
