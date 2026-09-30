@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -137,6 +138,8 @@ type Session struct {
 	PluginSessionRouter *PluginSessionRouter
 	systemPrompts       *agent.SystemPromptAssembler
 	InstructionFiles    []instructions.File
+	instructionConfig   config.InstructionFilesConfig
+	pluginSkills        pluginSkillSnapshot
 	AgentControl        *agentcontrol.AgentControl
 	ProcessManager      *process.Manager
 	Toolkit             *tools.Toolkit
@@ -237,6 +240,8 @@ func (s *Session) cloneForThreadModel() *Session {
 		PluginSessionRouter:         s.PluginSessionRouter,
 		systemPrompts:               s.systemPrompts,
 		InstructionFiles:            s.InstructionFiles,
+		instructionConfig:           s.instructionConfig,
+		pluginSkills:                s.pluginSkills,
 		AgentControl:                s.AgentControl,
 		ProcessManager:              s.ProcessManager,
 		threadProcesses:             s.threadProcessManagerPool(),
@@ -453,7 +458,8 @@ func NewSession(opts Options) (*Session, error) {
 		return nil, errors.Join(capabilityErr, closeErr)
 	}
 	hookDispatcher := buildHookDispatcher(cfg, activePlugins, providers.Client(client), toolModeModel, workspaceJournal)
-	discoveredSkills := discoverSkills(rootDir, opts.HomeDir, wuuHome, activePlugins)
+	pluginSkills := discoverPluginSkills(activePlugins)
+	discoveredSkills := discoverSkillsWithPlugins(rootDir, opts.HomeDir, wuuHome, pluginSkills)
 
 	processMgr, err := process.NewManager(rootDir, statepath.RuntimeDir(workspaceStateDir))
 	if err != nil {
@@ -596,7 +602,12 @@ func NewSession(opts Options) (*Session, error) {
 			HistoryDir:                     "",
 			WorkerSysPrompt:                workerBaseSystemPrompt,
 			WorkerPrompt: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata, isolation agentcontrol.IsolationMode) (string, error) {
-				return buildWorkerBasePrompt(workerRoot, sessionDate, "", workerToolProviderName, workerToolModeModel, workerToolSurface, instructionFiles, discoveredSkills), nil
+				files, workerSkills := instructionFiles, discoveredSkills
+				if !sameRuntimeRoot(workerRoot, rootDir) {
+					files = discoverInstructions(workerRoot, opts.HomeDir, cfg.Instructions)
+					workerSkills = discoverSkillsWithPlugins(workerRoot, opts.HomeDir, wuuHome, pluginSkills)
+				}
+				return buildWorkerBasePrompt(workerRoot, sessionDate, "", workerToolProviderName, workerToolModeModel, workerToolSurface, files, workerSkills), nil
 			},
 			WorkerFactory: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata) (agent.ToolExecutor, error) {
 				wkit, werr := toolkit.CloneForRoot(workerRoot)
@@ -614,7 +625,11 @@ func NewSession(opts Options) (*Session, error) {
 				}
 				wkit.SetStateDir(workerStateDir)
 				wkit.SetProcessManager(processMgr)
-				wkit.SetSkills(discoveredSkills)
+				workerSkills := discoveredSkills
+				if !sameRuntimeRoot(workerRoot, rootDir) {
+					workerSkills = discoverSkillsWithPlugins(workerRoot, opts.HomeDir, wuuHome, pluginSkills)
+				}
+				wkit.SetSkills(workerSkills)
 				wkit.SetAgentControl(agentControl)
 				wkit.ConfigureSurfaceForProviderModel(workerToolProviderName, workerToolModeModel, false)
 				wkit.SetToolSearchEnabled(workerToolSearchEnabled)
@@ -727,6 +742,8 @@ func NewSession(opts Options) (*Session, error) {
 		PluginSessionRouter:         pluginTurnRouter,
 		systemPrompts:               systemPrompts,
 		InstructionFiles:            instructionFiles,
+		instructionConfig:           cfg.Instructions,
+		pluginSkills:                pluginSkills,
 		AgentControl:                agentControl,
 		ProcessManager:              processMgr,
 		Toolkit:                     toolkit,
@@ -824,6 +841,7 @@ func NewSession(opts Options) (*Session, error) {
 		host:          pluginHost,
 		hooks:         initialHooks,
 		skills:        append([]skills.Skill(nil), discoveredSkills...),
+		pluginSkills:  pluginSkills,
 		mcpBinding:    mcpActivityBindingsFromPlugins(activePlugins),
 		systemPrompts: systemPrompts,
 		compactions:   compactions,
@@ -1200,6 +1218,8 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		threadRoot = ev
 	}
 
+	threadInstructions, threadSkills := s.guidanceForRoot(threadRoot, generation)
+
 	stateDir := strings.TrimSpace(s.StateDir)
 	if stateDir == "" {
 		home, err := statepath.Home("")
@@ -1248,11 +1268,7 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		kit.SetStateDir(stateDir)
 		kit.SetArtifactPublisher(newArtifactPublisher(wuuHome))
 		kit.SetProcessManager(threadProcessManager)
-		skills := s.Skills
-		if generation != nil {
-			skills = generation.skills
-		}
-		kit.SetSkills(skills)
+		kit.SetSkills(threadSkills)
 		ConfigureToolkitPermissions(kit, s.Permissions)
 		kit.SetApproveForMe(false)
 		kit.SetSessionID(id)
@@ -1315,8 +1331,8 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				workerToolProviderName,
 				workerToolModeModel,
 				workerToolSurface,
-				s.InstructionFiles,
-				s.Skills,
+				threadInstructions,
+				threadSkills,
 			)
 			control, controlErr := agentcontrol.New(agentcontrol.Config{
 				Client:                         workerClient,
@@ -1345,11 +1361,8 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 						}
 						workerRoot = environment.Root()
 					}
-					skills := s.Skills
-					if generation != nil {
-						skills = generation.skills
-					}
-					return buildWorkerBasePrompt(workerRoot, s.SessionDate, s.workerOrientation, workerToolProviderName, workerToolModeModel, workerToolSurface, s.InstructionFiles, skills), nil
+					files, workerSkills := s.guidanceForRoot(workerRoot, generation)
+					return buildWorkerBasePrompt(workerRoot, s.SessionDate, s.workerOrientation, workerToolProviderName, workerToolModeModel, workerToolSurface, files, workerSkills), nil
 				},
 				WorkerFactory: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata) (agent.ToolExecutor, error) {
 					workerKit, err := kit.CloneForRoot(workerRoot)
@@ -1370,11 +1383,8 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					}
 					workerKit.SetStateDir(workerStateDir)
 					workerKit.SetProcessManager(threadProcessManager)
-					skills := s.Skills
-					if generation != nil {
-						skills = generation.skills
-					}
-					workerKit.SetSkills(skills)
+					_, workerSkills := s.guidanceForRoot(workerRoot, generation)
+					workerKit.SetSkills(workerSkills)
 					workerKit.SetAgentControl(control)
 					workerKit.SetSessionID(id)
 					workerKit.SetSessionDir(artifactDir)
@@ -1424,6 +1434,19 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	}
 
 	runner := cloneStreamRunnerForThread(s.StreamRunner, toolExecutor)
+	if !sameRuntimeRoot(threadRoot, s.RootDir) {
+		model := runner.APIModel
+		if model == "" {
+			model = runner.Model
+		}
+		result := buildBaseSystemPromptResult(threadRoot, s.SessionDate, config.DefaultSystemPrompt(), "", s.ProviderName, model, activeSurfaceWithDeferredToolCatalog(kit, s.DeferredToolCatalogPrompt), threadInstructions, "", "", threadSkills)
+		assembler := s.systemPrompts
+		if generation != nil {
+			assembler = generation.systemPrompts
+		}
+		text, pluginSections := assemblePluginSystemPrompt(result.Content, assembler)
+		runner.UpdateSystemPromptWithSections(text, append(agentPromptSections(result.Sections), pluginSections...))
+	}
 	runner.ToolLedger = toolLedger
 	runner.SystemPrompt, runner.SystemPromptSections = systemPromptForThreadRoot(runner.SystemPrompt, runner.SystemPromptSections, threadRoot, s.SessionDate)
 	if kit != nil {
@@ -2213,7 +2236,9 @@ func (s *Session) RefreshPluginCatalog() error {
 	return nil
 }
 
-func discoverSkills(rootDir, homeDir, wuuHome string, plugins []pluginpkg.Plugin) []skills.Skill {
+type pluginSkillSnapshot struct{ project, user []skills.Skill }
+
+func discoverPluginSkills(plugins []pluginpkg.Plugin) pluginSkillSnapshot {
 	var projectDirs []skills.SourceDir
 	var userDirs []skills.SourceDir
 	for _, item := range plugins {
@@ -2227,6 +2252,15 @@ func discoverSkills(rootDir, homeDir, wuuHome string, plugins []pluginpkg.Plugin
 			}
 		}
 	}
+	return pluginSkillSnapshot{project: skills.DiscoverSourceDirs(projectDirs, nil), user: skills.DiscoverSourceDirs(nil, userDirs)}
+}
+
+func discoverSkills(rootDir, homeDir, wuuHome string, plugins []pluginpkg.Plugin) []skills.Skill {
+	return discoverSkillsWithPlugins(rootDir, homeDir, wuuHome, discoverPluginSkills(plugins))
+}
+
+func discoverSkillsWithPlugins(rootDir, homeDir, wuuHome string, plugins pluginSkillSnapshot) []skills.Skill {
+	var userDirs []skills.SourceDir
 	if home := skillUserHome(homeDir); home != "" {
 		userDirs = append(userDirs,
 			skills.SourceDir{Path: filepath.Join(home, ".codex", "skills"), Source: "user"},
@@ -2238,8 +2272,18 @@ func discoverSkills(rootDir, homeDir, wuuHome string, plugins []pluginpkg.Plugin
 	if strings.TrimSpace(wuuHome) != "" {
 		userDirs = append(userDirs, skills.SourceDir{Path: filepath.Join(wuuHome, "skills"), Source: "user"})
 	}
-	projectDirs = append(projectDirs, skillProjectDirs(rootDir)...)
-	discovered := skills.DiscoverSourceDirs(projectDirs, userDirs)
+	// Keep plugin contents pinned while resolving ordinary disk skills at this root.
+	byName := make(map[string]skills.Skill)
+	for _, layer := range [][]skills.Skill{plugins.user, skills.DiscoverSourceDirs(nil, userDirs), plugins.project, skills.DiscoverSourceDirs(skillProjectDirs(rootDir), nil)} {
+		for _, skill := range layer {
+			byName[skill.Name] = skill
+		}
+	}
+	discovered := make([]skills.Skill, 0, len(byName))
+	for _, skill := range byName {
+		discovered = append(discovered, skill)
+	}
+	sort.Slice(discovered, func(i, j int) bool { return discovered[i].Name < discovered[j].Name })
 	// Claude Code-style command templates (.claude/commands/*.md) are read as
 	// pure content and adapted into lightweight skill entries. Native skills
 	// take precedence over commands with the same name.
@@ -2564,6 +2608,19 @@ func BoundaryForMode(mode string) tools.WorkspaceBoundary {
 	}
 }
 
+// guidanceForRoot preserves the pinned plugin generation and user discovery
+// configuration while replacing project guidance with the actual checkout.
+func (s *Session) guidanceForRoot(root string, generation *PluginGeneration) ([]instructions.File, []skills.Skill) {
+	snapshot, discovered := s.pluginSkills, s.Skills
+	if generation != nil {
+		snapshot, discovered = generation.pluginSkills, generation.skills
+	}
+	if sameRuntimeRoot(root, s.RootDir) {
+		return s.InstructionFiles, discovered
+	}
+	return discoverInstructions(root, s.HomeDir, s.instructionConfig), discoverSkillsWithPlugins(root, s.HomeDir, s.WuuHome, snapshot)
+}
+
 func discoverInstructions(rootDir, homeDir string, cfg config.InstructionFilesConfig) []instructions.File {
 	instructionOptions := instructions.DefaultOptions()
 	if len(cfg.Filenames) > 0 {
@@ -2647,6 +2704,7 @@ func (s *Session) ApplyGeneralConfig(cfg config.Config, homeDir string) string {
 		homeDir = os.Getenv("HOME")
 	}
 	s.executionEnvironmentConfig = cfg.ExecutionEnvironments
+	s.instructionConfig = cfg.Instructions
 	s.InstructionFiles = discoverInstructions(s.RootDir, homeDir, cfg.Instructions)
 	if s.Toolkit != nil {
 		s.Toolkit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
