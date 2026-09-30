@@ -37,9 +37,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Editing a message after context compaction now retracts the selected message
   and following messages, preserving the correct conversation on resume and fork.
-- Provider keys or tokens saved in settings now outrank the provider type's
-  implicit default environment variable during credential resolution. Explicit
-  `api_key_env` and `auth_token_env` settings continue to take priority.
+- Keep queued input the Core rejected or lost: a message refused at admission
+  (for example by a `UserPromptSubmit` hook) is held with the reason, and queued
+  messages survive a Core restart as paused input instead of being removed.
 - Keep ordinary project conversations rooted in the selected folder after project
   relocation, while preserving custom directories and linked worktrees.
 - Keep attachments in their original conversation draft when file preparation
@@ -48,6 +48,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Harden MCP transport compatibility, request timeouts, OAuth refresh recovery,
   local server cleanup, bounded reads, catalog refreshes, and oversized results.
+
+- Bound MCP call cleanup: a cancelled call no longer waits on the server's answer
+  to `notifications/cancelled`, and stdio sends stop when their call ends rather
+  than blocking on a full pipe. The transport closes if a frame may be half-written.
+
+- Provider keys or tokens saved in settings now outrank the provider type's
+  implicit default environment variable during credential resolution. Explicit
+  `api_key_env` and `auth_token_env` settings continue to take priority.
 
 ## [2026.9.29] - 2026-09-29
 
