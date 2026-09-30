@@ -27,9 +27,6 @@
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
   --sidebar-row-action-archive-confirm-bg: rgba(184, 79, 53, 0.1);
   --sidebar-thread-list-button-hover-bg: var(--ink-overlay-4);
-  --sidebar-thread-row-dot-default: var(--ink-overlay-18);
-  --sidebar-thread-row-dot-hover: var(--ink-overlay-18);
-  --sidebar-thread-row-dot-active: var(--ink-overlay-18);
   --sidebar-thread-spinner-notch: rgba(17, 19, 21, 0.18);
   --sidebar-settings-button-hover-ring: rgba(255, 255, 255, 0.42);
   /* Collapsed-drawer chrome. */
@@ -327,13 +324,10 @@
    * sibling rows. The collapse body owns this gap; lists add no outer inset. */
   --sidebar-section-body-gap: var(--sidebar-row-gap);
   --sidebar-row-gap: 2px;
-  --sidebar-child-indent: 8px;
-  --sidebar-session-status-col: var(--sidebar-nav-icon-col);
   --sidebar-session-status-dot-size: 5px;
   --sidebar-session-status-bg: transparent;
   --sidebar-session-status-scale: 0.75;
   --sidebar-session-status-unread-bg: var(--info);
-  --sidebar-session-status-unread-fg: var(--ink-on-info);
   --sidebar-session-status-unread-scale: 1;
   --sidebar-session-spinner-size: 9px;
   --sidebar-session-spinner-border-width: 1.5px;

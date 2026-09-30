@@ -8,7 +8,6 @@
   --shell-session-tab-status-running-notch: rgba(17, 19, 21, 0.18);
   --shell-session-tab-pending-count-bg: rgba(17, 19, 21, 0.1);
   --shell-session-tab-active-pending-count-bg: rgba(17, 19, 21, 0.14);
-  --shell-session-tab-drag-overlay-ring: rgba(255, 255, 255, 0.72);
   --shell-todo-card-bg: #fff;
   --shell-todo-card-border: var(--hairline);
   --shell-todo-card-ink: #111315;
@@ -111,9 +110,8 @@
   );
   /* Conversation-only tokens. Shared session-level tokens
      (outer width, horizontal padding, composer width/radius) live in
-     session.css at :root — change them there and nothing else. */
-  --conversation-content-width: var(--session-composer-width);
-  /* Use the composer's width directly so message cards and answer prose stay
+     session.css at :root — change them there and nothing else.
+     Use the composer's width directly so message cards and answer prose stay
      flush with the input box without a second value to keep in sync. */
   --conversation-message-max-width: var(--session-composer-width);
   --conversation-message-max-inline: 90%;
@@ -146,7 +144,6 @@
   /* Expanded process folds (tool trail, reasoning) stay compact: bounded
      by an absolute ceiling and a viewport share, whichever is smaller. */
   --conversation-process-fold-max-height: min(320px, 40vh);
-  --conversation-meta-line-height: 1.6;
   --conversation-control-line-height: 1.7;
   --conversation-process-control-color: var(--shell-process-control-color);
   /* Lighten the message-flow process text one tier (was var(--ink-soft)
@@ -167,7 +164,6 @@
    */
   --conversation-user-rule-gap: max(32px, calc(var(--conversation-user-action-size) + 12px));
   --conversation-user-message-trailing-gap: 8px;
-  --conversation-rule-process-gap: 16px;
   --conversation-process-detail-gap: 16px;
   /* Reading groups do not inherit the independently configurable action-bar gap. */
   --conversation-process-answer-gap: max(12px, calc(var(--conversation-message-font-size) * 0.75));
@@ -181,11 +177,6 @@
   --conversation-visible-inset-left: 0px;
   --conversation-visible-inset-right: 0px;
   --dock-composer-height: 0px;
-  /*
-   * Min-height for the composer shell. A 60px textarea plus the compact 40px
-   * toolbar lands on this 100px baseline without reserving hidden space.
-   */
-  --conversation-composer-min-height: 100px;
   grid-column: 2;
   grid-row: 1;
   display: grid;

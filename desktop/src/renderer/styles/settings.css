@@ -288,9 +288,6 @@
   --settings-column-width: calc(var(--font-ui) * 50);
   --settings-pad: var(--page-padding);
   --settings-gap: var(--section-gap);
-  /* A row's leading mark (service monogram, extension artwork) and every
-   * indent that aligns with the text after it. */
-  --settings-mark-size: round(up, calc(var(--font-ui) * 2), 2px);
   width: min(calc(var(--settings-column-width) + var(--settings-pad) * 2), 100%);
   /* flex-shrink: 0 keeps the bottom padding inside the scrollable area
    * when content exceeds the viewport height. */

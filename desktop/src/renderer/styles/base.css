@@ -97,9 +97,6 @@
   --hairline: var(--wuu-color-border-subtle, var(--gray-250));
   --hairline-strong: var(--wuu-color-border-strong, var(--gray-350));
   --hairline-soft: var(--wuu-border-subtle, var(--ink-overlay-6));
-  /* In-flow horizontal rules (turn progress, markdown <hr>/heading
-     underlines) read as strong document rules: control tier. */
-  --rule: var(--hairline-strong);
   /* Ink-overlay alpha steps. Pre-tokenised so future opacity tweaks
      happen here, not scattered across CSS files. */
   --ink-overlay-4: rgba(31, 35, 40, 0.04);
@@ -366,10 +363,7 @@
   --window-titlebar-padding-inline: var(--pane-inset);
   --window-titlebar-leading-inset: max(var(--window-titlebar-padding-inline), calc(var(--window-controls-inset-left) + 10px));
 
-  --turn-warning-border: var(--warning-border);
-  --turn-warning-bg: var(--warning-soft);
   --turn-warning-text: var(--warning);
-  --turn-warning-text-strong: #7a4e0d;
 
   /* Top corners the OS window chrome owns: macOS puts the traffic lights
    * on the left, while Windows draws the controls overlay on the right.

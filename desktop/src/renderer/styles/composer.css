@@ -378,8 +378,6 @@
   --composer-frame-shadow: var(--shadow-composer);
   --composer-surface-bg: var(--wuu-color-surface, #fdfdfe);
   --composer-textarea-disabled: var(--wuu-color-text-muted, #6d7471);
-  --composer-slash-menu-bg: rgba(255, 255, 255, 0.96);
-  --composer-slash-menu-shadow: var(--shadow-pop);
   --composer-project-menu-icon: var(--wuu-color-text-muted, #6b7176);
   --composer-menu-note-warning-strong: var(--wuu-color-warning, #b45309);
 }

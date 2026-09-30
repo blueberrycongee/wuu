@@ -44,7 +44,6 @@
   --turn-process-entry-color: var(--ink-tertiary);
   --process-control-color-fallback: var(--ink-tertiary);
   --activity-toggle-hover-color: var(--gray-650);
-  --activity-toggle-hover-svg-color: var(--gray-550);
   --activity-toggle-hover-color-alt: var(--wuu-color-text-muted, var(--gray-600));
   --activity-detail-color: var(--wuu-color-text-muted, var(--gray-550));
   /* Diff counts are status text: the status roles already pass contrast on
@@ -57,7 +56,6 @@
    * gets a small contrast step without resembling a selected control. */
   --message-flow-card-bg: var(--surface-1);
   --message-flow-card-border: var(--hairline);
-  --message-flow-card-divider: var(--hairline-soft);
   --message-flow-card-header-bg: var(--message-flow-card-bg);
   --message-flow-card-hover-bg: var(--wuu-color-surface, var(--surface-1));
   --message-flow-card-shadow: var(--shadow-soft);

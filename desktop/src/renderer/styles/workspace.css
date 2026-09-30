@@ -6,8 +6,6 @@
   --browser-error-span-text: var(--wuu-color-danger, #6e2a22);
   --browser-retry-hover-bg: #93190f;
   --browser-loading-dot-bg: var(--wuu-color-info, #2f98ff);
-  --skills-section-border: var(--wuu-color-border-subtle, var(--hairline-soft));
-  --skill-artwork-neutral-bg: var(--wuu-color-surface-muted, #f4f4f1);
   --skill-mark-highlight: rgba(255, 255, 255, 0.54);
   /* Skill artwork mark palettes. --wuu-skill-mark-* are the public
      skin-overridable tokens; --skill-mark-* stay as component-local
@@ -61,15 +59,6 @@
   --review-overlay-bg: rgba(251, 251, 250, 0.92);
   --codex-runtime-trigger-icon: var(--wuu-color-text-muted, #707579);
   --codex-menu-label-text: var(--wuu-color-text-muted, #9a9ea2);
-  --grid-guide-border: rgba(228, 0, 43, 0.42);
-  --grid-guide-fill: rgba(228, 0, 43, 0.075);
-  --grid-guide-inset: rgba(228, 0, 43, 0.36);
-  --grid-guide-row-major: rgba(0, 150, 140, 0.3);
-  --grid-guide-row-minor: rgba(0, 150, 140, 0.12);
-  --split-header-bg: rgba(255, 255, 255, 0.94);
-  --split-composer-bg: rgba(255, 255, 255, 0.96);
-  --split-composer-border: var(--wuu-color-border-subtle, #deded9);
-  --split-composer-shadow: rgba(32, 36, 39, 0.08);
 }
 
 .workspace-right-panel {
