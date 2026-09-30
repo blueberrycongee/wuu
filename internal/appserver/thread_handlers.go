@@ -514,15 +514,16 @@ func (s *Server) loadPersistedThreadState(id string, now time.Time) (*threadStat
 }
 
 type persistedThreadSnapshot struct {
-	metadata         session.Session
-	history          []providers.ChatMessage
-	repairedHistory  []providers.ChatMessage
-	repairNeeded     bool
-	baselineSeq      int
-	displayHistory   []persistedMessage
-	rawHistory       []persistedMessage
-	tokenMetas       []persistedMessage
-	pluginGeneration session.PluginGenerationSnapshot
+	metadata           session.Session
+	workspaceRelocated bool
+	history            []providers.ChatMessage
+	repairedHistory    []providers.ChatMessage
+	repairNeeded       bool
+	baselineSeq        int
+	displayHistory     []persistedMessage
+	rawHistory         []persistedMessage
+	tokenMetas         []persistedMessage
+	pluginGeneration   session.PluginGenerationSnapshot
 }
 
 // loadPersistedThreadSnapshot is deliberately read-only. Loading or resuming a
@@ -571,15 +572,17 @@ func (s *Server) loadPersistedThreadSnapshot(id string) (persistedThreadSnapshot
 	if err != nil {
 		return persistedThreadSnapshot{}, err
 	}
+	relocated := relocatedSessionMetadata(metadata, s.registeredWorkspaces())
 	loaded := persistedThreadSnapshot{
-		metadata:         metadata,
-		repairedHistory:  repaired,
-		repairNeeded:     !reflect.DeepEqual(repaired, history),
-		baselineSeq:      historyHeadSeq,
-		displayHistory:   displayHistory,
-		rawHistory:       rawHistory,
-		tokenMetas:       tokenMetas,
-		pluginGeneration: pluginGeneration,
+		metadata:           relocated,
+		workspaceRelocated: relocated.CWD != metadata.CWD || relocated.WorktreeBaseRepo != metadata.WorktreeBaseRepo,
+		repairedHistory:    repaired,
+		repairNeeded:       !reflect.DeepEqual(repaired, history),
+		baselineSeq:        historyHeadSeq,
+		displayHistory:     displayHistory,
+		rawHistory:         rawHistory,
+		tokenMetas:         tokenMetas,
+		pluginGeneration:   pluginGeneration,
 	}
 	systemPrompt := s.rt.StreamRunner.SystemPrompt
 	// The active runtime prompt is configuration, not conversation data. Use it
@@ -977,7 +980,7 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 	if metadata, ok, err := session.Find(s.rt.SessionDir, id); err != nil {
 		return forkSourceThread{}, err
 	} else if ok {
-		applySessionMetadata(th, metadata)
+		applySessionMetadata(th, relocatedSessionMetadata(metadata, s.registeredWorkspaces()))
 	}
 	th.mu.Lock()
 	thread := th.snapshotLocked()
@@ -1013,6 +1016,10 @@ func (s *Server) handleThreadList(req Request) error {
 	sessions, err := session.ListForCWD(s.rt.SessionDir, targetCWD, targetWorkspaceID, 0)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	registered := s.registeredWorkspaces()
+	for i := range sessions {
+		sessions[i] = relocatedSessionMetadata(sessions[i], registered)
 	}
 	s.refreshListedSessionMetadata(sessions)
 	// Agent worker sessions are persisted alongside regular conversations, but
@@ -1107,6 +1114,10 @@ func (s *Server) handleThreadListAll(req Request) error {
 	}
 	agentThreadIDs := make(map[string]struct{})
 	rootIDs, err := s.rootThreadIDs()
+	registered := s.registeredWorkspaces()
+	for i := range sessions {
+		sessions[i] = relocatedSessionMetadata(sessions[i], registered)
+	}
 	s.refreshListedSessionMetadata(sessions)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1184,6 +1195,10 @@ func (s *Server) handleThreadListArchived(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	entries := make(map[string]threadListEntry, len(sessions))
+	registered := s.registeredWorkspaces()
+	for i := range sessions {
+		sessions[i] = relocatedSessionMetadata(sessions[i], registered)
+	}
 	s.refreshListedSessionMetadata(sessions)
 	for _, sess := range sessions {
 		if sess.Visibility == pluginhost.SessionVisibilityPlugin {
@@ -2148,6 +2163,7 @@ func (s *Server) mostRecentVisibleThreadID() (string, error) {
 }
 
 func (s *Server) threadAfterMetadataUpdate(metadata session.Session) (Thread, error) {
+	metadata = relocatedSessionMetadata(metadata, s.registeredWorkspaces())
 	control, err := s.readThreadSessionControl(metadata.ID)
 	if err != nil {
 		return Thread{}, err
