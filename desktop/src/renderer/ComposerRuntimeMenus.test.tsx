@@ -127,6 +127,8 @@ describe("RuntimePicker", () => {
       onSelectSpeed,
       engines: [{ id: "codex", enabled: true, binary_ok: true, models: [{ id: "gpt-6-astra", fast_mode: true, default_speed: defaultSpeed }] }],
     });
+    // Wait for the opening frame's automatic focus before simulating input.
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
     const button = document.querySelector<HTMLButtonElement>('button[aria-label="Fast mode"]');
     expect(button?.getAttribute("aria-pressed")).toBe(String(enabled));
     expect(document.querySelector<HTMLButtonElement>(".runtime-panel-speed-reset")?.disabled).toBe(!speed);
@@ -146,6 +148,8 @@ describe("RuntimePicker", () => {
     initialized.speed = "standard";
     initialized.providers![0].models![0].fast_mode = true;
     renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), createRef(), { onSelectSpeed });
+    // Wait for the opening frame's automatic focus before simulating input.
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
     const button = document.querySelector<HTMLButtonElement>('button[aria-label="Fast mode"]')!;
     act(() => { button.focus(); button.click(); });
     expect(button.disabled).toBe(false);
