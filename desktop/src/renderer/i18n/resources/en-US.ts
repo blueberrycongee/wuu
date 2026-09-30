@@ -445,6 +445,8 @@ export const enUS = {
   "common.showMore": "Show more",
   "common.unknown": "Unknown",
   "common.close": "Close",
+  "plugins.viewTabs": "Plugin views",
+  "plugins.viewUnavailable": "This plugin view is unavailable.",
   "common.loading": "Loading",
   "common.loadingEllipsis": "Loading…",
   "common.back": "Back",

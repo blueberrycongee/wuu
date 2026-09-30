@@ -442,6 +442,8 @@ export const zhCN = {
   "common.showMore": "显示更多",
   "common.unknown": "未知",
   "common.close": "关闭",
+  "plugins.viewTabs": "插件视图",
+  "plugins.viewUnavailable": "插件视图不可用。",
   "common.loading": "加载中",
   "common.loadingEllipsis": "加载中…",
   "common.back": "返回",
