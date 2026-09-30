@@ -31,6 +31,32 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Editing a message after context compaction now retracts the selected message
   and following messages, preserving the correct conversation on resume and fork.
+- Keep ordinary project conversations rooted in the selected folder after project
+  relocation, while preserving custom directories and linked worktrees.
+
+- Keep attachments in their original conversation draft when file preparation
+  finishes after switching conversations or closing a split pane. Pending files
+  remain removable, and sends wait for their bytes before submitting.
+
+- Preserve the selected skill and its instruction path when invoked from the catalog
+  or composer, including skills whose names collide with built-in slash commands.
+
+- Worktree conversations now load project instructions and skills from their actual
+  checkout, including restored conversations and their workers.
+
+- Honor PreCompact and PostCompact hooks when resetting context windows, and
+  preserve the active history when a hook rejects overflow recovery.
+
+- Recover Responses WebSocket follow-ups when the provider loses the cached
+  previous response, resending full conversation history within existing retry
+  limits and tool replay safeguards.
+
+- Stop reasoning and partial-answer streaming indicators when a turn ends,
+  retaining received text and discarding unfinished tool drafts.
+
+- Keep desktop text diffs readable when file contents mention Git binary markers.
+- Show Git patches for oversized text previews and submodule changes instead of
+  comparing incomplete or unavailable file contents.
 
 - Harden MCP transport compatibility, request timeouts, OAuth refresh recovery,
   local server cleanup, bounded reads, catalog refreshes, and oversized results.
