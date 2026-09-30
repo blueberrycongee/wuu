@@ -23,13 +23,14 @@ type StdioTransport struct {
 	stdin        io.WriteCloser
 	stdout       io.ReadCloser
 	stderr       io.ReadCloser
-	mu           sync.Mutex
-	enc          *json.Encoder
-	reader       *bufio.Reader
-	stderrMu     sync.Mutex
-	stderrBuf    bytes.Buffer
-	closeOnce    sync.Once
-	closeErr     error
+	// sendSlot serializes writes to stdin. It is a channel rather than a mutex
+	// so a caller can stop waiting for it when its context ends.
+	sendSlot  chan struct{}
+	reader    *bufio.Reader
+	stderrMu  sync.Mutex
+	stderrBuf bytes.Buffer
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // NewStdioTransport starts command as an MCP stdio server.
@@ -84,7 +85,7 @@ func NewStdioTransportWithEnv(command string, args []string, env map[string]stri
 		stdin:        stdin,
 		stdout:       stdout,
 		stderr:       stderr,
-		enc:          json.NewEncoder(stdin),
+		sendSlot:     make(chan struct{}, 1),
 		reader:       bufio.NewReader(stdout),
 	}
 	go t.captureStderr()
@@ -150,15 +151,37 @@ func mergeProcessEnv(base []string, overlay map[string]string) []string {
 }
 
 func (t *StdioTransport) Send(ctx context.Context, req Request) error {
-	if err := ctx.Err(); err != nil {
-		return err
+	frame, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("marshal message: %w", err)
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if err := ctx.Err(); err != nil {
-		return err
+	frame = append(frame, '\n')
+	select {
+	case t.sendSlot <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	return t.enc.Encode(req)
+	written := make(chan error, 1)
+	go func() {
+		_, err := t.stdin.Write(frame)
+		<-t.sendSlot
+		written <- err
+	}()
+	select {
+	case err := <-written:
+		return err
+	case <-ctx.Done():
+	}
+	select {
+	case err := <-written:
+		return err
+	default:
+	}
+	// The server stopped reading and the write may have left half a frame, so
+	// this stream cannot carry another message. Closing the connection also
+	// unblocks the pending write; the reader then reports the exit.
+	go func() { _ = t.Close() }()
+	return ctx.Err()
 }
 
 func (t *StdioTransport) Receive(ctx context.Context) (Response, error) {

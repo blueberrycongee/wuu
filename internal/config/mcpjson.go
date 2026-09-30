@@ -147,7 +147,7 @@ type mcpJsonDiag struct {
 // translateMCPJson parses `.mcp.json` bytes loosely and returns the approved,
 // translatable servers plus diagnostics for everything skipped. native is the
 // current cfg.MCPServers map (pre-merge) so name conflicts can be detected;
-// native entries always win and are never overwritten. lookup resolves
+// native entries that define a server always win and are never overwritten. lookup resolves
 // environment variables for ${VAR} expansion (os.LookupEnv in production).
 func translateMCPJson(data []byte, native map[string]MCPServerConfig, trust MCPJsonTrust, lookup func(string) (string, bool)) (map[string]MCPServerConfig, []mcpJsonDiag) {
 	// Loose parse: only mcpServers is read; unknown top-level keys are ignored.
@@ -174,8 +174,12 @@ func translateMCPJson(data []byte, native map[string]MCPServerConfig, trust MCPJ
 		if name == "" {
 			continue // malformed empty name — ignore silently
 		}
-		// Native mcp_servers wins on name conflict, regardless of approval.
-		if _, exists := native[name]; exists {
+		// A native entry that defines a server wins on name conflict, regardless
+		// of approval. One that only carries startup preferences (such as the
+		// settings on/off switch) does not: it applies on top of the project
+		// definition instead of hiding it.
+		preference, exists := native[name]
+		if exists && preference.definesServer() {
 			diags = append(diags, mcpJsonDiag{
 				Kind:    mcpJsonDiagConflict,
 				Name:    name,
@@ -196,6 +200,10 @@ func translateMCPJson(data []byte, native map[string]MCPServerConfig, trust MCPJ
 		diags = append(diags, transDiags...)
 		if !ok {
 			continue
+		}
+		if exists {
+			sc.Enabled = preference.Enabled
+			sc.ToolOverrides = preference.ToolOverrides
 		}
 		out[name] = sc
 	}

@@ -51,6 +51,7 @@ import type {
 import {
   OPTIMISTIC_TURN_ID_PREFIX,
   awaitComposerImages,
+  awaitComposerFiles,
   createComposerMessage,
   composerContextFromMessage,
   createOptimisticCompactTurn,
@@ -474,7 +475,17 @@ export function App(): JSX.Element {
     moveSplitDraftToGlobalComposer,
     currentPrimaryComposerDraft,
     restorePrimaryComposerDraft,
-  } = useComposerDraftState();
+  } = useComposerDraftState((update) => {
+    setState((current) => {
+      const sessionTabs = current.sessionTabs.map((tab) => {
+        if (tab.kind !== "draft" && tab.kind !== "thread") return tab;
+        const draft = update(tab);
+        return draft === tab ? tab : { ...tab, ...draft };
+      });
+      return sessionTabs.every((tab, index) => tab === current.sessionTabs[index])
+        ? current : { ...current, sessionTabs };
+    });
+  });
   useEffect(() => {
     const addSelection = (event: Event) => {
       const selection = (event as CustomEvent<ResponseSelection>).detail;
@@ -4266,9 +4277,8 @@ export function App(): JSX.Element {
     const pendingKey = () => admission?.thread?.id ?? queueKey;
     const text = message.text.trim();
     const imageCount = message.images.length;
-    const files = inputFilesFromComposer(message.files);
     if (
-      (!text && imageCount === 0 && files.length === 0) ||
+      (!text && imageCount === 0 && message.files.length === 0) ||
       (!targetThread && !admission) ||
       targetThread?.read_only ||
       !currentState.activeContext ||
@@ -4301,7 +4311,10 @@ export function App(): JSX.Element {
         return !stillPending;
       }
       const targetContext = resolveThreadRuntimeContext(targetThread, currentState.projects);
-      const encodedImages = await awaitComposerImages(message.images);
+      const [encodedImages, encodedFiles] = await Promise.all([
+        awaitComposerImages(message.images), awaitComposerFiles(message.files),
+      ]);
+      const files = inputFilesFromComposer(encodedFiles);
       if (
         !pendingComposerMessagesByThreadRef.current[targetThread.id]?.queued.some(
           (candidate) => candidate.id === message.id,
@@ -4338,6 +4351,7 @@ export function App(): JSX.Element {
                 ...candidate,
                 id: result.queued.id || message.id,
                 images: encodedImages,
+                files: encodedFiles,
                 operationState: undefined,
               }
             : candidate,
@@ -4378,10 +4392,9 @@ export function App(): JSX.Element {
     const currentState = appStateRef.current;
     const targetContext = targetThread ? resolveThreadRuntimeContext(targetThread, currentState.projects) : undefined;
     const text = message.text.trim();
-    const files = inputFilesFromComposer(message.files);
     const turnID = targetThread ? activeTurnIDForThread(targetThread) : undefined;
     if (
-      (!text && message.images.length === 0 && files.length === 0) ||
+      (!text && message.images.length === 0 && message.files.length === 0) ||
       !targetThread ||
       targetThread.read_only ||
       !turnID ||
@@ -4399,7 +4412,10 @@ export function App(): JSX.Element {
       ],
     }));
     try {
-      const encodedImages = await awaitComposerImages(message.images);
+      const [encodedImages, encodedFiles] = await Promise.all([
+        awaitComposerImages(message.images), awaitComposerFiles(message.files),
+      ]);
+      const files = inputFilesFromComposer(encodedFiles);
       if (
         !pendingComposerMessagesByThreadRef.current[targetThread.id]?.guides.some(
           (candidate) => candidate.id === message.id,
@@ -4430,7 +4446,7 @@ export function App(): JSX.Element {
         ...previous,
         guides: previous.guides.map((candidate) =>
           candidate.id === message.id
-            ? { ...candidate, images: encodedImages, operationState: undefined }
+            ? { ...candidate, images: encodedImages, files: encodedFiles, operationState: undefined }
             : candidate,
         ),
       }));
@@ -4471,9 +4487,8 @@ export function App(): JSX.Element {
     const currentState = appStateRef.current;
     const text = message.text.trim();
     const imageCount = message.images.length;
-    const files = inputFilesFromComposer(message.files);
     if (
-      (!text && imageCount === 0 && files.length === 0) ||
+      (!text && imageCount === 0 && message.files.length === 0) ||
       !currentState.activeContext ||
       !currentState.initialized ||
       targetThread?.read_only ||
@@ -4677,8 +4692,11 @@ export function App(): JSX.Element {
         ),
       );
       clearPendingThreadCreation(optimisticTurn.id);
-      const encodedImages = await Promise.race([awaitComposerImages(message.images), admission.cancelled]);
-      if (!encodedImages || admission.stopRequested) {
+      const attachments = await Promise.race([
+        Promise.all([awaitComposerImages(message.images), awaitComposerFiles(message.files)]),
+        admission.cancelled,
+      ]);
+      if (!attachments || admission.stopRequested) {
         const settle = (current: AppState) => updateThreadByID(current, thread.id,
           (value) => interruptOptimisticTurn(value, optimisticTurn.id, Date.now()),
           activeThreadIDForState(current) === thread.id ? { running: false } : {});
@@ -4687,7 +4705,9 @@ export function App(): JSX.Element {
         return true;
       }
       admission.sent = true;
+      const [encodedImages, encodedFiles] = attachments;
       const images = inputImagesFromComposer(encodedImages);
+      const files = inputFilesFromComposer(encodedFiles);
       const result = await window.wuu.startTurn(
         thread.id,
         text,
