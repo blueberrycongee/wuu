@@ -1962,25 +1962,12 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   line-height: 1.68;
 }
 
+/* Headings rank by size (appearance.css) and one weight, as in answers: no
+ * rules under them, natural tracking. */
 .workspace-markdown-reading .rich-heading {
   color: var(--ink);
   font-weight: var(--weight-semibold);
   line-height: 1.35;
-}
-
-/* Heading hierarchy: h1 = page title, h2 = section, h3+ = sub-head. */
-.workspace-markdown-reading .rich-heading--h1 {
-  font-weight: var(--weight-bold);
-  letter-spacing: -0.01em;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--rule);
-}
-
-.workspace-markdown-reading .rich-heading--h2 {
-  font-weight: var(--weight-semibold);
-  letter-spacing: -0.005em;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--rule);
 }
 
 .workspace-markdown-reading .rich-heading--h4,
@@ -2046,50 +2033,26 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   padding: 0.1em 0.36em;
 }
 
-/* Block code: keeps the existing rich-code-block chrome (header + copy
-   button) and only overrides the inner <pre><code> and the outer frame. */
-.workspace-markdown-reading .rich-code-block {
-  --rich-code-padding-block: 12px;
-  --rich-code-line-height: 1.55;
-  margin: 14px 0;
-  border: 1px solid var(--rule);
-  border-radius: var(--message-flow-card-radius);
-  background: var(--surface-2);
-  overflow: hidden;
-}
-
+/* Code blocks, quotes, rules and tables keep the answers' shared look. Code
+ * scrolls instead of wrapping, since a document keeps its own line breaks. */
 .workspace-markdown-reading .rich-code-block .rich-code {
-  margin: 0;
-  padding: var(--rich-code-padding-block) 14px;
-  background: transparent;
-  color: var(--ink);
-  font-family: var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", monospace);
-  line-height: var(--rich-code-line-height);
   white-space: pre;
   overflow-x: auto;
 }
 
-.workspace-markdown-reading .rich-code-block--no-header > .rich-code {
-  padding-right: 40px;
+/* As in answers, a table has no side frame: its outer cell text starts on the
+ * prose edge, and cells keep whole words while the wrapper scrolls. */
+.workspace-markdown-reading .rich-table-wrap :is(th, td) {
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
-.workspace-markdown-reading .rich-code-header {
-  background: var(--surface);
-  border-bottom: 1px solid var(--rule);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--ink-muted);
+.workspace-markdown-reading .rich-table-wrap :is(th, td):first-child {
+  padding-inline-start: 0;
 }
 
-/* Blockquote. */
-.workspace-markdown-reading .rich-blockquote {
-  margin: 12px 0;
-  padding: 6px 14px;
-  border-left: 3px solid var(--wuu-accent);
-  background: color-mix(in srgb, var(--surface-2) 65%, transparent);
-  color: var(--ink-soft);
-  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+.workspace-markdown-reading .rich-table-wrap :is(th, td):last-child {
+  padding-inline-end: 0;
 }
 
 /* Lists (react-markdown emits standard ul/ol when no override is supplied). */
@@ -2105,44 +2068,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 
 .workspace-markdown-reading li > p {
   margin: 0;
-}
-
-/* Horizontal rule. */
-.workspace-markdown-reading .rich-rule {
-  margin: 22px 0;
-  border: 0;
-  border-top: 1px solid var(--rule);
-}
-
-/* Tables. */
-.workspace-markdown-reading .rich-table-wrap {
-  margin: 14px 0;
-  overflow-x: auto;
-  border: 1px solid var(--rule);
-  border-radius: var(--message-flow-card-radius);
-}
-
-.workspace-markdown-reading .rich-table-wrap table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.workspace-markdown-reading .rich-table-wrap th,
-.workspace-markdown-reading .rich-table-wrap td {
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--rule);
-  text-align: left;
-  vertical-align: top;
-}
-
-.workspace-markdown-reading .rich-table-wrap th {
-  background: var(--surface-2);
-  font-weight: var(--weight-semibold);
-  color: var(--ink);
-}
-
-.workspace-markdown-reading .rich-table-wrap tr:last-child td {
-  border-bottom: 0;
 }
 
 /* Images. Raw HTML badges (e.g. shields.io) come in through img.rich-image
