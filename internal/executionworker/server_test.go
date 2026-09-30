@@ -3,9 +3,12 @@ package executionworker
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/codemode"
 	"github.com/blueberrycongee/wuu/internal/executionenv"
@@ -75,7 +78,10 @@ func TestWorkerProgramUsesToolOnlyAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	invoked := 0
-	ctx := toolctx.WithNestedExecutor(context.Background(), callbackExecutor{invoke: func(_ context.Context, call providers.ToolCall) (toolresult.Result, error) {
+	ctx := toolctx.WithNestedExecutor(context.Background(), callbackExecutor{invoke: func(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+		if _, ok := ctx.Deadline(); ok {
+			t.Error("omitted program timeout imposed a worker deadline")
+		}
 		invoked++
 		return toolresult.FromText(call.Name), nil
 	}})
@@ -101,5 +107,141 @@ func TestWorkerProgramUsesToolOnlyAuthority(t *testing.T) {
 	}
 	if invoked != 1 {
 		t.Fatalf("unexpected nested calls: %d", invoked)
+	}
+}
+
+// Run the real worker transport in a subprocess so protocol cancellation and
+// host-routed tool callbacks cross the same stdio boundary as remote execution.
+func TestWorkerTransportProcess(t *testing.T) {
+	if os.Getenv("WUU_EXECUTION_TEST_WORKER") != "1" {
+		return
+	}
+	if err := Serve(context.Background(), os.Stdin, os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+func TestWorkerTransportProgramCancellation(t *testing.T) {
+	t.Setenv("WUU_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("WUU_EXECUTION_TEST_WORKER", "1")
+	client := executionenv.NewClient([]string{os.Args[0], "-test.run=^TestWorkerTransportProcess$"}, os.Environ())
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			t.Errorf("close worker transport: %v", err)
+		}
+	})
+	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer initCancel()
+	if _, err := client.Call(initCtx, "initialize", executionenv.Init{Version: executionenv.ProtocolVersion, Root: t.TempDir(), Session: "program-cancellation"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name      string
+		code      string
+		timeoutMS int
+		cancel    bool
+	}{
+		{name: "caller_cancellation", code: `await tools.wait({})`, cancel: true},
+		{name: "caller_cancellation_busy_guest", code: `tools.wait({}); for (;;) {}`, cancel: true},
+		{name: "explicit_timeout", code: `await tools.wait({})`, timeoutMS: 1000},
+		{name: "unawaited_call_cleanup", code: `tools.wait({}); await tools.ready({}); return 7;`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			entered, stopped := make(chan struct{}), make(chan struct{})
+			type outcome struct {
+				data json.RawMessage
+				err  error
+			}
+			done := make(chan outcome, 1)
+			request := executionenv.CodeRequest{Actor: "a", PermissionMode: "unconfined", TimeoutMS: test.timeoutMS,
+				Program: codemode.RunRequest{Code: test.code, Tools: []codemode.ToolDefinition{{Name: "wait"}, {Name: "ready"}}}}
+			go func() {
+				data, err := client.CallWithHandler(ctx, "run_code", request, func(callCtx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+					var call providers.ToolCall
+					if err := json.Unmarshal(raw, &call); err != nil {
+						return nil, err
+					}
+					switch call.Name {
+					case "wait":
+						if test.timeoutMS == 0 {
+							if _, ok := callCtx.Deadline(); ok {
+								t.Error("omitted program timeout imposed a host callback deadline")
+							}
+						}
+						close(entered)
+						<-callCtx.Done()
+						close(stopped)
+						return nil, callCtx.Err()
+					case "ready":
+						select {
+						case <-entered:
+							return json.Marshal(toolresult.FromText("ready"))
+						case <-callCtx.Done():
+							return nil, callCtx.Err()
+						}
+					default:
+						return nil, fmt.Errorf("unexpected callback %q", call.Name)
+					}
+				})
+				done <- outcome{data, err}
+			}()
+			select {
+			case <-entered:
+			case <-time.After(10 * time.Second):
+				t.Fatal("host callback did not start")
+			}
+			if test.cancel {
+				cancel()
+			}
+			select {
+			case result := <-done:
+				if test.cancel {
+					if !errors.Is(result.err, context.Canceled) {
+						t.Fatalf("caller cancellation: %v", result.err)
+					}
+				} else {
+					if result.err != nil {
+						t.Fatal(result.err)
+					}
+					var program codemode.RunResult
+					if err := json.Unmarshal(result.data, &program); err != nil {
+						t.Fatal(err)
+					}
+					if test.timeoutMS > 0 {
+						if program.Error != context.DeadlineExceeded.Error() {
+							t.Fatalf("explicit timeout: %+v", program)
+						}
+					} else if program.Error != "" || string(program.Value) != "7" {
+						t.Fatalf("normal completion: %+v", program)
+					}
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("program did not finish")
+			}
+			// Host cleanup is asynchronous; the scope must still be revoked on
+			// every exit path, including a deadline imposed only by the worker.
+			select {
+			case <-stopped:
+			case <-time.After(10 * time.Second):
+				t.Fatal("host callback outlived its program scope")
+			}
+			nextCtx, nextCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer nextCancel()
+			request.Program = codemode.RunRequest{Code: `return 9`}
+			request.TimeoutMS = 0
+			raw, err := client.Call(nextCtx, "run_code", request)
+			if err != nil {
+				t.Fatalf("transport did not recover after program completion: %v", err)
+			}
+			var result codemode.RunResult
+			if err := json.Unmarshal(raw, &result); err != nil || result.Error != "" || string(result.Value) != "9" {
+				t.Fatalf("next program: %+v %v", result, err)
+			}
+		})
 	}
 }

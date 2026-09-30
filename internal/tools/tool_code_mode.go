@@ -36,11 +36,11 @@ func (*CodeModeExecTool) Execute(context.Context, string) (string, error) {
 func (*CodeModeExecTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        codeModeExecToolName,
-		Description: "Execute an async JavaScript or erasable TypeScript function body in a fresh tool-only interpreter. No filesystem, network, process, module imports, or timers are available. Discover bindings with await searchTools(query, {limit:8, offset:0}); it returns {tools:[{name,description}],total,next_offset?}. An empty query pages through the catalog. Read exact arguments with await describeTool(name), returning {name,description,input_schema}. Invoke await tools[name](args). Names are exact; bracket access handles punctuation. Calls return tool-result objects with content and optional structured_content. Failures reject with ToolCallError (toolName and message). Return JSON and/or console.log only what is needed; intermediate values stay out of the conversation. Successful image/audio results are attached automatically. Await writes and dependent calls sequentially; use bounded Promise.all for independent reads. There is no retained state or continuation. The elapsed deadline includes approval/tool waits. Cancellation stops active calls but cannot undo completed effects. Never blindly replay a failed program.",
+		Description: "Execute an async JavaScript or erasable TypeScript function body in a fresh tool-only interpreter. No filesystem, network, process, module imports, or timers are available. Discover bindings with await searchTools(query, {limit:8, offset:0}); it returns {tools:[{name,description}],total,next_offset?}. An empty query pages through the catalog. Read exact arguments with await describeTool(name), returning {name,description,input_schema}. Invoke await tools[name](args). Names are exact; bracket access handles punctuation. Calls return tool-result objects with content and optional structured_content. Failures reject with ToolCallError (toolName and message). Return JSON and/or console.log only what is needed; intermediate values stay out of the conversation. Successful image/audio results are attached automatically. Await writes and dependent calls sequentially; use bounded Promise.all for independent reads. There is no retained state or continuation. There is no default elapsed deadline; an explicit timeout includes approval/tool waits. Cancellation stops active calls but cannot undo completed effects. Never blindly replay a failed program.",
 		InputSchema: map[string]any{"type": "object", "additionalProperties": false, "required": []string{"code", "description"}, "properties": map[string]any{
 			"code":        map[string]any{"type": "string", "description": "Async function body. Type annotations are erased; enum and namespaces are unsupported."},
 			"description": map[string]any{"type": "string", "description": "Short description of this program."},
-			"timeout_ms":  map[string]any{"type": "integer", "minimum": 1, "maximum": codemode.MaxTimeoutMS, "description": fmt.Sprintf("Elapsed deadline; default %d ms, maximum %d ms.", codemode.DefaultTimeoutMS, codemode.MaxTimeoutMS)},
+			"timeout_ms":  map[string]any{"type": "integer", "minimum": 1, "maximum": codemode.MaxTimeoutMS, "description": "Optional total elapsed timeout in milliseconds, including approval and tool waits. Omit for no program deadline."},
 		}},
 	}
 }
@@ -55,13 +55,20 @@ func (e *CodeModeExecTool) ExecuteResultCall(ctx context.Context, call providers
 	var args struct {
 		Code        string `json:"code"`
 		Description string `json:"description"`
-		TimeoutMS   int    `json:"timeout_ms"`
+		TimeoutMS   *int   `json:"timeout_ms"`
 	}
 	if err := decodeArgs(call.Arguments, &args); err != nil {
 		return toolresult.Result{}, err
 	}
 	if strings.TrimSpace(args.Code) == "" || strings.TrimSpace(args.Description) == "" {
 		return toolresult.Result{}, errors.New("run_code requires non-empty code and description")
+	}
+	timeout := 0
+	if args.TimeoutMS != nil {
+		if *args.TimeoutMS <= 0 {
+			return toolresult.Result{}, errors.New("run_code timeout_ms must be positive when provided")
+		}
+		timeout = *args.TimeoutMS
 	}
 	definitions, err := e.toolkit.CodeModeNestedSurface()
 	if err != nil {
@@ -70,7 +77,7 @@ func (e *CodeModeExecTool) ExecuteResultCall(ctx context.Context, call providers
 	if remote, ok := e.toolkit.env.ExecutionEnvironment.(interface {
 		RunCode(context.Context, executionenv.CodeRequest, toolctx.NestedExecutor) (codemode.RunResult, error)
 	}); ok {
-		result, err := remote.RunCode(ctx, executionenv.CodeRequest{GitAttributionEnabled: !e.toolkit.env.GitAttributionDisabled, Program: codemode.RunRequest{Code: args.Code, Tools: definitions}, TimeoutMS: args.TimeoutMS, Actor: e.toolkit.env.AgentID, PermissionMode: e.toolkit.env.PermissionMode}, executor)
+		result, err := remote.RunCode(ctx, executionenv.CodeRequest{GitAttributionEnabled: !e.toolkit.env.GitAttributionDisabled, Program: codemode.RunRequest{Code: args.Code, Tools: definitions}, TimeoutMS: timeout, Actor: e.toolkit.env.AgentID, PermissionMode: e.toolkit.env.PermissionMode}, executor)
 		if err != nil {
 			return toolresult.Result{}, err
 		}
@@ -84,7 +91,7 @@ func (e *CodeModeExecTool) ExecuteResultCall(ctx context.Context, call providers
 	if err != nil {
 		return toolresult.Result{}, err
 	}
-	result, err := e.toolkit.CodeModeService().Run(ctx, codemode.RunRequest{Code: args.Code, TimeoutMS: args.TimeoutMS, Tools: definitions},
+	result, err := e.toolkit.CodeModeService().Run(ctx, codemode.RunRequest{Code: args.Code, TimeoutMS: timeout, Tools: definitions},
 		codemode.RunOptions{CWD: cwd, Executor: executor, Sandbox: policy, SandboxProvider: e.toolkit.env.ProcessSandboxProvider})
 	if err != nil {
 		return toolresult.Result{}, err

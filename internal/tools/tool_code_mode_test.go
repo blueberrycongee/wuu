@@ -192,3 +192,32 @@ return (await tools[name]({path:'fixture.txt'})).content[0].text;`)
 		t.Fatalf("discovery and invocation failed: %+v", result)
 	}
 }
+
+func TestPTCExplicitTimeoutValidation(t *testing.T) {
+	kit := newCodeModeTestToolkit(t)
+	for _, tc := range []struct {
+		name      string
+		timeout   int
+		wantError bool
+	}{
+		{"zero", 0, true},
+		{"negative", -1, true},
+		{"over ten minutes", 601000, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			runtime := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: kit, RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
+			defer runtime.Cancel()
+			args, _ := json.Marshal(map[string]any{"code": "return true;", "description": "Check explicit timeout", "timeout_ms": tc.timeout})
+			messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "program", Name: "run_code", Arguments: string(args)}}, nil)
+			if err != nil || len(messages) != 1 || messages[0].ToolResult == nil {
+				t.Fatalf("program execution: %+v %v", messages, err)
+			}
+			result := messages[0].ToolResult
+			if result.IsError != tc.wantError || (tc.wantError && !strings.Contains(result.TextProjection(), "timeout_ms")) {
+				t.Fatalf("explicit timeout result=%+v", result)
+			}
+		})
+	}
+}

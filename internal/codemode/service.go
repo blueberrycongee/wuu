@@ -87,8 +87,8 @@ func loadRuntimeWasm(assets fs.FS) ([]byte, error) {
 	return image, nil
 }
 
-const DefaultTimeoutMS = 120000
-const MaxTimeoutMS = 600000
+// MaxTimeoutMS is the largest millisecond timeout representable by time.Duration.
+const MaxTimeoutMS = int64((1<<63 - 1) / time.Millisecond)
 const defaultOutputBytes = 1024 * 1024
 const maxPendingCalls = 128
 
@@ -103,7 +103,7 @@ type ServiceConfig struct{ NodeExecutable string }
 type RunRequest struct {
 	Code      string           `json:"code"`
 	Tools     []ToolDefinition `json:"tools"`
-	TimeoutMS int              `json:"-"`
+	TimeoutMS int              `json:"-"` // Zero adds no deadline; the parent context still applies.
 }
 type RunOptions struct {
 	CWD             string
@@ -146,7 +146,7 @@ func (s *Service) Close() error {
 
 // Run retains only printed/returned values and media; nested calls go through
 // the caller's policy, scheduler and durable ledger. The interpreter has no native
-// capabilities. The deadline includes tool and approval waits.
+// capabilities. An explicit deadline includes tool and approval waits.
 func (s *Service) Run(parent context.Context, request RunRequest, opts RunOptions) (result RunResult, err error) {
 	if strings.TrimSpace(request.Code) == "" {
 		return result, errors.New("PTC requires code")
@@ -156,13 +156,16 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 		return result, catalogErr
 	}
 	timeout := request.TimeoutMS
-	if timeout == 0 {
-		timeout = DefaultTimeoutMS
+	if timeout < 0 || int64(timeout) > MaxTimeoutMS {
+		return result, fmt.Errorf("PTC timeout_ms must be between 0 and %d (0 adds no deadline)", MaxTimeoutMS)
 	}
-	if timeout < 1 || timeout > MaxTimeoutMS {
-		return result, fmt.Errorf("PTC timeout_ms must be between 1 and %d", MaxTimeoutMS)
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(parent, time.Duration(timeout)*time.Millisecond)
+	} else {
+		ctx, cancel = context.WithCancel(parent)
 	}
-	ctx, cancel := context.WithTimeout(parent, time.Duration(timeout)*time.Millisecond)
 	defer cancel()
 	id := rand.Text()
 	s.mu.Lock()

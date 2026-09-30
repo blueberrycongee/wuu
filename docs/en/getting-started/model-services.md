@@ -142,10 +142,11 @@ process environment, or timers, including in Unconfined mode. Effects are only
 available through authorized tools. The interpreter has a 128 MiB memory limit;
 the host process retains the session process sandbox as defense in depth.
 See the [security model](../reference/security-model.md).
-The default elapsed deadline is 120 seconds, including tool and approval
-waits, with a 600-second maximum. Programs have no persistent state or
-`yield`/`wait` continuation. Cancellation stops the program and its active
-nested calls; completed effects are not rolled back or automatically replayed.
+Programs have no default total timeout. Set a positive `timeout_ms` to limit
+elapsed time, including tool and approval waits; any earlier calling-context
+deadline still applies. Programs have no persistent state or `yield`/`wait`
+continuation. Cancellation stops the program and its active nested calls;
+completed effects are not rolled back or automatically replayed.
 Printed/returned text is limited to 1 MiB; media also obeys the shared rich
 result limits. Discovery returns at most 20 summaries per page; exact tool
 details are limited to 256 KiB and oversized details fail visibly rather than

@@ -2,6 +2,7 @@ package codemode
 
 import (
 	"context"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -113,37 +114,126 @@ func TestNodeRejectsLossyJSON(t *testing.T) {
 	}
 }
 
+func TestNodeOptionalDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		timeout       int
+		parentTimeout time.Duration
+	}{
+		{name: "omitted"},
+		{name: "explicit over ten minutes", timeout: 601000},
+		{name: "largest representable duration", timeout: math.MaxInt64 / int(time.Millisecond)},
+		{name: "inherited deadline", parentTimeout: time.Minute},
+		{name: "earlier parent deadline", timeout: 601000, parentTimeout: time.Minute},
+		{name: "earlier explicit deadline", timeout: 30000, parentTimeout: time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := nodeService(t)
+			ctx := context.Background()
+			if tc.parentTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tc.parentTimeout)
+				defer cancel()
+			}
+			var deadline time.Time
+			var hasDeadline bool
+			before := time.Now()
+			result, err := s.Run(ctx, RunRequest{Code: `await tools.inspect({}); return true;`, TimeoutMS: tc.timeout, Tools: []ToolDefinition{{Name: "inspect"}}}, RunOptions{CWD: t.TempDir(), Executor: nodeExecutor(func(callCtx context.Context, _ providers.ToolCall) (toolresult.Result, error) {
+				deadline, hasDeadline = callCtx.Deadline()
+				return toolresult.FromText("inspected"), nil
+			})})
+			after := time.Now()
+			if err != nil || result.Error != "" || string(result.Value) != "true" {
+				t.Fatalf("run=%+v err=%v", result, err)
+			}
+			wantDeadline := tc.timeout > 0 || tc.parentTimeout > 0
+			if hasDeadline != wantDeadline {
+				t.Fatalf("nested deadline=%v, want %v", hasDeadline, wantDeadline)
+			}
+			if parentDeadline, ok := ctx.Deadline(); ok && (tc.timeout == 0 || tc.parentTimeout < time.Duration(tc.timeout)*time.Millisecond) {
+				if !deadline.Equal(parentDeadline) {
+					t.Fatalf("nested deadline=%v, parent=%v", deadline, parentDeadline)
+				}
+			} else if tc.timeout > 0 {
+				duration := time.Duration(tc.timeout) * time.Millisecond
+				if deadline.Before(before.Add(duration)) || deadline.After(after.Add(duration)) {
+					t.Fatalf("explicit timeout was changed: deadline=%v", deadline)
+				}
+			}
+		})
+	}
+	for _, timeout := range []int{-1, math.MaxInt64/int(time.Millisecond) + 1} {
+		_, err := nodeService(t).Run(context.Background(), RunRequest{Code: `return true`, TimeoutMS: timeout}, RunOptions{CWD: t.TempDir()})
+		if err == nil || !strings.Contains(err.Error(), "timeout_ms") {
+			t.Fatalf("invalid timeout %d accepted: %v", timeout, err)
+		}
+	}
+}
+
 func TestNodeCancellationStopsBindings(t *testing.T) {
-	s := nodeService(t)
-	entered := make(chan struct{})
-	stopped := make(chan struct{})
-	ctx, cancel := context.WithCancel(context.Background())
-	opts := RunOptions{CWD: t.TempDir(), Executor: nodeExecutor(func(ctx context.Context, _ providers.ToolCall) (toolresult.Result, error) {
-		close(entered)
-		<-ctx.Done()
-		close(stopped)
-		return toolresult.Result{}, ctx.Err()
-	})}
-	done := make(chan error, 1)
-	go func() {
-		_, err := s.Run(ctx, RunRequest{Code: `await tools.wait({})`, Tools: []ToolDefinition{{Name: "wait"}}}, opts)
-		done <- err
-	}()
-	select {
-	case <-entered:
-	case <-time.After(10 * time.Second):
-		t.Fatal("binding never started")
-	}
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("cancel did not stop process")
-	}
-	select {
-	case <-stopped:
-	default:
-		t.Fatal("binding outlived run")
+	for _, tc := range []struct {
+		name, code   string
+		closeService bool
+	}{
+		{"waiting binding", `await tools.wait({})`, false},
+		{"busy guest", `tools.wait({}); for (;;) {}`, false},
+		{"service shutdown", `tools.wait({}); for (;;) {}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := nodeService(t)
+			entered := make(chan struct{})
+			stopped := make(chan struct{})
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			opts := RunOptions{CWD: t.TempDir(), Executor: nodeExecutor(func(ctx context.Context, _ providers.ToolCall) (toolresult.Result, error) {
+				close(entered)
+				<-ctx.Done()
+				close(stopped)
+				return toolresult.Result{}, ctx.Err()
+			})}
+			done := make(chan RunResult, 1)
+			go func() {
+				result, err := s.Run(ctx, RunRequest{Code: tc.code, Tools: []ToolDefinition{{Name: "wait"}}}, opts)
+				if err != nil {
+					result.Error = err.Error()
+				}
+				done <- result
+			}()
+			select {
+			case <-entered:
+			case <-time.After(10 * time.Second):
+				t.Fatal("binding never started")
+			}
+			shutdown := make(chan error, 1)
+			if tc.closeService {
+				go func() { shutdown <- s.Close() }()
+			} else {
+				cancel()
+			}
+			select {
+			case result := <-done:
+				if result.Error != context.Canceled.Error() {
+					t.Fatalf("cancellation=%+v", result)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("cancel did not stop process")
+			}
+			select {
+			case <-stopped:
+			default:
+				t.Fatal("binding outlived run")
+			}
+			if tc.closeService {
+				select {
+				case err := <-shutdown:
+					if err != nil {
+						t.Fatal(err)
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatal("service shutdown did not finish")
+				}
+			}
+		})
 	}
 }
 
