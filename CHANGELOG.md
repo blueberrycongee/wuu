@@ -25,9 +25,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   a toy-block fort built around the Applications folder.
 
 ### Fixed
-
 - Respect named `@@` context in file patches so edits cannot silently target
-  matching code before that context; reject missing or ambiguous context before writing.
+  matching code before that context; reject missing or ambiguous context before
+  writing.
+
+- Editing a message after context compaction now retracts the selected message
+  and following messages, preserving the correct conversation on resume and fork.
 
 - Harden MCP transport compatibility, request timeouts, OAuth refresh recovery,
   local server cleanup, bounded reads, catalog refreshes, and oversized results.
