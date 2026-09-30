@@ -608,3 +608,71 @@ func TestNativeDiscoveryRejectsKnownUnsupportedModels(t *testing.T) {
 		}
 	}
 }
+
+// A key saved for a provider through settings is an explicit choice for that
+// service. The type's implicit default env var is ambient, so it must not
+// replace the saved key; anything else keeps the existing env-over-store order.
+func TestResolveAPIKey_SavedKeyVersusEnvironment(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		stored   authstorage.Credentials
+		provider config.ProviderConfig
+		env      map[string]string
+		want     string
+	}{
+		{"saved key beats the implicit default env", authstorage.Credentials{Type: "api_key", APIKey: "sk-saved", Source: authstorage.SourceSaved},
+			config.ProviderConfig{Type: "openai-compatible", BaseURL: "https://custom.example/v1"},
+			map[string]string{"OPENAI_API_KEY": "sk-ambient"}, "sk-saved"},
+		{"unmarked stored key keeps env priority", authstorage.Credentials{Type: "api_key", APIKey: "sk-stored"},
+			config.ProviderConfig{Type: "openai-compatible", BaseURL: "https://custom.example/v1"},
+			map[string]string{"OPENAI_API_KEY": "sk-ambient"}, "sk-ambient"},
+		{"explicit api_key_env beats a saved key", authstorage.Credentials{Type: "api_key", APIKey: "sk-saved", Source: authstorage.SourceSaved},
+			config.ProviderConfig{Type: "openai-compatible", BaseURL: "https://custom.example/v1", APIKeyEnv: "CUSTOM_SERVICE_KEY"},
+			map[string]string{"CUSTOM_SERVICE_KEY": "sk-chosen-env", "OPENAI_API_KEY": "sk-ambient"}, "sk-chosen-env"},
+		{"unset explicit api_key_env falls back to the saved key, not ambient", authstorage.Credentials{Type: "api_key", APIKey: "sk-saved", Source: authstorage.SourceSaved},
+			config.ProviderConfig{Type: "openai-compatible", BaseURL: "https://custom.example/v1", APIKeyEnv: "CUSTOM_SERVICE_KEY"},
+			map[string]string{"CUSTOM_SERVICE_KEY": "", "OPENAI_API_KEY": "sk-ambient"}, "sk-saved"},
+		{"config api_key still wins", authstorage.Credentials{Type: "api_key", APIKey: "sk-saved", Source: authstorage.SourceSaved},
+			config.ProviderConfig{Type: "openai-compatible", BaseURL: "https://custom.example/v1", APIKey: "sk-config"},
+			map[string]string{"OPENAI_API_KEY": "sk-ambient"}, "sk-config"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for key, value := range tc.env {
+				t.Setenv(key, value)
+			}
+			home := t.TempDir()
+			store, err := authstorage.ForHome(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Set("myapi", tc.stored); err != nil {
+				t.Fatal(err)
+			}
+			got, err := ResolveAPIKeyWithHome(tc.provider, "myapi", home)
+			if err != nil || got != tc.want {
+				t.Fatalf("key = %q, err = %v, want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolveAuthToken_SavedTokenBeatsImplicitDefaultEnv(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "ambient-token")
+	store, err := authstorage.ForHome(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set("anthropic", authstorage.Credentials{Type: "auth_token", AuthToken: "saved-token", Source: authstorage.SourceSaved}); err != nil {
+		t.Fatal(err)
+	}
+	provider := config.ProviderConfig{Type: "anthropic", BaseURL: "https://api.anthropic.com", Model: "claude"}
+	if got := resolveAuthToken(provider, "anthropic"); got != "saved-token" {
+		t.Fatalf("auth token = %q, want the saved token", got)
+	}
+	provider.AuthTokenEnv = "ANTHROPIC_AUTH_TOKEN"
+	if got := resolveAuthToken(provider, "anthropic"); got != "ambient-token" {
+		t.Fatalf("explicit auth_token_env = %q, want it to win", got)
+	}
+}

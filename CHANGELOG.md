@@ -56,6 +56,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   to `notifications/cancelled`, and stdio sends stop when their call ends rather
   than blocking on a full pipe. The transport closes if a frame may be half-written.
 
+- Provider keys or tokens saved in settings now outrank the provider type's
+  implicit default environment variable during credential resolution. Explicit
+  `api_key_env` and `auth_token_env` settings continue to take priority.
+
 ## [2026.9.29] - 2026-09-29
 
 ### Contributors
