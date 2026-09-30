@@ -70,6 +70,7 @@ async function capturePanel(win, name) {
     return {
       panel: p, context: rect(context), source: rect(source), fast: rect(fast), reset: rect(reset), model: rect(model), slider: slider ? rect(slider) : null,
       pressed: fast.getAttribute('aria-pressed'), resetDisabled: reset.disabled,
+      bottomInset: parseFloat(getComputedStyle(panel.querySelector('.runtime-panel-summary')).paddingBottom) + parseFloat(getComputedStyle(panel).borderBottomWidth),
       fastColor: getComputedStyle(fast).color, fastBackground: getComputedStyle(fast).backgroundColor,
       font: getComputedStyle(panel).getPropertyValue('--font-ui').trim(), theme: document.documentElement.dataset.theme,
       viewport: { width: innerWidth, height: innerHeight },
@@ -77,16 +78,22 @@ async function capturePanel(win, name) {
       crop: { x: Math.max(0, Math.floor(p.x - 8)), y: Math.max(0, Math.floor(p.y - 8)), width: Math.min(innerWidth - Math.max(0, Math.floor(p.x - 8)), Math.ceil(p.width + 16)), height: Math.min(innerHeight - Math.max(0, Math.floor(p.y - 8)), Math.ceil(p.height + 16)) },
     };
   });
+  state.zoomFactor = win.webContents.getZoomFactor();
+  layoutEvidence.push({ name, ...state });
+  fs.writeFileSync(path.join(output, 'layout-evidence.json'), JSON.stringify(layoutEvidence, null, 2));
   assert(!state.nestedButton, 'Speed must be independent of the model navigation button.');
-  assert(state.fast.width >= 28 && state.fast.height >= 28, 'The compact speed toggle retains a usable hit target.');
+  // Browser geometry can differ by a fractional CSS pixel at non-integer zoom.
+  assert(state.fast.width >= 27.5 && state.fast.height >= 27.5, `The compact speed toggle retains a usable hit target: ${JSON.stringify(state.fast)}`);
   assert(state.fast.top >= state.context.top - 1 && state.fast.bottom <= state.context.bottom + 1, 'Fast mode shares the existing context header.');
-  assert(state.source.right <= state.fast.left && state.fast.right <= state.reset.left, 'Header labels, speed and reset must not overlap.');
+  assert(state.source.right <= state.fast.left + 0.5 && state.fast.right <= state.reset.left + 0.5, 'Header labels, speed and reset must not overlap.');
   assert(state.fast.bottom <= state.model.top + 1, 'Speed controls must not cover the model row.');
   assert(state.panel.left >= 0 && state.panel.right <= state.viewport.width && state.panel.top >= 0 && state.panel.bottom <= state.viewport.height, 'The popover stays inside the window.');
   const last = state.slider || state.model;
-  assert(last.bottom <= state.panel.bottom && state.panel.bottom - last.bottom < 16, 'The summary ends after its last content without a leftover speed row.');
-  layoutEvidence.push({ name, ...state });
-  fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage(state.crop)).toPNG());
+  assert(last.bottom <= state.panel.bottom + 0.5 && Math.abs(state.panel.bottom - last.bottom - state.bottomInset) <= 1,
+    'The summary ends at its normal inset without a leftover speed row.');
+  // DOM rectangles use CSS pixels; Electron capture rectangles use DIP.
+  const crop = Object.fromEntries(Object.entries(state.crop).map(([key, value]) => [key, Math.round(value * state.zoomFactor)]));
+  fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage(crop)).toPNG());
   return state;
 }
 let main;

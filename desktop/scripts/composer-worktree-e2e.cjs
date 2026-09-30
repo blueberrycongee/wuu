@@ -101,6 +101,12 @@ async function capture(win, name) {
   await settle(win);
   fs.writeFileSync(path.join(output, name), (await win.webContents.capturePage()).toPNG());
 }
+async function captureCrop(win, rect) {
+  // DOM rectangles are CSS pixels; Electron capture rectangles are DIP.
+  const zoom = win.webContents.getZoomFactor();
+  const crop = Object.fromEntries(Object.entries(rect).map(([key, value]) => [key, Math.round(value * zoom)]));
+  return (await win.webContents.capturePage(crop)).toPNG();
+}
 const click = (win, selector) => evaluate(win, target => {
   const element = document.querySelector(target);
   if (!element) throw new Error(`missing ${target}`);
@@ -261,7 +267,7 @@ async function run() {
       inspectorGeometry.push({ theme, fontSize, width, expanded, ...geometry });
       // Closed metadata keeps temporary fixture paths out of the shareable crop.
       if (!expanded) fs.writeFileSync(path.join(output, `worktree-panel-${theme}-${fontSize}-${width}.png`),
-        (await main.webContents.capturePage(geometry.crop)).toPNG());
+        await captureCrop(main, geometry.crop));
     }
   }
   await click(main, '.environment-panel-close-row button');
@@ -366,10 +372,11 @@ async function run() {
       assert.equal(state.optionCount, 2);
       assert(state.focusedFirst && state.fits, 'Fork options must be focused, readable, and inside the window.');
       if (dismissal === 'backdrop') {
-        const screenshot = await main.webContents.capturePage(state.crop);
-        fs.writeFileSync(path.join(output, `fork-dialog-${theme}-${fontSize}-${width}.png`), screenshot.toPNG());
-        main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...state.backdrop });
-        main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...state.backdrop });
+        fs.writeFileSync(path.join(output, `fork-dialog-${theme}-${fontSize}-${width}.png`), await captureCrop(main, state.crop));
+        const zoom = main.webContents.getZoomFactor();
+        const point = { x: Math.round(state.backdrop.x * zoom), y: Math.round(state.backdrop.y * zoom) };
+        main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
+        main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
       } else {
         main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
         main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
