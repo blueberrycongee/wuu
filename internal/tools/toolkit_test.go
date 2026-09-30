@@ -603,6 +603,159 @@ func TestToolkit_EditFileUsesCurrentContentAfterEarlierRead(t *testing.T) {
 	}
 }
 
+func TestToolkit_ReadThenEditPreservesLineEndings(t *testing.T) {
+	for _, tc := range []struct {
+		name, ending string
+		finalNewline bool
+	}{
+		{"LF", "\n", true},
+		{"CRLF", "\r\n", true},
+		{"CRLF without final newline", "\r\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			kit, err := New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, "source.txt")
+			before := strings.Join([]string{"header", "\tconst first = 1;", "\tconst second = left | right;", "footer"}, tc.ending)
+			if tc.finalNewline {
+				before += tc.ending
+			}
+			mustWriteFile(t, path, before)
+			read, err := kit.Execute(context.Background(), providers.ToolCall{
+				Name: "read_file", Arguments: `{"path":"source.txt","offset":2,"limit":2}`,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var excerpt struct {
+				Content string `json:"content"`
+			}
+			if err := json.Unmarshal([]byte(read), &excerpt); err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(strings.TrimSuffix(excerpt.Content, "\n"), "\n")
+			for i, line := range lines {
+				_, content, ok := strings.Cut(line, "|")
+				if !ok {
+					t.Fatalf("missing read metadata separator: %q", line)
+				}
+				lines[i] = content
+			}
+			oldText := strings.Join(lines, "\n")
+			newText := strings.Replace(oldText, "first = 1", "first = 10", 1)
+			result, editErr := kit.Execute(context.Background(), providers.ToolCall{
+				Name: "edit_file", Arguments: mustMarshalMap(map[string]any{
+					"path": "source.txt", "old_text": oldText, "new_text": newText,
+				}),
+			})
+			after := mustReadFile(t, path)
+			t.Logf("before=%q read=%s old_text=%q result=%s error=%v after=%q", before, read, oldText, result, editErr, after)
+			if editErr != nil {
+				t.Fatalf("edit from current read evidence: %v", editErr)
+			}
+			want := strings.Replace(before, "first = 1", "first = 10", 1)
+			if after != want {
+				t.Fatalf("edited bytes = %q, want %q", after, want)
+			}
+			var edited struct {
+				OldFileSHA string `json:"old_file_sha"`
+				NewFileSHA string `json:"new_file_sha"`
+			}
+			if err := json.Unmarshal([]byte(result), &edited); err != nil {
+				t.Fatal(err)
+			}
+			if edited.OldFileSHA != formatFileSHA(sha256Hex([]byte(before))) || edited.NewFileSHA != formatFileSHA(sha256Hex([]byte(after))) {
+				t.Fatalf("edit hashes must describe the actual file bytes: %+v", edited)
+			}
+		})
+	}
+}
+
+func TestToolkit_EditFileLineEndingMatchSafety(t *testing.T) {
+	for _, tc := range []struct {
+		name, before, oldText, newText, want, wantError string
+		replaceAll                                      bool
+	}{
+		{
+			name: "ambiguous CRLF excerpt", before: "first\r\nsecond\r\nfirst\r\nsecond\r\n",
+			oldText: "first\nsecond", newText: "changed\nsecond", wantError: "ambiguous_old_text",
+		},
+		{
+			name: "replace all CRLF excerpts", before: "first\r\nsecond\r\nfirst\r\nsecond\r\n",
+			oldText: "first\nsecond", newText: "changed\nsecond", replaceAll: true,
+			want: "changed\r\nsecond\r\nchanged\r\nsecond\r\n",
+		},
+		{
+			name: "stale CRLF excerpt", before: "first\r\ncurrent\r\n",
+			oldText: "first\nsecond", newText: "changed\nsecond", wantError: "old_text_not_found",
+		},
+		{
+			name: "CRLF indentation still exact", before: "\tfirst\r\n\tsecond\r\n",
+			oldText: "    first\n    second", newText: "changed\nsecond", wantError: "old_text_not_found",
+		},
+		{
+			name: "delete CRLF lines", before: "first\r\nsecond\r\nfooter\r\n",
+			oldText: "first\nsecond\n", newText: "", want: "footer\r\n",
+		},
+		{
+			name: "explicit CRLF input", before: "first\r\nsecond\r\n",
+			oldText: "first\r\nsecond", newText: "changed\r\nsecond", want: "changed\r\nsecond\r\n",
+		},
+		{
+			name: "insert lines into CRLF file", before: "first\r\nfooter\r\n",
+			oldText: "first", newText: "changed\nadded", want: "changed\r\nadded\r\nfooter\r\n",
+		},
+		{
+			name: "equivalent endings are not a change", before: "first\r\nsecond\r\n",
+			oldText: "first\nsecond", newText: "first\r\nsecond", wantError: "identical",
+		},
+		{
+			name: "mixed endings remain exact", before: "first\r\nsecond\nfooter\r\n",
+			oldText: "first\r\nsecond\n", newText: "changed\r\nnext\n", want: "changed\r\nnext\nfooter\r\n",
+		},
+		{
+			name: "mixed endings reject normalized anchor", before: "first\r\nsecond\nfooter\r\n",
+			oldText: "first\nsecond\n", newText: "changed\nnext\n", wantError: "old_text_not_found",
+		},
+		{
+			name: "bare CR prevents normalization", before: "header\rfirst\r\nsecond\r\n",
+			oldText: "first\nsecond", newText: "changed\nsecond", wantError: "old_text_not_found",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			kit, err := New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, "source.txt")
+			mustWriteFile(t, path, tc.before)
+			result, err := kit.Execute(context.Background(), providers.ToolCall{
+				Name: "edit_file", Arguments: mustMarshalMap(map[string]any{
+					"path": "source.txt", "old_text": tc.oldText, "new_text": tc.newText, "replace_all": tc.replaceAll,
+				}),
+			})
+			after := mustReadFile(t, path)
+			t.Logf("before=%q old_text=%q new_text=%q result=%s error=%v after=%q", tc.before, tc.oldText, tc.newText, result, err, after)
+			want := tc.want
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Errorf("expected %s rejection, got %v", tc.wantError, err)
+				}
+				want = tc.before
+			} else if err != nil {
+				t.Errorf("edit_file: %v", err)
+			}
+			if after != want {
+				t.Fatalf("edited bytes = %q, want %q", after, want)
+			}
+		})
+	}
+}
+
 func TestToolkit_EditFileDoesNotRequirePriorRead(t *testing.T) {
 	root := t.TempDir()
 	kit, err := New(root)
