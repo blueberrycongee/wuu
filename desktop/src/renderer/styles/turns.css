@@ -70,7 +70,6 @@
   /* Embedded cards use a middle radius between controls and full panels. */
   --message-flow-card-radius: 12px;
   --surface-chip: var(--surface-2);
-  --fork-worktree-copy-bg: rgba(255, 255, 255, 0.84);
   --fork-worktree-focus-ring: var(--focus-ring);
   --rich-blockquote-color: var(--wuu-color-text-muted, var(--gray-650));
   --rich-rule-color: var(--wuu-border-subtle, var(--gray-250));
@@ -3676,19 +3675,21 @@
 .fork-worktree-card {
   display: block;
   overflow: hidden;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  background: var(--surface-1);
+  border: 1px solid var(--message-flow-card-border);
+  border-radius: var(--message-flow-card-radius);
+  background: var(--message-flow-card-bg);
 }
 
+/* The glyph keeps its own column, so the title, the consequence below it and
+ * the facts in the open card share one text edge. */
 .fork-worktree-summary {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 18px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   width: 100%;
   min-width: 0;
   align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
+  column-gap: var(--space-3);
+  padding: var(--card-padding);
   color: var(--ink);
   cursor: pointer;
   list-style: none;
@@ -3709,12 +3710,8 @@
 }
 
 .fork-worktree-glyph {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--paper);
+  align-self: start;
+  margin-top: calc((var(--font-ui) * 1.35 - var(--icon-size)) / 2);
   color: var(--ink-tertiary);
 }
 
@@ -3731,17 +3728,17 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-medium);
+  line-height: 1.35;
 }
 
 .fork-worktree-summary-text span {
   min-width: 0;
   overflow: hidden;
-  color: var(--ink-tertiary);
+  color: var(--ink-soft);
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
 }
 
 .fork-worktree-chevron {
@@ -3755,86 +3752,66 @@
 
 .fork-worktree-details {
   display: grid;
-  gap: 12px;
-  padding: 0 14px 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--space-3);
+  padding: 0 var(--card-padding) var(--card-padding) calc(var(--card-padding) + var(--icon-size) + var(--space-3));
 }
 
+/* One label column for every fact, so the values share an edge whatever
+ * the label lengths in the current language. */
 .fork-worktree-meta {
   display: grid;
-  gap: 8px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-2) var(--space-3);
+  align-items: baseline;
   margin: 0;
   padding: 0;
 }
 
 .fork-worktree-meta div {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
+  display: contents;
 }
 
 .fork-worktree-meta dt {
-  color: var(--ink-tertiary);
+  color: var(--ink-soft);
   font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
 }
 
 .fork-worktree-meta dd {
   min-width: 0;
   margin: 0;
   color: var(--ink);
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: var(--font-sm);
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
-.fork-worktree-code-block {
-  position: relative;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  background: var(--paper);
-  overflow: hidden;
-}
-
-.fork-worktree-code {
-  max-height: 260px;
-  margin: 0;
-  overflow: auto;
-  background: transparent;
-  color: var(--ink-tertiary);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: var(--font-sm);
-  line-height: 1.5;
-  padding: 12px 42px 12px 12px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.fork-worktree-code code {
-  font: inherit;
-}
-
-.fork-worktree-copy {
-  position: absolute;
-  top: 10px;
-  right: 10px;
+/* A plain icon button in the open card, not the floating copy pill used on
+ * message hover. */
+.fork-worktree-copy,
+.fork-worktree-copy:hover,
+.fork-worktree-copy:focus-visible {
   --message-copy-rest-transform: none;
   width: 26px;
   height: 26px;
-  background: var(--fork-worktree-copy-bg);
+  border-radius: var(--radius-xs);
   box-shadow: none;
-  opacity: 0.72;
+  opacity: 1;
   pointer-events: auto;
   transform: none;
 }
 
-.fork-worktree-code-block:hover .fork-worktree-copy,
+.fork-worktree-copy {
+  background: transparent;
+  color: var(--ink-muted);
+}
+
 .fork-worktree-copy:hover,
-.fork-worktree-copy:focus-visible,
-.fork-worktree-copy.copied,
-.fork-worktree-copy.failed {
-  opacity: 1;
+.fork-worktree-copy:focus-visible {
+  background: var(--ink-overlay-6);
+  color: var(--ink);
 }
 
 /*
