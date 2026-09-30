@@ -1381,8 +1381,6 @@ export const enUS = {
   "split.sourceConversation": "Source conversation",
   "split.fork": "Fork",
   "split.source": "Source",
-  "queryHistory.label": "Previous inputs",
-  "queryHistory.empty": "This conversation has no previous inputs",
   "queryHistory.list": "Previous input list",
   "turnRail.navigation": "Conversation turn navigation",
   "turnRail.jumpToTurn": "Jump to conversation turn {number}",

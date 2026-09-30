@@ -1616,6 +1616,75 @@ button.conversation-status-capsule,
 }
 
 /*
+ * Past-query rail: a quiet tick column on the conversation's right edge,
+ * centred in the reading viewport. The sticky wrapper has no height, so it
+ * takes no room in the flow, and its width is the scroller's content box. A
+ * split view has a scroller per pane, so no single edge to index.
+ */
+.query-history-rail {
+  container: query-history-rail / inline-size;
+  position: sticky;
+  top: 50%;
+  z-index: 2;
+  height: 0;
+}
+
+.split-scroll-region .query-history-rail {
+  display: none;
+}
+
+/* The column needs a margin beside the 880px flow of its own footprint plus a
+ * reading gap, 44px on each side of the centred flow. With less it would sit
+ * against the text, so it steps aside, unless a docked environment card
+ * lends it the room below. */
+@container query-history-rail (width < 968px) {
+  .conversation-pane:not(.environment-panel-reserved) .query-history-rail-ticks {
+    display: none;
+  }
+}
+
+/* Inset by the focus ring's reach so the ring stays inside the scroller. */
+.query-history-rail-ticks {
+  position: absolute;
+  top: 0;
+  right: var(--space-1);
+  display: grid;
+  justify-items: end;
+  width: var(--space-6);
+  padding: var(--space-2) var(--space-1);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  translate: 0 -50%;
+}
+
+/* Beside a docked environment card the flow ends where the card's reserved
+ * space begins, so the column steps into that space, away from the text. */
+.conversation-pane.environment-panel-reserved .query-history-rail-ticks {
+  right: calc(var(--space-1) - min(var(--environment-panel-content-inset), var(--space-3)));
+}
+
+/* Each tick owns a 6px row of the column, drawn as a 2px dash in its middle,
+ * so the pointer finds a tick without aiming at the dash. */
+.query-history-rail-tick {
+  width: 10px;
+  height: 6px;
+  border-block: 2px solid transparent;
+  background: var(--ink-faint) padding-box;
+  transition:
+    width var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out);
+}
+
+.query-history-rail-ticks:is(:hover, [aria-expanded="true"]) .query-history-rail-tick {
+  background-color: var(--ink-muted);
+}
+
+.query-history-rail-ticks .query-history-rail-tick[data-active] {
+  width: 16px;
+  background-color: var(--ink);
+}
+
+/*
  * Conversation turn rail on the left edge of the message stream.
  *
  * One horizontal bar per turn. Hovering magnifies the bar (and its two

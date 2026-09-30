@@ -73,17 +73,13 @@ import {
 } from "./greetings";
 import {
   Composer,
-  FloatingMenuPortal,
   isInsideFloatingMenu,
   type CodexModelLoadState,
   type CodexRuntimeMenu,
   type ComposerVariant,
   type PermissionMode,
 } from "./ComposerView";
-import {
-  QueryHistoryPopover,
-  type QueryHistoryEntry,
-} from "./QueryHistoryPopover";
+import type { QueryHistoryEntry } from "./QueryHistoryPopover";
 import { QueryHistoryRail } from "./QueryHistoryRail";
 import { UserQuestionCard } from "./UserQuestionCard";
 import { ConversationSearchOverlay } from "./ConversationSearchOverlay";
@@ -335,7 +331,6 @@ const ENGINE_INVENTORY_STALE_MS = 6 * 60 * 60 * 1000;
 // docked. Transitions retarget mid-flight, so rapid toggles stay continuous.
 type WorkspaceSheetPhase = "docked" | "arming" | "open" | "exiting" | "docking";
 const ENVIRONMENT_PANEL_WIDTH_PX = 328;
-const ENVIRONMENT_PANEL_WIDTH_CSS = `${ENVIRONMENT_PANEL_WIDTH_PX}px`;
 // The panel's width grows with the UI text size, like
 // --environment-panel-width in conversation-shell.css; the reserved column
 // adds the gap to the conversation.
@@ -357,10 +352,6 @@ function environmentPanelFits(paneWidth: number): boolean {
   return paneWidth >= panelWidth + ENVIRONMENT_PANEL_FLOW_GAP_PX + 2 * 32 + 480 &&
     window.innerHeight >= ENVIRONMENT_PANEL_ROOM_MIN_HEIGHT_PX;
 }
-// Cap on the number of bars rendered in the always-visible rail. The
-// rail is a thin at-a-glance index; if there are more queries than fit,
-// we collapse the tail into a single bar.
-const QUERY_HISTORY_RAIL_MAX_BARS = 20;
 type EnvironmentDialog = "commit" | "pull-request" | null;
 /**
  * True when a turn/start failure means the user has no usable model
@@ -1019,9 +1010,6 @@ export function App(): JSX.Element {
     cancelViewSwitch,
     isCurrentViewSwitchRequest,
   } = useViewSwitchState();
-  const queryHistoryRailRef = useRef<HTMLDivElement | null>(null);
-  const [queryHistoryOpen, setQueryHistoryOpen] = useState(false);
-  const queryHistoryCloseTimerRef = useRef<number | undefined>(undefined);
   const windowResizingRef = useRef(false);
   const environmentPanelHasRoomRef = useRef(environmentPanelHasRoom);
   const pendingEnvironmentPanelHasRoomRef = useRef<boolean | undefined>(
@@ -1634,47 +1622,13 @@ export function App(): JSX.Element {
       : undefined;
   const splitConversation = Boolean(state.thread && state.secondaryThread);
 
-  // Past-query popover control. The rail beside the scrollbar is the hover
-  // target; we close on a short delay so the user can travel from the rail
-  // into the floating list without it snapping shut.
-  function openQueryHistory(): void {
-    if (activeThreadReadOnly || pastQueries.length === 0) {
-      return;
-    }
-    cancelQueryHistoryClose();
-    setQueryHistoryOpen(true);
-  }
-
-  function scheduleQueryHistoryClose(): void {
-    cancelQueryHistoryClose();
-    queryHistoryCloseTimerRef.current = window.setTimeout(() => {
-      queryHistoryCloseTimerRef.current = undefined;
-      setQueryHistoryOpen(false);
-    }, 200);
-  }
-
-  function cancelQueryHistoryClose(): void {
-    if (queryHistoryCloseTimerRef.current !== undefined) {
-      window.clearTimeout(queryHistoryCloseTimerRef.current);
-      queryHistoryCloseTimerRef.current = undefined;
-    }
-  }
-
   function handleQueryHistorySelect(entry: QueryHistoryEntry): void {
-    cancelQueryHistoryClose();
-    setQueryHistoryOpen(false);
     // Stop auto-follow before we jump — otherwise the next stream tick
     // would drag the scroll position back to the bottom and undo the
     // jump before the user even registers it happened.
     disableConversationAutoFollow();
     scrollToUserMessage(entry.turnID, entry.itemID);
   }
-
-  useEffect(() => {
-    return () => {
-      cancelQueryHistoryClose();
-    };
-  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -5405,11 +5359,7 @@ export function App(): JSX.Element {
                 {!activeThreadReadOnly ? (
                   <QueryHistoryRail
                     entries={pastQueries}
-                    maxBars={QUERY_HISTORY_RAIL_MAX_BARS}
-                    active={queryHistoryOpen}
-                    railRef={queryHistoryRailRef}
-                    onHoverStart={openQueryHistory}
-                    onHoverEnd={scheduleQueryHistoryClose}
+                    onSelect={handleQueryHistorySelect}
                   />
                 ) : null}
                 {splitConversation && state.thread && state.secondaryThread ? (
@@ -5683,31 +5633,6 @@ export function App(): JSX.Element {
           onCancel={() => setPendingFork(undefined)}
           onChoose={choosePendingFork}
         />
-      ) : null}
-      {queryHistoryOpen &&
-      !activeThreadReadOnly &&
-      pastQueries.length > 0 ? (
-        <FloatingMenuPortal
-          anchorRef={queryHistoryRailRef}
-          owner="composer-query-history"
-          placement="middle"
-          align="right"
-          crossAxisOffset={-8}
-          width={ENVIRONMENT_PANEL_WIDTH_PX}
-        >
-          <div
-            onMouseEnter={cancelQueryHistoryClose}
-            onMouseLeave={scheduleQueryHistoryClose}
-            style={{
-              width: `min(${ENVIRONMENT_PANEL_WIDTH_CSS}, calc(100vw - 32px))`,
-            }}
-          >
-            <QueryHistoryPopover
-              entries={pastQueries}
-              onSelect={handleQueryHistorySelect}
-            />
-          </div>
-        </FloatingMenuPortal>
       ) : null}
       <DesktopWorkbench
         host={desktopPluginHost}

@@ -1378,8 +1378,6 @@ export const zhCN = {
   "split.sourceConversation": "源对话",
   "split.fork": "分叉",
   "split.source": "源会话",
-  "queryHistory.label": "历史输入",
-  "queryHistory.empty": "这个对话里还没有历史输入",
   "queryHistory.list": "历史输入列表",
   "turnRail.navigation": "对话回合导航",
   "turnRail.jumpToTurn": "跳转到第 {number} 轮对话",

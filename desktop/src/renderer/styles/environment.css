@@ -389,39 +389,21 @@
   color: var(--env-deletions-text);
 }
 
-.query-history-popover {
-  display: grid;
-  width: 100%;
-  box-sizing: border-box;
-  min-height: 0;
-  max-height: 100%;
-  max-width: 100%;
-  overflow: hidden;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
-  background: var(--menu-bg);
-  padding: 8px;
-  box-shadow: var(--shadow-pop);
-}
-
-.query-history-popover .query-history-list {
-  display: grid;
-  min-height: 0;
-  overflow-y: auto;
-  gap: 3px;
-}
-
-.query-history-item {
-  grid-template-columns: minmax(0, 1fr);
-  min-height: 32px;
-  padding: 6px 10px;
+/* The past-query list is a shared menu panel. The rail keeps focus, so the
+ * active option shows the menu's hover surface rather than a focus ring, and
+ * a long query takes a second line before it is cut. */
+.query-history-item[aria-selected="true"] {
+  background: var(--menu-hover);
 }
 
 .query-history-text {
-  color: var(--ink);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  letter-spacing: 0;
+  display: -webkit-box;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .environment-footer-row {
