@@ -243,8 +243,15 @@ async function typeAndSend(win, text) {
 const readingPoint = win => evaluate(win, selector => {
   const node = document.querySelector(selector);
   const bounds = node.getBoundingClientRect();
-  const probe = document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + 40);
-  const block = probe?.closest("p, pre, [data-user-message-id]");
+  // Below the top edge, the first probe that lands in a text block: the spacing between
+  // blocks and a fold's header are not text.
+  let probe;
+  let block = null;
+  for (const offset of [40, 80, 120, 160, 200]) {
+    probe = document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + offset);
+    block = probe?.closest("p, pre, [data-user-message-id]");
+    if (block) break;
+  }
   if (!block) throw new Error(`No text block at the reading point: ${probe?.outerHTML.slice(0, 120)}`);
   return { text: block.textContent, top: block.getBoundingClientRect().top - bounds.top };
 }, VIEWPORT);
@@ -279,7 +286,7 @@ const stopTracking = win => evaluate(win, () => {
 
 app.whenReady().then(async () => {
   const win = new BrowserWindow({
-    width: 1180, height: 820, show: process.env.WUU_E2E_HIDDEN !== "true",
+    width: 1240, height: 820, show: process.env.WUU_E2E_HIDDEN !== "true",
     webPreferences: {
       preload: path.join(__dirname, "conversation-scroll-e2e-preload.cjs"),
       contextIsolation: true, sandbox: false, backgroundThrottling: false,
@@ -393,8 +400,11 @@ app.whenReady().then(async () => {
   // --- Jumping to a past query renders every frame of the jump and lands on the message.
   await wheel(win, -400, 30);
   await settleScroll(win);
-  // The rail opens its history on focus as well as hover.
-  await evaluate(win, () => document.querySelector(".query-history-rail").focus());
+  // The rail is a select-only combobox: focus it and ArrowDown opens its list. It steps
+  // aside below a 968px conversation pane, which is why the window is 1240px wide.
+  await evaluate(win, () => document.querySelector(".query-history-rail-ticks").focus());
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Down" });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Down" });
   await until(win, () => document.querySelectorAll(".query-history-item").length > 20, "query history");
   const target = await evaluate(win, () => {
     const items = [...document.querySelectorAll(".query-history-item")];
