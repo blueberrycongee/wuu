@@ -284,6 +284,7 @@ async function verifyQuestionOffers() {
         method: "user-question/requested", params: { request: {
           request_id: id, plugin_id: "ask-user", execution_id: `exec-${id}`, thread_id: admission.params.threadId,
           turn_id: admission.params.turnId, mode: "offer", created_at: new Date().toISOString(),
+          ...(action === "multiple" && id === "first" ? { expires_at: new Date(Date.now() + 60_000).toISOString() } : {}),
           questions: items,
         } },
       } });
@@ -291,9 +292,16 @@ async function verifyQuestionOffers() {
     await until(() => evaluate(() => Boolean(document.querySelector('.user-question-card [role="radio"]'))), "first offer");
     if (action === "multiple") {
       assert.equal(await evaluate(() => document.querySelectorAll(".user-question-field").length), 2, "all offered questions are rendered");
+      await until(() => evaluate(() => Boolean(document.querySelector('.user-question-card [role="timer"]'))), "offer countdown");
+      for (const [theme, width, font] of [["light", 1100, 14], ["dark", 760, 20]]) {
+        win.setSize(width, 820);
+        await evaluate(setVisualTheme, theme, font);
+        await capture(`offer-countdown-${theme}-${width}.png`);
+      }
       await evaluate(() => document.querySelector('.user-question-card [role="radio"]').click());
       assert.equal(gates.has("user-question/respond"), false, "partial answers are not submitted");
       (await until(() => gates.get("user-question/hold"), "hold while answering")).resolve();
+      await until(() => evaluate(() => !document.querySelector('.user-question-card [role="timer"]')), "held offer clears countdown");
       await evaluate(() => {
         const input = document.querySelector(".user-question-card input");
         input.focus();

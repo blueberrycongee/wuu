@@ -56,6 +56,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   labeled while an offer counts down and clear its timer when the offer is held.
 - Keep ordinary project conversations rooted in the selected folder after project
   relocation, while preserving custom directories and linked worktrees.
+
+- Worktree conversations now load project instructions and skills from their actual
+  checkout, including restored conversations and their workers.
 - Keep attachments in their original conversation draft when file preparation
   finishes after switching conversations or closing a split pane. Pending files
   remain removable, and sends wait for their bytes before submitting.

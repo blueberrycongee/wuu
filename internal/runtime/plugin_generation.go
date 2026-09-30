@@ -38,6 +38,7 @@ type PluginGeneration struct {
 	host              *pluginhost.Host
 	hooks             *hooks.Dispatcher
 	skills            []skills.Skill
+	pluginSkills      pluginSkillSnapshot
 	mcp               *mcp.Manager
 	mcpBinding        map[string]tools.MCPActivityBinding
 	requestTransforms *agent.RequestTransformChain
@@ -214,6 +215,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		}
 		return nil, errors.Join(err, closeErr)
 	}
+	pluginSkills := discoverPluginSkills(active)
 	generation := &PluginGeneration{
 		id:                newPluginGenerationID(s.WuuHome),
 		settings:          cfg,
@@ -221,7 +223,8 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		active:            append([]pluginpkg.Plugin(nil), active...),
 		host:              host,
 		hooks:             buildHookDispatcher(cfg, active, s.TitleClient, s.Model, nil),
-		skills:            discoverSkills(s.RootDir, s.HomeDir, s.WuuHome, active),
+		skills:            discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, pluginSkills),
+		pluginSkills:      pluginSkills,
 		mcpBinding:        mcpActivityBindingsFromPlugins(active),
 		requestTransforms: buildPluginRequestTransforms(host, s.ProviderName, "", s.RootDir),
 		systemPrompts:     systemPrompts,
@@ -367,6 +370,7 @@ func (s *Session) capturePluginGeneration() *PluginGeneration {
 		host:              s.PluginHost,
 		hooks:             hookSnapshot,
 		skills:            append([]skills.Skill(nil), s.Skills...),
+		pluginSkills:      s.pluginSkills,
 		mcp:               manager,
 		mcpBinding:        mcpActivityBindingsFromPlugins(s.ActivePlugins),
 		requestTransforms: buildPluginRequestTransforms(s.PluginHost, s.ProviderName, "", s.RootDir),
@@ -396,6 +400,7 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 	}
 	s.HookDispatcher = generation.hooks
 	s.Skills = append([]skills.Skill(nil), generation.skills...)
+	s.pluginSkills = generation.pluginSkills
 	if s.Toolkit != nil {
 		s.Toolkit.SetSkills(s.Skills)
 		s.Toolkit.SetMCPActivityBindings(generation.mcpBinding)
