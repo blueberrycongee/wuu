@@ -396,6 +396,22 @@ func (th *threadState) finishTurnLocked(turnID string, status TurnStatus, err er
 		}
 		turn = th.ensureTurnLocked(turnID, now)
 	}
+	// A terminal snapshot owns the final visible item list even when the stream
+	// ended before individual completion events. Preserve received text; calls
+	// without a result are drafts, not failed tool executions.
+	items := make([]ThreadItem, 0, len(turn.Items))
+	for _, item := range turn.Items {
+		if item.Status == ThreadItemStatusInProgress {
+			switch item.Type {
+			case ThreadItemAgentMessage, ThreadItemReasoning:
+				item.Status = ThreadItemStatusCompleted
+			case ThreadItemToolCall:
+				continue
+			}
+		}
+		items = append(items, item)
+	}
+	turn.Items = items
 	turn.Status = status
 	if err != nil {
 		turn.Error = &TurnError{Message: err.Error()}
