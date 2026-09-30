@@ -183,10 +183,34 @@ async function run() {
   assert.equal(findQuota(fresh, 'unknown').status, 'unsupported');
   assert.deepEqual(await evaluate(main, selector => [...document.querySelectorAll(`${selector} meter`)].map(meter => meter.value), card('personal')), [63, 0]);
   assert.equal(await evaluate(main, selector => document.querySelector(`${selector} meter`) === null, card('team')), true);
+  assert.equal(await evaluate(main, () => {
+    const personal = document.querySelector('[data-testid="subscription-builtin-personal"]');
+    const team = document.querySelector('[data-testid="subscription-builtin-team"]');
+    return personal.closest('article') === team.closest('article')
+      && personal.textContent.includes('personal@example.test')
+      && !personal.textContent.includes('team-with-a-long-account-name@example.test')
+      && team.textContent.includes('team-with-a-long-account-name@example.test')
+      && !team.textContent.includes('personal@example.test');
+  }), true, 'A shared service card must retain each account and its independent allowance.');
   assert.equal(await evaluate(main, selector => Boolean(document.querySelector(`${selector} .select-menu`)), card('deepseek')), false);
   await capture(main, '01-fresh-light.png');
   await evaluate(main, selector => document.querySelector(selector).scrollIntoView({ block: 'start' }), card('personal'));
   await capture(main, '01-accounts-light.png');
+
+  const beforeMenuRequests = requests.length;
+  await evaluate(main, selector => {
+    const trigger = document.querySelector(`${selector} [data-testid="subscription-account-actions"]`);
+    trigger.focus();
+    trigger.click();
+  }, card('personal'));
+  await waitFor(main, () => document.activeElement?.getAttribute('role') === 'menu');
+  assert.equal(await evaluate(main, () => document.querySelectorAll('[role="menuitem"]').length), 2);
+  await capture(main, '01-account-actions-light.png');
+  main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+  main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+  await waitFor(main, () => !document.querySelector('[role="menu"]'));
+  assert.equal(await evaluate(main, selector => document.activeElement === document.querySelector(`${selector} [data-testid="subscription-account-actions"]`), card('personal')), true);
+  assert.equal(requests.length, beforeMenuRequests, 'Opening and dismissing credential actions must not read quota or start authentication.');
 
   const layouts = [];
   for (const theme of ['light', 'dark']) for (const size of [14, 20]) for (const width of [1280, 760]) {

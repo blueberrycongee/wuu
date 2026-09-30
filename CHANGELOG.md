@@ -16,8 +16,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Production subscription dashboard with account-scoped quota observations,
   plan windows, prepaid balances, reset times, freshness, and explicit failure
-  states. Successful observations survive restarts without being reused for
-  another account. Quota reads do not submit inference or change model routing.
+  states. Compact service cards group separate accounts with parallel quota
+  windows and account-specific credential menus. Successful observations survive
+  restarts without being reused for another account. Quota reads do not submit
+  inference or change model routing.
 
 - Selectable execution environments for workspace tools, with isolated or shared
   filesystems, retained profiles, remote process controls, artifact transfer,

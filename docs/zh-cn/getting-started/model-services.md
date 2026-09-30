@@ -32,7 +32,7 @@ Claude Opus 5.5 和 Fable 5.1 始终使用自适应思考。Wuu 将已保存的 
 
 | 连接方式 | 设置方法 |
 |---|---|
-| Codex 订阅 | 先在 Codex CLI 登录，再在首次设置中选择复用检测到的登录。手动配置时，使用 `openai-codex` 服务并启用 `reuse_codex_credentials`。Wuu 桌面端不会自行发起 OpenAI OAuth 登录。 在“设置 → 订阅”中，点击“使用本机 Codex 登录”即可优先使用本机登录，不改变模型选择；“重新检查登录”通过拉取模型列表验证认证。Wuu 每次请求都会读取本机登录，凭据刷新后无需重启。 |
+| Codex 订阅 | 先在 Codex CLI 登录，再在首次设置中选择复用检测到的登录。手动配置时，使用 `openai-codex` 服务并启用 `reuse_codex_credentials`。Wuu 桌面端不会自行发起 OpenAI OAuth 登录。在“设置 → 订阅”中打开对应账号的 **…** 菜单，点击“使用本机 Codex 登录”即可优先使用本机登录，不改变模型选择；“重新检查登录”通过拉取模型列表验证认证。Wuu 每次请求都会读取本机登录，凭据刷新后无需重启。 |
 | xAI SuperGrok | 添加 **xAI SuperGrok** 服务，按提示在浏览器登录。CLI 使用 `wuu login xai`，运行时选择 `--provider xai-subscription`。 |
 | Grok Build | 先运行 `grok login`，再在 Wuu 中选择检测到的服务，或传入 `--provider grok-build`。登录过期后重新在 Grok CLI 登录；Wuu 不刷新或修改这类凭据。 |
 
@@ -40,7 +40,7 @@ SuperGrok 订阅登录、Grok CLI 登录和 `XAI_API_KEY` 是不同的凭据来�
 
 ## 在桌面端查看订阅
 
-**设置 → 订阅**集中显示已安装的外部 Agent 和已配置模型服务，分别展示各账号的订阅额度、套餐周期或预付余额，不合并不同账号或币种。支持的订阅行保留原有模型选择控件。需要配置账号的 ACP Agent 提供登录按钮；选择登录方式后才开始认证，可能会打开浏览器。模型读取失败不代表缺少凭据，CLI 的静态模型列表也不能证明登录状态。
+**设置 → 订阅**以紧凑卡片显示已安装的外部 Agent 和已配置模型服务。同一模型服务的连接放在一张卡片内，按账号分区并标明凭据来源；各账号的订阅额度、套餐周期或预付余额独立展示，不合并不同账号或币种。空间充足时额度窗口并排显示，窄卡片中上下排列。支持的账号保留原有模型选择控件，Codex 凭据操作位于对应账号的 **…** 菜单。需要配置账号的 ACP Agent 提供登录按钮；选择登录方式后才开始认证，可能会打开浏览器。模型读取失败不代表缺少凭据，CLI 的静态模型列表也不能证明登录状态。
 
 额度读取使用对应连接的凭据来源。已接入 ChatGPT/Codex、Grok Build、Anthropic OAuth 或本机 Claude Code、Kimi Code、智谱/Z.ai 套餐，以及 DeepSeek/OpenRouter 余额。浏览器 SuperGrok 和任意兼容端点目前不支持额度详情。
 

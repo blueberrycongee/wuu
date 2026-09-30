@@ -32,7 +32,7 @@ Claude Opus 5.5 and Fable 5.1 always use adaptive thinking. Wuu maps a saved `no
 
 | Connection | Setup |
 |---|---|
-| Codex subscription | Sign in with Codex CLI, then choose to reuse the detected login during first-run setup. In configuration, use the `openai-codex` provider with `reuse_codex_credentials`. Wuu's desktop does not start OpenAI OAuth login itself. In Settings → Subscriptions, “Use local Codex login” selects the local login over Wuu’s saved credentials without changing the model. “Check login again” verifies authentication by fetching the model list. Wuu reads the local login on each request, so refreshed credentials take effect without a restart. |
+| Codex subscription | Sign in with Codex CLI, then choose to reuse the detected login during first-run setup. In configuration, use the `openai-codex` provider with `reuse_codex_credentials`. Wuu's desktop does not start OpenAI OAuth login itself. In Settings → Subscriptions, open the account’s **…** menu. “Use local Codex login” selects the local login over Wuu’s saved credentials without changing the model. “Check login again” verifies authentication by fetching the model list. Wuu reads the local login on each request, so refreshed credentials take effect without a restart. |
 | xAI SuperGrok | Add an **xAI SuperGrok** provider and follow the browser login. For the CLI, run `wuu login xai` and select `--provider xai-subscription`. |
 | Grok Build | Run `grok login`, then select the detected provider in Wuu or pass `--provider grok-build`. If the login expires, sign in again with Grok CLI; Wuu does not refresh or modify those credentials. |
 
@@ -41,10 +41,13 @@ SuperGrok subscription login, Grok CLI login, and an `XAI_API_KEY` are separate 
 ## Check subscriptions in the desktop app
 
 **Settings → Subscriptions** groups installed external agents and configured
-model services. Each account keeps its own subscription, plan windows, or prepaid
-balance; different accounts and currencies are never added together. Supported
-subscription rows retain their existing model controls. ACP agents that
-need account setup offer a sign-in button; choose a method to start authentication,
+model services into compact cards. Connections to the same model service share
+a card, with separate account sections and credential-source labels. Each account
+keeps its own subscription, plan windows, or prepaid balance; different accounts
+and currencies are never added together. Quota windows appear side by side when
+space permits, and stack in narrow cards. Supported accounts retain their existing
+model controls; Codex credential actions belong to the selected account’s **…** menu.
+ACP agents that need account setup offer a sign-in button; choose a method to start authentication,
 which may open your browser. A model-loading failure is not proof that credentials
 are missing, and a static CLI model list does not establish login status.
 
