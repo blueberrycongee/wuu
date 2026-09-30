@@ -995,32 +995,25 @@ func (m *Manager) Stop(id string) (*Process, error) {
 		return p, fmt.Errorf("persist stopping process: %w", err)
 	}
 	m.mu.Unlock()
-	if err := ProcessTreeFromID(p.PGID).Terminate(); err != nil {
+	tree := ProcessTreeFromID(p.PGID)
+	if err := tree.Terminate(); err != nil {
 		return p, fmt.Errorf("terminate process group %d: %w", p.PGID, err)
 	}
-	cur, stopped, err := m.waitForStop(id, time.Now().Add(2*time.Second))
-	if err != nil || stopped {
-		if stopped {
-			waitForProcessMonitor(handle)
-		}
-		return cur, err
-	}
-
-	running, err = processMatchesRecord(cur)
+	cur, _, err := m.waitForStop(id, time.Now().Add(DefaultStopGracePeriod))
 	if err != nil {
 		return cur, err
 	}
-	if !running {
-		cur, err := m.reconcileStopped(id)
-		if err == nil {
-			waitForProcessMonitor(handle)
-		}
+
+	// The verified leader may have exited while descendants still hold output
+	// pipes open. Finish this stop against the original group before waiting
+	// for the monitor, but reject a PID reused during the grace period.
+	if _, err := processMatchesRecord(p); err != nil {
 		return cur, err
 	}
-	if err := ProcessTreeFromID(cur.PGID).Kill(); err != nil {
-		return cur, fmt.Errorf("kill process group %d: %w", cur.PGID, err)
+	if err := tree.Kill(); err != nil {
+		return cur, fmt.Errorf("kill process group %d: %w", tree.ID(), err)
 	}
-	cur, stopped, err = m.waitForStop(id, time.Now().Add(2*time.Second))
+	cur, stopped, err := m.waitForStop(id, time.Now().Add(DefaultStopGracePeriod))
 	if err != nil {
 		return cur, err
 	}

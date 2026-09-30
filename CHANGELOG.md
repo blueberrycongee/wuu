@@ -25,6 +25,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   a toy-block fort built around the Applications folder.
 
 ### Fixed
+- Respect named `@@` context in file patches so edits cannot silently target
+  matching code before that context; reject missing or ambiguous context before
+  writing.
+- Stopping a background command now kills remaining child processes after its
+  parent exits, including children that could leave a promoted command's stop
+  request waiting indefinitely for output pipes to close.
+
 - Fix multi-line `edit_file` replacements copied from `read_file` on CRLF files,
   preserving CRLF endings and exact unique-match checks.
 
