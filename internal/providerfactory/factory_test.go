@@ -13,6 +13,8 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/modelcatalog"
+	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -67,24 +69,37 @@ func TestBuildClient_OpenAICodexUsesCodexCredentialsWhenConfigured(t *testing.T)
 		if got := r.Header.Get("chatgpt-account-id"); got != "acct_factory" {
 			t.Fatalf("chatgpt-account-id = %q", got)
 		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			return
+		}
+		if body["model"] != "gpt-6.1-sol" || body["service_tier"] != "priority" {
+			t.Errorf("subscription request model/tier = %v/%v", body["model"], body["service_tier"])
+		}
+		if reasoning, _ := body["reasoning"].(map[string]any); reasoning["effort"] != "medium" {
+			t.Errorf("subscription reasoning = %v", reasoning)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
 	}))
 	defer server.Close()
 
-	client, err := BuildClient(config.ProviderConfig{
+	_, provider := modelcatalog.EnrichProvider("openai-codex", config.ProviderConfig{
 		Type:                  "openai-codex",
 		BaseURL:               server.URL,
 		WireAPI:               "responses",
-		Model:                 "gpt-5-codex",
+		Model:                 "gpt-6.1-sol-fast",
 		ReuseCodexCredentials: true,
-	}, "openai-codex")
+	}, "gpt-6.1-sol-fast")
+	client, err := BuildClient(provider, "openai-codex")
 	if err != nil {
 		t.Fatalf("BuildClient returned error: %v", err)
 	}
 	resp, err := client.Chat(context.Background(), providers.ChatRequest{
-		Model:    "gpt-5-codex",
-		Messages: []providers.ChatMessage{{Role: "user", Content: "hello"}},
+		Model:           modelcatalog.APIModel(provider, provider.Model),
+		ProviderOptions: modelvariant.BaseOptionsForProvider("openai-codex", provider, provider.Model),
+		Messages:        []providers.ChatMessage{{Role: "user", Content: "hello"}},
 	})
 	if err != nil {
 		t.Fatalf("Chat returned error: %v", err)

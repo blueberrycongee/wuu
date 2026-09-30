@@ -366,19 +366,31 @@ func TestPartitionToolCallsUsesCallArguments(t *testing.T) {
 }
 
 func TestRunToolLoop_ForwardsNativeDeferredToolDiscovery(t *testing.T) {
-	step := &fakeStep{results: []StepResult{{Content: "ok"}}}
-	_, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("hi")}, LoopConfig{
-		Model:                       "m",
-		NativeDeferredToolDiscovery: true,
-	}, step)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(step.calls) != 1 {
-		t.Fatalf("expected one call, got %d", len(step.calls))
-	}
-	if !step.calls[0].NativeDeferredToolDiscovery {
-		t.Fatal("expected ChatRequest to carry NativeDeferredToolDiscovery")
+	for _, name := range []string{"tool_search", "run_code", "transformed"} {
+		toolName := name
+		if name == "transformed" {
+			toolName = "tool_search"
+		}
+		step := &fakeStep{results: []StepResult{{Content: "ok"}}}
+		_, err := RunToolLoop(context.Background(), []providers.ChatMessage{
+			{Role: "system", Content: "[Conversation summary]", DiscoveredTools: []providers.LoadableToolDefinition{{Name: "previously_loaded", Description: "prior schema", InputSchema: map[string]any{"type": "object"}}}},
+			userMsg("hi"),
+		}, LoopConfig{
+			Model: "m", Tools: &fakeLoopTools{defs: []providers.ToolDefinition{{Name: toolName}}},
+			NativeDeferredToolDiscovery: true,
+			BeforeRequest: func(_ context.Context, req *providers.ChatRequest) error {
+				if name == "transformed" {
+					req.Tools = []providers.ToolDefinition{{Name: "run_code"}}
+				}
+				return nil
+			},
+		}, step)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(step.calls) != 1 || step.calls[0].NativeDeferredToolDiscovery != (name == "tool_search") {
+			t.Fatalf("discovery protocol did not follow the exposed surface for %s: %+v", name, step.calls)
+		}
 	}
 }
 

@@ -144,7 +144,8 @@ func BaseOptionsForProvider(providerName string, provider config.ProviderConfig,
 	}
 	if gptFamily := compatOpenAIGPTFamily(desc.APIID); gptFamily != 0 && !strings.Contains(desc.APIID, "gpt-5-chat") && !strings.Contains(desc.APIID, "gpt-6-chat") {
 		defaultEffort := "medium"
-		if gptFamily >= 6 && !strings.Contains(desc.APIID, "gpt-6-sol") && !strings.Contains(desc.APIID, "gpt-6-luna") {
+		if gptFamily >= 6 && !strings.Contains(desc.APIID, "gpt-6-sol") &&
+			!strings.Contains(desc.APIID, "gpt-6-luna") && !strings.Contains(desc.APIID, "gpt-6.1-sol") {
 			defaultEffort = "low"
 		}
 		if !compatOpenAIGPTProModel(desc.APIID) {

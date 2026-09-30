@@ -206,6 +206,8 @@ function readableToolActivityCommandInner(
   switch (name) {
     case "read_file":
       return t("toolActivity.readTarget", { target: formatPathTarget(path, t("toolActivity.file")) });
+    case "set_session_workspace":
+      return t("toolActivity.switchWorkspace");
     case "list_files":
       return path && path !== "."
         ? t("toolActivity.viewTarget", { target: formatDirectoryTarget(path) })
@@ -1125,6 +1127,8 @@ function readableBrowserLabel(args: JsonRecord | undefined): string {
 
 export function readableToolName(name: string | undefined): string {
   switch (canonicalToolName((name ?? "").trim())) {
+    case "set_session_workspace":
+      return t("toolActivity.switchWorkspace");
     case "read_file":
       return t("toolActivity.viewFile");
     case "list_files":
@@ -1537,7 +1541,7 @@ function collectResultFiles(
   }
 }
 
-function parseJSONRecord(value: string | undefined): JsonRecord | undefined {
+export function parseJSONRecord(value: string | undefined): JsonRecord | undefined {
   if (!value?.trim()) {
     return undefined;
   }

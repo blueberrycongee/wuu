@@ -16,16 +16,22 @@ The built-in Wuu engine has Standard, Read only, and Unconfined modes. Dedicated
 
 That sandbox restricts filesystem writes. It does not isolate network access, all file reads, process visibility, or inherited environment variables. Read only is useful for investigation, but is not a data-loss-prevention boundary. Unconfined removes the command sandbox and gives commands the authority of the user running Wuu.
 
-Optional PTC programs have full Node APIs and start with an empty environment.
-Their direct filesystem writes use the session command sandbox, including Read
-only and Unconfined behavior. Direct APIs do not pass through individual tool
-checks; nested `tools` calls do. With **Approve for me** enabled in Standard
-mode, every PTC program is reviewed before launch, and nested calls retain
-their own checks. Enabling PTC therefore grants broader API
-access than a runtime limited to tool bindings. PTC is user-controlled and off
-by default; normal project configuration cannot enable it or replace its
-executable. The program control channel is authenticated and listens only on
-loopback for that invocation.
+PTC programs run inside an isolated, memory-bounded interpreter.
+The program cannot access native APIs, import modules, read the environment, or
+perform direct filesystem/network operations. This boundary also applies in
+Unconfined mode. All effects use nested tools and their normal permission,
+scheduling, and audit pipeline. With **Approve for me** enabled in Standard
+mode, programs retain pre-launch review and each nested call retains its own
+checks. The host process keeps the session command sandbox as defense in depth.
+Cancellation stops the program and active calls without undoing completed effects.
+PTC is on by default for the built-in engine, with explicit global and model-family
+opt-outs. Project configuration cannot change it or replace its executable.
+Only explicit JSON checkpoints are retained in bounded, memory-only state,
+isolated by conversation, actor and workspace. Failed programs discard staged
+state changes; this does not undo tool effects. Direct interaction and lifecycle
+controls cannot be nested. The control channel is authenticated and listens
+only on loopback for that invocation. Execution-worker protocol version 3
+rejects older workers, preventing a downgrade to native program authority.
 
 **Approve for me** adds model review in Standard mode. It does not expand permissions or replace isolation. External Codex and Claude Code sessions use their own execution controls. See [permission modes](permissions.md) for the exact scope and adapter settings.
 
@@ -53,7 +59,7 @@ Conversation history, tool results, logs, artifacts, and plugin data can contain
 
 ## Desktop and remote control
 
-`wuu app-server` communicates over the subprocess's standard input and output. The control protocol does not require a network listener; optional PTC programs use a temporary authenticated loopback channel. The desktop shell exposes selected operations through its preload and IPC bridge.
+`wuu app-server` communicates over the subprocess's standard input and output. The control protocol does not require a network listener; PTC programs use a temporary authenticated loopback channel. The desktop shell exposes selected operations through its preload and IPC bridge.
 
 Remote control is a separate capability, and the current release build disables its desktop UI. If you build or run the remote components, treat an enrolled device as a controller of the host's workspaces. Use secure relay transport and revoke devices you no longer trust; see [remote and mobile control](../automation/remote.md).
 

@@ -561,6 +561,7 @@ func TestLoadFrom_ProjectSecurityKeysAreCaseInsensitive(t *testing.T) {
       "model": "cloud-model"
     }
   },
+  "ptc": {"enabled":false},
   "memory": {"user_dirs": ["~/.wuu"]},
   "agent": {
     "permission_mode": "read_only",

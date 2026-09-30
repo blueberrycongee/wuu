@@ -14,11 +14,25 @@ func TestTransportWorker(t *testing.T) {
 	if os.Getenv("WUU_ENV_TEST_WORKER") != "1" {
 		return
 	}
+	held := ""
 	scan := bufio.NewScanner(os.Stdin)
 	for scan.Scan() {
 		var req Request
 		if json.Unmarshal(scan.Bytes(), &req) != nil {
 			os.Exit(2)
+		}
+		if req.Method == "run_code" && string(req.Data) == `{"hold":true}` {
+			held = req.ID
+			_ = json.NewEncoder(os.Stdout).Encode(Response{Method: "process", Data: json.RawMessage(`{"ready":true}`)})
+			continue
+		}
+		if req.Method == "execute" && held != "" {
+			_ = json.NewEncoder(os.Stdout).Encode(Response{ID: held, Error: "cancelled"})
+			held = ""
+		}
+		if req.Method == "run_code" && held != "" {
+			_ = json.NewEncoder(os.Stdout).Encode(Response{ID: req.ID, Error: "new program overtook cancelled execution"})
+			continue
 		}
 		if req.Method == "disconnect" {
 			os.Exit(3)
@@ -27,6 +41,9 @@ func TestTransportWorker(t *testing.T) {
 			continue
 		}
 		if req.Method == "cancel" {
+			if req.ID == held {
+				continue
+			}
 			_ = json.NewEncoder(os.Stdout).Encode(Response{ID: req.ID, Error: "cancelled"})
 			continue
 		}
@@ -85,5 +102,34 @@ func TestConcurrentResponsesStayWithCaller(t *testing.T) {
 		if err := <-done; err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestProgramRetirementKeepsProcessControlAvailable(t *testing.T) {
+	c := testClient(t)
+	ready := make(chan struct{})
+	c.event = func(json.RawMessage) { close(ready) }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := make(chan error, 1)
+	go func() { _, err := c.Call(ctx, "run_code", map[string]bool{"hold": true}); first <- err }()
+	select {
+	case <-ready:
+	case <-time.After(5 * time.Second):
+		t.Fatal("program never started")
+	}
+	cancel()
+	if err := <-first; err == nil {
+		t.Fatal("cancelled program reported success")
+	}
+	nextCtx, nextCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer nextCancel()
+	next := make(chan error, 1)
+	go func() { _, err := c.Call(nextCtx, "run_code", nil); next <- err }()
+	if _, err := c.Call(nextCtx, "execute", map[string]string{"action": "stop"}); err != nil {
+		t.Fatalf("retirement blocked process control: %v", err)
+	}
+	if err := <-next; err != nil {
+		t.Fatalf("program reuse: %v", err)
 	}
 }

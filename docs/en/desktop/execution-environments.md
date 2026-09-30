@@ -90,3 +90,10 @@ For Singularity/Apptainer, set `WUU_EXECUTION_E2E_SIF` to a current worker SIF i
 For SSH, set `WUU_EXECUTION_E2E_SSH` to a JSON SSH profile for a disposable test server, then run `go test ./internal/executionworker -run TestSSHEnvironmentEndToEnd -count=1 -v`. The test creates files and processes in its own environment directories.
 
 Desktop acceptance uses `npm --prefix desktop run test:e2e:execution-environments`. It exercises the real renderer with a synthetic settings bridge and writes screenshots plus a JSON receipt under `desktop/out/e2e/execution-environments`. It does not authenticate cloud accounts. Live provider validation requires credentials and a published worker image in that provider.
+
+## Worker compatibility
+
+The host and worker must use execution protocol version 3. Upgrade the worker
+binary or rebuild its image when upgrading the host. Older workers are rejected
+before execution: programs require the current isolated interpreter and
+actor-scoped JSON state contract. They cannot fall back to native program access. No existing permission is expanded.

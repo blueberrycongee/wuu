@@ -3232,6 +3232,46 @@ func TestServerConfigCodexModels(t *testing.T) {
 	}
 }
 
+func TestGPT61SolSubscriptionModelSelection(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	if err := os.WriteFile(rt.ConfigPath, []byte(`{
+		"default_provider":"openai-codex",
+		"providers":{"openai-codex":{"type":"openai-codex","model":"gpt-5.5","reuse_codex_credentials":true}}
+	}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	live := []codex.ModelInfo{{Slug: "gpt-6.1-sol", DefaultReasoningLevel: "medium", SupportedReasoning: []string{"low", "medium", "high", "xhigh", "max"}}}
+	summaries := codexModelSummaries(live)
+	if len(summaries) != 2 || summaries[1].Slug != "gpt-6.1-sol-fast" {
+		t.Fatalf("subscription aliases = %+v", summaries)
+	}
+	if got := codexModelSummaries([]codex.ModelInfo{{Slug: "unknown-model"}}); len(got) != 1 {
+		t.Fatalf("unadvertised subscription models added: %+v", got)
+	}
+	srv.cacheCodexModels("openai-codex", live)
+	for _, model := range []string{"gpt-6.1-sol", "gpt-6.1-sol-fast"} {
+		request := fmt.Sprintf(`{"id":%q,"method":"config/model/update","params":{"provider":"openai-codex","model":%q,"variant":"max"}}`, model, model)
+		if err := srv.handleLine(context.Background(), []byte(request)); err != nil {
+			t.Fatal(err)
+		}
+		response := responseByID(t, parseOutput(t, out.String()), model)
+		if response["error"] != nil {
+			t.Fatalf("model update: %v", response)
+		}
+		if rt.StreamRunner.APIModel != "gpt-6.1-sol" || rt.StreamRunner.ProviderOptions["reasoningEffort"] != "max" {
+			t.Fatalf("runtime model/options = %s/%v", rt.StreamRunner.APIModel, rt.StreamRunner.ProviderOptions)
+		}
+		if rt.StreamRunner.ContextWindowOverride != 1050000 || rt.StreamRunner.MaxInputTokens != 272000 {
+			t.Fatalf("subscription budget = %d/%d", rt.StreamRunner.ContextWindowOverride, rt.StreamRunner.MaxInputTokens)
+		}
+		if model == "gpt-6.1-sol-fast" && rt.StreamRunner.ProviderOptions["serviceTier"] != "priority" {
+			t.Fatalf("fast options = %v", rt.StreamRunner.ProviderOptions)
+		}
+	}
+}
+
 func TestCachedCodexModelsReplaceCatalogOnlyReasoningLevels(t *testing.T) {
 	srv := &Server{}
 	srv.cacheCodexModels("openai-codex", []codex.ModelInfo{{

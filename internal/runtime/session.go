@@ -35,7 +35,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/modelbudget"
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
-	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/participant"
@@ -144,8 +143,8 @@ type Session struct {
 	ProcessManager      *process.Manager
 	Toolkit             *tools.Toolkit
 	ActivityRegistry    *activity.Registry
-	// CodeMode owns the session's optional PTC processes. Each program gets a
-	// fresh Node process and ends with its owning invocation.
+	// CodeMode owns isolated programs and bounded, in-memory conversation state.
+	// Each program ends with its owning invocation.
 	CodeMode                 *codemode.Service
 	WorkerClient             providers.StreamClient
 	ModelRoles               modelroles.Set
@@ -512,8 +511,8 @@ func NewSession(opts Options) (*Session, error) {
 		connectMCPServers(cfg, activePlugins, toolkit)
 	}
 
-	// The optional PTC service is inert until a model with PTC enabled calls it.
-	// Each program owns its process; thread clones share only the lifecycle owner.
+	// Interpreter processes start only when called. Thread clones share lifecycle
+	// ownership while state is isolated by conversation, actor and workspace.
 	var codeModeService *codemode.Service
 	if !opts.NoTools && toolkit != nil {
 		codeModeService = codemode.NewService(codemode.ServiceConfig{NodeExecutable: cfg.PTC.NodeExecutable})
@@ -561,15 +560,10 @@ func NewSession(opts Options) (*Session, error) {
 		workerToolProviderName := roleSelections.Worker.RuleProvider
 		workerToolModeModel := roleSelections.Worker.APIModel
 		_, workerToolSearchEnabled, workerNativeDeferredDiscovery := resolveToolLoadingForProvider(cfg.Agent, roleSelections.Worker.RuleProviderConfig, workerToolModeModel, roleSelections.Worker.ProviderOptions)
-		workerToolSurface := compiledSurfaceForProviderModel(workerToolProviderName, workerToolModeModel)
-		// Fill the worker deferred-tool catalog the same way mainSurface is
-		// filled above (consistency-repair #13: this was left empty while the
-		// worker prompt taught catalog lookups through tool_search).
-		workerDeferredCatalog, catErr := workerDeferredToolCatalogPromptForToolkit(toolkit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
+		workerToolSurface, catErr := workerToolSurfaceForToolkit(toolkit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
 		if catErr != nil {
 			return nil, catErr
 		}
-		workerToolSurface.DeferredToolCatalog = workerDeferredCatalog
 		workerBaseSystemPrompt := buildBaseSystemPromptContent(rootDir, sessionDate, config.WorkerSystemPrompt(), "", workerToolProviderName, workerToolModeModel, workerToolSurface, instructionFiles, "", "", discoveredSkills)
 		var werr error
 		workerClient, werr = providerfactory.BuildStreamClient(roleSelections.Worker.RuleProviderConfig, roleSelections.Worker.Provider)
@@ -944,26 +938,19 @@ func resolveToolLoadingModeForProvider(mode config.ToolLoadingMode, providerCfg 
 	switch mode {
 	case config.ToolLoadingFlat:
 		return mode, false, false
+	case config.ToolLoadingClient:
+		return mode, true, false
 	case config.ToolLoadingNative:
 		if providerfactory.SupportsNativeToolDiscovery(providerCfg, model, providerOptions) {
 			return mode, true, true
 		}
-		// Explicit native on a path that cannot carry the provider's own
-		// deferred-discovery protocol degrades to flat rather than silently
-		// selecting a different loading strategy. Say so: the user asked for
-		// deferred tools and is not getting them.
 		warnUnsupportedNativeToolLoadingOnce(providerCfg, model)
-		return config.ToolLoadingFlat, false, false
 	default:
 		if providerfactory.SupportsNativeToolDiscoveryByDefault(providerCfg, model, providerOptions) {
 			return config.ToolLoadingNative, true, true
 		}
-		// Everything else is flat. Paying the fixed schema cost once keeps the
-		// provider prompt-cache prefix stable, which progressive loading could
-		// not do: appending to the top-level tools array invalidated the cached
-		// prefix past the insertion point on every load.
-		return config.ToolLoadingFlat, false, false
 	}
+	return config.ToolLoadingClient, true, false
 }
 
 // ReconfigureToolLoading reapplies every mutable tool-loading field after the
@@ -1316,14 +1303,10 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			workerToolProviderName := s.ModelRoles.Worker.RuleProvider
 			workerToolModeModel := workerModel
 			_, workerToolSearchEnabled, workerNativeDeferredDiscovery := resolveToolLoadingModeForProvider(s.ToolLoadingPreference, s.ModelRoles.Worker.RuleProviderConfig, workerToolModeModel, s.ModelRoles.Worker.ProviderOptions)
-			workerToolSurface := compiledSurfaceForProviderModel(workerToolProviderName, workerToolModeModel)
-			// Fill the worker deferred-tool catalog like the session build
-			// path does (consistency-repair #13).
-			workerDeferredCatalog, catErr := workerDeferredToolCatalogPromptForToolkit(kit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
+			workerToolSurface, catErr := workerToolSurfaceForToolkit(kit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
 			if catErr != nil {
 				return nil, catErr
 			}
-			workerToolSurface.DeferredToolCatalog = workerDeferredCatalog
 			workerBaseSystemPrompt := buildWorkerBasePrompt(
 				threadRoot,
 				s.SessionDate,
@@ -2812,34 +2795,19 @@ func deferredToolCatalogPromptForToolkit(kit *tools.Toolkit) (string, error) {
 	return kit.DeferredToolCatalogSystemSection()
 }
 
-// workerDeferredToolCatalogPromptForToolkit computes the deferred-tool
-// catalog section for the worker surface (consistency-repair #13: worker
-// prompts taught tool_search catalog lookups while their catalog stayed
-// empty). It reuses the exact generator that fills
-// mainSurface.DeferredToolCatalog, but on a throwaway in-memory clone of the
-// session toolkit configured with the worker-compiled surface, so entries are
-// filtered by the worker's own exposure buckets (no orchestration suite,
-// worker tool-search setting).
-func workerDeferredToolCatalogPromptForToolkit(kit *tools.Toolkit, providerName, model string, toolSearchEnabled bool) (string, error) {
+// workerToolSurfaceForToolkit resolves the same model and PTC projection used
+// by the actual worker executor before constructing its prompt.
+func workerToolSurfaceForToolkit(kit *tools.Toolkit, providerName, model string, toolSearchEnabled bool) (capability.Surface, error) {
 	if kit == nil {
-		return "", nil
+		return capability.Surface{}, nil
 	}
 	wkit, err := kit.CloneForRoot("")
 	if err != nil {
-		return "", err
+		return capability.Surface{}, err
 	}
 	wkit.ConfigureSurfaceForProviderModel(providerName, model, false)
 	wkit.SetToolSearchEnabled(toolSearchEnabled)
-	return wkit.DeferredToolCatalogSystemSection()
-}
-
-// compiledSurfaceForProviderModel is the worker-only entry point in
-// production: every caller in internal/runtime/session.go that uses
-// it is configuring a worker's tool surface, not the main agent's.
-// The main agent's surface is installed through
-// internal/tools/edit_mode.go::ConfigureSurfaceForProviderModel on
-// the toolkit itself. Worker surfaces intentionally omit the
-// main-agent orchestration tools.
-func compiledSurfaceForProviderModel(providerName, model string) capability.Surface {
-	return modelprofile.DefaultCompiler{}.Compile(modelprofile.Resolve(providerName, model), modelprofile.SurfaceWorker)
+	surface := wkit.ActiveSurface()
+	surface.DeferredToolCatalog, err = wkit.DeferredToolCatalogSystemSection()
+	return surface, err
 }

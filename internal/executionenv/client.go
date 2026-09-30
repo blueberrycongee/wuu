@@ -14,7 +14,9 @@ import (
 	"time"
 )
 
-const ProtocolVersion = 1
+// Version 3 requires isolated program state and the current interpreter contract.
+// Older workers fail closed rather than silently executing a different API.
+const ProtocolVersion = 3
 const MaxFrameBytes = 16 * 1024 * 1024
 
 type Request struct {
@@ -47,6 +49,7 @@ type Client struct {
 	cmd        *exec.Cmd
 	stdin      io.WriteCloser
 	pending    map[string]chan Response
+	retiring   map[string]chan struct{}
 	sequence   uint64
 	failed     error
 	exitErr    error
@@ -54,7 +57,7 @@ type Client struct {
 }
 
 func NewClient(argv, env []string) *Client {
-	return &Client{argv: append([]string(nil), argv...), env: append([]string(nil), env...), pending: make(map[string]chan Response), handlers: make(map[string]func(context.Context, json.RawMessage) (json.RawMessage, error)), contexts: make(map[string]context.Context)}
+	return &Client{argv: append([]string(nil), argv...), env: append([]string(nil), env...), pending: make(map[string]chan Response), retiring: make(map[string]chan struct{}), handlers: make(map[string]func(context.Context, json.RawMessage) (json.RawMessage, error)), contexts: make(map[string]context.Context)}
 }
 
 func (c *Client) startLocked() error {
@@ -128,6 +131,10 @@ func (c *Client) startLocked() error {
 			c.mu.Lock()
 			ch := c.pending[response.ID]
 			delete(c.pending, response.ID)
+			if drained := c.retiring[response.ID]; drained != nil {
+				close(drained)
+				delete(c.retiring, response.ID)
+			}
 			c.mu.Unlock()
 			if ch != nil {
 				ch <- response
@@ -168,6 +175,10 @@ func (c *Client) fail(err error) {
 	if c.failed == nil {
 		c.failed = err
 	}
+	for id, drained := range c.retiring {
+		close(drained)
+		delete(c.retiring, id)
+	}
 	for id, ch := range c.pending {
 		ch <- Response{ID: id, Error: c.failed.Error()}
 		delete(c.pending, id)
@@ -203,7 +214,33 @@ func (c *Client) CallWithHandler(ctx context.Context, method string, data any, h
 	if err != nil {
 		return nil, err
 	}
-	c.mu.Lock()
+	// A cancelled caller returns promptly, but reuse must wait for the worker's
+	// terminal acknowledgement before another program reuses actor state.
+	// Process controls remain available to release blocked I/O during cleanup.
+	for {
+		c.mu.Lock()
+		if c.failed != nil {
+			err = c.failed
+			c.mu.Unlock()
+			return nil, err
+		}
+		var drained chan struct{}
+		if method == "run_code" {
+			for _, pending := range c.retiring {
+				drained = pending
+				break
+			}
+		}
+		if drained == nil {
+			break
+		}
+		c.mu.Unlock()
+		select {
+		case <-drained:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	if err = c.startLocked(); err != nil {
 		c.mu.Unlock()
 		return nil, err
@@ -236,7 +273,11 @@ func (c *Client) CallWithHandler(ctx context.Context, method string, data any, h
 		return response.Data, nil
 	case <-ctx.Done():
 		c.mu.Lock()
-		delete(c.pending, id)
+		if method == "run_code" && c.pending[id] != nil {
+			c.retiring[id] = make(chan struct{})
+		} else {
+			delete(c.pending, id)
+		}
 		c.mu.Unlock()
 		// Cancellation is addressed to the existing operation, never a replacement run.
 		go func() {

@@ -240,7 +240,8 @@
   grid-row: 1;
 }
 
-.environment-panel:has(> .environment-panel-header.environment-panel-close-row):not(:has(.plugin-inspector-section)) :is(.environment-change-row, .environment-panel-note) {
+.environment-panel:has(> .environment-panel-header.environment-panel-close-row):not(:has(.plugin-inspector-section, .fork-worktree-notice)) :is(.environment-change-row, .environment-panel-note),
+.environment-panel:has(> .environment-panel-header.environment-panel-close-row):not(:has(.plugin-inspector-section)) .fork-worktree-summary {
   margin-right: calc(var(--environment-panel-close-size) + var(--environment-panel-close-gap));
 }
 

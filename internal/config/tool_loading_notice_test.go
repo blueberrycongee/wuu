@@ -71,7 +71,7 @@ func TestSupportedToolLoadingValuesAreSilent(t *testing.T) {
 	restore := captureRetiredToolLoadingWarnings(t, &warnings)
 	defer restore()
 
-	for _, mode := range []ToolLoadingMode{ToolLoadingAuto, ToolLoadingFlat, ToolLoadingNative, ""} {
+	for _, mode := range []ToolLoadingMode{ToolLoadingAuto, ToolLoadingClient, ToolLoadingFlat, ToolLoadingNative, ""} {
 		agent := AgentConfig{ToolLoading: mode}
 		agent.ToolLoadingPreference()
 	}
@@ -80,8 +80,7 @@ func TestSupportedToolLoadingValuesAreSilent(t *testing.T) {
 	}
 }
 
-// The legacy boolean no longer selects Wuu progressive loading: true means
-// auto (native where the provider supports it, flat elsewhere).
+// The legacy boolean selects auto or the explicitly flat presentation.
 func TestLegacyToolSearchBooleanMapsToAutoAndFlat(t *testing.T) {
 	enabled, disabled := true, false
 	if got := (AgentConfig{ToolSearch: &enabled}).ToolLoadingPreference(); got != ToolLoadingAuto {

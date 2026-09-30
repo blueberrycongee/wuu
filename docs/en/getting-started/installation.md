@@ -34,7 +34,8 @@ For a Computer Use-enabled macOS build, screen capture and desktop control may r
 
 ## Install the CLI
 
-Install the Go version required by [go.mod](../../../go.mod), then run:
+Install the Go version required by [go.mod](../../../go.mod) and Node.js 22.19
+or later, then run:
 
 ```bash
 git clone https://github.com/blueberrycongee/wuu.git
@@ -50,5 +51,12 @@ export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
 If you use `GOBIN`, add that directory instead. The CLI and the core bundled with the desktop are separate installations and can have different versions. The release workflow does not publish standalone CLI archives. Product release tags use calendar versions, so install from a checkout rather than using `go install ...@latest`.
+
+The built-in CLI engine now uses isolated programmatic tool calling by default.
+Keep Node on `PATH` when upgrading, or set `ptc.node_executable` in your user
+configuration. Missing or unsupported Node prevents ordinary tool execution;
+explicitly set `ptc.enabled` to `false` if you want direct tool calls instead.
+Existing explicit global/family choices remain unchanged. The desktop bundles
+its own runtime and needs no separate Node installation.
 
 Continue with [model services](model-services.md). To build the desktop itself, use the [development guide](../project/development.md).

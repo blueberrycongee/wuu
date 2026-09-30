@@ -26,7 +26,7 @@ func (t *ToolSearchTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name: "tool_search",
 		Description: "Search deferred tools and load matching tool schemas.\n\n" +
-			"Deferred tool names are listed in the static Deferred Tool Catalog under <available-deferred-tools>, but those tools are not callable until their schemas are loaded. " +
+			"A bounded preview of deferred tools appears under <available-deferred-tools>; more tools may be available through search. Deferred tools are not callable until their schemas are loaded. " +
 			"Use this when you need a listed deferred tool or a capability that is not currently visible, especially MCP tools, scheduling, memory, or specialized helpers. Search by capability words, or use select:<tool_name> when you already know the exact tool. Load related tools in one call when you expect to need several, for example select:tool_a tool_b. Loaded schemas are callable on the next tool step; if a tool is already visible or reported in already_loaded, call it directly. Do not call MCP list/resource tools just to discover what tools exist; this search is the discovery path.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -246,7 +246,7 @@ func (t *Toolkit) markDeferredToolsLoaded(names ...string) {
 	toLoad := make([]string, 0, len(names))
 	for _, name := range names {
 		name = strings.TrimSpace(name)
-		if name == "" || t.isToolDisabled(name) || t.toolExposure(name) != ToolExposureDeferred {
+		if name == "" || t.IsToolDisabled(name) || t.toolExposure(name) != ToolExposureDeferred {
 			continue
 		}
 		toLoad = append(toLoad, name)

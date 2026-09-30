@@ -215,12 +215,13 @@ func (r *Runner) RunWithUsage(ctx context.Context, prompt string, onUsage func(i
 			if budgetErr != nil {
 				return messages, budgetErr
 			}
+			definitions := toolDefinitions(r.Tools)
 			return compact.CompactWithNativeOrSummary(ctx, messages, r.Client, r.Model, budget, compact.NativeOptions{
 				Provider:                    r.ProviderName,
-				Tools:                       toolDefinitions(r.Tools),
+				Tools:                       definitions,
 				Temperature:                 r.Temperature,
 				ProviderOptions:             r.ProviderOptions,
-				NativeDeferredToolDiscovery: r.NativeDeferredToolDiscovery,
+				NativeDeferredToolDiscovery: providers.NativeToolDiscoveryEnabled(r.NativeDeferredToolDiscovery, definitions),
 			})
 		},
 	}

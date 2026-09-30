@@ -198,7 +198,7 @@ func (c *Client) buildResponsesRequest(req providers.ChatRequest, stream bool) (
 	}
 
 	instructions, messages := splitResponsesInstructions(prepared)
-	nativeDeferred := req.NativeDeferredToolDiscovery
+	nativeDeferred := providers.NativeToolDiscoveryEnabled(req.NativeDeferredToolDiscovery, req.Tools)
 	input := make([]responsesInputItem, 0, len(messages))
 	if nativeDeferred {
 		if tools := responsesCompactedDiscoveredTools(req.Model, prepared); len(tools) > 0 {

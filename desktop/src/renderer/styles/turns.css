@@ -3463,28 +3463,24 @@
 }
 
 .fork-worktree-notice {
-  width: min(100%, var(--conversation-message-max-width));
-  margin: 6px 0 22px;
+  min-width: 0;
 }
 
 .fork-worktree-card {
   display: block;
   overflow: hidden;
-  border: 1px solid var(--message-flow-card-border);
-  border-radius: var(--message-flow-card-radius);
-  background: var(--message-flow-card-bg);
+  border-radius: var(--radius-sm);
 }
 
-/* The glyph keeps its own column, so the title, the consequence below it and
- * the facts in the open card share one text edge. */
+/* Match the inspector's compact action rows. */
 .fork-worktree-summary {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  width: 100%;
   min-width: 0;
+  min-height: var(--environment-row-height);
   align-items: center;
   column-gap: var(--space-3);
-  padding: var(--card-padding);
+  padding: var(--space-2) var(--space-3);
   color: var(--ink);
   cursor: pointer;
   list-style: none;
@@ -3523,17 +3519,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
   line-height: 1.35;
-}
-
-.fork-worktree-summary-text span {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ink-soft);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--font-sm);
 }
 
 .fork-worktree-chevron {
@@ -3550,14 +3537,13 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
   column-gap: var(--space-3);
-  padding: 0 var(--card-padding) var(--card-padding) calc(var(--card-padding) + var(--icon-size) + var(--space-3));
+  padding: 0 var(--space-3) var(--space-3);
 }
 
-/* One label column for every fact, so the values share an edge whatever
- * the label lengths in the current language. */
+/* Stack facts so long workspace paths fit the narrow inspector. */
 .fork-worktree-meta {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
+  min-width: 0;
   gap: var(--space-2) var(--space-3);
   align-items: baseline;
   margin: 0;
@@ -3565,12 +3551,13 @@
 }
 
 .fork-worktree-meta div {
-  display: contents;
+  display: grid;
+  gap: var(--space-1);
 }
 
 .fork-worktree-meta dt {
   color: var(--ink-soft);
-  font-size: var(--font-sm);
+  font-size: var(--font-ui);
 }
 
 .fork-worktree-meta dd {
@@ -3578,9 +3565,49 @@
   margin: 0;
   color: var(--ink);
   font-family: var(--font-mono);
-  font-size: var(--font-sm);
+  font-size: var(--appearance-code-size);
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.workspace-tool-record > summary {
+  width: fit-content;
+  max-width: 100%;
+  cursor: pointer;
+  list-style: none;
+}
+
+.workspace-tool-record > summary::-webkit-details-marker {
+  display: none;
+}
+
+.workspace-tool-record > summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+  border-radius: var(--radius-xs);
+}
+
+.workspace-tool-chevron {
+  flex-shrink: 0;
+}
+
+.workspace-tool-record[open] .workspace-tool-chevron {
+  transform: rotate(180deg);
+}
+
+.workspace-tool-details {
+  margin: var(--space-2) 0 0 calc(var(--icon-size) + var(--space-2));
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.workspace-tool-details code {
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+}
+
+.workspace-tool-details p {
+  margin: var(--space-2) 0 0;
 }
 
 /* A plain icon button in the open card, not the floating copy pill used on

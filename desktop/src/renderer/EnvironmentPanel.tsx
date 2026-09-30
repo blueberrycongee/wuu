@@ -17,12 +17,14 @@ import { type FormEvent as ReactFormEvent, type ReactNode, type RefObject, useEf
 import type {
   GitStatusResult,
   InitializeResult,
+  Thread,
   WorkspaceFileReadResult
 } from "../shared/protocol";
 import { desktopApiErrorMessage, formatBytes } from "./WorkspaceReviewHelpers";
 import { useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
 import { showErrorToast } from "./Toast";
+import { WorktreeNotice } from "./WorktreeNotice";
 
 export type EnvironmentPanelMenu = "branch" | "file" | null;
 export type EnvironmentPanelMotionState = "open" | "closing";
@@ -44,6 +46,7 @@ export function EnvironmentPanel({
   rightPanelFilePath,
   onCloseFilePreview,
   pluginSections,
+  thread,
 }: {
   panelRef: RefObject<HTMLDivElement | null>;
   motionState: EnvironmentPanelMotionState;
@@ -74,6 +77,7 @@ export function EnvironmentPanel({
   onCloseFilePreview?: () => void;
   /** Host-mounted plugin summaries. Each contribution owns its own error boundary. */
   pluginSections?: ReactNode;
+  thread?: Thread;
 }): JSX.Element {
   const { t, formatNumber } = useI18n();
   if (activeMenu === "file" && rightPanelFilePath) {
@@ -121,6 +125,7 @@ export function EnvironmentPanel({
       {pluginSections}
 
       <div className="environment-panel-body">
+        {thread?.worktree ? <WorktreeNotice key={thread.worktree.path} thread={thread} /> : null}
         {notRepository ? (
           <p className="environment-panel-note">{t("environment.notGitRepository")}</p>
         ) : <>

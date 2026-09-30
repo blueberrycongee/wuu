@@ -33,6 +33,28 @@ beforeAll(() => {
   };
 });
 
+describe("workspace tool records", () => {
+  it("keeps the historical destination and exposes failures", () => {
+    const item: ThreadItem = {
+      id: "workspace-1", type: "tool_call", name: "set_session_workspace",
+      status: "in_progress", arguments: JSON.stringify({ root: "/repo/worktree-one" }),
+    };
+    mount({ items: [item] });
+    const details = container!.querySelector("details")!;
+    expect(details.open).toBe(false);
+    expect(details.textContent).toContain("/repo/worktree-one");
+
+    act(() => { details.open = true; });
+    rerender({ items: [{ ...item, status: "completed", result: JSON.stringify({ root: "/repo/worktree-one" }) }] });
+    expect(container!.querySelector("details")!.open).toBe(true);
+    expect(container!.querySelector("details")!.textContent).toContain("/repo/worktree-one");
+
+    mount({ items: [{ ...item, id: "workspace-2", status: "failed", arguments: JSON.stringify({ root: "/repo/missing" }), error: "inspect workspace root: no such directory" }] });
+    expect(container!.querySelector("details")!.textContent).toContain("/repo/missing");
+    expect(container!.querySelector("details")!.textContent).toContain("inspect workspace root: no such directory");
+  });
+});
+
 function fakeReadFileTool(): ThreadItem {
   // Single-segment path so formatPathTarget's basename collapse lands
   // on a deterministic string we can match exactly in assertions.

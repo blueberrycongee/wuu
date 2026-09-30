@@ -34,7 +34,8 @@ ad-hoc 签名不能证明发布者身份，也不能保证更新后保留 macOS 
 
 ## 从源码安装 CLI
 
-安装 [go.mod](../../../go.mod) 要求的 Go 版本，然后运行：
+安装 [go.mod](../../../go.mod) 要求的 Go 版本，以及 Node.js 22.19 或更高版本，
+然后运行：
 
 ```bash
 git clone https://github.com/blueberrycongee/wuu.git
@@ -50,5 +51,10 @@ export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
 如果设置了 `GOBIN`，应添加该目录。CLI 与桌面应用内置的 core 独立安装，版本可能不同。发布流程不提供独立 CLI 压缩包。产品标签使用日期版本，请从检出的源码安装，不要使用 `go install ...@latest`。
+
+内置 CLI 引擎现在默认使用隔离的程序化工具调用。升级时请保留 `PATH` 中的
+Node，或在用户配置中设置 `ptc.node_executable`。缺少 Node 或版本不支持时，
+普通工具将无法执行；如需直调工具，可明确设置 `ptc.enabled` 为 `false`。
+原有明确保存的全局与家族选择保持不变。桌面应用自带运行时，无须另装 Node。
 
 接下来[连接模型服务](model-services.md)。构建桌面应用请参阅[开发指南](../../en/project/development.md)（英文）。

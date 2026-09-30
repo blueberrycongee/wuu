@@ -18,7 +18,11 @@ The composer's selection belongs to the conversation, or to the draft before its
 
 ## Current OpenAI and Anthropic models
 
-The catalog includes `gpt-6-sol`, `gpt-6-luna`, `claude-opus-5-5`, and `claude-fable-5-1`. Existing conversation and workspace selections remain unchanged; select a new model when you want to use it.
+The catalog includes `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `claude-opus-5-5`, and `claude-fable-5-1`. Existing conversation and workspace selections remain unchanged; select a new model when you want to use it.
+
+GPT-6.1 Sol supports `low`, `medium` (default), `high`, `xhigh`, and `max`; it does not support `none` or `minimal`. Tool calls require Responses, which Wuu selects when an official OpenAI connection has no explicit transport. Explicit and custom-endpoint transports remain unchanged: select Responses before using tools. Its Fast entry sends `gpt-6.1-sol` with priority processing at twice the standard API price; Fast is unavailable with EU data residency. Standard cached input costs $0.10 per million tokens, with higher rates above 272K input tokens. See the official [GPT-6.1 Sol specification](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
+
+To use GPT-6.1 Sol through an existing Codex subscription, reuse your local Codex login and refresh the subscription model list. Wuu adds the Fast alias when the account advertises the base model; the API catalog alone does not establish subscription access. Subscription requests keep Codex authentication and the subscription context-budget policy, rather than requiring an OpenAI API key or assuming the API input limit. API prices are not subscription quota estimates. The external Codex engine continues to use its own model discovery and login.
 
 GPT-6 Sol and Luna support reasoning levels from `none` through `max`, defaulting to `medium`. Their Fast entries use the same model with priority processing and a different price. Wuu defaults an unspecified official OpenAI connection to Responses for these models. If you explicitly selected Chat Completions, choose Responses for reasoning with tools; Chat Completions supports their tool calls only at `none`. Custom endpoints retain their configured transport. See the official [Sol](https://developers.openai.com/api/docs/models/gpt-6-sol) and [Luna](https://developers.openai.com/api/docs/models/gpt-6-luna) specifications.
 
@@ -97,7 +101,7 @@ ranges and continuations apply to text, not images.
 
 A model explicitly marked as text-only receives an unsupported-image marker,
 not the pixels. Choose an image-capable model to inspect the image. Original
-image results remain in history when the model changes. With optional PTC,
+image results remain in history when the model changes. With PTC,
 successful image and audio tool results are attached automatically:
 
 ```javascript
@@ -107,57 +111,101 @@ await tools.read_file({path: "screenshots/settings.png"});
 `present_artifact` displays a deliverable to the user; it does not inspect the
 image for the model. External agent engines use their own file and image tools.
 
-## Optional programmatic tool calling
+## Programmatic tool calling
 
-In **Settings → General → Programmatic tool calling**, enable PTC to let the
-built-in engine compose tool calls in a JavaScript or erasable TypeScript
-program. It is off by default. Each model family can follow the global switch,
-enable PTC, or disable it. An explicit family choice wins over the global
-switch; switching models resolves the setting again. Changes require idle
-turns and apply to the next turn. External engines keep their own tools.
+The built-in engine uses programmatic tool calling (PTC) by default. Ordinary
+file, command, search, browser, API and extension tools run through `run_code`.
+**Settings → Runtime → Programmatic tool calling** provides a global switch
+and model-family overrides. Explicit saved choices are preserved; configurations
+that omit the switch use the default. Changes require idle turns and apply on
+the next turn. External engines keep their own tools.
 
-When enabled, the model calls `run_code` with `code`, a short `description`,
-and an optional `timeout_ms`. Its description lists the current tool bindings
-and argument schemas. The program uses `await tools[name](args)`; the result is
-a Wuu tool-result object with `content` and optional `structured_content`.
-Unavailable and disabled tools are excluded. Family-specific editing tools
-remain available through the bindings. Context reset, when available, remains
-a separate top-level control. There are no family-specific performance claims
-or automatic opt-ins.
+Interaction, explicit artifact delivery, context replacement, workspace changes,
+and agent/session lifecycle controls remain separate direct tools. Extensions
+can declare `direct_only` for those controls. A direct-only tool cannot be called
+from a program; ordinary tools cannot bypass PTC while it is enabled. Available
+bindings retain their exact names, permissions and model-family edit primitives.
 
-Only printed values, a JSON return value, and successful image/audio outputs
-become the program's observation. Intermediate tool calls still pass through
-the normal permission, scheduling, event, and recording pipeline. Catch
-`ToolCallError` to handle a failed binding. Await writes and dependent work in
-order; use bounded parallel batches for independent reads.
+### Discover, execute and inspect results
 
-Each program starts a fresh Node process with an empty environment. Native
-APIs are available through `await import(...)`. Filesystem writes use the same
-session process sandbox as command tools; network access and all file reads
-are not isolated by that sandbox. See the [security model](../reference/security-model.md).
-The default elapsed deadline is 120 seconds, including tool and approval
-waits, with a 600-second maximum. Programs have no persistent state or
-`yield`/`wait` continuation. Cancellation stops the program and its active
-nested calls; completed effects are not rolled back or automatically replayed.
-Printed/returned text is limited to 1 MiB; media also obeys the shared rich
-result limits.
+Call `run_code` with `code`, a short `description`, and optional `timeout_ms`.
+Its description contains a bounded catalog preview. `await searchTools(query,
+{limit: 8, offset: 0})` returns `tools`, `total` and optional `next_offset`; an
+empty query pages through all bindings. `await describeTool(name)` returns the
+exact description and `input_schema`. Call `await tools[name](args)`; bracket
+access preserves names containing punctuation without aliases or collisions.
 
-Desktop uses its bundled runtime. CLI use requires Node.js 22.19 or later on
-`PATH`, or a user-configured `ptc.node_executable`. In user configuration:
+Results retain `content`, optional `structured_content`, and optional
+`model_text` for the compact model projection. Catch `ToolCallError` to inspect
+`toolName`, `message`, and the canonical `result` for a completed tool failure.
+Transport and discovery failures have no synthetic result. Only printed values,
+a JSON return value and successful image/audio outputs become the program's
+observation. Explicit deliverables use the separate `present_artifact` tool.
+Nested hook context still reaches the next model request even if code does not
+print it. Every effect keeps its normal permission, hook, scheduling and audit
+path. Await writes and dependencies in order; use bounded parallel batches for
+independent reads.
+
+### State and long-running work
+
+Every program starts a fresh isolated interpreter. `store(key, value)` stages a
+lossless JSON value, `load(key)` returns a clone or `undefined`, and `remove(key)`
+deletes a key and reports whether it existed. Mutating a loaded value does not
+change stored state until `store` is called again. Successful completion commits
+staged changes; errors, cancellation and resource-limit failures preserve the
+previous state. Completed tool effects are never rolled back or replayed.
+
+State is explicitly stored, memory-only, and isolated by conversation, actor and
+workspace. Rebuilding the same conversation or changing its model retains that
+scope; a fork, another actor or another workspace cannot read it. Restarting the
+runtime clears it. Do not store credentials. Each scope supports 256 keys and
+1 MiB of JSON; the shared session runtime supports 64 retained scopes and 16 MiB.
+Overlapping programs in one scope are rejected. Limits fail visibly without
+silent eviction; use `remove` or overwrite a checkpoint to reclaim space.
+
+Programs have no default total timeout. A positive `timeout_ms` limits elapsed
+time, including tool and approval waits; an earlier calling-context deadline
+still applies. Cancellation stops the interpreter and its active nested calls.
+There is no JavaScript `yield`/`wait` continuation or saved execution stack.
+For long commands, use `bash` with `run_in_background`, keep returned process
+IDs in `store`, and read, write or stop them through `process` in later programs.
+`process` supports bounded waits for new output, and managed completion retains
+its normal conversation wake-up behavior. Agent/session controls similarly use
+their own durable task handles. Await every nested call before returning;
+unawaited calls are cancelled when their program ends.
+
+### Isolation, limits and installation
+
+The interpreter has no native APIs, imports, filesystem, network, environment or
+timers, including in Unconfined mode. It has a 128 MiB memory limit; the host
+process keeps the session process sandbox as defense in depth. See the
+[security model](../reference/security-model.md).
+
+Printed/returned text is limited to 1 MiB; media obeys shared rich-result limits.
+Discovery returns at most 20 summaries per page. Exact tool details are limited
+to 256 KiB and fail visibly rather than returning partial schemas. A catalog
+supports 10,000 tools and 32 MiB of metadata. Catalogs are pinned for each model
+run; dispatch still checks live permissions and availability. Remote execution
+requires protocol version 3; upgrade older workers before using them.
+
+Desktop includes its runtime. CLI ordinary tools require Node.js 22.19 or later
+on `PATH`, or `ptc.node_executable` in user configuration. Missing or unsupported
+runtimes fail visibly; there is no silent switch to another execution model.
+To choose direct tool calls instead, explicitly disable PTC globally or for a
+family, for example:
 
 ```json
 {
   "ptc": {
-    "enabled": false,
-    "families": { "gpt": true }
+    "enabled": true,
+    "families": { "local": false }
   }
 }
 ```
 
-Normal project configuration cannot change PTC settings or its executable.
-The retired `code_mode` setting is accepted for configuration migration but
-never enables PTC; saving PTC settings removes it. Old persistent cells and
-the previous execution/wait tools are no longer supported.
+Normal project configuration cannot change these settings or the executable.
+The retired `code_mode` field is ignored and removed when PTC settings are
+saved; it cannot reactivate a broader runtime or restore old execution cells.
 
 ## Large tool results
 

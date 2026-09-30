@@ -59,6 +59,7 @@ fs.writeFileSync(path.join(project, 'README.md'), 'uncommitted edit\n');
 fs.writeFileSync(path.join(plain, 'notes.txt'), 'not a repository\n');
 
 const requests = [];
+let rebindStage = 0;
 const server = http.createServer((req, res) => {
   let body = '';
   req.on('data', chunk => { body += chunk; });
@@ -66,6 +67,15 @@ const server = http.createServer((req, res) => {
     requests.push({ path: req.url, body: JSON.parse(body) });
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const chunk = delta => `data: ${JSON.stringify({ id: 'fixture', model: 'fixture', choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`;
+    const messages = requests.at(-1).body.messages || [];
+    const latestUser = messages.findLast(message => message.role === 'user');
+    if (typeof latestUser?.content === 'string' && latestUser.content.includes('Rebind workspace fixture') && rebindStage === 0) {
+      rebindStage++;
+      res.write(chunk({ role: 'assistant', content: 'Moving this session back to the project.' }));
+      res.write(chunk({ tool_calls: [{ index: 0, id: 'workspace-fixture', type: 'function', function: { name: 'set_session_workspace', arguments: JSON.stringify({ root: fs.realpathSync(project) }) } }] }));
+      res.end(`data: ${JSON.stringify({ id: 'fixture', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`);
+      return;
+    }
     res.write(chunk({ role: 'assistant', content: 'Worktree fixture answer.' }));
     res.end(`data: ${JSON.stringify({ id: 'fixture', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 } })}\n\ndata: [DONE]\n\n`);
   });
@@ -83,6 +93,11 @@ async function waitFor(win, fn, arg, timeout = 30000) {
 }
 const settle = win => evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 async function capture(win, name) {
+  await settle(win);
+  await evaluate(win, () => Promise.all([...document.querySelectorAll('.collapsible-details, .environment-panel, .fork-worktree-chevron')]
+    .flatMap(node => node.getAnimations())
+    .filter(animation => animation.playState === 'running' && Number.isFinite(animation.effect?.getComputedTiming().endTime))
+    .map(animation => animation.finished.catch(() => {}))));
   await settle(win);
   fs.writeFileSync(path.join(output, name), (await win.webContents.capturePage()).toPNG());
 }
@@ -135,6 +150,7 @@ async function run() {
   fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en', theme: 'light' }));
   await import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href);
   while (!main) await delay(25);
+  main.webContents.setBackgroundThrottling(false);
   main.setSize(1280, 820);
   await waitFor(main, () => document.querySelector('.composer textarea') && document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === 'main');
 
@@ -177,12 +193,6 @@ async function run() {
   assert.equal(worktreeCount(), 1, 'Choosing a skill must not materialize the selected checkout.');
   await capture(main, '03b-initial-skill-draft.png');
   await click(main, '.composer-send-button');
-  await waitFor(main, () => document.querySelector('.fork-worktree-notice'));
-  assert.equal(await evaluate(main, () => {
-    const notice = document.querySelector('.fork-worktree-notice');
-    const message = notice?.closest('[data-thread-id]')?.querySelector('.user-message-motion');
-    return Boolean(message && (notice.compareDocumentPosition(message) & Node.DOCUMENT_POSITION_FOLLOWING));
-  }), true, 'A conversation started in a worktree opens with its notice.');
   await waitFor(main, () => [...document.querySelectorAll('[data-thread-id] .session-flow')]
     .some(flow => flow.textContent.includes('Worktree fixture answer.')), undefined, 60000);
   const thread = await evaluate(main, async () => {
@@ -203,8 +213,48 @@ async function run() {
     && typeof message.content === 'string' && message.content.includes('SELECTED_SKILL_MARKER Summarize this repository')
     && !message.content.includes('WORKSPACE_SKILL_MARKER') && message.content.includes(path.join(thread.cwd, path.dirname(skillPath))))),
     'The first turn must load the selected branch skill and its resource base.');
-  await evaluate(main, () => document.querySelector('.fork-worktree-card')?.setAttribute('open', ''));
-  await capture(main, '04-conversation-worktree-notice.png');
+  assert.equal(await evaluate(main, () => Boolean(document.querySelector('.session-flow .fork-worktree-notice'))), false,
+    'Current workspace metadata must not be inserted ahead of historical messages.');
+  await capture(main, '04-conversation-without-worktree-banner.png');
+  await waitFor(main, () => document.querySelector('.composer-send-button[data-wuu-state="send"]'));
+  await evaluate(main, () => {
+    const toggle = document.querySelector('.environment-toggle-button');
+    if (!toggle.classList.contains('active')) toggle.click();
+  });
+  await waitFor(main, () => document.querySelector('.environment-panel.open .fork-worktree-card'));
+  await click(main, '.environment-panel .fork-worktree-summary');
+  assert(await evaluate(main, root => document.querySelector('.environment-panel .fork-worktree-meta')?.textContent.includes(root), thread.cwd));
+  await capture(main, '04a-current-worktree-info.png');
+  const inspectorGeometry = await evaluate(main, () => {
+    const summary = document.querySelector('.fork-worktree-summary').getBoundingClientRect();
+    const close = document.querySelector('.environment-panel-close-row').getBoundingClientRect();
+    return { summaryRight: summary.right, closeLeft: close.left };
+  });
+  assert(inspectorGeometry.summaryRight <= inspectorGeometry.closeLeft, 'The worktree disclosure must not overlap the close button.');
+  main.setSize(760, 820);
+  await evaluate(main, () => {
+    document.documentElement.dataset.theme = 'dark';
+    document.documentElement.style.setProperty('--conversation-message-font-size', '20px');
+    document.documentElement.style.setProperty('--appearance-scale', String(20 / 14));
+  });
+  await settle(main);
+  await evaluate(main, () => {
+    const toggle = document.querySelector('.environment-toggle-button');
+    if (!toggle.classList.contains('active')) toggle.click();
+  });
+  await waitFor(main, () => document.querySelector('.environment-panel.open .fork-worktree-card'));
+  await evaluate(main, () => {
+    const card = document.querySelector('.fork-worktree-card');
+    if (!card.open) card.querySelector('summary').click();
+  });
+  await capture(main, '04b-current-worktree-dark-large-narrow.png');
+  await click(main, '.environment-panel-close-row button');
+  main.setSize(1280, 820);
+  await evaluate(main, () => {
+    document.documentElement.dataset.theme = 'light';
+    document.documentElement.style.removeProperty('--conversation-message-font-size');
+    document.documentElement.style.removeProperty('--appearance-scale');
+  });
 
   // Explicit selection must beat the built-in control command and use this checkout.
   await waitFor(main, () => document.querySelector('.composer-send-button[data-wuu-state="send"]'));
@@ -251,6 +301,53 @@ async function run() {
   while (!receivedSelectedSkill() && Date.now() < skillDeadline) await delay(50);
   assert(receivedSelectedSkill(), 'The provider must receive the selected checkout instructions, not the dispatch envelope.');
   await waitFor(main, () => document.querySelector('.composer-send-button[data-wuu-state="send"]'));
+  main.setSize(1280, 820);
+  await evaluate(main, () => {
+    document.documentElement.dataset.theme = 'light';
+    document.documentElement.style.removeProperty('--conversation-message-font-size');
+    document.documentElement.style.removeProperty('--appearance-scale');
+  });
+
+  // A mid-conversation rebind stays at its actual tool position, even after
+  // returning to the project (when the thread no longer has worktree metadata).
+  await evaluate(main, () => {
+    const input = document.querySelector('.composer textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Rebind workspace fixture');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await click(main, '.composer-send-button');
+  await waitFor(main, () => [...document.querySelectorAll('.user-message-motion')].some(node => node.textContent.includes('Rebind workspace fixture'))
+    && document.querySelector('.composer-send-button[data-wuu-state="send"]'));
+  await waitFor(main, async id => {
+    const thread = (await window.wuu.listThreads()).threads.find(candidate => candidate.id === id);
+    return thread && !thread.worktree && thread.status !== 'in_progress';
+  }, thread.id);
+  await waitFor(main, () => document.querySelector('.cached-conversation-pane[data-active="true"] .turn-process-toggle[aria-expanded="false"]'));
+  await evaluate(main, () => [...document.querySelectorAll('.cached-conversation-pane[data-active="true"] .turn-process-toggle[aria-expanded="false"]')].at(-1)?.click());
+  await waitFor(main, () => document.querySelector('.cached-conversation-pane[data-active="true"] .process-surface'));
+  await evaluate(main, () => document.querySelectorAll('.cached-conversation-pane[data-active="true"] .process-surface-fold.has-details:not([open]) > summary').forEach(node => node.click()));
+  await waitFor(main, () => document.querySelector('.workspace-tool-record[data-status="completed"]'));
+  const rebound = await evaluate(main, async id => (await window.wuu.listThreads()).threads.find(candidate => candidate.id === id), thread.id);
+  assert.equal(fs.realpathSync(rebound.cwd), fs.realpathSync(project));
+  assert.ok(!rebound.worktree);
+  assert(await evaluate(main, () => {
+    const pane = document.querySelector('.cached-conversation-pane[data-active="true"]');
+    const record = pane.querySelector('.workspace-tool-record');
+    const message = [...pane.querySelectorAll('.user-message-motion')].find(node => node.textContent.includes('Rebind workspace fixture'));
+    return message && Boolean(message.compareDocumentPosition(record) & Node.DOCUMENT_POSITION_FOLLOWING)
+      && !pane.querySelector('.fork-worktree-notice');
+  }), 'The workspace operation must follow its initiating message.');
+  await click(main, '.workspace-tool-record > summary');
+  assert(await evaluate(main, root => document.querySelector('.workspace-tool-details')?.textContent.includes(root), fs.realpathSync(project)));
+  await capture(main, '10-workspace-tool-light.png');
+  main.setSize(760, 820);
+  await evaluate(main, () => {
+    document.documentElement.dataset.theme = 'dark';
+    document.documentElement.style.setProperty('--conversation-message-font-size', '20px');
+    document.documentElement.style.setProperty('--appearance-scale', String(20 / 14));
+    document.querySelector('.workspace-tool-record > summary').focus();
+  });
+  await capture(main, '11-workspace-tool-dark-large-narrow.png');
   main.setSize(1280, 820);
   await evaluate(main, () => {
     document.documentElement.dataset.theme = 'light';
@@ -327,6 +424,7 @@ async function run() {
     thread: { id: thread.id, cwd: thread.cwd, worktree: thread.worktree },
     narrow,
     providerRequests: requests.length,
+    workspaceRebind: { cwd: rebound.cwd, chronologyVerified: true },
     crossProject,
     selectedSkill: { initialDraft: initialSkillDraft, draft: selectedDraft, initialWorktreeInstructionsVerified: true, loadedInstructionsVerified: true },
   }, null, 2)}\n`);
@@ -338,11 +436,13 @@ run().then(() => {
   server.close();
   app.quit();
 }).catch(async error => {
+  fs.writeFileSync(path.join(output, 'provider-requests.json'), JSON.stringify(requests, null, 2));
   if (main && !main.isDestroyed()) {
     try {
       await capture(main, 'failure.png');
       const state = await evaluate(main, () => ({
         draft: document.querySelector('.composer textarea')?.value,
+        flow: document.querySelector('.cached-conversation-pane[data-active="true"]')?.innerHTML,
         commands: [...document.querySelectorAll('.slash-command-item')].map(node => ({ id: node.id, text: node.textContent, disabled: node.disabled })),
       }));
       fs.writeFileSync(path.join(output, 'failure.json'), JSON.stringify(state, null, 2));

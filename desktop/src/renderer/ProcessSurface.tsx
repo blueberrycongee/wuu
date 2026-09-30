@@ -13,7 +13,7 @@ import {
   buildToolActivityProcessSegments,
   type ToolActivityProcessSegment,
 } from "./ToolActivityHelpers";
-import { ToolActivityTimeline } from "./ToolActivity";
+import { ToolActivityRow, ToolActivityTimeline } from "./ToolActivity";
 import { ToolActivityPresenter } from "./plugins/ToolActivityPresenter";
 import { ConversationProcessPresentation } from "./plugins/ConversationProcessPresentation";
 import {
@@ -399,7 +399,11 @@ export function ProcessSurface({
     </span>
   );
 
-  const nativeFallback = (
+  const nativeFallback = toolItems.length === 1 && !hasReasoning && toolItems[0].name === "set_session_workspace" ? (
+    <div className={className}>
+      <ToolActivityRow items={toolItems} streaming={streaming} />
+    </div>
+  ) : (
     <div className={className}>
       <ProcessSurfaceFold
         summary={summaryLine}

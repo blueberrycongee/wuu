@@ -2,7 +2,7 @@ const { contextBridge } = require("electron");
 
 const cwd = process.env.WUU_RESIZE_E2E_CWD || process.cwd();
 const runtimeContext = { kind: "no_project", cwd };
-let generalSettings = { git_attribution_enabled: true, ptc: { enabled: false } };
+let generalSettings = { git_attribution_enabled: true, ptc: { enabled: true } };
 const now = new Date().toISOString();
 const terminalListeners = new Set();
 let terminalSessionCounter = 1;

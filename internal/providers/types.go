@@ -15,6 +15,9 @@ type ToolDefinition struct {
 	Name        string
 	Description string
 	InputSchema map[string]any
+	// DirectOnly keeps interaction and lifecycle controls outside nested programs.
+	// This is a host routing contract, never a provider wire-format field.
+	DirectOnly bool
 	// DeferLoading marks a provider-native loadable tool declaration. It is a
 	// wire-format hint, not an execution policy; runtimes still decide whether a
 	// tool is hidden, deferred, or directly callable.

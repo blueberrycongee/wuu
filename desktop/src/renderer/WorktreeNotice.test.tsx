@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 describe("WorktreeNotice", () => {
-  it("renders a foldable worktree creation record", () => {
+  it("renders foldable current worktree metadata", () => {
     mount(createElement(WorktreeNotice, { thread: worktreeForkThread() }));
 
     const details = document.querySelector(".fork-worktree-card");

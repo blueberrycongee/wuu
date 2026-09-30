@@ -247,6 +247,18 @@ func TestSummariesIncludeAstraOpenAIFallback(t *testing.T) {
 	}
 }
 
+func TestGPT61SolReasoningFallback(t *testing.T) {
+	for _, model := range []string{"gpt-6.1-sol", "gpt-6.1-sol-fast"} {
+		provider := config.ProviderConfig{Type: "openai", Model: model}
+		if got := strings.Join(variantIDs(Summaries(provider, model)), ","); got != "low,medium,high,xhigh,max" {
+			t.Fatalf("%s variants = %s", model, got)
+		}
+		if got := BaseOptionsForProvider("openai", provider, model)["reasoningEffort"]; got != "medium" {
+			t.Fatalf("%s default effort = %v", model, got)
+		}
+	}
+}
+
 func TestSummariesUseDeclaredGPT56OpenAIEfforts(t *testing.T) {
 	reasoning := true
 	provider := config.ProviderConfig{

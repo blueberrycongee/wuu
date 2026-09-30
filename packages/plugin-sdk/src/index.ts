@@ -749,6 +749,8 @@ export interface ToolDisplayMetadata {
 }
 
 export interface ToolRegistration {
+  /** Keep interaction/lifecycle controls directly visible; reject nested invocation. */
+  direct_only?: boolean;
   id: string;
   description: string;
   input_schema: JSONSchemaObject;

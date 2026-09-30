@@ -88,3 +88,9 @@ Singularity/Apptainer 检查将 `WUU_EXECUTION_E2E_SIF` 指向包含当前执行
 SSH 检查使用一次性测试服务器：将 JSON 格式的 SSH 配置赋给 `WUU_EXECUTION_E2E_SSH`，运行 `go test ./internal/executionworker -run TestSSHEnvironmentEndToEnd -count=1 -v`。测试会在专属环境目录内创建文件和进程。
 
 桌面验收运行 `npm --prefix desktop run test:e2e:execution-environments`。它使用真实渲染器和模拟设置桥接，将截图及 JSON 记录保存到 `desktop/out/e2e/execution-environments`，不验证云端账号。云端实测需要对应凭据及已发布到该服务的执行镜像。
+
+## Worker 兼容性
+
+宿主与 worker 必须使用执行协议版本 3。升级宿主时也需要更新 worker 可执行文件
+或重建镜像。旧 worker 在执行前就会被拒绝：程序要求仅通过工具调用的解释器
+隔离，不能回退到原生程序权限。此次升级不扩大任何现有权限。

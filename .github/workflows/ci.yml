@@ -219,6 +219,26 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+
+      - name: Verify programmatic tool settings
+        shell: bash
+        run: |
+          (cd desktop && ./node_modules/.bin/electron-vite build)
+          mkdir -p desktop/out/e2e/ptc
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/ptc-settings-e2e.cjs 2>&1 | tee desktop/out/e2e/ptc/run.log
+
+      - name: Upload programmatic tool settings evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ptc-settings-evidence
+          path: |
+            desktop/out/e2e/ptc/*.png
+            desktop/out/e2e/ptc/*.json
+            desktop/out/e2e/ptc/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
   clients-check:
     name: Clients check
     runs-on: ubuntu-latest

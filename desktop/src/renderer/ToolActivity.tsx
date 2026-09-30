@@ -4,7 +4,10 @@ import { LightweightStreamingText } from "./LightweightStreamingText";
 import {
   buildToolActivitySections,
   summarizeToolActivity,
+  parseJSONRecord,
+  stringValue,
 } from "./ToolActivityHelpers";
+import { ChevronDown } from "./WuuIcons";
 import { ToolActivityPresenter } from "./plugins/ToolActivityPresenter";
 import { ToolActivityMarker } from "./ToolActivityMarker";
 import { useI18n } from "./i18n";
@@ -98,14 +101,15 @@ const ToolActivityTimelineItem = memo(function ToolActivityTimelineItem({
   );
 });
 
-// A single tool activity row is one line of plain prose. We no longer render
+// Ordinary tool activity rows are one line of plain prose. We no longer render
 // a separate collapsible "details" block: in nearly every case
 // (list_files, read_file, grep, run_shell with a readable label) the
 // toggle summary and the detail command text were the same string, so
 // the previous toggle+details pair read as the same tool call shown
 // twice. Tool failures remain available in debug data, but are not promoted
 // into the conversation: users care about the agent's eventual outcome, not
-// whether every intermediate attempt completed.
+// whether every intermediate attempt completed. Workspace switches expose their
+// destination and failure inside a disclosure because they change later tool roots.
 export function ToolActivityRow({
   items,
   streaming = false,
@@ -121,9 +125,32 @@ export function ToolActivityRow({
   streaming?: boolean;
 }): JSX.Element {
   // Locale changes must reach rows inside the memoized activity timeline.
-  useI18n();
+  const { t } = useI18n();
   const summary = summarizeToolActivity(items);
   const sections = buildToolActivitySections(items);
+
+  // Workspace changes retain the destination of this invocation. Reading the
+  // thread's current worktree here would rewrite history after the next switch.
+  if (items.length === 1 && items[0].name === "set_session_workspace") {
+    const item = items[0];
+    const destination = stringValue(parseJSONRecord(item.result), "root")
+      ?? stringValue(parseJSONRecord(item.arguments), "root");
+    return (
+      <details className="workspace-tool-record activity-group" data-status={item.status}>
+        <summary className="activity-row activity-summary">
+          <ToolActivityMarker kind="command" running={summary.running} />
+          <span className="activity-copy">{t(summary.failed
+            ? "toolActivity.workspaceFailed"
+            : summary.running ? "toolActivity.workspaceSwitching" : "toolActivity.workspaceSwitched")}</span>
+          <ChevronDown className="workspace-tool-chevron icon-sm" aria-hidden="true" />
+        </summary>
+        <div className="workspace-tool-details">
+          {destination ? <code>{destination}</code> : null}
+          {item.error ? <p>{item.error}</p> : null}
+        </div>
+      </details>
+    );
+  }
 
   // Each section carries both an action verb (title) and a target (detail).
   // Concatenate them so the rendered row reads as "动词 目标" — without

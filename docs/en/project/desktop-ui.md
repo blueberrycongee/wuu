@@ -106,6 +106,13 @@ leaves the project's checkout alone and captures light/dark, default/large-font,
 wide/narrow, and non-Git states in `artifacts/composer-worktree/`. The window is
 visible, so the pointer's position can add a hover surface to a capture.
 
+The current worktree belongs in the environment information panel, with its
+repository, base commit and path. It does not insert a creation banner into the
+conversation. Agent workspace switches stay at their tool-call position in the
+process trail; expand a record to see that invocation's destination or failure.
+Later switches do not rewrite earlier records. The same E2E checks a switch back
+to the project and captures both the tool record and the current-worktree panel.
+
 ## Settings pages
 
 Settings groups pages by task: **Agents & models** (model providers, agents, runtime), **App** (general, appearance), **Extensions** (MCP servers and plugin pages), and **Data** (usage, archive). Page IDs are part of the plugin settings snapshot, so they stay stable when a label or group changes; the runtime page keeps the `advanced` ID.
