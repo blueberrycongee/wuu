@@ -4,7 +4,7 @@ const path = require("node:path");
 const { app, BrowserWindow, ipcMain } = require("electron");
 const desktopRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(desktopRoot, "..");
-const evidence = path.join(desktopRoot, "out/e2e/request-lifecycle");
+const evidence = process.env.WUU_REQUEST_LIFECYCLE_OUTPUT || path.join(desktopRoot, "out/e2e/request-lifecycle");
 process.env.WUU_STREAM_E2E_CWD = repoRoot;
 process.env.WUU_REQUEST_LIFECYCLE_E2E = "1";
 app.setPath("userData", fs.mkdtempSync(path.join(require("node:os").tmpdir(), "wuu-request-lifecycle-")));
@@ -27,6 +27,12 @@ function setVisualTheme(theme, font) {
     .then(() => Promise.all((document.querySelector(".user-message-edit")?.getAnimations() ?? [])
       .filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity)
       .map(animation => animation.finished.catch(() => {}))));
+}
+// Chromium activates a focused button on the character event, not on keyDown alone.
+function pressEnter(win) {
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Return" });
+  win.webContents.sendInputEvent({ type: "char", keyCode: "\r" });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
 }
 async function until(read, label) {
   const deadline = Date.now() + 10000;
@@ -213,6 +219,12 @@ async function verifyQuestionOffers() {
       preload: path.join(__dirname, "streaming-e2e-preload.cjs"),
     } });
     const evaluate = (fn, ...args) => win.webContents.executeJavaScript(`(${fn.toString()})(...${JSON.stringify(args)})`);
+    // A hidden window only paints on request; wait for React to commit and paint before each capture.
+    const paint = () => evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const capture = async (name) => {
+      await paint();
+      fs.writeFileSync(path.join(evidence, name), (await win.webContents.capturePage()).toPNG());
+    };
     await win.loadFile(path.join(desktopRoot, "out/renderer/index.html"));
     await until(() => evaluate(() => Boolean(document.querySelector(".composer textarea"))), "offer composer");
     await evaluate(() => {
@@ -253,15 +265,14 @@ async function verifyQuestionOffers() {
       for (const [theme, width, font] of [["light", 1100, 14], ["dark", 760, 20]]) {
         win.setSize(width, 820);
         await evaluate(setVisualTheme, theme, font);
-        fs.writeFileSync(path.join(evidence, `offer-multiple-${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG());
+        await capture(`offer-multiple-${theme}-${width}.png`);
         assert(await evaluate(() => {
           const card = document.querySelector(".user-question-card").getBoundingClientRect();
           return card.top >= 0 && card.bottom <= innerHeight && card.left >= 0 && card.right <= innerWidth;
         }), "multi-question card fits viewport");
       }
       await evaluate(() => document.querySelector(".user-question-submit").focus());
-      win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Return" });
-      win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
+      pressEnter(win);
     } else {
       await evaluate(action => document.querySelector(action === "answer" ? '.user-question-card [role="radio"]' : ".user-question-skip").click(), action);
     }
@@ -272,7 +283,7 @@ async function verifyQuestionOffers() {
       { id: "language", selected: ["Go"] }, { id: "tests", selected: [], custom: "Integration tests" },
     ]);
     assert(await evaluate(() => [...document.querySelectorAll(".user-question-card button")].every(button => button.disabled)), "pending offer disables repeat actions");
-    fs.writeFileSync(path.join(evidence, `offer-${action}-pending.png`), (await win.webContents.capturePage()).toPNG());
+    await capture(`offer-${action}-pending.png`);
     response.resolve({ request_id: "first", resolved: true });
     await until(() => evaluate(() => document.querySelector(".user-question-card")?.textContent.includes("Next independent offer")), "next offer");
     assert(await evaluate(() => !document.querySelector('.user-question-card [role="radio"]').disabled), "next offer must not inherit submitting state");
@@ -280,8 +291,7 @@ async function verifyQuestionOffers() {
     if (action === "multiple") assert(queued[0].text.includes("Integration tests") && queued[0].text.includes("Go"));
     gates.delete("user-question/respond");
     await evaluate(() => document.querySelector('.user-question-card [role="radio"]').focus());
-    win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Return" });
-    win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
+    pressEnter(win);
     const next = await until(() => gates.get("user-question/respond"), "keyboard answer next offer");
     assert.deepEqual(next.params, { requestId: "second", answer: { answers: [{ id: "next", selected: ["Proceed"] }] } });
     next.resolve({ request_id: "second", resolved: true });
@@ -311,7 +321,7 @@ async function verifyQuestionOffers() {
         const rect = document.activeElement.getBoundingClientRect();
         return rect.top >= 0 && rect.bottom <= innerHeight;
       }), "last input remains reachable");
-      fs.writeFileSync(path.join(evidence, "offer-eight-questions-focus.png"), (await win.webContents.capturePage()).toPNG());
+      await capture("offer-eight-questions-focus.png");
       gates.get("user-question/hold")?.resolve();
     }
     console.log(`PASS: ${action} offer, pending feedback, next offer keyboard answer, composer restored`);
