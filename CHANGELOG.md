@@ -25,6 +25,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   a toy-block fort built around the Applications folder.
 
 ### Fixed
+- Edit conversation titles from the desktop title bar with a double click, while
+  preserving keyboard rename and the surrounding window drag area.
+
 - Respect named `@@` context in file patches so edits cannot silently target
   matching code before that context; reject missing or ambiguous context before
   writing.
