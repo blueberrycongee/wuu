@@ -191,7 +191,7 @@ function serviceLabels(providers: readonly ProviderSummary[], t: Translate): Map
   }));
 }
 
-function ServiceMark({ identity }: { identity: ServiceIdentity }): JSX.Element {
+export function ServiceMark({ identity }: { identity: ServiceIdentity }): JSX.Element {
   if (identity.engineMark) {
     return (
       <span className="provider-mark" data-mark={identity.engineMark} aria-hidden="true">

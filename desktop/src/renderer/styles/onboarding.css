@@ -385,6 +385,24 @@
   font-size: var(--font-sm);
 }
 
+/* Service rows carry vendor marks at the size the Model services tiles use,
+ * so a lettered mark stays legible; the name keeps one column across rows. */
+.onboarding-body .catalog-row:has(.provider-mark) {
+  --onboarding-service-mark: round(up, calc(var(--font-ui) * 2.2), 2px);
+  grid-template-columns:
+    var(--onboarding-service-mark) minmax(0, 1fr) auto
+    calc(var(--icon-size) * (1 - var(--chevron-tip-inset)));
+}
+
+.onboarding-body .catalog-row-mark:has(> .provider-mark) {
+  width: var(--onboarding-service-mark);
+  height: var(--onboarding-service-mark);
+}
+
+.onboarding-body .catalog-row-mark > .provider-mark {
+  --provider-mark-size: var(--onboarding-service-mark);
+}
+
 .onboarding-note {
   margin: 0;
   color: var(--ink-tertiary);

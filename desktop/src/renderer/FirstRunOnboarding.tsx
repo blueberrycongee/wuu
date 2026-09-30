@@ -13,7 +13,7 @@ import { useI18n } from "./i18n";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { engineLabel } from "./EngineDisplay";
 import { EngineIcon } from "./EngineIcons";
-import { ServiceConnector, serviceIdentity, useCatalogProviders } from "./ModelServicesPage";
+import { ServiceConnector, ServiceMark, serviceIdentity, useCatalogProviders } from "./ModelServicesPage";
 import { ONBOARDING_ENGINES, ONBOARDING_PLUGIN_ORDER, PLUGIN_DESCRIPTION_KEYS, RECOMMENDED_PLUGIN_IDS } from "./onboardingCatalog";
 import { OnboardingMascotStage } from "./OnboardingMascotStage";
 import { PREVIEW_PLUGINS } from "./onboardingPreview";
@@ -471,11 +471,7 @@ export function FirstRunOnboarding({
                   const identity = serviceIdentity(provider, t);
                   return (
                     <div key={provider.name} className="catalog-row onboarding-connection">
-                      <span className="catalog-row-mark" aria-hidden="true">
-                        {identity.engineMark
-                          ? <EngineIcon engine={identity.engineMark} />
-                          : <ProviderMark id={identity.markID} label={identity.label} />}
-                      </span>
+                      <span className="catalog-row-mark" aria-hidden="true"><ServiceMark identity={identity} /></span>
                       <span className="catalog-row-title">{identity.label}</span>
                       <span className="catalog-row-meta">{provider.model}</span>
                     </div>
