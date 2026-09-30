@@ -162,7 +162,6 @@
   --diff-delete-bg: #2c1a18;
   --review-overlay-bg: rgba(18, 20, 22, 0.92);
   --codex-runtime-trigger-icon: var(--wuu-color-text-muted, #8f959a);
-  --codex-menu-label-text: var(--wuu-color-text-muted, #757b80);
 
   /* composer.css / composer-context-meter.css / chat.css */
   --composer-frame-shadow: var(--shadow-composer);

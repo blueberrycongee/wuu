@@ -58,7 +58,6 @@
   --hljs-meta: var(--wuu-syntax-meta, #5f6870);
   --review-overlay-bg: rgba(251, 251, 250, 0.92);
   --codex-runtime-trigger-icon: var(--wuu-color-text-muted, #707579);
-  --codex-menu-label-text: var(--wuu-color-text-muted, #9a9ea2);
 }
 
 .workspace-right-panel {
