@@ -2906,11 +2906,11 @@ html[data-focus-modality="keyboard"] .workspace-diff-tree-row:focus-visible {
 
 /* The one control in the panel that is dragged, so it is the one with weight:
  * a capsule that fills with ink as the level rises, a dot for every level the
- * model offers, and a knob inset in the capsule that snaps to them. */
+ * model offers, and a knob that reaches the capsule endpoints. */
 .codex-effort-slider {
   --effort-knob: 20px;
   --effort-track: 24px;
-  --effort-edge: 2px;
+  --effort-edge: 0px;
   --effort-at: calc(var(--effort-edge) + var(--effort-knob) / 2 + (100% - var(--effort-knob) - var(--effort-edge) * 2) * var(--effort-ratio, 0));
   position: relative;
   height: 28px;
@@ -3130,6 +3130,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
 }
 
 .runtime-panel-summary {
+  --runtime-content-inset: var(--space-1);
   display: flex;
   height: 100%;
   min-height: 0;
@@ -3167,7 +3168,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   flex: 0 1 auto;
   align-items: center;
   gap: 4px;
-  padding: 0 4px;
+  padding: 0 var(--runtime-content-inset);
   border-radius: var(--radius-xs);
   color: var(--ink-tertiary);
   font-size: var(--font-xs);
@@ -3209,7 +3210,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   height: var(--runtime-row);
   flex: 0 0 auto;
   gap: 8px;
-  padding: 0 4px;
+  padding: 0 var(--runtime-content-inset);
   border-radius: var(--radius-xs);
   font-size: var(--font-menu);
   font-weight: var(--weight-medium);
@@ -3223,11 +3224,21 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   color: var(--ink-tertiary);
 }
 
-/* The model row shows the live effort value above the slider. */
+/* Lead with the same content guide as text and icons. The thumb's outer
+ * edges reach this guide and the trailing button edge, without a second inset. */
 .runtime-panel-effort {
   height: var(--runtime-effort-block);
   flex: 0 0 auto;
-  padding: 0 4px;
+  padding-inline: var(--runtime-content-inset) 0;
+}
+
+/* Focus stays within the painted control edge so keyboard use does not move
+ * either visual guide. The slider keeps its full input hit area. */
+html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
+  button:focus-visible,
+  .codex-effort-slider:has(input:focus-visible) .codex-effort-knob
+) {
+  outline-offset: -2px;
 }
 
 .codex-runtime-menu .runtime-panel-effort-value {

@@ -54,7 +54,7 @@ async function key(win, keyCode) {
   win.webContents.sendInputEvent({ type: 'keyUp', keyCode });
   await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
-async function capturePanel(win, name) {
+async function capturePanel(win, name, fastSupported = true) {
   await evaluate(win, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
   await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const state = await evaluate(win, () => {
@@ -65,30 +65,57 @@ async function capturePanel(win, name) {
     const reset = panel.querySelector('.runtime-panel-speed-reset');
     const model = panel.querySelector('.runtime-panel-model');
     const slider = panel.querySelector('.runtime-panel-effort');
+    const track = panel.querySelector('.codex-effort-track');
+    const knob = panel.querySelector('.codex-effort-knob');
+    const range = panel.querySelector('.codex-effort-slider input');
+    const leadingIcon = source.querySelector('.engine-icon');
+    const modelName = panel.querySelector('.runtime-panel-model-name');
+    const font = getComputedStyle(modelName);
+    const canvas = document.createElement('canvas').getContext('2d');
+    canvas.font = `${font.fontWeight} ${font.fontSize} ${font.fontFamily}`;
+    const text = document.createRange();
+    text.selectNodeContents(modelName);
+    const modelInkLeft = text.getBoundingClientRect().left - canvas.measureText(modelName.textContent).actualBoundingBoxLeft;
+    const iconBox = leadingIcon.getBBox();
+    const iconRect = leadingIcon.getBoundingClientRect();
+    const leadingInkLeft = iconRect.left + iconBox.x * iconRect.width / leadingIcon.viewBox.baseVal.width;
     const rect = node => { const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, left: r.left, right: r.right, top: r.top, bottom: r.bottom }; };
     const p = rect(panel);
     return {
-      panel: p, context: rect(context), source: rect(source), fast: rect(fast), reset: rect(reset), model: rect(model), slider: slider ? rect(slider) : null,
-      pressed: fast.getAttribute('aria-pressed'), resetDisabled: reset.disabled,
+      panel: p, context: rect(context), source: rect(source), fast: fast ? rect(fast) : null, reset: reset ? rect(reset) : null, model: rect(model), slider: slider ? rect(slider) : null,
+      track: rect(track), knob: rect(knob), endpoint: range.value === range.min ? 'min' : range.value === range.max ? 'max' : 'middle',
+      modelInkLeft, leadingInkLeft, modelOutlineOffset: getComputedStyle(model).outlineOffset, knobOutlineOffset: getComputedStyle(knob).outlineOffset,
+      pressed: fast?.getAttribute('aria-pressed') ?? null, resetDisabled: reset?.disabled ?? null,
       bottomInset: parseFloat(getComputedStyle(panel.querySelector('.runtime-panel-summary')).paddingBottom) + parseFloat(getComputedStyle(panel).borderBottomWidth),
-      fastColor: getComputedStyle(fast).color, fastBackground: getComputedStyle(fast).backgroundColor,
+      fastColor: fast ? getComputedStyle(fast).color : null, fastBackground: fast ? getComputedStyle(fast).backgroundColor : null,
       font: getComputedStyle(panel).getPropertyValue('--font-ui').trim(), theme: document.documentElement.dataset.theme,
       viewport: { width: innerWidth, height: innerHeight },
-      nestedButton: Boolean(fast.parentElement.closest('button')),
+      nestedButton: Boolean(fast?.parentElement.closest('button')),
       focusedFast: document.activeElement === fast, focusModality: document.documentElement.dataset.focusModality,
-      focusOutline: getComputedStyle(fast).outlineStyle,
+      focusOutline: fast ? getComputedStyle(fast).outlineStyle : null,
       crop: { x: Math.max(0, Math.floor(p.x - 8)), y: Math.max(0, Math.floor(p.y - 8)), width: Math.min(innerWidth - Math.max(0, Math.floor(p.x - 8)), Math.ceil(p.width + 16)), height: Math.min(innerHeight - Math.max(0, Math.floor(p.y - 8)), Math.ceil(p.height + 16)) },
     };
   });
   state.zoomFactor = win.webContents.getZoomFactor();
   layoutEvidence.push({ name, ...state });
   fs.writeFileSync(path.join(output, 'layout-evidence.json'), JSON.stringify(layoutEvidence, null, 2));
+  assert.equal(Boolean(state.fast), fastSupported, 'Only supported models show speed controls.');
+  assert.equal(Boolean(state.reset), fastSupported, 'Reset belongs to the available speed control.');
   assert(!state.nestedButton, 'Speed must be independent of the model navigation button.');
-  // Browser geometry can differ by a fractional CSS pixel at non-integer zoom.
-  assert(state.fast.width >= 27.5 && state.fast.height >= 27.5, `The compact speed toggle retains a usable hit target: ${JSON.stringify(state.fast)}`);
-  assert(state.fast.top >= state.context.top - 1 && state.fast.bottom <= state.context.bottom + 1, 'Fast mode shares the existing context header.');
-  assert(state.source.right <= state.fast.left + 0.5 && state.fast.right <= state.reset.left + 0.5, 'Header labels, speed and reset must not overlap.');
-  assert(state.fast.bottom <= state.model.top + 1, 'Speed controls must not cover the model row.');
+  if (state.fast) {
+    // Browser geometry can differ by a fractional CSS pixel at non-integer zoom.
+    assert(state.fast.width >= 27.5 && state.fast.height >= 27.5, `The compact speed toggle retains a usable hit target: ${JSON.stringify(state.fast)}`);
+    assert(state.fast.top >= state.context.top - 1 && state.fast.bottom <= state.context.bottom + 1, 'Fast mode shares the existing context header.');
+    assert(state.source.right <= state.fast.left + 0.5 && state.fast.right <= state.reset.left + 0.5, 'Header labels, speed and reset must not overlap.');
+    assert(state.fast.bottom <= state.model.top + 1, 'Speed controls must not cover the model row.');
+    assert(Math.abs(state.reset.right - state.model.right) <= 0.5, 'Header controls and the model button share their trailing painted edge.');
+  }
+  assert(Math.abs(state.modelInkLeft - state.track.left) <= 2 && Math.abs(state.leadingInkLeft - state.track.left) <= 2,
+    'Leading glyphs, model text and the slider share a guide, allowing natural glyph bearings.');
+  if (state.endpoint === 'min') assert(Math.abs(state.knob.left - state.track.left) <= 0.5, 'The thumb outer edge reaches the leading guide.');
+  if (state.endpoint === 'max') assert(Math.abs(state.knob.right - state.model.right) <= 0.5, 'The thumb outer edge reaches the same trailing guide as the model button.');
+  assert(Number.parseFloat(state.modelOutlineOffset) <= 0 && Number.parseFloat(state.knobOutlineOffset) <= 0,
+    'Focus rings must not move the visible edges outside the alignment guides.');
   assert(state.panel.left >= 0 && state.panel.right <= state.viewport.width && state.panel.top >= 0 && state.panel.bottom <= state.viewport.height, 'The popover stays inside the window.');
   const last = state.slider || state.model;
   assert(last.bottom <= state.panel.bottom + 0.5 && Math.abs(state.panel.bottom - last.bottom - state.bottomInset) <= 1,
@@ -112,7 +139,7 @@ async function run() {
   process.env.WUU_TEST_CODEX_DEFAULT_TIER = 'fast';
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
     default_provider: 'fixture', engines,
-    providers: { fixture: { type: 'openai-compatible', base_url: `http://127.0.0.1:${server.address().port}/v1`, api_key: 'fixture-only', model: 'fixture', models: { fixture: { name: 'Fixture model with a deliberately long display name', fast_mode: true, variants: { low: { reasoningEffort: 'low' }, high: { reasoningEffort: 'high' } } } } } },
+    providers: { fixture: { type: 'openai-compatible', base_url: `http://127.0.0.1:${server.address().port}/v1`, api_key: 'fixture-only', model: 'fixture', models: { fixture: { name: 'Fixture model with a deliberately long display name', fast_mode: true, variants: { low: { reasoningEffort: 'low' }, high: { reasoningEffort: 'high' } } }, 'fixture-basic': { name: 'Basic fixture model', fast_mode: false, variants: { low: { reasoningEffort: 'low' }, high: { reasoningEffort: 'high' } } } } } },
   }));
   fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [{ id: 'fixture', name: 'Fast mode fixture', path: project, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }], active_context: { kind: 'project', project_id: 'fixture', cwd: project } }));
   fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en', theme: 'light' }));
@@ -159,9 +186,13 @@ async function run() {
     assert.equal(request.body.reasoning_effort, 'high');
   }
   await turn('fast-mode-fast', 'priority');
-  async function openPanel() {
-    if (!await evaluate(main, () => Boolean(document.querySelector('button[aria-label="Fast mode"]')))) await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
-    await waitFor(main, () => document.querySelector('button[aria-label="Fast mode"]:not(:disabled)'));
+  async function openPanel(fastSupported = true) {
+    if (!await evaluate(main, () => Boolean(document.querySelector('.runtime-panel')))) await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
+    await waitFor(main, () => document.querySelector('.runtime-panel.is-summary .runtime-panel-model'));
+    if (fastSupported) await waitFor(main, () => document.querySelector('button[aria-label="Fast mode"]:not(:disabled)'));
+    // Opening schedules model autofocus; finish that frame before choosing a
+    // slider endpoint or the initial focus can overwrite the test's input.
+    await evaluate(main, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   }
   await openPanel();
   await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').focus());
@@ -195,6 +226,41 @@ async function run() {
     document.documentElement.setAttribute('data-theme', 'light');
     document.documentElement.style.removeProperty('--conversation-message-font-size');
     document.documentElement.style.removeProperty('--appearance-scale');
+  });
+  // Exercise the live slider at both endpoints, with and without speed support.
+  for (const fastSupported of [true, false]) {
+    if (!fastSupported) {
+      await openPanel();
+      await evaluate(main, () => document.querySelector('.runtime-panel-model').click());
+      await waitFor(main, () => [...document.querySelectorAll('.codex-model-item')].some(item => item.textContent.includes('Basic fixture model')));
+      await evaluate(main, () => [...document.querySelectorAll('.codex-model-item')].find(item => item.textContent.includes('Basic fixture model')).click());
+      await waitFor(main, () => document.querySelector('.runtime-panel-model-name')?.textContent === 'Basic fixture model'
+        && !document.querySelector('.runtime-panel-fast'));
+    }
+    for (const theme of ['light', 'dark']) for (const font of [14, 20]) for (const width of [1280, 760]) {
+      await evaluate(main, () => { if (document.querySelector('.runtime-panel')) document.querySelector('.codex-runtime-trigger').click(); });
+      main.setContentSize(width, 820);
+      await evaluate(main, ({ theme, font }) => {
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.setProperty('--conversation-message-font-size', `${font}px`);
+      }, { theme, font });
+      await openPanel(fastSupported);
+      for (const endpoint of ['Home', 'End']) {
+        await evaluate(main, () => document.querySelector('.codex-effort-slider input').focus());
+        await key(main, endpoint);
+        await waitFor(main, endpoint => {
+          const input = document.querySelector('.codex-effort-slider input');
+          return input.value === (endpoint === 'Home' ? input.min : input.max);
+        }, endpoint);
+        await capturePanel(main, `aligned-${fastSupported ? 'fast' : 'basic'}-${theme}-${font}-${width}-${endpoint.toLowerCase()}`, fastSupported);
+      }
+    }
+  }
+  await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
+  main.setContentSize(1380, 860);
+  await evaluate(main, () => {
+    document.documentElement.dataset.theme = 'light';
+    document.documentElement.style.removeProperty('--conversation-message-font-size');
   });
   const native = await evaluate(main, async () => {
     const result = await window.wuu.startThread({ engine: 'codex', model: 'gpt-6-astra', effort: 'high' });

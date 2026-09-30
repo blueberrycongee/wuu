@@ -1306,7 +1306,7 @@ function EffortSelector({
   };
 
   // Stops sit at the two ends of the capsule and evenly between them; a pointer
-  // snaps to the nearest one. The knob travels inside the capsule's edge.
+  // snaps to the nearest one. The knob's outside edge reaches each endpoint.
   const previewPointer = (clientX: number): void => {
     const slider = sliderRef.current;
     const rect = slider?.getBoundingClientRect();

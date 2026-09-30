@@ -25,6 +25,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Fast mode and its reset action share the model popover header, keeping the
   model and reasoning controls compact with keyboard access and cost hints.
+  Leading icons, labels, and slider share a content guide; the thumb reaches
+  the trailing control edge at maximum effort.
 
 - Fork destination dialogs show only the two destinations; click outside or
   press Escape to dismiss and return to the original message.
