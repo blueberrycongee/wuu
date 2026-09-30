@@ -298,6 +298,75 @@ describe("AppServerClientPool admission", () => {
 
 describe("AppServerClientPool session routing", () => {
   afterEach(() => vi.unstubAllEnvs());
+  it.each([{ prewarm: false, complete: true }, { prewarm: true, complete: true }, { prewarm: false, complete: false }])("uses the new identity at the same path ($prewarm, $complete) without stopping old turns", async ({ prewarm, complete }) => {
+    vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
+    const oldContext = { kind: "project" as const, project_id: "removed", cwd: "/project" };
+    const context = { ...oldContext, project_id: "readded" };
+    const children = new Map<string, FakeAppServerChild>();
+    const methods = new Map<string, string[]>();
+    const disposed: string[] = [];
+    const pool = new AppServerClientPool(() => context, () => context.cwd, () => {}, (_cmd, args) => {
+      const identity = args[args.indexOf("--workspace-id") + 1];
+      const child = new FakeAppServerChild();
+      children.set(identity, child);
+      methods.set(identity, []);
+      child.stdin.on("data", data => {
+        const request = JSON.parse(String(data));
+        methods.get(identity)!.push(request.method);
+        if (request.method === "shutdown") queueMicrotask(() => child.emit("exit", 0, null));
+        else child.stdout.write(`${JSON.stringify({ id: request.id, result: { identity } })}\n`);
+      });
+      return child.asChildProcess();
+    });
+    pool.setClientTorndownHandler(cwd => disposed.push(cwd));
+    try {
+      await pool.requestInContext(oldContext, "thread/start");
+      children.get("removed")!.stdout.write(`${JSON.stringify({ method: "turn/started", params: { thread_id: "old-turn" } })}\n`);
+      if (prewarm) pool.prewarmContexts([context]);
+      expect(await pool.request("thread/start")).toEqual({ identity: "readded" });
+      expect(methods.get("removed")).not.toContain("shutdown");
+      expect(pool.runningThreadsSnapshot()).toEqual([{ workdir: context.cwd, thread_id: "old-turn" }]);
+      expect(await pool.request("turn/steer", { thread_id: "old-turn" })).toEqual({ identity: "removed" });
+      expect(await pool.requestForWorkdir(context.cwd, "activity/list", { thread_id: "old-turn" })).toEqual({ identity: "removed" });
+      if (complete) {
+        children.get("removed")!.stdout.write(`${JSON.stringify({ method: "turn/completed", params: { thread_id: "old-turn" } })}\n`);
+        expect(methods.get("removed")).toContain("shutdown");
+      }
+      expect(disposed).toEqual([]);
+      expect(await pool.request("thread/list")).toEqual({ identity: "readded" });
+    } finally {
+      await pool.shutdown();
+    }
+    expect(methods.get("removed")).toContain("shutdown");
+    expect(methods.get("readded")).toContain("shutdown");
+    expect(disposed).toEqual([context.cwd]);
+  });
+
+  it("resumes a relocated project's session in its current project host", async () => {
+    vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
+    const oldContext = { kind: "project" as const, project_id: "project", cwd: "/old" };
+    const context = { ...oldContext, cwd: "/new" };
+    const children = new Map<string, FakeAppServerChild>();
+    const pool = new AppServerClientPool(() => context, () => context.cwd, () => {}, (_cmd, _args, options) => {
+      const child = new FakeAppServerChild();
+      children.set(options.cwd, child);
+      child.stdin.on("data", data => {
+        const request = JSON.parse(String(data));
+        if (request.method === "shutdown") queueMicrotask(() => child.emit("exit", 0, null));
+        else child.stdout.write(`${JSON.stringify({ id: request.id, result: { cwd: options.cwd } })}\n`);
+      });
+      return child.asChildProcess();
+    });
+    try {
+      pool.prewarmContexts([oldContext]);
+      children.get(oldContext.cwd)!.stdout.write(`${JSON.stringify({ method: "turn/started", params: { thread_id: "session" } })}\n`);
+      children.get(oldContext.cwd)!.stdout.write(`${JSON.stringify({ method: "turn/completed", params: { thread_id: "session" } })}\n`);
+      expect(await pool.request("thread/resume", { session_id: "session" })).toEqual({ cwd: context.cwd });
+    } finally {
+      await pool.shutdown();
+    }
+  });
+
   it("negotiates initialize capabilities for prewarmed and restarted project processes", async () => {
     vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
     const children: FakeAppServerChild[] = [];

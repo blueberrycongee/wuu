@@ -18,6 +18,12 @@ const CurrentVersion = 1
 
 var ErrNotFound = errors.New("authstorage: not found")
 
+// SourceSaved marks an API key or auth token the user saved for one provider
+// through settings, as opposed to a credential written by an OAuth or
+// bootstrap flow. Only a saved credential can outrank a provider type's
+// implicit default environment variable.
+const SourceSaved = "saved"
+
 type Credentials struct {
 	Type         string    `json:"type,omitempty"`
 	APIKey       string    `json:"api_key,omitempty"`

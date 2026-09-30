@@ -66,6 +66,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export class AppServerClientPool {
   private closing = false;
   private clients = new Map<string, AppServerClient>();
+  private retiredClients = new Set<AppServerClient>();
   private sessionOwners = new Map<string, AppServerClient>();
   private nextServerRequestRouteID = 1;
   private serverRequestRoutes = new Map<string, ServerRequestRoute>();
@@ -124,7 +125,7 @@ export class AppServerClientPool {
       const workdir = resolve(context.cwd);
       const existing = this.clients.get(workdir);
       if (existing) {
-        existing.start();
+        this.clientForContext(context).start();
         continue;
       }
       if (this.clients.size >= MAX_APP_SERVER_CLIENTS) {
@@ -147,7 +148,7 @@ export class AppServerClientPool {
 
   runningThreadsSnapshot(): RunningThreadSnapshot[] {
     const snapshot: RunningThreadSnapshot[] = [];
-    for (const client of this.clients.values()) {
+    for (const client of this.allClients()) {
       for (const threadID of client.runningThreadIDsList()) {
         snapshot.push({ workdir: client.workdir, thread_id: threadID });
       }
@@ -187,12 +188,19 @@ export class AppServerClientPool {
     params?: unknown,
     onResponse?: (response: AppServerResponse, workdir: string) => void,
   ): Promise<T> {
-    const client = this.sessionOwners.get(sessionID) ?? this.clientForContext(context);
+    const owner = this.sessionOwners.get(sessionID);
+    // A relocated project must resume through its new root. Cross-project
+    // execution owners still retain control of their own sessions.
+    const relocated = owner && context.kind === "project" &&
+      owner.workspaceId === context.project_id && owner.workdir !== resolve(context.cwd);
+    const client = (relocated ? undefined : owner) ?? this.clientForContext(context);
     return client.request<T>(method, params, (response) => onResponse?.(response, client.workdir));
   }
 
   requestForWorkdir<T>(workdir: string, method: string, params?: unknown): Promise<T> {
-    const client = this.clients.get(resolve(workdir));
+    const threadID = isRecord(params) ? params.thread_id : undefined;
+    const client = (typeof threadID === "string" ? this.sessionOwners.get(threadID) : undefined)
+      ?? this.clients.get(resolve(workdir));
     if (!client) {
       return Promise.reject(new Error("activity workspace is no longer connected"));
     }
@@ -201,7 +209,7 @@ export class AppServerClientPool {
 
   runningThreadCwds(): string[] {
     const cwds = new Set<string>();
-    for (const client of this.clients.values()) {
+    for (const client of this.allClients()) {
       for (const cwd of client.runningThreadCwds()) {
         cwds.add(cwd);
       }
@@ -210,7 +218,9 @@ export class AppServerClientPool {
   }
 
   threadCwdsForWorkdir(workdir: string): string[] {
-    return this.clients.get(resolve(workdir))?.knownThreadCwds() ?? [];
+    return [...new Set(this.allClients()
+      .filter(client => client.workdir === resolve(workdir))
+      .flatMap(client => client.knownThreadCwds()))];
   }
 
   respondToServerRequest(id: string, result: unknown): void {
@@ -244,7 +254,7 @@ export class AppServerClientPool {
   }
 
   private runningThreadsKey(): string {
-    return [...this.clients.values()]
+    return this.allClients()
       .flatMap((client) =>
         client
           .runningThreadIDsList()
@@ -257,11 +267,14 @@ export class AppServerClientPool {
   async shutdown(): Promise<void> {
     this.closing = true;
     const stopping: Promise<void>[] = [];
-    for (const client of this.clients.values()) {
+    const workdirs = new Set<string>();
+    for (const client of this.allClients()) {
       stopping.push(client.dispose());
-      this.clientTorndownHandler?.(client.workdir);
+      workdirs.add(client.workdir);
     }
+    for (const workdir of workdirs) this.clientTorndownHandler?.(workdir);
     this.clients.clear();
+    this.retiredClients.clear();
     this.sessionOwners.clear();
     this.serverRequestRoutes.clear();
     const results = await Promise.allSettled(stopping);
@@ -277,10 +290,13 @@ export class AppServerClientPool {
    * recreate runtime state mid-cleanup.
    */
   disposeWorkdirClient(workdir: string): void {
-    const client = this.clients.get(resolve(workdir));
-    if (client) {
-      this.disposeClient(client);
+    for (const client of this.allClients()) {
+      if (client.workdir === resolve(workdir)) this.disposeClient(client);
     }
+  }
+
+  private allClients(): AppServerClient[] {
+    return [...this.clients.values(), ...this.retiredClients];
   }
 
   private clientForContext(context: RuntimeContext): AppServerClient {
@@ -290,6 +306,13 @@ export class AppServerClientPool {
     // workspace stays path-keyed (its scratch dir never moves).
     const workspaceId = context.kind === "project" ? context.project_id : "";
     let client = this.clients.get(workdir);
+    if (client && client.workspaceId !== workspaceId) {
+      // Re-registering a path creates a new identity. Let old turns finish,
+      // but never admit new project requests into their former runtime.
+      this.clients.delete(workdir);
+      this.retiredClients.add(client);
+      client = undefined;
+    }
     if (!client) {
       client = new AppServerClient(
         workdir,
@@ -358,11 +381,16 @@ export class AppServerClientPool {
   }
 
   private evictIdleClients(admittingClient?: AppServerClient): void {
+    for (const client of this.retiredClients) {
+      if (!client.isBusy() && !this.isWorkdirPinned?.(client.workdir)) {
+        this.disposeClient(client);
+      }
+    }
     if (this.clients.size <= MAX_APP_SERVER_CLIENTS) {
       return;
     }
     const activeWorkdir = this.getActiveWorkdir();
-    const idleClients = [...this.clients.values()]
+    const idleClients = this.allClients()
       .filter(
         (client) =>
           client !== admittingClient &&
@@ -380,13 +408,17 @@ export class AppServerClientPool {
   }
 
   private disposeClient(client: AppServerClient): void {
-    this.clients.delete(client.workdir);
+    const isCurrent = this.clients.get(client.workdir) === client;
+    if (isCurrent) this.clients.delete(client.workdir);
+    this.retiredClients.delete(client);
     this.forgetSessionOwner(client);
     this.dropServerRequestRoutesForClient(client);
     client.dispose();
     // After the routes are dropped so any view-recycle broadcast the handler
     // fires can't collide with an in-flight reply for this client.
-    this.clientTorndownHandler?.(client.workdir);
+    if (!this.allClients().some(other => other.workdir === client.workdir)) {
+      this.clientTorndownHandler?.(client.workdir);
+    }
   }
 
   private dropServerRequestRoutesForClient(client: AppServerClient): void {
