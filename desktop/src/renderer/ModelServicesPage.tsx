@@ -363,25 +363,26 @@ export function ServiceConnector({
 
   return (
     <>
+      {catalog.providers === undefined && !catalog.failed ? (
+        <p className="settings-section-note" role="status">{t("settings.loading")}</p>
+      ) : null}
       <div className="model-service-tiles" data-testid="settings-provider-tiles">
-        {catalog.providers === undefined && !catalog.failed
-          ? Array.from({ length: 6 }, (_, index) => <span key={index} className="model-service-tile is-placeholder" aria-hidden="true" />)
-          : tiles.map((provider) => {
-            const name = catalogServiceName(provider.id, provider.name, t);
-            return (
-              <button
-                key={provider.id}
-                type="button"
-                className="model-service-tile"
-                data-catalog={provider.id}
-                disabled={running}
-                onClick={() => startConnect({ kind: "catalog", provider })}
-              >
-                <ProviderMark id={provider.id} label={name} />
-                <span className="model-service-tile-name">{name}</span>
-              </button>
-            );
-          })}
+        {tiles.map((provider) => {
+          const name = catalogServiceName(provider.id, provider.name, t);
+          return (
+            <button
+              key={provider.id}
+              type="button"
+              className="model-service-tile"
+              data-catalog={provider.id}
+              disabled={running}
+              onClick={() => startConnect({ kind: "catalog", provider })}
+            >
+              <ProviderMark id={provider.id} label={name} />
+              <span className="model-service-tile-name">{name}</span>
+            </button>
+          );
+        })}
         {isTouchWebShell() ? null : subscriptions.map((type) => (
           <button
             key={type}

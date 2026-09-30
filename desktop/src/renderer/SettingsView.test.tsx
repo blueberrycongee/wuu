@@ -405,6 +405,22 @@ function click(element: Element | null | undefined): void {
 }
 
 describe("SettingsView model services", () => {
+  it("keeps connection actions available while the catalog loads and reports failure", async () => {
+    const api = installServicesStub();
+    let rejectCatalog!: (reason: Error) => void;
+    api.listCatalogProviders = vi.fn(() => new Promise<Awaited<ReturnType<WuuDesktopApi["listCatalogProviders"]>>>((_resolve, reject) => { rejectCatalog = reject; }));
+    renderSettings({ initialized: servicesInitialized(), initialPage: "providers" });
+    await flush();
+
+    expect(container.querySelector('[role="status"]')).not.toBeNull();
+    click(container.querySelector('[data-testid="settings-provider-custom"]'));
+    expect(document.querySelector('[data-testid="settings-provider-connect-base-url"]')).not.toBeNull();
+
+    await act(async () => { rejectCatalog(new Error("catalog unavailable")); });
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(container.querySelector('[data-testid="settings-provider-custom"]')).not.toBeNull();
+  });
+
   it("leads with the default model and names connected services by vendor", async () => {
     installServicesStub();
     renderSettings({ initialized: servicesInitialized(), initialPage: "providers", locale: "en-US" });
