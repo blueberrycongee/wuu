@@ -31,52 +31,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Editing a message after context compaction now retracts the selected message
   and following messages, preserving the correct conversation on resume and fork.
-- After signing in to xAI SuperGrok again, conversations and clients that were already
-  running use the new session instead of the token they had cached; signing out stops
-  them from sending the old one.
-
-- A key or token saved for a provider in settings now stays the credential used for
-  that service, instead of being replaced by the provider type's default environment
-  variable (such as `OPENAI_API_KEY`) after the configuration is read back. An
-  explicit `api_key_env` still takes priority.
-
-- Bound MCP call cleanup: a cancelled call no longer waits on the server's answer
-  to `notifications/cancelled`, and a stdio send stops when its call ends instead of
-  blocking on a full pipe, closing the connection because a frame may be half written.
-
-- Keep a trusted project `.mcp.json` server's definition when its settings switch
-  is turned off and on: startup preferences no longer replace the project entry.
-
-- Keep queued input the Core rejected or lost: a message refused at admission
-  (for example by a `UserPromptSubmit` hook) is held with the reason, and queued
-  messages survive a Core restart as paused input instead of being removed.
-
-- Keep ordinary project conversations rooted in the selected folder after project
-  relocation, while preserving custom directories and linked worktrees.
-
-- Keep attachments in their original conversation draft when file preparation
-  finishes after switching conversations or closing a split pane. Pending files
-  remain removable, and sends wait for their bytes before submitting.
-
-- Preserve the selected skill and its instruction path when invoked from the catalog
-  or composer, including skills whose names collide with built-in slash commands.
-
-- Worktree conversations now load project instructions and skills from their actual
-  checkout, including restored conversations and their workers.
-
-- Honor PreCompact and PostCompact hooks when resetting context windows, and
-  preserve the active history when a hook rejects overflow recovery.
-
-- Recover Responses WebSocket follow-ups when the provider loses the cached
-  previous response, resending full conversation history within existing retry
-  limits and tool replay safeguards.
-
-- Stop reasoning and partial-answer streaming indicators when a turn ends,
-  retaining received text and discarding unfinished tool drafts.
-
-- Keep desktop text diffs readable when file contents mention Git binary markers.
-- Show Git patches for oversized text previews and submodule changes instead of
-  comparing incomplete or unavailable file contents.
+- xAI OAuth now reads credentials from the auth store on each request, so existing
+  clients and conversations pick up a new sign-in and stop using the session after
+  sign-out.
 
 - Harden MCP transport compatibility, request timeouts, OAuth refresh recovery,
   local server cleanup, bounded reads, catalog refreshes, and oversized results.
