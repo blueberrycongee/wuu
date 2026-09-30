@@ -308,6 +308,69 @@ async function run() {
     document.documentElement.style.removeProperty('--appearance-scale');
   });
 
+  // Dismissing the fork destination chooser is a non-mutating escape hatch.
+  // Exercise native pointer/keyboard input and keep cropped, synthetic UI evidence.
+  const threadIDsBeforeDismissal = await evaluate(main, async () => (await window.wuu.listThreads()).threads.map(item => item.id).sort());
+  const worktreesBeforeDismissal = worktreeCount();
+  const forkDismissals = [];
+  for (const theme of ['light', 'dark']) for (const fontSize of [14, 20]) for (const width of [1280, 760]) {
+    main.setContentSize(width, 820);
+    await evaluate(main, ({ theme, fontSize }) => {
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.style.setProperty('--conversation-message-font-size', `${fontSize}px`);
+    }, { theme, fontSize });
+    for (const dismissal of ['backdrop', 'Escape']) {
+      await evaluate(main, () => {
+        const opener = [...document.querySelectorAll('.cached-conversation-pane[data-active="true"] .agent-message-actions button:has(svg[data-icon="split"])')].at(-1);
+        if (!opener) throw new Error('missing fork opener');
+        opener.scrollIntoView({ block: 'center' });
+        opener.focus();
+        opener.click();
+      });
+      await waitFor(main, () => document.querySelector('.fork-dialog'));
+      await settle(main);
+      const state = await evaluate(main, () => {
+        const dialog = document.querySelector('.fork-dialog');
+        const rect = dialog.getBoundingClientRect();
+        const options = [...dialog.querySelectorAll('.fork-dialog-option')];
+        return {
+          buttonCount: dialog.querySelectorAll('button').length,
+          optionCount: options.length,
+          focusedFirst: document.activeElement === options[0],
+          fits: rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight
+            && [...dialog.querySelectorAll('.fork-dialog-option-title, .fork-dialog-option-description')]
+              .every(label => label.scrollWidth <= label.clientWidth + 1),
+          crop: { x: Math.floor(rect.x), y: Math.floor(rect.y), width: Math.ceil(rect.width), height: Math.ceil(rect.height) },
+          backdrop: { x: Math.max(1, Math.floor(rect.left / 2)), y: Math.round(rect.top + rect.height / 2) },
+        };
+      });
+      assert.equal(state.buttonCount, 2, 'The only fork actions are its two destinations.');
+      assert.equal(state.optionCount, 2);
+      assert(state.focusedFirst && state.fits, 'Fork options must be focused, readable, and inside the window.');
+      if (dismissal === 'backdrop') {
+        const screenshot = await main.webContents.capturePage(state.crop);
+        fs.writeFileSync(path.join(output, `fork-dialog-${theme}-${fontSize}-${width}.png`), screenshot.toPNG());
+        main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...state.backdrop });
+        main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...state.backdrop });
+      } else {
+        main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+        main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+      }
+      await waitFor(main, () => !document.querySelector('.fork-dialog'));
+      assert(await evaluate(main, () => document.activeElement?.matches('.agent-message-actions button:has(svg[data-icon="split"])')),
+        'Dismissing the chooser must return focus to its message action.');
+      forkDismissals.push({ theme, fontSize, width, dismissal, ...state });
+    }
+  }
+  assert.deepEqual(await evaluate(main, async () => (await window.wuu.listThreads()).threads.map(item => item.id).sort()), threadIDsBeforeDismissal,
+    'Dismissal must never fork a conversation.');
+  assert.equal(worktreeCount(), worktreesBeforeDismissal, 'Dismissal must never create a worktree.');
+  main.setSize(1280, 820);
+  await evaluate(main, () => {
+    document.documentElement.dataset.theme = 'light';
+    document.documentElement.style.removeProperty('--conversation-message-font-size');
+  });
+
   // A mid-conversation rebind stays at its actual tool position, even after
   // returning to the project (when the thread no longer has worktree metadata).
   await evaluate(main, () => {
@@ -423,6 +486,7 @@ async function run() {
     featureHead,
     thread: { id: thread.id, cwd: thread.cwd, worktree: thread.worktree },
     narrow,
+    forkDismissals,
     providerRequests: requests.length,
     workspaceRebind: { cwd: rebound.cwd, chronologyVerified: true },
     crossProject,

@@ -23,6 +23,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Fork destination dialogs show only the two destinations; click outside or
+  press Escape to dismiss and return to the original message.
+
 - Use programmatic tool calling by default for ordinary built-in-engine tools,
   while preserving explicit global/model-family opt-outs and direct interaction,
   delivery and lifecycle controls. CLI tools require Node.js 22.19 or later;

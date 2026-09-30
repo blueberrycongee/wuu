@@ -38,7 +38,7 @@ const FORK_OPTIONS: ForkOption[] = [
 // `onChoose` resolves when the caller has finished starting the fork;
 // the dialog stays open until then so the active spinner / disabled
 // state on the chosen option is the visible feedback. Cancelling is
-// always available via Cancel, Esc, or a backdrop click while not busy.
+// available via Escape or a backdrop click while not busy.
 export function ConversationForkDialog({
   onCancel,
   onChoose,
@@ -49,10 +49,8 @@ export function ConversationForkDialog({
   worktreeDisabledReason?: string;
 }): JSX.Element {
   const { t } = useI18n();
-  // Tracks which option is mid-flight so only that button shows a spinner
-  // and becomes non-interactive. We keep both options clickable even
-  // while one is submitting — when the IPC returns, the caller closes
-  // the dialog, which remounts this component.
+  // Show progress on the selected destination and lock both options and
+  // dismissal until the request settles, preventing duplicate forks.
   const [busyMode, setBusyMode] = useState<ForkMode | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
   const disabled = busyMode !== null;
@@ -101,11 +99,6 @@ export function ConversationForkDialog({
       closeDisabled={disabled}
       showCloseButton={false}
       panelClassName="fork-dialog"
-      footer={
-        <button className="settings-button settings-button-ghost" type="button" disabled={disabled} onClick={onCancel}>
-          {t("common.cancel")}
-        </button>
-      }
     >
       <div className="fork-dialog-options" onKeyDown={moveFocus}>
         {FORK_OPTIONS.map(({ mode, icon: Icon, titleKey, descriptionKey }) => {
