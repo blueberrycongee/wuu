@@ -122,13 +122,13 @@ type Config struct {
 	// Engines configures external agent engines (codex, claude) in the
 	// desktop settings. Nil means auto-detection from the CLI binaries.
 	Engines *EnginesConfig `json:"engines,omitempty"`
-	// PTC is optional programmatic tool calling through a fresh Node process.
+	// PTC controls programmatic tool calling through an isolated interpreter.
 	PTC PTCConfig `json:"ptc,omitempty"`
 	// Accept retired settings without activating a runtime with broader authority. Remove after saved configurations have dropped code_mode.
 	LegacyCodeMode json.RawMessage `json:"code_mode,omitempty"`
 }
 
-// PTCConfig controls the optional Node runtime. A family override takes
+// PTCConfig controls the isolated tool runtime. A family override takes
 // precedence over Enabled; omitted families inherit the global switch.
 type PTCConfig struct {
 	Enabled        bool            `json:"enabled"`
@@ -546,7 +546,7 @@ func readConfig(path string) (Config, error) {
 // the settings-layer merger (settings_layer.go) so both honor identical schema
 // strictness.
 func decodeConfig(data []byte, sourcePath string) (Config, error) {
-	var cfg Config
+	cfg := Config{PTC: PTCConfig{Enabled: true}}
 	sanitized := stripLegacyPermissionKeys(data)
 	dec := json.NewDecoder(bytes.NewReader(sanitized))
 	dec.DisallowUnknownFields()
@@ -926,6 +926,7 @@ func Default() Config {
 	nativeCompaction := true
 	grokBuild := ApplyGrokBuildProviderDefaults(ProviderConfig{Type: "grok-build"})
 	return Config{
+		PTC:             PTCConfig{Enabled: true},
 		DefaultProvider: "openai",
 		Providers: map[string]ProviderConfig{
 			"openai": {

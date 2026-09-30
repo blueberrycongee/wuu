@@ -1,9 +1,11 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,12 +21,14 @@ import (
 func TestCodeModeLargeCatalogCanStreamAcrossProviders(t *testing.T) {
 	for _, tc := range []struct{ name, model, wire string }{
 		{"grok", "grok-4.6", "chat"},
-		{"openai", "gpt-5", "responses"},
-		{"anthropic", "claude-sonnet-4", "messages"},
+		{"openai", "gpt-6-sol", "responses"},
+		{"anthropic", "claude-sonnet-4-5", "messages"},
+		{"kimi", "kimi-k3", "chat"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			kit := newCodeModeTestToolkit(t)
 			kit.ConfigureSurfaceForProviderModel(tc.name, tc.model, true)
+			kit.SetContextWindowToolsEnabled(true)
 			kit.SetCodeModeAdditionalTools(func() []providers.ToolDefinition {
 				var defs []providers.ToolDefinition
 				for i := 0; i < 3; i++ {
@@ -51,7 +55,15 @@ func TestCodeModeLargeCatalogCanStreamAcrossProviders(t *testing.T) {
 				var req struct {
 					Tools []json.RawMessage `json:"tools"`
 				}
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				payload, readErr := io.ReadAll(r.Body)
+				if readErr != nil {
+					t.Error(readErr)
+					return
+				}
+				if bytes.Contains(payload, []byte("stale_catalog_entry")) || bytes.Contains(payload, []byte(`"direct_only"`)) || bytes.Contains(payload, []byte(`"DirectOnly"`)) {
+					t.Error("stale schema or host routing metadata leaked to provider")
+				}
+				if err := json.Unmarshal(payload, &req); err != nil {
 					t.Error(err)
 					http.Error(w, "bad request", 400)
 					return
@@ -60,6 +72,7 @@ func TestCodeModeLargeCatalogCanStreamAcrossProviders(t *testing.T) {
 					t.Error("adapter dropped tools")
 				}
 				var execDescription string
+				direct := map[string]bool{}
 				for _, raw := range req.Tools {
 					var tool struct {
 						Name        string `json:"name"`
@@ -76,9 +89,16 @@ func TestCodeModeLargeCatalogCanStreamAcrossProviders(t *testing.T) {
 					if tool.Function != nil {
 						tool.Name, tool.Description = tool.Function.Name, tool.Function.Description
 					}
+					direct[tool.Name] = true
+					if tool.Name != "run_code" && tool.Name != "new_context" && tool.Name != "set_session_workspace" {
+						t.Errorf("ordinary tool leaked at top level: %s", tool.Name)
+					}
 					if tool.Name == "run_code" {
 						execDescription = tool.Description
 					}
+				}
+				if !direct["run_code"] || !direct["new_context"] || !direct["set_session_workspace"] {
+					t.Errorf("direct control missing: %v", direct)
 				}
 				t.Logf("catalog metadata=%d bytes; initial entry=%d bytes", len(catalog), len(execDescription))
 				if len(execDescription) == 0 || len(execDescription) > 10*1024 {
@@ -110,7 +130,7 @@ func TestCodeModeLargeCatalogCanStreamAcrossProviders(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			events, err := client.StreamChat(ctx, providers.ChatRequest{Model: tc.model, Messages: []providers.ChatMessage{{Role: "user", Content: "Reply ok"}}, Tools: kit.Definitions()})
+			events, err := client.StreamChat(ctx, providers.ChatRequest{Model: tc.model, NativeDeferredToolDiscovery: true, Messages: []providers.ChatMessage{{Role: "system", Content: "Recovered context", DiscoveredTools: []providers.LoadableToolDefinition{{Name: "stale_catalog_entry", InputSchema: map[string]any{"type": "object"}}}}, {Role: "user", Content: "Reply ok"}}, Tools: kit.Definitions()})
 			if err != nil {
 				t.Fatal(err)
 			}

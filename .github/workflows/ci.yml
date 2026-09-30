@@ -202,7 +202,7 @@ jobs:
       - name: Verify programmatic tool settings
         shell: bash
         run: |
-          (cd desktop && VITE_ENABLE_PTC=true ./node_modules/.bin/electron-vite build)
+          (cd desktop && ./node_modules/.bin/electron-vite build)
           mkdir -p desktop/out/e2e/ptc
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/ptc-settings-e2e.cjs 2>&1 | tee desktop/out/e2e/ptc/run.log
 

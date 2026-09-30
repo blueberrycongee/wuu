@@ -55,9 +55,7 @@ app.whenReady().then(async () => {
   }});
   await win.loadFile(path.join(desktopRoot, "out", "renderer", "index.html"));
   await openRuntime(win);
-  assert.equal(await evaluate(win, () => document.querySelector('[data-testid="settings-ptc-enabled"]').getAttribute("aria-checked")), "false");
-  await evaluate(win, () => document.querySelector('[data-testid="settings-ptc-enabled"]').click());
-  await waitFor(win, () => document.querySelector('[data-testid="settings-ptc-enabled"]').getAttribute("aria-checked") === "true");
+  assert.equal(await evaluate(win, () => document.querySelector('[data-testid="settings-ptc-enabled"]').getAttribute("aria-checked")), "true");
   await choose(win, '[data-testid="settings-ptc-family-mode"]', "off");
   let settings = await evaluate(win, async () => (await window.wuu.initialize()).general_settings.ptc);
   assert.deepEqual(settings, { enabled: true, families: { gpt: false } });

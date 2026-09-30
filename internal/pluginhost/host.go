@@ -373,6 +373,7 @@ func (h *Host) ToolDefinitions() []providers.ToolDefinition {
 		}
 		definitions = append(definitions, providers.ToolDefinition{
 			Name:        name,
+			DirectOnly:  tool.Registration.DirectOnly,
 			Description: tool.Registration.Description,
 			InputSchema: cloneSchema(tool.Registration.InputSchema),
 		})

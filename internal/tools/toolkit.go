@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -176,7 +177,7 @@ func (t *Toolkit) SetProcessSandboxProvider(provider processsandbox.Provider) {
 func (t *Toolkit) SetPermissionMode(mode string) { t.env.PermissionMode = strings.TrimSpace(mode) }
 
 func (t *Toolkit) AuthorizeTool(ctx context.Context, call providers.ToolCall, metadata agent.ToolMetadata) error {
-	if t.isToolDisabled(call.Name) {
+	if t.IsToolDisabled(call.Name) {
 		return fmt.Errorf("tool %q is disabled", call.Name)
 	}
 	return t.checkPermission(ctx, ToolInfo{
@@ -320,6 +321,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 	t.codeModeMu.RLock()
 	clone.codeMode = t.codeMode
 	clone.ptcConfig = t.ptcConfig
+	clone.ptcConfig.Families = maps.Clone(t.ptcConfig.Families)
 	clone.ptcFamily = t.ptcFamily
 	t.codeModeMu.RUnlock()
 	t.activeProfileMu.RLock()
@@ -332,13 +334,13 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 			clone.disabledTools[name] = struct{}{}
 		}
 	}
+	clone.rebuildRegistry()
 	clone.activeProfileMu.Lock()
 	clone.publishActiveSurfaceLocked()
 	clone.activeProfileMu.Unlock()
 	// Deferred tool loads are model-visible, per-conversation state created by
 	// tool_search. A cloned toolkit must not inherit them unless the clone's
 	// own model context has seen the loadable schema.
-	clone.rebuildRegistry()
 	clone.refreshMCPToolSnapshot(true)
 	return clone, nil
 }
@@ -426,6 +428,7 @@ func (t *Toolkit) CodeModeService() *codemode.Service {
 func (t *Toolkit) ConfigurePTC(service *codemode.Service, cfg config.PTCConfig) {
 	t.codeModeMu.Lock()
 	t.ptcConfig = cfg
+	t.ptcConfig.Families = maps.Clone(cfg.Families)
 	t.codeModeMu.Unlock()
 	t.SetCodeModeService(service)
 }
@@ -725,7 +728,7 @@ func (t *Toolkit) GitAttributionEnabled() bool {
 	return t != nil && t.env != nil && t.env.gitAttributionEnabled()
 }
 
-func (t *Toolkit) isToolDisabled(name string) bool {
+func (t *Toolkit) IsToolDisabled(name string) bool {
 	if len(t.disabledTools) == 0 {
 		return false
 	}
@@ -762,7 +765,7 @@ func (t *Toolkit) Definitions() []providers.ToolDefinition {
 	dynamic := make([]providers.ToolDefinition, 0)
 	nativeDeferred := t.nativeDeferredToolDiscoveryEnabled()
 	for _, d := range all {
-		if t.isToolDisabled(d.Name) {
+		if t.IsToolDisabled(d.Name) {
 			continue
 		}
 		exposure := t.toolExposure(d.Name)
@@ -822,6 +825,8 @@ func (t *Toolkit) FreezeToolSurface() {
 	if t == nil {
 		return
 	}
+	// Refresh between runs before pinning; repeated nested freezes keep the pin.
+	t.refreshMCPToolSnapshot(false)
 	t.mcpCatalogMu.Lock()
 	t.surfaceFreezeDepth++
 	t.mcpCatalogMu.Unlock()
@@ -841,7 +846,7 @@ func (t *Toolkit) UnfreezeToolSurface() {
 
 func (t *Toolkit) SupportsTool(name string) bool {
 	name = strings.TrimSpace(name)
-	if t == nil || name == "" || t.isToolDisabled(name) || (name == codeModeExecToolName && !t.CodeModeOnly()) {
+	if t == nil || name == "" || t.IsToolDisabled(name) || (name == codeModeExecToolName && !t.CodeModeOnly()) {
 		return false
 	}
 	if t.LookupTool(name) == nil {
@@ -929,7 +934,7 @@ func (t *Toolkit) SurfaceToolNames() []string {
 			continue
 		}
 		name := tool.Name()
-		if t.isToolDisabled(name) {
+		if t.IsToolDisabled(name) {
 			continue
 		}
 		if surface.ProfileName != "" {
@@ -1037,22 +1042,31 @@ func (t *Toolkit) ActiveSurface() capability.Surface {
 func (t *Toolkit) exposedSurfaceLocked() capability.Surface {
 	surface := t.withDisabledToolsRemoved(t.withCodeModeSurface(cloneSurface(t.surfaceForToolLoadingMode(t.activeSurface))))
 	if t.CodeModeOnly() {
-		_, hasContextControl := surface.Tools[newContextToolName]
-		// Retain reachable bindings for skill filtering while projecting the
-		// separate top-level entry points used by the model and frontend.
+		// Keep lifecycle controls visible while moving ordinary capabilities into
+		// the nested surface. Both dispatch and discovery use the same metadata.
 		surface.NestedTools = surface.Tools
-		for name, capability := range surface.DeferredTools {
-			surface.NestedTools[name] = capability
+		for name, capName := range surface.DeferredTools {
+			surface.NestedTools[name] = capName
 		}
-		delete(surface.NestedTools, codeModeExecToolName)
-		delete(surface.NestedTools, newContextToolName)
-		delete(surface.NestedTools, "tool_search")
 		surface.Tools = map[string]capability.Capability{codeModeExecToolName: capability.CapabilityCodeMode}
-		if hasContextControl {
-			surface.Tools[newContextToolName] = capability.CapabilityContextWindow
+		for name, capName := range surface.NestedTools {
+			if t.CodeModeDirectCallAllowed(name) {
+				surface.Tools[name] = capName
+				delete(surface.NestedTools, name)
+			}
 		}
+		delete(surface.NestedTools, "tool_search")
 		surface.DeferredTools = nil
-		surface.SystemFragment += "\nPTC mode is enabled. Invoke the capabilities described above through tools bindings inside run_code. Only run_code and separately advertised context controls are callable directly."
+		surface.DeferredCapabilities = nil
+		surface.Capabilities = nil
+		for _, name := range surface.ToolNames() {
+			capName := surface.Tools[name]
+			if !surfaceHasCapability(surface.Capabilities, capName) {
+				surface.Capabilities = append(surface.Capabilities, capName)
+			}
+		}
+		surface.SystemFragment += "\nPTC is the ordinary tool interface. Invoke the capabilities above through tools bindings inside run_code. Separately advertised interaction and lifecycle controls must be called directly. Use background process/task handles for long work; each program must await its own calls and cannot resume after it returns."
+
 	}
 	return surface
 }
@@ -1180,11 +1194,14 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 // content, metadata, or Activity references. Legacy tools are wrapped as one
 // text content part until they migrate to RichTool.
 func (t *Toolkit) ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
-	if t.CodeModeOnly() && call.Name != codeModeExecToolName && call.Name != newContextToolName && !toolctx.IsNestedCall(ctx) {
+	if toolctx.IsNestedCall(ctx) && (t.CodeModeDirectCallAllowed(call.Name)) {
+		return toolresult.Result{}, fmt.Errorf("tool %q must be called directly", call.Name)
+	}
+	if t.CodeModeOnly() && !t.CodeModeDirectCallAllowed(call.Name) && !toolctx.IsNestedCall(ctx) {
 		return toolresult.Result{}, errors.New("PTC mode requires calling tools inside run_code")
 	}
 
-	if t.isToolDisabled(call.Name) {
+	if t.IsToolDisabled(call.Name) {
 		return toolresult.Result{}, fmt.Errorf("tool %q is disabled in this session", call.Name)
 	}
 	if err := t.ensureToolAvailableForExecution(ctx, call.Name); err != nil {
@@ -1216,7 +1233,7 @@ func (t *Toolkit) ensureToolAvailableForExecution(ctx context.Context, name stri
 		}
 		exposure = activeSurfaceToolExposure(surface, name)
 	}
-	if exposure != ToolExposureDeferred || t.isDeferredToolLoaded(name) || toolctx.IsNestedCall(ctx) {
+	if exposure != ToolExposureDeferred || t.isDeferredToolLoaded(name) || toolctx.IsNestedCall(ctx) || (t.CodeModeOnly() && t.CodeModeDirectCallAllowed(name)) {
 		return nil
 	}
 	// A rebuilt runtime starts with no loaded tools, but the resumed conversation
@@ -1292,6 +1309,11 @@ func isReadOnlyMCPProfileCapability(capName capability.Capability) bool {
 }
 
 func surfaceHasVisibleCapability(surface capability.Surface, capName capability.Capability) bool {
+	for _, existing := range surface.NestedTools {
+		if existing == capName {
+			return true
+		}
+	}
 	for _, existing := range surface.Capabilities {
 		if existing == capName {
 			return true
@@ -1785,5 +1807,5 @@ func (t *Toolkit) RunEnvironmentCode(ctx context.Context, service *codemode.Serv
 	if err != nil {
 		return codemode.RunResult{}, err
 	}
-	return service.Run(ctx, request, codemode.RunOptions{CWD: t.env.RootDir, Executor: executor, Sandbox: policy})
+	return service.Run(ctx, request, codemode.RunOptions{StateScope: t.codeModeStateScope(), CWD: t.env.RootDir, Executor: executor, Sandbox: policy})
 }

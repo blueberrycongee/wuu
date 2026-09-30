@@ -3,6 +3,11 @@ package agent_test
 import (
 	"context"
 	"errors"
+	"github.com/blueberrycongee/wuu/internal/codemode"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/tools"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -100,4 +105,45 @@ func countMessageContent(messages []providers.ChatMessage, needle string) int {
 		}
 	}
 	return count
+}
+
+func TestRunToolLoopPreservesNestedPostToolContext(t *testing.T) {
+	root := t.TempDir()
+	kit, err := tools.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kit.SetBoundary(tools.UnconfinedBoundary())
+	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5", true)
+	service := codemode.NewService(codemode.ServiceConfig{})
+	defer service.Close()
+	kit.ConfigurePTC(service, config.PTCConfig{Enabled: true})
+	for _, name := range []string{"one.txt", "two.txt"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	registry := hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{
+		hooks.PostToolUse: {{Matcher: "read_file", Command: `input=$(cat); case "$input" in *one.txt*) printf '%s' '{"additional_context":"nested context one"}';; *) printf '%s' '{"additional_context":"nested context two"}';; esac`}},
+	})
+	executor := hooks.NewHookedExecutor(kit, hooks.NewDispatcher(registry), "session", root)
+	step := &hookContextStep{results: []agent.StepResult{
+		{ToolCalls: []providers.ToolCall{{ID: "program", Name: "run_code", Arguments: `{"code":"await Promise.all([tools.read_file({path:'one.txt'}), tools.read_file({path:'two.txt'})]);","description":"Read two files"}`}}},
+		{Content: "done"},
+	}}
+	result, err := agent.RunToolLoop(context.Background(), []providers.ChatMessage{{Role: "user", Content: "Read both files"}}, agent.LoopConfig{Model: "test-model", Tools: executor}, step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(step.requests) != 2 {
+		t.Fatalf("requests=%d", len(step.requests))
+	}
+	for _, want := range []string{"nested context one", "nested context two"} {
+		if got := countMessageContent(step.requests[1].Messages, want); got != 1 {
+			t.Fatalf("next request contains %q %d times", want, got)
+		}
+		if got := countMessageContent(result.NewMessages, want); got != 0 {
+			t.Fatalf("nested hook context persisted: %q", want)
+		}
+	}
 }

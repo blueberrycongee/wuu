@@ -75,7 +75,7 @@ export type ArchivedSessionView = {
   archive_project_id?: string;
   archive_project_name?: string;
 };
-import { ENABLE_PTC_SETTINGS, ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
+import { ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
 import { BackgroundSettings } from "./background/BackgroundSettings";
 import { ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
@@ -988,7 +988,7 @@ function SettingsRuntimePage({
   onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
-  const ptc = initialized?.general_settings?.ptc ?? { enabled: false };
+  const ptc = initialized?.general_settings?.ptc ?? { enabled: true };
   const [ptcBusy, setPTCBusy] = useState(false);
   const [ptcError, setPTCError] = useState("");
   const [ptcFamily, setPTCFamily] = useState("gpt");
@@ -1151,7 +1151,7 @@ function SettingsRuntimePage({
         </SettingsGroup>
       </SettingsSection>
       <ExecutionEnvironmentSettings value={initialized?.general_settings?.execution_environments ?? {}} disabled={fieldsDisabled} onSave={onGeneralSave} />
-      {ENABLE_PTC_SETTINGS && <SettingsSection title={t("settings.ptcTitle")} testID="settings-ptc">
+      <SettingsSection title={t("settings.ptcTitle")} testID="settings-ptc">
         <SettingsGroup>
           <SettingsRow title={t("settings.ptcEnabled")} description={t("settings.ptcDescription")}>
             <button className="settings-switch" type="button" role="switch"
@@ -1187,7 +1187,7 @@ function SettingsRuntimePage({
           </SettingsRow>
           {ptcError ? <p className="settings-error" role="alert">{ptcError}</p> : null}
         </SettingsGroup>
-      </SettingsSection>}
+      </SettingsSection>
       <SettingsSection title={t("settings.sectionGit")} testID="settings-git">
         <SettingsGroup>
           <SettingsRow

@@ -2,6 +2,8 @@ package codemode
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"math"
 	"os"
 	"os/exec"
@@ -344,5 +346,51 @@ func TestNodeInheritedArraySetterCannotForgeCompletion(t *testing.T) {
 	})})
 	if err != nil || result.Error != "" || string(result.Value) != "7" || !invoked {
 		t.Fatalf("inherited setter forged completion: %+v %v invoked=%v", result, err, invoked)
+	}
+}
+
+func TestNodeToolCallErrorRetainsCanonicalResult(t *testing.T) {
+	s := nodeService(t)
+	opts := RunOptions{CWD: t.TempDir(), Executor: nodeExecutor(func(_ context.Context, call providers.ToolCall) (toolresult.Result, error) {
+		if call.Name == "transport" {
+			return toolresult.Result{}, errors.New("transport unavailable")
+		}
+		return toolresult.Result{
+			IsError:           true,
+			Content:           []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: "conflict"}, {Type: toolresult.ContentTypeResourceLink, URI: "https://example.com/conflict", Name: "details"}},
+			StructuredContent: json.RawMessage(`{"code":"conflict","retryable":true}`),
+			Meta:              json.RawMessage(`{"request_id":"request-1"}`),
+		}, nil
+	})}
+	result, err := s.Run(context.Background(), RunRequest{Code: `try {await tools.fail({})} catch(e) {return {name:e.name,tool:e.toolName,result:e.result};}`, Tools: []ToolDefinition{{Name: "fail"}}}, opts)
+	want := `{"name":"ToolCallError","tool":"fail","result":{"content":[{"type":"text","text":"conflict"},{"type":"resource_link","uri":"https://example.com/conflict","name":"details"}],"structured_content":{"code":"conflict","retryable":true},"meta":{"request_id":"request-1"},"is_error":true}}`
+	if err != nil || result.Error != "" || string(result.Value) != want {
+		t.Fatalf("canonical error result lost=%+v %v", result, err)
+	}
+	result, err = s.Run(context.Background(), RunRequest{Code: `const results=[]; try {await tools.transport({})} catch(e) {results.push(typeof e.result)} try {await describeTool("missing")} catch(e) {results.push(typeof e.result)} return results;`, Tools: []ToolDefinition{{Name: "transport"}}}, opts)
+	if err != nil || result.Error != "" || string(result.Value) != `["undefined","undefined"]` {
+		t.Fatalf("synthetic errors acquired fake results=%+v %v", result, err)
+	}
+}
+
+func TestNodeUnsupportedRuntimeHasActionableStartupError(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal("Node is required for PTC integration tests:", err)
+	}
+	for _, tc := range []struct{ name, prelude string }{
+		{"older major", `Object.defineProperty(process.versions,"node",{value:"20.19.0"});`},
+		{"older minor", `Object.defineProperty(process.versions,"node",{value:"22.18.0"});`},
+		{"missing TypeScript support", `import legacyModule from "node:module"; legacyModule.stripTypeScriptTypes=undefined; legacyModule.syncBuiltinESMExports();`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, node, "--input-type=module", "-e", tc.prelude+"\n"+bootstrap)
+			output, err := command.CombinedOutput()
+			if err == nil || !strings.Contains(string(output), "PTC requires Node.js 22.19+ or the desktop Node runtime") {
+				t.Fatalf("startup was not actionable: err=%v output=%s", err, output)
+			}
+		})
 	}
 }

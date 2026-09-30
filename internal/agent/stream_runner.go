@@ -495,7 +495,7 @@ func (r *StreamRunner) runModelToolLoop(ctx context.Context, history []providers
 				Temperature:                 r.Temperature,
 				ProviderOptions:             r.ProviderOptions,
 				MediaInput:                  r.MediaInput,
-				NativeDeferredToolDiscovery: nativeDiscoveryForTools(r.NativeDeferredToolDiscovery, definitions),
+				NativeDeferredToolDiscovery: providers.NativeToolDiscoveryEnabled(r.NativeDeferredToolDiscovery, definitions),
 			})
 		},
 		CompactionRegistry:  r.CompactionRegistry,
@@ -885,7 +885,7 @@ func (r *StreamRunner) compactionNoteFork(retained *RetainedRequestContextState)
 	temperature := r.Temperature
 	effort := r.Effort
 	providerOptions := provideroptions.Clone(r.ProviderOptions)
-	nativeDeferredToolDiscovery := nativeDiscoveryForTools(r.NativeDeferredToolDiscovery, tools)
+	nativeDeferredToolDiscovery := providers.NativeToolDiscoveryEnabled(r.NativeDeferredToolDiscovery, tools)
 	mediaInput := r.MediaInput
 	beforeRequest := r.BeforeRequest
 	promptCacheKey := r.PromptCacheKey
@@ -930,7 +930,7 @@ func (r *StreamRunner) compactionNoteFork(retained *RetainedRequestContextState)
 				return CompactionNoteForkResult{}, err
 			}
 		}
-		req.NativeDeferredToolDiscovery = nativeDiscoveryForTools(req.NativeDeferredToolDiscovery, req.Tools)
+		req.NativeDeferredToolDiscovery = providers.NativeToolDiscoveryEnabled(req.NativeDeferredToolDiscovery, req.Tools)
 		if _, bounded := ctx.Value(compactionNoteBudgetKey{}).(int); bounded && estimateOutboundRequestTokens(req) > inputBudget {
 			return CompactionNoteForkResult{}, errors.New("transformed context note request exceeds the model input budget")
 		}

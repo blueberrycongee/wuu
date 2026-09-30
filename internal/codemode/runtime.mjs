@@ -1,6 +1,11 @@
 // The process owns transport; user code runs only inside the embedded interpreter.
 import net from "node:net";
-import { stripTypeScriptTypes } from "node:module";
+import * as nodeModule from "node:module";
+
+const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
+if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 19) || typeof nodeModule.stripTypeScriptTypes !== "function") {
+  throw new Error("PTC requires Node.js 22.19+ or the desktop Node runtime");
+}
 
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
@@ -32,20 +37,41 @@ function fail(error) {
   send({ type: "done", error: String(error?.message ?? error).slice(0, 8192) });
 }
 // This function is serialized into the guest. Its closures never contain a host object.
-function guestSetup(bridge, namesJSON) {
+function guestSetup(bridge, namesJSON, stateJSON, stateEnabled, maxStateBytes, maxStateKeys) {
   const stringify = JSON.stringify, parse = JSON.parse, string = String;
   const uncurry = fn => Function.prototype.call.bind(fn);
   const setHas = uncurry(Set.prototype.has), setAdd = uncurry(Set.prototype.add), setDelete = uncurry(Set.prototype.delete);
   const mapGet = uncurry(Map.prototype.get), mapSet = uncurry(Map.prototype.set), mapDelete = uncurry(Map.prototype.delete);
+  const mapForEach = uncurry(Map.prototype.forEach);
   const mapSize = uncurry(Object.getOwnPropertyDescriptor(Map.prototype, "size").get);
   const hasOwn = uncurry(Object.prototype.hasOwnProperty), slice = uncurry(String.prototype.slice);
+  const charCodeAt = uncurry(String.prototype.charCodeAt);
   const promiseThen = uncurry(Promise.prototype.then), NativePromise = Promise;
   const NativeSet = Set, NativeError = Error;
   const ownKeys = Reflect.ownKeys, descriptor = Object.getOwnPropertyDescriptor;
   const getPrototype = Object.getPrototypeOf, plainPrototype = Object.prototype;
   const isArray = Array.isArray, finite = Number.isFinite, is = Object.is;
   const pending = new Map();
+  const state = new Map();
+  let stateBytes = 0;
   let nextID = 1;
+  function utf8Bytes(value) {
+    let bytes = 0;
+    for (let index = 0; index < value.length; index++) {
+      const code = charCodeAt(value, index);
+      if (code < 0x80) bytes++;
+      else if (code < 0x800) bytes += 2;
+      else if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length && charCodeAt(value, index + 1) >= 0xdc00 && charCodeAt(value, index + 1) <= 0xdfff) { bytes += 4; index++; }
+      else bytes += 3;
+    }
+    return bytes;
+  }
+  const initial = parse(stateJSON), stateKeys = ownKeys(initial);
+  for (let index = 0; index < stateKeys.length; index++) {
+    const key = stateKeys[index], value = initial[key];
+    mapSet(state, key, value);
+    stateBytes += utf8Bytes(key) + utf8Bytes(value);
+  }
   function json(value, seen = new NativeSet()) {
     if (value === null || typeof value === "string" || typeof value === "boolean") return stringify(value);
     if (typeof value === "number" && finite(value) && !is(value, -0)) return stringify(value);
@@ -69,7 +95,42 @@ function guestSetup(bridge, namesJSON) {
     return encoded + (array ? "]" : "}");
   }
   class ToolCallError extends NativeError {
-    constructor(name, message) { super(message); this.name = "ToolCallError"; this.toolName = name; }
+    constructor(name, message, result) {
+      super(message); this.name = "ToolCallError"; this.toolName = name;
+      if (result !== undefined) this.result = result;
+    }
+  }
+  function stateKey(key) {
+    if (!stateEnabled) throw new NativeError("PTC store/load/remove require a caller state scope");
+    if (typeof key !== "string") throw new NativeError("Expected a state key string");
+    return stringify(key);
+  }
+  function store(key, value) {
+    const encodedKey = stateKey(key), encodedValue = json(value);
+    const previous = mapGet(state, encodedKey);
+    if (previous === undefined && mapSize(state) >= maxStateKeys) throw new NativeError("PTC state key limit exceeded (" + maxStateKeys + ")");
+    const bytes = stateBytes + utf8Bytes(encodedValue) + (previous === undefined ? utf8Bytes(encodedKey) : -utf8Bytes(previous));
+    if (bytes > maxStateBytes) throw new NativeError("PTC state exceeds the byte limit (" + maxStateBytes + ")");
+    mapSet(state, encodedKey, encodedValue);
+    stateBytes = bytes;
+  }
+  function load(key) {
+    const value = mapGet(state, stateKey(key));
+    return value === undefined ? undefined : parse(value);
+  }
+  function remove(key) {
+    const encodedKey = stateKey(key), value = mapGet(state, encodedKey);
+    if (value === undefined) return false;
+    stateBytes -= utf8Bytes(encodedKey) + utf8Bytes(value);
+    return mapDelete(state, encodedKey);
+  }
+  function stateSnapshot() {
+    let encoded = "{", count = 0;
+    mapForEach(state, (value, key) => {
+      if (count++) encoded += ",";
+      encoded += stringify(key) + ":" + stringify(value);
+    });
+    return encoded + "}";
   }
   function request(type, name, args) {
     if (typeof name !== "string") throw new NativeError("Expected a tool name string");
@@ -79,7 +140,7 @@ function guestSetup(bridge, namesJSON) {
       const id = nextID;
       const message = json({ type, id, name, args: parse(encoded) });
       nextID++;
-      mapSet(pending, id, { resolve, reject, name });
+      mapSet(pending, id, { resolve, reject, name, type });
       try { bridge(message); }
       catch (error) { mapDelete(pending, id); nextID--; reject(error); }
     });
@@ -110,10 +171,10 @@ function guestSetup(bridge, namesJSON) {
         catch { message = "Program failed with an unprintable error"; }
         bridge(json({ type: "done", error: message }));
       };
-      promiseThen(program(tools, console, ToolCallError, searchTools, describeTool), value => {
+      promiseThen(program(tools, console, ToolCallError, searchTools, describeTool, store, load, remove), value => {
         try {
           const encoded = value === undefined ? undefined : json(value);
-          bridge(encoded === undefined ? '{"type":"done"}' : '{"type":"done","value":' + encoded + '}');
+          bridge('{"type":"done"' + (encoded === undefined ? "" : ',"value":' + encoded) + (stateEnabled ? ',"state":' + stateSnapshot() : "") + '}');
         } catch (error) { failed(error); }
       }, failed);
     },
@@ -121,7 +182,7 @@ function guestSetup(bridge, namesJSON) {
       const reply = parse(encoded), call = mapGet(pending, reply.id);
       if (!call) throw new NativeError("Unknown PTC reply");
       mapDelete(pending, reply.id);
-      if (reply.error) call.reject(new ToolCallError(call.name, reply.error));
+      if (reply.error) call.reject(new ToolCallError(call.name, reply.error, call.type === "call" && hasOwn(reply, "value") ? reply.value : undefined));
       else call.resolve(reply.value);
     }
   };
@@ -138,7 +199,7 @@ const bridge = vm.newFunction("bridge", encoded => {
   if (frame.type === "done") finished = true;
   return vm.undefined;
 });
-const api = vm.withScope(scope => scope.escape(vm.callFunction(vm.evalCode("(" + guestSetup.toString() + ")"), vm.undefined, bridge, vm.newString(JSON.stringify(boot.tools ?? [])))));
+const api = vm.withScope(scope => scope.escape(vm.callFunction(vm.evalCode("(" + guestSetup.toString() + ")"), vm.undefined, bridge, vm.newString(JSON.stringify(boot.tools ?? [])), vm.newString(JSON.stringify(boot.state ?? {})), boot.stateEnabled ? vm.true : vm.false, vm.newNumber(boot.maxStateBytes), vm.newNumber(boot.maxStateKeys))));
 const settle = api.getProp("settle"), run = api.getProp("run");
 let buffer = Buffer.alloc(0);
 channel.on("data", chunk => {
@@ -158,7 +219,7 @@ channel.on("data", chunk => {
 });
 channel.on("error", () => process.exit(1));
 try {
-  const source = stripTypeScriptTypes("(async function(tools, console, ToolCallError, searchTools, describeTool) {\n" + boot.code + "\n})");
+  const source = nodeModule.stripTypeScriptTypes("(async function(tools, console, ToolCallError, searchTools, describeTool, store, load, remove) {\n" + boot.code + "\n})");
   vm.withScope(() => vm.callFunction(run, api, vm.evalCode(source, "program.ts")));
   vm.executePendingJobs();
 } catch (error) { fail(error); }

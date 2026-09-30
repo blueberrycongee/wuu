@@ -196,3 +196,17 @@ func MergeLoadableToolDefinitions(sets ...[]LoadableToolDefinition) []LoadableTo
 	}
 	return out
 }
+
+// NativeToolDiscoveryEnabled prevents retained discovery metadata from
+// reintroducing callable schemas after the active tool surface changes.
+func NativeToolDiscoveryEnabled(enabled bool, definitions []ToolDefinition) bool {
+	if !enabled {
+		return false
+	}
+	for _, definition := range definitions {
+		if definition.Name == "tool_search" {
+			return true
+		}
+	}
+	return false
+}

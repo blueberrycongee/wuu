@@ -26,6 +26,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/harness"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/mcp"
+	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -2708,7 +2709,7 @@ func TestBuildBaseSystemPromptNoToolsSkipsToolLoadedGuidance(t *testing.T) {
 }
 
 func TestBuildBaseSystemPromptAddsCatalogForToolSearchSurface(t *testing.T) {
-	surface := compiledSurfaceForProviderModel("openai", "gpt-5-codex")
+	surface := modelprofile.DefaultCompiler{}.Compile(modelprofile.Resolve("openai", "gpt-5-codex"), modelprofile.SurfaceWorker)
 	surface.DeferredToolCatalog = "# Deferred Tool Catalog\n\n<available-deferred-tools>\n- await_agents: Wait for helper agents. [tags: agent]\n</available-deferred-tools>"
 	promptText := buildBaseSystemPrompt(
 		t.TempDir(),
@@ -2735,7 +2736,7 @@ func TestBuildBaseSystemPromptAddsCatalogForToolSearchSurface(t *testing.T) {
 }
 
 func TestBuildBaseSystemPromptFiltersSkillsBySurface(t *testing.T) {
-	surface := compiledSurfaceForProviderModel("ollama", "llama-coder")
+	surface := modelprofile.DefaultCompiler{}.Compile(modelprofile.Resolve("ollama", "llama-coder"), modelprofile.SurfaceWorker)
 	promptText := buildBaseSystemPrompt(
 		t.TempDir(),
 		"base prompt",
@@ -2875,10 +2876,11 @@ func TestWorkerDeferredToolCatalogPromptForToolkit(t *testing.T) {
 	// produce a worker-scoped catalog from it.
 	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5-codex", true)
 
-	catalog, err := workerDeferredToolCatalogPromptForToolkit(kit, "openai", "gpt-5-codex", true)
+	surface, err := workerToolSurfaceForToolkit(kit, "openai", "gpt-5-codex", true)
 	if err != nil {
 		t.Fatalf("workerDeferredToolCatalogPromptForToolkit: %v", err)
 	}
+	catalog := surface.DeferredToolCatalog
 	if catalog == "" {
 		t.Fatal("worker deferred tool catalog must not be empty when tool search is enabled")
 	}
@@ -2893,12 +2895,12 @@ func TestWorkerDeferredToolCatalogPromptForToolkit(t *testing.T) {
 		}
 	}
 
-	disabled, err := workerDeferredToolCatalogPromptForToolkit(kit, "openai", "gpt-5-codex", false)
+	disabled, err := workerToolSurfaceForToolkit(kit, "openai", "gpt-5-codex", false)
 	if err != nil {
 		t.Fatalf("workerDeferredToolCatalogPromptForToolkit (tool search off): %v", err)
 	}
-	if disabled != "" {
-		t.Fatalf("catalog must be empty when worker tool search is disabled, got:\n%s", disabled)
+	if disabled.DeferredToolCatalog != "" {
+		t.Fatalf("catalog must be empty when worker tool search is disabled, got:\n%s", disabled.DeferredToolCatalog)
 	}
 }
 

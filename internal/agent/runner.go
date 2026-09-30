@@ -221,7 +221,7 @@ func (r *Runner) RunWithUsage(ctx context.Context, prompt string, onUsage func(i
 				Tools:                       definitions,
 				Temperature:                 r.Temperature,
 				ProviderOptions:             r.ProviderOptions,
-				NativeDeferredToolDiscovery: nativeDiscoveryForTools(r.NativeDeferredToolDiscovery, definitions),
+				NativeDeferredToolDiscovery: providers.NativeToolDiscoveryEnabled(r.NativeDeferredToolDiscovery, definitions),
 			})
 		},
 	}

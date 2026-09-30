@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/codemode"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
@@ -31,6 +32,29 @@ func TestSessionPTCDefaultAndFamilyOptIn(t *testing.T) {
 			if foundRun != enabled || foundRead == enabled {
 				t.Fatalf("PTC=%v run=%v read=%v", enabled, foundRun, foundRead)
 			}
+		}
+	}
+}
+
+func TestWorkerPTCSurfaceUsesItsFamilySetting(t *testing.T) {
+	kit, err := tools.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := codemode.NewService(codemode.ServiceConfig{})
+	defer service.Close()
+	for _, enabled := range []bool{false, true} {
+		kit.ConfigurePTC(service, config.PTCConfig{Enabled: !enabled, Families: map[string]bool{"claude": enabled}})
+		kit.ConfigureSurfaceForProviderModel("openai", "gpt-5", true)
+		surface, err := workerToolSurfaceForToolkit(kit, "anthropic", "claude-sonnet-4", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, run := surface.Tools["run_code"]
+		_, direct := surface.Tools["read_file"]
+		_, nested := surface.NestedTools["read_file"]
+		if run != enabled || direct == enabled || nested != enabled {
+			t.Fatalf("worker surface=%+v", surface)
 		}
 	}
 }

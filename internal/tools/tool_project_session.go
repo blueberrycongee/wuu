@@ -50,7 +50,8 @@ func (t *ProjectSessionTool) Definition() providers.ToolDefinition {
 		return map[string]any{"type": "string", "description": description}
 	}
 	return providers.ToolDefinition{
-		Name: projectSessionToolName,
+		DirectOnly: true,
+		Name:       projectSessionToolName,
 		Description: "Start and manage the sessions that do this project's work. " +
 			"list shows your sessions with their state. " +
 			"create starts a session from a self-contained brief: the goal, constraints, acceptance checks and what to leave alone; the session does not see this conversation. " +

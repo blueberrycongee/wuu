@@ -35,12 +35,13 @@ type toolRun struct {
 	parent          *toolRun
 	depth           int
 
-	mu     sync.Mutex
-	state  toolRunState
-	done   chan struct{}
-	cancel context.CancelFunc
-	result toolresult.Result
-	err    error
+	mu             sync.Mutex
+	state          toolRunState
+	done           chan struct{}
+	cancel         context.CancelFunc
+	result         toolresult.Result
+	err            error
+	requestContext *ContextSegment
 }
 
 // TurnToolRuntime owns tool executions for one model turn. Streaming can
@@ -308,6 +309,16 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 	go func() {
 		finish := func(result toolresult.Result, executionErr error) {
 			defer cancel()
+			if run.parent != nil {
+				if provider, ok := r.executor.(ToolCallContextProvider); ok {
+					if extra := provider.TakeAdditionalContext(call); extra != "" {
+						segment := postToolAdditionalContextSegment(call.Name, extra)
+						run.mu.Lock()
+						run.requestContext = &segment
+						run.mu.Unlock()
+					}
+				}
+			}
 			if executionErr != nil {
 				result = toolresult.FromErrorText(errorJSON(executionErr))
 			}
@@ -446,7 +457,9 @@ func (r *TurnToolRuntime) ExecuteFinalCalls(
 			return nil, batchResult.err
 		}
 		toolMessages = append(toolMessages, batchResult.messages...)
+		r.mu.Lock()
 		r.requestContext = append(r.requestContext, batchResult.requestContext...)
+		r.mu.Unlock()
 	}
 	return toolMessages, nil
 }
@@ -542,10 +555,23 @@ func isBarrierTool(name string) bool {
 // TakeRequestContextSegments returns request-only context produced by tool
 // execution and clears it from this turn runtime.
 func (r *TurnToolRuntime) TakeRequestContextSegments() []ContextSegment {
-	if r == nil || len(r.requestContext) == 0 {
+	if r == nil {
 		return nil
 	}
-	out := append([]ContextSegment(nil), r.requestContext...)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []ContextSegment
+	// Nested hooks finish concurrently. Project their context in registration
+	// order, never completion order or through the program's output filtering.
+	for _, run := range r.runs {
+		run.mu.Lock()
+		if run.requestContext != nil {
+			out = append(out, *run.requestContext)
+			run.requestContext = nil
+		}
+		run.mu.Unlock()
+	}
+	out = append(out, r.requestContext...)
 	r.requestContext = nil
 	return out
 }

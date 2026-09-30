@@ -246,7 +246,7 @@ func (t *Toolkit) markDeferredToolsLoaded(names ...string) {
 	toLoad := make([]string, 0, len(names))
 	for _, name := range names {
 		name = strings.TrimSpace(name)
-		if name == "" || t.isToolDisabled(name) || t.toolExposure(name) != ToolExposureDeferred {
+		if name == "" || t.IsToolDisabled(name) || t.toolExposure(name) != ToolExposureDeferred {
 			continue
 		}
 		toLoad = append(toLoad, name)

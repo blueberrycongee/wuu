@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/codemode"
 	"github.com/blueberrycongee/wuu/internal/executionenv"
+	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
@@ -243,5 +246,93 @@ func TestWorkerTransportProgramCancellation(t *testing.T) {
 				t.Fatalf("next program: %+v %v", result, err)
 			}
 		})
+	}
+}
+
+func TestWorkerTransportStateIsActorScopedAndVolatile(t *testing.T) {
+	t.Setenv("WUU_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("WUU_EXECUTION_TEST_WORKER", "1")
+	root := t.TempDir()
+	newClient := func() *executionenv.Client {
+		client := executionenv.NewClient([]string{os.Args[0], "-test.run=^TestWorkerTransportProcess$"}, os.Environ())
+		t.Cleanup(func() { _ = client.Close() })
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := client.Call(ctx, "initialize", executionenv.Init{Version: executionenv.ProtocolVersion, Root: root, Session: "state-conversation"}); err != nil {
+			t.Fatal(err)
+		}
+		return client
+	}
+	run := func(client *executionenv.Client, actor, code, want string, failed bool) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		raw, err := client.Call(ctx, "run_code", executionenv.CodeRequest{Actor: actor, PermissionMode: "unconfined", Program: codemode.RunRequest{Code: code}})
+		var result codemode.RunResult
+		if err != nil || json.Unmarshal(raw, &result) != nil || (result.Error != "") != failed || (!failed && string(result.Value) != want) {
+			t.Fatalf("worker state=%s err=%v", raw, err)
+		}
+	}
+	client := newClient()
+	run(client, "root", `store("checkpoint",{done:2}); return true;`, `true`, false)
+	run(client, "child", `return typeof load("checkpoint");`, `"undefined"`, false)
+	run(client, "root", `store("checkpoint",3); throw new Error("failed");`, "", true)
+	run(client, "root", `return load("checkpoint");`, `{"done":2}`, false)
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	run(newClient(), "root", `return typeof load("checkpoint");`, `"undefined"`, false)
+}
+
+func TestCanceledStdinWriteStillAllowsStop(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires a Unix PTY")
+	}
+	t.Setenv("WUU_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("WUU_EXECUTION_TEST_WORKER", "1")
+	client := executionenv.NewClient([]string{os.Args[0], "-test.run=^TestWorkerTransportProcess$"}, os.Environ())
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if _, err := client.Call(ctx, "initialize", executionenv.Init{Version: executionenv.ProtocolVersion, Root: t.TempDir(), Session: "stdin-recovery"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := client.Call(ctx, "execute", executionenv.ToolRequest{Actor: "a", PermissionMode: "unconfined", Call: providers.ToolCall{Name: "bash", Arguments: `{"command":"stty raw -echo; echo READY; sleep 60","run_in_background":true}`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result toolresult.Result
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	var proc struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(result.TextProjection()), &proc); err != nil || proc.ID == "" {
+		t.Fatalf("start %s, %v", raw, err)
+	}
+	raw, err = client.Call(ctx, "process/read", map[string]any{"id": proc.ID, "options": map[string]any{"OffsetBytes": 0, "Wait": int64(2 * time.Second)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "READY") {
+		t.Fatalf("process not ready: %s", raw)
+	}
+	writeCtx, stopWrite := context.WithTimeout(ctx, 200*time.Millisecond)
+	_, err = client.Call(writeCtx, "process/write", map[string]any{"id": proc.ID, "input": strings.Repeat("x", 64*1024)})
+	stopWrite()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected full stdin pipe: %v", err)
+	}
+	if client.Failed() {
+		t.Fatal("write cancellation interrupted transport setup rather than blocked process input")
+	}
+	stopCtx, stopStop := context.WithTimeout(ctx, 2*process.DefaultStopGracePeriod+time.Second)
+	defer stopStop()
+	_, err = client.Call(stopCtx, "process/stop", map[string]string{"id": proc.ID})
+	if err != nil {
+		t.Fatalf("cancelled stdin write blocks stop recovery: %v", err)
 	}
 }

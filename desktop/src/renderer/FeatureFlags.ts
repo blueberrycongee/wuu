@@ -23,13 +23,6 @@ export const ENABLE_ACCOUNT =
 export const ENABLE_SUBSCRIPTIONS = import.meta.env.DEV;
 
 /**
- * PTC settings stay hidden in release builds until the feature matures. The
- * runtime keeps honoring saved settings; set VITE_ENABLE_PTC=true to build them in.
- */
-export const ENABLE_PTC_SETTINGS =
-  import.meta.env.DEV || import.meta.env.VITE_ENABLE_PTC === "true";
-
-/**
  * Embedded browser. The workspace panel and the agent's page are one tab.
  * The page stays in a hidden host until that panel is showing it. Set
  * VITE_ENABLE_BROWSER=false to hide it during development.

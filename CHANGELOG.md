@@ -19,11 +19,16 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
-- Keep optional programmatic tool calling inside a tool-only interpreter, with
-  bounded discovery, exact schema lookup, and unchanged per-tool authorization.
-  Programs have no default total timeout; explicit timeouts and cancellation remain
-  available. It remains off by default. Remote execution requires worker protocol
-  version 2.
+- Use programmatic tool calling by default for ordinary built-in-engine tools,
+  while preserving explicit global/model-family opt-outs and direct interaction,
+  delivery and lifecycle controls. CLI tools require Node.js 22.19 or later;
+  desktop includes its runtime. Settings are available in regular builds.
+- Add bounded, conversation/actor/workspace-scoped JSON checkpoints to the isolated
+  tool interpreter. Keep exact discovery schemas, structured failures, nested
+  hook context and active-run catalog snapshots. Long work uses managed process
+  and task handles; programs have no default timeout or automatic replay.
+  Remote execution requires worker protocol version 3.
+- Send the latest visible composer text when deferred controls are still updating.
 - Use client-side tool discovery when native discovery is unavailable, keeping
   initial catalogs bounded. Explicit flat loading remains available.
 

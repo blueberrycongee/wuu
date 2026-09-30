@@ -323,6 +323,8 @@ export type ModelProfileSummary = {
 };
 
 export type ToolSurfaceSummary = {
+  nested_tool_names?: string[];
+  nested_capability_map?: Record<string, string>;
   profile_name: string;
   provider?: string;
   model?: string;

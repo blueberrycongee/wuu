@@ -92,6 +92,15 @@ const MaxTimeoutMS = int64((1<<63 - 1) / time.Millisecond)
 const defaultOutputBytes = 1024 * 1024
 const maxPendingCalls = 128
 
+// State limits bound retained JSON separately from printed and returned output.
+// Bytes count UTF-8 JSON-encoded keys and values, without transport framing.
+const (
+	MaxStateBytes        = 1024 * 1024
+	MaxStateKeys         = 256
+	MaxStateScopes       = 64
+	MaxServiceStateBytes = 16 * 1024 * 1024
+)
+
 type ToolDefinition struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
@@ -111,6 +120,10 @@ type RunOptions struct {
 	Sandbox         *processsandbox.Policy
 	SandboxProvider processsandbox.Provider
 	MaxOutputBytes  int
+	// StateScope is a caller-owned session/actor identity, never program input.
+	// Empty disables store/load/remove. Only one program may run in a scope at a time.
+	// A canceled predecessor is drained before admission; live overlaps are rejected.
+	StateScope string
 }
 type RunResult struct {
 	Logs  []string
@@ -119,23 +132,42 @@ type RunResult struct {
 	Media []toolresult.ContentPart
 }
 
-// Service owns running programs, not a persistent JavaScript kernel. Every Run
-// creates a fresh Node process; failed or interrupted programs are never replayed.
+// Service owns running programs and bounded JSON state, not a persistent
+// JavaScript kernel. Every Run creates a fresh Node process and interpreter;
+// failed or interrupted programs are never replayed. State is memory-only and
+// isolated by service and caller-supplied scope. Close cancels runs and clears it.
 type Service struct {
-	config ServiceConfig
-	mu     sync.Mutex
-	closed bool
-	active map[string]context.CancelFunc
-	done   sync.WaitGroup
+	config     ServiceConfig
+	mu         sync.Mutex
+	closed     bool
+	closedCh   chan struct{}
+	active     map[string]context.CancelFunc
+	done       sync.WaitGroup
+	scopes     map[string]*stateScope
+	stateBytes int
+}
+
+type stateScope struct {
+	ctx   context.Context
+	done  chan struct{}
+	bytes int
+	// Keep both keys and values as JSON text so UTF-16 strings survive transport
+	// without Go's JSON decoder replacing unpaired surrogate code units.
+	values map[string]string
 }
 
 func NewService(config ServiceConfig) *Service {
-	return &Service{config: config, active: map[string]context.CancelFunc{}}
+	return &Service{config: config, active: map[string]context.CancelFunc{}, scopes: map[string]*stateScope{}, closedCh: make(chan struct{})}
 }
 
 func (s *Service) Close() error {
 	s.mu.Lock()
-	s.closed = true
+	if !s.closed {
+		s.closed = true
+		close(s.closedCh)
+	}
+	s.scopes = nil
+	s.stateBytes = 0
 	for _, cancel := range s.active {
 		cancel()
 	}
@@ -144,9 +176,15 @@ func (s *Service) Close() error {
 	return nil
 }
 
-// Run retains only printed/returned values and media; nested calls go through
-// the caller's policy, scheduler and durable ledger. The interpreter has no native
-// capabilities. An explicit deadline includes tool and approval waits.
+// Run retains printed/returned values, media, and successful store()/remove() mutations.
+// load() returns a fresh clone of the scope's state, including staged writes.
+// remove() returns whether the key existed and reclaims its byte/key budget;
+// removing the last key also releases the scope slot after successful commit.
+// State commits only after successful completion and cleanup; errors, cancellation,
+// and state-limit rejection preserve the prior commit. Nested tool effects are
+// not transactional and are not rolled back when program state is discarded.
+// Calls use the caller's policy, scheduler and durable ledger. The interpreter
+// has no native capabilities. An explicit deadline includes tool/approval waits.
 func (s *Service) Run(parent context.Context, request RunRequest, opts RunOptions) (result RunResult, err error) {
 	if strings.TrimSpace(request.Code) == "" {
 		return result, errors.New("PTC requires code")
@@ -159,24 +197,105 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 	if timeout < 0 || int64(timeout) > MaxTimeoutMS {
 		return result, fmt.Errorf("PTC timeout_ms must be between 0 and %d (0 adds no deadline)", MaxTimeoutMS)
 	}
+	lifetime := parent
+	if timeout > 0 {
+		var cancelDeadline context.CancelFunc
+		lifetime, cancelDeadline = context.WithTimeout(parent, time.Duration(timeout)*time.Millisecond)
+		defer cancelDeadline()
+	}
 	var ctx context.Context
 	var cancel context.CancelFunc
-	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(parent, time.Duration(timeout)*time.Millisecond)
-	} else {
-		ctx, cancel = context.WithCancel(parent)
+	id := rand.Text()
+	var scope *stateScope
+	var committed map[string]string
+	var staged map[string]string
+	completed := false
+	for {
+		s.mu.Lock()
+		if s.closed {
+			s.mu.Unlock()
+			return result, errors.New("PTC runtime is closed")
+		}
+		if lifetime.Err() != nil {
+			s.mu.Unlock()
+			result.Error = lifetime.Err().Error()
+			return result, nil
+		}
+		if opts.StateScope != "" {
+			scope = s.scopes[opts.StateScope]
+			if scope != nil && scope.done != nil {
+				if scope.ctx.Err() == nil {
+					s.mu.Unlock()
+					return result, errors.New("PTC state scope already running; await the earlier program")
+				}
+				// Cancellation can return through a caller's transport before its
+				// executor finishes. Drain that run without replaying either program.
+				drained := scope.done
+				s.mu.Unlock()
+				select {
+				case <-drained:
+					continue
+				case <-lifetime.Done():
+					result.Error = lifetime.Err().Error()
+					return result, nil
+				case <-s.closedCh:
+					return result, errors.New("PTC runtime is closed")
+				}
+			}
+			if scope == nil {
+				if len(s.scopes) >= MaxStateScopes {
+					s.mu.Unlock()
+					return result, fmt.Errorf("PTC state scope limit exceeded (%d)", MaxStateScopes)
+				}
+				scope = &stateScope{}
+				s.scopes[opts.StateScope] = scope
+			}
+		}
+		ctx, cancel = context.WithCancel(lifetime)
+		if scope != nil {
+			scope.ctx, scope.done = ctx, make(chan struct{})
+			committed = scope.values
+		}
+		s.active[id] = cancel
+		s.done.Add(1)
+		s.mu.Unlock()
+		break
 	}
 	defer cancel()
-	id := rand.Text()
-	s.mu.Lock()
-	if s.closed {
+	defer func() {
+		s.mu.Lock()
+		delete(s.active, id)
+		if scope != nil {
+			if completed && err == nil && result.Error == "" {
+				switch {
+				case lifetime.Err() != nil:
+					result.Error = lifetime.Err().Error()
+				case s.closed:
+					result.Error = context.Canceled.Error()
+				default:
+					size, stateErr := validateState(staged)
+					if stateErr != nil {
+						result.Error = stateErr.Error()
+					} else if s.stateBytes-scope.bytes+size > MaxServiceStateBytes {
+						result.Error = fmt.Sprintf("PTC session state exceeds the byte limit (%d)", MaxServiceStateBytes)
+					} else {
+						s.stateBytes += size - scope.bytes
+						scope.values, scope.bytes = staged, size
+					}
+				}
+				if result.Error != "" {
+					result.Value = nil
+				}
+			}
+			if !s.closed && len(scope.values) == 0 {
+				delete(s.scopes, opts.StateScope)
+			}
+			close(scope.done)
+			scope.ctx, scope.done = nil, nil
+		}
 		s.mu.Unlock()
-		return result, errors.New("PTC runtime is closed")
-	}
-	s.active[id] = cancel
-	s.done.Add(1)
-	s.mu.Unlock()
-	defer func() { s.mu.Lock(); delete(s.active, id); s.mu.Unlock(); s.done.Done() }()
+		s.done.Done()
+	}()
 	node := s.config.NodeExecutable
 	if node == "" {
 		node = os.Getenv("WUU_NODE_EXECUTABLE")
@@ -214,7 +333,8 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 	if readErr != nil {
 		return result, readErr
 	}
-	boot, err := json.Marshal(map[string]any{"address": listener.Addr().String(), "secret": secret, "code": request.Code, "tools": catalog.Names(), "maxOutputBytes": outputLimit, "modules": modules, "wasm": wasm})
+	boot, err := json.Marshal(map[string]any{"address": listener.Addr().String(), "secret": secret, "code": request.Code, "tools": catalog.Names(), "maxOutputBytes": outputLimit, "modules": modules, "wasm": wasm,
+		"state": committed, "stateEnabled": scope != nil, "maxStateBytes": MaxStateBytes, "maxStateKeys": MaxStateKeys})
 	if err != nil {
 		return result, err
 	}
@@ -303,13 +423,14 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 	nextID := 1
 	for {
 		var frame struct {
-			Type  string          `json:"type"`
-			ID    int             `json:"id"`
-			Name  string          `json:"name"`
-			Args  json.RawMessage `json:"args"`
-			Value json.RawMessage `json:"value"`
-			Error string          `json:"error"`
-			Text  string          `json:"text"`
+			Type  string            `json:"type"`
+			ID    int               `json:"id"`
+			Name  string            `json:"name"`
+			Args  json.RawMessage   `json:"args"`
+			Value json.RawMessage   `json:"value"`
+			Error string            `json:"error"`
+			Text  string            `json:"text"`
+			State map[string]string `json:"state"`
 		}
 		if readErr := readFrame(conn, &frame); readErr != nil {
 			if ctx.Err() != nil {
@@ -334,6 +455,10 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 				result.Value = frame.Value
 				result.Error = frame.Error
 			}
+			if result.Error == "" && ctx.Err() != nil {
+				result.Error = ctx.Err().Error()
+			}
+			completed, staged = true, frame.State
 			return result, nil
 		case "search", "describe":
 			var value any
@@ -395,12 +520,37 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 					}
 					mediaMu.Unlock()
 				}
-				send(map[string]any{"id": id, "value": value, "error": message})
+				reply := map[string]any{"id": id, "error": message}
+				if callErr == nil {
+					reply["value"] = value
+				}
+				send(reply)
 			}(frame.ID, frame.Name, frame.Args)
 		default:
 			return result, errors.New("unknown PTC control message")
 		}
 	}
+}
+
+func validateState(values map[string]string) (int, error) {
+	if values == nil {
+		return 0, errors.New("PTC successful program omitted state")
+	}
+	if len(values) > MaxStateKeys {
+		return 0, fmt.Errorf("PTC state key limit exceeded (%d)", MaxStateKeys)
+	}
+	size := 0
+	for key, value := range values {
+		size += len(key) + len(value)
+		if size > MaxStateBytes {
+			return 0, fmt.Errorf("PTC state exceeds the byte limit (%d)", MaxStateBytes)
+		}
+		var decodedKey string
+		if len(key) == 0 || key[0] != '"' || json.Unmarshal([]byte(key), &decodedKey) != nil || !json.Valid([]byte(value)) {
+			return 0, errors.New("PTC state contains invalid JSON")
+		}
+	}
+	return size, nil
 }
 
 // runOutput also bounds raw native stdout/stderr, which never share the control channel.

@@ -95,6 +95,13 @@ Initialization is preparation, not permission to start product behavior. The hos
 
 Register model tools in the initialization result's `tools` array. Each tool needs an `id`, `description`, and object `input_schema`. The host creates a namespaced public name. `execution_scopes` can limit availability to `root` or `child`; `activity` describes read-only behavior, concurrency safety, risk, and whether the tool orchestrates child tools. Declare real effects rather than marking a writer read-only to bypass scheduling or permission checks. These declarations are trusted-extension contracts, not a sandbox.
 
+Ordinary tools are PTC bindings by default when the session enables PTC. Set
+`direct_only: true` for user interaction, explicit delivery, or lifecycle
+controls that must remain model-direct. Such tools stay in the top-level
+provider surface and reject nested invocation. The optional flag does not
+grant permissions or change execution scopes; undeclared tools retain ordinary
+routing. Keep this host metadata out of input schemas.
+
 `executeTool` receives arguments and execution context such as `cwd`, call ID, and available session/turn identifiers. Validate arguments even when a schema is present. Return `{ result: { content: [...] } }`, setting `is_error: true` for a tool failure. Content can contain text and supported rich result parts. Use `importArtifact` for a file that should become a thread-owned artifact rather than returning a temporary path that may disappear.
 
 Capabilities are declared separately, with an ID, `kind`, and version. Current supported capability IDs are:

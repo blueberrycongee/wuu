@@ -36,7 +36,7 @@ func (*CodeModeExecTool) Execute(context.Context, string) (string, error) {
 func (*CodeModeExecTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        codeModeExecToolName,
-		Description: "Execute an async JavaScript or erasable TypeScript function body in a fresh tool-only interpreter. No filesystem, network, process, module imports, or timers are available. Discover bindings with await searchTools(query, {limit:8, offset:0}); it returns {tools:[{name,description}],total,next_offset?}. An empty query pages through the catalog. Read exact arguments with await describeTool(name), returning {name,description,input_schema}. Invoke await tools[name](args). Names are exact; bracket access handles punctuation. Calls return tool-result objects with content and optional structured_content. Failures reject with ToolCallError (toolName and message). Return JSON and/or console.log only what is needed; intermediate values stay out of the conversation. Successful image/audio results are attached automatically. Await writes and dependent calls sequentially; use bounded Promise.all for independent reads. There is no retained state or continuation. There is no default elapsed deadline; an explicit timeout includes approval/tool waits. Cancellation stops active calls but cannot undo completed effects. Never blindly replay a failed program.",
+		Description: "Execute an async JavaScript or erasable TypeScript function body in a fresh tool-only interpreter. No filesystem, network, process, module imports, or timers are available. Discover bindings with await searchTools(query, {limit:8, offset:0}); it returns {tools:[{name,description}],total,next_offset?}. An empty query pages through the catalog. Read exact arguments with await describeTool(name), returning {name,description,input_schema}. Invoke await tools[name](args). Names are exact; bracket access handles punctuation. Calls return canonical tool-result objects with content, optional structured_content, and optional model_text compact projection. Failures reject with ToolCallError (toolName, message, and result for completed tool failures). Return JSON and/or console.log only what is needed; intermediate values stay out of the conversation. Successful image/audio results are attached automatically. Await writes and dependent calls sequentially; use bounded Promise.all for independent reads. store(key,value), load(key), and remove(key) manage lossless JSON checkpoints scoped to this conversation, actor and workspace. Values are cloned; load returns undefined for a missing key. Only successful programs commit state; tool effects are not transactional. State is memory-only, limited to 1 MiB and 256 keys per scope; use remove to reclaim it. Do not store credentials. There is no JS continuation: await all calls before returning. For long work use bash run_in_background and process read/write/stop in later programs; keep their handles with store. Separately advertised interaction, artifact delivery and lifecycle controls must be called directly. There is no default elapsed deadline; an explicit timeout includes approval/tool waits. Cancellation stops active calls but cannot undo completed effects. Never blindly replay a failed program.",
 		InputSchema: map[string]any{"type": "object", "additionalProperties": false, "required": []string{"code", "description"}, "properties": map[string]any{
 			"code":        map[string]any{"type": "string", "description": "Async function body. Type annotations are erased; enum and namespaces are unsupported."},
 			"description": map[string]any{"type": "string", "description": "Short description of this program."},
@@ -92,7 +92,7 @@ func (e *CodeModeExecTool) ExecuteResultCall(ctx context.Context, call providers
 		return toolresult.Result{}, err
 	}
 	result, err := e.toolkit.CodeModeService().Run(ctx, codemode.RunRequest{Code: args.Code, TimeoutMS: timeout, Tools: definitions},
-		codemode.RunOptions{CWD: cwd, Executor: executor, Sandbox: policy, SandboxProvider: e.toolkit.env.ProcessSandboxProvider})
+		codemode.RunOptions{StateScope: e.toolkit.codeModeStateScope(), CWD: cwd, Executor: executor, Sandbox: policy, SandboxProvider: e.toolkit.env.ProcessSandboxProvider})
 	if err != nil {
 		return toolresult.Result{}, err
 	}
@@ -132,7 +132,7 @@ func (t *Toolkit) withCodeModeSurface(surface capability.Surface) capability.Sur
 func (t *Toolkit) codeModeEntryDefinitions() []providers.ToolDefinition {
 	var out []providers.ToolDefinition
 	for _, d := range t.registry.Definitions() {
-		if (d.Name == codeModeExecToolName || d.Name == newContextToolName) && t.SupportsTool(d.Name) {
+		if (d.Name == codeModeExecToolName || d.DirectOnly) && t.SupportsTool(d.Name) {
 			if d.Name == codeModeExecToolName {
 				d.Description += t.codeModeToolCatalog()
 			}
@@ -194,7 +194,7 @@ func (t *Toolkit) codeModeNestedDefinitions() []providers.ToolDefinition {
 	}
 	out := make([]providers.ToolDefinition, 0, len(all))
 	for _, d := range all {
-		if d.Name == codeModeExecToolName || d.Name == newContextToolName || d.Name == "tool_search" || !t.SupportsTool(d.Name) {
+		if d.Name == codeModeExecToolName || d.DirectOnly || d.Name == "tool_search" || !t.SupportsTool(d.Name) {
 			continue
 		}
 		out = append(out, d)
@@ -204,7 +204,7 @@ func (t *Toolkit) codeModeNestedDefinitions() []providers.ToolDefinition {
 	t.codeModeMu.RUnlock()
 	if additional != nil {
 		for _, definition := range additional() {
-			if definition.Name != codeModeExecToolName && definition.Name != newContextToolName && definition.Name != "tool_search" && !t.isToolDisabled(definition.Name) {
+			if definition.Name != codeModeExecToolName && !definition.DirectOnly && definition.Name != "tool_search" && !t.IsToolDisabled(definition.Name) {
 				out = append(out, definition)
 			}
 		}
@@ -218,4 +218,23 @@ func codeModeToolDefinition(d providers.ToolDefinition) (codemode.ToolDefinition
 		return codemode.ToolDefinition{}, err
 	}
 	return codemode.ToolDefinition{Name: d.Name, Description: d.Description, InputSchema: schema}, nil
+}
+
+// CodeModeDirectCallAllowed is the shared top-level routing policy. Availability
+// and authorization are checked separately at dispatch time.
+func (t *Toolkit) CodeModeDirectCallAllowed(name string) bool {
+	if name == codeModeExecToolName {
+		return true
+	}
+	tool := t.LookupTool(name)
+	return tool != nil && tool.Definition().DirectOnly
+}
+
+// State is host-scoped and cannot address another conversation or workspace.
+func (t *Toolkit) codeModeStateScope() string {
+	if t.env.SessionID == "" || t.env.SessionID == "session-pending" {
+		return ""
+	}
+	identity, _ := json.Marshal([]string{t.env.SessionID, t.env.AgentID, t.env.RootDir})
+	return string(identity)
 }

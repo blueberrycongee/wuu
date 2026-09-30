@@ -282,3 +282,15 @@ func (h *HookedExecutor) storeAdditionalContext(call providers.ToolCall, context
 	}
 	h.additionalByCall[call.ID] = context
 }
+
+// FreezeToolSurface forwards the model-run snapshot boundary through hooks.
+func (h *HookedExecutor) FreezeToolSurface() {
+	if freezer, ok := h.inner.(agent.ToolSurfaceFreezer); ok {
+		freezer.FreezeToolSurface()
+	}
+}
+func (h *HookedExecutor) UnfreezeToolSurface() {
+	if freezer, ok := h.inner.(agent.ToolSurfaceFreezer); ok {
+		freezer.UnfreezeToolSurface()
+	}
+}

@@ -27,7 +27,8 @@ func (t *SetSessionWorkspaceTool) IsConcurrencySafe() bool { return false }
 
 func (t *SetSessionWorkspaceTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
-		Name: "set_session_workspace",
+		DirectOnly: true,
+		Name:       "set_session_workspace",
 		Description: "Persistently bind the current session to an existing linked Git worktree after intentionally moving the task there, " +
 			"or back to the project root. Before removing the session's own worktree, first move the session back to the project root. " +
 			"This updates subsequent tool roots and the desktop Environment panel. Do not use it for a temporary shell cd or command-specific cwd.",

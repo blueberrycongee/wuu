@@ -82,6 +82,11 @@ type Surface struct {
 // check whether the model can see the capability in the direct tool
 // list should consult Capabilities directly.
 func (s Surface) HasCapability(c Capability) bool {
+	for _, existing := range s.NestedTools {
+		if existing == c {
+			return true
+		}
+	}
 	for _, existing := range s.Capabilities {
 		if existing == c {
 			return true
@@ -106,6 +111,11 @@ func (s Surface) HasCapability(c Capability) bool {
 // capabilities, which the model can never load. Use it to gate guidance that
 // teaches a capability the model must be able to invoke.
 func (s Surface) HasAvailableCapability(c Capability) bool {
+	for _, existing := range s.NestedTools {
+		if existing == c {
+			return true
+		}
+	}
 	for _, existing := range s.Capabilities {
 		if existing == c {
 			return true
@@ -210,6 +220,8 @@ type Summary struct {
 	Model                 string            `json:"model"`
 	ToolNames             []string          `json:"tool_names"`
 	DeferredToolNames     []string          `json:"deferred_tool_names"`
+	NestedToolNames       []string          `json:"nested_tool_names"`
+	NestedCapabilityMap   map[string]string `json:"nested_capability_map"`
 	HiddenToolNames       []string          `json:"hidden_tool_names"`
 	Capabilities          []string          `json:"capabilities"`
 	DeferredCapabilities  []string          `json:"deferred_capabilities"`
@@ -227,6 +239,13 @@ type Summary struct {
 // debug UI; the full Surface stays server-side because it carries
 // the implementation map and the system prompt fragment.
 func (s Surface) Summarize() Summary {
+	nestedCaps := make(map[string]string, len(s.NestedTools))
+	nestedNames := make([]string, 0, len(s.NestedTools))
+	for name, c := range s.NestedTools {
+		nestedCaps[name] = string(c)
+		nestedNames = append(nestedNames, name)
+	}
+	sort.Strings(nestedNames)
 	toolCaps := make(map[string]string, len(s.Tools))
 	for name, c := range s.Tools {
 		toolCaps[name] = string(c)
@@ -258,6 +277,8 @@ func (s Surface) Summarize() Summary {
 	sort.Strings(hiddenTools)
 	return Summary{
 		ProfileName:           s.ProfileName,
+		NestedToolNames:       nestedNames,
+		NestedCapabilityMap:   nestedCaps,
 		Provider:              s.Provider,
 		Model:                 s.Model,
 		ToolNames:             s.ToolNames(),
@@ -283,6 +304,16 @@ func (s Surface) Summarize() Summary {
 func (s Surface) editPrimitive() string {
 	if patch, ok := s.ToolForCapability(CapabilityFileEdit); ok {
 		return patch
+	}
+	names := make([]string, 0, len(s.NestedTools))
+	for name, capName := range s.NestedTools {
+		if capName == CapabilityFileEdit {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	if len(names) > 0 {
+		return names[0]
 	}
 	return ""
 }
