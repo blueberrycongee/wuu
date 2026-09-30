@@ -1,0 +1,6 @@
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--paper); color: var(--ink); font-family: var(--font-family-ui, system-ui); }
+.fixture-shell { display: flex; flex-direction: column; height: 100%; }
+.fixture-pane { position: relative; display: flex; flex: 1; min-height: 0; flex-direction: column; justify-content: flex-end; width: min(100%, var(--fixture-width)); margin: 0 auto; }
+.fixture-history { flex: 1; overflow: auto; padding: 24px var(--session-outer-padding-inline) 0; line-height: 1.7; }
+.fixture-history > p { max-width: var(--session-composer-width); margin: 0 auto 16px; }
