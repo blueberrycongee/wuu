@@ -6,7 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 )
+
+// cancelNotificationTimeout bounds the best-effort notifications/cancelled that
+// follows a cancelled call, so an unresponsive server cannot hold the caller.
+var cancelNotificationTimeout = 2 * time.Second
 
 // Transport is the low-level JSON-RPC transport for MCP.
 type Transport interface {
@@ -157,16 +162,18 @@ func callWithProtocol(ctx context.Context, t Transport, f *inFlight, method stri
 	case <-ctx.Done():
 		// Tell the server to stop working on this request (MCP
 		// notifications/cancelled). Best-effort: ctx is already done, so the
-		// notification goes out on a background context and errors are ignored.
-		// The spec forbids cancelling initialize, so skip it there.
+		// notification goes out on its own bounded context and errors are
+		// ignored. The spec forbids cancelling initialize, so skip it there.
 		f.drop(id)
 		if method != "initialize" && method != "server/discover" {
 			if p, err := json.Marshal(cancelledParams{RequestID: id, Reason: ctx.Err().Error()}); err == nil {
-				_ = t.Send(context.Background(), Request{
+				cancelCtx, stop := context.WithTimeout(context.Background(), cancelNotificationTimeout)
+				_ = t.Send(cancelCtx, Request{
 					JSONRPC: "2.0",
 					Method:  "notifications/cancelled",
 					Params:  p,
 				})
+				stop()
 			}
 		}
 		return nil, ctx.Err()
