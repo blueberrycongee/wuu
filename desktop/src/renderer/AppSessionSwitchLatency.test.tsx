@@ -354,6 +354,44 @@ function emitNotification(method: string, params: Record<string, unknown>, workd
   }
 }
 
+async function pickPendingAttachment(owner: Element, extension: "pdf" | "png" | "mp4") {
+  const bytes = new TextEncoder().encode(`attachment owned by A (${extension})`);
+  const read = deferred<ArrayBuffer>();
+  const encoded = deferred<void>();
+  const originalRead = FileReader.prototype.readAsDataURL;
+  vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (this: FileReader, blob) {
+    this.addEventListener("loadend", () => encoded.resolve(), { once: true });
+    originalRead.call(this, blob);
+  });
+  if (extension !== "pdf") {
+    vi.stubGlobal("URL", class extends URL {
+      static createObjectURL = vi.fn(() => "blob:pending-owner-image");
+      static revokeObjectURL = vi.fn();
+    });
+  }
+  const type = extension === "pdf" ? "application/pdf" : extension === "png" ? "image/png" : "video/mp4";
+  const file = new File([bytes], `A-only.${extension}`, { type });
+  Object.defineProperty(file, "arrayBuffer", { value: () => read.promise });
+  await act(async () => {
+    const input = owner.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [file] });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  return {
+    data: btoa(new TextDecoder().decode(bytes)),
+    finish: async () => {
+      await act(async () => {
+        read.resolve(bytes.buffer);
+        await encoded.promise;
+      });
+    },
+    fail: async () => { await act(async () => read.reject(new Error("File read failed"))); },
+  };
+}
+
+const mainComposerSelector = '[data-main-conversation-composer="dock"]';
+const attachmentCardSelector = ".composer-attachment-card";
+
 describe("session tab switch latency", () => {
   beforeEach(() => {
     installWindowStubs();
@@ -370,9 +408,101 @@ describe("session tab switch latency", () => {
     });
     root = null;
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     container.remove();
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
+  });
+
+  it.each(["pdf", "png", "mp4"] as const)("keeps a pending %s on its original draft after switching conversations", async (extension) => {
+    const { startTurn } = installWuuApi();
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    const attachment = await pickPendingAttachment(container.querySelector(mainComposerSelector)!, extension);
+    await act(async () => { threadRowButton("session switch B")!.click(); });
+    await attachment.finish();
+    expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
+    await act(async () => { threadRowButton("session switch A")!.click(); });
+    expect(container.querySelectorAll(`${mainComposerSelector} ${attachmentCardSelector}`)).toHaveLength(1);
+    if (extension === "png") {
+      expect(container.querySelector(`${mainComposerSelector} img`)?.getAttribute("src")).toBe(`data:image/png;base64,${attachment.data}`);
+    }
+    await act(async () => { mainComposerSendButton().click(); });
+    expect(startTurn).toHaveBeenCalledOnce();
+    expect(startTurn.mock.calls[0][0]).toBe(threadAID);
+    expect(startTurn.mock.calls[0][extension === "png" ? 2 : 3][0].data).toBe(attachment.data);
+  });
+
+  it.each(["pdf", "png"] as const)("finishes a %s after its draft moves from a split pane to the main composer", async (extension) => {
+    installWuuApi();
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await act(async () => { requestOpenThreadInSplit(threadBID); });
+    const attachment = await pickPendingAttachment(container.querySelector(`.conversation-split-pane[data-thread-id="${threadAID}"]`)!, extension);
+    await act(async () => { container.querySelector<HTMLButtonElement>(".conversation-split-close")!.click(); });
+    await attachment.finish();
+    expect(container.querySelectorAll(`${mainComposerSelector} ${attachmentCardSelector}`)).toHaveLength(1);
+    if (extension === "png") {
+      expect(container.querySelector(`${mainComposerSelector} img`)?.getAttribute("src")).toBe(`data:image/png;base64,${attachment.data}`);
+    }
+  });
+
+  it.each(["remove", "send", "failure"] as const)("does not restore a pending PDF after %s", async (action) => {
+    const { startTurn } = installWuuApi();
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    const attachment = await pickPendingAttachment(container.querySelector(mainComposerSelector)!, "pdf");
+    expect(container.querySelectorAll(`${mainComposerSelector} ${attachmentCardSelector}`)).toHaveLength(1);
+    if (action === "remove") {
+      await act(async () => { container.querySelector<HTMLButtonElement>(`${mainComposerSelector} .composer-attachment-card-remove`)!.click(); });
+    } else if (action === "send") {
+      await act(async () => { mainComposerSendButton().click(); });
+      expect(startTurn).not.toHaveBeenCalled();
+    }
+    if (action === "failure") await attachment.fail();
+    else await attachment.finish();
+    expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
+    if (action === "send") {
+      expect(startTurn).toHaveBeenCalledOnce();
+      expect(startTurn.mock.calls[0][3][0].data).toBe(attachment.data);
+    } else expect(startTurn).not.toHaveBeenCalled();
+    await act(async () => { threadRowButton("session switch B")!.click(); });
+    await act(async () => { threadRowButton("session switch A")!.click(); });
+    expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
+  });
+
+  it.each(["pdf", "png"] as const)("does not revive a closed split draft when its %s finishes", async (extension) => {
+    installWuuApi();
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await act(async () => { requestOpenThreadInSplit(threadBID); });
+    const attachment = await pickPendingAttachment(container.querySelector(`.conversation-split-pane[data-thread-id="${threadBID}"]`)!, extension);
+    await act(async () => { container.querySelector<HTMLButtonElement>(".conversation-split-close")!.click(); });
+    await attachment.finish();
+    expect(container.querySelector(attachmentCardSelector)).toBeNull();
+    await act(async () => { requestOpenThreadInSplit(threadBID); });
+    expect(container.querySelector(attachmentCardSelector)).toBeNull();
+  });
+
+  it.each(["queue", "steer"] as const)("waits for pending PDF bytes before %s without refilling the sent draft", async (action) => {
+    const { threadsByID } = installWuuApi();
+    threadsByID.set(threadAID, runningThreadA());
+    const submit = vi.fn(async () => ({ queued: { id: "queued-pdf", thread_id: threadAID }, turn_id: threadA().turns[0].id }));
+    window.wuu.queueTurn = submit;
+    window.wuu.steerTurn = submit;
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    const attachment = await pickPendingAttachment(container.querySelector(mainComposerSelector)!, "pdf");
+    await act(async () => {
+      mainComposerTextarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: action === "queue", bubbles: true }));
+    });
+    expect(submit).not.toHaveBeenCalled();
+    await attachment.finish();
+    expect(submit).toHaveBeenCalledOnce();
+    const args = vi.mocked(action === "queue" ? window.wuu.queueTurn : window.wuu.steerTurn).mock.calls[0];
+    expect(args[0]).toBe(threadAID);
+    expect(args[action === "queue" ? 4 : 5]).toEqual([{ media_type: "application/pdf", filename: "A-only.pdf", data: attachment.data }]);
+    expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
   });
 
   it("keeps pending creation visible and stoppable after a background list refresh", async () => {
