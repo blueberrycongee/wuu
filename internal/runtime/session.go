@@ -2301,7 +2301,7 @@ func commandProjectDirs(rootDir string) []skills.SourceDir {
 	if err != nil {
 		return nil
 	}
-	projectRoot := findSkillProjectRoot(absRoot)
+	projectRoot := SkillProjectRoot(absRoot)
 	chain := skillDirChain(projectRoot, absRoot)
 	out := make([]skills.SourceDir, 0, len(chain)*2)
 	for _, dir := range chain {
@@ -2341,7 +2341,7 @@ func skillProjectDirs(rootDir string) []skills.SourceDir {
 	if err != nil {
 		return nil
 	}
-	projectRoot := findSkillProjectRoot(absRoot)
+	projectRoot := SkillProjectRoot(absRoot)
 	chain := skillDirChain(projectRoot, absRoot)
 	out := make([]skills.SourceDir, 0, len(chain)*5)
 	for _, dir := range chain {
@@ -2359,7 +2359,9 @@ func skillProjectDirs(rootDir string) []skills.SourceDir {
 	return out
 }
 
-func findSkillProjectRoot(start string) string {
+// SkillProjectRoot returns the nearest repository boundary used for skill discovery.
+// An empty result means discovery is limited to the starting directory.
+func SkillProjectRoot(start string) string {
 	cur := start
 	for {
 		for _, marker := range []string{".git", ".hg", ".jj", ".svn"} {

@@ -473,9 +473,11 @@ function composerSlashCommandSearchText(command: ComposerSlashCommand): string {
     .toLowerCase();
 }
 
-export function composerSkillPrompt(skill: Pick<SkillSummary, "name" | "source" | "path">, args = ""): string {
+export function composerSkillPrompt(skill: Pick<SkillSummary, "name" | "source" | "path" | "project">, args = ""): string {
   // Persist the catalog identity so dispatch never depends on model interpretation.
-  const identity = { name: skill.name, source: skill.source, path: skill.path ?? "" };
+  const identity = skill.project
+    ? { name: skill.name, source: skill.source, project: skill.project }
+    : { name: skill.name, source: skill.source, path: skill.path ?? "" };
   return `/skill ${JSON.stringify(identity)}\n\n${args.trim()}`;
 }
 

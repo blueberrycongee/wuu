@@ -40,12 +40,14 @@ git(project, 'config', 'user.name', 'E2E');
 fs.writeFileSync(path.join(project, 'README.md'), 'committed\n');
 const skillPath = path.join('.agents', 'skills', 'compact', 'SKILL.md');
 fs.mkdirSync(path.dirname(path.join(project, skillPath)), { recursive: true });
-fs.writeFileSync(path.join(project, skillPath), '---\nname: compact\ndescription: Explicit skill identity fixture\n---\nWORKSPACE_SKILL_MARKER ${ARGUMENTS}\n');
+fs.writeFileSync(path.join(project, skillPath), '---\nname: compact\ndescription: Explicit skill identity fixture\n---\nWORKSPACE_SKILL_MARKER ${ARGUMENTS}\nResource base: ${CLAUDE_SKILL_DIR}\n');
+fs.writeFileSync(path.join(project, path.dirname(skillPath), 'resource.txt'), 'WORKSPACE_RESOURCE_MARKER');
 git(project, 'add', '.');
 git(project, 'commit', '-q', '-m', 'init');
 git(project, 'switch', '-q', '-c', 'feature');
 fs.writeFileSync(path.join(project, 'feature.txt'), 'feature\n');
-fs.writeFileSync(path.join(project, skillPath), '---\nname: compact\ndescription: Explicit skill identity fixture\n---\nSELECTED_SKILL_MARKER ${ARGUMENTS}\n');
+fs.writeFileSync(path.join(project, skillPath), '---\nname: compact\ndescription: Explicit skill identity fixture\n---\nSELECTED_SKILL_MARKER ${ARGUMENTS}\nResource base: ${CLAUDE_SKILL_DIR}\n');
+fs.writeFileSync(path.join(project, path.dirname(skillPath), 'resource.txt'), 'SELECTED_RESOURCE_MARKER');
 git(project, 'add', '.');
 git(project, 'commit', '-q', '-m', 'feature');
 const featureHead = git(project, 'rev-parse', 'HEAD');
@@ -89,6 +91,19 @@ const click = (win, selector) => evaluate(win, target => {
   if (!element) throw new Error(`missing ${target}`);
   element.click();
 }, selector);
+async function waitForSkillRow(win) {
+  await waitFor(win, () => {
+    const row = document.querySelector('.slash-command-item[id$="-skill:compact"]');
+    if (!row || row.disabled) return false;
+    const rect = row.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0 || rect.left < 0 || rect.top < 0 || rect.right > innerWidth || rect.bottom > innerHeight) return false;
+    for (let element = row; element; element = element.parentElement) {
+      const style = getComputedStyle(element);
+      if (style.display === 'none' || style.visibility !== 'visible' || Number(style.opacity) < 0.99) return false;
+    }
+    return row.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2));
+  });
+}
 const gitControls = win => evaluate(win, () => {
   const group = document.querySelector('.composer-git-controls');
   const toggle = group?.querySelector('.composer-worktree-toggle');
@@ -142,12 +157,25 @@ async function run() {
   assert.deepEqual(await gitControls(main), { branch: 'feature', worktree: 'true' });
   await capture(main, '03-worktree-on-feature.png');
 
-  // Send: the conversation runs in a new worktree at the start branch.
-  await evaluate(main, text => {
+  // Select before the new checkout exists; browsing must not create a worktree.
+  const worktreeCount = () => git(project, 'worktree', 'list', '--porcelain').split('\n').filter(line => line.startsWith('worktree ')).length;
+  assert.equal(worktreeCount(), 1);
+  main.focus();
+  await evaluate(main, () => {
     const textarea = document.querySelector('.composer textarea');
-    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(textarea, text);
+    textarea.focus();
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(textarea, '/compact Summarize this repository');
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
-  }, 'Summarize this repository');
+  });
+  await waitForSkillRow(main);
+  await capture(main, '03a-initial-skill-menu.png');
+  await evaluate(main, () => document.querySelector('.slash-command-item[id$="-skill:compact"]').click());
+  await waitFor(main, () => document.querySelector('.composer textarea').value.startsWith('/skill '));
+  const initialSkillDraft = await evaluate(main, () => document.querySelector('.composer textarea').value);
+  const projectIdentity = { root: fs.realpathSync(project), path: skillPath.split(path.sep).join('/') };
+  assert.deepEqual(JSON.parse(initialSkillDraft.split('\n')[0].slice('/skill '.length)), { name: 'compact', source: 'project', project: projectIdentity });
+  assert.equal(worktreeCount(), 1, 'Choosing a skill must not materialize the selected checkout.');
+  await capture(main, '03b-initial-skill-draft.png');
   await click(main, '.composer-send-button');
   await waitFor(main, () => document.querySelector('.fork-worktree-notice'));
   assert.equal(await evaluate(main, () => {
@@ -168,9 +196,13 @@ async function run() {
   assert.equal(git(thread.worktree.path, 'rev-parse', 'HEAD'), featureHead);
   assert.equal(fs.readFileSync(path.join(thread.worktree.path, 'README.md'), 'utf8'), 'committed\n', 'Uncommitted changes are not carried into the worktree.');
   assert.ok(fs.existsSync(path.join(thread.worktree.path, 'feature.txt')));
+  assert.equal(fs.readFileSync(path.join(thread.cwd, path.dirname(skillPath), 'resource.txt'), 'utf8'), 'SELECTED_RESOURCE_MARKER');
   assert.equal(git(project, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main');
   assert.equal(fs.readFileSync(path.join(project, 'README.md'), 'utf8'), 'uncommitted edit\n');
-  assert.ok(requests.some(request => JSON.stringify(request.body.messages).includes('Summarize this repository')), 'The turn reached the provider.');
+  assert.ok(requests.some(request => (request.body.messages || []).some(message => message.role === 'user'
+    && typeof message.content === 'string' && message.content.includes('SELECTED_SKILL_MARKER Summarize this repository')
+    && !message.content.includes('WORKSPACE_SKILL_MARKER') && message.content.includes(path.join(thread.cwd, path.dirname(skillPath))))),
+    'The first turn must load the selected branch skill and its resource base.');
   await evaluate(main, () => document.querySelector('.fork-worktree-card')?.setAttribute('open', ''));
   await capture(main, '04-conversation-worktree-notice.png');
 
@@ -183,23 +215,13 @@ async function run() {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, '/compact');
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await waitFor(main, () => {
-    const row = document.querySelector('.slash-command-item[id$="-skill:compact"]');
-    if (!row || row.disabled) return false;
-    const rect = row.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0 || rect.left < 0 || rect.top < 0 || rect.right > innerWidth || rect.bottom > innerHeight) return false;
-    for (let element = row; element; element = element.parentElement) {
-      const style = getComputedStyle(element);
-      if (style.display === 'none' || style.visibility !== 'visible' || Number(style.opacity) < 0.99) return false;
-    }
-    return row.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2));
-  });
+  await waitForSkillRow(main);
   await capture(main, '07-explicit-skill-menu.png');
   await evaluate(main, () => document.querySelector('.slash-command-item[id$="-skill:compact"]').click());
   await waitFor(main, () => document.querySelector('.composer textarea').value.startsWith('/skill '));
   const selectedDraft = await evaluate(main, () => document.querySelector('.composer textarea').value);
   assert.deepEqual(JSON.parse(selectedDraft.split('\n')[0].slice('/skill '.length)), {
-    name: 'compact', source: 'project', path: path.join(thread.cwd, skillPath),
+    name: 'compact', source: 'project', project: projectIdentity,
   });
   await capture(main, '08-explicit-skill-draft-light.png');
   main.setSize(760, 820);
@@ -288,13 +310,25 @@ async function run() {
   await waitFor(main, () => document.querySelector('.composer-project-control .hero-project-pill-text')?.textContent === 'plain-folder' && !document.querySelector('.composer-git-controls'));
   await capture(main, '06-draft-non-git.png');
 
+  const crossProject = await evaluate(main, async draft => {
+    const { thread } = await window.wuu.startThread();
+    try {
+      await window.wuu.startTurn(thread.id, draft);
+      return { rejected: false };
+    } catch (error) {
+      return { rejected: true, error: String(error) };
+    }
+  }, initialSkillDraft);
+  assert(crossProject.rejected && crossProject.error.includes('invalid project skill selection'), 'Pasting the bound draft into another project must fail before invocation.');
+
   fs.writeFileSync(path.join(output, 'evidence.json'), `${JSON.stringify({
     fixture,
     featureHead,
     thread: { id: thread.id, cwd: thread.cwd, worktree: thread.worktree },
     narrow,
     providerRequests: requests.length,
-    selectedSkill: { draft: selectedDraft, loadedInstructionsVerified: true },
+    crossProject,
+    selectedSkill: { initialDraft: initialSkillDraft, draft: selectedDraft, initialWorktreeInstructionsVerified: true, loadedInstructionsVerified: true },
   }, null, 2)}\n`);
   console.log(`composer worktree E2E passed; artifacts in ${output}`);
 }

@@ -1000,7 +1000,7 @@ func (s *Server) handleExtensionCatalogRefresh(req Request) error {
 	}
 	return s.writeResponse(req.ID, ExtensionCatalogRefreshResult{
 		ExtensionInventory: s.currentExtensionInventory(),
-		Skills:             skillSummaries(s.rt.Skills),
+		Skills:             s.skillSummaries(s.rt.Skills, s.rt.RootDir),
 	}, nil)
 }
 
@@ -1935,39 +1935,47 @@ func (s *Server) handleSkillList(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	catalog, err := s.skillCatalog(params.ThreadID)
+	catalog, root, err := s.skillCatalog(params.ThreadID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	return s.writeResponse(req.ID, SkillListResult{Skills: skillSummaries(catalog)}, nil)
+	return s.writeResponse(req.ID, SkillListResult{Skills: s.skillSummaries(catalog, root)}, nil)
 }
 
-func (s *Server) skillCatalog(threadID string) ([]skills.Skill, error) {
+func (s *Server) skillCatalog(threadID string) ([]skills.Skill, string, error) {
 	if strings.TrimSpace(threadID) == "" {
-		return s.rt.Skills, nil
+		return s.rt.Skills, s.rt.RootDir, nil
 	}
 	th, err := s.ensureThreadLoaded(threadID)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	threadRuntime, err := s.ensureThreadRuntime(th)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if threadRuntime.Toolkit != nil {
-		return tools.FilterSkillsForSurface(threadRuntime.Toolkit.Skills(), threadRuntime.Toolkit.ActiveSurface()), nil
+		root := threadRuntime.Toolkit.RootDir()
+		th.mu.Lock()
+		baseRepo := th.WorktreeBaseRepo
+		th.mu.Unlock()
+		if skillDiscoveryRoot(root) != skillDiscoveryRoot(s.rt.RootDir) &&
+			(baseRepo == "" || sessionWorkspacePath(baseRepo) != sessionWorkspacePath(s.rt.RootDir)) {
+			root = ""
+		}
+		return tools.FilterSkillsForSurface(threadRuntime.Toolkit.Skills(), threadRuntime.Toolkit.ActiveSurface()), root, nil
 	}
 	th.mu.Lock()
 	root := th.CWD
 	th.mu.Unlock()
 	if sessionWorkspacePath(root) == sessionWorkspacePath(s.rt.RootDir) {
-		return s.rt.Skills, nil
+		return s.rt.Skills, s.rt.RootDir, nil
 	}
 	// Engines without a native toolkit cannot resolve a different checkout's catalog.
-	return nil, nil
+	return nil, root, nil
 }
 
-func skillSummaries(items []skills.Skill) []SkillSummary {
+func (s *Server) skillSummaries(items []skills.Skill, root string) []SkillSummary {
 	out := make([]SkillSummary, 0, len(items))
 	for _, item := range items {
 		out = append(out, SkillSummary{
@@ -1977,6 +1985,7 @@ func skillSummaries(items []skills.Skill) []SkillSummary {
 			TriggerCondition:      item.TriggerCondition,
 			Source:                item.Source,
 			Path:                  item.Path,
+			Project:               projectSkillIdentity(item, root, s.rt.RootDir),
 			ArgumentHint:          item.ArgumentHint,
 			Model:                 item.Model,
 			Context:               item.Context,

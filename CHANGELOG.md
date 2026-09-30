@@ -27,7 +27,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Fixed
 - Load explicitly selected skills deterministically through `/skill` drafts, preserving
   source identity, thread checkout, queued instructions, and built-in command behavior.
-  Reject stale selections instead of silently choosing another skill.
+  Resolve project-local selections to the chosen checkout, including the first turn
+  of a new worktree; reject stale or cross-project selections without silent fallback.
 
 - Respect named `@@` context in file patches so edits cannot silently target
   matching code before that context; reject missing or ambiguous context before

@@ -800,6 +800,11 @@ export type ProviderModelVariantSummary = {
   options?: Record<string, JsonValue>;
 };
 
+export type SkillProjectIdentity = {
+  root: string;
+  path: string;
+};
+
 export type SkillSummary = {
   name: string;
   description?: string;
@@ -807,6 +812,7 @@ export type SkillSummary = {
   trigger_condition?: string;
   source: string;
   path?: string;
+  project?: SkillProjectIdentity;
   argument_hint?: string;
   model?: string;
   context?: string;

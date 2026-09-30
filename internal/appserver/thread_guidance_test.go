@@ -75,6 +75,17 @@ func TestWorktreeProtocolGuidanceUsesSelectedCheckout(t *testing.T) {
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	defer srv.Close()
+	dispatchPayload(t, srv, "initial-catalog", MethodSkillList, SkillListParams{})
+	initialCatalog := remarshal[SkillListResult](t, responseByID(t, parseOutput(t, out.String()), "initial-catalog")["result"])
+	var initialSkill SkillSummary
+	for _, item := range initialCatalog.Skills {
+		if item.Name == "release-check" {
+			initialSkill = item
+		}
+	}
+	if initialSkill.Project == nil || initialSkill.Project.Root != sessionWorkspacePath(repo) || initialSkill.Project.Path != ".agents/skills/release-check/SKILL.md" {
+		t.Fatalf("draft catalog did not supply a bound project identity: %+v", initialSkill)
+	}
 
 	for _, tc := range []struct {
 		name, cwd    string
@@ -165,7 +176,7 @@ func TestWorktreeProtocolGuidanceUsesSelectedCheckout(t *testing.T) {
 		if selectedPath != filepath.Join(canonical, ".agents", "skills", "release-check", "SKILL.md") {
 			t.Fatalf("%s catalog used the wrong checkout: %+v", tc.name, selected)
 		}
-		identity, _ := json.Marshal(map[string]string{"name": selected.Name, "source": selected.Source, "path": selected.Path})
+		identity, _ := json.Marshal(map[string]any{"name": initialSkill.Name, "source": initialSkill.Source, "project": initialSkill.Project})
 		explicit := "/skill " + string(identity) + "\n\nrelease notes"
 		queueID := "explicit-" + tc.name
 		dispatchPayload(t, srv, queueID, MethodTurnQueue, TurnQueueParams{

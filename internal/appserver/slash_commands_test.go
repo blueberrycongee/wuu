@@ -2,10 +2,13 @@ package appserver
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
@@ -188,4 +191,141 @@ func TestExplicitSkillSteeringUsesLoadedInstructions(t *testing.T) {
 		}
 	}
 	t.Fatal("steering did not deliver selected instructions")
+}
+
+func TestProjectSkillIdentityBoundaries(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	if err := os.Mkdir(filepath.Join(rt.RootDir, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	instructionPath := filepath.Join(rt.RootDir, ".agents", "skills", "review", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(instructionPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(instructionPath, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rt.Skills = []skills.Skill{{Name: "review", Source: "project", Path: instructionPath, Dir: filepath.Dir(instructionPath), UserInvocable: true, Content: "project instructions ${ARGUMENTS}"}}
+	srv := New(rt, &lockedBuffer{})
+	summary := srv.skillSummaries(rt.Skills, rt.RootDir)[0]
+	if summary.Project == nil {
+		t.Fatal("owned skill missing project identity")
+	}
+	owner := summary.Project.Root
+	for _, tc := range []struct {
+		name, root, path, source, absolute string
+		valid                              bool
+	}{
+		{"owned", owner, ".agents/skills/review/SKILL.md", "project", "", true},
+		{"other-project", t.TempDir(), ".agents/skills/review/SKILL.md", "project", "", false},
+		{"traversal", owner, "../.agents/skills/review/SKILL.md", "project", "", false},
+		{"normalized-traversal", owner, ".agents/../.agents/skills/review/SKILL.md", "project", "", false},
+		{"backslash", owner, `.agents\skills\review\SKILL.md`, "project", "", false},
+		{"absolute", owner, instructionPath, "project", "", false},
+		{"mixed", owner, ".agents/skills/review/SKILL.md", "project", instructionPath, false},
+		{"wrong-source", owner, ".agents/skills/review/SKILL.md", "user", "", false},
+		{"missing", owner, ".agents/skills/missing/SKILL.md", "project", "", false},
+		{"wrong-name", owner, ".agents/skills/review/SKILL.md", "project", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			identity := map[string]any{"name": "review", "source": tc.source, "project": map[string]string{"root": tc.root, "path": tc.path}}
+			if tc.name == "wrong-name" {
+				identity["name"] = "missing"
+			}
+			if tc.absolute != "" {
+				identity["path"] = tc.absolute
+			}
+			encoded, _ := json.Marshal(identity)
+			msg, err := srv.userMessageWithInputImages("", "/skill "+string(encoded)+"\nnotes", nil, nil, nil)
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v, error=%v, discovered=%+v", tc.valid, err, projectSkillIdentity(rt.Skills[0], owner, rt.RootDir))
+			}
+			if tc.valid && !strings.Contains(msg.Content, "project instructions notes") {
+				t.Fatalf("wrong instructions: %s", msg.Content)
+			}
+		})
+	}
+}
+
+func TestProjectSkillCatalogOwnership(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	if err := os.Mkdir(filepath.Join(rt.RootDir, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(rt.RootDir, ".agents", "skills", "review")
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(directory, "SKILL.md")
+	if err := os.WriteFile(file, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	skill := skills.Skill{Name: "review", Source: "project", Path: file, Dir: directory, UserInvocable: true, Content: "owned instructions"}
+	rt.Skills = []skills.Skill{skill}
+	srv := New(rt, &lockedBuffer{})
+	for _, source := range []string{"user", "plugin:fixture"} {
+		candidate := skill
+		candidate.Source = source
+		summary := srv.skillSummaries([]skills.Skill{candidate}, rt.RootDir)[0]
+		if summary.Project != nil || summary.Path != file {
+			t.Fatalf("external source was rebound: %+v", summary)
+		}
+		rt.Skills = []skills.Skill{candidate}
+		identity, _ := json.Marshal(map[string]string{"name": candidate.Name, "source": source, "path": file})
+		if _, err := srv.userMessageWithInputImages("", "/skill "+string(identity), nil, nil, nil); err != nil {
+			t.Fatalf("absolute external identity failed: %v", err)
+		}
+	}
+	rt.Skills = []skills.Skill{skill}
+	subdirectory := filepath.Join(rt.RootDir, "subpackage")
+	if err := os.Mkdir(subdirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	workspace := rt.RootDir
+	rt.RootDir = subdirectory
+	summary := srv.skillSummaries(rt.Skills, subdirectory)[0]
+	if summary.Project == nil || summary.Project.Root != sessionWorkspacePath(subdirectory) || summary.Project.Path != ".agents/skills/review/SKILL.md" {
+		t.Fatalf("ancestor skill lost checkout-relative identity: %+v", summary)
+	}
+	rt.RootDir = workspace
+
+	foreign := t.TempDir()
+	if err := os.Mkdir(filepath.Join(foreign, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(foreign, "SKILL.md")
+	if err := os.WriteFile(outside, []byte("outside"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(directory, "linked.md")
+	if err := os.Symlink(outside, link); err == nil {
+		escaped := skill
+		escaped.Path = link
+		if got := srv.skillSummaries([]skills.Skill{escaped}, workspace)[0]; got.Project != nil {
+			t.Fatalf("escaped skill acquired project ownership: %+v", got)
+		}
+		rt.Skills = []skills.Skill{escaped}
+		identity, _ := json.Marshal(map[string]any{"name": "review", "source": "project", "project": map[string]string{"root": sessionWorkspacePath(workspace), "path": ".agents/skills/review/linked.md"}})
+		if _, err := srv.userMessageWithInputImages("", "/skill "+string(identity), nil, nil, nil); err == nil {
+			t.Fatal("escaped symlink matched a project-relative selection")
+		}
+		rt.Skills = []skills.Skill{skill}
+	}
+	kit, err := tools.New(foreign)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := skill
+	other.Path = outside
+	other.Dir = foreign
+	kit.SetSkills([]skills.Skill{other})
+	srv.threads["foreign"] = &threadState{ID: "foreign", CWD: foreign, EngineID: "wuu", running: true, execRuntime: &runtime.ThreadRuntime{Toolkit: kit}}
+	catalog, root, err := srv.skillCatalog("foreign")
+	if err != nil || len(catalog) != 1 || root != "" {
+		t.Fatalf("foreign checkout inherited ownership: root=%q catalog=%+v error=%v", root, catalog, err)
+	}
+	identity, _ := json.Marshal(map[string]any{"name": "review", "source": "project", "project": map[string]string{"root": sessionWorkspacePath(workspace), "path": "SKILL.md"}})
+	if _, err := srv.userMessageWithInputImages("foreign", "/skill "+string(identity), nil, nil, nil); err == nil {
+		t.Fatal("foreign checkout accepted originating project identity")
+	}
 }
