@@ -269,21 +269,9 @@
 }
 
 .conversation-split-width .assistant-turn-shell {
-                                                                  
-                                                                 
-                                                                 
-                                          
   width: 100%;
 }
 
-                                                              
-                                                                   
-                                                                
-                                                                    
-                                                               
-                                                                    
-                                                                  
-                                                                 
 .turn-answer-body {
   display: flex;
   flex-direction: column;
@@ -302,10 +290,6 @@
   gap: var(--conversation-image-gap);
 }
 
-                                                                    
-                                                                     
-                                                                      
-                                        
 .message {
   max-width: min(var(--conversation-message-max-width), var(--conversation-message-max-inline));
   border-radius: var(--radius-sm);
@@ -325,12 +309,6 @@
     var(--wuu-message-user-color, var(--user-message-fg-color)) 14%,
     transparent
   );
-                                                         
-                                                           
-                                                             
-                                                              
-                                                       
-                            
   --user-message-background: var(--wuu-message-user-background, var(--user-message-bg-color));
   background: var(--user-message-background);
   border: var(--wuu-message-user-border, 0);
@@ -352,8 +330,6 @@
      break lands between turns, not inside one. */
   margin-bottom: var(--conversation-user-message-trailing-gap);
   border-radius: var(--radius-lg);
-                                                                        
-                                                     
   scroll-margin-top: 12px;
 }
 
@@ -416,10 +392,6 @@
   justify-items: end;
 }
 
-                                                                         
-                                                                     
-                                                                     
-                                        
 .user-message-block.user-message-jump-flash > .user-message-motion > .user-message,
 .user-message-block.user-message-jump-flash > .user-message-motion > .user-message-edit {
   animation: user-message-jump-flash 800ms var(--ease-out);
@@ -1727,12 +1699,6 @@
   overflow-wrap: anywhere;
 }
 
-                                                                                
-                                                                               
-                                                                                
-                                                                           
-                                                                         
-                                                         
 
 .streaming-markdown {
   display: block;
@@ -1763,13 +1729,6 @@
   gap: var(--conversation-prose-block-gap, 24px);
 }
 
-                                                                     
-                                                                
-                                                                 
-                                                              
-                                              
-                                                                    
-                                                                          
 .stream-cursor {
   /* Layout-stable slot. The wrapper takes zero flow width so inserting
      or removing the cursor does not shift the trailing character of a
@@ -1811,7 +1770,6 @@
   bottom: 0;
 }
 
-                                                                         
 .streaming-markdown[data-cursor-state="fading"] .stream-cursor {
   transition: opacity var(--motion-base) var(--ease-out);
   opacity: 0;
@@ -1826,7 +1784,6 @@
   color: inherit;
 }
 
-                                                        
 @container style(--motion-reduced: 1) {
   .streaming-markdown[data-cursor-state="fading"] .stream-cursor {
     transition: none;
@@ -2005,23 +1962,11 @@
   color: var(--ink-tertiary);
   text-overflow: ellipsis;
   white-space: nowrap;
-                                                                 
-                                                                
-                                                              
-                                                                
-                                          
   font-size: var(--conversation-process-font-size);
   font-weight: var(--conversation-process-font-weight);
   line-height: var(--conversation-process-line-height);
 }
 
-                                                               
-                                                               
-                                                              
-                                         
-                                                                 
-                                                                  
-                                                              
 .turn-process-live-dot {
   display: inline-block;
   flex: 0 0 auto;
@@ -2031,10 +1976,6 @@
   background: var(--ink-muted);
   margin-right: 6px;
   vertical-align: middle;
-                                                                  
-                                                                    
-                                                                 
-                                
   --pulse-opacity: 0.4;
   animation: wuu-pulse 1.2s ease-in-out infinite;
 }
@@ -2055,11 +1996,6 @@
   line-height: var(--conversation-process-line-height);
 }
 
-                                                             
-                                                                
-                                                                  
-                                                                
-                                                              
 .turn-process-preview {
   display: flex;
   flex: 1 1 0;
@@ -2082,18 +2018,7 @@
   white-space: nowrap;
 }
 
-                                                               
-                                                                 
-                                                                 
-                                                                   
-                                                                  
-                                                  
 
-                                                                   
-                                                                 
-                                                             
-                                                               
-                                                                
 .collapsible-details {
   /* Drive the fold body height directly with height: 0 / auto.
      interpolate-size: allow-keywords lets the browser transition
@@ -2254,11 +2179,6 @@
 }
 
 .activity-row {
-                                                                  
-                                                                  
-                                                               
-                                                                 
-                                                              
   display: inline-flex;
   min-width: 0;
   min-height: 0;
@@ -2339,9 +2259,6 @@
   flex: 0 0 auto;
 }
 
-                                                                
-                                                                   
-                                                                    
 .activity-summary {
   display: inline-flex;
   align-items: center;
@@ -2360,15 +2277,6 @@
 }
 
 .activity-details {
-                                                                     
-                                                                
-                                                                 
-                                                                     
-                                                               
-                                                                     
-                                                                    
-                                                                 
-                                                   
   display: none;
 }
 
@@ -3429,10 +3337,6 @@
 }
 
 .rich-content :not(pre) > code {
-                                                              
-                                                              
-                                                                
-                                                              
   border: 0;
   border-radius: var(--radius-xs);
   background: var(--wuu-inline-code-background, var(--surface-chip));
@@ -3490,9 +3394,6 @@
   display: block;
   max-width: 100%;
   max-height: 420px;
-                                                              
-                                                           
-                                                                    
   border: 1px solid var(--hairline);
   border-radius: var(--radius-media);
   background: var(--surface-1);
@@ -3502,10 +3403,6 @@
 .rich-code {
   max-height: 460px;
   min-width: 0;
-                                                                   
-                                                                  
-                                                                    
-                                  
   border: 0;
   background: var(--message-flow-card-bg);
   border-radius: var(--radius-sm);
@@ -3850,10 +3747,6 @@
 
 .rich-blockquote {
   margin: 0;
-                                                               
-                                                               
-                                                           
-                                                                  
   border-left: 2px solid var(--hairline-strong);
   color: var(--rich-blockquote-color);
   padding: 2px 0 2px 16px;
@@ -3954,21 +3847,6 @@
   margin-top: 2px;
 }
 
-                                                                 
-                                                                    
-                                                                
-                                                           
-                                                               
-                                                           
-                                                              
-                                                                
-                                                            
-                                                                 
-                                                                
-                                                                     
-                                                                
-                                                               
-                                              
 .turn-reasoning-fold {
   min-width: 0;
 }
@@ -3995,9 +3873,6 @@
   display: none;
 }
 
-                                                                  
-                                                                    
-                           
 .turn-reasoning-summary:hover,
 .turn-reasoning-summary:focus-visible {
   text-decoration: underline;
@@ -4012,19 +3887,7 @@
   min-width: 0;
 }
 
-                                                                 
-                                                                  
-                                                                 
-                                                       
 
-                                                            
-                                                               
-                                                                 
-                                                                
-                                                                     
-                                                               
-                                                                      
-                                              
 /* (the overlay, keyframes, and reduced-motion handling for
    `.turn-reasoning-summary-text.is-streaming` live with the unified
    process-surface shimmer selectors above) */
@@ -4040,11 +3903,6 @@
   transform: rotate(90deg);
 }
 
-                                                                     
-                                                                   
-                                                                  
-                                                               
-                                        
 .turn-reasoning-body {
   display: grid;
   grid-template-rows: 0fr;
@@ -4063,18 +3921,9 @@
   min-height: 0;
   overflow: hidden;
   padding: 4px 0 2px 20px;
-                                                                    
-                                                               
-                                                                    
-                                    
   color: var(--wuu-ink-soft);
 }
 
-                                                                      
-                                                                  
-                                                                  
-                                                                     
-                                                  
 .turn-reasoning-scroll {
   max-height: var(--conversation-process-fold-max-height, min(320px, 40vh));
   min-height: 0;
@@ -4137,30 +3986,11 @@ pre {
 }
 
   
-                           
   
-                                                                         
-                                                                     
-                                                                       
-                                                                   
-                                                      
   
-                                              
-                                                          
-                                                                    
-                                                                   
-                                                                      
-                                                        
-                                                                       
    
 
-                                                                     
-                                                               
-                                         
   
-                                                                      
-                                                                   
-                                                          
    
 .system-line {
   border: 0;
