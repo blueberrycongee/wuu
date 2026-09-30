@@ -823,6 +823,10 @@ export type SkillSummary = {
   version?: string;
 };
 
+export type SkillListParams = {
+  thread_id?: string;
+};
+
 export type SkillListResult = {
   skills: SkillSummary[];
 };
@@ -2746,7 +2750,7 @@ export type WuuDesktopApi = {
   takeoverActivity: (threadId: string, activityId: string) => Promise<ActivityActionResult>;
   releaseActivity: (threadId: string, activityId: string) => Promise<ActivityReleaseResult>;
   stopActivity: (threadId: string, activityId: string) => Promise<ActivityActionResult>;
-  listSkills: () => Promise<SkillListResult>;
+  listSkills: (params?: SkillListParams) => Promise<SkillListResult>;
   readSkillContent: (params: SkillContentParams) => Promise<SkillContentResult>;
   returnManagedSession: (params: { thread_id: string; revision: number }) => Promise<{ control: NonNullable<Thread["session_control"]> }>;
   takeOverManagedSession?: (params: { thread_id: string; revision: number }) => Promise<{ control: NonNullable<Thread["session_control"]> }>;

@@ -2069,7 +2069,7 @@ describe("Composer send control", () => {
     const prompt = setPrompt.mock.calls.at(-1)?.[0];
     expect(prompt).toContain(name);
     expect(prompt).toContain(path);
-    expect(prompt).not.toMatch(/^\//);
+    expect(JSON.parse(prompt.split("\n")[0].slice("/skill ".length))).toEqual({ name, source: "user", path });
   });
 
   it("shows both the command name and the description on a skill row", async () => {

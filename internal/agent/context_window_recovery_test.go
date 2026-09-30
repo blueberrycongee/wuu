@@ -88,6 +88,101 @@ func TestFreshContextFailureRetainsOriginalWindow(t *testing.T) {
 	}
 }
 
+func TestFreshContextHooksProtectWindowReplacement(t *testing.T) {
+	for _, trigger := range []string{"manual", "threshold", "overflow", "overflow-trim"} {
+		for _, blockedHook := range []string{"pre", "post", "none"} {
+			t.Run(trigger+"/"+blockedHook, func(t *testing.T) {
+				history := []providers.ChatMessage{
+					{Role: "system", Content: "instructions"},
+					{Role: "user", Content: strings.Repeat("original task ", 2000)},
+					{Role: "assistant", Content: "completed progress"},
+					{Role: "user", Content: "continue"},
+				}
+				cfg := recoveryWindowConfig()
+				overflow := providers.NewProviderStreamError("context_length_exceeded", "")
+				step := &fakeStep{results: []StepResult{{Content: "done"}}}
+				wantRequests, blockAttempt := 0, 1
+				switch trigger {
+				case "manual":
+					cfg.ForceInitialCompact, cfg.CompactOnly = true, true
+				case "threshold":
+					cfg.CompactThresholdTokens = 1
+				case "overflow":
+					step.results = []StepResult{{}, {Content: "done"}}
+					step.errs = []error{overflow, nil}
+					wantRequests = 1
+				case "overflow-trim":
+					step.results = []StepResult{{}, {}, {Content: "done"}}
+					step.errs = []error{overflow, overflow, nil}
+					wantRequests, blockAttempt = 2, 2
+				}
+				before, after, archives, commits, successes := 0, 0, 0, 0, 0
+				hookErr := errors.New("checkpoint must remain active")
+				cfg.BeforeCompact = func(context.Context, CompactReason) error {
+					before++
+					if blockedHook == "pre" && before == blockAttempt {
+						return hookErr
+					}
+					return nil
+				}
+				cfg.AfterCompact = func(_ context.Context, _ CompactReason, err error) error {
+					after++
+					if err != nil {
+						t.Fatalf("unexpected window failure: %v", err)
+					}
+					if blockedHook == "post" && after == blockAttempt {
+						return hookErr
+					}
+					return nil
+				}
+				cfg.ArchiveHistory = func(context.Context, []providers.ChatMessage) (HistoryArchive, error) {
+					archives++
+					return HistoryArchive{HeadSeq: 100}, nil
+				}
+				cfg.FreshContext = func(_ context.Context, messages []providers.ChatMessage, _, _, _ int) ([]providers.ChatMessage, error) {
+					if trigger == "overflow-trim" {
+						return providers.CloneChatMessages(messages), nil
+					}
+					return []providers.ChatMessage{messages[0], messages[len(messages)-1]}, nil
+				}
+				cfg.AcceptFreshContext = func(_ context.Context, messages []providers.ChatMessage, head int) ([]providers.ChatMessage, int, error) {
+					commits++
+					return messages, head, nil
+				}
+				cfg.OnCompact = func(CompactInfo) { successes++ }
+				result, err := RunToolLoop(context.Background(), history, cfg, step)
+				wantAfter, wantCommits := blockAttempt, 0
+				if blockedHook == "none" {
+					wantCommits = 1
+					if trigger != "manual" {
+						wantRequests++
+					}
+					if err != nil || !result.HistoryRewritten {
+						t.Fatalf("approved window failed: rewritten=%v err=%v", result.HistoryRewritten, err)
+					}
+					if trigger != "manual" {
+						for _, message := range step.calls[len(step.calls)-1].Messages {
+							if message.Content == history[1].Content {
+								t.Error("approved retry still contains released history")
+							}
+						}
+					}
+				} else {
+					if blockedHook == "pre" {
+						wantAfter--
+					}
+					if !errors.Is(err, hookErr) || result.HistoryRewritten || len(result.NewMessages) != 0 {
+						t.Errorf("rejected window escaped: rewritten=%v new=%d err=%v", result.HistoryRewritten, len(result.NewMessages), err)
+					}
+				}
+				if before != blockAttempt || after != wantAfter || archives != wantAfter || commits != wantCommits || successes != wantCommits || len(step.calls) != wantRequests {
+					t.Fatalf("pre=%d post=%d archives=%d commits=%d successes=%d requests=%d; want %d/%d/%d/%d/%d/%d", before, after, archives, commits, successes, len(step.calls), blockAttempt, wantAfter, wantAfter, wantCommits, wantCommits, wantRequests)
+				}
+			})
+		}
+	}
+}
+
 type recoveryProgressTools struct{}
 
 func (recoveryProgressTools) Definitions() []providers.ToolDefinition {

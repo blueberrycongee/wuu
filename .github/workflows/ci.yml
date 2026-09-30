@@ -160,6 +160,24 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Verify worktree skill selection
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WUU_WORKTREE_OUTPUT: ${{ runner.temp }}/wuu-composer-worktree-evidence
+          WUU_WORKTREE_CORE: ${{ runner.temp }}/wuu-session-switch-core
+        run: |
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/composer-worktree-e2e.cjs 2>&1 | tee "$WUU_WORKTREE_OUTPUT.log"
+
+      - name: Upload worktree skill evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: composer-worktree-skill-evidence
+          path: ${{ runner.temp }}/wuu-composer-worktree-evidence*
+          if-no-files-found: ignore
+          retention-days: 14
+
   clients-check:
     name: Clients check
     runs-on: ubuntu-latest

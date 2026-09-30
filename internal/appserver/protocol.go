@@ -1160,6 +1160,10 @@ type SkillSummary struct {
 	Version               string   `json:"version,omitempty"`
 }
 
+type SkillListParams struct {
+	ThreadID string `json:"thread_id,omitempty"`
+}
+
 type SkillListResult struct {
 	Skills []SkillSummary `json:"skills"`
 }

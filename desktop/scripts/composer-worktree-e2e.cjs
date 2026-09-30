@@ -13,7 +13,7 @@ const { pathToFileURL } = require('node:url');
 const { app } = require('electron');
 
 const desktop = path.resolve(__dirname, '..');
-const output = path.resolve(desktop, '../artifacts/composer-worktree');
+const output = process.env.WUU_WORKTREE_OUTPUT || path.resolve(desktop, '../artifacts/composer-worktree');
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-composer-worktree-'));
 const home = path.join(fixture, 'home');
 const project = path.join(fixture, 'project');
@@ -38,10 +38,14 @@ git(project, 'init', '-q', '-b', 'main');
 git(project, 'config', 'user.email', 'e2e@example.com');
 git(project, 'config', 'user.name', 'E2E');
 fs.writeFileSync(path.join(project, 'README.md'), 'committed\n');
+const skillPath = path.join('.agents', 'skills', 'compact', 'SKILL.md');
+fs.mkdirSync(path.dirname(path.join(project, skillPath)), { recursive: true });
+fs.writeFileSync(path.join(project, skillPath), '---\nname: compact\ndescription: Explicit skill identity fixture\n---\nWORKSPACE_SKILL_MARKER ${ARGUMENTS}\n');
 git(project, 'add', '.');
 git(project, 'commit', '-q', '-m', 'init');
 git(project, 'switch', '-q', '-c', 'feature');
 fs.writeFileSync(path.join(project, 'feature.txt'), 'feature\n');
+fs.writeFileSync(path.join(project, skillPath), '---\nname: compact\ndescription: Explicit skill identity fixture\n---\nSELECTED_SKILL_MARKER ${ARGUMENTS}\n');
 git(project, 'add', '.');
 git(project, 'commit', '-q', '-m', 'feature');
 const featureHead = git(project, 'rev-parse', 'HEAD');
@@ -170,6 +174,56 @@ async function run() {
   await evaluate(main, () => document.querySelector('.fork-worktree-card')?.setAttribute('open', ''));
   await capture(main, '04-conversation-worktree-notice.png');
 
+  // Explicit selection must beat the built-in control command and use this checkout.
+  await waitFor(main, () => document.querySelector('.composer-send-button[data-wuu-state="send"]'));
+  await evaluate(main, () => {
+    const input = document.querySelector('.composer textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, '/compact');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await waitFor(main, () => [...document.querySelectorAll('.slash-command-item[data-command-name="compact"]')].some(node => node.textContent.includes('Skill')));
+  await capture(main, '07-explicit-skill-menu.png');
+  await evaluate(main, () => [...document.querySelectorAll('.slash-command-item[data-command-name="compact"]')].find(node => node.textContent.includes('Skill')).click());
+  await waitFor(main, () => document.querySelector('.composer textarea').value.startsWith('/skill '));
+  const selectedDraft = await evaluate(main, () => document.querySelector('.composer textarea').value);
+  assert.deepEqual(JSON.parse(selectedDraft.split('\n')[0].slice('/skill '.length)), {
+    name: 'compact', source: 'project', path: path.join(thread.cwd, skillPath),
+  });
+  await capture(main, '08-explicit-skill-draft-light.png');
+  main.setSize(760, 820);
+  await evaluate(main, () => {
+    document.documentElement.dataset.theme = 'dark';
+    document.documentElement.style.setProperty('--conversation-message-font-size', '20px');
+    document.documentElement.style.setProperty('--appearance-scale', String(20 / 14));
+  });
+  await settle(main);
+  assert(await evaluate(main, () => {
+    const input = document.querySelector('.composer textarea');
+    return input.scrollWidth <= input.clientWidth + 1 && input.getBoundingClientRect().right <= innerWidth;
+  }), 'The explicit identity draft must wrap inside the narrow composer.');
+  await capture(main, '09-explicit-skill-draft-dark-narrow.png');
+  await evaluate(main, text => {
+    const input = document.querySelector('.composer textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, text + 'verify selected workflow');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }, selectedDraft);
+  await click(main, '.composer-send-button');
+  const receivedSelectedSkill = () => requests.some(request => (request.body.messages || []).some(message =>
+    message.role === 'user' && typeof message.content === 'string'
+    && message.content.includes('SELECTED_SKILL_MARKER verify selected workflow')
+    && !message.content.includes('WORKSPACE_SKILL_MARKER')
+    && !message.content.startsWith('/skill ')));
+  const skillDeadline = Date.now() + 30000;
+  while (!receivedSelectedSkill() && Date.now() < skillDeadline) await delay(50);
+  assert(receivedSelectedSkill(), 'The provider must receive the selected checkout instructions, not the dispatch envelope.');
+  await waitFor(main, () => document.querySelector('.composer-send-button[data-wuu-state="send"]'));
+  main.setSize(1280, 820);
+  await evaluate(main, () => {
+    document.documentElement.dataset.theme = 'light';
+    document.documentElement.style.removeProperty('--conversation-message-font-size');
+    document.documentElement.style.removeProperty('--appearance-scale');
+  });
+
   // The next draft starts shared again, and with worktree off a branch choice
   // is a checkout of the shared project.
   await click(main, '.session-tab-new');
@@ -228,6 +282,7 @@ async function run() {
     thread: { id: thread.id, cwd: thread.cwd, worktree: thread.worktree },
     narrow,
     providerRequests: requests.length,
+    selectedSkill: { draft: selectedDraft, loadedInstructionsVerified: true },
   }, null, 2)}\n`);
   console.log(`composer worktree E2E passed; artifacts in ${output}`);
 }

@@ -10,6 +10,8 @@ In the desktop composer, enter `/skills` to open the catalog. Search the discove
 /release-check 2026.9.1
 ```
 
+Selecting a skill from the menu or catalog inserts a `/skill` draft containing its name, source, and instruction path. Keep that identity intact and add your request below it. On submission, Wuu loads that exact catalog entry before calling the model, including skills hidden from automatic selection. An unavailable or changed identity is rejected so you can select it again. Bare built-in commands such as `/review` and `/compact` retain their usual behavior.
+
 The Wuu engine gives the model a catalog of skill names and descriptions. When a task matches, it can use `load_skill` to read the full workflow. A missing description or `disable-model-invocation: true` keeps a skill out of that automatic-selection catalog. `user-invocable` controls whether it is offered for direct user invocation.
 
 Availability depends on the workspace, discovered sources, and current tool surface. A skill that requires unavailable tools may be filtered out. Refresh the catalog after installing or editing one, and inspect the source path if the wrong version appears.

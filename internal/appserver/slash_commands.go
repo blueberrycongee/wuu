@@ -1,9 +1,14 @@
 package appserver
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 type slashCommandTemplate struct {
@@ -163,4 +168,44 @@ func renderSlashTemplate(template slashCommandTemplate, args string) string {
 		return strings.TrimSpace(template.PromptNoArg)
 	}
 	return strings.TrimSpace(strings.ReplaceAll(template.Prompt, "{{args}}", args))
+}
+
+// Explicit skill drafts carry a catalog identity, never a path to read directly.
+// Resolving at submission freezes the instructions for queued turns and retries.
+func (s *Server) renderExplicitSkillPrompt(threadID, prompt string) (string, bool, error) {
+	command, value, ok := splitSlashCommand(strings.TrimSpace(prompt))
+	if !strings.HasPrefix(strings.TrimSpace(prompt), "/") || !ok || command != "skill" {
+		return prompt, false, nil
+	}
+	var identity struct {
+		Name   string `json:"name"`
+		Source string `json:"source"`
+		Path   string `json:"path"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(value))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&identity); err != nil {
+		return "", true, fmt.Errorf("invalid skill selection: %w", err)
+	}
+	arguments := strings.TrimSpace(value[decoder.InputOffset():])
+	catalog, err := s.skillCatalog(threadID)
+	if err != nil {
+		return "", true, err
+	}
+	for _, skill := range catalog {
+		if skill.Name != identity.Name || skill.Source != identity.Source || skill.Path != identity.Path {
+			continue
+		}
+		if !skill.UserInvocable {
+			return "", true, fmt.Errorf("skill %q cannot be invoked by the user", identity.Name)
+		}
+		env := tools.Env{SessionID: threadID}
+		body := env.ProcessSkillBody(context.Background(), skill, arguments)
+		content := tools.SkillContentBlock(skill, body)
+		if arguments != "" {
+			content += "\n\n" + arguments
+		}
+		return content, true, nil
+	}
+	return "", true, fmt.Errorf("selected skill %q is no longer available; select it again", identity.Name)
 }

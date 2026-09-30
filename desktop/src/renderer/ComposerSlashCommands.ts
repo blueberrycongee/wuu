@@ -383,7 +383,7 @@ export function buildComposerSlashCommands({
   ];
   const skillCommands = buildSkillSlashCommands(skills, needsRuntime);
   const reservedNames = new Set(
-    [...commands, ...skillCommands].flatMap((command) => [command.name, ...(command.aliases ?? [])]),
+    ["skill", ...[...commands, ...skillCommands].flatMap((command) => [command.name, ...(command.aliases ?? [])])],
   );
   const pluginCommands = registerPluginPromptCommands(
     pluginCommandPackagesFromInventory(initialized?.extension_inventory ?? []),
@@ -474,9 +474,9 @@ function composerSlashCommandSearchText(command: ComposerSlashCommand): string {
 }
 
 export function composerSkillPrompt(skill: Pick<SkillSummary, "name" | "source" | "path">, args = ""): string {
-  // An explicit selection must survive slash-name collisions and draft persistence.
-  const instructions = skill.path ? ` Read and follow its instructions at ${JSON.stringify(skill.path)}.` : "";
-  return `Use the ${JSON.stringify(skill.name)} skill from ${JSON.stringify(skill.source)}.${instructions}\n\n${args.trim()}`;
+  // Persist the catalog identity so dispatch never depends on model interpretation.
+  const identity = { name: skill.name, source: skill.source, path: skill.path ?? "" };
+  return `/skill ${JSON.stringify(identity)}\n\n${args.trim()}`;
 }
 
 export function composerSlashPrompt(command: ComposerSlashCommand, args: string): string {

@@ -813,7 +813,7 @@ export class RemoteDesktopBridge {
       listMCPServers: () => this.call("mcp/list"),
       startXAILogin: () => this.call("auth/xai/login/start"),
       readSkillContent: (params) => this.call("desktop/skill/content",params),
-      listSkills: () => this.call("skill/list"),
+      listSkills: (params) => this.call("skill/list", params),
       listInstructionFiles: () => this.call("instructions/list"),
       getSessionOrganization: () => this.call("sessionOrganization/list"),
       getSettingsUsage: () => this.call("settings/usage"),

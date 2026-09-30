@@ -37,6 +37,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/subagent"
+	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/version"
 )
 
@@ -1930,7 +1931,40 @@ func (s *Server) runningTurnUsingProvider(providerName string) (string, bool) {
 }
 
 func (s *Server) handleSkillList(req Request) error {
-	return s.writeResponse(req.ID, SkillListResult{Skills: skillSummaries(s.rt.Skills)}, nil)
+	var params SkillListParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	catalog, err := s.skillCatalog(params.ThreadID)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	return s.writeResponse(req.ID, SkillListResult{Skills: skillSummaries(catalog)}, nil)
+}
+
+func (s *Server) skillCatalog(threadID string) ([]skills.Skill, error) {
+	if strings.TrimSpace(threadID) == "" {
+		return s.rt.Skills, nil
+	}
+	th, err := s.ensureThreadLoaded(threadID)
+	if err != nil {
+		return nil, err
+	}
+	threadRuntime, err := s.ensureThreadRuntime(th)
+	if err != nil {
+		return nil, err
+	}
+	if threadRuntime.Toolkit != nil {
+		return tools.FilterSkillsForSurface(threadRuntime.Toolkit.Skills(), threadRuntime.Toolkit.ActiveSurface()), nil
+	}
+	th.mu.Lock()
+	root := th.CWD
+	th.mu.Unlock()
+	if sessionWorkspacePath(root) == sessionWorkspacePath(s.rt.RootDir) {
+		return s.rt.Skills, nil
+	}
+	// Engines without a native toolkit cannot resolve a different checkout's catalog.
+	return nil, nil
 }
 
 func skillSummaries(items []skills.Skill) []SkillSummary {

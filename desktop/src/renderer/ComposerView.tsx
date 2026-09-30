@@ -673,7 +673,7 @@ export function Composer({
 
     async function loadSlashSkills(): Promise<void> {
       try {
-        const result = await window.wuu.listSkills();
+        const result = await window.wuu.listSkills(queryHistorySessionID ? { thread_id: queryHistorySessionID } : undefined);
         if (!cancelled) {
           setSlashSkills(result.skills);
         }
@@ -683,7 +683,7 @@ export function Composer({
         }
       }
     }
-  }, [readOnly, slashRuntimeReady, slashSkillContextKey, slashSkillCountKey, textOnly]);
+  }, [readOnly, slashRuntimeReady, slashSkillContextKey, slashSkillCountKey, textOnly, queryHistorySessionID]);
 
   useEffect(() => {
     if (readOnly) {

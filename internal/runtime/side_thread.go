@@ -50,6 +50,8 @@ func (s *Session) NewSideThreadRunner(sideThreadID, rootDir string, selected Thr
 		if err != nil {
 			return nil, err
 		}
+		_, threadSkills := s.guidanceForRoot(kit.RootDir(), nil)
+		kit.SetSkills(threadSkills)
 		model := strings.TrimSpace(runner.APIModel)
 		if model == "" {
 			model = strings.TrimSpace(runner.Model)

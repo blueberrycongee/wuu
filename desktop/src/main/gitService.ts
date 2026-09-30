@@ -374,16 +374,15 @@ function gitFileDiffResult(
     rawPatch,
     GIT_DIFF_PREVIEW_MAX_BYTES,
   );
-  const binary =
-    change.binary ||
-    rawPatch.includes("Binary files ") ||
-    rawPatch.includes("GIT binary patch");
+  const binary = Boolean(change.binary);
   const originalText = binary
     ? undefined
-    : gitRevisionFileText(root, base, change.old_path ?? change.path);
+    : change.status === "added" ? "" : gitRevisionFileText(root, base, change.old_path ?? change.path);
   const modifiedText = binary
     ? undefined
-    : readWorkingTreeFileText(absolutePath);
+    : change.status === "deleted" ? "" : readWorkingTreeFileText(absolutePath);
+  // The renderer must use the patch unless both full-text models are complete.
+  const hasFullText = originalText !== undefined && modifiedText !== undefined;
   return {
     is_repo: true,
     path: change.path,
@@ -393,8 +392,8 @@ function gitFileDiffResult(
     deletions: change.deletions,
     binary,
     patch: truncatedPatch.text,
-    original_text: originalText,
-    modified_text: modifiedText,
+    original_text: hasFullText ? originalText : undefined,
+    modified_text: hasFullText ? modifiedText : undefined,
     truncated: truncatedPatch.truncated,
   };
 }
@@ -867,8 +866,8 @@ function gitNewFileDiffResult(
       deletions: change.deletions,
       binary,
       patch,
-      original_text: binary ? undefined : "",
-      modified_text: binary ? undefined : previewBuffer.toString("utf8"),
+      original_text: binary || truncated ? undefined : "",
+      modified_text: binary || truncated ? undefined : previewBuffer.toString("utf8"),
       truncated,
     };
   } catch {
@@ -880,10 +879,11 @@ function gitRevisionFileText(
   root: string,
   revision: string,
   relativePath: string,
-): string {
+): string | undefined {
+  // Unlike git show, cat-file blob cannot render a gitlink as commit text.
   const result = spawnSync(
     "git",
-    ["-C", root, "show", `${revision}:${relativePath}`],
+    ["-C", root, "cat-file", "blob", `${revision}:${relativePath}`],
     {
       cwd: root,
       encoding: "utf8",
@@ -891,10 +891,10 @@ function gitRevisionFileText(
       maxBuffer: GIT_DIFF_COMMAND_MAX_BUFFER,
     },
   );
-  if (result.status !== 0) {
-    return "";
+  if (result.status !== 0 || Buffer.byteLength(result.stdout, "utf8") > GIT_DIFF_PREVIEW_MAX_BYTES) {
+    return undefined;
   }
-  return truncateTextBytes(result.stdout, GIT_DIFF_PREVIEW_MAX_BYTES).text;
+  return result.stdout;
 }
 
 // Git stores a symlink's target path as its blob, never the target's contents.
@@ -916,11 +916,13 @@ function readGitFilePreview(absolutePath: string, maxBytes: number): {
   };
 }
 
-function readWorkingTreeFileText(absolutePath: string): string {
+function readWorkingTreeFileText(absolutePath: string): string | undefined {
   try {
-    return readGitFilePreview(absolutePath, GIT_DIFF_PREVIEW_MAX_BYTES)?.buffer.toString("utf8") ?? "";
+    const preview = readGitFilePreview(absolutePath, GIT_DIFF_PREVIEW_MAX_BYTES);
+    if (!preview || preview.size > GIT_DIFF_PREVIEW_MAX_BYTES) return undefined;
+    return preview.buffer.toString("utf8");
   } catch {
-    return "";
+    return undefined;
   }
 }
 
