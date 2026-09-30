@@ -125,7 +125,7 @@ button.catalog-row,
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   line-height: 1.5;
   white-space: nowrap;
@@ -296,7 +296,7 @@ button.catalog-row,
 }
 
 .catalog-tab-count {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   font-weight: var(--weight-regular);
   font-variant-numeric: tabular-nums;
@@ -404,7 +404,7 @@ button.catalog-row,
 
 .plugin-page-footnote {
   margin: 0;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
 }
 

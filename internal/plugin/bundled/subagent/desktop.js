@@ -39,7 +39,7 @@ export async function activate(api) {
     .plugin-subagent-alias-footer { display:flex; justify-content:space-between; align-items:baseline; gap:var(--space-3); }
     @container settings-page (max-width:560px) { .plugin-subagent-fields { grid-template-columns:minmax(0,1fr); } }
     .plugin-subagent-actions { align-items:center; gap:var(--space-2); }
-    .plugin-subagent-saved { color:var(--ink-muted); font-size:var(--font-sm); }
+    .plugin-subagent-saved { color:var(--ink-tertiary); font-size:var(--font-sm); }
     .plugin-subagent-settings-error { color:var(--danger); font-size:var(--font-ui); overflow-wrap:anywhere; }
   ` });
 

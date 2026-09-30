@@ -101,7 +101,7 @@ export async function activate(api) {
     .plugin-automation-group-title { margin:0 0 var(--space-3); color:var(--ink-strong); font-size:var(--font-ui); font-weight:var(--weight-semibold); line-height:1.4; }
     .plugin-automation-empty { min-height:160px; }
     .plugin-automation-error { color:var(--danger); font-size:var(--font-sm); overflow-wrap:anywhere; }
-    .plugin-automation-filtered-empty { margin:0; color:var(--ink-muted); }
+    .plugin-automation-filtered-empty { margin:0; color:var(--ink-tertiary); }
     .plugin-automation-detail-title { flex:1; min-width:0; margin:0; color:var(--ink-strong); font-size:var(--font-ui); font-weight:var(--weight-semibold); line-height:1.4; }
     .plugin-automation-detail-head > .plugin-automation-enable { flex:1; justify-content:start; grid-template-columns:auto auto; gap:var(--space-3); }
     .plugin-automation-detail { position:relative; display:flex; flex-direction:column; width:var(--automation-detail-width); min-width:var(--automation-detail-width); min-height:0; overflow:hidden; border-left:1px solid var(--hairline); transition:opacity var(--environment-panel-exit-duration) var(--ease-in); }
@@ -114,7 +114,7 @@ export async function activate(api) {
     .plugin-automation-resizer:hover::after, .plugin-automation-resizer:focus-visible::after, .plugin-automation-body[data-resizing="true"] .plugin-automation-resizer::after { background:var(--sidebar-resizer-hover-bg, var(--ink-overlay-18)); box-shadow:0 0 0 1px var(--sidebar-resizer-hover-ring, var(--ink-overlay-8)); }
     .plugin-automation-body[data-resizing="true"], .plugin-automation-body[data-resizing="true"] * { cursor:col-resize !important; user-select:none; }
     .plugin-automation-detail-head { display:flex; align-items:center; gap:var(--space-2); min-height:var(--control-field-height); margin-bottom:var(--automation-gap); }
-    .plugin-automation-detail-status { flex:1; color:var(--ink-muted); font-size:var(--font-sm); }
+    .plugin-automation-detail-status { flex:1; color:var(--ink-tertiary); font-size:var(--font-sm); }
     .plugin-automation .plugin-automation-detail-close { display:grid; place-items:center; width:var(--control-field-height); padding:0; }
     .plugin-automation-detail-close svg { width:var(--icon-size); height:var(--icon-size); }
     .plugin-automation-form { display:flex; flex-direction:column; gap:var(--space-6); }

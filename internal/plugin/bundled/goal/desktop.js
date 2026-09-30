@@ -167,7 +167,7 @@ export async function activate(api) {
      * label stays ink; status color on small text would miss contrast. */
     .plugin-goal-label { flex-shrink:0; font-weight:var(--weight-medium); }
     .plugin-goal-summary { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink-soft); }
-    .plugin-goal-status { flex-shrink:0; color:var(--ink-muted); font-variant-numeric:tabular-nums; }
+    .plugin-goal-status { flex-shrink:0; color:var(--ink-tertiary); font-variant-numeric:tabular-nums; }
     .plugin-goal-details { display:grid; gap:var(--space-2); padding:var(--space-1) var(--space-3) var(--space-3); }
     .plugin-goal-progress { display:grid; gap:var(--space-1); }
     .plugin-goal-objective { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }

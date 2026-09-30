@@ -179,7 +179,7 @@
 }
 
 .settings-scroll .plugin-ui-state strong {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-ui);
   font-weight: var(--weight-regular);
 }
@@ -249,7 +249,7 @@
 .plugin-ui-section-header p,
 .plugin-ui-field-description,
 .plugin-ui-state p {
-  color: var(--wuu-color-text-muted, var(--ink-muted));
+  color: var(--ink-soft);
 }
 
 .plugin-ui-stack {
@@ -347,7 +347,7 @@
   border: 0;
   border-radius: var(--wuu-radius-control, var(--radius-sm));
   padding: 0;
-  color: var(--wuu-color-text-muted, var(--ink-muted));
+  color: var(--ink-soft);
   background: transparent;
   cursor: pointer;
   font: inherit;

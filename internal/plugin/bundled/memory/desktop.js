@@ -51,7 +51,7 @@ export async function activate(api) {
     .plugin-memory-chat-entry.user { justify-content:flex-end; }
     .plugin-memory-chat-bubble { max-width:min(72%, 420px); padding:var(--compact-padding-block) var(--compact-padding-inline); border-radius:var(--message-flow-card-radius); background:var(--wuu-color-surface-muted, var(--surface-2)); color:var(--ink); font-size:var(--font-ui); line-height:1.55; white-space:pre-wrap; overflow-wrap:anywhere; }
     .plugin-memory-chat-reply { max-width:68ch; margin:0; color:var(--ink); font-size:var(--font-ui); line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
-    .plugin-memory-chat-pending, .plugin-memory-changes { color:var(--ink-muted); font-size:var(--font-sm); }
+    .plugin-memory-chat-pending, .plugin-memory-changes { color:var(--ink-tertiary); font-size:var(--font-sm); }
     .plugin-memory-changes summary { cursor:pointer; }
     .plugin-memory-changes ul { margin:var(--space-1) 0 0; padding-left:1.25em; }
     .plugin-memory-changes code { font-size:var(--font-sm); }
@@ -69,8 +69,8 @@ export async function activate(api) {
     .plugin-memory-file-head::before { content:"›"; color:var(--ink-muted); transition:transform var(--motion-fast) var(--ease-out); }
     .plugin-memory-file[open] .plugin-memory-file-head::before { transform:rotate(90deg); }
     .plugin-memory-file-name { overflow:hidden; color:var(--ink); font-size:var(--font-ui); text-overflow:ellipsis; white-space:nowrap; }
-    .plugin-memory-file-type { flex:none; padding:0 var(--space-2); border-radius:var(--radius-xs); background:var(--wuu-color-surface-muted, var(--surface-2)); color:var(--ink-muted); font-size:var(--font-xs); line-height:1.6; }
-    .plugin-memory-file-desc { overflow:hidden; color:var(--ink-muted); font-size:var(--font-sm); text-overflow:ellipsis; white-space:nowrap; }
+    .plugin-memory-file-type { flex:none; padding:0 var(--space-2); border-radius:var(--radius-xs); background:var(--wuu-color-surface-muted, var(--surface-2)); color:var(--ink-soft); font-size:var(--font-xs); line-height:1.6; }
+    .plugin-memory-file-desc { overflow:hidden; color:var(--ink-tertiary); font-size:var(--font-sm); text-overflow:ellipsis; white-space:nowrap; }
     .plugin-memory-file pre { max-height:300px; margin:var(--space-3) 0 0; padding:var(--compact-padding-block) var(--compact-padding-inline); overflow:auto; border-radius:var(--radius-sm); background:var(--surface-1); color:var(--ink-soft); white-space:pre-wrap; overflow-wrap:anywhere; font:var(--font-sm)/1.6 var(--wuu-font-family-mono, ui-monospace, monospace); }
 
     .plugin-memory-error { display:grid; gap:var(--space-1); padding:var(--compact-padding-block) var(--compact-padding-inline); border-radius:var(--radius-sm); background:var(--danger-soft); color:var(--ink); font-size:var(--font-ui); overflow-wrap:anywhere; }

@@ -38,7 +38,7 @@ export async function activate(api) {
     .plugin-dream-num { max-width:100%; width:6.5em; text-align:right; font-variant-numeric:tabular-nums; }
     .plugin-dream-model { width:12em; max-width:100%; }
     .plugin-dream-actions { justify-content:flex-start; align-items:center; gap:var(--space-2); }
-    .plugin-dream-saved { color:var(--ink-muted); font-size:var(--font-sm); }
+    .plugin-dream-saved { color:var(--ink-tertiary); font-size:var(--font-sm); }
     .plugin-dream-stat { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:var(--space-6); }
     .plugin-dream-stat-label { color:var(--ink); font-size:var(--font-ui); }
     .plugin-dream-stat-value { display:inline-flex; align-items:center; gap:var(--space-2); overflow-wrap:anywhere; color:var(--ink-soft); font-size:var(--font-ui); font-variant-numeric:tabular-nums; text-align:right; }
@@ -47,7 +47,7 @@ export async function activate(api) {
     .plugin-dream-status-dot[data-tone="bad"] { background:var(--danger); }
     .plugin-dream-status-dot[data-tone="busy"] { background:var(--warning); }
     .plugin-dream-error { color:var(--danger); font-size:var(--font-ui); }
-    .plugin-dream-loading { color:var(--ink-muted); font-size:var(--font-ui); }
+    .plugin-dream-loading { color:var(--ink-tertiary); font-size:var(--font-ui); }
     @container settings-page (max-width:480px) {
       .plugin-dream-row { grid-template-columns:minmax(0,1fr); gap:var(--space-2); }
       .plugin-dream-num, .plugin-dream-model { width:100%; text-align:left; }
