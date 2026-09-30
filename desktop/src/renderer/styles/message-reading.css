@@ -152,10 +152,18 @@
 
 /* Prose may break anywhere, but in a table that shrinks every column's
  * min-content to one character and splits words ("stat/us") in narrow panes.
- * Keep whole words and let the wrapper scroll instead. */
+ * Keep whole words and let the wrapper scroll instead. Chinese may still
+ * break between any two characters, so a column keeps at least four of them
+ * and its header whole ("模块", not "模/块"). */
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-table-wrap :is(th, td) {
+  /* Table layout counts the cell's padding in its minimum. */
+  min-width: calc(4em + 2 * var(--space-3));
   overflow-wrap: break-word;
   word-break: normal;
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-table-wrap th {
+  white-space: nowrap;
 }
 
 /* Message tables have no side frame, so their outer columns sit on the prose

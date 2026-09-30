@@ -3578,12 +3578,12 @@
   background: var(--message-flow-card-header-bg);
 }
 
+/* The fence's language as written, in the metadata role: UI chrome, not
+ * code, so it follows the UI size rather than the code size. */
 .rich-code-language {
   font-family: inherit;
-  font-size: 10px;
-  font-weight: var(--weight-semibold);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
   color: var(--ink-tertiary);
   pointer-events: none;
   user-select: none;
@@ -3625,11 +3625,11 @@
   height: 24px;
   background: none;
   box-shadow: none;
-  opacity: 0.5;
+  /* Quiet at rest, yet a control mark that clears 3:1. */
+  color: var(--ink-muted);
+  opacity: 1;
   pointer-events: auto;
-  transition:
-    color var(--motion-fast) var(--ease-out),
-    opacity var(--motion-fast) var(--ease-out);
+  transition: color var(--motion-fast) var(--ease-out);
 }
 
 /* Even glyph in the 24px box keeps --rich-code-copy-glyph-offset whole. */
@@ -3639,14 +3639,12 @@
 }
 
 .rich-code-block:hover .rich-code-copy,
-.rich-code-copy:hover,
 .rich-code-copy:focus-visible {
-  opacity: 1;
+  color: var(--ink-tertiary);
 }
 
-.rich-code-copy.copied,
-.rich-code-copy.failed {
-  opacity: 1;
+.rich-code-copy:hover {
+  color: var(--ink);
 }
 
 /* Code block copy keeps the inherited icon color in the copied state.
