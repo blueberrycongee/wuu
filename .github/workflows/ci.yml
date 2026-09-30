@@ -133,6 +133,26 @@ jobs:
       - name: Build desktop fixture core
         run: go build -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
 
+      - name: Verify compact Fast mode controls
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WUU_FAST_OUTPUT: ${{ runner.temp }}/wuu-fast-mode-evidence
+          WUU_FAST_CORE: ${{ runner.temp }}/wuu-session-switch-core
+        run: |
+          mkdir -p "$WUU_FAST_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/fast-mode-e2e.cjs 2>&1 | tee "$WUU_FAST_OUTPUT/run.log"
+
+      - name: Upload Fast mode evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fast-mode-evidence
+          path: ${{ runner.temp }}/wuu-fast-mode-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Verify worktree skill selection
         timeout-minutes: 5
         shell: bash

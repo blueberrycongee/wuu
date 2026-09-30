@@ -3067,9 +3067,9 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   --runtime-summary: calc(
     2px + var(--menu-inset) * 2
     + var(--runtime-summary-context, 1) * var(--runtime-context-row)
-    + var(--runtime-summary-rows, 1) * var(--runtime-row)
+    + var(--runtime-row)
     + var(--runtime-summary-effort, 0) * var(--runtime-effort-block)
-    + (var(--runtime-summary-context, 1) + var(--runtime-summary-rows, 1) + var(--runtime-summary-effort, 0) - 1) * 2px
+    + (var(--runtime-summary-context, 1) + var(--runtime-summary-effort, 0)) * 2px
   );
   position: relative;
   display: block;
@@ -3148,6 +3148,14 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   align-items: center;
   gap: 4px;
   color: var(--ink-tertiary);
+}
+
+.runtime-panel-context-source {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 4px;
 }
 
 .codex-runtime-menu .runtime-panel-context button,
@@ -3536,43 +3544,31 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   scrollbar-gutter: stable both-edges;
 }
 
-/* Speed is independent of the model and the effort slider: a row that shows
- * its state with a check, like the checked rows of the list pages. */
-.runtime-panel-fast-row {
+/* Keep speed separate from model navigation without taking a full row. The
+ * reset keeps its slot when inherited, so toggling never moves either target. */
+.runtime-panel-speed-controls {
   display: flex;
-  height: var(--runtime-row);
   flex: 0 0 auto;
   align-items: center;
   gap: 2px;
 }
 
-.codex-runtime-menu .runtime-panel-fast {
-  height: 100%;
-  flex: 1 1 auto;
-  gap: 8px;
-  padding: 0 4px;
-  border-radius: var(--radius-xs);
-  font-size: var(--font-menu);
-  font-weight: var(--weight-medium);
-}
-
-.codex-runtime-menu .runtime-panel-fast > svg {
-  color: var(--ink-soft);
-}
-
-.runtime-panel-fast .runtime-panel-fast-check {
-  visibility: hidden;
-}
-
-.runtime-panel-fast[aria-pressed="true"] .runtime-panel-fast-check {
-  visibility: visible;
-}
-
-.codex-runtime-menu .runtime-panel-fast-row .runtime-panel-speed-reset {
-  width: var(--runtime-row);
-  height: 100%;
+.codex-runtime-menu .runtime-panel-speed-controls button {
+  width: var(--runtime-context-row);
+  height: var(--runtime-context-row);
   flex: 0 0 auto;
   justify-content: center;
   padding: 0;
+  border-radius: var(--radius-xs);
   color: var(--ink-tertiary);
+}
+
+.codex-runtime-menu .runtime-panel-speed-controls button > svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.codex-runtime-menu .runtime-panel-fast[aria-pressed="true"] {
+  color: var(--interaction-accent);
+  background: var(--selection-surface);
 }

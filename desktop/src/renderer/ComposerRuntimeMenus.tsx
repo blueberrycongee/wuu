@@ -212,8 +212,8 @@ function RuntimePanelHeader({ title, onBack }: { title: string; onBack: () => vo
 }
 
 // The summary reads top down: where the model comes from (engine and model
-// service, when there is a choice to show), the model, how hard it thinks,
-// then the optional speed row.
+// service, when there is a choice to show), the model, then how hard it thinks.
+// Speed is an independent accessory in the context header, not another choice row.
 function RuntimePanelSummary({
   engine,
   engineId,
@@ -260,6 +260,7 @@ function RuntimePanelSummary({
   useEffect(() => setPendingSpeed(undefined), [speed, model]);
   const requestedSpeed = pendingSpeed ?? speed;
   const displayedSpeed = effectiveModelSpeed(requestedSpeed, defaultSpeed);
+  const fastModeHint = `${t(displayedSpeed === "fast" ? "runtime.fastModeOn" : displayedSpeed === "standard" ? "runtime.fastModeOff" : "runtime.fastModeDefault")} · ${t("runtime.fastModeHint")}`;
   const changeSpeed = async (next: string): Promise<void> => {
     if (!onSelectSpeed || speedSaving) return;
     setPendingSpeed(next);
@@ -307,11 +308,37 @@ function RuntimePanelSummary({
 
   return (
     <div className="runtime-panel-summary">
-      {showEngine || providerItem ? (
+      {showEngine || providerItem || onSelectSpeed ? (
         <div className="runtime-panel-context">
-          {showEngine ? engineItem : null}
-          {showEngine && providerItem ? <span className="runtime-panel-context-separator" aria-hidden="true">/</span> : null}
-          {providerItem}
+          <div className="runtime-panel-context-source">
+            {showEngine ? engineItem : null}
+            {showEngine && providerItem ? <span className="runtime-panel-context-separator" aria-hidden="true">/</span> : null}
+            {providerItem}
+          </div>
+          {onSelectSpeed ? (
+            <div className="runtime-panel-speed-controls">
+              <Tooltip content={fastModeHint}>
+                <button
+                  type="button"
+                  className="runtime-panel-fast"
+                  aria-label={t("runtime.fastMode")}
+                  aria-description={fastModeHint}
+                  aria-pressed={displayedSpeed ? displayedSpeed === "fast" : "mixed"}
+                  disabled={speedDisabled || speedSaving}
+                  onClick={() => { void changeSpeed(displayedSpeed === "fast" ? "standard" : "fast"); }}
+                ><Zap aria-hidden="true" /></button>
+              </Tooltip>
+              <Tooltip content={t("runtime.resetSpeed")}>
+                <button
+                  className="runtime-panel-speed-reset"
+                  type="button"
+                  aria-label={t("runtime.resetSpeed")}
+                  disabled={!requestedSpeed || speedDisabled || speedSaving}
+                  onClick={() => { void changeSpeed(""); }}
+                ><RotateCcw aria-hidden="true" /></button>
+              </Tooltip>
+            </div>
+          ) : null}
         </div>
       ) : null}
       <button type="button" className="runtime-panel-model" data-menu-autofocus onClick={onOpenModels}>
@@ -332,45 +359,17 @@ function RuntimePanelSummary({
           />
         </div>
       ) : null}
-      {onSelectSpeed ? (
-        <div className="runtime-panel-fast-row">
-          <button
-            type="button"
-            className="runtime-panel-fast"
-            aria-label={t("runtime.fastMode")}
-            aria-pressed={displayedSpeed ? displayedSpeed === "fast" : "mixed"}
-            title={t(displayedSpeed === "fast" ? "runtime.fastModeOn" : displayedSpeed === "standard" ? "runtime.fastModeOff" : "runtime.fastModeDefault")}
-            disabled={speedDisabled || speedSaving}
-            onClick={() => { void changeSpeed(displayedSpeed === "fast" ? "standard" : "fast"); }}
-          >
-            <Zap aria-hidden="true" />
-            <span>{t("runtime.fastMode")}</span>
-            <Check className="runtime-panel-fast-check" aria-hidden="true" />
-          </button>
-          {/* Only an explicit choice can be reset to the configured default. */}
-          {requestedSpeed ? (
-            <button
-              className="runtime-panel-speed-reset"
-              type="button"
-              aria-label={t("runtime.resetSpeed")}
-              title={t("runtime.resetSpeed")}
-              disabled={speedDisabled || speedSaving}
-              onClick={() => { void changeSpeed(""); }}
-            ><RotateCcw aria-hidden="true" /></button>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   );
 }
 
 // The shell morphs between pages, so the summary's height comes from the rows
 // it shows rather than from its content.
-function runtimeSummaryStyle({ context, effort, rows }: { context: boolean; effort: boolean; rows: number }): CSSProperties {
+function runtimeSummaryStyle({ context, effort, speed }: { context: boolean; effort: boolean; speed: boolean }): CSSProperties {
   return {
     "--runtime-summary-context": context ? "1" : "0",
     "--runtime-summary-effort": effort ? "1" : "0",
-    "--runtime-summary-rows": String(rows),
+    ...(speed ? { "--runtime-context-row": "var(--control-size-inline)" } : {}),
   } as CSSProperties;
 }
 
@@ -812,7 +811,7 @@ function EngineRuntimeMenu({
         ...runtimeSummaryStyle({
           context: true,
           effort: effortOptions.length > 1,
-          rows: 1 + (effectiveModel?.fast_mode && onSelectSpeed ? 1 : 0),
+          speed: Boolean(effectiveModel?.fast_mode && onSelectSpeed),
         }),
       }}
       onKeyDown={(event) => handleRuntimePanelKeyDown(event, view, showSummary)}
@@ -1094,9 +1093,9 @@ export function RuntimeModelMenu({
       style={{
         ...runtimePanelStyle(pageRows, width),
         ...runtimeSummaryStyle({
-          context: showEngine || Boolean(effectiveProviderName),
+          context: showEngine || Boolean(effectiveProviderName) || Boolean(effectiveModel?.fast_mode && onSelectSpeed),
           effort: effortOptions.length > 1,
-          rows: 1 + (effectiveModel?.fast_mode && onSelectSpeed ? 1 : 0),
+          speed: Boolean(effectiveModel?.fast_mode && onSelectSpeed),
         }),
       }}
       onKeyDown={(event) => handleRuntimePanelKeyDown(event, view, showSummary)}
