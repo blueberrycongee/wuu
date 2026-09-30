@@ -25,10 +25,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   a toy-block fort built around the Applications folder.
 
 ### Fixed
-
 - Stopping a background command now kills remaining child processes after its
   parent exits, including children that could leave a promoted command's stop
   request waiting indefinitely for output pipes to close.
+
+- Editing a message after context compaction now retracts the selected message
+  and following messages, preserving the correct conversation on resume and fork.
 
 - Harden MCP transport compatibility, request timeouts, OAuth refresh recovery,
   local server cleanup, bounded reads, catalog refreshes, and oversized results.
