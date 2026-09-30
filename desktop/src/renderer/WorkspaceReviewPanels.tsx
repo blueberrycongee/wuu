@@ -796,7 +796,7 @@ function GitChangeTreeNodeView({
         >
           <ChevronRight className="workspace-diff-tree-chevron icon-sm" />
           {expanded ? <FolderOpen className="icon-sm" /> : <Folder className="icon-sm" />}
-          <span className="workspace-diff-tree-name">{node.name}</span>
+          <TruncatedText className="workspace-diff-tree-name" text={node.name} />
           <span className="workspace-diff-tree-count">{formatNumber(node.fileCount)}</span>
         </button>
         {expanded ? (
@@ -838,7 +838,7 @@ function GitChangeTreeNodeView({
     >
       <span className="workspace-diff-tree-spacer" />
       <FileText className="icon-sm" />
-      <span className="workspace-diff-tree-name">{node.name}</span>
+      <TruncatedText className="workspace-diff-tree-name" text={node.name} />
       {file ? <GitChangeFileStats file={file} /> : null}
     </button>
   );
