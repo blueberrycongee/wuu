@@ -130,7 +130,23 @@ func TestWorktreeProtocolGuidanceUsesSelectedCheckout(t *testing.T) {
 		if !strings.Contains(prompt, rule) {
 			t.Errorf("%s: missing checkout instruction %s", tc.name, rule)
 		}
-		if !strings.Contains(result, skill) || !strings.Contains(result, canonical) {
+		var loadedSkill struct {
+			Metadata struct {
+				Dir string `json:"dir"`
+			} `json:"metadata"`
+			Output string `json:"output"`
+		}
+		if err := json.Unmarshal([]byte(result), &loadedSkill); err != nil {
+			t.Fatalf("%s decode loaded skill: %v", tc.name, err)
+		}
+		// Discovery may preserve a symlink alias for the same checkout.
+		resourceDir, err := filepath.EvalSymlinks(loadedSkill.Metadata.Dir)
+		if err != nil {
+			t.Fatalf("%s resolve skill resource directory: %v", tc.name, err)
+		}
+		if !strings.Contains(loadedSkill.Output, skill) ||
+			!strings.Contains(loadedSkill.Output, "Resource base: "+loadedSkill.Metadata.Dir) ||
+			resourceDir != filepath.Join(canonical, ".agents", "skills", "release-check") {
 			t.Errorf("%s: wrong skill content or resource root: %s", tc.name, result)
 		}
 		listID := "skills-" + tc.name
@@ -142,7 +158,11 @@ func TestWorktreeProtocolGuidanceUsesSelectedCheckout(t *testing.T) {
 				selected = item
 			}
 		}
-		if selected.Path != filepath.Join(canonical, ".agents", "skills", "release-check", "SKILL.md") {
+		selectedPath, err := filepath.EvalSymlinks(selected.Path)
+		if err != nil {
+			t.Fatalf("%s resolve catalog skill path: %v", tc.name, err)
+		}
+		if selectedPath != filepath.Join(canonical, ".agents", "skills", "release-check", "SKILL.md") {
 			t.Fatalf("%s catalog used the wrong checkout: %+v", tc.name, selected)
 		}
 		identity, _ := json.Marshal(map[string]string{"name": selected.Name, "source": selected.Source, "path": selected.Path})
