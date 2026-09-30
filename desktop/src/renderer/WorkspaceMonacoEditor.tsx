@@ -393,7 +393,7 @@ export function defineWorkspaceMonacoTheme(theme: AppliedTheme): string {
       "editorGutter.background": transparent,
       "editorLineNumber.foreground": color.inkTertiary,
       "editorLineNumber.activeForeground": color.ink,
-      "editorLineNumber.dimmedForeground": color.inkFaint,
+      "editorLineNumber.dimmedForeground": color.inkTertiary,
       "editorCursor.foreground": color.ink,
       "editor.selectionBackground": color.selection,
       // A linked range stays marked while focus remains in the conversation.

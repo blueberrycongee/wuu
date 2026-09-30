@@ -857,7 +857,7 @@
 }
 
 .conversation-search-preview-sep {
-  color: var(--ink-overlay-8);
+  color: var(--ink-muted);
 }
 
 .conversation-search-preview-snippet {
