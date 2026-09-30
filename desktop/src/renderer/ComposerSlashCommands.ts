@@ -44,6 +44,7 @@ export type ComposerSlashCommand = {
   pluginId?: string;
   pluginCommandId?: string;
   promptTemplate?: string;
+  skill?: SkillSummary;
 };
 
 export type ComposerSlashDraft = {
@@ -472,7 +473,16 @@ function composerSlashCommandSearchText(command: ComposerSlashCommand): string {
     .toLowerCase();
 }
 
+export function composerSkillPrompt(skill: Pick<SkillSummary, "name" | "source" | "path">, args = ""): string {
+  // An explicit selection must survive slash-name collisions and draft persistence.
+  const instructions = skill.path ? ` Read and follow its instructions at ${JSON.stringify(skill.path)}.` : "";
+  return `Use the ${JSON.stringify(skill.name)} skill from ${JSON.stringify(skill.source)}.${instructions}\n\n${args.trim()}`;
+}
+
 export function composerSlashPrompt(command: ComposerSlashCommand, args: string): string {
+  if (command.skill) {
+    return composerSkillPrompt(command.skill, args);
+  }
   if (command.promptTemplate) {
     return renderPluginPromptTemplate(command.promptTemplate, args);
   }
@@ -504,6 +514,7 @@ function buildSkillSlashCommands(skills: SkillSummary[], disabledReason?: string
       description: summary,
       tag: "Skill",
       kind: "skill",
+      skill,
       aliases: skill.examples?.slice(0, 3),
       keywords: [
         "skill",

@@ -2047,37 +2047,29 @@ describe("Composer send control", () => {
     expect(runtimeButton?.disabled).toBe(false);
   });
 
-  it("inserts a selected skill slash command into the composer", async () => {
+  it.each(["review", "commit", "audit", "compact", "release-check"])("preserves explicitly selected %s skill identity", async (name) => {
     const setPrompt = vi.fn();
-    installSkillList([
-      {
-        name: "slides",
-        description: "Create slide decks",
-        source: "bundled",
-        user_invocable: true,
-        disable_model_invoke: false,
-      },
-    ]);
+    const path = `/synthetic/skills/${name}/SKILL.md`;
+    installSkillList([{ name, path, source: "user", user_invocable: true, disable_model_invoke: true }]);
     renderComposer({
-      prompt: "/sli",
+      prompt: `/${name}`,
       setPrompt,
       activeContext: { kind: "project", project_id: "repo", cwd: "/repo" },
     });
-
     await act(async () => {
       await Promise.resolve();
     });
-
-    const skillButton = document.body.querySelector<HTMLButtonElement>(
-      '.slash-command-item[data-command-name="slides"]',
-    );
-    expect(skillButton).not.toBeUndefined();
-
+    const skillButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>(
+      `.slash-command-item[data-command-name="${name}"]`,
+    )).find(button => button.textContent?.includes("Skill"));
+    expect(skillButton).toBeDefined();
     act(() => {
       skillButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
-
-    expect(setPrompt).toHaveBeenCalledWith("/slides ");
+    const prompt = setPrompt.mock.calls.at(-1)?.[0];
+    expect(prompt).toContain(name);
+    expect(prompt).toContain(path);
+    expect(prompt).not.toMatch(/^\//);
   });
 
   it("shows both the command name and the description on a skill row", async () => {

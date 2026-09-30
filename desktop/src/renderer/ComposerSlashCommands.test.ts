@@ -133,8 +133,9 @@ describe("composer slash commands", () => {
 
     expect(visible.map((command) => command.name)).toEqual(["slides"]);
     expect(visible[0]?.kind).toBe("skill");
-    expect(composerSlashPrompt(visible[0]!, "")).toBe("/slides ");
-    expect(composerSlashPrompt(visible[0]!, "quarterly roadmap")).toBe("/slides quarterly roadmap");
+    expect(composerSlashPrompt(visible[0]!, "")).toContain("slides");
+    expect(composerSlashPrompt(visible[0]!, "")).not.toMatch(/^\//);
+    expect(composerSlashPrompt(visible[0]!, "quarterly roadmap")).toContain("quarterly roadmap");
     expect(filterComposerSlashCommands(commands, "internal-only")).toEqual([]);
   });
 
