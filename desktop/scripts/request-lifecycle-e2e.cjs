@@ -137,6 +137,8 @@ async function run() {
     assert.equal(state.cursorState, "fading");
     assert.equal(state.focused, true);
     reasoningEvidence.push({ theme, width, font, ...state });
+    // A hidden window only paints on request; a stale frame would disagree with the DOM assertions above.
+    await evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     fs.writeFileSync(path.join(evidence, `reasoning-stopped-${theme}-${width}-${font}.png`), (await win.webContents.capturePage()).toPNG());
   }
   fs.writeFileSync(path.join(evidence, "reasoning-stopped.json"), JSON.stringify(reasoningEvidence, null, 2));
