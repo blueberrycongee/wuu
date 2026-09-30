@@ -218,10 +218,6 @@
   );
 }
 
-.app-shell.bottom-panel-open {
-  grid-template-rows: minmax(0, 1fr) var(--workspace-bottom-panel-height, 238px);
-}
-
 /* Glass rail surface — shared between the main sidebar (`<aside class="sidebar">`)
  * and the settings rail (`<aside class="settings-sidebar">`). Single source of
  * truth so future tweaks to the translucent material (border opacity,
@@ -758,7 +754,6 @@
   z-index: 1;
   -webkit-app-region: no-drag;
 }
-
 
 .sidebar-brand {
   /* Two tracks so the wordmark stays put when the bell mounts or unmounts.

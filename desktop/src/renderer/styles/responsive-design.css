@@ -1,10 +1,3 @@
-/* Component color tokens for responsive-design.css. Light-theme values; the dark
-   theme overrides these in base.css theme blocks. */
-:root {
-  --responsive-secondary-button-bg: var(--wuu-control-secondary-background, #f0f0ed);
-  --responsive-secondary-button-text: var(--wuu-color-text, #3c4145);
-}
-
 @container style(--motion-reduced: 1) {
   .project-add-menu,
   .codex-runtime-menu,
@@ -144,17 +137,6 @@
   }
 }
 
-/* Only the fork dialog's Cancel still uses this; it should move to
- * .settings-button like the other dialogs, and this rule go with it. */
-.secondary-button {
-  height: 36px;
-  border-radius: var(--radius-sm);
-  font-weight: var(--weight-semibold);
-  padding: 0 14px;
-  background: var(--wuu-control-secondary-background, var(--responsive-secondary-button-bg));
-  color: var(--wuu-color-text, var(--responsive-secondary-button-text));
-}
-
 @container style(--motion-reduced: 1) {
   .app-shell,
   .sidebar,
@@ -165,7 +147,6 @@
   .dock-composer-wrap,
   .workspace-right-panel,
   .workspace-right-panel-resizer,
-  .workspace-bottom-panel,
   .nav-item,
   .project-row,
   .project-row-new-thread,

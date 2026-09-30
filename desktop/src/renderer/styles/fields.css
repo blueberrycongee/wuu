@@ -49,10 +49,6 @@
   border-bottom: 0;
 }
 
-.workspace-diff-search {
-  margin: 0 8px 7px;
-}
-
 /* Host settings and extension settings share the same switch. The target is
  * larger than its track; font growth never stretches the track or the thumb.
  * Switches end their rows, so the end margin gives back the target's overhang

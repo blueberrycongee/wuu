@@ -188,7 +188,7 @@
 
 .plugin-inspector-section > h2 {
   margin: 0;
-  color: var(--text-secondary);
+  color: var(--ink-soft);
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
 }
@@ -278,9 +278,9 @@
 .plugin-inspector-section-error {
   margin: 0;
   padding: 8px;
-  color: var(--danger-text, var(--text-primary));
+  color: var(--danger);
   border-radius: var(--radius-sm);
-  background: var(--danger-surface, var(--surface-2));
+  background: var(--danger-soft);
 }
 
 .environment-row,

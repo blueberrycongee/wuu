@@ -102,7 +102,7 @@ export function ConversationForkDialog({
       showCloseButton={false}
       panelClassName="fork-dialog"
       footer={
-        <button className="secondary-button" type="button" disabled={disabled} onClick={onCancel}>
+        <button className="settings-button settings-button-ghost" type="button" disabled={disabled} onClick={onCancel}>
           {t("common.cancel")}
         </button>
       }

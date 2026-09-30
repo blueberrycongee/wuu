@@ -204,8 +204,6 @@
 
   /* responsive-design.css
      (image-preview.css is a dark overlay in both themes — no override) */
-  --responsive-secondary-button-bg: var(--wuu-control-secondary-background, #2b2f34);
-  --responsive-secondary-button-text: var(--wuu-color-text, #ccd1d5);
 
   /* workbench.css — host primitives still resolve through public theme
      tokens, so extension themes remain authoritative. */
