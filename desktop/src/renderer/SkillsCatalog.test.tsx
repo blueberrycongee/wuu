@@ -87,6 +87,27 @@ describe("SkillsCatalog", () => {
     expect(container.querySelector(".skills-catalog-error")).toBeNull();
   });
 
+  it("reports a failed skill load with a retry instead of an empty list", async () => {
+    installSkillList([existingSkill]);
+    (window.wuu.listSkills as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("core unavailable"));
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog />);
+    });
+
+    const notice = container.querySelector<HTMLElement>(".skills-catalog-error");
+    expect(notice?.getAttribute("role")).toBe("alert");
+    expect(notice?.textContent).toContain("core unavailable");
+    expect(container.querySelector(".settings-group-empty")).toBeNull();
+
+    await act(async () => {
+      notice?.querySelector("button")?.click();
+    });
+    expect(container.querySelector(".skills-catalog-error")).toBeNull();
+    expect(skillButton(existingSkill.name)).toBeTruthy();
+  });
+
   it("refreshes the complete extension catalog through the parent runtime", async () => {
     installSkillList([]);
     const refreshedSkills: SkillSummary[] = [{

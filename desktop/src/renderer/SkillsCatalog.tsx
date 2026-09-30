@@ -479,7 +479,19 @@ export function SkillsCatalog({
         ))}
       </div>
 
-      {state.error ? <div className="skills-catalog-error">{state.error}</div> : null}
+      {/* Skills come from the core and plugins from the inventory, so a failed
+       * skill load is reported on the Skills tab, with the reload that
+       * recovers, in place of an empty list. */}
+      {activeTab === "skills" && state.error ? (
+        <div className="plugin-detail-notice is-error skills-catalog-error" role="alert">
+          <AlertCircle className="icon-sm" aria-hidden="true" />
+          <span className="plugin-detail-notice-text">{t("skills.loadFailed")}</span>
+          {state.error !== t("skills.loadFailed") ? <span className="plugin-detail-notice-detail">{state.error}</span> : null}
+          <button type="button" className="settings-button" disabled={state.loading} onClick={() => void refreshSkills()}>
+            {t("skills.pluginRetryStart")}
+          </button>
+        </div>
+      ) : null}
 
       {/* A plugin that needs a decision shows the reason instead of its
        * tagline; the decision is made on its page. */}
@@ -538,7 +550,7 @@ export function SkillsCatalog({
         />
       ) : null}
 
-      {!state.loading && (activeTab === "plugins" ? visiblePlugins.length === 0 : visibleSkills.length === 0) ? (
+      {!state.loading && (activeTab === "plugins" ? visiblePlugins.length === 0 : visibleSkills.length === 0 && !state.error) ? (
         <p className="settings-group-empty">
           {filter.trim() ? t("skills.noMatches") : activeTab === "plugins" ? t("skills.noPlugins") : t("skills.empty")}
         </p>

@@ -126,6 +126,8 @@ const skillContent = [
   ...Array.from({ length: long ? 6 : 1 }, () => skillSection),
 ].join("\n\n");
 
+let skillLoadFailed = false;
+
 window.wuu = {
   initialLanguagePreference: params.get("lang") === "en" ? "en-US" : "zh-CN",
   initialThemePreference: params.get("theme") === "dark" ? "dark" : "light",
@@ -134,7 +136,14 @@ window.wuu = {
   onThemePreferenceChange: () => () => undefined,
   getMessageFlowFontSize: async () => Number(params.get("size")) || 14.5,
   setMessageFlowFontSize: async () => undefined,
-  listSkills: async () => ({ skills: structuredClone(skills) }),
+  // `error` fails the first skill load, as a restarting core would.
+  listSkills: async () => {
+    if (params.has("error") && !skillLoadFailed) {
+      skillLoadFailed = true;
+      throw new Error("The Wuu core is restarting.");
+    }
+    return { skills: structuredClone(skills) };
+  },
   readSkillContent: async () => ({ content: skillContent }),
   getPluginSetting: async ({ key }: { key: string }) => ({ value: ({ autosave: true, recall: "相关时", limit: 200 } as Record<string, boolean | string | number>)[key] }),
   setPluginSetting: async ({ value }: { value: boolean | string | number }) => ({ value }),

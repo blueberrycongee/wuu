@@ -1702,7 +1702,7 @@ export const enUS = {
   "workspace.monaco.editor": "File editor for {path}",
   "git.branch.createFailed": "Failed to create branch",
   "workspace.review.binary": "binary",
-  "skills.loadFailed": "Could not load plugins",
+  "skills.loadFailed": "Could not load skills",
   "skills.catalogLabel": "Plugins and skills",
   "skills.title": "Plugins",
   "skills.searchPlaceholder": "Search plugins and skills",

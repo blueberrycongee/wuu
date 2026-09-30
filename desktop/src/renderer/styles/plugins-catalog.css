@@ -25,15 +25,6 @@
   flex: none;
 }
 
-.skills-catalog-error {
-  border-radius: var(--radius-sm);
-  background: var(--danger-soft);
-  color: var(--danger);
-  font-size: var(--font-ui);
-  line-height: 1.45;
-  padding: var(--compact-padding-block) var(--compact-padding-inline);
-}
-
 /* Plugin and skill rows share the settings row grammar: the mark, the name
  * over a tagline (or the reason a plugin needs a look), a trailing control,
  * and a chevron. Columns: mark, copy, trailing control, chevron; the

@@ -1699,7 +1699,7 @@ export const zhCN = {
   "workspace.monaco.editor": "{path} 文件编辑器",
   "git.branch.createFailed": "创建分支失败",
   "workspace.review.binary": "二进制",
-  "skills.loadFailed": "无法加载插件",
+  "skills.loadFailed": "未能读取技能",
   "skills.catalogLabel": "插件与技能",
   "skills.title": "插件",
   "skills.searchPlaceholder": "搜索插件与技能",
