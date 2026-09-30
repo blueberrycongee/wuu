@@ -341,33 +341,44 @@ func normalizeType(value string) string {
 }
 
 // ResolveAPIKeyWithHome resolves API key with explicit home directory.
+//
+// Order: config api_key, the configured api_key_env, a key the user saved for
+// this provider, the provider type's implicit default env var, then any other
+// stored key. Saved keys rank above the implicit default only because that
+// variable is ambient and says nothing about this service.
 func ResolveAPIKeyWithHome(provider config.ProviderConfig, providerName, home string) (string, error) {
 	// 1. Explicit api_key in config.
 	if strings.TrimSpace(provider.APIKey) != "" {
 		return strings.TrimSpace(provider.APIKey), nil
 	}
 
-	// 2. Environment variable.
 	envKey := strings.TrimSpace(provider.APIKeyEnv)
-	if envKey == "" {
-		envKey = defaultAPIKeyEnv(normalizeType(provider.Type))
-	}
 	if envKey != "" {
-		value := strings.TrimSpace(os.Getenv(envKey))
-		if value != "" {
+		if value := strings.TrimSpace(os.Getenv(envKey)); value != "" {
 			return value, nil
 		}
 	}
 
-	// 3. Global auth store.
-	if home != "" && providerName != "" {
-		if store, err := authstorage.ForHome(home); err == nil {
-			if credentials, err := store.Get(providerName); err == nil && strings.TrimSpace(credentials.APIKey) != "" {
-				return strings.TrimSpace(credentials.APIKey), nil
-			} else if err == nil && shouldTreatStoredAuthTokenAsAPIKey(provider, providerName) && strings.TrimSpace(credentials.AuthToken) != "" {
-				return strings.TrimSpace(credentials.AuthToken), nil
+	stored, hasStored := storedCredentials(home, providerName)
+	storedKey := ""
+	if hasStored {
+		storedKey = storedAPIKey(stored, provider, providerName)
+	}
+	if storedKey != "" && stored.Source == authstorage.SourceSaved {
+		return storedKey, nil
+	}
+
+	if envKey == "" {
+		envKey = defaultAPIKeyEnv(normalizeType(provider.Type))
+		if envKey != "" {
+			if value := strings.TrimSpace(os.Getenv(envKey)); value != "" {
+				return value, nil
 			}
 		}
+	}
+
+	if storedKey != "" {
+		return storedKey, nil
 	}
 
 	hint := "set api_key or run wuu init"
@@ -375,6 +386,28 @@ func ResolveAPIKeyWithHome(provider config.ProviderConfig, providerName, home st
 		hint = fmt.Sprintf("set api_key, %s env var, or run wuu init", envKey)
 	}
 	return "", fmt.Errorf("no API key found for provider %q (%s)", provider.Type, hint)
+}
+
+func storedCredentials(home, providerName string) (authstorage.Credentials, bool) {
+	if home == "" || providerName == "" {
+		return authstorage.Credentials{}, false
+	}
+	store, err := authstorage.ForHome(home)
+	if err != nil {
+		return authstorage.Credentials{}, false
+	}
+	credentials, err := store.Get(providerName)
+	return credentials, err == nil
+}
+
+func storedAPIKey(credentials authstorage.Credentials, provider config.ProviderConfig, providerName string) string {
+	if key := strings.TrimSpace(credentials.APIKey); key != "" {
+		return key
+	}
+	if shouldTreatStoredAuthTokenAsAPIKey(provider, providerName) {
+		return strings.TrimSpace(credentials.AuthToken)
+	}
+	return ""
 }
 
 func resolveAPIKey(provider config.ProviderConfig, providerName string) (string, error) {
@@ -397,24 +430,32 @@ func resolveAuthToken(provider config.ProviderConfig, providerName string) strin
 	if t := strings.TrimSpace(provider.AuthToken); t != "" {
 		return t
 	}
-	envKey := strings.TrimSpace(provider.AuthTokenEnv)
-	if envKey == "" {
-		envKey = "ANTHROPIC_AUTH_TOKEN"
-	}
-	if token := strings.TrimSpace(os.Getenv(envKey)); token != "" {
-		return token
-	}
-	if providerName != "" {
-		if store, err := authstorage.ForHome(os.Getenv("HOME")); err == nil {
-			if credentials, err := store.Get(providerName); err == nil && strings.TrimSpace(credentials.AuthToken) != "" {
-				if shouldTreatStoredAuthTokenAsAPIKey(provider, providerName) {
-					return ""
-				}
-				return strings.TrimSpace(credentials.AuthToken)
-			}
+	// A stored token is a bearer token unless the provider treats it as its key.
+	storedToken := ""
+	saved := false
+	if providerName != "" && !shouldTreatStoredAuthTokenAsAPIKey(provider, providerName) {
+		if credentials, ok := storedCredentials(os.Getenv("HOME"), providerName); ok {
+			storedToken = strings.TrimSpace(credentials.AuthToken)
+			saved = credentials.Source == authstorage.SourceSaved
 		}
 	}
-	return ""
+	envKey := strings.TrimSpace(provider.AuthTokenEnv)
+	if envKey != "" {
+		if token := strings.TrimSpace(os.Getenv(envKey)); token != "" {
+			return token
+		}
+	}
+	// A saved token was chosen for this provider; the implicit default env var
+	// is ambient and must not replace it.
+	if saved && storedToken != "" {
+		return storedToken
+	}
+	if envKey == "" {
+		if token := strings.TrimSpace(os.Getenv("ANTHROPIC_AUTH_TOKEN")); token != "" {
+			return token
+		}
+	}
+	return storedToken
 }
 
 func shouldTreatStoredAuthTokenAsAPIKey(provider config.ProviderConfig, providerName string) bool {

@@ -124,6 +124,19 @@ func (s *Server) refreshDurableThreadHistoryLocked(th *threadState) error {
 			return fmt.Errorf("reload repaired state for thread %q: %w", th.ID, err)
 		}
 	}
+	if loaded.workspaceRelocated {
+		root, id, err := s.sessionWorkspace(loaded.metadata)
+		if err != nil {
+			return err
+		}
+		if !s.ownsSessionWorkspace(root, id) {
+			return errors.New("session must execute in its relocated project runtime")
+		}
+		m := loaded.metadata
+		if _, err := session.UpdateWorkspaceBinding(s.rt.SessionDir, th.ID, m.CWD, m.WorktreePath, m.WorktreeBaseHEAD, m.WorktreeBaseRepo); err != nil {
+			return err
+		}
+	}
 	// Durable state is authoritative once execution ownership is ours. A
 	// different app-server may have completed turns, changed focus, compacted,
 	// or edited the thread since this process loaded its cached snapshot.
